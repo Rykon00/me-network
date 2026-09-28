@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Packt die Mod als Factorio-Zip (Gregtorio_<version>.zip) nach dist/.
+"""Packs the mod as a Factorio zip (Gregtorio_<version>.zip) into dist/.
 
-    python tools/build.py              # nur bauen
-    python tools/build.py --install    # bauen + in den Factorio-Mods-Ordner kopieren
-    python tools/build.py --mods-dir PFAD --install
-    python tools/build.py --no-psd     # Photoshop-Quellen weglassen (kleineres Zip)
+    python tools/build.py              # build only
+    python tools/build.py --install    # build + copy into the Factorio mods folder
+    python tools/build.py --mods-dir PATH --install
+    python tools/build.py --no-psd     # leave out Photoshop sources (smaller zip)
 """
 import argparse, json, os, shutil, sys, zipfile
 from pathlib import Path
@@ -47,21 +47,21 @@ def main():
                 if f.name in (".DS_Store", "Thumbs.db"):
                     continue
                 z.write(f, f"{base}/{rel.as_posix()}")
-    # Release-Notes = oberster Abschnitt aus changelog.txt
+    # release notes = topmost section of changelog.txt
     cl = ROOT / "changelog.txt"
     if cl.exists():
         blocks = cl.read_text(encoding="utf-8").split("-" * 99)
         first = next((b.strip() for b in blocks if b.strip()), "")
         (dist / "release-notes.md").write_text("```\n" + first + "\n```\n", encoding="utf-8")
-    print(f"gebaut: {out} ({out.stat().st_size/1e6:.1f} MB)")
+    print(f"built: {out} ({out.stat().st_size/1e6:.1f} MB)")
 
     if a.install:
         mods = a.mods_dir or default_mods_dir()
         for old in mods.glob(f"{info['name']}_*.zip"):
-            print(f"entferne alte Version: {old.name}")
+            print(f"removing old version: {old.name}")
             old.unlink()
         shutil.copy2(out, mods / out.name)
-        print(f"installiert nach: {mods / out.name}")
+        print(f"installed to: {mods / out.name}")
 
 if __name__ == "__main__":
     main()
