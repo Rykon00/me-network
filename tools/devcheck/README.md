@@ -25,8 +25,8 @@ linked in, so every run tests the current files.
 
 | Command | What it does |
 |---|---|
-| `check` | Creates a map. Reports load errors, draft recipes hidden by the draft guard, researchable technologies and where progression stops, missing `__Gregtorio__/` files, too small sprite sheets, and unlocked recipes that cannot be crafted (no machine, unobtainable ingredient, not enough fluid ports). `--locale-out names.tsv` also writes the input for `tools/gen_locale.py`. |
-| `runtime` | Places every assembling machine that has an item, gives it a recipe and power, and runs the map (`--ticks`, default 600). |
+| `check` | Creates a map. Reports load errors, draft recipes hidden by the draft guard, researchable technologies and where progression stops, missing `__Gregtorio__/` files, too small sprite sheets, and unlocked recipes that cannot be crafted (no machine, unobtainable ingredient, not enough fluid ports). `--locale-out names.tsv` also writes the input for `tools/gen_locale.py`. `--techs REGEX` lists the matching technologies and whether they are researchable. |
+| `runtime` | Places every assembling machine that has an item, gives it a recipe and power, builds a small ME network (controller, one drive per tier, interface, terminal) and runs the map (`--ticks`, default 600). At tick 300 the ME network is checked: interface default, terminal power and network, taking items out and storing them again through the terminal's code. |
 | `migrate --from-ref <tag/commit>` or `--from-zip <zip>` | Creates a save with an older version and loads it with the working copy. The unmodified upstream 0.1.9 import is commit `0e935ba` (tag `v0.1.9-upstream`). |
 | `all` | `check` and `runtime`. |
 
