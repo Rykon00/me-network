@@ -9,7 +9,7 @@ current working copy (no zip building/copying after every change).
 Factorio loads an unpacked mod from a folder named like the mod ("Gregtorio"). On Windows
 the link is a directory junction (no admin rights needed), elsewhere a symlink.
 Existing Gregtorio_*.zip files in the mods folder would compete with the folder, so they
-are moved to mods/_gregtorio_zips/ (nothing is deleted).
+are moved next to the mods folder into gregtorio-zips-backup/ (nothing is deleted).
 Factorio only reads mods at startup: restart it after pulling changes.
 """
 import argparse, json, os, shutil, subprocess, sys
@@ -58,11 +58,11 @@ def main():
             return
         sys.exit(f"{link} already exists as a real folder - move it away first")
 
-    parked = mods / "_gregtorio_zips"
+    parked = mods.parent / "gregtorio-zips-backup"   # outside mods/, Factorio would scan it
     for z in sorted(mods.glob(f"{name}_*.zip")):
-        parked.mkdir(exist_ok=True)
+        parked.mkdir(parents=True, exist_ok=True)
         shutil.move(str(z), parked / z.name)
-        print(f"moved {z.name} -> {parked.name}/")
+        print(f"moved {z.name} -> {parked}")
 
     if sys.platform.startswith("win"):
         subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(ROOT)], check=True)
