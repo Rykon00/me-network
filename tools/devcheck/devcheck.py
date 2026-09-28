@@ -233,6 +233,29 @@ class Model:
                 out.append((t, [s for s in v["sci"] if s not in self.avail]))
         return out
 
+    def blockers(self, t, seen=None):
+        """Root causes why a technology cannot be researched: disabled or missing prerequisites (recursively),
+        science packs nobody can make, a craft trigger nobody can satisfy."""
+        seen = seen if seen is not None else set()
+        if t in seen:
+            return []
+        seen.add(t)
+        v = self.T.get(t)
+        if v is None:
+            return [f"{t} (does not exist)"]
+        if not v["en"]:
+            return [f"{t} (disabled)"]
+        out = []
+        for p in v["pre"]:
+            if p not in self.researched:
+                out += self.blockers(p, seen)
+        missing = [x for x in v["sci"] if x not in self.avail]
+        if missing:
+            out.append(f"{t} (no way to make {', '.join(missing)})")
+        if not out and t not in self.researched:
+            out.append(f"{t} (craft trigger or unknown)")
+        return out
+
     def uncraftable(self):
         out = []
         for r in sorted(self.unlocked):
@@ -307,6 +330,9 @@ def check(a):
     print(f"\nresearchable technologies: {len(m.researched)} of {sum(1 for v in m.T.values() if v['en'])}")
     for t, miss in m.frontier():
         print(f"  progression stops at {t}" + (f" (missing science: {', '.join(miss)})" if miss else ""))
+    stuck = [f"{t}: blocked by {', '.join(sorted(set(m.blockers(t))))}"
+             for t, v in sorted(m.T.items()) if v["en"] and t not in m.researched]
+    report("technologies that cannot be researched", stuck, limit=100)
     if a.techs:
         rx = re.compile(a.techs)
         rows = []
@@ -315,7 +341,7 @@ def check(a):
                 state = "researchable" if t in m.researched else "NOT researchable"
                 sci = ", ".join(s.replace("-science-pack", "") for s in v["sci"])
                 rows.append(f"{t}: {state} [{sci}] unlocks {len(v['eff'])} recipes")
-        report(f"technologies matching /{a.techs}/", rows, limit=200)
+        report(f"technologies matching /{a.techs}/", rows, limit=400)
     report("missing graphics files", files)
     report("sprite sheets too small", sprites)
     report("unlocked but uncraftable recipes", [f"{r}: {why}" for r, why in uncraft])
@@ -345,11 +371,15 @@ def runtime(a):
     print(f"ME network test: {me.group(1) if me else 'did not run'}")
     mold = re.search(r"DEVCHECK-RUNTIME-MOLD (.*)", log)
     print(f"mold test: {mold.group(1) if mold else 'did not run'}")
+    victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (\w+)", log)
+    print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
         fails.append("ME network test did not run (needs --ticks >= 300)")
     if not mold:
         fails.append("mold test did not run (needs --ticks >= 500)")
-    report("runtime problems (placement, ME network test, mold test)", fails)
+    if not victory:
+        fails.append("victory test did not run (needs --ticks >= 500)")
+    report("runtime problems (placement, ME network test, mold test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
