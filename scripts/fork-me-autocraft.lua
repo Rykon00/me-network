@@ -571,7 +571,7 @@ local function collect_output(job, net, machine, map)
 	if map and #map.outputs > 0 then
 		local fb = machine.fluidbox
 		for _, o in pairs(map.outputs) do
-			local f = fb[o.index]
+			local f = o.index <= #fb and fb[o.index] or nil     -- a changed recipe may have fewer boxes
 			if f and f.amount > 0 then
 				pool_add(job, FLUID_PREFIX .. f.name, f.amount)
 				fb[o.index] = nil
@@ -595,7 +595,7 @@ local function take_back_input(job, machine, proto, map)
 	if map and #map.inputs > 0 then
 		local fb = machine.fluidbox
 		for _, i in pairs(map.inputs) do
-			local f = fb[i.index]
+			local f = i.index <= #fb and fb[i.index] or nil
 			if f and f.amount > 0 then
 				pool_add(job, FLUID_PREFIX .. f.name, f.amount)
 				fb[i.index] = nil
@@ -615,7 +615,7 @@ local function machine_idle(machine, proto, map)
 	if map and #map.inputs > 0 then
 		local fb = machine.fluidbox
 		for _, i in pairs(map.inputs) do
-			local f = fb[i.index]
+			local f = i.index <= #fb and fb[i.index] or nil
 			if f and f.amount >= i.amount then return false end
 		end
 	end
