@@ -371,15 +371,21 @@ def runtime(a):
     print(f"ME network test: {me.group(1) if me else 'did not run'}")
     mold = re.search(r"DEVCHECK-RUNTIME-MOLD (.*)", log)
     print(f"mold test: {mold.group(1) if mold else 'did not run'}")
+    autocraft = re.search(r"DEVCHECK-RUNTIME-AUTOCRAFT (.*)", log)
+    print(f"autocrafting test: {autocraft.group(1) if autocraft else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (\w+)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
         fails.append("ME network test did not run (needs --ticks >= 300)")
     if not mold:
-        fails.append("mold test did not run (needs --ticks >= 500)")
+        fails.append("mold test did not run (needs --ticks >= 900)")
+    if not autocraft:
+        fails.append("autocrafting test did not run (needs --ticks >= 900)")
+    elif not autocraft.group(1).startswith("ok"):
+        fails.append("autocrafting test failed")
     if not victory:
-        fails.append("victory test did not run (needs --ticks >= 500)")
-    report("runtime problems (placement, ME network test, mold test, victory test)", fails)
+        fails.append("victory test did not run (needs --ticks >= 900)")
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
@@ -426,14 +432,14 @@ def main():
     c.add_argument("--locale-out", help="also write the locale name list for tools/gen_locale.py")
     c.add_argument("--techs", help="regex: list matching technologies and whether they are researchable")
     r = sub.add_parser("runtime")
-    r.add_argument("--ticks", type=int, default=600)
+    r.add_argument("--ticks", type=int, default=900)
     m = sub.add_parser("migrate")
     src = m.add_mutually_exclusive_group(required=True)
     src.add_argument("--from-zip", help="older Gregtorio_x.y.z.zip to create the save with")
     src.add_argument("--from-ref", help="git tag or commit of an older version, e.g. 0e935ba (upstream 0.1.9)")
     m.add_argument("--ticks", type=int, default=300)
     al = sub.add_parser("all")
-    al.add_argument("--ticks", type=int, default=600)
+    al.add_argument("--ticks", type=int, default=900)
     al.add_argument("--locale-out")
     al.add_argument("--techs")
     a = ap.parse_args()
