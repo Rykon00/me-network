@@ -3,6 +3,8 @@
 --- the run. Results are logged as DEVCHECK-RUNTIME lines.
 --- ME network (prototypes/120-fork-ae2.lua): controller, one drive per tier, interface and
 --- terminal on their own power; checked during the benchmark run (see on_nth_tick below).
+--- Molds (prototypes/130-fork-molds.lua): an LV alloy smelter with a mold recipe must stop
+--- without a mold, run with a mold in its mold slot and keep the mold there.
 local ME_Y = 100
 local ME_ITEM = "iron-plate"
 
@@ -60,6 +62,63 @@ script.on_nth_tick(300, function(event)
 	log("DEVCHECK-RUNTIME-ME " .. (#problems == 0 and "ok" or "failed"))
 end)
 
+local MOLD_Y = 120
+local MOLD_RECIPE = "glass-alloy-smelter"
+
+function setup_mold_test(s)
+	local ok, err = pcall(function()
+		local eei = s.create_entity{ name = "electric-energy-interface", position = { 0, MOLD_Y }, force = "player" }
+		eei.power_production = 1e6
+		eei.electric_buffer_size = 1e7
+		s.create_entity{ name = "substation", position = { 3, MOLD_Y }, force = "player" }
+		local m = s.create_entity{ name = "lv-alloy-smelter", position = { 6, MOLD_Y }, force = "player", raise_built = true }
+		m.force.recipes[MOLD_RECIPE].enabled = true
+		m.set_recipe(MOLD_RECIPE)
+		m.insert{ name = "glass-dust", count = 20 }
+		storage.mold_machine = m
+	end)
+	if not ok then return { "mold test setup: " .. tostring(err) } end
+	return {}
+end
+
+script.on_event(defines.events.on_tick, function(event)
+	local m = storage.mold_machine
+	if storage.mold_done then return end
+	local phase
+	if not storage.mold_phase1 and event.tick >= 60 then
+		phase = 1
+		storage.mold_phase1 = event.tick
+	elseif storage.mold_phase1 and event.tick >= storage.mold_phase1 + 450 then
+		phase = 2
+		storage.mold_done = true
+	else
+		return
+	end
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	expect(m and m.valid, "mold test machine missing")
+	if #problems == 0 then
+		local glass = m.get_inventory(defines.inventory.crafter_output or defines.inventory.assembling_machine_output).get_item_count("glass")
+		local inv = m.get_module_inventory()
+		if phase == 1 then
+			expect(m.disabled_by_script, "mold test: machine without mold is not stopped")
+			expect(glass == 0, "mold test: crafted " .. glass .. " glass without a mold")
+			expect(inv and inv.insert{ name = "mold", count = 1 } == 1, "mold test: mold does not fit into the mold slot")
+		else
+			expect(not m.disabled_by_script, "mold test: machine with mold is still stopped")
+			expect(glass > 0, "mold test: no glass crafted with the mold inserted")
+			expect(inv.get_item_count("mold") == 1, "mold test: mold left the mold slot")
+			expect(m.get_item_count("mold") == 1, "mold test: mold was duplicated or moved")
+			log("DEVCHECK-RUNTIME-MOLD " .. (#problems == 0 and "ok" or "failed") .. " (glass " .. glass .. ")")
+		end
+	end
+	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
+	if #problems > 0 and phase == 1 then
+		storage.mold_done = true
+		log("DEVCHECK-RUNTIME-MOLD failed")
+	end
+end)
+
 script.on_init(function()
 	local s = game.surfaces[1]
 	s.always_day = true
@@ -91,6 +150,7 @@ script.on_init(function()
 		end
 	end
 	for _, f in pairs(setup_me_network(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_mold_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

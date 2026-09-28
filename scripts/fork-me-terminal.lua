@@ -196,8 +196,6 @@ end
 
 script.on_init(function() state() end)
 
-script.on_event(defines.events.script_raised_built, function(event) M.on_built(event.entity) end)
-
 script.on_event("fork-me-terminal-open", function(event)
 	local player = game.get_player(event.player_index)
 	if player and player.selected and player.selected.name == "me-terminal" then
