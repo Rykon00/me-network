@@ -1,0 +1,9 @@
+{
+  "name": "zz-gregtorio-devcheck",
+  "version": "1.0.0",
+  "title": "Gregtorio devcheck",
+  "author": "rykon_",
+  "factorio_version": "2.0",
+  "description": "Test helper for tools/devcheck: validates and dumps Gregtorio prototypes into the log. Not meant for normal play.",
+  "dependencies": ["Gregtorio"]
+}
