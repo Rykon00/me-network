@@ -7,8 +7,14 @@
 ---     inventory, the item in hand can be stored in the network. While a terminal GUI is
 ---     open it is refreshed once per second (only for players that have it open).
 ---   * ME Interface: "trash unrequested" is switched on when a player places one by hand.
+---   * Crafting tab (autocrafting, scripts/fork-me-autocraft.lua): every item a pattern can make,
+---     an amount field and a "Craft" button with a plan preview (what is missing), and the job list
+---     with progress and a cancel button. Selected item and amount live in the GUI elements (tags,
+---     text field); jobs live in storage.fork_ae2.
 --- State: storage.fork_me_terminal[player_index] = { entity = LuaEntity, filter = string }
 --------------------------------------------------------------------------------
+
+local autocraft = require("scripts.fork-me-autocraft")
 
 local M = {}
 
@@ -24,6 +30,18 @@ end
 
 local function network_of(entity)
 	return entity.surface.find_logistic_network_by_position(entity.position, entity.force)
+end
+
+--- breadth first search for a named element below `root`
+local function find(root, name)
+	local queue, i = { root }, 1
+	while queue[i] do
+		for _, child in pairs(queue[i].children) do
+			if child.name == name then return child end
+			queue[#queue + 1] = child
+		end
+		i = i + 1
+	end
 end
 
 local function close(player)
@@ -44,7 +62,7 @@ local function refresh(player)
 	local frame = player.gui.screen[FRAME]
 	if not (st and frame) then return end
 	local entity = st.entity
-	local status, grid = frame.fork_me_status, frame.fork_me_scroll.fork_me_grid
+	local status, grid = frame.fork_me_status, find(frame, "fork_me_grid")
 	local why = problem(entity)
 	if why then
 		grid.clear()
@@ -53,6 +71,7 @@ local function refresh(player)
 		status.visible = true
 		return
 	end
+	M.refresh_crafting(player, frame, entity)
 	local filter = (st.filter or ""):lower():gsub("%s+", "-")
 	local items = {}
 	for _, c in pairs(network_of(entity).get_contents()) do
@@ -112,13 +131,190 @@ local function open(player, entity)
 	local status = frame.add{ type = "label", name = "fork_me_status" }
 	status.style.single_line = false
 	status.style.maximal_width = 40 * COLUMNS
-	local scroll = frame.add{ type = "scroll-pane", name = "fork_me_scroll", horizontal_scroll_policy = "never" }
+	local tabs = frame.add{ type = "tabbed-pane", name = "fork_me_tabs" }
+	local storage_tab = tabs.add{ type = "tab", caption = { "fork-me-terminal.tab-storage" } }
+	local craft_tab = tabs.add{ type = "tab", caption = { "fork-me-craft.tab" } }
+	local storage_flow = tabs.add{ type = "flow", direction = "vertical" }
+	local scroll = storage_flow.add{ type = "scroll-pane", name = "fork_me_scroll", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = 400
 	scroll.style.minimal_width = 40 * COLUMNS + 12
 	scroll.add{ type = "table", name = "fork_me_grid", column_count = COLUMNS }
+	tabs.add_tab(storage_tab, storage_flow)
+	tabs.add_tab(craft_tab, M.build_crafting(tabs))
 	state()[player.index] = { entity = entity, filter = "" }
 	player.opened = frame
 	refresh(player)
+end
+
+
+--------------------------------------------------------------------------------
+--- crafting tab
+--------------------------------------------------------------------------------
+
+local MAX_CRAFT_BUTTONS = 200
+
+function M.build_crafting(parent)
+	local flow = parent.add{ type = "flow", name = "fork_ae2_flow", direction = "vertical" }
+	local info = flow.add{ type = "label", name = "fork_ae2_info" }
+	info.style.single_line = false
+	info.style.maximal_width = 40 * COLUMNS
+	local scroll = flow.add{ type = "scroll-pane", name = "fork_ae2_scroll", horizontal_scroll_policy = "never" }
+	scroll.style.maximal_height = 180
+	scroll.style.minimal_width = 40 * COLUMNS + 12
+	scroll.add{ type = "table", name = "fork_ae2_grid", column_count = COLUMNS }
+	local panel = flow.add{ type = "flow", name = "fork_ae2_panel", direction = "horizontal" }
+	panel.style.vertical_align = "center"
+	panel.visible = false
+	panel.add{ type = "sprite", name = "fork_ae2_icon" }
+	panel.add{ type = "label", name = "fork_ae2_name" }
+	local amount = panel.add{ type = "textfield", name = "fork_ae2_amount", text = "1", numeric = true,
+		allow_decimal = false, allow_negative = false }
+	amount.style.width = 80
+	panel.add{ type = "button", name = "fork_ae2_craft", caption = { "fork-me-craft.craft" } }
+	local plan = flow.add{ type = "label", name = "fork_ae2_plan" }
+	plan.style.single_line = false
+	plan.style.maximal_width = 40 * COLUMNS
+	flow.add{ type = "line" }
+	flow.add{ type = "label", caption = { "fork-me-craft.jobs" }, style = "caption_label" }
+	local jobs = flow.add{ type = "scroll-pane", name = "fork_ae2_jobs_scroll", horizontal_scroll_policy = "never" }
+	jobs.style.maximal_height = 160
+	jobs.style.minimal_width = 40 * COLUMNS + 12
+	jobs.add{ type = "table", name = "fork_ae2_jobs", column_count = 5 }
+	return flow
+end
+
+local function status_text(j)
+	if j.status == "running" then
+		return j.wait and { "fork-me-craft.wait-" .. j.wait } or { "fork-me-craft.status-running" }
+	elseif j.status == "failed" then
+		return { "fork-me-craft.status-failed", j.reason or "" }
+	end
+	return { "fork-me-craft.status-" .. j.status }
+end
+
+--- plan preview for the selected item and amount; enables or disables the Craft button
+local function update_plan(frame, net)
+	local panel = find(frame, "fork_ae2_panel")
+	local label, button = find(frame, "fork_ae2_plan"), find(frame, "fork_ae2_craft")
+	local item = panel.tags and panel.tags.item
+	if not item then
+		panel.visible = false
+		label.caption = ""
+		return
+	end
+	panel.visible = true
+	local amount = tonumber(find(frame, "fork_ae2_amount").text) or 0
+	local total = autocraft.cpu_summary(net)
+	local plan = amount >= 1 and autocraft.plan(net, item, amount) or nil
+	button.enabled = plan ~= nil and plan.ok and total > 0
+	if not plan then
+		label.caption = { "fork-me-craft.bad-amount" }
+	elseif total == 0 then
+		label.caption = { "fork-me-craft.no-cpu" }
+	elseif plan.ok then
+		label.caption = { "fork-me-craft.plan-ok", plan.runs, #plan.steps, autocraft.item_list(plan.reserve, 6) }
+	else
+		local text = { "", { "fork-me-craft.plan-missing", autocraft.item_list(plan.missing, 8) } }
+		if next(plan.loops) then text[#text + 1] = { "fork-me-craft.plan-loop", autocraft.item_list(plan.loops, 4) } end
+		label.caption = text
+	end
+end
+
+local function refresh_jobs(st, frame, net)
+	local jobs = autocraft.jobs(net)
+	local sig = {}
+	for i, j in ipairs(jobs) do sig[i] = j.id .. ":" .. j.status .. ":" .. tostring(j.wait) .. ":" .. j.done .. "/" .. j.total end
+	sig = table.concat(sig, ",")
+	if st.jobs_shown == sig then return end
+	st.jobs_shown = sig
+	local grid = find(frame, "fork_ae2_jobs")
+	grid.clear()
+	for _, j in ipairs(jobs) do
+		grid.add{ type = "sprite", sprite = "item/" .. j.item }
+		local name = grid.add{ type = "label", caption = { "", j.amount .. "x ", prototypes.item[j.item].localised_name } }
+		name.style.minimal_width = 160
+		local bar = grid.add{ type = "progressbar", value = j.total > 0 and j.done / j.total or 0 }
+		bar.style.width = 100
+		local status = grid.add{ type = "label", caption = status_text(j) }
+		status.style.minimal_width = 160
+		if j.active then
+			grid.add{ type = "button", caption = { "fork-me-craft.cancel" }, tags = { fork_ae2_cancel = j.id } }
+		else
+			grid.add{ type = "empty-widget" }
+		end
+	end
+end
+
+function M.refresh_crafting(player, frame, entity)
+	local st = state()[player.index]
+	local tabs = frame.fork_me_tabs
+	if not (st and tabs and tabs.selected_tab_index == 2) then return end
+	local net = network_of(entity)
+	local info = find(frame, "fork_ae2_info")
+	local total, free = autocraft.cpu_summary(net)
+	local names, ignored = autocraft.craftable(net)
+	info.caption = { "fork-me-craft.info", total, free, #names, ignored }
+
+	local filter = (st.filter or ""):lower():gsub("%s+", "-")
+	local shown, sig = {}, {}
+	for _, name in pairs(names) do
+		if filter == "" or name:find(filter, 1, true) then
+			if #shown < MAX_CRAFT_BUTTONS then
+				local count = net.get_item_count{ name = name, quality = "normal" }
+				shown[#shown + 1] = { name = name, count = count }
+				sig[#sig + 1] = name .. "=" .. count
+			end
+		end
+	end
+	sig = table.concat(sig, ",")
+	if st.craft_shown ~= sig then
+		st.craft_shown = sig
+		local grid = find(frame, "fork_ae2_grid")
+		grid.clear()
+		for _, c in pairs(shown) do
+			grid.add{
+				type = "sprite-button", sprite = "item/" .. c.name, number = c.count, style = "slot_button",
+				elem_tooltip = { type = "item", name = c.name }, tags = { fork_ae2_pick = c.name },
+			}
+		end
+	end
+	update_plan(frame, net)
+	refresh_jobs(st, frame, net)
+end
+
+local function pick_craftable(player, name)
+	local frame = player.gui.screen[FRAME]
+	local st = state()[player.index]
+	if not (frame and st) then return end
+	local panel = find(frame, "fork_ae2_panel")
+	panel.tags = { item = name }
+	find(frame, "fork_ae2_icon").sprite = "item/" .. name
+	find(frame, "fork_ae2_name").caption = prototypes.item[name].localised_name
+	update_plan(frame, network_of(st.entity))
+end
+
+local function start_craft(player)
+	local frame = player.gui.screen[FRAME]
+	local st = state()[player.index]
+	if not (frame and st) then return end
+	local item = find(frame, "fork_ae2_panel").tags.item
+	if not item then return end
+	local amount = tonumber(find(frame, "fork_ae2_amount").text) or 0
+	local id, why, plan = autocraft.start(st.entity, item, amount)
+	if id then
+		player.print({ "fork-me-craft.started", amount, prototypes.item[item].localised_name })
+		st.jobs_shown = nil
+	elseif why == "missing" then
+		player.print({ "fork-me-craft.plan-missing", autocraft.item_list(plan.missing, 8) })
+	else
+		player.print({ "fork-me-craft.error-" .. why })
+	end
+end
+
+local function cancel_craft(player, id)
+	autocraft.cancel(id)
+	local st = state()[player.index]
+	if st then st.jobs_shown = nil end
 end
 
 --- Move up to `count` items from the network at `terminal` into `target` (anything with
@@ -223,6 +419,14 @@ script.on_event(defines.events.on_gui_click, function(event)
 	if el.tags and el.tags.fork_me_item then
 		take(player, el.tags.fork_me_item, el.tags.fork_me_quality, event.button, event.shift)
 		refresh(player)
+	elseif el.tags and el.tags.fork_ae2_pick then
+		pick_craftable(player, el.tags.fork_ae2_pick)
+	elseif el.tags and el.tags.fork_ae2_cancel then
+		cancel_craft(player, el.tags.fork_ae2_cancel)
+		refresh(player)
+	elseif el.name == "fork_ae2_craft" then
+		start_craft(player)
+		refresh(player)
 	elseif el.name == "fork_me_store" then
 		store_hand(player)
 		refresh(player)
@@ -230,10 +434,19 @@ script.on_event(defines.events.on_gui_click, function(event)
 end)
 
 script.on_event(defines.events.on_gui_text_changed, function(event)
-	if event.element.name ~= "fork_me_search" then return end
+	local name = event.element.name
 	local st = state()[event.player_index]
-	if st then
+	if not st then return end
+	if name == "fork_me_search" then
 		st.filter = event.element.text
+		refresh(game.get_player(event.player_index))
+	elseif name == "fork_ae2_amount" then
+		refresh(game.get_player(event.player_index))
+	end
+end)
+
+script.on_event(defines.events.on_gui_selected_tab_changed, function(event)
+	if event.element and event.element.valid and event.element.name == "fork_me_tabs" then
 		refresh(game.get_player(event.player_index))
 	end
 end)
