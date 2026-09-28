@@ -11,7 +11,8 @@ Sources:
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
-  graphics/icons/fork/me-*.png             32x32 item icons
+  graphics/icons/fork/me-*.png             32x32 item icons (also pattern provider, molecular assembler,
+                                           crafting CPU of prototypes/121-fork-ae2-autocrafting.lua)
   graphics/technology/fork/me-*.png        256x256 technology icons
 """
 import argparse
@@ -31,7 +32,7 @@ TILE = 32
 GT_PX = 16                     # GT textures are 16x16, scaled 2x to one Factorio tile
 
 # GT material color of the machine hull per voltage tier
-HULL_TINT = {"MV": (170, 210, 245), "EV": (220, 170, 240), "IV": (100, 100, 160)}
+HULL_TINT = {"MV": (170, 210, 245), "HV": (205, 205, 225), "EV": (220, 170, 240), "IV": (100, 100, 160)}
 
 # storage cell tier -> (LED color, hull tier of the drive that holds four of them)
 CELLS = {
@@ -139,6 +140,92 @@ def drive_icon(cell):
     return img
 
 
+# --- autocrafting (prototypes/121-fork-ae2-autocrafting.lua) -------------------------------
+CPU_CYAN = (95, 225, 245)
+CARD = (235, 235, 245)
+
+
+def provider_sprite(gt):
+    """1x1: HV casing with a pattern card (a small grid of crafting slots, the result in blue)."""
+    img = hull(gt, "HV")
+    d = ImageDraw.Draw(img)
+    d.rectangle((2, 2, 13, 13), fill=(20, 20, 24, 255))
+    d.rectangle((3, 3, 12, 12), outline=FLUIX + (255,))
+    for x in (4, 7, 10):                      # 3x3 crafting grid on the card, the last cell is the result
+        for y in (4, 7, 10):
+            colour = FLUIX_LIGHT if (x, y) == (10, 10) else CARD
+            d.rectangle((x, y, x + 1, y + 1), fill=colour + (255,))
+    return up(img)
+
+
+def assembler_sprite(gt, phase=0):
+    """3x3: HV casing tiles, inner dark bay with four robot arms around a fluix core.
+    phase 0..3 pulses the core and moves the arm tips (working animation)."""
+    tile = up(hull(gt, "HV"))
+    size = 3 * TILE
+    img = Image.new("RGBA", (size, size))
+    for x in range(3):
+        for y in range(3):
+            img.paste(tile, (x * TILE, y * TILE))
+    d = ImageDraw.Draw(img)
+    d.rectangle((6, 6, size - 7, size - 7), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+    c = size // 2
+    glow = [(150, 95, 225), (175, 120, 240), (205, 150, 255), (175, 120, 240)][phase]
+    d.rectangle((c - 9, c - 9, c + 8, c + 8), fill=glow + (255,), outline=FLUIX_LIGHT + (255,))
+    d.rectangle((c - 4, c - 4, c + 3, c + 3), fill=(235, 225, 255, 255))
+    reach = 4 + (phase % 2) * 3
+    for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):        # arms towards the four sides
+        x0, y0 = c + dx * 10, c + dy * 10
+        x1, y1 = c + dx * (10 + reach + 8), c + dy * (10 + reach + 8)
+        d.line((x0, y0, x1, y1), fill=(170, 170, 185, 255), width=3)
+        d.rectangle((x1 - 2, y1 - 2, x1 + 2, y1 + 2), fill=FLUIX_LIGHT + (255,))
+    for cx, cy in ((10, 10), (size - 12, 10), (10, size - 12), (size - 12, size - 12)):
+        d.rectangle((cx, cy, cx + 1, cy + 1), fill=FLUIX + (255,))
+    return img
+
+
+def cpu_sprites(gt):
+    """2x2: EV casing ring around a dark screen with a chip grid. off = base, on = lit chips only."""
+    tile = up(hull(gt, "EV"))
+    off = Image.new("RGBA", (2 * TILE, 2 * TILE))
+    for x in range(2):
+        for y in range(2):
+            off.paste(tile, (x * TILE, y * TILE))
+    d = ImageDraw.Draw(off)
+    d.rectangle((6, 6, 2 * TILE - 7, 2 * TILE - 7), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+    lit = Image.new("RGBA", off.size)
+    dl = ImageDraw.Draw(lit)
+    for i, cx in enumerate((12, 27, 42)):
+        for j, cy in enumerate((12, 27, 42)):
+            d.rectangle((cx, cy, cx + 9, cy + 9), fill=(45, 45, 55, 255), outline=(85, 85, 100, 255))
+            on = (i + j) % 2 == 0 or (i, j) == (1, 1)
+            dl.rectangle((cx + 2, cy + 2, cx + 7, cy + 7), fill=(CPU_CYAN if on else FLUIX_LIGHT) + (255,))
+    return off, lit
+
+
+def flat_icon(img, size=TILE):
+    return img.resize((size, size), Image.NEAREST if img.width % size == 0 else Image.LANCZOS)
+
+
+def autocrafting(gt):
+    provider_sprite(gt).save(OUT_ENTITY / "me-pattern-provider.png")
+    provider_sprite(gt).save(OUT_ICON / "me-pattern-provider.png")
+    frames = [assembler_sprite(gt, p) for p in range(4)]
+    frames[0].save(OUT_ENTITY / "me-molecular-assembler-idle.png")
+    strip = Image.new("RGBA", (3 * TILE, 3 * TILE * 4))
+    for i, f in enumerate(frames):
+        strip.paste(f, (0, i * 3 * TILE))
+    strip.save(OUT_ENTITY / "me-molecular-assembler-working.png")
+    flat_icon(frames[0]).save(OUT_ICON / "me-molecular-assembler.png")
+    off, lit = cpu_sprites(gt)
+    off.save(OUT_ENTITY / "me-crafting-cpu-off.png")
+    lit.save(OUT_ENTITY / "me-crafting-cpu-on.png")
+    icon = off.copy()
+    icon.alpha_composite(lit)
+    flat_icon(icon).save(OUT_ICON / "me-crafting-cpu.png")
+    upscale(load(OUT_ICON / "me-molecular-assembler.png")).save(OUT_TECH / "me-autocrafting.png")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, required=True, help="path to the GT5-Unofficial checkout")
@@ -159,6 +246,7 @@ def main():
     for tech, icon in (("me-network", "me-drive-16k"), ("me-storage-64k", "me-drive-64k"),
                        ("me-storage-256k", "me-drive-256k")):
         upscale(load(OUT_ICON / f"{icon}.png")).save(OUT_TECH / f"{tech}.png")
+    autocrafting(a.gt)
     print("ME sprites:", len(list(OUT_ENTITY.glob("*.png"))))
 
 
