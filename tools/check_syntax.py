@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Syntax-Check aller Lua-Dateien mit luac (luac5.4 oder luac muss installiert sein)."""
+"""Syntax check of all Lua files with luac (luac5.4 or luac must be installed).
+
+    python tools/check_syntax.py            # all .lua files
+    python tools/check_syntax.py --loaded   # only files data.lua/control.lua actually load
+"""
 import shutil, subprocess, sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 luac = shutil.which("luac5.4") or shutil.which("luac5.3") or shutil.which("luac") or shutil.which("luac5.2")
 if not luac:
-    sys.exit("luac nicht gefunden")
+    sys.exit("luac not found")
 import re
 files = sorted(f for f in ROOT.rglob("*.lua") if ".git" not in f.parts and "dist" not in f.parts)
 if "--loaded" in sys.argv:
-    # nur Dateien, die tatsächlich per require geladen werden (auskommentierte Tiers ignorieren)
+    # only files that are actually loaded via require (ignore commented-out tiers)
     loaded = set()
     for entry in ["data.lua", "data-updates.lua", "data-final-fixes.lua", "control.lua", "settings.lua"]:
         p = ROOT / entry
@@ -27,5 +31,5 @@ for f in files:
     if r.returncode:
         bad += 1
         print(r.stderr.strip())
-print(f"{bad} Datei(en) mit Syntaxfehlern")
+print(f"{bad} file(s) with syntax errors")
 sys.exit(1 if bad else 0)
