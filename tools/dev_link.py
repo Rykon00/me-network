@@ -61,7 +61,13 @@ def main():
     parked = mods.parent / "gregtorio-zips-backup"   # outside mods/, Factorio would scan it
     for z in sorted(mods.glob(f"{name}_*.zip")):
         parked.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(z), parked / z.name)
+        dst = parked / z.name
+        try:
+            if dst.exists():
+                dst.unlink()          # left over from an earlier, interrupted run
+            os.replace(z, dst)
+        except PermissionError:
+            sys.exit(f"{z.name} is in use - close Factorio and run the script again.")
         print(f"moved {z.name} -> {parked}")
 
     if sys.platform.startswith("win"):
