@@ -3,7 +3,7 @@
 --- the run. Results are logged as DEVCHECK-RUNTIME lines.
 --- ME network (prototypes/120-fork-ae2.lua): controller, one drive per tier, interface and
 --- terminal on their own power; checked during the benchmark run (see on_nth_tick below).
---- Molds (prototypes/130-fork-molds.lua): an LV alloy smelter with a mold recipe must stop
+--- Molds (prototypes/150-fork-molds.lua): an LV alloy smelter with a mold recipe must stop
 --- without a mold, run with a mold in its mold slot and keep the mold there.
 local ME_Y = 100
 local ME_ITEM = "iron-plate"
