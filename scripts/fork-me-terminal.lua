@@ -4,17 +4,21 @@
 --- script parts are event driven:
 ---   * ME Terminal: opening it shows a GUI with the contents of the logistic network at
 ---     its position; clicking an item moves it from network storage into the player's
----     inventory, the item in hand can be stored in the network. While a terminal GUI is
----     open it is refreshed once per second (only for players that have it open).
+---     inventory, the item in hand can be stored in the network. Fluids stored in the network
+---     (scripts/fork-me-fluids.lua) are listed below the items; they cannot be taken by hand.
+---     While a terminal GUI is open it is refreshed once per second (only for players that
+---     have it open).
 ---   * ME Interface: "trash unrequested" is switched on when a player places one by hand.
----   * Crafting tab (autocrafting, scripts/fork-me-autocraft.lua): every item a pattern can make,
----     an amount field and a "Craft" button with a plan preview (what is missing), and the job list
----     with progress and a cancel button. Selected item and amount live in the GUI elements (tags,
----     text field); jobs live in storage.fork_ae2.
+---   * Crafting tab (autocrafting, scripts/fork-me-autocraft.lua): every item or fluid a pattern
+---     can make, an amount field and a "Craft" button with a plan preview (what is missing), and
+---     the job list with progress and a cancel button. Selected resource and amount live in the
+---     GUI elements (tags, text field); jobs live in storage.fork_ae2.
+---   * GUI events of the fluid drive and fluid interface panels are routed to fork-me-fluids.lua.
 --- State: storage.fork_me_terminal[player_index] = { entity = LuaEntity, filter = string }
 --------------------------------------------------------------------------------
 
 local autocraft = require("scripts.fork-me-autocraft")
+local fluids = require("scripts.fork-me-fluids")
 
 local M = {}
 
@@ -63,33 +67,49 @@ local function refresh(player)
 	if not (st and frame) then return end
 	local entity = st.entity
 	local status, grid = frame.fork_me_status, find(frame, "fork_me_grid")
+	local fluid_line, fluid_grid = find(frame, "fork_me_fluid_line"), find(frame, "fork_me_fluid_grid")
 	local why = problem(entity)
 	if why then
 		grid.clear()
+		fluid_grid.clear()
+		fluid_line.visible = false
 		st.shown = nil
 		status.caption = { "fork-me-terminal." .. why }
 		status.visible = true
 		return
 	end
 	M.refresh_crafting(player, frame, entity)
+	local net = network_of(entity)
 	local filter = (st.filter or ""):lower():gsub("%s+", "-")
 	local items = {}
-	for _, c in pairs(network_of(entity).get_contents()) do
+	for _, c in pairs(net.get_contents()) do
 		if filter == "" or c.name:find(filter, 1, true) then items[#items + 1] = c end
 	end
 	table.sort(items, function(a, b)
 		if a.count ~= b.count then return a.count > b.count end
 		return a.name < b.name
 	end)
+	local liquids = {}
+	for name, amount in pairs(fluids.totals(net)) do
+		if filter == "" or name:find(filter, 1, true) then liquids[#liquids + 1] = { name = name, amount = amount } end
+	end
+	table.sort(liquids, function(a, b)
+		if a.amount ~= b.amount then return a.amount > b.amount end
+		return a.name < b.name
+	end)
+	local capacity, used = fluids.capacity(net)
 	--- unchanged since the last refresh: keep the buttons (and their open tooltips)
 	local sig = {}
 	for i = 1, math.min(#items, MAX_BUTTONS) do sig[i] = items[i].name .. "/" .. (items[i].quality or "normal") .. "=" .. items[i].count end
+	for _, f in ipairs(liquids) do sig[#sig + 1] = "fluid/" .. f.name .. "=" .. f.amount end
+	sig[#sig + 1] = "capacity=" .. used .. "/" .. capacity
 	sig = table.concat(sig, ",")
 	if st.shown == sig then return end
 	st.shown = sig
 	grid.clear()
+	fluid_grid.clear()
 	status.visible = false
-	if #items == 0 then
+	if #items == 0 and #liquids == 0 then
 		status.caption = { "fork-me-terminal.empty" }
 		status.visible = true
 	elseif #items > MAX_BUTTONS then
@@ -106,6 +126,20 @@ local function refresh(player)
 				style = "slot_button",
 				elem_tooltip = { type = "item-with-quality", name = c.name, quality = c.quality },
 				tags = { fork_me_item = c.name, fork_me_quality = c.quality },
+			}
+		end
+	end
+	fluid_line.visible = capacity > 0 or #liquids > 0
+	fluid_line.caption = { "fork-me-terminal.fluids", fluids.format(used), fluids.format(capacity) }
+	for _, f in ipairs(liquids) do
+		local proto = prototypes.fluid[f.name]
+		if proto then
+			fluid_grid.add{
+				type = "sprite-button",
+				sprite = "fluid/" .. f.name,
+				number = f.amount,
+				style = "slot_button",
+				tooltip = { "fork-me-terminal.fluid-tooltip", proto.localised_name, fluids.format(f.amount) },
 			}
 		end
 	end
@@ -139,6 +173,9 @@ local function open(player, entity)
 	scroll.style.maximal_height = 400
 	scroll.style.minimal_width = 40 * COLUMNS + 12
 	scroll.add{ type = "table", name = "fork_me_grid", column_count = COLUMNS }
+	local fluid_line = scroll.add{ type = "label", name = "fork_me_fluid_line", style = "caption_label" }
+	fluid_line.visible = false
+	scroll.add{ type = "table", name = "fork_me_fluid_grid", column_count = COLUMNS }
 	tabs.add_tab(storage_tab, storage_flow)
 	tabs.add_tab(craft_tab, M.build_crafting(tabs))
 	state()[player.index] = { entity = entity, filter = "" }
@@ -192,12 +229,12 @@ local function status_text(j)
 	return { "fork-me-craft.status-" .. j.status }
 end
 
---- plan preview for the selected item and amount; enables or disables the Craft button
+--- plan preview for the selected resource and amount; enables or disables the Craft button
 local function update_plan(frame, net)
 	local panel = find(frame, "fork_ae2_panel")
 	local label, button = find(frame, "fork_ae2_plan"), find(frame, "fork_ae2_craft")
-	local item = panel.tags and panel.tags.item
-	if not item then
+	local key = panel.tags and panel.tags.item
+	if not key then
 		panel.visible = false
 		label.caption = ""
 		return
@@ -205,7 +242,7 @@ local function update_plan(frame, net)
 	panel.visible = true
 	local amount = tonumber(find(frame, "fork_ae2_amount").text) or 0
 	local total = autocraft.cpu_summary(net)
-	local plan = amount >= 1 and autocraft.plan(net, item, amount) or nil
+	local plan = amount >= 1 and autocraft.plan(net, key, amount) or nil
 	button.enabled = plan ~= nil and plan.ok and total > 0
 	if not plan then
 		label.caption = { "fork-me-craft.bad-amount" }
@@ -230,8 +267,10 @@ local function refresh_jobs(st, frame, net)
 	local grid = find(frame, "fork_ae2_jobs")
 	grid.clear()
 	for _, j in ipairs(jobs) do
-		grid.add{ type = "sprite", sprite = "item/" .. j.item }
-		local name = grid.add{ type = "label", caption = { "", j.amount .. "x ", prototypes.item[j.item].localised_name } }
+		local d = autocraft.describe(j.item)
+		grid.add{ type = "sprite", sprite = d and d.sprite or nil }
+		local prefix = (d and d.fluid) and (j.amount .. " ") or (j.amount .. "x ")
+		local name = grid.add{ type = "label", caption = { "", prefix, d and d.localised_name or j.item } }
 		name.style.minimal_width = 160
 		local bar = grid.add{ type = "progressbar", value = j.total > 0 and j.done / j.total or 0 }
 		bar.style.width = 100
@@ -252,17 +291,20 @@ function M.refresh_crafting(player, frame, entity)
 	local net = network_of(entity)
 	local info = find(frame, "fork_ae2_info")
 	local total, free = autocraft.cpu_summary(net)
-	local names, ignored = autocraft.craftable(net)
-	info.caption = { "fork-me-craft.info", total, free, #names, ignored }
+	local keys, ignored = autocraft.craftable(net)
+	info.caption = { "fork-me-craft.info", total, free, #keys, ignored.total or 0, autocraft.ignored_list(ignored) }
 
 	local filter = (st.filter or ""):lower():gsub("%s+", "-")
 	local shown, sig = {}, {}
-	for _, name in pairs(names) do
-		if filter == "" or name:find(filter, 1, true) then
+	for _, key in pairs(keys) do
+		if filter == "" or key:find(filter, 1, true) then
 			if #shown < MAX_CRAFT_BUTTONS then
-				local count = net.get_item_count{ name = name, quality = "normal" }
-				shown[#shown + 1] = { name = name, count = count }
-				sig[#sig + 1] = name .. "=" .. count
+				local d = autocraft.describe(key)
+				if d then
+					local count = d.fluid and fluids.count(net, d.name) or net.get_item_count{ name = key, quality = "normal" }
+					shown[#shown + 1] = { key = key, d = d, count = count }
+					sig[#sig + 1] = key .. "=" .. count
+				end
 			end
 		end
 	end
@@ -273,8 +315,8 @@ function M.refresh_crafting(player, frame, entity)
 		grid.clear()
 		for _, c in pairs(shown) do
 			grid.add{
-				type = "sprite-button", sprite = "item/" .. c.name, number = c.count, style = "slot_button",
-				elem_tooltip = { type = "item", name = c.name }, tags = { fork_ae2_pick = c.name },
+				type = "sprite-button", sprite = c.d.sprite, number = c.count, style = "slot_button",
+				elem_tooltip = { type = c.d.fluid and "fluid" or "item", name = c.d.name }, tags = { fork_ae2_pick = c.key },
 			}
 		end
 	end
@@ -282,14 +324,16 @@ function M.refresh_crafting(player, frame, entity)
 	refresh_jobs(st, frame, net)
 end
 
-local function pick_craftable(player, name)
+local function pick_craftable(player, key)
 	local frame = player.gui.screen[FRAME]
 	local st = state()[player.index]
 	if not (frame and st) then return end
+	local d = autocraft.describe(key)
+	if not d then return end
 	local panel = find(frame, "fork_ae2_panel")
-	panel.tags = { item = name }
-	find(frame, "fork_ae2_icon").sprite = "item/" .. name
-	find(frame, "fork_ae2_name").caption = prototypes.item[name].localised_name
+	panel.tags = { item = key }
+	find(frame, "fork_ae2_icon").sprite = d.sprite
+	find(frame, "fork_ae2_name").caption = d.localised_name
 	update_plan(frame, network_of(st.entity))
 end
 
@@ -297,12 +341,14 @@ local function start_craft(player)
 	local frame = player.gui.screen[FRAME]
 	local st = state()[player.index]
 	if not (frame and st) then return end
-	local item = find(frame, "fork_ae2_panel").tags.item
-	if not item then return end
+	local key = find(frame, "fork_ae2_panel").tags.item
+	if not key then return end
+	local d = autocraft.describe(key)
+	if not d then return end
 	local amount = tonumber(find(frame, "fork_ae2_amount").text) or 0
-	local id, why, plan = autocraft.start(st.entity, item, amount)
+	local id, why, plan = autocraft.start(st.entity, key, amount)
 	if id then
-		player.print({ "fork-me-craft.started", amount, prototypes.item[item].localised_name })
+		player.print({ d.fluid and "fork-me-craft.started-fluid" or "fork-me-craft.started", amount, d.localised_name })
 		st.jobs_shown = nil
 	elseif why == "missing" then
 		player.print({ "fork-me-craft.plan-missing", autocraft.item_list(plan.missing, 8) })
@@ -392,14 +438,19 @@ end
 
 script.on_init(function() state() end)
 
+--- the "open GUI" key: the terminal here, the fluid drive in the fluids module
 script.on_event("fork-me-terminal-open", function(event)
 	local player = game.get_player(event.player_index)
-	if player and player.selected and player.selected.name == "me-terminal" then
+	if not (player and player.selected) then return end
+	if player.selected.name == "me-terminal" then
 		open(player, player.selected)
+	else
+		fluids.on_open_input(player, player.selected)
 	end
 end)
 
 script.on_event(defines.events.on_gui_opened, function(event)
+	if fluids.on_gui_opened(event) then return end
 	if event.gui_type == defines.gui_type.entity and event.entity and event.entity.valid
 		and event.entity.name == "me-terminal" then
 		open(game.get_player(event.player_index), event.entity)
@@ -407,6 +458,7 @@ script.on_event(defines.events.on_gui_opened, function(event)
 end)
 
 script.on_event(defines.events.on_gui_closed, function(event)
+	if fluids.on_gui_closed(event) then return end
 	if event.element and event.element.valid and event.element.name == FRAME then
 		close(game.get_player(event.player_index))
 	end
@@ -434,6 +486,7 @@ script.on_event(defines.events.on_gui_click, function(event)
 end)
 
 script.on_event(defines.events.on_gui_text_changed, function(event)
+	if fluids.on_gui_text_changed(event) then return end
 	local name = event.element.name
 	local st = state()[event.player_index]
 	if not st then return end
@@ -468,6 +521,7 @@ end)
 
 script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
+	fluids.on_player_removed(event.player_index)
 end)
 
 return M
