@@ -42,9 +42,17 @@ BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails"}
 # setup
 # --------------------------------------------------------------------------------------------
 
+# factorio.com (Cloudflare) answers the default "Python-urllib" user agent with 403
+USER_AGENT = "gregtorio-devcheck/1.0 (+https://github.com/Rykon00/Gregtorio)"
+
+
+def urlopen(url):
+    return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}))
+
+
 def download(url, dest):
     print(f"downloading {url.split('?')[0]}")
-    with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
+    with urlopen(url) as r, open(dest, "wb") as f:
         shutil.copyfileobj(r, f)
 
 
@@ -90,7 +98,7 @@ def setup(a):
         user, token = os.environ.get("FACTORIO_USERNAME"), os.environ.get("FACTORIO_TOKEN")
         if not user or not token:
             sys.exit(f"need {name}: set FACTORIO_USERNAME/FACTORIO_TOKEN or pass --mods-from DIR")
-        meta = json.load(urllib.request.urlopen(f"https://mods.factorio.com/api/mods/{urllib.parse.quote(name)}"))
+        meta = json.load(urlopen(f"https://mods.factorio.com/api/mods/{urllib.parse.quote(name)}"))
         rel = [r for r in meta["releases"] if r["info_json"].get("factorio_version") == "2.0"][-1]
         q = urllib.parse.urlencode({"username": user, "token": token})
         download(f"https://mods.factorio.com{rel['download_url']}?{q}", MODS / rel["file_name"])
