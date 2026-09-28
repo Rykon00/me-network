@@ -79,6 +79,7 @@ for i, c in ipairs(CELLS) do
 			{ type = "item", name = c.pump, amount = 1 },
 		},
 	}
+	data.raw.item[cell].localised_description = { "item-description.fork-me-fluid-storage-cell", c.tier, tostring(c.capacity) }
 
 	--- drive = drive chassis + four cells
 	local ingredients = {
@@ -104,6 +105,7 @@ for i, c in ipairs(CELLS) do
 	data.raw.item[drive] = nil
 	item.type = "item-with-tags"
 	data:extend({ item })
+	data.raw.recipe[drive].auto_recycle = false          -- a recycler would void the fluid on the item
 
 	--- take the cells out again (e.g. after the upgrade planner replaced the drive)
 	local parts = {
@@ -123,6 +125,7 @@ for i, c in ipairs(CELLS) do
 	}
 	data.raw.recipe[drive .. "-disassembly"].allow_decomposition = false
 	data.raw.recipe[drive .. "-disassembly"].localised_name = { "recipe-name.fork-me-drive-disassembly", { "item-name." .. drive } }
+	data.raw.recipe[drive .. "-disassembly"].localised_description = { "recipe-description.fork-me-fluid-drive-disassembly" }
 
 	--- passive marker entity: the contents live in the runtime (scripts/fork-me-fluids.lua)
 	data:extend({ {
@@ -188,6 +191,7 @@ data:extend({ {
 	fluid_box = {
 		volume = INTERFACE_VOLUME,
 		pipe_covers = pipecoverspictures(),
+		hide_connection_info = true,                  -- four connections on one tile, like a pipe
 		pipe_connections = {
 			{ direction = defines.direction.north, position = { 0, 0 } },
 			{ direction = defines.direction.east, position = { 0, 0 } },

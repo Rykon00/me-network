@@ -23,6 +23,10 @@
 
 local M = {}
 
+--- functions called with every mined assembling machine, furnace, drive or interface (autocrafting
+--- rescues the fluid of a leased machine); registered at load time, so nothing is stored
+M.mined_hooks = {}
+
 local STEP_TICKS = 15               -- 20 (autocrafting), 30 (molds) and 60 (terminal) are taken
 local INTERFACES_PER_STEP = 8
 local EPS = 1e-6                    -- fluid amounts are fixed point (1/2^24); below this a box counts as empty
@@ -210,10 +214,8 @@ function M.fluid_list(contents, limit)
 	local out = { "" }
 	for i, name in ipairs(names) do
 		if i > (limit or 8) then out[#out + 1] = ", ..." break end
-		if i > 1 then out[#out + 1] = ", " end
 		local proto = prototypes.fluid[name]
-		out[#out + 1] = format(contents[name]) .. " "
-		out[#out + 1] = proto and proto.localised_name or name
+		out[#out + 1] = { "", (i > 1 and ", " or "") .. format(contents[name]) .. " ", proto and proto.localised_name or name }
 	end
 	return out
 end
@@ -229,6 +231,7 @@ local function pack_drive(s, entity, stack)
 	tags[TAG] = contents
 	stack.tags = tags
 	stack.custom_description = { "fork-me-fluids.drive-item-holds", M.fluid_list(contents, 6) }
+	rec.contents, rec.used = {}, 0          -- moved, not copied
 	return true
 end
 
@@ -431,6 +434,14 @@ local function interface_gui_refresh(frame, rec)
 	local fluid_row = find(frame, "fork_mef_fluid_row")
 	fluid_row.visible = rec.mode == "export"
 	find(frame, "fork_mef_level_row").visible = rec.mode == "export"
+	--- another player (or a script) may have changed the settings: mirror the record
+	local switch = find(frame, "fork_mef_mode")
+	local want = rec.mode == "export" and "right" or "left"
+	if switch.switch_state ~= want then switch.switch_state = want end
+	local button = find(frame, "fork_mef_fluid")
+	if button.elem_value ~= rec.fluid then button.elem_value = rec.fluid end
+	local level = find(frame, "fork_mef_level")
+	if tonumber(level.text) ~= rec.level then level.text = format(rec.level) end
 end
 
 local function open_interface_gui(player, entity)
@@ -543,10 +554,16 @@ local function on_step()
 	if next(s.gui) then
 		for index, g in pairs(s.gui) do
 			local player = game.get_player(index)
-			if not (player and player.valid and g.entity.valid and player.gui.screen[DRIVE_FRAME]) then
-				if player and player.valid then close_drive_gui(player) else s.gui[index] = nil end
+			if not (player and player.valid) then
+				s.gui[index] = nil
 			else
-				drive_gui_refresh(player, g)
+				local frame = player.gui.screen[DRIVE_FRAME]
+				--- dying or disconnecting closes the GUI without an event: the frame must not linger
+				if not (frame and g.entity.valid and player.opened == frame and player.can_reach_entity(g.entity)) then
+					close_drive_gui(player)
+				else
+					drive_gui_refresh(player, g)
+				end
 			end
 		end
 	end
@@ -598,7 +615,8 @@ function M.on_built(entity, tags)
 	end
 end
 
---- mined by a player, a robot or a space platform: the fluids go onto the item in `buffer`
+--- mined by a player, a robot or a space platform: a drive's fluids go onto the item in `buffer`,
+--- an interface's content goes back into the network (as far as the drives have room)
 function M.on_mined(entity, buffer)
 	if not (entity and entity.valid) then return end
 	local s = state()
@@ -615,7 +633,12 @@ function M.on_mined(entity, buffer)
 		end
 		s.drives[unit] = nil
 	elseif s.interfaces[unit] then
+		local held = entity.fluidbox[1]
+		local net = held and held.amount > EPS and network_of(entity)
+		if net then tank_to_network(entity, held, drives_in(s, net)) end
 		drop_interface(s, unit)
+	else
+		for _, hook in pairs(M.mined_hooks) do hook(entity) end
 	end
 end
 
@@ -711,8 +734,10 @@ end)
 
 --- (a filter can only be given when one event is registered at a time)
 local ENTITY_FILTER = { { filter = "type", type = "simple-entity-with-force" }, { filter = "type", type = "storage-tank" } }
+local MINED_FILTER = { { filter = "type", type = "simple-entity-with-force" }, { filter = "type", type = "storage-tank" },
+	{ filter = "type", type = "assembling-machine" }, { filter = "type", type = "furnace" } }
 for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
-	script.on_event(defines.events[name], function(event) M.on_mined(event.entity, event.buffer) end, ENTITY_FILTER)
+	script.on_event(defines.events[name], function(event) M.on_mined(event.entity, event.buffer) end, MINED_FILTER)
 end
 for _, name in pairs({ "on_entity_died", "script_raised_destroy" }) do
 	script.on_event(defines.events[name], function(event) M.on_removed(event.entity) end, ENTITY_FILTER)
@@ -767,7 +792,13 @@ function M.on_configuration_changed()
 		local player = game.get_player(index)
 		if player then close_drive_gui(player) else s.gui[index] = nil end
 	end
-	for _, player in pairs(game.players) do close_interface_gui(player) end
+	for _, player in pairs(game.players) do
+		close_interface_gui(player)
+		local opened = player.opened
+		if opened and player.opened_gui_type == defines.gui_type.entity and opened.valid and opened.name == interface_name() then
+			player.opened = nil
+		end
+	end
 end
 
 --- Other mods and the devcheck runtime test use the same code paths

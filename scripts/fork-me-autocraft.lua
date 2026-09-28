@@ -37,7 +37,8 @@ local KEEP_FINISHED_TICKS = 5 * 60 * 60
 local MAX_FINISHED = 12
 local MAX_PLAN_NODES = 3000
 local MAX_DEPTH = 40
-local MAX_AMOUNT = 100000
+local MAX_AMOUNT = 100000       -- items per job
+local MAX_FLUID_AMOUNT = 10000000 -- fluid units per job
 local QUALITY = "normal"        -- only normal quality items are planned and crafted
 local FLUID_MARGIN = 0.01       -- extra fluid reserved per job and fluid (fixed point rounding)
 local FLUID_EPS = 1e-6
@@ -132,7 +133,9 @@ local function machine_recipe(machine)
 	if recipe then return recipe.name end
 	if machine.type == "furnace" then
 		local previous = machine.previous_recipe
-		return previous and previous.name or nil
+		local name = previous and previous.name
+		if name ~= nil and type(name) ~= "string" then name = name.name end   -- a recipe prototype when read
+		return name
 	end
 	return nil
 end
@@ -353,10 +356,17 @@ end
 --- planning
 --------------------------------------------------------------------------------
 
+--- items with own data (item-with-tags: a fluid drive item carries its fluid) are never taken from
+--- storage: moving them by name and count would strip the data
+local function plain_item(name)
+	local proto = prototypes.item[name]
+	return proto ~= nil and proto.type ~= "item-with-tags"
+end
+
 local function stock_of(net)
 	local stock = {}
 	for _, c in pairs(net.get_contents()) do
-		if (c.quality or QUALITY) == QUALITY then stock[c.name] = (stock[c.name] or 0) + c.count end
+		if (c.quality or QUALITY) == QUALITY and plain_item(c.name) then stock[c.name] = (stock[c.name] or 0) + c.count end
 	end
 	for name, amount in pairs(fluids.totals(net)) do
 		stock[FLUID_PREFIX .. name] = amount
@@ -1012,7 +1022,7 @@ function M.start(entity, key, amount)
 	if not net then return nil, "no-network" end
 	amount = math.floor(tonumber(amount) or 0)
 	if amount < 1 then return nil, "bad-amount" end
-	if amount > MAX_AMOUNT then return nil, "too-many" end
+	if amount > (is_fluid(key) and MAX_FLUID_AMOUNT or MAX_AMOUNT) then return nil, "too-many" end
 	if not proto_of(key) then return nil, "no-pattern" end
 	local cpus = cpus_in(s, net)
 	if #cpus == 0 then return nil, "no-cpu" end
@@ -1115,14 +1125,12 @@ function M.item_list(counts, limit)
 	local out = { "" }
 	for i, key in ipairs(keys) do
 		if i > (limit or 6) then out[#out + 1] = ", ..." break end
-		if i > 1 then out[#out + 1] = ", " end
 		local proto = proto_of(key)
-		if is_fluid(key) then
-			out[#out + 1] = fluids.format(counts[key]) .. " "
-			out[#out + 1] = proto and proto.localised_name or fluid_name(key)
+		local sep = i > 1 and ", " or ""
+		if is_fluid(key) then                            -- one nested string per entry: at most limit + 1 parameters
+			out[#out + 1] = { "", sep .. fluids.format(counts[key]) .. " ", proto and proto.localised_name or fluid_name(key) }
 		else
-			out[#out + 1] = counts[key] .. "x "
-			out[#out + 1] = proto and proto.localised_name or key
+			out[#out + 1] = { "", sep .. counts[key] .. "x ", proto and proto.localised_name or key }
 		end
 	end
 	return out
@@ -1167,6 +1175,26 @@ function M.on_built(entity)
 		register(state(), entity)
 	end
 end
+
+--- A pattern machine mined while a job uses it: the fluid in its boxes would vanish with the
+--- entity (items are collected by the game), so it goes back into the job's pool first. The job
+--- then fails at its next step ("a pattern machine was removed") and returns the pool.
+function M.on_mined(entity)
+	local s = storage.fork_ae2
+	if not (s and entity and entity.valid and entity.unit_number) then return end
+	local id = s.busy[entity.unit_number]
+	local job = id and s.jobs[id]
+	if not job then return end
+	for _, lease in pairs(job.leases) do
+		if lease.unit == entity.unit_number then
+			local proto = prototypes.recipe[lease.recipe]
+			collect_output(job, job_network(job), entity, lease.fluid)
+			if proto then take_back_input(job, entity, proto, lease.fluid) end
+			return
+		end
+	end
+end
+fluids.mined_hooks[#fluids.mined_hooks + 1] = M.on_mined
 
 --- Rebuild the registries from the world, drop stale references, and repair the job books.
 --- Jobs and their pools are kept.

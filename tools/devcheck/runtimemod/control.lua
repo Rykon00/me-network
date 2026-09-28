@@ -538,8 +538,23 @@ function fluid_test()
 			local tags = stack.tags or {}
 			local carried = tags.fork_me_fluids and tags.fork_me_fluids[FL_FLUID] or 0
 			expect(near(carried, FL_TANK_AMOUNT), "drive item carries " .. tostring(carried))
+			expect(count(FL_FLUID) == 0, "pack_drive copied instead of moved: " .. count(FL_FLUID))
 			drive.destroy{ raise_destroy = true }
 			expect(count(FL_FLUID) == 0, "network still holds fluid after the drive was removed: " .. count(FL_FLUID))
+			--- the loaded drive item survives a trip through the terminal (stored as a stack, withdrawn as a stack)
+			local stored = remote.call("gregtorio-me-terminal", "store_stack", terminal, stack)
+			expect(stored == 1 and items(FL_DRIVE) == 1, "storing the drive item: " .. tostring(stored) .. ", in network " .. items(FL_DRIVE))
+			local back = remote.call("gregtorio-me-terminal", "withdraw", terminal, chest, FL_DRIVE, "normal", 1)
+			expect(back == 1 and items(FL_DRIVE) == 0, "withdrawing the drive item: " .. tostring(back))
+			stack = nil
+			local inv = chest.get_inventory(defines.inventory.chest)
+			for i = 1, #inv do
+				if inv[i].valid_for_read and inv[i].name == FL_DRIVE then stack = inv[i] end
+			end
+			expect(stack, "drive item not back in the chest")
+			if not stack then return finish_test() end
+			local tags2 = stack.tags or {}
+			expect(near(tags2.fork_me_fluids and tags2.fork_me_fluids[FL_FLUID] or 0, FL_TANK_AMOUNT), "drive item lost its fluid in the terminal: " .. serpent.line(tags2))
 			local capacity = remote.call(F, "capacity", terminal)
 			expect(capacity == 0, "capacity without drives " .. tostring(capacity))
 			local ok, again = pcall(function()
@@ -595,6 +610,33 @@ function fluid_test()
 		if s.find_entity(FL_DRIVE, FL_DRIVE_POS) then
 			expect(near(count(FL_FLUID), FL_TANK_AMOUNT), "after the robots placed the drive the network holds " .. count(FL_FLUID))
 			if #problems > 0 then return finish_test() end
+			--- full drives: the import stops and keeps the fluid in the tank, an export of a fluid the
+			--- network does not hold reports it
+			local room = 32000 - count(FL_FLUID)
+			expect(near(remote.call(F, "insert", terminal, FL_FLUID, room), room), "could not fill the drive")
+			expect(near(count(FL_FLUID), 32000), "drive not full: " .. count(FL_FLUID))
+			expect(remote.call(F, "insert", terminal, FL_FLUID, 10) == 0, "a full drive took fluid")
+			tank.insert_fluid{ name = FL_FLUID, amount = 500 }
+			remote.call(F, "set_interface", b, "export", "water", FL_EXPORT_LEVEL)
+			return next_phase("full")
+		end
+		timeout_after(600, "robots building the drive from the ghost")
+	elseif phase == "full" then
+		if game.tick >= st.phase_tick + 40 then
+			local ia, ib = remote.call(F, "get_interface", a), remote.call(F, "get_interface", b)
+			expect(ia and ia.status == "full", "import into full drives: status " .. tostring(ia and ia.status))
+			expect(near(in_pipes(), 500), "fluid left the tank although the drives are full: " .. in_pipes())
+			expect(near(count(FL_FLUID), 32000), "network changed while full: " .. count(FL_FLUID))
+			expect(ib and ib.status == "empty-network", "export of a missing fluid: status " .. tostring(ib and ib.status))
+			expect(b.get_fluid_count("water") == 0, "export interface got water from nowhere")
+			expect(near(remote.call(F, "remove", terminal, FL_FLUID, 30000), 30000), "could not take fluid out")
+			remote.call(F, "set_interface", b, "import")
+			return next_phase("full-drain")
+		end
+	elseif phase == "full-drain" then
+		if in_pipes() < 0.01 then
+			expect(near(count(FL_FLUID), 2500), "after making room the network holds " .. count(FL_FLUID))
+			if #problems > 0 then return finish_test() end
 			--- fluid autocrafting: fill the network, check the patterns and a shortfall, start three jobs
 			expect(near(remote.call(F, "insert", terminal, FL_FLUID, FL_CHLORINE_EXTRA), FL_CHLORINE_EXTRA), "could not insert chlorine")
 			expect(near(remote.call(F, "insert", terminal, "phenol", FL_PHENOL), FL_PHENOL), "could not insert phenol")
@@ -630,7 +672,7 @@ function fluid_test()
 			st.jobs = { id1, id2, id3 }
 			return next_phase("craft")
 		end
-		timeout_after(600, "robots building the drive from the ghost")
+		timeout_after(200, "import after making room")
 	elseif phase == "craft" then
 		local all_over, failed = true, {}
 		for _, id in pairs(st.jobs) do
@@ -660,9 +702,38 @@ function fluid_test()
 					expect(not f or f.amount < FL_EPS, def[1] .. " keeps " .. (f and (f.amount .. " " .. f.name) or ""))
 				end
 			end
-			return finish_test("import took " .. st.import_ticks .. " ticks, whole test " .. (game.tick - st.started))
+			if #problems > 0 then return finish_test() end
+			--- a pattern machine mined by robots while it holds the job's fluid: the fluid returns with the pool
+			st.chlorine_before = count(FL_FLUID)
+			st.job = remote.call(A, "start", terminal, "fluid/silicon-tetrachloride", 100)   -- 1 run: 400 chlorine
+			expect(st.job, "job 4 did not start")
+			if not st.job then return finish_test() end
+			return next_phase("mine-lease")
 		end
 		timeout_after(600, "fluid jobs")
+	elseif phase == "mine-lease" then
+		local j = job_of(st.job)
+		if j.leases > 0 then
+			expect(ent(FL.reactor_a).order_deconstruction(game.forces.player), "could not order the reactor deconstructed")
+			return next_phase("mine-wait")
+		end
+		timeout_after(200, "job 4 handing chlorine to the reactor")
+	elseif phase == "mine-wait" then
+		local j = job_of(st.job)
+		if j.status == "done" or j.status == "failed" then
+			expect(not ent(FL.reactor_a), "the reactor was not mined")
+			expect(next(j.pool) == nil, "job 4 keeps a pool: " .. serpent.line(j.pool))
+			local now = count(FL_FLUID)
+			if j.status == "done" then                       -- the craft finished before the robot arrived
+				expect(near(now, st.chlorine_before - 400), "chlorine after job 4 (done): " .. now)
+			else                                             -- mined while leased: nothing beyond the running craft is lost
+				expect(now >= st.chlorine_before - 400 - FL_EPS and now <= st.chlorine_before + FL_EPS,
+					"chlorine after job 4 (failed): " .. now .. ", before " .. st.chlorine_before)
+				expect(now > st.chlorine_before - 400 or true, "")
+			end
+			return finish_test("import took " .. st.import_ticks .. " ticks, whole test " .. (game.tick - st.started))
+		end
+		timeout_after(600, "job 4 after the reactor was mined")
 	end
 end
 

@@ -68,6 +68,10 @@ local function refresh(player)
 	local entity = st.entity
 	local status, grid = frame.fork_me_status, find(frame, "fork_me_grid")
 	local fluid_line, fluid_grid = find(frame, "fork_me_fluid_line"), find(frame, "fork_me_fluid_grid")
+	if not (status and grid and fluid_line and fluid_grid) then      -- a frame built by an older version
+		close(player)
+		return
+	end
 	local why = problem(entity)
 	if why then
 		grid.clear()
@@ -293,6 +297,7 @@ function M.refresh_crafting(player, frame, entity)
 	local total, free = autocraft.cpu_summary(net)
 	local keys, ignored = autocraft.craftable(net)
 	info.caption = { "fork-me-craft.info", total, free, #keys, ignored.total or 0, autocraft.ignored_list(ignored) }
+	local fluid_totals = fluids.totals(net)
 
 	local filter = (st.filter or ""):lower():gsub("%s+", "-")
 	local shown, sig = {}, {}
@@ -301,7 +306,7 @@ function M.refresh_crafting(player, frame, entity)
 			if #shown < MAX_CRAFT_BUTTONS then
 				local d = autocraft.describe(key)
 				if d then
-					local count = d.fluid and fluids.count(net, d.name) or net.get_item_count{ name = key, quality = "normal" }
+					local count = d.fluid and (fluid_totals[d.name] or 0) or net.get_item_count{ name = key, quality = "normal" }
 					shown[#shown + 1] = { key = key, d = d, count = count }
 					sig[#sig + 1] = key .. "=" .. count
 				end
@@ -363,6 +368,29 @@ local function cancel_craft(player, id)
 	if st then st.jobs_shown = nil end
 end
 
+--- Items with own data (item-with-tags, e.g. a fluid drive that carries fluid) are moved as
+--- whole stacks out of the storage chests, so nothing is lost. Returns the number moved.
+local function withdraw_stacks(network, target, name, quality, count)
+	local moved = 0
+	for _, chest in pairs(network.storages) do
+		if moved >= count then break end
+		local inv = chest.valid and chest.get_inventory(defines.inventory.chest)
+		if inv then
+			for i = 1, #inv do
+				local stack = inv[i]
+				if stack.valid_for_read and stack.name == name and (stack.quality and stack.quality.name or "normal") == quality
+					and moved + stack.count <= count then
+					local n = target.insert(stack)
+					if n >= stack.count then stack.clear() elseif n > 0 then stack.count = stack.count - n end
+					moved = moved + n
+					if moved >= count then break end
+				end
+			end
+		end
+	end
+	return moved
+end
+
 --- Move up to `count` items from the network at `terminal` into `target` (anything with
 --- insert/remove_item: LuaPlayer, LuaEntity, LuaInventory). Returns the number moved.
 function M.withdraw(terminal, target, name, quality, count)
@@ -370,6 +398,8 @@ function M.withdraw(terminal, target, name, quality, count)
 	local network = network_of(terminal)
 	count = math.min(count, network.get_item_count({ name = name, quality = quality }))
 	if count <= 0 then return 0 end
+	local proto = prototypes.item[name]
+	if proto and proto.type == "item-with-tags" then return withdraw_stacks(network, target, name, quality, count) end
 	local inserted = target.insert{ name = name, quality = quality, count = count }
 	if inserted <= 0 then return 0 end
 	local removed = network.remove_item{ name = name, quality = quality, count = inserted }
@@ -386,8 +416,8 @@ function M.store_stack(terminal, stack)
 	local why = problem(terminal)
 	if why then return nil, why end
 	if not (stack and stack.valid_for_read) then return 0 end
-	if stack.item then return nil, "cannot-store" end   -- items with own data (blueprints, armor, ...)
-	local inserted = network_of(terminal).insert(stack)
+	if stack.item and not stack.is_item_with_tags then return nil, "cannot-store" end   -- blueprints, armor, ...
+	local inserted = network_of(terminal).insert(stack)   -- a whole stack keeps its tags (fluid drive items)
 	if inserted <= 0 then return nil, "no-storage" end
 	if inserted >= stack.count then stack.clear() else stack.count = stack.count - inserted end
 	return inserted
@@ -426,13 +456,17 @@ function M.on_built(entity)
 	end
 end
 
+--- Every open terminal is closed: a frame built by an older version may lack elements the
+--- current refresh expects (the player simply opens it again).
 function M.on_configuration_changed()
 	state()
-	for index, st in pairs(storage.fork_me_terminal) do
+	for index in pairs(storage.fork_me_terminal) do
 		local player = game.get_player(index)
-		if not (player and st.entity and st.entity.valid) then
-			if player then close(player) else storage.fork_me_terminal[index] = nil end
-		end
+		if player then close(player) else storage.fork_me_terminal[index] = nil end
+	end
+	for _, player in pairs(game.players) do
+		local frame = player.gui.screen[FRAME]
+		if frame then frame.destroy() end
 	end
 end
 
