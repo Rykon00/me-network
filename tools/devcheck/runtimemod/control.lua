@@ -62,6 +62,22 @@ script.on_nth_tick(300, function(event)
 	log("DEVCHECK-RUNTIME-ME " .. (#problems == 0 and "ok" or "failed"))
 end)
 
+--- Victory (scripts/fork-victory.lua): researching `victory` must win the game, and go on.
+--- Winning stops the scripts of the benchmark run (no player to continue), so this runs last, at
+--- tick 550, and is checked in the same tick.
+script.on_nth_tick(550, function(event)
+	if storage.victory_checked or event.tick == 0 then return end
+	storage.victory_checked = true
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local ok, err = pcall(function() game.forces.player.technologies["victory"].researched = true end)
+	expect(ok, "victory test: " .. tostring(err))
+	--- (can_continue cannot be read before a player chooses to go on; the script passes it, see fork-victory.lua)
+	expect(game.finished, "victory test: researching `victory` did not finish the game")
+	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
+	log("DEVCHECK-RUNTIME-VICTORY " .. (#problems == 0 and "ok" or "failed"))
+end)
+
 local MOLD_Y = 120
 local MOLD_RECIPE = "glass-alloy-smelter"
 

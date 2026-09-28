@@ -345,11 +345,15 @@ def runtime(a):
     print(f"ME network test: {me.group(1) if me else 'did not run'}")
     mold = re.search(r"DEVCHECK-RUNTIME-MOLD (.*)", log)
     print(f"mold test: {mold.group(1) if mold else 'did not run'}")
+    victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (\w+)", log)
+    print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
         fails.append("ME network test did not run (needs --ticks >= 300)")
     if not mold:
         fails.append("mold test did not run (needs --ticks >= 500)")
-    report("runtime problems (placement, ME network test, mold test)", fails)
+    if not victory:
+        fails.append("victory test did not run (needs --ticks >= 500)")
+    report("runtime problems (placement, ME network test, mold test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
