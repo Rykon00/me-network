@@ -112,10 +112,13 @@ function setup_autocraft_test(s)
 	place("me-terminal", 8.5, AC_Y + 4.5)
 	place("me-crafting-cpu", 10, AC_Y)
 	local drive = place("me-drive-16k", 8.5, AC_Y + 6.5)
-	place("me-molecular-assembler", 16.5, AC_Y + 0.5, "iron-gear-crafting-table")
-	place("me-molecular-assembler", 22.5, AC_Y + 0.5, AC_ITEM)
+	place("me-molecular-assembler", 14.5, AC_Y + 0.5, "iron-gear-crafting-table")
+	place("me-molecular-assembler", 20.5, AC_Y + 0.5, AC_ITEM)
+	place("me-pattern-provider", 16.5, AC_Y + 0.5)
 	place("me-pattern-provider", 18.5, AC_Y + 0.5)
-	place("me-pattern-provider", 20.5, AC_Y + 0.5)
+	--- outside the network (controller radius 16): its recipe must not become a pattern
+	place("me-molecular-assembler", 32.5, AC_Y + 0.5, "splitter")
+	place("me-pattern-provider", 34.5, AC_Y + 0.5)
 	--- a GT machine as pattern machine: crushing raw iron (may have several or probabilistic products)
 	place("ev-macerator", 16.5, AC_Y + 4.5, AC_CRUSH)
 	place("me-pattern-provider", 18.5, AC_Y + 4.5)
@@ -152,6 +155,7 @@ local function autocraft_test()
 		local set = {}
 		for _, n in pairs(craftable) do set[n] = true end
 		expect(set[AC_ITEM] and set["iron-gear-wheel"], "patterns not registered")
+		expect(not set["splitter"], "a machine outside the network became a pattern")
 		expect(count("iron-plate") == AC_PLATES and count("iron-stick") == AC_STICKS, "raw materials not in the network")
 
 		--- per-craft amounts, from the recipes
@@ -212,7 +216,13 @@ local function autocraft_test()
 		local plates, sticks = raw_value()
 		expect(plates == AC_PLATES and sticks == AC_STICKS, what .. ": raw value " .. plates .. "/" .. sticks .. ", expected " .. AC_PLATES .. "/" .. AC_STICKS)
 	end
-	local function job_of(id) return remote.call("gregtorio-me-autocraft", "job", id) end
+	local function job_of(id)
+		local j = remote.call("gregtorio-me-autocraft", "job", id)
+		for item, n in pairs(j and j.pool or {}) do
+			expect(n >= 0, "job " .. id .. " pool holds " .. n .. " " .. item)   -- a job may never hand out more than it holds
+		end
+		return j
+	end
 	local function timeout_after(ticks, what)
 		if game.tick > st.phase_tick + ticks then
 			expect(false, what .. " timed out: " .. serpent.line(st.job and job_of(st.job)))
@@ -280,7 +290,7 @@ local function autocraft_test()
 			--- scenario 3: a pattern machine is removed, the job waits; cancelling gives everything back
 			st.job = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, AC_AMOUNT)
 			expect(st.job, "job 5 did not start")
-			local b = s.find_entity("me-molecular-assembler", { 22.5, AC_Y + 0.5 })
+			local b = s.find_entity("me-molecular-assembler", { 20.5, AC_Y + 0.5 })
 			expect(b, "belt assembler not found")
 			if b then b.destroy() end
 			if not st.job then return finish_test() end

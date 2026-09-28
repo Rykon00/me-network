@@ -519,6 +519,9 @@ local function start_lease(s, job, step_index, machine, batch)
 	local inp = input_inventory(machine)
 	if not inp then return false end
 	local given = {}
+	for _, ing in pairs(proto.ingredients) do          -- never hand out more than the pool holds
+		if (job.pool[ing.name] or 0) < ing.amount * batch then return false end
+	end
 	for _, ing in pairs(proto.ingredients) do
 		local count = ing.amount * batch
 		pool_add(job, ing.name, -count)
@@ -629,16 +632,16 @@ local function job_step(s, job)
 		local proto = prototypes.recipe[step.recipe]
 		while ops > 0 and step.issued < step.runs do
 			local batch = math.min(step.runs - step.issued, MAX_BATCH)
-			for _, ing in pairs(proto.ingredients) do
+			for _, p in pairs(proto.products) do        -- the products must fit into the output slot
+				if p.type == "item" then
+					local per = p.amount or p.amount_max
+					batch = math.min(batch, math.max(1, math.floor(prototypes.item[p.name].stack_size / per)))
+				end
+			end
+			for _, ing in pairs(proto.ingredients) do   -- only what the pool holds, one stack per ingredient
 				local per = ing.amount
 				batch = math.min(batch, math.floor((job.pool[ing.name] or 0) / per),
 					math.floor(prototypes.item[ing.name].stack_size / per))
-			end
-			for _, p in pairs(proto.products) do
-				if p.type == "item" then
-					local per = p.amount or p.amount_max
-					batch = math.max(1, math.min(batch, math.floor(prototypes.item[p.name].stack_size / per)))
-				end
 			end
 			if batch <= 0 then waiting = waiting or "ingredients" break end
 			local machine = find_machine(s, net, step.recipe, proto)
