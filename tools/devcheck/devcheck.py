@@ -42,9 +42,17 @@ BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails"}
 # setup
 # --------------------------------------------------------------------------------------------
 
+# factorio.com (Cloudflare) answers the default "Python-urllib" user agent with 403
+USER_AGENT = "gregtorio-devcheck/1.0 (+https://github.com/Rykon00/Gregtorio)"
+
+
+def urlopen(url):
+    return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": USER_AGENT}))
+
+
 def download(url, dest):
     print(f"downloading {url.split('?')[0]}")
-    with urllib.request.urlopen(url) as r, open(dest, "wb") as f:
+    with urlopen(url) as r, open(dest, "wb") as f:
         shutil.copyfileobj(r, f)
 
 
@@ -90,7 +98,7 @@ def setup(a):
         user, token = os.environ.get("FACTORIO_USERNAME"), os.environ.get("FACTORIO_TOKEN")
         if not user or not token:
             sys.exit(f"need {name}: set FACTORIO_USERNAME/FACTORIO_TOKEN or pass --mods-from DIR")
-        meta = json.load(urllib.request.urlopen(f"https://mods.factorio.com/api/mods/{urllib.parse.quote(name)}"))
+        meta = json.load(urlopen(f"https://mods.factorio.com/api/mods/{urllib.parse.quote(name)}"))
         rel = [r for r in meta["releases"] if r["info_json"].get("factorio_version") == "2.0"][-1]
         q = urllib.parse.urlencode({"username": user, "token": token})
         download(f"https://mods.factorio.com{rel['download_url']}?{q}", MODS / rel["file_name"])
@@ -299,6 +307,15 @@ def check(a):
     print(f"\nresearchable technologies: {len(m.researched)} of {sum(1 for v in m.T.values() if v['en'])}")
     for t, miss in m.frontier():
         print(f"  progression stops at {t}" + (f" (missing science: {', '.join(miss)})" if miss else ""))
+    if a.techs:
+        rx = re.compile(a.techs)
+        rows = []
+        for t, v in sorted(m.T.items()):
+            if rx.search(t) and v["en"]:
+                state = "researchable" if t in m.researched else "NOT researchable"
+                sci = ", ".join(s.replace("-science-pack", "") for s in v["sci"])
+                rows.append(f"{t}: {state} [{sci}] unlocks {len(v['eff'])} recipes")
+        report(f"technologies matching /{a.techs}/", rows, limit=200)
     report("missing graphics files", files)
     report("sprite sheets too small", sprites)
     report("unlocked but uncraftable recipes", [f"{r}: {why}" for r, why in uncraft])
@@ -322,8 +339,13 @@ def runtime(a):
     log = factorio("--benchmark", str(WORK / "runtime-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
     err = re.search(r"(Error.*|non-recoverable.*)", log)
+    fails += re.findall(r"DEVCHECK-RUNTIME-FAIL (.*)", log)
+    me = re.search(r"DEVCHECK-RUNTIME-ME (\w+)", log)
     print(f"benchmark: {ran.group(0) if ran else 'did not run'}")
-    report("machines that could not be placed", fails)
+    print(f"ME network test: {me.group(1) if me else 'did not run'}")
+    if not me:
+        fails.append("ME network test did not run (needs --ticks >= 300)")
+    report("runtime problems (placement, ME network test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
@@ -368,6 +390,7 @@ def main():
     s.add_argument("--mods-from", help="folder with the dependency mod zips instead of downloading them")
     c = sub.add_parser("check")
     c.add_argument("--locale-out", help="also write the locale name list for tools/gen_locale.py")
+    c.add_argument("--techs", help="regex: list matching technologies and whether they are researchable")
     r = sub.add_parser("runtime")
     r.add_argument("--ticks", type=int, default=600)
     m = sub.add_parser("migrate")
@@ -378,6 +401,7 @@ def main():
     al = sub.add_parser("all")
     al.add_argument("--ticks", type=int, default=600)
     al.add_argument("--locale-out")
+    al.add_argument("--techs")
     a = ap.parse_args()
     if a.cmd == "setup":
         return setup(a)
