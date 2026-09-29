@@ -23,7 +23,7 @@ Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks three entities:
 | Entity | What it does |
 |---|---|
 | **ME Molecular Assembler** | assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW |
-| **ME Pattern Provider** | 1x1 marker, no power. Placed **next to a machine**, the recipe that machine has set becomes a pattern of the network |
+| **ME Pattern Provider** | 1x1 marker, no power. Placed **next to a machine**, the recipe that machine has set becomes a pattern of the network; for furnaces you choose the recipe in the provider |
 | **ME Crafting CPU** | 2x2, needs power (60 kW), part of the network. Runs one job at a time |
 
 Step by step:
@@ -37,6 +37,7 @@ Step by step:
    machine** (left, right, above or below). Any assembling machine or furnace works: a
    Molecular Assembler for crafting recipes, a GT machine (macerator, EBF, wiremill, chemical
    reactor, ...) for processing recipes. One provider can serve up to four machines around it.
+   Furnaces have no recipe setting: see [Furnaces as pattern machines](#furnaces-as-pattern-machines).
 4. Open the ME Terminal, tab **Crafting**: every item and fluid a pattern can make is listed
    (also at 0 in stock). Click one, enter an amount (items, or fluid units), and read the plan line:
    `Ready: 12 crafts in 3 steps. Taken from storage: ...` or `Missing: 12x tin cable, 400 chlorine`.
@@ -50,6 +51,8 @@ Rules for pattern machines:
 * **Dedicate them to the network.** While a job runs the CPU puts ingredients into the machine
   and takes its products out. Do not feed them with inserters, belts or pipes as well.
 * A machine without a recipe, outside the network, or a provider that touches no machine is ignored.
+  A furnace without a recipe (no choice in its provider, never smelted anything) is counted as
+  `no-recipe` in the crafting tab's info line.
   Changing the recipe of a pattern machine changes the pattern (within a few seconds). If it is
   changed while a job uses it, that job fails and returns its items.
 * The machine has to work on its own: power (or fuel), a mold in the mold slot if the recipe
@@ -65,6 +68,32 @@ Rules for pattern machines:
   machines with a pipe on a used box (`fluid-pipes`), and recipes that need a fluid temperature
   the network cannot deliver (`fluid-temperature`, see the temperature rule below).
 * Only normal quality items are planned and crafted.
+
+### Furnaces as pattern machines
+
+A furnace (stone, iron or steel furnace, any `furnace` type machine) has no recipe setting: it
+picks the recipe from the item in its input slot. So the **pattern provider holds the recipe**:
+
+1. Place the furnace (with fuel or power) and an ME Pattern Provider touching it, inside the network.
+2. Point at the provider and press the normal **open** key (left click by default). The window
+   lists every recipe the furnaces next to it can make: their crafting categories, researched
+   recipes only, no hidden and no fluid recipes.
+3. Click a recipe. It is the pattern at once, the furnace does not have to smelt it first.
+   Clicking the chosen recipe again, or **Clear**, removes the choice.
+
+The choice belongs to the provider and applies to every furnace next to it that can make the
+recipe; a furnace that cannot make it keeps the recipe it smelted last. It is kept in the save,
+copied with the provider's settings (shift right click on it, shift left click on another
+provider), stored in blueprints and copied when a provider is cloned. Without a choice the
+furnace's last smelted recipe is used (`previous_recipe`), as before; a furnace with neither is
+counted as `no-recipe`.
+
+While a job runs the network puts only the chosen recipe's ingredient into the furnace and
+collects the products, exactly as for an assembling machine. The furnace itself still picks the
+recipe from that ingredient: if another recipe of that furnace has the same input, it may smelt
+that one instead. The window marks such recipes, and a job whose furnace smelts another recipe
+fails ("a furnace smelted another recipe with the same input") and returns its items. None of the
+current smelting recipes share an input.
 
 ## Fluids
 
@@ -199,8 +228,14 @@ unambiguous; the price is the temperature rule above.
 
 `storage.fork_ae2.providers` lists every provider. A provider looks at the four tiles around it
 (`find_entities_filtered` on the tile centers), collects the assembling machines and furnaces
-found there that are in the same logistic network, and reads their recipe (`get_recipe()`, for
-furnaces also `previous_recipe`). From all providers of a network the script builds
+found there that are in the same logistic network, and reads their recipe (`get_recipe()`). For
+furnaces the provider's recipe choice (`providers[unit].recipe`) counts when the furnace can make it
+(category, researched, no fluid) and holds nothing: a furnace that holds or smelts something counts
+with the recipe it runs, so a job notices when the furnace picked another recipe. Without a choice
+`previous_recipe` is used; a furnace with no recipe at all is counted under `no-recipe`. The
+choice is set by `set_recipe` (GUI, settings paste, the blueprint tag `fork_ae2_recipe` on build,
+cloning; the remote interface has the same function), survives `on_configuration_changed`, and
+leases keep the choice they were started with. From all providers of a network the script builds
 `patterns[network id]`: resource key -> recipes that make it, recipe -> machines. Resource keys
 are item names and `fluid/<name>` for fluids; stock, plan, pool, GUI and the remote interface
 use the same keys. A machine with a fluid recipe carries its **fluid map**, built from
@@ -346,8 +381,10 @@ version and checks it).
   cancelled hand disassembly returns the drive item without its fluid, which stays recovered.
   Untested in the real game: the headless test calls the same function the craft event calls.
 * Only normal quality, no items with own data (armor, tools) and no spoilage handling in the pool.
-* Machines with a fixed recipe picked by their input (furnaces) are only patterns once they
-  have smelted the recipe (`previous_recipe`); this path is untested in the real game.
+* A furnace picks its recipe from its input: if two recipes it can make share an input, the
+  network cannot force the chosen one (the job fails and returns its items). The provider window,
+  settings paste and blueprint event are untested in the real game (the headless test calls the
+  same functions).
 * One CPU runs one job; no co-processors or CPU storage tiers, no crafting request from
   circuit signals, no "keep N in stock" (autocrafting on demand).
 * A machine whose only input is shared with a belt, inserter or pipe will fight with the network.
@@ -363,6 +400,13 @@ raw material that must report the exact shortfall and not start, a queued job th
 a CPU that is removed and replaced during a job, a pattern machine that is removed while a job
 waits for it and then a cancel (checked with a conservation of raw materials), and a GT
 machine as pattern machine.
+
+A furnace network (issue #27) has two fresh iron furnaces with providers: both must be counted as
+`no-recipe`, the recipe options must list only researched smelting recipes, and after the choice
+(`set_recipe`, the function the GUI calls) one furnace must be a pattern at once, smelt a job and
+leave the ingots in storage with empty furnace slots. Then the choice is pasted onto the other
+provider, cleared (the last smelted recipe keeps the furnace a pattern), stored in a blueprint as
+entity tag, and restored on a provider revived from a tagged ghost.
 
 A second network tests the fluids: an import interface with a storage tank of chlorine connected
 to it, an export interface set to 1000 units, a 1k fluid drive, a roboport with construction
