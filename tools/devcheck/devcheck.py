@@ -188,7 +188,8 @@ class Model:
             k = p[0]
             if k == "R":
                 self.R[p[1]] = dict(cat=p[2], en=p[3] == "true", ing=split(p[4]), res=split(p[5]),
-                                    fin=kinds(p[4]).count("fluid"), fout=kinds(p[5]).count("fluid"))
+                                    fin=kinds(p[4]).count("fluid"), fout=kinds(p[5]).count("fluid"),
+                                    hidden=p[6] == "true", hide_craft=p[7] == "true", sg=p[8], group=p[9])
             elif k == "C":
                 self.C[p[1]] = p[3].split(",") if p[3] else []
                 self.CF[p[1]] = (int(p[4]), int(p[5]))
@@ -291,6 +292,47 @@ class Model:
         return out
 
 
+def check_crafting_menu(m, sec):
+    """Issue #49: every recipe that is enabled or unlocked by a technology and whose category has a
+    machine is listed in the crafting menu (not hide_from_player_crafting), except the allow-list
+    FORK_CRAFTING_MENU_HIDDEN of prototypes/198-fork-crafting-menu.lua. Returns (info lines, problems)."""
+    rows = sec.get("CRAFTMENU", [])
+    setting = next((r[1] for r in rows if r[0] == "setting"), "absent")
+    allow = {k: {} for k in ("categories", "subgroups", "recipes")}
+    for r in rows:
+        if r[0] in allow:
+            allow[r[0]][r[1]] = r[2]
+    if setting == "false":
+        return ["skipped: startup setting gregtorio-continued-show-machine-recipes is off"], []
+    machine_cats = {c for e, cats in m.C.items() if e != "character" for c in cats}
+    reach = {r for r, v in m.R.items() if v["en"]}
+    for v in m.T.values():
+        if v["en"]:
+            reach.update(r for r in v["eff"] if r in m.R)
+    shown, kept, problems, tabs = 0, 0, [], {}
+    for r in sorted(reach):
+        v = m.R[r]
+        if v["hidden"]:
+            continue
+        if not v["hide_craft"]:
+            tabs[v["group"]] = tabs.get(v["group"], 0) + 1
+        if v["cat"] not in machine_cats:
+            continue
+        if not v["hide_craft"]:
+            shown += 1
+        elif v["cat"] in allow["categories"] or v["sg"] in allow["subgroups"] or r in allow["recipes"]:
+            kept += 1
+        else:
+            problems.append(f"{r} (category {v['cat']}, subgroup {v['sg']})")
+    stale = [f"{k} {n} (allow-list entry matches nothing)" for k, names in allow.items() for n in names
+             if (k == "recipes" and n not in m.R) or (k == "categories" and not any(v["cat"] == n for v in m.R.values()))
+             or (k == "subgroups" and not any(v["sg"] == n for v in m.R.values()))]
+    info = [f"machine recipes (enabled or unlocked by a technology): {shown} shown, {kept} kept hidden by the "
+            f"allow-list, {len(problems)} hidden without an allow-list entry",
+            "recipes shown per crafting menu tab: " + ", ".join(f"{g} {n}" for g, n in sorted(tabs.items(), key=lambda x: -x[1]))]
+    return info, problems + stale
+
+
 def check_files(sec):
     missing = []
     for path, owner in sec.get("PATHS", []):
@@ -362,10 +404,15 @@ def check(a):
     report("missing graphics files", files)
     report("sprite sheets too small", sprites)
     report("unlocked but uncraftable recipes", [f"{r}: {why}" for r, why in uncraft])
+    menu_info, menu = check_crafting_menu(m, sec)
+    print("\ncrafting menu (issue #49):")
+    for line in menu_info:
+        print("  " + line)
+    report("machine recipes hidden from the crafting menu without an allow-list entry", menu)
     if a.locale_out:
         Path(a.locale_out).write_text("\n".join("\t".join(r) for r in sec.get("LOCALE", [])))
         print(f"\nlocale name list written to {a.locale_out} (input for tools/gen_locale.py)")
-    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft)
+    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu)
     print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
     return 0 if ok else 1
 
