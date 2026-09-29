@@ -6,14 +6,21 @@ Sources:
     GTNewHorizons/GT5-Unofficial (LGPL-3.0), tinted with the GT material color of the tier
   * existing Gregtorio icons (ME drive, storage housing)
   * everything else (drive bays, cell LEDs, interface arrows) is drawn here with Pillow
+  * the fluid variants (prototypes/122-fork-ae2-fluids.lua) are derived from the item PNGs
+    generated here: the same shapes with blue accents instead of fluix purple
 
-    python tools/gen_ae2_sprites.py --gt C:/00_Repositories/GT5-Unofficial
+    python tools/gen_ae2_sprites.py --gt C:/00_Repositories/GT5-Unofficial   # everything
+    python tools/gen_ae2_sprites.py --fluids      # only the fluid graphics, from the existing item PNGs
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
   graphics/icons/fork/me-*.png             32x32 item icons (also pattern provider, molecular assembler,
                                            crafting CPU of prototypes/121-fork-ae2-autocrafting.lua)
   graphics/technology/fork/me-*.png        256x256 technology icons
+  fluids (--fluids, or after everything else with --gt):
+  graphics/entity/fork/ae2/me-fluid-drive-<tier>.png, me-fluid-interface.png
+  graphics/icons/fork/me-<tier>-fluid-storage-cell.png, me-fluid-drive-<tier>.png, me-fluid-interface.png
+  graphics/technology/fork/me-fluid-storage.png, me-fluid-storage-256k.png
 """
 import argparse
 from pathlib import Path
@@ -226,28 +233,125 @@ def autocrafting(gt):
     upscale(load(OUT_ICON / "me-molecular-assembler.png")).save(OUT_TECH / "me-autocrafting.png")
 
 
+# --- fluids (prototypes/122-fork-ae2-fluids.lua) -------------------------------------------
+# Derived from the item PNGs written above (not from the GT textures), so this part also runs
+# without a checkout: the AE2 fluid cells look like the item cells with blue accents.
+FLUID = (70, 150, 255)              # accent: cell drop, drive border ring, interface arrows
+FLUID_LIGHT = (120, 190, 255)
+STEEL = (95, 150, 225)              # the cell's gray housing is multiplied by this
+FLUID_BAY = (40, 70, 120)           # drive bay outlines (instead of BAY)
+FLUID_HOUSING = (110, 150, 210)     # cell housings in the bays (instead of HOUSING)
+PIPE = (90, 130, 190)               # pipe ring of the fluid interface
+
+
+def neutral(rgb, lo=90, hi=200, spread=12):
+    """A gray pixel (channels within `spread` of each other) with a brightness in lo..hi."""
+    r, g, b = rgb
+    return max(abs(r - g), abs(g - b), abs(r - b)) <= spread and lo <= (r + g + b) // 3 <= hi
+
+
+def recolor(img, mapping):
+    """Replaces exact RGB values (mapping old -> new), alpha is kept."""
+    px = img.load()
+    for y in range(img.height):
+        for x in range(img.width):
+            p = px[x, y]
+            new = mapping.get(p[:3])
+            if new is not None:
+                px[x, y] = new + (p[3],)
+    return img
+
+
+def fluid_cell_icon(cell):
+    """Item cell icon of the tier with a steel blue housing, the tier LED and component window
+    kept, and a blue drop (2x6 bar) bottom left, mirroring the LED."""
+    led, _ = CELLS[cell]
+    window = (led[0] * 2 // 3, led[1] * 2 // 3, led[2] * 2 // 3)      # as drawn by cell_icon()
+    img = load(OUT_ICON / f"me-{cell}-storage-cell.png")
+    px = img.load()
+    for y in range(img.height):
+        for x in range(img.width):
+            r, g, b, a = px[x, y]
+            if a and (r, g, b) not in (led, window) and neutral((r, g, b)):
+                px[x, y] = (r * STEEL[0] // 255, g * STEEL[1] // 255, b * STEEL[2] // 255, a)
+    ImageDraw.Draw(img).rectangle((12, 22, 13, 27), fill=FLUID + (255,))
+    return img
+
+
+def fluid_drive_icon(cell_icon_img):
+    """Like drive_icon(), with the fluid cell as the badge."""
+    img = load(ICONS / "me-drive.png")
+    img.alpha_composite(cell_icon_img.resize((20, 20), Image.NEAREST), (12, 12))
+    return img
+
+
+def fluid_drive_sprite(cell):
+    """Item drive sprite with the bays and cell housings shifted to blue (LEDs kept) and a
+    1 px blue ring just inside the tile edge."""
+    img = recolor(load(OUT_ENTITY / f"me-drive-{cell}.png"), {BAY: FLUID_BAY, HOUSING: FLUID_HOUSING})
+    ImageDraw.Draw(img).rectangle((1, 1, TILE - 2, TILE - 2), outline=FLUID + (255,))
+    return img
+
+
+def fluid_interface_sprite():
+    """Item interface sprite with the fluix arrows in blue and a pipe ring (2 px circle of
+    radius 9) around the center. Also used as the item icon."""
+    img = recolor(load(OUT_ENTITY / "me-interface.png"), {FLUIX: FLUID, FLUIX_LIGHT: FLUID_LIGHT})
+    c = TILE // 2
+    ImageDraw.Draw(img).ellipse((c - 9, c - 9, c + 8, c + 8), outline=PIPE + (255,), width=2)
+    return img
+
+
+def fluids():
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for cell in CELLS:
+        icon = fluid_cell_icon(cell)
+        save(icon, OUT_ICON / f"me-{cell}-fluid-storage-cell.png")
+        save(fluid_drive_icon(icon), OUT_ICON / f"me-fluid-drive-{cell}.png")
+        save(fluid_drive_sprite(cell), OUT_ENTITY / f"me-fluid-drive-{cell}.png")
+    interface = fluid_interface_sprite()
+    save(interface, OUT_ENTITY / "me-fluid-interface.png")
+    save(interface, OUT_ICON / "me-fluid-interface.png")
+    for tech, icon in (("me-fluid-storage", "me-fluid-drive-16k"),
+                       ("me-fluid-storage-256k", "me-fluid-drive-256k")):
+        save(upscale(load(OUT_ICON / f"{icon}.png")), OUT_TECH / f"{tech}.png")
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gt", type=Path, required=True, help="path to the GT5-Unofficial checkout")
+    ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
+    ap.add_argument("--fluids", action="store_true",
+                    help="only the fluid graphics, derived from the existing item PNGs (no checkout needed)")
     a = ap.parse_args()
+    if not a.gt and not a.fluids:
+        ap.error("either --gt <checkout> or --fluids is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
-    for cell in CELLS:
-        drive_sprite(a.gt, cell).save(OUT_ENTITY / f"me-drive-{cell}.png")
-        cell_icon(cell).save(OUT_ICON / f"me-{cell}-storage-cell.png")
-        drive_icon(cell).save(OUT_ICON / f"me-drive-{cell}.png")
-    interface_sprite(a.gt).save(OUT_ENTITY / "me-interface.png")
-    off, lit = terminal_sprites(a.gt)
-    off.save(OUT_ENTITY / "me-terminal-off.png")
-    lit.save(OUT_ENTITY / "me-terminal-on.png")
-    controller_sprite(a.gt).save(OUT_ENTITY / "me-controller.png")
+    if a.gt:
+        for cell in CELLS:
+            drive_sprite(a.gt, cell).save(OUT_ENTITY / f"me-drive-{cell}.png")
+            cell_icon(cell).save(OUT_ICON / f"me-{cell}-storage-cell.png")
+            drive_icon(cell).save(OUT_ICON / f"me-drive-{cell}.png")
+        interface_sprite(a.gt).save(OUT_ENTITY / "me-interface.png")
+        off, lit = terminal_sprites(a.gt)
+        off.save(OUT_ENTITY / "me-terminal-off.png")
+        lit.save(OUT_ENTITY / "me-terminal-on.png")
+        controller_sprite(a.gt).save(OUT_ENTITY / "me-controller.png")
 
-    for tech, icon in (("me-network", "me-drive-16k"), ("me-storage-64k", "me-drive-64k"),
-                       ("me-storage-256k", "me-drive-256k")):
-        upscale(load(OUT_ICON / f"{icon}.png")).save(OUT_TECH / f"{tech}.png")
-    autocrafting(a.gt)
-    print("ME sprites:", len(list(OUT_ENTITY.glob("*.png"))))
+        for tech, icon in (("me-network", "me-drive-16k"), ("me-storage-64k", "me-drive-64k"),
+                           ("me-storage-256k", "me-drive-256k")):
+            upscale(load(OUT_ICON / f"{icon}.png")).save(OUT_TECH / f"{tech}.png")
+        autocrafting(a.gt)
+        print("ME sprites:", len(list(OUT_ENTITY.glob("*.png"))))
+    written = fluids()
+    print("ME fluid sprites:", len(written))
 
 
 if __name__ == "__main__":
