@@ -112,7 +112,7 @@ def setup(a):
 MOD_NAMES = ("Gregtorio", "gregtorio-continued")   # the mod before and since 0.3.0
 
 
-def prepare_mods(with_runtime=False, gregtorio_zip=None):
+def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False):
     """mods/ = dependency zips + the mod (working copy or a zip) + devcheck helper mods."""
     for p in MODS.iterdir():
         if p.name.startswith(MOD_NAMES + ("zz-gregtorio-devcheck",)) or p.name == "mod-list.json":
@@ -135,6 +135,9 @@ def prepare_mods(with_runtime=False, gregtorio_zip=None):
     if with_runtime:
         (MODS / "zz-gregtorio-devcheck-runtime").symlink_to(HERE / "runtimemod", target_is_directory=True)
         enabled.append("zz-gregtorio-devcheck-runtime")
+    if with_migrate:
+        (MODS / "zz-gregtorio-devcheck-migrate").symlink_to(HERE / "migratemod", target_is_directory=True)
+        enabled.append("zz-gregtorio-devcheck-migrate")
     (MODS / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in enabled]}))
 
 
@@ -379,6 +382,8 @@ def runtime(a):
     print(f"autocrafting test: {autocraft.group(1) if autocraft else 'did not run'}")
     fluids = re.search(r"DEVCHECK-RUNTIME-FLUIDS (.*)", log)
     print(f"fluid test: {fluids.group(1) if fluids else 'did not run'}")
+    recovery = re.search(r"DEVCHECK-RUNTIME-RECOVERY (.*)", log)
+    print(f"fluid recovery test: {recovery.group(1) if recovery else 'did not run'}")
     power = re.search(r"DEVCHECK-RUNTIME-POWER (.*)", log)
     print(f"power test: {power.group(1) if power else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (\w+)", log)
@@ -395,13 +400,17 @@ def runtime(a):
         fails.append("fluid test did not run (needs --ticks >= 1500)")
     elif not fluids.group(1).startswith("ok"):
         fails.append("fluid test failed")
+    if not recovery:
+        fails.append("fluid recovery test did not run (needs --ticks >= 1500)")
+    elif not recovery.group(1).startswith("ok"):
+        fails.append("fluid recovery test failed")
     if not power:
         fails.append("power test did not run (needs --ticks >= 420)")
     elif not power.group(1).startswith("ok"):
         fails.append("power test failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, fluid test, power test, victory test)", fails)
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, fluid test, fluid recovery test, power test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
@@ -423,18 +432,24 @@ def zip_from_ref(ref):
 def migrate(a):
     """Create a map with an older version (also "Gregtorio" before 0.3.0), then load and run it with the working copy."""
     old = a.from_zip or zip_from_ref(a.from_ref)
-    prepare_mods(gregtorio_zip=old)
+    prepare_mods(gregtorio_zip=old, with_migrate=True)
     log = factorio("--create", str(WORK / "migrate-map.zip"))
     if load_errors(log):
         print("could not create the map with the old version:\n" + load_errors(log))
         return 1
-    prepare_mods()
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
+    print(f"old save with loaded fluid drives: {setup.group(1) if setup else 'no result'}")
+    prepare_mods(with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
+    fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
     print(f"old save loaded with working copy: {'ok, ' + ran.group(0) if ran else 'FAILED'}")
+    print(f"fluid drives of the old save: {fluids.group(1) if fluids else 'no result'}")
+    for f in re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log):
+        print("  - " + f)
     if not ran:
         print(load_errors(log) or "")
-    return 0 if ran else 1
+    return 0 if ran and fluids and not fluids.group(1).startswith("failed") else 1
 
 
 def main():

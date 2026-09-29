@@ -13,6 +13,9 @@
 --- construction robots, and pattern machines with fluid recipes (chemical reactors, an extractor). Checks the
 --- import and export totals, a drive picked up (contents on the item) and placed again by script and by
 --- robots, a reported fluid shortfall, and jobs with a fluid ingredient, a fluid product and both.
+--- Fluid recovery (issue #26): a destroyed drive (other drives take what fits, the rest is pooled and a
+--- robot-rebuilt drive takes it over), the upgrade planner (fluid stays on the old item), the cells taken
+--- out of a loaded item by hand (inside and outside a network) and a deleted surface with a pool.
 --- Molds (prototypes/150-fork-molds.lua): an LV alloy smelter with a mold recipe must stop
 --- without a mold, run with a mold in its mold slot and keep the mold there.
 --- Endgame power (prototypes/136-fork-power.lua): a plasma turbine and a naquadah reactor under load
@@ -352,6 +355,7 @@ end
 script.on_nth_tick(10, function()
 	if not (storage.autocraft and storage.autocraft.done) then autocraft_test() end
 	if not (storage.fluids and storage.fluids.done) then fluid_test() end
+	if not (storage.fluid_rec and storage.fluid_rec.done) then recovery_test() end
 end)
 
 
@@ -739,6 +743,204 @@ function fluid_test()
 	end
 end
 
+--------------------------------------------------------------------------------
+--- fluid recovery (issue #26): destroyed drives, the upgrade planner, taking the cells out by hand
+--------------------------------------------------------------------------------
+
+local RC_Y = 330                                        -- below the power test, own roboport
+local RC = {
+	d1 = { FL_DRIVE, 8.5, RC_Y + 3.5 },
+	d2 = { FL_DRIVE, 10.5, RC_Y + 3.5 },
+	idrive = { "me-drive-16k", 13.5, RC_Y + 3.5 },     -- the robots' storage
+}
+local RC_UPGRADE = "me-fluid-drive-4k"
+local RC_OUTSIDE = { 120.5, RC_Y + 0.5 }                -- no logistic network here
+
+function setup_recovery_test(s)
+	local fails = {}
+	local function place(name, x, y)
+		local ok, e = pcall(function()
+			return s.create_entity{ name = name, position = { x, y }, force = "player", raise_built = true }
+		end)
+		if not (ok and e) then fails[#fails + 1] = "recovery " .. name .. ": " .. tostring(e) return nil end
+		return e
+	end
+	local eei = place("electric-energy-interface", 0, RC_Y)
+	if eei then
+		eei.power_production = 1e6
+		eei.electric_buffer_size = 1e7
+	end
+	place("substation", 3, RC_Y)
+	place("me-controller", 6, RC_Y)
+	place(RC.d1[1], RC.d1[2], RC.d1[3])
+	place(RC.d2[1], RC.d2[2], RC.d2[3])
+	local idrive = place(RC.idrive[1], RC.idrive[2], RC.idrive[3])
+	if idrive then
+		idrive.insert{ name = FL_DRIVE, count = 1 }         -- rebuilds the ghost of the destroyed drive
+		idrive.insert{ name = RC_UPGRADE, count = 1 }       -- for the upgrade planner
+	end
+	local port = place("roboport", 16, RC_Y)
+	if port then port.insert{ name = "construction-robot", count = 4 } end
+	return fails
+end
+
+function recovery_test()
+	local s = game.surfaces[1]
+	local F = "gregtorio-me-fluids"
+	local function ent(def, name) return s.find_entity(name or def[1], { def[2], def[3] }) end
+	local ref = ent(RC.idrive)
+	local function count(fluid) return ref and remote.call(F, "count", ref, fluid) or -1 end
+	local function near(a, b) return math.abs((a or 0) - (b or 0)) <= FL_EPS end
+	local function pool() return remote.call(F, "recovered", s, "player") end
+	local function same(a, b)                           -- two { fluid -> amount } tables
+		for k, v in pairs(a) do if not near(v, b[k]) then return false end end
+		for k, v in pairs(b) do if not near(v, a[k]) then return false end end
+		return true
+	end
+	local st = storage.fluid_rec
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish_test(note)
+		storage.fluid_rec.done = true
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL recovery: " .. p) end
+		log("DEVCHECK-RUNTIME-RECOVERY " .. (#problems == 0 and "ok" or "failed") .. (note and (" (" .. note .. ")") or ""))
+	end
+	local function next_phase(name) st.phase = name st.phase_tick = game.tick end
+	local function timeout_after(ticks, what)
+		if game.tick > st.phase_tick + ticks then
+			expect(false, what .. " timed out")
+			finish_test()
+		end
+	end
+	--- the drive item with fluid tags in the robots' storage (nil if there is none)
+	local function loaded_item(name)
+		local inv = ref.get_inventory(defines.inventory.chest)
+		for i = 1, #inv do
+			local stack = inv[i]
+			if stack.valid_for_read and stack.name == name and stack.is_item_with_tags then
+				local tags = stack.tags
+				if tags and tags.fork_me_fluids then return stack, tags.fork_me_fluids end
+			end
+		end
+	end
+
+	if not st then
+		if game.tick < 60 then return end
+		storage.fluid_rec = { started = game.tick, phase = "destroy", phase_tick = game.tick }
+		st = storage.fluid_rec
+		local d1, d2 = ent(RC.d1), ent(RC.d2)
+		expect(ref and d1 and d2, "entities missing")
+		if #problems > 0 then return finish_test() end
+		local capacity, used = remote.call(F, "capacity", ref)
+		expect(capacity == 64000 and used == 0, "capacity " .. tostring(capacity) .. "/" .. tostring(used))
+		--- water fills drive 1 (30000), chlorine fills it up (2000) and goes on into drive 2 (8000)
+		expect(near(remote.call(F, "insert", ref, "water", 30000), 30000), "could not insert water")
+		expect(near(remote.call(F, "insert", ref, "chlorine", 10000), 10000), "could not insert chlorine")
+		local c1, c2 = remote.call(F, "drive", d1), remote.call(F, "drive", d2)
+		expect(same(c1.contents, { water = 30000, chlorine = 2000 }) and same(c2.contents, { chlorine = 8000 }),
+			"drive contents " .. serpent.line(c1.contents) .. " " .. serpent.line(c2.contents))
+		st.before = remote.call(F, "totals", ref)
+		--- 1) a destroyed drive: drive 2 takes what fits (chlorine 2000, water 22000), 8000 water is pooled
+		expect(d1.die(), "drive 1 did not die")
+		local totals, left = remote.call(F, "totals", ref), pool()
+		expect(same(totals, { water = 22000, chlorine = 10000 }), "network after the destroyed drive " .. serpent.line(totals))
+		expect(same(left, { water = 8000 }), "recovered fluid after the destroyed drive " .. serpent.line(left))
+		for name, amount in pairs(st.before) do
+			expect(near((totals[name] or 0) + (left[name] or 0), amount), name .. " not conserved: " .. serpent.line(totals) .. " + " .. serpent.line(left))
+		end
+		expect(near(remote.call(F, "drive", d2).used, 32000), "drive 2 not full")
+		--- the ghost of the destroyed drive (created by the engine; if not, by the test) is rebuilt by robots
+		local ghosts = s.find_entities_filtered{ ghost_name = FL_DRIVE, position = { RC.d1[2], RC.d1[3] }, radius = 0.5 }
+		st.engine_ghost = #ghosts > 0
+		if not st.engine_ghost then
+			s.create_entity{ name = "entity-ghost", inner_name = FL_DRIVE, position = { RC.d1[2], RC.d1[3] }, force = "player" }
+		end
+		if #problems > 0 then return finish_test() end
+		return
+	end
+	if st.done then return end
+
+	local phase = st.phase
+	if phase == "destroy" then
+		local rebuilt = ent(RC.d1)
+		if rebuilt then
+			--- 2) the rebuilt drive takes the recovered fluid over: the network holds everything again
+			expect(next(pool()) == nil, "recovered fluid left after the rebuild " .. serpent.line(pool()))
+			expect(same(remote.call(F, "totals", ref), st.before), "network after the rebuild " .. serpent.line(remote.call(F, "totals", ref)))
+			expect(same(remote.call(F, "drive", rebuilt).contents, { water = 8000 }), "rebuilt drive " .. serpent.line(remote.call(F, "drive", rebuilt)))
+			if #problems > 0 then return finish_test() end
+			--- 3) the upgrade planner on the full drive 2: its fluid stays on the old drive item
+			local d2 = ent(RC.d2)
+			expect(d2.order_upgrade{ target = RC_UPGRADE, force = "player" }, "order_upgrade refused")
+			return next_phase("upgrade")
+		end
+		local ghosts = s.find_entities_filtered{ ghost_name = FL_DRIVE, position = { RC.d1[2], RC.d1[3] }, radius = 0.5 }
+		timeout_after(600, "robots rebuilding the destroyed drive (ghosts " .. #ghosts .. ", drive items in storage "
+			.. ref.get_item_count(FL_DRIVE) .. ")")
+	elseif phase == "upgrade" then
+		local new = ent(RC.d2, RC_UPGRADE)
+		local stack, carried = loaded_item(FL_DRIVE)
+		if new and stack then
+			local d = remote.call(F, "drive", new)
+			expect(d and d.capacity == 128000 and d.used == 0, "upgraded drive " .. serpent.line(d))
+			expect(same(carried, { water = 22000, chlorine = 10000 }), "old drive item after the upgrade carries " .. serpent.line(carried))
+			expect(same(remote.call(F, "totals", ref), { water = 8000 }), "network after the upgrade " .. serpent.line(remote.call(F, "totals", ref)))
+			expect(next(pool()) == nil, "the upgrade pooled fluid " .. serpent.line(pool()))
+			--- 4) the cells are taken out of the loaded item by hand (what the craft event does): the
+			--- fluid goes into the drives of the network at the player's position, the item loses its tags
+			local inv = game.create_inventory(1)
+			inv[1].transfer_stack(stack)
+			local moved, pooled = remote.call(F, "salvage_items", inv, s, "player", { RC.idrive[2], RC.idrive[3] })
+			expect(same(moved, { water = 22000, chlorine = 10000 }) and next(pooled) == nil, "disassembly in the network: moved " .. serpent.line(moved) .. ", pooled " .. serpent.line(pooled))
+			expect(same(remote.call(F, "totals", ref), st.before), "network after the disassembly " .. serpent.line(remote.call(F, "totals", ref)))
+			local tags = inv[1].valid_for_read and inv[1].tags or {}
+			expect(inv[1].valid_for_read and inv[1].name == FL_DRIVE and not tags.fork_me_fluids, "the disassembled item still carries fluid " .. serpent.line(tags))
+			--- 5) the same outside any network: everything is pooled, a drive's take over empties the pool
+			inv[1].set_stack{ name = FL_DRIVE, count = 1 }
+			inv[1].tags = { fork_me_fluids = { water = 500 } }
+			moved, pooled = remote.call(F, "salvage_items", inv, s, "player", RC_OUTSIDE)
+			expect(next(moved) == nil and same(pooled, { water = 500 }), "disassembly outside: moved " .. serpent.line(moved) .. ", pooled " .. serpent.line(pooled))
+			expect(same(pool(), { water = 500 }), "recovered fluid after the disassembly outside " .. serpent.line(pool()))
+			local taken = remote.call(F, "take_recovered", new)
+			expect(same(taken, { water = 500 }) and next(pool()) == nil, "take over: " .. serpent.line(taken) .. ", left " .. serpent.line(pool()))
+			expect(near(count("water"), 30500), "water after the take over " .. count("water"))
+			inv.destroy()
+			--- 6) a loaded drive removed by another mod without an event: the next lookup pools its fluid
+			local silent = s.create_entity{ name = FL_DRIVE, position = RC_OUTSIDE, force = "player", raise_built = true }
+			remote.call(F, "unpack_drive", silent, { fork_me_fluids = { water = 300 } })
+			silent.destroy()
+			expect(near(count("water"), 30500), "water after the silent removal " .. count("water"))
+			expect(same(pool(), { water = 300 }), "recovered fluid after the silent removal " .. serpent.line(pool()))
+			taken = remote.call(F, "take_recovered", new)
+			expect(same(taken, { water = 300 }) and next(pool()) == nil, "take over after the silent removal: " .. serpent.line(taken))
+			--- 7) a drive destroyed outside any network on another surface pools everything; deleting the
+			--- surface drops that pool (and reports it)
+			local other = game.create_surface("fork-recovery-test", { width = 64, height = 64 })
+			other.request_to_generate_chunks({ 0, 0 }, 1)
+			other.force_generate_chunk_requests()
+			local lone = other.create_entity{ name = FL_DRIVE, position = { 0.5, 0.5 }, force = "player", raise_built = true }
+			expect(lone, "no drive on the other surface")
+			if not lone then return finish_test() end
+			remote.call(F, "unpack_drive", lone, { fork_me_fluids = { chlorine = 700 } })
+			expect(same(remote.call(F, "drive", lone).contents, { chlorine = 700 }), "lone drive " .. serpent.line(remote.call(F, "drive", lone)))
+			lone.die()
+			expect(same(remote.call(F, "recovered", other, "player"), { chlorine = 700 }), "pool of the other surface " .. serpent.line(remote.call(F, "recovered", other, "player")))
+			st.other = other.index
+			game.delete_surface(other)
+			if #problems > 0 then return finish_test() end
+			return next_phase("surface")
+		end
+		timeout_after(600, "robots upgrading the drive")
+	elseif phase == "surface" then
+		if not game.get_surface(st.other) then
+			expect(next(remote.call(F, "recovered", st.other, "player")) == nil, "the deleted surface keeps recovered fluid")
+			expect(same(remote.call(F, "totals", ref), { water = 30800, chlorine = 10000 }), "network at the end " .. serpent.line(remote.call(F, "totals", ref)))
+			return finish_test("ghost " .. (st.engine_ghost and "by the engine" or "by the test") .. ", whole test " .. (game.tick - st.started) .. " ticks")
+		end
+		timeout_after(120, "deleting the surface")
+	end
+end
+
 --- Endgame power (prototypes/136-fork-power.lua, scripts/fork-power.lua): a LuV large plasma turbine
 --- with helium plasma and a turbine output hatch next to it, and a UV large naquadah reactor with
 --- naquadah based fuel MK1, each loaded by an electric energy interface that draws the generator's
@@ -912,6 +1114,7 @@ script.on_init(function()
 	for _, f in pairs(setup_mold_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_autocraft_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fluid_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_recovery_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end

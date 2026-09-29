@@ -1,0 +1,12 @@
+{
+  "name": "zz-gregtorio-devcheck-migrate",
+  "version": "1.0.0",
+  "title": "Gregtorio devcheck migrate",
+  "author": "rykon_",
+  "factorio_version": "2.0",
+  "description": "Test helper for tools/devcheck migrate: builds loaded ME fluid drives with an older version and checks them after the update. Not meant for normal play.",
+  "dependencies": [
+    "? Gregtorio",
+    "? gregtorio-continued"
+  ]
+}
