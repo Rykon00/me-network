@@ -112,20 +112,39 @@ script.on_nth_tick(300, function(event)
 end)
 
 --- Victory (scripts/fork-victory.lua): researching `victory` must win the game, and go on.
---- Winning stops the scripts of the benchmark run (no player to continue), so this runs last, at
---- tick 1450, and is checked in the same tick.
-script.on_nth_tick(1450, function(event)
-	if storage.victory_checked or event.tick == 0 then return end
+--- Winning stops the scripts of the benchmark run (no player to continue), so this runs last: as soon
+--- as every other test has reported, at the latest at tick VICTORY_DEADLINE (a test still running
+--- then is reported as unfinished). Checked from the 10-tick handler below.
+local VICTORY_DEADLINE = 1450
+local function tests_running()
+	local running = {}
+	local function check(done, name) if not done then running[#running + 1] = name end end
+	check(storage.me_checked, "ME network")
+	check(storage.mold_done, "mold")
+	check(storage.autocraft and storage.autocraft.done, "autocrafting")
+	check(storage.furnace and storage.furnace.done, "furnace patterns")
+	check(storage.fluids and storage.fluids.done, "fluids")
+	check(storage.fluid_rec and storage.fluid_rec.done, "fluid recovery")
+	check(storage.power_checked, "power")
+	check(storage.fuel and storage.fuel.done, "fuel check")
+	return running
+end
+
+function victory_test()
+	if storage.victory_checked then return end
+	local running = tests_running()
+	if #running > 0 and game.tick < VICTORY_DEADLINE then return end
 	storage.victory_checked = true
 	local problems = {}
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	expect(#running == 0, "tests still running at tick " .. game.tick .. ": " .. table.concat(running, ", "))
 	local ok, err = pcall(function() game.forces.player.technologies["victory"].researched = true end)
 	expect(ok, "victory test: " .. tostring(err))
 	--- (can_continue cannot be read before a player chooses to go on; the script passes it, see fork-victory.lua)
 	expect(game.finished, "victory test: researching `victory` did not finish the game")
 	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
-	log("DEVCHECK-RUNTIME-VICTORY " .. (#problems == 0 and "ok" or "failed"))
-end)
+	log("DEVCHECK-RUNTIME-VICTORY " .. (#problems == 0 and "ok" or "failed") .. " (tick " .. game.tick .. ")")
+end
 
 local AC_Y = 140
 local AC_PLATES, AC_STICKS = 200, 100
@@ -547,6 +566,7 @@ script.on_nth_tick(10, function()
 	if not (storage.fluids and storage.fluids.done) then fluid_test() end
 	if not (storage.fluid_rec and storage.fluid_rec.done) then recovery_test() end
 	if not (storage.fuel and storage.fuel.done) then fuel_test() end
+	victory_test()
 end)
 
 
@@ -1385,6 +1405,7 @@ end
 
 local MOLD_Y = 120
 local MOLD_RECIPE = "glass-alloy-smelter"
+local MOLD_DEADLINE = 900                               -- ticks for the first glass with the mold in (361 needed)
 
 function setup_mold_test(s)
 	local ok, err = pcall(function()
@@ -1406,11 +1427,15 @@ script.on_event(defines.events.on_tick, function(event)
 	fuel_window_tick()
 	local m = storage.mold_machine
 	if storage.mold_done then return end
+	local function glass_made()
+		return m and m.valid and m.get_inventory(defines.inventory.crafter_output or defines.inventory.assembling_machine_output).get_item_count("glass") or 0
+	end
+	--- phase 2 as soon as the first glass is out, at the latest MOLD_DEADLINE ticks after the mold went in
 	local phase
 	if not storage.mold_phase1 and event.tick >= 60 then
 		phase = 1
 		storage.mold_phase1 = event.tick
-	elseif storage.mold_phase1 and event.tick >= storage.mold_phase1 + 450 then
+	elseif storage.mold_phase1 and (glass_made() > 0 or event.tick >= storage.mold_phase1 + MOLD_DEADLINE) then
 		phase = 2
 		storage.mold_done = true
 	else
@@ -1420,7 +1445,7 @@ script.on_event(defines.events.on_tick, function(event)
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
 	expect(m and m.valid, "mold test machine missing")
 	if #problems == 0 then
-		local glass = m.get_inventory(defines.inventory.crafter_output or defines.inventory.assembling_machine_output).get_item_count("glass")
+		local glass = glass_made()
 		local inv = m.get_module_inventory()
 		if phase == 1 then
 			expect(m.disabled_by_script, "mold test: machine without mold is not stopped")
@@ -1431,7 +1456,7 @@ script.on_event(defines.events.on_tick, function(event)
 			expect(glass > 0, "mold test: no glass crafted with the mold inserted")
 			expect(inv.get_item_count("mold") == 1, "mold test: mold left the mold slot")
 			expect(m.get_item_count("mold") == 1, "mold test: mold was duplicated or moved")
-			log("DEVCHECK-RUNTIME-MOLD " .. (#problems == 0 and "ok" or "failed") .. " (glass " .. glass .. ")")
+			log("DEVCHECK-RUNTIME-MOLD " .. (#problems == 0 and "ok" or "failed") .. " (glass " .. glass .. " after " .. (event.tick - storage.mold_phase1) .. " ticks)")
 		end
 	end
 	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end

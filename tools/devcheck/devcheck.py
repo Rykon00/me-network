@@ -401,7 +401,7 @@ def runtime(a):
     print(f"power test: {power.group(1) if power else 'did not run'}")
     fuel = re.search(r"DEVCHECK-RUNTIME-FUEL (.*)", log)
     print(f"fuel check test: {fuel.group(1) if fuel else 'did not run'}")
-    victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (\w+)", log)
+    victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
         fails.append("ME network test did not run (needs --ticks >= 300)")
@@ -433,6 +433,8 @@ def runtime(a):
         fails.append("fuel check test failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
+    elif not victory.group(1).startswith("ok"):
+        fails.append("victory test failed")
     report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
