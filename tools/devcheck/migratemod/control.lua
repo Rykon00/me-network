@@ -4,7 +4,9 @@
 --- fluid must go into the other drive and the recovered fluid (issue #26) with nothing lost.
 --- Results are logged as DEVCHECK-MIGRATE-FLUIDS lines. Versions without fluid drives are skipped.
 --- It also builds a large naquadah reactor full of steam under load, which must be stopped after the
---- update (DEVCHECK-MIGRATE-POWER, issue #25).
+--- update (DEVCHECK-MIGRATE-POWER, issue #25), and a LuV plasma turbine on helium plasma under full load
+--- with a turbine output hatch, which must run after the update and return one helium per plasma
+--- (DEVCHECK-MIGRATE-TURBINE, issue #28).
 --- Pattern providers (issue #27): in the same network a Molecular Assembler and a fresh iron furnace with
 --- providers. After the update the assembler must still be a pattern, the furnace must be counted as
 --- "no-recipe", and a recipe chosen in the old provider must make the furnace a pattern
@@ -75,6 +77,56 @@ local function check_power()
 	log("DEVCHECK-MIGRATE-POWER " .. (#problems == 0 and "ok" or "failed") .. string.format(" (steam %.1f of %.1f)", left, p.steam))
 end
 
+--- Plasma turbine (issue #28): placed with the old version (its old state), it must burn plasma after
+--- the update and the hatch must get the cooled helium for it (hatch + owed + the energy of the current
+--- step / fuel value, within 0.1 %), checked at tick 120. Versions without the turbine are skipped.
+local TB = "luv-large-plasma-turbine"
+local TB_POS = { 75.5, Y + 1.5 }
+local TB_PLASMA, TB_POWER = 100, 81.92e6
+
+local function setup_turbine()
+	if not (prototypes.entity[TB] and prototypes.entity["turbine-output-hatch"]) then
+		storage.turbine = "skipped"
+		log("DEVCHECK-MIGRATE-SETUP-TURBINE skipped (no plasma turbine in this version)")
+		return
+	end
+	local s = game.surfaces[1]
+	local t = s.create_entity{ name = TB, position = TB_POS, force = "player", raise_built = true }
+	local got = t.insert_fluid{ name = "helium-plasma", amount = TB_PLASMA }
+	local h = s.create_entity{ name = "turbine-output-hatch", position = { TB_POS[1] + 2, TB_POS[2] }, force = "player", raise_built = true }
+	local eei = s.create_entity{ name = "electric-energy-interface", position = { TB_POS[1], TB_POS[2] + 6 }, force = "player" }
+	eei.power_production = 0
+	eei.power_usage = TB_POWER / 60
+	eei.electric_buffer_size = TB_POWER / 60
+	s.create_entity{ name = "substation", position = { TB_POS[1] + 4, TB_POS[2] + 6 }, force = "player" }
+	storage.turbine = { turbine = t, hatch = h, plasma = got }
+	log("DEVCHECK-MIGRATE-SETUP-TURBINE " .. (got == TB_PLASMA and "ok" or "failed") .. " (turbine with " .. got .. " helium plasma)")
+end
+
+local function check_turbine()
+	local p = storage.turbine
+	if p == nil or p == "skipped" then
+		log("DEVCHECK-MIGRATE-TURBINE skipped")
+		return
+	end
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local t, h = p.turbine, p.hatch
+	expect(t.valid and h.valid, "the turbine or its hatch is gone")
+	local burnt, back = 0, 0
+	if t.valid and h.valid then
+		local seg = t.fluidbox.get_fluid_segment_contents(1)
+		burnt = p.plasma - t.get_fluid_count("helium-plasma") - ((seg and seg["helium-plasma"]) or 0)
+		local P = "gregtorio-power"
+		back = h.get_fluid_count("helium") + remote.call(P, "debt", t, "helium")
+			+ remote.call(P, "energy", t) / prototypes.fluid["helium-plasma"].fuel_value
+		expect(burnt > 0.2, "the turbine burnt only " .. burnt .. " plasma")
+		expect(math.abs(back - burnt) <= 1e-3 + 1e-3 * burnt, "the turbine burnt " .. burnt .. " plasma and returned " .. back .. " helium")
+	end
+	for _, m in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL turbine: " .. m) end
+	log("DEVCHECK-MIGRATE-TURBINE " .. (#problems == 0 and "ok" or "failed") .. string.format(" (%.4f plasma -> %.4f helium)", burnt, back))
+end
+
 local A = "gregtorio-me-autocraft"
 local PT_ASSEMBLER, PT_FURNACE = { 14.5, Y + 8.5 }, { 19, Y + 13 }
 local PT_PROVIDER_A, PT_PROVIDER_F = { 16.5, Y + 8.5 }, { 17.5, Y + 12.5 }
@@ -129,6 +181,7 @@ end
 
 script.on_init(function()
 	setup_power()
+	setup_turbine()
 	storage.patterns = "skipped"
 	storage.state = "skipped"
 	if not (remote.interfaces[F] and prototypes.entity[DRIVE] and prototypes.entity["me-controller"]) then
@@ -165,7 +218,12 @@ end)
 --- runs after every mod or prototype change: tells the check which path ran
 script.on_configuration_changed(function() storage.config_changed = true end)
 
-script.on_nth_tick(30, function()
+script.on_nth_tick(30, function(event)
+	--- the turbine has to run first (this handler also fires at tick 0)
+	if not storage.turbine_checked and event.tick >= 120 then
+		storage.turbine_checked = true
+		check_turbine()
+	end
 	if storage.checked then return end
 	storage.checked = true
 	check_power()

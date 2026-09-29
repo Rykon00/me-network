@@ -127,6 +127,7 @@ local function tests_running()
 	check(storage.fluid_rec and storage.fluid_rec.done, "fluid recovery")
 	check(storage.power_checked, "power")
 	check(storage.fuel and storage.fuel.done, "fuel check")
+	check(storage.cooled and storage.cooled.done, "cooled fluid")
 	return running
 end
 
@@ -566,6 +567,7 @@ script.on_nth_tick(10, function()
 	if not (storage.fluids and storage.fluids.done) then fluid_test() end
 	if not (storage.fluid_rec and storage.fluid_rec.done) then recovery_test() end
 	if not (storage.fuel and storage.fuel.done) then fuel_test() end
+	if not (storage.cooled and storage.cooled.done) then cooled_test() end
 	victory_test()
 end)
 
@@ -1156,7 +1158,7 @@ end
 --- with helium plasma and a turbine output hatch next to it, and a UV large naquadah reactor with
 --- naquadah based fuel MK1, each loaded by an electric energy interface that draws the generator's
 --- full output. After 7 s both must have produced power and burnt fuel, and the hatch must hold the
---- cooled fluid (helium) for the plasma the turbine burnt.
+--- cooled fluid (helium) for the plasma the turbine burnt (see the cooled fluid test below).
 local PW_Y = 260                                        -- below the fluid test and its roboport area
 local PW_TICK = 420
 local PW = {
@@ -1218,9 +1220,9 @@ script.on_nth_tick(PW_TICK, function(event)
 		expect(turbine.energy_generated_last_tick > 0, "plasma turbine generates nothing")
 		expect(burnt > 0.6 * seconds and burnt < 1.2 * seconds, "plasma turbine burnt " .. burnt .. " helium plasma in " .. seconds .. " s")
 		local helium = hatch.get_fluid_count("helium")
-		local owed = remote.call("gregtorio-power", "debt", turbine)
+		local owed = remote.call("gregtorio-power", "debt", turbine) + remote.call("gregtorio-power", "energy", turbine) / PW.turbine[6]
 		expect(helium > 0, "the output hatch got no helium")
-		expect(math.abs(helium + owed - burnt) < 0.5, "hatch holds " .. helium .. " helium (+ " .. owed .. " owed) for " .. burnt .. " plasma burnt")
+		expect(math.abs(helium + owed - burnt) <= cooled_tolerance(burnt), "hatch holds " .. helium .. " helium (+ " .. owed .. " owed) for " .. burnt .. " plasma burnt")
 		expect(hatch.get_fluid_count("helium-plasma") == 0, "plasma leaked into the output hatch")
 		--- reactor: 327.68 MW on fuel MK1 (58.5 GJ per unit) burns 0.0056 units per second
 		local fuel_left = fluid_in(reactor, "naquadah-based-fuel-mk1")
@@ -1403,6 +1405,174 @@ function fuel_test()
 	end
 end
 
+--- Cooled fluid (issue #28, scripts/fork-power.lua): the cooled fluid in a turbine's output hatch
+--- must match the plasma it burnt, one unit per unit, within COOLED_TOL (relative) + COOLED_ABS
+--- units, whatever the load. Every LuV plasma turbine has its own load (an electric energy interface
+--- that draws exactly the given share of 81.92 MW per tick, no buffer), set every tick:
+---   full, partial (40 %), burst (full for 5 ticks out of 23, idle in between): a known amount of
+---     helium plasma burnt to the last drop, then the hatch must hold exactly that much helium;
+---   idle: no load; only the first fill of the load's buffer is burnt, and returned;
+---   full_hatch: the hatch starts with 3999 of its 4000 helium, so the rest stays owed; once it is
+---     emptied it must get all of it;
+---   pair_a, pair_b: two turbines side by side on helium and nitrogen plasma, one hatch each: each
+---     hatch gets only its own cooled fluid, in the right amount.
+--- A running turbine is compared as hatch + owed + the energy of the current step / fuel value.
+local CO_Y = 370
+local COOLED_TOL, COOLED_ABS = 1e-3, 1e-3
+local CO_DEADLINE = 1300
+local CO_POWER = 81.92e6
+local CO = {
+	--  key           x      plasma            amount  load(tick)                                       hatch x offset
+	{ "full",       200.5, "helium-plasma",   4,     function() return 1 end,                         2 },
+	{ "partial",    225.5, "helium-plasma",   2,     function() return 0.4 end,                       2 },
+	{ "burst",      250.5, "helium-plasma",   1.5,   function(t) return t % 23 < 5 and 1 or 0 end,    2 },
+	{ "idle",       275.5, "helium-plasma",   10,    function() return 0 end,                         2 },
+	{ "full_hatch", 300.5, "helium-plasma",   100,   function() return 1 end,                         2 },
+	{ "pair_a",     330.5, "helium-plasma",   100,   function() return 1 end,                         -2 },
+	{ "pair_b",     333.5, "nitrogen-plasma", 100,   function() return 1 end,                         2 },
+}
+local CO_PREFILL = 3999
+
+function cooled_tolerance(burnt) return COOLED_ABS + COOLED_TOL * burnt end
+
+function setup_cooled_test(s)
+	local fails = {}
+	storage.cooled = { t = {} }
+	for i, def in ipairs(CO) do
+		local ok, err = pcall(function()
+			local g = s.create_entity{ name = "luv-large-plasma-turbine", position = { def[2], CO_Y }, force = "player", raise_built = true }
+			local got = g.insert_fluid{ name = def[3], amount = def[4] }
+			if math.abs(got - def[4]) > 1e-6 then fails[#fails + 1] = "cooled test: " .. def[1] .. " took only " .. got .. " " .. def[3] end
+			local eei = s.create_entity{ name = "electric-energy-interface", position = { def[2], CO_Y + 6 }, force = "player" }
+			eei.power_production = 0
+			eei.power_usage = 0
+			eei.electric_buffer_size = CO_POWER / 60
+			s.create_entity{ name = "substation", position = { def[2] + (def[6] > 0 and 4 or -4), CO_Y + 6 }, force = "player" }
+			local h = s.create_entity{ name = "turbine-output-hatch", position = { def[2] + def[6], CO_Y }, force = "player", raise_built = true }
+			storage.cooled.t[def[1]] = { g = g, eei = eei, h = h, i = i, removed = 0 }
+		end)
+		if not ok then fails[#fails + 1] = "cooled test " .. def[1] .. ": " .. tostring(err) end
+	end
+	local fh = storage.cooled.t.full_hatch
+	if fh then
+		local got = fh.h.insert_fluid{ name = "helium", amount = CO_PREFILL }
+		if math.abs(got - CO_PREFILL) > 1e-6 then fails[#fails + 1] = "cooled test: the full hatch took only " .. got .. " helium" end
+	end
+	return fails
+end
+
+--- Every tick: the load of each turbine
+function cooled_load_tick(tick)
+	local st = storage.cooled
+	if not st or st.done then return end
+	for _, c in pairs(st.t) do
+		if c.eei.valid then c.eei.power_usage = CO_POWER / 60 * CO[c.i][5](tick) end
+	end
+end
+
+function cooled_test()
+	local st = storage.cooled
+	if not st then return end
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish(summary)
+		st.done = true
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL cooled fluid test: " .. p) end
+		log("DEVCHECK-RUNTIME-COOLED " .. (#problems == 0 and "ok" or "failed") .. (summary or ""))
+	end
+	for _, def in ipairs(CO) do
+		local c = st.t[def[1]]
+		if not (c and c.g.valid and c.h.valid and c.eei.valid) then
+			problems[#problems + 1] = def[1] .. " missing"
+			return finish()
+		end
+	end
+	local P = "gregtorio-power"
+	--- the plasma a turbine burnt (entity and segment) and the cooled fluid it returned: in the hatch
+	--- (and taken out of it by the test), owed, and the energy of the current step
+	local function account(c)
+		local def = CO[c.i]
+		local fuel = prototypes.fluid[def[3]].fuel_value
+		local out = def[3] == "helium-plasma" and "helium" or "nitrogen"
+		local seg = c.g.fluidbox.get_fluid_segment_contents(1)
+		local burnt = def[4] - c.g.get_fluid_count(def[3]) - ((seg and seg[def[3]]) or 0)
+		local prefill = def[1] == "full_hatch" and CO_PREFILL or 0
+		local hatch = c.h.get_fluid_count(out) + c.removed - prefill
+		local owed = remote.call(P, "debt", c.g, out)
+		local pending = remote.call(P, "energy", c.g) / fuel
+		return burnt, hatch, owed, pending, out
+	end
+	local function matches(key, c)
+		local burnt, hatch, owed, pending, out = account(c)
+		local ok = math.abs(hatch + owed + pending - burnt) <= cooled_tolerance(burnt)
+		st.worst = math.max(st.worst or 0, math.abs(hatch + owed + pending - burnt) / burnt)
+		expect(ok, string.format("%s: %.6f plasma burnt, hatch got %.6f %s, %.6f owed, %.6f pending", key, burnt, hatch, out, owed, pending))
+		return burnt, hatch + owed + pending - burnt
+	end
+	local tick = game.tick
+	st.dry = st.dry or {}
+	--- the known amounts: burnt to the last drop, stopped for "no fuel", nothing owed or pending
+	for _, key in pairs({ "full", "partial", "burst" }) do
+		local c = st.t[key]
+		if not st.dry[key] then
+			local burnt, hatch, owed, pending = account(c)
+			local amount = CO[c.i][4]
+			if burnt >= amount - 1e-9 and owed < 1e-4 and pending == 0 and c.g.disabled_by_script then
+				st.dry[key] = { tick = tick, hatch = hatch }
+				st.worst = math.max(st.worst or 0, math.abs(hatch - amount) / amount)
+				expect(math.abs(hatch - amount) <= cooled_tolerance(amount),
+					string.format("%s: %.6f plasma burnt, the hatch got %.6f", key, amount, hatch))
+			end
+		end
+	end
+	--- the full hatch: full, the rest owed; then emptied, and it must get everything
+	local fh = st.t.full_hatch
+	if not st.hatch_phase then
+		local burnt, _, owed = account(fh)
+		if burnt >= 3 then
+			expect(math.abs(fh.h.get_fluid_count("helium") - 4000) < 1e-3, "full hatch holds " .. fh.h.get_fluid_count("helium") .. " of 4000")
+			expect(owed > 1.5, "full hatch: only " .. owed .. " helium owed for " .. burnt .. " plasma burnt")
+			matches("full_hatch (full)", fh)
+			st.hatch_owed = owed
+			fh.removed = fh.removed + fh.h.remove_fluid{ name = "helium", amount = 4000 }
+			st.hatch_phase = tick
+		end
+	elseif st.hatch_phase ~= true and tick >= st.hatch_phase + 60 then
+		matches("full_hatch (emptied)", fh)
+		local _, _, owed = account(fh)
+		expect(owed < 0.2, "full hatch: still " .. owed .. " helium owed after it was emptied")
+		st.hatch_phase = true
+	end
+	--- the pair: own fluid only, right amounts
+	if not st.pair_checked and account(st.t.pair_a) >= 3 then
+		matches("pair_a", st.t.pair_a)
+		matches("pair_b", st.t.pair_b)
+		expect(st.t.pair_a.h.get_fluid_count("nitrogen") == 0, "pair_a's hatch got nitrogen")
+		expect(st.t.pair_b.h.get_fluid_count("helium") == 0, "pair_b's hatch got helium")
+		expect(account(st.t.pair_b) > 1, "pair_b burnt only " .. account(st.t.pair_b) .. " nitrogen plasma")
+		st.pair_checked = true
+	end
+	if #problems > 0 then return finish() end
+	if st.dry.full and st.dry.partial and st.dry.burst and st.hatch_phase == true and st.pair_checked then
+		--- idle: only the first fill of its load's buffer (one tick of output each) is burnt
+		local idle_burnt = matches("idle", st.t.idle)
+		expect(idle_burnt < 3 / 60 + 1e-6, "idle turbine burnt " .. idle_burnt .. " plasma")
+		return finish(string.format(" (4/2/1.5 plasma -> %.6f/%.6f/%.6f helium at full/40%%/burst load, worst error %.1e, full hatch owed %.2f)",
+			st.dry.full.hatch, st.dry.partial.hatch, st.dry.burst.hatch, st.worst or 0, st.hatch_owed))
+	end
+	if tick > CO_DEADLINE then
+		local left = {}
+		for _, key in pairs({ "full", "partial", "burst" }) do
+			if not st.dry[key] then
+				local burnt, hatch, owed, pending = account(st.t[key])
+				left[key] = { burnt = burnt, hatch = hatch, owed = owed, pending = pending, stopped = st.t[key].g.disabled_by_script }
+			end
+		end
+		expect(false, "timed out: dry " .. serpent.line(st.dry) .. " (not yet: " .. serpent.line(left) .. ")" .. ", full hatch " .. tostring(st.hatch_phase) .. ", pair " .. tostring(st.pair_checked))
+		return finish()
+	end
+end
+
 local MOLD_Y = 120
 local MOLD_RECIPE = "glass-alloy-smelter"
 local MOLD_DEADLINE = 900                               -- ticks for the first glass with the mold in (361 needed)
@@ -1425,6 +1595,7 @@ end
 
 script.on_event(defines.events.on_tick, function(event)
 	fuel_window_tick()
+	cooled_load_tick(event.tick)
 	local m = storage.mold_machine
 	if storage.mold_done then return end
 	local function glass_made()
@@ -1531,6 +1702,7 @@ script.on_init(function()
 	for _, f in pairs(setup_recovery_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fuel_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_cooled_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)
