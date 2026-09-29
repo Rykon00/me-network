@@ -6,16 +6,19 @@ current working copy (no zip building/copying after every change).
     python tools/dev_link.py --unlink   # remove the link again
     python tools/dev_link.py --mods-dir PATH
 
-Factorio loads an unpacked mod from a folder named like the mod ("Gregtorio"). On Windows
-the link is a directory junction (no admin rights needed), elsewhere a symlink.
-Existing Gregtorio_*.zip files in the mods folder would compete with the folder, so they
-are moved next to the mods folder into gregtorio-zips-backup/ (nothing is deleted).
+Factorio loads an unpacked mod from a folder named like the mod ("gregtorio-continued"). On
+Windows the link is a directory junction (no admin rights needed), elsewhere a symlink.
+Existing gregtorio-continued_*.zip files in the mods folder (for example from the mod portal)
+would compete with the folder, so they are moved next to the mods folder into
+gregtorio-zips-backup/ (nothing is deleted). A link from before 0.3.0 that is still called
+"Gregtorio" and points to this repo is removed (only the link, never the repo).
 Factorio only reads mods at startup: restart it after pulling changes.
 """
 import argparse, json, os, shutil, subprocess, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+OLD_NAMES = ["Gregtorio"]   # name of the mod before 0.3.0
 
 
 def default_mods_dir():
@@ -51,6 +54,15 @@ def main():
         else:
             print("no link found")
         return
+
+    for old_name in OLD_NAMES:
+        old = mods / old_name
+        if old_name != name and is_link(old) and os.path.realpath(old) == os.path.realpath(ROOT):
+            try:
+                os.rmdir(old) if sys.platform.startswith("win") else old.unlink()
+            except PermissionError:
+                sys.exit(f"{old} is in use - close Factorio and run the script again.")
+            print(f"removed the old link {old} (the mod is called {name} now)")
 
     if link.exists() or is_link(link):
         if is_link(link):

@@ -11,7 +11,7 @@
 --- Sprites and icons: tools/gen_ae2_sprites.py.
 --------------------------------------------------------------------------------
 
-local ENTITY_PATH = "__Gregtorio__/graphics/entity/fork/ae2/"
+local ENTITY_PATH = "__gregtorio-continued__/graphics/entity/fork/ae2/"
 local ICON_FORK = ICON_PATH .. "fork/"
 
 --------------------------------------------------------------------------------
@@ -199,7 +199,7 @@ end
 data:extend({ {
 	type = "technology",
 	name = "me-autocrafting",
-	icon = "__Gregtorio__/graphics/technology/fork/me-autocrafting.png",
+	icon = "__gregtorio-continued__/graphics/technology/fork/me-autocrafting.png",
 	icon_size = 256,
 	effects = effects,
 	prerequisites = { "me-storage-64k" },

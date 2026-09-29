@@ -19,7 +19,7 @@ zips into a folder and pass --mods-from DIR.
 `check` fails (exit code 1) when any of these is true:
   * the mod does not load
   * a recipe/tech still references a missing prototype after the draft guard
-  * a referenced __Gregtorio__/ file does not exist (headless Factorio does not load graphics,
+  * a referenced __gregtorio-continued__/ file does not exist (headless Factorio does not load graphics,
     the real game crashes on missing files)
   * a sprite sheet is smaller than its width/height/frame_count need
   * an unlocked recipe cannot be crafted: no machine for its category, an ingredient that can
@@ -109,10 +109,13 @@ def setup(a):
 # running factorio
 # --------------------------------------------------------------------------------------------
 
+MOD_NAMES = ("Gregtorio", "gregtorio-continued")   # the mod before and since 0.3.0
+
+
 def prepare_mods(with_runtime=False, gregtorio_zip=None):
-    """mods/ = dependency zips + Gregtorio (working copy or a zip) + devcheck helper mods."""
+    """mods/ = dependency zips + the mod (working copy or a zip) + devcheck helper mods."""
     for p in MODS.iterdir():
-        if p.name.startswith(("Gregtorio", "zz-gregtorio-devcheck")) or p.name == "mod-list.json":
+        if p.name.startswith(MOD_NAMES + ("zz-gregtorio-devcheck",)) or p.name == "mod-list.json":
             if p.is_symlink() or p.is_file():
                 p.unlink()
             else:
@@ -124,10 +127,11 @@ def prepare_mods(with_runtime=False, gregtorio_zip=None):
         # Factorio insists on <name>_<version>.zip
         shutil.copy2(gregtorio_zip, MODS / f"{info['name']}_{info['version']}.zip")
     else:
-        (MODS / "Gregtorio").symlink_to(ROOT, target_is_directory=True)
+        info = json.loads((ROOT / "info.json").read_text(encoding="utf-8"))
+        (MODS / info["name"]).symlink_to(ROOT, target_is_directory=True)
     (MODS / "zz-gregtorio-devcheck").symlink_to(HERE / "checkmod", target_is_directory=True)
-    enabled = ["base", "space-age", "quality", "elevated-rails", "Gregtorio", "zz-gregtorio-devcheck"]
-    enabled += [z.name.rsplit("_", 1)[0] for z in MODS.glob("*.zip") if not z.name.startswith("Gregtorio")]
+    enabled = ["base", "space-age", "quality", "elevated-rails", info["name"], "zz-gregtorio-devcheck"]
+    enabled += [z.name.rsplit("_", 1)[0] for z in MODS.glob("*.zip") if not z.name.startswith(MOD_NAMES)]
     if with_runtime:
         (MODS / "zz-gregtorio-devcheck-runtime").symlink_to(HERE / "runtimemod", target_is_directory=True)
         enabled.append("zz-gregtorio-devcheck-runtime")
@@ -277,7 +281,7 @@ class Model:
 def check_files(sec):
     missing = []
     for path, owner in sec.get("PATHS", []):
-        if not (ROOT / path[len("__Gregtorio__/"):]).exists():
+        if not (ROOT / path[len("__gregtorio-continued__/"):]).exists():
             missing.append(f"{path} ({owner})")
     return sorted(set(missing))
 
@@ -289,9 +293,9 @@ def check_sprites(sec):
         return ["(Pillow not installed, sprite sizes not checked: pip install pillow)"]
     bad = []
     for name, key, fn, w, h, fc, ll, x, y in sec.get("SPRITES", []):
-        if not fn.startswith("__Gregtorio__/"):
+        if not fn.startswith("__gregtorio-continued__/"):
             continue
-        f = ROOT / fn[len("__Gregtorio__/"):]
+        f = ROOT / fn[len("__gregtorio-continued__/"):]
         if not f.exists():
             continue
         w, h, fc, ll, x, y = map(int, (w, h, fc, ll, x, y))
@@ -411,7 +415,7 @@ def zip_from_ref(ref):
 
 
 def migrate(a):
-    """Create a map with an older Gregtorio version, then load and run it with the working copy."""
+    """Create a map with an older version (also "Gregtorio" before 0.3.0), then load and run it with the working copy."""
     old = a.from_zip or zip_from_ref(a.from_ref)
     prepare_mods(gregtorio_zip=old)
     log = factorio("--create", str(WORK / "migrate-map.zip"))
