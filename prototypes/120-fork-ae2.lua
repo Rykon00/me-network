@@ -12,7 +12,7 @@
 --- Sprites and icons: tools/gen_ae2_sprites.py.
 --------------------------------------------------------------------------------
 
-local ENTITY_PATH = "__Gregtorio__/graphics/entity/fork/ae2/"
+local ENTITY_PATH = "__gregtorio-continued__/graphics/entity/fork/ae2/"
 local ICON_FORK = ICON_PATH .. "fork/"
 
 --- cell tier -> slots per cell, assembler category of cell and drive, extra drive ingredient
@@ -290,7 +290,7 @@ local function tech(def)
 	data:extend({ {
 		type = "technology",
 		name = def.name,
-		icon = "__Gregtorio__/graphics/technology/fork/" .. def.name .. ".png",
+		icon = "__gregtorio-continued__/graphics/technology/fork/" .. def.name .. ".png",
 		icon_size = 256,
 		effects = effects,
 		prerequisites = def.prerequisites,

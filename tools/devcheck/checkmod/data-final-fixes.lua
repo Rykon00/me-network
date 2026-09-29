@@ -48,12 +48,12 @@ end
 for n, e in pairs(data.raw["offshore-pump"] or {}) do D("O", n, e.fluid or "") end
 section("DUMP", dump)
 
---- Every __Gregtorio__/ file referenced anywhere, with its owner prototype
+--- Every __gregtorio-continued__/ file referenced anywhere, with its owner prototype
 local paths, seen = {}, {}
 local function scan(t, owner, depth)
 	if depth > 12 then return end
 	for _, v in pairs(t) do
-		if type(v) == "string" and v:sub(1, 14) == "__Gregtorio__/" then
+		if type(v) == "string" and v:sub(1, 24) == "__gregtorio-continued__/" then
 			local k = v .. "\t" .. owner
 			if not seen[k] then seen[k] = true; paths[#paths + 1] = k end
 		elseif type(v) == "table" then
@@ -85,7 +85,7 @@ section("SPRITES", sprites)
 
 --- Prototypes with a Gregtorio icon, for locale checks (tools/gen_locale.py input format)
 local loc = {}
-local function greg(p) return type(p.icon) == "string" and p.icon:sub(1, 14) == "__Gregtorio__/" end
+local function greg(p) return type(p.icon) == "string" and p.icon:sub(1, 24) == "__gregtorio-continued__/" end
 for t, _ in pairs(defines.prototypes.item) do
 	for n, p in pairs(data.raw[t] or {}) do if greg(p) then loc[#loc + 1] = "item-name\t" .. n end end
 end

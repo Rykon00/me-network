@@ -16,7 +16,7 @@
 --- Runtime logic: scripts/fork-me-fluids.lua. Sprites and icons: tools/gen_ae2_sprites.py.
 --------------------------------------------------------------------------------
 
-local ENTITY_PATH = "__Gregtorio__/graphics/entity/fork/ae2/"
+local ENTITY_PATH = "__gregtorio-continued__/graphics/entity/fork/ae2/"
 local ICON_FORK = ICON_PATH .. "fork/"
 
 --- fluid units one "1k" of a cell holds, and cells per drive
@@ -258,7 +258,7 @@ local function tech(def)
 	data:extend({ {
 		type = "technology",
 		name = def.name,
-		icon = "__Gregtorio__/graphics/technology/fork/" .. def.name .. ".png",
+		icon = "__gregtorio-continued__/graphics/technology/fork/" .. def.name .. ".png",
 		icon_size = 256,
 		effects = effects,
 		prerequisites = def.prerequisites,

@@ -5,5 +5,8 @@
   "author": "rykon_",
   "factorio_version": "2.0",
   "description": "Test helper for tools/devcheck: places every craftable machine on a new map. Not meant for normal play.",
-  "dependencies": ["Gregtorio"]
+  "dependencies": [
+    "? Gregtorio",
+    "? gregtorio-continued"
+  ]
 }
