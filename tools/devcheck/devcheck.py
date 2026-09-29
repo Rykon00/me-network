@@ -167,6 +167,13 @@ def load_errors(log):
     return m.group(1).strip() if m else "unknown error (see .devcheck/last-run.log)"
 
 
+def not_saved(log):
+    """--create runs on_init and then saves; a failed save (e.g. a function in `storage`) keeps the
+    previous map file, so the next run would test an old map"""
+    m = re.search(r"Writing .* failed.*|Error while running event .*on_save.*\n.*", log)
+    return "the map was not saved: " + m.group(0).strip() if m else None
+
+
 # --------------------------------------------------------------------------------------------
 # analysis
 # --------------------------------------------------------------------------------------------
@@ -375,6 +382,9 @@ def runtime(a):
     if load_errors(log):
         print(load_errors(log))
         return 1
+    if not_saved(log):
+        print(not_saved(log))
+        return 1
     placed = re.search(r"DEVCHECK-RUNTIME (placed=.*)", log)
     fails = re.findall(r"DEVCHECK-RUNTIME-FAIL (.*)", log)
     print("runtime setup:", placed.group(1) if placed else "no result")
@@ -462,6 +472,9 @@ def migrate(a):
     print(f"map seed: {'random' if a.seed == 'random' else a.seed}")
     if load_errors(log):
         print("could not create the map with the old version:\n" + load_errors(log))
+        return 1
+    if not_saved(log):
+        print(not_saved(log))
         return 1
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
     print(f"old save with loaded fluid drives: {setup.group(1) if setup else 'no result'}")
