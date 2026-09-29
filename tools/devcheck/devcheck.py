@@ -386,6 +386,8 @@ def runtime(a):
     print(f"fluid recovery test: {recovery.group(1) if recovery else 'did not run'}")
     power = re.search(r"DEVCHECK-RUNTIME-POWER (.*)", log)
     print(f"power test: {power.group(1) if power else 'did not run'}")
+    fuel = re.search(r"DEVCHECK-RUNTIME-FUEL (.*)", log)
+    print(f"fuel check test: {fuel.group(1) if fuel else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (\w+)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
@@ -408,9 +410,13 @@ def runtime(a):
         fails.append("power test did not run (needs --ticks >= 420)")
     elif not power.group(1).startswith("ok"):
         fails.append("power test failed")
+    if not fuel:
+        fails.append("fuel check test did not run (needs --ticks >= 1500)")
+    elif not fuel.group(1).startswith("ok"):
+        fails.append("fuel check test failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, fluid test, fluid recovery test, power test, victory test)", fails)
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, fluid test, fluid recovery test, power test, fuel check test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
@@ -439,17 +445,22 @@ def migrate(a):
         return 1
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
     print(f"old save with loaded fluid drives: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-POWER (.*)", log)
+    print(f"old save with a reactor on steam: {setup.group(1) if setup else 'no result'}")
     prepare_mods(with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
     fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
     print(f"old save loaded with working copy: {'ok, ' + ran.group(0) if ran else 'FAILED'}")
     print(f"fluid drives of the old save: {fluids.group(1) if fluids else 'no result'}")
+    power = re.search(r"DEVCHECK-MIGRATE-POWER (.*)", log)
+    print(f"reactor on steam in the old save: {power.group(1) if power else 'no result'}")
     for f in re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log):
         print("  - " + f)
     if not ran:
         print(load_errors(log) or "")
-    return 0 if ran and fluids and not fluids.group(1).startswith("failed") else 1
+    ok = ran and fluids and not fluids.group(1).startswith("failed") and power and not power.group(1).startswith("failed")
+    return 0 if ok else 1
 
 
 def main():

@@ -3,6 +3,8 @@
 --- is loaded with the working copy it checks that every drive kept its contents, then destroys a drive: its
 --- fluid must go into the other drive and the recovered fluid (issue #26) with nothing lost.
 --- Results are logged as DEVCHECK-MIGRATE-FLUIDS lines. Versions without fluid drives are skipped.
+--- It also builds a large naquadah reactor full of steam under load, which must be stopped after the
+--- update (DEVCHECK-MIGRATE-POWER, issue #25).
 local F = "gregtorio-me-fluids"
 local DRIVE = "me-fluid-drive-1k"
 local Y = 40
@@ -16,7 +18,61 @@ local function same(a, b)
 	return true
 end
 
+--- Endgame generators (issue #25): the old save has a UV large naquadah reactor full of steam under
+--- full load (before the fuel check it burns steam). After the update it must be stopped with the
+--- "Wrong fuel" status and keep its steam. Versions without the reactor are skipped.
+local PW_REACTOR = "uv-large-naquadah-reactor"
+local PW_POS = { 40.5, Y + 2.5 }
+local PW_STEAM = 500
+
+local function steam_in(e)
+	local seg = e.fluidbox.get_fluid_segment_contents(1)
+	return e.get_fluid_count("steam") + ((seg and seg.steam) or 0)
+end
+
+local function setup_power()
+	if not prototypes.entity[PW_REACTOR] then
+		storage.power = "skipped"
+		log("DEVCHECK-MIGRATE-SETUP-POWER skipped (no large naquadah reactor in this version)")
+		return
+	end
+	local s = game.surfaces[1]
+	local r = s.create_entity{ name = PW_REACTOR, position = PW_POS, force = "player", raise_built = true }
+	local got = r.insert_fluid{ name = "steam", amount = PW_STEAM }
+	local eei = s.create_entity{ name = "electric-energy-interface", position = { PW_POS[1], PW_POS[2] + 6 }, force = "player" }
+	eei.power_production = 0
+	eei.power_usage = 327.68e6 / 60
+	eei.electric_buffer_size = 1e8
+	s.create_entity{ name = "substation", position = { PW_POS[1] + 4, PW_POS[2] + 6 }, force = "player" }
+	storage.power = { reactor = r, steam = got, stopped_before = r.disabled_by_script }
+	log("DEVCHECK-MIGRATE-SETUP-POWER " .. (got == PW_STEAM and "ok" or "failed") .. " (reactor with " .. got .. " steam)")
+end
+
+local function check_power()
+	local p = storage.power
+	if p == nil or p == "skipped" then
+		log("DEVCHECK-MIGRATE-POWER skipped")
+		return
+	end
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local r = p.reactor
+	expect(r.valid, "the reactor is gone")
+	local left = 0
+	if r.valid then
+		left = steam_in(r)
+		local cs = r.custom_status
+		expect(r.disabled_by_script, "the reactor on steam is not stopped")
+		expect(cs and type(cs.label) == "table" and cs.label[1] == "entity-status.fork-wrong-fuel",
+			"reactor status " .. serpent.line(cs))
+		expect(math.abs(left - p.steam) < 1e-6, "the reactor holds " .. left .. " steam of " .. p.steam)
+	end
+	for _, m in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL power: " .. m) end
+	log("DEVCHECK-MIGRATE-POWER " .. (#problems == 0 and "ok" or "failed") .. string.format(" (steam %.1f of %.1f)", left, p.steam))
+end
+
 script.on_init(function()
+	setup_power()
 	storage.state = "skipped"
 	if not (remote.interfaces[F] and prototypes.entity[DRIVE] and prototypes.entity["me-controller"]) then
 		log("DEVCHECK-MIGRATE-SETUP skipped (no ME fluid drives in this version)")
@@ -53,6 +109,7 @@ script.on_configuration_changed(function() storage.config_changed = true end)
 script.on_nth_tick(30, function()
 	if storage.checked then return end
 	storage.checked = true
+	check_power()
 	if storage.state ~= "ready" then
 		log("DEVCHECK-MIGRATE-FLUIDS " .. (storage.state == "skipped" and "skipped" or "failed (" .. tostring(storage.state) .. ")"))
 		return
@@ -81,3 +138,4 @@ script.on_nth_tick(30, function()
 	log("DEVCHECK-MIGRATE-FLUIDS " .. (#problems == 0 and "ok" or "failed")
 		.. " (on_configuration_changed " .. (storage.config_changed and "ran" or "did not run") .. ")")
 end)
+
