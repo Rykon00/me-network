@@ -501,6 +501,7 @@ end)
 script.on_event(defines.events.on_gui_click, function(event)
 	local el = event.element
 	if not (el and el.valid) then return end
+	if fluids.on_gui_click(event) then return end
 	local player = game.get_player(event.player_index)
 	if el.tags and el.tags.fork_me_item then
 		take(player, el.tags.fork_me_item, el.tags.fork_me_quality, event.button, event.shift)
