@@ -379,6 +379,8 @@ def runtime(a):
     print(f"autocrafting test: {autocraft.group(1) if autocraft else 'did not run'}")
     fluids = re.search(r"DEVCHECK-RUNTIME-FLUIDS (.*)", log)
     print(f"fluid test: {fluids.group(1) if fluids else 'did not run'}")
+    power = re.search(r"DEVCHECK-RUNTIME-POWER (.*)", log)
+    print(f"power test: {power.group(1) if power else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (\w+)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
@@ -393,9 +395,13 @@ def runtime(a):
         fails.append("fluid test did not run (needs --ticks >= 1500)")
     elif not fluids.group(1).startswith("ok"):
         fails.append("fluid test failed")
+    if not power:
+        fails.append("power test did not run (needs --ticks >= 420)")
+    elif not power.group(1).startswith("ok"):
+        fails.append("power test failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, fluid test, victory test)", fails)
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, fluid test, power test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
