@@ -20,6 +20,7 @@
 --- without a mold, run with a mold in its mold slot and keep the mold there.
 --- Endgame power (prototypes/136-fork-power.lua): a plasma turbine and a naquadah reactor under load
 --- must burn their fuel and make power; the turbine's output hatch gets the cooled fluid.
+--- Fuel check (issue #25): steam and the other generator's fuel stop a generator; the right fuel runs it.
 local ME_Y = 100
 local ME_ITEM = "iron-plate"
 
@@ -356,6 +357,7 @@ script.on_nth_tick(10, function()
 	if not (storage.autocraft and storage.autocraft.done) then autocraft_test() end
 	if not (storage.fluids and storage.fluids.done) then fluid_test() end
 	if not (storage.fluid_rec and storage.fluid_rec.done) then recovery_test() end
+	if not (storage.fuel and storage.fuel.done) then fuel_test() end
 end)
 
 
@@ -1023,6 +1025,175 @@ script.on_nth_tick(PW_TICK, function(event)
 	log("DEVCHECK-RUNTIME-POWER " .. (#problems == 0 and "ok" or "failed") .. summary)
 end)
 
+--- Fuel check (issue #25, scripts/fork-power.lua): generators on a wrong fluid, each with its own
+--- load of the generator's full output and its own network (25 tiles apart). Steam (through a pipe)
+--- in a plasma turbine, steam in a naquadah reactor, naquadah fuel in a plasma turbine and plasma in
+--- a naquadah reactor must make no power, keep their fluid and show "Wrong fuel"; after the right
+--- fuel is put in they run. A running turbine whose plasma is replaced by steam burns steam for at
+--- most one check interval (10 ticks, the documented window) and then stops.
+local FC_Y = PW_Y
+local FC_WINDOW_TICKS = 10
+local FC = {
+	--  key            generator                     x      wrong fluid                amount  right fuel                 amount  load (W)
+	{ "steam_turbine", "luv-large-plasma-turbine",   75.5,  "steam",                   100,    "helium-plasma",           100,    81.92e6, pipe = true },
+	{ "steam_reactor", "uv-large-naquadah-reactor",  100.5, "steam",                   500,    "naquadah-based-fuel-mk1", 10,     327.68e6 },
+	{ "fuel_turbine",  "luv-large-plasma-turbine",   125.5, "naquadah-based-fuel-mk1", 10,     "helium-plasma",           100,    81.92e6 },
+	{ "plasma_reactor", "uv-large-naquadah-reactor", 150.5, "helium-plasma",           100,    "naquadah-based-fuel-mk1", 10,     327.68e6 },
+	{ "window",        "luv-large-plasma-turbine",   175.5, "steam",                   500,    "helium-plasma",           100,    81.92e6 },
+}
+
+--- an input-output fluid box keeps part of its fluid in the pipeline segment (see the power test)
+local function fc_fluid_in(e, fluid)
+	local seg = e.fluidbox.get_fluid_segment_contents(1)
+	return e.get_fluid_count(fluid) + ((seg and seg[fluid]) or 0)
+end
+
+function setup_fuel_test(s)
+	local fails = {}
+	storage.fuel = { gens = {} }
+	for _, def in ipairs(FC) do
+		local ok, err = pcall(function()
+			local y = FC_Y + (def[2]:find("reactor") and 2.5 or 1.5)
+			local g = s.create_entity{ name = def[2], position = { def[3], y }, force = "player", raise_built = true }
+			local first, amount = def[4], def[5]
+			if def[1] == "window" then first, amount = def[6], def[7] end
+			if def.pipe then
+				--- the north connection of the 3x3 turbine is one tile above its top edge
+				local pipe = s.create_entity{ name = "pipe", position = { def[3], y - 2 }, force = "player" }
+				local got = pipe.insert_fluid{ name = first, amount = amount }
+				if got < amount then fails[#fails + 1] = "fuel test: the pipe took only " .. got .. " " .. first end
+			else
+				local got = g.insert_fluid{ name = first, amount = amount }
+				if got < amount then fails[#fails + 1] = "fuel test: " .. def[1] .. " took only " .. got .. " " .. first end
+			end
+			local eei = s.create_entity{ name = "electric-energy-interface", position = { def[3], y + 6 }, force = "player" }
+			eei.power_production = 0
+			eei.power_usage = def[8] / 60
+			eei.electric_buffer_size = 1e8
+			s.create_entity{ name = "substation", position = { def[3] + 4, y + 6 }, force = "player" }
+			storage.fuel.gens[def[1]] = g
+		end)
+		if not ok then fails[#fails + 1] = "fuel test " .. def[1] .. ": " .. tostring(err) end
+	end
+	return fails
+end
+
+--- The window turbine: from the swap on, its plasma is taken out every tick, and on the tick it is
+--- empty the steam goes in, so the fuel check (every 10 ticks) meets steam that may have burnt since
+function fuel_window_tick()
+	local st = storage.fuel
+	if not (st and st.phase and not st.window_swapped and not st.done) then return end
+	local def = FC[#FC]
+	local g = st.gens.window
+	if not (g and g.valid) then return end
+	g.remove_fluid{ name = def[6], amount = 1e9 }
+	if fc_fluid_in(g, def[6]) > 0 then return end
+	local got = g.insert_fluid{ name = def[4], amount = def[5] }
+	if math.abs(got - def[5]) > 1e-6 then log("DEVCHECK-RUNTIME-FAIL fuel test: window turbine took only " .. got .. " steam") end
+	st.window_swapped, st.window_stopped = game.tick, g.disabled_by_script
+end
+
+function fuel_test()
+	local st = storage.fuel
+	if not st then return end
+	local tick = game.tick
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function label_key(e)
+		local cs = e.custom_status
+		return cs and type(cs.label) == "table" and cs.label[1] or nil
+	end
+	local function finish(summary)
+		st.done = true
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL fuel test: " .. p) end
+		log("DEVCHECK-RUNTIME-FUEL " .. (#problems == 0 and "ok" or "failed") .. (summary or ""))
+	end
+	for _, def in ipairs(FC) do
+		if not (st.gens[def[1]] and st.gens[def[1]].valid) then
+			problems[#problems + 1] = "generator " .. def[1] .. " missing"
+			return finish()
+		end
+	end
+	if not st.phase and tick >= 120 then
+		--- wrong fuels: no power, fluid kept, status set; the window turbine runs on plasma
+		for _, def in ipairs(FC) do
+			local g = st.gens[def[1]]
+			if def[1] == "window" then
+				expect(g.energy_generated_last_tick > 0, "window turbine does not run on plasma")
+				expect(not g.disabled_by_script, "window turbine stopped on plasma")
+			else
+				local left = fc_fluid_in(g, def[4])
+				expect(g.energy_generated_last_tick == 0, def[1] .. " generates " .. g.energy_generated_last_tick .. " J/tick on " .. def[4])
+				expect(math.abs(left - def[5]) < 1e-6, def[1] .. " holds " .. left .. " " .. def[4] .. " of " .. def[5])
+				expect(g.disabled_by_script, def[1] .. " is not stopped")
+				expect(label_key(g) == "entity-status.fork-wrong-fuel", def[1] .. " status " .. serpent.line(g.custom_status))
+			end
+		end
+		if #problems > 0 then return finish() end
+		st.phase, st.drain = "draining", 0
+	elseif st.phase == "draining" then
+		--- swap: empty the stopped ones (removing takes only the entity's share, the segment gives
+		--- the rest back over the next ticks), then put the right fuel in; the window turbine is
+		--- swapped every tick by fuel_window_tick
+		local left = 0
+		for _, def in ipairs(FC) do
+			if def[1] ~= "window" then
+				local g = st.gens[def[1]]
+				g.remove_fluid{ name = def[4], amount = 1e9 }
+				left = left + fc_fluid_in(g, def[4])
+			end
+		end
+		st.drain = st.drain + 1
+		if left > 0 then
+			if st.drain > 30 then
+				problems[#problems + 1] = "could not empty the generators (" .. left .. " left)"
+				return finish()
+			end
+			return
+		end
+		for _, def in ipairs(FC) do
+			if def[1] ~= "window" then
+				local g = st.gens[def[1]]
+				local got = g.insert_fluid{ name = def[6], amount = def[7] }
+				expect(math.abs(got - def[7]) < 1e-6, def[1] .. " took only " .. got .. " " .. def[6] .. " after emptying it")
+			end
+		end
+		st.phase, st.swapped = "right", tick
+		if #problems > 0 then return finish() end
+	elseif st.phase == "right" and st.window_swapped and not st.window_mid and tick >= st.window_swapped + FC_WINDOW_TICKS + 10 then
+		st.window_mid = fc_fluid_in(st.gens.window, FC[#FC][4])
+	elseif st.phase == "right" and st.window_mid and tick >= math.max(st.swapped, st.window_swapped) + 60 then
+		local summary = ""
+		for _, def in ipairs(FC) do
+			local g = st.gens[def[1]]
+			if def[1] == "window" then
+				--- at most one interval of the full output on steam (+1 tick for the check order)
+				local burnt = def[5] - fc_fluid_in(g, def[4])
+				local max = def[8] * (FC_WINDOW_TICKS + 1) / 60 / prototypes.fluid[def[4]].fuel_value
+				expect(burnt <= max, "window turbine burnt " .. burnt .. " steam, more than " .. max)
+				--- a stopped generator keeps its last energy_generated_last_tick: the steam must not move
+				expect(st.window_mid and math.abs(fc_fluid_in(g, def[4]) - st.window_mid) < 1e-6,
+					"window turbine still burns steam (" .. tostring(st.window_mid) .. " -> " .. fc_fluid_in(g, def[4]) .. ")")
+				expect(g.disabled_by_script, "window turbine is not stopped")
+				expect(label_key(g) == "entity-status.fork-wrong-fuel", "window turbine status " .. serpent.line(g.custom_status))
+				summary = string.format(" (window: %.1f steam = %.2f MJ burnt, swapped on tick %d %s)", burnt,
+					burnt * prototypes.fluid[def[4]].fuel_value / 1e6, st.window_swapped,
+					st.window_stopped and "after the turbine had stopped" or "while the turbine ran")
+			else
+				local burnt = def[7] - fc_fluid_in(g, def[6])
+				expect(g.energy_generated_last_tick > 0, def[1] .. " does not run on " .. def[6])
+				expect(burnt > 0, def[1] .. " burnt no " .. def[6])
+				expect(not g.disabled_by_script, def[1] .. " still stopped on " .. def[6])
+				expect(g.custom_status == nil, def[1] .. " still has status " .. serpent.line(g.custom_status))
+			end
+		end
+		return finish(summary)
+	elseif tick > 900 then
+		problems[#problems + 1] = "timed out in phase " .. tostring(st.phase)
+		return finish()
+	end
+end
+
 local MOLD_Y = 120
 local MOLD_RECIPE = "glass-alloy-smelter"
 
@@ -1043,6 +1214,7 @@ function setup_mold_test(s)
 end
 
 script.on_event(defines.events.on_tick, function(event)
+	fuel_window_tick()
 	local m = storage.mold_machine
 	if storage.mold_done then return end
 	local phase
@@ -1116,6 +1288,7 @@ script.on_init(function()
 	for _, f in pairs(setup_fluid_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_recovery_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_fuel_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)
