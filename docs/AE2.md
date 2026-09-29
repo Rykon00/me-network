@@ -75,7 +75,7 @@ Drives from 1k to 64k and the ME Fluid Interface; `me-fluid-storage-256k` (IV, a
 | Thing | What it is |
 |---|---|
 | **Fluid storage cell** (1k ... 256k) | storage housing + storage component of the tier + a pump. Holds 8000 fluid units per "1k" |
-| **ME Fluid Drive** (1k ... 256k) | 1x1, no power, four cells on a drive chassis: 32 000 / 128 000 / 512 000 / 2 048 000 / 8 192 000 units. Takes any fluids of the network in any mix; the disassembly recipe gives the cells back (a loaded drive item loses its fluid there, so place it and export first; recyclers do not take drives) |
+| **ME Fluid Drive** (1k ... 256k) | 1x1, no power, four cells on a drive chassis: 32 000 / 128 000 / 512 000 / 2 048 000 / 8 192 000 units. Takes any fluids of the network in any mix; the disassembly recipe (hand crafting only) gives the cells back, the fluid of a loaded drive item is recovered (see below); recyclers do not take drives |
 | **ME Fluid Interface** | 1x1 tank of 5000 units with a pipe connection on every side: the import/export point |
 
 Step by step:
@@ -106,9 +106,35 @@ Step by step:
 tooltip; placing that item brings them back (by hand, by robots, from a ghost of a
 deconstructed drive, on a space platform). The upgrade planner and fast replace leave the fluid
 on the **old** drive item, the new drive starts empty: place the old drive item again inside the
-network to get its fluid back. A drive that is destroyed loses its fluids, like a storage tank
-that burns down, and so does a loaded drive item whose cells are taken out. Picking up a fluid
-interface moves what it holds back into the network (as far as the drives have room).
+network to get its fluid back (checked for robots: deconstruction and the upgrade planner). Picking
+up a fluid interface moves what it holds back into the network (as far as the drives have room).
+
+**A destroyed drive** (biters, an explosion, a script) loses nothing:
+
+1. The other fluid drives of its network take its fluid, as far as they have room.
+2. What does not fit (or everything, if the drive stood outside any network) is kept as
+   **recovered fluid** of that surface, together with the place it came from.
+3. The next fluid drive placed in the same network takes the recovered fluid over, as far as it
+   has room. Robots rebuilding the ghost of the destroyed drive do exactly that, so a network with
+   construction robots and a spare drive item repairs itself. If no network covers that place any
+   more (the roboports burnt down too), the next fluid drive placed anywhere on the surface takes it.
+4. The "open GUI" key on any fluid drive shows the recovered fluid of the surface with a
+   **Take over** button, which moves all of it (from any network) into that drive.
+
+Every step is reported in the chat with a map link: what went into other drives, what was kept as
+recovered fluid, what a drive took over. Recovered fluid is only lost when its surface is deleted,
+and that is reported too. The same happens to a drive removed by another mod without an event: its
+fluid is kept as recovered fluid as soon as the network is next looked at.
+
+**Taking the cells out of a loaded drive item** (the disassembly recipe) works by hand only. The
+drive's fluid goes into the fluid drives of the network you stand in, as far as they have room; the
+rest becomes recovered fluid (as above), and the chat says which. The item comes back without its
+fluid. Assemblers cannot run the disassembly, because the mod cannot see the fluid of an item an
+assembler consumes.
+
+**Blueprints** do not carry fluid: fluid contents are not blueprint data. A drive built from a
+blueprint (or a copy-paste) starts empty, apart from the recovered fluid it takes over; only the
+drive item carries fluid, on its tags.
 
 **Temperature:** the network stores fluids by name only, without a temperature. Importing drops
 the temperature; an export, and the hand-over to a pattern machine, delivers the fluid at its
@@ -135,6 +161,25 @@ makes picking a drive up work: the mined-entity events move the table onto the i
 `event.consumed_items` for players) and restore the contents, clamped to the capacity. A cloned
 drive starts empty (no duplication). `insert` fills drives that already hold the fluid first,
 then the rest; `remove` takes from the drives in unit-number order.
+
+**Recovery** (`storage.fork_me_fluids.recovered`: surface index -> force name -> list of
+`{ position, contents }`). `on_entity_died` and `script_raised_destroy` drop the drive's record
+first, then `salvage` inserts its contents into the drives of the logistic network at its position
+(the same `insert` as the interfaces) and adds the rest as an entry. An entry takes the fluid of
+every later salvage in the same network (or at the same spot); at most 32 entries per surface and
+force, more are merged into the last one. Networks have no stable identity (the network id changes
+when networks merge or split, and an attack often takes the roboports with it), so an entry stores
+its position and the network is looked up when a drive is placed: the drive takes the entries whose
+position lies in its own network, or in no network at all. Placing a drive restores the item's
+tags first, then takes recovered fluid. The drive GUI's button takes every entry of the surface.
+A drive record whose entity became invalid without any event is salvaged into an entry at its
+stored position the next time a network total is computed (records carry surface, force and
+position; records from older saves get them on the fly). `on_pre_surface_deleted` drops the
+surface's drives and entries and reports the amounts as lost. The hand disassembly uses
+`on_pre_player_crafted_item`: the consumed drive items are replaced by the same items without tags
+and their fluid is salvaged at the player's position; `on_player_cancelled_crafting` strips the
+tags from returned drive items, so a cancelled craft cannot hand the fluid out twice. Everything is
+exposed on the remote interface for the tests (`recovered`, `salvage_items`, `take_recovered`).
 
 The **ME Fluid Interface** is a real storage tank (5000 units). Every 15 ticks
 (`on_nth_tick(15)`; 20, 30 and 60 are taken by autocrafting, molds and terminal) up to 8
@@ -275,14 +320,21 @@ keeps jobs and their pools; leases from before fluid support get empty fluid map
 rescanned.
 The fluid state is created lazily; its rebuild (run first, autocrafting reads it) finds the fluid
 drives and interfaces in the world, keeps drive contents by unit number (clamped to the capacity)
-and interface settings, and closes open fluid panels.
+and interface settings, and closes open fluid panels. Recovered fluid is created lazily as well;
+the rebuild drops entries of fluids, surfaces or forces that no longer exist. Loaded fluid drives
+of an older save keep their contents (`devcheck.py migrate` builds such a save with the old
+version and checks it).
 
 ## Limits and open points
 
 * One temperature per fluid: stored by name, exported at the default temperature. Hot steam loses
   its heat; recipes that need another temperature are not patterns.
 * Drive contents are not part of blueprints: a drive built from a blueprint starts empty, only
-  the item's tags carry fluid. Fluid in a destroyed drive is lost.
+  the item's tags carry fluid. A destroyed drive's fluid is recovered (see **Fluids**), but only
+  a newly placed drive or the Take over button brings recovered fluid back; existing drives do not
+  pull it in when they get room.
+* The upgrade planner and fast replace leave the fluid on the old drive item (it is not moved into
+  the new drive).
 * No per-drive limits on fluid types (no partitioning, no filters, unlike AE2 cells): every drive
   takes every fluid; `insert` prefers drives that already hold it.
 * The export level applies to the interface's own box; pipes and tanks connected without a pump
@@ -290,8 +342,9 @@ and interface settings, and closes open fluid panels.
   interface to fill a tank.
 * The fluid interface has no circuit connection, and the ME Controller's circuit output lists
   items only; the fluid totals are only shown in the terminal and the panels.
-* Taking the cells out of a loaded drive item (disassembly recipe) loses its fluid; the recipe
-  says so, and recyclers do not accept drives.
+* The disassembly recipe is hand crafting only (the fluid of a loaded item is recovered); a
+  cancelled hand disassembly returns the drive item without its fluid, which stays recovered.
+  Untested in the real game: the headless test calls the same function the craft event calls.
 * Only normal quality, no items with own data (armor, tools) and no spoilage handling in the pool.
 * Machines with a fixed recipe picked by their input (furnaces) are only patterns once they
   have smelted the recipe (`previous_recipe`); this path is untested in the real game.
@@ -323,4 +376,13 @@ reports it, that a reactor with a pipe on its input is counted under `fluid-pipe
 pattern, that a too large request reports the missing chlorine and raw silicon exactly, that
 three jobs (fluid in and out, fluid out only, fluid in only) finish with the expected amounts and
 empty machines, and that a reactor mined by robots while it holds a job's chlorine gives it back.
+
+A third network tests the recovery: two loaded 1k drives, one of them destroyed (the other takes
+what fits, the rest becomes recovered fluid, totals conserved), its ghost rebuilt by robots (the new
+drive takes the recovered fluid over), the upgrade planner on a loaded drive (the old item keeps
+the fluid, the new drive is empty), the cells taken out of that item inside the network (all fluid
+back in the drives, the item without tags) and outside of any network (all recovered, then taken
+over), a loaded drive removed without an event, and a destroyed drive on a second surface that is
+then deleted. `devcheck.py migrate --from-ref v0.3.0` builds loaded fluid drives with 0.3.0 and
+checks them (and the recovery) after the update.
 See `tools/devcheck/README.md`.
