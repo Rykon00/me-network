@@ -472,13 +472,14 @@ end
 
 script.on_init(function() state() end)
 
---- the "open GUI" key: the terminal here, the fluid drive in the fluids module
+--- the "open GUI" key: the terminal here, the pattern provider in the autocrafting module, the fluid
+--- drive in the fluids module
 script.on_event("fork-me-terminal-open", function(event)
 	local player = game.get_player(event.player_index)
 	if not (player and player.selected) then return end
 	if player.selected.name == "me-terminal" then
 		open(player, player.selected)
-	else
+	elseif not autocraft.on_open_input(player, player.selected) then
 		fluids.on_open_input(player, player.selected)
 	end
 end)
@@ -493,6 +494,7 @@ end)
 
 script.on_event(defines.events.on_gui_closed, function(event)
 	if fluids.on_gui_closed(event) then return end
+	if autocraft.on_gui_closed(event) then return end
 	if event.element and event.element.valid and event.element.name == FRAME then
 		close(game.get_player(event.player_index))
 	end
@@ -502,6 +504,7 @@ script.on_event(defines.events.on_gui_click, function(event)
 	local el = event.element
 	if not (el and el.valid) then return end
 	if fluids.on_gui_click(event) then return end
+	if autocraft.on_gui_click(event) then return end
 	local player = game.get_player(event.player_index)
 	if el.tags and el.tags.fork_me_item then
 		take(player, el.tags.fork_me_item, el.tags.fork_me_quality, event.button, event.shift)
