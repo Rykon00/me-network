@@ -15,6 +15,8 @@
 --- robots, a reported fluid shortfall, and jobs with a fluid ingredient, a fluid product and both.
 --- Molds (prototypes/150-fork-molds.lua): an LV alloy smelter with a mold recipe must stop
 --- without a mold, run with a mold in its mold slot and keep the mold there.
+--- Endgame power (prototypes/136-fork-power.lua): a plasma turbine and a naquadah reactor under load
+--- must burn their fuel and make power; the turbine's output hatch gets the cooled fluid.
 local ME_Y = 100
 local ME_ITEM = "iron-plate"
 
@@ -737,6 +739,88 @@ function fluid_test()
 	end
 end
 
+--- Endgame power (prototypes/136-fork-power.lua, scripts/fork-power.lua): a LuV large plasma turbine
+--- with helium plasma and a turbine output hatch next to it, and a UV large naquadah reactor with
+--- naquadah based fuel MK1, each loaded by an electric energy interface that draws the generator's
+--- full output. After 7 s both must have produced power and burnt fuel, and the hatch must hold the
+--- cooled fluid (helium) for the plasma the turbine burnt.
+local PW_Y = 260                                        -- below the fluid test and its roboport area
+local PW_TICK = 420
+local PW = {
+	turbine = { "luv-large-plasma-turbine", 1.5, PW_Y + 1.5, "helium-plasma", 100, 81.92e6 },
+	hatch = { "turbine-output-hatch", 3.5, PW_Y + 1.5 },
+	reactor = { "uv-large-naquadah-reactor", 42.5, PW_Y + 2.5, "naquadah-based-fuel-mk1", 10, 327.68e6 },
+}
+
+function setup_power_test(s)
+	local fails = {}
+	local function place(def)
+		local ok, e = pcall(function()
+			return s.create_entity{ name = def[1], position = { def[2], def[3] }, force = "player", raise_built = true }
+		end)
+		if not (ok and e) then fails[#fails + 1] = "power test " .. def[1] .. ": " .. tostring(e) return nil end
+		return e
+	end
+	for _, key in pairs({ "turbine", "reactor" }) do
+		local def = PW[key]
+		local g = place(def)
+		if g then
+			local got = g.insert_fluid{ name = def[4], amount = def[5] }
+			if got < def[5] then fails[#fails + 1] = "power test: " .. def[1] .. " took only " .. got .. " " .. def[4] end
+			local ok, err = pcall(function()
+				local eei = s.create_entity{ name = "electric-energy-interface", position = { def[2], def[3] + 6 }, force = "player" }
+				eei.power_production = 0
+				eei.power_usage = def[6] / 60
+				eei.electric_buffer_size = 1e8
+				s.create_entity{ name = "substation", position = { def[2] + 4, def[3] + 6 }, force = "player" }
+			end)
+			if not ok then fails[#fails + 1] = "power test load: " .. tostring(err) end
+		end
+	end
+	place(PW.hatch)
+	return fails
+end
+
+script.on_nth_tick(PW_TICK, function(event)
+	if storage.power_checked or event.tick == 0 then return end
+	storage.power_checked = true
+	local s = game.surfaces[1]
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function find(def) return s.find_entity(def[1], { def[2], def[3] }) end
+	local turbine, hatch, reactor = find(PW.turbine), find(PW.hatch), find(PW.reactor)
+	expect(turbine and hatch and reactor, "power test entities missing")
+	--- an input-output fluid box keeps part of its fluid in the pipeline segment, which
+	--- get_fluid_count does not report
+	local function fluid_in(e, fluid)
+		local seg = e.fluidbox.get_fluid_segment_contents(1)
+		return e.get_fluid_count(fluid) + ((seg and seg[fluid]) or 0)
+	end
+	local summary = ""
+	if #problems == 0 then
+		local seconds = event.tick / 60
+		--- turbine: 81.92 MW on helium plasma (81.92 MJ per unit) burns one unit per second
+		local left = fluid_in(turbine, "helium-plasma")
+		local burnt = PW.turbine[5] - left
+		expect(turbine.energy_generated_last_tick > 0, "plasma turbine generates nothing")
+		expect(burnt > 0.6 * seconds and burnt < 1.2 * seconds, "plasma turbine burnt " .. burnt .. " helium plasma in " .. seconds .. " s")
+		local helium = hatch.get_fluid_count("helium")
+		local owed = remote.call("gregtorio-power", "debt", turbine)
+		expect(helium > 0, "the output hatch got no helium")
+		expect(math.abs(helium + owed - burnt) < 0.5, "hatch holds " .. helium .. " helium (+ " .. owed .. " owed) for " .. burnt .. " plasma burnt")
+		expect(hatch.get_fluid_count("helium-plasma") == 0, "plasma leaked into the output hatch")
+		--- reactor: 327.68 MW on fuel MK1 (58.5 GJ per unit) burns 0.0056 units per second
+		local fuel_left = fluid_in(reactor, "naquadah-based-fuel-mk1")
+		local fuel_burnt = PW.reactor[5] - fuel_left
+		expect(reactor.energy_generated_last_tick > 0, "naquadah reactor generates nothing")
+		expect(fuel_burnt > 0.003 * seconds and fuel_burnt < 0.007 * seconds, "naquadah reactor burnt " .. fuel_burnt .. " fuel in " .. seconds .. " s")
+		summary = string.format(" (turbine %.2f plasma -> %.2f helium, %.1f MW; reactor %.4f fuel, %.1f MW)",
+			burnt, helium, turbine.energy_generated_last_tick * 60 / 1e6, fuel_burnt, reactor.energy_generated_last_tick * 60 / 1e6)
+	end
+	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
+	log("DEVCHECK-RUNTIME-POWER " .. (#problems == 0 and "ok" or "failed") .. summary)
+end)
+
 local MOLD_Y = 120
 local MOLD_RECIPE = "glass-alloy-smelter"
 
@@ -828,6 +912,7 @@ script.on_init(function()
 	for _, f in pairs(setup_mold_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_autocraft_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fluid_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)
