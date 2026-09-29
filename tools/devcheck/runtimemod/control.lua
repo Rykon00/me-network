@@ -28,6 +28,35 @@
 local ME_Y = 100
 local ME_ITEM = "iron-plate"
 
+--- State of a robot job at `pos` for a timeout message: ghosts and blocking entities there, the tile,
+--- the chunk, and every construction network covering it (robots with position, energy and order).
+function robot_report(s, pos, name)
+	local force = game.forces.player
+	local out = {}
+	local function add(x) out[#out + 1] = x end
+	local area = { { pos[1] - 1.5, pos[2] - 1.5 }, { pos[1] + 1.5, pos[2] + 1.5 } }
+	add("ghosts " .. #s.find_entities_filtered{ ghost_name = name, position = pos, radius = 0.5 })
+	local blocking = {}
+	for _, e in pairs(s.find_entities_filtered{ area = area }) do
+		if e.name ~= name and e.type ~= "entity-ghost" then blocking[#blocking + 1] = e.name .. "@" .. e.position.x .. "," .. e.position.y end
+	end
+	add("near: " .. table.concat(blocking, " "))
+	add("tile " .. s.get_tile(pos[1], pos[2]).name)
+	local chunk = { math.floor(pos[1] / 32), math.floor(pos[2] / 32) }
+	add("chunk generated " .. tostring(s.is_chunk_generated(chunk)) .. " charted " .. tostring(force.is_chunk_charted(s, chunk)))
+	for _, n in pairs(s.find_logistic_networks_by_construction_area(pos, force)) do
+		local robots = {}
+		for _, r in pairs(n.construction_robots) do
+			robots[#robots + 1] = string.format("(%.1f,%.1f e=%.0f orders=%d)", r.position.x, r.position.y, r.energy, #r.robot_order_queue)
+		end
+		local ports = {}
+		for _, c in pairs(n.cells) do ports[#ports + 1] = c.owner.name .. " e=" .. string.format("%.0f", c.owner.energy) end
+		add("network " .. n.network_id .. ": robots " .. n.available_construction_robots .. "/" .. n.all_construction_robots
+			.. " " .. table.concat(robots, " ") .. " cells " .. table.concat(ports, ", "))
+	end
+	return table.concat(out, "; ")
+end
+
 function setup_me_network(s)
 	local fails = {}
 	local function place(name, x, y)
@@ -83,20 +112,39 @@ script.on_nth_tick(300, function(event)
 end)
 
 --- Victory (scripts/fork-victory.lua): researching `victory` must win the game, and go on.
---- Winning stops the scripts of the benchmark run (no player to continue), so this runs last, at
---- tick 1450, and is checked in the same tick.
-script.on_nth_tick(1450, function(event)
-	if storage.victory_checked or event.tick == 0 then return end
+--- Winning stops the scripts of the benchmark run (no player to continue), so this runs last: as soon
+--- as every other test has reported, at the latest at tick VICTORY_DEADLINE (a test still running
+--- then is reported as unfinished). Checked from the 10-tick handler below.
+local VICTORY_DEADLINE = 1450
+local function tests_running()
+	local running = {}
+	local function check(done, name) if not done then running[#running + 1] = name end end
+	check(storage.me_checked, "ME network")
+	check(storage.mold_done, "mold")
+	check(storage.autocraft and storage.autocraft.done, "autocrafting")
+	check(storage.furnace and storage.furnace.done, "furnace patterns")
+	check(storage.fluids and storage.fluids.done, "fluids")
+	check(storage.fluid_rec and storage.fluid_rec.done, "fluid recovery")
+	check(storage.power_checked, "power")
+	check(storage.fuel and storage.fuel.done, "fuel check")
+	return running
+end
+
+function victory_test()
+	if storage.victory_checked then return end
+	local running = tests_running()
+	if #running > 0 and game.tick < VICTORY_DEADLINE then return end
 	storage.victory_checked = true
 	local problems = {}
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	expect(#running == 0, "tests still running at tick " .. game.tick .. ": " .. table.concat(running, ", "))
 	local ok, err = pcall(function() game.forces.player.technologies["victory"].researched = true end)
 	expect(ok, "victory test: " .. tostring(err))
 	--- (can_continue cannot be read before a player chooses to go on; the script passes it, see fork-victory.lua)
 	expect(game.finished, "victory test: researching `victory` did not finish the game")
 	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
-	log("DEVCHECK-RUNTIME-VICTORY " .. (#problems == 0 and "ok" or "failed"))
-end)
+	log("DEVCHECK-RUNTIME-VICTORY " .. (#problems == 0 and "ok" or "failed") .. " (tick " .. game.tick .. ")")
+end
 
 local AC_Y = 140
 local AC_PLATES, AC_STICKS = 200, 100
@@ -518,6 +566,7 @@ script.on_nth_tick(10, function()
 	if not (storage.fluids and storage.fluids.done) then fluid_test() end
 	if not (storage.fluid_rec and storage.fluid_rec.done) then recovery_test() end
 	if not (storage.fuel and storage.fuel.done) then fuel_test() end
+	victory_test()
 end)
 
 
@@ -652,7 +701,7 @@ function fluid_test()
 
 	local function timeout_after(ticks, what)
 		if game.tick > st.phase_tick + ticks then
-			expect(false, what .. " timed out (network " .. FL_FLUID .. " " .. count(FL_FLUID) .. ")")
+			expect(false, what .. " timed out at tick " .. game.tick .. " (network " .. FL_FLUID .. " " .. count(FL_FLUID) .. ")")
 			finish_test()
 			return true
 		end
@@ -747,7 +796,7 @@ function fluid_test()
 			expect(count(FL_FLUID) == 0, "network holds fluid without a drive: " .. count(FL_FLUID))
 			return next_phase("robot-stored")
 		end
-		timeout_after(600, "robots deconstructing the drive")
+		timeout_after(600, "robots deconstructing the drive (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "robot-stored" then
 		--- the robot delivers the drive item (with its tags) into the storage chest = the item drive
 		local idrive = ent(FL.idrive)
@@ -773,7 +822,7 @@ function fluid_test()
 			if not (ok and ghost) then return finish_test() end
 			return next_phase("robot-build")
 		end
-		timeout_after(600, "robot storing the drive item")
+		timeout_after(600, "robot storing the drive item (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "robot-build" then
 		if s.find_entity(FL_DRIVE, FL_DRIVE_POS) then
 			expect(near(count(FL_FLUID), FL_TANK_AMOUNT), "after the robots placed the drive the network holds " .. count(FL_FLUID))
@@ -788,7 +837,7 @@ function fluid_test()
 			remote.call(F, "set_interface", b, "export", "water", FL_EXPORT_LEVEL)
 			return next_phase("full")
 		end
-		timeout_after(600, "robots building the drive from the ghost")
+		timeout_after(600, "robots building the drive from the ghost (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "full" then
 		if game.tick >= st.phase_tick + 40 then
 			local ia, ib = remote.call(F, "get_interface", a), remote.call(F, "get_interface", b)
@@ -970,7 +1019,7 @@ function recovery_test()
 	local function next_phase(name) st.phase = name st.phase_tick = game.tick end
 	local function timeout_after(ticks, what)
 		if game.tick > st.phase_tick + ticks then
-			expect(false, what .. " timed out")
+			expect(false, what .. " timed out at tick " .. game.tick)
 			finish_test()
 		end
 	end
@@ -1038,7 +1087,7 @@ function recovery_test()
 		end
 		local ghosts = s.find_entities_filtered{ ghost_name = FL_DRIVE, position = { RC.d1[2], RC.d1[3] }, radius = 0.5 }
 		timeout_after(600, "robots rebuilding the destroyed drive (ghosts " .. #ghosts .. ", drive items in storage "
-			.. ref.get_item_count(FL_DRIVE) .. ")")
+			.. ref.get_item_count(FL_DRIVE) .. "; " .. robot_report(s, { RC.d1[2], RC.d1[3] }, FL_DRIVE) .. ")")
 	elseif phase == "upgrade" then
 		local new = ent(RC.d2, RC_UPGRADE)
 		local stack, carried = loaded_item(FL_DRIVE)
@@ -1092,7 +1141,7 @@ function recovery_test()
 			if #problems > 0 then return finish_test() end
 			return next_phase("surface")
 		end
-		timeout_after(600, "robots upgrading the drive")
+		timeout_after(600, "robots upgrading the drive (" .. robot_report(s, { RC.d2[2], RC.d2[3] }, RC_UPGRADE) .. ")")
 	elseif phase == "surface" then
 		if not game.get_surface(st.other) then
 			expect(next(remote.call(F, "recovered", st.other, "player")) == nil, "the deleted surface keeps recovered fluid")
@@ -1356,6 +1405,7 @@ end
 
 local MOLD_Y = 120
 local MOLD_RECIPE = "glass-alloy-smelter"
+local MOLD_DEADLINE = 900                               -- ticks for the first glass with the mold in (361 needed)
 
 function setup_mold_test(s)
 	local ok, err = pcall(function()
@@ -1377,11 +1427,15 @@ script.on_event(defines.events.on_tick, function(event)
 	fuel_window_tick()
 	local m = storage.mold_machine
 	if storage.mold_done then return end
+	local function glass_made()
+		return m and m.valid and m.get_inventory(defines.inventory.crafter_output or defines.inventory.assembling_machine_output).get_item_count("glass") or 0
+	end
+	--- phase 2 as soon as the first glass is out, at the latest MOLD_DEADLINE ticks after the mold went in
 	local phase
 	if not storage.mold_phase1 and event.tick >= 60 then
 		phase = 1
 		storage.mold_phase1 = event.tick
-	elseif storage.mold_phase1 and event.tick >= storage.mold_phase1 + 450 then
+	elseif storage.mold_phase1 and (glass_made() > 0 or event.tick >= storage.mold_phase1 + MOLD_DEADLINE) then
 		phase = 2
 		storage.mold_done = true
 	else
@@ -1391,7 +1445,7 @@ script.on_event(defines.events.on_tick, function(event)
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
 	expect(m and m.valid, "mold test machine missing")
 	if #problems == 0 then
-		local glass = m.get_inventory(defines.inventory.crafter_output or defines.inventory.assembling_machine_output).get_item_count("glass")
+		local glass = glass_made()
 		local inv = m.get_module_inventory()
 		if phase == 1 then
 			expect(m.disabled_by_script, "mold test: machine without mold is not stopped")
@@ -1402,7 +1456,7 @@ script.on_event(defines.events.on_tick, function(event)
 			expect(glass > 0, "mold test: no glass crafted with the mold inserted")
 			expect(inv.get_item_count("mold") == 1, "mold test: mold left the mold slot")
 			expect(m.get_item_count("mold") == 1, "mold test: mold was duplicated or moved")
-			log("DEVCHECK-RUNTIME-MOLD " .. (#problems == 0 and "ok" or "failed") .. " (glass " .. glass .. ")")
+			log("DEVCHECK-RUNTIME-MOLD " .. (#problems == 0 and "ok" or "failed") .. " (glass " .. glass .. " after " .. (event.tick - storage.mold_phase1) .. " ticks)")
 		end
 	end
 	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
@@ -1412,11 +1466,38 @@ script.on_event(defines.events.on_tick, function(event)
 	end
 end)
 
+--- The terrain comes from the map seed: trees, rocks, cliffs, water and enemies can be anywhere. The
+--- tests place their entities by script, which ignores all that, but construction robots do not build
+--- a ghost over a tree or on water, so a robot rebuild timed out on some seeds (issue #47). The whole
+--- generated test area is cleared first (ore patches stay, they block nothing).
+local TEST_RADIUS = 12                                     -- chunks around { 0, 0 }; every test lies inside
+local function clear_test_area(s)
+	local r = TEST_RADIUS * 32
+	local area = { { -r, -r }, { r + 32, r + 32 } }
+	local removed, water = 0, {}
+	for _, e in pairs(s.find_entities_filtered{ area = area, force = { "neutral", "enemy" } }) do
+		if e.valid and e.type ~= "resource" then
+			e.destroy()
+			removed = removed + 1
+		end
+	end
+	for _, t in pairs(s.find_tiles_filtered{ area = area, collision_mask = "water_tile" }) do
+		water[#water + 1] = { name = "landfill", position = t.position }
+	end
+	s.set_tiles(water)
+	s.destroy_decoratives{ area = area }
+	s.peaceful_mode = true
+	game.map_settings.enemy_expansion.enabled = false
+	return removed, #water
+end
+
 script.on_init(function()
 	local s = game.surfaces[1]
 	s.always_day = true
-	s.request_to_generate_chunks({ 0, 0 }, 12)
+	s.request_to_generate_chunks({ 0, 0 }, TEST_RADIUS)
 	s.force_generate_chunk_requests()
+	local removed, water = clear_test_area(s)
+	log("DEVCHECK-RUNTIME-SEED " .. s.map_gen_settings.seed .. " (test area cleared: " .. removed .. " entities, " .. water .. " water tiles)")
 	local recipe_for = {}
 	for rn, r in pairs(prototypes.recipe) do recipe_for[r.category] = recipe_for[r.category] or rn end
 	local x, y, placed, with_recipe, fails = -150, -150, 0, 0, {}

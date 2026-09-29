@@ -35,6 +35,9 @@ WORK = ROOT / ".devcheck"
 FACTORIO = WORK / "factorio"
 MODS = WORK / "mods"
 LOG = WORK / "last-run.log"
+# `runtime` and `migrate` create their maps with this seed, so a run is reproducible (issue #47);
+# `--seed N` or `--seed random` picks another one, the output prints the seed of every run
+DEFAULT_SEED = 3115102263
 BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails"}
 
 
@@ -360,15 +363,23 @@ def check(a):
     return 0 if ok else 1
 
 
+def seed_args(a):
+    if a.seed == "random":
+        return []
+    return ["--map-gen-seed", str(int(a.seed))]
+
+
 def runtime(a):
     prepare_mods(with_runtime=True)
-    log = factorio("--create", str(WORK / "runtime-map.zip"))
+    log = factorio("--create", str(WORK / "runtime-map.zip"), *seed_args(a))
     if load_errors(log):
         print(load_errors(log))
         return 1
     placed = re.search(r"DEVCHECK-RUNTIME (placed=.*)", log)
     fails = re.findall(r"DEVCHECK-RUNTIME-FAIL (.*)", log)
     print("runtime setup:", placed.group(1) if placed else "no result")
+    seed = re.search(r"DEVCHECK-RUNTIME-SEED (.*)", log)
+    print("map seed:", seed.group(1) if seed else "unknown")
     log = factorio("--benchmark", str(WORK / "runtime-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
     err = re.search(r"(Error.*|non-recoverable.*)", log)
@@ -390,7 +401,7 @@ def runtime(a):
     print(f"power test: {power.group(1) if power else 'did not run'}")
     fuel = re.search(r"DEVCHECK-RUNTIME-FUEL (.*)", log)
     print(f"fuel check test: {fuel.group(1) if fuel else 'did not run'}")
-    victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (\w+)", log)
+    victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
         fails.append("ME network test did not run (needs --ticks >= 300)")
@@ -422,6 +433,8 @@ def runtime(a):
         fails.append("fuel check test failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
+    elif not victory.group(1).startswith("ok"):
+        fails.append("victory test failed")
     report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
@@ -445,7 +458,8 @@ def migrate(a):
     """Create a map with an older version (also "Gregtorio" before 0.3.0), then load and run it with the working copy."""
     old = a.from_zip or zip_from_ref(a.from_ref)
     prepare_mods(gregtorio_zip=old, with_migrate=True)
-    log = factorio("--create", str(WORK / "migrate-map.zip"))
+    log = factorio("--create", str(WORK / "migrate-map.zip"), *seed_args(a))
+    print(f"map seed: {'random' if a.seed == 'random' else a.seed}")
     if load_errors(log):
         print("could not create the map with the old version:\n" + load_errors(log))
         return 1
@@ -486,15 +500,18 @@ def main():
     c.add_argument("--techs", help="regex: list matching technologies and whether they are researchable")
     r = sub.add_parser("runtime")
     r.add_argument("--ticks", type=int, default=1500)
+    r.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     m = sub.add_parser("migrate")
     src = m.add_mutually_exclusive_group(required=True)
     src.add_argument("--from-zip", help="older Gregtorio_x.y.z.zip to create the save with")
     src.add_argument("--from-ref", help="git tag or commit of an older version, e.g. 0e935ba (upstream 0.1.9)")
     m.add_argument("--ticks", type=int, default=300)
+    m.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     al = sub.add_parser("all")
     al.add_argument("--ticks", type=int, default=1500)
     al.add_argument("--locale-out")
     al.add_argument("--techs")
+    al.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed of the runtime map or `random` (default {DEFAULT_SEED})")
     a = ap.parse_args()
     if a.cmd == "setup":
         return setup(a)
