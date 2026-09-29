@@ -167,6 +167,13 @@ def load_errors(log):
     return m.group(1).strip() if m else "unknown error (see .devcheck/last-run.log)"
 
 
+def not_saved(log):
+    """--create runs on_init and then saves; a failed save (e.g. a function in `storage`) keeps the
+    previous map file, so the next run would test an old map"""
+    m = re.search(r"Writing .* failed.*|Error while running event .*on_save.*\n.*", log)
+    return "the map was not saved: " + m.group(0).strip() if m else None
+
+
 # --------------------------------------------------------------------------------------------
 # analysis
 # --------------------------------------------------------------------------------------------
@@ -375,6 +382,9 @@ def runtime(a):
     if load_errors(log):
         print(load_errors(log))
         return 1
+    if not_saved(log):
+        print(not_saved(log))
+        return 1
     placed = re.search(r"DEVCHECK-RUNTIME (placed=.*)", log)
     fails = re.findall(r"DEVCHECK-RUNTIME-FAIL (.*)", log)
     print("runtime setup:", placed.group(1) if placed else "no result")
@@ -401,6 +411,8 @@ def runtime(a):
     print(f"power test: {power.group(1) if power else 'did not run'}")
     fuel = re.search(r"DEVCHECK-RUNTIME-FUEL (.*)", log)
     print(f"fuel check test: {fuel.group(1) if fuel else 'did not run'}")
+    cooled = re.search(r"DEVCHECK-RUNTIME-COOLED (.*)", log)
+    print(f"cooled fluid test: {cooled.group(1) if cooled else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
@@ -431,11 +443,15 @@ def runtime(a):
         fails.append("fuel check test did not run (needs --ticks >= 1500)")
     elif not fuel.group(1).startswith("ok"):
         fails.append("fuel check test failed")
+    if not cooled:
+        fails.append("cooled fluid test did not run (needs --ticks >= 1500)")
+    elif not cooled.group(1).startswith("ok"):
+        fails.append("cooled fluid test failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
     elif not victory.group(1).startswith("ok"):
         fails.append("victory test failed")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, victory test)", fails)
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
@@ -463,10 +479,15 @@ def migrate(a):
     if load_errors(log):
         print("could not create the map with the old version:\n" + load_errors(log))
         return 1
+    if not_saved(log):
+        print(not_saved(log))
+        return 1
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
     print(f"old save with loaded fluid drives: {setup.group(1) if setup else 'no result'}")
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP-POWER (.*)", log)
     print(f"old save with a reactor on steam: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-TURBINE (.*)", log)
+    print(f"old save with a plasma turbine: {setup.group(1) if setup else 'no result'}")
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP-PATTERNS (.*)", log)
     print(f"old save with pattern providers: {setup.group(1) if setup else 'no result'}")
     prepare_mods(with_migrate=True)
@@ -477,6 +498,8 @@ def migrate(a):
     print(f"fluid drives of the old save: {fluids.group(1) if fluids else 'no result'}")
     power = re.search(r"DEVCHECK-MIGRATE-POWER (.*)", log)
     print(f"reactor on steam in the old save: {power.group(1) if power else 'no result'}")
+    turbine = re.search(r"DEVCHECK-MIGRATE-TURBINE (.*)", log)
+    print(f"plasma turbine of the old save: {turbine.group(1) if turbine else 'no result'}")
     patterns = re.search(r"DEVCHECK-MIGRATE-PATTERNS (.*)", log)
     print(f"pattern providers of the old save: {patterns.group(1) if patterns else 'no result'}")
     for f in re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log):
@@ -484,6 +507,7 @@ def migrate(a):
     if not ran:
         print(load_errors(log) or "")
     ok = ran and fluids and not fluids.group(1).startswith("failed") and power and not power.group(1).startswith("failed") \
+        and turbine and not turbine.group(1).startswith("failed") \
         and patterns and not patterns.group(1).startswith("failed")
     return 0 if ok else 1
 
