@@ -5,6 +5,10 @@
 --- Results are logged as DEVCHECK-MIGRATE-FLUIDS lines. Versions without fluid drives are skipped.
 --- It also builds a large naquadah reactor full of steam under load, which must be stopped after the
 --- update (DEVCHECK-MIGRATE-POWER, issue #25).
+--- Pattern providers (issue #27): in the same network a Molecular Assembler and a fresh iron furnace with
+--- providers. After the update the assembler must still be a pattern, the furnace must be counted as
+--- "no-recipe", and a recipe chosen in the old provider must make the furnace a pattern
+--- (DEVCHECK-MIGRATE-PATTERNS). Versions without pattern providers are skipped.
 local F = "gregtorio-me-fluids"
 local DRIVE = "me-fluid-drive-1k"
 local Y = 40
@@ -71,11 +75,65 @@ local function check_power()
 	log("DEVCHECK-MIGRATE-POWER " .. (#problems == 0 and "ok" or "failed") .. string.format(" (steam %.1f of %.1f)", left, p.steam))
 end
 
+local A = "gregtorio-me-autocraft"
+local PT_ASSEMBLER, PT_FURNACE = { 14.5, Y + 8.5 }, { 19, Y + 13 }
+local PT_PROVIDER_A, PT_PROVIDER_F = { 16.5, Y + 8.5 }, { 17.5, Y + 12.5 }
+local PT_RECIPE, PT_FURNACE_RECIPE = "iron-gear-crafting-table", "iron-dust-smelter"
+
+--- after the ME network of the fluid drives exists (its controller)
+local function setup_patterns(place)
+	if not (remote.interfaces[A] and prototypes.entity["me-pattern-provider"]) then
+		storage.patterns = "skipped"
+		log("DEVCHECK-MIGRATE-SETUP-PATTERNS skipped (no pattern providers in this version)")
+		return
+	end
+	local m = place("me-molecular-assembler", PT_ASSEMBLER[1], PT_ASSEMBLER[2])
+	m.force.recipes[PT_RECIPE].enabled = true
+	m.set_recipe(PT_RECIPE)
+	place("me-pattern-provider", PT_PROVIDER_A[1], PT_PROVIDER_A[2])
+	place("iron-furnace", PT_FURNACE[1], PT_FURNACE[2])
+	local p = place("me-pattern-provider", PT_PROVIDER_F[1], PT_PROVIDER_F[2])
+	local set = {}
+	for _, k in pairs(remote.call(A, "craftable", p)) do set[k] = true end
+	storage.patterns = { provider = p, ok = set["iron-gear-wheel"] == true }
+	log("DEVCHECK-MIGRATE-SETUP-PATTERNS " .. (set["iron-gear-wheel"] and "ok" or "failed"))
+end
+
+local function check_patterns()
+	local st = storage.patterns
+	if st == nil or st == "skipped" then
+		log("DEVCHECK-MIGRATE-PATTERNS skipped")
+		return
+	end
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local p = st.provider
+	local function craftable()
+		local set = {}
+		for _, k in pairs(remote.call(A, "craftable", p)) do set[k] = true end
+		return set
+	end
+	expect(st.ok, "the assembler was no pattern in the old save")
+	expect(p.valid, "the old provider is gone")
+	if p.valid then
+		expect(craftable()["iron-gear-wheel"], "the assembler is no pattern after the update")
+		local ignored = remote.call(A, "ignored", p)
+		expect(ignored["no-recipe"] == 1, "the fresh furnace is not counted as no-recipe: " .. serpent.line(ignored))
+		p.force.recipes[PT_FURNACE_RECIPE].enabled = true
+		expect(remote.call(A, "set_recipe", p, PT_FURNACE_RECIPE), "set_recipe on the old provider failed")
+		expect(craftable()["iron-ingot"], "the furnace is no pattern after choosing its recipe in the old provider")
+	end
+	for _, m in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL patterns: " .. m) end
+	log("DEVCHECK-MIGRATE-PATTERNS " .. (#problems == 0 and "ok" or "failed"))
+end
+
 script.on_init(function()
 	setup_power()
+	storage.patterns = "skipped"
 	storage.state = "skipped"
 	if not (remote.interfaces[F] and prototypes.entity[DRIVE] and prototypes.entity["me-controller"]) then
 		log("DEVCHECK-MIGRATE-SETUP skipped (no ME fluid drives in this version)")
+		log("DEVCHECK-MIGRATE-SETUP-PATTERNS skipped (no ME fluid drives in this version)")
 		return
 	end
 	local s = game.surfaces[1]
@@ -101,6 +159,7 @@ script.on_init(function()
 	end
 	storage.state = ok and "ready" or "setup-failed"
 	log("DEVCHECK-MIGRATE-SETUP " .. (ok and "ok" or "failed"))
+	setup_patterns(place)
 end)
 
 --- runs after every mod or prototype change: tells the check which path ran
@@ -110,6 +169,7 @@ script.on_nth_tick(30, function()
 	if storage.checked then return end
 	storage.checked = true
 	check_power()
+	check_patterns()
 	if storage.state ~= "ready" then
 		log("DEVCHECK-MIGRATE-FLUIDS " .. (storage.state == "skipped" and "skipped" or "failed (" .. tostring(storage.state) .. ")"))
 		return

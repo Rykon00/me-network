@@ -8,6 +8,10 @@
 --- gear, gear + plate -> transport belt) and raw materials in a drive. Job 1 crafts belts through the
 --- two-level chain, job 2 asks for more than the raw materials allow and must not start, job 3 is
 --- queued behind job 1 (one CPU) and cancelled; its items must come back.
+--- Furnace patterns (issue #27): in its own network, a fresh iron furnace next to a pattern provider
+--- with a chosen recipe is a pattern at once and smelts a job into storage; a furnace without choice
+--- and without a smelted recipe is counted as ignored ("no-recipe"). Settings paste, blueprint tags and
+--- a revived ghost carry the choice.
 --- Fluids (prototypes/122-fork-ae2-fluids.lua, scripts/fork-me-fluids.lua): a network with a fluid drive,
 --- an import interface with a tank of chlorine connected to it, an export interface, a roboport with
 --- construction robots, and pattern machines with fluid recipes (chemical reactors, an extractor). Checks the
@@ -353,8 +357,164 @@ local function autocraft_test()
 	end
 end
 
+--------------------------------------------------------------------------------
+--- furnace patterns (issue #27): the recipe choice of a pattern provider
+--------------------------------------------------------------------------------
+
+local FU_X, FU_Y = -116, -220                          -- own network, above the machine grid
+local FU_RECIPE, FU_ITEM, FU_INPUT, FU_AMOUNT = "iron-dust-smelter", "iron-ingot", "iron-dust", 2
+local FU_PROVIDER_A = { FU_X + 16.5, FU_Y + 10.5 }     -- touches furnace A (west)
+local FU_PROVIDER_B = { FU_X + 7.5, FU_Y + 10.5 }      -- touches furnace B (west)
+local FU_GHOST = { FU_X + 20.5, FU_Y + 4.5 }
+
+function setup_furnace_test(s)
+	local fails = {}
+	local function place(name, x, y)
+		local ok, e = pcall(function()
+			return s.create_entity{ name = name, position = { x, y }, force = "player", raise_built = true }
+		end)
+		if not (ok and e) then fails[#fails + 1] = "furnace test " .. name .. ": " .. tostring(e) return nil end
+		return e
+	end
+	local eei = place("electric-energy-interface", FU_X + 12.5, FU_Y + 6.5)
+	if eei then
+		eei.power_production = 1e6
+		eei.electric_buffer_size = 1e7
+	end
+	place("substation", FU_X + 13, FU_Y + 2)
+	place("me-controller", FU_X + 6, FU_Y)
+	place("me-terminal", FU_X + 8.5, FU_Y + 4.5)
+	place("me-crafting-cpu", FU_X + 10, FU_Y)
+	local drive = place("me-drive-16k", FU_X + 8.5, FU_Y + 6.5)
+	for _, pos in pairs({ { FU_X + 15, FU_Y + 11 }, { FU_X + 6, FU_Y + 11 } }) do
+		local f = place("iron-furnace", pos[1], pos[2])
+		if f then f.get_inventory(defines.inventory.fuel).insert{ name = "coal", count = 20 } end
+	end
+	place("me-pattern-provider", FU_PROVIDER_A[1], FU_PROVIDER_A[2])
+	place("me-pattern-provider", FU_PROVIDER_B[1], FU_PROVIDER_B[2])
+	if drive then drive.insert{ name = FU_INPUT, count = 10 } end
+	return fails
+end
+
+function furnace_test()
+	local s = game.surfaces[1]
+	local A = "gregtorio-me-autocraft"
+	local terminal = s.find_entity("me-terminal", { FU_X + 8.5, FU_Y + 4.5 })
+	local net = terminal and s.find_logistic_network_by_position(terminal.position, terminal.force)
+	local pa = s.find_entity("me-pattern-provider", FU_PROVIDER_A)
+	local pb = s.find_entity("me-pattern-provider", FU_PROVIDER_B)
+	local furnace_a = s.find_entity("iron-furnace", { FU_X + 15, FU_Y + 11 })
+	local function count(item) return net and net.get_item_count{ name = item, quality = "normal" } or -1 end
+	local st = storage.furnace
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish_test(note)
+		storage.furnace.done = true
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL furnace patterns: " .. p) end
+		log("DEVCHECK-RUNTIME-FURNACE " .. (#problems == 0 and "ok" or "failed") .. (note and (" (" .. note .. ")") or ""))
+	end
+	local function craftable()
+		local set = {}
+		for _, k in pairs(remote.call(A, "craftable", terminal)) do set[k] = true end
+		return set
+	end
+
+	if not st then
+		if game.tick < 60 then return end
+		storage.furnace = { started = game.tick }
+		st = storage.furnace
+		if not (terminal and net and pa and pb and furnace_a) then expect(false, "entities missing") return finish_test() end
+		--- fresh furnaces: no recipe, no previous recipe; both are counted as ignored
+		expect(furnace_a.previous_recipe == nil and furnace_a.get_recipe() == nil, "furnace A is not fresh")
+		local ignored = remote.call(A, "ignored", terminal)
+		expect(ignored["no-recipe"] == 2 and ignored.total == 2, "fresh furnaces ignored: " .. serpent.line(ignored))
+		expect(not craftable()[FU_ITEM], "a fresh furnace became a pattern")
+		--- the GUI's options: researched recipes of the furnace's categories only
+		local options = remote.call(A, "recipe_options", pa)
+		local listed = {}
+		for _, n in pairs(options) do listed[n] = true end
+		expect(not listed[FU_RECIPE], "the options list a recipe that is not researched")
+		terminal.force.recipes[FU_RECIPE].enabled = true
+		options = remote.call(A, "recipe_options", pa)
+		listed = {}
+		for _, n in pairs(options) do
+			listed[n] = true
+			local r = terminal.force.recipes[n]
+			expect(r.enabled and prototypes.recipe[n].category == "smelting", "option " .. n .. " is not a researched smelting recipe")
+		end
+		expect(listed[FU_RECIPE], "the options miss " .. FU_RECIPE .. ": " .. serpent.line(options))
+		--- choose the recipe (the GUI's code path): a pattern right away
+		expect(remote.call(A, "set_recipe", pa, FU_RECIPE), "set_recipe failed")
+		expect(remote.call(A, "get_recipe", pa) == FU_RECIPE, "choice not stored")
+		expect(craftable()[FU_ITEM], "the furnace with a chosen recipe is no pattern")
+		ignored = remote.call(A, "ignored", terminal)
+		expect(ignored["no-recipe"] == 1 and ignored.total == 1, "ignored after the choice: " .. serpent.line(ignored))
+		local per_run = 0
+		for _, i in pairs(prototypes.recipe[FU_RECIPE].ingredients) do if i.name == FU_INPUT then per_run = i.amount end end
+		local yield = 0
+		for _, p in pairs(prototypes.recipe[FU_RECIPE].products) do if p.name == FU_ITEM then yield = p.amount end end
+		st.runs = math.ceil(FU_AMOUNT / yield)
+		st.input = st.runs * per_run
+		st.output = st.runs * yield
+		local plan = remote.call(A, "plan", terminal, FU_ITEM, FU_AMOUNT)
+		expect(plan and plan.ok and plan.steps == 1 and plan.runs == st.runs, "furnace plan: " .. serpent.line(plan))
+		st.job = remote.call(A, "start", terminal, FU_ITEM, FU_AMOUNT)
+		expect(st.job, "furnace job did not start")
+		if #problems > 0 then return finish_test() end
+		return
+	end
+	if st.done then return end
+
+	local j = remote.call(A, "job", st.job)
+	if j and (j.status == "done" or j.status == "failed" or j.status == "cancelled") then
+		expect(j.status == "done", "furnace job ended as " .. j.status .. " " .. serpent.line(j))
+		expect(count(FU_ITEM) == st.output, "ingots in storage: " .. count(FU_ITEM) .. ", expected " .. st.output)
+		expect(count(FU_INPUT) == 10 - st.input, "dust left: " .. count(FU_INPUT) .. ", expected " .. (10 - st.input))
+		expect(next(j.pool) == nil, "furnace job keeps items: " .. serpent.line(j.pool))
+		expect(furnace_a.get_inventory(defines.inventory.furnace_source).is_empty()
+			and furnace_a.get_inventory(defines.inventory.furnace_result).is_empty(), "furnace A is not empty after the job")
+		--- settings paste: provider B takes the choice, furnace B becomes a pattern too
+		remote.call(A, "paste", pa, pb)
+		expect(remote.call(A, "get_recipe", pb) == FU_RECIPE, "paste did not copy the choice")
+		local ignored = remote.call(A, "ignored", terminal)
+		expect((ignored.total or 0) == 0, "ignored after the paste: " .. serpent.line(ignored))
+		--- without a choice the recipe furnace A smelted last (previous_recipe) keeps it a pattern
+		remote.call(A, "set_recipe", pa, nil)
+		ignored = remote.call(A, "ignored", terminal)
+		expect((ignored.total or 0) == 0, "furnace A without choice lost its last smelted recipe: " .. serpent.line(ignored))
+		remote.call(A, "set_recipe", pa, FU_RECIPE)
+		--- blueprint: the provider's choice becomes an entity tag
+		local inv = game.create_inventory(1)
+		inv.insert{ name = "blueprint" }
+		local bp = inv[1]
+		local mapping = bp.create_blueprint{ surface = s, force = "player",
+			area = { { FU_PROVIDER_A[1] - 0.4, FU_PROVIDER_A[2] - 0.4 }, { FU_PROVIDER_A[1] + 0.4, FU_PROVIDER_A[2] + 0.4 } } }
+		remote.call(A, "tag_blueprint", bp, mapping)
+		local tagged = false
+		for index, e in pairs(mapping or {}) do
+			if e.name == "me-pattern-provider" then tagged = bp.get_blueprint_entity_tag(index, "fork_ae2_recipe") == FU_RECIPE end
+		end
+		expect(tagged, "the blueprint does not carry the choice")
+		inv.destroy()
+		--- a ghost with the tag is revived: the new provider has the choice
+		local ghost = s.create_entity{ name = "entity-ghost", inner_name = "me-pattern-provider", position = FU_GHOST,
+			force = "player", tags = { fork_ae2_recipe = FU_RECIPE } }
+		local _, revived = ghost.revive{ raise_revive = true }
+		expect(revived and remote.call(A, "get_recipe", revived) == FU_RECIPE, "a revived ghost lost the choice")
+		return finish_test("job took " .. (game.tick - st.started) .. " ticks")
+	end
+	if game.tick > st.started + 1200 then
+		local status
+		for name, v in pairs(defines.entity_status) do if furnace_a.status == v then status = name end end
+		expect(false, "furnace job timed out: " .. serpent.line(j) .. ", furnace " .. tostring(status) .. " progress "
+			.. furnace_a.crafting_progress .. " recipe energy " .. prototypes.recipe[FU_RECIPE].energy)
+		finish_test()
+	end
+end
+
 script.on_nth_tick(10, function()
 	if not (storage.autocraft and storage.autocraft.done) then autocraft_test() end
+	if not (storage.furnace and storage.furnace.done) then furnace_test() end
 	if not (storage.fluids and storage.fluids.done) then fluid_test() end
 	if not (storage.fluid_rec and storage.fluid_rec.done) then recovery_test() end
 	if not (storage.fuel and storage.fuel.done) then fuel_test() end
@@ -1285,6 +1445,7 @@ script.on_init(function()
 	for _, f in pairs(setup_me_network(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_mold_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_autocraft_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_furnace_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fluid_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_recovery_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end

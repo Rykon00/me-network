@@ -380,6 +380,8 @@ def runtime(a):
     print(f"mold test: {mold.group(1) if mold else 'did not run'}")
     autocraft = re.search(r"DEVCHECK-RUNTIME-AUTOCRAFT (.*)", log)
     print(f"autocrafting test: {autocraft.group(1) if autocraft else 'did not run'}")
+    furnace = re.search(r"DEVCHECK-RUNTIME-FURNACE (.*)", log)
+    print(f"furnace pattern test: {furnace.group(1) if furnace else 'did not run'}")
     fluids = re.search(r"DEVCHECK-RUNTIME-FLUIDS (.*)", log)
     print(f"fluid test: {fluids.group(1) if fluids else 'did not run'}")
     recovery = re.search(r"DEVCHECK-RUNTIME-RECOVERY (.*)", log)
@@ -398,6 +400,10 @@ def runtime(a):
         fails.append("autocrafting test did not run (needs --ticks >= 1500)")
     elif not autocraft.group(1).startswith("ok"):
         fails.append("autocrafting test failed")
+    if not furnace:
+        fails.append("furnace pattern test did not run (needs --ticks >= 1500)")
+    elif not furnace.group(1).startswith("ok"):
+        fails.append("furnace pattern test failed")
     if not fluids:
         fails.append("fluid test did not run (needs --ticks >= 1500)")
     elif not fluids.group(1).startswith("ok"):
@@ -416,7 +422,7 @@ def runtime(a):
         fails.append("fuel check test failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, fluid test, fluid recovery test, power test, fuel check test, victory test)", fails)
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
@@ -447,6 +453,8 @@ def migrate(a):
     print(f"old save with loaded fluid drives: {setup.group(1) if setup else 'no result'}")
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP-POWER (.*)", log)
     print(f"old save with a reactor on steam: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-PATTERNS (.*)", log)
+    print(f"old save with pattern providers: {setup.group(1) if setup else 'no result'}")
     prepare_mods(with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
@@ -455,11 +463,14 @@ def migrate(a):
     print(f"fluid drives of the old save: {fluids.group(1) if fluids else 'no result'}")
     power = re.search(r"DEVCHECK-MIGRATE-POWER (.*)", log)
     print(f"reactor on steam in the old save: {power.group(1) if power else 'no result'}")
+    patterns = re.search(r"DEVCHECK-MIGRATE-PATTERNS (.*)", log)
+    print(f"pattern providers of the old save: {patterns.group(1) if patterns else 'no result'}")
     for f in re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log):
         print("  - " + f)
     if not ran:
         print(load_errors(log) or "")
-    ok = ran and fluids and not fluids.group(1).startswith("failed") and power and not power.group(1).startswith("failed")
+    ok = ran and fluids and not fluids.group(1).startswith("failed") and power and not power.group(1).startswith("failed") \
+        and patterns and not patterns.group(1).startswith("failed")
     return 0 if ok else 1
 
 
