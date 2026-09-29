@@ -28,6 +28,35 @@
 local ME_Y = 100
 local ME_ITEM = "iron-plate"
 
+--- State of a robot job at `pos` for a timeout message: ghosts and blocking entities there, the tile,
+--- the chunk, and every construction network covering it (robots with position, energy and order).
+function robot_report(s, pos, name)
+	local force = game.forces.player
+	local out = {}
+	local function add(x) out[#out + 1] = x end
+	local area = { { pos[1] - 1.5, pos[2] - 1.5 }, { pos[1] + 1.5, pos[2] + 1.5 } }
+	add("ghosts " .. #s.find_entities_filtered{ ghost_name = name, position = pos, radius = 0.5 })
+	local blocking = {}
+	for _, e in pairs(s.find_entities_filtered{ area = area }) do
+		if e.name ~= name and e.type ~= "entity-ghost" then blocking[#blocking + 1] = e.name .. "@" .. e.position.x .. "," .. e.position.y end
+	end
+	add("near: " .. table.concat(blocking, " "))
+	add("tile " .. s.get_tile(pos[1], pos[2]).name)
+	local chunk = { math.floor(pos[1] / 32), math.floor(pos[2] / 32) }
+	add("chunk generated " .. tostring(s.is_chunk_generated(chunk)) .. " charted " .. tostring(force.is_chunk_charted(s, chunk)))
+	for _, n in pairs(s.find_logistic_networks_by_construction_area(pos, force)) do
+		local robots = {}
+		for _, r in pairs(n.construction_robots) do
+			robots[#robots + 1] = string.format("(%.1f,%.1f e=%.0f orders=%d)", r.position.x, r.position.y, r.energy, #r.robot_order_queue)
+		end
+		local ports = {}
+		for _, c in pairs(n.cells) do ports[#ports + 1] = c.owner.name .. " e=" .. string.format("%.0f", c.owner.energy) end
+		add("network " .. n.network_id .. ": robots " .. n.available_construction_robots .. "/" .. n.all_construction_robots
+			.. " " .. table.concat(robots, " ") .. " cells " .. table.concat(ports, ", "))
+	end
+	return table.concat(out, "; ")
+end
+
 function setup_me_network(s)
 	local fails = {}
 	local function place(name, x, y)
@@ -652,7 +681,7 @@ function fluid_test()
 
 	local function timeout_after(ticks, what)
 		if game.tick > st.phase_tick + ticks then
-			expect(false, what .. " timed out (network " .. FL_FLUID .. " " .. count(FL_FLUID) .. ")")
+			expect(false, what .. " timed out at tick " .. game.tick .. " (network " .. FL_FLUID .. " " .. count(FL_FLUID) .. ")")
 			finish_test()
 			return true
 		end
@@ -747,7 +776,7 @@ function fluid_test()
 			expect(count(FL_FLUID) == 0, "network holds fluid without a drive: " .. count(FL_FLUID))
 			return next_phase("robot-stored")
 		end
-		timeout_after(600, "robots deconstructing the drive")
+		timeout_after(600, "robots deconstructing the drive (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "robot-stored" then
 		--- the robot delivers the drive item (with its tags) into the storage chest = the item drive
 		local idrive = ent(FL.idrive)
@@ -773,7 +802,7 @@ function fluid_test()
 			if not (ok and ghost) then return finish_test() end
 			return next_phase("robot-build")
 		end
-		timeout_after(600, "robot storing the drive item")
+		timeout_after(600, "robot storing the drive item (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "robot-build" then
 		if s.find_entity(FL_DRIVE, FL_DRIVE_POS) then
 			expect(near(count(FL_FLUID), FL_TANK_AMOUNT), "after the robots placed the drive the network holds " .. count(FL_FLUID))
@@ -788,7 +817,7 @@ function fluid_test()
 			remote.call(F, "set_interface", b, "export", "water", FL_EXPORT_LEVEL)
 			return next_phase("full")
 		end
-		timeout_after(600, "robots building the drive from the ghost")
+		timeout_after(600, "robots building the drive from the ghost (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "full" then
 		if game.tick >= st.phase_tick + 40 then
 			local ia, ib = remote.call(F, "get_interface", a), remote.call(F, "get_interface", b)
@@ -970,7 +999,7 @@ function recovery_test()
 	local function next_phase(name) st.phase = name st.phase_tick = game.tick end
 	local function timeout_after(ticks, what)
 		if game.tick > st.phase_tick + ticks then
-			expect(false, what .. " timed out")
+			expect(false, what .. " timed out at tick " .. game.tick)
 			finish_test()
 		end
 	end
@@ -1038,7 +1067,7 @@ function recovery_test()
 		end
 		local ghosts = s.find_entities_filtered{ ghost_name = FL_DRIVE, position = { RC.d1[2], RC.d1[3] }, radius = 0.5 }
 		timeout_after(600, "robots rebuilding the destroyed drive (ghosts " .. #ghosts .. ", drive items in storage "
-			.. ref.get_item_count(FL_DRIVE) .. ")")
+			.. ref.get_item_count(FL_DRIVE) .. "; " .. robot_report(s, { RC.d1[2], RC.d1[3] }, FL_DRIVE) .. ")")
 	elseif phase == "upgrade" then
 		local new = ent(RC.d2, RC_UPGRADE)
 		local stack, carried = loaded_item(FL_DRIVE)
@@ -1092,7 +1121,7 @@ function recovery_test()
 			if #problems > 0 then return finish_test() end
 			return next_phase("surface")
 		end
-		timeout_after(600, "robots upgrading the drive")
+		timeout_after(600, "robots upgrading the drive (" .. robot_report(s, { RC.d2[2], RC.d2[3] }, RC_UPGRADE) .. ")")
 	elseif phase == "surface" then
 		if not game.get_surface(st.other) then
 			expect(next(remote.call(F, "recovered", st.other, "player")) == nil, "the deleted surface keeps recovered fluid")
@@ -1412,11 +1441,38 @@ script.on_event(defines.events.on_tick, function(event)
 	end
 end)
 
+--- The terrain comes from the map seed: trees, rocks, cliffs, water and enemies can be anywhere. The
+--- tests place their entities by script, which ignores all that, but construction robots do not build
+--- a ghost over a tree or on water, so a robot rebuild timed out on some seeds (issue #47). The whole
+--- generated test area is cleared first (ore patches stay, they block nothing).
+local TEST_RADIUS = 12                                     -- chunks around { 0, 0 }; every test lies inside
+local function clear_test_area(s)
+	local r = TEST_RADIUS * 32
+	local area = { { -r, -r }, { r + 32, r + 32 } }
+	local removed, water = 0, {}
+	for _, e in pairs(s.find_entities_filtered{ area = area, force = { "neutral", "enemy" } }) do
+		if e.valid and e.type ~= "resource" then
+			e.destroy()
+			removed = removed + 1
+		end
+	end
+	for _, t in pairs(s.find_tiles_filtered{ area = area, collision_mask = "water_tile" }) do
+		water[#water + 1] = { name = "landfill", position = t.position }
+	end
+	s.set_tiles(water)
+	s.destroy_decoratives{ area = area }
+	s.peaceful_mode = true
+	game.map_settings.enemy_expansion.enabled = false
+	return removed, #water
+end
+
 script.on_init(function()
 	local s = game.surfaces[1]
 	s.always_day = true
-	s.request_to_generate_chunks({ 0, 0 }, 12)
+	s.request_to_generate_chunks({ 0, 0 }, TEST_RADIUS)
 	s.force_generate_chunk_requests()
+	local removed, water = clear_test_area(s)
+	log("DEVCHECK-RUNTIME-SEED " .. s.map_gen_settings.seed .. " (test area cleared: " .. removed .. " entities, " .. water .. " water tiles)")
 	local recipe_for = {}
 	for rn, r in pairs(prototypes.recipe) do recipe_for[r.category] = recipe_for[r.category] or rn end
 	local x, y, placed, with_recipe, fails = -150, -150, 0, 0, {}
