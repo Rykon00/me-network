@@ -133,3 +133,45 @@ for kind, list in pairs(FORK_CRAFTING_MENU_HIDDEN or {}) do
 	for name, reason in pairs(list) do cm[#cm + 1] = kind .. "\t" .. name .. "\t" .. reason end
 end
 section("CRAFTMENU", cm)
+
+--- Balance data (`devcheck.py check --balance-out`): recipes with amounts and times, machine speeds,
+--- technology unit counts. One JSON object per line.
+local bal = {}
+local function stacks(list)
+	local t = {}
+	for _, x in pairs(list or {}) do
+		t[#t + 1] = {
+			name = x.name or x[1], type = x.type or "item", amount = x.amount or x[2],
+			amount_min = x.amount_min, amount_max = x.amount_max, probability = x.probability,
+			catalyst = x.ignored_by_productivity,
+		}
+	end
+	return t
+end
+for n, r in pairs(data.raw.recipe) do
+	bal[#bal + 1] = helpers.table_to_json({
+		kind = "recipe", name = n, category = r.category or "crafting", time = r.energy_required or 0.5,
+		enabled = r.enabled ~= false, hidden = r.hidden == true,
+		ingredients = stacks(r.ingredients), results = stacks(r.results),
+	})
+end
+for _, t in pairs({ "assembling-machine", "furnace", "rocket-silo" }) do
+	for n, e in pairs(data.raw[t] or {}) do
+		bal[#bal + 1] = helpers.table_to_json({
+			kind = "crafter", name = n, speed = e.crafting_speed, categories = e.crafting_categories,
+			energy = e.energy_usage,
+		})
+	end
+end
+for n, tech in pairs(data.raw.technology) do
+	local u = tech.unit
+	bal[#bal + 1] = helpers.table_to_json({
+		kind = "tech", name = n, enabled = tech.enabled ~= false and not tech.hidden,
+		prerequisites = tech.prerequisites or {},
+		unlocks = (function() local e = {} for _, x in pairs(tech.effects or {}) do
+			if x.type == "unlock-recipe" then e[#e + 1] = x.recipe end end return e end)(),
+		count = u and u.count, count_formula = u and u.count_formula, time = u and u.time,
+		ingredients = u and stacks(u.ingredients) or {}, max_level = tech.max_level,
+	})
+end
+section("BALANCE", bal)
