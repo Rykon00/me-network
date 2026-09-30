@@ -13,12 +13,15 @@
 ---     can make, an amount field and a "Craft" button with a plan preview (what is missing), and
 ---     the job list with progress and a cancel button. Selected resource and amount live in the
 ---     GUI elements (tags, text field); jobs live in storage.fork_ae2.
----   * GUI events of the fluid drive and fluid interface panels are routed to fork-me-fluids.lua.
+---   * GUI events of the fluid drive and fluid interface panels are routed to fork-me-fluids.lua, those
+---     of the level maintainer and circuit interface panels to fork-me-circuit.lua (a Factorio event
+---     has one handler, so this module registers them all).
 --- State: storage.fork_me_terminal[player_index] = { entity = LuaEntity, filter = string }
 --------------------------------------------------------------------------------
 
 local autocraft = require("scripts.fork-me-autocraft")
 local fluids = require("scripts.fork-me-fluids")
+local circuit = require("scripts.fork-me-circuit")
 
 local M = {}
 
@@ -294,9 +297,9 @@ function M.refresh_crafting(player, frame, entity)
 	if not (st and tabs and tabs.selected_tab_index == 2) then return end
 	local net = network_of(entity)
 	local info = find(frame, "fork_ae2_info")
-	local total, free = autocraft.cpu_summary(net)
+	local total, free, _, slots = autocraft.cpu_summary(net)
 	local keys, ignored = autocraft.craftable(net)
-	info.caption = { "fork-me-craft.info", total, free, #keys, ignored.total or 0, autocraft.ignored_list(ignored) }
+	info.caption = { "fork-me-craft.info", total, free, #keys, ignored.total or 0, autocraft.ignored_list(ignored), slots }
 	local fluid_totals = fluids.totals(net)
 
 	local filter = (st.filter or ""):lower():gsub("%s+", "-")
@@ -486,6 +489,7 @@ end)
 
 script.on_event(defines.events.on_gui_opened, function(event)
 	if fluids.on_gui_opened(event) then return end
+	if circuit.on_gui_opened(event) then return end
 	if event.gui_type == defines.gui_type.entity and event.entity and event.entity.valid
 		and event.entity.name == "me-terminal" then
 		open(game.get_player(event.player_index), event.entity)
@@ -494,6 +498,7 @@ end)
 
 script.on_event(defines.events.on_gui_closed, function(event)
 	if fluids.on_gui_closed(event) then return end
+	if circuit.on_gui_closed(event) then return end
 	if autocraft.on_gui_closed(event) then return end
 	if event.element and event.element.valid and event.element.name == FRAME then
 		close(game.get_player(event.player_index))
@@ -525,6 +530,7 @@ end)
 
 script.on_event(defines.events.on_gui_text_changed, function(event)
 	if fluids.on_gui_text_changed(event) then return end
+	if circuit.on_gui_text_changed(event) then return end
 	local name = event.element.name
 	local st = state()[event.player_index]
 	if not st then return end
@@ -534,6 +540,24 @@ script.on_event(defines.events.on_gui_text_changed, function(event)
 	elseif name == "fork_ae2_amount" then
 		refresh(game.get_player(event.player_index))
 	end
+end)
+
+script.on_event(defines.events.on_gui_switch_state_changed, function(event)
+	fluids.on_gui_switch_state_changed(event)
+end)
+
+script.on_event(defines.events.on_gui_elem_changed, function(event)
+	if fluids.on_gui_elem_changed(event) then return end
+	circuit.on_gui_elem_changed(event)
+end)
+
+script.on_event(defines.events.on_gui_confirmed, function(event)
+	if fluids.on_gui_confirmed(event) then return end
+	circuit.on_gui_confirmed(event)
+end)
+
+script.on_event(defines.events.on_gui_checked_state_changed, function(event)
+	circuit.on_gui_checked_state_changed(event)
 end)
 
 script.on_event(defines.events.on_gui_selected_tab_changed, function(event)
