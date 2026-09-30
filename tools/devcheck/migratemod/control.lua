@@ -14,6 +14,10 @@
 --- providers. After the update the assembler must still be a pattern, the furnace must be counted as
 --- "no-recipe", and a recipe chosen in the old provider must make the furnace a pattern
 --- (DEVCHECK-MIGRATE-PATTERNS). Versions without pattern providers are skipped.
+--- Crafting CPU (issue #38 changed its record to several job slots): the old save also has a powered CPU, a
+--- drive with plates and sticks, and a gear job started with the old version on the assembler above. After
+--- the update the job must finish with the gears in storage and the CPU must count as one job slot
+--- (DEVCHECK-MIGRATE-JOB).
 local F = "gregtorio-me-fluids"
 local DRIVE = "me-fluid-drive-1k"
 local Y = 40
@@ -135,6 +139,7 @@ local A = "gregtorio-me-autocraft"
 local PT_ASSEMBLER, PT_FURNACE = { 14.5, Y + 8.5 }, { 19, Y + 13 }
 local PT_PROVIDER_A, PT_PROVIDER_F = { 16.5, Y + 8.5 }, { 17.5, Y + 12.5 }
 local PT_RECIPE, PT_FURNACE_RECIPE = "iron-gear-crafting-table", "iron-dust-smelter"
+local JOB_GEARS = 5
 
 --- after the ME network of the fluid drives exists (its controller)
 local function setup_patterns(place)
@@ -153,6 +158,44 @@ local function setup_patterns(place)
 	for _, k in pairs(remote.call(A, "craftable", p)) do set[k] = true end
 	storage.patterns = { provider = p, ok = set["iron-gear-wheel"] == true }
 	log("DEVCHECK-MIGRATE-SETUP-PATTERNS " .. (set["iron-gear-wheel"] and "ok" or "failed"))
+	--- a job of the old version on a crafting CPU (own power for the CPU and the assembler)
+	local eei = place("electric-energy-interface", 12, Y + 15)
+	eei.power_production = 1e6
+	eei.electric_buffer_size = 1e7
+	place("substation", 12, Y + 12)
+	place("me-crafting-cpu", 9, Y + 9)
+	local drive = place("me-drive-16k", 8.5, Y + 12.5)
+	drive.insert{ name = "iron-plate", count = 50 }
+	drive.insert{ name = "iron-stick", count = 50 }
+	local id, why = remote.call(A, "start", p, "iron-gear-wheel", JOB_GEARS)
+	storage.job = { id = id, provider = p }
+	log("DEVCHECK-MIGRATE-SETUP-JOB " .. (id and "ok" or ("failed (" .. tostring(why) .. ")")))
+end
+
+local function check_job()
+	local st = storage.job
+	if not (st and st.id) then
+		log("DEVCHECK-MIGRATE-JOB " .. (st and "failed (no job in the old save)" or "skipped"))
+		return
+	end
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local j = remote.call(A, "job", st.id)
+	local m = game.surfaces[1].find_entity("me-molecular-assembler", PT_ASSEMBLER)
+	local status = "gone"
+	if m then for k, v in pairs(defines.entity_status) do if v == m.status then status = k end end end
+	expect(j and j.status == "done", "the job of the old save: " .. serpent.line(j) .. ", assembler " .. status
+		.. " progress " .. (m and m.crafting_progress or -1))
+	local p = st.provider
+	if p.valid then
+		local net = p.surface.find_logistic_network_by_position(p.position, p.force)
+		local gears = net and net.get_item_count{ name = "iron-gear-wheel", quality = "normal" } or 0
+		expect(gears >= JOB_GEARS, "gears in storage after the job: " .. gears)
+		local n, free, _, slots = remote.call(A, "cpus", p)
+		expect(n == 1 and slots == 1 and free == 1, "the old CPU: " .. n .. " CPUs, " .. tostring(slots) .. " slots, " .. free .. " free")
+	end
+	for _, m in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL job: " .. m) end
+	log("DEVCHECK-MIGRATE-JOB " .. (#problems == 0 and "ok" or "failed"))
 end
 
 local function check_patterns()
@@ -253,6 +296,16 @@ script.on_nth_tick(30, function(event)
 	if not storage.turbine_checked and event.tick >= 120 then
 		storage.turbine_checked = true
 		check_turbine()
+	end
+	--- the update resets the technology effects: the gear recipe, enabled by script in the old save, is
+	--- researched in a real game
+	if storage.job and not storage.job_recipe then
+		storage.job_recipe = true
+		game.forces.player.recipes[PT_RECIPE].enabled = true
+	end
+	if not storage.job_checked and event.tick >= 270 then
+		storage.job_checked = true
+		check_job()
 	end
 	if storage.pull then return check_pull() end
 	if storage.checked then return end

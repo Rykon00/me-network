@@ -564,6 +564,12 @@ def runtime(a):
     print(f"turbine tier test: {tiers.group(1) if tiers else 'did not run'}")
     recipes = re.search(r"DEVCHECK-RUNTIME-RECIPES (.*)", log)
     print(f"recipe test: {recipes.group(1) if recipes else 'did not run'}")
+    # issue #38: level maintainer, CPU tiers, circuit interface and blueprint/paste of the settings
+    extras = [(label, re.search(rf"DEVCHECK-RUNTIME-{key} (.*)", log)) for key, label in
+              (("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
+               ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"))]
+    for label, m in extras:
+        print(f"{label}: {m.group(1) if m else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
@@ -606,11 +612,16 @@ def runtime(a):
         fails.append("recipe test did not run (needs --ticks >= 1500)")
     elif not recipes.group(1).startswith("ok"):
         fails.append("recipe test failed")
+    for label, m in extras:
+        if not m:
+            fails.append(f"{label} did not run (needs --ticks >= 1500)")
+        elif not m.group(1).startswith("ok"):
+            fails.append(f"{label} failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
     elif not victory.group(1).startswith("ok"):
         fails.append("victory test failed")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, turbine tier test, recipe test, victory test)", fails)
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, turbine tier test, recipe test, level maintainer test, crafting CPU tier test, circuit interface test, settings copy test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
@@ -649,6 +660,8 @@ def migrate(a):
     print(f"old save with a plasma turbine: {setup.group(1) if setup else 'no result'}")
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP-PATTERNS (.*)", log)
     print(f"old save with pattern providers: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-JOB (.*)", log)
+    print(f"old save with a crafting job: {setup.group(1) if setup else 'no result'}")
     prepare_mods(with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
@@ -661,13 +674,15 @@ def migrate(a):
     print(f"plasma turbine of the old save: {turbine.group(1) if turbine else 'no result'}")
     patterns = re.search(r"DEVCHECK-MIGRATE-PATTERNS (.*)", log)
     print(f"pattern providers of the old save: {patterns.group(1) if patterns else 'no result'}")
+    job = re.search(r"DEVCHECK-MIGRATE-JOB (.*)", log)
+    print(f"crafting job of the old save: {job.group(1) if job else 'no result'}")
     for f in re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log):
         print("  - " + f)
     if not ran:
         print(load_errors(log) or "")
     ok = ran and fluids and not fluids.group(1).startswith("failed") and power and not power.group(1).startswith("failed") \
         and turbine and not turbine.group(1).startswith("failed") \
-        and patterns and not patterns.group(1).startswith("failed")
+        and patterns and not patterns.group(1).startswith("failed")         and job and not job.group(1).startswith("failed")
     return 0 if ok else 1
 
 
