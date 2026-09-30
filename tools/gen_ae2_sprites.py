@@ -11,6 +11,7 @@ Sources:
 
     python tools/gen_ae2_sprites.py --gt C:/00_Repositories/GT5-Unofficial   # everything
     python tools/gen_ae2_sprites.py --fluids      # only the fluid graphics, from the existing item PNGs
+    python tools/gen_ae2_sprites.py --extras      # only the issue #38 graphics, from the existing PNGs
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
@@ -21,6 +22,12 @@ Output:
   graphics/entity/fork/ae2/me-fluid-drive-<tier>.png, me-fluid-interface.png
   graphics/icons/fork/me-<tier>-fluid-storage-cell.png, me-fluid-drive-<tier>.png, me-fluid-interface.png
   graphics/technology/fork/me-fluid-storage.png, me-fluid-storage-256k.png
+  extras (issue #38, --extras, or after everything else): derived from the crafting CPU, terminal and
+  interface PNGs
+  graphics/entity/fork/ae2/me-co-processing-cpu-{off,on}.png, me-quantum-crafting-cpu-{off,on}.png,
+  me-level-maintainer-{off,on}.png, me-circuit-interface.png; the item icons of the same names in
+  graphics/icons/fork/; graphics/technology/fork/me-automation.png, me-co-processing.png,
+  me-quantum-crafting.png
 """
 import argparse
 from pathlib import Path
@@ -323,14 +330,109 @@ def fluids():
     return written
 
 
+# --- issue #38: CPU tiers, level maintainer, circuit interface ------------------------------
+# Derived from the PNGs written above (no checkout needed), like the fluid graphics.
+CPU_TIERS = {                        # entity -> (casing tint relative to the EV one, lit chip colors)
+    "me-co-processing-cpu": ((100, 100, 160), (CPU_CYAN, FLUIX_LIGHT)),
+    "me-quantum-crafting-cpu": ((230, 150, 90), ((255, 120, 220), (235, 225, 255))),
+}
+SIGNAL_GREEN = (80, 220, 90)
+SIGNAL_RED = (235, 70, 60)
+GAUGE_ON = (95, 225, 120)
+GAUGE_OFF = (60, 64, 72)
+TARGET = (245, 215, 70)
+
+
+def cpu_tier_sprites(tint_rgb, chips):
+    """The crafting CPU with its casing ring re-tinted (EV -> tier) and every chip lit in the tier's
+    colors (a co-processor on each), plus a tier colored frame around the screen."""
+    ev = HULL_TINT["EV"]
+    off = load(OUT_ENTITY / "me-crafting-cpu-off.png")
+    px = off.load()
+    for y in range(off.height):
+        for x in range(off.width):
+            if 6 <= x <= off.width - 7 and 6 <= y <= off.height - 7:
+                continue
+            r, g, b, a = px[x, y]
+            if a:
+                px[x, y] = (min(255, r * tint_rgb[0] // ev[0]), min(255, g * tint_rgb[1] // ev[1]),
+                            min(255, b * tint_rgb[2] // ev[2]), a)
+    d = ImageDraw.Draw(off)
+    d.rectangle((6, 6, 2 * TILE - 7, 2 * TILE - 7), outline=tint_rgb + (255,))
+    lit = Image.new("RGBA", off.size)
+    dl = ImageDraw.Draw(lit)
+    for i, cx in enumerate((12, 27, 42)):
+        for j, cy in enumerate((12, 27, 42)):
+            dl.rectangle((cx + 2, cy + 2, cx + 7, cy + 7), fill=chips[(i + j) % 2] + (255,))
+    return off, lit
+
+
+def maintainer_sprites():
+    """1x1: the terminal casing with a gauge of three bars under a yellow target line (off: dark
+    bars; on: the whole picture with green bars)."""
+    off = load(OUT_ENTITY / "me-terminal-off.png")
+    d = ImageDraw.Draw(off)
+    d.rectangle((8, 8, 23, 23), fill=(20, 20, 24, 255))
+    heights = (5, 9, 12)
+    on = off.copy()
+    for img, colour in ((off, GAUGE_OFF), (on, GAUGE_ON)):
+        dd = ImageDraw.Draw(img)
+        for i, h in enumerate(heights):
+            x = 10 + i * 4
+            dd.rectangle((x, 21 - h, x + 2, 21), fill=colour + (255,))
+        dd.line((9, 10, 22, 10), fill=(TARGET if img is on else (110, 100, 50)) + (255,))
+    return off, on
+
+
+def circuit_interface_sprite():
+    """The ME interface with a green square wave and a red signal line instead of the arrows."""
+    img = load(OUT_ENTITY / "me-interface.png")
+    d = ImageDraw.Draw(img)
+    d.rectangle((10, 10, 21, 21), fill=(20, 20, 24, 255))
+    wave = [(10, 16), (12, 16), (12, 12), (15, 12), (15, 16), (18, 16), (18, 12), (21, 12)]
+    d.line(wave, fill=SIGNAL_GREEN + (255,), width=1)
+    d.line((10, 19, 21, 19), fill=SIGNAL_RED + (255,), width=1)
+    return img
+
+
+def extras():
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for name, (tint_rgb, chips) in CPU_TIERS.items():
+        off, lit = cpu_tier_sprites(tint_rgb, chips)
+        save(off, OUT_ENTITY / f"{name}-off.png")
+        save(lit, OUT_ENTITY / f"{name}-on.png")
+        icon = off.copy()
+        icon.alpha_composite(lit)
+        save(flat_icon(icon), OUT_ICON / f"{name}.png")
+    off, on = maintainer_sprites()
+    save(off, OUT_ENTITY / "me-level-maintainer-off.png")
+    save(on, OUT_ENTITY / "me-level-maintainer-on.png")
+    save(on, OUT_ICON / "me-level-maintainer.png")
+    circuit = circuit_interface_sprite()
+    save(circuit, OUT_ENTITY / "me-circuit-interface.png")
+    save(circuit, OUT_ICON / "me-circuit-interface.png")
+    for tech, icon in (("me-automation", "me-level-maintainer"), ("me-co-processing", "me-co-processing-cpu"),
+                       ("me-quantum-crafting", "me-quantum-crafting-cpu")):
+        save(upscale(load(OUT_ICON / f"{icon}.png")), OUT_TECH / f"{tech}.png")
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
     ap.add_argument("--fluids", action="store_true",
                     help="only the fluid graphics, derived from the existing item PNGs (no checkout needed)")
+    ap.add_argument("--extras", action="store_true",
+                    help="only the issue #38 graphics (CPU tiers, level maintainer, circuit interface), derived "
+                         "from the existing PNGs (no checkout needed)")
     a = ap.parse_args()
-    if not a.gt and not a.fluids:
-        ap.error("either --gt <checkout> or --fluids is required")
+    if not (a.gt or a.fluids or a.extras):
+        ap.error("--gt <checkout>, --fluids or --extras is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -350,8 +452,12 @@ def main():
             upscale(load(OUT_ICON / f"{icon}.png")).save(OUT_TECH / f"{tech}.png")
         autocrafting(a.gt)
         print("ME sprites:", len(list(OUT_ENTITY.glob("*.png"))))
-    written = fluids()
-    print("ME fluid sprites:", len(written))
+    if a.gt or a.fluids:
+        written = fluids()
+        print("ME fluid sprites:", len(written))
+    if a.gt or a.extras:
+        written = extras()
+        print("ME issue #38 sprites:", len(written))
 
 
 if __name__ == "__main__":

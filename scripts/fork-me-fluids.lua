@@ -15,15 +15,21 @@
 ---     next fluid drive placed in that network takes it over (a robot rebuilding the ghost of a
 ---     destroyed drive does that; if no network covers the position any more, any drive placed on
 ---     the surface), or a drive's "take over" button. Only a deleted surface loses recovered
----     fluid. Every step is reported to the force (chat, with a map position).
+---     fluid. Every step is reported to the force (chat, with a map position). Drives that stand in
+---     the network of an entry pull it in by themselves as soon as they have room (fluid step, a few
+---     entries per step, round robin).
+---   * Upgrades: a drive replaced by fast replace (hand) or by an upgrade order (robots, platforms)
+---     does not put its fluid onto the old item; it is kept for the new drive at the same spot, and
+---     what that drive cannot hold goes into the network, then into the recovered fluid.
 ---   * ME Fluid Interface: a small storage tank. In import mode its content is moved into the
 ---     network, in export mode it is filled with a chosen fluid up to a chosen level. Pumps and
 ---     pipes connect to it like to any tank. Mode, fluid and level live in
----     storage.fork_me_fluids.interfaces and are set in a panel next to the tank GUI.
+---     storage.fork_me_fluids.interfaces and are set in a panel next to the tank GUI. They are copied
+---     by settings paste and cloning and kept in blueprints (entity tag "fork_me_fluid_interface").
 ---   * Temperature: the network stores fluids by name only. Importing drops the temperature,
 ---     exporting (and the autocrafting hand-over) uses the fluid's default temperature.
---- Work per step: INTERFACES_PER_STEP interfaces every STEP_TICKS ticks (round robin) and the
---- open drive GUIs. Nothing runs per tick; a network total loops over the drives (a few hundred
+--- Work per step: INTERFACES_PER_STEP interfaces and RECOVERED_PER_STEP recovered entries every
+--- STEP_TICKS ticks (round robin) and the open drive GUIs. Nothing runs per tick; a network total loops over the drives (a few hundred
 --- at most), nothing loops over all tanks.
 --- State: storage.fork_me_fluids only. GUI state lives in the GUI elements (tags).
 --------------------------------------------------------------------------------
@@ -36,8 +42,10 @@ M.mined_hooks = {}
 
 local STEP_TICKS = 15               -- 20 (autocrafting), 30 (molds) and 60 (terminal) are taken
 local INTERFACES_PER_STEP = 8
+local RECOVERED_PER_STEP = 4        -- recovered entries pulled into the drives of their network per step
 local EPS = 1e-6                    -- fluid amounts are fixed point (1/2^24); below this a box counts as empty
 local TAG = "fork_me_fluids"        -- item tag that carries the contents of a picked up drive
+local IFACE_TAG = "fork_me_fluid_interface"   -- blueprint tag of an interface's settings { mode, fluid, level }
 local DRIVE_FRAME = "fork_me_fluid_drive"
 local IFACE_FRAME = "fork_me_fluid_interface"
 
@@ -71,7 +79,11 @@ local function state()
 			ilist = {},         -- unit numbers of interfaces (round robin)
 			icursor = 1,
 			gui = {},           -- player_index -> { entity, sig } while a drive GUI is open
-			recovered = {},     -- surface index -> force name -> { { position, contents = { fluid -> amount } } }
+			recovered = {},     -- surface index -> force name -> { { position, contents = { fluid -> amount }, moved } }
+			--- created lazily (also in older saves):
+			--- rcursor: round robin cursor over the recovered entries
+			--- replacing: "surface:x:y" -> { contents, tick, surface, force, position, name } of a drive being replaced
+			--- prebuild: player_index -> { tick, surface, position } of the player's last build (fast replace)
 		}
 		storage.fork_me_fluids = s
 	end
@@ -378,6 +390,140 @@ local function take_recovered(s, rec, entity, any)
 		if left then report(force, { "fork-me-fluids.recovered-left", M.fluid_list(left, 8) }) end
 	end
 	return taken
+end
+
+--- "[gps=x,y,surface]" of a position
+local function gps(surface, position)
+	return string.format("[gps=%d,%d,%s]", math.floor(position.x or position[1]), math.floor(position.y or position[2]), surface.name)
+end
+
+--- Existing drives pull recovered fluid in: RECOVERED_PER_STEP entries per step (round robin over every
+--- surface and force), each into the drives of the logistic network its position lies in, as far as
+--- they have room. An entry that is fully taken over is reported once. `drives_of(net)` gives the drive
+--- list of a network (cached per step).
+local function pull_recovered(s, drives_of)
+	local r = s.recovered
+	if not (r and next(r)) then return end
+	local surfaces = {}
+	for index in pairs(r) do surfaces[#surfaces + 1] = index end
+	table.sort(surfaces)
+	local refs = {}                                     -- { surface index, force name, entry }, a fixed order
+	for _, index in ipairs(surfaces) do
+		for _, force_name in ipairs(sorted_names(r[index])) do
+			for _, entry in ipairs(r[index][force_name]) do refs[#refs + 1] = { index, force_name, entry } end
+		end
+	end
+	local n = #refs
+	if n == 0 then return end
+	local cursor = s.rcursor or 1
+	if cursor > n then cursor = 1 end
+	local count = math.min(RECOVERED_PER_STEP, n)
+	s.rcursor = cursor + count
+	local touched = {}
+	for k = 0, count - 1 do
+		local ref = refs[(cursor - 1 + k) % n + 1]
+		local surface, force, entry = game.get_surface(ref[1]), game.forces[ref[2]], ref[3]
+		local net = surface and force and next(entry.contents) and entry_network(surface, force, entry)
+		if net then
+			local list = drives_of(net)
+			local total, used = list_capacity(list)
+			if total - used > EPS then
+				for _, name in pairs(sorted_names(entry.contents)) do
+					local amount = entry.contents[name]
+					if prototypes.fluid[name] then
+						local put = list_insert(list, name, amount)
+						if put > 0 then
+							entry.moved = entry.moved or {}
+							entry.moved[name] = (entry.moved[name] or 0) + put
+							entry.contents[name] = amount - put > EPS and amount - put or nil
+						end
+					end
+				end
+				if not next(entry.contents) then
+					report(force, { "fork-me-fluids.recovered-returned", gps(surface, entry.position), M.fluid_list(entry.moved or {}, 8) })
+					touched[#touched + 1] = ref
+				end
+			end
+		end
+	end
+	for _, ref in ipairs(touched) do pool_tidy(s, ref[1], ref[2]) end
+end
+
+local function spot_key(surface_index, position)
+	return surface_index .. ":" .. position.x .. ":" .. position.y
+end
+
+--- Keep the contents of a drive that is being replaced (fast replace, upgrade) for the drive built at
+--- the same spot; its item gets no fluid.
+local function hold_for_replacement(s, rec, entity)
+	local pending = s.replacing or {}
+	s.replacing = pending
+	local key = spot_key(entity.surface.index, entity.position)
+	local p = pending[key]
+	if not p then
+		p = { contents = {}, tick = game.tick, surface = entity.surface.index, force = entity.force.name,
+			position = entity.position, name = entity.name }
+		pending[key] = p
+	end
+	add_to(p.contents, rec.contents)
+	rec.contents, rec.used = {}, 0
+end
+
+--- The drive built at the spot of a replaced drive takes its contents, as far as it has room; the rest
+--- goes into the network, then into the recovered fluid.
+local function take_replaced(s, rec, entity)
+	local pending = s.replacing
+	if not pending then return end
+	local key = spot_key(entity.surface.index, entity.position)
+	local p = pending[key]
+	if not (p and p.force == entity.force.name) then return end
+	pending[key] = nil
+	local rest = {}
+	for _, name in pairs(sorted_names(p.contents)) do
+		local amount = p.contents[name]
+		if prototypes.fluid[name] then
+			local put = math.min(math.max(rec.capacity - rec.used, 0), amount)
+			if put > 0 then rec_add(rec, name, put) end
+			if amount - put > EPS then rest[name] = amount - put end
+		end
+	end
+	if next(rest) then
+		local moved, pooled = salvage(s, rest, entity.surface, entity.force, entity.position)
+		report_salvage(entity.force, { "fork-me-fluids.salvage-replaced", where(entity.name, entity.surface, entity.position) }, moved, pooled)
+	end
+end
+
+--- Contents held for a replacement that no drive took (no drive was built at that spot): into the
+--- network at that spot, then into the recovered fluid. `all`: also those of this tick.
+local function flush_replacing(s, all)
+	local pending = s.replacing
+	if not (pending and next(pending)) then return end
+	for _, key in ipairs(sorted_names(pending)) do
+		local p = pending[key]
+		if all or p.tick < game.tick then
+			pending[key] = nil
+			local surface, force = game.get_surface(p.surface), game.forces[p.force]
+			if surface and force and next(p.contents) then
+				local moved, pooled = salvage(s, p.contents, surface, force, p.position)
+				report_salvage(force, { "fork-me-fluids.salvage-removed", where(p.name, surface, p.position) }, moved, pooled)
+			end
+		end
+	end
+end
+
+--- A player's build at `position` this tick: a drive that player mines at that spot in the same tick is
+--- fast replaced (on_pre_build comes before the mined events of the replaced entity).
+local function note_pre_build(s, player_index, surface_index, position)
+	s.prebuild = s.prebuild or {}
+	s.prebuild[player_index] = { tick = game.tick, surface = surface_index, position = position }
+end
+
+local function is_fast_replace(s, player_index, entity)
+	local b = s.prebuild and s.prebuild[player_index]
+	if not (b and b.tick == game.tick and b.surface == entity.surface.index) then return false end
+	local pos = entity.position
+	local bx, by = b.position.x or b.position[1], b.position.y or b.position[2]
+	return math.abs(bx - pos.x) < 1 and math.abs(by - pos.y) < 1
 end
 
 --- The fluid on the drive items in `inventory` (e.g. the items a hand craft consumes) is salvaged at
@@ -744,12 +890,12 @@ local function set_level(rec, text)
 	rec.level = math.max(0, math.min(interface_volume(), math.floor(n)))
 end
 
---- Set an interface from a script: mode "import"/"export", fluid name (export), level (export)
+--- Set an interface from a script: mode "import"/"export", fluid name (export; false clears it), level (export)
 function M.set_interface(entity, mode, fluid, level)
 	if not (entity and entity.valid and entity.name == interface_name()) then return false end
 	local rec = register_interface(state(), entity)
 	if mode == "import" or mode == "export" then rec.mode = mode end
-	if fluid ~= nil then rec.fluid = prototypes.fluid[fluid] and fluid or nil end
+	if fluid ~= nil then rec.fluid = fluid and prototypes.fluid[fluid] and fluid or nil end   -- false clears it
 	if level ~= nil then set_level(rec, level) end
 	return true
 end
@@ -767,17 +913,18 @@ end
 local function on_step()
 	local s = storage.fork_me_fluids
 	if not s then return end
+	flush_replacing(s)
+	local cache = {}                                        -- network id -> drive list, once per step
+	local function drives_of(net)
+		local list = cache[net.network_id]
+		if not list then
+			list = drives_in(s, net)
+			cache[net.network_id] = list
+		end
+		return list
+	end
 	local n = #s.ilist
 	if n > 0 then
-		local cache = {}                                    -- network id -> drive list, once per step
-		local function drives_of(net)
-			local list = cache[net.network_id]
-			if not list then
-				list = drives_in(s, net)
-				cache[net.network_id] = list
-			end
-			return list
-		end
 		for _ = 1, math.min(INTERFACES_PER_STEP, n) do
 			if s.icursor > #s.ilist then s.icursor = 1 end
 			local unit = s.ilist[s.icursor]
@@ -791,6 +938,7 @@ local function on_step()
 			if #s.ilist == 0 then break end
 		end
 	end
+	pull_recovered(s, drives_of)
 	if next(s.gui) then
 		for index, g in pairs(s.gui) do
 			local player = game.get_player(index)
@@ -825,7 +973,7 @@ script.on_nth_tick(STEP_TICKS, on_step)
 --- The tags of the drive item a build event consumed: `event.tags` (ghost tags, script_raised_revive),
 --- the robot's `event.stack`, or the player's `event.consumed_items`.
 function M.tags_from_event(event)
-	if type(event.tags) == "table" and event.tags[TAG] then return event.tags end
+	if type(event.tags) == "table" and (event.tags[TAG] or event.tags[IFACE_TAG]) then return event.tags end
 	local stack = event.stack
 	if stack and stack.valid and stack.valid_for_read and stack.is_item_with_tags then
 		local tags = stack.tags
@@ -844,27 +992,70 @@ function M.tags_from_event(event)
 	return nil
 end
 
---- `tags`: the item tags of the placed drive item (see tags_from_event)
-function M.on_built(entity, tags)
+--- `tags`: the item tags of the placed drive item, or the blueprint tags of a built interface ghost
+--- (see tags_from_event); `source`: the original of a cloned entity (an interface copies its settings,
+--- a cloned drive starts empty)
+function M.on_built(entity, tags, source)
 	if not (entity and entity.valid) then return end
 	local s = state()
 	if drive_capacity(entity.name) then
 		local rec = unpack_drive(s, entity, tags)
+		take_replaced(s, rec, entity)
 		take_recovered(s, rec, entity)
 	elseif entity.name == interface_name() then
 		register_interface(s, entity)
+		local settings = type(tags) == "table" and tags[IFACE_TAG] or nil
+		if type(settings) == "table" then
+			M.set_interface(entity, settings.mode, settings.fluid or false, settings.level)
+		elseif source and source.valid and source.name == entity.name then
+			local from = M.get_interface(source)
+			if from then M.set_interface(entity, from.mode, from.fluid or false, from.level) end
+		end
+	end
+end
+
+--- copy mode, fluid and level from one interface to another (shift right click, shift left click)
+function M.on_entity_settings_pasted(event)
+	local src, dst = event.source, event.destination
+	if not (src and src.valid and dst and dst.valid and src.name == interface_name() and dst.name == interface_name()) then return end
+	local from = M.get_interface(src) or { mode = "import", level = interface_volume() }
+	M.set_interface(dst, from.mode, from.fluid or false, from.level)
+	for _, player in pairs(game.connected_players) do       -- an open panel shows the new settings
+		local frame = player.gui.relative[IFACE_FRAME]
+		if frame then
+			local rec = interface_of_element(frame)
+			if rec then interface_gui_refresh(frame, rec) end
+		end
+	end
+end
+
+--- A blueprint with fluid interfaces carries their settings as entity tag (from the autocrafting
+--- module's blueprint handler). Drive contents are not blueprint data (only the drive item carries fluid).
+function M.tag_blueprint(bp, mapping)
+	local s = storage.fork_me_fluids
+	if not s then return end
+	for index, entity in pairs(mapping) do
+		if entity.valid and entity.name == interface_name() then
+			local rec = s.interfaces[entity.unit_number]
+			if rec then
+				bp.set_blueprint_entity_tag(index, IFACE_TAG, { mode = rec.mode, fluid = rec.fluid, level = rec.level })
+			end
+		end
 	end
 end
 
 --- mined by a player, a robot or a space platform: a drive's fluids go onto the item in `buffer`,
---- an interface's content goes back into the network (as far as the drives have room)
-function M.on_mined(entity, buffer)
+--- an interface's content goes back into the network (as far as the drives have room). A drive that is
+--- being replaced (`replacing`: fast replace, upgrade) keeps its fluids for the new drive instead.
+function M.on_mined(entity, buffer, replacing)
 	if not (entity and entity.valid) then return end
 	local s = state()
 	local unit = entity.unit_number
 	local rec = s.drives[unit]
 	if rec then
-		if buffer and buffer.valid then
+		if replacing and next(rec.contents) then
+			hold_for_replacement(s, rec, entity)
+		elseif buffer and buffer.valid then
 			for i = 1, #buffer do
 				local stack = buffer[i]
 				if stack.valid_for_read and stack.name == entity.name then
@@ -953,47 +1144,75 @@ function M.on_gui_text_changed(event)
 end
 
 function M.on_player_removed(index)
-	state().gui[index] = nil
+	local s = state()
+	s.gui[index] = nil
+	if s.prebuild then s.prebuild[index] = nil end
 end
 
-script.on_event(defines.events.on_gui_switch_state_changed, function(event)
+--- the GUI events below are registered by the terminal module, which routes them (one handler per event)
+function M.on_gui_switch_state_changed(event)
 	local el = event.element
-	if not (el and el.valid and el.name == "fork_mef_mode") then return end
+	if not (el and el.valid and el.name == "fork_mef_mode") then return false end
 	local rec, frame = interface_of_element(el)
-	if not rec then return end
+	if not rec then return true end
 	rec.mode = el.switch_state == "right" and "export" or "import"
 	rec.status = "ok"
 	interface_gui_refresh(frame, rec)
-end)
+	return true
+end
 
-script.on_event(defines.events.on_gui_elem_changed, function(event)
+function M.on_gui_elem_changed(event)
 	local el = event.element
-	if not (el and el.valid and el.name == "fork_mef_fluid") then return end
+	if not (el and el.valid and el.name == "fork_mef_fluid") then return false end
 	local rec, frame = interface_of_element(el)
-	if not rec then return end
+	if not rec then return true end
 	local value = el.elem_value
 	rec.fluid = type(value) == "string" and prototypes.fluid[value] and value or nil
 	rec.status = "ok"
 	interface_gui_refresh(frame, rec)
-end)
+	return true
+end
 
-script.on_event(defines.events.on_gui_confirmed, function(event)
+function M.on_gui_confirmed(event)
 	local el = event.element
-	if not (el and el.valid and el.name == "fork_mef_level") then return end
+	if not (el and el.valid and el.name == "fork_mef_level") then return false end
 	local rec, frame = interface_of_element(el)
-	if not rec then return end
+	if not rec then return true end
 	set_level(rec, el.text)
 	el.text = format(rec.level)
 	interface_gui_refresh(frame, rec)
-end)
+	return true
+end
 
 --- (a filter can only be given when one event is registered at a time)
 local ENTITY_FILTER = { { filter = "type", type = "simple-entity-with-force" }, { filter = "type", type = "storage-tank" } }
 local MINED_FILTER = { { filter = "type", type = "simple-entity-with-force" }, { filter = "type", type = "storage-tank" },
 	{ filter = "type", type = "assembling-machine" }, { filter = "type", type = "furnace" } }
-for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
-	script.on_event(defines.events[name], function(event) M.on_mined(event.entity, event.buffer) end, MINED_FILTER)
+--- How the mined drive and the drive built in its place are linked (see docs/AE2.md, "Upgrades"):
+---   * by hand (fast replace, also onto a drive marked for upgrade): on_pre_build of the player at that
+---     spot, then on_player_mined_entity of the old drive, then on_built_entity of the new one, one tick;
+---   * robots and space platforms (upgrade planner): the old drive is still marked for upgrade in
+---     on_robot_mined_entity / on_space_platform_mined_entity, then the built event follows in the same tick.
+--- The key is the spot (surface and position); what no drive takes is salvaged by the next step.
+local function on_mined_event(event)
+	local entity = event.entity
+	local replacing = false
+	if entity.valid and drive_capacity(entity.name) then
+		if event.player_index then
+			replacing = is_fast_replace(state(), event.player_index, entity)
+		else
+			replacing = entity.to_be_upgraded()
+		end
+	end
+	M.on_mined(entity, event.buffer, replacing)
 end
+for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
+	script.on_event(defines.events[name], on_mined_event, MINED_FILTER)
+end
+script.on_event(defines.events.on_pre_build, function(event)
+	local player = game.get_player(event.player_index)
+	if player and event.position then note_pre_build(state(), event.player_index, player.surface.index, event.position) end
+end)
 script.on_event(defines.events.on_entity_died, function(event) M.on_removed(event.entity, true) end, ENTITY_FILTER)
 script.on_event(defines.events.script_raised_destroy, function(event) M.on_removed(event.entity, false) end, ENTITY_FILTER)
 
@@ -1040,6 +1259,12 @@ function M.on_pre_surface_deleted(surface_index)
 			s.drives[unit] = nil
 		end
 	end
+	for key, p in pairs(s.replacing or {}) do
+		if p.surface == surface_index then
+			add(p.force, p.contents)
+			s.replacing[key] = nil
+		end
+	end
 	local per = recovered(s)[surface_index]
 	if per then
 		for force_name, list in pairs(per) do
@@ -1077,6 +1302,7 @@ end
 --- interface settings too; open GUIs are closed.
 function M.on_configuration_changed()
 	local s = state()
+	flush_replacing(s, true)
 	for _, rec in pairs(s.drives) do
 		if not rec.entity.valid then rescue_orphan(s, rec) end
 	end
@@ -1132,7 +1358,7 @@ function M.on_configuration_changed()
 						for name, amount in pairs(entry.contents or {}) do
 							if prototypes.fluid[name] and type(amount) == "number" and amount > EPS then clean[name] = amount end
 						end
-						if next(clean) and entry.position then entries[#entries + 1] = { position = entry.position, contents = clean } end
+						if next(clean) and entry.position then entries[#entries + 1] = { position = entry.position, contents = clean, moved = entry.moved } end
 					end
 					if #entries > 0 then
 						kept[surface_index] = kept[surface_index] or {}
@@ -1195,6 +1421,8 @@ remote.add_interface("gregtorio-me-fluids", {
 	end,
 	set_interface = function(entity, mode, fluid, level) return M.set_interface(entity, mode, fluid, level) end,
 	get_interface = function(entity) return M.get_interface(entity) end,
+	--- settings paste between two interfaces (the handler of on_entity_settings_pasted)
+	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	--- what mining a drive does: the contents go onto `stack` (an item stack of the same drive item)
 	pack_drive = function(entity, stack) return pack_drive(state(), entity, stack) end,
 	--- what placing a drive item does: `tags` are the item's tags
@@ -1218,6 +1446,21 @@ remote.add_interface("gregtorio-me-fluids", {
 		return salvage_items(state(), inventory, sf, fo, position, fo)
 	end,
 	--- what the "take over" button of a drive's GUI does; returns the amounts taken
+	--- what the build and mine events of a hand fast replace do, in the engine's order (a headless test has
+	--- no player): on_pre_build of `player_index` at `position`, on_player_mined_entity with `buffer`
+	pre_build = function(player_index, surface, position)
+		local sf = game.get_surface(type(surface) == "userdata" and surface.index or surface)
+		if sf then note_pre_build(state(), player_index, sf.index, position) end
+	end,
+	player_mined = function(entity, buffer, player_index)
+		on_mined_event{ entity = entity, buffer = buffer, player_index = player_index }
+	end,
+	--- contents held for replacements that no drive has taken yet ({ fluid -> amount } over all spots)
+	replacing = function()
+		local out = {}
+		for _, p in pairs(state().replacing or {}) do add_to(out, p.contents) end
+		return out
+	end,
 	take_recovered = function(entity)
 		if not (entity and entity.valid and drive_capacity(entity.name)) then return {} end
 		local s = state()

@@ -117,14 +117,30 @@ def setup(a):
 MOD_NAMES = ("Gregtorio", "gregtorio-continued")   # the mod before and since 0.3.0
 
 
+def link_dir(link, target):
+    """Directory link; on Windows without symlink rights a junction (never follow it when deleting)."""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+
+
+def remove_path(p):
+    if p.is_symlink() or (hasattr(p, "is_junction") and p.is_junction()):
+        os.rmdir(p) if os.name == "nt" and p.is_dir() else p.unlink()
+    elif p.is_file():
+        p.unlink()
+    else:
+        shutil.rmtree(p)
+
+
 def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False):
     """mods/ = dependency zips + the mod (working copy or a zip) + devcheck helper mods."""
     for p in MODS.iterdir():
         if p.name.startswith(MOD_NAMES + ("zz-gregtorio-devcheck",)) or p.name == "mod-list.json":
-            if p.is_symlink() or p.is_file():
-                p.unlink()
-            else:
-                shutil.rmtree(p)
+            remove_path(p)
     if gregtorio_zip:
         import zipfile
         with zipfile.ZipFile(gregtorio_zip) as z:
@@ -133,21 +149,21 @@ def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False):
         shutil.copy2(gregtorio_zip, MODS / f"{info['name']}_{info['version']}.zip")
     else:
         info = json.loads((ROOT / "info.json").read_text(encoding="utf-8"))
-        (MODS / info["name"]).symlink_to(ROOT, target_is_directory=True)
-    (MODS / "zz-gregtorio-devcheck").symlink_to(HERE / "checkmod", target_is_directory=True)
+        link_dir(MODS / info["name"], ROOT)
+    link_dir(MODS / "zz-gregtorio-devcheck", HERE / "checkmod")
     enabled = ["base", "space-age", "quality", "elevated-rails", info["name"], "zz-gregtorio-devcheck"]
     enabled += [z.name.rsplit("_", 1)[0] for z in MODS.glob("*.zip") if not z.name.startswith(MOD_NAMES)]
     if with_runtime:
-        (MODS / "zz-gregtorio-devcheck-runtime").symlink_to(HERE / "runtimemod", target_is_directory=True)
+        link_dir(MODS / "zz-gregtorio-devcheck-runtime", HERE / "runtimemod")
         enabled.append("zz-gregtorio-devcheck-runtime")
     if with_migrate:
-        (MODS / "zz-gregtorio-devcheck-migrate").symlink_to(HERE / "migratemod", target_is_directory=True)
+        link_dir(MODS / "zz-gregtorio-devcheck-migrate", HERE / "migratemod")
         enabled.append("zz-gregtorio-devcheck-migrate")
     (MODS / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in enabled]}))
 
 
 def factorio(*args):
-    binary = FACTORIO / "bin/x64/factorio"
+    binary = FACTORIO / ("bin/x64/factorio.exe" if os.name == "nt" else "bin/x64/factorio")
     if not binary.exists():
         sys.exit("run `devcheck.py setup` first")
     r = subprocess.run([str(binary), "--mod-directory", str(MODS), *args], capture_output=True, text=True)
@@ -373,12 +389,23 @@ def report(title, items, limit=40):
 
 
 # Recipes that must stay unlocked by a researchable technology and craftable in the progression model
-# (issue #35: grades 7 and 8, FPIC/APIC, complex SMDs); the runtime test crafts them once in a machine.
+# (issue #35: grades 7 and 8, FPIC/APIC, complex SMDs, which the runtime test also crafts once in a machine;
+# issues #39 and #36: the drafts made real and the new endgame materials).
 REQUIRED_RECIPES = [
     "grade-7-water", "grade-8-water", "quark-creation-catalyst", "fpic-wafer", "apic-wafer", "femto-power-ic",
     "atto-power-ic", "complex-smd-transistor", "complex-smd-resistor", "complex-smd-capacitor", "complex-smd-diode",
     "complex-smd-inductor",
+    # issues #39 and #36: the drafts made real and the endgame materials
+    "lapotronic-energy-orb-cluster", "high-density-plutonium", "plutonium-based-liquid-fuel", "super-coolant",
+    "1080k-super-coolant-cell", "molten-fluxed-electrum", "fine-fluxed-electrum-wire", "bedrockium-cable",
+    "bedrockium-plate", "molten-quantium", "quantium-cable",
 ]
+
+
+# Issues #39 and #36: the draft recipes the draft guard may still hide (docs/ROADMAP.md, "Drafts and endgame
+# materials"); any other FORK-DRAFT recipe is a problem. Removed drafts are deleted in
+# prototypes/137-fork-endgame-materials.lua (FORK-REMOVED in the log) and must not come back as drafts.
+DRAFTS_OK = []
 
 
 # Technologies that stay enabled but cannot be researched on purpose: vanilla armor, equipment and
@@ -444,6 +471,9 @@ def check(a):
         print("\n" + err)
         return 1
     print(f"draft recipes hidden by the draft guard: {len(drafts)} (FORK-DRAFT in .devcheck/last-run.log)")
+    removed = re.findall(r"FORK-REMOVED: (\S+ \S+)", log)
+    print(f"drafts removed for good: {len(removed)} prototypes (FORK-REMOVED)")
+    new_drafts = [d for d in drafts if d not in DRAFTS_OK]
     m = Model(sec["DUMP"])
     files, sprites, uncraft = check_files(sec), check_sprites(sec), m.uncraftable()
     print(f"\nresearchable technologies: {len(m.researched)} of {sum(1 for v in m.T.values() if v['en'])}")
@@ -470,8 +500,9 @@ def check(a):
     report("sprite sheets too small", sprites)
     report("unlocked but uncraftable recipes", [f"{r}: {why}" for r, why in uncraft])
     required = check_required(m)
-    print(f"\nrequired recipes (issue #35): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
+    print(f"\nrequired recipes (issues #35, #36, #39): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
     report("required recipes not unlocked or not craftable", required)
+    report("draft recipes outside DRAFTS_OK (issue #39)", new_drafts)
     menu_info, menu = check_crafting_menu(m, sec)
     print("\ncrafting menu (issue #49):")
     for line in menu_info:
@@ -480,7 +511,12 @@ def check(a):
     if a.locale_out:
         Path(a.locale_out).write_text("\n".join("\t".join(r) for r in sec.get("LOCALE", [])))
         print(f"\nlocale name list written to {a.locale_out} (input for tools/gen_locale.py)")
-    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu or required or unresearchable)
+    if getattr(a, "balance_out", None):
+        rows = ["\t".join(r) for r in sec.get("BALANCE", [])]
+        Path(a.balance_out).write_text("[\n" + ",\n".join(rows) + "\n]\n", encoding="utf-8")
+        print(f"\nbalance data written to {a.balance_out} (recipes, machines, technologies as JSON)")
+    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu or required or unresearchable
+              or new_drafts)
     print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
     return 0 if ok else 1
 
@@ -528,8 +564,16 @@ def runtime(a):
     print(f"fuel check test: {fuel.group(1) if fuel else 'did not run'}")
     cooled = re.search(r"DEVCHECK-RUNTIME-COOLED (.*)", log)
     print(f"cooled fluid test: {cooled.group(1) if cooled else 'did not run'}")
+    tiers = re.search(r"DEVCHECK-RUNTIME-TIERS (.*)", log)
+    print(f"turbine tier test: {tiers.group(1) if tiers else 'did not run'}")
     recipes = re.search(r"DEVCHECK-RUNTIME-RECIPES (.*)", log)
     print(f"recipe test: {recipes.group(1) if recipes else 'did not run'}")
+    # issue #38: level maintainer, CPU tiers, circuit interface and blueprint/paste of the settings
+    extras = [(label, re.search(rf"DEVCHECK-RUNTIME-{key} (.*)", log)) for key, label in
+              (("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
+               ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"))]
+    for label, m in extras:
+        print(f"{label}: {m.group(1) if m else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
@@ -564,15 +608,24 @@ def runtime(a):
         fails.append("cooled fluid test did not run (needs --ticks >= 1500)")
     elif not cooled.group(1).startswith("ok"):
         fails.append("cooled fluid test failed")
+    if not tiers:
+        fails.append("turbine tier test did not run (needs --ticks >= 1500)")
+    elif not tiers.group(1).startswith("ok"):
+        fails.append("turbine tier test failed")
     if not recipes:
         fails.append("recipe test did not run (needs --ticks >= 1500)")
     elif not recipes.group(1).startswith("ok"):
         fails.append("recipe test failed")
+    for label, m in extras:
+        if not m:
+            fails.append(f"{label} did not run (needs --ticks >= 1500)")
+        elif not m.group(1).startswith("ok"):
+            fails.append(f"{label} failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
     elif not victory.group(1).startswith("ok"):
         fails.append("victory test failed")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, recipe test, victory test)", fails)
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, turbine tier test, recipe test, level maintainer test, crafting CPU tier test, circuit interface test, settings copy test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
@@ -611,6 +664,8 @@ def migrate(a):
     print(f"old save with a plasma turbine: {setup.group(1) if setup else 'no result'}")
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP-PATTERNS (.*)", log)
     print(f"old save with pattern providers: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-JOB (.*)", log)
+    print(f"old save with a crafting job: {setup.group(1) if setup else 'no result'}")
     prepare_mods(with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
@@ -623,13 +678,15 @@ def migrate(a):
     print(f"plasma turbine of the old save: {turbine.group(1) if turbine else 'no result'}")
     patterns = re.search(r"DEVCHECK-MIGRATE-PATTERNS (.*)", log)
     print(f"pattern providers of the old save: {patterns.group(1) if patterns else 'no result'}")
+    job = re.search(r"DEVCHECK-MIGRATE-JOB (.*)", log)
+    print(f"crafting job of the old save: {job.group(1) if job else 'no result'}")
     for f in re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log):
         print("  - " + f)
     if not ran:
         print(load_errors(log) or "")
     ok = ran and fluids and not fluids.group(1).startswith("failed") and power and not power.group(1).startswith("failed") \
         and turbine and not turbine.group(1).startswith("failed") \
-        and patterns and not patterns.group(1).startswith("failed")
+        and patterns and not patterns.group(1).startswith("failed")         and job and not job.group(1).startswith("failed")
     return 0 if ok else 1
 
 
@@ -643,6 +700,7 @@ def main():
     c = sub.add_parser("check")
     c.add_argument("--locale-out", help="also write the locale name list for tools/gen_locale.py")
     c.add_argument("--techs", help="regex: list matching technologies and whether they are researchable")
+    c.add_argument("--balance-out", help="also write recipes (amounts, times), machine speeds and technology counts as JSON")
     r = sub.add_parser("runtime")
     r.add_argument("--ticks", type=int, default=1500)
     r.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
