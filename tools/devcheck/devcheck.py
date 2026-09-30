@@ -511,6 +511,10 @@ def check(a):
     if a.locale_out:
         Path(a.locale_out).write_text("\n".join("\t".join(r) for r in sec.get("LOCALE", [])))
         print(f"\nlocale name list written to {a.locale_out} (input for tools/gen_locale.py)")
+    if getattr(a, "balance_out", None):
+        rows = ["\t".join(r) for r in sec.get("BALANCE", [])]
+        Path(a.balance_out).write_text("[\n" + ",\n".join(rows) + "\n]\n", encoding="utf-8")
+        print(f"\nbalance data written to {a.balance_out} (recipes, machines, technologies as JSON)")
     ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu or required or unresearchable
               or new_drafts)
     print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
@@ -696,6 +700,7 @@ def main():
     c = sub.add_parser("check")
     c.add_argument("--locale-out", help="also write the locale name list for tools/gen_locale.py")
     c.add_argument("--techs", help="regex: list matching technologies and whether they are researchable")
+    c.add_argument("--balance-out", help="also write recipes (amounts, times), machine speeds and technology counts as JSON")
     r = sub.add_parser("runtime")
     r.add_argument("--ticks", type=int, default=1500)
     r.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
