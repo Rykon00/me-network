@@ -25,6 +25,8 @@
 --- Endgame power (prototypes/136-fork-power.lua): a plasma turbine and a naquadah reactor under load
 --- must burn their fuel and make power; the turbine's output hatch gets the cooled fluid.
 --- Fuel check (issue #25): steam and the other generator's fuel stop a generator; the right fuel runs it.
+--- Turbine tiers (issue #34): the UHV to UXV plasma turbines under an overload give exactly four amps of
+--- their tier and return the cooled fluid of the plasma they burnt.
 --- Recipes of issue #35: grades 7 and 8, FPIC/APIC wafers and chips, complex SMDs and the recipes that
 --- use them are crafted once each (setup_recipe_test).
 local ME_Y = 100
@@ -130,6 +132,7 @@ local function tests_running()
 	check(storage.power_checked, "power")
 	check(storage.fuel and storage.fuel.done, "fuel check")
 	check(storage.cooled and storage.cooled.done, "cooled fluid")
+	check(storage.tiers and storage.tiers.done, "turbine tiers")
 	check(storage.recipe_test and storage.recipe_test.done, "recipes of issue #35")
 	return running
 end
@@ -571,6 +574,7 @@ script.on_nth_tick(10, function()
 	if not (storage.fluid_rec and storage.fluid_rec.done) then recovery_test() end
 	if not (storage.fuel and storage.fuel.done) then fuel_test() end
 	if not (storage.cooled and storage.cooled.done) then cooled_test() end
+	if not (storage.tiers and storage.tiers.done) then tier_test() end
 	if not (storage.recipe_test and storage.recipe_test.done) then recipe_test() end
 	victory_test()
 end)
@@ -1254,6 +1258,9 @@ local FC = {
 	{ "steam_reactor", "uv-large-naquadah-reactor",  100.5, "steam",                   500,    "naquadah-based-fuel-mk1", 10,     327.68e6 },
 	{ "fuel_turbine",  "luv-large-plasma-turbine",   125.5, "naquadah-based-fuel-mk1", 10,     "helium-plasma",           100,    81.92e6 },
 	{ "plasma_reactor", "uv-large-naquadah-reactor", 150.5, "helium-plasma",           100,    "naquadah-based-fuel-mk1", 10,     327.68e6 },
+	--- issue #34: the new tiers take the same fuel check (1000 plasma: 7.8 s of the UXV turbine)
+	{ "steam_uxv",     "uxv-large-plasma-turbine",   200.5, "steam",                   100,    "helium-plasma",           1000,   10485.76e6 },
+	{ "fuel_uev",      "uev-large-plasma-turbine",   225.5, "naquadah-based-fuel-mk1", 10,     "helium-plasma",           100,    1310.72e6 },
 	{ "window",        "luv-large-plasma-turbine",   175.5, "steam",                   500,    "helium-plasma",           100,    81.92e6 },
 }
 
@@ -1284,7 +1291,7 @@ function setup_fuel_test(s)
 			local eei = s.create_entity{ name = "electric-energy-interface", position = { def[3], y + 6 }, force = "player" }
 			eei.power_production = 0
 			eei.power_usage = def[8] / 60
-			eei.electric_buffer_size = 1e8
+			eei.electric_buffer_size = math.max(1e8, 2 * def[8] / 60)
 			s.create_entity{ name = "substation", position = { def[3] + 4, y + 6 }, force = "player" }
 			storage.fuel.gens[def[1]] = g
 		end)
@@ -1577,6 +1584,113 @@ function cooled_test()
 	end
 end
 
+--- Turbine tiers (issue #34, prototypes/136-fork-power.lua): one UHV to UXV large plasma turbine each
+--- and a second UXV one on neon plasma, with an output hatch and a load of twice its output (an electric
+--- energy interface in its own network). While it runs, every turbine must generate exactly four amps
+--- of its tier per tick (the cap, not the load; fluid_usage_per_tick must let the weakest plasma, neon,
+--- reach it too); once its plasma (one to one and a half seconds of full output) is burnt to the last
+--- drop, its hatch must hold exactly that much cooled fluid (tolerance of the cooled fluid test).
+--- The runtime code is the one of the LuV turbines: the new turbines are only listed in the mod data.
+local TT_Y = -260                                       -- above the machine grid, below the recipe test
+local TT_CHECK_TICK = 20
+local TT_DEADLINE = 600
+local TT = {
+	--  turbine                     x      plasma            amount  cooled fluid    cap (W)
+	{ "uhv-large-plasma-turbine", 100.5, "helium-plasma",   8,      "helium",       655.36e6 },
+	{ "uev-large-plasma-turbine", 125.5, "helium-plasma",   16,     "helium",       1310.72e6 },
+	{ "uiv-large-plasma-turbine", 150.5, "nitrogen-plasma", 30,     "nitrogen",     2621.44e6 },
+	{ "umv-large-plasma-turbine", 175.5, "iron-plasma",     30,     "molten-iron",  5242.88e6 },
+	{ "uxv-large-plasma-turbine", 200.5, "helium-plasma",   128,    "helium",       10485.76e6 },
+	--- the weakest plasma (20.48 MJ): the UXV turbine needs 8.53 of its 9 units per tick for the cap
+	{ "uxv-large-plasma-turbine", 225.5, "neon-plasma",     512,    "neon",         10485.76e6 },
+}
+
+function setup_tier_test(s)
+	local fails = {}
+	storage.tiers = { t = {}, dry = {} }
+	for i, def in ipairs(TT) do
+		local ok, err = pcall(function()
+			local g = s.create_entity{ name = def[1], position = { def[2], TT_Y }, force = "player", raise_built = true }
+			local got = g.insert_fluid{ name = def[3], amount = def[4] }
+			if math.abs(got - def[4]) > 1e-6 then fails[#fails + 1] = "tier test: " .. def[1] .. " took only " .. got .. " " .. def[3] end
+			local eei = s.create_entity{ name = "electric-energy-interface", position = { def[2], TT_Y + 6 }, force = "player" }
+			eei.power_production = 0
+			eei.power_usage = 2 * def[6] / 60
+			eei.electric_buffer_size = 4 * def[6] / 60
+			s.create_entity{ name = "substation", position = { def[2] + 4, TT_Y + 6 }, force = "player" }
+			local h = s.create_entity{ name = "turbine-output-hatch", position = { def[2] + 2, TT_Y }, force = "player", raise_built = true }
+			storage.tiers.t[i] = { g = g, h = h }
+		end)
+		if not ok then fails[#fails + 1] = "tier test " .. def[1] .. ": " .. tostring(err) end
+	end
+	return fails
+end
+
+function tier_test()
+	local st = storage.tiers
+	if not st then return end
+	local tick = game.tick
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish(summary)
+		st.done = true
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL turbine tier test: " .. p) end
+		log("DEVCHECK-RUNTIME-TIERS " .. (#problems == 0 and "ok" or "failed") .. (summary or ""))
+	end
+	for i, def in ipairs(TT) do
+		local c = st.t[i]
+		if not (c and c.g.valid and c.h.valid) then
+			problems[#problems + 1] = def[1] .. " missing"
+			return finish()
+		end
+	end
+	--- the cap: four amps of the tier per tick under twice that load, as the prototype says
+	if not st.capped and tick >= TT_CHECK_TICK then
+		for i, def in ipairs(TT) do
+			local g = st.t[i].g
+			local per_tick = def[6] / 60
+			local max = g.prototype.get_max_power_output()
+			expect(math.abs(max - per_tick) <= 1e-6 * per_tick, def[1] .. ": max_power_output " .. max * 60 .. " W, expected " .. def[6])
+			expect(not g.disabled_by_script, def[1] .. " is stopped on " .. def[3] .. " (" .. serpent.line(g.custom_status) .. ")")
+			expect(math.abs(g.energy_generated_last_tick - per_tick) <= 1e-6 * per_tick,
+				string.format("%s generates %.6g W under a load of %.6g W, expected the cap %.6g W", def[1],
+					g.energy_generated_last_tick * 60, 2 * def[6], def[6]))
+		end
+		st.capped = true
+		if #problems > 0 then return finish() end
+	end
+	--- the cooled fluid: burnt to the last drop (stopped for "no fuel", nothing owed or pending)
+	for i, def in ipairs(TT) do
+		local c = st.t[i]
+		if not st.dry[i] then
+			local seg = c.g.fluidbox.get_fluid_segment_contents(1)
+			local burnt = def[4] - c.g.get_fluid_count(def[3]) - ((seg and seg[def[3]]) or 0)
+			local owed = remote.call("gregtorio-power", "debt", c.g, def[5])
+			local pending = remote.call("gregtorio-power", "energy", c.g)
+			if burnt >= def[4] - 1e-9 and owed < 1e-4 and pending == 0 and c.g.disabled_by_script then
+				local hatch = c.h.get_fluid_count(def[5])
+				st.dry[i] = { tick = tick, hatch = hatch }
+				st.worst = math.max(st.worst or 0, math.abs(hatch - def[4]) / def[4])
+				expect(math.abs(hatch - def[4]) <= cooled_tolerance(def[4]),
+					string.format("%s: %.6f %s burnt, the hatch got %.6f %s", def[1], def[4], def[3], hatch, def[5]))
+				expect(c.h.get_fluid_count(def[3]) == 0, def[1] .. ": plasma leaked into the output hatch")
+			end
+		end
+	end
+	if #problems > 0 then return finish() end
+	if st.capped and table_size(st.dry) == #TT then
+		local parts = {}
+		for i, def in ipairs(TT) do
+			parts[#parts + 1] = string.format("%s %.6g MW: %g -> %.6f", def[1]:sub(1, 3), def[6] / 1e6, def[4], st.dry[i].hatch)
+		end
+		return finish(string.format(" (%s; worst error %.1e)", table.concat(parts, ", "), st.worst or 0))
+	end
+	if tick > TT_DEADLINE then
+		expect(false, "timed out: capped " .. tostring(st.capped) .. ", dry " .. serpent.line(st.dry))
+		return finish()
+	end
+end
+
 --- New recipes of issue #35 (prototypes/129-fork-water-purification.lua): grades 7 and 8 in the water
 --- purification plant, the FPIC and APIC wafers and chips, the complex SMDs, the quark creation catalyst
 --- and recipes that take the new parts. Each machine gets one craft's ingredients (placed above the
@@ -1799,6 +1913,7 @@ script.on_init(function()
 	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fuel_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_cooled_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_tier_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_recipe_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
