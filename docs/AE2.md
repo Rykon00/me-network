@@ -1,4 +1,4 @@
-# AE2 in Gregtorio: ME network, autocrafting and fluids
+# AE2 in Gregtorio: ME network, autocrafting, fluids and automation
 
 ## What the ME network is
 
@@ -12,9 +12,13 @@ The ME network is Factorio's logistic network (`prototypes/120-fork-ae2.lua`):
 | ME Terminal | powered screen: search, take, store, and (this page) **crafting** |
 | ME Fluid Drive (1k ... 256k) | fluid storage of the network, capacity from its four fluid storage cells (this page, **Fluids**) |
 | ME Fluid Interface | small tank: import/export point for fluids |
+| ME Crafting CPU, Co-Processing and Quantum Crafting CPU | run autocrafting jobs: 1, 2 or 4 at once (this page, **CPU tiers**) |
+| ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
+| ME Circuit Interface | puts the network contents onto a circuit wire (this page, **Circuit network**) |
 
 Techs: `me-network` (MV), `me-storage-64k` (EV), `me-storage-256k` (IV), `me-autocrafting` (EV),
-`me-fluid-storage` (EV), `me-fluid-storage-256k` (IV).
+`me-fluid-storage` (EV), `me-fluid-storage-256k` (IV), `me-automation` (EV), `me-co-processing` (IV),
+`me-quantum-crafting` (LuV).
 
 ## Autocrafting: how to build it
 
@@ -24,14 +28,14 @@ Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks three entities:
 |---|---|
 | **ME Molecular Assembler** | assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW |
 | **ME Pattern Provider** | 1x1 marker, no power. Placed **next to a machine**, the recipe that machine has set becomes a pattern of the network; for furnaces you choose the recipe in the provider |
-| **ME Crafting CPU** | 2x2, needs power (60 kW), part of the network. Runs one job at a time |
+| **ME Crafting CPU** | 2x2, needs power (60 kW), part of the network. Runs one job at a time (bigger CPUs: see [CPU tiers](#cpu-tiers)) |
 
 Step by step:
 
 1. Build an ME network: ME Controller (powered), at least one ME Drive with items in it,
    an ME Terminal (powered) inside the controller's area.
 2. Place an **ME Crafting CPU** in the area and power it. One CPU = one job at a time; a second
-   CPU lets two jobs run in parallel.
+   CPU, or a bigger one, lets two jobs run in parallel.
 3. For every recipe the network should be able to craft, place a machine **inside the area**,
    give it power and set the recipe, then put an **ME Pattern Provider on a tile touching the
    machine** (left, right, above or below). Any assembling machine or furnace works: a
@@ -94,6 +98,95 @@ recipe from that ingredient: if another recipe of that furnace has the same inpu
 that one instead. The window marks such recipes, and a job whose furnace smelts another recipe
 fails ("a furnace smelted another recipe with the same input") and returns its items. None of the
 current smelting recipes share an input.
+
+## CPU tiers
+
+Two bigger Crafting CPUs (issue #38) run several jobs at once and hand work to the pattern machines
+faster. They are 2x2 like the ME Crafting CPU, need power, and belong to the network they stand in.
+
+| Entity | Tech (tier) | Jobs at once | Speed | Power | Recipe (main parts) |
+|---|---|---|---|---|---|
+| ME Crafting CPU | `me-autocrafting` (EV) | 1 | 1x (6 machine hand-overs per job every 20 ticks) | 60 kW | EV hull, ME controller, 2 64k cells |
+| **ME Co-Processing Crafting CPU** | `me-co-processing` (IV, after `me-storage-256k` and IV components) | 2 | 2x | 240 kW | ME Crafting CPU, IV hull, 2 256k cells, 4 acceleration cards, 4 IV circuits (IV assembler) |
+| **ME Quantum Crafting CPU** | `me-quantum-crafting` (LuV, after `me-co-processing` and LuV machines) | 4 | 4x | 960 kW | Co-Processing CPU, LuV hull, 2 LuV emitters, 8 acceleration cards, 4 LuV circuits (LuV assembler) |
+
+* The job slots of all CPUs in the network are the number of jobs that run at once. The crafting
+  tab shows them: `Crafting CPUs: 1, job slots: 2 (free: 1)`. A new job takes the fastest CPU with a
+  free slot; with none free it waits (`Waiting for a free CPU`).
+* **Speed** is how many machines a job can load and empty per step. It matters when a job has many
+  pattern machines for the same recipe: a job on the base CPU keeps about 18 machine hand-overs per
+  second going, on a Quantum CPU four times that. The machines still craft at their own speed.
+* **Upgrading:** the upgrade planner (or fast replace by hand) swaps a CPU for the next tier. A job on
+  the replaced CPU pauses for a moment and goes on on the new one (or on any other free slot), with
+  everything it holds.
+
+## Keeping items in stock: ME Level Maintainer
+
+Tech `me-automation` (EV, needs `me-autocrafting` and Circuit network). The **ME Level Maintainer** is
+a 1x1 block that needs power (30 kW) and stands in the network.
+
+1. Place it inside the network area and power it. Autocrafting must work for the resource: a pattern
+   (provider next to a machine with the recipe) and a Crafting CPU.
+2. Open it (the lamp window opens with a panel **ME Level Maintainer** next to it). Choose the item or
+   fluid in the signal button and type the amount to keep (items, or fluid units).
+3. When the network holds less than that amount, the maintainer starts a crafting job for the
+   difference, the way the Craft button does. It checks about once a second (several maintainers take
+   turns, see **Design**).
+4. While that job runs, it starts no other one; nor does it while any other job of the network crafts
+   the same resource (for example one you started in the terminal). When the job is done and the stock
+   is reached again, it waits until the stock drops.
+
+What the panel says:
+
+| Status | Meaning |
+|---|---|
+| Enough in stock | nothing to do |
+| Crafting job N is running | its job; the progress is also in the terminal's job list |
+| Another job of this network is crafting it | waits for that job |
+| Waiting for a Crafting CPU with a free job slot | all slots are busy: the maintainer does not queue jobs, it waits and tries again |
+| Cannot craft the difference, missing: ... | the plan lacks raw materials; it tries again every 5 seconds |
+| No pattern for this item or fluid | no machine with that recipe behind a provider |
+| Switched off by the circuit condition | see below |
+
+**Circuit network** (connect a red or green wire to the maintainer):
+
+* **On/off:** the lamp window's circuit condition ("Enable/disable") switches the maintainer. While
+  the condition is false it starts nothing; a running job goes on.
+* **Amount from the circuit:** tick the box in the panel. The signal of the chosen item or fluid on
+  the wires (red plus green) is then the amount to keep, instead of the number field. No signal means
+  0 (keep nothing).
+
+**Copying:** shift right click and shift left click copy the resource, amount and circuit option to
+another maintainer (the game copies the circuit condition). Blueprints, copy and paste (ctrl+C, ctrl+V)
+and cloning keep them.
+
+## Circuit network: ME Circuit Interface
+
+Tech `me-automation`. The **ME Circuit Interface** is a constant combinator (no power) inside the
+network area. Connect red or green wires to it: they carry
+
+* every item of the network (with its quality) and every fluid, fluids rounded down to whole units,
+  or
+* only the resources chosen as **filters**: open it, the panel **ME Circuit Interface** next to the
+  combinator window has 20 signal buttons. Items and fluids only; without filters everything is sent.
+
+The signals are refreshed about once a second (with more than six interfaces a little less often: two
+of them are refreshed every 20 ticks, in turns). The network writes the combinator's signal list: entries
+added by hand are replaced, extra sections are removed; the combinator's on/off switch still turns the
+output off. Filters are copied by settings paste and kept in blueprints, copy and paste, and clones. The ME
+Controller's own circuit connection still reads the items of the network (roboport behavior); the
+Circuit Interface adds the fluids and the filter. Up to 1000 signals per interface (the largest amounts
+first).
+
+## Settings in blueprints and copy/paste
+
+| Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
+|---|---|---|---|
+| ME Pattern Provider | furnace recipe choice | yes | yes |
+| ME Fluid Interface | import/export, fluid, fill level | yes (shift right click, shift left click) | yes (since issue #38) |
+| ME Fluid Drive | none: no filters or partitions; its contents are fluid, not settings | - | the contents stay on the drive item (see **Fluids**) |
+| ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
+| ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
 
 ## Fluids
 
@@ -171,7 +264,9 @@ assembler consumes.
 
 **Blueprints** do not carry fluid: fluid contents are not blueprint data. A drive built from a
 blueprint (or a copy-paste) starts empty, apart from the recovered fluid it takes over; only the
-drive item carries fluid, on its tags.
+drive item carries fluid, on its tags. The **settings** of a fluid interface (import or export, fluid,
+fill level) are kept in blueprints and copied by settings paste and cloning (issue #38); a drive has no
+settings.
 
 **Temperature:** the network stores fluids by name only, without a temperature. Importing drops
 the temperature; an export, and the hand-over to a pattern machine, delivers the fluid at its
@@ -368,14 +463,56 @@ Removed entities:
 | Fluid interface | nothing for jobs; what it holds goes back into the network (as far as the drives have room), its mode, fluid and level are forgotten |
 | Terminal, controller | jobs without a network pause ("No ME network") |
 
+### CPU tiers (issue #38)
+
+The tier numbers come from the mod-data `fork-me-autocraft` (`cpus[name] = { jobs, speed }`, written by
+`prototypes/121-fork-ae2-autocrafting.lua`), so the runtime has no copy of them. A CPU record holds the
+jobs it runs (`cpus[unit].jobs = { [job id] = true }`; a record of an older save with a single `job` is
+converted when it is first read). `assign_cpus` gives a queued job the fastest CPU of its network with
+fewer jobs than slots. A job's machine interactions per step are `STEP_OPS` (6) times the speed of its
+CPU, and all jobs of one step share `MAX_OPS_PER_STEP` (96, four Quantum jobs at full speed): what a job
+does not use goes back to the step's budget. A CPU that is replaced or removed releases its jobs, which
+queue and take the next free slot (the path the existing CPU test covers).
+
+### Level maintainer and circuit interface (issue #38)
+
+`scripts/fork-me-circuit.lua` keeps `storage.fork_ae2.maintainers` / `mlist` / `mcursor` and `circuits` /
+`clist` / `ccursor` (created lazily) and runs as a step hook of the autocrafting step (every 20 ticks).
+
+* **Maintainer check** (4 per step, round robin): no resource, no power, `cb.disabled` of the lamp's
+  control behavior while its circuit (or logistic) condition is switched on (a freshly wired lamp reads
+  `disabled` until its next circuit update, so the flag alone is not trusted), no network: status only. Otherwise the target is the amount,
+  or the resource's signal on red plus green (`get_circuit_network(wire).get_signal`). The stock is
+  `get_item_count` (normal quality) or the fluid drives' count. Its own job still queued or running:
+  nothing. Stock below target: if an active, not closing job of the network crafts the same key
+  (`active_job_for`), nothing; else, if a powered CPU has a free slot (`free_slot`), `M.start` with the
+  difference and the maintainer's unit number as the job's `owner`. At most one start per step (a start
+  rescans the providers and plans); a failed start (missing, no pattern) waits `RETRY_TICKS` (300).
+* **Circuit interface update** (2 per step, round robin): the network's `get_contents()` (with quality)
+  and fluid totals (floored, at least 1 unit), filtered by key, sorted by amount, at most 1000, are
+  written as the filters of section 1 of the combinator's control behavior; other sections are removed.
+* **Settings copy:** blueprint tags `fork_me_maintainer` (`{ key, amount, circuit }`), `fork_me_circuit`
+  (`{ filters }`) and `fork_me_fluid_interface` (`{ mode, fluid, level }`), written by the one
+  `on_player_setup_blueprint` handler (autocrafting module: providers, then `fluids.tag_blueprint`, then
+  the blueprint hooks) and read in the built events from `event.tags`; `on_entity_settings_pasted` and
+  `on_entity_cloned` copy the records. The fluid interface prototype lists itself in
+  `additional_pastable_entities`, since a storage tank has no settings of its own.
+* **GUI:** relative panels on the lamp GUI (maintainer) and the constant combinator GUI (interface),
+  refreshed every step while open. All GUI events are registered once in the terminal module, which
+  routes them to the fluids and circuit modules.
+
 ### Throughput and UPS
 
 * One shared autocrafting step every 20 ticks (`on_nth_tick(20)`; the fluid interfaces use 15,
   the molds 30, the terminal refresh 60).
-* At most 8 jobs per step (round robin), at most 6 machine hand-overs/collections per job per step,
-  so one CPU moves up to about 18 machine interactions per second. That matches an assembler
-  line and keeps a step cheap; a job with more machines is throttled by the CPU, a second CPU
-  doubles it.
+* At most 8 jobs per step (round robin), at most 6 machine hand-overs/collections per job per step
+  on the base CPU (12 on a Co-Processing, 24 on a Quantum CPU), at most 96 for all jobs together, so a
+  base CPU job moves up to about 18 machine interactions per second. That matches an assembler line
+  and keeps a step cheap; a job with more machines is throttled by the CPU, a faster CPU lifts it.
+* Level maintainers and circuit interfaces run in the same step: 4 maintainer checks (cheap: a count
+  and a few table lookups) with at most one job start per step (the only expensive part: a provider
+  rescan and a plan, like the Craft button; a failed start waits 5 seconds), and 2 circuit interface
+  updates (one `get_contents()`, the fluid totals and one write of the section each).
 * 8 provider rescans per step, planning only on user actions (terminal GUI: while a craft item is
   selected, once per second from the cache).
 * The fluid step every 15 ticks handles at most 8 interfaces (one `remove_fluid` or
@@ -391,6 +528,10 @@ Nothing changes for existing ME networks. `on_configuration_changed` rebuilds th
 CPU registries from the world (`find_entities_filtered`), repairs leases and job books and
 keeps jobs and their pools; leases from before fluid support get empty fluid maps, providers are
 rescanned.
+CPU records of older saves hold one `job`; they are rebuilt (`jobs = {}`) and the jobs reassigned, and a
+record read before the rebuild is converted on the spot (`migrate --from-ref v0.3.1` starts a job with
+the old version and checks that it finishes after the update). Level maintainers and circuit interfaces
+are new, their state is created lazily and rebuilt from the world (settings kept by unit number).
 The fluid state is created lazily; its rebuild (run first, autocrafting reads it) finds the fluid
 drives and interfaces in the world, keeps drive contents by unit number (clamped to the capacity)
 and interface settings, and closes open fluid panels. Recovered fluid is created lazily as well;
@@ -417,8 +558,8 @@ save is kept and pulled into its network's drives like new entries (`migrate --f
 * The export level applies to the interface's own box; pipes and tanks connected without a pump
   share that level, so the segment holds more than `level` in total. Put a pump behind the
   interface to fill a tank.
-* The fluid interface has no circuit connection, and the ME Controller's circuit output lists
-  items only; the fluid totals are only shown in the terminal and the panels.
+* The fluid interface has no circuit connection; the fluid totals reach the circuit network through
+  the ME Circuit Interface (issue #38).
 * The disassembly recipe is hand crafting only (the fluid of a loaded item is recovered); a
   cancelled hand disassembly returns the drive item without its fluid, which stays recovered.
   Untested in the real game: the headless test calls the same function the craft event calls.
@@ -427,8 +568,12 @@ save is kept and pulled into its network's drives like new entries (`migrate --f
   network cannot force the chosen one (the job fails and returns its items). The provider window,
   settings paste and blueprint event are untested in the real game (the headless test calls the
   same functions).
-* One CPU runs one job; no co-processors or CPU storage tiers, no crafting request from
-  circuit signals, no "keep N in stock" (autocrafting on demand).
+* CPU tiers (issue #38) add parallel jobs and speed, not storage: a job's size is not limited by its
+  CPU (AE2's crafting storage has no counterpart). The level maintainer keeps one resource per block;
+  a circuit signal sets its amount or switches it, but there is no "craft what the circuit asks for"
+  request of several resources at once. The maintainer and circuit interface panels, the lamp's circuit
+  condition in the real lamp GUI, settings paste by hand and the upgrade planner on CPUs are untested in
+  the real game (the headless test calls the same functions).
 * A machine whose only input is shared with a belt, inserter or pipe will fight with the network.
 * Balance (costs, speeds, tier), the look of the sprites and the GUIs (terminal fluid grid,
   drive contents, interface panel) are untested in the real game.
@@ -481,4 +626,16 @@ and the whole amount is conserved. `devcheck.py migrate --from-ref v0.3.0` build
 with 0.3.0 and checks them (and the recovery) after the update; from v0.3.1 on the old save also holds
 recovered fluid, which must be kept, and after 5000 water leave the network the recovered water of a
 destroyed drive must be pulled in.
+Issue #38 (four more networks right of the machine grid): a level maintainer that keeps 10 gears, in a
+network with two free job slots, must start exactly one job for 10, never have two active gear jobs, start
+nothing while the stock holds (120 ticks), start one job for exactly the difference after 3 gears are taken
+out, take 14 from a constant combinator's signal with "amount from the circuit", start nothing while the
+lamp's circuit condition is false and start the job for 20 once it is true. A Co-Processing CPU runs two gear
+jobs at once (both running at the start, both with a machine crafting at the same time, 12 hand-overs per
+step, no free slot), a third job waits and is cancelled, and a Quantum CPU put in its place has four slots.
+A circuit interface wired to a pole must carry exactly the network's items and floored fluids (500.5 water
+is 500), then only its two filters, then follow 25 more plates. The settings of a maintainer (a fluid, 1234,
+circuit), a circuit interface (two filters) and a fluid interface (export water 2345) must be blueprint
+tags, come back on the entities built from that blueprint and revived, and be copied by settings paste and
+by cloning. `devcheck.py migrate` checks a job started by the old version.
 See `tools/devcheck/README.md`.

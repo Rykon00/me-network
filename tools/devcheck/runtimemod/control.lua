@@ -33,6 +33,9 @@
 --- their tier and return the cooled fluid of the plasma they burnt.
 --- Recipes of issue #35: grades 7 and 8, FPIC/APIC wafers and chips, complex SMDs and the recipes that
 --- use them are crafted once each (setup_recipe_test).
+--- Issue #38: the level maintainer (one job at a time, stops at N, circuit amount and condition), crafting
+--- CPU tiers (two jobs at once), the circuit interface (network contents on the wire) and the settings of
+--- maintainers, circuit and fluid interfaces in blueprints, settings paste and clones (setup_issue38_tests).
 local ME_Y = 100
 local ME_ITEM = "iron-plate"
 
@@ -138,6 +141,10 @@ local function tests_running()
 	check(storage.cooled and storage.cooled.done, "cooled fluid")
 	check(storage.tiers and storage.tiers.done, "turbine tiers")
 	check(storage.recipe_test and storage.recipe_test.done, "recipes of issue #35")
+	check(storage.maint38 and storage.maint38.done, "level maintainer")
+	check(storage.tiers38 and storage.tiers38.done, "crafting CPU tiers")
+	check(storage.circuit38 and storage.circuit38.done, "circuit interface")
+	check(storage.settings38 and storage.settings38.done, "settings copy")
 	return running
 end
 
@@ -580,6 +587,10 @@ script.on_nth_tick(10, function()
 	if not (storage.cooled and storage.cooled.done) then cooled_test() end
 	if not (storage.tiers and storage.tiers.done) then tier_test() end
 	if not (storage.recipe_test and storage.recipe_test.done) then recipe_test() end
+	if not (storage.maint38 and storage.maint38.done) then maintainer_test() end
+	if not (storage.tiers38 and storage.tiers38.done) then cpu_tier_test() end
+	if not (storage.circuit38 and storage.circuit38.done) then circuit_test() end
+	settings_test()
 	victory_test()
 end)
 
@@ -1972,6 +1983,498 @@ script.on_event(defines.events.on_tick, function(event)
 	end
 end)
 
+--------------------------------------------------------------------------------
+--- issue #38 (scripts/fork-me-circuit.lua, CPU tiers in scripts/fork-me-autocraft.lua): four own networks
+--- right of the machine grid. Level maintainer: keeps 10 gears (exactly one job, then nothing while the
+--- stock holds), refills what is taken out, takes its amount from a circuit signal, is switched off and on
+--- by the lamp's circuit condition. CPU tiers: a co-processing CPU runs two jobs at once on two machines at
+--- twice the speed, a third job waits; a quantum CPU has four slots. Circuit interface: the wire carries the
+--- network contents (items and fluids), then only the filtered ones, and follows a change. Settings copy:
+--- maintainer, circuit interface and fluid interface settings survive a blueprint (built and revived),
+--- settings paste and cloning.
+--------------------------------------------------------------------------------
+
+local X38 = 250
+local LM_Y, CT_Y, CI_Y, SC_Y = -80, -20, 40, 100
+local LM_ITEM, LM_KEEP, LM_TAKE, LM_CIRCUIT, LM_LATER = "iron-gear-wheel", 10, 3, 14, 20
+local GEAR_RECIPE = "iron-gear-crafting-table"
+local AC38, C38, F38 = "gregtorio-me-autocraft", "gregtorio-me-circuit", "gregtorio-me-fluids"
+local RED = defines.wire_connector_id.circuit_red
+
+local function place38(s, fails, name, x, y, recipe)
+	local ok, e = pcall(function()
+		return s.create_entity{ name = name, position = { x, y }, force = "player", raise_built = true }
+	end)
+	if not (ok and e) then fails[#fails + 1] = "issue #38 " .. name .. ": " .. tostring(e) return nil end
+	if recipe then
+		e.force.recipes[recipe].enabled = true
+		local ok2, err = pcall(function() e.set_recipe(recipe) end)
+		if not ok2 then fails[#fails + 1] = "issue #38 recipe " .. recipe .. ": " .. tostring(err) end
+	end
+	return e
+end
+
+--- power, controller, terminal, a CPU (optional), a 16k drive with plates and sticks (the layout of the autocrafting test)
+local function network38(s, fails, y, cpu)
+	local eei = place38(s, fails, "electric-energy-interface", X38 + 12.5, y + 6.5)
+	if eei then
+		eei.power_production = 1e6
+		eei.electric_buffer_size = 1e7
+	end
+	place38(s, fails, "substation", X38 + 13, y + 2)
+	place38(s, fails, "me-controller", X38 + 6, y)
+	place38(s, fails, "me-terminal", X38 + 8.5, y + 4.5)
+	if cpu then place38(s, fails, cpu, X38 + 10, y) end
+	local drive = place38(s, fails, "me-drive-16k", X38 + 8.5, y + 6.5)
+	if drive then
+		drive.insert{ name = "iron-plate", count = 200 }
+		drive.insert{ name = "iron-stick", count = 200 }
+	end
+end
+
+local function wire(a, b)
+	return a.get_wire_connector(RED, true).connect_to(b.get_wire_connector(RED, true), false)
+end
+
+function setup_issue38_tests(s)
+	local fails = {}
+	--- level maintainer: two base CPUs (a free slot while a job runs: only the maintainer's own rule keeps it
+	--- from starting a second job), one gear machine, a constant combinator for the circuit input
+	network38(s, fails, LM_Y, "me-crafting-cpu")
+	place38(s, fails, "me-crafting-cpu", X38 + 10, LM_Y - 3)
+	place38(s, fails, "me-molecular-assembler", X38 + 14.5, LM_Y + 0.5, GEAR_RECIPE)
+	place38(s, fails, "me-pattern-provider", X38 + 16.5, LM_Y + 0.5)
+	place38(s, fails, "me-level-maintainer", X38 + 4.5, LM_Y + 8.5)
+	place38(s, fails, "constant-combinator", X38 + 3.5, LM_Y + 10.5)
+	--- CPU tiers: a co-processing CPU and two gear machines
+	network38(s, fails, CT_Y, "me-co-processing-cpu")
+	place38(s, fails, "me-molecular-assembler", X38 + 14.5, CT_Y + 0.5, GEAR_RECIPE)
+	place38(s, fails, "me-pattern-provider", X38 + 16.5, CT_Y + 0.5)
+	place38(s, fails, "me-molecular-assembler", X38 + 20.5, CT_Y + 0.5, GEAR_RECIPE)
+	place38(s, fails, "me-pattern-provider", X38 + 18.5, CT_Y + 0.5)
+	--- circuit interface: a fluid drive, the interface wired to a pole
+	network38(s, fails, CI_Y, nil)
+	place38(s, fails, "me-fluid-drive-1k", X38 + 14.5, CI_Y + 6.5)
+	place38(s, fails, "me-circuit-interface", X38 + 2.5, CI_Y + 8.5)
+	place38(s, fails, "small-electric-pole", X38 + 0.5, CI_Y + 8.5)
+	--- settings copy: a maintainer, a circuit interface and a fluid interface with settings
+	network38(s, fails, SC_Y, nil)
+	place38(s, fails, "me-level-maintainer", X38 + 2.5, SC_Y + 10.5)
+	place38(s, fails, "me-circuit-interface", X38 + 3.5, SC_Y + 10.5)
+	place38(s, fails, "me-fluid-interface", X38 + 4.5, SC_Y + 10.5)
+	return fails
+end
+
+local function report38(key, name, problems, note)
+	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. name .. ": " .. p) end
+	log("DEVCHECK-RUNTIME-" .. key .. " " .. (#problems == 0 and "ok" or "failed") .. (note and (" (" .. note .. ")") or ""))
+end
+
+--- level maintainer: exactly one job, stops at N, refills, circuit amount, circuit condition
+function maintainer_test()
+	local s = game.surfaces[1]
+	local terminal = s.find_entity("me-terminal", { X38 + 8.5, LM_Y + 4.5 })
+	local m = s.find_entity("me-level-maintainer", { X38 + 4.5, LM_Y + 8.5 })
+	local cc = s.find_entity("constant-combinator", { X38 + 3.5, LM_Y + 10.5 })
+	local net = terminal and s.find_logistic_network_by_position(terminal.position, terminal.force)
+	local st = storage.maint38
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish(note)
+		storage.maint38.done = true
+		report38("MAINTAINER", "level maintainer", problems, note)
+	end
+	local function count() return net and net.get_item_count{ name = LM_ITEM, quality = "normal" } or -1 end
+	local function gear_jobs(active_only)
+		local out = {}
+		for _, j in pairs(remote.call(AC38, "jobs", terminal)) do
+			if j.item == LM_ITEM and (j.active or not active_only) then out[#out + 1] = j end
+		end
+		return out
+	end
+
+	if not st then
+		if game.tick < 60 then return end
+		storage.maint38 = { started = game.tick, phase = "keep", phase_tick = game.tick, seen = {}, jobs = 0, amounts = {} }
+		st = storage.maint38
+		if not (terminal and net and m and cc) then expect(false, "entities missing") return finish() end
+		expect(count() == 0, "gears in the network at the start: " .. count())
+		local _, free, _, slots = remote.call(AC38, "cpus", terminal)
+		expect(slots == 2 and free == 2, "maintainer network: " .. tostring(slots) .. " job slots, " .. free .. " free")
+		expect(remote.call(C38, "set_maintainer", m, LM_ITEM, LM_KEEP, false), "set_maintainer failed")
+		local g = remote.call(C38, "get_maintainer", m)
+		expect(g and g.key == LM_ITEM and g.amount == LM_KEEP and g.circuit == false, "settings not stored: " .. serpent.line(g))
+		if #problems > 0 then return finish() end
+		return
+	end
+	if st.done then return end
+	local function next_phase(name) st.phase = name st.phase_tick = game.tick end
+	local function timeout(ticks, what)
+		if game.tick > st.phase_tick + ticks then
+			expect(false, what .. " timed out: maintainer " .. serpent.line(remote.call(C38, "get_maintainer", m))
+				.. ", jobs " .. serpent.line(gear_jobs(false)) .. ", gears " .. count())
+			finish()
+			return true
+		end
+	end
+
+	--- never two active jobs for the gear, and every job comes from the maintainer
+	local active = gear_jobs(true)
+	expect(#active <= 1, "more than one active gear job: " .. serpent.line(active))
+	for _, j in pairs(gear_jobs(false)) do
+		if not st.seen[j.id] then
+			st.seen[j.id] = true
+			st.jobs = st.jobs + 1
+			st.last = { id = j.id, amount = j.amount }
+			st.amounts[#st.amounts + 1] = j.amount
+			expect(j.owner == m.unit_number, "job " .. j.id .. " was not started by the maintainer (owner " .. tostring(j.owner) .. ")")
+			local info = remote.call(AC38, "job", j.id)
+			expect(info.cpu_name == nil or (info.cpu_name == "me-crafting-cpu" and info.ops == 6),
+				"a job on the ME Crafting CPU: " .. tostring(info.cpu_name) .. " with " .. tostring(info.ops) .. " hand-overs per step")
+		end
+	end
+	if #problems > 0 then return finish() end
+	local g = remote.call(C38, "get_maintainer", m)
+	local function last_done(what)
+		local j = remote.call(AC38, "job", st.last.id)
+		expect(j and j.status == "done", what .. " ended as " .. tostring(j and j.status))
+	end
+
+	if st.phase == "keep" then
+		if st.jobs == 1 and #active == 0 then
+			last_done("the first job")
+			expect(st.last.amount == LM_KEEP, "the first job asks for " .. st.last.amount .. ", expected " .. LM_KEEP)
+			expect(count() >= LM_KEEP, "gears after the first job: " .. count())
+			st.after_first = count()
+			return next_phase("hold")
+		end
+		timeout(500, "the first maintainer job")
+	elseif st.phase == "hold" then
+		--- the stock is reached: no further job for 120 ticks (six maintainer checks)
+		expect(st.jobs == 1, "a second job started although " .. count() .. " gears are in stock")
+		if game.tick >= st.phase_tick + 120 then
+			expect(g.status == "stocked", "status with enough in stock: " .. tostring(g.status))
+			expect(count() == st.after_first, "the gear count changed without a job: " .. count())
+			net.remove_item{ name = LM_ITEM, count = LM_TAKE, quality = "normal" }
+			st.low = count()
+			expect(st.low < LM_KEEP, "test setup: taking " .. LM_TAKE .. " gears out leaves " .. st.low)
+			next_phase("refill")
+		end
+	elseif st.phase == "refill" then
+		if st.jobs == 2 and #active == 0 then
+			last_done("the refill job")
+			expect(st.last.amount == LM_KEEP - st.low, "the refill job asks for " .. st.last.amount .. ", expected " .. (LM_KEEP - st.low))
+			expect(count() >= LM_KEEP, "gears after the refill: " .. count())
+			--- circuit input: the combinator sends LM_CIRCUIT gears, the maintainer takes its amount from the wire
+			expect(wire(cc, m), "the combinator could not be wired to the maintainer")
+			local cb = cc.get_or_create_control_behavior()
+			local section = cb.get_section(1) or cb.add_section()
+			section.set_slot(1, { value = { type = "item", name = LM_ITEM, quality = "normal", comparator = "=" }, min = LM_CIRCUIT })
+			m.get_or_create_control_behavior().circuit_enable_disable = false
+			remote.call(C38, "set_maintainer", m, nil, nil, true)
+			st.before_circuit = count()
+			return next_phase("circuit")
+		end
+		timeout(500, "the refill job")
+	elseif st.phase == "circuit" then
+		if st.jobs == 3 and #active == 0 then
+			last_done("the circuit job")
+			expect(st.last.amount == LM_CIRCUIT - st.before_circuit,
+				"the circuit job asks for " .. st.last.amount .. ", expected " .. (LM_CIRCUIT - st.before_circuit))
+			expect(count() >= LM_CIRCUIT, "gears after the circuit job: " .. count())
+			expect(g.target == LM_CIRCUIT, "target from the circuit: " .. tostring(g.target))
+			--- switched off by the lamp's circuit condition (signal-X > 0 is not on the wire), then amount 20 by hand
+			local cb = m.get_or_create_control_behavior()
+			cb.circuit_enable_disable = true
+			cb.circuit_condition = { first_signal = { type = "virtual", name = "signal-X" }, comparator = ">", constant = 0 }
+			remote.call(C38, "set_maintainer", m, nil, LM_LATER, false)
+			return next_phase("disabled")
+		end
+		timeout(500, "the circuit job")
+	elseif st.phase == "disabled" then
+		expect(st.jobs == 3, "a job started while the circuit condition is false")
+		if game.tick >= st.phase_tick + 100 then
+			expect(g.status == "disabled", "status with a false circuit condition: " .. tostring(g.status))
+			m.get_or_create_control_behavior().circuit_condition =
+				{ first_signal = { type = "item", name = LM_ITEM }, comparator = ">", constant = 0 }
+			st.before_enable = count()
+			next_phase("enabled")
+		end
+	elseif st.phase == "enabled" then
+		if st.jobs == 4 and #active == 0 then
+			last_done("the job after switching on")
+			expect(st.last.amount == LM_LATER - st.before_enable,
+				"the job after switching on asks for " .. st.last.amount .. ", expected " .. (LM_LATER - st.before_enable))
+			expect(count() >= LM_LATER, "gears at the end: " .. count())
+			if #problems > 0 then return finish() end
+			return finish("jobs for " .. table.concat(st.amounts, ", ") .. " gears, whole test " .. (game.tick - st.started) .. " ticks")
+		end
+		timeout(500, "the job after switching on")
+	end
+	if #problems > 0 then finish() end
+end
+
+--- CPU tiers: two jobs at once on a co-processing CPU, a third one waits; the quantum CPU's slots
+function cpu_tier_test()
+	local s = game.surfaces[1]
+	local terminal = s.find_entity("me-terminal", { X38 + 8.5, CT_Y + 4.5 })
+	local net = terminal and s.find_logistic_network_by_position(terminal.position, terminal.force)
+	local st = storage.tiers38
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish(note)
+		storage.tiers38.done = true
+		report38("CPUTIERS", "crafting CPU tiers", problems, note)
+	end
+	local function count(item) return net and net.get_item_count{ name = item, quality = "normal" } or -1 end
+
+	if not st then
+		if game.tick < 60 then return end
+		storage.tiers38 = { started = game.tick }
+		st = storage.tiers38
+		if not (terminal and net) then expect(false, "entities missing") return finish() end
+		local n, free, _, slots = remote.call(AC38, "cpus", terminal)
+		expect(n == 1 and slots == 2 and free == 2, "co-processing CPU: " .. n .. " CPUs, " .. tostring(slots) .. " slots, " .. free .. " free")
+		local a = remote.call(AC38, "start", terminal, LM_ITEM, 8)
+		local b = remote.call(AC38, "start", terminal, LM_ITEM, 8)
+		expect(a and b, "the two jobs did not start")
+		if not (a and b) then return finish() end
+		local ja, jb = remote.call(AC38, "job", a), remote.call(AC38, "job", b)
+		expect(ja.status == "running" and jb.status == "running", "the two jobs do not run at once: " .. ja.status .. ", " .. jb.status)
+		expect(ja.cpu == jb.cpu and ja.cpu_name == "me-co-processing-cpu", "the jobs are not on the co-processing CPU: " .. tostring(ja.cpu_name))
+		expect(ja.ops == 12 and jb.ops == 12, "hand-overs per step on the co-processing CPU: " .. ja.ops .. ", " .. jb.ops)
+		local _, free2 = remote.call(AC38, "cpus", terminal)
+		expect(free2 == 0, "free slots with two jobs: " .. free2)
+		local c = remote.call(AC38, "start", terminal, LM_ITEM, 1)
+		local jc = c and remote.call(AC38, "job", c)
+		expect(jc and jc.status == "queued", "a third job must wait for a slot: " .. tostring(jc and jc.status))
+		if c then remote.call(AC38, "cancel", c) end
+		st.a, st.b, st.c = a, b, c
+		if #problems > 0 then return finish() end
+		return
+	end
+	if st.done then return end
+	local ja, jb = remote.call(AC38, "job", st.a), remote.call(AC38, "job", st.b)
+	if ja.leases > 0 and jb.leases > 0 then st.overlap = true end     -- both jobs had a machine crafting at once
+	local function over(j) return j.status == "done" or j.status == "failed" or j.status == "cancelled" end
+	if over(ja) and over(jb) then
+		expect(ja.status == "done" and jb.status == "done", "jobs ended as " .. ja.status .. ", " .. jb.status)
+		expect(st.overlap, "the two jobs never had a machine crafting at the same time")
+		expect(count(LM_ITEM) >= 16, "gears after both jobs: " .. count(LM_ITEM))
+		local jc = st.c and remote.call(AC38, "job", st.c)
+		expect(not jc or jc.status == "cancelled", "the third job: " .. tostring(jc and jc.status))
+		--- the upgrade planner's result, by script: a quantum CPU with four slots
+		local cpu = s.find_entity("me-co-processing-cpu", { X38 + 10, CT_Y })
+		if cpu then cpu.destroy() end
+		local q = s.create_entity{ name = "me-quantum-crafting-cpu", position = { X38 + 10, CT_Y }, force = "player", raise_built = true }
+		local n, free, _, slots = remote.call(AC38, "cpus", terminal)
+		expect(q and n == 1 and slots == 4 and free == 4, "quantum CPU: " .. n .. " CPUs, " .. tostring(slots) .. " slots, " .. free .. " free")
+		if #problems > 0 then return finish() end
+		return finish("two jobs of 8 gears at once, " .. (game.tick - st.started) .. " ticks")
+	end
+	if game.tick > st.started + 900 then
+		expect(false, "the two jobs timed out: " .. serpent.line(ja) .. " / " .. serpent.line(jb))
+		finish()
+	end
+end
+
+--- circuit interface: the wire carries the network contents, then the filtered ones, and follows a change
+function circuit_test()
+	local s = game.surfaces[1]
+	local terminal = s.find_entity("me-terminal", { X38 + 8.5, CI_Y + 4.5 })
+	local ci = s.find_entity("me-circuit-interface", { X38 + 2.5, CI_Y + 8.5 })
+	local pole = s.find_entity("small-electric-pole", { X38 + 0.5, CI_Y + 8.5 })
+	local drive = s.find_entity("me-drive-16k", { X38 + 8.5, CI_Y + 6.5 })
+	local net = terminal and s.find_logistic_network_by_position(terminal.position, terminal.force)
+	local st = storage.circuit38
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish(note)
+		storage.circuit38.done = true
+		report38("CIRCUIT", "circuit interface", problems, note)
+	end
+	--- "name" for items (with "@quality" above normal), "fluid/name" for fluids -> count
+	local function on_wire()
+		local out = {}
+		local cn = ci.get_circuit_network(RED)
+		for _, sg in pairs(cn and cn.signals or {}) do
+			local sig = sg.signal
+			local key
+			if sig.type == "fluid" then key = "fluid/" .. sig.name
+			else
+				local q = sig.quality and (type(sig.quality) == "string" and sig.quality or sig.quality.name) or "normal"
+				key = sig.name .. (q ~= "normal" and ("@" .. q) or "")
+			end
+			out[key] = (out[key] or 0) + sg.count
+		end
+		return out
+	end
+	local function expected(filter)
+		local out = {}
+		for _, c in pairs(net.get_contents()) do
+			if not filter or filter[c.name] then
+				local q = c.quality or "normal"
+				local key = c.name .. (q ~= "normal" and ("@" .. q) or "")
+				out[key] = (out[key] or 0) + c.count
+			end
+		end
+		for name, amount in pairs(remote.call(F38, "totals", terminal)) do
+			if (not filter or filter["fluid/" .. name]) and amount >= 1 then out["fluid/" .. name] = math.floor(amount) end
+		end
+		return out
+	end
+	local function same(a, b)
+		for k, v in pairs(a) do if b[k] ~= v then return false end end
+		for k, v in pairs(b) do if a[k] ~= v then return false end end
+		return true
+	end
+
+	if not st then
+		if game.tick < 60 then return end
+		storage.circuit38 = { started = game.tick, phase = "all", phase_tick = game.tick }
+		st = storage.circuit38
+		if not (terminal and net and ci and pole and drive) then expect(false, "entities missing") return finish() end
+		local put = remote.call(F38, "insert", terminal, "water", 500.5)
+		expect(math.abs(put - 500.5) < 1e-6, "water into the fluid drive: " .. put)
+		expect(wire(ci, pole), "the interface could not be wired")
+		if #problems > 0 then return finish() end
+		return
+	end
+	if st.done then return end
+	local function next_phase(name) st.phase = name st.phase_tick = game.tick end
+	local wired = on_wire()
+	if st.phase == "all" then
+		local want = expected(nil)
+		if same(wired, want) then
+			expect(wired["fluid/water"] == 500, "water on the wire: " .. tostring(wired["fluid/water"]))
+			expect(wired["iron-plate"] == 200 and wired["iron-stick"] == 200, "items on the wire: " .. serpent.line(wired))
+			st.all = table_size(wired)
+			remote.call(C38, "set_circuit_filters", ci, { "iron-plate", "fluid/water" })
+			return next_phase("filtered")
+		end
+		if game.tick > st.phase_tick + 200 then
+			expect(false, "the wire does not carry the network contents: " .. serpent.line(wired) .. ", expected " .. serpent.line(want))
+			return finish()
+		end
+	elseif st.phase == "filtered" then
+		local want = expected({ ["iron-plate"] = true, ["fluid/water"] = true })
+		if same(wired, want) then
+			local got = remote.call(C38, "get_circuit", ci)
+			expect(got and #got.filters == 2 and got.signals == 2, "interface record: " .. serpent.line(got))
+			drive.insert{ name = "iron-plate", count = 25 }
+			return next_phase("change")
+		end
+		if game.tick > st.phase_tick + 200 then
+			expect(false, "the filtered wire: " .. serpent.line(wired) .. ", expected " .. serpent.line(want))
+			return finish()
+		end
+	elseif st.phase == "change" then
+		if wired["iron-plate"] == 225 then
+			expect(table_size(wired) == 2, "the filtered wire after the change: " .. serpent.line(wired))
+			if #problems > 0 then return finish() end
+			return finish(st.all .. " signals, then 2 filtered, change seen after " .. (game.tick - st.phase_tick) .. " ticks")
+		end
+		if game.tick > st.phase_tick + 200 then
+			expect(false, "the wire did not follow the change: " .. serpent.line(wired))
+			return finish()
+		end
+	end
+end
+
+--- settings copy: blueprint (tags, built and revived), settings paste, cloning; for maintainers, circuit
+--- interfaces and fluid interfaces
+function settings_test()
+	if storage.settings38 then return end
+	if game.tick < 60 then return end
+	storage.settings38 = { done = true }
+	local s = game.surfaces[1]
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local m = s.find_entity("me-level-maintainer", { X38 + 2.5, SC_Y + 10.5 })
+	local ci = s.find_entity("me-circuit-interface", { X38 + 3.5, SC_Y + 10.5 })
+	local fi = s.find_entity("me-fluid-interface", { X38 + 4.5, SC_Y + 10.5 })
+	if not (m and ci and fi) then
+		expect(false, "entities missing")
+		return report38("SETTINGS", "settings copy", problems)
+	end
+	--- the panels cannot open without a player; at least their anchors must exist
+	expect(defines.relative_gui_type.lamp_gui and defines.relative_gui_type.constant_combinator_gui
+		and defines.relative_gui_type.storage_tank_gui, "a relative GUI anchor of the panels does not exist")
+	local M_SET = { key = "fluid/water", amount = 1234, circuit = true }
+	local C_SET = { "iron-plate", "fluid/water" }
+	local F_SET = { mode = "export", fluid = "water", level = 2345 }
+	remote.call(C38, "set_maintainer", m, M_SET.key, M_SET.amount, M_SET.circuit)
+	remote.call(C38, "set_circuit_filters", ci, C_SET)
+	remote.call(F38, "set_interface", fi, F_SET.mode, F_SET.fluid, F_SET.level)
+	local function check(what, mm, cc, ff)
+		if mm then
+			local g = remote.call(C38, "get_maintainer", mm)
+			expect(g and g.key == M_SET.key and g.amount == M_SET.amount and g.circuit == M_SET.circuit,
+				what .. ": maintainer settings " .. serpent.line(g))
+		end
+		if cc then
+			local g = remote.call(C38, "get_circuit", cc)
+			expect(g and serpent.line(g.filters) == serpent.line(C_SET), what .. ": circuit interface filters " .. serpent.line(g))
+			--- that network has no fluid drive: of the two filters only the plates are on the wire
+			expect(g and g.signals == 1, what .. ": circuit interface signals " .. tostring(g and g.signals))
+		end
+		if ff then
+			local g = remote.call(F38, "get_interface", ff)
+			expect(g and g.mode == F_SET.mode and g.fluid == F_SET.fluid and g.level == F_SET.level,
+				what .. ": fluid interface settings " .. serpent.line(g))
+		end
+	end
+	check("original", m, ci, fi)
+
+	--- blueprint: the settings become entity tags (the handler of on_player_setup_blueprint)
+	local inv = game.create_inventory(1)
+	inv.insert{ name = "blueprint" }
+	local bp = inv[1]
+	local mapping = bp.create_blueprint{ surface = s, force = "player",
+		area = { { X38 + 2, SC_Y + 10 }, { X38 + 5, SC_Y + 11 } } }
+	remote.call(AC38, "tag_blueprint", bp, mapping)
+	local tagged = {}
+	for index, e in pairs(mapping or {}) do
+		local tag = ({ ["me-level-maintainer"] = "fork_me_maintainer", ["me-circuit-interface"] = "fork_me_circuit",
+			["me-fluid-interface"] = "fork_me_fluid_interface" })[e.name]
+		if tag then tagged[e.name] = bp.get_blueprint_entity_tag(index, tag) end
+	end
+	local tm, tc, tf = tagged["me-level-maintainer"], tagged["me-circuit-interface"], tagged["me-fluid-interface"]
+	expect(tm and tm.key == M_SET.key and tm.amount == M_SET.amount and tm.circuit == M_SET.circuit, "maintainer tag " .. serpent.line(tm))
+	expect(tc and serpent.line(tc.filters) == serpent.line(C_SET), "circuit interface tag " .. serpent.line(tc))
+	expect(tf and tf.mode == F_SET.mode and tf.fluid == F_SET.fluid and tf.level == F_SET.level, "fluid interface tag " .. serpent.line(tf))
+	--- built from the blueprint (ghosts with the tags) and revived: the new entities have the settings
+	local ghosts = bp.build_blueprint{ surface = s, force = "player", position = { X38 + 10, SC_Y + 14 } }
+	local built = {}
+	for _, g in pairs(ghosts or {}) do
+		if g.valid then
+			local name = g.ghost_name
+			local _, e = g.revive{ raise_revive = true }
+			if e then built[name] = e end
+		end
+	end
+	expect(table_size(built) == 3, "revived from the blueprint: " .. table_size(built) .. " of 3")
+	check("blueprint", built["me-level-maintainer"], built["me-circuit-interface"], built["me-fluid-interface"])
+	inv.destroy()
+
+	--- settings paste onto plain entities
+	local pm = s.create_entity{ name = "me-level-maintainer", position = { X38 + 2.5, SC_Y + 12.5 }, force = "player", raise_built = true }
+	local pc = s.create_entity{ name = "me-circuit-interface", position = { X38 + 3.5, SC_Y + 12.5 }, force = "player", raise_built = true }
+	local pf = s.create_entity{ name = "me-fluid-interface", position = { X38 + 4.5, SC_Y + 12.5 }, force = "player", raise_built = true }
+	remote.call(C38, "paste", m, pm)
+	remote.call(C38, "paste", ci, pc)
+	remote.call(F38, "paste", fi, pf)
+	check("paste", pm, pc, pf)
+
+	--- clones (on_entity_cloned)
+	local km = m.clone{ position = { X38 + 2.5, SC_Y + 8.5 } }
+	local kc = ci.clone{ position = { X38 + 3.5, SC_Y + 8.5 } }
+	local kf = fi.clone{ position = { X38 + 4.5, SC_Y + 8.5 } }
+	expect(km and kc and kf, "clone failed")
+	check("clone", km, kc, kf)
+	report38("SETTINGS", "settings copy", problems, #problems == 0 and "blueprint, paste and clone of 3 entity types" or nil)
+end
+
 --- The terrain comes from the map seed: trees, rocks, cliffs, water and enemies can be anywhere. The
 --- tests place their entities by script, which ignores all that, but construction robots do not build
 --- a ghost over a tree or on water, so a robot rebuild timed out on some seeds (issue #47). The whole
@@ -2040,6 +2543,7 @@ script.on_init(function()
 	for _, f in pairs(setup_cooled_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_tier_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_recipe_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_issue38_tests(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

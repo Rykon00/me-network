@@ -213,6 +213,9 @@ data:extend({ {
 	},
 	two_direction_only = false,
 	circuit_wire_max_distance = 0,
+	--- a storage tank has no settings of its own: this lets the game copy the interface's settings
+	--- (mode, fluid, level; the runtime copies them in on_entity_settings_pasted, issue #38)
+	additional_pastable_entities = { INTERFACE },
 	localised_description = { "entity-description." .. INTERFACE },
 } })
 

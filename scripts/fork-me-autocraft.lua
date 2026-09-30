@@ -11,8 +11,10 @@
 ---   next to it that can make it. Without a choice the furnace's last smelted recipe is used, a
 ---   furnace with neither is counted as ignored ("no-recipe"). While a furnace holds or smelts
 ---   something, the recipe it actually runs counts (it picks it from the input item).
---- CPU: a Crafting CPU runs one job at a time; the number of CPUs in the network is the number
----   of parallel jobs. Jobs wait ("queued") until a CPU is free.
+--- CPU: a Crafting CPU runs one job at a time, the bigger tiers (issue #38, mod-data
+---   "fork-me-autocraft") several, and hand more work to the machines per step (speed). The job
+---   slots of all CPUs in the network are the number of parallel jobs. Jobs wait ("queued") until a
+---   slot is free.
 --- Planning: recursive over the patterns, storage first, loops recognised, missing raw
 ---   materials reported before anything is started (M.plan). Items and fluids are both
 ---   "resources", keyed by the item name or "fluid/<name>" (fluid storage: fork-me-fluids.lua).
@@ -22,9 +24,11 @@
 ---   is idle again, moves the products into the pool, and at the end everything left in the pool
 ---   (result and by-products) is stored in the network. Cancel and failure give the pool back
 ---   the same way.
---- Work per step: STEP_OPS machine interactions per job, MAX_JOBS_PER_STEP jobs, PROVIDERS_PER_STEP
----   provider rescans, one step every STEP_TICKS ticks (15, 30 and 60 are used by the fluid
----   storage, the molds and the terminal, see control.lua).
+--- Work per step: STEP_OPS machine interactions per job (times the speed of its CPU tier), at most
+---   MAX_OPS_PER_STEP in all, MAX_JOBS_PER_STEP jobs, PROVIDERS_PER_STEP provider rescans, and the
+---   step hooks (level maintainers and circuit interfaces, scripts/fork-me-circuit.lua), one step
+---   every STEP_TICKS ticks (15, 30 and 60 are used by the fluid storage, the molds and the terminal,
+---   see control.lua).
 --- State: storage.fork_ae2 only (entities, counts, plain data). GUI state lives in the GUI.
 --------------------------------------------------------------------------------
 
@@ -32,9 +36,15 @@ local fluids = require("scripts.fork-me-fluids")
 
 local M = {}
 
+--- functions run at the end of every step (fork-me-circuit.lua); registered at load time, nothing is stored
+M.step_hooks = {}
+--- functions(bp, mapping) run when a blueprint is set up, after the providers are tagged
+M.blueprint_hooks = {}
+
 local STEP_TICKS = 20
 local MAX_JOBS_PER_STEP = 8
-local STEP_OPS = 6              -- machine hand-overs / collections per job and step
+local STEP_OPS = 6              -- machine hand-overs / collections per job and step (base CPU)
+local MAX_OPS_PER_STEP = 96     -- all jobs together (4 quantum CPU jobs at full speed)
 local MAX_BATCH = 16            -- crafts handed to one machine at once
 local PROVIDERS_PER_STEP = 8
 local STALL_STEPS = 900         -- steps without progress (5 minutes) until a job fails
@@ -44,6 +54,7 @@ local MAX_PLAN_NODES = 3000
 local MAX_DEPTH = 40
 local MAX_AMOUNT = 100000       -- items per job
 local MAX_FLUID_AMOUNT = 10000000 -- fluid units per job
+M.MAX_AMOUNT, M.MAX_FLUID_AMOUNT = MAX_AMOUNT, MAX_FLUID_AMOUNT
 local QUALITY = "normal"        -- only normal quality items are planned and crafted
 local FLUID_MARGIN = 0.01       -- extra fluid reserved per job and fluid (fixed point rounding)
 local FLUID_EPS = 1e-6
@@ -51,6 +62,23 @@ local FIXED = 16777216          -- fluid amounts are fixed point with 24 fractio
 
 local PROVIDER, CPU = "me-pattern-provider", "me-crafting-cpu"
 local NEIGHBORS = { { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
+
+--- CPU tiers: entity name -> { jobs, speed } (prototypes/121-fork-ae2-autocrafting.lua)
+local function cpu_specs()
+	local md = prototypes.mod_data["fork-me-autocraft"]
+	return md and md.data.cpus or { [CPU] = { jobs = 1, speed = 1 } }
+end
+
+local function cpu_spec(name)
+	return cpu_specs()[name]
+end
+
+local function cpu_names()
+	local names = {}
+	for name in pairs(cpu_specs()) do names[#names + 1] = name end
+	table.sort(names)
+	return names
+end
 
 --------------------------------------------------------------------------------
 --- resource keys: item name, or "fluid/<name>" for fluids
@@ -95,7 +123,7 @@ local function state()
 			providers = {},      -- unit_number -> { entity, net, sig, recipe (furnace choice), machines = { {entity, unit, recipe, fluid, chosen} }, ignored }
 			plist = {},          -- unit numbers of providers (round robin for rescans)
 			pcursor = 1,
-			cpus = {},           -- unit_number -> { entity, job = job id | nil }
+			cpus = {},           -- unit_number -> { entity, jobs = { [job id] = true } } (older saves: job = id)
 			jobs = {},           -- id -> job
 			active = {},         -- ids of jobs that are not finished
 			finished = {},       -- ids of finished jobs (oldest first)
@@ -109,6 +137,9 @@ local function state()
 	end
 	return s
 end
+
+--- the level maintainers and circuit interfaces keep their records in the same table (fork-me-circuit.lua)
+M.state = state
 
 local function shallow_map(t) local c = {} for k, v in pairs(t) do c[k] = v end return c end
 local function shallow(list) return { table.unpack(list) } end
@@ -550,7 +581,29 @@ local function cpu_powered(cpu)
 	return cpu.status ~= defines.entity_status.no_power
 end
 
---- CPUs of a network: total, free (no job), and how many of them have power
+--- the jobs a CPU runs ({ [id] = true }); a record from before the CPU tiers held one `job`
+local function cpu_jobs(rec)
+	if not rec.jobs then
+		rec.jobs = {}
+		if rec.job then rec.jobs[rec.job] = true end
+		rec.job = nil
+	end
+	return rec.jobs
+end
+
+local function cpu_load(rec)
+	local n = 0
+	for _ in pairs(cpu_jobs(rec)) do n = n + 1 end
+	return n
+end
+
+--- job slots of a CPU record (1 for an entity that is no longer a known tier)
+local function cpu_slots(rec)
+	local spec = rec.entity.valid and cpu_spec(rec.entity.name)
+	return spec and spec.jobs or 1
+end
+
+--- CPUs of a network, fastest first (a queued job takes the fastest free one)
 local function cpus_in(s, net)
 	local list = {}
 	for unit, rec in pairs(s.cpus) do
@@ -561,6 +614,12 @@ local function cpus_in(s, net)
 			s.cpus[unit] = nil
 		end
 	end
+	table.sort(list, function(a, b)
+		local sa, sb = cpu_spec(a.entity.name), cpu_spec(b.entity.name)
+		local va, vb = sa and sa.speed or 1, sb and sb.speed or 1
+		if va ~= vb then return va > vb end
+		return a.entity.unit_number < b.entity.unit_number
+	end)
 	return list
 end
 
@@ -673,7 +732,7 @@ end
 
 local function release_cpu(s, job)
 	local rec = job.cpu and s.cpus[job.cpu]
-	if rec and rec.job == job.id then rec.job = nil end
+	if rec then cpu_jobs(rec)[job.id] = nil end
 	job.cpu = nil
 end
 
@@ -708,9 +767,9 @@ local function assign_cpus(s)
 		if job and job.status == "queued" and not job.closing then
 			local net = job_network(job)
 			if net then
-				for _, rec in pairs(cpus_in(s, net)) do
-					if rec.job == nil then
-						rec.job = job.id
+				for _, rec in ipairs(cpus_in(s, net)) do
+					if cpu_load(rec) < cpu_slots(rec) then
+						cpu_jobs(rec)[job.id] = true
 						job.cpu = rec.entity.unit_number
 						job.pos = { x = rec.entity.position.x, y = rec.entity.position.y }
 						job.status = "running"
@@ -814,7 +873,15 @@ local function set_wait(job, wait)
 	job.wait = wait
 end
 
-local function job_step(s, job)
+--- machine interactions a job may use in this step: STEP_OPS times the speed of its CPU tier
+local function job_ops(s, job)
+	local rec = job.cpu and s.cpus[job.cpu]
+	local spec = rec and rec.entity.valid and cpu_spec(rec.entity.name)
+	return STEP_OPS * (spec and spec.speed or 1)
+end
+
+--- `work.ops`: machine interactions left for this job in this step (counted down)
+local function job_step(s, job, work)
 	if job.status == "queued" and not job.closing then return end
 	local net = job_network(job)
 	if not net then set_wait(job, "no-network") return end
@@ -830,11 +897,11 @@ local function job_step(s, job)
 		if not cpu_powered(cpu_rec.entity) then set_wait(job, "no-power") return end
 	end
 
-	local ops, progress = STEP_OPS, false
+	local progress = false
 
 	--- 1) collect finished machines
 	for _, real in pairs(shallow(job.leases)) do
-		if ops > 0 then
+		if work.ops > 0 then
 			local m = real.machine
 			if not m.valid then
 				release_lease(s, job, real)
@@ -868,7 +935,7 @@ local function job_step(s, job)
 					release_lease(s, job, real)
 					progress = true
 				end
-				ops = ops - 1
+				work.ops = work.ops - 1
 			end
 		end
 	end
@@ -894,7 +961,7 @@ local function job_step(s, job)
 	local waiting
 	for i, step in ipairs(job.steps) do
 		local proto = prototypes.recipe[step.recipe]
-		while ops > 0 and step.issued < step.runs do
+		while work.ops > 0 and step.issued < step.runs do
 			local batch = math.min(step.runs - step.issued, MAX_BATCH)
 			for _, p in pairs(proto.products) do        -- the products must fit into the output slot
 				if p.type == "item" then
@@ -916,7 +983,7 @@ local function job_step(s, job)
 			if batch <= 0 then waiting = waiting or "machine" break end
 			collect_output(job, net, machine, map)
 			if not start_lease(s, job, i, machine, batch, map, chosen) then waiting = waiting or "machine" break end
-			ops = ops - 1
+			work.ops = work.ops - 1
 			progress = true
 		end
 		if step.issued < step.runs and not waiting then waiting = "machine" end
@@ -990,13 +1057,20 @@ local function on_step(event)
 		local ids = {}
 		for i = 0, count - 1 do ids[#ids + 1] = s.active[(s.jcursor - 1 + i) % n + 1] end
 		s.jcursor = (s.jcursor - 1 + count) % n + 1
+		local budget = MAX_OPS_PER_STEP
 		for _, id in pairs(ids) do
 			local job = s.jobs[id]
-			if job and (job.status == "queued" or job.status == "running") then job_step(s, job) end
+			if job and (job.status == "queued" or job.status == "running") then
+				local work = { ops = math.min(job_ops(s, job), budget) }
+				local given = work.ops
+				job_step(s, job, work)
+				budget = math.max(0, budget - (given - work.ops))
+			end
 		end
 	end
 	maintenance(s)
 	prune_finished(s)
+	for _, hook in pairs(M.step_hooks) do hook(s) end
 end
 
 script.on_nth_tick(STEP_TICKS, on_step)
@@ -1029,16 +1103,40 @@ function M.describe(key)
 	return { key = key, name = key, fluid = false, sprite = "item/" .. key, localised_name = proto.localised_name }
 end
 
---- Crafting CPUs of the network: total, free, powered
+--- Crafting CPUs of the network: CPUs, free job slots, powered CPUs, job slots (a base CPU has one)
 function M.cpu_summary(net)
 	local s = state()
-	local total, free, powered = 0, 0, 0
+	local total, free, powered, slots = 0, 0, 0, 0
 	for _, rec in pairs(cpus_in(s, net)) do
 		total = total + 1
-		if rec.job == nil then free = free + 1 end
+		local n = cpu_slots(rec)
+		slots = slots + n
+		free = free + math.max(0, n - cpu_load(rec))
 		if cpu_powered(rec.entity) then powered = powered + 1 end
 	end
-	return total, free, powered
+	return total, free, powered, slots
+end
+
+--- true when a powered CPU of the network has a free job slot (a new job would run at once)
+function M.free_slot(net)
+	local s = state()
+	for _, rec in pairs(cpus_in(s, net)) do
+		if cpu_powered(rec.entity) and cpu_load(rec) < cpu_slots(rec) then return true end
+	end
+	return false
+end
+
+--- the id of an active job of the network that crafts `key`, nil if there is none
+function M.active_job_for(net, key)
+	local s = state()
+	for _, id in pairs(s.active) do
+		local job = s.jobs[id]
+		if job and job.item == key and not job.closing then
+			local jn = job_network(job)
+			if jn and jn.network_id == net.network_id then return id end
+		end
+	end
+	return nil
 end
 
 --- `fresh` rescans all pattern providers first (user actions); the GUI preview uses the cache
@@ -1051,8 +1149,9 @@ function M.plan(net, key, amount, fresh)
 end
 
 --- Start a job for `amount` of `key` in the network of `entity` (a network member such as the
---- terminal). Returns the job id, or nil, a reason key and the plan.
-function M.start(entity, key, amount)
+--- terminal). `owner`: unit number of the level maintainer that asked for it (nil for a player).
+--- Returns the job id, or nil, a reason key and the plan.
+function M.start(entity, key, amount, owner)
 	local s = state()
 	local net = network_of(entity)
 	if not net then return nil, "no-network" end
@@ -1097,7 +1196,7 @@ function M.start(entity, key, amount)
 		id = id, item = key, amount = amount, status = "queued", steps = steps, pool = pool, leases = {},
 		total_runs = total, done_runs = 0, idle = 0, tick = game.tick,
 		surface = entity.surface.index, force = entity.force.index,
-		pos = { x = entity.position.x, y = entity.position.y },
+		pos = { x = entity.position.x, y = entity.position.y }, owner = owner,
 	}
 	s.active[#s.active + 1] = id
 	assign_cpus(s)
@@ -1134,7 +1233,7 @@ function M.jobs(net)
 				out[#out + 1] = {
 					id = job.id, item = job.item, amount = job.amount, status = status, wait = job.wait,
 					reason = job.reason, done = job.done_runs, total = job.total_runs,
-					active = job.status == "queued" or job.status == "running",
+					active = job.status == "queued" or job.status == "running", owner = job.owner,
 				}
 			end
 		end
@@ -1146,11 +1245,14 @@ function M.jobs(net)
 end
 
 function M.job(id)
-	local job = state().jobs[id]
+	local s = state()
+	local job = s.jobs[id]
 	if not job then return nil end
+	local rec = job.cpu and s.cpus[job.cpu]
 	return { id = job.id, item = job.item, amount = job.amount, status = job.status, closing = job.closing,
 		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool,
-		leases = #job.leases }
+		leases = #job.leases, owner = job.owner, cpu = job.cpu, ops = job_ops(s, job),
+		cpu_name = rec and rec.entity.valid and rec.entity.name or nil }
 end
 
 --- LocalisedString "12x A, 3x B, 100 C (fluid)" for a { key -> count } table (at most `limit` entries)
@@ -1203,9 +1305,9 @@ local function register(s, entity)
 		end
 		scan_provider(s.providers[unit])
 		s.dirty = true
-	elseif entity.name == CPU then
+	elseif cpu_spec(entity.name) then
 		local unit = entity.unit_number
-		s.cpus[unit] = s.cpus[unit] or { entity = entity }
+		s.cpus[unit] = s.cpus[unit] or { entity = entity, jobs = {} }
 	end
 end
 
@@ -1382,8 +1484,9 @@ function M.on_entity_settings_pasted(event)
 	M.set_recipe(dst, M.get_recipe(src))
 end
 
---- A blueprint with providers carries their choice as entity tag. `bp` is the blueprint (item stack or
---- record), `mapping` blueprint entity index -> source entity.
+--- A blueprint with providers carries their choice as entity tag; the fluid interfaces (fluids module)
+--- and the blueprint hooks (level maintainers, circuit interfaces) tag theirs. `bp` is the blueprint
+--- (item stack or record), `mapping` blueprint entity index -> source entity.
 function M.tag_blueprint(bp, mapping)
 	if not (bp and bp.valid and mapping) then return end
 	for index, entity in pairs(mapping) do
@@ -1392,6 +1495,8 @@ function M.tag_blueprint(bp, mapping)
 			if choice then bp.set_blueprint_entity_tag(index, TAG, choice) end
 		end
 	end
+	fluids.tag_blueprint(bp, mapping)
+	for _, hook in pairs(M.blueprint_hooks) do hook(bp, mapping) end
 end
 
 local function blueprint_usable(bp)
@@ -1412,7 +1517,7 @@ end
 
 --- `tags`: the blueprint tags of a built ghost; `source`: the original of a cloned entity
 function M.on_built(entity, tags, source)
-	if not (entity and entity.valid and (entity.name == PROVIDER or entity.name == CPU)) then return end
+	if not (entity and entity.valid and (entity.name == PROVIDER or cpu_spec(entity.name))) then return end
 	register(state(), entity)
 	if entity.name ~= PROVIDER then return end
 	local choice = type(tags) == "table" and tags[TAG] or nil
@@ -1450,8 +1555,10 @@ function M.on_configuration_changed()
 	end
 	s.providers, s.plist, s.pcursor, s.patterns, s.dirty = {}, {}, 1, {}, true
 	s.cpus = {}
+	local names = cpu_names()
+	names[#names + 1] = PROVIDER
 	for _, surface in pairs(game.surfaces) do
-		for _, e in pairs(surface.find_entities_filtered{ name = { PROVIDER, CPU } }) do
+		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
 			register(s, e)
 			local p = s.providers[e.unit_number]
 			if p and choices[e.unit_number] then
@@ -1489,7 +1596,7 @@ function M.on_configuration_changed()
 			end
 		end
 	end
-	for _, rec in pairs(s.cpus) do rec.job = nil end
+	for _, rec in pairs(s.cpus) do rec.job, rec.jobs = nil, {} end
 end
 
 --- Other mods and the devcheck runtime test use the same code paths. Resource keys are item names
@@ -1521,10 +1628,16 @@ remote.add_interface("gregtorio-me-autocraft", {
 		local _, ignored = M.craftable(net)
 		return ignored
 	end,
+	--- CPUs, free job slots, powered CPUs, job slots
 	cpus = function(entity)
 		local net = network_of(entity)
-		if not net then return 0, 0, 0 end
+		if not net then return 0, 0, 0, 0 end
 		return M.cpu_summary(net)
+	end,
+	--- the jobs of the network (newest first): { id, item, amount, status, wait, done, total, active, owner }
+	jobs = function(entity)
+		local net = network_of(entity)
+		return net and M.jobs(net) or {}
 	end,
 	--- recipe choice of a pattern provider for the furnaces next to it (the GUI's code path)
 	get_recipe = function(provider) return M.get_recipe(provider) end,

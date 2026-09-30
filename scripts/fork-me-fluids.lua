@@ -24,7 +24,8 @@
 ---   * ME Fluid Interface: a small storage tank. In import mode its content is moved into the
 ---     network, in export mode it is filled with a chosen fluid up to a chosen level. Pumps and
 ---     pipes connect to it like to any tank. Mode, fluid and level live in
----     storage.fork_me_fluids.interfaces and are set in a panel next to the tank GUI.
+---     storage.fork_me_fluids.interfaces and are set in a panel next to the tank GUI. They are copied
+---     by settings paste and cloning and kept in blueprints (entity tag "fork_me_fluid_interface").
 ---   * Temperature: the network stores fluids by name only. Importing drops the temperature,
 ---     exporting (and the autocrafting hand-over) uses the fluid's default temperature.
 --- Work per step: INTERFACES_PER_STEP interfaces and RECOVERED_PER_STEP recovered entries every
@@ -44,6 +45,7 @@ local INTERFACES_PER_STEP = 8
 local RECOVERED_PER_STEP = 4        -- recovered entries pulled into the drives of their network per step
 local EPS = 1e-6                    -- fluid amounts are fixed point (1/2^24); below this a box counts as empty
 local TAG = "fork_me_fluids"        -- item tag that carries the contents of a picked up drive
+local IFACE_TAG = "fork_me_fluid_interface"   -- blueprint tag of an interface's settings { mode, fluid, level }
 local DRIVE_FRAME = "fork_me_fluid_drive"
 local IFACE_FRAME = "fork_me_fluid_interface"
 
@@ -888,12 +890,12 @@ local function set_level(rec, text)
 	rec.level = math.max(0, math.min(interface_volume(), math.floor(n)))
 end
 
---- Set an interface from a script: mode "import"/"export", fluid name (export), level (export)
+--- Set an interface from a script: mode "import"/"export", fluid name (export; false clears it), level (export)
 function M.set_interface(entity, mode, fluid, level)
 	if not (entity and entity.valid and entity.name == interface_name()) then return false end
 	local rec = register_interface(state(), entity)
 	if mode == "import" or mode == "export" then rec.mode = mode end
-	if fluid ~= nil then rec.fluid = prototypes.fluid[fluid] and fluid or nil end
+	if fluid ~= nil then rec.fluid = fluid and prototypes.fluid[fluid] and fluid or nil end   -- false clears it
 	if level ~= nil then set_level(rec, level) end
 	return true
 end
@@ -971,7 +973,7 @@ script.on_nth_tick(STEP_TICKS, on_step)
 --- The tags of the drive item a build event consumed: `event.tags` (ghost tags, script_raised_revive),
 --- the robot's `event.stack`, or the player's `event.consumed_items`.
 function M.tags_from_event(event)
-	if type(event.tags) == "table" and event.tags[TAG] then return event.tags end
+	if type(event.tags) == "table" and (event.tags[TAG] or event.tags[IFACE_TAG]) then return event.tags end
 	local stack = event.stack
 	if stack and stack.valid and stack.valid_for_read and stack.is_item_with_tags then
 		local tags = stack.tags
@@ -990,8 +992,10 @@ function M.tags_from_event(event)
 	return nil
 end
 
---- `tags`: the item tags of the placed drive item (see tags_from_event)
-function M.on_built(entity, tags)
+--- `tags`: the item tags of the placed drive item, or the blueprint tags of a built interface ghost
+--- (see tags_from_event); `source`: the original of a cloned entity (an interface copies its settings,
+--- a cloned drive starts empty)
+function M.on_built(entity, tags, source)
 	if not (entity and entity.valid) then return end
 	local s = state()
 	if drive_capacity(entity.name) then
@@ -1000,6 +1004,43 @@ function M.on_built(entity, tags)
 		take_recovered(s, rec, entity)
 	elseif entity.name == interface_name() then
 		register_interface(s, entity)
+		local settings = type(tags) == "table" and tags[IFACE_TAG] or nil
+		if type(settings) == "table" then
+			M.set_interface(entity, settings.mode, settings.fluid or false, settings.level)
+		elseif source and source.valid and source.name == entity.name then
+			local from = M.get_interface(source)
+			if from then M.set_interface(entity, from.mode, from.fluid or false, from.level) end
+		end
+	end
+end
+
+--- copy mode, fluid and level from one interface to another (shift right click, shift left click)
+function M.on_entity_settings_pasted(event)
+	local src, dst = event.source, event.destination
+	if not (src and src.valid and dst and dst.valid and src.name == interface_name() and dst.name == interface_name()) then return end
+	local from = M.get_interface(src) or { mode = "import", level = interface_volume() }
+	M.set_interface(dst, from.mode, from.fluid or false, from.level)
+	for _, player in pairs(game.connected_players) do       -- an open panel shows the new settings
+		local frame = player.gui.relative[IFACE_FRAME]
+		if frame then
+			local rec = interface_of_element(frame)
+			if rec then interface_gui_refresh(frame, rec) end
+		end
+	end
+end
+
+--- A blueprint with fluid interfaces carries their settings as entity tag (from the autocrafting
+--- module's blueprint handler). Drive contents are not blueprint data (only the drive item carries fluid).
+function M.tag_blueprint(bp, mapping)
+	local s = storage.fork_me_fluids
+	if not s then return end
+	for index, entity in pairs(mapping) do
+		if entity.valid and entity.name == interface_name() then
+			local rec = s.interfaces[entity.unit_number]
+			if rec then
+				bp.set_blueprint_entity_tag(index, IFACE_TAG, { mode = rec.mode, fluid = rec.fluid, level = rec.level })
+			end
+		end
 	end
 end
 
@@ -1108,36 +1149,40 @@ function M.on_player_removed(index)
 	if s.prebuild then s.prebuild[index] = nil end
 end
 
-script.on_event(defines.events.on_gui_switch_state_changed, function(event)
+--- the GUI events below are registered by the terminal module, which routes them (one handler per event)
+function M.on_gui_switch_state_changed(event)
 	local el = event.element
-	if not (el and el.valid and el.name == "fork_mef_mode") then return end
+	if not (el and el.valid and el.name == "fork_mef_mode") then return false end
 	local rec, frame = interface_of_element(el)
-	if not rec then return end
+	if not rec then return true end
 	rec.mode = el.switch_state == "right" and "export" or "import"
 	rec.status = "ok"
 	interface_gui_refresh(frame, rec)
-end)
+	return true
+end
 
-script.on_event(defines.events.on_gui_elem_changed, function(event)
+function M.on_gui_elem_changed(event)
 	local el = event.element
-	if not (el and el.valid and el.name == "fork_mef_fluid") then return end
+	if not (el and el.valid and el.name == "fork_mef_fluid") then return false end
 	local rec, frame = interface_of_element(el)
-	if not rec then return end
+	if not rec then return true end
 	local value = el.elem_value
 	rec.fluid = type(value) == "string" and prototypes.fluid[value] and value or nil
 	rec.status = "ok"
 	interface_gui_refresh(frame, rec)
-end)
+	return true
+end
 
-script.on_event(defines.events.on_gui_confirmed, function(event)
+function M.on_gui_confirmed(event)
 	local el = event.element
-	if not (el and el.valid and el.name == "fork_mef_level") then return end
+	if not (el and el.valid and el.name == "fork_mef_level") then return false end
 	local rec, frame = interface_of_element(el)
-	if not rec then return end
+	if not rec then return true end
 	set_level(rec, el.text)
 	el.text = format(rec.level)
 	interface_gui_refresh(frame, rec)
-end)
+	return true
+end
 
 --- (a filter can only be given when one event is registered at a time)
 local ENTITY_FILTER = { { filter = "type", type = "simple-entity-with-force" }, { filter = "type", type = "storage-tank" } }
@@ -1376,6 +1421,8 @@ remote.add_interface("gregtorio-me-fluids", {
 	end,
 	set_interface = function(entity, mode, fluid, level) return M.set_interface(entity, mode, fluid, level) end,
 	get_interface = function(entity) return M.get_interface(entity) end,
+	--- settings paste between two interfaces (the handler of on_entity_settings_pasted)
+	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	--- what mining a drive does: the contents go onto `stack` (an item stack of the same drive item)
 	pack_drive = function(entity, stack) return pack_drive(state(), entity, stack) end,
 	--- what placing a drive item does: `tags` are the item's tags
