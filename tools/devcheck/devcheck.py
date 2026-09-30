@@ -24,6 +24,8 @@ zips into a folder and pass --mods-from DIR.
   * a sprite sheet is smaller than its width/height/frame_count need
   * an unlocked recipe cannot be crafted: no machine for its category, an ingredient that can
     never be obtained, or no reachable machine with enough fluid inputs/outputs
+  * an enabled technology cannot be researched and is not in UNRESEARCHABLE_OK (the vanilla
+    armor/equipment techs), or one of the issue #29 QoL techs is neither researchable nor hidden
 It also reports how many technologies are researchable and where progression stops.
 """
 import argparse, json, os, re, shutil, subprocess, sys, tarfile, urllib.parse, urllib.request
@@ -379,6 +381,43 @@ REQUIRED_RECIPES = [
 ]
 
 
+# Technologies that stay enabled but cannot be researched on purpose: vanilla armor, equipment and
+# military techs whose vanilla prerequisites Gregtorio disables (docs/ROADMAP.md, "Final pass").
+# Every other enabled technology must be researchable.
+UNRESEARCHABLE_OK = [
+    "battery-equipment", "battery-mk2-equipment", "battery-mk3-equipment", "belt-immunity-equipment",
+    "energy-shield-equipment", "energy-shield-mk2-equipment", "exoskeleton-equipment", "explosives",
+    "fission-reactor-equipment", "fusion-reactor", "fusion-reactor-equipment", "mech-armor", "modular-armor",
+    "night-vision-equipment", "personal-roboport-equipment", "personal-roboport-mk2-equipment", "power-armor",
+    "power-armor-mk2", "spidertron",
+]
+# Issue #29: the quality-of-life techs whose vanilla gate is disabled; each must be researchable or hidden
+# (prototypes/103-fork-qol-techs.lua re-gates them onto Gregtorio techs)
+QOL_TECHS = (["bulk-inserter", "stack-inserter", "logistics-3", "turbo-transport-belt",
+              "transport-belt-capacity-1", "transport-belt-capacity-2"]
+             + [f"inserter-capacity-bonus-{i}" for i in range(1, 8)]
+             + [f"worker-robots-speed-{i}" for i in range(1, 8)]
+             + [f"worker-robots-storage-{i}" for i in range(1, 4)])
+
+
+def check_unresearchable(m):
+    """Enabled but unresearchable technologies outside UNRESEARCHABLE_OK, QoL techs that are neither
+    researchable nor hidden, and allow-list entries that are researchable, hidden or gone."""
+    out = []
+    for t in QOL_TECHS:
+        if t not in m.T:
+            out.append(f"{t}: issue #29 technology does not exist")
+        elif m.T[t]["en"] and t not in m.researched:
+            out.append(f"{t}: issue #29 technology is neither researchable nor hidden")
+    for t, v in sorted(m.T.items()):
+        if v["en"] and t not in m.researched and t not in UNRESEARCHABLE_OK and t not in QOL_TECHS:
+            out.append(f"{t}: cannot be researched and is not in UNRESEARCHABLE_OK")
+    for t in UNRESEARCHABLE_OK:
+        if t not in m.T or not m.T[t]["en"] or t in m.researched:
+            out.append(f"{t}: in UNRESEARCHABLE_OK but researchable, hidden or missing (remove the entry)")
+    return out
+
+
 def check_required(m):
     out = []
     for r in REQUIRED_RECIPES:
@@ -413,6 +452,11 @@ def check(a):
     stuck = [f"{t}: blocked by {', '.join(sorted(set(m.blockers(t))))}"
              for t, v in sorted(m.T.items()) if v["en"] and t not in m.researched]
     report("technologies that cannot be researched", stuck, limit=100)
+    unresearchable = check_unresearchable(m)
+    print(f"  intentional (UNRESEARCHABLE_OK): {len(UNRESEARCHABLE_OK)}; issue #29 QoL technologies researchable: "
+          f"{sum(1 for t in QOL_TECHS if t in m.researched)} of {len(QOL_TECHS)}, hidden: "
+          f"{sum(1 for t in QOL_TECHS if t in m.T and not m.T[t]['en'])}")
+    report("unexpected unresearchable technologies", unresearchable)
     if a.techs:
         rx = re.compile(a.techs)
         rows = []
@@ -436,7 +480,7 @@ def check(a):
     if a.locale_out:
         Path(a.locale_out).write_text("\n".join("\t".join(r) for r in sec.get("LOCALE", [])))
         print(f"\nlocale name list written to {a.locale_out} (input for tools/gen_locale.py)")
-    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu or required)
+    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu or required or unresearchable)
     print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
     return 0 if ok else 1
 
