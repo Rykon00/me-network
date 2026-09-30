@@ -1802,7 +1802,7 @@ end
 
 --- New recipes of issue #35 (prototypes/129-fork-water-purification.lua): grades 7 and 8 in the water
 --- purification plant, the FPIC and APIC wafers and chips, the complex SMDs, the quark creation catalyst
---- and recipes that take the new parts. Each machine gets one craft's ingredients (placed above the
+--- and recipes that take the new parts; the same for issues #39 and #36. Each machine gets one craft's ingredients (placed above the
 --- machine grid, powered like it); once it crafts, its progress is set close to the end (the grades take
 --- 25 and 30 s, a mainframe 12 minutes), and the main product must come out.
 local RT_Y = -300
@@ -1824,6 +1824,22 @@ local RT = {
 	{ "zpm-assembly-line", "uiv-energy-hatch" },
 	{ "zpm-assembly-line", "fusion-reactor-mk4-controller" },
 	{ "luv-circuit-assembly-line", "wetware-processor-mainframe" },
+	-- issues #39 and #36 (prototypes/137-fork-endgame-materials.lua): the drafts made real, the new
+	-- materials and recipes that take them
+	{ "iv-circuit-assembler", "lapotronic-energy-orb-cluster" },
+	{ "ev-assembling-machine", "wrapped-plutonium-ingot" },
+	{ "hv-implosion-compressor", "high-density-plutonium-nugget" },
+	{ "luv-mixer", "plutonium-based-liquid-fuel" },
+	{ "hv-mixer", "super-coolant" },
+	{ "hv-canning-machine", "1080k-super-coolant-cell" },
+	{ "zpm-electric-blast-furnace", "hot-fluxed-electrum-ingot" },
+	{ "zpm-alloy-blast-smelter", "molten-fluxed-electrum" },
+	{ "uv-electric-blast-furnace", "hot-bedrockium-ingot" },
+	{ "uhv-electric-blast-furnace", "hot-quantium-ingot" },
+	{ "iv-extractor", "molten-quantium" },
+	{ "uhv-mixer", "naquadah-based-fuel-mk2" },
+	{ "water-purification-plant", "grade-5-water" },
+	{ "zpm-assembly-line", "uxv-energy-hatch" },
 }
 
 local function rt_product(recipe)
