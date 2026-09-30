@@ -25,6 +25,8 @@
 --- Endgame power (prototypes/136-fork-power.lua): a plasma turbine and a naquadah reactor under load
 --- must burn their fuel and make power; the turbine's output hatch gets the cooled fluid.
 --- Fuel check (issue #25): steam and the other generator's fuel stop a generator; the right fuel runs it.
+--- Recipes of issue #35: grades 7 and 8, FPIC/APIC wafers and chips, complex SMDs and the recipes that
+--- use them are crafted once each (setup_recipe_test).
 local ME_Y = 100
 local ME_ITEM = "iron-plate"
 
@@ -128,6 +130,7 @@ local function tests_running()
 	check(storage.power_checked, "power")
 	check(storage.fuel and storage.fuel.done, "fuel check")
 	check(storage.cooled and storage.cooled.done, "cooled fluid")
+	check(storage.recipe_test and storage.recipe_test.done, "recipes of issue #35")
 	return running
 end
 
@@ -568,6 +571,7 @@ script.on_nth_tick(10, function()
 	if not (storage.fluid_rec and storage.fluid_rec.done) then recovery_test() end
 	if not (storage.fuel and storage.fuel.done) then fuel_test() end
 	if not (storage.cooled and storage.cooled.done) then cooled_test() end
+	if not (storage.recipe_test and storage.recipe_test.done) then recipe_test() end
 	victory_test()
 end)
 
@@ -1573,6 +1577,98 @@ function cooled_test()
 	end
 end
 
+--- New recipes of issue #35 (prototypes/129-fork-water-purification.lua): grades 7 and 8 in the water
+--- purification plant, the FPIC and APIC wafers and chips, the complex SMDs, the quark creation catalyst
+--- and recipes that take the new parts. Each machine gets one craft's ingredients (placed above the
+--- machine grid, powered like it); once it crafts, its progress is set close to the end (the grades take
+--- 25 and 30 s, a mainframe 12 minutes), and the main product must come out.
+local RT_Y = -300
+local RT_DEADLINE = 900
+local RT = {
+	{ "water-purification-plant", "grade-7-water" },
+	{ "water-purification-plant", "grade-8-water" },
+	{ "uhv-laser-engraver", "fpic-wafer" },
+	{ "uev-laser-engraver", "apic-wafer" },
+	{ "uhv-assembling-machine", "femto-power-ic" },
+	{ "uev-assembling-machine", "atto-power-ic" },
+	{ "uv-assembling-machine", "complex-smd-transistor" },
+	{ "uv-assembling-machine", "complex-smd-resistor" },
+	{ "uv-assembling-machine", "complex-smd-capacitor" },
+	{ "uv-assembling-machine", "complex-smd-diode" },
+	{ "uv-assembling-machine", "complex-smd-inductor" },
+	{ "zpm-assembly-line", "quark-creation-catalyst" },
+	{ "zpm-assembly-line", "uev-energy-hatch" },
+	{ "zpm-assembly-line", "uiv-energy-hatch" },
+	{ "zpm-assembly-line", "fusion-reactor-mk4-controller" },
+	{ "luv-circuit-assembly-line", "wetware-processor-mainframe" },
+}
+
+local function rt_product(recipe)
+	local r = prototypes.recipe[recipe]
+	for _, p in pairs(r.products) do
+		if p.name == (r.main_product and r.main_product.name or p.name) then return p end
+	end
+end
+
+function setup_recipe_test(s)
+	local fails = {}
+	storage.recipe_test = { m = {}, ok = {} }
+	local x = -150
+	for i, def in pairs(RT) do
+		local ok, err = pcall(function()
+			local e = s.create_entity{ name = def[1], position = { x, RT_Y }, force = "player", raise_built = true }
+			s.create_entity{ name = "electric-energy-interface", position = { x, RT_Y + 7 }, force = "player" }
+			s.create_entity{ name = "substation", position = { x + 5, RT_Y + 7 }, force = "player" }
+			e.force.recipes[def[2]].enabled = true
+			e.set_recipe(def[2])
+			for _, ing in pairs(prototypes.recipe[def[2]].ingredients) do
+				if ing.type == "item" then
+					local n = e.insert{ name = ing.name, count = ing.amount }
+					assert(n == ing.amount, "only " .. n .. " of " .. ing.amount .. " " .. ing.name .. " fit")
+				else
+					local n = e.insert_fluid{ name = ing.name, amount = ing.amount }
+					assert(math.abs(n - ing.amount) < 1e-6, "only " .. n .. " of " .. ing.amount .. " " .. ing.name .. " fit")
+				end
+			end
+			storage.recipe_test.m[i] = e
+		end)
+		if not ok then fails[#fails + 1] = "recipe test " .. def[2] .. " in " .. def[1] .. ": " .. tostring(err) end
+		x = x + 18
+	end
+	return fails
+end
+
+function recipe_test()
+	local st = storage.recipe_test
+	if not st or st.done then return end
+	local pending = {}
+	for i, def in pairs(RT) do
+		local e = st.m[i]
+		if e and e.valid and not st.ok[i] then
+			local p = rt_product(def[2])
+			local made = p.type == "fluid" and e.get_fluid_count(p.name) or
+				e.get_inventory(defines.inventory.crafter_output).get_item_count(p.name)
+			if made >= (p.amount or p.amount_min or 1) - 1e-6 then
+				st.ok[i] = true
+			else
+				if e.crafting_progress > 0 and e.crafting_progress < 0.999 then e.crafting_progress = 0.999 end
+				local status
+				for name, v in pairs(defines.entity_status) do if e.status == v then status = name end end
+				pending[#pending + 1] = def[2] .. " (" .. tostring(status) .. ", progress " .. e.crafting_progress .. ", made " .. made .. ")"
+			end
+		end
+	end
+	local n = 0
+	for _ in pairs(st.ok) do n = n + 1 end
+	if #pending == 0 or game.tick > RT_DEADLINE then
+		st.done = true
+		local problems = {}
+		if n < #RT then problems[#problems + 1] = "recipe test: " .. (#RT - n) .. " of " .. #RT .. " recipes made nothing: " .. table.concat(pending, ", ") end
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
+		log("DEVCHECK-RUNTIME-RECIPES " .. (#problems == 0 and "ok" or "failed") .. " (" .. n .. " of " .. #RT .. " recipes crafted by tick " .. game.tick .. ")")
+	end
+end
+
 local MOLD_Y = 120
 local MOLD_RECIPE = "glass-alloy-smelter"
 local MOLD_DEADLINE = 900                               -- ticks for the first glass with the mold in (361 needed)
@@ -1703,6 +1799,7 @@ script.on_init(function()
 	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fuel_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_cooled_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_recipe_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)
