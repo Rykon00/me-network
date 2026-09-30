@@ -6,6 +6,11 @@
 ---   of the ME network (= logistic network) the provider stands in. Recipes with fluids work when
 ---   the machine's fluid boxes are not connected to pipes (the network fills and drains them);
 ---   machines the network cannot use are counted per reason (see machine_problem).
+--- Furnaces have no recipe setting: the provider holds a recipe choice (its GUI, opened with the
+---   "open" key; copied by settings paste, blueprints and cloning) that applies to every furnace
+---   next to it that can make it. Without a choice the furnace's last smelted recipe is used, a
+---   furnace with neither is counted as ignored ("no-recipe"). While a furnace holds or smelts
+---   something, the recipe it actually runs counts (it picks it from the input item).
 --- CPU: a Crafting CPU runs one job at a time; the number of CPUs in the network is the number
 ---   of parallel jobs. Jobs wait ("queued") until a CPU is free.
 --- Planning: recursive over the patterns, storage first, loops recognised, missing raw
@@ -87,7 +92,7 @@ local function state()
 	local s = storage.fork_ae2
 	if not s then
 		s = {
-			providers = {},      -- unit_number -> { entity, net, sig, machines = { {entity, unit, recipe, fluid} }, ignored }
+			providers = {},      -- unit_number -> { entity, net, sig, recipe (furnace choice), machines = { {entity, unit, recipe, fluid, chosen} }, ignored }
 			plist = {},          -- unit numbers of providers (round robin for rescans)
 			pcursor = 1,
 			cpus = {},           -- unit_number -> { entity, job = job id | nil }
@@ -127,9 +132,26 @@ end
 --- machines and patterns
 --------------------------------------------------------------------------------
 
---- the recipe (name) a machine has set, nil when it has none
-local function machine_recipe(machine)
+local function input_inventory(machine)
+	local d = defines.inventory
+	return machine.get_inventory(machine.type == "furnace" and d.furnace_source or d.crafter_input)
+end
+
+local function output_inventory(machine)
+	local d = defines.inventory
+	return machine.get_inventory(machine.type == "furnace" and d.furnace_result or d.crafter_output)
+end
+
+--- The recipe (name) a machine stands for, nil when it has none. `chosen` is the recipe the pattern
+--- provider holds for a furnace (see furnace_choice): it counts while the furnace is empty; a furnace
+--- that holds or smelts something runs the recipe it picked from its input.
+local function machine_recipe(machine, chosen)
 	local recipe = machine.get_recipe()
+	if chosen and machine.type == "furnace" then
+		local inp = input_inventory(machine)
+		if recipe and (machine.crafting_progress > 0 or (inp and not inp.is_empty())) then return recipe.name end
+		return chosen
+	end
 	if recipe then return recipe.name end
 	if machine.type == "furnace" then
 		local previous = machine.previous_recipe
@@ -228,14 +250,20 @@ local function machine_problem(machine, proto)
 	return nil, map
 end
 
-local function input_inventory(machine)
-	local d = defines.inventory
-	return machine.get_inventory(machine.type == "furnace" and d.furnace_source or d.crafter_input)
+--- Recipes a furnace can be a pattern for: its crafting categories, researched by its force, not
+--- hidden, items only (a furnace has no fluid boxes the network could fill).
+local function furnace_can_make(machine, proto)
+	if not (proto and machine.prototype.crafting_categories[proto.category]) then return false end
+	if proto.hidden or has_fluid(proto) then return false end
+	local r = machine.force.recipes[proto.name]
+	return r ~= nil and r.enabled
 end
 
-local function output_inventory(machine)
-	local d = defines.inventory
-	return machine.get_inventory(machine.type == "furnace" and d.furnace_result or d.crafter_output)
+--- the provider's recipe choice if the furnace can make it, else nil
+local function furnace_choice(machine, choice)
+	if not (choice and machine.type == "furnace") then return nil end
+	if furnace_can_make(machine, prototypes.recipe[choice]) then return choice end
+	return nil
 end
 
 local function scan_provider(p)
@@ -251,18 +279,24 @@ local function scan_provider(p)
 		for _, m in pairs(found) do
 			if not seen[m.unit_number] then
 				seen[m.unit_number] = true
-				local name = machine_recipe(m)
+				local chosen = furnace_choice(m, p.recipe)
+				local name = machine_recipe(m, chosen)
 				local proto = name and prototypes.recipe[name]
-				local mnet = proto and network_of(m)
-				if proto and net and mnet and mnet.network_id == net.network_id then   -- machines outside the network are ignored
+				local mnet = (proto or m.type == "furnace") and network_of(m)
+				local inside = net and mnet and mnet.network_id == net.network_id   -- machines outside the network are ignored
+				if inside and not proto then                -- a furnace without a choice that never smelted
+					ignored.total = ignored.total + 1
+					ignored["no-recipe"] = (ignored["no-recipe"] or 0) + 1
+					sig[#sig + 1] = m.unit_number .. "::no-recipe"
+				elseif inside then
 					local reason, map = machine_problem(m, proto)
 					if reason then
 						ignored.total = ignored.total + 1
 						ignored[reason] = (ignored[reason] or 0) + 1
 						sig[#sig + 1] = m.unit_number .. ":" .. name .. ":" .. reason
 					else
-						machines[#machines + 1] = { entity = m, unit = m.unit_number, recipe = name, fluid = map }
-						sig[#sig + 1] = m.unit_number .. ":" .. name
+						machines[#machines + 1] = { entity = m, unit = m.unit_number, recipe = name, fluid = map, chosen = chosen }
+						sig[#sig + 1] = m.unit_number .. ":" .. name .. (chosen and ":chosen" or "")
 					end
 				end
 			end
@@ -689,7 +723,7 @@ local function assign_cpus(s)
 end
 
 --- one lease per machine: hand `batch` crafts of ingredients to it
-local function start_lease(s, job, step_index, machine, batch, map)
+local function start_lease(s, job, step_index, machine, batch, map, chosen)
 	local step = job.steps[step_index]
 	local proto = prototypes.recipe[step.recipe]
 	local inp = input_inventory(machine)
@@ -736,12 +770,12 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	end
 	step.issued = step.issued + batch
 	job.leases[#job.leases + 1] = { machine = machine, unit = machine.unit_number, step = step_index,
-		recipe = step.recipe, runs = batch, fluid = map, finished0 = machine.products_finished }
+		recipe = step.recipe, runs = batch, fluid = map, chosen = chosen, finished0 = machine.products_finished }
 	s.busy[machine.unit_number] = job.id
 	return true
 end
 
---- an idle pattern machine for the recipe, and its fluid map
+--- an idle pattern machine for the recipe, its fluid map and the furnace choice it was found with
 local function find_machine(s, net, recipe, proto)
 	local net_patterns = ensure_patterns(s)[net.network_id]
 	local list = net_patterns and net_patterns.machines[recipe]
@@ -749,14 +783,14 @@ local function find_machine(s, net, recipe, proto)
 	for _, m in pairs(list) do
 		local e = m.entity
 		if e.valid and not s.busy[m.unit] and not e.disabled_by_script
-			and machine_recipe(e) == recipe and machine_idle(e, proto, m.fluid) then
+			and machine_recipe(e, m.chosen) == recipe and machine_idle(e, proto, m.fluid) then
 			local ok = true
 			if m.fluid and (#m.fluid.inputs > 0 or #m.fluid.outputs > 0) then   -- a pipe connected since the scan
 				local fb = e.fluidbox
 				for _, i in pairs(m.fluid.inputs) do if connected(fb, i.index) then ok = false end end
 				for _, o in pairs(m.fluid.outputs) do if connected(fb, o.index) then ok = false end end
 			end
-			if ok then return e, m.fluid or { inputs = {}, outputs = {} } end
+			if ok then return e, m.fluid or { inputs = {}, outputs = {} }, m.chosen end
 		end
 	end
 	return nil
@@ -809,12 +843,14 @@ local function job_step(s, job)
 				end
 			else
 				local proto = prototypes.recipe[real.recipe]
-				local recipe_changed = machine_recipe(m) ~= real.recipe
+				local recipe_changed = machine_recipe(m, real.chosen) ~= real.recipe
 				if recipe_changed and not job.closing then
 					take_back_input(job, m, proto, real.fluid)
 					collect_output(job, net, m, real.fluid)
 					release_lease(s, job, real)
-					begin_closing(s, job, "failed", { "fork-me-craft.reason-recipe-changed" })
+					--- a furnace picks its recipe from the input item: another recipe with the same input won
+					local why = m.type == "furnace" and "reason-furnace-other-recipe" or "reason-recipe-changed"
+					begin_closing(s, job, "failed", { "fork-me-craft." .. why })
 					progress = true
 				elseif machine_idle(m, proto, real.fluid) or recipe_changed then
 					collect_output(job, net, m, real.fluid)
@@ -874,12 +910,12 @@ local function job_step(s, job)
 				end
 			end
 			if batch <= 0 then waiting = waiting or "ingredients" break end
-			local machine, map = find_machine(s, net, step.recipe, proto)
+			local machine, map, chosen = find_machine(s, net, step.recipe, proto)
 			if not machine then waiting = waiting or "machine" break end
 			batch = fluid_batch_limit(map, proto, batch)
 			if batch <= 0 then waiting = waiting or "machine" break end
 			collect_output(job, net, machine, map)
-			if not start_lease(s, job, i, machine, batch, map) then waiting = waiting or "machine" break end
+			if not start_lease(s, job, i, machine, batch, map, chosen) then waiting = waiting or "machine" break end
 			ops = ops - 1
 			progress = true
 		end
@@ -1152,8 +1188,11 @@ function M.ignored_list(ignored)
 end
 
 --------------------------------------------------------------------------------
---- events (called from control.lua)
+--- recipe choice of a pattern provider (for the furnaces next to it)
 --------------------------------------------------------------------------------
+
+local TAG = "fork_ae2_recipe"                -- blueprint tag of a provider's choice
+local GUI_FRAME = "fork_ae2_provider"
 
 local function register(s, entity)
 	if entity.name == PROVIDER then
@@ -1170,10 +1209,215 @@ local function register(s, entity)
 	end
 end
 
-function M.on_built(entity)
-	if entity and entity.valid and (entity.name == PROVIDER or entity.name == CPU) then
-		register(state(), entity)
+--- the provider's record (registered on demand), nil for anything else
+local function provider_record(entity)
+	if not (entity and entity.valid and entity.name == PROVIDER) then return nil end
+	local s = state()
+	if not s.providers[entity.unit_number] then register(s, entity) end
+	return s.providers[entity.unit_number]
+end
+
+--- the furnaces next to a provider (in the order of NEIGHBORS, each once)
+local function furnaces_next_to(entity)
+	local out, seen = {}, {}
+	for _, d in pairs(NEIGHBORS) do
+		for _, m in pairs(entity.surface.find_entities_filtered{
+			position = { entity.position.x + d[1], entity.position.y + d[2] }, type = "furnace", force = entity.force,
+		}) do
+			if not seen[m.unit_number] then
+				seen[m.unit_number] = true
+				out[#out + 1] = m
+			end
+		end
 	end
+	return out
+end
+
+--- The recipe choice of a provider, nil when it has none
+function M.get_recipe(entity)
+	local p = provider_record(entity)
+	return p and p.recipe
+end
+
+--- Set (recipe name) or clear (nil) the recipe choice of a provider; the patterns are updated at
+--- once. The GUI, settings paste, blueprints and the devcheck test use this. Returns true when set.
+function M.set_recipe(entity, name)
+	local p = provider_record(entity)
+	if not p then return false end
+	if name ~= nil and not prototypes.recipe[name] then return false end
+	p.recipe = name
+	scan_provider(p)
+	return true
+end
+
+--- Recipes the player can choose for a provider: every recipe one of the furnaces next to it can make
+--- (see furnace_can_make), sorted by order. `shared[name]` is true when another of these recipes
+--- has the same input item: the furnace picks the recipe from its input, so it may run the other one.
+function M.recipe_options(entity)
+	local names, seen, protos = {}, {}, {}
+	for _, m in pairs(furnaces_next_to(entity)) do
+		local filters = {}
+		for category in pairs(m.prototype.crafting_categories) do
+			filters[#filters + 1] = { filter = "category", category = category }
+		end
+		if #filters > 0 then
+			for name, proto in pairs(prototypes.get_recipe_filtered(filters)) do
+				if not seen[name] and furnace_can_make(m, proto) then
+					seen[name] = true
+					names[#names + 1] = name
+					protos[name] = proto
+				end
+			end
+		end
+	end
+	table.sort(names, function(a, b)
+		local pa, pb = protos[a], protos[b]
+		if pa.group.order ~= pb.group.order then return pa.group.order < pb.group.order end
+		if pa.subgroup.order ~= pb.subgroup.order then return pa.subgroup.order < pb.subgroup.order end
+		if pa.order ~= pb.order then return pa.order < pb.order end
+		return a < b
+	end)
+	local by_input, shared = {}, {}
+	for _, name in pairs(names) do
+		for _, ing in pairs(protos[name].ingredients) do
+			local other = by_input[ing.name]
+			if other then shared[other], shared[name] = true, true else by_input[ing.name] = name end
+		end
+	end
+	return names, shared
+end
+
+--- provider GUI: the recipe of the furnaces next to it
+
+local function gui_close(player)
+	local frame = player.gui.screen[GUI_FRAME]
+	if frame then frame.destroy() end
+end
+
+local function gui_refresh(player, entity)
+	local frame = player.gui.screen[GUI_FRAME]
+	if not (frame and entity.valid) then return end
+	local choice = M.get_recipe(entity)
+	local furnaces = furnaces_next_to(entity)
+	local body = frame.fork_ae2_body
+	body.clear()
+	local info = body.add{ type = "label", caption = #furnaces > 0 and { "fork-me-provider.info", #furnaces } or { "fork-me-provider.no-furnace" } }
+	info.style.single_line = false
+	info.style.maximal_width = 420
+	local row = body.add{ type = "flow", direction = "horizontal" }
+	row.style.vertical_align = "center"
+	local proto = choice and prototypes.recipe[choice]
+	row.add{ type = "label", caption = proto and { "fork-me-provider.current", proto.localised_name } or { "fork-me-provider.current-none" } }
+	if choice then
+		row.add{ type = "button", caption = { "fork-me-provider.clear" }, tags = { fork_ae2_provider_clear = true },
+			tooltip = { "fork-me-provider.clear-tooltip" } }
+	end
+	if #furnaces == 0 then return end
+	local names, shared = M.recipe_options(entity)
+	if #names == 0 then
+		body.add{ type = "label", caption = { "fork-me-provider.no-recipes" } }
+		return
+	end
+	local scroll = body.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
+	scroll.style.maximal_height = 400
+	local grid = scroll.add{ type = "table", column_count = 10 }
+	for _, name in pairs(names) do
+		local r = prototypes.recipe[name]
+		local tooltip = shared[name] and { "", r.localised_name, "\n", { "fork-me-provider.shared-input" } } or r.localised_name
+		grid.add{ type = "sprite-button", sprite = "recipe/" .. name, style = name == choice and "yellow_slot_button" or "slot_button",
+			tooltip = tooltip, tags = { fork_ae2_provider_recipe = name } }
+	end
+end
+
+local function gui_open(player, entity)
+	gui_close(player)
+	local frame = player.gui.screen.add{ type = "frame", name = GUI_FRAME, direction = "vertical",
+		caption = entity.localised_name, tags = { unit = entity.unit_number } }
+	frame.auto_center = true
+	frame.add{ type = "flow", name = "fork_ae2_body", direction = "vertical" }
+	player.opened = frame
+	gui_refresh(player, entity)
+end
+
+--- the "open GUI" key on a selected entity (routed from the terminal's custom input handler)
+function M.on_open_input(player, entity)
+	if not (entity and entity.valid and entity.name == PROVIDER) then return false end
+	if player.can_reach_entity(entity) then gui_open(player, entity) end
+	return true
+end
+
+function M.on_gui_closed(event)
+	local el = event.element
+	if not (el and el.valid and el.name == GUI_FRAME) then return false end
+	local player = game.get_player(event.player_index)
+	if player then gui_close(player) end
+	return true
+end
+
+function M.on_gui_click(event)
+	local el = event.element
+	local tags = el and el.valid and el.tags
+	if not (tags and (tags.fork_ae2_provider_recipe or tags.fork_ae2_provider_clear)) then return false end
+	local player = game.get_player(event.player_index)
+	local frame = player and player.gui.screen[GUI_FRAME]
+	local p = frame and storage.fork_ae2 and storage.fork_ae2.providers[frame.tags.unit]
+	local entity = p and p.entity
+	if not (player and entity and entity.valid and player.can_reach_entity(entity)) then
+		if player then gui_close(player) end
+		return true
+	end
+	if tags.fork_ae2_provider_clear or tags.fork_ae2_provider_recipe == M.get_recipe(entity) then
+		M.set_recipe(entity, nil)                 -- clicking the chosen recipe again clears it
+	else
+		M.set_recipe(entity, tags.fork_ae2_provider_recipe)
+	end
+	gui_refresh(player, entity)
+	return true
+end
+
+--- copy the choice with the provider's settings (shift right click, shift left click)
+function M.on_entity_settings_pasted(event)
+	local src, dst = event.source, event.destination
+	if not (src and src.valid and dst and dst.valid and src.name == PROVIDER and dst.name == PROVIDER) then return end
+	M.set_recipe(dst, M.get_recipe(src))
+end
+
+--- A blueprint with providers carries their choice as entity tag. `bp` is the blueprint (item stack or
+--- record), `mapping` blueprint entity index -> source entity.
+function M.tag_blueprint(bp, mapping)
+	if not (bp and bp.valid and mapping) then return end
+	for index, entity in pairs(mapping) do
+		if entity.valid and entity.name == PROVIDER then
+			local choice = M.get_recipe(entity)
+			if choice then bp.set_blueprint_entity_tag(index, TAG, choice) end
+		end
+	end
+end
+
+local function blueprint_usable(bp)
+	if not (bp and bp.valid) then return false end
+	if bp.object_name == "LuaRecord" then return true end
+	return bp.valid_for_read and bp.is_blueprint
+end
+
+function M.on_player_setup_blueprint(event)
+	local player = game.get_player(event.player_index)
+	local bp = event.record or event.stack
+	if not blueprint_usable(bp) and player then bp = player.blueprint_to_setup end
+	if not blueprint_usable(bp) and player then bp = player.cursor_stack end
+	if not blueprint_usable(bp) then return end
+	--- the mapping can be stale when another mod changed the blueprint: never break blueprinting
+	pcall(function() M.tag_blueprint(bp, event.mapping.get()) end)
+end
+
+--- `tags`: the blueprint tags of a built ghost; `source`: the original of a cloned entity
+function M.on_built(entity, tags, source)
+	if not (entity and entity.valid and (entity.name == PROVIDER or entity.name == CPU)) then return end
+	register(state(), entity)
+	if entity.name ~= PROVIDER then return end
+	local choice = type(tags) == "table" and tags[TAG] or nil
+	if not choice and source and source.valid and source.name == PROVIDER then choice = M.get_recipe(source) end
+	if type(choice) == "string" then M.set_recipe(entity, choice) end
 end
 
 --- A pattern machine mined while a job uses it: the fluid in its boxes would vanish with the
@@ -1200,11 +1444,23 @@ fluids.mined_hooks[#fluids.mined_hooks + 1] = M.on_mined
 --- Jobs and their pools are kept.
 function M.on_configuration_changed()
 	local s = state()
+	local choices = {}                           -- recipe choices survive the rebuild (dropped if the recipe is gone)
+	for unit, p in pairs(s.providers) do
+		if p.recipe and prototypes.recipe[p.recipe] then choices[unit] = p.recipe end
+	end
 	s.providers, s.plist, s.pcursor, s.patterns, s.dirty = {}, {}, 1, {}, true
 	s.cpus = {}
 	for _, surface in pairs(game.surfaces) do
-		for _, e in pairs(surface.find_entities_filtered{ name = { PROVIDER, CPU } }) do register(s, e) end
+		for _, e in pairs(surface.find_entities_filtered{ name = { PROVIDER, CPU } }) do
+			register(s, e)
+			local p = s.providers[e.unit_number]
+			if p and choices[e.unit_number] then
+				p.recipe = choices[e.unit_number]
+				scan_provider(p)
+			end
+		end
 	end
+	for _, player in pairs(game.players) do gui_close(player) end   -- open provider GUIs are closed
 	s.busy = {}
 	for _, id in pairs(shallow(s.active)) do
 		local job = s.jobs[id]
@@ -1270,6 +1526,12 @@ remote.add_interface("gregtorio-me-autocraft", {
 		if not net then return 0, 0, 0 end
 		return M.cpu_summary(net)
 	end,
+	--- recipe choice of a pattern provider for the furnaces next to it (the GUI's code path)
+	get_recipe = function(provider) return M.get_recipe(provider) end,
+	set_recipe = function(provider, name) return M.set_recipe(provider, name) end,
+	recipe_options = function(provider) return M.recipe_options(provider) end,
+	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
+	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
 })
 
 return M

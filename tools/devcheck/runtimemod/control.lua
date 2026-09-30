@@ -8,15 +8,56 @@
 --- gear, gear + plate -> transport belt) and raw materials in a drive. Job 1 crafts belts through the
 --- two-level chain, job 2 asks for more than the raw materials allow and must not start, job 3 is
 --- queued behind job 1 (one CPU) and cancelled; its items must come back.
+--- Furnace patterns (issue #27): in its own network, a fresh iron furnace next to a pattern provider
+--- with a chosen recipe is a pattern at once and smelts a job into storage; a furnace without choice
+--- and without a smelted recipe is counted as ignored ("no-recipe"). Settings paste, blueprint tags and
+--- a revived ghost carry the choice.
 --- Fluids (prototypes/122-fork-ae2-fluids.lua, scripts/fork-me-fluids.lua): a network with a fluid drive,
 --- an import interface with a tank of chlorine connected to it, an export interface, a roboport with
 --- construction robots, and pattern machines with fluid recipes (chemical reactors, an extractor). Checks the
 --- import and export totals, a drive picked up (contents on the item) and placed again by script and by
 --- robots, a reported fluid shortfall, and jobs with a fluid ingredient, a fluid product and both.
+--- Fluid recovery (issue #26): a destroyed drive (other drives take what fits, the rest is pooled and a
+--- robot-rebuilt drive takes it over), the upgrade planner (fluid stays on the old item), the cells taken
+--- out of a loaded item by hand (inside and outside a network) and a deleted surface with a pool.
 --- Molds (prototypes/150-fork-molds.lua): an LV alloy smelter with a mold recipe must stop
 --- without a mold, run with a mold in its mold slot and keep the mold there.
+--- Endgame power (prototypes/136-fork-power.lua): a plasma turbine and a naquadah reactor under load
+--- must burn their fuel and make power; the turbine's output hatch gets the cooled fluid.
+--- Fuel check (issue #25): steam and the other generator's fuel stop a generator; the right fuel runs it.
+--- Recipes of issue #35: grades 7 and 8, FPIC/APIC wafers and chips, complex SMDs and the recipes that
+--- use them are crafted once each (setup_recipe_test).
 local ME_Y = 100
 local ME_ITEM = "iron-plate"
+
+--- State of a robot job at `pos` for a timeout message: ghosts and blocking entities there, the tile,
+--- the chunk, and every construction network covering it (robots with position, energy and order).
+function robot_report(s, pos, name)
+	local force = game.forces.player
+	local out = {}
+	local function add(x) out[#out + 1] = x end
+	local area = { { pos[1] - 1.5, pos[2] - 1.5 }, { pos[1] + 1.5, pos[2] + 1.5 } }
+	add("ghosts " .. #s.find_entities_filtered{ ghost_name = name, position = pos, radius = 0.5 })
+	local blocking = {}
+	for _, e in pairs(s.find_entities_filtered{ area = area }) do
+		if e.name ~= name and e.type ~= "entity-ghost" then blocking[#blocking + 1] = e.name .. "@" .. e.position.x .. "," .. e.position.y end
+	end
+	add("near: " .. table.concat(blocking, " "))
+	add("tile " .. s.get_tile(pos[1], pos[2]).name)
+	local chunk = { math.floor(pos[1] / 32), math.floor(pos[2] / 32) }
+	add("chunk generated " .. tostring(s.is_chunk_generated(chunk)) .. " charted " .. tostring(force.is_chunk_charted(s, chunk)))
+	for _, n in pairs(s.find_logistic_networks_by_construction_area(pos, force)) do
+		local robots = {}
+		for _, r in pairs(n.construction_robots) do
+			robots[#robots + 1] = string.format("(%.1f,%.1f e=%.0f orders=%d)", r.position.x, r.position.y, r.energy, #r.robot_order_queue)
+		end
+		local ports = {}
+		for _, c in pairs(n.cells) do ports[#ports + 1] = c.owner.name .. " e=" .. string.format("%.0f", c.owner.energy) end
+		add("network " .. n.network_id .. ": robots " .. n.available_construction_robots .. "/" .. n.all_construction_robots
+			.. " " .. table.concat(robots, " ") .. " cells " .. table.concat(ports, ", "))
+	end
+	return table.concat(out, "; ")
+end
 
 function setup_me_network(s)
 	local fails = {}
@@ -73,20 +114,41 @@ script.on_nth_tick(300, function(event)
 end)
 
 --- Victory (scripts/fork-victory.lua): researching `victory` must win the game, and go on.
---- Winning stops the scripts of the benchmark run (no player to continue), so this runs last, at
---- tick 1450, and is checked in the same tick.
-script.on_nth_tick(1450, function(event)
-	if storage.victory_checked or event.tick == 0 then return end
+--- Winning stops the scripts of the benchmark run (no player to continue), so this runs last: as soon
+--- as every other test has reported, at the latest at tick VICTORY_DEADLINE (a test still running
+--- then is reported as unfinished). Checked from the 10-tick handler below.
+local VICTORY_DEADLINE = 1450
+local function tests_running()
+	local running = {}
+	local function check(done, name) if not done then running[#running + 1] = name end end
+	check(storage.me_checked, "ME network")
+	check(storage.mold_done, "mold")
+	check(storage.autocraft and storage.autocraft.done, "autocrafting")
+	check(storage.furnace and storage.furnace.done, "furnace patterns")
+	check(storage.fluids and storage.fluids.done, "fluids")
+	check(storage.fluid_rec and storage.fluid_rec.done, "fluid recovery")
+	check(storage.power_checked, "power")
+	check(storage.fuel and storage.fuel.done, "fuel check")
+	check(storage.cooled and storage.cooled.done, "cooled fluid")
+	check(storage.recipe_test and storage.recipe_test.done, "recipes of issue #35")
+	return running
+end
+
+function victory_test()
+	if storage.victory_checked then return end
+	local running = tests_running()
+	if #running > 0 and game.tick < VICTORY_DEADLINE then return end
 	storage.victory_checked = true
 	local problems = {}
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	expect(#running == 0, "tests still running at tick " .. game.tick .. ": " .. table.concat(running, ", "))
 	local ok, err = pcall(function() game.forces.player.technologies["victory"].researched = true end)
 	expect(ok, "victory test: " .. tostring(err))
 	--- (can_continue cannot be read before a player chooses to go on; the script passes it, see fork-victory.lua)
 	expect(game.finished, "victory test: researching `victory` did not finish the game")
 	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
-	log("DEVCHECK-RUNTIME-VICTORY " .. (#problems == 0 and "ok" or "failed"))
-end)
+	log("DEVCHECK-RUNTIME-VICTORY " .. (#problems == 0 and "ok" or "failed") .. " (tick " .. game.tick .. ")")
+end
 
 local AC_Y = 140
 local AC_PLATES, AC_STICKS = 200, 100
@@ -347,9 +409,170 @@ local function autocraft_test()
 	end
 end
 
+--------------------------------------------------------------------------------
+--- furnace patterns (issue #27): the recipe choice of a pattern provider
+--------------------------------------------------------------------------------
+
+local FU_X, FU_Y = -116, -220                          -- own network, above the machine grid
+local FU_RECIPE, FU_ITEM, FU_INPUT, FU_AMOUNT = "iron-dust-smelter", "iron-ingot", "iron-dust", 2
+local FU_PROVIDER_A = { FU_X + 16.5, FU_Y + 10.5 }     -- touches furnace A (west)
+local FU_PROVIDER_B = { FU_X + 7.5, FU_Y + 10.5 }      -- touches furnace B (west)
+local FU_GHOST = { FU_X + 20.5, FU_Y + 4.5 }
+
+function setup_furnace_test(s)
+	local fails = {}
+	local function place(name, x, y)
+		local ok, e = pcall(function()
+			return s.create_entity{ name = name, position = { x, y }, force = "player", raise_built = true }
+		end)
+		if not (ok and e) then fails[#fails + 1] = "furnace test " .. name .. ": " .. tostring(e) return nil end
+		return e
+	end
+	local eei = place("electric-energy-interface", FU_X + 12.5, FU_Y + 6.5)
+	if eei then
+		eei.power_production = 1e6
+		eei.electric_buffer_size = 1e7
+	end
+	place("substation", FU_X + 13, FU_Y + 2)
+	place("me-controller", FU_X + 6, FU_Y)
+	place("me-terminal", FU_X + 8.5, FU_Y + 4.5)
+	place("me-crafting-cpu", FU_X + 10, FU_Y)
+	local drive = place("me-drive-16k", FU_X + 8.5, FU_Y + 6.5)
+	for _, pos in pairs({ { FU_X + 15, FU_Y + 11 }, { FU_X + 6, FU_Y + 11 } }) do
+		local f = place("iron-furnace", pos[1], pos[2])
+		if f then f.get_inventory(defines.inventory.fuel).insert{ name = "coal", count = 20 } end
+	end
+	place("me-pattern-provider", FU_PROVIDER_A[1], FU_PROVIDER_A[2])
+	place("me-pattern-provider", FU_PROVIDER_B[1], FU_PROVIDER_B[2])
+	if drive then drive.insert{ name = FU_INPUT, count = 10 } end
+	return fails
+end
+
+function furnace_test()
+	local s = game.surfaces[1]
+	local A = "gregtorio-me-autocraft"
+	local terminal = s.find_entity("me-terminal", { FU_X + 8.5, FU_Y + 4.5 })
+	local net = terminal and s.find_logistic_network_by_position(terminal.position, terminal.force)
+	local pa = s.find_entity("me-pattern-provider", FU_PROVIDER_A)
+	local pb = s.find_entity("me-pattern-provider", FU_PROVIDER_B)
+	local furnace_a = s.find_entity("iron-furnace", { FU_X + 15, FU_Y + 11 })
+	local function count(item) return net and net.get_item_count{ name = item, quality = "normal" } or -1 end
+	local st = storage.furnace
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish_test(note)
+		storage.furnace.done = true
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL furnace patterns: " .. p) end
+		log("DEVCHECK-RUNTIME-FURNACE " .. (#problems == 0 and "ok" or "failed") .. (note and (" (" .. note .. ")") or ""))
+	end
+	local function craftable()
+		local set = {}
+		for _, k in pairs(remote.call(A, "craftable", terminal)) do set[k] = true end
+		return set
+	end
+
+	if not st then
+		if game.tick < 60 then return end
+		storage.furnace = { started = game.tick }
+		st = storage.furnace
+		if not (terminal and net and pa and pb and furnace_a) then expect(false, "entities missing") return finish_test() end
+		--- fresh furnaces: no recipe, no previous recipe; both are counted as ignored
+		expect(furnace_a.previous_recipe == nil and furnace_a.get_recipe() == nil, "furnace A is not fresh")
+		local ignored = remote.call(A, "ignored", terminal)
+		expect(ignored["no-recipe"] == 2 and ignored.total == 2, "fresh furnaces ignored: " .. serpent.line(ignored))
+		expect(not craftable()[FU_ITEM], "a fresh furnace became a pattern")
+		--- the GUI's options: researched recipes of the furnace's categories only
+		local options = remote.call(A, "recipe_options", pa)
+		local listed = {}
+		for _, n in pairs(options) do listed[n] = true end
+		expect(not listed[FU_RECIPE], "the options list a recipe that is not researched")
+		terminal.force.recipes[FU_RECIPE].enabled = true
+		options = remote.call(A, "recipe_options", pa)
+		listed = {}
+		for _, n in pairs(options) do
+			listed[n] = true
+			local r = terminal.force.recipes[n]
+			expect(r.enabled and prototypes.recipe[n].category == "smelting", "option " .. n .. " is not a researched smelting recipe")
+		end
+		expect(listed[FU_RECIPE], "the options miss " .. FU_RECIPE .. ": " .. serpent.line(options))
+		--- choose the recipe (the GUI's code path): a pattern right away
+		expect(remote.call(A, "set_recipe", pa, FU_RECIPE), "set_recipe failed")
+		expect(remote.call(A, "get_recipe", pa) == FU_RECIPE, "choice not stored")
+		expect(craftable()[FU_ITEM], "the furnace with a chosen recipe is no pattern")
+		ignored = remote.call(A, "ignored", terminal)
+		expect(ignored["no-recipe"] == 1 and ignored.total == 1, "ignored after the choice: " .. serpent.line(ignored))
+		local per_run = 0
+		for _, i in pairs(prototypes.recipe[FU_RECIPE].ingredients) do if i.name == FU_INPUT then per_run = i.amount end end
+		local yield = 0
+		for _, p in pairs(prototypes.recipe[FU_RECIPE].products) do if p.name == FU_ITEM then yield = p.amount end end
+		st.runs = math.ceil(FU_AMOUNT / yield)
+		st.input = st.runs * per_run
+		st.output = st.runs * yield
+		local plan = remote.call(A, "plan", terminal, FU_ITEM, FU_AMOUNT)
+		expect(plan and plan.ok and plan.steps == 1 and plan.runs == st.runs, "furnace plan: " .. serpent.line(plan))
+		st.job = remote.call(A, "start", terminal, FU_ITEM, FU_AMOUNT)
+		expect(st.job, "furnace job did not start")
+		if #problems > 0 then return finish_test() end
+		return
+	end
+	if st.done then return end
+
+	local j = remote.call(A, "job", st.job)
+	if j and (j.status == "done" or j.status == "failed" or j.status == "cancelled") then
+		expect(j.status == "done", "furnace job ended as " .. j.status .. " " .. serpent.line(j))
+		expect(count(FU_ITEM) == st.output, "ingots in storage: " .. count(FU_ITEM) .. ", expected " .. st.output)
+		expect(count(FU_INPUT) == 10 - st.input, "dust left: " .. count(FU_INPUT) .. ", expected " .. (10 - st.input))
+		expect(next(j.pool) == nil, "furnace job keeps items: " .. serpent.line(j.pool))
+		expect(furnace_a.get_inventory(defines.inventory.furnace_source).is_empty()
+			and furnace_a.get_inventory(defines.inventory.furnace_result).is_empty(), "furnace A is not empty after the job")
+		--- settings paste: provider B takes the choice, furnace B becomes a pattern too
+		remote.call(A, "paste", pa, pb)
+		expect(remote.call(A, "get_recipe", pb) == FU_RECIPE, "paste did not copy the choice")
+		local ignored = remote.call(A, "ignored", terminal)
+		expect((ignored.total or 0) == 0, "ignored after the paste: " .. serpent.line(ignored))
+		--- without a choice the recipe furnace A smelted last (previous_recipe) keeps it a pattern
+		remote.call(A, "set_recipe", pa, nil)
+		ignored = remote.call(A, "ignored", terminal)
+		expect((ignored.total or 0) == 0, "furnace A without choice lost its last smelted recipe: " .. serpent.line(ignored))
+		remote.call(A, "set_recipe", pa, FU_RECIPE)
+		--- blueprint: the provider's choice becomes an entity tag
+		local inv = game.create_inventory(1)
+		inv.insert{ name = "blueprint" }
+		local bp = inv[1]
+		local mapping = bp.create_blueprint{ surface = s, force = "player",
+			area = { { FU_PROVIDER_A[1] - 0.4, FU_PROVIDER_A[2] - 0.4 }, { FU_PROVIDER_A[1] + 0.4, FU_PROVIDER_A[2] + 0.4 } } }
+		remote.call(A, "tag_blueprint", bp, mapping)
+		local tagged = false
+		for index, e in pairs(mapping or {}) do
+			if e.name == "me-pattern-provider" then tagged = bp.get_blueprint_entity_tag(index, "fork_ae2_recipe") == FU_RECIPE end
+		end
+		expect(tagged, "the blueprint does not carry the choice")
+		inv.destroy()
+		--- a ghost with the tag is revived: the new provider has the choice
+		local ghost = s.create_entity{ name = "entity-ghost", inner_name = "me-pattern-provider", position = FU_GHOST,
+			force = "player", tags = { fork_ae2_recipe = FU_RECIPE } }
+		local _, revived = ghost.revive{ raise_revive = true }
+		expect(revived and remote.call(A, "get_recipe", revived) == FU_RECIPE, "a revived ghost lost the choice")
+		return finish_test("job took " .. (game.tick - st.started) .. " ticks")
+	end
+	if game.tick > st.started + 1200 then
+		local status
+		for name, v in pairs(defines.entity_status) do if furnace_a.status == v then status = name end end
+		expect(false, "furnace job timed out: " .. serpent.line(j) .. ", furnace " .. tostring(status) .. " progress "
+			.. furnace_a.crafting_progress .. " recipe energy " .. prototypes.recipe[FU_RECIPE].energy)
+		finish_test()
+	end
+end
+
 script.on_nth_tick(10, function()
 	if not (storage.autocraft and storage.autocraft.done) then autocraft_test() end
+	if not (storage.furnace and storage.furnace.done) then furnace_test() end
 	if not (storage.fluids and storage.fluids.done) then fluid_test() end
+	if not (storage.fluid_rec and storage.fluid_rec.done) then recovery_test() end
+	if not (storage.fuel and storage.fuel.done) then fuel_test() end
+	if not (storage.cooled and storage.cooled.done) then cooled_test() end
+	if not (storage.recipe_test and storage.recipe_test.done) then recipe_test() end
+	victory_test()
 end)
 
 
@@ -484,7 +707,7 @@ function fluid_test()
 
 	local function timeout_after(ticks, what)
 		if game.tick > st.phase_tick + ticks then
-			expect(false, what .. " timed out (network " .. FL_FLUID .. " " .. count(FL_FLUID) .. ")")
+			expect(false, what .. " timed out at tick " .. game.tick .. " (network " .. FL_FLUID .. " " .. count(FL_FLUID) .. ")")
 			finish_test()
 			return true
 		end
@@ -579,7 +802,7 @@ function fluid_test()
 			expect(count(FL_FLUID) == 0, "network holds fluid without a drive: " .. count(FL_FLUID))
 			return next_phase("robot-stored")
 		end
-		timeout_after(600, "robots deconstructing the drive")
+		timeout_after(600, "robots deconstructing the drive (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "robot-stored" then
 		--- the robot delivers the drive item (with its tags) into the storage chest = the item drive
 		local idrive = ent(FL.idrive)
@@ -605,7 +828,7 @@ function fluid_test()
 			if not (ok and ghost) then return finish_test() end
 			return next_phase("robot-build")
 		end
-		timeout_after(600, "robot storing the drive item")
+		timeout_after(600, "robot storing the drive item (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "robot-build" then
 		if s.find_entity(FL_DRIVE, FL_DRIVE_POS) then
 			expect(near(count(FL_FLUID), FL_TANK_AMOUNT), "after the robots placed the drive the network holds " .. count(FL_FLUID))
@@ -620,7 +843,7 @@ function fluid_test()
 			remote.call(F, "set_interface", b, "export", "water", FL_EXPORT_LEVEL)
 			return next_phase("full")
 		end
-		timeout_after(600, "robots building the drive from the ghost")
+		timeout_after(600, "robots building the drive from the ghost (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "full" then
 		if game.tick >= st.phase_tick + 40 then
 			local ia, ib = remote.call(F, "get_interface", a), remote.call(F, "get_interface", b)
@@ -737,8 +960,718 @@ function fluid_test()
 	end
 end
 
+--------------------------------------------------------------------------------
+--- fluid recovery (issue #26): destroyed drives, the upgrade planner, taking the cells out by hand
+--------------------------------------------------------------------------------
+
+local RC_Y = 330                                        -- below the power test, own roboport
+local RC = {
+	d1 = { FL_DRIVE, 8.5, RC_Y + 3.5 },
+	d2 = { FL_DRIVE, 10.5, RC_Y + 3.5 },
+	idrive = { "me-drive-16k", 13.5, RC_Y + 3.5 },     -- the robots' storage
+}
+local RC_UPGRADE = "me-fluid-drive-4k"
+local RC_OUTSIDE = { 120.5, RC_Y + 0.5 }                -- no logistic network here
+
+function setup_recovery_test(s)
+	local fails = {}
+	local function place(name, x, y)
+		local ok, e = pcall(function()
+			return s.create_entity{ name = name, position = { x, y }, force = "player", raise_built = true }
+		end)
+		if not (ok and e) then fails[#fails + 1] = "recovery " .. name .. ": " .. tostring(e) return nil end
+		return e
+	end
+	local eei = place("electric-energy-interface", 0, RC_Y)
+	if eei then
+		eei.power_production = 1e6
+		eei.electric_buffer_size = 1e7
+	end
+	place("substation", 3, RC_Y)
+	place("me-controller", 6, RC_Y)
+	place(RC.d1[1], RC.d1[2], RC.d1[3])
+	place(RC.d2[1], RC.d2[2], RC.d2[3])
+	local idrive = place(RC.idrive[1], RC.idrive[2], RC.idrive[3])
+	if idrive then
+		idrive.insert{ name = FL_DRIVE, count = 1 }         -- rebuilds the ghost of the destroyed drive
+		idrive.insert{ name = RC_UPGRADE, count = 1 }       -- for the upgrade planner
+	end
+	local port = place("roboport", 16, RC_Y)
+	if port then port.insert{ name = "construction-robot", count = 4 } end
+	return fails
+end
+
+function recovery_test()
+	local s = game.surfaces[1]
+	local F = "gregtorio-me-fluids"
+	local function ent(def, name) return s.find_entity(name or def[1], { def[2], def[3] }) end
+	local ref = ent(RC.idrive)
+	local function count(fluid) return ref and remote.call(F, "count", ref, fluid) or -1 end
+	local function near(a, b) return math.abs((a or 0) - (b or 0)) <= FL_EPS end
+	local function pool() return remote.call(F, "recovered", s, "player") end
+	local function same(a, b)                           -- two { fluid -> amount } tables
+		for k, v in pairs(a) do if not near(v, b[k]) then return false end end
+		for k, v in pairs(b) do if not near(v, a[k]) then return false end end
+		return true
+	end
+	local st = storage.fluid_rec
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish_test(note)
+		storage.fluid_rec.done = true
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL recovery: " .. p) end
+		log("DEVCHECK-RUNTIME-RECOVERY " .. (#problems == 0 and "ok" or "failed") .. (note and (" (" .. note .. ")") or ""))
+	end
+	local function next_phase(name) st.phase = name st.phase_tick = game.tick end
+	local function timeout_after(ticks, what)
+		if game.tick > st.phase_tick + ticks then
+			expect(false, what .. " timed out at tick " .. game.tick)
+			finish_test()
+		end
+	end
+	--- the drive item with fluid tags in the robots' storage (nil if there is none)
+	local function loaded_item(name)
+		local inv = ref.get_inventory(defines.inventory.chest)
+		for i = 1, #inv do
+			local stack = inv[i]
+			if stack.valid_for_read and stack.name == name and stack.is_item_with_tags then
+				local tags = stack.tags
+				if tags and tags.fork_me_fluids then return stack, tags.fork_me_fluids end
+			end
+		end
+	end
+
+	if not st then
+		if game.tick < 60 then return end
+		storage.fluid_rec = { started = game.tick, phase = "destroy", phase_tick = game.tick }
+		st = storage.fluid_rec
+		local d1, d2 = ent(RC.d1), ent(RC.d2)
+		expect(ref and d1 and d2, "entities missing")
+		if #problems > 0 then return finish_test() end
+		local capacity, used = remote.call(F, "capacity", ref)
+		expect(capacity == 64000 and used == 0, "capacity " .. tostring(capacity) .. "/" .. tostring(used))
+		--- water fills drive 1 (30000), chlorine fills it up (2000) and goes on into drive 2 (8000)
+		expect(near(remote.call(F, "insert", ref, "water", 30000), 30000), "could not insert water")
+		expect(near(remote.call(F, "insert", ref, "chlorine", 10000), 10000), "could not insert chlorine")
+		local c1, c2 = remote.call(F, "drive", d1), remote.call(F, "drive", d2)
+		expect(same(c1.contents, { water = 30000, chlorine = 2000 }) and same(c2.contents, { chlorine = 8000 }),
+			"drive contents " .. serpent.line(c1.contents) .. " " .. serpent.line(c2.contents))
+		st.before = remote.call(F, "totals", ref)
+		--- 1) a destroyed drive: drive 2 takes what fits (chlorine 2000, water 22000), 8000 water is pooled
+		expect(d1.die(), "drive 1 did not die")
+		local totals, left = remote.call(F, "totals", ref), pool()
+		expect(same(totals, { water = 22000, chlorine = 10000 }), "network after the destroyed drive " .. serpent.line(totals))
+		expect(same(left, { water = 8000 }), "recovered fluid after the destroyed drive " .. serpent.line(left))
+		for name, amount in pairs(st.before) do
+			expect(near((totals[name] or 0) + (left[name] or 0), amount), name .. " not conserved: " .. serpent.line(totals) .. " + " .. serpent.line(left))
+		end
+		expect(near(remote.call(F, "drive", d2).used, 32000), "drive 2 not full")
+		--- the ghost of the destroyed drive (created by the engine; if not, by the test) is rebuilt by robots
+		local ghosts = s.find_entities_filtered{ ghost_name = FL_DRIVE, position = { RC.d1[2], RC.d1[3] }, radius = 0.5 }
+		st.engine_ghost = #ghosts > 0
+		if not st.engine_ghost then
+			s.create_entity{ name = "entity-ghost", inner_name = FL_DRIVE, position = { RC.d1[2], RC.d1[3] }, force = "player" }
+		end
+		if #problems > 0 then return finish_test() end
+		return
+	end
+	if st.done then return end
+
+	local phase = st.phase
+	if phase == "destroy" then
+		local rebuilt = ent(RC.d1)
+		if rebuilt then
+			--- 2) the rebuilt drive takes the recovered fluid over: the network holds everything again
+			expect(next(pool()) == nil, "recovered fluid left after the rebuild " .. serpent.line(pool()))
+			expect(same(remote.call(F, "totals", ref), st.before), "network after the rebuild " .. serpent.line(remote.call(F, "totals", ref)))
+			expect(same(remote.call(F, "drive", rebuilt).contents, { water = 8000 }), "rebuilt drive " .. serpent.line(remote.call(F, "drive", rebuilt)))
+			if #problems > 0 then return finish_test() end
+			--- 3) the upgrade planner on the full drive 2: its fluid stays on the old drive item
+			local d2 = ent(RC.d2)
+			expect(d2.order_upgrade{ target = RC_UPGRADE, force = "player" }, "order_upgrade refused")
+			return next_phase("upgrade")
+		end
+		local ghosts = s.find_entities_filtered{ ghost_name = FL_DRIVE, position = { RC.d1[2], RC.d1[3] }, radius = 0.5 }
+		timeout_after(600, "robots rebuilding the destroyed drive (ghosts " .. #ghosts .. ", drive items in storage "
+			.. ref.get_item_count(FL_DRIVE) .. "; " .. robot_report(s, { RC.d1[2], RC.d1[3] }, FL_DRIVE) .. ")")
+	elseif phase == "upgrade" then
+		local new = ent(RC.d2, RC_UPGRADE)
+		local stack, carried = loaded_item(FL_DRIVE)
+		if new and stack then
+			local d = remote.call(F, "drive", new)
+			expect(d and d.capacity == 128000 and d.used == 0, "upgraded drive " .. serpent.line(d))
+			expect(same(carried, { water = 22000, chlorine = 10000 }), "old drive item after the upgrade carries " .. serpent.line(carried))
+			expect(same(remote.call(F, "totals", ref), { water = 8000 }), "network after the upgrade " .. serpent.line(remote.call(F, "totals", ref)))
+			expect(next(pool()) == nil, "the upgrade pooled fluid " .. serpent.line(pool()))
+			--- 4) the cells are taken out of the loaded item by hand (what the craft event does): the
+			--- fluid goes into the drives of the network at the player's position, the item loses its tags
+			local inv = game.create_inventory(1)
+			inv[1].transfer_stack(stack)
+			local moved, pooled = remote.call(F, "salvage_items", inv, s, "player", { RC.idrive[2], RC.idrive[3] })
+			expect(same(moved, { water = 22000, chlorine = 10000 }) and next(pooled) == nil, "disassembly in the network: moved " .. serpent.line(moved) .. ", pooled " .. serpent.line(pooled))
+			expect(same(remote.call(F, "totals", ref), st.before), "network after the disassembly " .. serpent.line(remote.call(F, "totals", ref)))
+			local tags = inv[1].valid_for_read and inv[1].tags or {}
+			expect(inv[1].valid_for_read and inv[1].name == FL_DRIVE and not tags.fork_me_fluids, "the disassembled item still carries fluid " .. serpent.line(tags))
+			--- 5) the same outside any network: everything is pooled, a drive's take over empties the pool
+			inv[1].set_stack{ name = FL_DRIVE, count = 1 }
+			inv[1].tags = { fork_me_fluids = { water = 500 } }
+			moved, pooled = remote.call(F, "salvage_items", inv, s, "player", RC_OUTSIDE)
+			expect(next(moved) == nil and same(pooled, { water = 500 }), "disassembly outside: moved " .. serpent.line(moved) .. ", pooled " .. serpent.line(pooled))
+			expect(same(pool(), { water = 500 }), "recovered fluid after the disassembly outside " .. serpent.line(pool()))
+			local taken = remote.call(F, "take_recovered", new)
+			expect(same(taken, { water = 500 }) and next(pool()) == nil, "take over: " .. serpent.line(taken) .. ", left " .. serpent.line(pool()))
+			expect(near(count("water"), 30500), "water after the take over " .. count("water"))
+			inv.destroy()
+			--- 6) a loaded drive removed by another mod without an event: the next lookup pools its fluid
+			local silent = s.create_entity{ name = FL_DRIVE, position = RC_OUTSIDE, force = "player", raise_built = true }
+			remote.call(F, "unpack_drive", silent, { fork_me_fluids = { water = 300 } })
+			silent.destroy()
+			expect(near(count("water"), 30500), "water after the silent removal " .. count("water"))
+			expect(same(pool(), { water = 300 }), "recovered fluid after the silent removal " .. serpent.line(pool()))
+			taken = remote.call(F, "take_recovered", new)
+			expect(same(taken, { water = 300 }) and next(pool()) == nil, "take over after the silent removal: " .. serpent.line(taken))
+			--- 7) a drive destroyed outside any network on another surface pools everything; deleting the
+			--- surface drops that pool (and reports it)
+			local other = game.create_surface("fork-recovery-test", { width = 64, height = 64 })
+			other.request_to_generate_chunks({ 0, 0 }, 1)
+			other.force_generate_chunk_requests()
+			local lone = other.create_entity{ name = FL_DRIVE, position = { 0.5, 0.5 }, force = "player", raise_built = true }
+			expect(lone, "no drive on the other surface")
+			if not lone then return finish_test() end
+			remote.call(F, "unpack_drive", lone, { fork_me_fluids = { chlorine = 700 } })
+			expect(same(remote.call(F, "drive", lone).contents, { chlorine = 700 }), "lone drive " .. serpent.line(remote.call(F, "drive", lone)))
+			lone.die()
+			expect(same(remote.call(F, "recovered", other, "player"), { chlorine = 700 }), "pool of the other surface " .. serpent.line(remote.call(F, "recovered", other, "player")))
+			st.other = other.index
+			game.delete_surface(other)
+			if #problems > 0 then return finish_test() end
+			return next_phase("surface")
+		end
+		timeout_after(600, "robots upgrading the drive (" .. robot_report(s, { RC.d2[2], RC.d2[3] }, RC_UPGRADE) .. ")")
+	elseif phase == "surface" then
+		if not game.get_surface(st.other) then
+			expect(next(remote.call(F, "recovered", st.other, "player")) == nil, "the deleted surface keeps recovered fluid")
+			expect(same(remote.call(F, "totals", ref), { water = 30800, chlorine = 10000 }), "network at the end " .. serpent.line(remote.call(F, "totals", ref)))
+			return finish_test("ghost " .. (st.engine_ghost and "by the engine" or "by the test") .. ", whole test " .. (game.tick - st.started) .. " ticks")
+		end
+		timeout_after(120, "deleting the surface")
+	end
+end
+
+--- Endgame power (prototypes/136-fork-power.lua, scripts/fork-power.lua): a LuV large plasma turbine
+--- with helium plasma and a turbine output hatch next to it, and a UV large naquadah reactor with
+--- naquadah based fuel MK1, each loaded by an electric energy interface that draws the generator's
+--- full output. After 7 s both must have produced power and burnt fuel, and the hatch must hold the
+--- cooled fluid (helium) for the plasma the turbine burnt (see the cooled fluid test below).
+local PW_Y = 260                                        -- below the fluid test and its roboport area
+local PW_TICK = 420
+local PW = {
+	turbine = { "luv-large-plasma-turbine", 1.5, PW_Y + 1.5, "helium-plasma", 100, 81.92e6 },
+	hatch = { "turbine-output-hatch", 3.5, PW_Y + 1.5 },
+	reactor = { "uv-large-naquadah-reactor", 42.5, PW_Y + 2.5, "naquadah-based-fuel-mk1", 10, 327.68e6 },
+}
+
+function setup_power_test(s)
+	local fails = {}
+	local function place(def)
+		local ok, e = pcall(function()
+			return s.create_entity{ name = def[1], position = { def[2], def[3] }, force = "player", raise_built = true }
+		end)
+		if not (ok and e) then fails[#fails + 1] = "power test " .. def[1] .. ": " .. tostring(e) return nil end
+		return e
+	end
+	for _, key in pairs({ "turbine", "reactor" }) do
+		local def = PW[key]
+		local g = place(def)
+		if g then
+			local got = g.insert_fluid{ name = def[4], amount = def[5] }
+			if got < def[5] then fails[#fails + 1] = "power test: " .. def[1] .. " took only " .. got .. " " .. def[4] end
+			local ok, err = pcall(function()
+				local eei = s.create_entity{ name = "electric-energy-interface", position = { def[2], def[3] + 6 }, force = "player" }
+				eei.power_production = 0
+				eei.power_usage = def[6] / 60
+				eei.electric_buffer_size = 1e8
+				s.create_entity{ name = "substation", position = { def[2] + 4, def[3] + 6 }, force = "player" }
+			end)
+			if not ok then fails[#fails + 1] = "power test load: " .. tostring(err) end
+		end
+	end
+	place(PW.hatch)
+	return fails
+end
+
+script.on_nth_tick(PW_TICK, function(event)
+	if storage.power_checked or event.tick == 0 then return end
+	storage.power_checked = true
+	local s = game.surfaces[1]
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function find(def) return s.find_entity(def[1], { def[2], def[3] }) end
+	local turbine, hatch, reactor = find(PW.turbine), find(PW.hatch), find(PW.reactor)
+	expect(turbine and hatch and reactor, "power test entities missing")
+	--- an input-output fluid box keeps part of its fluid in the pipeline segment, which
+	--- get_fluid_count does not report
+	local function fluid_in(e, fluid)
+		local seg = e.fluidbox.get_fluid_segment_contents(1)
+		return e.get_fluid_count(fluid) + ((seg and seg[fluid]) or 0)
+	end
+	local summary = ""
+	if #problems == 0 then
+		local seconds = event.tick / 60
+		--- turbine: 81.92 MW on helium plasma (81.92 MJ per unit) burns one unit per second
+		local left = fluid_in(turbine, "helium-plasma")
+		local burnt = PW.turbine[5] - left
+		expect(turbine.energy_generated_last_tick > 0, "plasma turbine generates nothing")
+		expect(burnt > 0.6 * seconds and burnt < 1.2 * seconds, "plasma turbine burnt " .. burnt .. " helium plasma in " .. seconds .. " s")
+		local helium = hatch.get_fluid_count("helium")
+		local owed = remote.call("gregtorio-power", "debt", turbine) + remote.call("gregtorio-power", "energy", turbine) / PW.turbine[6]
+		expect(helium > 0, "the output hatch got no helium")
+		expect(math.abs(helium + owed - burnt) <= cooled_tolerance(burnt), "hatch holds " .. helium .. " helium (+ " .. owed .. " owed) for " .. burnt .. " plasma burnt")
+		expect(hatch.get_fluid_count("helium-plasma") == 0, "plasma leaked into the output hatch")
+		--- reactor: 327.68 MW on fuel MK1 (58.5 GJ per unit) burns 0.0056 units per second
+		local fuel_left = fluid_in(reactor, "naquadah-based-fuel-mk1")
+		local fuel_burnt = PW.reactor[5] - fuel_left
+		expect(reactor.energy_generated_last_tick > 0, "naquadah reactor generates nothing")
+		expect(fuel_burnt > 0.003 * seconds and fuel_burnt < 0.007 * seconds, "naquadah reactor burnt " .. fuel_burnt .. " fuel in " .. seconds .. " s")
+		summary = string.format(" (turbine %.2f plasma -> %.2f helium, %.1f MW; reactor %.4f fuel, %.1f MW)",
+			burnt, helium, turbine.energy_generated_last_tick * 60 / 1e6, fuel_burnt, reactor.energy_generated_last_tick * 60 / 1e6)
+	end
+	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
+	log("DEVCHECK-RUNTIME-POWER " .. (#problems == 0 and "ok" or "failed") .. summary)
+end)
+
+--- Fuel check (issue #25, scripts/fork-power.lua): generators on a wrong fluid, each with its own
+--- load of the generator's full output and its own network (25 tiles apart). Steam (through a pipe)
+--- in a plasma turbine, steam in a naquadah reactor, naquadah fuel in a plasma turbine and plasma in
+--- a naquadah reactor must make no power, keep their fluid and show "Wrong fuel"; after the right
+--- fuel is put in they run. A running turbine whose plasma is replaced by steam burns steam for at
+--- most one check interval (10 ticks, the documented window) and then stops.
+local FC_Y = PW_Y
+local FC_WINDOW_TICKS = 10
+local FC = {
+	--  key            generator                     x      wrong fluid                amount  right fuel                 amount  load (W)
+	{ "steam_turbine", "luv-large-plasma-turbine",   75.5,  "steam",                   100,    "helium-plasma",           100,    81.92e6, pipe = true },
+	{ "steam_reactor", "uv-large-naquadah-reactor",  100.5, "steam",                   500,    "naquadah-based-fuel-mk1", 10,     327.68e6 },
+	{ "fuel_turbine",  "luv-large-plasma-turbine",   125.5, "naquadah-based-fuel-mk1", 10,     "helium-plasma",           100,    81.92e6 },
+	{ "plasma_reactor", "uv-large-naquadah-reactor", 150.5, "helium-plasma",           100,    "naquadah-based-fuel-mk1", 10,     327.68e6 },
+	{ "window",        "luv-large-plasma-turbine",   175.5, "steam",                   500,    "helium-plasma",           100,    81.92e6 },
+}
+
+--- an input-output fluid box keeps part of its fluid in the pipeline segment (see the power test)
+local function fc_fluid_in(e, fluid)
+	local seg = e.fluidbox.get_fluid_segment_contents(1)
+	return e.get_fluid_count(fluid) + ((seg and seg[fluid]) or 0)
+end
+
+function setup_fuel_test(s)
+	local fails = {}
+	storage.fuel = { gens = {} }
+	for _, def in ipairs(FC) do
+		local ok, err = pcall(function()
+			local y = FC_Y + (def[2]:find("reactor") and 2.5 or 1.5)
+			local g = s.create_entity{ name = def[2], position = { def[3], y }, force = "player", raise_built = true }
+			local first, amount = def[4], def[5]
+			if def[1] == "window" then first, amount = def[6], def[7] end
+			if def.pipe then
+				--- the north connection of the 3x3 turbine is one tile above its top edge
+				local pipe = s.create_entity{ name = "pipe", position = { def[3], y - 2 }, force = "player" }
+				local got = pipe.insert_fluid{ name = first, amount = amount }
+				if got < amount then fails[#fails + 1] = "fuel test: the pipe took only " .. got .. " " .. first end
+			else
+				local got = g.insert_fluid{ name = first, amount = amount }
+				if got < amount then fails[#fails + 1] = "fuel test: " .. def[1] .. " took only " .. got .. " " .. first end
+			end
+			local eei = s.create_entity{ name = "electric-energy-interface", position = { def[3], y + 6 }, force = "player" }
+			eei.power_production = 0
+			eei.power_usage = def[8] / 60
+			eei.electric_buffer_size = 1e8
+			s.create_entity{ name = "substation", position = { def[3] + 4, y + 6 }, force = "player" }
+			storage.fuel.gens[def[1]] = g
+		end)
+		if not ok then fails[#fails + 1] = "fuel test " .. def[1] .. ": " .. tostring(err) end
+	end
+	return fails
+end
+
+--- The window turbine: from the swap on, its plasma is taken out every tick, and on the tick it is
+--- empty the steam goes in, so the fuel check (every 10 ticks) meets steam that may have burnt since
+function fuel_window_tick()
+	local st = storage.fuel
+	if not (st and st.phase and not st.window_swapped and not st.done) then return end
+	local def = FC[#FC]
+	local g = st.gens.window
+	if not (g and g.valid) then return end
+	g.remove_fluid{ name = def[6], amount = 1e9 }
+	if fc_fluid_in(g, def[6]) > 0 then return end
+	local got = g.insert_fluid{ name = def[4], amount = def[5] }
+	if math.abs(got - def[5]) > 1e-6 then log("DEVCHECK-RUNTIME-FAIL fuel test: window turbine took only " .. got .. " steam") end
+	st.window_swapped, st.window_stopped = game.tick, g.disabled_by_script
+end
+
+function fuel_test()
+	local st = storage.fuel
+	if not st then return end
+	local tick = game.tick
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function label_key(e)
+		local cs = e.custom_status
+		return cs and type(cs.label) == "table" and cs.label[1] or nil
+	end
+	local function finish(summary)
+		st.done = true
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL fuel test: " .. p) end
+		log("DEVCHECK-RUNTIME-FUEL " .. (#problems == 0 and "ok" or "failed") .. (summary or ""))
+	end
+	for _, def in ipairs(FC) do
+		if not (st.gens[def[1]] and st.gens[def[1]].valid) then
+			problems[#problems + 1] = "generator " .. def[1] .. " missing"
+			return finish()
+		end
+	end
+	if not st.phase and tick >= 120 then
+		--- wrong fuels: no power, fluid kept, status set; the window turbine runs on plasma
+		for _, def in ipairs(FC) do
+			local g = st.gens[def[1]]
+			if def[1] == "window" then
+				expect(g.energy_generated_last_tick > 0, "window turbine does not run on plasma")
+				expect(not g.disabled_by_script, "window turbine stopped on plasma")
+			else
+				local left = fc_fluid_in(g, def[4])
+				expect(g.energy_generated_last_tick == 0, def[1] .. " generates " .. g.energy_generated_last_tick .. " J/tick on " .. def[4])
+				expect(math.abs(left - def[5]) < 1e-6, def[1] .. " holds " .. left .. " " .. def[4] .. " of " .. def[5])
+				expect(g.disabled_by_script, def[1] .. " is not stopped")
+				expect(label_key(g) == "entity-status.fork-wrong-fuel", def[1] .. " status " .. serpent.line(g.custom_status))
+			end
+		end
+		if #problems > 0 then return finish() end
+		st.phase, st.drain = "draining", 0
+	elseif st.phase == "draining" then
+		--- swap: empty the stopped ones (removing takes only the entity's share, the segment gives
+		--- the rest back over the next ticks), then put the right fuel in; the window turbine is
+		--- swapped every tick by fuel_window_tick
+		local left = 0
+		for _, def in ipairs(FC) do
+			if def[1] ~= "window" then
+				local g = st.gens[def[1]]
+				g.remove_fluid{ name = def[4], amount = 1e9 }
+				left = left + fc_fluid_in(g, def[4])
+			end
+		end
+		st.drain = st.drain + 1
+		if left > 0 then
+			if st.drain > 30 then
+				problems[#problems + 1] = "could not empty the generators (" .. left .. " left)"
+				return finish()
+			end
+			return
+		end
+		for _, def in ipairs(FC) do
+			if def[1] ~= "window" then
+				local g = st.gens[def[1]]
+				local got = g.insert_fluid{ name = def[6], amount = def[7] }
+				expect(math.abs(got - def[7]) < 1e-6, def[1] .. " took only " .. got .. " " .. def[6] .. " after emptying it")
+			end
+		end
+		st.phase, st.swapped = "right", tick
+		if #problems > 0 then return finish() end
+	elseif st.phase == "right" and st.window_swapped and not st.window_mid and tick >= st.window_swapped + FC_WINDOW_TICKS + 10 then
+		st.window_mid = fc_fluid_in(st.gens.window, FC[#FC][4])
+	elseif st.phase == "right" and st.window_mid and tick >= math.max(st.swapped, st.window_swapped) + 60 then
+		local summary = ""
+		for _, def in ipairs(FC) do
+			local g = st.gens[def[1]]
+			if def[1] == "window" then
+				--- at most one interval of the full output on steam (+1 tick for the check order)
+				local burnt = def[5] - fc_fluid_in(g, def[4])
+				local max = def[8] * (FC_WINDOW_TICKS + 1) / 60 / prototypes.fluid[def[4]].fuel_value
+				expect(burnt <= max, "window turbine burnt " .. burnt .. " steam, more than " .. max)
+				--- a stopped generator keeps its last energy_generated_last_tick: the steam must not move
+				expect(st.window_mid and math.abs(fc_fluid_in(g, def[4]) - st.window_mid) < 1e-6,
+					"window turbine still burns steam (" .. tostring(st.window_mid) .. " -> " .. fc_fluid_in(g, def[4]) .. ")")
+				expect(g.disabled_by_script, "window turbine is not stopped")
+				expect(label_key(g) == "entity-status.fork-wrong-fuel", "window turbine status " .. serpent.line(g.custom_status))
+				summary = string.format(" (window: %.1f steam = %.2f MJ burnt, swapped on tick %d %s)", burnt,
+					burnt * prototypes.fluid[def[4]].fuel_value / 1e6, st.window_swapped,
+					st.window_stopped and "after the turbine had stopped" or "while the turbine ran")
+			else
+				local burnt = def[7] - fc_fluid_in(g, def[6])
+				expect(g.energy_generated_last_tick > 0, def[1] .. " does not run on " .. def[6])
+				expect(burnt > 0, def[1] .. " burnt no " .. def[6])
+				expect(not g.disabled_by_script, def[1] .. " still stopped on " .. def[6])
+				expect(g.custom_status == nil, def[1] .. " still has status " .. serpent.line(g.custom_status))
+			end
+		end
+		return finish(summary)
+	elseif tick > 900 then
+		problems[#problems + 1] = "timed out in phase " .. tostring(st.phase)
+		return finish()
+	end
+end
+
+--- Cooled fluid (issue #28, scripts/fork-power.lua): the cooled fluid in a turbine's output hatch
+--- must match the plasma it burnt, one unit per unit, within COOLED_TOL (relative) + COOLED_ABS
+--- units, whatever the load. Every LuV plasma turbine has its own load (an electric energy interface
+--- that draws exactly the given share of 81.92 MW per tick, no buffer), set every tick:
+---   full, partial (40 %), burst (full for 5 ticks out of 23, idle in between): a known amount of
+---     helium plasma burnt to the last drop, then the hatch must hold exactly that much helium;
+---   idle: no load; only the first fill of the load's buffer is burnt, and returned;
+---   full_hatch: the hatch starts with 3999 of its 4000 helium, so the rest stays owed; once it is
+---     emptied it must get all of it;
+---   pair_a, pair_b: two turbines side by side on helium and nitrogen plasma, one hatch each: each
+---     hatch gets only its own cooled fluid, in the right amount.
+--- A running turbine is compared as hatch + owed + the energy of the current step / fuel value.
+local CO_Y = 370
+local COOLED_TOL, COOLED_ABS = 1e-3, 1e-3
+local CO_DEADLINE = 1300
+local CO_POWER = 81.92e6
+local CO = {
+	--  key           x      plasma            amount  load(tick)                                       hatch x offset
+	{ "full",       200.5, "helium-plasma",   4,     function() return 1 end,                         2 },
+	{ "partial",    225.5, "helium-plasma",   2,     function() return 0.4 end,                       2 },
+	{ "burst",      250.5, "helium-plasma",   1.5,   function(t) return t % 23 < 5 and 1 or 0 end,    2 },
+	{ "idle",       275.5, "helium-plasma",   10,    function() return 0 end,                         2 },
+	{ "full_hatch", 300.5, "helium-plasma",   100,   function() return 1 end,                         2 },
+	{ "pair_a",     330.5, "helium-plasma",   100,   function() return 1 end,                         -2 },
+	{ "pair_b",     333.5, "nitrogen-plasma", 100,   function() return 1 end,                         2 },
+}
+local CO_PREFILL = 3999
+
+function cooled_tolerance(burnt) return COOLED_ABS + COOLED_TOL * burnt end
+
+function setup_cooled_test(s)
+	local fails = {}
+	storage.cooled = { t = {} }
+	for i, def in ipairs(CO) do
+		local ok, err = pcall(function()
+			local g = s.create_entity{ name = "luv-large-plasma-turbine", position = { def[2], CO_Y }, force = "player", raise_built = true }
+			local got = g.insert_fluid{ name = def[3], amount = def[4] }
+			if math.abs(got - def[4]) > 1e-6 then fails[#fails + 1] = "cooled test: " .. def[1] .. " took only " .. got .. " " .. def[3] end
+			local eei = s.create_entity{ name = "electric-energy-interface", position = { def[2], CO_Y + 6 }, force = "player" }
+			eei.power_production = 0
+			eei.power_usage = 0
+			eei.electric_buffer_size = CO_POWER / 60
+			s.create_entity{ name = "substation", position = { def[2] + (def[6] > 0 and 4 or -4), CO_Y + 6 }, force = "player" }
+			local h = s.create_entity{ name = "turbine-output-hatch", position = { def[2] + def[6], CO_Y }, force = "player", raise_built = true }
+			storage.cooled.t[def[1]] = { g = g, eei = eei, h = h, i = i, removed = 0 }
+		end)
+		if not ok then fails[#fails + 1] = "cooled test " .. def[1] .. ": " .. tostring(err) end
+	end
+	local fh = storage.cooled.t.full_hatch
+	if fh then
+		local got = fh.h.insert_fluid{ name = "helium", amount = CO_PREFILL }
+		if math.abs(got - CO_PREFILL) > 1e-6 then fails[#fails + 1] = "cooled test: the full hatch took only " .. got .. " helium" end
+	end
+	return fails
+end
+
+--- Every tick: the load of each turbine
+function cooled_load_tick(tick)
+	local st = storage.cooled
+	if not st or st.done then return end
+	for _, c in pairs(st.t) do
+		if c.eei.valid then c.eei.power_usage = CO_POWER / 60 * CO[c.i][5](tick) end
+	end
+end
+
+function cooled_test()
+	local st = storage.cooled
+	if not st then return end
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish(summary)
+		st.done = true
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL cooled fluid test: " .. p) end
+		log("DEVCHECK-RUNTIME-COOLED " .. (#problems == 0 and "ok" or "failed") .. (summary or ""))
+	end
+	for _, def in ipairs(CO) do
+		local c = st.t[def[1]]
+		if not (c and c.g.valid and c.h.valid and c.eei.valid) then
+			problems[#problems + 1] = def[1] .. " missing"
+			return finish()
+		end
+	end
+	local P = "gregtorio-power"
+	--- the plasma a turbine burnt (entity and segment) and the cooled fluid it returned: in the hatch
+	--- (and taken out of it by the test), owed, and the energy of the current step
+	local function account(c)
+		local def = CO[c.i]
+		local fuel = prototypes.fluid[def[3]].fuel_value
+		local out = def[3] == "helium-plasma" and "helium" or "nitrogen"
+		local seg = c.g.fluidbox.get_fluid_segment_contents(1)
+		local burnt = def[4] - c.g.get_fluid_count(def[3]) - ((seg and seg[def[3]]) or 0)
+		local prefill = def[1] == "full_hatch" and CO_PREFILL or 0
+		local hatch = c.h.get_fluid_count(out) + c.removed - prefill
+		local owed = remote.call(P, "debt", c.g, out)
+		local pending = remote.call(P, "energy", c.g) / fuel
+		return burnt, hatch, owed, pending, out
+	end
+	local function matches(key, c)
+		local burnt, hatch, owed, pending, out = account(c)
+		local ok = math.abs(hatch + owed + pending - burnt) <= cooled_tolerance(burnt)
+		st.worst = math.max(st.worst or 0, math.abs(hatch + owed + pending - burnt) / burnt)
+		expect(ok, string.format("%s: %.6f plasma burnt, hatch got %.6f %s, %.6f owed, %.6f pending", key, burnt, hatch, out, owed, pending))
+		return burnt, hatch + owed + pending - burnt
+	end
+	local tick = game.tick
+	st.dry = st.dry or {}
+	--- the known amounts: burnt to the last drop, stopped for "no fuel", nothing owed or pending
+	for _, key in pairs({ "full", "partial", "burst" }) do
+		local c = st.t[key]
+		if not st.dry[key] then
+			local burnt, hatch, owed, pending = account(c)
+			local amount = CO[c.i][4]
+			if burnt >= amount - 1e-9 and owed < 1e-4 and pending == 0 and c.g.disabled_by_script then
+				st.dry[key] = { tick = tick, hatch = hatch }
+				st.worst = math.max(st.worst or 0, math.abs(hatch - amount) / amount)
+				expect(math.abs(hatch - amount) <= cooled_tolerance(amount),
+					string.format("%s: %.6f plasma burnt, the hatch got %.6f", key, amount, hatch))
+			end
+		end
+	end
+	--- the full hatch: full, the rest owed; then emptied, and it must get everything
+	local fh = st.t.full_hatch
+	if not st.hatch_phase then
+		local burnt, _, owed = account(fh)
+		if burnt >= 3 then
+			expect(math.abs(fh.h.get_fluid_count("helium") - 4000) < 1e-3, "full hatch holds " .. fh.h.get_fluid_count("helium") .. " of 4000")
+			expect(owed > 1.5, "full hatch: only " .. owed .. " helium owed for " .. burnt .. " plasma burnt")
+			matches("full_hatch (full)", fh)
+			st.hatch_owed = owed
+			fh.removed = fh.removed + fh.h.remove_fluid{ name = "helium", amount = 4000 }
+			st.hatch_phase = tick
+		end
+	elseif st.hatch_phase ~= true and tick >= st.hatch_phase + 60 then
+		matches("full_hatch (emptied)", fh)
+		local _, _, owed = account(fh)
+		expect(owed < 0.2, "full hatch: still " .. owed .. " helium owed after it was emptied")
+		st.hatch_phase = true
+	end
+	--- the pair: own fluid only, right amounts
+	if not st.pair_checked and account(st.t.pair_a) >= 3 then
+		matches("pair_a", st.t.pair_a)
+		matches("pair_b", st.t.pair_b)
+		expect(st.t.pair_a.h.get_fluid_count("nitrogen") == 0, "pair_a's hatch got nitrogen")
+		expect(st.t.pair_b.h.get_fluid_count("helium") == 0, "pair_b's hatch got helium")
+		expect(account(st.t.pair_b) > 1, "pair_b burnt only " .. account(st.t.pair_b) .. " nitrogen plasma")
+		st.pair_checked = true
+	end
+	if #problems > 0 then return finish() end
+	if st.dry.full and st.dry.partial and st.dry.burst and st.hatch_phase == true and st.pair_checked then
+		--- idle: only the first fill of its load's buffer (one tick of output each) is burnt
+		local idle_burnt = matches("idle", st.t.idle)
+		expect(idle_burnt < 3 / 60 + 1e-6, "idle turbine burnt " .. idle_burnt .. " plasma")
+		return finish(string.format(" (4/2/1.5 plasma -> %.6f/%.6f/%.6f helium at full/40%%/burst load, worst error %.1e, full hatch owed %.2f)",
+			st.dry.full.hatch, st.dry.partial.hatch, st.dry.burst.hatch, st.worst or 0, st.hatch_owed))
+	end
+	if tick > CO_DEADLINE then
+		local left = {}
+		for _, key in pairs({ "full", "partial", "burst" }) do
+			if not st.dry[key] then
+				local burnt, hatch, owed, pending = account(st.t[key])
+				left[key] = { burnt = burnt, hatch = hatch, owed = owed, pending = pending, stopped = st.t[key].g.disabled_by_script }
+			end
+		end
+		expect(false, "timed out: dry " .. serpent.line(st.dry) .. " (not yet: " .. serpent.line(left) .. ")" .. ", full hatch " .. tostring(st.hatch_phase) .. ", pair " .. tostring(st.pair_checked))
+		return finish()
+	end
+end
+
+--- New recipes of issue #35 (prototypes/129-fork-water-purification.lua): grades 7 and 8 in the water
+--- purification plant, the FPIC and APIC wafers and chips, the complex SMDs, the quark creation catalyst
+--- and recipes that take the new parts. Each machine gets one craft's ingredients (placed above the
+--- machine grid, powered like it); once it crafts, its progress is set close to the end (the grades take
+--- 25 and 30 s, a mainframe 12 minutes), and the main product must come out.
+local RT_Y = -300
+local RT_DEADLINE = 900
+local RT = {
+	{ "water-purification-plant", "grade-7-water" },
+	{ "water-purification-plant", "grade-8-water" },
+	{ "uhv-laser-engraver", "fpic-wafer" },
+	{ "uev-laser-engraver", "apic-wafer" },
+	{ "uhv-assembling-machine", "femto-power-ic" },
+	{ "uev-assembling-machine", "atto-power-ic" },
+	{ "uv-assembling-machine", "complex-smd-transistor" },
+	{ "uv-assembling-machine", "complex-smd-resistor" },
+	{ "uv-assembling-machine", "complex-smd-capacitor" },
+	{ "uv-assembling-machine", "complex-smd-diode" },
+	{ "uv-assembling-machine", "complex-smd-inductor" },
+	{ "zpm-assembly-line", "quark-creation-catalyst" },
+	{ "zpm-assembly-line", "uev-energy-hatch" },
+	{ "zpm-assembly-line", "uiv-energy-hatch" },
+	{ "zpm-assembly-line", "fusion-reactor-mk4-controller" },
+	{ "luv-circuit-assembly-line", "wetware-processor-mainframe" },
+}
+
+local function rt_product(recipe)
+	local r = prototypes.recipe[recipe]
+	for _, p in pairs(r.products) do
+		if p.name == (r.main_product and r.main_product.name or p.name) then return p end
+	end
+end
+
+function setup_recipe_test(s)
+	local fails = {}
+	storage.recipe_test = { m = {}, ok = {} }
+	local x = -150
+	for i, def in pairs(RT) do
+		local ok, err = pcall(function()
+			local e = s.create_entity{ name = def[1], position = { x, RT_Y }, force = "player", raise_built = true }
+			s.create_entity{ name = "electric-energy-interface", position = { x, RT_Y + 7 }, force = "player" }
+			s.create_entity{ name = "substation", position = { x + 5, RT_Y + 7 }, force = "player" }
+			e.force.recipes[def[2]].enabled = true
+			e.set_recipe(def[2])
+			for _, ing in pairs(prototypes.recipe[def[2]].ingredients) do
+				if ing.type == "item" then
+					local n = e.insert{ name = ing.name, count = ing.amount }
+					assert(n == ing.amount, "only " .. n .. " of " .. ing.amount .. " " .. ing.name .. " fit")
+				else
+					local n = e.insert_fluid{ name = ing.name, amount = ing.amount }
+					assert(math.abs(n - ing.amount) < 1e-6, "only " .. n .. " of " .. ing.amount .. " " .. ing.name .. " fit")
+				end
+			end
+			storage.recipe_test.m[i] = e
+		end)
+		if not ok then fails[#fails + 1] = "recipe test " .. def[2] .. " in " .. def[1] .. ": " .. tostring(err) end
+		x = x + 18
+	end
+	return fails
+end
+
+function recipe_test()
+	local st = storage.recipe_test
+	if not st or st.done then return end
+	local pending = {}
+	for i, def in pairs(RT) do
+		local e = st.m[i]
+		if e and e.valid and not st.ok[i] then
+			local p = rt_product(def[2])
+			local made = p.type == "fluid" and e.get_fluid_count(p.name) or
+				e.get_inventory(defines.inventory.crafter_output).get_item_count(p.name)
+			if made >= (p.amount or p.amount_min or 1) - 1e-6 then
+				st.ok[i] = true
+			else
+				if e.crafting_progress > 0 and e.crafting_progress < 0.999 then e.crafting_progress = 0.999 end
+				local status
+				for name, v in pairs(defines.entity_status) do if e.status == v then status = name end end
+				pending[#pending + 1] = def[2] .. " (" .. tostring(status) .. ", progress " .. e.crafting_progress .. ", made " .. made .. ")"
+			end
+		end
+	end
+	local n = 0
+	for _ in pairs(st.ok) do n = n + 1 end
+	if #pending == 0 or game.tick > RT_DEADLINE then
+		st.done = true
+		local problems = {}
+		if n < #RT then problems[#problems + 1] = "recipe test: " .. (#RT - n) .. " of " .. #RT .. " recipes made nothing: " .. table.concat(pending, ", ") end
+		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
+		log("DEVCHECK-RUNTIME-RECIPES " .. (#problems == 0 and "ok" or "failed") .. " (" .. n .. " of " .. #RT .. " recipes crafted by tick " .. game.tick .. ")")
+	end
+end
+
 local MOLD_Y = 120
 local MOLD_RECIPE = "glass-alloy-smelter"
+local MOLD_DEADLINE = 900                               -- ticks for the first glass with the mold in (361 needed)
 
 function setup_mold_test(s)
 	local ok, err = pcall(function()
@@ -757,13 +1690,19 @@ function setup_mold_test(s)
 end
 
 script.on_event(defines.events.on_tick, function(event)
+	fuel_window_tick()
+	cooled_load_tick(event.tick)
 	local m = storage.mold_machine
 	if storage.mold_done then return end
+	local function glass_made()
+		return m and m.valid and m.get_inventory(defines.inventory.crafter_output or defines.inventory.assembling_machine_output).get_item_count("glass") or 0
+	end
+	--- phase 2 as soon as the first glass is out, at the latest MOLD_DEADLINE ticks after the mold went in
 	local phase
 	if not storage.mold_phase1 and event.tick >= 60 then
 		phase = 1
 		storage.mold_phase1 = event.tick
-	elseif storage.mold_phase1 and event.tick >= storage.mold_phase1 + 450 then
+	elseif storage.mold_phase1 and (glass_made() > 0 or event.tick >= storage.mold_phase1 + MOLD_DEADLINE) then
 		phase = 2
 		storage.mold_done = true
 	else
@@ -773,7 +1712,7 @@ script.on_event(defines.events.on_tick, function(event)
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
 	expect(m and m.valid, "mold test machine missing")
 	if #problems == 0 then
-		local glass = m.get_inventory(defines.inventory.crafter_output or defines.inventory.assembling_machine_output).get_item_count("glass")
+		local glass = glass_made()
 		local inv = m.get_module_inventory()
 		if phase == 1 then
 			expect(m.disabled_by_script, "mold test: machine without mold is not stopped")
@@ -784,7 +1723,7 @@ script.on_event(defines.events.on_tick, function(event)
 			expect(glass > 0, "mold test: no glass crafted with the mold inserted")
 			expect(inv.get_item_count("mold") == 1, "mold test: mold left the mold slot")
 			expect(m.get_item_count("mold") == 1, "mold test: mold was duplicated or moved")
-			log("DEVCHECK-RUNTIME-MOLD " .. (#problems == 0 and "ok" or "failed") .. " (glass " .. glass .. ")")
+			log("DEVCHECK-RUNTIME-MOLD " .. (#problems == 0 and "ok" or "failed") .. " (glass " .. glass .. " after " .. (event.tick - storage.mold_phase1) .. " ticks)")
 		end
 	end
 	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
@@ -794,11 +1733,38 @@ script.on_event(defines.events.on_tick, function(event)
 	end
 end)
 
+--- The terrain comes from the map seed: trees, rocks, cliffs, water and enemies can be anywhere. The
+--- tests place their entities by script, which ignores all that, but construction robots do not build
+--- a ghost over a tree or on water, so a robot rebuild timed out on some seeds (issue #47). The whole
+--- generated test area is cleared first (ore patches stay, they block nothing).
+local TEST_RADIUS = 12                                     -- chunks around { 0, 0 }; every test lies inside
+local function clear_test_area(s)
+	local r = TEST_RADIUS * 32
+	local area = { { -r, -r }, { r + 32, r + 32 } }
+	local removed, water = 0, {}
+	for _, e in pairs(s.find_entities_filtered{ area = area, force = { "neutral", "enemy" } }) do
+		if e.valid and e.type ~= "resource" then
+			e.destroy()
+			removed = removed + 1
+		end
+	end
+	for _, t in pairs(s.find_tiles_filtered{ area = area, collision_mask = "water_tile" }) do
+		water[#water + 1] = { name = "landfill", position = t.position }
+	end
+	s.set_tiles(water)
+	s.destroy_decoratives{ area = area }
+	s.peaceful_mode = true
+	game.map_settings.enemy_expansion.enabled = false
+	return removed, #water
+end
+
 script.on_init(function()
 	local s = game.surfaces[1]
 	s.always_day = true
-	s.request_to_generate_chunks({ 0, 0 }, 12)
+	s.request_to_generate_chunks({ 0, 0 }, TEST_RADIUS)
 	s.force_generate_chunk_requests()
+	local removed, water = clear_test_area(s)
+	log("DEVCHECK-RUNTIME-SEED " .. s.map_gen_settings.seed .. " (test area cleared: " .. removed .. " entities, " .. water .. " water tiles)")
 	local recipe_for = {}
 	for rn, r in pairs(prototypes.recipe) do recipe_for[r.category] = recipe_for[r.category] or rn end
 	local x, y, placed, with_recipe, fails = -150, -150, 0, 0, {}
@@ -827,7 +1793,13 @@ script.on_init(function()
 	for _, f in pairs(setup_me_network(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_mold_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_autocraft_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_furnace_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fluid_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_recovery_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_fuel_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_cooled_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_recipe_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

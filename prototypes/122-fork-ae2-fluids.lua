@@ -7,7 +7,8 @@
 ---                          the runtime keeps a fluid -> amount table per drive, nothing is
 ---                          stored in an engine fluid box. Picking the drive up moves the
 ---                          contents onto the item (item-with-tags), placing it again restores
----                          them; a destroyed drive loses its fluids.
+---                          them; a destroyed drive's fluids go to the other drives of its
+---                          network or are kept for the next drive placed on the surface.
 ---   * ME Fluid Interface = 1x1 storage tank inside the network. Its GUI selects import
 ---                          (tank -> network) or export (network -> tank, up to a fill level).
 ---                          The network stores fluids by name only, without temperature.
@@ -107,7 +108,9 @@ for i, c in ipairs(CELLS) do
 	data:extend({ item })
 	data.raw.recipe[drive].auto_recycle = false          -- a recycler would void the fluid on the item
 
-	--- take the cells out again (e.g. after the upgrade planner replaced the drive)
+	--- take the cells out again (e.g. after the upgrade planner replaced the drive). Hand crafting
+	--- only: the hand craft event shows the consumed item with its tags, so the runtime can salvage
+	--- the fluid of a loaded drive item; an assembler would consume it without any event.
 	local parts = {
 		{ type = "item", name = "me-drive", amount = 1 },
 		{ type = "item", name = cell, amount = CELLS_PER_DRIVE },
@@ -115,7 +118,7 @@ for i, c in ipairs(CELLS) do
 	if c.extra then parts[#parts + 1] = c.extra end
 	create_recipe{
 		recipe_name = drive .. "-disassembly",
-		category = "crafting-or-assembling-recipes",
+		category = "manual-only-recipes",
 		subgroup = "fork-me-fluid-drives",
 		order = "c" .. order,
 		icon = ICON_FORK .. drive .. ".png",

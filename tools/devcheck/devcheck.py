@@ -24,6 +24,8 @@ zips into a folder and pass --mods-from DIR.
   * a sprite sheet is smaller than its width/height/frame_count need
   * an unlocked recipe cannot be crafted: no machine for its category, an ingredient that can
     never be obtained, or no reachable machine with enough fluid inputs/outputs
+  * an enabled technology cannot be researched and is not in UNRESEARCHABLE_OK (the vanilla
+    armor/equipment techs), or one of the issue #29 QoL techs is neither researchable nor hidden
 It also reports how many technologies are researchable and where progression stops.
 """
 import argparse, json, os, re, shutil, subprocess, sys, tarfile, urllib.parse, urllib.request
@@ -35,6 +37,9 @@ WORK = ROOT / ".devcheck"
 FACTORIO = WORK / "factorio"
 MODS = WORK / "mods"
 LOG = WORK / "last-run.log"
+# `runtime` and `migrate` create their maps with this seed, so a run is reproducible (issue #47);
+# `--seed N` or `--seed random` picks another one, the output prints the seed of every run
+DEFAULT_SEED = 3115102263
 BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails"}
 
 
@@ -112,7 +117,7 @@ def setup(a):
 MOD_NAMES = ("Gregtorio", "gregtorio-continued")   # the mod before and since 0.3.0
 
 
-def prepare_mods(with_runtime=False, gregtorio_zip=None):
+def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False):
     """mods/ = dependency zips + the mod (working copy or a zip) + devcheck helper mods."""
     for p in MODS.iterdir():
         if p.name.startswith(MOD_NAMES + ("zz-gregtorio-devcheck",)) or p.name == "mod-list.json":
@@ -135,6 +140,9 @@ def prepare_mods(with_runtime=False, gregtorio_zip=None):
     if with_runtime:
         (MODS / "zz-gregtorio-devcheck-runtime").symlink_to(HERE / "runtimemod", target_is_directory=True)
         enabled.append("zz-gregtorio-devcheck-runtime")
+    if with_migrate:
+        (MODS / "zz-gregtorio-devcheck-migrate").symlink_to(HERE / "migratemod", target_is_directory=True)
+        enabled.append("zz-gregtorio-devcheck-migrate")
     (MODS / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in enabled]}))
 
 
@@ -161,6 +169,13 @@ def load_errors(log):
     return m.group(1).strip() if m else "unknown error (see .devcheck/last-run.log)"
 
 
+def not_saved(log):
+    """--create runs on_init and then saves; a failed save (e.g. a function in `storage`) keeps the
+    previous map file, so the next run would test an old map"""
+    m = re.search(r"Writing .* failed.*|Error while running event .*on_save.*\n.*", log)
+    return "the map was not saved: " + m.group(0).strip() if m else None
+
+
 # --------------------------------------------------------------------------------------------
 # analysis
 # --------------------------------------------------------------------------------------------
@@ -175,7 +190,8 @@ class Model:
             k = p[0]
             if k == "R":
                 self.R[p[1]] = dict(cat=p[2], en=p[3] == "true", ing=split(p[4]), res=split(p[5]),
-                                    fin=kinds(p[4]).count("fluid"), fout=kinds(p[5]).count("fluid"))
+                                    fin=kinds(p[4]).count("fluid"), fout=kinds(p[5]).count("fluid"),
+                                    hidden=p[6] == "true", hide_craft=p[7] == "true", sg=p[8], group=p[9])
             elif k == "C":
                 self.C[p[1]] = p[3].split(",") if p[3] else []
                 self.CF[p[1]] = (int(p[4]), int(p[5]))
@@ -278,6 +294,47 @@ class Model:
         return out
 
 
+def check_crafting_menu(m, sec):
+    """Issue #49: every recipe that is enabled or unlocked by a technology and whose category has a
+    machine is listed in the crafting menu (not hide_from_player_crafting), except the allow-list
+    FORK_CRAFTING_MENU_HIDDEN of prototypes/198-fork-crafting-menu.lua. Returns (info lines, problems)."""
+    rows = sec.get("CRAFTMENU", [])
+    setting = next((r[1] for r in rows if r[0] == "setting"), "absent")
+    allow = {k: {} for k in ("categories", "subgroups", "recipes")}
+    for r in rows:
+        if r[0] in allow:
+            allow[r[0]][r[1]] = r[2]
+    if setting == "false":
+        return ["skipped: startup setting gregtorio-continued-show-machine-recipes is off"], []
+    machine_cats = {c for e, cats in m.C.items() if e != "character" for c in cats}
+    reach = {r for r, v in m.R.items() if v["en"]}
+    for v in m.T.values():
+        if v["en"]:
+            reach.update(r for r in v["eff"] if r in m.R)
+    shown, kept, problems, tabs = 0, 0, [], {}
+    for r in sorted(reach):
+        v = m.R[r]
+        if v["hidden"]:
+            continue
+        if not v["hide_craft"]:
+            tabs[v["group"]] = tabs.get(v["group"], 0) + 1
+        if v["cat"] not in machine_cats:
+            continue
+        if not v["hide_craft"]:
+            shown += 1
+        elif v["cat"] in allow["categories"] or v["sg"] in allow["subgroups"] or r in allow["recipes"]:
+            kept += 1
+        else:
+            problems.append(f"{r} (category {v['cat']}, subgroup {v['sg']})")
+    stale = [f"{k} {n} (allow-list entry matches nothing)" for k, names in allow.items() for n in names
+             if (k == "recipes" and n not in m.R) or (k == "categories" and not any(v["cat"] == n for v in m.R.values()))
+             or (k == "subgroups" and not any(v["sg"] == n for v in m.R.values()))]
+    info = [f"machine recipes (enabled or unlocked by a technology): {shown} shown, {kept} kept hidden by the "
+            f"allow-list, {len(problems)} hidden without an allow-list entry",
+            "recipes shown per crafting menu tab: " + ", ".join(f"{g} {n}" for g, n in sorted(tabs.items(), key=lambda x: -x[1]))]
+    return info, problems + stale
+
+
 def check_files(sec):
     missing = []
     for path, owner in sec.get("PATHS", []):
@@ -315,6 +372,64 @@ def report(title, items, limit=40):
         print(f"  ... {len(items) - limit} more")
 
 
+# Recipes that must stay unlocked by a researchable technology and craftable in the progression model
+# (issue #35: grades 7 and 8, FPIC/APIC, complex SMDs); the runtime test crafts them once in a machine.
+REQUIRED_RECIPES = [
+    "grade-7-water", "grade-8-water", "quark-creation-catalyst", "fpic-wafer", "apic-wafer", "femto-power-ic",
+    "atto-power-ic", "complex-smd-transistor", "complex-smd-resistor", "complex-smd-capacitor", "complex-smd-diode",
+    "complex-smd-inductor",
+]
+
+
+# Technologies that stay enabled but cannot be researched on purpose: vanilla armor, equipment and
+# military techs whose vanilla prerequisites Gregtorio disables (docs/ROADMAP.md, "Final pass").
+# Every other enabled technology must be researchable.
+UNRESEARCHABLE_OK = [
+    "battery-equipment", "battery-mk2-equipment", "battery-mk3-equipment", "belt-immunity-equipment",
+    "energy-shield-equipment", "energy-shield-mk2-equipment", "exoskeleton-equipment", "explosives",
+    "fission-reactor-equipment", "fusion-reactor", "fusion-reactor-equipment", "mech-armor", "modular-armor",
+    "night-vision-equipment", "personal-roboport-equipment", "personal-roboport-mk2-equipment", "power-armor",
+    "power-armor-mk2", "spidertron",
+]
+# Issue #29: the quality-of-life techs whose vanilla gate is disabled; each must be researchable or hidden
+# (prototypes/103-fork-qol-techs.lua re-gates them onto Gregtorio techs)
+QOL_TECHS = (["bulk-inserter", "stack-inserter", "logistics-3", "turbo-transport-belt",
+              "transport-belt-capacity-1", "transport-belt-capacity-2"]
+             + [f"inserter-capacity-bonus-{i}" for i in range(1, 8)]
+             + [f"worker-robots-speed-{i}" for i in range(1, 8)]
+             + [f"worker-robots-storage-{i}" for i in range(1, 4)])
+
+
+def check_unresearchable(m):
+    """Enabled but unresearchable technologies outside UNRESEARCHABLE_OK, QoL techs that are neither
+    researchable nor hidden, and allow-list entries that are researchable, hidden or gone."""
+    out = []
+    for t in QOL_TECHS:
+        if t not in m.T:
+            out.append(f"{t}: issue #29 technology does not exist")
+        elif m.T[t]["en"] and t not in m.researched:
+            out.append(f"{t}: issue #29 technology is neither researchable nor hidden")
+    for t, v in sorted(m.T.items()):
+        if v["en"] and t not in m.researched and t not in UNRESEARCHABLE_OK and t not in QOL_TECHS:
+            out.append(f"{t}: cannot be researched and is not in UNRESEARCHABLE_OK")
+    for t in UNRESEARCHABLE_OK:
+        if t not in m.T or not m.T[t]["en"] or t in m.researched:
+            out.append(f"{t}: in UNRESEARCHABLE_OK but researchable, hidden or missing (remove the entry)")
+    return out
+
+
+def check_required(m):
+    out = []
+    for r in REQUIRED_RECIPES:
+        if r not in m.R:
+            out.append(f"{r}: recipe does not exist")
+        elif r not in m.unlocked:
+            out.append(f"{r}: not unlocked by a researchable technology")
+        elif not all(x in m.avail for x in m.R[r]["res"]):
+            out.append(f"{r}: products never obtainable")
+    return out
+
+
 def check(a):
     prepare_mods()
     log = factorio("--create", str(WORK / "check-map.zip"))
@@ -337,6 +452,11 @@ def check(a):
     stuck = [f"{t}: blocked by {', '.join(sorted(set(m.blockers(t))))}"
              for t, v in sorted(m.T.items()) if v["en"] and t not in m.researched]
     report("technologies that cannot be researched", stuck, limit=100)
+    unresearchable = check_unresearchable(m)
+    print(f"  intentional (UNRESEARCHABLE_OK): {len(UNRESEARCHABLE_OK)}; issue #29 QoL technologies researchable: "
+          f"{sum(1 for t in QOL_TECHS if t in m.researched)} of {len(QOL_TECHS)}, hidden: "
+          f"{sum(1 for t in QOL_TECHS if t in m.T and not m.T[t]['en'])}")
+    report("unexpected unresearchable technologies", unresearchable)
     if a.techs:
         rx = re.compile(a.techs)
         rows = []
@@ -349,23 +469,42 @@ def check(a):
     report("missing graphics files", files)
     report("sprite sheets too small", sprites)
     report("unlocked but uncraftable recipes", [f"{r}: {why}" for r, why in uncraft])
+    required = check_required(m)
+    print(f"\nrequired recipes (issue #35): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
+    report("required recipes not unlocked or not craftable", required)
+    menu_info, menu = check_crafting_menu(m, sec)
+    print("\ncrafting menu (issue #49):")
+    for line in menu_info:
+        print("  " + line)
+    report("machine recipes hidden from the crafting menu without an allow-list entry", menu)
     if a.locale_out:
         Path(a.locale_out).write_text("\n".join("\t".join(r) for r in sec.get("LOCALE", [])))
         print(f"\nlocale name list written to {a.locale_out} (input for tools/gen_locale.py)")
-    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft)
+    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu or required or unresearchable)
     print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
     return 0 if ok else 1
 
 
+def seed_args(a):
+    if a.seed == "random":
+        return []
+    return ["--map-gen-seed", str(int(a.seed))]
+
+
 def runtime(a):
     prepare_mods(with_runtime=True)
-    log = factorio("--create", str(WORK / "runtime-map.zip"))
+    log = factorio("--create", str(WORK / "runtime-map.zip"), *seed_args(a))
     if load_errors(log):
         print(load_errors(log))
+        return 1
+    if not_saved(log):
+        print(not_saved(log))
         return 1
     placed = re.search(r"DEVCHECK-RUNTIME (placed=.*)", log)
     fails = re.findall(r"DEVCHECK-RUNTIME-FAIL (.*)", log)
     print("runtime setup:", placed.group(1) if placed else "no result")
+    seed = re.search(r"DEVCHECK-RUNTIME-SEED (.*)", log)
+    print("map seed:", seed.group(1) if seed else "unknown")
     log = factorio("--benchmark", str(WORK / "runtime-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
     err = re.search(r"(Error.*|non-recoverable.*)", log)
@@ -377,9 +516,21 @@ def runtime(a):
     print(f"mold test: {mold.group(1) if mold else 'did not run'}")
     autocraft = re.search(r"DEVCHECK-RUNTIME-AUTOCRAFT (.*)", log)
     print(f"autocrafting test: {autocraft.group(1) if autocraft else 'did not run'}")
+    furnace = re.search(r"DEVCHECK-RUNTIME-FURNACE (.*)", log)
+    print(f"furnace pattern test: {furnace.group(1) if furnace else 'did not run'}")
     fluids = re.search(r"DEVCHECK-RUNTIME-FLUIDS (.*)", log)
     print(f"fluid test: {fluids.group(1) if fluids else 'did not run'}")
-    victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (\w+)", log)
+    recovery = re.search(r"DEVCHECK-RUNTIME-RECOVERY (.*)", log)
+    print(f"fluid recovery test: {recovery.group(1) if recovery else 'did not run'}")
+    power = re.search(r"DEVCHECK-RUNTIME-POWER (.*)", log)
+    print(f"power test: {power.group(1) if power else 'did not run'}")
+    fuel = re.search(r"DEVCHECK-RUNTIME-FUEL (.*)", log)
+    print(f"fuel check test: {fuel.group(1) if fuel else 'did not run'}")
+    cooled = re.search(r"DEVCHECK-RUNTIME-COOLED (.*)", log)
+    print(f"cooled fluid test: {cooled.group(1) if cooled else 'did not run'}")
+    recipes = re.search(r"DEVCHECK-RUNTIME-RECIPES (.*)", log)
+    print(f"recipe test: {recipes.group(1) if recipes else 'did not run'}")
+    victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
         fails.append("ME network test did not run (needs --ticks >= 300)")
@@ -389,13 +540,39 @@ def runtime(a):
         fails.append("autocrafting test did not run (needs --ticks >= 1500)")
     elif not autocraft.group(1).startswith("ok"):
         fails.append("autocrafting test failed")
+    if not furnace:
+        fails.append("furnace pattern test did not run (needs --ticks >= 1500)")
+    elif not furnace.group(1).startswith("ok"):
+        fails.append("furnace pattern test failed")
     if not fluids:
         fails.append("fluid test did not run (needs --ticks >= 1500)")
     elif not fluids.group(1).startswith("ok"):
         fails.append("fluid test failed")
+    if not recovery:
+        fails.append("fluid recovery test did not run (needs --ticks >= 1500)")
+    elif not recovery.group(1).startswith("ok"):
+        fails.append("fluid recovery test failed")
+    if not power:
+        fails.append("power test did not run (needs --ticks >= 420)")
+    elif not power.group(1).startswith("ok"):
+        fails.append("power test failed")
+    if not fuel:
+        fails.append("fuel check test did not run (needs --ticks >= 1500)")
+    elif not fuel.group(1).startswith("ok"):
+        fails.append("fuel check test failed")
+    if not cooled:
+        fails.append("cooled fluid test did not run (needs --ticks >= 1500)")
+    elif not cooled.group(1).startswith("ok"):
+        fails.append("cooled fluid test failed")
+    if not recipes:
+        fails.append("recipe test did not run (needs --ticks >= 1500)")
+    elif not recipes.group(1).startswith("ok"):
+        fails.append("recipe test failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, fluid test, victory test)", fails)
+    elif not victory.group(1).startswith("ok"):
+        fails.append("victory test failed")
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, recipe test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
@@ -417,18 +594,43 @@ def zip_from_ref(ref):
 def migrate(a):
     """Create a map with an older version (also "Gregtorio" before 0.3.0), then load and run it with the working copy."""
     old = a.from_zip or zip_from_ref(a.from_ref)
-    prepare_mods(gregtorio_zip=old)
-    log = factorio("--create", str(WORK / "migrate-map.zip"))
+    prepare_mods(gregtorio_zip=old, with_migrate=True)
+    log = factorio("--create", str(WORK / "migrate-map.zip"), *seed_args(a))
+    print(f"map seed: {'random' if a.seed == 'random' else a.seed}")
     if load_errors(log):
         print("could not create the map with the old version:\n" + load_errors(log))
         return 1
-    prepare_mods()
+    if not_saved(log):
+        print(not_saved(log))
+        return 1
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
+    print(f"old save with loaded fluid drives: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-POWER (.*)", log)
+    print(f"old save with a reactor on steam: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-TURBINE (.*)", log)
+    print(f"old save with a plasma turbine: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-PATTERNS (.*)", log)
+    print(f"old save with pattern providers: {setup.group(1) if setup else 'no result'}")
+    prepare_mods(with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
+    fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
     print(f"old save loaded with working copy: {'ok, ' + ran.group(0) if ran else 'FAILED'}")
+    print(f"fluid drives of the old save: {fluids.group(1) if fluids else 'no result'}")
+    power = re.search(r"DEVCHECK-MIGRATE-POWER (.*)", log)
+    print(f"reactor on steam in the old save: {power.group(1) if power else 'no result'}")
+    turbine = re.search(r"DEVCHECK-MIGRATE-TURBINE (.*)", log)
+    print(f"plasma turbine of the old save: {turbine.group(1) if turbine else 'no result'}")
+    patterns = re.search(r"DEVCHECK-MIGRATE-PATTERNS (.*)", log)
+    print(f"pattern providers of the old save: {patterns.group(1) if patterns else 'no result'}")
+    for f in re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log):
+        print("  - " + f)
     if not ran:
         print(load_errors(log) or "")
-    return 0 if ran else 1
+    ok = ran and fluids and not fluids.group(1).startswith("failed") and power and not power.group(1).startswith("failed") \
+        and turbine and not turbine.group(1).startswith("failed") \
+        and patterns and not patterns.group(1).startswith("failed")
+    return 0 if ok else 1
 
 
 def main():
@@ -443,15 +645,18 @@ def main():
     c.add_argument("--techs", help="regex: list matching technologies and whether they are researchable")
     r = sub.add_parser("runtime")
     r.add_argument("--ticks", type=int, default=1500)
+    r.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     m = sub.add_parser("migrate")
     src = m.add_mutually_exclusive_group(required=True)
     src.add_argument("--from-zip", help="older Gregtorio_x.y.z.zip to create the save with")
     src.add_argument("--from-ref", help="git tag or commit of an older version, e.g. 0e935ba (upstream 0.1.9)")
     m.add_argument("--ticks", type=int, default=300)
+    m.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     al = sub.add_parser("all")
     al.add_argument("--ticks", type=int, default=1500)
     al.add_argument("--locale-out")
     al.add_argument("--techs")
+    al.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed of the runtime map or `random` (default {DEFAULT_SEED})")
     a = ap.parse_args()
     if a.cmd == "setup":
         return setup(a)

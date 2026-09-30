@@ -7,8 +7,15 @@
 ---     drives that stand in that logistic network; the network is looked up when a total is asked
 ---     for, so merging or splitting networks needs no bookkeeping.
 ---   * Picking a drive up moves its contents onto the item (item-with-tags, tag "fork_me_fluids"),
----     placing that item brings them back. A drive that is destroyed (or removed by a script
----     without mining) loses its fluids, like a tank that burns down.
+---     placing that item brings them back.
+---   * Recovery: fluid that loses its drive (a destroyed drive, a drive removed by a script, a
+---     loaded drive item taken apart by hand) goes into the other fluid drives of the logistic
+---     network at that position as far as they have room; the rest is kept as recovered fluid
+---     (storage.fork_me_fluids.recovered: per surface and force, entries with the position). The
+---     next fluid drive placed in that network takes it over (a robot rebuilding the ghost of a
+---     destroyed drive does that; if no network covers the position any more, any drive placed on
+---     the surface), or a drive's "take over" button. Only a deleted surface loses recovered
+---     fluid. Every step is reported to the force (chat, with a map position).
 ---   * ME Fluid Interface: a small storage tank. In import mode its content is moved into the
 ---     network, in export mode it is filled with a chosen fluid up to a chosen level. Pumps and
 ---     pipes connect to it like to any tank. Mode, fluid and level live in
@@ -59,11 +66,12 @@ local function state()
 	local s = storage.fork_me_fluids
 	if not s then
 		s = {
-			drives = {},        -- unit_number -> { entity, name, capacity, contents = { fluid -> amount }, used }
+			drives = {},        -- unit_number -> { entity, name, capacity, contents = { fluid -> amount }, used, surface, force }
 			interfaces = {},    -- unit_number -> { entity, mode = "import"|"export", fluid, level, status }
 			ilist = {},         -- unit numbers of interfaces (round robin)
 			icursor = 1,
 			gui = {},           -- player_index -> { entity, sig } while a drive GUI is open
+			recovered = {},     -- surface index -> force name -> { { position, contents = { fluid -> amount } } }
 		}
 		storage.fork_me_fluids = s
 	end
@@ -74,6 +82,14 @@ local function network_of(entity)
 	return entity.surface.find_logistic_network_by_position(entity.position, entity.force)
 end
 M.network_of = network_of
+
+--- fluid names of a { fluid -> amount } table in a fixed order (the same result on every peer)
+local function sorted_names(t)
+	local names = {}
+	for name in pairs(t) do names[#names + 1] = name end
+	table.sort(names)
+	return names
+end
 
 --- "1234" or "12.3" for the GUI
 function M.format(amount)
@@ -90,7 +106,8 @@ local function drive_record(s, entity)
 	local unit = entity.unit_number
 	local rec = s.drives[unit]
 	if not rec then
-		rec = { entity = entity, name = entity.name, capacity = drive_capacity(entity.name) or 0, contents = {}, used = 0 }
+		rec = { entity = entity, name = entity.name, capacity = drive_capacity(entity.name) or 0, contents = {}, used = 0,
+			surface = entity.surface.index, force = entity.force.name, position = entity.position }
 		s.drives[unit] = rec
 	end
 	return rec
@@ -105,6 +122,118 @@ local function rec_add(rec, name, amount)
 	rec.used = used
 end
 
+--------------------------------------------------------------------------------
+--- recovered fluid: per surface and force a list of entries { position, contents }, the position
+--- being where the fluid lost its drive. A placed drive takes over the entries of its own logistic
+--- network and those whose network no longer exists.
+--------------------------------------------------------------------------------
+
+local MAX_ENTRIES = 32              -- per surface and force; more are merged into the last one
+
+local function recovered(s)
+	local r = s.recovered
+	if not r then                   -- saves from before the recovery
+		r = {}
+		s.recovered = r
+	end
+	return r
+end
+
+--- the entry list of a surface and force (nil if there is none and `create` is not set)
+local function entries_of(s, surface_index, force_name, create)
+	local r = recovered(s)
+	local per = r[surface_index]
+	if not per then
+		if not create then return nil end
+		per = {}
+		r[surface_index] = per
+	end
+	local list = per[force_name]
+	if not list and create then
+		list = {}
+		per[force_name] = list
+	end
+	return list
+end
+
+--- the logistic network an entry belongs to now (nil: none covers its position any more)
+local function entry_network(surface, force, entry)
+	return surface.find_logistic_network_by_position(entry.position, force)
+end
+
+local function add_to(t, contents)
+	for _, name in pairs(sorted_names(contents)) do t[name] = (t[name] or 0) + contents[name] end
+end
+
+--- keep `contents` for recovery; an entry of the same network (or the same spot) takes it
+local function pool_add(s, surface, force, position, contents)
+	local list = entries_of(s, surface.index, force.name, true)
+	local pos = { x = position.x or position[1], y = position.y or position[2] }
+	local net = surface.find_logistic_network_by_position(pos, force)
+	local into
+	for _, entry in ipairs(list) do
+		local n = net and entry_network(surface, force, entry)
+		if (n and n.network_id == net.network_id) or (entry.position.x == pos.x and entry.position.y == pos.y) then
+			into = entry
+			break
+		end
+	end
+	if not into and #list >= MAX_ENTRIES then into = list[#list] end
+	if not into then
+		into = { position = pos, contents = {} }
+		list[#list + 1] = into
+	end
+	add_to(into.contents, contents)
+end
+
+--- { fluid -> amount } over all entries of a surface and force (nil if there are none)
+local function pool_sum(s, surface_index, force_name)
+	local list = entries_of(s, surface_index, force_name)
+	if not list then return nil end
+	local out = {}
+	for _, entry in ipairs(list) do add_to(out, entry.contents) end
+	return next(out) and out or nil
+end
+
+--- drop empty entries and lists
+local function pool_tidy(s, surface_index, force_name)
+	local r = recovered(s)
+	local per = r[surface_index]
+	if not per then return end
+	local list = per[force_name]
+	if list then
+		for i = #list, 1, -1 do
+			if not next(list[i].contents) then table.remove(list, i) end
+		end
+		if #list == 0 then per[force_name] = nil end
+	end
+	if not next(per) then r[surface_index] = nil end
+end
+
+--- "Name [gps=x,y,surface]" for the chat
+local function where(entity_name, surface, position)
+	local proto = prototypes.entity[entity_name] or prototypes.item[entity_name]
+	return { "", proto and proto.localised_name or entity_name,
+		string.format(" [gps=%d,%d,%s]", math.floor(position.x or position[1]), math.floor(position.y or position[2]), surface.name) }
+end
+
+--- a report goes to `target` (a player or a force)
+local function report(target, message)
+	if target and target.valid then target.print(message) end
+end
+
+--- A drive record whose entity vanished without an event (another mod's destroy(), surface.clear()):
+--- its contents go into the recovery pool of the surface it stood on.
+local function rescue_orphan(s, rec)
+	if not (next(rec.contents) and rec.surface and rec.force) then return end
+	local surface = game.get_surface(rec.surface)
+	local force = game.forces[rec.force]
+	if not (surface and force) then return end      -- the surface is gone: on_pre_surface_deleted reported it
+	pool_add(s, surface, force, rec.position or { 0, 0 }, rec.contents)
+	report(force, { "fork-me-fluids.drive-vanished", { "entity-name." .. rec.name }, M.fluid_list(rec.contents, 8), surface.name })
+	rec.contents, rec.used = {}, 0
+end
+
 --- drives standing in `net`, oldest first; records of removed entities are dropped on the way
 local function drives_in(s, net)
 	local list = {}
@@ -113,8 +242,11 @@ local function drives_in(s, net)
 	for unit, rec in pairs(s.drives) do
 		local e = rec.entity
 		if not e.valid then
+			rescue_orphan(s, rec)
 			s.drives[unit] = nil
 		else
+			rec.surface, rec.force = e.surface.index, e.force.name     -- saves from before the recovery, changed forces
+			if not rec.position then rec.position = e.position end
 			local n = network_of(e)
 			if n and n.network_id == id then list[#list + 1] = rec end
 		end
@@ -181,6 +313,98 @@ local function list_remove(list, name, amount)
 	end
 	if left < EPS then left = 0 end
 	return amount - left
+end
+
+--- Fluid that lost its drive: into the fluid drives of the logistic network at `position` (as far as
+--- they have room), the rest into the recovery pool of the surface and force. Returns the amounts
+--- moved into drives and the amounts pooled ({ fluid -> amount } each).
+local function salvage(s, contents, surface, force, position)
+	local moved, pooled = {}, {}
+	local net = position and surface.find_logistic_network_by_position(position, force)
+	local list = drives_in(s, net)
+	for _, name in pairs(sorted_names(contents)) do
+		local amount = contents[name]
+		if type(amount) == "number" and amount > EPS and prototypes.fluid[name] then
+			local put = list_insert(list, name, amount)
+			if put > 0 then moved[name] = put end
+			if amount - put > EPS then pooled[name] = amount - put end
+		end
+	end
+	if next(pooled) then pool_add(s, surface, force, position, pooled) end
+	return moved, pooled
+end
+
+--- the chat lines for a salvage: `what` names the event ({ "fork-me-fluids.salvage-destroyed", where })
+local function report_salvage(target, what, moved, pooled)
+	if next(moved) then report(target, { "fork-me-fluids.salvage-moved", what, M.fluid_list(moved, 8) }) end
+	if next(pooled) then report(target, { "fork-me-fluids.salvage-pooled", what, M.fluid_list(pooled, 8) }) end
+end
+
+--- A drive takes over recovered fluid of its surface and force, as far as it has room: the entries of
+--- its own logistic network and those whose network no longer exists, or every entry with `any` (the
+--- "take over" button). Returns the amounts taken ({ fluid -> amount }, empty for none).
+local function take_recovered(s, rec, entity, any)
+	local surface, force = entity.surface, entity.force
+	local list = entries_of(s, surface.index, force.name)
+	local taken = {}
+	if not list then return taken end
+	local net = network_of(entity)
+	for _, entry in ipairs(list) do
+		if rec.capacity - rec.used <= EPS then break end
+		local ok = any
+		if not ok then
+			local n = entry_network(surface, force, entry)
+			ok = not n or (net and n.network_id == net.network_id)
+		end
+		if ok then
+			for _, name in pairs(sorted_names(entry.contents)) do
+				local amount = entry.contents[name]
+				local room = rec.capacity - rec.used
+				if not prototypes.fluid[name] then
+					entry.contents[name] = nil     -- the fluid no longer exists
+				elseif room > EPS then
+					local put = math.min(room, amount)
+					rec_add(rec, name, put)
+					taken[name] = (taken[name] or 0) + put
+					entry.contents[name] = amount - put > EPS and amount - put or nil
+				end
+			end
+		end
+	end
+	pool_tidy(s, surface.index, force.name)
+	if next(taken) then
+		local left = pool_sum(s, surface.index, force.name)
+		report(force, { "fork-me-fluids.recovered-taken", where(entity.name, surface, entity.position), M.fluid_list(taken, 8) })
+		if left then report(force, { "fork-me-fluids.recovered-left", M.fluid_list(left, 8) }) end
+	end
+	return taken
+end
+
+--- The fluid on the drive items in `inventory` (e.g. the items a hand craft consumes) is salvaged at
+--- `position` and removed from the items. `target` (player or force) gets the report.
+--- Returns the amounts moved into drives and pooled.
+local function salvage_items(s, inventory, surface, force, position, target)
+	local contents = {}
+	for i = 1, #inventory do
+		local stack = inventory[i]
+		if stack.valid_for_read and drive_capacity(stack.name) and stack.is_item_with_tags then
+			local tags = stack.tags
+			local stored = tags and tags[TAG]
+			if type(stored) == "table" then
+				for name, amount in pairs(stored) do
+					if type(name) == "string" and type(amount) == "number" and amount > 0 then
+						contents[name] = (contents[name] or 0) + amount * stack.count
+					end
+				end
+				--- a fresh stack: no tags, no description (the fluid is not on the item any more)
+				stack.set_stack{ name = stack.name, count = stack.count, quality = stack.quality }
+			end
+		end
+	end
+	if not next(contents) then return {}, {} end
+	local moved, pooled = salvage(s, contents, surface, force, position)
+	report_salvage(target, { "fork-me-fluids.salvage-item" }, moved, pooled)
+	return moved, pooled
 end
 
 --- { fluid -> amount } stored in the network
@@ -357,13 +581,21 @@ local function drive_gui_refresh(player, g)
 	for name, amount in pairs(rec.contents) do names[#names + 1] = name end
 	table.sort(names)
 	for i, name in ipairs(names) do sig[i] = name .. "=" .. rec.contents[name] end
-	sig = table.concat(sig, ",") .. "|" .. (net and net.network_id or "-")
+	local pool = pool_sum(s, entity.surface.index, entity.force.name)
+	local pool_sig = {}
+	for i, name in ipairs(pool and sorted_names(pool) or {}) do pool_sig[i] = name .. "=" .. pool[name] end
+	sig = table.concat(sig, ",") .. "|" .. (net and net.network_id or "-") .. "|" .. table.concat(pool_sig, ",")
 	if g.sig == sig then return true end
 	g.sig = sig
 	find(frame, "fork_mefd_used").caption = { "fork-me-fluids.drive-used", format(rec.used), format(rec.capacity) }
 	local status = find(frame, "fork_mefd_status")
 	status.caption = net and "" or { "fork-me-fluids.status-no-network" }
 	status.visible = net == nil
+	local pool_row = find(frame, "fork_mefd_pool_row")
+	if pool_row then                           -- (not in a window opened before the recovery existed)
+		pool_row.visible = pool ~= nil
+		if pool then find(frame, "fork_mefd_pool").caption = { "fork-me-fluids.recovered-waiting", M.fluid_list(pool, 8) } end
+	end
 	local grid = find(frame, "fork_mefd_grid")
 	grid.clear()
 	for _, name in ipairs(names) do
@@ -402,6 +634,14 @@ local function open_drive(player, entity)
 	local status = frame.add{ type = "label", name = "fork_mefd_status" }
 	status.style.single_line = false
 	status.style.maximal_width = 320
+	--- recovered fluid of the surface (destroyed drives, taken apart drive items), with a take over button
+	local pool_row = frame.add{ type = "flow", name = "fork_mefd_pool_row", direction = "horizontal" }
+	pool_row.style.vertical_align = "center"
+	local pool = pool_row.add{ type = "label", name = "fork_mefd_pool" }
+	pool.style.single_line = false
+	pool.style.maximal_width = 240
+	pool_row.add{ type = "button", name = "fork_mefd_take", caption = { "fork-me-fluids.recovered-take" },
+		tooltip = { "fork-me-fluids.recovered-take-tooltip" } }
 	local scroll = frame.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = 300
 	scroll.style.minimal_width = 320
@@ -609,7 +849,8 @@ function M.on_built(entity, tags)
 	if not (entity and entity.valid) then return end
 	local s = state()
 	if drive_capacity(entity.name) then
-		unpack_drive(s, entity, tags)
+		local rec = unpack_drive(s, entity, tags)
+		take_recovered(s, rec, entity)
 	elseif entity.name == interface_name() then
 		register_interface(s, entity)
 	end
@@ -621,7 +862,8 @@ function M.on_mined(entity, buffer)
 	if not (entity and entity.valid) then return end
 	local s = state()
 	local unit = entity.unit_number
-	if s.drives[unit] then
+	local rec = s.drives[unit]
+	if rec then
 		if buffer and buffer.valid then
 			for i = 1, #buffer do
 				local stack = buffer[i]
@@ -632,6 +874,10 @@ function M.on_mined(entity, buffer)
 			end
 		end
 		s.drives[unit] = nil
+		if next(rec.contents) then             -- no drive item in the buffer (another mod changed it): salvage
+			local moved, pooled = salvage(s, rec.contents, entity.surface, entity.force, entity.position)
+			report_salvage(entity.force, { "fork-me-fluids.salvage-removed", where(entity.name, entity.surface, entity.position) }, moved, pooled)
+		end
 	elseif s.interfaces[unit] then
 		local held = entity.fluidbox[1]
 		local net = held and held.amount > EPS and network_of(entity)
@@ -642,13 +888,22 @@ function M.on_mined(entity, buffer)
 	end
 end
 
---- destroyed or removed without mining: the fluids are lost
-function M.on_removed(entity)
+--- destroyed (`died`) or removed by a script without mining: a drive's fluids go into the other fluid
+--- drives of its network, the rest into the recovery pool of the surface (an interface's tank content
+--- is lost like that of any tank)
+function M.on_removed(entity, died)
 	if not (entity and entity.valid) then return end
 	local s = state()
 	local unit = entity.unit_number
-	if s.drives[unit] then
-		s.drives[unit] = nil
+	local rec = s.drives[unit]
+	if rec then
+		s.drives[unit] = nil                   -- first: the drive itself takes nothing
+		if next(rec.contents) then
+			local moved, pooled = salvage(s, rec.contents, entity.surface, entity.force, entity.position)
+			local what = { died and "fork-me-fluids.salvage-destroyed" or "fork-me-fluids.salvage-removed",
+				where(entity.name, entity.surface, entity.position) }
+			report_salvage(entity.force, what, moved, pooled)
+		end
 	elseif s.interfaces[unit] then
 		drop_interface(s, unit)
 	end
@@ -739,14 +994,92 @@ local MINED_FILTER = { { filter = "type", type = "simple-entity-with-force" }, {
 for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
 	script.on_event(defines.events[name], function(event) M.on_mined(event.entity, event.buffer) end, MINED_FILTER)
 end
-for _, name in pairs({ "on_entity_died", "script_raised_destroy" }) do
-	script.on_event(defines.events[name], function(event) M.on_removed(event.entity) end, ENTITY_FILTER)
+script.on_event(defines.events.on_entity_died, function(event) M.on_removed(event.entity, true) end, ENTITY_FILTER)
+script.on_event(defines.events.script_raised_destroy, function(event) M.on_removed(event.entity, false) end, ENTITY_FILTER)
+
+--- a hand craft that consumes a loaded drive item (the disassembly recipe, hand crafting only): the
+--- fluid is salvaged at the player's position before the item is gone (from control.lua)
+function M.on_pre_player_crafted_item(event)
+	local items = event.items
+	local player = game.get_player(event.player_index)
+	if not (items and items.valid and player) then return end
+	salvage_items(state(), items, player.surface, player.force, player.position, player)
+end
+
+--- A cancelled hand craft returns its items. The fluid of a drive item among them was salvaged when
+--- the craft was queued, so a drive item that comes back with its tags must not carry it twice.
+function M.on_player_cancelled_crafting(event)
+	local items = event.items
+	if not (items and items.valid) then return end
+	for i = 1, #items do
+		local stack = items[i]
+		if stack.valid_for_read and drive_capacity(stack.name) and stack.is_item_with_tags then
+			local tags = stack.tags
+			if tags and tags[TAG] then stack.set_stack{ name = stack.name, count = stack.count, quality = stack.quality } end
+		end
+	end
+end
+
+--- A surface is about to be deleted (from control.lua): its drives and its recovered fluid are lost; the
+--- forces are told what.
+function M.on_pre_surface_deleted(surface_index)
+	local s = storage.fork_me_fluids
+	if not s then return end
+	local surface = game.get_surface(surface_index)
+	local lost = {}                            -- force name -> { fluid -> amount }
+	local function add(force_name, contents)
+		local t = lost[force_name] or {}
+		lost[force_name] = t
+		for name, amount in pairs(contents) do t[name] = (t[name] or 0) + amount end
+	end
+	for unit, rec in pairs(s.drives) do
+		local e = rec.entity
+		local on_it = e.valid and e.surface.index == surface_index or (not e.valid and rec.surface == surface_index)
+		if on_it then
+			if next(rec.contents) then add(e.valid and e.force.name or rec.force, rec.contents) end
+			s.drives[unit] = nil
+		end
+	end
+	local per = recovered(s)[surface_index]
+	if per then
+		for force_name, list in pairs(per) do
+			for _, entry in ipairs(list) do add(force_name, entry.contents) end
+		end
+		recovered(s)[surface_index] = nil
+	end
+	for _, force_name in pairs(sorted_names(lost)) do
+		local force = game.forces[force_name]
+		if force and next(lost[force_name]) then
+			report(force, { "fork-me-fluids.surface-lost", surface and surface.name or tostring(surface_index), M.fluid_list(lost[force_name], 8) })
+		end
+	end
+end
+
+--- The drive of an open drive GUI takes over the recovered fluid of its surface ("take over" button).
+function M.on_gui_click(event)
+	local el = event.element
+	if not (el and el.valid and el.name == "fork_mefd_take") then return false end
+	local player = game.get_player(event.player_index)
+	local s = state()
+	local g = player and s.gui[player.index]
+	if g and g.entity.valid then
+		local rec = s.drives[g.entity.unit_number] or drive_record(s, g.entity)
+		if not next(take_recovered(s, rec, g.entity, true)) then
+			player.print({ "fork-me-fluids.recovered-no-room" })
+		end
+		g.sig = nil
+		drive_gui_refresh(player, g)
+	end
+	return true
 end
 
 --- Rebuild the registries from the world. Drive contents are kept (matched by unit number),
 --- interface settings too; open GUIs are closed.
 function M.on_configuration_changed()
 	local s = state()
+	for _, rec in pairs(s.drives) do
+		if not rec.entity.valid then rescue_orphan(s, rec) end
+	end
 	local names = {}
 	for name in pairs(mod_data().drives) do names[#names + 1] = name end
 	names[#names + 1] = interface_name()
@@ -756,7 +1089,8 @@ function M.on_configuration_changed()
 			local unit = e.unit_number
 			if drive_capacity(e.name) then
 				local old = s.drives[unit]
-				local rec = { entity = e, name = e.name, capacity = drive_capacity(e.name), contents = {}, used = 0 }
+				local rec = { entity = e, name = e.name, capacity = drive_capacity(e.name), contents = {}, used = 0,
+					surface = e.surface.index, force = e.force.name, position = e.position }
 				if old and old.contents then
 					local list = {}
 					for n in pairs(old.contents) do list[#list + 1] = n end
@@ -785,6 +1119,30 @@ function M.on_configuration_changed()
 			end
 		end
 	end
+	--- recovered fluid: fluids that no longer exist are dropped; surfaces and forces that are gone take
+	--- theirs with them (deleting a surface reports it, see on_pre_surface_deleted)
+	local kept = {}
+	for surface_index, per in pairs(recovered(s)) do
+		if game.get_surface(surface_index) then
+			for force_name, list in pairs(per) do
+				if game.forces[force_name] then
+					local entries = {}
+					for _, entry in ipairs(list) do
+						local clean = {}
+						for name, amount in pairs(entry.contents or {}) do
+							if prototypes.fluid[name] and type(amount) == "number" and amount > EPS then clean[name] = amount end
+						end
+						if next(clean) and entry.position then entries[#entries + 1] = { position = entry.position, contents = clean } end
+					end
+					if #entries > 0 then
+						kept[surface_index] = kept[surface_index] or {}
+						kept[surface_index][force_name] = entries
+					end
+				end
+			end
+		end
+	end
+	s.recovered = kept
 	s.drives, s.interfaces, s.ilist, s.icursor = drives, interfaces, {}, 1
 	for unit in pairs(interfaces) do s.ilist[#s.ilist + 1] = unit end
 	table.sort(s.ilist)
@@ -841,6 +1199,30 @@ remote.add_interface("gregtorio-me-fluids", {
 	pack_drive = function(entity, stack) return pack_drive(state(), entity, stack) end,
 	--- what placing a drive item does: `tags` are the item's tags
 	unpack_drive = function(entity, tags) M.on_built(entity, tags) end,
+	--- recovered fluid ({ fluid -> amount }, all entries) of a surface (LuaSurface, name or index) and force
+	recovered = function(surface, force)
+		local index = type(surface) == "number" and surface
+		if not index then
+			local sf = game.get_surface(type(surface) == "userdata" and surface.index or surface)
+			index = sf and sf.index
+		end
+		local force_name = type(force) == "userdata" and force.name or force or "player"
+		return index and pool_sum(state(), index, force_name) or {}
+	end,
+	--- what a hand craft does with the drive items it consumes: `inventory` holds them, the fluid is
+	--- salvaged at `position` on `surface` for `force`; returns moved, pooled
+	salvage_items = function(inventory, surface, force, position)
+		local sf = game.get_surface(type(surface) == "userdata" and surface.index or surface)
+		local fo = game.forces[type(force) == "userdata" and force.name or force or "player"]
+		if not (sf and fo and inventory and inventory.valid) then return {}, {} end
+		return salvage_items(state(), inventory, sf, fo, position, fo)
+	end,
+	--- what the "take over" button of a drive's GUI does; returns the amounts taken
+	take_recovered = function(entity)
+		if not (entity and entity.valid and drive_capacity(entity.name)) then return {} end
+		local s = state()
+		return take_recovered(s, s.drives[entity.unit_number] or drive_record(s, entity), entity, true)
+	end,
 })
 
 return M
