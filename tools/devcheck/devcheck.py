@@ -370,6 +370,27 @@ def report(title, items, limit=40):
         print(f"  ... {len(items) - limit} more")
 
 
+# Recipes that must stay unlocked by a researchable technology and craftable in the progression model
+# (issue #35: grades 7 and 8, FPIC/APIC, complex SMDs); the runtime test crafts them once in a machine.
+REQUIRED_RECIPES = [
+    "grade-7-water", "grade-8-water", "quark-creation-catalyst", "fpic-wafer", "apic-wafer", "femto-power-ic",
+    "atto-power-ic", "complex-smd-transistor", "complex-smd-resistor", "complex-smd-capacitor", "complex-smd-diode",
+    "complex-smd-inductor",
+]
+
+
+def check_required(m):
+    out = []
+    for r in REQUIRED_RECIPES:
+        if r not in m.R:
+            out.append(f"{r}: recipe does not exist")
+        elif r not in m.unlocked:
+            out.append(f"{r}: not unlocked by a researchable technology")
+        elif not all(x in m.avail for x in m.R[r]["res"]):
+            out.append(f"{r}: products never obtainable")
+    return out
+
+
 def check(a):
     prepare_mods()
     log = factorio("--create", str(WORK / "check-map.zip"))
@@ -404,6 +425,9 @@ def check(a):
     report("missing graphics files", files)
     report("sprite sheets too small", sprites)
     report("unlocked but uncraftable recipes", [f"{r}: {why}" for r, why in uncraft])
+    required = check_required(m)
+    print(f"\nrequired recipes (issue #35): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
+    report("required recipes not unlocked or not craftable", required)
     menu_info, menu = check_crafting_menu(m, sec)
     print("\ncrafting menu (issue #49):")
     for line in menu_info:
@@ -412,7 +436,7 @@ def check(a):
     if a.locale_out:
         Path(a.locale_out).write_text("\n".join("\t".join(r) for r in sec.get("LOCALE", [])))
         print(f"\nlocale name list written to {a.locale_out} (input for tools/gen_locale.py)")
-    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu)
+    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu or required)
     print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
     return 0 if ok else 1
 
@@ -460,6 +484,8 @@ def runtime(a):
     print(f"fuel check test: {fuel.group(1) if fuel else 'did not run'}")
     cooled = re.search(r"DEVCHECK-RUNTIME-COOLED (.*)", log)
     print(f"cooled fluid test: {cooled.group(1) if cooled else 'did not run'}")
+    recipes = re.search(r"DEVCHECK-RUNTIME-RECIPES (.*)", log)
+    print(f"recipe test: {recipes.group(1) if recipes else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     if not me:
@@ -494,11 +520,15 @@ def runtime(a):
         fails.append("cooled fluid test did not run (needs --ticks >= 1500)")
     elif not cooled.group(1).startswith("ok"):
         fails.append("cooled fluid test failed")
+    if not recipes:
+        fails.append("recipe test did not run (needs --ticks >= 1500)")
+    elif not recipes.group(1).startswith("ok"):
+        fails.append("recipe test failed")
     if not victory:
         fails.append("victory test did not run (needs --ticks >= 1500)")
     elif not victory.group(1).startswith("ok"):
         fails.append("victory test failed")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, victory test)", fails)
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, recipe test, victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
