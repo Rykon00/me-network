@@ -397,6 +397,15 @@ REQUIRED_RECIPES = [
 ]
 
 
+# Issues #39 and #36: the draft recipes the draft guard may still hide (docs/ROADMAP.md, "Drafts and endgame
+# materials"); any other FORK-DRAFT recipe is a problem. Removed drafts are deleted in
+# prototypes/137-fork-endgame-materials.lua (FORK-REMOVED in the log) and must not come back as drafts.
+DRAFTS_OK = [
+    # need the materials of issue #36 (super coolant needs callisto ice, the space cell dense fluxed electrum)
+    "super-coolant", "1080k-space-cell", "1080k-super-coolant-cell",
+]
+
+
 # Technologies that stay enabled but cannot be researched on purpose: vanilla armor, equipment and
 # military techs whose vanilla prerequisites Gregtorio disables (docs/ROADMAP.md, "Final pass").
 # Every other enabled technology must be researchable.
@@ -460,6 +469,9 @@ def check(a):
         print("\n" + err)
         return 1
     print(f"draft recipes hidden by the draft guard: {len(drafts)} (FORK-DRAFT in .devcheck/last-run.log)")
+    removed = re.findall(r"FORK-REMOVED: (\S+ \S+)", log)
+    print(f"drafts removed for good: {len(removed)} prototypes (FORK-REMOVED)")
+    new_drafts = [d for d in drafts if d not in DRAFTS_OK]
     m = Model(sec["DUMP"])
     files, sprites, uncraft = check_files(sec), check_sprites(sec), m.uncraftable()
     print(f"\nresearchable technologies: {len(m.researched)} of {sum(1 for v in m.T.values() if v['en'])}")
@@ -486,8 +498,9 @@ def check(a):
     report("sprite sheets too small", sprites)
     report("unlocked but uncraftable recipes", [f"{r}: {why}" for r, why in uncraft])
     required = check_required(m)
-    print(f"\nrequired recipes (issue #35): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
+    print(f"\nrequired recipes (issues #35, #36, #39): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
     report("required recipes not unlocked or not craftable", required)
+    report("draft recipes outside DRAFTS_OK (issue #39)", new_drafts)
     menu_info, menu = check_crafting_menu(m, sec)
     print("\ncrafting menu (issue #49):")
     for line in menu_info:
@@ -496,7 +509,8 @@ def check(a):
     if a.locale_out:
         Path(a.locale_out).write_text("\n".join("\t".join(r) for r in sec.get("LOCALE", [])))
         print(f"\nlocale name list written to {a.locale_out} (input for tools/gen_locale.py)")
-    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu or required or unresearchable)
+    ok = not (files or [s for s in sprites if not s.startswith("(")] or uncraft or menu or required or unresearchable
+              or new_drafts)
     print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
     return 0 if ok else 1
 
