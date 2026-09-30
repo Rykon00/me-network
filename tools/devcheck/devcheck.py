@@ -117,14 +117,30 @@ def setup(a):
 MOD_NAMES = ("Gregtorio", "gregtorio-continued")   # the mod before and since 0.3.0
 
 
+def link_dir(link, target):
+    """Directory link; on Windows without symlink rights a junction (never follow it when deleting)."""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+
+
+def remove_path(p):
+    if p.is_symlink() or (hasattr(p, "is_junction") and p.is_junction()):
+        os.rmdir(p) if os.name == "nt" and p.is_dir() else p.unlink()
+    elif p.is_file():
+        p.unlink()
+    else:
+        shutil.rmtree(p)
+
+
 def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False):
     """mods/ = dependency zips + the mod (working copy or a zip) + devcheck helper mods."""
     for p in MODS.iterdir():
         if p.name.startswith(MOD_NAMES + ("zz-gregtorio-devcheck",)) or p.name == "mod-list.json":
-            if p.is_symlink() or p.is_file():
-                p.unlink()
-            else:
-                shutil.rmtree(p)
+            remove_path(p)
     if gregtorio_zip:
         import zipfile
         with zipfile.ZipFile(gregtorio_zip) as z:
@@ -133,21 +149,21 @@ def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False):
         shutil.copy2(gregtorio_zip, MODS / f"{info['name']}_{info['version']}.zip")
     else:
         info = json.loads((ROOT / "info.json").read_text(encoding="utf-8"))
-        (MODS / info["name"]).symlink_to(ROOT, target_is_directory=True)
-    (MODS / "zz-gregtorio-devcheck").symlink_to(HERE / "checkmod", target_is_directory=True)
+        link_dir(MODS / info["name"], ROOT)
+    link_dir(MODS / "zz-gregtorio-devcheck", HERE / "checkmod")
     enabled = ["base", "space-age", "quality", "elevated-rails", info["name"], "zz-gregtorio-devcheck"]
     enabled += [z.name.rsplit("_", 1)[0] for z in MODS.glob("*.zip") if not z.name.startswith(MOD_NAMES)]
     if with_runtime:
-        (MODS / "zz-gregtorio-devcheck-runtime").symlink_to(HERE / "runtimemod", target_is_directory=True)
+        link_dir(MODS / "zz-gregtorio-devcheck-runtime", HERE / "runtimemod")
         enabled.append("zz-gregtorio-devcheck-runtime")
     if with_migrate:
-        (MODS / "zz-gregtorio-devcheck-migrate").symlink_to(HERE / "migratemod", target_is_directory=True)
+        link_dir(MODS / "zz-gregtorio-devcheck-migrate", HERE / "migratemod")
         enabled.append("zz-gregtorio-devcheck-migrate")
     (MODS / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in enabled]}))
 
 
 def factorio(*args):
-    binary = FACTORIO / "bin/x64/factorio"
+    binary = FACTORIO / ("bin/x64/factorio.exe" if os.name == "nt" else "bin/x64/factorio")
     if not binary.exists():
         sys.exit("run `devcheck.py setup` first")
     r = subprocess.run([str(binary), "--mod-directory", str(MODS), *args], capture_output=True, text=True)
