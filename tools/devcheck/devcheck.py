@@ -389,21 +389,23 @@ def report(title, items, limit=40):
 
 
 # Recipes that must stay unlocked by a researchable technology and craftable in the progression model
-# (issue #35: grades 7 and 8, FPIC/APIC, complex SMDs); the runtime test crafts them once in a machine.
+# (issue #35: grades 7 and 8, FPIC/APIC, complex SMDs, which the runtime test also crafts once in a machine;
+# issues #39 and #36: the drafts made real and the new endgame materials).
 REQUIRED_RECIPES = [
     "grade-7-water", "grade-8-water", "quark-creation-catalyst", "fpic-wafer", "apic-wafer", "femto-power-ic",
     "atto-power-ic", "complex-smd-transistor", "complex-smd-resistor", "complex-smd-capacitor", "complex-smd-diode",
     "complex-smd-inductor",
+    # issues #39 and #36: the drafts made real and the endgame materials
+    "lapotronic-energy-orb-cluster", "high-density-plutonium", "plutonium-based-liquid-fuel", "super-coolant",
+    "1080k-super-coolant-cell", "molten-fluxed-electrum", "fine-fluxed-electrum-wire", "bedrockium-cable",
+    "bedrockium-plate", "molten-quantium", "quantium-cable",
 ]
 
 
 # Issues #39 and #36: the draft recipes the draft guard may still hide (docs/ROADMAP.md, "Drafts and endgame
 # materials"); any other FORK-DRAFT recipe is a problem. Removed drafts are deleted in
 # prototypes/137-fork-endgame-materials.lua (FORK-REMOVED in the log) and must not come back as drafts.
-DRAFTS_OK = [
-    # need the materials of issue #36 (super coolant needs callisto ice, the space cell dense fluxed electrum)
-    "super-coolant", "1080k-space-cell", "1080k-super-coolant-cell",
-]
+DRAFTS_OK = []
 
 
 # Technologies that stay enabled but cannot be researched on purpose: vanilla armor, equipment and
