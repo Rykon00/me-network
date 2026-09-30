@@ -1,7 +1,10 @@
 --- Test helper for `devcheck.py migrate`. On the new map made with the older version (on_init) it builds a
 --- small ME network with two loaded 1k fluid drives and a loaded drive outside any network. After the save
 --- is loaded with the working copy it checks that every drive kept its contents, then destroys a drive: its
---- fluid must go into the other drive and the recovered fluid (issue #26) with nothing lost.
+--- fluid must go into the other drive and the recovered fluid (issue #26) with nothing lost. A version with
+--- recovered fluid also gets an entry outside any network in the old save; it must be kept, and after 5000
+--- water are taken out of the network the drives must pull the destroyed drive's recovered water in by
+--- themselves (issue #43).
 --- Results are logged as DEVCHECK-MIGRATE-FLUIDS lines. Versions without fluid drives are skipped.
 --- It also builds a large naquadah reactor full of steam under load, which must be stopped after the
 --- update (DEVCHECK-MIGRATE-POWER, issue #25), and a LuV plasma turbine on helium plasma under full load
@@ -16,6 +19,7 @@ local DRIVE = "me-fluid-drive-1k"
 local Y = 40
 local TOTAL = { water = 40000, chlorine = 10000 }      -- drive 1: 32000 water, drive 2: 8000 water + 10000 chlorine
 local LONE = { water = 500 }
+local OLD_POOL, OLD_POOL_AT = { chlorine = 700 }, { 60.5, Y + 0.5 }   -- recovered fluid of the old save, no network there
 
 local function near(a, b) return math.abs((a or 0) - (b or 0)) <= 1e-3 end
 local function same(a, b)
@@ -179,6 +183,23 @@ local function check_patterns()
 	log("DEVCHECK-MIGRATE-PATTERNS " .. (#problems == 0 and "ok" or "failed"))
 end
 
+--- the second part of the fluid check: the recovered water is pulled in by the fluid step (every 15 ticks)
+function check_pull()
+	local st = storage.pull
+	if st.done or game.tick < st.tick + 30 then return end
+	st.done = true
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local d2 = st.drive
+	local totals, pool = remote.call(F, "totals", d2), remote.call(F, "recovered", d2.surface, "player")
+	expect(same(totals, { water = 22000, chlorine = 10000 }), "network after the pull-in " .. serpent.line(totals))
+	expect(same(pool, st.pool), "recovered fluid after the pull-in " .. serpent.line(pool) .. ", expected " .. serpent.line(st.pool))
+	for _, p in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL " .. p) end
+	log("DEVCHECK-MIGRATE-FLUIDS " .. (#problems == 0 and "ok" or "failed")
+		.. " (on_configuration_changed " .. (storage.config_changed and "ran" or "did not run") .. ", old recovered fluid "
+		.. (storage.old_pool and "kept" or "not in this version") .. ", pulled in)")
+end
+
 script.on_init(function()
 	setup_power()
 	setup_turbine()
@@ -206,6 +227,15 @@ script.on_init(function()
 	local ok = near(remote.call(F, "insert", d1, "water", TOTAL.water), TOTAL.water)
 		and near(remote.call(F, "insert", d1, "chlorine", TOTAL.chlorine), TOTAL.chlorine)
 	remote.call(F, "unpack_drive", lone, { fork_me_fluids = LONE })
+	if remote.interfaces[F].salvage_items then
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = DRIVE, count = 1 }
+		inv[1].tags = { fork_me_fluids = OLD_POOL }
+		remote.call(F, "salvage_items", inv, s, "player", OLD_POOL_AT)
+		inv.destroy()
+		storage.old_pool = remote.call(F, "recovered", s, "player")
+		ok = ok and same(storage.old_pool, OLD_POOL)
+	end
 	storage.drives = {}
 	for _, d in pairs({ d1, d2, lone }) do
 		storage.drives[#storage.drives + 1] = { entity = d, contents = remote.call(F, "drive", d).contents }
@@ -224,6 +254,7 @@ script.on_nth_tick(30, function(event)
 		storage.turbine_checked = true
 		check_turbine()
 	end
+	if storage.pull then return check_pull() end
 	if storage.checked then return end
 	storage.checked = true
 	check_power()
@@ -245,11 +276,22 @@ script.on_nth_tick(30, function(event)
 	if d1.valid and d2.valid then
 		expect(same(remote.call(F, "totals", d2), TOTAL), "network holds " .. serpent.line(remote.call(F, "totals", d2)))
 		if remote.interfaces[F].recovered then
+			local old = storage.old_pool or {}
+			expect(same(remote.call(F, "recovered", d2.surface, "player"), old), "recovered fluid of the old save " .. serpent.line(remote.call(F, "recovered", d2.surface, "player")))
 			--- drive 2 has room for 14000 of drive 1's water, the other 18000 are recovered
 			d1.die()
 			local totals, pool = remote.call(F, "totals", d2), remote.call(F, "recovered", d2.surface, "player")
 			expect(same(totals, { water = 22000, chlorine = 10000 }), "network after the destroyed drive " .. serpent.line(totals))
-			expect(same(pool, { water = 18000 }), "recovered fluid " .. serpent.line(pool))
+			local want = { water = 18000 }
+			for k, v in pairs(old) do want[k] = (want[k] or 0) + v end
+			expect(same(pool, want), "recovered fluid " .. serpent.line(pool))
+			--- 5000 water leave the network (what an export does): drive 2 pulls 5000 recovered water in
+			expect(near(remote.call(F, "remove", d2, "water", 5000), 5000), "could not take water out")
+			if #problems == 0 then
+				want.water = 13000
+				storage.pull = { tick = event.tick, drive = d2, pool = want }
+				return
+			end
 		end
 	end
 	for _, p in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL " .. p) end
