@@ -18,8 +18,12 @@
 --- import and export totals, a drive picked up (contents on the item) and placed again by script and by
 --- robots, a reported fluid shortfall, and jobs with a fluid ingredient, a fluid product and both.
 --- Fluid recovery (issue #26): a destroyed drive (other drives take what fits, the rest is pooled and a
---- robot-rebuilt drive takes it over), the upgrade planner (fluid stays on the old item), the cells taken
---- out of a loaded item by hand (inside and outside a network) and a deleted surface with a pool.
+--- robot-rebuilt drive takes it over), the cells taken out of a loaded item by hand (inside and outside a
+--- network) and a deleted surface with a pool. Issue #43: the upgrade planner (robots) moves a loaded
+--- drive's fluid into the new drive and the old item carries none; existing drives pull recovered fluid in
+--- once an export interface has made room; a robot downgrade into a too small drive puts the rest into
+--- the network, then into the recovered fluid; a hand fast replace (the engine's event order, called
+--- through the remote interface: no player in a headless run) moves the fluid into the new drive.
 --- Molds (prototypes/150-fork-molds.lua): an LV alloy smelter with a mold recipe must stop
 --- without a mold, run with a mold in its mold slot and keep the mold there.
 --- Endgame power (prototypes/136-fork-power.lua): a plasma turbine and a naquadah reactor under load
@@ -976,6 +980,7 @@ local RC = {
 }
 local RC_UPGRADE = "me-fluid-drive-4k"
 local RC_OUTSIDE = { 120.5, RC_Y + 0.5 }                -- no logistic network here
+local RC_IFACE = { 8.5, RC_Y + 6.5 }                    -- export interface of the pull-in test
 
 function setup_recovery_test(s)
 	local fails = {}
@@ -1090,8 +1095,9 @@ function recovery_test()
 			expect(same(remote.call(F, "totals", ref), st.before), "network after the rebuild " .. serpent.line(remote.call(F, "totals", ref)))
 			expect(same(remote.call(F, "drive", rebuilt).contents, { water = 8000 }), "rebuilt drive " .. serpent.line(remote.call(F, "drive", rebuilt)))
 			if #problems > 0 then return finish_test() end
-			--- 3) the upgrade planner on the full drive 2: its fluid stays on the old drive item
+			--- 3) the upgrade planner on the full drive 2 (robots): its fluid goes into the new drive
 			local d2 = ent(RC.d2)
+			st.events = {}
 			expect(d2.order_upgrade{ target = RC_UPGRADE, force = "player" }, "order_upgrade refused")
 			return next_phase("upgrade")
 		end
@@ -1100,20 +1106,25 @@ function recovery_test()
 			.. ref.get_item_count(FL_DRIVE) .. "; " .. robot_report(s, { RC.d1[2], RC.d1[3] }, FL_DRIVE) .. ")")
 	elseif phase == "upgrade" then
 		local new = ent(RC.d2, RC_UPGRADE)
-		local stack, carried = loaded_item(FL_DRIVE)
-		if new and stack then
+		--- done when the new drive stands and the robot has brought the old drive item back
+		if new and ref.get_item_count(FL_DRIVE) >= 1 then
 			local d = remote.call(F, "drive", new)
-			expect(d and d.capacity == 128000 and d.used == 0, "upgraded drive " .. serpent.line(d))
-			expect(same(carried, { water = 22000, chlorine = 10000 }), "old drive item after the upgrade carries " .. serpent.line(carried))
-			expect(same(remote.call(F, "totals", ref), { water = 8000 }), "network after the upgrade " .. serpent.line(remote.call(F, "totals", ref)))
+			expect(d and d.capacity == 128000 and same(d.contents, { water = 22000, chlorine = 10000 }), "upgraded drive " .. serpent.line(d))
+			expect(loaded_item(FL_DRIVE) == nil, "the old drive item carries fluid after the upgrade " .. serpent.line(select(2, loaded_item(FL_DRIVE))))
+			expect(same(remote.call(F, "totals", ref), st.before), "network after the upgrade " .. serpent.line(remote.call(F, "totals", ref)))
 			expect(next(pool()) == nil, "the upgrade pooled fluid " .. serpent.line(pool()))
-			--- 4) the cells are taken out of the loaded item by hand (what the craft event does): the
-			--- fluid goes into the drives of the network at the player's position, the item loses its tags
+			expect(next(remote.call(F, "replacing")) == nil, "fluid still held for a replacement " .. serpent.line(remote.call(F, "replacing")))
+			log("DEVCHECK-RUNTIME-UPGRADE-EVENTS upgrade " .. table.concat(st.events, " "))
+			local expected = { water = 30000, chlorine = 10000 }
+			--- 4) the cells are taken out of a loaded item by hand (what the craft event does): the fluid
+			--- goes into the drives of the network at the player's position, the item loses its tags
 			local inv = game.create_inventory(1)
-			inv[1].transfer_stack(stack)
+			inv[1].set_stack{ name = FL_DRIVE, count = 1 }
+			inv[1].tags = { fork_me_fluids = { water = 1000, chlorine = 500 } }
 			local moved, pooled = remote.call(F, "salvage_items", inv, s, "player", { RC.idrive[2], RC.idrive[3] })
-			expect(same(moved, { water = 22000, chlorine = 10000 }) and next(pooled) == nil, "disassembly in the network: moved " .. serpent.line(moved) .. ", pooled " .. serpent.line(pooled))
-			expect(same(remote.call(F, "totals", ref), st.before), "network after the disassembly " .. serpent.line(remote.call(F, "totals", ref)))
+			expect(same(moved, { water = 1000, chlorine = 500 }) and next(pooled) == nil, "disassembly in the network: moved " .. serpent.line(moved) .. ", pooled " .. serpent.line(pooled))
+			expected = { water = 31000, chlorine = 10500 }
+			expect(same(remote.call(F, "totals", ref), expected), "network after the disassembly " .. serpent.line(remote.call(F, "totals", ref)))
 			local tags = inv[1].valid_for_read and inv[1].tags or {}
 			expect(inv[1].valid_for_read and inv[1].name == FL_DRIVE and not tags.fork_me_fluids, "the disassembled item still carries fluid " .. serpent.line(tags))
 			--- 5) the same outside any network: everything is pooled, a drive's take over empties the pool
@@ -1124,13 +1135,13 @@ function recovery_test()
 			expect(same(pool(), { water = 500 }), "recovered fluid after the disassembly outside " .. serpent.line(pool()))
 			local taken = remote.call(F, "take_recovered", new)
 			expect(same(taken, { water = 500 }) and next(pool()) == nil, "take over: " .. serpent.line(taken) .. ", left " .. serpent.line(pool()))
-			expect(near(count("water"), 30500), "water after the take over " .. count("water"))
+			expect(near(count("water"), 31500), "water after the take over " .. count("water"))
 			inv.destroy()
 			--- 6) a loaded drive removed by another mod without an event: the next lookup pools its fluid
 			local silent = s.create_entity{ name = FL_DRIVE, position = RC_OUTSIDE, force = "player", raise_built = true }
 			remote.call(F, "unpack_drive", silent, { fork_me_fluids = { water = 300 } })
 			silent.destroy()
-			expect(near(count("water"), 30500), "water after the silent removal " .. count("water"))
+			expect(near(count("water"), 31500), "water after the silent removal " .. count("water"))
 			expect(same(pool(), { water = 300 }), "recovered fluid after the silent removal " .. serpent.line(pool()))
 			taken = remote.call(F, "take_recovered", new)
 			expect(same(taken, { water = 300 }) and next(pool()) == nil, "take over after the silent removal: " .. serpent.line(taken))
@@ -1155,12 +1166,110 @@ function recovery_test()
 	elseif phase == "surface" then
 		if not game.get_surface(st.other) then
 			expect(next(remote.call(F, "recovered", st.other, "player")) == nil, "the deleted surface keeps recovered fluid")
-			expect(same(remote.call(F, "totals", ref), { water = 30800, chlorine = 10000 }), "network at the end " .. serpent.line(remote.call(F, "totals", ref)))
-			return finish_test("ghost " .. (st.engine_ghost and "by the engine" or "by the test") .. ", whole test " .. (game.tick - st.started) .. " ticks")
+			expect(same(remote.call(F, "totals", ref), { water = 31800, chlorine = 10500 }), "network after the deleted surface " .. serpent.line(remote.call(F, "totals", ref)))
+			--- 8) existing drives pull recovered fluid in: the network is filled up, 3000 chlorine of a
+			--- disassembly find no room and are pooled; an export interface then takes 5000 water out
+			local capacity, used = remote.call(F, "capacity", ref)
+			expect(near(remote.call(F, "insert", ref, "water", capacity - used), capacity - used), "could not fill the network")
+			local inv = game.create_inventory(1)
+			inv[1].set_stack{ name = FL_DRIVE, count = 1 }
+			inv[1].tags = { fork_me_fluids = { chlorine = 3000 } }
+			local moved, pooled = remote.call(F, "salvage_items", inv, s, "player", { RC.idrive[2], RC.idrive[3] })
+			inv.destroy()
+			expect(next(moved) == nil and same(pooled, { chlorine = 3000 }), "disassembly into a full network: moved " .. serpent.line(moved) .. ", pooled " .. serpent.line(pooled))
+			local iface = s.create_entity{ name = "me-fluid-interface", position = RC_IFACE, force = "player", raise_built = true }
+			expect(iface and remote.call(F, "set_interface", iface, "export", "water", 5000), "no export interface")
+			if #problems > 0 then return finish_test() end
+			st.all = { water = 31800 + capacity - used, chlorine = 13500 }   -- drives + interface + pool from here on
+			return next_phase("pullin")
 		end
 		timeout_after(120, "deleting the surface")
+	elseif phase == "pullin" then
+		local iface = s.find_entity("me-fluid-interface", RC_IFACE)
+		local function all()
+			local out = remote.call(F, "totals", ref)
+			for name, amount in pairs(pool()) do out[name] = (out[name] or 0) + amount end
+			local held = iface and iface.get_fluid_count("water") or 0
+			if held > 0 then out.water = (out.water or 0) + held end
+			return out
+		end
+		expect(same(all(), st.all), "fluid not conserved while exporting and pulling in: " .. serpent.line(all()) .. ", expected " .. serpent.line(st.all))
+		if #problems > 0 then return finish_test() end
+		if next(pool()) == nil and iface and near(iface.get_fluid_count("water"), 5000) then
+			local capacity, used = remote.call(F, "capacity", ref)
+			expect(near(capacity - used, 2000), "room after the pull-in " .. (capacity - used))
+			st.pullin_ticks = game.tick - st.phase_tick
+			--- 9) the upgrade planner downgrades the full 4k drive (128000) to a 1k (32000): the new drive
+			--- takes 32000, the network's 2000 of room the next, the rest is recovered fluid
+			local big = ent(RC.d2, RC_UPGRADE)
+			st.big_used = remote.call(F, "drive", big).used
+			st.room = capacity - used
+			st.events = {}
+			expect(big.order_upgrade{ target = FL_DRIVE, force = "player" }, "order_upgrade (downgrade) refused")
+			return next_phase("downgrade")
+		end
+		timeout_after(300, "pulling the recovered chlorine in (pool " .. serpent.line(pool()) .. ", interface "
+			.. (iface and iface.get_fluid_count("water") or -1) .. ")")
+	elseif phase == "downgrade" then
+		local small = ent(RC.d2, FL_DRIVE)
+		local iface = s.find_entity("me-fluid-interface", RC_IFACE)
+		if small and ref.get_item_count(RC_UPGRADE) >= 1 then
+			local d = remote.call(F, "drive", small)
+			expect(d and near(d.used, 32000), "downgraded drive " .. serpent.line(d))
+			expect(loaded_item(RC_UPGRADE) == nil, "the old 4k drive item carries fluid after the downgrade")
+			local rest = 0
+			for _, amount in pairs(pool()) do rest = rest + amount end
+			expect(near(rest, st.big_used - 32000 - st.room), "recovered after the downgrade " .. rest .. ", expected " .. (st.big_used - 32000 - st.room))
+			local capacity, used = remote.call(F, "capacity", ref)
+			expect(near(capacity, used), "the network is not full after the downgrade " .. used .. "/" .. capacity)
+			expect(next(remote.call(F, "replacing")) == nil, "fluid still held for a replacement " .. serpent.line(remote.call(F, "replacing")))
+			log("DEVCHECK-RUNTIME-UPGRADE-EVENTS downgrade " .. table.concat(st.events, " "))
+			--- 10) a hand fast replace of the rebuilt 1k drive by a 4k drive, in the engine's event order:
+			--- on_pre_build of the player at that spot, on_player_mined_entity (buffer: the old item), the
+			--- old entity is gone, on_built_entity of the new drive. The new drive takes the old drive's fluid
+			--- and then the recovered fluid of its network.
+			local d1 = ent(RC.d1)
+			local old = remote.call(F, "drive", d1).contents
+			local buffer = game.create_inventory(1)
+			buffer.insert{ name = FL_DRIVE, count = 1 }
+			remote.call(F, "pre_build", 1, s, { x = RC.d1[2], y = RC.d1[3] })
+			remote.call(F, "player_mined", d1, buffer, 1)
+			expect(same(remote.call(F, "replacing"), old), "held for the fast replace " .. serpent.line(remote.call(F, "replacing")) .. ", drive held " .. serpent.line(old))
+			local tags = buffer[1].valid_for_read and buffer[1].tags or {}
+			expect(buffer[1].valid_for_read and not tags.fork_me_fluids, "the replaced drive item carries fluid " .. serpent.line(tags))
+			buffer.destroy()
+			d1.destroy()
+			local hand = s.create_entity{ name = RC_UPGRADE, position = { RC.d1[2], RC.d1[3] }, force = "player" }
+			remote.call(F, "unpack_drive", hand, nil)
+			local h = remote.call(F, "drive", hand)
+			for name, amount in pairs(old) do
+				expect(h.contents[name] and h.contents[name] >= amount - FL_EPS, "the fast replaced drive lost " .. name .. ": " .. serpent.line(h.contents))
+			end
+			expect(next(pool()) == nil, "recovered fluid left after the fast replace " .. serpent.line(pool()))
+			expect(next(remote.call(F, "replacing")) == nil, "fluid still held after the fast replace")
+			local out = remote.call(F, "totals", ref)
+			out.water = (out.water or 0) + (iface and iface.get_fluid_count("water") or 0)
+			expect(same(out, st.all), "fluid not conserved at the end: " .. serpent.line(out) .. ", expected " .. serpent.line(st.all))
+			return finish_test("ghost " .. (st.engine_ghost and "by the engine" or "by the test") .. ", pull-in " .. st.pullin_ticks
+				.. " ticks, whole test " .. (game.tick - st.started) .. " ticks")
+		end
+		timeout_after(600, "robots downgrading the drive (" .. robot_report(s, { RC.d2[2], RC.d2[3] }, FL_DRIVE) .. ")")
 	end
 end
+
+--- the engine's event order of a robot upgrade, logged for docs/AE2.md ("Upgrades")
+local function note_upgrade_event(what)
+	return function(event)
+		local st = storage.fluid_rec
+		local e = event.entity
+		if not (st and st.events and e and e.valid and e.name:find("^me%-fluid%-drive")) then return end
+		local marked = (what ~= "built") and tostring(e.to_be_upgraded()) or "-"
+		st.events[#st.events + 1] = string.format("%s:%s@%d(unit %d, marked %s)", what, e.name, game.tick, e.unit_number, marked)
+	end
+end
+script.on_event(defines.events.on_robot_pre_mined, note_upgrade_event("pre_mined"))
+script.on_event(defines.events.on_robot_mined_entity, note_upgrade_event("mined"))
+script.on_event(defines.events.on_robot_built_entity, note_upgrade_event("built"))
 
 --- Endgame power (prototypes/136-fork-power.lua, scripts/fork-power.lua): a LuV large plasma turbine
 --- with helium plasma and a turbine output hatch next to it, and a UV large naquadah reactor with

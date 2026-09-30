@@ -111,7 +111,8 @@ Step by step:
 
 1. Place ME Fluid Drives inside the network area (ME Controller or roboport coverage), like ME
    Drives. The storage tab of the ME Terminal shows `Fluids: used of capacity` as soon as a drive
-   is there. The upgrade planner swaps in bigger drives (read "Picking a drive up" below first).
+   is there. The upgrade planner (or fast replace by hand) swaps in bigger drives and keeps their
+   fluid (see "Upgrading a drive" below).
 2. **Import:** place an ME Fluid Interface inside the area and connect pipes to it. Import is
    the default mode: everything in the pipes and tanks connected to the interface goes into the
    network. Pipes and tanks connected **without a pump** in between form one fluid segment with
@@ -133,20 +134,27 @@ Step by step:
 
 **Picking a drive up:** the contents travel on the drive item and are listed in the item's
 tooltip; placing that item brings them back (by hand, by robots, from a ghost of a
-deconstructed drive, on a space platform). The upgrade planner and fast replace leave the fluid
-on the **old** drive item, the new drive starts empty: place the old drive item again inside the
-network to get its fluid back (checked for robots: deconstruction and the upgrade planner). Picking
-up a fluid interface moves what it holds back into the network (as far as the drives have room).
+deconstructed drive, on a space platform; checked for robots). Picking up a fluid interface moves
+what it holds back into the network (as far as the drives have room).
+
+**Upgrading a drive** (the upgrade planner with robots, also on a space platform, or fast replace by
+hand: placing another drive onto a drive) moves its fluid into the **new** drive. If the new drive is
+smaller and cannot hold all of it, the rest goes into the other fluid drives of the network, and what
+still does not fit becomes recovered fluid (see below); the chat says which. The old drive item comes
+back without fluid.
 
 **A destroyed drive** (biters, an explosion, a script) loses nothing:
 
 1. The other fluid drives of its network take its fluid, as far as they have room.
 2. What does not fit (or everything, if the drive stood outside any network) is kept as
    **recovered fluid** of that surface, together with the place it came from.
-3. The next fluid drive placed in the same network takes the recovered fluid over, as far as it
-   has room. Robots rebuilding the ghost of the destroyed drive do exactly that, so a network with
-   construction robots and a spare drive item repairs itself. If no network covers that place any
-   more (the roboports burnt down too), the next fluid drive placed anywhere on the surface takes it.
+3. The fluid drives of the same network take the recovered fluid over by themselves as soon as
+   they have room (an export took fluid out, a drive was upgraded or added), a few entries every
+   quarter second; the chat reports it once when all of an entry is back. A fluid drive placed in
+   that network takes it over at once, as far as it has room. Robots rebuilding the ghost of the
+   destroyed drive do exactly that, so a network with construction robots and a spare drive item
+   repairs itself. If no network covers that place any more (the roboports burnt down too), the
+   recovered fluid waits for the next fluid drive placed anywhere on the surface.
 4. The "open GUI" key on any fluid drive shows the recovered fluid of the surface with a
    **Take over** button, which moves all of it (from any network) into that drive.
 
@@ -200,7 +208,14 @@ force, more are merged into the last one. Networks have no stable identity (the 
 when networks merge or split, and an attack often takes the roboports with it), so an entry stores
 its position and the network is looked up when a drive is placed: the drive takes the entries whose
 position lies in its own network, or in no network at all. Placing a drive restores the item's
-tags first, then takes recovered fluid. The drive GUI's button takes every entry of the surface.
+tags first, then the contents of a drive it replaced (see **Upgrades**), then takes recovered fluid.
+The drive GUI's button takes every entry of the surface. The fluid step also pulls entries into the
+drives that already stand in their network: `RECOVERED_PER_STEP` (4) entries per step, round robin
+over every surface and force (cursor `rcursor`), each into the drives of the network its position
+lies in now (the per-step drive list cache of the interfaces, so a network's drives are listed once
+per step), with the same `insert`. Entries without a network or without room there are skipped. An
+entry sums what it gave away in `moved`; when it is empty it is reported once with that sum and
+dropped.
 A drive record whose entity became invalid without any event is salvaged into an entry at its
 stored position the next time a network total is computed (records carry surface, force and
 position; records from older saves get them on the fly). `on_pre_surface_deleted` drops the
@@ -223,6 +238,28 @@ network does not hold the fluid, another fluid blocks the tank) is shown in the 
 
 Fluids are stored by name only. One temperature per fluid keeps totals, export and hand-over
 unambiguous; the price is the temperature rule above.
+
+### Upgrades
+
+Factorio 2.0 does not tell a script which entity replaced which: the built events have no
+"replaced entity" field and there is no upgrade event that carries both entities
+(`on_marked_for_upgrade` only marks). The old drive is mined and the new one built at the same
+position of the same surface and force in the same tick, so the script links them by **spot**. The
+runtime test logs the robot event order (`DEVCHECK-RUNTIME-UPGRADE-EVENTS` in the log):
+
+| Path | Events | The mined drive counts as replaced when |
+|---|---|---|
+| Upgrade planner, robots (bigger or smaller drive) | `on_robot_mined_entity` (old), then `on_robot_built_entity` (new), same tick; no `on_robot_pre_mined` | `entity.to_be_upgraded()` is still true in the mined event (a deconstruction gives false) |
+| Upgrade planner on a space platform | `on_space_platform_mined_entity`, then `on_space_platform_built_entity` | the same (`to_be_upgraded()`) |
+| Fast replace by hand (also onto a drive marked for upgrade) | `on_pre_build` (player, position of the new entity), `on_player_mined_entity` (old), `on_built_entity` (new), same tick | the same player had an `on_pre_build` in this tick whose position lies on the mined drive |
+
+A drive that counts as replaced puts nothing onto its item. Its contents are held in
+`storage.fork_me_fluids.replacing["surface:x:y"]` (with force, tick and name), and the drive built at
+that spot takes them in `on_built` (any build path), as far as it has room; the rest goes through
+`salvage` (the network at that spot, then the recovered fluid) and is reported. Held contents that no
+drive took (the build did not happen) are salvaged the same way by the next fluid step, so nothing is
+lost. Should the hand path ever raise the mined event before `on_pre_build`, the drive would not count
+as replaced and its fluid would go onto the old item as before: no loss and no duplication either.
 
 ### Patterns
 
@@ -342,7 +379,8 @@ Removed entities:
 * 8 provider rescans per step, planning only on user actions (terminal GUI: while a craft item is
   selected, once per second from the cache).
 * The fluid step every 15 ticks handles at most 8 interfaces (one `remove_fluid` or
-  `insert_fluid` each) and the open drive and interface panels. A network total loops over the
+  `insert_fluid` each), at most 4 recovered entries (nothing when there is no recovered fluid) and
+  the open drive and interface panels. A network total loops over the
   fluid drives (a few hundred at most, once per network and step), never over tanks or pipes.
 * No per-tick loops, no loops over the whole network. State lives in `storage.fork_ae2` and
   `storage.fork_me_fluids`; GUI state (selected resource, amount) lives in the GUI elements.
@@ -358,18 +396,22 @@ drives and interfaces in the world, keeps drive contents by unit number (clamped
 and interface settings, and closes open fluid panels. Recovered fluid is created lazily as well;
 the rebuild drops entries of fluids, surfaces or forces that no longer exist. Loaded fluid drives
 of an older save keep their contents (`devcheck.py migrate` builds such a save with the old
-version and checks it).
+version and checks it). The layout of `storage.fork_me_fluids` is unchanged; the pull-in cursor, the
+held contents of replaced drives and the players' last build spots are added lazily (held contents
+never outlive a tick; a configuration change salvages any that are left). Recovered fluid of an older
+save is kept and pulled into its network's drives like new entries (`migrate --from-ref v0.3.1`).
 
 ## Limits and open points
 
 * One temperature per fluid: stored by name, exported at the default temperature. Hot steam loses
   its heat; recipes that need another temperature are not patterns.
 * Drive contents are not part of blueprints: a drive built from a blueprint starts empty, only
-  the item's tags carry fluid. A destroyed drive's fluid is recovered (see **Fluids**), but only
-  a newly placed drive or the Take over button brings recovered fluid back; existing drives do not
-  pull it in when they get room.
-* The upgrade planner and fast replace leave the fluid on the old drive item (it is not moved into
-  the new drive).
+  the item's tags carry fluid. A destroyed drive's fluid is recovered (see **Fluids**): the drives
+  of its network pull it in when they have room (4 entries per quarter second), a newly placed drive
+  takes it at once, the Take over button from any network.
+* Upgrades are linked by spot and tick (see **Upgrades**). The robot upgrade and downgrade run in
+  the engine in the headless test; the hand fast replace is tested through the same functions in the
+  engine's order (no player in a benchmark run) and is untested in the real game, like the chat reports.
 * No per-drive limits on fluid types (no partitioning, no filters, unlike AE2 cells): every drive
   takes every fluid; `insert` prefers drives that already hold it.
 * The export level applies to the interface's own box; pipes and tanks connected without a pump
@@ -423,10 +465,20 @@ empty machines, and that a reactor mined by robots while it holds a job's chlori
 
 A third network tests the recovery: two loaded 1k drives, one of them destroyed (the other takes
 what fits, the rest becomes recovered fluid, totals conserved), its ghost rebuilt by robots (the new
-drive takes the recovered fluid over), the upgrade planner on a loaded drive (the old item keeps
-the fluid, the new drive is empty), the cells taken out of that item inside the network (all fluid
-back in the drives, the item without tags) and outside of any network (all recovered, then taken
-over), a loaded drive removed without an event, and a destroyed drive on a second surface that is
-then deleted. `devcheck.py migrate --from-ref v0.3.0` builds loaded fluid drives with 0.3.0 and
-checks them (and the recovery) after the update.
+drive takes the recovered fluid over), the upgrade planner on a loaded drive (robots: the new 4k
+drive holds all of the fluid, the old item comes back into storage without tags), the cells taken out
+of a loaded item inside the network (all fluid in the drives, the item without tags) and outside of
+any network (all recovered, then taken over), a loaded drive removed without an event, and a
+destroyed drive on a second surface that is then deleted. Then the pull-in (issue #43): the network is
+filled up, a disassembly's chlorine is recovered (no room), an export interface takes 5000 water out,
+and the drives must pull the chlorine in by themselves (drives + interface + recovered fluid conserved
+at every check). The upgrade planner then downgrades the full 4k drive to a 1k (robots): the new drive
+holds 32000, the network's last room is filled, the rest is recovered, the old 4k item has no tags.
+Last, a hand fast replace of the other drive by a 4k (`on_pre_build`, the mined event with the old
+item in its buffer, then the build, in the engine's order through the remote interface): the old item
+has no tags, the new drive holds the old drive's fluid and then the recovered fluid of its network,
+and the whole amount is conserved. `devcheck.py migrate --from-ref v0.3.0` builds loaded fluid drives
+with 0.3.0 and checks them (and the recovery) after the update; from v0.3.1 on the old save also holds
+recovered fluid, which must be kept, and after 5000 water leave the network the recovered water of a
+destroyed drive must be pulled in.
 See `tools/devcheck/README.md`.
