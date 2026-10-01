@@ -10,11 +10,11 @@ The rework comes in three steps:
 | Step | Content | State |
 |---|---|---|
 | **R1** | the new core: cable graph, controller, drives with cell slots, cells with their contents in tags, the storage API, the terminal, the ME Interface and buses, migration of old networks; autocrafting, level maintainer, circuit interface and fluids moved onto the new API | done (PR #69) |
-| **R2** | fluids on cells: fluid storage cells in the ME Drive, the fluid API of the storage engine, fluids in the terminal grid, the fluid interface on the new API, fluid import and export buses, migration of fluid drives, their recovered fluid and loaded drive items; the old recovery removed | done (this document, "Fluids (R2)") |
-| R3 | proper GUIs for pattern provider, level maintainer, circuit interface, crafting CPUs, interface and buses | open |
+| **R2** | fluids on cells: fluid storage cells in the ME Drive, the fluid API of the storage engine, fluids in the terminal grid, the fluid interface on the new API, fluid import and export buses, migration of fluid drives, their recovered fluid and loaded drive items; the old recovery removed | done (PR #70, "Fluids (R2)") |
+| **R3** | one GUI style and a window for every ME block (replacing the panels next to the game's windows), the terminal as hub (storage, crafting, jobs, cells), the ME Interface's config rows, cell partitions and drive priorities | done (this document, "GUIs, partitions and priorities (R3)") |
 
-This file is the design record: what was decided and why, and what is left for R3. The player's
-guide is `docs/AE2.md`.
+This file is the design record: what was decided and why, and what is still open ("Open points"). The
+player's guide is `docs/AE2.md`.
 
 ## Network topology
 
@@ -139,8 +139,9 @@ walks the network's cells once for one with a free type (a few hundred cells at 
 An empty ME Drive (`me-drive`, the existing drive chassis item, 1x1) is placed, and up to **10 cells** go
 into its slots (AE2: 10). Only storage cells are accepted.
 
-**Entity:** a `simple-entity-with-force` without engine inventory, and a script GUI with the 10 slots
-(open it with the normal open key): click a slot with a cell in the cursor to put it in, click a filled
+**Entity:** a `simple-entity-with-force` without engine inventory, and a script window with the 10 slots
+(open it with the normal open key; since R3 in `scripts/fork-me-windows.lua`, with the drive's priority and a
+cell window per slot): click a slot with a cell in the cursor to put it in, click a filled
 slot to take the cell into the cursor (shift: into the inventory). Clicking the drive itself with a cell in
 the cursor puts it into the first free slot. A container with an engine inventory was rejected: Factorio
 raises no event when a player moves a stack in or out of a container, so the script could not write the
@@ -178,7 +179,8 @@ central window of the network:
   fluid drives (read only, as before) and a row with the player's inventory: click an item there to store
   all of it (right click: one stack).
 * **Crafting tab:** kept as it was (craftable list, amount, plan line, Craft, job list with progress and
-  Cancel), moved onto the new API. Its look is redone in R3.
+  Cancel), moved onto the new API. Since R3 the terminal is the hub with Storage, Crafting, Jobs and Cells
+  tabs (see "GUIs, partitions and priorities (R3)").
 
 Every button calls a function that the runtime test calls directly (`take`, `store_cursor`,
 `store_inventory_item`, ...), so the logic behind the GUI is tested headless.
@@ -191,12 +193,13 @@ keeps it filled with its item up to a full stack; every **unfiltered slot** is i
 the network. Inserters and belts work with it as with a chest: inserters put items in (import) and take the
 filtered items out (export). The filters are kept in blueprints, copied by settings paste and by cloning
 (tag `fork_me_interface`). This is AE2's interface (config slots plus storage) with the slot filter as its
-configuration, so it needs no extra GUI in R1.
+configuration, so it needs no extra GUI in R1. **R3** replaced the slot filters by script-held config rows (item,
+quality, amount; see "GUIs, partitions and priorities (R3)").
 
 **ME Import Bus / ME Export Bus** (`me-import-bus`, `me-export-bus`, 1x1, rotatable): a bus faces one
 entity. The import bus pulls items out of that entity's output (assembler or furnace result, chest) into the
 network, the export bus puts its filtered items into the entity's input (assembler or furnace input, chest),
-up to one stack of each in the target. Up to 5 item filters (import: none means everything), set in a small
+up to one stack of each in the target. Up to 5 item filters (import: none means everything), set in its
 window (open key), kept in blueprints, settings paste and clones (tag `fork_me_bus`).
 
 For Gregtorio both are worth having: belts and inserters feed machines through the interface, and a bus
@@ -217,7 +220,7 @@ No new `on_tick`, no new interval:
 |---|---|
 | 15 (was fluids only) | the I/O step: the fluid interfaces and recovered fluid (unchanged, 8 interfaces, 4 entries) and then up to 24 item interfaces and buses |
 | 20 | autocrafting, level maintainers, circuit interfaces (unchanged) |
-| 60 | open terminals, drive fill lights of changed drives (up to 50 drives), the sweep for vanished members (200 per step) |
+| 60 | open ME windows (R3: at most 30, one per player), drive fill lights of changed drives (up to 50 drives), the sweep for vanished members (200 per step) |
 
 `fork-me-network.lua` registers the interval 15 and calls the fluid step from it (one handler per interval).
 
@@ -364,7 +367,7 @@ type, and an export would have to pick one; the cost (hot steam cannot be stored
   buckets for that; Factorio has none).
 * **ME Fluid Interface:** unchanged entity and settings (import by default, export with a fluid and a level,
   blueprint tag `fork_me_fluid_interface`, settings paste, clones), now on the fluid API: import takes what
-  `can_insert_fluid` allows, export takes what the network holds. Its panel shows the fluid bytes and types.
+  `can_insert_fluid` allows, export takes what the network holds. Its panel showed the fluid bytes and types (since R3: its window shows the tank and the status).
 * **ME Fluid Import / Export Bus** (`me-fluid-import-bus`, `me-fluid-export-bus`, tech `me-fluid-storage`, HV
   assembler: an item bus, an HV pump, two pipes): R1's bus design with fluid filters. The import bus empties the
   output boxes of a machine (every box of a tank; input boxes are left alone), the export bus fills its filtered
@@ -422,14 +425,100 @@ also with more fluid than four cells hold); the level maintainer, circuit interf
 wire) and settings copy tests on the new fluid storage. `migrate`: the totals above, the network's fluid totals,
 the drives' cells, the untagged items with their cells.
 
-## Open for R3
+## GUIs, partitions and priorities (R3)
 
-* GUIs: pattern provider (pattern slots, AE2 style encoded patterns instead of reading the machine),
-  level maintainer (several resources), circuit interface, crafting CPU status, interface (amounts per
-  filter instead of a stack), buses (more filters, speed cards), the fluid interface's panel as a window of its
-  own (today a panel next to the tank GUI).
-* The terminal's crafting tab in the style of the storage tab; a crafting status window per CPU; fluid amounts
-  shown on the buttons in AE2 style (k, M) instead of a floored number.
-* Cell partitioning (a cell that takes only some items or fluids) and priorities between drives.
-* A "view cells" mode in the terminal (per drive and cell).
+### One window style
+
+`scripts/fork-me-gui.lua` (new) is the shared GUI: a window is a screen frame `fork_me_window` with a title bar
+(caption, drag handle, close button) and a light content frame, and it is the player's `opened` GUI (E and Escape
+close it). One window per player: opening another replaces it. Building blocks: slot buttons for items (with
+quality) and fluids, number fields, slot grids, headings, wrapping labels; amounts are formatted with `fmt` (999,
+1.2k, 12k, 1.5M, 2.5G) on every button and label.
+
+Routing: an acting element carries `fork_me_act = <action>` and its data in its tags; modules register actions
+with `G.on(action, fn)` and windows with `G.window(name, { open, refresh, entities })` (entities by name or by ME
+kind). `scripts/fork-me-terminal.lua` registers every GUI event of the mod once (click, text, elem, confirmed,
+checked, switch, selection, tab, value) and calls `G.dispatch`; one action per element, so no module has to look
+at another module's elements. Every handler calls a function of the block's module (or a small `set_*` helper
+of `fork-me-windows.lua`) that the runtime test calls through the remote interfaces.
+
+### Own windows instead of panels
+
+`scripts/fork-me-windows.lua` (new) has a window for the drive, a storage cell, the controller, the pattern
+provider, the crafting CPUs, the level maintainer, the circuit interface, the fluid interface, the ME Interface and
+the four buses (`docs/AE2.md`, "The ME windows"). A click on the block opens it: the custom input linked to the
+game's `open-gui` (simple entities without a window of their own: drive, controller, buses, provider) and
+`on_gui_opened` (lamps, combinator, tank, container: the game opens its window, the handler sets `opened` to the
+ME window, which closes the game's one at once). Both fire for the same click; `open_entity` sees its window open
+for that unit and only re-sets `opened`. Fallbacks: the ME Interface's container window stays reachable through
+"Open inventory" (`G.open_vanilla`, a one-time bypass in `storage.fork_me_gui_bypass`); the level maintainer's
+lamp window is replaced, its circuit condition is edited in the ME window through the lamp's own control behavior
+(so the game keeps copying and blueprinting it). Removed: the drive GUI of the network module, the provider window
+of the autocrafting module, the relative panels on the lamp (maintainer), constant combinator (circuit interface)
+and storage tank (fluid interface), the bus window of the I/O module, and every `on_open_input` / `on_gui_*`
+handler of those modules; the terminal's event routing to them; their frames are destroyed on a mod update.
+
+Refresh: the terminal step (60 ticks) calls `G.refresh_all`: only players with an ME window open, at most 30;
+a window whose entity is gone or out of reach (a window opened from the terminal: the terminal's reach) is closed.
+A window part is rebuilt only when its data signature changed (kept in the part's tags), so open tooltips and
+focused number fields survive the refresh; number fields are never rebuilt by their own change.
+
+### Terminal as hub
+
+Tabs Storage (sort, kind filter all/items/fluids, grid, inventory row), Crafting (the craftable grid in the
+storage style, picked resource, amount, plan preview with missing and taken resources as slot buttons, Craft),
+Jobs (amount, progress, status, Cancel), Cells (the network's drives by priority with their cells; a click opens
+the drive or cell window with a Back button and the terminal's reach). The search field above the tabs filters
+Storage and Crafting. Per player state: `storage.fork_me_terminal[player] = { entity, filter, sort, kind, pick,
+amount, tab, signatures }`. Data functions for the test: `entries(net, filter, sort, kind)`, `craft_preview`,
+`start_craft`, `cancel_job`, `jobs`, `cells`.
+
+### ME Interface config
+
+AE2's interface has config slots with amounts; R1 used the container's slot filters (one stack per filtered
+slot). R3: `storage.fork_me_io.recs[unit].config = { [1..9] = { name, quality, amount } }`. The step keeps the
+inventory count of each configured item at its amount (fill with `extract_to`, take a surplus back with
+`can_insert`/`remove`/`insert`), then imports the other stacks (up to 8 operations per visit as before). Lazy
+migration: the first `config_of` of an interface without config turns its slot filters into config rows (one stack
+per filtered slot, the same item adds up, at most 9 items) and clears the filters; a blueprint tag of R1
+(`{ filters }`) is converted the same way, R3 writes `{ config = { { slot, name, quality, amount } } }`. The
+container prototype keeps `with_filters_and_bar` so the filters of old saves are still there to be read.
+
+### Partitions and priorities
+
+Kept simple and documented in `docs/AE2.md` ("Partitions and priorities"):
+
+* A cell partition is a set of exact keys (`name`, `name@quality`, `fluid/<name>`), at most the cell's types, no
+  items with tags. A partitioned cell takes nothing else (`cell_room`). It is part of the cell's tags, so it
+  travels with the cell; an empty partitioned cell is an item with tags.
+* A drive priority (-1000 ... 1000) applies to every cell in it.
+* Insertion: priority descending; inside one priority partitioned-for-the-key, then holding-the-key, then any.
+  Extraction: priority ascending; inside one priority unpartitioned first. AE2 does the same with priorities and
+  prefers partitioned cells on insertion; taking from unpartitioned (overflow) cells first keeps the partitioned
+  ones full.
+* Cost: the order is cached per network (`net.order`, rebuilt when a cell or setting changes, 500 cells sort in
+  well under a millisecond); a network with one priority and no partition keeps the R1 path (`net.uniform`).
+  Extraction sorts only the cells that hold the key (the index).
+* Blueprints, paste, clone: drive tag `fork_me_drive = { priority, partitions = { ["slot"] = keys } }` (string
+  slot keys: blueprint tags need them); a slot without a cell keeps the template for the next cell
+  (`slot_partition`). Settings paste sets every slot (a source slot without partition clears the target's).
+
+### Tests (R3)
+
+`devcheck runtime`, "ME partitions and windows test": insertion and extraction order with priorities and
+partitions, the all-partitioned network that refuses other items, partition from contents, the partition in the
+tags of empty and loaded cells, a fluid cell's partition, drive settings through the blueprint handler, a revived
+ghost, settings paste and a clone, `fmt`, a window for every ME block, the data and set functions of every window,
+the terminal's kind filter, cells tab, craft preview and jobs tab. The ME import/export test now checks the
+interface config (fill, top-up, surplus back, import of the rest, paste, old filters and old blueprint tags as
+config). The settings copy test lost its check of the panels' anchors. Not testable headless (no player): building
+the windows, the clicks, the replacement of the game's windows; the pull request has a click-through list.
+
+## Open points
+
+* Pattern provider with AE2 style encoded patterns (pattern slots) instead of reading the machine next to it;
+  a level maintainer with several resources; upgrade and speed cards on buses; more than 5 bus filters.
+* Fuzzy or inverted partitions (AE2 cards); a storage bus (left out on purpose, see "Import and export").
+* Terminal search by localised name (a script cannot read localised names).
+* The windows are checked by hand only (see "Tests (R3)").
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").

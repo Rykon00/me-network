@@ -264,8 +264,9 @@ for _, t in ipairs(CPU_TIERS) do cpu_data[t.name] = { jobs = t.jobs, speed = t.s
 
 --------------------------------------------------------------------------------
 --- LEVEL MAINTAINER (issue #38): keeps N of an item or fluid in stock. A 1x1 lamp like the ME
---- Terminal: needs power, and the lamp's circuit condition (native GUI, copied and blueprinted by
---- the game) switches it on and off. Target and amount are set in a panel next to the lamp GUI.
+--- Terminal: needs power, and the lamp's circuit condition (kept on the entity, so the game copies and
+--- blueprints it) switches it on and off. Target, amount and the condition are set in its ME window
+--- (scripts/fork-me-windows.lua), which replaces the lamp's window.
 --------------------------------------------------------------------------------
 
 create_item{

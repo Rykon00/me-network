@@ -10,9 +10,15 @@
 ---     network the totals, bytes, types and an index item -> cells are kept, so count is a lookup and
 ---     insert / extract only touch the cells that hold the item. A cell taken out of a drive carries its
 ---     contents in its tags (fork_me_cell); putting it into a drive reads them back.
----   * ME Drive: 10 cell slots, a script GUI (the open key) and a light per slot (rendering).
+---   * ME Drive: 10 cell slots, a window (scripts/fork-me-windows.lua) and a light per slot (rendering).
+---   * Partitions and priorities (R3, docs/AE2.md): a cell can be restricted to some keys (cell.partition,
+---     kept in its tags), a drive has a priority (-1000 ... 1000). Insertion: drives of higher priority first;
+---     within one priority the cells partitioned for the key, then the cells that hold it, then any cell
+---     with room; a partitioned cell never takes other keys. Extraction: the reverse (lower priority first,
+---     unpartitioned cells before partitioned ones). Priority and partitions are kept in blueprints
+---     (tag fork_me_drive), settings paste and clones.
 --- Keys: "name" (normal quality), "name@quality", and for items with tags "name@quality#<json of the tags>".
---- State: storage.fork_me_net (nodes, nets, drives). GUI state lives in the GUI elements (tags).
+--- State: storage.fork_me_net (nodes, nets, drives).
 --------------------------------------------------------------------------------
 
 local M = {}
@@ -24,8 +30,8 @@ local SWEEP_PER_STEP = 200          -- members checked for validity per slow ste
 local LEDS_PER_STEP_N = 50          -- drives whose lights are redrawn per slow step
 local BASE_POWER = 120000           -- W: controller
 local MEMBER_POWER = 4000           -- W: per member without its own power connection
-local DRIVE_FRAME = "fork_me_drive"
 local CELL_TAG = "fork_me_cell"
+local DRIVE_TAG = "fork_me_drive"   -- blueprint tag of a drive: { priority, partitions = { ["slot"] = { keys } } }
 local OFF = 16                      -- pixels from the drive's left/top edge to its center
 --- bay rectangles of the drive sprite (tools/gen_ae2_sprites.py: DRIVE_BAY_X, DRIVE_BAY_Y)
 local BAY_X, BAY_Y = { 5, 17 }, { 4, 9, 14, 19, 24 }
@@ -465,6 +471,7 @@ end
 --- items (fluid units) of `key` the cell can still take; item cells take items, fluid cells fluids
 local function cell_room(cell, spec, key)
 	if fluid_cell(spec) ~= is_fluid_key(key) then return 0 end
+	if cell.partition and next(cell.partition) and not cell.partition[key] then return 0 end   -- partitioned (R3)
 	local per = spec.per_byte or 8
 	local free = spec.bytes - cell.bytes
 	local have = cell.items[key]
@@ -516,7 +523,31 @@ local function cell_from_tags(name, tags)
 			if type(d) == "table" then cell.data[key] = d end
 		end
 	end
+	cell.partition = M.clean_partition(spec, stored.partition)
 	return cell
+end
+
+--- A partition ({ key -> true } or a list of keys) checked against the cell's kind and the prototypes; nil
+--- when empty. At most the cell's number of types.
+function M.clean_partition(spec, partition)
+	if type(partition) ~= "table" or not spec then return nil end
+	local keys = {}
+	for k, v in pairs(partition) do
+		local key = type(k) == "string" and v == true and k or (type(v) == "string" and v or nil)
+		if key then keys[#keys + 1] = key end
+	end
+	table.sort(keys)
+	local out, n = {}, 0
+	for _, key in ipairs(keys) do
+		local ok
+		if is_fluid_key(key) then ok = fluid_cell(spec) and prototypes.fluid[key:sub(#FLUID_PREFIX + 1)] ~= nil
+		else ok = not fluid_cell(spec) and not key:find("#") and prototypes.item[(parse_key(key))] ~= nil end
+		if ok and not out[key] and n < spec.types then
+			out[key] = true
+			n = n + 1
+		end
+	end
+	return n > 0 and out or nil
 end
 
 --- "1234" or "12.3"
@@ -534,7 +565,7 @@ end
 
 --- the item stack definition of a cell (tags and a description when it holds something)
 local function cell_stack(cell)
-	if next(cell.items) == nil then return { name = cell.name, count = 1 } end
+	if next(cell.items) == nil and not cell.partition then return { name = cell.name, count = 1 } end
 	local items, data = {}, {}
 	local keys = {}
 	for key, count in pairs(cell.items) do
@@ -556,9 +587,13 @@ local function cell_stack(cell)
 		end
 	end
 	local spec = cell_spec(cell.name)
+	if next(cell.items) == nil and cell.partition then        -- an empty partitioned cell keeps its partition
+		return { name = cell.name, count = 1, tags = { [CELL_TAG] = { items = {}, data = {}, partition = cell.partition } },
+			custom_description = { "fork-me-net.cell-partitioned", table_size(cell.partition) } }
+	end
 	return {
 		name = cell.name, count = 1,
-		tags = { [CELL_TAG] = { items = items, data = data } },
+		tags = { [CELL_TAG] = { items = items, data = data, partition = cell.partition } },
 		custom_description = { spec and fluid_cell(spec) and "fork-me-net.fluid-cell-holds" or "fork-me-net.cell-holds",
 			amount_text(cell_total(cell)), cell.types, table.concat(list, ", "),
 			cell.bytes, spec and spec.bytes or 0, #keys > 5 and ", ..." or "" },
@@ -579,6 +614,7 @@ end
 local function net_cell(net, cid, cell, sign)
 	local spec = cell_spec(cell.name)
 	if not spec then return end
+	net.order_dirty = true
 	if sign > 0 then
 		net.cells[cid] = cell
 		net.cell_list[#net.cell_list + 1] = cid
@@ -656,7 +692,7 @@ function recompute(s, net)
 				and { diode = defines.entity_status_diode.red, label = { "fork-me-net.status-conflict" } } or nil
 		end
 	end
-	net.items, net.index, net.cells, net.cell_list = {}, {}, {}, {}
+	net.items, net.index, net.cells, net.cell_list, net.order_dirty = {}, {}, {}, {}, true
 	net.bytes, net.bytes_total, net.types, net.types_total = 0, 0, 0, 0
 	net.fbytes, net.fbytes_total, net.ftypes, net.ftypes_total = 0, 0, 0, 0
 	drive_cells(net, s, function(cid, cell) net_cell(net, cid, cell, 1) end)
@@ -745,6 +781,41 @@ local function room_for(net, key)
 end
 
 --- Store up to `count` of `key` (data: { tags, description } of an item with tags). Returns the amount stored.
+--- the priority of the drive a cell id ("<unit>:<slot>") belongs to
+local function cell_priority(s, cid)
+	local d = s.drives[tonumber(cid:match("^(%d+):"))]
+	return d and d.priority or 0
+end
+
+--- The network's cells in insertion order (R3): higher drive priority first, then drive and slot order. Cached
+--- until a cell or a priority changes (net.order_dirty). Also says whether the plain order of R1 is enough (one
+--- priority, no partition).
+local function ordered(s, net)
+	if net.order and not net.order_dirty then return net.order, net.uniform end
+	local list = {}
+	local prios, parts = {}, false
+	for i, cid in ipairs(net.cell_list) do
+		local p = cell_priority(s, cid)
+		prios[p] = true
+		if net.cells[cid].partition then parts = true end
+		list[i] = { cid = cid, p = p, i = i }
+	end
+	table.sort(list, function(a, b)
+		if a.p ~= b.p then return a.p > b.p end
+		return a.i < b.i
+	end)
+	local order = {}
+	for i, c in ipairs(list) do order[i] = { cid = c.cid, p = c.p } end
+	local n = 0
+	for _ in pairs(prios) do n = n + 1 end
+	net.order, net.uniform, net.order_dirty = order, (n <= 1 and not parts), nil
+	return order, net.uniform
+end
+M.ordered = ordered
+
+--- Store up to `count` of `key`. Order (R3, docs/ME-REWORK.md "Partitions and priorities"): drives of higher
+--- priority first; within one priority the cells partitioned for the key first, then the cells that hold it,
+--- then any cell with room (a partitioned cell only takes its keys).
 local function insert_key(net, key, count, data)
 	if count <= 0 then return 0 end
 	local s = state()
@@ -766,16 +837,36 @@ local function insert_key(net, key, count, data)
 		if left < ZERO then left = 0 end
 		mark_drive(s, tonumber(cid:match("^(%d+):")))
 	end
-	local held = {}
-	for cid in pairs(net.index[key] or {}) do held[#held + 1] = cid end
-	table.sort(held)
-	for _, cid in ipairs(held) do
-		if left <= 0 then break end
-		put(cid)
+	local order, uniform = ordered(s, net)
+	if uniform then                                    -- one priority, no partition: the cells that hold it first
+		local held = {}
+		for cid in pairs(net.index[key] or {}) do held[#held + 1] = cid end
+		table.sort(held)
+		for _, cid in ipairs(held) do
+			if left <= 0 then break end
+			put(cid)
+		end
+		for _, cid in ipairs(net.cell_list) do
+			if left <= 0 then break end
+			if not net.cells[cid].items[key] then put(cid) end
+		end
+		return count - left
 	end
-	for _, cid in ipairs(net.cell_list) do
-		if left <= 0 then break end
-		if not net.cells[cid].items[key] then put(cid) end
+	local i = 1
+	while order[i] and left > 0 do
+		local p, j = order[i].p, i
+		while order[j] and order[j].p == p do j = j + 1 end      -- cells i .. j-1 have priority p
+		for pass = 1, 3 do
+			for k = i, j - 1 do
+				if left <= 0 then break end
+				local cell = net.cells[order[k].cid]
+				local part = cell.partition
+				local hit = (pass == 1 and part and part[key]) or (pass == 2 and not part and cell.items[key])
+					or (pass == 3 and not part and not cell.items[key])
+				if hit then put(order[k].cid) end
+			end
+		end
+		i = j
 	end
 	return count - left
 end
@@ -784,10 +875,18 @@ local function extract_key(net, key, count)
 	if count <= 0 or not net.items[key] then return 0 end
 	local s = state()
 	local left = count
+	--- extraction is the reverse of insertion: lower drive priority first, unpartitioned cells before partitioned
 	local held = {}
-	for cid in pairs(net.index[key] or {}) do held[#held + 1] = cid end
-	table.sort(held)
-	for _, cid in ipairs(held) do
+	for cid in pairs(net.index[key] or {}) do
+		held[#held + 1] = { cid = cid, p = cell_priority(s, cid), part = net.cells[cid].partition and 1 or 0 }
+	end
+	table.sort(held, function(a, b)
+		if a.p ~= b.p then return a.p < b.p end
+		if a.part ~= b.part then return a.part < b.part end
+		return a.cid < b.cid
+	end)
+	for _, h in ipairs(held) do
+		local cid = h.cid
 		if left <= 0 then break end
 		local cell = net.cells[cid]
 		local n = math.min(left, cell.items[key] or 0)
@@ -1018,9 +1117,15 @@ local function drive_net(s, unit)
 	return node and s.nets[node.net] or nil
 end
 
---- put a cell record into a free slot of a drive (and into its network's totals)
+--- put a cell record into a free slot of a drive (and into its network's totals); a cell without partition takes
+--- the slot's partition from a blueprint (d.slot_partition)
 local function place_cell(s, d, slot, cell)
 	d.slots[slot] = cell
+	local template = d.slot_partition and d.slot_partition[slot]
+	if template and not cell.partition then
+		cell.partition = M.clean_partition(cell_spec(cell.name), template)
+		d.slot_partition[slot] = nil
+	end
 	local unit = d.entity.unit_number
 	local net = drive_net(s, unit)
 	if net then net_cell(net, unit .. ":" .. slot, cell, 1) end
@@ -1232,6 +1337,124 @@ function M.fluid_cells(cell_name, contents)
 	return out
 end
 
+--------------------------------------------------------------------------------
+--- drive priority and cell partitions (R3; the drive and cell windows, blueprints and settings paste use these)
+--------------------------------------------------------------------------------
+
+local MAX_PRIORITY = 1000
+
+local function touch_order(s, unit)
+	local net = drive_net(s, unit)
+	if net then net.order_dirty = true end
+end
+
+--- the priority of a drive (-1000 ... 1000, default 0); higher priority drives are filled first
+function M.get_priority(drive)
+	local s = storage.fork_me_net
+	local d = s and drive and drive.valid and s.drives[drive.unit_number]
+	return d and d.priority or 0
+end
+
+function M.set_priority(drive, priority)
+	if not (drive and drive.valid and M.kind_of(drive.name) == "drive") then return false end
+	local s = state()
+	local d = drive_record(s, drive)
+	local p = math.floor(tonumber(priority) or 0)
+	d.priority = math.max(-MAX_PRIORITY, math.min(MAX_PRIORITY, p))
+	if d.priority == 0 then d.priority = nil end
+	touch_order(s, drive.unit_number)
+	return true
+end
+
+--- the partition of the cell in `slot`: a sorted list of keys (empty: none)
+function M.get_partition(drive, slot)
+	local s = storage.fork_me_net
+	local d = s and drive and drive.valid and s.drives[drive.unit_number]
+	local cell = d and d.slots[slot]
+	local out = {}
+	for key in pairs(cell and cell.partition or {}) do out[#out + 1] = key end
+	table.sort(out)
+	return out
+end
+
+--- Restrict the cell in `slot` to `keys` (items "name"/"name@quality", fluids "fluid/<name>"); an empty list
+--- removes the partition. What the cell holds stays. Returns true when the slot has a cell.
+function M.set_partition(drive, slot, keys)
+	local s = state()
+	local d = drive and drive.valid and s.drives[drive.unit_number]
+	local cell = d and d.slots[slot]
+	if not cell then return false end
+	cell.partition = M.clean_partition(cell_spec(cell.name), keys or {})
+	touch_order(s, drive.unit_number)
+	mark_drive(s, drive.unit_number)
+	return true
+end
+
+--- AE2's "partition storage": the cell is restricted to what it holds now
+function M.partition_from_contents(drive, slot)
+	local s = state()
+	local d = drive and drive.valid and s.drives[drive.unit_number]
+	local cell = d and d.slots[slot]
+	if not cell then return false end
+	local keys = {}
+	for key in pairs(cell.items) do if not key:find("#") then keys[#keys + 1] = key end end
+	return M.set_partition(drive, slot, keys)
+end
+
+--- the settings of a drive for blueprints and settings paste: { priority, partitions = { [slot] = { keys } } }
+function M.drive_settings(drive)
+	local s = storage.fork_me_net
+	local d = s and drive and drive.valid and s.drives[drive.unit_number]
+	if not d then return nil end
+	local parts = {}
+	for slot = 1, drive_slots() do
+		local keys = M.get_partition(drive, slot)
+		if #keys > 0 then parts[tostring(slot)] = keys end
+	end
+	if not d.priority and not next(parts) then return nil end
+	return { priority = d.priority or 0, partitions = parts }
+end
+
+--- Apply drive settings: the priority, and each slot's partition onto the cell in it (a slot without a cell keeps
+--- the partition for the next cell put into it, as a blueprint does).
+function M.apply_drive_settings(drive, settings)
+	if type(settings) ~= "table" or not (drive and drive.valid and M.kind_of(drive.name) == "drive") then return false end
+	local s = state()
+	local d = drive_record(s, drive)
+	M.set_priority(drive, settings.priority or 0)
+	for slot_text, keys in pairs(type(settings.partitions) == "table" and settings.partitions or {}) do
+		local slot = tonumber(slot_text)
+		if slot and slot >= 1 and slot <= drive_slots() and type(keys) == "table" then
+			if d.slots[slot] then
+				M.set_partition(drive, slot, keys)
+			else
+				d.slot_partition = d.slot_partition or {}
+				d.slot_partition[slot] = keys
+			end
+		end
+	end
+	return true
+end
+
+--- the drives of a network for the terminal's cell view: { { entity, unit, priority, cells = drive_info } },
+--- higher priority first
+function M.drives_of(net)
+	local s = state()
+	local out = {}
+	if not net then return out end
+	for unit in pairs(net.drives) do
+		local d = s.drives[unit]
+		if d and d.entity.valid then
+			out[#out + 1] = { entity = d.entity, unit = unit, priority = d.priority or 0, cells = M.drive_info(d.entity) }
+		end
+	end
+	table.sort(out, function(a, b)
+		if a.priority ~= b.priority then return a.priority > b.priority end
+		return a.unit < b.unit
+	end)
+	return out
+end
+
 --- plain data of a drive's slots for GUIs and tests: { [slot] = { name, items, bytes, bytes_total, types, state } }
 function M.drive_info(drive)
 	local s = storage.fork_me_net
@@ -1244,8 +1467,12 @@ function M.drive_info(drive)
 			local spec = cell_spec(cell.name) or { bytes = 0, types = 0 }
 			local items = {}
 			for k, v in pairs(cell.items) do items[k] = v end
+			local partition = {}
+			for key in pairs(cell.partition or {}) do partition[#partition + 1] = key end
+			table.sort(partition)
 			out[slot] = { name = cell.name, items = items, bytes = cell.bytes, bytes_total = spec.bytes,
-				types = cell.types, types_total = spec.types, state = cell_state(cell) }
+				types = cell.types, types_total = spec.types, state = cell_state(cell), fluid = fluid_cell(spec),
+				partition = partition }
 		end
 	end
 	return out
@@ -1299,60 +1526,8 @@ local function draw_leds(s, d)
 end
 
 --------------------------------------------------------------------------------
---- drive GUI (screen frame, the open key on a drive)
+--- the drive window's logic (the window itself: scripts/fork-me-windows.lua)
 --------------------------------------------------------------------------------
-
-local function find(root, name)
-	local queue, i = { root }, 1
-	while queue[i] do
-		for _, child in pairs(queue[i].children) do
-			if child.name == name then return child end
-			queue[#queue + 1] = child
-		end
-		i = i + 1
-	end
-end
-
-local function drive_gui_refresh(player)
-	local frame = player.gui.screen[DRIVE_FRAME]
-	if not frame then return end
-	local s = state()
-	local d = s.drives[frame.tags.unit]
-	if not (d and d.entity.valid) then frame.destroy() return end
-	local net = drive_net(s, frame.tags.unit)
-	local ok, why = M.usable(net)
-	find(frame, "fork_me_drive_status").caption = ok and { "fork-me-net.drive-online" } or { "fork-me-net.status-" .. (why or "no-network") }
-	local grid = find(frame, "fork_me_drive_grid")
-	grid.clear()
-	for slot = 1, drive_slots() do
-		local cell = d.slots[slot]
-		local spec = cell and cell_spec(cell.name)
-		local b = grid.add{ type = "sprite-button", style = "slot_button", tags = { fork_me_drive_slot = slot },
-			sprite = cell and ("item/" .. cell.name) or nil,
-			tooltip = cell and { "fork-me-net.drive-slot", cell_total(cell), cell.types, spec.types, cell.bytes, spec.bytes }
-				or { "fork-me-net.drive-slot-empty" } }
-		b.style.size = 40
-		local flow = grid.add{ type = "flow", direction = "vertical" }
-		local bar = flow.add{ type = "progressbar", value = cell and spec and math.min(1, cell.bytes / spec.bytes) or 0 }
-		bar.style.width = 110
-		flow.add{ type = "label", caption = cell and { "fork-me-net.drive-slot-short", cell.bytes, spec.bytes, cell.types, spec.types } or "" }
-	end
-end
-
-local function drive_gui_open(player, entity)
-	local frame = player.gui.screen[DRIVE_FRAME]
-	if frame then frame.destroy() end
-	frame = player.gui.screen.add{ type = "frame", name = DRIVE_FRAME, direction = "vertical", caption = entity.localised_name,
-		tags = { unit = entity.unit_number } }
-	frame.auto_center = true
-	local help = frame.add{ type = "label", caption = { "fork-me-net.drive-help" } }
-	help.style.single_line = false
-	help.style.maximal_width = 330
-	frame.add{ type = "label", name = "fork_me_drive_status" }
-	frame.add{ type = "table", name = "fork_me_drive_grid", column_count = 4 }
-	player.opened = frame
-	drive_gui_refresh(player)
-end
 
 --- a click on a slot: with a cell in the cursor it goes into the slot (a cell there is swapped into the cursor);
 --- with an empty cursor the cell goes into the cursor (shift: into the inventory). Returns a reason on failure.
@@ -1444,7 +1619,44 @@ function M.on_built(entity, event)
 		end
 	end
 	add_node(s, entity, kind)
-	if kind == "drive" then mark_drive(s, entity.unit_number) end
+	if kind == "drive" then
+		mark_drive(s, entity.unit_number)
+		--- priority and partitions from a blueprint (R3)
+		local t = event and type(event.tags) == "table" and event.tags[DRIVE_TAG]
+		if type(t) == "table" then M.apply_drive_settings(entity, t) end
+	end
+end
+
+--- the drive settings of a clone (on_entity_cloned; the cells of the source are not copied)
+function M.on_cloned(source, destination)
+	if not (source and source.valid and destination and destination.valid) then return end
+	if kinds()[source.name] == "drive" and kinds()[destination.name] == "drive" then
+		M.apply_drive_settings(destination, M.drive_settings(source) or { priority = 0, partitions = {} })
+	end
+end
+
+--- settings paste between drives: the priority and the partition of each slot
+function M.on_entity_settings_pasted(event)
+	local src, dst = event.source, event.destination
+	if not (src and src.valid and dst and dst.valid) then return end
+	if kinds()[src.name] ~= "drive" or kinds()[dst.name] ~= "drive" then return end
+	local settings = M.drive_settings(src) or { priority = 0, partitions = {} }
+	--- every slot of the destination gets the source slot's partition (none: cleared)
+	for slot = 1, drive_slots() do
+		local key = tostring(slot)
+		if not settings.partitions[key] then settings.partitions[key] = {} end
+	end
+	M.apply_drive_settings(dst, settings)
+end
+
+--- blueprint hook of the autocrafting module: the drive settings as tag fork_me_drive
+function M.tag_blueprint(bp, mapping)
+	for index, entity in pairs(mapping) do
+		if entity.valid and kinds()[entity.name] == "drive" then
+			local settings = M.drive_settings(entity)
+			if settings then bp.set_blueprint_entity_tag(index, DRIVE_TAG, settings) end
+		end
+	end
 end
 
 --- A member is mined (its cells go into `buffer`), destroyed (`died`: its cells are spilled) or removed by a
@@ -1488,7 +1700,7 @@ local function vanish(s, unit)
 	if node then remove_node(s, unit) end
 end
 
---- every 60 ticks (from the terminal module): the lights of changed drives, the sweep, open drive GUIs
+--- every 60 ticks (from the terminal module): the lights of changed drives, the sweep
 function M.slow_step()
 	local s = storage.fork_me_net
 	if not s then return end
@@ -1512,51 +1724,17 @@ function M.slow_step()
 		local node = s.nodes[unit]
 		if node and not node.entity.valid then vanish(s, unit) end
 	end
-	for _, player in pairs(game.connected_players) do
-		local frame = player.gui.screen[DRIVE_FRAME]
-		if frame then
-			local d = s.drives[frame.tags.unit]
-			if not (d and d.entity.valid and player.can_reach_entity(d.entity)) then frame.destroy()
-			else drive_gui_refresh(player) end
-		end
-	end
 end
 
---- the open key on a selected entity: a drive (with a cell in the cursor: the cell goes into the first free slot)
-function M.on_open_input(player, entity)
+--- the open key on a drive with a cell in the cursor: the cell goes into the first free slot (true when it did
+--- something; else the drive window opens)
+function M.quick_insert(player, entity)
 	if not (entity and entity.valid and kinds()[entity.name] == "drive") then return false end
-	if not player.can_reach_entity(entity) then return true end
 	local cursor = player.cursor_stack
-	if cursor and cursor.valid_for_read and cell_spec(cursor.name) then
-		local _, why = M.insert_cell(entity, cursor)
-		if why then player.create_local_flying_text{ text = { "fork-me-net.error-" .. why }, create_at_cursor = true } end
-		return true
-	end
-	drive_gui_open(player, entity)
-	return true
-end
-
-function M.on_gui_click(event)
-	local el = event.element
-	local slot = el and el.valid and el.tags and el.tags.fork_me_drive_slot
-	if not slot then return false end
-	local player = game.get_player(event.player_index)
-	local frame = player.gui.screen[DRIVE_FRAME]
-	local d = frame and state().drives[frame.tags.unit]
-	if not (d and d.entity.valid and player.can_reach_entity(d.entity)) then
-		if frame then frame.destroy() end
-		return true
-	end
-	local why = M.drive_click(player.cursor_stack, player.get_main_inventory(), d.entity, slot, event.shift)
+	if not (cursor and cursor.valid_for_read and cell_spec(cursor.name)) then return false end
+	if not player.can_reach_entity(entity) then return true end
+	local _, why = M.insert_cell(entity, cursor)
 	if why then player.create_local_flying_text{ text = { "fork-me-net.error-" .. why }, create_at_cursor = true } end
-	drive_gui_refresh(player)
-	return true
-end
-
-function M.on_gui_closed(event)
-	local el = event.element
-	if not (el and el.valid and el.name == DRIVE_FRAME) then return false end
-	el.destroy()
 	return true
 end
 
@@ -1644,10 +1822,6 @@ function M.rebuild()
 		end
 	end
 	for _, node in pairs(s.nodes) do update_cable(s, node) end
-	for _, player in pairs(game.players) do
-		local frame = player.gui.screen[DRIVE_FRAME]
-		if frame then frame.destroy() end
-	end
 	for _, hook in pairs(M.change_hooks) do hook(nil) end
 end
 
@@ -1865,6 +2039,34 @@ remote.add_interface("gregtorio-me-network", {
 	insert_cell = function(drive, stack, slot) return M.insert_cell(drive, stack, slot) end,
 	take_cell = function(drive, slot, target) return M.take_cell(drive, slot, target) end,
 	drive = function(drive) return M.drive_info(drive) end,
+	--- drive priority and cell partitions (R3)
+	get_priority = function(drive) return M.get_priority(drive) end,
+	set_priority = function(drive, priority) return M.set_priority(drive, priority) end,
+	get_partition = function(drive, slot) return M.get_partition(drive, slot) end,
+	set_partition = function(drive, slot, keys) return M.set_partition(drive, slot, keys) end,
+	partition_from_contents = function(drive, slot) return M.partition_from_contents(drive, slot) end,
+	drive_settings = function(drive) return M.drive_settings(drive) end,
+	apply_drive_settings = function(drive, settings) return M.apply_drive_settings(drive, settings) end,
+	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
+	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
+	--- what building a ghost with blueprint tags does
+	built_with_tags = function(entity, tags) M.on_built(entity, { tags = tags }) end,
+	--- the insertion order of the network's cells: { { cid, p } }
+	order = function(entity)
+		local net = M.network_of(entity)
+		if not net then return {} end
+		local order = ordered(state(), net)
+		local out = {}
+		for i, c in ipairs(order) do out[i] = { cid = c.cid, p = c.p } end
+		return out
+	end,
+	--- which cells hold `key`: { cid -> count }
+	holders = function(entity, key)
+		local net = M.network_of(entity)
+		local out = {}
+		for cid in pairs(net and net.index[key] or {}) do out[cid] = net.cells[cid].items[key] end
+		return out
+	end,
 	--- a click on a slot of the drive window, for a cursor stack and a main inventory
 	drive_click = function(cursor, inventory, drive, slot, shift) return M.drive_click(cursor, inventory, drive, slot, shift) end,
 	--- cables from members[1]'s network to every other member; returns cables placed, unreached members

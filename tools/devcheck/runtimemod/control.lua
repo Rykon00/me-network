@@ -551,8 +551,8 @@ function me_io_test()
 	local mol = find("me-molecular-assembler", 11.5, 2.5)
 	local function count(name) return remote.call(NET, "count", t, name) end
 	local size = prototypes.item["iron-plate"].stack_size
-	--- interface: slot 1 filtered (export), slot 5 unfiltered with copper (import), slot 6 a spoiling item (stays)
-	expect(remote.call(IO, "set_interface_filters", iface, { [1] = { name = "iron-plate" } }), "set_interface_filters")
+	--- interface (R3 config): one stack of iron plates kept in it, copper put in is imported, a spoiling item stays
+	expect(remote.call(IO, "set_interface_config", iface, { [1] = { name = "iron-plate", amount = size } }), "set_interface_config")
 	local inv = iface.get_inventory(defines.inventory.chest)
 	inv[5].set_stack{ name = "copper-plate", count = 20 }
 	local spoiling
@@ -562,19 +562,41 @@ function me_io_test()
 	inv[6].set_stack{ name = spoiling, count = 1 }
 	local copper = count("copper-plate")
 	remote.call(IO, "step", iface)
-	expect(inv[1].valid_for_read and inv[1].name == "iron-plate" and inv[1].count == size and count("iron-plate") == 1000 - size,
-		"export slot: " .. (inv[1].valid_for_read and inv[1].count or 0))
-	expect(not inv[5].valid_for_read and count("copper-plate") == copper + 20, "import slot: network copper " .. count("copper-plate"))
+	expect(inv.get_item_count("iron-plate") == size and count("iron-plate") == 1000 - size,
+		"export: " .. inv.get_item_count("iron-plate"))
+	expect(not inv[5].valid_for_read and count("copper-plate") == copper + 20, "import: network copper " .. count("copper-plate"))
 	expect(inv[6].valid_for_read, "the spoiling item left the interface")
-	inv[1].count = 10                                     -- an inserter took plates: the slot is topped up
+	inv.remove{ name = "iron-plate", count = size - 10 }  -- an inserter took plates: topped up
 	remote.call(IO, "step", iface)
-	expect(inv[1].count == size and count("iron-plate") == 1000 - 2 * size + 10, "export top-up: " .. inv[1].count)
+	expect(inv.get_item_count("iron-plate") == size and count("iron-plate") == 1000 - 2 * size + 10, "export top-up: " .. inv.get_item_count("iron-plate"))
+	inv.insert{ name = "iron-plate", count = 30 }          -- more than configured: the surplus goes back
+	remote.call(IO, "step", iface)
+	expect(inv.get_item_count("iron-plate") == size and count("iron-plate") == 1000 - 2 * size + 40, "surplus back: " .. inv.get_item_count("iron-plate"))
 	inv[6].clear()
-	--- settings paste and blueprint tag of the filters
+	--- settings paste of the config
 	local other = s.create_entity{ name = "me-network-interface", position = { CX + 2.5, CY + 8.5 }, force = "player", raise_built = true }
 	remote.call(IO, "paste", iface, other)
-	local f = remote.call(IO, "get_interface_filters", other)
-	expect(f[1] and f[1].name == "iron-plate", "pasted filters " .. serpent.line(f))
+	local f = remote.call(IO, "get_interface_config", other)
+	expect(f[1] and f[1].name == "iron-plate" and f[1].amount == size, "pasted config " .. serpent.line(f))
+	--- a pre-R3 interface: its slot filters become config (one stack per filtered slot), the filters are cleared
+	local legacy = s.create_entity{ name = "me-network-interface", position = { CX + 2.5, CY + 10.5 }, force = "player" }
+	local linv = legacy.get_inventory(defines.inventory.chest)
+	linv.set_filter(3, { name = "copper-plate", quality = "normal" })
+	linv.set_filter(4, { name = "copper-plate", quality = "normal" })
+	linv.set_filter(7, { name = "iron-gear-wheel", quality = "normal" })
+	local lc = remote.call(IO, "get_interface_config", legacy)
+	local csize, gsize = prototypes.item["copper-plate"].stack_size, prototypes.item["iron-gear-wheel"].stack_size
+	expect(lc[1] and lc[1].name == "copper-plate" and lc[1].amount == 2 * csize and lc[2] and lc[2].name == "iron-gear-wheel"
+		and lc[2].amount == gsize and not linv.get_filter(3), "old filters as config " .. serpent.line(lc))
+	--- old and new blueprint tags of an interface
+	local b1 = s.create_entity{ name = "me-network-interface", position = { CX + 4.5, CY + 10.5 }, force = "player" }
+	remote.call(IO, "built", b1, { fork_me_interface = { filters = { [2] = { name = "copper-plate", quality = "normal" } } } })
+	local c1 = remote.call(IO, "get_interface_config", b1)
+	expect(c1[1] and c1[1].name == "copper-plate" and c1[1].amount == csize, "old blueprint tag " .. serpent.line(c1))
+	local b2 = s.create_entity{ name = "me-network-interface", position = { CX + 6.5, CY + 10.5 }, force = "player" }
+	remote.call(IO, "built", b2, { fork_me_interface = { config = { { slot = 4, name = "iron-plate", quality = "normal", amount = 7 } } } })
+	local c2 = remote.call(IO, "get_interface_config", b2)
+	expect(c2[4] and c2[4].amount == 7 and not c2[1], "blueprint tag " .. serpent.line(c2))
 	--- import bus: 100 gears in the chest it faces, 64 per visit
 	ichest.insert{ name = "iron-gear-wheel", count = 100 }
 	expect(remote.call(IO, "step", ib) == 64 and count("iron-gear-wheel") == 64, "import bus first visit: " .. count("iron-gear-wheel"))
@@ -631,6 +653,7 @@ local function tests_running()
 	check(storage.furnace and storage.furnace.done, "furnace patterns")
 	check(storage.fluids and storage.fluids.done, "fluids")
 	check(storage.fluid_cells and storage.fluid_cells.done, "ME fluid cells")
+	check(storage.me_r3 and storage.me_r3.done, "ME partitions and windows")
 	check(storage.power_checked, "power")
 	check(storage.fuel and storage.fuel.done, "fuel check")
 	check(storage.cooled and storage.cooled.done, "cooled fluid")
@@ -1113,6 +1136,7 @@ script.on_nth_tick(10, function()
 	if not (storage.furnace and storage.furnace.done) then furnace_test() end
 	if not (storage.fluids and storage.fluids.done) then fluid_test() end
 	fluid_cell_test()
+	me_r3_test()
 	if not (storage.fuel and storage.fuel.done) then fuel_test() end
 	if not (storage.cooled and storage.cooled.done) then cooled_test() end
 	if not (storage.tiers and storage.tiers.done) then tier_test() end
@@ -1625,6 +1649,233 @@ function fluid_cell_test()
 	expect(bi[5] and near(total, 40000), "an old item with more fluid than four cells hold: " .. serpent.line(bi))
 	inv.destroy()
 	me_report("FLUIDCELLS", "ME fluid cells", problems, "mixed drive, tags, capacity, terminal, fluid buses, old fluid drive items")
+end
+
+--- Issue #68 step R3: cell partitions and drive priorities (insertion and extraction order), drive settings
+--- in blueprints, settings paste and clones, the read and set functions of every ME window, the terminal's
+--- tabs. Own network: controller, drives D1..D3 and a terminal in a row; the other blocks stand apart (their
+--- windows are read without a network).
+local RX, RY = 250, 160
+local GUI = "gregtorio-me-gui"
+
+function setup_r3_test(s)
+	local fails = {}
+	power(s, fails, "R3", RX, RY)
+	me_place(s, fails, "R3", "me-network-controller", RX + 7, RY)          -- tiles RX+6..7, RY-1..RY
+	me_place(s, fails, "R3", "me-drive", RX + 8.5, RY - 0.5)
+	me_place(s, fails, "R3", "me-drive", RX + 9.5, RY - 0.5)
+	me_place(s, fails, "R3", "me-drive", RX + 10.5, RY - 0.5)
+	me_place(s, fails, "R3", "me-terminal", RX + 11.5, RY - 0.5)
+	local x = RX
+	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-fluid-import-bus", "me-fluid-export-bus", "me-network-interface",
+		"me-pattern-provider", "me-crafting-cpu", "me-level-maintainer", "me-circuit-interface", "me-fluid-interface" }) do
+		me_place(s, fails, "R3", name, x + 0.5, RY + 6.5)
+		x = x + 4
+	end
+	return fails
+end
+
+function me_r3_test()
+	if storage.me_r3 then return end
+	if game.tick < 60 then return end
+	storage.me_r3 = { done = true }
+	local s = game.surfaces[1]
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function find(name, x, y) return s.find_entity(name, { RX + x, RY + y }) end
+	local d1, d2, d3, t = find("me-drive", 8.5, -0.5), find("me-drive", 9.5, -0.5), find("me-drive", 10.5, -0.5), find("me-terminal", 11.5, -0.5)
+	local ctrl = find("me-network-controller", 7, 0)
+	if not (d1 and d2 and d3 and t and ctrl) then return me_report("MER3", "ME partitions and windows", { "entities missing" }) end
+	local inv = game.create_inventory(6)
+	local function cell(drive, slot, name)
+		inv[1].set_stack{ name = name or "me-1k-storage-cell", count = 1 }
+		return remote.call(NET, "insert_cell", drive, inv[1], slot) == slot
+	end
+	expect(cell(d1, 1) and cell(d1, 2) and cell(d2, 1) and cell(d3, 1), "cells not inserted")
+	local u1, u2, u3 = d1.unit_number, d2.unit_number, d3.unit_number
+	local function holders(key)
+		local h = remote.call(NET, "holders", t, key)
+		local out = {}
+		for cid, n in pairs(h) do out[#out + 1] = cid .. "=" .. n end
+		table.sort(out)
+		return table.concat(out, ",")
+	end
+	local function cid(unit, slot) return unit .. ":" .. slot end
+
+	--- priorities: D2 = 5 is filled first
+	expect(remote.call(NET, "set_priority", d2, 5) and remote.call(NET, "get_priority", d2) == 5, "set_priority")
+	expect(remote.call(NET, "set_partition", d1, 2, { "copper-plate" }), "set_partition")
+	expect(serpent.line(remote.call(NET, "get_partition", d1, 2)) == serpent.line({ "copper-plate" }), "get_partition")
+	local order = remote.call(NET, "order", t)
+	expect(order[1] and order[1].cid == cid(u2, 1) and order[1].p == 5, "insertion order " .. serpent.line(order))
+	remote.call(NET, "insert", t, "iron-plate", 100)
+	expect(holders("iron-plate") == cid(u2, 1) .. "=100", "iron into the priority 5 drive: " .. holders("iron-plate"))
+	--- a higher priority drive comes before a partitioned cell of a lower one
+	remote.call(NET, "insert", t, "copper-plate", 50)
+	expect(holders("copper-plate") == cid(u2, 1) .. "=50", "copper by priority: " .. holders("copper-plate"))
+	--- D2 below D1: the cell partitioned for copper first, other items never go into it
+	remote.call(NET, "set_priority", d2, -5)
+	remote.call(NET, "insert", t, "copper-plate", 30)
+	expect(holders("copper-plate") == table.concat({ cid(u1, 2) .. "=30", cid(u2, 1) .. "=50" }, ","), "copper into the partitioned cell: " .. holders("copper-plate"))
+	remote.call(NET, "insert", t, "iron-gear-wheel", 20)
+	expect(holders("iron-gear-wheel") == cid(u1, 1) .. "=20", "gears not into the partitioned cell: " .. holders("iron-gear-wheel"))
+	--- a partitioned cell takes nothing else even when every other cell is full
+	expect(remote.call(NET, "set_partition", d1, 1, { "stone" }) and remote.call(NET, "set_partition", d2, 1, { "stone" })
+		and remote.call(NET, "set_partition", d3, 1, { "stone" }), "partitions for the full test")
+	expect(remote.call(NET, "can_insert", t, "wood", 10) == 0, "a partitioned cell took wood")
+	for _, d in pairs({ d1, d2, d3 }) do remote.call(NET, "set_partition", d, 1, {}) end
+	--- extraction: lower priority first (D2 at -5 before D1)
+	expect(remote.call(NET, "extract", t, "copper-plate", 40) == 40, "extract copper")
+	expect(holders("copper-plate") == table.concat({ cid(u1, 2) .. "=30", cid(u2, 1) .. "=10" }, ","), "extraction by priority: " .. holders("copper-plate"))
+	--- the same priority: unpartitioned cells before partitioned ones
+	remote.call(NET, "set_priority", d2, 0)
+	expect(remote.call(NET, "extract", t, "copper-plate", 15) == 15, "extract copper 2")
+	expect(holders("copper-plate") == cid(u1, 2) .. "=25", "unpartitioned first: " .. holders("copper-plate"))
+	--- partition from contents
+	expect(remote.call(NET, "partition_from_contents", d1, 1), "partition_from_contents")
+	expect(serpent.line(remote.call(NET, "get_partition", d1, 1)) == serpent.line({ "iron-gear-wheel" }), "from contents: " .. serpent.line(remote.call(NET, "get_partition", d1, 1)))
+	--- the partition travels with the cell, also an empty one
+	expect(remote.call(NET, "set_partition", d3, 1, { "stone", "wood" }), "partition of the empty cell")
+	expect(remote.call(NET, "take_cell", d3, 1, inv[2]), "take the empty cell")
+	local tags = inv[2].valid_for_read and inv[2].tags or {}
+	expect(tags.fork_me_cell and tags.fork_me_cell.partition and tags.fork_me_cell.partition.stone, "empty cell tags " .. serpent.line(tags))
+	expect(remote.call(NET, "insert_cell", d3, inv[2], 3) == 3 and serpent.line(remote.call(NET, "get_partition", d3, 3)) == serpent.line({ "stone", "wood" }),
+		"partition back in the drive " .. serpent.line(remote.call(NET, "get_partition", d3, 3)))
+	expect(remote.call(NET, "take_cell", d1, 2, inv[3]), "take the copper cell")
+	tags = inv[3].valid_for_read and inv[3].tags or {}
+	expect(tags.fork_me_cell and tags.fork_me_cell.items["copper-plate"] == 25 and tags.fork_me_cell.partition["copper-plate"], "copper cell tags " .. serpent.line(tags))
+	expect(remote.call(NET, "insert_cell", d1, inv[3], 2) == 2, "copper cell back")
+	--- a fluid cell partitioned for water takes no steam; an item cell refuses fluid keys
+	expect(cell(d3, 4, "me-1k-fluid-storage-cell"), "fluid cell")
+	expect(remote.call(NET, "set_partition", d3, 4, { "fluid/water", "iron-plate" }), "fluid partition")
+	expect(serpent.line(remote.call(NET, "get_partition", d3, 4)) == serpent.line({ "fluid/water" }), "fluid partition keeps fluids only")
+	expect(remote.call(NET, "can_insert_fluid", t, "steam", 10) == 0 and remote.call(NET, "can_insert_fluid", t, "water", 10) == 10, "fluid partition room")
+
+	--- drive settings: blueprint (through the autocrafting handler and its hooks), revive, paste, clone
+	remote.call(NET, "set_priority", d1, 7)
+	local settings = remote.call(NET, "drive_settings", d1)
+	expect(settings and settings.priority == 7 and settings.partitions["1"] and settings.partitions["2"][1] == "copper-plate", "drive_settings " .. serpent.line(settings))
+	local bpi = game.create_inventory(1)
+	bpi.insert{ name = "blueprint" }
+	local mapping = bpi[1].create_blueprint{ surface = s, force = "player", area = { { RX + 8, RY - 1 }, { RX + 9, RY } } }
+	remote.call("gregtorio-me-autocraft", "tag_blueprint", bpi[1], mapping)
+	local tag
+	for index, e in pairs(mapping or {}) do
+		if e.name == "me-drive" then tag = bpi[1].get_blueprint_entity_tag(index, "fork_me_drive") end
+	end
+	expect(tag and tag.priority == 7 and tag.partitions and tag.partitions["2"] and tag.partitions["2"][1] == "copper-plate", "drive blueprint tag " .. serpent.line(tag))
+	local ghosts = bpi[1].build_blueprint{ surface = s, force = "player", position = { RX + 20.5, RY + 12.5 } }
+	local built
+	for _, g in pairs(ghosts or {}) do
+		if g.valid and g.ghost_name == "me-drive" then
+			local _, e = g.revive{ raise_revive = true }
+			built = e
+		end
+	end
+	expect(built and remote.call(NET, "get_priority", built) == 7, "revived drive priority " .. tostring(built and remote.call(NET, "get_priority", built)))
+	if built then
+		expect(cell(built, 2), "cell into the revived drive")
+		expect(serpent.line(remote.call(NET, "get_partition", built, 2)) == serpent.line({ "copper-plate" }), "the slot's partition from the blueprint: "
+			.. serpent.line(remote.call(NET, "get_partition", built, 2)))
+	end
+	bpi.destroy()
+	local pasted = s.create_entity{ name = "me-drive", position = { RX + 22.5, RY + 12.5 }, force = "player", raise_built = true }
+	expect(cell(pasted, 2) and cell(pasted, 3), "cells for the paste")
+	remote.call(NET, "set_partition", pasted, 3, { "wood" })
+	remote.call(NET, "paste", d1, pasted)
+	expect(remote.call(NET, "get_priority", pasted) == 7 and serpent.line(remote.call(NET, "get_partition", pasted, 2)) == serpent.line({ "copper-plate" })
+		and #remote.call(NET, "get_partition", pasted, 3) == 0, "pasted drive settings " .. serpent.line(remote.call(NET, "drive_settings", pasted)))
+	local clone = d1.clone{ position = { RX + 24.5, RY + 12.5 } }
+	expect(clone and remote.call(NET, "get_priority", clone) == 7, "cloned drive priority")
+
+	--- the windows' read and set functions
+	expect(remote.call(GUI, "fmt", 999) == "999" and remote.call(GUI, "fmt", 1234) == "1.2k" and remote.call(GUI, "fmt", 12345) == "12k"
+		and remote.call(GUI, "fmt", 1500000) == "1.5M" and remote.call(GUI, "fmt", 2.5e9) == "2.5G" and remote.call(GUI, "fmt", 12.5) == "12.5",
+		"fmt " .. remote.call(GUI, "fmt", 1234) .. " " .. remote.call(GUI, "fmt", 2.5e9))
+	local blocks = {}
+	local x = RX
+	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-fluid-import-bus", "me-fluid-export-bus", "me-network-interface",
+		"me-pattern-provider", "me-crafting-cpu", "me-level-maintainer", "me-circuit-interface", "me-fluid-interface" }) do
+		blocks[name] = s.find_entity(name, { x + 0.5, RY + 6.5 })
+		expect(blocks[name] and remote.call(GUI, "has_window", blocks[name]), "no window for " .. name)
+		x = x + 4
+	end
+	for _, e in pairs({ d1, t, ctrl }) do expect(remote.call(GUI, "has_window", e), "no window for " .. e.name) end
+	local dd = remote.call(GUI, "drive_data", d1)
+	expect(dd and dd.priority == 7 and dd.online and dd.cells[1] and dd.cells[2].partition[1] == "copper-plate", "drive_data " .. serpent.line(dd))
+	local cd = remote.call(GUI, "cell_data", d1, 1)
+	expect(cd and cd.contents[1] and cd.contents[1].key == "iron-gear-wheel" and cd.contents[1].count == 20, "cell_data " .. serpent.line(cd))
+	expect(remote.call(GUI, "set_partition_slot", d1, 1, 2, "iron-plate"), "set_partition_slot")
+	expect(serpent.line(remote.call(NET, "get_partition", d1, 1)) == serpent.line({ "iron-gear-wheel", "iron-plate" }), "partition button 2")
+	remote.call(GUI, "set_partition_slot", d1, 1, 1, nil)
+	expect(serpent.line(remote.call(NET, "get_partition", d1, 1)) == serpent.line({ "iron-plate" }), "partition button 1 cleared")
+	local ctl = remote.call(GUI, "controller_data", ctrl)
+	expect(ctl and ctl.ok and ctl.drives == 3 and ctl.cells >= 4, "controller_data " .. serpent.line(ctl))
+	local pd = remote.call(GUI, "provider_data", blocks["me-pattern-provider"])
+	expect(pd and pd.machines and pd.furnaces == 0, "provider_data " .. serpent.line(pd))
+	local cpu = remote.call(GUI, "cpu_data", blocks["me-crafting-cpu"])
+	expect(cpu and cpu.slots == 1 and #cpu.jobs == 0, "cpu_data " .. serpent.line(cpu))
+	local maint = blocks["me-level-maintainer"]
+	expect(remote.call(GUI, "set_maintainer_target", maint, { type = "item", name = "iron-plate" }), "set_maintainer_target")
+	local md = remote.call(GUI, "maintainer_data", maint)
+	expect(md and md.key == "iron-plate" and md.condition, "maintainer_data " .. serpent.line(md))
+	remote.call(GUI, "set_maintainer_target", maint, { type = "virtual", name = "signal-A" })
+	expect(remote.call(GUI, "maintainer_data", maint).key == nil, "a virtual signal as maintainer target")
+	expect(remote.call("gregtorio-me-circuit", "set_condition", maint, true, { type = "item", name = "iron-plate" }, "<", 5), "set_condition")
+	local cond = remote.call("gregtorio-me-circuit", "get_condition", maint)
+	expect(cond.enabled and cond.signal and cond.signal.name == "iron-plate" and cond.comparator == "<" and cond.constant == 5, "condition " .. serpent.line(cond))
+	local ci = blocks["me-circuit-interface"]
+	remote.call(GUI, "set_circuit_filter", ci, 1, "iron-plate")
+	remote.call(GUI, "set_circuit_filter", ci, 2, "fluid/water")
+	remote.call(GUI, "set_circuit_filter", ci, 1, nil)
+	local cdata = remote.call(GUI, "circuit_data", ci)
+	expect(cdata and serpent.line(cdata.filters) == serpent.line({ "fluid/water" }) and cdata.enabled ~= nil, "circuit_data " .. serpent.line(cdata))
+	remote.call("gregtorio-me-circuit", "set_circuit_enabled", ci, false)
+	expect(remote.call("gregtorio-me-circuit", "get_circuit_enabled", ci) == false, "circuit output switch")
+	local fi = remote.call(GUI, "fluid_interface_data", blocks["me-fluid-interface"])
+	expect(fi and fi.mode and fi.volume and fi.volume > 0, "fluid_interface_data " .. serpent.line(fi))
+	local iface = blocks["me-network-interface"]
+	local isize = prototypes.item["iron-plate"].stack_size
+	remote.call(GUI, "set_interface_item", iface, 3, { name = "iron-plate", quality = "normal" })
+	local idata = remote.call(GUI, "interface_data", iface)
+	expect(idata and idata.config[3] and idata.config[3].amount == isize and idata.slots == 9, "interface_data " .. serpent.line(idata))
+	remote.call(IO, "set_interface_slot", iface, 3, "iron-plate", "normal", 7)
+	remote.call(GUI, "set_interface_item", iface, 5, { name = "iron-plate", quality = "normal" })
+	idata = remote.call(GUI, "interface_data", iface)
+	expect(idata.config[5] and idata.config[5].amount == 7 and not idata.config[3], "an item moved to another config slot " .. serpent.line(idata.config))
+	remote.call(GUI, "set_interface_item", iface, 5, nil)
+	expect(next(remote.call(GUI, "interface_data", iface).config) == nil, "config slot cleared")
+	local bus = blocks["me-export-bus"]
+	remote.call(IO, "set_bus_filter", bus, 1, "iron-plate")
+	remote.call(IO, "set_bus_filter", bus, 3, "copper-plate")
+	local bd = remote.call(GUI, "bus_data", bus)
+	expect(bd and serpent.line(bd.filters) == serpent.line({ "iron-plate", "copper-plate" }) and not bd.fluid and bd.max == 5, "bus_data " .. serpent.line(bd))
+	remote.call(IO, "set_bus_filter", bus, 1, nil)
+	expect(serpent.line(remote.call(GUI, "bus_data", bus).filters) == serpent.line({ "copper-plate" }), "bus filter removed")
+	local fbd = remote.call(GUI, "bus_data", blocks["me-fluid-import-bus"])
+	expect(fbd and fbd.fluid and fbd.import, "fluid bus_data " .. serpent.line(fbd))
+	expect(remote.call(GUI, "key_of_elem", "item-with-quality", { name = "iron-plate", quality = "normal" }) == "iron-plate"
+		and remote.call(GUI, "key_of_elem", "fluid", "water") == "fluid/water"
+		and remote.call(GUI, "key_of_elem", "signal", { type = "virtual", name = "signal-A" }) == nil, "key_of_elem")
+
+	--- the terminal's tabs
+	local items = remote.call(TERM, "entries", t, "", "count", "items")
+	local fluids_only = remote.call(TERM, "entries", t, "", "count", "fluids")
+	local all = remote.call(TERM, "entries", t, "", "count", "all")
+	remote.call(NET, "insert_fluid", t, "water", 100)
+	fluids_only = remote.call(TERM, "entries", t, "", "count", "fluids")
+	expect(#items >= 3 and #fluids_only == 1 and fluids_only[1].key == "fluid/water" and #all >= 3, "kind filter " .. #items .. "/" .. #fluids_only .. "/" .. #all)
+	for _, e in pairs(items) do expect(not e.fluid, "a fluid in the items view") end
+	local cells = remote.call(TERM, "cells", t)
+	expect(#cells == 3 and cells[1].unit == u1 and cells[1].priority == 7, "cells tab " .. serpent.line(cells))
+	local prev = remote.call(TERM, "craft_preview", t, "iron-gear-wheel", 1)
+	expect(prev and not prev.ok and prev.reason, "craft preview without pattern " .. serpent.line(prev))
+	local prev0 = remote.call(TERM, "craft_preview", t, "iron-gear-wheel", 0)
+	expect(prev0 and prev0.reason == "bad-amount", "craft preview amount 0 " .. serpent.line(prev0))
+	expect(#remote.call(TERM, "jobs", t) == 0, "jobs tab")
+	inv.destroy()
+	me_report("MER3", "ME partitions and windows", problems,
+		"partitions, priorities, insert/extract order, drive blueprint/paste/clone, window data and set functions, terminal tabs")
 end
 
 --- Endgame power (prototypes/136-fork-power.lua, scripts/fork-power.lua): a LuV large plasma turbine
@@ -2769,9 +3020,6 @@ function settings_test()
 		expect(false, "entities missing")
 		return report38("SETTINGS", "settings copy", problems)
 	end
-	--- the panels cannot open without a player; at least their anchors must exist
-	expect(defines.relative_gui_type.lamp_gui and defines.relative_gui_type.constant_combinator_gui
-		and defines.relative_gui_type.storage_tank_gui, "a relative GUI anchor of the panels does not exist")
 	local M_SET = { key = "fluid/water", amount = 1234, circuit = true }
 	local C_SET = { "iron-plate", "fluid/water" }
 	local F_SET = { mode = "export", fluid = "water", level = 2345 }
@@ -2921,6 +3169,7 @@ script.on_init(function()
 	for _, f in pairs(setup_furnace_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fluid_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fluid_cell_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_r3_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fuel_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_cooled_test(s)) do fails[#fails + 1] = f end

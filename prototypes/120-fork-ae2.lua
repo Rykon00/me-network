@@ -313,7 +313,7 @@ data.raw.item["me-controller"].stack_size = 10
 
 
 --------------------------------------------------------------------------------
---- ME DRIVE (the chassis item; cells go into its 10 slots through the script GUI)
+--- ME DRIVE (the chassis item; cells go into its 10 slots through the script window)
 --------------------------------------------------------------------------------
 
 block{
@@ -322,7 +322,9 @@ block{
 	extra = { picture = {
 		filename = ENTITY_PATH .. "me-drive.png",
 		priority = "extra-high", width = 32, height = 32,
-	} },
+	},
+	--- settings paste of the priority and the cell partitions (issue #68 step R3, scripts/fork-me-network.lua)
+	additional_pastable_entities = { DRIVE } },
 }
 data.raw.item["me-drive"].place_result = DRIVE
 data.raw.item["me-drive"].stack_size = 10
@@ -466,8 +468,8 @@ data:extend({ terminal })
 data.raw.item["me-terminal"].place_result = "me-terminal"
 data.raw.item["me-terminal"].stack_size = 50
 
---- The "open GUI" key: terminal, drive, buses, pattern provider, fluid drive (works whether or not the
---- engine opens a GUI for the entity)
+--- The "open GUI" key: opens the ME window of a block (scripts/fork-me-gui.lua; works whether or not the
+--- engine opens a window for the entity), or puts the cell in the cursor into a drive
 data:extend({ {
 	type = "custom-input",
 	name = "fork-me-terminal-open",

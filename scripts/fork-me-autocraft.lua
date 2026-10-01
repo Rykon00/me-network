@@ -1313,7 +1313,6 @@ end
 --------------------------------------------------------------------------------
 
 local TAG = "fork_ae2_recipe"                -- blueprint tag of a provider's choice
-local GUI_FRAME = "fork_ae2_provider"
 
 local function register(s, entity)
 	if entity.name == PROVIDER then
@@ -1408,92 +1407,54 @@ function M.recipe_options(entity)
 	return names, shared
 end
 
---- provider GUI: the recipe of the furnaces next to it
-
-local function gui_close(player)
-	local frame = player.gui.screen[GUI_FRAME]
-	if frame then frame.destroy() end
+--- The pattern provider window's data: the machines next to it (name, recipe or the reason they are no
+--- pattern), the recipe choice for furnaces and its options.
+function M.provider_info(entity)
+	local p = provider_record(entity)
+	if not p then return nil end
+	scan_provider(p)
+	local machines = {}
+	for _, m in pairs(p.machines or {}) do
+		if m.entity.valid then
+			machines[#machines + 1] = { name = m.entity.name, unit = m.unit, recipe = m.recipe, chosen = m.chosen ~= nil }
+		end
+	end
+	table.sort(machines, function(a, b) return a.unit < b.unit end)
+	local options, shared = M.recipe_options(entity)
+	local ignored = {}
+	for reason, n in pairs(p.ignored or {}) do if reason ~= "total" then ignored[reason] = n end end
+	return { machines = machines, ignored = ignored, choice = p.recipe, furnaces = #furnaces_next_to(entity),
+		options = options, shared = shared, network = p.net ~= nil }
 end
 
-local function gui_refresh(player, entity)
-	local frame = player.gui.screen[GUI_FRAME]
-	if not (frame and entity.valid) then return end
-	local choice = M.get_recipe(entity)
-	local furnaces = furnaces_next_to(entity)
-	local body = frame.fork_ae2_body
-	body.clear()
-	local info = body.add{ type = "label", caption = #furnaces > 0 and { "fork-me-provider.info", #furnaces } or { "fork-me-provider.no-furnace" } }
-	info.style.single_line = false
-	info.style.maximal_width = 420
-	local row = body.add{ type = "flow", direction = "horizontal" }
-	row.style.vertical_align = "center"
-	local proto = choice and prototypes.recipe[choice]
-	row.add{ type = "label", caption = proto and { "fork-me-provider.current", proto.localised_name } or { "fork-me-provider.current-none" } }
-	if choice then
-		row.add{ type = "button", caption = { "fork-me-provider.clear" }, tags = { fork_ae2_provider_clear = true },
-			tooltip = { "fork-me-provider.clear-tooltip" } }
-	end
-	if #furnaces == 0 then return end
-	local names, shared = M.recipe_options(entity)
-	if #names == 0 then
-		body.add{ type = "label", caption = { "fork-me-provider.no-recipes" } }
-		return
-	end
-	local scroll = body.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
-	scroll.style.maximal_height = 400
-	local grid = scroll.add{ type = "table", column_count = 10 }
-	for _, name in pairs(names) do
-		local r = prototypes.recipe[name]
-		local tooltip = shared[name] and { "", r.localised_name, "\n", { "fork-me-provider.shared-input" } } or r.localised_name
-		grid.add{ type = "sprite-button", sprite = "recipe/" .. name, style = name == choice and "yellow_slot_button" or "slot_button",
-			tooltip = tooltip, tags = { fork_ae2_provider_recipe = name } }
-	end
+--- the pattern provider window's recipe button: choose it, or clear the choice when it is chosen already
+function M.toggle_recipe(entity, name)
+	if name == nil or name == M.get_recipe(entity) then return M.set_recipe(entity, nil) end
+	return M.set_recipe(entity, name)
 end
 
-local function gui_open(player, entity)
-	gui_close(player)
-	local frame = player.gui.screen.add{ type = "frame", name = GUI_FRAME, direction = "vertical",
-		caption = entity.localised_name, tags = { unit = entity.unit_number } }
-	frame.auto_center = true
-	frame.add{ type = "flow", name = "fork_ae2_body", direction = "vertical" }
-	player.opened = frame
-	gui_refresh(player, entity)
-end
-
---- the "open GUI" key on a selected entity (routed from the terminal's custom input handler)
-function M.on_open_input(player, entity)
-	if not (entity and entity.valid and entity.name == PROVIDER) then return false end
-	if player.can_reach_entity(entity) then gui_open(player, entity) end
-	return true
-end
-
-function M.on_gui_closed(event)
-	local el = event.element
-	if not (el and el.valid and el.name == GUI_FRAME) then return false end
-	local player = game.get_player(event.player_index)
-	if player then gui_close(player) end
-	return true
-end
-
-function M.on_gui_click(event)
-	local el = event.element
-	local tags = el and el.valid and el.tags
-	if not (tags and (tags.fork_ae2_provider_recipe or tags.fork_ae2_provider_clear)) then return false end
-	local player = game.get_player(event.player_index)
-	local frame = player and player.gui.screen[GUI_FRAME]
-	local p = frame and storage.fork_ae2 and storage.fork_ae2.providers[frame.tags.unit]
-	local entity = p and p.entity
-	if not (player and entity and entity.valid and player.can_reach_entity(entity)) then
-		if player then gui_close(player) end
-		return true
+--- The CPU window's data: its tier (job slots, speed), power, and the jobs it runs or that wait in its network
+function M.cpu_info(entity)
+	local s = state()
+	if not (entity and entity.valid and cpu_spec(entity.name)) then return nil end
+	register(s, entity)
+	local rec = s.cpus[entity.unit_number]
+	local spec = cpu_spec(entity.name)
+	local jobs = {}
+	for id in pairs(cpu_jobs(rec)) do
+		local j = M.job(id)
+		if j then jobs[#jobs + 1] = j end
 	end
-	if tags.fork_ae2_provider_clear or tags.fork_ae2_provider_recipe == M.get_recipe(entity) then
-		M.set_recipe(entity, nil)                 -- clicking the chosen recipe again clears it
-	else
-		M.set_recipe(entity, tags.fork_ae2_provider_recipe)
+	table.sort(jobs, function(a, b) return a.id < b.id end)
+	local waiting = {}
+	local net = network_of(entity)
+	if net then
+		for _, j in ipairs(M.jobs(net)) do
+			if j.status == "queued" then waiting[#waiting + 1] = j end
+		end
 	end
-	gui_refresh(player, entity)
-	return true
+	return { slots = spec.jobs, speed = spec.speed, powered = cpu_powered(entity), network = net ~= nil,
+		jobs = jobs, waiting = waiting }
 end
 
 --- copy the choice with the provider's settings (shift right click, shift left click)
@@ -1586,7 +1547,6 @@ function M.on_configuration_changed()
 			end
 		end
 	end
-	for _, player in pairs(game.players) do gui_close(player) end   -- open provider GUIs are closed
 	s.busy = {}
 	for _, id in pairs(shallow(s.active)) do
 		local job = s.jobs[id]
@@ -1662,6 +1622,8 @@ remote.add_interface("gregtorio-me-autocraft", {
 	get_recipe = function(provider) return M.get_recipe(provider) end,
 	set_recipe = function(provider, name) return M.set_recipe(provider, name) end,
 	recipe_options = function(provider) return M.recipe_options(provider) end,
+	--- the pattern provider window's recipe button (choose, or clear when chosen), the CPU window's data (R3)
+	toggle_recipe = function(provider, name) return M.toggle_recipe(provider, name) end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
 })
