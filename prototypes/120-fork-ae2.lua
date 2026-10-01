@@ -42,7 +42,7 @@ local CONTROLLER, CABLE, DRIVE, INTERFACE = "me-network-controller", "me-cable",
 local IMPORT_BUS, EXPORT_BUS = "me-import-bus", "me-export-bus"
 local STORAGE_BUS = "me-storage-bus"
 local UNDERGROUND = "me-underground-cable"
-local UNDERGROUND_REACH = 10        -- free tiles between the two ends of an underground cable (like the underground pipe)
+local UNDERGROUND_REACH = 10        -- max_underground_distance of the underground cable (the underground pipe's)
 --- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask
 local WALKABLE = { layers = { item = true, meltable = true, object = true, water_tile = true, is_lower_object = true } }
 
@@ -425,12 +425,37 @@ create_item{
 	},
 	results = { { type = "item", name = UNDERGROUND, amount = 2 } },
 }
-block{
-	name = UNDERGROUND, icon = ICON_FORK .. UNDERGROUND .. ".png", health = 80, mining_time = 0.1,
+--- A real pipe-to-ground whose fluid box has its own connection category: it never connects to pipes or carries
+--- fluid, but the engine pairs the ends exactly like underground pipes (reach, rotation, blocking, dragging) and
+--- shows the pairing on hover and while placing. Its direction is the run's direction; the above ground
+--- connection points backwards. The ME graph reads the engine's pairing (fluidbox.get_connections).
+data:extend({ {
+	type = "pipe-to-ground",
+	name = UNDERGROUND,
+	icon = ICON_FORK .. UNDERGROUND .. ".png",
+	icon_size = 32,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.1, result = UNDERGROUND },
+	placeable_by = { item = UNDERGROUND, count = 1 },
+	max_health = 80,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 45,
-	description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
-	extra = { picture = four_way(UNDERGROUND), render_layer = "lower-object", collision_mask = WALKABLE },
-}
+	collision_mask = WALKABLE,
+	fluid_box = {
+		volume = 1,
+		hide_connection_info = true,
+		pipe_connections = {
+			{ direction = defines.direction.south, position = { 0, 0 }, connection_category = "me-cable" },
+			{ connection_type = "underground", direction = defines.direction.north, position = { 0, 0 },
+			  max_underground_distance = UNDERGROUND_REACH, connection_category = "me-cable" },
+		},
+	},
+	pictures = four_way(UNDERGROUND),
+	localised_description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
+} })
 
 --- shift right click / shift left click copies the filters of the buses (runtime, on_entity_settings_pasted)
 data.raw["simple-entity-with-force"][IMPORT_BUS].additional_pastable_entities = { IMPORT_BUS }
