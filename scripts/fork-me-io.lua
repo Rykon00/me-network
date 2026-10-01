@@ -14,7 +14,7 @@
 ---     paste and clones. The windows of both are in scripts/fork-me-windows.lua.
 --- The I/O step runs every STEP_TICKS ticks (shared with the fluid interfaces and the storage buses: this module
 --- registers the interval and calls the fluid step and the storage bus visits of scripts/fork-me-storagebus.lua
---- first): at most ENDPOINTS_PER_STEP interfaces and buses, round robin;
+--- and scripts/fork-me-fluid-storagebus.lua first): at most ENDPOINTS_PER_STEP interfaces and buses, round robin;
 --- an interface handles at most IFACE_SLOTS_PER_VISIT slots per visit, a bus moves BUS_ITEMS items.
 --- State: storage.fork_me_io (records by unit number). GUI state lives in the GUI elements.
 --------------------------------------------------------------------------------
@@ -22,6 +22,7 @@
 local N = require("scripts.fork-me-network")
 local fluids = require("scripts.fork-me-fluids")
 local storage_bus = require("scripts.fork-me-storagebus")
+local fluid_storage_bus = require("scripts.fork-me-fluid-storagebus")
 
 local M = {}
 
@@ -385,7 +386,12 @@ function M.fluid_bus_step(rec, net, t)
 			local avail = math.min(N.fluid_count(net, name), BUS_FLUID - moved)
 			if avail > 1e-6 then
 				local inserted = t.insert_fluid{ name = name, amount = avail }
-				if inserted > 0 then moved = moved + N.extract_fluid(net, name, inserted) end
+				if inserted > 0 then
+					local got = N.extract_fluid(net, name, inserted)
+					--- a fluid storage bus's segment had less than its snapshot: never duplicate
+					if got < inserted - 1e-6 then t.remove_fluid{ name = name, amount = inserted - got } end
+					moved = moved + got
+				end
 			end
 		end
 	end
@@ -447,6 +453,7 @@ end
 local function on_step()
 	fluids.on_step()
 	storage_bus.on_step()                     -- the storage buses read their inventories (bounded, round robin)
+	fluid_storage_bus.on_step()               -- the fluid storage buses read their segments (bounded, round robin)
 	local s = storage.fork_me_io
 	if not s then return end
 	local n = #s.list

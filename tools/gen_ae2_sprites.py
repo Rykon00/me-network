@@ -16,6 +16,7 @@ Sources:
     python tools/gen_ae2_sprites.py --r2          # only the issue #68 (R2) fluid bus graphics, from the R1 PNGs
     python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
     python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
+    python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
@@ -613,6 +614,40 @@ def storage_bus():
     return written
 
 
+# --- issue #68: ME Fluid Storage Bus ----------------------------------------------------------
+# The storage bus casing with the plate and arrows in fluid blue and a small storage tank (with its fluid
+# window) instead of the chest.
+TANK_STEEL = (120, 126, 136)
+TANK_DARK = (60, 64, 72)
+
+
+def fluid_storage_bus_sprite(direction):
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    d.rectangle((4, 0, TILE - 5, 4), fill=FLUID + (255,), outline=(40, 40, 48, 255))             # the plate (north)
+    d.rectangle((15, 9, 16, 15), fill=(235, 235, 245, 255))                                      # arrow shaft
+    d.polygon([(12, 9), (19, 9), (15, 5)], fill=FLUID_LIGHT + (255,))                          # head at the plate
+    d.polygon([(12, 15), (19, 15), (15, 19)], fill=FLUID_LIGHT + (255,))                         # head at the tank
+    d.ellipse((9, 19, 22, 29), fill=TANK_STEEL + (255,), outline=TANK_DARK + (255,))            # the tank
+    d.rectangle((12, 23, 19, 25), fill=FLUID + (255,))                                            # fluid window
+    d.line((9, 24, 11, 24), fill=PIPE + (255,))                                                    # pipe stubs
+    d.line((20, 24, 22, 24), fill=PIPE + (255,))
+    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    return img.rotate(turns, resample=Image.NEAREST) if turns else img
+
+
+def fluid_storage_bus():
+    written = []
+    for direction in ("north", "east", "south", "west"):
+        path = OUT_ENTITY / f"me-fluid-storage-bus-{direction}.png"
+        fluid_storage_bus_sprite(direction).save(path)
+        written.append(path)
+    path = OUT_ICON / "me-fluid-storage-bus.png"
+    fluid_storage_bus_sprite("north").save(path)
+    written.append(path)
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
@@ -630,9 +665,12 @@ def main():
                     help="only the ME Underground Cable (drawn from the cable colours)")
     ap.add_argument("--storage-bus", action="store_true",
                     help="only the ME Storage Bus, derived from the R1 PNGs")
+    ap.add_argument("--fluid-storage-bus", action="store_true",
+                    help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus):
-        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground or --storage-bus is required")
+    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus):
+        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus or --fluid-storage-bus"
+                 " is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -670,6 +708,9 @@ def main():
     if a.gt or a.storage_bus:
         written = storage_bus()
         print("ME storage bus sprites:", len(written))
+    if a.gt or a.fluid_storage_bus:
+        written = fluid_storage_bus()
+        print("ME fluid storage bus sprites:", len(written))
 
 
 if __name__ == "__main__":

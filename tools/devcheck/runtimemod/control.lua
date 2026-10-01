@@ -670,6 +670,7 @@ local function tests_running()
 	check(storage.fluid_cells and storage.fluid_cells.done, "ME fluid cells")
 	check(storage.me_r3 and storage.me_r3.done, "ME partitions and windows")
 	check(storage.me_sbus and storage.me_sbus.done, "ME storage bus")
+	check(storage.me_fsbus and storage.me_fsbus.done, "ME fluid storage bus")
 	check(storage.power_checked, "power")
 	check(storage.fuel and storage.fuel.done, "fuel check")
 	check(storage.cooled and storage.cooled.done, "cooled fluid")
@@ -1154,6 +1155,7 @@ script.on_nth_tick(10, function()
 	fluid_cell_test()
 	me_r3_test()
 	storage_bus_test()
+	fluid_storage_bus_test()
 	if not (storage.fuel and storage.fuel.done) then fuel_test() end
 	if not (storage.cooled and storage.cooled.done) then cooled_test() end
 	if not (storage.tiers and storage.tiers.done) then tier_test() end
@@ -2150,6 +2152,310 @@ function storage_bus_test()
 	pinv.destroy()
 	--- the inserter test (above): one wood into the source chest
 	src.insert{ name = "wood", count = 1 }
+end
+
+--------------------------------------------------------------------------------
+--- ME Fluid Storage Bus (issue #68, scripts/fork-me-fluid-storagebus.lua): own network right of the storage bus test,
+--- a drive with four 1k fluid cells, a terminal, fluid storage buses on storage tanks below a cable row. T1 and T2
+--- are one fluid segment (a pipe between them): counted once, the second bus refused; removing the pipe splits
+--- the segment and the second bus takes its part. Then the terminal's entries and an extract (what autocrafting and
+--- the export buses do), a filtered insert (T3) and the rest into the cells, priority, read only and write only, a
+--- stale snapshot (fluid taken out by hand), another temperature (hot steam in T4), removals, the settings in a
+--- blueprint tag, on a revived ghost, by paste and clone, the window data; after every part the network's fluid
+--- must equal the cells plus the segments of the working buses. Then (waiting) the fluid export bus takes from
+--- T1's segment, a level maintainer counts it ("stocked") and a pump filling T5 is in the network within one
+--- visit cycle.
+--------------------------------------------------------------------------------
+
+local FSX, FSY = 340, 125
+local FSB = "gregtorio-me-fluid-storagebus"
+local FS_CY = FSY + 2.5                                     -- centre row of the tanks below the buses
+
+function setup_fluid_storage_bus_test(s)
+	local fails = {}
+	local what = "fluid storage bus"
+	power(s, fails, what, FSX, FSY)
+	me_place(s, fails, what, "me-network-controller", FSX + 7, FSY)
+	me_drive(s, fails, what, FSX + 8.5, FSY - 0.5, {}, "1k", true)
+	me_place(s, fails, what, "me-terminal", FSX + 9.5, FSY - 0.5)
+	cable_row(s, fails, FSX + 10, FSX + 38, FSY - 1)
+	local south = { direction = defines.direction.south }
+	--- T1 (north) and T2 (east) joined by the pipe P on T1's east and T2's west connection: one segment
+	me_place(s, fails, what, "storage-tank", FSX + 12.5, FS_CY)
+	me_place(s, fails, what, "pipe", FSX + 14.5, FS_CY + 1)
+	me_place(s, fails, what, "storage-tank", FSX + 16.5, FS_CY, { direction = defines.direction.east })
+	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 12.5, FSY + 0.5, south)     -- B1 on T1
+	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 16.5, FSY + 0.5, south)     -- B2 on T2: same segment
+	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 19.5, FSY + 0.5, { direction = defines.direction.north })  -- B6: a cable
+	me_place(s, fails, what, "storage-tank", FSX + 21.5, FS_CY)                         -- T3: filters
+	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 21.5, FSY + 0.5, south)     -- B3
+	me_place(s, fails, what, "storage-tank", FSX + 26.5, FS_CY)                         -- T4: priority, modes, temperature
+	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 26.5, FSY + 0.5, south)     -- B4
+	me_place(s, fails, what, "storage-tank", FSX + 31.5, FS_CY)                         -- T5: filled by the pump
+	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 31.5, FSY + 0.5, south)     -- B5
+	--- the pump (output north into T5's south connection) and its source tank TS (north connection into the pump)
+	me_place(s, fails, what, "pump", FSX + 32.5, FSY + 5, { direction = defines.direction.north })
+	me_place(s, fails, what, "storage-tank", FSX + 33.5, FSY + 7.5)
+	power(s, fails, what, FSX + 36, FSY + 8)
+	--- the fluid export bus into TE, and a level maintainer
+	me_place(s, fails, what, "me-fluid-export-bus", FSX + 35.5, FSY + 0.5, south)
+	me_place(s, fails, what, "storage-tank", FSX + 35.5, FS_CY)
+	me_place(s, fails, what, "me-level-maintainer", FSX + 37.5, FSY + 0.5)
+	return fails
+end
+
+function fluid_storage_bus_test()
+	local st = storage.me_fsbus
+	if (st and st.done) or game.tick < 60 then return end
+	local s = game.surfaces[1]
+	local function find(name, x, y) return s.find_entity(name, { FSX + x, FSY + y }) end
+	local t, drive = find("me-terminal", 9.5, -0.5), find("me-drive", 8.5, -0.5)
+	local function fcount(name) return remote.call(NET, "fluid_count", t, name) end
+	local function near(a, b) return math.abs((a or 0) - (b or 0)) < 0.01 end
+	local function seg(tank) return tank.fluidbox.get_fluid_segment_contents(1) or {} end
+	local function info(b) return remote.call(FSB, "info", b) or {} end
+	local cy = FS_CY - FSY
+	if st then
+		--- waiting part: the export bus, the maintainer, the pump
+		local problems = st.problems
+		local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+		local t5, b5 = find("storage-tank", 31.5, cy), find("me-fluid-storage-bus", 31.5, 0.5)
+		local te = find("storage-tank", 35.5, cy)
+		local maint = find("me-level-maintainer", 37.5, 0.5)
+		if not st.export_done and te.get_fluid_count("lubricant") > 0 then
+			st.export_done = true
+			remote.call(IO, "set_bus_filters", find("me-fluid-export-bus", 35.5, 0.5), {})   -- one visit is enough
+			expect(near(seg(st.t1).lubricant, st.t1_before - te.get_fluid_count("lubricant")),
+				"export bus: T1's segment " .. tostring(seg(st.t1).lubricant) .. ", before " .. st.t1_before .. ", TE " .. te.get_fluid_count("lubricant"))
+		end
+		if not st.maint_done then
+			local m = remote.call("gregtorio-me-circuit", "get_maintainer", maint)
+			if m and m.status == "stocked" then
+				st.maint_done = true
+				expect(near(m.stock, fcount("lubricant")) and m.stock >= 100, "maintainer stock " .. tostring(m.stock) .. ", network " .. fcount("lubricant"))
+			end
+		end
+		if not st.seen and (seg(t5).water or 0) > 0 then st.seen = game.tick end
+		local buses = s.count_entities_filtered{ name = "me-fluid-storage-bus" }
+		local cycle = 15 * math.ceil(buses / 8) + 10           -- visit cycle plus this test's 10 tick granularity
+		if st.seen and not st.pump_done and (info(b5).contents or {})["fluid/water"] then
+			st.pump_done = game.tick - st.seen
+			expect(st.pump_done <= cycle, "pump: water seen after " .. st.pump_done .. " ticks (cycle " .. cycle .. ")")
+		end
+		if st.export_done and st.maint_done and st.pump_done then
+			st.done = true
+			return me_report("MEFLUIDSTORAGEBUS", "ME fluid storage bus", problems,
+				"pump picked up after " .. st.pump_done .. " ticks, cycle " .. cycle)
+		elseif game.tick > st.started + 900 then
+			expect(st.export_done, "the export bus took nothing from T1's segment")
+			expect(st.maint_done, "maintainer: " .. serpent.line(remote.call("gregtorio-me-circuit", "get_maintainer", maint)))
+			expect(st.pump_done, "the pump's water never showed up (seen at " .. tostring(st.seen) .. ", B5 " .. serpent.line(info(b5)) .. ")")
+			st.done = true
+			return me_report("MEFLUIDSTORAGEBUS", "ME fluid storage bus", problems)
+		end
+		return
+	end
+	st = { problems = {}, started = game.tick }
+	storage.me_fsbus = st
+	local problems = st.problems
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function bus(x) return find("me-fluid-storage-bus", x, 0.5) end
+	local b1, b2, b6, b3, b4, b5 = bus(12.5), bus(16.5), bus(19.5), bus(21.5), bus(26.5), bus(31.5)
+	local t1, t2 = find("storage-tank", 12.5, cy), find("storage-tank", 16.5, cy)
+	local t3, t4, t5 = find("storage-tank", 21.5, cy), find("storage-tank", 26.5, cy), find("storage-tank", 31.5, cy)
+	local ts, te = find("storage-tank", 33.5, 7.5), find("storage-tank", 35.5, cy)
+	local pipe = find("pipe", 14.5, cy + 1)
+	local ebus, maint = find("me-fluid-export-bus", 35.5, 0.5), find("me-level-maintainer", 37.5, 0.5)
+	if not (t and drive and b1 and b2 and b3 and b4 and b5 and b6 and t1 and t2 and t3 and t4 and t5 and ts and te and pipe
+		and ebus and maint) then
+		st.done = true
+		return me_report("MEFLUIDSTORAGEBUS", "ME fluid storage bus", { "entities missing" })
+	end
+	st.t1 = t1
+	local net = remote.call(NET, "network", t)
+	expect(net and net.ok and net.fluid_storage_buses == 6 and net.storage_buses == 0, "network " .. serpent.line(net))
+	expect(t1.fluidbox.get_fluid_segment_id(1) == t2.fluidbox.get_fluid_segment_id(1), "T1 and T2 are not one segment")
+	local function visit(b) remote.call(FSB, "visit", b) end
+	local function cells(name)
+		local n = 0
+		for _, c in pairs(remote.call(NET, "drive", drive)) do n = n + (c.items["fluid/" .. name] or 0) end
+		return n
+	end
+	--- the network's fluid must be the cells' plus the segments of the working buses (each segment once)
+	local pairs_ = { { b1, t1 }, { b2, t2 }, { b3, t3 }, { b4, t4 }, { b5, t5 } }
+	local function consistent(label)
+		local want = {}
+		for _, c in pairs(remote.call(NET, "drive", drive)) do
+			for k, n in pairs(c.items) do
+				if k:sub(1, 6) == "fluid/" then want[k:sub(7)] = (want[k:sub(7)] or 0) + n end
+			end
+		end
+		for _, p in ipairs(pairs_) do
+			if p[1].valid then visit(p[1]) end
+		end
+		local done = {}
+		for _, p in ipairs(pairs_) do
+			if p[1].valid and p[2].valid then
+				local i = info(p[1])
+				local id = p[2].fluidbox.get_fluid_segment_id(1)
+				if (i.status == "ok" or i.status == "temperature") and i.mode ~= "write" and not done[id] then
+					done[id] = true
+					local allow = {}
+					for _, f in pairs(i.filters) do allow[f] = true end
+					for name, n in pairs(seg(p[2])) do
+						if #i.filters == 0 or allow[name] then want[name] = (want[name] or 0) + n end
+					end
+				end
+			end
+		end
+		local have = remote.call(NET, "fluid_contents", t)
+		local diff = {}
+		for k, n in pairs(want) do if not near(have[k], n) then diff[#diff + 1] = k .. " " .. tostring(have[k]) .. "/" .. n end end
+		for k, n in pairs(have) do if not want[k] then diff[#diff + 1] = k .. " " .. n .. "/0" end end
+		table.sort(diff)
+		expect(#diff == 0, label .. ": network/expected " .. table.concat(diff, ", "))
+	end
+
+	--- one segment, two tanks: counted once after a visit (not before: no event), the second bus refused
+	t1.insert_fluid{ name = "lubricant", amount = 1000 }
+	expect(fcount("lubricant") == 0, "T1 seen without a visit")
+	visit(b1)
+	visit(b2)
+	local i1, i2 = info(b1), info(b2)
+	expect(near(fcount("lubricant"), 1000), "two tanks of one segment: lubricant " .. fcount("lubricant"))
+	expect(i1.status == "ok" and i2.status == "shared-target" and i1.segment == "s" .. t1.fluidbox.get_fluid_segment_id(1)
+		and i1.fluid == "lubricant" and near(i1.amount, 1000) and i1.target == "storage-tank",
+		"one segment: " .. serpent.line(i1) .. " / " .. serpent.line(i2))
+	consistent("one segment")
+	--- the terminal shows it (and refuses it by hand); an extract (what autocrafting and the export buses do) takes from it
+	local shown
+	for _, en in pairs(remote.call(TERM, "entries", t, "", "count", "fluids")) do
+		if en.key == "fluid/lubricant" then shown = en.count end
+	end
+	expect(near(shown, 1000), "terminal entry: " .. tostring(shown))
+	local inv = game.create_inventory(2)
+	local took = remote.call(TERM, "take", inv[1], inv, t, "fluid/lubricant", "inventory")
+	expect(not took or took == 0, "terminal took fluid by hand: " .. tostring(took))
+	inv.destroy()
+	expect(near(remote.call(NET, "extract_fluid", t, "lubricant", 300), 300) and near(seg(t1).lubricant, 700)
+		and near(fcount("lubricant"), 700), "extract from the segment: T1+T2 " .. tostring(seg(t1).lubricant))
+	consistent("after the extract")
+	--- split: the pipe between T1 and T2 removed, B2 takes T2's part
+	pipe.destroy{ raise_destroy = true }
+	expect(t1.fluidbox.get_fluid_segment_id(1) ~= t2.fluidbox.get_fluid_segment_id(1), "the segment did not split")
+	local part1, part2 = seg(t1).lubricant or 0, seg(t2).lubricant or 0
+	expect(near(part1 + part2, 700), "split parts " .. part1 .. " + " .. part2)
+	--- before any visit the engine never takes more than the bus really owns
+	local got = remote.call(NET, "extract_fluid", t, "lubricant", 700)
+	expect(got <= part1 + 1e-6 and near(seg(t1).lubricant or 0, part1 - got), "extract after the split: " .. got .. " of " .. part1)
+	if got > 0 then t1.insert_fluid{ name = "lubricant", amount = got } end      -- back to the split state
+	remote.call(FSB, "step")                                                     -- the removal marked B1 for the next step
+	visit(b2)
+	i1, i2 = info(b1), info(b2)
+	expect(i1.status == "ok" and i2.status == "ok" and i1.segment ~= i2.segment and near(i2.amount, part2)
+		and near(fcount("lubricant"), 700), "after the split: " .. serpent.line(i1) .. " / " .. serpent.line(i2) .. ", network " .. fcount("lubricant"))
+	consistent("after the split")
+	--- a filtered bus gets its fluid; a fluid no bus holds goes into the cells
+	expect(remote.call(FSB, "set_settings", b3, { filters = { "sulfuric-acid" } }), "set_settings filters")
+	expect(near(remote.call(NET, "insert_fluid", t, "sulfuric-acid", 500), 500) and near(seg(t3)["sulfuric-acid"], 500)
+		and cells("sulfuric-acid") == 0, "filtered insert: T3 " .. tostring(seg(t3)["sulfuric-acid"]))
+	expect(near(remote.call(NET, "insert_fluid", t, "crude-oil", 400), 400) and near(cells("crude-oil"), 400)
+		and not seg(t4)["crude-oil"] and not seg(t3)["crude-oil"], "crude oil into the cells: " .. cells("crude-oil"))
+	consistent("after the inserts")
+	--- priority against the cells
+	remote.call(FSB, "set_settings", b4, { priority = 10 })
+	remote.call(NET, "insert_fluid", t, "water", 200)
+	expect(near(seg(t4).water, 200) and cells("water") == 0, "priority 10: water into T4 " .. tostring(seg(t4).water))
+	remote.call(FSB, "set_settings", b4, { priority = -10 })
+	remote.call(NET, "insert_fluid", t, "water", 100)
+	expect(near(seg(t4).water, 200) and near(cells("water"), 100), "priority -10: water into the cells " .. cells("water"))
+	expect(near(remote.call(NET, "extract_fluid", t, "water", 50), 50) and near(seg(t4).water, 150) and near(cells("water"), 100),
+		"priority -10: water taken from T4 first")
+	remote.call(FSB, "set_settings", b4, { priority = 10 })
+	expect(near(remote.call(NET, "extract_fluid", t, "water", 50), 50) and near(seg(t4).water, 150) and near(cells("water"), 50),
+		"priority 10: water taken from the cells first")
+	consistent("after the priorities")
+	--- read only: nothing goes in, taking works; write only: not shown, not taken from, but filled
+	remote.call(FSB, "set_settings", b4, { mode = "read", priority = -10 })
+	remote.call(NET, "insert_fluid", t, "water", 30)
+	expect(near(seg(t4).water, 150) and near(cells("water"), 80), "read only: water into T4 " .. tostring(seg(t4).water))
+	expect(near(remote.call(NET, "extract_fluid", t, "water", 50), 50) and near(cells("water"), 80) and near(seg(t4).water, 100),
+		"read only: taken from T4 " .. tostring(seg(t4).water))
+	remote.call(FSB, "set_settings", b4, { mode = "write", priority = 10 })
+	expect(near(fcount("water"), 80), "write only: T4 shown " .. fcount("water"))
+	remote.call(NET, "insert_fluid", t, "water", 20)
+	expect(near(seg(t4).water, 120) and near(fcount("water"), 80), "write only: water into T4 " .. tostring(seg(t4).water))
+	expect(near(remote.call(NET, "extract_fluid", t, "water", 200), 80) and near(seg(t4).water, 120), "write only: water taken from T4")
+	remote.call(FSB, "set_settings", b4, { mode = "readwrite", priority = 0 })
+	expect(near(fcount("water"), 120), "read and write again: " .. fcount("water"))
+	consistent("after the modes")
+	--- stale snapshot: fluid taken out by hand is counted until the next visit, but an extract finds only the real fluid
+	t4.remove_fluid{ name = "water", amount = 100 }
+	expect(near(fcount("water"), 120), "water recounted without a visit")
+	expect(near(remote.call(NET, "extract_fluid", t, "water", 120), 20) and fcount("water") == 0 and (seg(t4).water or 0) < 1e-6,
+		"stale extract: network " .. fcount("water"))
+	consistent("after the stale extract")
+	--- another temperature: hot steam in T4 is read, the network's steam (default temperature) does not go in
+	t4.insert_fluid{ name = "steam", amount = 100, temperature = 500 }
+	visit(b4)
+	local i4 = info(b4)
+	expect(i4.status == "temperature" and near(i4.temperature, 500) and near(fcount("steam"), 100), "hot steam: " .. serpent.line(i4))
+	expect(near(remote.call(NET, "insert_fluid", t, "steam", 50), 50) and near(seg(t4).steam, 100) and near(cells("steam"), 50)
+		and near(t4.fluidbox[1].temperature, 500), "steam inserted into the hot tank: T4 " .. tostring(seg(t4).steam))
+	expect(near(remote.call(NET, "extract_fluid", t, "steam", 120), 120) and near(seg(t4).steam, 0) and near(cells("steam"), 30),
+		"steam taken: T4 " .. tostring(seg(t4).steam) .. ", cells " .. cells("steam"))
+	consistent("after the temperature")
+	--- removals: a tank removed with an event leaves at once, a removed bus takes its segment out
+	t3.destroy{ raise_destroy = true }
+	expect(fcount("sulfuric-acid") == 0 and info(b3).status == "no-target", "T3 removed: acid " .. fcount("sulfuric-acid"))
+	b2.destroy{ raise_destroy = true }
+	expect(near(fcount("lubricant"), part1), "B2 removed: lubricant " .. fcount("lubricant") .. ", T1 " .. part1)
+	consistent("after the removals")
+	net = remote.call(NET, "network", t)
+	expect(net and net.fluid_storage_buses == 5, "fluid storage buses left: " .. serpent.line(net and net.fluid_storage_buses))
+	--- a bus facing an ME block works with nothing
+	visit(b6)
+	expect(info(b6).status == "me-target", "facing a cable: " .. tostring(info(b6).status))
+	--- settings: blueprint tag, a revived ghost with the tag, paste, clone, the window's data
+	local want = { mode = "read", priority = 7, filters = { "lubricant", "water" } }
+	expect(remote.call(FSB, "set_settings", b6, want), "set_settings b6")
+	local function same(b, label)
+		local g = remote.call(FSB, "get_settings", b)
+		expect(g and serpent.line(g) == serpent.line(want), label .. ": " .. serpent.line(g))
+	end
+	same(b6, "settings")
+	local bpi = game.create_inventory(1)
+	bpi.insert{ name = "blueprint" }
+	local mapping = bpi[1].create_blueprint{ surface = s, force = "player", area = { { FSX + 19, FSY }, { FSX + 20, FSY + 1 } } }
+	remote.call(FSB, "tag_blueprint", bpi[1], mapping)
+	local tag
+	for index, e in pairs(mapping or {}) do
+		if e.name == "me-fluid-storage-bus" then tag = bpi[1].get_blueprint_entity_tag(index, "fork_me_fluid_storage_bus") end
+	end
+	bpi.destroy()
+	expect(tag and serpent.line(tag) == serpent.line(want), "blueprint tag " .. serpent.line(tag))
+	local ghost = s.create_entity{ name = "entity-ghost", inner_name = "me-fluid-storage-bus", position = { FSX + 26.5, FSY + 12.5 },
+		force = "player", tags = { fork_me_fluid_storage_bus = tag } }
+	local _, revived = ghost.revive{ raise_revive = true }
+	if revived then same(revived, "revived ghost") else expect(false, "ghost not revived") end
+	local pasted = s.create_entity{ name = "me-fluid-storage-bus", position = { FSX + 28.5, FSY + 12.5 }, force = "player", raise_built = true }
+	remote.call(FSB, "paste", b6, pasted)
+	same(pasted, "pasted")
+	local clone = b6.clone{ position = { FSX + 30.5, FSY + 12.5 } }
+	if clone then same(clone, "clone") else expect(false, "no clone") end
+	local wd = remote.call(GUI, "fluid_storage_bus_data", b6)
+	expect(wd and wd.mode == "read" and wd.priority == 7 and wd.max == 5 and wd.status == "me-target", "window data " .. serpent.line(wd))
+	expect(remote.call(GUI, "has_window", b6), "the fluid storage bus has no window")
+	remote.call(FSB, "set_filter", b6, 1, nil)
+	expect(serpent.line(remote.call(FSB, "get_settings", b6).filters) == serpent.line({ "water" }), "filter removed")
+	--- the waiting part (above): the export bus takes lubricant from T1's segment, a maintainer keeps 100 lubricant,
+	--- the pump fills T5 from TS
+	t1.insert_fluid{ name = "lubricant", amount = 2000 }                     -- enough for the export and the maintainer
+	visit(b1)
+	st.t1_before = seg(t1).lubricant or 0
+	remote.call(IO, "set_bus_filters", ebus, { "lubricant" })
+	remote.call("gregtorio-me-circuit", "set_maintainer", maint, "fluid/lubricant", 100, false)
+	ts.insert_fluid{ name = "water", amount = 5000 }
 end
 
 --- Endgame power (prototypes/136-fork-power.lua, scripts/fork-power.lua): a LuV large plasma turbine
@@ -3445,6 +3751,7 @@ script.on_init(function()
 	for _, f in pairs(setup_fluid_cell_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_r3_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_storage_bus_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_fluid_storage_bus_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fuel_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_cooled_test(s)) do fails[#fails + 1] = f end

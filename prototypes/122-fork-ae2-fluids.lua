@@ -9,12 +9,15 @@
 ---                          (network -> tank, up to a fill level).
 ---   * ME Fluid Import / Export Bus = rotatable 1x1 blocks that take fluid out of / put fluid into the
 ---                          entity they face (tank, machine).
+---   * ME Fluid Storage Bus = rotatable 1x1 block: the fluid segment of the tank it faces is storage of the
+---                          network (scripts/fork-me-fluid-storagebus.lua).
 ---   * The old ME Fluid Drive (four cells crafted in, contents in script state) stays hidden so saves load;
 ---     scripts/fork-me-migrate.lua replaces each one by an ME Drive with four fluid cells of its tier.
 ---     Placing an old fluid drive item gives the same (its fluid goes into the cells).
 --- The cell numbers go into the mod-data "fork-me-network" of 120; the interface's numbers into the
 --- mod-data "fork-me-fluids". Runtime: scripts/fork-me-network.lua (storage), scripts/fork-me-fluids.lua
---- (fluid interface), scripts/fork-me-io.lua (buses). Sprites and icons: tools/gen_ae2_sprites.py.
+--- (fluid interface), scripts/fork-me-io.lua (buses), scripts/fork-me-fluid-storagebus.lua (fluid storage bus).
+--- Sprites and icons: tools/gen_ae2_sprites.py.
 --------------------------------------------------------------------------------
 
 local ENTITY_PATH = "__gregtorio-continued__/graphics/entity/fork/ae2/"
@@ -37,6 +40,7 @@ local CELLS = {
 local INTERFACE = "me-fluid-interface"
 local INTERFACE_VOLUME = 5000
 local IMPORT_BUS, EXPORT_BUS = "me-fluid-import-bus", "me-fluid-export-bus"
+local STORAGE_BUS = "me-fluid-storage-bus"   -- the fluid segment of the tank it faces is network storage
 
 
 
@@ -196,7 +200,8 @@ data:extend({ {
 
 
 --------------------------------------------------------------------------------
---- ME FLUID IMPORT / EXPORT BUS (rotatable, like the item buses of 120)
+--- ME FLUID IMPORT / EXPORT / STORAGE BUS (rotatable, like the item buses of 120; the fluid storage bus makes the
+--- fluid segment of the tank it faces network storage, runtime: scripts/fork-me-fluid-storagebus.lua)
 --------------------------------------------------------------------------------
 
 local function four_way(name)
@@ -210,6 +215,7 @@ end
 for _, bus in pairs({
 	{ name = IMPORT_BUS, base = "me-import-bus", order = "h2" },
 	{ name = EXPORT_BUS, base = "me-export-bus", order = "h3" },
+	{ name = STORAGE_BUS, base = "me-storage-bus", order = "h4" },
 }) do
 	create_item{
 		name = bus.name,
@@ -298,9 +304,9 @@ local function tech(def)
 	} })
 end
 
---- EV: fluid cells up to 64k, the fluid interface, the fluid buses
+--- EV: fluid cells up to 64k, the fluid interface, the fluid buses (import, export, storage)
 tech{ name = "me-fluid-storage", prerequisites = { "me-autocrafting" }, packs = 5, count = 600, recipes = {
-	INTERFACE, IMPORT_BUS, EXPORT_BUS, "me-1k-fluid-storage-cell", "me-4k-fluid-storage-cell",
+	INTERFACE, IMPORT_BUS, EXPORT_BUS, STORAGE_BUS, "me-1k-fluid-storage-cell", "me-4k-fluid-storage-cell",
 	"me-16k-fluid-storage-cell", "me-64k-fluid-storage-cell" } }
 
 --- IV: 256k fluid cells

@@ -171,7 +171,11 @@ function M.interface_step(rec)
 		return
 	end
 	local inserted = e.insert_fluid{ name = fluid, amount = math.min(want, avail) }
-	if inserted > 0 then N.extract_fluid(net, fluid, inserted) end
+	if inserted > 0 then
+		local got = N.extract_fluid(net, fluid, inserted)
+		--- a fluid storage bus's segment had less than its snapshot: never duplicate
+		if got < inserted - EPS then e.remove_fluid{ name = fluid, amount = inserted - got } end
+	end
 	rec.status = "ok"
 end
 

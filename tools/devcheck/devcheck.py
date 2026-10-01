@@ -600,7 +600,8 @@ def runtime(a):
               (("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
                ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"),
                ("MER3", "ME partitions and windows test (issue #68 R3)"),
-               ("MESTORAGEBUS", "ME storage bus test (issue #68)"))]
+               ("MESTORAGEBUS", "ME storage bus test (issue #68)"),
+               ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test (issue #68)"))]
     for label, m in extras:
         print(f"{label}: {m.group(1) if m else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
