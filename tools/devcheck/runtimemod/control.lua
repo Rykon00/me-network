@@ -164,6 +164,9 @@ function me_graph_test()
 		storage.me_graph = { phase = "graph", phase_tick = game.tick }
 		st = storage.me_graph
 		if not (a and d) then expect(false, "entities missing") return finish() end
+		--- the ME windows find their entity by unit number (game.get_entity_by_unit_number knows none of them)
+		expect(remote.call(TERM, "entity_by_unit", d.unit_number) == d and remote.call(TERM, "entity_by_unit", a.unit_number) == a,
+			"the ME windows cannot find their entity by unit number")
 		--- join: controller, 5 cables and the drive are one network that works
 		local n = net(a)
 		expect(same(a, d), "the drive is not in the controller's network")

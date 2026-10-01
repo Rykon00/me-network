@@ -667,17 +667,19 @@ end)
 
 G.on("term_drive", function(event, player, el)
 	local st = st_of(player)
-	local drive = game.get_entity_by_unit_number(el.tags.drive)
+	local drive = G.entity_by_unit(el.tags.drive)
 	if st and st.entity and st.entity.valid and drive and drive.valid then G.open("drive", player, drive, { via = st.entity.unit_number }) end
 end)
 
 G.on("term_cell", function(event, player, el)
 	local st = st_of(player)
-	local drive = game.get_entity_by_unit_number(el.tags.drive)
+	local drive = G.entity_by_unit(el.tags.drive)
 	if st and st.entity and st.entity.valid and drive and drive.valid then G.open("cell", player, drive, { slot = el.tags.slot, via = st.entity.unit_number }) end
 end)
 
 remote.add_interface("gregtorio-me-terminal", {
+	--- the lookup of the ME windows (their entity by unit number)
+	entity_by_unit = function(unit) return G.entity_by_unit(unit) end,
 	withdraw = function(terminal, target, name, quality, count) return M.withdraw(terminal, target, name, quality or "normal", count) end,
 	store_stack = function(terminal, stack) return M.store_stack(terminal, stack) end,
 	--- what the grid buttons do, for a cursor stack and a main inventory: mode "stack", "one" or "inventory"
