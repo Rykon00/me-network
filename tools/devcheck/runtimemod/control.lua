@@ -200,6 +200,43 @@ function me_graph_test()
 		local e = s.create_entity{ name = "me-drive", position = { GX + 12.5, GY + 4.5 }, force = "player", raise_built = true }
 		local placed, unreached = remote.call(NET, "connect", { a, e }, 8)
 		expect(placed > 0 and #unreached == 0 and same(a, e), "router: " .. placed .. " cables, " .. #unreached .. " unreached")
+		--- underground cable: drive, end facing east, 3 free tiles, end facing west, drive (no controller needed)
+		local ux, uy = GX + 20.5, GY + 12.5
+		local function put(name, dx, dy, dir)
+			return s.create_entity{ name = name, position = { ux + dx, uy + dy }, force = "player", direction = dir, raise_built = true }
+		end
+		local ud1 = put("me-drive", 0, 0)
+		local u1 = put("me-underground-cable", 1, 0, defines.direction.east)
+		local u2 = put("me-underground-cable", 5, 0, defines.direction.west)
+		local ud2 = put("me-drive", 6, 0)
+		expect(ud1 and u1 and u2 and ud2 and same(ud1, ud2), "the drives are not connected through the underground cable")
+		expect(u1 and u2 and remote.call(NET, "underground_partner", u1) == u2.unit_number, "the underground ends did not pair")
+		--- a cable over the run and one beside an end belong to other networks
+		local over = put("me-cable", 3, 0)
+		local beside = put("me-cable", 1, 1)
+		expect(over and not same(over, ud1), "a cable over the underground run joined it")
+		expect(beside and not same(beside, ud1), "a cable beside an underground end joined it")
+		--- removing an end splits, placing it again joins
+		u2.destroy{ raise_destroy = true }
+		expect(not same(ud1, ud2), "still connected without the second end")
+		u2 = put("me-underground-cable", 5, 0, defines.direction.west)
+		expect(u2 and same(ud1, ud2), "not connected again after placing the end again")
+		--- rotating an end breaks the link (and turning it back restores it)
+		u1.direction = defines.direction.south
+		remote.call(NET, "rotated", u1)
+		expect(not same(ud1, ud2) and remote.call(NET, "underground_partner", u2) == nil, "still linked after rotating an end")
+		u1.direction = defines.direction.east
+		remote.call(NET, "rotated", u1)
+		expect(same(ud1, ud2), "not linked after rotating the end back")
+		--- out of reach: an end 12 tiles away does not pair
+		local far1 = put("me-underground-cable", 1, 3, defines.direction.east)
+		local far2 = put("me-underground-cable", 13, 3, defines.direction.west)
+		expect(far1 and far2 and remote.call(NET, "underground_partner", far1) == nil, "ends 11 tiles apart paired")
+		--- cables can be walked over
+		local mask = prototypes.entity["me-cable"].collision_mask.layers
+		expect(not mask.player and not prototypes.entity["me-underground-cable"].collision_mask.layers.player,
+			"ME cables block the player")
+		expect(s.can_place_entity{ name = "character", position = { ux + 3, uy } }, "a character cannot stand on an ME cable")
 		--- power: the unpowered network does not work
 		local pa = s.find_entity("me-network-controller", { PX + 6, PY })
 		local pd = s.find_entity("me-drive", { PX + 7.5, PY - 0.5 })
@@ -225,7 +262,7 @@ function me_graph_test()
 		if game.tick >= st.phase_tick + 120 then
 			local n = net(pa)
 			expect(not n.ok and n.status == "no-power", "after the power was cut " .. serpent.line(n))
-			return finish("join, split, conflict, sweep, router, power")
+			return finish("join, split, conflict, sweep, router, underground cable, walkable, power")
 		end
 	end
 	if #problems > 0 then finish() end

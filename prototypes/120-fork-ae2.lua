@@ -38,6 +38,10 @@ local INTERFACE_SLOTS = 18          -- AE2: 9 config + 9 storage slots
 
 local CONTROLLER, CABLE, DRIVE, INTERFACE = "me-network-controller", "me-cable", "me-drive", "me-network-interface"
 local IMPORT_BUS, EXPORT_BUS = "me-import-bus", "me-export-bus"
+local UNDERGROUND = "me-underground-cable"
+local UNDERGROUND_REACH = 10        -- free tiles between the two ends of an underground cable (like the underground pipe)
+--- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask
+local WALKABLE = { layers = { item = true, meltable = true, object = true, water_tile = true, is_lower_object = true } }
 
 
 
@@ -263,6 +267,7 @@ block{
 		} },
 		random_variation_on_create = false,
 		render_layer = "lower-object",
+		collision_mask = WALKABLE,
 	},
 }
 data.raw.item["fluix-cable"].place_result = CABLE
@@ -394,6 +399,34 @@ for _, bus in pairs({
 	}
 end
 
+--------------------------------------------------------------------------------
+--- ME UNDERGROUND CABLE (rotatable pair, like the underground pipe: the direction points along the run;
+--- above ground an end connects only on its back side, under ground to the first end within reach that faces
+--- it; runtime: scripts/fork-me-network.lua, find_partner)
+--------------------------------------------------------------------------------
+
+create_item{
+	name = UNDERGROUND,
+	icon = ICON_FORK .. UNDERGROUND .. ".png",
+	category = "mv-assembling-machine-recipes",
+	subgroup = "fork-me-network",
+	order = "a1",
+	energy_required = 5 * MV_SPEED,
+	stack_size = 50,
+	place_result = UNDERGROUND,
+	ingredients = {
+		{ type = "item", name = "fluix-cable", amount = 8 },
+		{ type = "item", name = "aluminium-plate", amount = 2 },
+	},
+	results = { { type = "item", name = UNDERGROUND, amount = 2 } },
+}
+block{
+	name = UNDERGROUND, icon = ICON_FORK .. UNDERGROUND .. ".png", health = 80, mining_time = 0.1,
+	selection_priority = 45,
+	description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
+	extra = { picture = four_way(UNDERGROUND), render_layer = "lower-object", collision_mask = WALKABLE },
+}
+
 --- shift right click / shift left click copies the filters of the buses (runtime, on_entity_settings_pasted)
 data.raw["simple-entity-with-force"][IMPORT_BUS].additional_pastable_entities = { IMPORT_BUS }
 data.raw["simple-entity-with-force"][EXPORT_BUS].additional_pastable_entities = { EXPORT_BUS }
@@ -459,7 +492,9 @@ data:extend({ {
 		names = {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
+			underground = UNDERGROUND,
 		},
+		underground_reach = UNDERGROUND_REACH,
 		legacy = { controller = "me-controller", interface = "me-interface" },
 	},
 } })
@@ -509,7 +544,7 @@ fork_add_unlock("logistic-system", "me-drive")
 --- MV: basic cells, terminal, buses (cable, controller and interface come with Applied Energistics Components)
 tech{ name = "me-network", prerequisites = { "logistic-system" }, packs = 3, count = 400, recipes = {
 	"me-terminal", "computer-monitor", "certus-quartz-bolt", "certus-quartz-screw",
-	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS,
+	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND,
 } }
 
 --- EV: 64k (the component needs epoxy boards)

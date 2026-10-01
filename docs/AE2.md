@@ -9,7 +9,8 @@ Factorio's logistic network any more.
 
 | Entity | Role |
 |---|---|
-| ME Cable | placed with the **fluix cable** item; connects ME blocks on all four sides |
+| ME Cable | placed with the **fluix cable** item; connects ME blocks on all four sides; can be walked over |
+| ME Underground Cable | rotatable pair (MV, `me-network`, 8 fluix cables + 2 aluminium plates -> 2): carries the network under up to 10 tiles to the first underground cable facing it, like an underground pipe; above ground an end connects only on the side opposite its arrow; can be walked over |
 | ME Controller | 2x2, needs power; exactly one per network runs it (two are a conflict) |
 | ME Drive | 1x1, holds up to 10 storage cells |
 | Storage cell (1k ... 256k) | holds the items (AE2 bytes and types); keeps them when taken out of the drive |

@@ -14,6 +14,7 @@ Sources:
     python tools/gen_ae2_sprites.py --extras      # only the issue #38 graphics, from the existing PNGs
     python tools/gen_ae2_sprites.py --r1          # only the issue #68 (R1) graphics, from the existing PNGs
     python tools/gen_ae2_sprites.py --r2          # only the issue #68 (R2) fluid bus graphics, from the R1 PNGs
+    python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
@@ -508,6 +509,31 @@ def bus_sprite(accent, export, direction):
     return img.rotate(turns, resample=Image.NEAREST) if turns else img
 
 
+def underground_sprite(direction):
+    """1x1 underground cable end, drawn facing north (the run goes north under the ground): the cable arm on
+    the back side (south) into a dark tunnel mouth with a fluix arrow pointing along the run. Rotated."""
+    img = cable_variation(4)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((6, 3, TILE - 7, 20), radius=4, fill=(24, 22, 30, 255), outline=CABLE_EDGE + (255,), width=2)
+    d.rectangle((10, 6, TILE - 11, 18), fill=(12, 10, 16, 255))
+    d.polygon([(11, 15), (20, 15), (15, 8)], fill=CABLE_GLOW + (255,))
+    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    return img.rotate(turns, resample=Image.NEAREST) if turns else img
+
+
+def underground():
+    """The ME Underground Cable (no other input: drawn from the cable colours)."""
+    written = []
+    for direction in ("north", "east", "south", "west"):
+        path = OUT_ENTITY / f"me-underground-cable-{direction}.png"
+        underground_sprite(direction).save(path)
+        written.append(path)
+    path = OUT_ICON / "me-underground-cable.png"
+    underground_sprite("north").save(path)
+    written.append(path)
+    return written
+
+
 def r1():
     written = []
 
@@ -565,9 +591,11 @@ def main():
                          "derived from the existing PNGs (no checkout needed)")
     ap.add_argument("--r2", action="store_true",
                     help="only the issue #68 (R2) graphics (fluid import and export bus), derived from the R1 PNGs")
+    ap.add_argument("--underground", action="store_true",
+                    help="only the ME Underground Cable (drawn from the cable colours)")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2):
-        ap.error("--gt <checkout>, --fluids, --extras, --r1 or --r2 is required")
+    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground):
+        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2 or --underground is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -599,6 +627,9 @@ def main():
     if a.gt or a.r2:
         written = r2()
         print("ME issue #68 (R2) sprites:", len(written))
+    if a.gt or a.underground:
+        written = underground()
+        print("ME underground cable sprites:", len(written))
 
 
 if __name__ == "__main__":
