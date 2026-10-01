@@ -1,0 +1,12 @@
+{
+  "name": "zz-gregtorio-devcheck-menusim",
+  "version": "1.0.0",
+  "title": "Gregtorio devcheck menu simulation",
+  "author": "rykon_",
+  "factorio_version": "2.0",
+  "description": "Test helper for tools/devcheck: runs a main menu simulation on its save and logs what happens. Not meant for normal play.",
+  "dependencies": [
+    "? Gregtorio",
+    "? gregtorio-continued"
+  ]
+}

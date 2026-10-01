@@ -160,6 +160,39 @@ function victory_test()
 	expect(ok, "victory test: " .. tostring(err))
 	--- (can_continue cannot be read before a player chooses to go on; the script passes it, see fork-victory.lua)
 	expect(game.finished, "victory test: researching `victory` did not finish the game")
+	--- Phase 6b: after victory, the post-victory technologies (MAX science) must be researchable. `victory` is
+	--- infinite, so it is no prerequisite; their prerequisites are researched by script, then the engine must
+	--- accept `godforge-upgrades` (the infinite sink) in the research queue, and researching its first level
+	--- must give the godforge's magmatter recipe its productivity and leave the godforge unlocked.
+	local force = game.forces.player
+	local seen = {}
+	local function research_prerequisites(tech)
+		for name, pre in pairs(tech.prerequisites) do
+			if not seen[name] then
+				seen[name] = true
+				research_prerequisites(pre)
+				if not pre.researched then pre.researched = true end
+			end
+		end
+	end
+	local upgrades = force.technologies["godforge-upgrades"]
+	ok, err = pcall(function()
+		research_prerequisites(upgrades)
+		force.research_queue = { "godforge-upgrades" }
+	end)
+	expect(ok, "post-victory test: " .. tostring(err))
+	local queued = force.research_queue[1]
+	expect(queued and queued.name == "godforge-upgrades",
+		"post-victory test: godforge-upgrades was not accepted for research (prerequisites not met)")
+	force.research_queue = {}
+	upgrades.researched = true
+	expect(upgrades.level == 2, "post-victory test: godforge-upgrades is at level " .. upgrades.level .. ", not 2")
+	local bonus = force.recipes["molten-magmatter-from-neutronium"].productivity_bonus
+	expect(math.abs(bonus - 0.05) < 1e-6, "post-victory test: magmatter productivity " .. bonus .. ", not 0.05")
+	expect(force.recipes["godforge"].enabled and force.technologies["max-materials"].enabled,
+		"post-victory test: the godforge recipe is not unlocked")
+	log("DEVCHECK-RUNTIME-POSTVICTORY " .. (#problems == 0 and "ok" or "failed") .. " (godforge-upgrades level 1, "
+		.. (seen["victory"] and "victory is a prerequisite" or "after victory") .. ")")
 	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
 	log("DEVCHECK-RUNTIME-VICTORY " .. (#problems == 0 and "ok" or "failed") .. " (tick " .. game.tick .. ")")
 end
@@ -1704,7 +1737,7 @@ function cooled_test()
 	end
 end
 
---- Turbine tiers (issue #34, prototypes/136-fork-power.lua): one UHV to UXV large plasma turbine each
+--- Turbine tiers (issue #34, prototypes/136-fork-power.lua): one UHV to UXV (and MAX, phase 6b) large plasma turbine each
 --- and a second UXV one on neon plasma, with an output hatch and a load of twice its output (an electric
 --- energy interface in its own network). While it runs, every turbine must generate exactly four amps
 --- of its tier per tick (the cap, not the load; fluid_usage_per_tick must let the weakest plasma, neon,
@@ -1723,6 +1756,9 @@ local TT = {
 	{ "uxv-large-plasma-turbine", 200.5, "helium-plasma",   128,    "helium",       10485.76e6 },
 	--- the weakest plasma (20.48 MJ): the UXV turbine needs 8.53 of its 9 units per tick for the cap
 	{ "uxv-large-plasma-turbine", 225.5, "neon-plasma",     512,    "neon",         10485.76e6 },
+	--- phase 6b (prototypes/141-fork-max.lua): the MAX turbine, also on the weakest plasma (17.07 of its 18 units)
+	{ "max-large-plasma-turbine", 250.5, "helium-plasma",   256,    "helium",       20971.52e6 },
+	{ "max-large-plasma-turbine", 275.5, "neon-plasma",     960,    "neon",         20971.52e6 },
 }
 
 function setup_tier_test(s)
@@ -1813,9 +1849,10 @@ end
 
 --- New recipes of issue #35 (prototypes/129-fork-water-purification.lua): grades 7 and 8 in the water
 --- purification plant, the FPIC and APIC wafers and chips, the complex SMDs, the quark creation catalyst
---- and recipes that take the new parts; the same for issues #39 and #36. Each machine gets one craft's ingredients (placed above the
---- machine grid, powered like it); once it crafts, its progress is set close to the end (the grades take
---- 25 and 30 s, a mainframe 12 minutes), and the main product must come out.
+--- and recipes that take the new parts; the same for issues #39 and #36 and phase 6a (plasma forge, QFT).
+--- Each machine gets one craft's ingredients (placed above the machine grid, powered like it); once it
+--- crafts, its progress is set close to the end (the grades take 25 and 30 s, a mainframe 12 minutes), and
+--- the main product must come out (a main product with a probability: the craft must finish).
 local RT_Y = -300
 local RT_DEADLINE = 900
 local RT = {
@@ -1851,6 +1888,19 @@ local RT = {
 	{ "uhv-mixer", "naquadah-based-fuel-mk2" },
 	{ "water-purification-plant", "grade-5-water" },
 	{ "zpm-assembly-line", "uxv-energy-hatch" },
+	-- phase 6a (prototypes/139-fork-endgame-multiblocks.lua): a plasma forge recipe (the catalyst and a metal) and
+	-- a quantum force transformer recipe in the real machines
+	{ "dimensionally-transcendent-plasma-forge", "excited-dimensionally-transcendent-crude-catalyst" },
+	{ "dimensionally-transcendent-plasma-forge", "molten-spacetime-dtpf-crude" },
+	{ "quantum-force-transformer", "metallic-platinum-powder-qft-platinum-dust" },
+	-- phase 6b (prototypes/140-fork-godforge.lua, 141-fork-max.lua): godforge recipes (star matter, magmatter), the
+	-- stellar catalyst in the plasma forge, a MAX component, a recipe in a MAX machine and the MAX pack from MAX parts
+	{ "godforge", "raw-star-matter" },
+	{ "godforge", "molten-magmatter-from-neutronium" },
+	{ "dimensionally-transcendent-plasma-forge", "excited-dimensionally-transcendent-stellar-catalyst" },
+	{ "zpm-assembly-line", "max-motor" },
+	{ "max-assembling-machine", "maximum-voltage-coil" },
+	{ "uxv-assembling-machine", "max-science-pack-from-magmatter" },
 }
 
 local function rt_product(recipe)
@@ -1898,7 +1948,8 @@ function recipe_test()
 			local p = rt_product(def[2])
 			local made = p.type == "fluid" and e.get_fluid_count(p.name) or
 				e.get_inventory(defines.inventory.crafter_output).get_item_count(p.name)
-			if made >= (p.amount or p.amount_min or 1) - 1e-6 then
+			-- a main product with a probability (the QFT's focused output) may roll nothing: a finished craft counts
+			if made >= (p.amount or p.amount_min or 1) - 1e-6 or ((p.probability or 1) < 1 and e.products_finished > 0) then
 				st.ok[i] = true
 			else
 				if e.crafting_progress > 0 and e.crafting_progress < 0.999 then e.crafting_progress = 0.999 end
