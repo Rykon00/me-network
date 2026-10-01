@@ -61,8 +61,8 @@ local function kinds()
 	k["me-fluid-interface"] = "fluid-interface"
 	local ac = prototypes.mod_data["fork-me-autocraft"]
 	for name in pairs(ac and ac.data.cpus or {}) do k[name] = "cpu" end
-	local fl = prototypes.mod_data["fork-me-fluids"]
-	for name in pairs(fl and fl.data.drives or {}) do k[name] = "fluid-drive" end
+	k["me-fluid-import-bus"] = "fluid-import-bus"
+	k["me-fluid-export-bus"] = "fluid-export-bus"
 	for name in pairs(k) do
 		if not prototypes.entity[name] then k[name] = nil end
 	end
@@ -71,6 +71,7 @@ local function kinds()
 end
 
 local POWERED_SELF = { cable = true, controller = true, terminal = true, cpu = true, maintainer = true }
+--- (the old ME Fluid Drives are no members since issue #68 step R2: scripts/fork-me-migrate.lua replaces them)
 
 --- the entity names of all members, sorted (cached: the filter of every find_entities_filtered of the graph)
 function M.node_names()
@@ -335,27 +336,37 @@ end
 --- cells and network storage
 --------------------------------------------------------------------------------
 
+local FLUID_PREFIX = "fluid/"       -- keys of fluids: "fluid/<name>" (the resource keys of autocrafting)
+local ZERO = 1e-6                   -- fluid amounts are fixed point: below this an amount counts as nothing
+
+local function is_fluid_key(key) return key:sub(1, #FLUID_PREFIX) == FLUID_PREFIX end
+local function fluid_cell(spec) return spec.kind == "fluid" end
+M.is_fluid_key = is_fluid_key
+
 local function type_bytes(spec, count)
-	return spec.per_type + math.ceil(count / 8)
+	return spec.per_type + math.ceil(count / (spec.per_byte or 8) - ZERO)
 end
 
---- items of `key` the cell can still take
+--- items (fluid units) of `key` the cell can still take; item cells take items, fluid cells fluids
 local function cell_room(cell, spec, key)
+	if fluid_cell(spec) ~= is_fluid_key(key) then return 0 end
+	local per = spec.per_byte or 8
 	local free = spec.bytes - cell.bytes
 	local have = cell.items[key]
 	if have then
-		return (math.ceil(have / 8) * 8 - have) + math.max(0, free) * 8
+		return math.max(0, math.ceil(have / per - ZERO) * per - have) + math.max(0, free) * per
 	end
 	if cell.types >= spec.types then return 0 end
 	free = free - spec.per_type
 	if free <= 0 then return 0 end
-	return free * 8
+	return free * per
 end
 
 --- change the count of `key` in a cell by `delta`; returns the change of bytes and types
 local function cell_add(cell, spec, key, delta)
 	local have = cell.items[key] or 0
 	local now = have + delta
+	if now < ZERO then now = 0 end
 	local before = have > 0 and type_bytes(spec, have) or 0
 	local after = now > 0 and type_bytes(spec, now) or 0
 	local dtypes = (now > 0 and 1 or 0) - (have > 0 and 1 or 0)
@@ -382,8 +393,9 @@ local function cell_from_tags(name, tags)
 	end
 	table.sort(keys)
 	for _, key in ipairs(keys) do
-		local item = parse_key(key)
-		if prototypes.item[item] then
+		if is_fluid_key(key) then
+			if fluid_cell(spec) and prototypes.fluid[key:sub(#FLUID_PREFIX + 1)] then cell_add(cell, spec, key, stored.items[key]) end
+		elseif not fluid_cell(spec) and prototypes.item[(parse_key(key))] then
 			cell_add(cell, spec, key, math.floor(stored.items[key]))
 			local d = stored.data and stored.data[key]
 			if type(d) == "table" then cell.data[key] = d end
@@ -391,6 +403,13 @@ local function cell_from_tags(name, tags)
 	end
 	return cell
 end
+
+--- "1234" or "12.3"
+local function amount_text(n)
+	if n == math.floor(n) then return string.format("%d", n) end
+	return string.format("%.1f", n)
+end
+M.amount_text = amount_text
 
 local function cell_total(cell)
 	local n = 0
@@ -414,14 +433,19 @@ local function cell_stack(cell)
 	end)
 	local list = {}
 	for i = 1, math.min(5, #keys) do
-		local name = parse_key(keys[i])
-		list[#list + 1] = items[keys[i]] .. " [item=" .. name .. "]"
+		local key = keys[i]
+		if is_fluid_key(key) then
+			list[#list + 1] = amount_text(items[key]) .. " [fluid=" .. key:sub(#FLUID_PREFIX + 1) .. "]"
+		else
+			list[#list + 1] = items[key] .. " [item=" .. parse_key(key) .. "]"
+		end
 	end
 	local spec = cell_spec(cell.name)
 	return {
 		name = cell.name, count = 1,
 		tags = { [CELL_TAG] = { items = items, data = data } },
-		custom_description = { "fork-me-net.cell-holds", cell_total(cell), cell.types, table.concat(list, ", "),
+		custom_description = { spec and fluid_cell(spec) and "fork-me-net.fluid-cell-holds" or "fork-me-net.cell-holds",
+			amount_text(cell_total(cell)), cell.types, table.concat(list, ", "),
 			cell.bytes, spec and spec.bytes or 0, #keys > 5 and ", ..." or "" },
 	}
 end
@@ -449,13 +473,14 @@ local function net_cell(net, cid, cell, sign)
 			if net.cell_list[i] == cid then table.remove(net.cell_list, i) end
 		end
 	end
-	net.bytes = net.bytes + sign * cell.bytes
-	net.bytes_total = net.bytes_total + sign * spec.bytes
-	net.types = net.types + sign * cell.types
-	net.types_total = net.types_total + sign * spec.types
+	local p = fluid_cell(spec) and "f" or ""          -- item cells count in bytes/types, fluid cells in fbytes/ftypes
+	net[p .. "bytes"] = net[p .. "bytes"] + sign * cell.bytes
+	net[p .. "bytes_total"] = net[p .. "bytes_total"] + sign * spec.bytes
+	net[p .. "types"] = net[p .. "types"] + sign * cell.types
+	net[p .. "types_total"] = net[p .. "types_total"] + sign * spec.types
 	for key, count in pairs(cell.items) do
 		local now = (net.items[key] or 0) + sign * count
-		net.items[key] = now > 0 and now or nil
+		net.items[key] = now > ZERO and now or nil
 		local idx = net.index[key]
 		if sign > 0 then
 			if not idx then idx = {} net.index[key] = idx end
@@ -518,6 +543,7 @@ function recompute(s, net)
 	end
 	net.items, net.index, net.cells, net.cell_list = {}, {}, {}, {}
 	net.bytes, net.bytes_total, net.types, net.types_total = 0, 0, 0, 0
+	net.fbytes, net.fbytes_total, net.ftypes, net.ftypes_total = 0, 0, 0, 0
 	drive_cells(net, s, function(cid, cell) net_cell(net, cid, cell, 1) end)
 	net.usable_tick = nil
 	update_power(s, net)
@@ -615,12 +641,14 @@ local function insert_key(net, key, count, data)
 		if n <= 0 then return end
 		local db, dt = cell_add(cell, spec, key, n)
 		if data and not cell.data[key] then cell.data[key] = data end
-		net.bytes, net.types = net.bytes + db, net.types + dt
+		local p = fluid_cell(spec) and "f" or ""
+		net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
 		net.items[key] = (net.items[key] or 0) + n
 		local idx = net.index[key]
 		if not idx then idx = {} net.index[key] = idx end
 		idx[cid] = true
 		left = left - n
+		if left < ZERO then left = 0 end
 		mark_drive(s, tonumber(cid:match("^(%d+):")))
 	end
 	local held = {}
@@ -649,15 +677,18 @@ local function extract_key(net, key, count)
 		local cell = net.cells[cid]
 		local n = math.min(left, cell.items[key] or 0)
 		if n > 0 then
-			local db, dt = cell_add(cell, cell_spec(cell.name), key, -n)
-			net.bytes, net.types = net.bytes + db, net.types + dt
+			local spec = cell_spec(cell.name)
+			local db, dt = cell_add(cell, spec, key, -n)
+			local p = fluid_cell(spec) and "f" or ""
+			net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
 			left = left - n
+			if left < ZERO then left = 0 end
 			if not cell.items[key] then net.index[key][cid] = nil end
 			mark_drive(s, tonumber(cid:match("^(%d+):")))
 		end
 	end
 	local now = (net.items[key] or 0) - (count - left)
-	net.items[key] = now > 0 and now or nil
+	net.items[key] = now > ZERO and now or nil
 	if net.index[key] and next(net.index[key]) == nil then net.index[key] = nil end
 	return count - left
 end
@@ -702,13 +733,15 @@ function M.can_insert(net, name, quality, count)
 	return math.min(math.floor(count), room_for(net, key_of(name, quality)))
 end
 
---- { { key, name, quality, count, data } }, unsorted
+--- the items: { { key, name, quality, count, data } }, unsorted (fluids: fluid_contents)
 function M.contents(net)
 	local out = {}
 	if not M.usable(net) then return out end
 	for key, count in pairs(net.items) do
-		local name, q, json = parse_key(key)
-		out[#out + 1] = { key = key, name = name, quality = q, count = count, special = json ~= nil }
+		if not is_fluid_key(key) then
+			local name, q, json = parse_key(key)
+			out[#out + 1] = { key = key, name = name, quality = q, count = count, special = json ~= nil }
+		end
 	end
 	return out
 end
@@ -718,18 +751,54 @@ function M.plain_counts(net)
 	local out = {}
 	if not M.usable(net) then return out end
 	for key, count in pairs(net.items) do
-		if not key:find("[@#]") then out[key] = count end
+		if not (key:find("[@#]") or is_fluid_key(key)) then out[key] = count end
+	end
+	return out
+end
+
+--- the fluid API (fluids are stored by name, one temperature per fluid): amounts may be fractional
+function M.insert_fluid(net, name, amount)
+	if not (M.usable(net) and prototypes.fluid[name] and amount and amount > 0) then return 0 end
+	return insert_key(net, FLUID_PREFIX .. name, amount)
+end
+
+function M.extract_fluid(net, name, amount)
+	if not (M.usable(net) and amount and amount > 0) then return 0 end
+	return extract_key(net, FLUID_PREFIX .. name, amount)
+end
+
+function M.fluid_count(net, name)
+	if not M.usable(net) then return 0 end
+	return net.items[FLUID_PREFIX .. name] or 0
+end
+
+function M.can_insert_fluid(net, name, amount)
+	if not M.usable(net) then return 0 end
+	return math.min(amount, room_for(net, FLUID_PREFIX .. name))
+end
+
+--- { fluid name -> amount }
+function M.fluid_contents(net)
+	local out = {}
+	if not M.usable(net) then return out end
+	for key, amount in pairs(net.items) do
+		if is_fluid_key(key) then out[key:sub(#FLUID_PREFIX + 1)] = amount end
 	end
 	return out
 end
 
 function M.stats(net)
 	local ok, why = M.usable(net)
-	local drives, cells = 0, #net.cell_list
+	local drives, cells, fcells = 0, 0, 0
 	for _ in pairs(net.drives) do drives = drives + 1 end
+	for _, cid in ipairs(net.cell_list) do
+		local spec = cell_spec(net.cells[cid].name)
+		if spec and fluid_cell(spec) then fcells = fcells + 1 else cells = cells + 1 end
+	end
 	return { ok = ok, status = ok and "ok" or why, bytes = net.bytes, bytes_total = net.bytes_total,
 		types = net.types, types_total = net.types_total, drives = drives, cells = cells, power = net.power,
-		members = net.n, id = net.id }
+		fbytes = net.fbytes or 0, fbytes_total = net.fbytes_total or 0, ftypes = net.ftypes or 0,
+		ftypes_total = net.ftypes_total or 0, fluid_cells = fcells, members = net.n, id = net.id }
 end
 
 --- Why a stack cannot go into the network (a locale key suffix), or nil and its key and data
@@ -893,15 +962,11 @@ end
 --- Store (part of) a LuaItemStack in the cells of one drive, whether or not its network works (the migration
 --- fills each new drive with the contents of the old one). The stack shrinks. Returns the count, or nil and a
 --- reason.
-function M.store_in_drive(drive, stack)
-	local s = state()
-	local d = drive and drive.valid and s.drives[drive.unit_number]
-	if not d then return nil, "no-drive" end
-	local problem, key, data = M.storable(stack)
-	if problem then return nil, problem end
-	local unit = drive.unit_number
+--- up to `amount` of `key` into the cells of drive record `d` (slot order), its network's totals updated;
+--- returns the amount stored
+local function store_key_in_drive(s, d, unit, key, amount, data)
 	local net = drive_net(s, unit)
-	local left = stack.count
+	local left = amount
 	for slot = 1, drive_slots() do
 		if left <= 0 then break end
 		local cell = d.slots[slot]
@@ -913,20 +978,143 @@ function M.store_in_drive(drive, stack)
 				if data and not cell.data[key] then cell.data[key] = data end
 				local cid = unit .. ":" .. slot
 				if net and net.cells[cid] then
-					net.bytes, net.types = net.bytes + db, net.types + dt
+					local p = fluid_cell(spec) and "f" or ""
+					net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
 					net.items[key] = (net.items[key] or 0) + n
 					net.index[key] = net.index[key] or {}
 					net.index[key][cid] = true
 				end
 				left = left - n
+				if left < ZERO then left = 0 end
 			end
 		end
 	end
-	local n = stack.count - left
+	if left < amount then mark_drive(s, unit) end
+	return amount - left
+end
+
+function M.store_in_drive(drive, stack)
+	local s = state()
+	local d = drive and drive.valid and s.drives[drive.unit_number]
+	if not d then return nil, "no-drive" end
+	local problem, key, data = M.storable(stack)
+	if problem then return nil, problem end
+	local n = store_key_in_drive(s, d, drive.unit_number, key, stack.count, data)
 	if n <= 0 then return nil, "no-storage" end
-	mark_drive(s, unit)
-	if left <= 0 then stack.clear() else stack.count = left end
+	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
 	return n
+end
+
+--- Store up to `amount` of fluid `name` in the fluid cells of one drive, whether or not its network works (the
+--- migration). Returns the amount stored.
+function M.store_fluid_in_drive(drive, name, amount)
+	local s = state()
+	local d = drive and drive.valid and s.drives[drive.unit_number]
+	if not (d and prototypes.fluid[name] and amount > 0) then return 0 end
+	return store_key_in_drive(s, d, drive.unit_number, FLUID_PREFIX .. name, amount, nil)
+end
+
+--- Store up to `amount` of fluid `name` in the fluid cells of a network's drives, whether or not the network works
+--- (the migration). Returns the amount stored.
+function M.store_fluid_in_network(net, name, amount)
+	local s = state()
+	if not (net and prototypes.fluid[name] and amount > 0) then return 0 end
+	local units = {}
+	for unit in pairs(net.drives) do units[#units + 1] = unit end
+	table.sort(units)
+	local left = amount
+	for _, unit in ipairs(units) do
+		if left <= ZERO then break end
+		local d = s.drives[unit]
+		if d and d.entity.valid then left = left - store_key_in_drive(s, d, unit, FLUID_PREFIX .. name, left, nil) end
+	end
+	return amount - math.max(0, left)
+end
+
+--- The drives on a surface (of a force) with room for fluid `name`, nearest to `position` first
+function M.fluid_drives_near(surface_index, force_name, position, name)
+	local s = state()
+	local out = {}
+	for unit, d in pairs(s.drives) do
+		if d.entity.valid and d.surface == surface_index and d.force == force_name then
+			local room = 0
+			for slot = 1, drive_slots() do
+				local cell = d.slots[slot]
+				if cell then room = room + cell_room(cell, cell_spec(cell.name), FLUID_PREFIX .. name) end
+			end
+			if room > ZERO then
+				local dx, dy = d.position.x - (position.x or position[1]), d.position.y - (position.y or position[2])
+				out[#out + 1] = { entity = d.entity, unit = unit, dist = dx * dx + dy * dy }
+			end
+		end
+	end
+	table.sort(out, function(a, b)
+		if a.dist ~= b.dist then return a.dist < b.dist end
+		return a.unit < b.unit
+	end)
+	return out
+end
+
+--- Fill fluids ({ name -> amount }) into a drive's cells; what they cannot hold goes into new cells `cell_name`
+--- in the drive's free slots (four cells of an old fluid drive hold its fluid only while it has few types).
+--- Returns what is left ({ name -> amount }, empty when everything fit) and the number of cells added.
+function M.fill_fluids(drive, cell_name, contents)
+	local s = state()
+	local d = drive and drive.valid and drive_record(s, drive)
+	local left, added = {}, 0
+	if not d then return contents, 0 end
+	local names = {}
+	for name, amount in pairs(contents) do
+		if prototypes.fluid[name] and type(amount) == "number" and amount > ZERO then names[#names + 1] = name end
+	end
+	table.sort(names)
+	for _, name in ipairs(names) do
+		local rest = contents[name] - store_key_in_drive(s, d, drive.unit_number, FLUID_PREFIX .. name, contents[name], nil)
+		while rest > ZERO do
+			local free
+			for slot = 1, drive_slots() do
+				if not d.slots[slot] then free = slot break end
+			end
+			if not (free and cell_spec(cell_name)) then break end
+			local cell = new_cell(cell_name)
+			local unit = drive.unit_number
+			local net = drive_net(s, unit)
+			d.slots[free] = cell
+			if net then net_cell(net, unit .. ":" .. free, cell, 1) end
+			added = added + 1
+			rest = rest - store_key_in_drive(s, d, unit, FLUID_PREFIX .. name, rest, nil)
+		end
+		if rest > ZERO then left[name] = rest end
+	end
+	return left, added
+end
+
+--- Fluids ({ name -> amount }) in new cells `cell_name`, as stack definitions (for a chest or the ground)
+function M.fluid_cells(cell_name, contents)
+	local out = {}
+	local spec = cell_spec(cell_name)
+	if not spec then return out end
+	local names = {}
+	for name, amount in pairs(contents) do
+		if prototypes.fluid[name] and amount > ZERO then names[#names + 1] = name end
+	end
+	table.sort(names)
+	local cell = new_cell(cell_name)
+	for _, name in ipairs(names) do
+		local rest = contents[name]
+		while rest > ZERO do
+			local n = math.min(rest, cell_room(cell, spec, FLUID_PREFIX .. name))
+			if n <= ZERO then
+				out[#out + 1] = cell_stack(cell)
+				cell = new_cell(cell_name)
+			else
+				cell_add(cell, spec, FLUID_PREFIX .. name, n)
+				rest = rest - n
+			end
+		end
+	end
+	if next(cell.items) then out[#out + 1] = cell_stack(cell) end
+	return out
 end
 
 --- plain data of a drive's slots for GUIs and tests: { [slot] = { name, items, bytes, bytes_total, types, state } }
@@ -1101,13 +1289,14 @@ end
 --- the old drive item a build consumed (placing it gives an ME Drive with its four empty cells)
 local function legacy_item(event)
 	local md = mod_data()
+	local function tags_of(st) return st.is_item_with_tags and st.tags or nil end
 	local stack = event and event.stack
-	if stack and stack.valid and stack.valid_for_read and md.legacy_drives[stack.name] then return stack.name, nil end
+	if stack and stack.valid and stack.valid_for_read and md.legacy_drives[stack.name] then return stack.name, tags_of(stack) end
 	local consumed = event and event.consumed_items
 	if consumed and consumed.valid then
 		for i = 1, #consumed do
 			local st = consumed[i]
-			if st.valid_for_read and md.legacy_drives[st.name] then return st.name, event.player_index end
+			if st.valid_for_read and md.legacy_drives[st.name] then return st.name, tags_of(st) end
 		end
 	end
 	return nil
@@ -1122,10 +1311,16 @@ function M.on_built(entity, event)
 	local s = state()
 	if kind == "drive" then
 		local d = drive_record(s, entity)
-		local old = legacy_item(event)
+		local old, tags = legacy_item(event)
 		if old then
 			local info = mod_data().legacy_drives[old]
 			for i = 1, info.cells do d.slots[i] = new_cell(info.cell) end
+			--- an old fluid drive item carries its fluid in its tags: into the cells (more cells if needed)
+			local fluid = info.fluid and type(tags) == "table" and type(tags[info.fluid_tag]) == "table" and tags[info.fluid_tag]
+			if fluid then
+				local left = M.fill_fluids(entity, info.cell, fluid)
+				for _, def in ipairs(M.fluid_cells(info.cell, left)) do spill(entity.surface, entity.position, def) end
+			end
 			if info.extra then
 				local player = event.player_index and game.get_player(event.player_index)
 				local got = player and player.insert(info.extra) or 0
@@ -1517,6 +1712,13 @@ remote.add_interface("gregtorio-me-network", {
 		return out
 	end,
 	insert_stack = function(entity, stack) return M.insert_stack(M.network_of(entity), stack) end,
+	--- fluids (issue #68, R2): by name, amounts may be fractional
+	insert_fluid = function(entity, name, amount) return M.insert_fluid(M.network_of(entity), name, amount) end,
+	extract_fluid = function(entity, name, amount) return M.extract_fluid(M.network_of(entity), name, amount) end,
+	fluid_count = function(entity, name) return M.fluid_count(M.network_of(entity), name) end,
+	can_insert_fluid = function(entity, name, amount) return M.can_insert_fluid(M.network_of(entity), name, amount) end,
+	fluid_contents = function(entity) return M.fluid_contents(M.network_of(entity)) end,
+	store_fluid_in_drive = function(drive, name, amount) return M.store_fluid_in_drive(drive, name, amount) end,
 	--- `count` of `name` straight into the cells of one drive (also without power; the migration's function)
 	store_in_drive = function(drive, name, count, quality)
 		local inv = game.create_inventory(1)

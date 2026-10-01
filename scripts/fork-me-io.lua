@@ -24,6 +24,7 @@ local STEP_TICKS = 15                -- 20 (autocrafting), 30 (molds) and 60 (te
 local ENDPOINTS_PER_STEP = 24
 local IFACE_SLOTS_PER_VISIT = 8
 local BUS_ITEMS = 64
+local BUS_FLUID = 1000               -- fluid units a fluid bus moves per visit
 local MAX_FILTERS = 5
 local IFACE_TAG, BUS_TAG = "fork_me_interface", "fork_me_bus"
 local BUS_FRAME = "fork_me_bus"
@@ -149,7 +150,11 @@ local OUTPUT = { ["assembling-machine"] = defines.inventory.crafter_output, ["fu
 local INPUT = { ["assembling-machine"] = defines.inventory.crafter_input, ["furnace"] = defines.inventory.furnace_source,
 	["container"] = defines.inventory.chest, ["logistic-container"] = defines.inventory.chest }
 
---- the entity in front of a bus that has the inventory the bus works with (cached until it is gone)
+local BUSES = { ["import-bus"] = true, ["export-bus"] = true, ["fluid-import-bus"] = true, ["fluid-export-bus"] = true }
+local FLUID_BUSES = { ["fluid-import-bus"] = true, ["fluid-export-bus"] = true }
+local IMPORTS = { ["import-bus"] = true, ["fluid-import-bus"] = true }
+
+--- the entity in front of a bus that has the inventory (fluid boxes) the bus works with (cached until it is gone)
 local function target_of(rec)
 	local t = rec.target
 	local e = rec.entity
@@ -158,16 +163,20 @@ local function target_of(rec)
 	local d = FRONT[e.direction] or FRONT[defines.direction.north]
 	local table_ = rec.kind == "import-bus" and OUTPUT or INPUT
 	for _, o in pairs(e.surface.find_entities_filtered{ position = { e.position.x + d[1], e.position.y + d[2] } }) do
-		if o.valid and table_[o.type] and not N.kind_of(o.name) then
-			rec.target = o
-			return o
+		if o.valid and not N.kind_of(o.name) then
+			local fits
+			if FLUID_BUSES[rec.kind] then fits = o.fluidbox and #o.fluidbox > 0 else fits = table_[o.type] end
+			if fits then
+				rec.target = o
+				return o
+			end
 		end
 	end
 	return nil
 end
 
 local function allowed(rec, name)
-	if #rec.filters == 0 then return rec.kind == "import-bus" end
+	if #rec.filters == 0 then return IMPORTS[rec.kind] == true end
 	for _, f in pairs(rec.filters) do
 		if f == name then return true end
 	end
@@ -185,7 +194,9 @@ function M.bus_step(rec)
 	local t = target_of(rec)
 	if not t then rec.status = "no-target" return 0 end
 	local moved = 0
-	if rec.kind == "import-bus" then
+	if FLUID_BUSES[rec.kind] then
+		moved = M.fluid_bus_step(rec, net, t)
+	elseif rec.kind == "import-bus" then
 		local inv = t.get_inventory(OUTPUT[t.type])
 		if not inv then rec.status = "no-target" return 0 end
 		for i = 1, #inv do
@@ -216,13 +227,53 @@ function M.bus_step(rec)
 	return moved
 end
 
+--- A fluid bus visit: the import bus empties the output boxes of a machine (any box of a tank) into the
+--- network, the export bus fills its filtered fluids into the entity (insert_fluid: the machine's input boxes,
+--- a tank), at the fluid's default temperature. Up to BUS_FLUID units per visit. Returns the units moved.
+function M.fluid_bus_step(rec, net, t)
+	local fb = t.fluidbox
+	local moved = 0
+	if rec.kind == "fluid-import-bus" then
+		for i = 1, #fb do
+			if moved >= BUS_FLUID then break end
+			local f = fb[i]
+			local p = fb.get_prototype(i)
+			if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
+			local kind_ = p and p.production_type
+			if f and f.amount > 1e-6 and kind_ ~= "input" and allowed(rec, f.name) then
+				local take = N.can_insert_fluid(net, f.name, math.min(f.amount, BUS_FLUID - moved))
+				if take > 1e-6 then
+					local left = f.amount - take
+					fb[i] = left > 1e-6 and { name = f.name, amount = left, temperature = f.temperature } or nil
+					local stored = N.insert_fluid(net, f.name, take)
+					if stored < take - 1e-6 then                 -- cannot happen (room was checked), but never lose fluid
+						t.insert_fluid{ name = f.name, amount = take - stored, temperature = f.temperature }
+					end
+					moved = moved + stored
+				end
+			end
+		end
+	else
+		for _, name in pairs(rec.filters) do
+			if moved >= BUS_FLUID then break end
+			local avail = math.min(N.fluid_count(net, name), BUS_FLUID - moved)
+			if avail > 1e-6 then
+				local inserted = t.insert_fluid{ name = name, amount = avail }
+				if inserted > 0 then moved = moved + N.extract_fluid(net, name, inserted) end
+			end
+		end
+	end
+	return moved
+end
+
 function M.set_bus_filters(entity, filters)
 	local k = kind(entity)
-	if k ~= "import-bus" and k ~= "export-bus" then return false end
+	if not BUSES[k] then return false end
 	local rec = register(state(), entity)
 	local list, seen = {}, {}
+	local protos = FLUID_BUSES[k] and prototypes.fluid or prototypes.item
 	for _, name in pairs(filters or {}) do
-		if type(name) == "string" and prototypes.item[name] and not seen[name] and #list < MAX_FILTERS then
+		if type(name) == "string" and protos[name] and not seen[name] and #list < MAX_FILTERS then
 			seen[name] = true
 			list[#list + 1] = name
 		end
@@ -255,7 +306,11 @@ local function bus_gui_open(player, entity)
 	help.style.maximal_width = 300
 	local row = frame.add{ type = "flow", direction = "horizontal" }
 	for i = 1, MAX_FILTERS do
-		row.add{ type = "choose-elem-button", elem_type = "item", item = rec.filters[i], tags = { fork_me_bus_filter = i } }
+		if FLUID_BUSES[rec.kind] then
+			row.add{ type = "choose-elem-button", elem_type = "fluid", fluid = rec.filters[i], tags = { fork_me_bus_filter = i } }
+		else
+			row.add{ type = "choose-elem-button", elem_type = "item", item = rec.filters[i], tags = { fork_me_bus_filter = i } }
+		end
 	end
 	frame.add{ type = "label", name = "fork_me_bus_status", caption = { "fork-me-net.bus-" .. (rec.status or "ok") } }
 	player.opened = frame
@@ -263,7 +318,7 @@ end
 
 function M.on_open_input(player, entity)
 	local k = kind(entity)
-	if k ~= "import-bus" and k ~= "export-bus" then return false end
+	if not BUSES[k] then return false end
 	if player.can_reach_entity(entity) then bus_gui_open(player, entity) end
 	return true
 end
@@ -320,7 +375,7 @@ script.on_nth_tick(STEP_TICKS, on_step)
 --- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
 function M.on_built(entity, tags, source)
 	local k = kind(entity)
-	if k ~= "interface" and k ~= "import-bus" and k ~= "export-bus" then return end
+	if k ~= "interface" and not BUSES[k] then return end
 	register(state(), entity)
 	if k == "interface" then
 		local t = type(tags) == "table" and tags[IFACE_TAG] or nil
@@ -352,7 +407,7 @@ function M.on_entity_settings_pasted(event)
 	if not (src and src.valid and dst and dst.valid and src.name == dst.name) then return end
 	local k = kind(src)
 	if k == "interface" then M.set_interface_filters(dst, M.get_interface_filters(src))
-	elseif k == "import-bus" or k == "export-bus" then
+	elseif BUSES[k] then
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
 	end
@@ -365,7 +420,7 @@ function M.tag_blueprint(bp, mapping)
 		if k == "interface" then
 			local f = M.get_interface_filters(entity)
 			if next(f) then bp.set_blueprint_entity_tag(index, IFACE_TAG, { filters = f }) end
-		elseif k == "import-bus" or k == "export-bus" then
+		elseif BUSES[k] then
 			local b = M.get_bus(entity)
 			if b and #b.filters > 0 then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters }) end
 		end
@@ -380,7 +435,7 @@ function M.on_configuration_changed()
 	local names = {}
 	for _, name in pairs(N.node_names()) do
 		local k = N.kind_of(name)
-		if k == "interface" or k == "import-bus" or k == "export-bus" then names[#names + 1] = name end
+		if k == "interface" or BUSES[k] then names[#names + 1] = name end
 	end
 	for _, surface in pairs(game.surfaces) do
 		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
