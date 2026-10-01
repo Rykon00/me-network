@@ -11,6 +11,8 @@
 ---   * ME Interface    = container with filterable slots: filtered slots are kept filled from the network
 ---                       (export), everything else is moved into the network (import).
 ---   * ME Import / Export Bus = rotatable 1x1 blocks that pull from / push into the entity they face.
+---   * ME Storage Bus  = rotatable 1x1 block: the chest or cargo wagon it faces is storage of the network
+---                       (scripts/fork-me-storagebus.lua).
 ---   * ME Terminal     = powered screen, the central GUI (scripts/fork-me-terminal.lua).
 --- The old prototypes (roboport controller, logistic chest drives, requester interface) stay hidden, so
 --- saves load; scripts/fork-me-migrate.lua replaces them. Runtime: scripts/fork-me-network.lua (graph,
@@ -38,6 +40,7 @@ local INTERFACE_SLOTS = 18          -- AE2: 9 config + 9 storage slots
 
 local CONTROLLER, CABLE, DRIVE, INTERFACE = "me-network-controller", "me-cable", "me-drive", "me-network-interface"
 local IMPORT_BUS, EXPORT_BUS = "me-import-bus", "me-export-bus"
+local STORAGE_BUS = "me-storage-bus"
 local UNDERGROUND = "me-underground-cable"
 local UNDERGROUND_REACH = 10        -- free tiles between the two ends of an underground cable (like the underground pipe)
 --- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask
@@ -433,6 +436,33 @@ block{
 data.raw["simple-entity-with-force"][IMPORT_BUS].additional_pastable_entities = { IMPORT_BUS }
 data.raw["simple-entity-with-force"][EXPORT_BUS].additional_pastable_entities = { EXPORT_BUS }
 
+--------------------------------------------------------------------------------
+--- ME STORAGE BUS (rotatable: the arrow side faces the chest or cargo wagon whose inventory becomes network
+--- storage; AE2's recipe is an interface and two pistons; runtime: scripts/fork-me-storagebus.lua)
+--------------------------------------------------------------------------------
+
+create_item{
+	name = STORAGE_BUS,
+	icon = ICON_FORK .. STORAGE_BUS .. ".png",
+	category = "mv-assembling-machine-recipes",
+	subgroup = "fork-me-network",
+	order = "b4",
+	energy_required = 10 * MV_SPEED,
+	stack_size = 50,
+	place_result = STORAGE_BUS,
+	ingredients = {
+		{ type = "item", name = "me-interface", amount = 1 },
+		{ type = "item", name = "mv-piston", amount = 2 },
+		{ type = "item", name = "aluminium-plate", amount = 2 },
+		{ type = "item", name = "fluix-cable", amount = 2 },
+	},
+}
+block{
+	name = STORAGE_BUS, icon = ICON_FORK .. STORAGE_BUS .. ".png",
+	description = { "entity-description." .. STORAGE_BUS },
+	extra = { picture = four_way(STORAGE_BUS), additional_pastable_entities = { STORAGE_BUS } },
+}
+
 
 
 --------------------------------------------------------------------------------
@@ -494,7 +524,7 @@ data:extend({ {
 		names = {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
-			underground = UNDERGROUND,
+			underground = UNDERGROUND, storage_bus = STORAGE_BUS,
 		},
 		underground_reach = UNDERGROUND_REACH,
 		legacy = { controller = "me-controller", interface = "me-interface" },
@@ -546,7 +576,7 @@ fork_add_unlock("logistic-system", "me-drive")
 --- MV: basic cells, terminal, buses (cable, controller and interface come with Applied Energistics Components)
 tech{ name = "me-network", prerequisites = { "logistic-system" }, packs = 3, count = 400, recipes = {
 	"me-terminal", "computer-monitor", "certus-quartz-bolt", "certus-quartz-screw",
-	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND,
+	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
 } }
 
 --- EV: 64k (the component needs epoxy boards)

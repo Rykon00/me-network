@@ -654,6 +654,7 @@ local function tests_running()
 	check(storage.fluids and storage.fluids.done, "fluids")
 	check(storage.fluid_cells and storage.fluid_cells.done, "ME fluid cells")
 	check(storage.me_r3 and storage.me_r3.done, "ME partitions and windows")
+	check(storage.me_sbus and storage.me_sbus.done, "ME storage bus")
 	check(storage.power_checked, "power")
 	check(storage.fuel and storage.fuel.done, "fuel check")
 	check(storage.cooled and storage.cooled.done, "cooled fluid")
@@ -1137,6 +1138,7 @@ script.on_nth_tick(10, function()
 	if not (storage.fluids and storage.fluids.done) then fluid_test() end
 	fluid_cell_test()
 	me_r3_test()
+	storage_bus_test()
 	if not (storage.fuel and storage.fuel.done) then fuel_test() end
 	if not (storage.cooled and storage.cooled.done) then cooled_test() end
 	if not (storage.tiers and storage.tiers.done) then tier_test() end
@@ -1876,6 +1878,263 @@ function me_r3_test()
 	inv.destroy()
 	me_report("MER3", "ME partitions and windows", problems,
 		"partitions, priorities, insert/extract order, drive blueprint/paste/clone, window data and set functions, terminal tabs")
+end
+
+--------------------------------------------------------------------------------
+--- ME Storage Bus (issue #68, scripts/fork-me-storagebus.lua): own network right of the R3 test, a drive with two
+--- 1k cells, a terminal and storage buses on iron chests below a cable row. Checks the totals after a visit, a
+--- terminal extract from the chest, a filtered bus taking its item and the rest going into the cells, priority
+--- against the cells (insert and extract), read only and write only, a stale snapshot (an extract and a terminal
+--- take find only what is really there), two buses on one chest, a bus facing an ME block, a chest removed with
+--- and without an event, a removed bus, the settings in a blueprint tag, on a revived ghost, by paste and clone,
+--- the window data; then an inserter puts wood into a chest: the network must show it within one visit cycle.
+--------------------------------------------------------------------------------
+
+local SBX, SBY = 300, 125
+local SB = "gregtorio-me-storagebus"
+
+function setup_storage_bus_test(s)
+	local fails = {}
+	local what = "storage bus"
+	power(s, fails, what, SBX, SBY)
+	me_place(s, fails, what, "me-network-controller", SBX + 7, SBY)            -- tiles SBX+6..7, SBY-1..SBY
+	me_place(s, fails, what, "me-drive", SBX + 8.5, SBY - 0.5)
+	me_place(s, fails, what, "me-terminal", SBX + 9.5, SBY - 0.5)
+	cable_row(s, fails, SBX + 10, SBX + 22, SBY - 1)
+	local south = { direction = defines.direction.south }
+	--- B1 (main) on C1, B2 (filters) on C2, B3 on C3, B6 on C7 (inserter); each bus below the cable row
+	for _, x in pairs({ 10.5, 12.5, 15.5, 20.5 }) do
+		me_place(s, fails, what, "me-storage-bus", SBX + x, SBY + 0.5, south)
+		me_place(s, fails, what, "iron-chest", SBX + x, SBY + 1.5)
+	end
+	me_place(s, fails, what, "me-cable", SBX + 16.5, SBY + 0.5)
+	me_place(s, fails, what, "me-storage-bus", SBX + 16.5, SBY + 1.5, { direction = defines.direction.west })   -- B4: C3 too
+	me_place(s, fails, what, "me-storage-bus", SBX + 18.5, SBY + 0.5, { direction = defines.direction.north })  -- B5: a cable
+	me_place(s, fails, what, "me-storage-bus", SBX + 22.5, SBY + 0.5, south)                                   -- B7: settings
+	--- the inserter test: a source chest, an inserter dropping into C7, a substation for it
+	me_place(s, fails, what, "iron-chest", SBX + 20.5, SBY + 3.5)
+	local ins = me_place(s, fails, what, "inserter", SBX + 20.5, SBY + 2.5)
+	if ins and ins.drop_position.y > SBY + 2.5 then
+		ins.rotate()
+		ins.rotate()
+	end
+	me_place(s, fails, what, "substation", SBX + 18, SBY + 5)
+	return fails
+end
+
+function storage_bus_test()
+	local st = storage.me_sbus
+	if (st and st.done) or game.tick < 60 then return end
+	local s = game.surfaces[1]
+	local function find(name, x, y) return s.find_entity(name, { SBX + x, SBY + y }) end
+	local t, drive = find("me-terminal", 9.5, -0.5), find("me-drive", 8.5, -0.5)
+	local c7 = find("iron-chest", 20.5, 1.5)
+	local function count(name) return remote.call(NET, "count", t, name) end
+	if st then
+		--- the inserter: the wood it put into C7 must be in the network within one visit cycle
+		local problems = st.problems
+		if not st.seen and c7 and c7.get_item_count("wood") > 0 then st.seen = game.tick end
+		local buses = s.count_entities_filtered{ name = "me-storage-bus" }
+		local cycle = 15 * math.ceil(buses / 8) + 10           -- visit cycle plus this test's 10 tick granularity
+		if st.seen and count("wood") == 1 then
+			if game.tick - st.seen > cycle then problems[#problems + 1] = "wood seen after " .. (game.tick - st.seen) .. " ticks (cycle " .. cycle .. ")" end
+			st.done = true
+			me_report("MESTORAGEBUS", "ME storage bus", problems, "inserter picked up after " .. (game.tick - st.seen) .. " ticks, cycle " .. cycle)
+		elseif game.tick > st.started + 900 then
+			problems[#problems + 1] = "the inserter's wood never showed up (seen at " .. tostring(st.seen) .. ", network " .. count("wood") .. ")"
+			st.done = true
+			me_report("MESTORAGEBUS", "ME storage bus", problems)
+		end
+		return
+	end
+	st = { problems = {}, started = game.tick }
+	storage.me_sbus = st
+	local problems = st.problems
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function bus(x, y) return find("me-storage-bus", x, y) end
+	local b1, b2, b3, b4, b5, b6, b7 = bus(10.5, 0.5), bus(12.5, 0.5), bus(15.5, 0.5), bus(16.5, 1.5), bus(18.5, 0.5),
+		bus(20.5, 0.5), bus(22.5, 0.5)
+	local c1, c2, c3 = find("iron-chest", 10.5, 1.5), find("iron-chest", 12.5, 1.5), find("iron-chest", 15.5, 1.5)
+	local src = find("iron-chest", 20.5, 3.5)
+	if not (t and drive and b1 and b2 and b3 and b4 and b5 and b6 and b7 and c1 and c2 and c3 and c7 and src) then
+		st.done = true
+		return me_report("MESTORAGEBUS", "ME storage bus", { "entities missing" })
+	end
+	local inv = game.create_inventory(4)
+	for slot = 1, 2 do
+		inv[1].set_stack{ name = "me-1k-storage-cell", count = 1 }
+		remote.call(NET, "insert_cell", drive, inv[1], slot)
+	end
+	local net = remote.call(NET, "network", t)
+	expect(net and net.ok and net.storage_buses == 7, "network " .. serpent.line(net))
+	local function visit(b) remote.call(SB, "visit", b) end
+	local function info(b) return remote.call(SB, "info", b) or {} end
+	local function in_cells(name)
+		local n = 0
+		for _, c in pairs(remote.call(NET, "drive", drive)) do n = n + (c.items[name] or 0) end
+		return n
+	end
+	--- the network's items must be the cells' plus what the working buses show of their chests (after a visit)
+	local pairs_ = { { b1, c1 }, { b2, c2 }, { b3, c3 }, { b4, c3 }, { b6, c7 } }
+	local function consistent(label)
+		local want = {}
+		for _, c in pairs(remote.call(NET, "drive", drive)) do
+			for k, n in pairs(c.items) do want[k] = (want[k] or 0) + n end
+		end
+		for _, p in ipairs(pairs_) do
+			if p[1].valid then
+				visit(p[1])
+				local i = info(p[1])
+				if i.status == "ok" and i.mode ~= "write" and p[2].valid then
+					local allow = {}
+					for _, f in pairs(i.filters) do allow[f] = true end
+					for _, it in pairs(p[2].get_inventory(defines.inventory.chest).get_contents()) do
+						if #i.filters == 0 or allow[it.name] then want[it.name] = (want[it.name] or 0) + it.count end
+					end
+				end
+			end
+		end
+		local have = remote.call(NET, "contents", t)
+		local diff = {}
+		for k, n in pairs(want) do if have[k] ~= n then diff[#diff + 1] = k .. " " .. tostring(have[k]) .. "/" .. n end end
+		for k, n in pairs(have) do if not want[k] then diff[#diff + 1] = k .. " " .. n .. "/0" end end
+		table.sort(diff)
+		expect(#diff == 0, label .. ": network/expected " .. table.concat(diff, ", "))
+	end
+	local ch1 = c1.get_inventory(defines.inventory.chest)
+
+	--- the chest's items in the network's totals after a visit (not before: no event)
+	ch1.insert{ name = "iron-plate", count = 100 }
+	ch1.insert{ name = "copper-plate", count = 50 }
+	expect(count("iron-plate") == 0, "C1 seen without a visit")
+	visit(b1)
+	expect(count("iron-plate") == 100 and count("copper-plate") == 50, "totals after a visit: " .. count("iron-plate") .. "/" .. count("copper-plate"))
+	local i1 = info(b1)
+	expect(i1.status == "ok" and i1.items == 150 and i1.types == 2 and i1.target == "iron-chest", "info " .. serpent.line(i1))
+	--- a terminal take: the cells are empty, so out of C1
+	local pinv = game.create_inventory(10)
+	local size = prototypes.item["iron-plate"].stack_size
+	local got = remote.call(TERM, "take", inv[2], pinv, t, "iron-plate", "inventory")
+	expect(got == math.min(100, size) and pinv.get_item_count("iron-plate") == got and c1.get_item_count("iron-plate") == 100 - got
+		and count("iron-plate") == 100 - got, "terminal take from C1: " .. tostring(got))
+	pinv.remove{ name = "iron-plate", count = got }
+	ch1.insert{ name = "iron-plate", count = got }              -- 100 again
+	visit(b1)
+	--- a filtered bus gets its item; an item without a filter goes into the cells
+	expect(remote.call(SB, "set_settings", b2, { filters = { "copper-plate" } }), "set_settings filters")
+	expect(remote.call(NET, "insert", t, "copper-plate", 30) == 30 and c2.get_item_count("copper-plate") == 30
+		and c1.get_item_count("copper-plate") == 50, "filtered insert: C2 " .. c2.get_item_count("copper-plate"))
+	expect(remote.call(NET, "insert", t, "iron-gear-wheel", 20) == 20 and in_cells("iron-gear-wheel") == 20
+		and c2.get_item_count("iron-gear-wheel") == 0 and c1.get_item_count("iron-gear-wheel") == 0, "unfiltered insert into the cells: " .. in_cells("iron-gear-wheel"))
+	consistent("after the inserts")
+	--- priority against the cells
+	remote.call(SB, "set_settings", b1, { priority = 10 })
+	remote.call(NET, "insert", t, "stone", 40)
+	expect(c1.get_item_count("stone") == 40 and in_cells("stone") == 0, "priority 10: stone into C1 " .. c1.get_item_count("stone"))
+	remote.call(SB, "set_settings", b1, { priority = -10 })
+	remote.call(NET, "insert", t, "stone", 15)
+	expect(c1.get_item_count("stone") == 40 and in_cells("stone") == 15, "priority -10: stone into the cells " .. in_cells("stone"))
+	remote.call(NET, "store_in_drive", drive, "iron-plate", 10)
+	expect(remote.call(NET, "extract", t, "iron-plate", 5) == 5 and c1.get_item_count("iron-plate") == 95 and in_cells("iron-plate") == 10,
+		"priority -10: iron taken from C1 first")
+	remote.call(SB, "set_settings", b1, { priority = 10 })
+	expect(remote.call(NET, "extract", t, "iron-plate", 5) == 5 and c1.get_item_count("iron-plate") == 95 and in_cells("iron-plate") == 5,
+		"priority 10: iron taken from the cells first")
+	consistent("after the priorities")
+	--- read only: nothing goes in (stone into the cells although C1 has priority 10), taking works
+	remote.call(SB, "set_settings", b1, { mode = "read" })
+	remote.call(NET, "insert", t, "stone", 5)
+	expect(c1.get_item_count("stone") == 40 and in_cells("stone") == 20, "read only: stone into C1")
+	expect(remote.call(NET, "extract", t, "stone", 25) == 25 and in_cells("stone") == 0 and c1.get_item_count("stone") == 35,
+		"read only: taken from C1 " .. c1.get_item_count("stone"))
+	--- write only: C1 is not shown and not taken from, but filled
+	remote.call(SB, "set_settings", b1, { mode = "write" })
+	expect(count("stone") == 0 and count("copper-plate") == 30, "write only: C1 shown " .. count("stone") .. "/" .. count("copper-plate"))
+	remote.call(NET, "insert", t, "stone", 7)
+	expect(c1.get_item_count("stone") == 42 and count("stone") == 0, "write only: stone into C1 " .. c1.get_item_count("stone"))
+	expect(remote.call(NET, "extract", t, "copper-plate", 40) == 30 and c1.get_item_count("copper-plate") == 50, "write only: copper taken from C1")
+	remote.call(SB, "set_settings", b1, { mode = "readwrite" })
+	expect(count("stone") == 42 and count("copper-plate") == 50, "read and write again: " .. count("stone") .. "/" .. count("copper-plate"))
+	consistent("after the modes")
+	--- stale snapshot: items taken out by hand are counted until the next visit, but an extract finds only the real ones
+	ch1.remove{ name = "stone", count = 40 }
+	expect(count("stone") == 42, "stone recounted without a visit")
+	expect(remote.call(NET, "extract", t, "stone", 10) == 2 and count("stone") == 0 and c1.get_item_count("stone") == 0,
+		"stale extract: network " .. count("stone"))
+	local iron_c1 = c1.get_item_count("iron-plate")
+	ch1.remove{ name = "iron-plate", count = iron_c1 }
+	local before = pinv.get_item_count("iron-plate")
+	local got2 = remote.call(TERM, "take", inv[3], pinv, t, "iron-plate", "inventory")
+	expect(got2 == 5 and pinv.get_item_count("iron-plate") == before + 5 and count("iron-plate") == 0,
+		"stale terminal take: " .. tostring(got2) .. ", inventory +" .. (pinv.get_item_count("iron-plate") - before))
+	consistent("after the stale takes")
+	--- two buses on one chest: counted once, one of them refused; the other takes over when the first goes
+	c3.insert{ name = "steel-plate", count = 7 }
+	visit(b3)
+	visit(b4)
+	local s3, s4 = info(b3).status, info(b4).status
+	expect(count("steel-plate") == 7 and (s3 == "ok") ~= (s4 == "ok") and (s3 == "shared-target" or s4 == "shared-target"),
+		"two buses on one chest: steel " .. count("steel-plate") .. ", " .. tostring(s3) .. "/" .. tostring(s4))
+	local owner, other = b3, b4
+	if s4 == "ok" then owner, other = b4, b3 end
+	owner.destroy{ raise_destroy = true }
+	expect(count("steel-plate") == 0, "a removed bus left its chest in the network: steel " .. count("steel-plate"))
+	visit(other)
+	expect(count("steel-plate") == 7 and info(other).status == "ok", "the second bus took over: steel " .. count("steel-plate") .. ", " .. tostring(info(other).status))
+	--- a bus facing an ME block works with nothing
+	visit(b5)
+	expect(info(b5).status == "me-target", "facing a cable: " .. tostring(info(b5).status))
+	--- a chest removed with an event leaves the network at once, one removed without an event at the next visit
+	c2.insert{ name = "copper-plate", count = 9 }
+	visit(b2)
+	expect(count("copper-plate") == 59, "copper in C1 and C2: " .. count("copper-plate"))
+	c2.destroy{ raise_destroy = true }
+	expect(count("copper-plate") == 50 and info(b2).status == "no-target", "C2 removed: copper " .. count("copper-plate"))
+	c3.destroy()
+	visit(other)
+	expect(count("steel-plate") == 0 and info(other).status == "no-target", "C3 removed without an event: steel " .. count("steel-plate"))
+	--- a removed bus: C1 leaves the network
+	b1.destroy{ raise_destroy = true }
+	expect(count("copper-plate") == 0 and count("iron-plate") == in_cells("iron-plate"), "B1 removed: copper " .. count("copper-plate"))
+	consistent("after the removals")
+	net = remote.call(NET, "network", t)
+	expect(net and net.storage_buses == 5, "storage buses left: " .. serpent.line(net and net.storage_buses))
+	--- settings: blueprint tag, a revived ghost with the tag, paste, clone, the window's data
+	local want = { mode = "read", priority = 7, filters = { "copper-plate", "iron-plate" } }
+	expect(remote.call(SB, "set_settings", b7, want), "set_settings b7")
+	local function same(b, label)
+		local g = remote.call(SB, "get_settings", b)
+		expect(g and serpent.line(g) == serpent.line(want), label .. ": " .. serpent.line(g))
+	end
+	same(b7, "settings")
+	local bpi = game.create_inventory(1)
+	bpi.insert{ name = "blueprint" }
+	local mapping = bpi[1].create_blueprint{ surface = s, force = "player", area = { { SBX + 22, SBY }, { SBX + 23, SBY + 1 } } }
+	remote.call(SB, "tag_blueprint", bpi[1], mapping)
+	local tag
+	for index, e in pairs(mapping or {}) do
+		if e.name == "me-storage-bus" then tag = bpi[1].get_blueprint_entity_tag(index, "fork_me_storage_bus") end
+	end
+	bpi.destroy()
+	expect(tag and serpent.line(tag) == serpent.line(want), "blueprint tag " .. serpent.line(tag))
+	local ghost = s.create_entity{ name = "entity-ghost", inner_name = "me-storage-bus", position = { SBX + 26.5, SBY + 8.5 },
+		force = "player", tags = { fork_me_storage_bus = tag } }
+	local _, revived = ghost.revive{ raise_revive = true }
+	if revived then same(revived, "revived ghost") else expect(false, "ghost not revived") end
+	local pasted = s.create_entity{ name = "me-storage-bus", position = { SBX + 28.5, SBY + 8.5 }, force = "player", raise_built = true }
+	remote.call(SB, "paste", b7, pasted)
+	same(pasted, "pasted")
+	local clone = b7.clone{ position = { SBX + 30.5, SBY + 8.5 } }
+	if clone then same(clone, "clone") else expect(false, "no clone") end
+	local wd = remote.call(GUI, "storage_bus_data", b7)
+	expect(wd and wd.mode == "read" and wd.priority == 7 and wd.max == 18 and wd.status == "no-target", "window data " .. serpent.line(wd))
+	expect(remote.call(GUI, "has_window", b7), "the storage bus has no window")
+	remote.call(SB, "set_filter", b7, 1, nil)
+	expect(serpent.line(remote.call(SB, "get_settings", b7).filters) == serpent.line({ "iron-plate" }), "filter removed")
+	inv.destroy()
+	pinv.destroy()
+	--- the inserter test (above): one wood into the source chest
+	src.insert{ name = "wood", count = 1 }
 end
 
 --- Endgame power (prototypes/136-fork-power.lua, scripts/fork-power.lua): a LuV large plasma turbine
@@ -3170,6 +3429,7 @@ script.on_init(function()
 	for _, f in pairs(setup_fluid_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fluid_cell_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_r3_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_storage_bus_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fuel_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_cooled_test(s)) do fails[#fails + 1] = f end
