@@ -2,9 +2,9 @@
 --- FORK AE2: AUTOCRAFTING (side quest, on top of the ME network from 120-fork-ae2.lua)
 ---   * Molecular Assembler = assembling machine for item-only crafting recipes. Set its
 ---                           recipe like any assembler; the recipe becomes a pattern.
----   * Pattern Provider    = small entity placed next to ANY machine (GT machine, furnace,
+---   * Pattern Provider    = small ME block placed next to ANY machine (GT machine, furnace,
 ---                           Molecular Assembler). The recipe that machine has set becomes a
----                           pattern of the ME network the provider stands in.
+---                           pattern of the ME network the provider is connected to.
 ---   * Crafting CPU        = powered entity of the ME network, runs one crafting job at a time.
 ---                           Two bigger tiers (issue #38) run more jobs at once and move more
 ---                           items per step: Co-Processing (IV) and Quantum (LuV) Crafting CPU.
@@ -83,7 +83,7 @@ create_item{
 	ingredients = {
 		{ type = "item", name = "ev-machine-hull", amount = 1 },
 		{ type = "item", name = "me-controller", amount = 1 },
-		{ type = "item", name = "me-64k-storage-cell", amount = 2 },
+		{ type = "item", name = "me-64k-storage-component", amount = 2 },     -- issue #68: cells carry contents, components do not
 		{ type = "item", name = "processing-unit", amount = 4 },
 		{ type = "item", name = "fluix-cable", amount = 8 },
 	},
@@ -231,7 +231,7 @@ create_item{
 	ingredients = {
 		{ type = "item", name = "me-crafting-cpu", amount = 1 },
 		{ type = "item", name = "iv-machine-hull", amount = 1 },
-		{ type = "item", name = "me-256k-storage-cell", amount = 2 },
+		{ type = "item", name = "me-256k-storage-component", amount = 2 },
 		{ type = "item", name = "acceleration-card", amount = 4 },
 		{ type = "item", name = "iv-circuit", amount = 4 },
 		{ type = "item", name = "fluix-cable", amount = 16 },

@@ -23,6 +23,7 @@
 
 local autocraft = require("scripts.fork-me-autocraft")
 local fluids = require("scripts.fork-me-fluids")
+local N = require("scripts.fork-me-network")
 
 local M = {}
 
@@ -59,8 +60,9 @@ local function state()
 	return s
 end
 
+--- the working ME network of an entity (scripts/fork-me-network.lua)
 local function network_of(entity)
-	return entity.surface.find_logistic_network_by_position(entity.position, entity.force)
+	return N.active_of(entity)
 end
 
 local function remove_value(list, value)
@@ -92,7 +94,7 @@ end
 --- what the network holds of a key (normal quality items)
 local function stock_of(net, key)
 	if is_fluid(key) then return fluids.count(net, fluid_name(key)) end
-	return net.get_item_count{ name = key, quality = "normal" }
+	return N.count(net, key, "normal")
 end
 
 --- the sum of the key's signal on the red and green wire
@@ -225,10 +227,17 @@ end
 --- the signals of a network: { { type, name, quality, count } }, largest first, at most MAX_SIGNALS;
 --- `filter` (key -> true) limits them to those resources
 local function network_signals(net, filter)
-	local out = {}
-	for _, c in pairs(net.get_contents()) do
+	local out, by_item = {}, {}
+	for _, c in pairs(N.contents(net)) do          -- items with tags count under their item and quality
 		if not filter or filter[c.name] then
-			out[#out + 1] = { type = "item", name = c.name, quality = c.quality or "normal", count = c.count }
+			local k = c.name .. "@" .. c.quality
+			local sig = by_item[k]
+			if sig then sig.count = sig.count + c.count
+			else
+				sig = { type = "item", name = c.name, quality = c.quality, count = c.count }
+				by_item[k] = sig
+				out[#out + 1] = sig
+			end
 		end
 	end
 	for name, amount in pairs(fluids.totals(net)) do
@@ -270,7 +279,7 @@ local function circuit_step(rec)
 	end
 	section.filters = filters
 	rec.signals = #filters
-	rec.net = net and net.network_id or nil
+	rec.net = net and net.id or nil
 end
 
 --- Set the filter of an interface: a list of keys (items, "fluid/<name>"), empty for everything

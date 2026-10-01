@@ -1,27 +1,30 @@
 --------------------------------------------------------------------------------
---- FORK AE2: ME TERMINAL AND ME INTERFACE (runtime)
---- The ME network is the logistic network (see prototypes/120-fork-ae2.lua), so the only
---- script parts are event driven:
----   * ME Terminal: opening it shows a GUI with the contents of the logistic network at
----     its position; clicking an item moves it from network storage into the player's
----     inventory, the item in hand can be stored in the network. Fluids stored in the network
----     (scripts/fork-me-fluids.lua) are listed below the items; they cannot be taken by hand.
----     While a terminal GUI is open it is refreshed once per second (only for players that
----     have it open).
----   * ME Interface: "trash unrequested" is switched on when a player places one by hand.
----   * Crafting tab (autocrafting, scripts/fork-me-autocraft.lua): every item or fluid a pattern
----     can make, an amount field and a "Craft" button with a plan preview (what is missing), and
----     the job list with progress and a cancel button. Selected resource and amount live in the
----     GUI elements (tags, text field); jobs live in storage.fork_ae2.
----   * GUI events of the fluid drive and fluid interface panels are routed to fork-me-fluids.lua, those
----     of the level maintainer and circuit interface panels to fork-me-circuit.lua (a Factorio event
----     has one handler, so this module registers them all).
---- State: storage.fork_me_terminal[player_index] = { entity = LuaEntity, filter = string }
+--- FORK AE2: ME TERMINAL (runtime; issue #68: the central GUI of the ME network, scripts/fork-me-network.lua)
+---   * Status line: network state, bytes and types used of the cells, drives and cells, the controller's
+---     power draw.
+---   * Storage tab: search (item name), sort (amount or name), the item grid. Left click: a stack into the
+---     cursor (with something in the cursor: that is stored instead); right click: one item into the cursor;
+---     shift click: a stack into the inventory. Below: the fluids of the fluid drives (read only) and the
+---     player's inventory (click: store all of that item, right click: one stack).
+---   * Crafting tab (autocrafting, scripts/fork-me-autocraft.lua): every item or fluid a pattern can make,
+---     an amount field and a "Craft" button with a plan preview (what is missing), and the job list with
+---     progress and a cancel button. Its look is redone in step R3.
+---   * The GUI is refreshed once per second while it is open (only for players that have it open); the same
+---     step runs the slow step of the network module (drive lights, sweep for vanished members).
+---   * GUI events of every ME window are registered here and routed (a Factorio event has one handler):
+---     drives (fork-me-network.lua), buses (fork-me-io.lua), fluid drives and fluid interfaces
+---     (fork-me-fluids.lua), level maintainers and circuit interfaces (fork-me-circuit.lua), pattern
+---     providers (fork-me-autocraft.lua).
+--- Every button calls a function of this module that the runtime test calls directly (take, store_cursor,
+--- store_inventory_item, withdraw, store_stack).
+--- State: storage.fork_me_terminal[player_index] = { entity, filter, sort }
 --------------------------------------------------------------------------------
 
+local N = require("scripts.fork-me-network")
 local autocraft = require("scripts.fork-me-autocraft")
 local fluids = require("scripts.fork-me-fluids")
 local circuit = require("scripts.fork-me-circuit")
+local io = require("scripts.fork-me-io")
 
 local M = {}
 
@@ -33,10 +36,6 @@ local REFRESH_TICKS = 60
 local function state()
 	storage.fork_me_terminal = storage.fork_me_terminal or {}
 	return storage.fork_me_terminal
-end
-
-local function network_of(entity)
-	return entity.surface.find_logistic_network_by_position(entity.position, entity.force)
 end
 
 --- breadth first search for a named element below `root`
@@ -57,11 +56,53 @@ local function close(player)
 	state()[player.index] = nil
 end
 
---- nil when the terminal can be used, otherwise the reason as a locale key
+--- nil when the terminal can be used, otherwise the reason as a locale key of [fork-me-net] (status-...)
 local function problem(entity)
-	if entity.status == defines.entity_status.no_power then return "no-power" end
-	if not network_of(entity) then return "no-network" end
+	if not (entity and entity.valid) then return "no-network" end
+	if entity.status == defines.entity_status.no_power then return "no-power-terminal" end
+	local net = N.network_of(entity)
+	if not net then return "no-network" end
+	local ok, why = N.usable(net)
+	if not ok then return why end
 	return nil
+end
+
+--- the working network of a terminal, or nil and the reason
+local function network(entity)
+	local why = problem(entity)
+	if why then return nil, why end
+	return N.network_of(entity)
+end
+M.network = network
+
+local function format_bytes(n)
+	if n >= 1048576 then return string.format("%.1fM", n / 1048576) end
+	if n >= 1024 then return string.format("%.1fk", n / 1024) end
+	return tostring(n)
+end
+
+local function status_line(net)
+	local st = N.stats(net)
+	return { "fork-me-net.terminal-status", format_bytes(st.bytes), format_bytes(st.bytes_total), st.types, st.types_total,
+		st.drives, st.cells, string.format("%.0f", st.power / 1000) }
+end
+
+--- the entries of the storage grid: filtered by the search, sorted by amount or name
+function M.entries(net, filter, sort)
+	filter = (filter or ""):lower():gsub("%s+", "-")
+	local items = {}
+	for _, c in pairs(N.contents(net)) do
+		if prototypes.item[c.name] and (filter == "" or c.name:find(filter, 1, true)) then items[#items + 1] = c end
+	end
+	table.sort(items, function(a, b)
+		if sort == "name" then
+			if a.name ~= b.name then return a.name < b.name end
+		elseif a.count ~= b.count then
+			return a.count > b.count
+		end
+		return a.key < b.key
+	end)
+	return items
 end
 
 local function refresh(player)
@@ -69,33 +110,28 @@ local function refresh(player)
 	local frame = player.gui.screen[FRAME]
 	if not (st and frame) then return end
 	local entity = st.entity
-	local status, grid = frame.fork_me_status, find(frame, "fork_me_grid")
+	local status, grid = find(frame, "fork_me_status"), find(frame, "fork_me_grid")
 	local fluid_line, fluid_grid = find(frame, "fork_me_fluid_line"), find(frame, "fork_me_fluid_grid")
-	if not (status and grid and fluid_line and fluid_grid) then      -- a frame built by an older version
+	local inv_grid, net_line = find(frame, "fork_me_inv_grid"), find(frame, "fork_me_net_line")
+	if not (status and grid and fluid_line and fluid_grid and inv_grid and net_line) then   -- a frame built by an older version
 		close(player)
 		return
 	end
-	local why = problem(entity)
-	if why then
+	local net, why = network(entity)
+	if not net then
 		grid.clear()
 		fluid_grid.clear()
 		fluid_line.visible = false
 		st.shown = nil
-		status.caption = { "fork-me-terminal." .. why }
+		net_line.caption = ""
+		status.caption = { "fork-me-net.status-" .. why }
 		status.visible = true
 		return
 	end
+	net_line.caption = status_line(net)
 	M.refresh_crafting(player, frame, entity)
-	local net = network_of(entity)
+	local items = M.entries(net, st.filter, st.sort)
 	local filter = (st.filter or ""):lower():gsub("%s+", "-")
-	local items = {}
-	for _, c in pairs(net.get_contents()) do
-		if filter == "" or c.name:find(filter, 1, true) then items[#items + 1] = c end
-	end
-	table.sort(items, function(a, b)
-		if a.count ~= b.count then return a.count > b.count end
-		return a.name < b.name
-	end)
 	local liquids = {}
 	for name, amount in pairs(fluids.totals(net)) do
 		if filter == "" or name:find(filter, 1, true) then liquids[#liquids + 1] = { name = name, amount = amount } end
@@ -105,16 +141,24 @@ local function refresh(player)
 		return a.name < b.name
 	end)
 	local capacity, used = fluids.capacity(net)
+	local main = player.get_main_inventory()
+	local own = main and main.get_contents() or {}
+	table.sort(own, function(a, b)
+		if a.name ~= b.name then return a.name < b.name end
+		return (a.quality or "normal") < (b.quality or "normal")
+	end)
 	--- unchanged since the last refresh: keep the buttons (and their open tooltips)
-	local sig = {}
-	for i = 1, math.min(#items, MAX_BUTTONS) do sig[i] = items[i].name .. "/" .. (items[i].quality or "normal") .. "=" .. items[i].count end
+	local sig = { st.sort or "count" }
+	for i = 1, math.min(#items, MAX_BUTTONS) do sig[#sig + 1] = items[i].key .. "=" .. items[i].count end
 	for _, f in ipairs(liquids) do sig[#sig + 1] = "fluid/" .. f.name .. "=" .. f.amount end
 	sig[#sig + 1] = "capacity=" .. used .. "/" .. capacity
+	for _, c in ipairs(own) do sig[#sig + 1] = "inv/" .. c.name .. "/" .. (c.quality or "normal") .. "=" .. c.count end
 	sig = table.concat(sig, ",")
 	if st.shown == sig then return end
 	st.shown = sig
 	grid.clear()
 	fluid_grid.clear()
+	inv_grid.clear()
 	status.visible = false
 	if #items == 0 and #liquids == 0 then
 		status.caption = { "fork-me-terminal.empty" }
@@ -125,16 +169,14 @@ local function refresh(player)
 	end
 	for i = 1, math.min(#items, MAX_BUTTONS) do
 		local c = items[i]
-		if prototypes.item[c.name] then
-			grid.add{
-				type = "sprite-button",
-				sprite = "item/" .. c.name,
-				number = c.count,
-				style = "slot_button",
-				elem_tooltip = { type = "item-with-quality", name = c.name, quality = c.quality },
-				tags = { fork_me_item = c.name, fork_me_quality = c.quality },
-			}
-		end
+		grid.add{
+			type = "sprite-button",
+			sprite = "item/" .. c.name,
+			number = c.count,
+			style = c.special and "yellow_slot_button" or "slot_button",
+			elem_tooltip = { type = "item-with-quality", name = c.name, quality = c.quality },
+			tags = { fork_me_key = c.key },
+		}
 	end
 	fluid_line.visible = capacity > 0 or #liquids > 0
 	fluid_line.caption = { "fork-me-terminal.fluids", fluids.format(used), fluids.format(capacity) }
@@ -150,7 +192,17 @@ local function refresh(player)
 			}
 		end
 	end
+	for _, c in ipairs(own) do
+		if prototypes.item[c.name] then
+			inv_grid.add{
+				type = "sprite-button", sprite = "item/" .. c.name, number = c.count, style = "slot_button",
+				elem_tooltip = { type = "item-with-quality", name = c.name, quality = c.quality or "normal" },
+				tags = { fork_me_inv = c.name, fork_me_quality = c.quality or "normal" },
+			}
+		end
+	end
 end
+M.refresh = refresh
 
 local function open(player, entity)
 	if not (entity and entity.valid and entity.name == "me-terminal") then return end
@@ -168,7 +220,11 @@ local function open(player, entity)
 	top.style.vertical_align = "center"
 	top.add{ type = "label", caption = { "fork-me-terminal.search" } }
 	top.add{ type = "textfield", name = "fork_me_search" }
+	top.add{ type = "button", name = "fork_me_sort", caption = { "fork-me-net.sort-count" }, tooltip = { "fork-me-net.sort-tooltip" } }
 	top.add{ type = "button", name = "fork_me_store", caption = { "fork-me-terminal.store-hand" } }
+	local net_line = frame.add{ type = "label", name = "fork_me_net_line" }
+	net_line.style.single_line = false
+	net_line.style.maximal_width = 40 * COLUMNS
 	local status = frame.add{ type = "label", name = "fork_me_status" }
 	status.style.single_line = false
 	status.style.maximal_width = 40 * COLUMNS
@@ -176,19 +232,29 @@ local function open(player, entity)
 	local storage_tab = tabs.add{ type = "tab", caption = { "fork-me-terminal.tab-storage" } }
 	local craft_tab = tabs.add{ type = "tab", caption = { "fork-me-craft.tab" } }
 	local storage_flow = tabs.add{ type = "flow", direction = "vertical" }
+	local help = storage_flow.add{ type = "label", caption = { "fork-me-net.terminal-help" } }
+	help.style.single_line = false
+	help.style.maximal_width = 40 * COLUMNS
 	local scroll = storage_flow.add{ type = "scroll-pane", name = "fork_me_scroll", horizontal_scroll_policy = "never" }
-	scroll.style.maximal_height = 400
+	scroll.style.maximal_height = 360
 	scroll.style.minimal_width = 40 * COLUMNS + 12
 	scroll.add{ type = "table", name = "fork_me_grid", column_count = COLUMNS }
 	local fluid_line = scroll.add{ type = "label", name = "fork_me_fluid_line", style = "caption_label" }
 	fluid_line.visible = false
 	scroll.add{ type = "table", name = "fork_me_fluid_grid", column_count = COLUMNS }
+	storage_flow.add{ type = "line" }
+	storage_flow.add{ type = "label", caption = { "fork-me-net.inventory" }, style = "caption_label" }
+	local inv = storage_flow.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
+	inv.style.maximal_height = 130
+	inv.style.minimal_width = 40 * COLUMNS + 12
+	inv.add{ type = "table", name = "fork_me_inv_grid", column_count = COLUMNS }
 	tabs.add_tab(storage_tab, storage_flow)
 	tabs.add_tab(craft_tab, M.build_crafting(tabs))
-	state()[player.index] = { entity = entity, filter = "" }
+	state()[player.index] = { entity = entity, filter = "", sort = "count" }
 	player.opened = frame
 	refresh(player)
 end
+M.open = open
 
 
 --------------------------------------------------------------------------------
@@ -295,7 +361,8 @@ function M.refresh_crafting(player, frame, entity)
 	local st = state()[player.index]
 	local tabs = frame.fork_me_tabs
 	if not (st and tabs and tabs.selected_tab_index == 2) then return end
-	local net = network_of(entity)
+	local net = network(entity)
+	if not net then return end
 	local info = find(frame, "fork_ae2_info")
 	local total, free, _, slots = autocraft.cpu_summary(net)
 	local keys, ignored = autocraft.craftable(net)
@@ -309,7 +376,7 @@ function M.refresh_crafting(player, frame, entity)
 			if #shown < MAX_CRAFT_BUTTONS then
 				local d = autocraft.describe(key)
 				if d then
-					local count = d.fluid and (fluid_totals[d.name] or 0) or net.get_item_count{ name = key, quality = "normal" }
+					local count = d.fluid and (fluid_totals[d.name] or 0) or N.count(net, key, "normal")
 					shown[#shown + 1] = { key = key, d = d, count = count }
 					sig[#sig + 1] = key .. "=" .. count
 				end
@@ -342,7 +409,8 @@ local function pick_craftable(player, key)
 	panel.tags = { item = key }
 	find(frame, "fork_ae2_icon").sprite = d.sprite
 	find(frame, "fork_ae2_name").caption = d.localised_name
-	update_plan(frame, network_of(st.entity))
+	local net = network(st.entity)
+	if net then update_plan(frame, net) end
 end
 
 local function start_craft(player)
@@ -371,93 +439,127 @@ local function cancel_craft(player, id)
 	if st then st.jobs_shown = nil end
 end
 
---- Items with own data (item-with-tags, e.g. a fluid drive that carries fluid) are moved as
---- whole stacks out of the storage chests, so nothing is lost. Returns the number moved.
-local function withdraw_stacks(network, target, name, quality, count)
-	local moved = 0
-	for _, chest in pairs(network.storages) do
-		if moved >= count then break end
-		local inv = chest.valid and chest.get_inventory(defines.inventory.chest)
-		if inv then
-			for i = 1, #inv do
-				local stack = inv[i]
-				if stack.valid_for_read and stack.name == name and (stack.quality and stack.quality.name or "normal") == quality
-					and moved + stack.count <= count then
-					local n = target.insert(stack)
-					if n >= stack.count then stack.clear() elseif n > 0 then stack.count = stack.count - n end
-					moved = moved + n
-					if moved >= count then break end
-				end
+--------------------------------------------------------------------------------
+--- the storage tab's functions (also the remote interface: the runtime test calls the same code)
+--------------------------------------------------------------------------------
+
+--- Move up to `count` items `name` of `quality` from the network at `terminal` into `target` (anything with
+--- insert: LuaPlayer, LuaEntity, LuaInventory). Plain items first, then items with tags of that name.
+--- Returns the number moved.
+function M.withdraw(terminal, target, name, quality, count)
+	local net = network(terminal)
+	if not net then return 0 end
+	local moved = N.extract_to(net, target, N.key_of(name, quality), count)
+	if moved < count then
+		for _, c in pairs(N.contents(net)) do
+			if moved >= count then break end
+			if c.special and c.name == name and c.quality == (quality or "normal") then
+				moved = moved + N.extract_to(net, target, c.key, count - moved)
 			end
 		end
 	end
 	return moved
 end
 
---- Move up to `count` items from the network at `terminal` into `target` (anything with
---- insert/remove_item: LuaPlayer, LuaEntity, LuaInventory). Returns the number moved.
-function M.withdraw(terminal, target, name, quality, count)
-	if not (terminal and terminal.valid) or problem(terminal) then return 0 end
-	local network = network_of(terminal)
-	count = math.min(count, network.get_item_count({ name = name, quality = quality }))
-	if count <= 0 then return 0 end
-	local proto = prototypes.item[name]
-	if proto and proto.type == "item-with-tags" then return withdraw_stacks(network, target, name, quality, count) end
-	local inserted = target.insert{ name = name, quality = quality, count = count }
-	if inserted <= 0 then return 0 end
-	local removed = network.remove_item{ name = name, quality = quality, count = inserted }
-	if removed < inserted then
-		target.remove_item{ name = name, quality = quality, count = inserted - removed }
-	end
-	return removed
-end
-
 --- Store a LuaItemStack in the network at `terminal`.
---- Returns the number of items stored, or nil and a locale key.
+--- Returns the number of items stored, or nil and a locale key of [fork-me-net] (status-... or the reason).
 function M.store_stack(terminal, stack)
-	if not (terminal and terminal.valid) then return nil, "no-network" end
-	local why = problem(terminal)
-	if why then return nil, why end
+	local net, why = network(terminal)
+	if not net then return nil, why end
 	if not (stack and stack.valid_for_read) then return 0 end
-	if stack.item and not stack.is_item_with_tags then return nil, "cannot-store" end   -- blueprints, armor, ...
-	local inserted = network_of(terminal).insert(stack)   -- a whole stack keeps its tags (fluid drive items)
-	if inserted <= 0 then return nil, "no-storage" end
-	if inserted >= stack.count then stack.clear() else stack.count = stack.count - inserted end
-	return inserted
+	return N.insert_stack(net, stack)
 end
 
-local function take(player, name, quality, button, shift)
-	local st = state()[player.index]
-	if not st then return end
-	local stack = prototypes.item[name].stack_size
-	local want = stack
-	if shift then want = stack * 10 elseif button == defines.mouse_button_type.right then want = math.ceil(stack / 2) end
-	M.withdraw(st.entity, player, name, quality, want)
+--- A click on an item of the grid, for a player's `cursor` (LuaItemStack) and main inventory `inv`. `mode`:
+--- "stack" (a stack into the cursor), "one" (one item into the cursor), "inventory" (a stack into the
+--- inventory). With something in the cursor, "stack" stores the cursor. Returns the number of items moved
+--- (stored: negative), or nil and a reason.
+function M.take_to(cursor, inv, terminal, key, mode)
+	local net, why = network(terminal)
+	if not net then return nil, why end
+	local name = N.parse_key(key)
+	local proto = prototypes.item[name]
+	if not proto then return nil, "cannot-store" end
+	if mode == "stack" and cursor and cursor.valid_for_read then
+		local n, w = M.store_stack(terminal, cursor)
+		return n and -n or nil, w
+	end
+	if mode == "inventory" then
+		if not inv then return nil, "inventory-full" end
+		local n = N.extract_to(net, inv, key, proto.stack_size)
+		if n == 0 then return nil, "inventory-full" end
+		return n
+	end
+	if not cursor then return nil, "inventory-full" end
+	if mode == "one" and cursor.valid_for_read then
+		--- one more of the same plain item into the cursor
+		local problem, ckey = N.storable(cursor)
+		if problem or ckey ~= key or cursor.count >= proto.stack_size then return 0 end
+		local got = N.extract_key(net, key, 1)
+		if got > 0 then cursor.count = cursor.count + got end
+		return got
+	end
+	if cursor.valid_for_read then return 0 end
+	return N.extract_to(net, cursor, key, mode == "one" and 1 or proto.stack_size)
 end
 
-local function store_hand(player)
-	local st = state()[player.index]
-	if not st then return end
-	local _, why = M.store_stack(st.entity, player.cursor_stack)
-	if why and why ~= "no-power" and why ~= "no-network" then player.print({ "fork-me-terminal." .. why }) end
+function M.take(player, terminal, key, mode)
+	return M.take_to(player.cursor_stack, player.get_main_inventory(), terminal, key, mode)
 end
 
---- Other mods and the devcheck runtime test can use the same code paths
+--- Store what the player holds in the cursor. Returns the count, or nil and a reason.
+function M.store_cursor(player, terminal)
+	return M.store_stack(terminal, player.cursor_stack)
+end
+
+--- Store items `name` of `quality` from the inventory `inv`: all of them, or one stack (`all` false).
+--- Stacks with own data (tags) are stored stack by stack. Returns the count stored, or nil and a reason.
+function M.store_inventory_item(inv, terminal, name, quality, all)
+	local net, why = network(terminal)
+	if not net then return nil, why end
+	if not inv then return 0 end
+	local total, reason = 0, nil
+	for i = 1, #inv do
+		local stack = inv[i]
+		if stack.valid_for_read and stack.name == name and stack.quality.name == (quality or "normal") then
+			local n, w = N.insert_stack(net, stack)
+			if n then total = total + n else reason = w end
+			if not all or reason then break end
+		end
+	end
+	if total == 0 and reason then return nil, reason end
+	return total
+end
+
+local function report(player, why)
+	if why and why ~= "empty" then
+		player.create_local_flying_text{ text = { "fork-me-net.error-" .. why }, create_at_cursor = true }
+	end
+end
+
 remote.add_interface("gregtorio-me-terminal", {
 	withdraw = function(terminal, target, name, quality, count) return M.withdraw(terminal, target, name, quality or "normal", count) end,
 	store_stack = function(terminal, stack) return M.store_stack(terminal, stack) end,
+	--- what the grid buttons do, for a cursor stack and a main inventory: mode "stack", "one" or "inventory"
+	take = function(cursor, inventory, terminal, key, mode) return M.take_to(cursor, inventory, terminal, key, mode) end,
+	--- the "Store item in hand" button and a click on the grid with something in the cursor
+	store_cursor = function(cursor, terminal) return M.store_stack(terminal, cursor) end,
+	--- a click on an item of the inventory row
+	store_inventory_item = function(inventory, terminal, name, quality, all)
+		return M.store_inventory_item(inventory, terminal, name, quality, all)
+	end,
+	--- the grid's entries for a search text and a sort ("count" or "name"): { { key, name, quality, count } }
+	entries = function(terminal, filter, sort)
+		local net = network(terminal)
+		return net and M.entries(net, filter, sort) or {}
+	end,
+	--- nil when the terminal works, else the reason
+	problem = function(terminal) return problem(terminal) end,
 })
 
 --------------------------------------------------------------------------------
 --- events
 --------------------------------------------------------------------------------
-
-function M.on_built(entity)
-	if entity and entity.valid and entity.name == "me-interface" then
-		local point = entity.get_requester_point()
-		if point then point.trash_not_requested = true end
-	end
-end
 
 --- Every open terminal is closed: a frame built by an older version may lack elements the
 --- current refresh expects (the player simply opens it again).
@@ -473,17 +575,21 @@ function M.on_configuration_changed()
 	end
 end
 
-script.on_init(function() state() end)
+script.on_init(function()
+	state()
+	N.rebuild()
+end)
 
---- the "open GUI" key: the terminal here, the pattern provider in the autocrafting module, the fluid
---- drive in the fluids module
+--- the "open GUI" key: the terminal here, drives (network module), buses (I/O module), the pattern provider
+--- (autocrafting module), the fluid drive (fluids module)
 script.on_event("fork-me-terminal-open", function(event)
 	local player = game.get_player(event.player_index)
 	if not (player and player.selected) then return end
-	if player.selected.name == "me-terminal" then
-		open(player, player.selected)
-	elseif not autocraft.on_open_input(player, player.selected) then
-		fluids.on_open_input(player, player.selected)
+	local e = player.selected
+	if e.name == "me-terminal" then
+		open(player, e)
+	elseif not (N.on_open_input(player, e) or io.on_open_input(player, e) or autocraft.on_open_input(player, e)) then
+		fluids.on_open_input(player, e)
 	end
 end)
 
@@ -500,6 +606,8 @@ script.on_event(defines.events.on_gui_closed, function(event)
 	if fluids.on_gui_closed(event) then return end
 	if circuit.on_gui_closed(event) then return end
 	if autocraft.on_gui_closed(event) then return end
+	if N.on_gui_closed(event) then return end
+	if io.on_gui_closed(event) then return end
 	if event.element and event.element.valid and event.element.name == FRAME then
 		close(game.get_player(event.player_index))
 	end
@@ -510,9 +618,20 @@ script.on_event(defines.events.on_gui_click, function(event)
 	if not (el and el.valid) then return end
 	if fluids.on_gui_click(event) then return end
 	if autocraft.on_gui_click(event) then return end
+	if N.on_gui_click(event) then return end
 	local player = game.get_player(event.player_index)
-	if el.tags and el.tags.fork_me_item then
-		take(player, el.tags.fork_me_item, el.tags.fork_me_quality, event.button, event.shift)
+	local st = state()[player.index]
+	if el.tags and el.tags.fork_me_key then
+		if not st then return end
+		local mode = event.shift and "inventory" or event.button == defines.mouse_button_type.right and "one" or "stack"
+		local _, why = M.take(player, st.entity, el.tags.fork_me_key, mode)
+		report(player, why)
+		refresh(player)
+	elseif el.tags and el.tags.fork_me_inv then
+		if not st then return end
+		local _, why = M.store_inventory_item(player.get_main_inventory(), st.entity, el.tags.fork_me_inv, el.tags.fork_me_quality,
+			event.button ~= defines.mouse_button_type.right)
+		report(player, why)
 		refresh(player)
 	elseif el.tags and el.tags.fork_ae2_pick then
 		pick_craftable(player, el.tags.fork_ae2_pick)
@@ -523,7 +642,14 @@ script.on_event(defines.events.on_gui_click, function(event)
 		start_craft(player)
 		refresh(player)
 	elseif el.name == "fork_me_store" then
-		store_hand(player)
+		if not st then return end
+		local _, why = M.store_cursor(player, st.entity)
+		report(player, why)
+		refresh(player)
+	elseif el.name == "fork_me_sort" then
+		if not st then return end
+		st.sort = st.sort == "name" and "count" or "name"
+		el.caption = { "fork-me-net.sort-" .. st.sort }
 		refresh(player)
 	end
 end)
@@ -548,6 +674,7 @@ end)
 
 script.on_event(defines.events.on_gui_elem_changed, function(event)
 	if fluids.on_gui_elem_changed(event) then return end
+	if io.on_gui_elem_changed(event) then return end
 	circuit.on_gui_elem_changed(event)
 end)
 
@@ -567,6 +694,7 @@ script.on_event(defines.events.on_gui_selected_tab_changed, function(event)
 end)
 
 script.on_nth_tick(REFRESH_TICKS, function()
+	N.slow_step()
 	local terminals = storage.fork_me_terminal
 	if not terminals or next(terminals) == nil then return end
 	for index, st in pairs(terminals) do

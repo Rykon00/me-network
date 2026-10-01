@@ -568,9 +568,13 @@ def runtime(a):
     ran = re.search(r"Performed (\d+) updates", log)
     err = re.search(r"(Error.*|non-recoverable.*)", log)
     fails += re.findall(r"DEVCHECK-RUNTIME-FAIL (.*)", log)
-    me = re.search(r"DEVCHECK-RUNTIME-ME (\w+)", log)
     print(f"benchmark: {ran.group(0) if ran else 'did not run'}")
-    print(f"ME network test: {me.group(1) if me else 'did not run'}")
+    # issue #68: the ME network core (cable graph, cells, terminal, import/export)
+    me_tests = [(label, re.search(rf"DEVCHECK-RUNTIME-{key} (.*)", log)) for key, label in
+                (("MEGRAPH", "ME graph test"), ("MECELLS", "ME cell test"), ("METERMINAL", "ME terminal test"),
+                 ("MEIO", "ME import/export test"))]
+    for label, m in me_tests:
+        print(f"{label}: {m.group(1) if m else 'did not run'}")
     mold = re.search(r"DEVCHECK-RUNTIME-MOLD (.*)", log)
     print(f"mold test: {mold.group(1) if mold else 'did not run'}")
     autocraft = re.search(r"DEVCHECK-RUNTIME-AUTOCRAFT (.*)", log)
@@ -601,8 +605,11 @@ def runtime(a):
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
     post = re.search(r"DEVCHECK-RUNTIME-POSTVICTORY (.*)", log)
     print(f"post-victory test: {post.group(1) if post else 'did not run'}")
-    if not me:
-        fails.append("ME network test did not run (needs --ticks >= 300)")
+    for label, m in me_tests:
+        if not m:
+            fails.append(f"{label} did not run (needs --ticks >= 1500)")
+        elif not m.group(1).startswith("ok"):
+            fails.append(f"{label} failed")
     if not mold:
         fails.append("mold test did not run (needs --ticks >= 1500)")
     if not autocraft:
@@ -654,7 +661,7 @@ def runtime(a):
         fails.append("post-victory test did not run (needs --ticks >= 1500)")
     elif not post.group(1).startswith("ok"):
         fails.append("post-victory test failed")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, turbine tier test, recipe test, level maintainer test, crafting CPU tier test, circuit interface test, settings copy test, victory test, post-victory test)", fails)
+    report("runtime problems (placement, ME graph, cell, terminal and import/export tests, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, turbine tier test, recipe test, level maintainer test, crafting CPU tier test, circuit interface test, settings copy test, victory test, post-victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")

@@ -12,6 +12,7 @@ Sources:
     python tools/gen_ae2_sprites.py --gt C:/00_Repositories/GT5-Unofficial   # everything
     python tools/gen_ae2_sprites.py --fluids      # only the fluid graphics, from the existing item PNGs
     python tools/gen_ae2_sprites.py --extras      # only the issue #38 graphics, from the existing PNGs
+    python tools/gen_ae2_sprites.py --r1          # only the issue #68 (R1) graphics, from the existing PNGs
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
@@ -422,6 +423,108 @@ def extras():
     return written
 
 
+# --- issue #68, step R1: cable, controller, drive with 10 cell bays, buses -------------------
+# Derived from the PNGs written above (the MV casing of the item drive and the interface; no checkout
+# needed) and drawn with Pillow. The bay geometry must match DRIVE_BAYS in scripts/fork-me-network.lua,
+# which draws the cell lights on top (rendering.draw_rectangle).
+CABLE_CORE = (125, 80, 200)
+CABLE_EDGE = (70, 40, 120)
+CABLE_GLOW = (200, 165, 255)
+DRIVE_BAY_X = (5, 17)                # left edge of the two bay columns (10 px wide)
+DRIVE_BAY_Y = (4, 9, 14, 19, 24)     # top edge of the five bay rows (4 px tall)
+IMPORT_ACCENT = (95, 165, 255)
+EXPORT_ACCENT = FLUIX
+
+
+def cable_variation(mask):
+    """32x32: a knot in the middle and an arm to every side whose bit is set (1 N, 2 E, 4 S, 8 W)."""
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    c0, c1 = 12, 19                                       # the knot, 8 px
+    arms = {1: (13, 0, 18, c0), 2: (c1, 13, TILE - 1, 18), 4: (13, c1, 18, TILE - 1), 8: (0, 13, c0, 18)}
+    for bit, box in arms.items():
+        if mask & bit:
+            d.rectangle(box, fill=CABLE_EDGE + (255,))
+            x0, y0, x1, y1 = box
+            if bit in (1, 4):
+                d.rectangle((x0 + 1, y0, x1 - 1, y1), fill=CABLE_CORE + (255,))
+                d.line((x0 + 2, y0, x0 + 2, y1), fill=CABLE_GLOW + (255,))
+            else:
+                d.rectangle((x0, y0 + 1, x1, y1 - 1), fill=CABLE_CORE + (255,))
+                d.line((x0, y0 + 2, x1, y0 + 2), fill=CABLE_GLOW + (255,))
+    d.rectangle((c0, c0, c1, c1), fill=CABLE_EDGE + (255,))
+    d.rectangle((c0 + 1, c0 + 1, c1 - 1, c1 - 1), fill=CABLE_CORE + (255,))
+    d.rectangle((c0 + 2, c0 + 2, c0 + 3, c0 + 3), fill=CABLE_GLOW + (255,))
+    return img
+
+
+def cable_sheet():
+    sheet = Image.new("RGBA", (TILE * 16, TILE))
+    for mask in range(16):
+        sheet.paste(cable_variation(mask), (mask * TILE, 0))
+    return sheet
+
+
+def casing_ring(src):
+    """The 32x32 sprite `src` with its inner part cleared to a dark panel (keeps the MV casing edge)."""
+    img = src.copy()
+    ImageDraw.Draw(img).rectangle((3, 2, TILE - 4, TILE - 3), fill=(20, 20, 24, 255))
+    return img
+
+
+def drive_r1_sprite():
+    """1x1: MV casing, ten empty cell bays in two columns of five."""
+    img = casing_ring(load(OUT_ENTITY / "me-drive-16k.png"))
+    d = ImageDraw.Draw(img)
+    for x in DRIVE_BAY_X:
+        for y in DRIVE_BAY_Y:
+            d.rectangle((x, y, x + 9, y + 3), fill=BAY + (255,), outline=(55, 55, 66, 255))
+    return img
+
+
+def controller_r1_sprite():
+    """The old controller sprite with a green status lamp in each corner instead of the fluix dots."""
+    img = load(OUT_ENTITY / "me-controller.png")
+    d = ImageDraw.Draw(img)
+    for cx, cy in ((4, 4), (2 * TILE - 6, 4), (4, 2 * TILE - 6), (2 * TILE - 6, 2 * TILE - 6)):
+        d.rectangle((cx - 1, cy - 1, cx + 2, cy + 2), fill=(30, 30, 34, 255))
+        d.rectangle((cx, cy, cx + 1, cy + 1), fill=(95, 225, 120, 255))
+    return img
+
+
+def bus_sprite(accent, export, direction):
+    """1x1: MV casing, a plate on the side the bus faces and an arrow: towards the plate (export) or away
+    from it (import). Drawn facing north, then rotated."""
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    d.rectangle((4, 0, TILE - 5, 4), fill=accent + (255,), outline=(40, 40, 48, 255))   # the plate (north)
+    d.rectangle((14, 7, 17, 24), fill=(235, 235, 245, 255))                             # arrow shaft
+    if export:                                       # arrow head at the plate: items go out
+        d.polygon([(9, 13), (22, 13), (15, 6)], fill=accent + (255,))
+    else:                                            # arrow head away from the plate: items come in
+        d.polygon([(9, 19), (22, 19), (15, 27)], fill=accent + (255,))
+    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    return img.rotate(turns, resample=Image.NEAREST) if turns else img
+
+
+def r1():
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    save(cable_sheet(), OUT_ENTITY / "me-cable.png")
+    save(cable_variation(15), OUT_ICON / "me-cable.png")
+    save(drive_r1_sprite(), OUT_ENTITY / "me-drive.png")
+    save(controller_r1_sprite(), OUT_ENTITY / "me-network-controller.png")
+    for name, accent, export in (("me-import-bus", IMPORT_ACCENT, False), ("me-export-bus", EXPORT_ACCENT, True)):
+        for direction in ("north", "east", "south", "west"):
+            save(bus_sprite(accent, export, direction), OUT_ENTITY / f"{name}-{direction}.png")
+        save(bus_sprite(accent, export, "north"), OUT_ICON / f"{name}.png")
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
@@ -430,9 +533,12 @@ def main():
     ap.add_argument("--extras", action="store_true",
                     help="only the issue #38 graphics (CPU tiers, level maintainer, circuit interface), derived "
                          "from the existing PNGs (no checkout needed)")
+    ap.add_argument("--r1", action="store_true",
+                    help="only the issue #68 (R1) graphics (cable, controller, drive with cell bays, buses), "
+                         "derived from the existing PNGs (no checkout needed)")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras):
-        ap.error("--gt <checkout>, --fluids or --extras is required")
+    if not (a.gt or a.fluids or a.extras or a.r1):
+        ap.error("--gt <checkout>, --fluids, --extras or --r1 is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -458,6 +564,9 @@ def main():
     if a.gt or a.extras:
         written = extras()
         print("ME issue #38 sprites:", len(written))
+    if a.gt or a.r1:
+        written = r1()
+        print("ME issue #68 (R1) sprites:", len(written))
 
 
 if __name__ == "__main__":
