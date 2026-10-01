@@ -117,7 +117,11 @@ local function replace(old, name)
 	local surface, position, force, direction = old.surface, old.position, old.force, old.direction
 	old.destroy()
 	local e = surface.create_entity{ name = name, position = position, force = force, direction = direction }
-	if e then N.on_built(e) end
+	if e then
+		--- a new controller starts with an empty buffer: without this the network would be off for a tick
+		if e.type == "electric-energy-interface" then e.energy = e.electric_buffer_size end
+		N.on_built(e)
+	end
 	return e
 end
 
@@ -248,6 +252,7 @@ local function migrate_group(g, data, report)
 	report.cables = report.cables + cables
 	for _, e in ipairs(unreached) do
 		report.unreached = report.unreached + 1
+		log("FORK-ME-MIGRATE: no cable path to " .. e.name .. " at " .. e.position.x .. "," .. e.position.y)
 		force.print({ "fork-me-net.migrate-unreached", e.localised_name, gps(surface, e.position) })
 	end
 	--- 7) check: the items before against the new cells, the chests and what was spilled
@@ -290,7 +295,8 @@ local function migrate_group(g, data, report)
 	end
 end
 
---- ghosts of old entities become ghosts of the new ones
+--- ghosts of old entities become ghosts of the new ones (in the tested saves the game has already removed them
+--- when the save is loaded: no item builds the old prototypes any more)
 local function swap_ghosts(surface, data)
 	local map = { [data.legacy.controller] = data.names.controller, [data.legacy.interface] = data.names.interface }
 	for name in pairs(data.legacy_drives) do map[name] = data.names.drive end

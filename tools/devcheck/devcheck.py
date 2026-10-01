@@ -702,6 +702,8 @@ def migrate(a):
     print(f"old save with pattern providers: {setup.group(1) if setup else 'no result'}")
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP-JOB (.*)", log)
     print(f"old save with a crafting job: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-ITEMS (.*)", log)
+    print(f"old save with a logistic ME network (items): {setup.group(1) if setup else 'no result'}")
     prepare_mods(with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
@@ -716,13 +718,18 @@ def migrate(a):
     print(f"pattern providers of the old save: {patterns.group(1) if patterns else 'no result'}")
     job = re.search(r"DEVCHECK-MIGRATE-JOB (.*)", log)
     print(f"crafting job of the old save: {job.group(1) if job else 'no result'}")
+    items = re.search(r"DEVCHECK-MIGRATE-ITEMS (.*)", log)
+    print(f"ME network of the old save converted (issue #68): {items.group(1) if items else 'no result'}")
+    for line in re.findall(r"FORK-ME-MIGRATE: (.*)", log):
+        print("  migration: " + line)
     for f in re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log):
         print("  - " + f)
     if not ran:
         print(load_errors(log) or "")
     ok = ran and fluids and not fluids.group(1).startswith("failed") and power and not power.group(1).startswith("failed") \
         and turbine and not turbine.group(1).startswith("failed") \
-        and patterns and not patterns.group(1).startswith("failed")         and job and not job.group(1).startswith("failed")
+        and patterns and not patterns.group(1).startswith("failed") and job and not job.group(1).startswith("failed") \
+        and items and not items.group(1).startswith("failed")
     return 0 if ok else 1
 
 

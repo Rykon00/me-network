@@ -1442,7 +1442,24 @@ function M.connect(members, margin)
 			end
 		end
 		if not hit then
-			for _, e in ipairs(targets) do unreached[e.unit_number] = e end
+			for _, e in ipairs(targets) do
+				unreached[e.unit_number] = e
+				local why = {}
+				for k, target in pairs(target_tiles) do
+					if target == e then
+						local x, y = k:match("^(-?%d+),(-?%d+)$")
+						x, y = tonumber(x), tonumber(y)
+						local blockers = {}
+						for _, o in pairs(surface.find_entities_filtered{ area = { { x + 0.05, y + 0.05 }, { x + 0.95, y + 0.95 } } }) do
+							blockers[#blockers + 1] = o.name
+						end
+						why[#why + 1] = k .. (is_free(x, y) and " free" or " blocked") .. (foreign(x, y, root_net) and " foreign" or "")
+							.. (parent[k] ~= nil and " reached" or "") .. " [" .. table.concat(blockers, " ") .. "]"
+					end
+				end
+				table.sort(why)
+				log("FORK-ME-NET: no cable path to " .. e.name .. ": " .. table.concat(why, "; ") .. " (" .. (qi - 1) .. " tiles searched)")
+			end
 			break
 		end
 		local k = hit[1] .. "," .. hit[2]
