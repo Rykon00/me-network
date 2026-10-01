@@ -965,9 +965,11 @@ local function spill(surface, position, def)
 	inv.destroy()
 end
 
+--- the drive's lights are kept as render object ids (numbers)
 local function clear_leds(d)
-	for _, obj in pairs(d.leds or {}) do
-		if obj.valid then obj.destroy() end
+	for _, id in pairs(d.leds or {}) do
+		local obj = type(id) == "number" and rendering.get_object_by_id(id)
+		if obj and obj.valid then obj.destroy() end
 	end
 	d.leds = {}
 end
@@ -988,7 +990,7 @@ local function draw_leds(s, d)
 				filled = true, surface = e.surface,
 				left_top = { entity = e, offset = { (x0 + 1 - OFF) / 32, (y0 + 1 - OFF) / 32 } },
 				right_bottom = { entity = e, offset = { (x0 + 9 - OFF) / 32, (y0 + 3 - OFF) / 32 } },
-			}
+			}.id
 		end
 	end
 end
