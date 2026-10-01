@@ -61,6 +61,7 @@ local function kinds()
 		k[n.export_bus] = "export-bus"
 		k[n.terminal] = "terminal"
 		if n.underground then k[n.underground] = "underground" end
+		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -112,9 +113,11 @@ local function state()
 			drives = {},      -- unit -> { entity, slots = { [i] = cell }, surface, force, position, leds, dirty }
 			dirty = {},       -- drive unit -> true: lights to redraw
 			sweep = 1,
+			ext = {},         -- unit -> external cell of a member (storage bus, scripts/fork-me-storagebus.lua)
 		}
 		storage.fork_me_net = s
 	end
+	if not s.ext then s.ext = {} end          -- saves before the storage bus
 	return s
 end
 M.state = state
@@ -612,8 +615,8 @@ end
 
 --- add (sign 1) or remove (sign -1) the cell's contents to or from the network's totals and index
 local function net_cell(net, cid, cell, sign)
-	local spec = cell_spec(cell.name)
-	if not spec then return end
+	local spec = not cell.ext and cell_spec(cell.name)
+	if not (spec or cell.ext) then return end
 	net.order_dirty = true
 	if sign > 0 then
 		net.cells[cid] = cell
@@ -624,11 +627,13 @@ local function net_cell(net, cid, cell, sign)
 			if net.cell_list[i] == cid then table.remove(net.cell_list, i) end
 		end
 	end
-	local p = fluid_cell(spec) and "f" or ""          -- item cells count in bytes/types, fluid cells in fbytes/ftypes
-	net[p .. "bytes"] = net[p .. "bytes"] + sign * cell.bytes
-	net[p .. "bytes_total"] = net[p .. "bytes_total"] + sign * spec.bytes
-	net[p .. "types"] = net[p .. "types"] + sign * cell.types
-	net[p .. "types_total"] = net[p .. "types_total"] + sign * spec.types
+	if spec then                                      -- an external cell (storage bus) has no bytes or types
+		local p = fluid_cell(spec) and "f" or ""      -- item cells count in bytes/types, fluid cells in fbytes/ftypes
+		net[p .. "bytes"] = net[p .. "bytes"] + sign * cell.bytes
+		net[p .. "bytes_total"] = net[p .. "bytes_total"] + sign * spec.bytes
+		net[p .. "types"] = net[p .. "types"] + sign * cell.types
+		net[p .. "types_total"] = net[p .. "types_total"] + sign * spec.types
+	end
 	for key, count in pairs(cell.items) do
 		local now = (net.items[key] or 0) + sign * count
 		net.items[key] = now > ZERO and now or nil
@@ -696,6 +701,10 @@ function recompute(s, net)
 	net.bytes, net.bytes_total, net.types, net.types_total = 0, 0, 0, 0
 	net.fbytes, net.fbytes_total, net.ftypes, net.ftypes_total = 0, 0, 0, 0
 	drive_cells(net, s, function(cid, cell) net_cell(net, cid, cell, 1) end)
+	local ext = {}
+	for unit in pairs(net.nodes) do if s.ext and s.ext[unit] then ext[#ext + 1] = unit end end
+	table.sort(ext)
+	for _, unit in ipairs(ext) do net_cell(net, unit .. ":ext", s.ext[unit], 1) end
 	net.usable_tick = nil
 	update_power(s, net)
 end
@@ -766,28 +775,118 @@ function M.version() local s = storage.fork_me_net return s and s.version or 0 e
 
 local function mark_drive(s, unit) s.dirty[unit] = true end
 
+--------------------------------------------------------------------------------
+--- external cells: storage that is not a storage cell (the storage bus, scripts/fork-me-storagebus.lua). An
+--- external cell is a record { ext = <handler name>, items = { key -> count }, data = {}, partition, priority,
+--- hidden } kept in s.ext[unit] of its member; its cell id is "<unit>:ext". `items` is a snapshot of what the
+--- storage held at the last look (none while `hidden`: write only); the totals and the index of the network
+--- include it like any cell. The handler (M.ext_handlers[name], registered at load time) works on the real
+--- storage: room(cell, key), insert(cell, key, count), count(cell, key) and extract(cell, key, count). The
+--- engine asks `count` before it takes, so the network never hands out what is no longer there.
+--------------------------------------------------------------------------------
+
+M.ext_handlers = {}
+
+local function ext_cid(unit) return unit .. ":ext" end
+
+--- items of `key` a cell can take now
+local function room_in(cell, key)
+	if cell.ext then return M.ext_handlers[cell.ext].room(cell, key) end
+	return cell_room(cell, cell_spec(cell.name), key)
+end
+
+--- set an external cell's snapshot of `key` to `n`, the network's totals and index with it
+local function ext_set(net, cid, cell, key, n)
+	local old = cell.items[key] or 0
+	if n < ZERO then n = 0 end
+	if n == old then return end
+	cell.items[key] = n > 0 and n or nil
+	if not (net and net.cells[cid] == cell) then return end
+	local now = (net.items[key] or 0) + n - old
+	net.items[key] = now > ZERO and now or nil
+	local idx = net.index[key]
+	if n > 0 then
+		if not idx then idx = {} net.index[key] = idx end
+		idx[cid] = true
+	elseif idx then
+		idx[cid] = nil
+		if next(idx) == nil then net.index[key] = nil end
+	end
+end
+
+function M.ext_get(unit)
+	local s = storage.fork_me_net
+	return s and s.ext and s.ext[unit] or nil
+end
+
+--- register the external cell of a member (its network takes it into its totals)
+function M.ext_attach(entity, cell)
+	local s = state()
+	local unit = entity.unit_number
+	if s.ext[unit] then M.ext_detach(unit) end
+	cell.items = cell.items or {}
+	cell.data = cell.data or {}
+	s.ext[unit] = cell
+	local net = M.network_of(entity)
+	if net then net_cell(net, ext_cid(unit), cell, 1) end
+end
+
+function M.ext_detach(unit)
+	local s = storage.fork_me_net
+	local cell = s and s.ext and s.ext[unit]
+	if not cell then return end
+	local node = s.nodes[unit]
+	local net = node and s.nets[node.net]
+	if net and net.cells[ext_cid(unit)] == cell then net_cell(net, ext_cid(unit), cell, -1) end
+	s.ext[unit] = nil
+end
+
+--- the snapshot of an external cell is now `contents` ({ key -> count }): only the differences are applied
+function M.ext_sync(unit, contents)
+	local s = storage.fork_me_net
+	local cell = s and s.ext and s.ext[unit]
+	if not cell then return end
+	local node = s.nodes[unit]
+	local net = node and s.nets[node.net]
+	local cid = ext_cid(unit)
+	if cell.hidden then contents = {} end
+	for key in pairs(cell.items) do
+		if not contents[key] then ext_set(net, cid, cell, key, 0) end
+	end
+	for key, n in pairs(contents) do ext_set(net, cid, cell, key, n) end
+end
+
+--- the priority or partition of an external cell changed: its network sorts its cells again
+function M.ext_touch(unit)
+	local s = storage.fork_me_net
+	local node = s and s.nodes[unit]
+	local net = node and s.nets[node.net]
+	if net then net.order_dirty = true end
+end
+
 --- items of `key` the network can take
 local function room_for(net, key)
 	local n = 0
 	for cid in pairs(net.index[key] or {}) do
-		local cell = net.cells[cid]
-		n = n + cell_room(cell, cell_spec(cell.name), key)
+		n = n + room_in(net.cells[cid], key)
 	end
 	for _, cid in ipairs(net.cell_list) do
 		local cell = net.cells[cid]
-		if not cell.items[key] then n = n + cell_room(cell, cell_spec(cell.name), key) end
+		if not cell.items[key] then n = n + room_in(cell, key) end
 	end
 	return n
 end
 
---- Store up to `count` of `key` (data: { tags, description } of an item with tags). Returns the amount stored.
---- the priority of the drive a cell id ("<unit>:<slot>") belongs to
-local function cell_priority(s, cid)
+--- the priority of a cell: of the drive it is in ("<unit>:<slot>"), or of the external cell
+local function cell_priority(s, net, cid)
+	local cell = net.cells[cid]
+	if cell and cell.ext then return cell.priority or 0 end
 	local d = s.drives[tonumber(cid:match("^(%d+):"))]
 	return d and d.priority or 0
 end
 
---- The network's cells in insertion order (R3): higher drive priority first, then drive and slot order. Cached
+--- The network's cells in insertion order (R3): higher drive priority first, then drive and slot order (cells before
+--- storage buses of the same priority). Cached
 --- until a cell or a priority changes (net.order_dirty). Also says whether the plain order of R1 is enough (one
 --- priority, no partition).
 local function ordered(s, net)
@@ -795,13 +894,15 @@ local function ordered(s, net)
 	local list = {}
 	local prios, parts = {}, false
 	for i, cid in ipairs(net.cell_list) do
-		local p = cell_priority(s, cid)
+		local p = cell_priority(s, net, cid)
 		prios[p] = true
-		if net.cells[cid].partition then parts = true end
-		list[i] = { cid = cid, p = p, i = i }
+		if net.cells[cid].partition or net.cells[cid].ext then parts = true end   -- an external cell: never uniform
+		list[i] = { cid = cid, p = p, i = i, ext = net.cells[cid].ext and 1 or 0 }
 	end
+	--- within one priority the cells before the external storage (storage buses): the network's own storage first
 	table.sort(list, function(a, b)
 		if a.p ~= b.p then return a.p > b.p end
+		if a.ext ~= b.ext then return a.ext < b.ext end
 		return a.i < b.i
 	end)
 	local order = {}
@@ -822,6 +923,20 @@ local function insert_key(net, key, count, data)
 	local left = count
 	local function put(cid)
 		local cell = net.cells[cid]
+		if cell.ext then                               -- external cell: into the real storage, then the snapshot
+			if data then return end                    -- items with tags only go into cells
+			local n = M.ext_handlers[cell.ext].insert(cell, key, math.floor(left))
+			if n <= 0 then return end
+			if not cell.hidden then
+				cell.items[key] = (cell.items[key] or 0) + n
+				net.items[key] = (net.items[key] or 0) + n
+				local idx = net.index[key]
+				if not idx then idx = {} net.index[key] = idx end
+				idx[cid] = true
+			end
+			left = left - n
+			return
+		end
 		local spec = cell_spec(cell.name)
 		local n = math.min(left, cell_room(cell, spec, key))
 		if n <= 0 then return end
@@ -875,13 +990,16 @@ local function extract_key(net, key, count)
 	if count <= 0 or not net.items[key] then return 0 end
 	local s = state()
 	local left = count
-	--- extraction is the reverse of insertion: lower drive priority first, unpartitioned cells before partitioned
+	--- extraction is the reverse of insertion: lower drive priority first, storage buses before cells of the same
+	--- priority, unpartitioned before partitioned
 	local held = {}
 	for cid in pairs(net.index[key] or {}) do
-		held[#held + 1] = { cid = cid, p = cell_priority(s, cid), part = net.cells[cid].partition and 1 or 0 }
+		local cell = net.cells[cid]
+		held[#held + 1] = { cid = cid, p = cell_priority(s, net, cid), part = cell.partition and 1 or 0, ext = cell.ext and 0 or 1 }
 	end
 	table.sort(held, function(a, b)
 		if a.p ~= b.p then return a.p < b.p end
+		if a.ext ~= b.ext then return a.ext < b.ext end
 		if a.part ~= b.part then return a.part < b.part end
 		return a.cid < b.cid
 	end)
@@ -889,16 +1007,29 @@ local function extract_key(net, key, count)
 		local cid = h.cid
 		if left <= 0 then break end
 		local cell = net.cells[cid]
-		local n = math.min(left, cell.items[key] or 0)
-		if n > 0 then
-			local spec = cell_spec(cell.name)
-			local db, dt = cell_add(cell, spec, key, -n)
-			local p = fluid_cell(spec) and "f" or ""
-			net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
-			left = left - n
-			if left < ZERO then left = 0 end
-			if not cell.items[key] then net.index[key][cid] = nil end
-			mark_drive(s, tonumber(cid:match("^(%d+):")))
+		if cell.ext then                               -- external cell: the real storage first (staleness)
+			local handler = M.ext_handlers[cell.ext]
+			local real = handler.count(cell, key)
+			if real ~= (cell.items[key] or 0) then ext_set(net, cid, cell, key, real) end
+			local n = math.min(left, real)
+			local got = n > 0 and handler.extract(cell, key, n) or 0
+			if got > 0 then
+				cell.items[key] = real - got > 0 and (real - got) or nil      -- net.items: below, with the others
+				if not cell.items[key] and net.index[key] then net.index[key][cid] = nil end
+				left = left - got
+			end
+		else
+			local n = math.min(left, cell.items[key] or 0)
+			if n > 0 then
+				local spec = cell_spec(cell.name)
+				local db, dt = cell_add(cell, spec, key, -n)
+				local p = fluid_cell(spec) and "f" or ""
+				net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
+				left = left - n
+				if left < ZERO then left = 0 end
+				if not cell.items[key] and net.index[key] then net.index[key][cid] = nil end
+				mark_drive(s, tonumber(cid:match("^(%d+):")))
+			end
 		end
 	end
 	local now = (net.items[key] or 0) - (count - left)
@@ -1003,16 +1134,18 @@ end
 
 function M.stats(net)
 	local ok, why = M.usable(net)
-	local drives, cells, fcells = 0, 0, 0
+	local drives, cells, fcells, buses = 0, 0, 0, 0
 	for _ in pairs(net.drives) do drives = drives + 1 end
 	for _, cid in ipairs(net.cell_list) do
-		local spec = cell_spec(net.cells[cid].name)
-		if spec and fluid_cell(spec) then fcells = fcells + 1 else cells = cells + 1 end
+		local cell = net.cells[cid]
+		local spec = not cell.ext and cell_spec(cell.name)
+		if cell.ext then buses = buses + 1
+		elseif spec and fluid_cell(spec) then fcells = fcells + 1 else cells = cells + 1 end
 	end
 	return { ok = ok, status = ok and "ok" or why, bytes = net.bytes, bytes_total = net.bytes_total,
 		types = net.types, types_total = net.types_total, drives = drives, cells = cells, power = net.power,
 		fbytes = net.fbytes or 0, fbytes_total = net.fbytes_total or 0, ftypes = net.ftypes or 0,
-		ftypes_total = net.ftypes_total or 0, fluid_cells = fcells, members = net.n, id = net.id }
+		ftypes_total = net.ftypes_total or 0, fluid_cells = fcells, storage_buses = buses, members = net.n, id = net.id }
 end
 
 --- Why a stack cannot go into the network (a locale key suffix), or nil and its key and data
@@ -1090,7 +1223,7 @@ function M.extract_to(net, target, key, count)
 	end
 	if moved <= 0 then return 0 end
 	local got = extract_key(net, key, moved)
-	if got < moved then                       -- the storage had less than counted: never duplicate
+	if got < moved then                       -- a storage bus's chest had less than its snapshot: never duplicate
 		local surplus = { name = def.name, quality = def.quality, count = moved - got }
 		if target.object_name == "LuaItemStack" then
 			if got <= 0 then target.clear() else target.count = got end
@@ -1678,6 +1811,7 @@ function M.on_removed(entity, buffer)
 		s.drives[entity.unit_number] = nil
 		s.dirty[entity.unit_number] = nil
 	end
+	M.ext_detach(entity.unit_number)               -- a storage bus: its inventory leaves the network
 	remove_node(s, entity.unit_number)
 end
 
@@ -1700,6 +1834,7 @@ local function vanish(s, unit)
 		s.drives[unit] = nil
 		s.dirty[unit] = nil
 	end
+	M.ext_detach(unit)
 	if node then remove_node(s, unit) end
 end
 
@@ -1777,6 +1912,12 @@ function M.rebuild()
 				end
 			end
 		end
+	end
+	--- external cells (storage buses) of members that still exist are kept with their snapshot
+	local old_ext = s.ext
+	s.ext = {}
+	for unit, cell in pairs(old_ext) do
+		if cell.entity and cell.entity.valid and kinds()[cell.entity.name] == cell.ext then s.ext[unit] = cell end
 	end
 	--- nodes without links first, then the links, then the components
 	for _, e in ipairs(all) do

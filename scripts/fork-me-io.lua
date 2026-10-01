@@ -12,14 +12,16 @@
 ---     entity's input (assembler or furnace input: up to one stack each; chest: as far as it has room).
 ---     Up to MAX_FILTERS filters (import: none = everything), kept in blueprints (tag fork_me_bus), settings
 ---     paste and clones. The windows of both are in scripts/fork-me-windows.lua.
---- The I/O step runs every STEP_TICKS ticks (shared with the fluid interfaces: this module registers the
---- interval and calls the fluid step first): at most ENDPOINTS_PER_STEP interfaces and buses, round robin;
+--- The I/O step runs every STEP_TICKS ticks (shared with the fluid interfaces and the storage buses: this module
+--- registers the interval and calls the fluid step and the storage bus visits of scripts/fork-me-storagebus.lua
+--- first): at most ENDPOINTS_PER_STEP interfaces and buses, round robin;
 --- an interface handles at most IFACE_SLOTS_PER_VISIT slots per visit, a bus moves BUS_ITEMS items.
 --- State: storage.fork_me_io (records by unit number). GUI state lives in the GUI elements.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
 local fluids = require("scripts.fork-me-fluids")
+local storage_bus = require("scripts.fork-me-storagebus")
 
 local M = {}
 
@@ -444,6 +446,7 @@ end
 
 local function on_step()
 	fluids.on_step()
+	storage_bus.on_step()                     -- the storage buses read their inventories (bounded, round robin)
 	local s = storage.fork_me_io
 	if not s then return end
 	local n = #s.list

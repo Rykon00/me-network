@@ -15,6 +15,8 @@
 ---   * ME Fluid Interface: mode, fluid, fill level, tank content, status.
 ---   * ME Interface: 9 config slots (item and amount), the container's content, "Open inventory".
 ---   * ME Import/Export Bus, ME Fluid Import/Export Bus: 5 filters, status, the entity it faces.
+---   * ME Storage Bus: mode (read and write, read only, write only), priority, 18 filters, what it shows,
+---     status, the entity it faces.
 --- Every window shows plain data from a `*_data` function and changes things through functions of the
 --- block's module (or the small `set_*` helpers here); the runtime test calls the same functions
 --- (remote interface "gregtorio-me-gui"). Nothing is kept in storage: what a window shows lives in its tags.
@@ -26,6 +28,7 @@ local autocraft = require("scripts.fork-me-autocraft")
 local fluids = require("scripts.fork-me-fluids")
 local circuit = require("scripts.fork-me-circuit")
 local io = require("scripts.fork-me-io")
+local sbus = require("scripts.fork-me-storagebus")
 local terminal = require("scripts.fork-me-terminal")
 
 local M = {}
@@ -808,6 +811,76 @@ G.on("bus_filter", function(event, player, el)
 end)
 
 --------------------------------------------------------------------------------
+--- ME Storage Bus
+--------------------------------------------------------------------------------
+
+local SBUS_MODES = { "readwrite", "read", "write" }
+
+function M.storage_bus_data(entity) return sbus.info(entity) end
+
+local function open_storage_bus(player, entity)
+	local d = M.storage_bus_data(entity)
+	if not d then return end
+	local _, content = G.open_window(player, "storage-bus", caption_of(entity), { unit = entity.unit_number })
+	G.label(content, { "fork-me-net.storage-bus-help" }, WIDTH)
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.storage-bus-mode" } }
+	local items, index = {}, 1
+	for i, mode in ipairs(SBUS_MODES) do
+		items[i] = { "fork-me-gui.storage-bus-mode-" .. mode }
+		if mode == d.mode then index = i end
+	end
+	row.add{ type = "drop-down", items = items, selected_index = index, tags = G.act("sbus_mode") }
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.storage-bus-priority-tooltip" } }
+	G.number_field(row, d.priority, G.act("sbus_priority"), 70, true).tooltip = { "fork-me-gui.storage-bus-priority-tooltip" }
+	content.add{ type = "label", caption = { "fork-me-gui.storage-bus-filters" }, tooltip = { "fork-me-gui.storage-bus-filters-tooltip" } }
+	content.add{ type = "flow", name = "fork_me_sbus_filters", direction = "vertical" }
+	G.label(content, "", WIDTH, nil, "fork_me_sbus_holds")
+	G.label(content, "", WIDTH, nil, "fork_me_sbus_target")
+	G.label(content, "", WIDTH, nil, "fork_me_sbus_status")
+	M.refresh_storage_bus(player, G.window_of(player))
+end
+
+function M.refresh_storage_bus(player, frame)
+	local entity = G.entity_of(player, frame)
+	local d = entity and M.storage_bus_data(entity)
+	if not d then return false end
+	rebuild(frame, "fork_me_sbus_filters", table.concat(d.filters, ","), function(box)
+		local t = box.add{ type = "table", column_count = 9, style = "filter_slot_table" }
+		for i = 1, d.max do chooser(t, "item-with-quality", d.filters[i], G.act("sbus_filter", { index = i })) end
+	end)
+	G.find(frame, "fork_me_sbus_holds").caption = { "fork-me-gui.storage-bus-holds", G.fmt(d.items), d.types }
+	local target = d.target and prototypes.entity[d.target]
+	G.find(frame, "fork_me_sbus_target").caption = target and { "fork-me-gui.bus-target", target.localised_name } or ""
+	G.find(frame, "fork_me_sbus_status").caption = { "fork-me-net.storage-bus-" .. (d.status or "ok") }
+	return true
+end
+
+G.window("storage-bus", { open = open_storage_bus, refresh = M.refresh_storage_bus, entities = { "storage-bus" } })
+
+G.on("sbus_mode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = window_entity(player)
+	if entity then sbus.set_mode(entity, SBUS_MODES[el.selected_index] or "readwrite") G.refresh_one(player) end
+end)
+
+G.on("sbus_priority", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then sbus.set_priority(entity, tonumber(el.text) or 0) end
+end)
+
+G.on("sbus_filter", function(event, player, el)
+	if event.name ~= defines.events.on_gui_elem_changed then return end
+	local entity = window_entity(player)
+	if entity then
+		sbus.set_filter(entity, el.tags.index, key_of_elem("item-with-quality", el.elem_value))
+		G.refresh_one(player)
+	end
+end)
+
+--------------------------------------------------------------------------------
 --- remote interface (the runtime test: the data and set functions of every window)
 --------------------------------------------------------------------------------
 
@@ -829,6 +902,7 @@ remote.add_interface("gregtorio-me-gui", {
 	interface_data = function(entity) return M.interface_data(entity) end,
 	set_interface_item = function(entity, i, elem, amount) return M.set_interface_item(entity, i, elem, amount) end,
 	bus_data = function(entity) return M.bus_data(entity) end,
+	storage_bus_data = function(entity) return M.storage_bus_data(entity) end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
 })
 

@@ -15,6 +15,7 @@ Sources:
     python tools/gen_ae2_sprites.py --r1          # only the issue #68 (R1) graphics, from the existing PNGs
     python tools/gen_ae2_sprites.py --r2          # only the issue #68 (R2) fluid bus graphics, from the R1 PNGs
     python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
+    python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
@@ -578,6 +579,40 @@ def r2():
     return written
 
 
+# --- issue #68: ME Storage Bus ----------------------------------------------------------------
+# The R1 bus casing with a green plate on the side it faces, a two-headed arrow (the network reads and
+# writes the inventory) and a small chest below it.
+STORAGE_ACCENT = (95, 200, 120)
+CHEST_WOOD = (150, 105, 60)
+CHEST_DARK = (90, 60, 32)
+
+
+def storage_bus_sprite(direction):
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    d.rectangle((4, 0, TILE - 5, 4), fill=STORAGE_ACCENT + (255,), outline=(40, 40, 48, 255))   # the plate (north)
+    d.rectangle((15, 9, 16, 15), fill=(235, 235, 245, 255))                                      # arrow shaft
+    d.polygon([(12, 9), (19, 9), (15, 5)], fill=STORAGE_ACCENT + (255,))                       # head at the plate
+    d.polygon([(12, 15), (19, 15), (15, 19)], fill=STORAGE_ACCENT + (255,))                      # head at the chest
+    d.rectangle((9, 20, 22, 28), fill=CHEST_WOOD + (255,), outline=CHEST_DARK + (255,))          # the chest
+    d.line((9, 23, 22, 23), fill=CHEST_DARK + (255,))                                             # lid
+    d.rectangle((15, 22, 16, 25), fill=(230, 200, 90, 255))                                       # latch
+    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    return img.rotate(turns, resample=Image.NEAREST) if turns else img
+
+
+def storage_bus():
+    written = []
+    for direction in ("north", "east", "south", "west"):
+        path = OUT_ENTITY / f"me-storage-bus-{direction}.png"
+        storage_bus_sprite(direction).save(path)
+        written.append(path)
+    path = OUT_ICON / "me-storage-bus.png"
+    storage_bus_sprite("north").save(path)
+    written.append(path)
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
@@ -593,9 +628,11 @@ def main():
                     help="only the issue #68 (R2) graphics (fluid import and export bus), derived from the R1 PNGs")
     ap.add_argument("--underground", action="store_true",
                     help="only the ME Underground Cable (drawn from the cable colours)")
+    ap.add_argument("--storage-bus", action="store_true",
+                    help="only the ME Storage Bus, derived from the R1 PNGs")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground):
-        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2 or --underground is required")
+    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus):
+        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground or --storage-bus is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -630,6 +667,9 @@ def main():
     if a.gt or a.underground:
         written = underground()
         print("ME underground cable sprites:", len(written))
+    if a.gt or a.storage_bus:
+        written = storage_bus()
+        print("ME storage bus sprites:", len(written))
 
 
 if __name__ == "__main__":
