@@ -1090,9 +1090,12 @@ function M.extract_to(net, target, key, count)
 	end
 	if moved <= 0 then return 0 end
 	local got = extract_key(net, key, moved)
-	if got < moved then                       -- cannot happen (count was checked), but never duplicate
-		if target.object_name == "LuaItemStack" then target.count = math.max(0, got) if got == 0 then target.clear() end
-		else target.remove_item{ name = def.name, quality = def.quality, count = moved - got } end
+	if got < moved then                       -- the storage had less than counted: never duplicate
+		local surplus = { name = def.name, quality = def.quality, count = moved - got }
+		if target.object_name == "LuaItemStack" then
+			if got <= 0 then target.clear() else target.count = got end
+		elseif target.object_name == "LuaInventory" then target.remove(surplus)
+		else target.remove_item(surplus) end
 	end
 	return got
 end
