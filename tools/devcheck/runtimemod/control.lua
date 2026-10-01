@@ -211,6 +211,8 @@ function me_graph_test()
 		local ud2 = put("me-drive", 6, 0)
 		expect(ud1 and u1 and u2 and ud2 and same(ud1, ud2), "the drives are not connected through the underground cable")
 		expect(u1 and u2 and remote.call(NET, "underground_partner", u1) == u2.unit_number, "the underground ends did not pair")
+		expect(u1 and u2 and remote.call(NET, "underground_link", u1) and remote.call(NET, "underground_link", u2),
+			"the paired underground ends show no line")
 		--- a cable over the run and one beside an end belong to other networks
 		local over = put("me-cable", 3, 0)
 		local beside = put("me-cable", 1, 1)
@@ -219,6 +221,7 @@ function me_graph_test()
 		--- removing an end splits, placing it again joins
 		u2.destroy{ raise_destroy = true }
 		expect(not same(ud1, ud2), "still connected without the second end")
+		expect(not remote.call(NET, "underground_link", u1), "the line stayed after removing the second end")
 		u2 = put("me-underground-cable", 5, 0, defines.direction.west)
 		expect(u2 and same(ud1, ud2), "not connected again after placing the end again")
 		--- rotating an end breaks the link (and turning it back restores it)
@@ -228,6 +231,7 @@ function me_graph_test()
 		u1.direction = defines.direction.east
 		remote.call(NET, "rotated", u1)
 		expect(same(ud1, ud2), "not linked after rotating the end back")
+		st.underground = { ud1 = ud1, ud2 = ud2, u1 = u1, u2 = u2, over = over, beside = beside }
 		--- out of reach: an end 12 tiles away does not pair
 		local far1 = put("me-underground-cable", 1, 3, defines.direction.east)
 		local far2 = put("me-underground-cable", 13, 3, defines.direction.west)
@@ -262,6 +266,15 @@ function me_graph_test()
 		if game.tick >= st.phase_tick + 120 then
 			local n = net(pa)
 			expect(not n.ok and n.status == "no-power", "after the power was cut " .. serpent.line(n))
+			--- the graph rebuild (on_configuration_changed) keeps the underground pairs and their side rule
+			local u = st.underground
+			if u then
+				remote.call(NET, "rebuild")
+				expect(same(u.ud1, u.ud2) and remote.call(NET, "underground_partner", u.u1) == u.u2.unit_number,
+					"the underground pair is lost after the graph rebuild")
+				expect(not same(u.over, u.ud1) and not same(u.beside, u.ud1), "the graph rebuild joined cables over or beside the run")
+				expect(remote.call(NET, "underground_link", u.u1), "no line after the graph rebuild")
+			end
 			return finish("join, split, conflict, sweep, router, underground cable, walkable, power")
 		end
 	end
