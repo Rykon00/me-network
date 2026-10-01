@@ -54,6 +54,7 @@ local function kinds()
 		k[n.import_bus] = "import-bus"
 		k[n.export_bus] = "export-bus"
 		k[n.terminal] = "terminal"
+		if n.underground then k[n.underground] = "underground" end
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -70,7 +71,7 @@ local function kinds()
 	return k
 end
 
-local POWERED_SELF = { cable = true, controller = true, terminal = true, cpu = true, maintainer = true }
+local POWERED_SELF = { cable = true, underground = true, controller = true, terminal = true, cpu = true, maintainer = true }
 --- (the old ME Fluid Drives are no members since issue #68 step R2: scripts/fork-me-migrate.lua replaces them)
 
 --- the entity names of all members, sorted (cached: the filter of every find_entities_filtered of the graph)
@@ -174,6 +175,50 @@ local function adjacent(a, b)
 end
 M.adjacent = adjacent
 
+--- side of `ob` that `b` touches: 1 N, 2 E, 4 S, 8 W (0: none)
+local function side_of(b, ob)
+	if ob[4] == b[2] then return 1
+	elseif ob[1] == b[3] then return 2
+	elseif ob[2] == b[4] then return 4
+	elseif ob[3] == b[1] then return 8 end
+	return 0
+end
+
+--- Underground cable: its direction points along the run under the ground; above ground it connects only on
+--- the opposite side (like an underground pipe), under ground to its partner (see find_partner).
+local DIR_BIT = { [defines.direction.north] = 1, [defines.direction.east] = 2, [defines.direction.south] = 4, [defines.direction.west] = 8 }
+local BACK_BIT = { [1] = 4, [2] = 8, [4] = 1, [8] = 2 }
+local DIR_VEC = { [defines.direction.north] = { 0, -1 }, [defines.direction.east] = { 1, 0 },
+	[defines.direction.south] = { 0, 1 }, [defines.direction.west] = { -1, 0 } }
+
+--- may `a` and `b` (adjacent boxes) connect above ground?
+local function connects(a, b)
+	if a.kind == "underground" and side_of(a.box, b.box) ~= BACK_BIT[DIR_BIT[a.dir]] then return false end
+	if b.kind == "underground" and side_of(b.box, a.box) ~= BACK_BIT[DIR_BIT[b.dir]] then return false end
+	return true
+end
+
+local function underground_reach() return mod_data().underground_reach or 10 end
+
+--- The first underground cable within reach in the node's direction. It is the partner if it faces back
+--- towards the node and has none yet; any other underground cable on the way blocks (like underground pipes).
+local function find_partner(s, node)
+	local e = node.entity
+	local v = DIR_VEC[node.dir]
+	if not v then return nil end
+	local opposite = (node.dir + 8) % 16
+	for k = 1, underground_reach() + 1 do
+		local pos = { e.position.x + v[1] * k, e.position.y + v[2] * k }
+		local found = e.surface.find_entities_filtered{ position = pos, name = e.name, force = e.force, limit = 1 }[1]
+		if found then
+			local o = s.nodes[found.unit_number]
+			if o and o.entity == found and o.dir == opposite and not o.partner then return o end
+			return nil
+		end
+	end
+	return nil
+end
+
 --- cable picture: 1 + N + 2E + 4S + 8W
 local function update_cable(s, node)
 	if node.kind ~= "cable" or not node.entity.valid then return end
@@ -230,6 +275,7 @@ local function add_node(s, entity, kind)
 	if node then return node end
 	node = { entity = entity, kind = kind, adj = {}, box = tile_box(entity), surface = entity.surface.index,
 		force = entity.force.name, position = { x = entity.position.x, y = entity.position.y } }
+	if kind == "underground" then node.dir = entity.direction end
 	s.nodes[unit] = node
 	local b = node.box
 	local found = entity.surface.find_entities_filtered{
@@ -237,12 +283,25 @@ local function add_node(s, entity, kind)
 	local nets, order = {}, {}
 	for _, e in pairs(found) do
 		local other = e.valid and e.unit_number ~= unit and s.nodes[e.unit_number]
-		if other and other.entity == e and adjacent(b, other.box) then
+		if other and other.entity == e and adjacent(b, other.box) and connects(node, other) then
 			node.adj[e.unit_number] = true
 			other.adj[unit] = true
 			if not nets[other.net] then
 				nets[other.net] = true
 				order[#order + 1] = other.net
+			end
+		end
+	end
+	if kind == "underground" then
+		local partner = find_partner(s, node)
+		if partner then
+			local pu = partner.entity.unit_number
+			node.partner, partner.partner = pu, unit
+			node.adj[pu] = true
+			partner.adj[unit] = true
+			if not nets[partner.net] then
+				nets[partner.net] = true
+				order[#order + 1] = partner.net
 			end
 		end
 	end
@@ -270,7 +329,7 @@ local function add_node(s, entity, kind)
 	node.net = net.id
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
-	if kind == "cable" and #order == 1 then
+	if (kind == "cable" or kind == "underground") and #order == 1 then
 		s.version = s.version + 1                  -- only the member count changed (and the power)
 		net.power_dirty = true
 	else
@@ -279,8 +338,8 @@ local function add_node(s, entity, kind)
 	return node
 end
 
---- Unregister a member (the entity may already be invalid). The drive's cells are handled by the caller.
-local function remove_node(s, unit)
+--- Unregister a member from the graph (the entity may already be invalid).
+local function remove_node_graph(s, unit)
 	local node = s.nodes[unit]
 	if not node then return end
 	s.nodes[unit] = nil
@@ -305,7 +364,7 @@ local function remove_node(s, unit)
 	end
 	local comps = components(s, net, neighbours)
 	if #comps <= 1 then
-		if node.kind == "cable" then
+		if node.kind == "cable" or node.kind == "underground" then
 			s.version = s.version + 1
 			net.power_dirty = true
 		else
@@ -330,6 +389,29 @@ local function remove_node(s, unit)
 		changed(s, part)
 	end
 	changed(s, net)
+end
+
+--- Unregister a member (the entity may already be invalid). The drive's cells are handled by the caller. The
+--- partner of an underground cable is registered again, so it can pair with another one in reach.
+local function remove_node(s, unit)
+	local node = s.nodes[unit]
+	local pu = node and node.partner
+	if pu and s.nodes[pu] then s.nodes[pu].partner = nil end
+	remove_node_graph(s, unit)
+	local p = pu and s.nodes[pu]
+	if p and p.entity.valid then
+		remove_node_graph(s, pu)
+		add_node(s, p.entity, p.kind)
+	end
+end
+
+--- A rotated underground cable changes its connections: register it again (its old partner too).
+function M.on_rotated(entity)
+	local s = storage.fork_me_net
+	local node = s and entity and entity.valid and entity.unit_number and s.nodes[entity.unit_number]
+	if not (node and node.kind == "underground" and node.dir ~= entity.direction) then return end
+	remove_node(s, entity.unit_number)
+	add_node(s, entity, "underground")
 end
 
 --------------------------------------------------------------------------------
@@ -1755,6 +1837,14 @@ remote.add_interface("gregtorio-me-network", {
 	end,
 	version = function() return M.version() end,
 	cable_variation = function(cable) return cable.graphics_variation end,
+	--- what the rotation event does (entity.rotate raises none)
+	rotated = function(entity) M.on_rotated(entity) end,
+	--- the unit number of an underground cable's partner, or nil
+	underground_partner = function(entity)
+		local s = storage.fork_me_net
+		local node = s and entity and entity.valid and s.nodes[entity.unit_number]
+		return node and node.partner or nil
+	end,
 })
 
 return M
