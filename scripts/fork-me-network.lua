@@ -71,6 +71,7 @@ local function kinds()
 	for name in pairs(ac and ac.data.cpus or {}) do k[name] = "cpu" end
 	k["me-fluid-import-bus"] = "fluid-import-bus"
 	k["me-fluid-export-bus"] = "fluid-export-bus"
+	k["me-fluid-storage-bus"] = "fluid-storage-bus"
 	for name in pairs(k) do
 		if not prototypes.entity[name] then k[name] = nil end
 	end
@@ -776,7 +777,8 @@ function M.version() local s = storage.fork_me_net return s and s.version or 0 e
 local function mark_drive(s, unit) s.dirty[unit] = true end
 
 --------------------------------------------------------------------------------
---- external cells: storage that is not a storage cell (the storage bus, scripts/fork-me-storagebus.lua). An
+--- external cells: storage that is not a storage cell (the storage bus, scripts/fork-me-storagebus.lua, and the
+--- fluid storage bus, scripts/fork-me-fluid-storagebus.lua: fluid keys, fractional amounts). An
 --- external cell is a record { ext = <handler name>, items = { key -> count }, data = {}, partition, priority,
 --- hidden } kept in s.ext[unit] of its member; its cell id is "<unit>:ext". `items` is a snapshot of what the
 --- storage held at the last look (none while `hidden`: write only); the totals and the index of the network
@@ -925,7 +927,7 @@ local function insert_key(net, key, count, data)
 		local cell = net.cells[cid]
 		if cell.ext then                               -- external cell: into the real storage, then the snapshot
 			if data then return end                    -- items with tags only go into cells
-			local n = M.ext_handlers[cell.ext].insert(cell, key, math.floor(left))
+			local n = M.ext_handlers[cell.ext].insert(cell, key, is_fluid_key(key) and left or math.floor(left))
 			if n <= 0 then return end
 			if not cell.hidden then
 				cell.items[key] = (cell.items[key] or 0) + n
@@ -935,6 +937,7 @@ local function insert_key(net, key, count, data)
 				idx[cid] = true
 			end
 			left = left - n
+			if left < ZERO then left = 0 end
 			return
 		end
 		local spec = cell_spec(cell.name)
@@ -1014,9 +1017,10 @@ local function extract_key(net, key, count)
 			local n = math.min(left, real)
 			local got = n > 0 and handler.extract(cell, key, n) or 0
 			if got > 0 then
-				cell.items[key] = real - got > 0 and (real - got) or nil      -- net.items: below, with the others
+				cell.items[key] = real - got > ZERO and (real - got) or nil   -- net.items: below, with the others
 				if not cell.items[key] and net.index[key] then net.index[key][cid] = nil end
 				left = left - got
+				if left < ZERO then left = 0 end
 			end
 		else
 			local n = math.min(left, cell.items[key] or 0)
@@ -1134,18 +1138,20 @@ end
 
 function M.stats(net)
 	local ok, why = M.usable(net)
-	local drives, cells, fcells, buses = 0, 0, 0, 0
+	local drives, cells, fcells, buses, fbuses = 0, 0, 0, 0, 0
 	for _ in pairs(net.drives) do drives = drives + 1 end
 	for _, cid in ipairs(net.cell_list) do
 		local cell = net.cells[cid]
 		local spec = not cell.ext and cell_spec(cell.name)
-		if cell.ext then buses = buses + 1
+		if cell.ext == "fluid-storage-bus" then fbuses = fbuses + 1
+		elseif cell.ext then buses = buses + 1
 		elseif spec and fluid_cell(spec) then fcells = fcells + 1 else cells = cells + 1 end
 	end
 	return { ok = ok, status = ok and "ok" or why, bytes = net.bytes, bytes_total = net.bytes_total,
 		types = net.types, types_total = net.types_total, drives = drives, cells = cells, power = net.power,
 		fbytes = net.fbytes or 0, fbytes_total = net.fbytes_total or 0, ftypes = net.ftypes or 0,
-		ftypes_total = net.ftypes_total or 0, fluid_cells = fcells, storage_buses = buses, members = net.n, id = net.id }
+		ftypes_total = net.ftypes_total or 0, fluid_cells = fcells, storage_buses = buses,
+		fluid_storage_buses = fbuses, members = net.n, id = net.id }
 end
 
 --- Why a stack cannot go into the network (a locale key suffix), or nil and its key and data
