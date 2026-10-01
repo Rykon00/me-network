@@ -44,7 +44,8 @@ The controller (`me-network-controller`, placed by the `me-controller` item, 2x2
 `electric-energy-interface` without GUI. Its power use is 120 kW plus 4 kW for every member that has no
 power of its own (drives, interfaces, buses, providers, circuit interfaces, fluid drives and interfaces;
 cables are free), set by the script when the network changes. It counts as powered while its status is not
-"no power" (an underpowered controller keeps the network running at low power, like other machines).
+"no power" and its buffer is not empty (an energy interface without any pole reports no "no power" status;
+an underpowered controller keeps the network running at low power, like other machines).
 Terminals, CPUs and level maintainers keep their own power connection (lamps), as before.
 
 **Incremental graph:** nothing scans the map at runtime.
@@ -170,7 +171,7 @@ central window of the network:
 
 * **Status line:** network state (working, no controller, controller conflict, no power), bytes used of
   total, types used of total, drives and cells, the controller's power draw.
-* **Storage tab:** a search field (matches the internal name and the localised name of what is shown), a
+* **Storage tab:** a search field (matches the internal item name: a script cannot read localised names), a
   sort switch (by amount or by name) and the item grid. Left click on an item: a stack into the cursor
   (with something in the cursor: that is stored instead, like AE2). Right click: one item into the cursor
   (more of the same item: one more). Shift click: a stack into the inventory. Below the grid the fluids of the
@@ -266,8 +267,10 @@ requester chest `me-interface`.
    placed by the script (they are not taken from anywhere). A member that no path reaches (walled in) is
    left unconnected and named in the chat with a map link; its contents stay in it (cells in the drive,
    fluid in the fluid drive), nothing is lost, the player connects it.
-8. **Ghosts** of the old entities (destroyed, not yet rebuilt) become ghosts of the new ones; a blueprint
-   with old entities builds new ones (the built event swaps the ghost).
+8. **Ghosts** of the old entities: the game removes them when the save is loaded, before any script runs
+   (nothing can build the old prototypes any more; seen in `migrate --from-ref v0.3.2`). Should one be left,
+   the migration makes it a ghost of the new entity, and the built event does the same for a ghost of an old
+   entity built from an old blueprint. Ghosts are no items: nothing is lost.
 9. **Check:** the item totals of step 1 are compared with what the new networks, the overflow chests and
    the spilled items hold, per item; a difference is written to the log (`FORK-ME-MIGRATE`) and the chat.
 
@@ -277,10 +280,12 @@ storage chests of the old ME network stay in those chests: the new network holds
 can block a walkway (it collides like a 1x1 entity); the player can move it.
 
 **Fluids** stay as they are until R2: the ME Fluid Drive keeps its contents and its recovery, it is a
-network member like any other, its totals are summed over the fluid drives of the new network. Recovered
-fluid entries keep their position; the network of an entry is the network of an ME member within 1.5 tiles
-of it (the cable or device the drive was connected to). The network "you stand in" for the hand
-disassembly of a loaded fluid drive item is the network of the nearest member within 10 tiles.
+network member like any other, its totals are summed over the fluid drives of the new network. A recovered
+fluid entry keeps its position and the ME member it was recovered at (the member nearest to the destroyed
+drive within 1.5 tiles, or to the player within 10 tiles for the hand disassembly of a loaded fluid drive
+item): its network is that member's network while the member exists, else the network of a member within
+1.5 tiles of the position. (Without the member, an entry made at a player's position looked like "no network"
+and the first fluid drive placed anywhere took it; the runtime test caught that.)
 
 **Autocrafting:** CPUs, providers and jobs keep their records; a job looks its network up through its CPU
 (or the entity it was started at) instead of a position. Running jobs and their pools survive.
@@ -298,14 +303,23 @@ disassembly of a loaded fluid drive item is the network of the nearest member wi
 
 ## Tests (headless, `tools/devcheck`)
 
-`runtime` (all through the same functions the GUIs call): cable graph (join, split, two controllers, power
-off, a member removed without an event), cells (insert and remove with contents in tags, a cell moved to
-another drive, a cell stored in a cell), terminal calls (take a stack, take one, shift into the inventory,
-store the cursor, store an inventory item, search and sort), interface import and export, both buses, and
-every ME test that existed (autocrafting, furnace patterns, fluids, fluid recovery, level maintainer, CPU
-tiers, circuit interface, settings copy) on cable networks. `migrate --from-ref v0.3.2`: an old ME network
-with items in drives and an interface, a second controller, fluid drives with fluid, a pattern provider and a
-running job; after the update the item totals must match, the fluid totals too, the job must finish.
+`runtime` (all through the same functions the GUIs call):
+
+| Test | What it checks |
+|---|---|
+| ME graph | join (members, power draw, cable pictures), split (the larger part keeps the id), join again, a second controller (conflict, nothing stored, status on the controller), a cable removed without an event (sweep), the cable router, a network without power, with power, after the power is cut |
+| ME cells | cells into slots, only cells, AE2 bytes, the contents in the tags of a cell taken out and back in another drive, capacity of the network exactly, full cells, quality as its own type, a loaded cell stored in the network and taken out with its tags, the drive window's clicks (take, put, swap, shift), a destroyed drive spills its cells with their items, an old drive item gives its four cells and the card, robots mine a drive with loaded cells into a storage chest |
+| ME terminal | take a stack, one more, a click with something in the cursor stores it, take one, store the cursor, a stack into the inventory, the inventory row, search, sort by amount and name, a spoiling item and a blueprint refused |
+| ME import/export | interface export slot filled and topped up, import slot emptied, a spoiling item stays, filters pasted; import bus 64 per visit, with a filter; export bus without filter idle, into a chest, into a machine; a rotated bus; bus filters pasted; blueprint tags of interface and bus |
+| autocrafting, furnace patterns, fluids, fluid recovery, level maintainer, CPU tiers, circuit interface, settings copy | the tests that existed, on cable networks laid by the router |
+
+`migrate --from-ref v0.3.2`: an old ME network with items in a drive and an interface (other quality, a
+blueprint that cannot be stored, items in the requester's trash), a second controller in the same logistic
+network, a terminal, fluid drives with fluid and recovered fluid, pattern providers and a running job, a
+chest with 16 cells on one stack, old drive items, the ghost of an old drive. After the update: no old entity
+left, every block connected, drives with four cells of their tier, the report's counts equal the old chests'
+items, those items are in the network (the blueprint in an overflow chest), no difference, the 16 cells kept,
+fluids, recovery, patterns and the job as before.
 
 ## Open for R2
 

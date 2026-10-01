@@ -40,7 +40,7 @@ local function mod_data()
 	return md and md.data or { cells = {}, legacy_drives = {}, drive_slots = 10, names = {}, legacy = {} }
 end
 
-local names_cache
+local names_cache, names_list
 --- entity name -> kind; kinds with their own power connection draw nothing from the controller
 local function kinds()
 	if names_cache then return names_cache end
@@ -72,10 +72,13 @@ end
 
 local POWERED_SELF = { cable = true, controller = true, terminal = true, cpu = true, maintainer = true }
 
+--- the entity names of all members, sorted (cached: the filter of every find_entities_filtered of the graph)
 function M.node_names()
+	if names_list then return names_list end
 	local out = {}
 	for name in pairs(kinds()) do out[#out + 1] = name end
 	table.sort(out)
+	names_list = out
 	return out
 end
 
@@ -1250,7 +1253,7 @@ end
 --------------------------------------------------------------------------------
 
 function M.rebuild()
-	names_cache = nil
+	names_cache, names_list = nil, nil
 	local s = state()
 	local old_drives = s.drives
 	s.nodes, s.nets, s.version = {}, {}, s.version + 1

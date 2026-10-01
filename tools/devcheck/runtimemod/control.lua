@@ -1,8 +1,10 @@
 --- Places every assembling machine that has an item, gives it a recipe and power, then lets
 --- the benchmark run the map. Any runtime error in Gregtorio's scripts or the entities fails
 --- the run. Results are logged as DEVCHECK-RUNTIME lines.
---- ME network (prototypes/120-fork-ae2.lua): controller, one drive per tier, interface and
---- terminal on their own power; checked during the benchmark run (see on_nth_tick below).
+--- ME network core (issue #68, prototypes/120-fork-ae2.lua, scripts/fork-me-network.lua, fork-me-io.lua,
+--- fork-me-terminal.lua): cable graph and power, storage cells, the terminal's functions, interface and buses
+--- (me_graph_test, me_cells_test, me_terminal_test, me_io_test). The ME networks of the other tests are laid
+--- out as before and connected by the network's cable router (me_connect).
 --- Autocrafting (prototypes/121-fork-ae2-autocrafting.lua, scripts/fork-me-autocraft.lua): a network
 --- with a crafting CPU, two Molecular Assemblers with pattern providers (iron plate + 2 iron sticks ->
 --- gear, gear + plate -> transport belt) and raw materials in a drive. Job 1 crafts belts through the
