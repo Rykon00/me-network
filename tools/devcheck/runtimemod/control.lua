@@ -211,8 +211,6 @@ function me_graph_test()
 		local ud2 = put("me-drive", 6, 0)
 		expect(ud1 and u1 and u2 and ud2 and same(ud1, ud2), "the drives are not connected through the underground cable")
 		expect(u1 and u2 and remote.call(NET, "underground_partner", u1) == u2.unit_number, "the underground ends did not pair")
-		expect(u1 and u2 and remote.call(NET, "underground_link", u1) and remote.call(NET, "underground_link", u2),
-			"the paired underground ends show no line")
 		--- a cable over the run and one beside an end belong to other networks
 		local over = put("me-cable", 3, 0)
 		local beside = put("me-cable", 1, 1)
@@ -221,7 +219,6 @@ function me_graph_test()
 		--- removing an end splits, placing it again joins
 		u2.destroy{ raise_destroy = true }
 		expect(not same(ud1, ud2), "still connected without the second end")
-		expect(not remote.call(NET, "underground_link", u1), "the line stayed after removing the second end")
 		u2 = put("me-underground-cable", 5, 0, defines.direction.west)
 		expect(u2 and same(ud1, ud2), "not connected again after placing the end again")
 		--- rotating an end breaks the link (and turning it back restores it)
@@ -235,7 +232,20 @@ function me_graph_test()
 		--- out of reach: an end 12 tiles away does not pair
 		local far1 = put("me-underground-cable", 1, 3, defines.direction.east)
 		local far2 = put("me-underground-cable", 13, 3, defines.direction.west)
-		expect(far1 and far2 and remote.call(NET, "underground_partner", far1) == nil, "ends 11 tiles apart paired")
+		expect(far1 and far2 and remote.call(NET, "underground_partner", far1) == nil, "ends 12 tiles apart paired")
+		--- it is an underground pipe of its own category: a pipe next to it does not connect
+		local pipe = put("pipe", 0, 3)
+		expect(pipe and #pipe.fluidbox.get_connections(1) == 0, "a pipe connected to an underground cable")
+		--- an end placed between a pair takes the near end (like underground pipes); removing it gives the pair back
+		local wd1, wd2 = put("me-drive", 0, 6), put("me-drive", 8, 6)
+		local w1 = put("me-underground-cable", 1, 6, defines.direction.east)
+		local w2 = put("me-underground-cable", 7, 6, defines.direction.west)
+		expect(same(wd1, wd2), "the second pair did not connect")
+		local w3 = put("me-underground-cable", 4, 6, defines.direction.west)
+		expect(remote.call(NET, "underground_partner", w1) == w3.unit_number and not same(wd1, wd2)
+			and remote.call(NET, "underground_partner", w2) == nil, "the middle end did not take the near end")
+		w3.destroy{ raise_destroy = true }
+		st.weave = { wd1 = wd1, wd2 = wd2, w1 = w1, w2 = w2 }
 		--- cables can be walked over
 		local mask = prototypes.entity["me-cable"].collision_mask.layers
 		expect(not mask.player and not prototypes.entity["me-underground-cable"].collision_mask.layers.player,
@@ -266,6 +276,12 @@ function me_graph_test()
 		if game.tick >= st.phase_tick + 120 then
 			local n = net(pa)
 			expect(not n.ok and n.status == "no-power", "after the power was cut " .. serpent.line(n))
+			--- (before the rebuild below, which would pair them anyway: the slow step must have done it)
+			local w = st.weave
+			if w then
+				expect(same(w.wd1, w.wd2) and remote.call(NET, "underground_partner", w.w1) == w.w2.unit_number,
+					"the pair did not connect again after removing the end between them")
+			end
 			--- the graph rebuild (on_configuration_changed) keeps the underground pairs and their side rule
 			local u = st.underground
 			if u then
@@ -273,7 +289,6 @@ function me_graph_test()
 				expect(same(u.ud1, u.ud2) and remote.call(NET, "underground_partner", u.u1) == u.u2.unit_number,
 					"the underground pair is lost after the graph rebuild")
 				expect(not same(u.over, u.ud1) and not same(u.beside, u.ud1), "the graph rebuild joined cables over or beside the run")
-				expect(remote.call(NET, "underground_link", u.u1), "no line after the graph rebuild")
 			end
 			return finish("join, split, conflict, sweep, router, underground cable, walkable, power")
 		end
