@@ -583,8 +583,8 @@ def runtime(a):
     print(f"furnace pattern test: {furnace.group(1) if furnace else 'did not run'}")
     fluids = re.search(r"DEVCHECK-RUNTIME-FLUIDS (.*)", log)
     print(f"fluid test: {fluids.group(1) if fluids else 'did not run'}")
-    recovery = re.search(r"DEVCHECK-RUNTIME-RECOVERY (.*)", log)
-    print(f"fluid recovery test: {recovery.group(1) if recovery else 'did not run'}")
+    recovery = re.search(r"DEVCHECK-RUNTIME-FLUIDCELLS (.*)", log)
+    print(f"ME fluid cell test: {recovery.group(1) if recovery else 'did not run'}")
     power = re.search(r"DEVCHECK-RUNTIME-POWER (.*)", log)
     print(f"power test: {power.group(1) if power else 'did not run'}")
     fuel = re.search(r"DEVCHECK-RUNTIME-FUEL (.*)", log)
@@ -625,9 +625,9 @@ def runtime(a):
     elif not fluids.group(1).startswith("ok"):
         fails.append("fluid test failed")
     if not recovery:
-        fails.append("fluid recovery test did not run (needs --ticks >= 1500)")
+        fails.append("ME fluid cell test did not run (needs --ticks >= 1500)")
     elif not recovery.group(1).startswith("ok"):
-        fails.append("fluid recovery test failed")
+        fails.append("ME fluid cell test failed")
     if not power:
         fails.append("power test did not run (needs --ticks >= 420)")
     elif not power.group(1).startswith("ok"):
@@ -661,7 +661,7 @@ def runtime(a):
         fails.append("post-victory test did not run (needs --ticks >= 1500)")
     elif not post.group(1).startswith("ok"):
         fails.append("post-victory test failed")
-    report("runtime problems (placement, ME graph, cell, terminal and import/export tests, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, turbine tier test, recipe test, level maintainer test, crafting CPU tier test, circuit interface test, settings copy test, victory test, post-victory test)", fails)
+    report("runtime problems (placement, ME graph, cell, terminal and import/export tests, mold test, autocrafting test, furnace pattern test, fluid test, ME fluid cell test, power test, fuel check test, cooled fluid test, turbine tier test, recipe test, level maintainer test, crafting CPU tier test, circuit interface test, settings copy test, victory test, post-victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
