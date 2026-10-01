@@ -1,43 +1,46 @@
 --------------------------------------------------------------------------------
---- FORK AE2: FLUIDS IN THE ME NETWORK (on top of the ME network from 120-fork-ae2.lua)
----   * Fluid Storage Cell = storage housing + storage component + pump. Four of them make
----                          an ME Fluid Drive; 8000 fluid units per "1k" of a cell (AE2:
----                          8 items per byte).
----   * ME Fluid Drive     = passive 1x1 entity of the ME network. Its contents are virtual:
----                          the runtime keeps a fluid -> amount table per drive, nothing is
----                          stored in an engine fluid box. Picking the drive up moves the
----                          contents onto the item (item-with-tags), placing it again restores
----                          them; a destroyed drive's fluids go to the other drives of its
----                          network or are kept for the next drive placed on the surface.
----   * ME Fluid Interface = 1x1 storage tank inside the network. Its GUI selects import
----                          (tank -> network) or export (network -> tank, up to a fill level).
----                          The network stores fluids by name only, without temperature.
----   * The numbers the runtime needs (drive capacities, interface volume) are passed through
----     the mod-data "fork-me-fluids", so nothing is duplicated in scripts/fork-me-fluids.lua.
---- Runtime logic: scripts/fork-me-fluids.lua. Sprites and icons: tools/gen_ae2_sprites.py.
+--- FORK AE2: FLUIDS IN THE ME NETWORK (issue #68, step R2; design: docs/ME-REWORK.md)
+---   * Fluid Storage Cell = storage housing + storage component + pump, an item with tags (stack size 1)
+---                          that goes into the ME Drive like an item cell. It stores fluids by name (one
+---                          temperature per fluid): k*1024 bytes, k*8 bytes per fluid type, up to 18
+---                          types, 8 fluid units per byte. Taken out of a drive it carries its fluids in
+---                          its tags.
+---   * ME Fluid Interface = 1x1 storage tank of the network: import (tank -> network, the default) or export
+---                          (network -> tank, up to a fill level).
+---   * ME Fluid Import / Export Bus = rotatable 1x1 blocks that take fluid out of / put fluid into the
+---                          entity they face (tank, machine).
+---   * ME Fluid Storage Bus = rotatable 1x1 block: the fluid segment of the tank it faces is storage of the
+---                          network (scripts/fork-me-fluid-storagebus.lua).
+---   * The old ME Fluid Drive (four cells crafted in, contents in script state) stays hidden so saves load;
+---     scripts/fork-me-migrate.lua replaces each one by an ME Drive with four fluid cells of its tier.
+---     Placing an old fluid drive item gives the same (its fluid goes into the cells).
+--- The cell numbers go into the mod-data "fork-me-network" of 120; the interface's numbers into the
+--- mod-data "fork-me-fluids". Runtime: scripts/fork-me-network.lua (storage), scripts/fork-me-fluids.lua
+--- (fluid interface), scripts/fork-me-io.lua (buses), scripts/fork-me-fluid-storagebus.lua (fluid storage bus).
+--- Sprites and icons: tools/gen_ae2_sprites.py.
 --------------------------------------------------------------------------------
 
 local ENTITY_PATH = "__gregtorio-continued__/graphics/entity/fork/ae2/"
 local ICON_FORK = ICON_PATH .. "fork/"
 
---- fluid units one "1k" of a cell holds, and cells per drive
-local UNITS_PER_K = 8000
-local CELLS_PER_DRIVE = 4
+local UNITS_PER_BYTE = 8
+local FLUID_TYPES = 18
+local OLD_CELLS_PER_DRIVE = 4
 
---- cell tier -> "k" of the cell, pump of the cell recipe, assembler category of cell and
---- drive, extra drive ingredient (categories and speeds like the item cells in 120)
+--- cell tier -> "k", pump of the cell recipe, assembler category of the cell
 local CELLS = {
-	{ tier = "1k",   k = 1,   pump = "lv-pump", cell_cat = "lv-assembling-machine-recipes", drive_cat = "mv-assembling-machine-recipes", speed = MV_SPEED },
-	{ tier = "4k",   k = 4,   pump = "lv-pump", cell_cat = "lv-assembling-machine-recipes", drive_cat = "mv-assembling-machine-recipes", speed = MV_SPEED },
-	{ tier = "16k",  k = 16,  pump = "mv-pump", cell_cat = "mv-assembling-machine-recipes", drive_cat = "mv-assembling-machine-recipes", speed = MV_SPEED },
-	{ tier = "64k",  k = 64,  pump = "hv-pump", cell_cat = "hv-assembling-machine-recipes", drive_cat = "ev-assembling-machine-recipes", speed = EV_SPEED },
-	{ tier = "256k", k = 256, pump = "ev-pump", cell_cat = "ev-assembling-machine-recipes", drive_cat = "iv-assembling-machine-recipes", speed = IV_SPEED,
-	  extra = { type = "item", name = "acceleration-card", amount = 1 } },
+	{ tier = "1k",   k = 1,   pump = "lv-pump", cell_cat = "lv-assembling-machine-recipes" },
+	{ tier = "4k",   k = 4,   pump = "lv-pump", cell_cat = "lv-assembling-machine-recipes" },
+	{ tier = "16k",  k = 16,  pump = "mv-pump", cell_cat = "mv-assembling-machine-recipes" },
+	{ tier = "64k",  k = 64,  pump = "hv-pump", cell_cat = "hv-assembling-machine-recipes" },
+	{ tier = "256k", k = 256, pump = "ev-pump", cell_cat = "ev-assembling-machine-recipes",
+	  extra = { name = "acceleration-card", count = 1 } },
 }
-for _, c in ipairs(CELLS) do c.capacity = c.k * UNITS_PER_K * CELLS_PER_DRIVE end
 
 local INTERFACE = "me-fluid-interface"
 local INTERFACE_VOLUME = 5000
+local IMPORT_BUS, EXPORT_BUS = "me-fluid-import-bus", "me-fluid-export-bus"
+local STORAGE_BUS = "me-fluid-storage-bus"   -- the fluid segment of the tank it faces is network storage
 
 
 
@@ -54,18 +57,17 @@ data:extend({
 
 
 --------------------------------------------------------------------------------
---- FLUID STORAGE CELLS AND FLUID DRIVES
+--- FLUID STORAGE CELLS (items with tags) AND THE OLD FLUID DRIVES (hidden)
 --------------------------------------------------------------------------------
 
-local drive_capacity = {}
+local net_data = data.raw["mod-data"]["fork-me-network"].data
 
 for i, c in ipairs(CELLS) do
 	local cell = "me-" .. c.tier .. "-fluid-storage-cell"
 	local drive = "me-fluid-drive-" .. c.tier
 	local order = string.format("%02d", i)
-	drive_capacity[drive] = c.capacity
 
-	--- cell = storage housing + storage component + pump
+	--- cell = storage housing + storage component + pump (unchanged recipe)
 	create_item{
 		name = cell,
 		icon = ICON_FORK .. cell .. ".png",
@@ -73,64 +75,44 @@ for i, c in ipairs(CELLS) do
 		subgroup = "fork-me-fluid-cells",
 		order = order,
 		energy_required = 5,
-		stack_size = 16,
+		stack_size = 1,
 		ingredients = {
 			{ type = "item", name = "me-" .. c.tier .. "-storage-component", amount = 1 },
 			{ type = "item", name = "basic-storage-housing", amount = 1 },
 			{ type = "item", name = c.pump, amount = 1 },
 		},
 	}
-	data.raw.item[cell].localised_description = { "item-description.fork-me-fluid-storage-cell", c.tier, tostring(c.capacity) }
-
-	--- drive = drive chassis + four cells
-	local ingredients = {
-		{ type = "item", name = "me-drive", amount = 1 },
-		{ type = "item", name = cell, amount = CELLS_PER_DRIVE },
-	}
-	if c.extra then ingredients[#ingredients + 1] = c.extra end
-	create_item{
-		name = drive,
-		icon = ICON_FORK .. drive .. ".png",
-		category = c.drive_cat,
-		subgroup = "fork-me-fluid-drives",
-		order = "b" .. order,
-		energy_required = 10 * c.speed,
-		stack_size = 10,
-		place_result = drive,
-		ingredients = ingredients,
-	}
-
-	--- the drive item carries its fluids as tags when it is picked up (like 150-fork-molds
-	--- turns the mold item into a module: remove it from data.raw.item, change the type, re-add)
-	local item = data.raw.item[drive]
-	data.raw.item[drive] = nil
+	--- like the item cells (120): remove, change the type, add again
+	local item = data.raw.item[cell]
+	data.raw.item[cell] = nil
 	item.type = "item-with-tags"
 	data:extend({ item })
-	data.raw.recipe[drive].auto_recycle = false          -- a recycler would void the fluid on the item
+	data.raw.recipe[cell].auto_recycle = false         -- a recycler would void the fluid
+	local bytes = c.k * 1024
+	local per_type = c.k * 8
+	net_data.cells[cell] = { tier = c.tier, kind = "fluid", bytes = bytes, per_type = per_type, types = FLUID_TYPES,
+		per_byte = UNITS_PER_BYTE }
+	item.localised_description = { "item-description.fork-me-fluid-storage-cell", c.tier, tostring(bytes),
+		tostring(FLUID_TYPES), tostring((bytes - per_type) * UNITS_PER_BYTE) }
 
-	--- take the cells out again (e.g. after the upgrade planner replaced the drive). Hand crafting
-	--- only: the hand craft event shows the consumed item with its tags, so the runtime can salvage
-	--- the fluid of a loaded drive item; an assembler would consume it without any event.
-	local parts = {
-		{ type = "item", name = "me-drive", amount = 1 },
-		{ type = "item", name = cell, amount = CELLS_PER_DRIVE },
-	}
-	if c.extra then parts[#parts + 1] = c.extra end
-	create_recipe{
-		recipe_name = drive .. "-disassembly",
-		category = "manual-only-recipes",
-		subgroup = "fork-me-fluid-drives",
-		order = "c" .. order,
+	--- the old fluid drive item (chassis + four cells, fluid in its tags): no recipe any more, hidden; placing
+	--- one builds an ME Drive with its four fluid cells holding its fluid
+	data:extend({ {
+		type = "item-with-tags",
+		name = drive,
 		icon = ICON_FORK .. drive .. ".png",
-		energy_required = 1,
-		ingredients = { { type = "item", name = drive, amount = 1 } },
-		results = parts,
-	}
-	data.raw.recipe[drive .. "-disassembly"].allow_decomposition = false
-	data.raw.recipe[drive .. "-disassembly"].localised_name = { "recipe-name.fork-me-drive-disassembly", { "item-name." .. drive } }
-	data.raw.recipe[drive .. "-disassembly"].localised_description = { "recipe-description.fork-me-fluid-drive-disassembly" }
+		icon_size = 32,
+		subgroup = "fork-me-fluid-drives",
+		order = "z" .. order,
+		stack_size = 10,
+		place_result = "me-drive",
+		hidden = true,
+		localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
+	} })
+	net_data.legacy_drives[drive] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra, fluid = true,
+		fluid_tag = "fork_me_fluids" }
 
-	--- passive marker entity: the contents live in the runtime (scripts/fork-me-fluids.lua)
+	--- the old fluid drive entity: hidden, kept so saves load it (the migration replaces it)
 	data:extend({ {
 		type = "simple-entity-with-force",
 		name = drive,
@@ -139,21 +121,17 @@ for i, c in ipairs(CELLS) do
 		flags = { "placeable-neutral", "player-creation" },
 		minable = { mining_time = 0.2, result = drive },
 		max_health = 400,
-		--- a simple-entity-with-force is a military target by default; the drive is a chest-like
-		--- passive block (the ME Drive is a logistic container, which is no target either)
 		is_military_target = false,
 		corpse = "small-remnants",
 		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
 		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
-		selection_priority = 60,
 		picture = {
 			filename = ENTITY_PATH .. drive .. ".png",
 			priority = "extra-high",
 			width = 32, height = 32,
 		},
-		fast_replaceable_group = "me-fluid-drive",
-		next_upgrade = CELLS[i + 1] and ("me-fluid-drive-" .. CELLS[i + 1].tier) or nil,
-		localised_description = { "entity-description.fork-me-fluid-drive", tostring(c.capacity), c.tier },
+		hidden = true,
+		localised_name = { "entity-name.fork-me-legacy", { "item-name." .. drive } },
 	} })
 end
 
@@ -222,6 +200,61 @@ data:extend({ {
 
 
 --------------------------------------------------------------------------------
+--- ME FLUID IMPORT / EXPORT / STORAGE BUS (rotatable, like the item buses of 120; the fluid storage bus makes the
+--- fluid segment of the tank it faces network storage, runtime: scripts/fork-me-fluid-storagebus.lua)
+--------------------------------------------------------------------------------
+
+local function four_way(name)
+	local out = {}
+	for _, dir in pairs({ "north", "east", "south", "west" }) do
+		out[dir] = { filename = ENTITY_PATH .. name .. "-" .. dir .. ".png", priority = "extra-high", width = 32, height = 32 }
+	end
+	return out
+end
+
+for _, bus in pairs({
+	{ name = IMPORT_BUS, base = "me-import-bus", order = "h2" },
+	{ name = EXPORT_BUS, base = "me-export-bus", order = "h3" },
+	{ name = STORAGE_BUS, base = "me-storage-bus", order = "h4" },
+}) do
+	create_item{
+		name = bus.name,
+		icon = ICON_FORK .. bus.name .. ".png",
+		category = "hv-assembling-machine-recipes",
+		subgroup = "fork-me-network",
+		order = bus.order,
+		energy_required = 10 * HV_SPEED,
+		stack_size = 50,
+		place_result = bus.name,
+		ingredients = {
+			{ type = "item", name = bus.base, amount = 1 },
+			{ type = "item", name = "hv-pump", amount = 1 },
+			{ type = "item", name = "pipe", amount = 2 },
+		},
+	}
+	data:extend({ {
+		type = "simple-entity-with-force",
+		name = bus.name,
+		icon = ICON_FORK .. bus.name .. ".png",
+		icon_size = 32,
+		flags = { "placeable-neutral", "player-creation" },
+		minable = { mining_time = 0.2, result = bus.name },
+		placeable_by = { item = bus.name, count = 1 },
+		max_health = 200,
+		is_military_target = false,
+		corpse = "small-remnants",
+		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+		selection_priority = 60,
+		picture = four_way(bus.name),
+		additional_pastable_entities = { bus.name },
+		localised_description = { "entity-description." .. bus.name },
+	} })
+end
+
+
+
+--------------------------------------------------------------------------------
 --- MOD DATA (read by scripts/fork-me-fluids.lua: no duplicated numbers)
 --------------------------------------------------------------------------------
 
@@ -229,7 +262,6 @@ data:extend({ {
 	type = "mod-data",
 	name = "fork-me-fluids",
 	data = {
-		drives = drive_capacity,
 		interface = { name = INTERFACE, volume = INTERFACE_VOLUME },
 	},
 } })
@@ -272,19 +304,11 @@ local function tech(def)
 	} })
 end
 
-local function drive_recipes(tier)
-	return "me-" .. tier .. "-fluid-storage-cell", "me-fluid-drive-" .. tier, "me-fluid-drive-" .. tier .. "-disassembly"
-end
+--- EV: fluid cells up to 64k, the fluid interface, the fluid buses (import, export, storage)
+tech{ name = "me-fluid-storage", prerequisites = { "me-autocrafting" }, packs = 5, count = 600, recipes = {
+	INTERFACE, IMPORT_BUS, EXPORT_BUS, STORAGE_BUS, "me-1k-fluid-storage-cell", "me-4k-fluid-storage-cell",
+	"me-16k-fluid-storage-cell", "me-64k-fluid-storage-cell" } }
 
---- EV: fluid cells and drives up to 64k, the fluid interface
-local ev = { INTERFACE }
-for _, t in pairs({ "1k", "4k", "16k", "64k" }) do
-	for _, r in pairs({ drive_recipes(t) }) do ev[#ev + 1] = r end
-end
-tech{ name = "me-fluid-storage", prerequisites = { "me-autocrafting" }, packs = 5, count = 600, recipes = ev }
-
---- IV: 256k fluid cells and drives
-local iv = {}
-for _, r in pairs({ drive_recipes("256k") }) do iv[#iv + 1] = r end
+--- IV: 256k fluid cells
 tech{ name = "me-fluid-storage-256k", prerequisites = { "me-fluid-storage", "me-storage-256k" },
-	packs = 6, count = 800, recipes = iv }
+	packs = 6, count = 800, recipes = { "me-256k-fluid-storage-cell" } }

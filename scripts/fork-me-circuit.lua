@@ -5,9 +5,9 @@
 ---     less, it starts a crafting job for the difference (scripts/fork-me-autocraft.lua), provided a
 ---     pattern exists and a powered CPU has a free job slot. It starts no second job while a job of
 ---     that network crafts the same resource (its own or anyone's). The lamp's circuit condition
----     (native lamp GUI, copied and blueprinted by the game) switches it off; "amount from the circuit"
+---     (kept on the lamp entity, copied and blueprinted by the game) switches it off; "amount from the circuit"
 ---     takes the target amount from the signal of the resource on its wires. Resource, amount and the
----     circuit option are set in a panel next to the lamp GUI.
+---     circuit option are set in its ME window (scripts/fork-me-windows.lua), which also edits the condition.
 ---   * ME Circuit Interface: a constant combinator. The runtime writes its first section: every item
 ---     (with its quality) and fluid of its ME network, or only the filtered resources. Other sections
 ---     are removed, so the output always equals the network contents.
@@ -16,13 +16,14 @@
 --- Work per autocrafting step (every 20 ticks, a step hook of fork-me-autocraft.lua): MAINTAINERS_PER_STEP
 --- maintainer checks and at most STARTS_PER_STEP job starts (a start plans with a provider rescan; a
 --- maintainer whose start failed waits RETRY_TICKS), CIRCUITS_PER_STEP interface updates, both round
---- robin, and the open panels. Nothing runs per tick.
+--- robin. Nothing runs per tick.
 --- State: storage.fork_ae2.maintainers, mlist, mcursor, circuits, clist, ccursor (created lazily, so
 --- older saves need nothing). GUI state lives in the GUI elements (tags).
 --------------------------------------------------------------------------------
 
 local autocraft = require("scripts.fork-me-autocraft")
 local fluids = require("scripts.fork-me-fluids")
+local N = require("scripts.fork-me-network")
 
 local M = {}
 
@@ -35,7 +36,6 @@ local MAX_SIGNALS = 1000            -- per circuit interface, the largest amount
 local MAX_FILTERS = 20
 local SIGNAL_MAX = 2147483647       -- signals are 32 bit
 local MAINT_TAG, CIRCUIT_TAG = "fork_me_maintainer", "fork_me_circuit"
-local MAINT_FRAME, CIRCUIT_FRAME = "fork_me_maintainer", "fork_me_circuit"
 local WIRES = { defines.wire_connector_id.circuit_red, defines.wire_connector_id.circuit_green }
 
 local is_fluid, fluid_name = autocraft.is_fluid, autocraft.fluid_name
@@ -59,8 +59,9 @@ local function state()
 	return s
 end
 
+--- the working ME network of an entity (scripts/fork-me-network.lua)
 local function network_of(entity)
-	return entity.surface.find_logistic_network_by_position(entity.position, entity.force)
+	return N.active_of(entity)
 end
 
 local function remove_value(list, value)
@@ -92,7 +93,7 @@ end
 --- what the network holds of a key (normal quality items)
 local function stock_of(net, key)
 	if is_fluid(key) then return fluids.count(net, fluid_name(key)) end
-	return net.get_item_count{ name = key, quality = "normal" }
+	return N.count(net, key, "normal")
 end
 
 --- the sum of the key's signal on the red and green wire
@@ -225,10 +226,17 @@ end
 --- the signals of a network: { { type, name, quality, count } }, largest first, at most MAX_SIGNALS;
 --- `filter` (key -> true) limits them to those resources
 local function network_signals(net, filter)
-	local out = {}
-	for _, c in pairs(net.get_contents()) do
+	local out, by_item = {}, {}
+	for _, c in pairs(N.contents(net)) do          -- items with tags count under their item and quality
 		if not filter or filter[c.name] then
-			out[#out + 1] = { type = "item", name = c.name, quality = c.quality or "normal", count = c.count }
+			local k = c.name .. "@" .. c.quality
+			local sig = by_item[k]
+			if sig then sig.count = sig.count + c.count
+			else
+				sig = { type = "item", name = c.name, quality = c.quality, count = c.count }
+				by_item[k] = sig
+				out[#out + 1] = sig
+			end
 		end
 	end
 	for name, amount in pairs(fluids.totals(net)) do
@@ -270,7 +278,7 @@ local function circuit_step(rec)
 	end
 	section.filters = filters
 	rec.signals = #filters
-	rec.net = net and net.network_id or nil
+	rec.net = net and net.id or nil
 end
 
 --- Set the filter of an interface: a list of keys (items, "fluid/<name>"), empty for everything
@@ -298,38 +306,13 @@ function M.get_circuit(entity)
 end
 
 --------------------------------------------------------------------------------
---- panels (relative to the lamp GUI of the maintainer and the combinator GUI of the interface)
+--- the windows' logic (the windows themselves: scripts/fork-me-windows.lua, issue #68 step R3)
 --------------------------------------------------------------------------------
 
-local function find(root, name)
-	local queue, i = { root }, 1
-	while queue[i] do
-		for _, child in pairs(queue[i].children) do
-			if child.name == name then return child end
-			queue[#queue + 1] = child
-		end
-		i = i + 1
-	end
-end
-
-local function frame_record(el, frame_name, list)
-	local frame = el
-	while frame and frame.valid and frame.name ~= frame_name do frame = frame.parent end
-	if not (frame and frame.valid) then return nil end
-	local unit = frame.tags and frame.tags.unit
-	local s = storage.fork_ae2
-	local rec = unit and s and s[list] and s[list][unit]
-	if not (rec and rec.entity.valid) then return nil end
-	return rec, frame
-end
-
-local function describe(key)
-	local d = key and autocraft.describe(key)
-	return d and d.localised_name or ""
-end
-
-local function maintainer_status(rec)
-	local st = rec.status or "no-target"
+--- the maintainer's status as a LocalisedString
+function M.maintainer_status(entity)
+	local rec = M.get_maintainer(entity)
+	local st = rec and rec.status or "no-target"
 	if st == "running" then
 		local j = rec.job and autocraft.job(rec.job)
 		return { "fork-me-circuit.maintainer-running", rec.job or "?", j and j.done or 0, j and j.total or 0 }
@@ -339,199 +322,52 @@ local function maintainer_status(rec)
 	return { "fork-me-circuit.maintainer-" .. st }
 end
 
-local function maintainer_gui_refresh(frame, rec)
-	if not (frame and frame.valid and rec.entity.valid) then return end
-	local button = find(frame, "fork_mem_target")
-	local want = rec.key and signal_of(rec.key) or nil
-	local have = button.elem_value
-	if (have and have.name) ~= (want and want.name) or (have and have.type or "item") ~= (want and want.type or "item") then
-		button.elem_value = want
-	end
-	local amount = find(frame, "fork_mem_amount")
-	if tonumber(amount.text) ~= rec.amount then amount.text = tostring(rec.amount) end
-	amount.enabled = not rec.circuit
-	local check = find(frame, "fork_mem_circuit")
-	if check.state ~= rec.circuit then check.state = rec.circuit end
-	local stock = find(frame, "fork_mem_stock")
-	if rec.key and rec.stock then
-		stock.caption = { "fork-me-circuit.maintainer-stock", fluids.format(rec.stock), fluids.format(rec.target or 0), describe(rec.key) }
-	else
-		stock.caption = ""
-	end
-	find(frame, "fork_mem_status").caption = maintainer_status(rec)
+local COMPARATORS = { ">", "<", "=", ">=", "<=", "!=" }
+M.COMPARATORS = COMPARATORS
+
+--- The maintainer's on/off condition (the lamp's circuit condition, kept on the entity, so the game copies it
+--- with blueprints and settings paste): { enabled, signal = SignalID or nil, comparator, constant }
+function M.get_condition(entity)
+	if not (entity and entity.valid and entity.name == MAINTAINER) then return nil end
+	local cb = entity.get_or_create_control_behavior()
+	local c = cb.circuit_condition or {}
+	return { enabled = cb.circuit_enable_disable, signal = c.first_signal, comparator = c.comparator or ">",
+		constant = c.constant or 0 }
 end
 
-local function open_maintainer_gui(player, entity)
+--- Set the condition; nil arguments stay as they are (`signal = false` clears the signal)
+function M.set_condition(entity, enabled, signal, comparator, constant)
+	if not (entity and entity.valid and entity.name == MAINTAINER) then return false end
+	local cb = entity.get_or_create_control_behavior()
+	if enabled ~= nil then cb.circuit_enable_disable = enabled and true or false end
+	local c = cb.circuit_condition or {}
+	local cond = { first_signal = c.first_signal, comparator = c.comparator or ">", constant = c.constant or 0 }
+	if signal ~= nil then cond.first_signal = signal or nil end
+	if comparator ~= nil then
+		for _, v in pairs(COMPARATORS) do if v == comparator then cond.comparator = v end end
+	end
+	if constant ~= nil then cond.constant = math.floor(tonumber(constant) or 0) end
+	cb.circuit_condition = cond
 	local rec = maintainer_record(state(), entity)
-	local rel = player.gui.relative
-	if rel[MAINT_FRAME] then rel[MAINT_FRAME].destroy() end
-	local frame = rel.add{
-		type = "frame", name = MAINT_FRAME, direction = "vertical", caption = { "fork-me-circuit.maintainer-title" },
-		anchor = { gui = defines.relative_gui_type.lamp_gui, position = defines.relative_gui_position.right, names = { MAINTAINER } },
-		tags = { unit = entity.unit_number },
-	}
-	local help = frame.add{ type = "label", caption = { "fork-me-circuit.maintainer-help" } }
-	help.style.single_line = false
-	help.style.maximal_width = 300
-	local row = frame.add{ type = "flow", direction = "horizontal" }
-	row.style.vertical_align = "center"
-	row.add{ type = "label", caption = { "fork-me-circuit.maintainer-keep" } }
-	row.add{ type = "choose-elem-button", name = "fork_mem_target", elem_type = "signal", signal = rec.key and signal_of(rec.key) or nil }
-	local amount = row.add{ type = "textfield", name = "fork_mem_amount", text = tostring(rec.amount), numeric = true,
-		allow_decimal = false, allow_negative = false, lose_focus_on_confirm = true }
-	amount.style.width = 90
-	frame.add{ type = "checkbox", name = "fork_mem_circuit", state = rec.circuit, caption = { "fork-me-circuit.maintainer-circuit" },
-		tooltip = { "fork-me-circuit.maintainer-circuit-tooltip" } }
-	local stock = frame.add{ type = "label", name = "fork_mem_stock" }
-	stock.style.single_line = false
-	stock.style.maximal_width = 300
-	local status = frame.add{ type = "label", name = "fork_mem_status" }
-	status.style.single_line = false
-	status.style.maximal_width = 300
-	maintainer_gui_refresh(frame, rec)
-end
-
-local function circuit_gui_refresh(frame, rec)
-	if not (frame and frame.valid and rec.entity.valid) then return end
-	for i = 1, MAX_FILTERS do
-		local button = find(frame, "fork_mec_filter_" .. i)
-		local key = rec.filters[i]
-		local want = key and signal_of(key) or nil
-		local have = button.elem_value
-		if (have and have.name) ~= (want and want.name) or (have and have.type or "item") ~= (want and want.type or "item") then
-			button.elem_value = want
-		end
-	end
-	local status = find(frame, "fork_mec_status")
-	if not network_of(rec.entity) then
-		status.caption = { "fork-me-circuit.circuit-no-network" }
-	else
-		status.caption = { #rec.filters > 0 and "fork-me-circuit.circuit-filtered" or "fork-me-circuit.circuit-all", rec.signals or 0 }
-	end
-end
-
-local function open_circuit_gui(player, entity)
-	local rec = circuit_record(state(), entity)
-	local rel = player.gui.relative
-	if rel[CIRCUIT_FRAME] then rel[CIRCUIT_FRAME].destroy() end
-	local frame = rel.add{
-		type = "frame", name = CIRCUIT_FRAME, direction = "vertical", caption = { "fork-me-circuit.circuit-title" },
-		anchor = { gui = defines.relative_gui_type.constant_combinator_gui, position = defines.relative_gui_position.right, names = { CIRCUIT } },
-		tags = { unit = entity.unit_number },
-	}
-	local help = frame.add{ type = "label", caption = { "fork-me-circuit.circuit-help" } }
-	help.style.single_line = false
-	help.style.maximal_width = 300
-	local grid = frame.add{ type = "table", column_count = 5 }
-	for i = 1, MAX_FILTERS do
-		local key = rec.filters[i]
-		grid.add{ type = "choose-elem-button", name = "fork_mec_filter_" .. i, elem_type = "signal",
-			signal = key and signal_of(key) or nil, tags = { fork_mec_filter = i } }
-	end
-	local status = frame.add{ type = "label", name = "fork_mec_status" }
-	status.style.single_line = false
-	status.style.maximal_width = 300
-	circuit_gui_refresh(frame, rec)
-end
-
-local function refresh_panels()
-	for _, player in pairs(game.connected_players) do
-		local rel = player.gui.relative
-		local f = rel[MAINT_FRAME]
-		if f then
-			local rec = frame_record(f, MAINT_FRAME, "maintainers")
-			if rec then maintainer_gui_refresh(f, rec) else f.destroy() end
-		end
-		f = rel[CIRCUIT_FRAME]
-		if f then
-			local rec = frame_record(f, CIRCUIT_FRAME, "circuits")
-			if rec then circuit_gui_refresh(f, rec) else f.destroy() end
-		end
-	end
-end
-
---- GUI events, routed by the terminal module (one handler per event); true when handled
-function M.on_gui_opened(event)
-	local e = event.entity
-	if not (event.gui_type == defines.gui_type.entity and e and e.valid) then return false end
-	local player = game.get_player(event.player_index)
-	if e.name == MAINTAINER then open_maintainer_gui(player, e) return true end
-	if e.name == CIRCUIT then open_circuit_gui(player, e) return true end
-	return false
-end
-
-function M.on_gui_closed(event)
-	local e = event.entity
-	if not (event.gui_type == defines.gui_type.entity and e and e.valid) then return false end
-	local player = game.get_player(event.player_index)
-	local name = e.name == MAINTAINER and MAINT_FRAME or e.name == CIRCUIT and CIRCUIT_FRAME or nil
-	if not (name and player) then return false end
-	if player.gui.relative[name] then player.gui.relative[name].destroy() end
+	rec.retry = nil
 	return true
 end
 
-function M.on_gui_elem_changed(event)
-	local el = event.element
-	if not (el and el.valid) then return false end
-	if el.name == "fork_mem_target" then
-		local rec, frame = frame_record(el, MAINT_FRAME, "maintainers")
-		if rec then
-			local key = key_of_signal(el.elem_value)
-			if el.elem_value and not key then el.elem_value = nil end      -- virtual signals: no resource
-			M.set_maintainer(rec.entity, key or false)
-			maintainer_gui_refresh(frame, rec)
-		end
-		return true
-	end
-	local index = el.tags and el.tags.fork_mec_filter
-	if index then
-		local rec, frame = frame_record(el, CIRCUIT_FRAME, "circuits")
-		if rec then
-			local key = key_of_signal(el.elem_value)
-			if el.elem_value and not key then el.elem_value = nil end
-			local keys = {}
-			for i = 1, MAX_FILTERS do
-				local k = i == index and key or rec.filters[i]
-				if k then keys[#keys + 1] = k end
-			end
-			M.set_circuit_filters(rec.entity, keys)
-			circuit_gui_refresh(frame, rec)
-		end
-		return true
-	end
-	return false
+--- the circuit interface's output switch (the combinator's own on/off)
+function M.get_circuit_enabled(entity)
+	if not (entity and entity.valid and entity.name == CIRCUIT) then return nil end
+	return entity.get_or_create_control_behavior().enabled
 end
 
-function M.on_gui_text_changed(event)
-	local el = event.element
-	if not (el and el.valid and el.name == "fork_mem_amount") then return false end
-	local rec = frame_record(el, MAINT_FRAME, "maintainers")
-	if rec and tonumber(el.text) then M.set_maintainer(rec.entity, nil, el.text) end
+function M.set_circuit_enabled(entity, on)
+	if not (entity and entity.valid and entity.name == CIRCUIT) then return false end
+	entity.get_or_create_control_behavior().enabled = on and true or false
 	return true
 end
 
-function M.on_gui_confirmed(event)
-	local el = event.element
-	if not (el and el.valid and el.name == "fork_mem_amount") then return false end
-	local rec, frame = frame_record(el, MAINT_FRAME, "maintainers")
-	if rec then
-		M.set_maintainer(rec.entity, nil, el.text)
-		el.text = tostring(rec.amount)
-		maintainer_gui_refresh(frame, rec)
-	end
-	return true
-end
-
-function M.on_gui_checked_state_changed(event)
-	local el = event.element
-	if not (el and el.valid and el.name == "fork_mem_circuit") then return false end
-	local rec, frame = frame_record(el, MAINT_FRAME, "maintainers")
-	if rec then
-		M.set_maintainer(rec.entity, nil, nil, el.state)
-		maintainer_gui_refresh(frame, rec)
-	end
-	return true
-end
+--- the SignalID of a resource key and the key of a SignalID (for the windows' signal buttons)
+M.signal_of = signal_of
+M.key_of_signal = key_of_signal
 
 --------------------------------------------------------------------------------
 --- step (a hook of the autocrafting step, every 20 ticks)
@@ -571,7 +407,6 @@ local function on_step(s)
 			if #s.clist == 0 then break end
 		end
 	end
-	refresh_panels()
 end
 autocraft.step_hooks[#autocraft.step_hooks + 1] = on_step
 
@@ -619,7 +454,6 @@ function M.on_entity_settings_pasted(event)
 	else
 		return
 	end
-	refresh_panels()
 end
 
 --- blueprint hook of the autocrafting module: the settings as entity tags
@@ -641,7 +475,7 @@ end
 autocraft.blueprint_hooks[#autocraft.blueprint_hooks + 1] = tag_blueprint
 
 --- Rebuild the registries from the world; settings are kept by unit number, resources that no longer
---- exist are dropped, open panels are closed.
+--- exist are dropped.
 function M.on_configuration_changed()
 	local s = state()
 	local old_m, old_c = s.maintainers, s.circuits
@@ -672,11 +506,6 @@ function M.on_configuration_changed()
 	end
 	table.sort(s.mlist)
 	table.sort(s.clist)
-	for _, player in pairs(game.players) do
-		for _, name in pairs({ MAINT_FRAME, CIRCUIT_FRAME }) do
-			if player.gui.relative[name] then player.gui.relative[name].destroy() end
-		end
-	end
 end
 
 --- Other mods and the devcheck runtime test use the same code paths. Keys are item names or
@@ -690,6 +519,14 @@ remote.add_interface("gregtorio-me-circuit", {
 	set_circuit_filters = function(entity, keys) return M.set_circuit_filters(entity, keys) end,
 	--- { filters, signals = number of signals written, network = network id }
 	get_circuit = function(entity) return M.get_circuit(entity) end,
+	--- the windows (R3): the maintainer's circuit condition, the circuit interface's output switch, the status
+	get_condition = function(entity) return M.get_condition(entity) end,
+	set_condition = function(entity, enabled, signal, comparator, constant)
+		return M.set_condition(entity, enabled, signal, comparator, constant)
+	end,
+	get_circuit_enabled = function(entity) return M.get_circuit_enabled(entity) end,
+	set_circuit_enabled = function(entity, on) return M.set_circuit_enabled(entity, on) end,
+	maintainer_status = function(entity) return M.maintainer_status(entity) end,
 	--- writes the signals of an interface now (what the step does)
 	update_circuit = function(entity)
 		if not (entity and entity.valid and entity.name == CIRCUIT) then return false end

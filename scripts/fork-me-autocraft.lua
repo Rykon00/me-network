@@ -3,7 +3,7 @@
 ---
 --- Patterns: a Pattern Provider looks at the machines next to it (assembling machine or furnace,
 ---   i.e. Molecular Assembler, any GT machine). The recipe such a machine has set is a pattern
----   of the ME network (= logistic network) the provider stands in. Recipes with fluids work when
+---   of the ME network the provider is connected to (scripts/fork-me-network.lua). Recipes with fluids work when
 ---   the machine's fluid boxes are not connected to pipes (the network fills and drains them);
 ---   machines the network cannot use are counted per reason (see machine_problem).
 --- Furnaces have no recipe setting: the provider holds a recipe choice (its GUI, opened with the
@@ -33,6 +33,7 @@
 --------------------------------------------------------------------------------
 
 local fluids = require("scripts.fork-me-fluids")
+local N = require("scripts.fork-me-network")
 
 local M = {}
 
@@ -150,13 +151,9 @@ local function remove_value(list, value)
 	end
 end
 
-local function network_at(surface, position, force)
-	if not (surface and force) then return nil end
-	return surface.find_logistic_network_by_position(position, force)
-end
-
+--- the working ME network of an entity (nil when it is no member or the network is off)
 local function network_of(entity)
-	return network_at(entity.surface, entity.position, entity.force)
+	return N.active_of(entity)
 end
 
 --------------------------------------------------------------------------------
@@ -300,7 +297,7 @@ end
 local function scan_provider(p)
 	local e = p.entity
 	local machines, seen, ignored, sig = {}, {}, { total = 0 }, {}
-	local net = network_of(e)
+	local net = N.network_of(e)                  -- patterns are kept while the network is off, jobs wait
 	for _, d in pairs(NEIGHBORS) do
 		local found = e.surface.find_entities_filtered{
 			position = { e.position.x + d[1], e.position.y + d[2] },
@@ -313,8 +310,7 @@ local function scan_provider(p)
 				local chosen = furnace_choice(m, p.recipe)
 				local name = machine_recipe(m, chosen)
 				local proto = name and prototypes.recipe[name]
-				local mnet = (proto or m.type == "furnace") and network_of(m)
-				local inside = net and mnet and mnet.network_id == net.network_id   -- machines outside the network are ignored
+				local inside = net ~= nil                  -- a provider outside any network makes no pattern
 				if inside and not proto then                -- a furnace without a choice that never smelted
 					ignored.total = ignored.total + 1
 					ignored["no-recipe"] = (ignored["no-recipe"] or 0) + 1
@@ -334,8 +330,8 @@ local function scan_provider(p)
 		end
 	end
 	table.sort(sig)
-	sig = (net and net.network_id or "-") .. "|" .. table.concat(sig, ",")
-	p.machines, p.ignored, p.net = machines, ignored, net and net.network_id or nil
+	sig = (net and net.id or "-") .. "|" .. table.concat(sig, ",")
+	p.machines, p.ignored, p.net = machines, ignored, net and net.id or nil
 	if p.sig ~= sig then
 		p.sig = sig
 		state().dirty = true
@@ -386,17 +382,26 @@ local function rebuild_patterns(s)
 	s.dirty = false
 end
 
-local function ensure_patterns(s)
-	if s.dirty then rebuild_patterns(s) end
-	return s.patterns
-end
-
 --- rescan every provider (before starting a job: patterns must be current)
 local function refresh_providers(s)
 	for _, unit in pairs(shallow(s.plist)) do
 		local p = s.providers[unit]
 		if p and p.entity.valid then scan_provider(p) else drop_provider(s, unit) end
 	end
+end
+
+--- the patterns of every network; a change of the ME graph (networks joined or split) rescans the providers
+local function ensure_patterns(s)
+	if s.graph_dirty then
+		s.graph_dirty = nil
+		refresh_providers(s)
+	end
+	if s.dirty then rebuild_patterns(s) end
+	return s.patterns
+end
+N.change_hooks[#N.change_hooks + 1] = function()
+	local s = storage.fork_ae2
+	if s then s.graph_dirty = true end
 end
 
 --- bounded slice of the round robin rescan
@@ -430,8 +435,8 @@ end
 
 local function stock_of(net)
 	local stock = {}
-	for _, c in pairs(net.get_contents()) do
-		if (c.quality or QUALITY) == QUALITY and plain_item(c.name) then stock[c.name] = (stock[c.name] or 0) + c.count end
+	for name, count in pairs(N.plain_counts(net)) do
+		if plain_item(name) then stock[name] = count end
 	end
 	for name, amount in pairs(fluids.totals(net)) do
 		stock[FLUID_PREFIX .. name] = amount
@@ -552,7 +557,7 @@ end
 --- Returns { ok, missing = {key -> count}, loops = {key -> true}, steps = { {recipe, runs} },
 --- reserve = {key -> count taken from storage}, runs, too_complex }
 local function make_plan(s, net, key, amount)
-	local patterns = ensure_patterns(s)[net.network_id] or { items = {}, machines = {}, ignored = { total = 0 } }
+	local patterns = ensure_patterns(s)[net.id] or { items = {}, machines = {}, ignored = { total = 0 } }
 	local ctx = {
 		patterns = patterns, stock = stock_of(net), surplus = {}, reserve = {}, missing = {}, loops = {},
 		steps = {}, order = {}, missing_n = 0, nodes = 0,
@@ -608,8 +613,8 @@ local function cpus_in(s, net)
 	local list = {}
 	for unit, rec in pairs(s.cpus) do
 		if rec.entity.valid then
-			local n = network_of(rec.entity)
-			if n and n.network_id == net.network_id then list[#list + 1] = rec end
+			local n = N.network_of(rec.entity)
+			if n and n.id == net.id then list[#list + 1] = rec end
 		else
 			s.cpus[unit] = nil
 		end
@@ -627,8 +632,22 @@ end
 --- jobs
 --------------------------------------------------------------------------------
 
+--- the working network of a job: that of its CPU, else of the entity it was started at, else of the ME member at
+--- its position (jobs of older saves)
 local function job_network(job)
-	return network_at(game.get_surface(job.surface), job.pos, game.forces[job.force])
+	local s = state()
+	local rec = job.cpu and s.cpus[job.cpu]
+	if rec and rec.entity.valid and N.network_of(rec.entity) then return N.active_of(rec.entity) end
+	if job.anchor and job.anchor.valid and N.network_of(job.anchor) then return N.active_of(job.anchor) end
+	local surface = game.get_surface(job.surface)
+	if not (surface and job.pos) then return nil end
+	for _, e in pairs(surface.find_entities_filtered{ position = job.pos, name = N.node_names() }) do
+		if N.network_of(e) then
+			job.anchor = e
+			return N.active_of(e)
+		end
+	end
+	return nil
 end
 
 local function pool_add(job, key, count)
@@ -645,7 +664,7 @@ local function flush_pool(job, net)
 			if is_fluid(key) then
 				inserted = fluids.insert(net, fluid_name(key), count)
 			else
-				inserted = net.insert{ name = key, count = count, quality = QUALITY }
+				inserted = N.insert(net, key, QUALITY, count)
 			end
 		end
 		if inserted >= count - FLUID_EPS then job.pool[key] = nil else job.pool[key] = count - inserted end
@@ -663,7 +682,7 @@ local function collect_output(job, net, machine, map)
 				if (c.quality or QUALITY) == QUALITY then
 					pool_add(job, c.name, removed)
 				else
-					local inserted = net and net.insert{ name = c.name, count = removed, quality = c.quality } or 0
+					local inserted = net and N.insert(net, c.name, c.quality, removed) or 0
 					if inserted < removed then      -- no room: put it back, the machine keeps it
 						out.insert{ name = c.name, count = removed - inserted, quality = c.quality }
 					end
@@ -836,7 +855,7 @@ end
 
 --- an idle pattern machine for the recipe, its fluid map and the furnace choice it was found with
 local function find_machine(s, net, recipe, proto)
-	local net_patterns = ensure_patterns(s)[net.network_id]
+	local net_patterns = ensure_patterns(s)[net.id]
 	local list = net_patterns and net_patterns.machines[recipe]
 	if not list then return nil end
 	for _, m in pairs(list) do
@@ -1019,7 +1038,7 @@ local function job_step(s, job, work)
 						else
 							local short = ing.amount - (job.pool[key] or 0)
 							if short > 0 then
-								local got = net.remove_item{ name = ing.name, count = short, quality = QUALITY }
+								local got = N.extract(net, ing.name, QUALITY, short)
 								if got > 0 then pool_add(job, key, got) job.idle = 0 end
 							end
 						end
@@ -1083,7 +1102,7 @@ script.on_nth_tick(STEP_TICKS, on_step)
 --- table of pattern machines the network cannot use: { total = n, [reason] = n }
 function M.craftable(net)
 	local s = state()
-	local p = ensure_patterns(s)[net.network_id]
+	local p = ensure_patterns(s)[net.id]
 	if not p then return {}, { total = 0 } end
 	local keys = {}
 	for key in pairs(p.items) do
@@ -1133,7 +1152,7 @@ function M.active_job_for(net, key)
 		local job = s.jobs[id]
 		if job and job.item == key and not job.closing then
 			local jn = job_network(job)
-			if jn and jn.network_id == net.network_id then return id end
+			if jn and jn.id == net.id then return id end
 		end
 	end
 	return nil
@@ -1169,7 +1188,7 @@ function M.start(entity, key, amount, owner)
 	local pool, taken = {}, {}
 	local function undo()
 		for _, k in pairs(taken) do
-			if is_fluid(k) then fluids.insert(net, fluid_name(k), pool[k]) else net.insert{ name = k, count = pool[k], quality = QUALITY } end
+			if is_fluid(k) then fluids.insert(net, fluid_name(k), pool[k]) else N.insert(net, k, QUALITY, pool[k]) end
 		end
 	end
 	for k, count in pairs(plan.reserve) do
@@ -1177,7 +1196,7 @@ function M.start(entity, key, amount, owner)
 		if is_fluid(k) then
 			removed = fluids.remove(net, fluid_name(k), count + FLUID_MARGIN)   -- a little extra covers fixed point rounding
 		else
-			removed = net.remove_item{ name = k, count = count, quality = QUALITY }
+			removed = N.extract(net, k, QUALITY, count)
 		end
 		if removed > 0 then pool[k] = removed taken[#taken + 1] = k end
 		if removed + FLUID_EPS < count then                     -- storage changed under us: undo
@@ -1196,7 +1215,7 @@ function M.start(entity, key, amount, owner)
 		id = id, item = key, amount = amount, status = "queued", steps = steps, pool = pool, leases = {},
 		total_runs = total, done_runs = 0, idle = 0, tick = game.tick,
 		surface = entity.surface.index, force = entity.force.index,
-		pos = { x = entity.position.x, y = entity.position.y }, owner = owner,
+		pos = { x = entity.position.x, y = entity.position.y }, owner = owner, anchor = entity,
 	}
 	s.active[#s.active + 1] = id
 	assign_cpus(s)
@@ -1227,7 +1246,7 @@ function M.jobs(net)
 		local job = s.jobs[id]
 		if job then
 			local jn = job_network(job)
-			if jn and jn.network_id == net.network_id then
+			if jn and jn.id == net.id then
 				local status = job.status
 				if job.closing then status = job.closing == "done" and "delivering" or "cancelling" end
 				out[#out + 1] = {
@@ -1294,7 +1313,6 @@ end
 --------------------------------------------------------------------------------
 
 local TAG = "fork_ae2_recipe"                -- blueprint tag of a provider's choice
-local GUI_FRAME = "fork_ae2_provider"
 
 local function register(s, entity)
 	if entity.name == PROVIDER then
@@ -1389,92 +1407,54 @@ function M.recipe_options(entity)
 	return names, shared
 end
 
---- provider GUI: the recipe of the furnaces next to it
-
-local function gui_close(player)
-	local frame = player.gui.screen[GUI_FRAME]
-	if frame then frame.destroy() end
+--- The pattern provider window's data: the machines next to it (name, recipe or the reason they are no
+--- pattern), the recipe choice for furnaces and its options.
+function M.provider_info(entity)
+	local p = provider_record(entity)
+	if not p then return nil end
+	scan_provider(p)
+	local machines = {}
+	for _, m in pairs(p.machines or {}) do
+		if m.entity.valid then
+			machines[#machines + 1] = { name = m.entity.name, unit = m.unit, recipe = m.recipe, chosen = m.chosen ~= nil }
+		end
+	end
+	table.sort(machines, function(a, b) return a.unit < b.unit end)
+	local options, shared = M.recipe_options(entity)
+	local ignored = {}
+	for reason, n in pairs(p.ignored or {}) do if reason ~= "total" then ignored[reason] = n end end
+	return { machines = machines, ignored = ignored, choice = p.recipe, furnaces = #furnaces_next_to(entity),
+		options = options, shared = shared, network = p.net ~= nil }
 end
 
-local function gui_refresh(player, entity)
-	local frame = player.gui.screen[GUI_FRAME]
-	if not (frame and entity.valid) then return end
-	local choice = M.get_recipe(entity)
-	local furnaces = furnaces_next_to(entity)
-	local body = frame.fork_ae2_body
-	body.clear()
-	local info = body.add{ type = "label", caption = #furnaces > 0 and { "fork-me-provider.info", #furnaces } or { "fork-me-provider.no-furnace" } }
-	info.style.single_line = false
-	info.style.maximal_width = 420
-	local row = body.add{ type = "flow", direction = "horizontal" }
-	row.style.vertical_align = "center"
-	local proto = choice and prototypes.recipe[choice]
-	row.add{ type = "label", caption = proto and { "fork-me-provider.current", proto.localised_name } or { "fork-me-provider.current-none" } }
-	if choice then
-		row.add{ type = "button", caption = { "fork-me-provider.clear" }, tags = { fork_ae2_provider_clear = true },
-			tooltip = { "fork-me-provider.clear-tooltip" } }
-	end
-	if #furnaces == 0 then return end
-	local names, shared = M.recipe_options(entity)
-	if #names == 0 then
-		body.add{ type = "label", caption = { "fork-me-provider.no-recipes" } }
-		return
-	end
-	local scroll = body.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
-	scroll.style.maximal_height = 400
-	local grid = scroll.add{ type = "table", column_count = 10 }
-	for _, name in pairs(names) do
-		local r = prototypes.recipe[name]
-		local tooltip = shared[name] and { "", r.localised_name, "\n", { "fork-me-provider.shared-input" } } or r.localised_name
-		grid.add{ type = "sprite-button", sprite = "recipe/" .. name, style = name == choice and "yellow_slot_button" or "slot_button",
-			tooltip = tooltip, tags = { fork_ae2_provider_recipe = name } }
-	end
+--- the pattern provider window's recipe button: choose it, or clear the choice when it is chosen already
+function M.toggle_recipe(entity, name)
+	if name == nil or name == M.get_recipe(entity) then return M.set_recipe(entity, nil) end
+	return M.set_recipe(entity, name)
 end
 
-local function gui_open(player, entity)
-	gui_close(player)
-	local frame = player.gui.screen.add{ type = "frame", name = GUI_FRAME, direction = "vertical",
-		caption = entity.localised_name, tags = { unit = entity.unit_number } }
-	frame.auto_center = true
-	frame.add{ type = "flow", name = "fork_ae2_body", direction = "vertical" }
-	player.opened = frame
-	gui_refresh(player, entity)
-end
-
---- the "open GUI" key on a selected entity (routed from the terminal's custom input handler)
-function M.on_open_input(player, entity)
-	if not (entity and entity.valid and entity.name == PROVIDER) then return false end
-	if player.can_reach_entity(entity) then gui_open(player, entity) end
-	return true
-end
-
-function M.on_gui_closed(event)
-	local el = event.element
-	if not (el and el.valid and el.name == GUI_FRAME) then return false end
-	local player = game.get_player(event.player_index)
-	if player then gui_close(player) end
-	return true
-end
-
-function M.on_gui_click(event)
-	local el = event.element
-	local tags = el and el.valid and el.tags
-	if not (tags and (tags.fork_ae2_provider_recipe or tags.fork_ae2_provider_clear)) then return false end
-	local player = game.get_player(event.player_index)
-	local frame = player and player.gui.screen[GUI_FRAME]
-	local p = frame and storage.fork_ae2 and storage.fork_ae2.providers[frame.tags.unit]
-	local entity = p and p.entity
-	if not (player and entity and entity.valid and player.can_reach_entity(entity)) then
-		if player then gui_close(player) end
-		return true
+--- The CPU window's data: its tier (job slots, speed), power, and the jobs it runs or that wait in its network
+function M.cpu_info(entity)
+	local s = state()
+	if not (entity and entity.valid and cpu_spec(entity.name)) then return nil end
+	register(s, entity)
+	local rec = s.cpus[entity.unit_number]
+	local spec = cpu_spec(entity.name)
+	local jobs = {}
+	for id in pairs(cpu_jobs(rec)) do
+		local j = M.job(id)
+		if j then jobs[#jobs + 1] = j end
 	end
-	if tags.fork_ae2_provider_clear or tags.fork_ae2_provider_recipe == M.get_recipe(entity) then
-		M.set_recipe(entity, nil)                 -- clicking the chosen recipe again clears it
-	else
-		M.set_recipe(entity, tags.fork_ae2_provider_recipe)
+	table.sort(jobs, function(a, b) return a.id < b.id end)
+	local waiting = {}
+	local net = network_of(entity)
+	if net then
+		for _, j in ipairs(M.jobs(net)) do
+			if j.status == "queued" then waiting[#waiting + 1] = j end
+		end
 	end
-	gui_refresh(player, entity)
-	return true
+	return { slots = spec.jobs, speed = spec.speed, powered = cpu_powered(entity), network = net ~= nil,
+		jobs = jobs, waiting = waiting }
 end
 
 --- copy the choice with the provider's settings (shift right click, shift left click)
@@ -1567,7 +1547,6 @@ function M.on_configuration_changed()
 			end
 		end
 	end
-	for _, player in pairs(game.players) do gui_close(player) end   -- open provider GUIs are closed
 	s.busy = {}
 	for _, id in pairs(shallow(s.active)) do
 		local job = s.jobs[id]
@@ -1643,6 +1622,8 @@ remote.add_interface("gregtorio-me-autocraft", {
 	get_recipe = function(provider) return M.get_recipe(provider) end,
 	set_recipe = function(provider, name) return M.set_recipe(provider, name) end,
 	recipe_options = function(provider) return M.recipe_options(provider) end,
+	--- the pattern provider window's recipe button (choose, or clear when chosen), the CPU window's data (R3)
+	toggle_recipe = function(provider, name) return M.toggle_recipe(provider, name) end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
 })

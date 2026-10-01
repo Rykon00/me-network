@@ -12,6 +12,11 @@ Sources:
     python tools/gen_ae2_sprites.py --gt C:/00_Repositories/GT5-Unofficial   # everything
     python tools/gen_ae2_sprites.py --fluids      # only the fluid graphics, from the existing item PNGs
     python tools/gen_ae2_sprites.py --extras      # only the issue #38 graphics, from the existing PNGs
+    python tools/gen_ae2_sprites.py --r1          # only the issue #68 (R1) graphics, from the existing PNGs
+    python tools/gen_ae2_sprites.py --r2          # only the issue #68 (R2) fluid bus graphics, from the R1 PNGs
+    python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
+    python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
+    python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
@@ -422,6 +427,227 @@ def extras():
     return written
 
 
+# --- issue #68, step R1: cable, controller, drive with 10 cell bays, buses -------------------
+# Derived from the PNGs written above (the MV casing of the item drive and the interface; no checkout
+# needed) and drawn with Pillow. The bay geometry must match DRIVE_BAYS in scripts/fork-me-network.lua,
+# which draws the cell lights on top (rendering.draw_rectangle).
+CABLE_CORE = (125, 80, 200)
+CABLE_EDGE = (70, 40, 120)
+CABLE_GLOW = (200, 165, 255)
+DRIVE_BAY_X = (5, 17)                # left edge of the two bay columns (10 px wide)
+DRIVE_BAY_Y = (4, 9, 14, 19, 24)     # top edge of the five bay rows (4 px tall)
+IMPORT_ACCENT = (95, 165, 255)
+EXPORT_ACCENT = FLUIX
+
+
+def cable_variation(mask):
+    """32x32: a knot in the middle and an arm to every side whose bit is set (1 N, 2 E, 4 S, 8 W)."""
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    c0, c1 = 12, 19                                       # the knot, 8 px
+    arms = {1: (13, 0, 18, c0), 2: (c1, 13, TILE - 1, 18), 4: (13, c1, 18, TILE - 1), 8: (0, 13, c0, 18)}
+    for bit, box in arms.items():
+        if mask & bit:
+            d.rectangle(box, fill=CABLE_EDGE + (255,))
+            x0, y0, x1, y1 = box
+            if bit in (1, 4):
+                d.rectangle((x0 + 1, y0, x1 - 1, y1), fill=CABLE_CORE + (255,))
+                d.line((x0 + 2, y0, x0 + 2, y1), fill=CABLE_GLOW + (255,))
+            else:
+                d.rectangle((x0, y0 + 1, x1, y1 - 1), fill=CABLE_CORE + (255,))
+                d.line((x0, y0 + 2, x1, y0 + 2), fill=CABLE_GLOW + (255,))
+    d.rectangle((c0, c0, c1, c1), fill=CABLE_EDGE + (255,))
+    d.rectangle((c0 + 1, c0 + 1, c1 - 1, c1 - 1), fill=CABLE_CORE + (255,))
+    d.rectangle((c0 + 2, c0 + 2, c0 + 3, c0 + 3), fill=CABLE_GLOW + (255,))
+    return img
+
+
+def cable_sheet():
+    sheet = Image.new("RGBA", (TILE * 16, TILE))
+    for mask in range(16):
+        sheet.paste(cable_variation(mask), (mask * TILE, 0))
+    return sheet
+
+
+def casing_ring(src):
+    """The 32x32 sprite `src` with its inner part cleared to a dark panel (keeps the MV casing edge)."""
+    img = src.copy()
+    ImageDraw.Draw(img).rectangle((3, 2, TILE - 4, TILE - 3), fill=(20, 20, 24, 255))
+    return img
+
+
+def drive_r1_sprite():
+    """1x1: MV casing, ten empty cell bays in two columns of five."""
+    img = casing_ring(load(OUT_ENTITY / "me-drive-16k.png"))
+    d = ImageDraw.Draw(img)
+    for x in DRIVE_BAY_X:
+        for y in DRIVE_BAY_Y:
+            d.rectangle((x, y, x + 9, y + 3), fill=BAY + (255,), outline=(55, 55, 66, 255))
+    return img
+
+
+def controller_r1_sprite():
+    """The old controller sprite with a green status lamp in each corner instead of the fluix dots."""
+    img = load(OUT_ENTITY / "me-controller.png")
+    d = ImageDraw.Draw(img)
+    for cx, cy in ((4, 4), (2 * TILE - 6, 4), (4, 2 * TILE - 6), (2 * TILE - 6, 2 * TILE - 6)):
+        d.rectangle((cx - 1, cy - 1, cx + 2, cy + 2), fill=(30, 30, 34, 255))
+        d.rectangle((cx, cy, cx + 1, cy + 1), fill=(95, 225, 120, 255))
+    return img
+
+
+def bus_sprite(accent, export, direction):
+    """1x1: MV casing, a plate on the side the bus faces and an arrow: towards the plate (export) or away
+    from it (import). Drawn facing north, then rotated."""
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    d.rectangle((4, 0, TILE - 5, 4), fill=accent + (255,), outline=(40, 40, 48, 255))   # the plate (north)
+    d.rectangle((14, 7, 17, 24), fill=(235, 235, 245, 255))                             # arrow shaft
+    if export:                                       # arrow head at the plate: items go out
+        d.polygon([(9, 13), (22, 13), (15, 6)], fill=accent + (255,))
+    else:                                            # arrow head away from the plate: items come in
+        d.polygon([(9, 19), (22, 19), (15, 27)], fill=accent + (255,))
+    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    return img.rotate(turns, resample=Image.NEAREST) if turns else img
+
+
+def underground_sprite(direction):
+    """1x1 underground cable end, drawn facing north (the run goes north under the ground): the cable arm on
+    the back side (south) into a dark tunnel mouth with a fluix arrow pointing along the run. Rotated."""
+    img = cable_variation(4)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((6, 3, TILE - 7, 20), radius=4, fill=(24, 22, 30, 255), outline=CABLE_EDGE + (255,), width=2)
+    d.rectangle((10, 6, TILE - 11, 18), fill=(12, 10, 16, 255))
+    d.polygon([(11, 15), (20, 15), (15, 8)], fill=CABLE_GLOW + (255,))
+    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    return img.rotate(turns, resample=Image.NEAREST) if turns else img
+
+
+def underground():
+    """The ME Underground Cable (no other input: drawn from the cable colours)."""
+    written = []
+    for direction in ("north", "east", "south", "west"):
+        path = OUT_ENTITY / f"me-underground-cable-{direction}.png"
+        underground_sprite(direction).save(path)
+        written.append(path)
+    path = OUT_ICON / "me-underground-cable.png"
+    underground_sprite("north").save(path)
+    written.append(path)
+    return written
+
+
+def r1():
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    save(cable_sheet(), OUT_ENTITY / "me-cable.png")
+    save(cable_variation(15), OUT_ICON / "me-cable.png")
+    save(drive_r1_sprite(), OUT_ENTITY / "me-drive.png")
+    save(controller_r1_sprite(), OUT_ENTITY / "me-network-controller.png")
+    for name, accent, export in (("me-import-bus", IMPORT_ACCENT, False), ("me-export-bus", EXPORT_ACCENT, True)):
+        for direction in ("north", "east", "south", "west"):
+            save(bus_sprite(accent, export, direction), OUT_ENTITY / f"{name}-{direction}.png")
+        save(bus_sprite(accent, export, "north"), OUT_ICON / f"{name}.png")
+    return written
+
+
+# --- issue #68, step R2: fluid import and export bus --------------------------------------
+# Derived from the item bus sprites of R1: the accents in fluid blue and the pipe ring of the fluid
+# interface around the arrow.
+def fluid_bus_sprite(name, direction):
+    img = recolor(load(OUT_ENTITY / f"{name}-{direction}.png"),
+                  {IMPORT_ACCENT: FLUID_LIGHT, EXPORT_ACCENT: FLUID})
+    c = TILE // 2
+    ImageDraw.Draw(img).ellipse((c - 9, c - 9, c + 8, c + 8), outline=PIPE + (255,), width=2)
+    return img
+
+
+def r2():
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for name in ("me-import-bus", "me-export-bus"):
+        fluid_name = name.replace("me-", "me-fluid-", 1)
+        for direction in ("north", "east", "south", "west"):
+            save(fluid_bus_sprite(name, direction), OUT_ENTITY / f"{fluid_name}-{direction}.png")
+        save(fluid_bus_sprite(name, "north"), OUT_ICON / f"{fluid_name}.png")
+    return written
+
+
+# --- issue #68: ME Storage Bus ----------------------------------------------------------------
+# The R1 bus casing with a green plate on the side it faces, a two-headed arrow (the network reads and
+# writes the inventory) and a small chest below it.
+STORAGE_ACCENT = (95, 200, 120)
+CHEST_WOOD = (150, 105, 60)
+CHEST_DARK = (90, 60, 32)
+
+
+def storage_bus_sprite(direction):
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    d.rectangle((4, 0, TILE - 5, 4), fill=STORAGE_ACCENT + (255,), outline=(40, 40, 48, 255))   # the plate (north)
+    d.rectangle((15, 9, 16, 15), fill=(235, 235, 245, 255))                                      # arrow shaft
+    d.polygon([(12, 9), (19, 9), (15, 5)], fill=STORAGE_ACCENT + (255,))                       # head at the plate
+    d.polygon([(12, 15), (19, 15), (15, 19)], fill=STORAGE_ACCENT + (255,))                      # head at the chest
+    d.rectangle((9, 20, 22, 28), fill=CHEST_WOOD + (255,), outline=CHEST_DARK + (255,))          # the chest
+    d.line((9, 23, 22, 23), fill=CHEST_DARK + (255,))                                             # lid
+    d.rectangle((15, 22, 16, 25), fill=(230, 200, 90, 255))                                       # latch
+    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    return img.rotate(turns, resample=Image.NEAREST) if turns else img
+
+
+def storage_bus():
+    written = []
+    for direction in ("north", "east", "south", "west"):
+        path = OUT_ENTITY / f"me-storage-bus-{direction}.png"
+        storage_bus_sprite(direction).save(path)
+        written.append(path)
+    path = OUT_ICON / "me-storage-bus.png"
+    storage_bus_sprite("north").save(path)
+    written.append(path)
+    return written
+
+
+# --- issue #68: ME Fluid Storage Bus ----------------------------------------------------------
+# The storage bus casing with the plate and arrows in fluid blue and a small storage tank (with its fluid
+# window) instead of the chest.
+TANK_STEEL = (120, 126, 136)
+TANK_DARK = (60, 64, 72)
+
+
+def fluid_storage_bus_sprite(direction):
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    d.rectangle((4, 0, TILE - 5, 4), fill=FLUID + (255,), outline=(40, 40, 48, 255))             # the plate (north)
+    d.rectangle((15, 9, 16, 15), fill=(235, 235, 245, 255))                                      # arrow shaft
+    d.polygon([(12, 9), (19, 9), (15, 5)], fill=FLUID_LIGHT + (255,))                          # head at the plate
+    d.polygon([(12, 15), (19, 15), (15, 19)], fill=FLUID_LIGHT + (255,))                         # head at the tank
+    d.ellipse((9, 19, 22, 29), fill=TANK_STEEL + (255,), outline=TANK_DARK + (255,))            # the tank
+    d.rectangle((12, 23, 19, 25), fill=FLUID + (255,))                                            # fluid window
+    d.line((9, 24, 11, 24), fill=PIPE + (255,))                                                    # pipe stubs
+    d.line((20, 24, 22, 24), fill=PIPE + (255,))
+    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    return img.rotate(turns, resample=Image.NEAREST) if turns else img
+
+
+def fluid_storage_bus():
+    written = []
+    for direction in ("north", "east", "south", "west"):
+        path = OUT_ENTITY / f"me-fluid-storage-bus-{direction}.png"
+        fluid_storage_bus_sprite(direction).save(path)
+        written.append(path)
+    path = OUT_ICON / "me-fluid-storage-bus.png"
+    fluid_storage_bus_sprite("north").save(path)
+    written.append(path)
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
@@ -430,9 +656,21 @@ def main():
     ap.add_argument("--extras", action="store_true",
                     help="only the issue #38 graphics (CPU tiers, level maintainer, circuit interface), derived "
                          "from the existing PNGs (no checkout needed)")
+    ap.add_argument("--r1", action="store_true",
+                    help="only the issue #68 (R1) graphics (cable, controller, drive with cell bays, buses), "
+                         "derived from the existing PNGs (no checkout needed)")
+    ap.add_argument("--r2", action="store_true",
+                    help="only the issue #68 (R2) graphics (fluid import and export bus), derived from the R1 PNGs")
+    ap.add_argument("--underground", action="store_true",
+                    help="only the ME Underground Cable (drawn from the cable colours)")
+    ap.add_argument("--storage-bus", action="store_true",
+                    help="only the ME Storage Bus, derived from the R1 PNGs")
+    ap.add_argument("--fluid-storage-bus", action="store_true",
+                    help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras):
-        ap.error("--gt <checkout>, --fluids or --extras is required")
+    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus):
+        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus or --fluid-storage-bus"
+                 " is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -458,6 +696,21 @@ def main():
     if a.gt or a.extras:
         written = extras()
         print("ME issue #38 sprites:", len(written))
+    if a.gt or a.r1:
+        written = r1()
+        print("ME issue #68 (R1) sprites:", len(written))
+    if a.gt or a.r2:
+        written = r2()
+        print("ME issue #68 (R2) sprites:", len(written))
+    if a.gt or a.underground:
+        written = underground()
+        print("ME underground cable sprites:", len(written))
+    if a.gt or a.storage_bus:
+        written = storage_bus()
+        print("ME storage bus sprites:", len(written))
+    if a.gt or a.fluid_storage_bus:
+        written = fluid_storage_bus()
+        print("ME fluid storage bus sprites:", len(written))
 
 
 if __name__ == "__main__":
