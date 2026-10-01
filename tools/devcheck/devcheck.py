@@ -8,6 +8,8 @@
                                                 # create a save with an older version (git ref or
                                                 # --from-zip), load it with the working copy
     python tools/devcheck/devcheck.py all       # check + runtime
+    python tools/devcheck/devcheck.py menusim --sim all --compare
+                                                # run the main menu simulations with and without the mod
 
 Everything is kept in .devcheck/ in the repository root (git-ignored).
 
@@ -136,12 +138,15 @@ def remove_path(p):
         shutil.rmtree(p)
 
 
-def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False):
-    """mods/ = dependency zips + the mod (working copy or a zip) + devcheck helper mods."""
+def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False, menusim=None, gregtorio=True):
+    """mods/ = dependency zips + the mod (working copy or a zip) + devcheck helper mods.
+    menusim: name of a main menu simulation for the menusim helper mod; gregtorio=False leaves the mod out."""
     for p in MODS.iterdir():
         if p.name.startswith(MOD_NAMES + ("zz-gregtorio-devcheck",)) or p.name == "mod-list.json":
             remove_path(p)
-    if gregtorio_zip:
+    if not gregtorio:
+        info = None
+    elif gregtorio_zip:
         import zipfile
         with zipfile.ZipFile(gregtorio_zip) as z:
             info = json.loads(z.read(next(n for n in z.namelist() if n.endswith("/info.json") and n.count("/") == 1)))
@@ -151,7 +156,7 @@ def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False):
         info = json.loads((ROOT / "info.json").read_text(encoding="utf-8"))
         link_dir(MODS / info["name"], ROOT)
     link_dir(MODS / "zz-gregtorio-devcheck", HERE / "checkmod")
-    enabled = ["base", "space-age", "quality", "elevated-rails", info["name"], "zz-gregtorio-devcheck"]
+    enabled = ["base", "space-age", "quality", "elevated-rails"] + ([info["name"]] if info else []) + ["zz-gregtorio-devcheck"]
     enabled += [z.name.rsplit("_", 1)[0] for z in MODS.glob("*.zip") if not z.name.startswith(MOD_NAMES)]
     if with_runtime:
         link_dir(MODS / "zz-gregtorio-devcheck-runtime", HERE / "runtimemod")
@@ -159,6 +164,11 @@ def prepare_mods(with_runtime=False, gregtorio_zip=None, with_migrate=False):
     if with_migrate:
         link_dir(MODS / "zz-gregtorio-devcheck-migrate", HERE / "migratemod")
         enabled.append("zz-gregtorio-devcheck-migrate")
+    if menusim:
+        # a copy, not a link: config.lua names the simulation to run
+        shutil.copytree(HERE / "menusimmod", MODS / "zz-gregtorio-devcheck-menusim")
+        (MODS / "zz-gregtorio-devcheck-menusim" / "config.lua").write_text(f"return {{ name = {json.dumps(menusim)} }}\n")
+        enabled.append("zz-gregtorio-devcheck-menusim")
     (MODS / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in enabled]}))
 
 
@@ -709,6 +719,68 @@ def migrate(a):
     return 0 if ok else 1
 
 
+def menusim_list(gregtorio):
+    """{name: (save file, length)} of the main menu simulations, as the game has them with this mod set"""
+    prepare_mods(menusim="none", gregtorio=gregtorio)
+    log = factorio("--create", str(WORK / "menusim-list.zip"))
+    if load_errors(log):
+        sys.exit("the mods do not load:\n" + load_errors(log))
+    return {r[0]: (r[1], int(r[2])) for r in sections(log).get("MENUSIMS", [])}
+
+
+def save_path(path):
+    m = re.match(r"__([\w-]+)__/(.*)", path)
+    if not m:
+        return None
+    if m.group(1) in BUILTIN:
+        return FACTORIO / "data" / m.group(1) / m.group(2)
+    return ROOT / m.group(2) if m.group(1) in MOD_NAMES else None
+
+
+def run_menusim(name, save, length, gregtorio):
+    """Load the simulation's save with --benchmark for its length; the helper mod runs its init and update chunks"""
+    prepare_mods(menusim=name, gregtorio=gregtorio)
+    path = save_path(save)
+    if not path or not path.exists():
+        return f"skipped (no save file: {save or 'none'})", []
+    log = factorio("--benchmark", str(path), "--benchmark-ticks", str(length))
+    lines = re.findall(r"DEVCHECK-MENUSIM (.*)", log)
+    ran = re.search(r"Performed (\d+) updates", log)
+    err = re.search(r"(Error while running.*|non-recoverable.*|Error.*)(\n.*){0,3}", log)
+    if any(l.startswith("FAIL") for l in lines):
+        return next(l for l in lines if l.startswith("FAIL")), lines
+    if err and not ran:
+        return "ERROR " + " ".join(x.strip() for x in err.group(0).splitlines()), lines
+    if not any(l == "init done" for l in lines):
+        return "ERROR init did not run", lines
+    deaths = sum(1 for l in lines if l.startswith("DIED"))
+    return f"ok ({ran.group(1)} ticks{f', {deaths} characters died' if deaths else ''})", lines
+
+
+def menusim(a):
+    """Run main menu simulations with the mod (and with --compare also without it) and report errors."""
+    variants = [True, False] if a.compare else [True]
+    failed = False
+    for gregtorio in variants:
+        label = "with Gregtorio" if gregtorio else "without Gregtorio"
+        sims = menusim_list(gregtorio)
+        names = sorted(sims) if a.sim == "all" else [a.sim]
+        print(f"== {label}: {len(sims)} menu simulations{'' if a.sim == 'all' else ', running ' + a.sim}")
+        for name in names:
+            if name not in sims:
+                print(f"{name}: not in main_menu_simulations")
+                continue
+            save, length = sims[name]
+            result, lines = run_menusim(name, save, a.ticks or length, gregtorio)
+            print(f"{name}: {result}")
+            if a.sim != "all" or a.verbose:
+                for l in lines:
+                    print("    " + l)
+            failed |= result.startswith(("ERROR", "FAIL"))
+    print("\nRESULT: " + ("PROBLEMS FOUND" if failed else "OK"))
+    return 1 if failed else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -729,6 +801,11 @@ def main():
     src.add_argument("--from-ref", help="git tag or commit of an older version, e.g. 0e935ba (upstream 0.1.9)")
     m.add_argument("--ticks", type=int, default=300)
     m.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
+    ms = sub.add_parser("menusim", help="run main menu simulations")
+    ms.add_argument("--sim", default="nauvis_biter_base_laser_defense", help="simulation name or `all`")
+    ms.add_argument("--compare", action="store_true", help="also run without Gregtorio")
+    ms.add_argument("--ticks", type=int, help="ticks to run (default: the simulation's length)")
+    ms.add_argument("--verbose", action="store_true", help="print the log lines with --sim all too")
     al = sub.add_parser("all")
     al.add_argument("--ticks", type=int, default=1500)
     al.add_argument("--locale-out")
@@ -743,6 +820,8 @@ def main():
         return runtime(a)
     if a.cmd == "migrate":
         return migrate(a)
+    if a.cmd == "menusim":
+        return menusim(a)
     return check(a) or runtime(a)
 
 
