@@ -18,7 +18,17 @@
 --- drive with plates and sticks, and a gear job started with the old version on the assembler above. After
 --- the update the job must finish with the gears in storage and the CPU must count as one job slot
 --- (DEVCHECK-MIGRATE-JOB).
+--- Issue #68 (the ME rework): the old save's ME network is a logistic network. It gets an old 1k drive with
+--- items (also of another quality and a blueprint, which the new network cannot store), an old requester
+--- interface with items in its inventory and its trash, an old terminal, a second old controller in the same
+--- logistic network, a chest with 16 storage cells on one stack (cells become items with tags and stack size
+--- 1), an old drive item in a chest and the ghost of an old drive. After the update every old entity must be
+--- replaced, the network connected by cables (fluid drives, CPU, provider and terminal included), the item
+--- totals of the old chests must be in the new network (job items aside, they move), the blueprint in an
+--- overflow chest, the migration report without a difference, the cells and the old item kept
+--- (DEVCHECK-MIGRATE-ITEMS).
 local F = "gregtorio-me-fluids"
+local NET = "gregtorio-me-network"
 local DRIVE = "me-fluid-drive-1k"
 local Y = 40
 local TOTAL = { water = 40000, chlorine = 10000 }      -- drive 1: 32000 water, drive 2: 8000 water + 10000 chlorine
@@ -188,8 +198,13 @@ local function check_job()
 		.. " progress " .. (m and m.crafting_progress or -1))
 	local p = st.provider
 	if p.valid then
-		local net = p.surface.find_logistic_network_by_position(p.position, p.force)
-		local gears = net and net.get_item_count{ name = "iron-gear-wheel", quality = "normal" } or 0
+		local gears
+		if remote.interfaces[NET] then
+			gears = remote.call(NET, "count", p, "iron-gear-wheel")
+		else
+			local net = p.surface.find_logistic_network_by_position(p.position, p.force)
+			gears = net and net.get_item_count{ name = "iron-gear-wheel", quality = "normal" } or 0
+		end
 		expect(gears >= JOB_GEARS, "gears in storage after the job: " .. gears)
 		local n, free, _, slots = remote.call(A, "cpus", p)
 		expect(n == 1 and slots == 1 and free == 1, "the old CPU: " .. n .. " CPUs, " .. tostring(slots) .. " slots, " .. free .. " free")
@@ -226,6 +241,134 @@ local function check_patterns()
 	log("DEVCHECK-MIGRATE-PATTERNS " .. (#problems == 0 and "ok" or "failed"))
 end
 
+--- issue #68: the old item network (see the top of the file); only for versions with the logistic ME network
+local IT_DRIVE, IT_IFACE, IT_CTRL2 = { 12.5, Y + 3.5 }, { 14.5, Y + 3.5 }, { 22, Y }
+local IT_TERMINAL, IT_CELLS, IT_GHOST = { 3.5, Y + 5.5 }, { 30.5, Y + 20.5 }, { 24.5, Y + 3.5 }
+local IT_JOB = { ["iron-plate"] = true, ["iron-stick"] = true, ["iron-gear-wheel"] = true }
+
+function setup_items(place)
+	local s = game.surfaces[1]
+	if not (prototypes.entity["me-drive-1k"] and prototypes.entity["me-drive-1k"].type == "logistic-container"
+		and prototypes.entity["me-controller"] and prototypes.entity["me-controller"].type == "roboport") then
+		storage.items = "skipped"
+		log("DEVCHECK-MIGRATE-SETUP-ITEMS skipped (no logistic ME network in this version)")
+		return
+	end
+	local drive = place("me-drive-1k", IT_DRIVE[1], IT_DRIVE[2])
+	drive.insert{ name = "copper-plate", count = 100 }
+	drive.insert{ name = "stone", count = 37 }
+	drive.insert{ name = "iron-plate", count = 5, quality = "uncommon" }
+	drive.insert{ name = "blueprint", count = 1 }
+	local iface = place("me-interface", IT_IFACE[1], IT_IFACE[2])
+	iface.get_inventory(defines.inventory.chest).insert{ name = "copper-cable", count = 20 }
+	iface.get_inventory(defines.inventory.logistic_container_trash).insert{ name = "stone-brick", count = 10 }
+	place("me-terminal", IT_TERMINAL[1], IT_TERMINAL[2])
+	place("me-controller", IT_CTRL2[1], IT_CTRL2[2])
+	local chest = place("iron-chest", IT_CELLS[1], IT_CELLS[2])
+	chest.insert{ name = "me-1k-storage-cell", count = 16 }
+	chest.insert{ name = "me-drive-4k", count = 2 }
+	local ghost = s.create_entity{ name = "entity-ghost", inner_name = "me-drive-4k", position = IT_GHOST, force = "player" }
+	--- the totals of every old ME chest (the job's items move while the job runs: counted, not compared)
+	local totals = {}
+	for _, e in pairs(s.find_entities_filtered{ name = { "me-drive-1k", "me-drive-16k", "me-interface" } }) do
+		for _, id in pairs({ defines.inventory.chest, defines.inventory.logistic_container_trash }) do
+			local inv = e.get_inventory(id)
+			for _, c in pairs(inv and inv.get_contents() or {}) do
+				local key = c.name .. "@" .. (c.quality or "normal")
+				totals[key] = (totals[key] or 0) + c.count
+			end
+		end
+	end
+	local ln = s.find_logistic_network_by_position({ 6, Y }, "player")
+	local ln2 = s.find_logistic_network_by_position(IT_CTRL2, "player")
+	storage.items = { totals = totals, one_network = ln and ln2 and ln.network_id == ln2.network_id, ghost = ghost and ghost.valid }
+	log("DEVCHECK-MIGRATE-SETUP-ITEMS " .. (storage.items.one_network and "ok" or "failed (the second controller is in another logistic network)")
+		.. " (ghost of an old drive: " .. tostring(storage.items.ghost) .. ")")
+end
+
+function check_items()
+	local st = storage.items
+	if st == nil or st == "skipped" then
+		log("DEVCHECK-MIGRATE-ITEMS skipped")
+		return
+	end
+	local s = game.surfaces[1]
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	expect(st.one_network, "test setup: the two old controllers were not in one logistic network")
+	--- every old entity is replaced
+	for _, name in pairs({ "me-drive-1k", "me-drive-4k", "me-drive-16k", "me-drive-64k", "me-drive-256k" }) do
+		expect(#s.find_entities_filtered{ name = name, type = "logistic-container" } == 0, "an old " .. name .. " is left")
+	end
+	expect(#s.find_entities_filtered{ name = "me-controller", type = "roboport" } == 0, "an old controller is left")
+	expect(#s.find_entities_filtered{ name = "me-interface", type = "logistic-container" } == 0, "an old interface is left")
+	local ctrl = s.find_entity("me-network-controller", { 6, Y })
+	local drive = s.find_entity("me-drive", IT_DRIVE)
+	local iface = s.find_entity("me-network-interface", IT_IFACE)
+	local terminal = s.find_entity("me-terminal", IT_TERMINAL)
+	expect(ctrl and drive and iface and terminal, "new entities missing: controller " .. tostring(ctrl ~= nil) .. ", drive "
+		.. tostring(drive ~= nil) .. ", interface " .. tostring(iface ~= nil) .. ", terminal " .. tostring(terminal ~= nil))
+	if #problems == 0 then
+		local n = remote.call(NET, "network", ctrl)
+		expect(n and n.ok and n.controllers == 1, "the new network " .. serpent.line(n))
+		for _, e in pairs({ drive, iface, terminal, storage.drives[1].entity, storage.drives[2].entity,
+			s.find_entity("me-crafting-cpu", { 9, Y + 9 }), storage.patterns.provider, s.find_entity("me-drive", { 8.5, Y + 12.5 }) }) do
+			expect(e and e.valid and remote.call(NET, "same_network", ctrl, e), (e and e.valid and e.name or "?") .. " is not connected to the controller")
+		end
+		--- the drive has four 1k cells, the 16k drive four 16k cells
+		local cells = remote.call(NET, "drive", drive)
+		expect(cells[4] and cells[4].name == "me-1k-storage-cell" and not cells[5], "new 1k drive " .. serpent.line(cells))
+		local big = remote.call(NET, "drive", s.find_entity("me-drive", { 8.5, Y + 12.5 }))
+		expect(big[4] and big[4].name == "me-16k-storage-cell", "new 16k drive " .. serpent.line(big))
+		--- item totals: what the old chests held (+ the second controller) is in the network, the blueprint in a chest
+		local report = remote.call("gregtorio-me-migrate", "report")
+		expect(report and report.diff == 0 and report.groups >= 1, "migration report " .. serpent.line(report and { report.groups, report.diff }))
+		local want = {}
+		for k, v in pairs(st.totals) do want[k] = v end
+		want["me-controller@normal"] = (want["me-controller@normal"] or 0) + 1
+		for k, v in pairs(want) do
+			expect(report and report.before[k] == v, "the migration counted " .. tostring(report and report.before[k]) .. " " .. k .. ", the old save had " .. v)
+		end
+		local contents = remote.call(NET, "contents", ctrl)
+		local overflow = {}
+		for _, c in pairs(s.find_entities_filtered{ name = "iron-chest", position = { 6, Y }, radius = 40 }) do
+			for _, it in pairs(c.get_inventory(defines.inventory.chest).get_contents()) do
+				local k = it.name .. "@" .. (it.quality or "normal")
+				overflow[k] = (overflow[k] or 0) + it.count
+			end
+		end
+		for k, v in pairs(want) do
+			local name, q = k:match("^([^@]+)@(.+)$")
+			if not IT_JOB[name] then
+				local key = q == "normal" and name or k
+				local got = (contents[key] or 0) + (overflow[k] or 0)
+				expect(got == v, k .. ": " .. got .. " after the update (network " .. (contents[key] or 0) .. ", chests "
+					.. (overflow[k] or 0) .. "), " .. v .. " before")
+			end
+		end
+		expect((overflow["blueprint@normal"] or 0) == 1, "the blueprint is not in an overflow chest: " .. serpent.line(overflow))
+		--- the cells of the stack of 16 and the old drive items are kept; the ghost is an ME Drive ghost
+		local chest = s.find_entity("iron-chest", IT_CELLS)
+		expect(chest and chest.get_item_count("me-1k-storage-cell") == 16, "cells in the chest: " .. (chest and chest.get_item_count("me-1k-storage-cell") or -1))
+		expect(chest and chest.get_item_count("me-drive-4k") == 2, "old drive items in the chest: " .. (chest and chest.get_item_count("me-drive-4k") or -1))
+		--- the ghost of an old drive: the game removes it when the save is loaded (no item builds the old prototype
+		--- any more), before any script runs; if one is left, the migration makes it an ME Drive ghost
+		local ghosts = s.find_entities_filtered{ ghost_name = "me-drive", position = IT_GHOST, radius = 0.5 }
+		local old = s.find_entities_filtered{ ghost_name = "me-drive-4k", position = IT_GHOST, radius = 0.5 }
+		expect(#old == 0, "the ghost of an old drive is left")
+		st.ghost_note = #ghosts == 1 and "old ghost became an ME Drive ghost" or "old ghost removed by the game on load"
+		local total = 0
+		for _, v in pairs(st.totals) do total = total + v end
+		for _, m in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL items: " .. m) end
+		log("DEVCHECK-MIGRATE-ITEMS " .. (#problems == 0 and "ok" or "failed") .. " (" .. total .. " items in the old chests, "
+			.. (report and report.cables or 0) .. " cables placed, " .. (report and report.chests or 0) .. " overflow chests, "
+			.. st.ghost_note .. ")")
+		return
+	end
+	for _, m in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL items: " .. m) end
+	log("DEVCHECK-MIGRATE-ITEMS failed")
+end
+
 --- the second part of the fluid check: the recovered water is pulled in by the fluid step (every 15 ticks)
 function check_pull()
 	local st = storage.pull
@@ -246,6 +389,7 @@ end
 script.on_init(function()
 	setup_power()
 	setup_turbine()
+	storage.items = "skipped"
 	storage.patterns = "skipped"
 	storage.state = "skipped"
 	if not (remote.interfaces[F] and prototypes.entity[DRIVE] and prototypes.entity["me-controller"]) then
@@ -257,6 +401,16 @@ script.on_init(function()
 	s.request_to_generate_chunks({ 0, Y }, 2)
 	s.request_to_generate_chunks({ 120, Y }, 1)
 	s.force_generate_chunk_requests()
+	--- issue #68: the migration lays cables between the old ME blocks; on water it cannot (the player connects such
+	--- a block), so the test area is land
+	local land = {}
+	for _, t in pairs(s.find_tiles_filtered{ area = { { -40, Y - 40 }, { 140, Y + 60 } }, collision_mask = "water_tile" }) do
+		land[#land + 1] = { name = "landfill", position = t.position }
+	end
+	s.set_tiles(land)
+	for _, e in pairs(s.find_entities_filtered{ area = { { -40, Y - 40 }, { 140, Y + 60 } }, type = { "tree", "simple-entity", "cliff" } }) do
+		e.destroy()
+	end
 	local function place(name, x, y)
 		return s.create_entity{ name = name, position = { x, y }, force = "player", raise_built = true }
 	end
@@ -286,6 +440,7 @@ script.on_init(function()
 	storage.state = ok and "ready" or "setup-failed"
 	log("DEVCHECK-MIGRATE-SETUP " .. (ok and "ok" or "failed"))
 	setup_patterns(place)
+	setup_items(place)
 end)
 
 --- runs after every mod or prototype change: tells the check which path ran
@@ -312,6 +467,7 @@ script.on_nth_tick(30, function(event)
 	storage.checked = true
 	check_power()
 	check_patterns()
+	check_items()
 	if storage.state ~= "ready" then
 		log("DEVCHECK-MIGRATE-FLUIDS " .. (storage.state == "skipped" and "skipped" or "failed (" .. tostring(storage.state) .. ")"))
 		return

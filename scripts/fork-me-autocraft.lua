@@ -3,7 +3,7 @@
 ---
 --- Patterns: a Pattern Provider looks at the machines next to it (assembling machine or furnace,
 ---   i.e. Molecular Assembler, any GT machine). The recipe such a machine has set is a pattern
----   of the ME network (= logistic network) the provider stands in. Recipes with fluids work when
+---   of the ME network the provider is connected to (scripts/fork-me-network.lua). Recipes with fluids work when
 ---   the machine's fluid boxes are not connected to pipes (the network fills and drains them);
 ---   machines the network cannot use are counted per reason (see machine_problem).
 --- Furnaces have no recipe setting: the provider holds a recipe choice (its GUI, opened with the
@@ -33,6 +33,7 @@
 --------------------------------------------------------------------------------
 
 local fluids = require("scripts.fork-me-fluids")
+local N = require("scripts.fork-me-network")
 
 local M = {}
 
@@ -150,13 +151,9 @@ local function remove_value(list, value)
 	end
 end
 
-local function network_at(surface, position, force)
-	if not (surface and force) then return nil end
-	return surface.find_logistic_network_by_position(position, force)
-end
-
+--- the working ME network of an entity (nil when it is no member or the network is off)
 local function network_of(entity)
-	return network_at(entity.surface, entity.position, entity.force)
+	return N.active_of(entity)
 end
 
 --------------------------------------------------------------------------------
@@ -300,7 +297,7 @@ end
 local function scan_provider(p)
 	local e = p.entity
 	local machines, seen, ignored, sig = {}, {}, { total = 0 }, {}
-	local net = network_of(e)
+	local net = N.network_of(e)                  -- patterns are kept while the network is off, jobs wait
 	for _, d in pairs(NEIGHBORS) do
 		local found = e.surface.find_entities_filtered{
 			position = { e.position.x + d[1], e.position.y + d[2] },
@@ -313,8 +310,7 @@ local function scan_provider(p)
 				local chosen = furnace_choice(m, p.recipe)
 				local name = machine_recipe(m, chosen)
 				local proto = name and prototypes.recipe[name]
-				local mnet = (proto or m.type == "furnace") and network_of(m)
-				local inside = net and mnet and mnet.network_id == net.network_id   -- machines outside the network are ignored
+				local inside = net ~= nil                  -- a provider outside any network makes no pattern
 				if inside and not proto then                -- a furnace without a choice that never smelted
 					ignored.total = ignored.total + 1
 					ignored["no-recipe"] = (ignored["no-recipe"] or 0) + 1
@@ -334,8 +330,8 @@ local function scan_provider(p)
 		end
 	end
 	table.sort(sig)
-	sig = (net and net.network_id or "-") .. "|" .. table.concat(sig, ",")
-	p.machines, p.ignored, p.net = machines, ignored, net and net.network_id or nil
+	sig = (net and net.id or "-") .. "|" .. table.concat(sig, ",")
+	p.machines, p.ignored, p.net = machines, ignored, net and net.id or nil
 	if p.sig ~= sig then
 		p.sig = sig
 		state().dirty = true
@@ -386,17 +382,26 @@ local function rebuild_patterns(s)
 	s.dirty = false
 end
 
-local function ensure_patterns(s)
-	if s.dirty then rebuild_patterns(s) end
-	return s.patterns
-end
-
 --- rescan every provider (before starting a job: patterns must be current)
 local function refresh_providers(s)
 	for _, unit in pairs(shallow(s.plist)) do
 		local p = s.providers[unit]
 		if p and p.entity.valid then scan_provider(p) else drop_provider(s, unit) end
 	end
+end
+
+--- the patterns of every network; a change of the ME graph (networks joined or split) rescans the providers
+local function ensure_patterns(s)
+	if s.graph_dirty then
+		s.graph_dirty = nil
+		refresh_providers(s)
+	end
+	if s.dirty then rebuild_patterns(s) end
+	return s.patterns
+end
+N.change_hooks[#N.change_hooks + 1] = function()
+	local s = storage.fork_ae2
+	if s then s.graph_dirty = true end
 end
 
 --- bounded slice of the round robin rescan
@@ -430,8 +435,8 @@ end
 
 local function stock_of(net)
 	local stock = {}
-	for _, c in pairs(net.get_contents()) do
-		if (c.quality or QUALITY) == QUALITY and plain_item(c.name) then stock[c.name] = (stock[c.name] or 0) + c.count end
+	for name, count in pairs(N.plain_counts(net)) do
+		if plain_item(name) then stock[name] = count end
 	end
 	for name, amount in pairs(fluids.totals(net)) do
 		stock[FLUID_PREFIX .. name] = amount
@@ -552,7 +557,7 @@ end
 --- Returns { ok, missing = {key -> count}, loops = {key -> true}, steps = { {recipe, runs} },
 --- reserve = {key -> count taken from storage}, runs, too_complex }
 local function make_plan(s, net, key, amount)
-	local patterns = ensure_patterns(s)[net.network_id] or { items = {}, machines = {}, ignored = { total = 0 } }
+	local patterns = ensure_patterns(s)[net.id] or { items = {}, machines = {}, ignored = { total = 0 } }
 	local ctx = {
 		patterns = patterns, stock = stock_of(net), surplus = {}, reserve = {}, missing = {}, loops = {},
 		steps = {}, order = {}, missing_n = 0, nodes = 0,
@@ -608,8 +613,8 @@ local function cpus_in(s, net)
 	local list = {}
 	for unit, rec in pairs(s.cpus) do
 		if rec.entity.valid then
-			local n = network_of(rec.entity)
-			if n and n.network_id == net.network_id then list[#list + 1] = rec end
+			local n = N.network_of(rec.entity)
+			if n and n.id == net.id then list[#list + 1] = rec end
 		else
 			s.cpus[unit] = nil
 		end
@@ -627,8 +632,22 @@ end
 --- jobs
 --------------------------------------------------------------------------------
 
+--- the working network of a job: that of its CPU, else of the entity it was started at, else of the ME member at
+--- its position (jobs of older saves)
 local function job_network(job)
-	return network_at(game.get_surface(job.surface), job.pos, game.forces[job.force])
+	local s = state()
+	local rec = job.cpu and s.cpus[job.cpu]
+	if rec and rec.entity.valid and N.network_of(rec.entity) then return N.active_of(rec.entity) end
+	if job.anchor and job.anchor.valid and N.network_of(job.anchor) then return N.active_of(job.anchor) end
+	local surface = game.get_surface(job.surface)
+	if not (surface and job.pos) then return nil end
+	for _, e in pairs(surface.find_entities_filtered{ position = job.pos, name = N.node_names() }) do
+		if N.network_of(e) then
+			job.anchor = e
+			return N.active_of(e)
+		end
+	end
+	return nil
 end
 
 local function pool_add(job, key, count)
@@ -645,7 +664,7 @@ local function flush_pool(job, net)
 			if is_fluid(key) then
 				inserted = fluids.insert(net, fluid_name(key), count)
 			else
-				inserted = net.insert{ name = key, count = count, quality = QUALITY }
+				inserted = N.insert(net, key, QUALITY, count)
 			end
 		end
 		if inserted >= count - FLUID_EPS then job.pool[key] = nil else job.pool[key] = count - inserted end
@@ -663,7 +682,7 @@ local function collect_output(job, net, machine, map)
 				if (c.quality or QUALITY) == QUALITY then
 					pool_add(job, c.name, removed)
 				else
-					local inserted = net and net.insert{ name = c.name, count = removed, quality = c.quality } or 0
+					local inserted = net and N.insert(net, c.name, c.quality, removed) or 0
 					if inserted < removed then      -- no room: put it back, the machine keeps it
 						out.insert{ name = c.name, count = removed - inserted, quality = c.quality }
 					end
@@ -836,7 +855,7 @@ end
 
 --- an idle pattern machine for the recipe, its fluid map and the furnace choice it was found with
 local function find_machine(s, net, recipe, proto)
-	local net_patterns = ensure_patterns(s)[net.network_id]
+	local net_patterns = ensure_patterns(s)[net.id]
 	local list = net_patterns and net_patterns.machines[recipe]
 	if not list then return nil end
 	for _, m in pairs(list) do
@@ -1019,7 +1038,7 @@ local function job_step(s, job, work)
 						else
 							local short = ing.amount - (job.pool[key] or 0)
 							if short > 0 then
-								local got = net.remove_item{ name = ing.name, count = short, quality = QUALITY }
+								local got = N.extract(net, ing.name, QUALITY, short)
 								if got > 0 then pool_add(job, key, got) job.idle = 0 end
 							end
 						end
@@ -1083,7 +1102,7 @@ script.on_nth_tick(STEP_TICKS, on_step)
 --- table of pattern machines the network cannot use: { total = n, [reason] = n }
 function M.craftable(net)
 	local s = state()
-	local p = ensure_patterns(s)[net.network_id]
+	local p = ensure_patterns(s)[net.id]
 	if not p then return {}, { total = 0 } end
 	local keys = {}
 	for key in pairs(p.items) do
@@ -1133,7 +1152,7 @@ function M.active_job_for(net, key)
 		local job = s.jobs[id]
 		if job and job.item == key and not job.closing then
 			local jn = job_network(job)
-			if jn and jn.network_id == net.network_id then return id end
+			if jn and jn.id == net.id then return id end
 		end
 	end
 	return nil
@@ -1169,7 +1188,7 @@ function M.start(entity, key, amount, owner)
 	local pool, taken = {}, {}
 	local function undo()
 		for _, k in pairs(taken) do
-			if is_fluid(k) then fluids.insert(net, fluid_name(k), pool[k]) else net.insert{ name = k, count = pool[k], quality = QUALITY } end
+			if is_fluid(k) then fluids.insert(net, fluid_name(k), pool[k]) else N.insert(net, k, QUALITY, pool[k]) end
 		end
 	end
 	for k, count in pairs(plan.reserve) do
@@ -1177,7 +1196,7 @@ function M.start(entity, key, amount, owner)
 		if is_fluid(k) then
 			removed = fluids.remove(net, fluid_name(k), count + FLUID_MARGIN)   -- a little extra covers fixed point rounding
 		else
-			removed = net.remove_item{ name = k, count = count, quality = QUALITY }
+			removed = N.extract(net, k, QUALITY, count)
 		end
 		if removed > 0 then pool[k] = removed taken[#taken + 1] = k end
 		if removed + FLUID_EPS < count then                     -- storage changed under us: undo
@@ -1196,7 +1215,7 @@ function M.start(entity, key, amount, owner)
 		id = id, item = key, amount = amount, status = "queued", steps = steps, pool = pool, leases = {},
 		total_runs = total, done_runs = 0, idle = 0, tick = game.tick,
 		surface = entity.surface.index, force = entity.force.index,
-		pos = { x = entity.position.x, y = entity.position.y }, owner = owner,
+		pos = { x = entity.position.x, y = entity.position.y }, owner = owner, anchor = entity,
 	}
 	s.active[#s.active + 1] = id
 	assign_cpus(s)
@@ -1227,7 +1246,7 @@ function M.jobs(net)
 		local job = s.jobs[id]
 		if job then
 			local jn = job_network(job)
-			if jn and jn.network_id == net.network_id then
+			if jn and jn.id == net.id then
 				local status = job.status
 				if job.closing then status = job.closing == "done" and "delivering" or "cancelling" end
 				out[#out + 1] = {

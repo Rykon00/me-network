@@ -1,16 +1,17 @@
 --------------------------------------------------------------------------------
 --- FORK AE2: FLUID STORAGE OF THE ME NETWORK (runtime, see prototypes/122-fork-ae2-fluids.lua)
---- The logistic network knows no fluids, so the fluid side of the ME network is kept by script:
+--- The fluid side of the ME network (scripts/fork-me-network.lua) is kept here until fluid cells replace the
+--- fluid drives (issue #68, step R2):
 ---   * ME Fluid Drive: a 1x1 entity without fluid boxes. Its contents are virtual, a table
 ---     { fluid -> amount } in storage.fork_me_fluids.drives[unit_number], capped by the capacity
 ---     of the drive (mod-data "fork-me-fluids"). The network total of a fluid is the sum over the
----     drives that stand in that logistic network; the network is looked up when a total is asked
+---     drives that are members of that ME network; the network is looked up when a total is asked
 ---     for, so merging or splitting networks needs no bookkeeping.
 ---   * Picking a drive up moves its contents onto the item (item-with-tags, tag "fork_me_fluids"),
 ---     placing that item brings them back.
 ---   * Recovery: fluid that loses its drive (a destroyed drive, a drive removed by a script, a
----     loaded drive item taken apart by hand) goes into the other fluid drives of the logistic
----     network at that position as far as they have room; the rest is kept as recovered fluid
+---     loaded drive item taken apart by hand) goes into the other fluid drives of the ME network
+---     at that position (the network of an ME member within 1.5 tiles; 10 for the hand disassembly) as far as they have room; the rest is kept as recovered fluid
 ---     (storage.fork_me_fluids.recovered: per surface and force, entries with the position). The
 ---     next fluid drive placed in that network takes it over (a robot rebuilding the ghost of a
 ---     destroyed drive does that; if no network covers the position any more, any drive placed on
@@ -29,10 +30,12 @@
 ---   * Temperature: the network stores fluids by name only. Importing drops the temperature,
 ---     exporting (and the autocrafting hand-over) uses the fluid's default temperature.
 --- Work per step: INTERFACES_PER_STEP interfaces and RECOVERED_PER_STEP recovered entries every
---- STEP_TICKS ticks (round robin) and the open drive GUIs. Nothing runs per tick; a network total loops over the drives (a few hundred
+--- STEP_TICKS ticks (round robin, the step is called by the I/O step of fork-me-io.lua) and the open drive GUIs. Nothing runs per tick; a network total loops over the drives (a few hundred
 --- at most), nothing loops over all tanks.
 --- State: storage.fork_me_fluids only. GUI state lives in the GUI elements (tags).
 --------------------------------------------------------------------------------
+
+local N = require("scripts.fork-me-network")
 
 local M = {}
 
@@ -40,10 +43,11 @@ local M = {}
 --- rescues the fluid of a leased machine); registered at load time, so nothing is stored
 M.mined_hooks = {}
 
-local STEP_TICKS = 15               -- 20 (autocrafting), 30 (molds) and 60 (terminal) are taken
+local STEP_TICKS = 15               -- the I/O step of fork-me-io.lua (20, 30 and 60 are taken)
 local INTERFACES_PER_STEP = 8
 local RECOVERED_PER_STEP = 4        -- recovered entries pulled into the drives of their network per step
 local EPS = 1e-6                    -- fluid amounts are fixed point (1/2^24); below this a box counts as empty
+local HAND_RADIUS = 10              -- the network "you stand in": the nearest ME member within this many tiles
 local TAG = "fork_me_fluids"        -- item tag that carries the contents of a picked up drive
 local IFACE_TAG = "fork_me_fluid_interface"   -- blueprint tag of an interface's settings { mode, fluid, level }
 local DRIVE_FRAME = "fork_me_fluid_drive"
@@ -90,8 +94,15 @@ local function state()
 	return s
 end
 
+--- the working ME network of an entity (scripts/fork-me-network.lua), nil if none
 local function network_of(entity)
-	return entity.surface.find_logistic_network_by_position(entity.position, entity.force)
+	return N.active_of(entity)
+end
+
+--- the working network at a position: that of an ME member within `radius` (default 1.5: the cable or block a
+--- drive was connected to)
+local function network_at(surface, position, force, radius)
+	return N.network_near(surface, position, force, radius or 1.5)
 end
 M.network_of = network_of
 
@@ -136,7 +147,7 @@ end
 
 --------------------------------------------------------------------------------
 --- recovered fluid: per surface and force a list of entries { position, contents }, the position
---- being where the fluid lost its drive. A placed drive takes over the entries of its own logistic
+--- being where the fluid lost its drive. A placed drive takes over the entries of its own ME
 --- network and those whose network no longer exists.
 --------------------------------------------------------------------------------
 
@@ -168,31 +179,49 @@ local function entries_of(s, surface_index, force_name, create)
 	return list
 end
 
---- the logistic network an entry belongs to now (nil: none covers its position any more)
+--- the ME member nearest to a position within `radius` (default 1.5), working network or not, and its network
+local function member_at(surface, position, force, radius)
+	return N.member_near(surface, position, force, radius or 1.5, true)
+end
+
+--- the ME network an entry belongs to (working or not): that of the member it was recovered at (the cable or
+--- block next to a destroyed drive, the member nearest to the player who took a loaded item apart), else that
+--- of a member next to its position; nil when there is none any more
+local function entry_member_net(surface, force, entry)
+	local a = entry.anchor
+	if a and a.valid and N.network_of(a) then return N.network_of(a) end
+	local _, net = member_at(surface, entry.position, force)
+	return net
+end
+
+--- the working ME network an entry belongs to now (nil: none, or it does not work)
 local function entry_network(surface, force, entry)
-	return surface.find_logistic_network_by_position(entry.position, force)
+	local net = entry_member_net(surface, force, entry)
+	return net and N.usable(net) and net or nil
 end
 
 local function add_to(t, contents)
 	for _, name in pairs(sorted_names(contents)) do t[name] = (t[name] or 0) + contents[name] end
 end
 
---- keep `contents` for recovery; an entry of the same network (or the same spot) takes it
-local function pool_add(s, surface, force, position, contents)
+--- keep `contents` for recovery; an entry of the same network (or the same spot) takes it. `anchor`: the ME
+--- member the fluid was recovered at
+local function pool_add(s, surface, force, position, contents, anchor)
 	local list = entries_of(s, surface.index, force.name, true)
 	local pos = { x = position.x or position[1], y = position.y or position[2] }
-	local net = surface.find_logistic_network_by_position(pos, force)
+	local net
+	if anchor and anchor.valid then net = N.network_of(anchor) else anchor, net = member_at(surface, pos, force) end
 	local into
 	for _, entry in ipairs(list) do
-		local n = net and entry_network(surface, force, entry)
-		if (n and n.network_id == net.network_id) or (entry.position.x == pos.x and entry.position.y == pos.y) then
+		local n = net and entry_member_net(surface, force, entry)
+		if (n and n.id == net.id) or (entry.position.x == pos.x and entry.position.y == pos.y) then
 			into = entry
 			break
 		end
 	end
 	if not into and #list >= MAX_ENTRIES then into = list[#list] end
 	if not into then
-		into = { position = pos, contents = {} }
+		into = { position = pos, contents = {}, anchor = anchor }
 		list[#list + 1] = into
 	end
 	add_to(into.contents, contents)
@@ -250,7 +279,7 @@ end
 local function drives_in(s, net)
 	local list = {}
 	if not net then return list end
-	local id = net.network_id
+	local id = net.id
 	for unit, rec in pairs(s.drives) do
 		local e = rec.entity
 		if not e.valid then
@@ -260,7 +289,7 @@ local function drives_in(s, net)
 			rec.surface, rec.force = e.surface.index, e.force.name     -- saves from before the recovery, changed forces
 			if not rec.position then rec.position = e.position end
 			local n = network_of(e)
-			if n and n.network_id == id then list[#list + 1] = rec end
+			if n and n.id == id then list[#list + 1] = rec end
 		end
 	end
 	table.sort(list, function(a, b) return a.entity.unit_number < b.entity.unit_number end)
@@ -327,12 +356,13 @@ local function list_remove(list, name, amount)
 	return amount - left
 end
 
---- Fluid that lost its drive: into the fluid drives of the logistic network at `position` (as far as
+--- Fluid that lost its drive: into the fluid drives of the ME network at `position` (as far as
 --- they have room), the rest into the recovery pool of the surface and force. Returns the amounts
 --- moved into drives and the amounts pooled ({ fluid -> amount } each).
-local function salvage(s, contents, surface, force, position)
+local function salvage(s, contents, surface, force, position, radius)
 	local moved, pooled = {}, {}
-	local net = position and surface.find_logistic_network_by_position(position, force)
+	local anchor = position and member_at(surface, position, force, radius)
+	local net = anchor and N.active_of(anchor)
 	local list = drives_in(s, net)
 	for _, name in pairs(sorted_names(contents)) do
 		local amount = contents[name]
@@ -342,7 +372,7 @@ local function salvage(s, contents, surface, force, position)
 			if amount - put > EPS then pooled[name] = amount - put end
 		end
 	end
-	if next(pooled) then pool_add(s, surface, force, position, pooled) end
+	if next(pooled) then pool_add(s, surface, force, position, pooled, anchor) end
 	return moved, pooled
 end
 
@@ -353,7 +383,7 @@ local function report_salvage(target, what, moved, pooled)
 end
 
 --- A drive takes over recovered fluid of its surface and force, as far as it has room: the entries of
---- its own logistic network and those whose network no longer exists, or every entry with `any` (the
+--- its own ME network and those whose network no longer exists, or every entry with `any` (the
 --- "take over" button). Returns the amounts taken ({ fluid -> amount }, empty for none).
 local function take_recovered(s, rec, entity, any)
 	local surface, force = entity.surface, entity.force
@@ -365,8 +395,8 @@ local function take_recovered(s, rec, entity, any)
 		if rec.capacity - rec.used <= EPS then break end
 		local ok = any
 		if not ok then
-			local n = entry_network(surface, force, entry)
-			ok = not n or (net and n.network_id == net.network_id)
+			local n = entry_member_net(surface, force, entry)
+			ok = not n or (net and n.id == net.id)
 		end
 		if ok then
 			for _, name in pairs(sorted_names(entry.contents)) do
@@ -398,7 +428,7 @@ local function gps(surface, position)
 end
 
 --- Existing drives pull recovered fluid in: RECOVERED_PER_STEP entries per step (round robin over every
---- surface and force), each into the drives of the logistic network its position lies in, as far as
+--- surface and force), each into the drives of the ME network at its position, as far as
 --- they have room. An entry that is fully taken over is reported once. `drives_of(net)` gives the drive
 --- list of a network (cached per step).
 local function pull_recovered(s, drives_of)
@@ -548,7 +578,7 @@ local function salvage_items(s, inventory, surface, force, position, target)
 		end
 	end
 	if not next(contents) then return {}, {} end
-	local moved, pooled = salvage(s, contents, surface, force, position)
+	local moved, pooled = salvage(s, contents, surface, force, position, HAND_RADIUS)
 	report_salvage(target, { "fork-me-fluids.salvage-item" }, moved, pooled)
 	return moved, pooled
 end
@@ -730,7 +760,7 @@ local function drive_gui_refresh(player, g)
 	local pool = pool_sum(s, entity.surface.index, entity.force.name)
 	local pool_sig = {}
 	for i, name in ipairs(pool and sorted_names(pool) or {}) do pool_sig[i] = name .. "=" .. pool[name] end
-	sig = table.concat(sig, ",") .. "|" .. (net and net.network_id or "-") .. "|" .. table.concat(pool_sig, ",")
+	sig = table.concat(sig, ",") .. "|" .. (net and net.id or "-") .. "|" .. table.concat(pool_sig, ",")
 	if g.sig == sig then return true end
 	g.sig = sig
 	find(frame, "fork_mefd_used").caption = { "fork-me-fluids.drive-used", format(rec.used), format(rec.capacity) }
@@ -910,16 +940,17 @@ end
 --- step
 --------------------------------------------------------------------------------
 
-local function on_step()
+--- one fluid step: run by the I/O step of scripts/fork-me-io.lua, which registers the interval
+function M.on_step()
 	local s = storage.fork_me_fluids
 	if not s then return end
 	flush_replacing(s)
 	local cache = {}                                        -- network id -> drive list, once per step
 	local function drives_of(net)
-		local list = cache[net.network_id]
+		local list = cache[net.id]
 		if not list then
 			list = drives_in(s, net)
-			cache[net.network_id] = list
+			cache[net.id] = list
 		end
 		return list
 	end
@@ -964,7 +995,6 @@ local function on_step()
 	end
 end
 
-script.on_nth_tick(STEP_TICKS, on_step)
 
 --------------------------------------------------------------------------------
 --- events (build/mine from control.lua, GUI from the terminal module and here)
@@ -1185,16 +1215,13 @@ function M.on_gui_confirmed(event)
 end
 
 --- (a filter can only be given when one event is registered at a time)
-local ENTITY_FILTER = { { filter = "type", type = "simple-entity-with-force" }, { filter = "type", type = "storage-tank" } }
-local MINED_FILTER = { { filter = "type", type = "simple-entity-with-force" }, { filter = "type", type = "storage-tank" },
-	{ filter = "type", type = "assembling-machine" }, { filter = "type", type = "furnace" } }
 --- How the mined drive and the drive built in its place are linked (see docs/AE2.md, "Upgrades"):
 ---   * by hand (fast replace, also onto a drive marked for upgrade): on_pre_build of the player at that
 ---     spot, then on_player_mined_entity of the old drive, then on_built_entity of the new one, one tick;
 ---   * robots and space platforms (upgrade planner): the old drive is still marked for upgrade in
 ---     on_robot_mined_entity / on_space_platform_mined_entity, then the built event follows in the same tick.
 --- The key is the spot (surface and position); what no drive takes is salvaged by the next step.
-local function on_mined_event(event)
+function M.on_mined_event(event)
 	local entity = event.entity
 	local replacing = false
 	if entity.valid and drive_capacity(entity.name) then
@@ -1206,15 +1233,11 @@ local function on_mined_event(event)
 	end
 	M.on_mined(entity, event.buffer, replacing)
 end
-for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
-	script.on_event(defines.events[name], on_mined_event, MINED_FILTER)
-end
+local on_mined_event = M.on_mined_event
 script.on_event(defines.events.on_pre_build, function(event)
 	local player = game.get_player(event.player_index)
 	if player and event.position then note_pre_build(state(), event.player_index, player.surface.index, event.position) end
 end)
-script.on_event(defines.events.on_entity_died, function(event) M.on_removed(event.entity, true) end, ENTITY_FILTER)
-script.on_event(defines.events.script_raised_destroy, function(event) M.on_removed(event.entity, false) end, ENTITY_FILTER)
 
 --- a hand craft that consumes a loaded drive item (the disassembly recipe, hand crafting only): the
 --- fluid is salvaged at the player's position before the item is gone (from control.lua)
@@ -1358,7 +1381,9 @@ function M.on_configuration_changed()
 						for name, amount in pairs(entry.contents or {}) do
 							if prototypes.fluid[name] and type(amount) == "number" and amount > EPS then clean[name] = amount end
 						end
-						if next(clean) and entry.position then entries[#entries + 1] = { position = entry.position, contents = clean, moved = entry.moved } end
+						if next(clean) and entry.position then
+							entries[#entries + 1] = { position = entry.position, contents = clean, moved = entry.moved, anchor = entry.anchor }
+						end
 					end
 					if #entries > 0 then
 						kept[surface_index] = kept[surface_index] or {}
