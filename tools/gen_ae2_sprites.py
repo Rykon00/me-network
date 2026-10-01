@@ -13,6 +13,7 @@ Sources:
     python tools/gen_ae2_sprites.py --fluids      # only the fluid graphics, from the existing item PNGs
     python tools/gen_ae2_sprites.py --extras      # only the issue #38 graphics, from the existing PNGs
     python tools/gen_ae2_sprites.py --r1          # only the issue #68 (R1) graphics, from the existing PNGs
+    python tools/gen_ae2_sprites.py --r2          # only the issue #68 (R2) fluid bus graphics, from the R1 PNGs
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
@@ -525,6 +526,32 @@ def r1():
     return written
 
 
+# --- issue #68, step R2: fluid import and export bus --------------------------------------
+# Derived from the item bus sprites of R1: the accents in fluid blue and the pipe ring of the fluid
+# interface around the arrow.
+def fluid_bus_sprite(name, direction):
+    img = recolor(load(OUT_ENTITY / f"{name}-{direction}.png"),
+                  {IMPORT_ACCENT: FLUID_LIGHT, EXPORT_ACCENT: FLUID})
+    c = TILE // 2
+    ImageDraw.Draw(img).ellipse((c - 9, c - 9, c + 8, c + 8), outline=PIPE + (255,), width=2)
+    return img
+
+
+def r2():
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for name in ("me-import-bus", "me-export-bus"):
+        fluid_name = name.replace("me-", "me-fluid-", 1)
+        for direction in ("north", "east", "south", "west"):
+            save(fluid_bus_sprite(name, direction), OUT_ENTITY / f"{fluid_name}-{direction}.png")
+        save(fluid_bus_sprite(name, "north"), OUT_ICON / f"{fluid_name}.png")
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
@@ -536,9 +563,11 @@ def main():
     ap.add_argument("--r1", action="store_true",
                     help="only the issue #68 (R1) graphics (cable, controller, drive with cell bays, buses), "
                          "derived from the existing PNGs (no checkout needed)")
+    ap.add_argument("--r2", action="store_true",
+                    help="only the issue #68 (R2) graphics (fluid import and export bus), derived from the R1 PNGs")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras or a.r1):
-        ap.error("--gt <checkout>, --fluids, --extras or --r1 is required")
+    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2):
+        ap.error("--gt <checkout>, --fluids, --extras, --r1 or --r2 is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -567,6 +596,9 @@ def main():
     if a.gt or a.r1:
         written = r1()
         print("ME issue #68 (R1) sprites:", len(written))
+    if a.gt or a.r2:
+        written = r2()
+        print("ME issue #68 (R2) sprites:", len(written))
 
 
 if __name__ == "__main__":

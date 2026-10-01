@@ -1,19 +1,20 @@
 --------------------------------------------------------------------------------
 --- FORK AE2: ME TERMINAL (runtime; issue #68: the central GUI of the ME network, scripts/fork-me-network.lua)
----   * Status line: network state, bytes and types used of the cells, drives and cells, the controller's
----     power draw.
----   * Storage tab: search (item name), sort (amount or name), the item grid. Left click: a stack into the
----     cursor (with something in the cursor: that is stored instead); right click: one item into the cursor;
----     shift click: a stack into the inventory. Below: the fluids of the fluid drives (read only) and the
----     player's inventory (click: store all of that item, right click: one stack).
+---   * Status line: network state, bytes and types used of the item cells and of the fluid cells, drives and
+---     cells, the controller's power draw.
+---   * Storage tab: search (item or fluid name), sort (amount or name), one grid with the items and then the
+---     fluids (issue #68 step R2). Left click on an item: a stack into the cursor (with something in the cursor:
+---     that is stored instead); right click: one item into the cursor; shift click: a stack into the inventory.
+---     Fluids are shown with their amounts; they cannot be taken by hand (an ME Fluid Interface or a fluid
+---     export bus takes them out). Below: the player's inventory (click: store all of that item, right click:
+---     one stack).
 ---   * Crafting tab (autocrafting, scripts/fork-me-autocraft.lua): every item or fluid a pattern can make,
 ---     an amount field and a "Craft" button with a plan preview (what is missing), and the job list with
 ---     progress and a cancel button. Its look is redone in step R3.
 ---   * The GUI is refreshed once per second while it is open (only for players that have it open); the same
 ---     step runs the slow step of the network module (drive lights, sweep for vanished members).
 ---   * GUI events of every ME window are registered here and routed (a Factorio event has one handler):
----     drives (fork-me-network.lua), buses (fork-me-io.lua), fluid drives and fluid interfaces
----     (fork-me-fluids.lua), level maintainers and circuit interfaces (fork-me-circuit.lua), pattern
+---     drives (fork-me-network.lua), buses (fork-me-io.lua), fluid interfaces (fork-me-fluids.lua), level maintainers and circuit interfaces (fork-me-circuit.lua), pattern
 ---     providers (fork-me-autocraft.lua).
 --- Every button calls a function of this module that the runtime test calls directly (take, store_cursor,
 --- store_inventory_item, withdraw, store_stack).
@@ -84,24 +85,34 @@ end
 local function status_line(net)
 	local st = N.stats(net)
 	return { "fork-me-net.terminal-status", format_bytes(st.bytes), format_bytes(st.bytes_total), st.types, st.types_total,
-		st.drives, st.cells, string.format("%.0f", st.power / 1000) }
+		st.drives, st.cells, string.format("%.0f", st.power / 1000), format_bytes(st.fbytes), format_bytes(st.fbytes_total),
+		st.ftypes, st.ftypes_total, st.fluid_cells }
 end
 
---- the entries of the storage grid: filtered by the search, sorted by amount or name
+--- the entries of the storage grid: the items, then the fluids (key "fluid/<name>", fluid = true), each filtered
+--- by the search and sorted by amount or name
 function M.entries(net, filter, sort)
 	filter = (filter or ""):lower():gsub("%s+", "-")
-	local items = {}
+	local items, liquids = {}, {}
 	for _, c in pairs(N.contents(net)) do
 		if prototypes.item[c.name] and (filter == "" or c.name:find(filter, 1, true)) then items[#items + 1] = c end
 	end
-	table.sort(items, function(a, b)
+	for name, amount in pairs(N.fluid_contents(net)) do
+		if prototypes.fluid[name] and (filter == "" or name:find(filter, 1, true)) then
+			liquids[#liquids + 1] = { key = "fluid/" .. name, name = name, count = amount, fluid = true }
+		end
+	end
+	local function order(a, b)
 		if sort == "name" then
 			if a.name ~= b.name then return a.name < b.name end
 		elseif a.count ~= b.count then
 			return a.count > b.count
 		end
 		return a.key < b.key
-	end)
+	end
+	table.sort(items, order)
+	table.sort(liquids, order)
+	for _, f in ipairs(liquids) do items[#items + 1] = f end
 	return items
 end
 
@@ -111,17 +122,14 @@ local function refresh(player)
 	if not (st and frame) then return end
 	local entity = st.entity
 	local status, grid = find(frame, "fork_me_status"), find(frame, "fork_me_grid")
-	local fluid_line, fluid_grid = find(frame, "fork_me_fluid_line"), find(frame, "fork_me_fluid_grid")
 	local inv_grid, net_line = find(frame, "fork_me_inv_grid"), find(frame, "fork_me_net_line")
-	if not (status and grid and fluid_line and fluid_grid and inv_grid and net_line) then   -- a frame built by an older version
+	if not (status and grid and inv_grid and net_line) then   -- a frame built by an older version
 		close(player)
 		return
 	end
 	local net, why = network(entity)
 	if not net then
 		grid.clear()
-		fluid_grid.clear()
-		fluid_line.visible = false
 		st.shown = nil
 		net_line.caption = ""
 		status.caption = { "fork-me-net.status-" .. why }
@@ -131,16 +139,6 @@ local function refresh(player)
 	net_line.caption = status_line(net)
 	M.refresh_crafting(player, frame, entity)
 	local items = M.entries(net, st.filter, st.sort)
-	local filter = (st.filter or ""):lower():gsub("%s+", "-")
-	local liquids = {}
-	for name, amount in pairs(fluids.totals(net)) do
-		if filter == "" or name:find(filter, 1, true) then liquids[#liquids + 1] = { name = name, amount = amount } end
-	end
-	table.sort(liquids, function(a, b)
-		if a.amount ~= b.amount then return a.amount > b.amount end
-		return a.name < b.name
-	end)
-	local capacity, used = fluids.capacity(net)
 	local main = player.get_main_inventory()
 	local own = main and main.get_contents() or {}
 	table.sort(own, function(a, b)
@@ -150,17 +148,14 @@ local function refresh(player)
 	--- unchanged since the last refresh: keep the buttons (and their open tooltips)
 	local sig = { st.sort or "count" }
 	for i = 1, math.min(#items, MAX_BUTTONS) do sig[#sig + 1] = items[i].key .. "=" .. items[i].count end
-	for _, f in ipairs(liquids) do sig[#sig + 1] = "fluid/" .. f.name .. "=" .. f.amount end
-	sig[#sig + 1] = "capacity=" .. used .. "/" .. capacity
 	for _, c in ipairs(own) do sig[#sig + 1] = "inv/" .. c.name .. "/" .. (c.quality or "normal") .. "=" .. c.count end
 	sig = table.concat(sig, ",")
 	if st.shown == sig then return end
 	st.shown = sig
 	grid.clear()
-	fluid_grid.clear()
 	inv_grid.clear()
 	status.visible = false
-	if #items == 0 and #liquids == 0 then
+	if #items == 0 then
 		status.caption = { "fork-me-terminal.empty" }
 		status.visible = true
 	elseif #items > MAX_BUTTONS then
@@ -169,26 +164,23 @@ local function refresh(player)
 	end
 	for i = 1, math.min(#items, MAX_BUTTONS) do
 		local c = items[i]
-		grid.add{
-			type = "sprite-button",
-			sprite = "item/" .. c.name,
-			number = c.count,
-			style = c.special and "yellow_slot_button" or "slot_button",
-			elem_tooltip = { type = "item-with-quality", name = c.name, quality = c.quality },
-			tags = { fork_me_key = c.key },
-		}
-	end
-	fluid_line.visible = capacity > 0 or #liquids > 0
-	fluid_line.caption = { "fork-me-terminal.fluids", fluids.format(used), fluids.format(capacity) }
-	for _, f in ipairs(liquids) do
-		local proto = prototypes.fluid[f.name]
-		if proto then
-			fluid_grid.add{
+		if c.fluid then
+			grid.add{
 				type = "sprite-button",
-				sprite = "fluid/" .. f.name,
-				number = f.amount,
+				sprite = "fluid/" .. c.name,
+				number = math.floor(c.count),
 				style = "slot_button",
-				tooltip = { "fork-me-terminal.fluid-tooltip", proto.localised_name, fluids.format(f.amount) },
+				tooltip = { "fork-me-terminal.fluid-tooltip", prototypes.fluid[c.name].localised_name, fluids.format(c.count) },
+				tags = { fork_me_key = c.key },
+			}
+		else
+			grid.add{
+				type = "sprite-button",
+				sprite = "item/" .. c.name,
+				number = c.count,
+				style = c.special and "yellow_slot_button" or "slot_button",
+				elem_tooltip = { type = "item-with-quality", name = c.name, quality = c.quality },
+				tags = { fork_me_key = c.key },
 			}
 		end
 	end
@@ -239,9 +231,6 @@ local function open(player, entity)
 	scroll.style.maximal_height = 360
 	scroll.style.minimal_width = 40 * COLUMNS + 12
 	scroll.add{ type = "table", name = "fork_me_grid", column_count = COLUMNS }
-	local fluid_line = scroll.add{ type = "label", name = "fork_me_fluid_line", style = "caption_label" }
-	fluid_line.visible = false
-	scroll.add{ type = "table", name = "fork_me_fluid_grid", column_count = COLUMNS }
 	storage_flow.add{ type = "line" }
 	storage_flow.add{ type = "label", caption = { "fork-me-net.inventory" }, style = "caption_label" }
 	local inv = storage_flow.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
@@ -477,6 +466,7 @@ end
 function M.take_to(cursor, inv, terminal, key, mode)
 	local net, why = network(terminal)
 	if not net then return nil, why end
+	if N.is_fluid_key(key) then return nil, "fluid-by-hand" end
 	local name = N.parse_key(key)
 	local proto = prototypes.item[name]
 	if not proto then return nil, "cannot-store" end
@@ -581,15 +571,15 @@ script.on_init(function()
 end)
 
 --- the "open GUI" key: the terminal here, drives (network module), buses (I/O module), the pattern provider
---- (autocrafting module), the fluid drive (fluids module)
+--- (autocrafting module)
 script.on_event("fork-me-terminal-open", function(event)
 	local player = game.get_player(event.player_index)
 	if not (player and player.selected) then return end
 	local e = player.selected
 	if e.name == "me-terminal" then
 		open(player, e)
-	elseif not (N.on_open_input(player, e) or io.on_open_input(player, e) or autocraft.on_open_input(player, e)) then
-		fluids.on_open_input(player, e)
+	elseif not N.on_open_input(player, e) and not io.on_open_input(player, e) then
+		autocraft.on_open_input(player, e)
 	end
 end)
 
@@ -616,7 +606,6 @@ end)
 script.on_event(defines.events.on_gui_click, function(event)
 	local el = event.element
 	if not (el and el.valid) then return end
-	if fluids.on_gui_click(event) then return end
 	if autocraft.on_gui_click(event) then return end
 	if N.on_gui_click(event) then return end
 	local player = game.get_player(event.player_index)
@@ -711,7 +700,6 @@ end)
 
 script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
-	fluids.on_player_removed(event.player_index)
 end)
 
 return M
