@@ -16,8 +16,9 @@ Factorio's logistic network any more.
 | ME Terminal | powered screen: the network's contents, take and store items, **crafting** |
 | ME Interface | 1x1 with 18 slots: filtered slots are kept filled from the network, everything else is imported |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items out of / put items into the machine or chest they face |
-| ME Fluid Drive (1k ... 256k) | fluid storage of the network, capacity from its four fluid storage cells (this page, **Fluids**) |
+| Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | ME Fluid Interface | small tank: import/export point for fluids |
+| ME Fluid Import Bus, ME Fluid Export Bus | 1x1, rotatable: take fluid out of / put fluid into the machine or tank they face |
 | ME Crafting CPU, Co-Processing and Quantum Crafting CPU | run autocrafting jobs: 1, 2 or 4 at once (this page, **CPU tiers**) |
 | ME Pattern Provider | makes the recipe of the machine next to it a pattern (this page, **Autocrafting**) |
 | ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
@@ -92,8 +93,8 @@ Needs power and a working network. Its window:
 * **Storage tab:** search (by the item's internal name) and sort (by amount or by name) the item grid.
   **Left click** an item: a stack into your hand; with something in hand, the click stores that instead.
   **Right click**: one item into your hand (one more of the same item). **Shift click**: a stack into your
-  inventory. Items with tags (loaded cells, loaded fluid drive items) have a yellow frame. Below: the fluids of
-  the fluid drives (read only), and **your inventory**: click an item there to store all of it, right click to
+  inventory. Items with tags (loaded cells) have a yellow frame. After the items, the fluids of the fluid cells
+  with their amounts (they cannot be taken by hand). Below: **your inventory**: click an item there to store all of it, right click to
   store one stack. "Store item in hand" stores the cursor.
 * **Crafting tab:** see **Autocrafting** below.
 
@@ -154,7 +155,7 @@ Step by step:
    With something missing the Craft button stays disabled. Click **Craft**; the job appears
    in the job list with its progress and a **Cancel** button.
 5. When the job is done, the result (and any by-products) is in network storage: items in the
-   ME Drives, fluids in the ME Fluid Drives.
+   cells of the ME Drives (items in item cells, fluids in fluid cells).
 
 Rules for pattern machines:
 
@@ -294,102 +295,75 @@ largest amounts first).
 | ME Import Bus, ME Export Bus | item filters | yes | yes |
 | ME Drive | none: the cells are items, not settings | - | a drive from a blueprint is empty |
 | ME Fluid Interface | import/export, fluid, fill level | yes (shift right click, shift left click) | yes (since issue #38) |
-| ME Fluid Drive | none: no filters or partitions; its contents are fluid, not settings | - | the contents stay on the drive item (see **Fluids**) |
+| ME Fluid Import Bus, ME Fluid Export Bus | fluid filters | yes | yes |
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
 | ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
 
 ## Fluids
 
-Tech `me-fluid-storage` (EV, needs `me-autocrafting`) unlocks fluid storage cells and ME Fluid
-Drives from 1k to 64k and the ME Fluid Interface; `me-fluid-storage-256k` (IV, also needs
-`me-storage-256k`) the 256k cell and drive (`prototypes/122-fork-ae2-fluids.lua`).
+Tech `me-fluid-storage` (EV, needs `me-autocrafting`) unlocks 1k to 64k **fluid storage cells**, the **ME Fluid
+Interface** and the **ME Fluid Import and Export Bus**; `me-fluid-storage-256k` (IV, also needs `me-storage-256k`)
+the 256k fluid cell (`prototypes/122-fork-ae2-fluids.lua`). Since issue #68 step R2 fluids are stored like items:
+in cells in the ME Drive.
 
 | Thing | What it is |
 |---|---|
-| **Fluid storage cell** (1k ... 256k) | storage housing + storage component of the tier + a pump. Holds 8000 fluid units per "1k" |
-| **ME Fluid Drive** (1k ... 256k) | 1x1, no power, four cells on a drive chassis: 32 000 / 128 000 / 512 000 / 2 048 000 / 8 192 000 units. Takes any fluids of the network in any mix; the disassembly recipe (hand crafting only) gives the cells back, the fluid of a loaded drive item is recovered (see below); recyclers do not take drives |
-| **ME Fluid Interface** | 1x1 tank of 5000 units with a pipe connection on every side: the import/export point |
+| **Fluid storage cell** (1k ... 256k) | storage housing + storage component of the tier + a pump. Goes into an ME Drive slot like an item cell; a drive may hold item and fluid cells in any mix |
+| **ME Fluid Interface** | 1x1 tank of 5000 units with a pipe connection on every side: the import/export point for pipes |
+| **ME Fluid Import Bus / Export Bus** | 1x1, rotatable: takes fluid out of / puts fluid into the machine or tank it faces |
 
-Step by step:
+**Fluid cell capacity** (the item cells' byte model; AE2 gives fluid cells fewer types than item cells, 18 is
+Gregtorio's choice):
 
-1. Connect ME Fluid Drives to the network (cables, or next to another ME block). The fluid drive and its
-   four fixed cells stay as they are until step R2 of issue #68 brings fluid cells for the ME Drive. The
-   storage tab of the ME Terminal shows `Fluids: used of capacity` as soon as a drive
-   is there. The upgrade planner (or fast replace by hand) swaps in bigger drives and keeps their
-   fluid (see "Upgrading a drive" below).
-2. **Import:** connect an ME Fluid Interface to the network and connect pipes to it. Import is
-   the default mode: everything in the pipes and tanks connected to the interface goes into the
-   network. Pipes and tanks connected **without a pump** in between form one fluid segment with
-   the interface, and the whole segment is emptied (a full storage tank within a second). With
-   a pump in front of the interface the fluid arrives at the pump's rate. Import stops when the
-   fluid drives are full.
-3. **Export:** open the interface. The panel next to the tank GUI has an Import/Export switch,
-   a fluid selector and a fill level (0 to 5000). In export mode the network fills the interface
-   with the chosen fluid up to that level and refills it as pipes and machines take it. Pipes
-   and tanks connected without a pump share that level with the interface; a pump behind the
-   interface takes the fluid away at its rate. Another fluid still in the tank is imported first
-   (if the drives have room). The panel shows the status (working, no drive, drives full, the
-   network does not hold this fluid, ...) and the fluid totals of the network.
-4. The **storage tab** of the ME Terminal lists the stored fluids below the items (the search
-   applies to them too). Fluids cannot be taken by hand: use an interface in export mode. The
-   "open GUI" key on a fluid drive shows what that drive holds (the window closes when you walk
-   out of reach). A loaded drive item can be stored in the network and taken out again through
-   the terminal; it keeps its fluid. Autocrafting never takes drive items out of storage.
+| Cell | Bytes | Bytes per fluid | Fluids | Units of one fluid |
+|---|---|---|---|---|
+| 1k | 1 024 | 8 | 18 | 8 128 |
+| 4k | 4 096 | 32 | 18 | 32 512 |
+| 16k | 16 384 | 128 | 18 | 130 048 |
+| 64k | 65 536 | 512 | 18 | 520 192 |
+| 256k | 262 144 | 2 048 | 18 | 2 080 768 |
 
-**Picking a drive up:** the contents travel on the drive item and are listed in the item's
-tooltip; placing that item brings them back (by hand, by robots, from a ghost of a
-deconstructed drive, on a space platform; checked for robots). Picking up a fluid interface moves
-what it holds back into the network (as far as the drives have room).
+Every 8 units of a fluid cost one byte. One fluid cell holds a little more than the old fluid drive held per
+cell (8 000 units per "1k"). An item cell takes no fluid and a fluid cell no items.
 
-**Upgrading a drive** (the upgrade planner with robots, also on a space platform, or fast replace by
-hand: placing another drive onto a drive) moves its fluid into the **new** drive. If the new drive is
-smaller and cannot hold all of it, the rest goes into the other fluid drives of the network, and what
-still does not fit becomes recovered fluid (see below); the chat says which. The old drive item comes
-back without fluid.
+* **Putting a cell in, taking it out:** exactly as item cells (the ME Drive's window, or click the drive with a cell
+  in hand). A fluid cell taken out keeps its fluid; its tooltip lists it ("12345 units of 2 fluids: ...").
+* **Terminal:** the fluids are in the same grid as the items, after them, with their amounts; the search and sort
+  apply to them. The status line shows the bytes and types of the fluid cells next to those of the item cells.
+  Fluids cannot be taken by hand: use a fluid interface in export mode or a fluid export bus.
+* **Import (interface):** connect pipes to an ME Fluid Interface. Import is the default mode: everything in the
+  pipes and tanks connected to it goes into the network. Pipes and tanks connected **without a pump** in between
+  form one fluid segment with the interface, and the whole segment is emptied (a full storage tank within a
+  second). With a pump in front of the interface the fluid arrives at the pump's rate. Import stops when the
+  fluid cells are full.
+* **Export (interface):** open the interface. The panel next to the tank GUI has an Import/Export switch, a fluid
+  selector and a fill level (0 to 5000). In export mode the network fills the interface with the chosen fluid up
+  to that level and refills it as pipes and machines take it. Pipes and tanks connected without a pump share that
+  level with the interface; a pump behind the interface takes the fluid away at its rate. Another fluid still in
+  the tank is imported first (if the cells have room). The panel shows the status (working, no fluid cell, cells
+  full, the network does not hold this fluid, ...) and the bytes and types of the network's fluid cells.
+* **Fluid buses:** the import bus empties the output boxes of the machine it faces (a tank: all of it), the
+  export bus fills its filtered fluids into the machine's input boxes or the tank. Up to 1000 units per visit (a
+  visit about every quarter second while there are fewer than 24 interfaces and buses), up to 5 fluid filters
+  (import: none means every fluid), kept in blueprints, settings paste and clones.
+* **Blueprints:** a drive from a blueprint is empty (cells are items). The settings of a fluid interface (import
+  or export, fluid, fill level) are kept in blueprints and copied by settings paste and cloning (issue #38).
 
-**A destroyed drive** (biters, an explosion, a script) loses nothing:
+**Temperature:** the network stores fluids by name only, without a temperature. Importing drops the temperature;
+an export, a fluid export bus and the hand-over to a pattern machine deliver the fluid at its default
+temperature. Steam therefore loses its heat in the network (it comes out at 15 °C, which no steam engine or
+turbine accepts); the Gregtorio fluids have a single temperature and are not affected. A recipe whose fluid box
+needs a temperature the default does not satisfy is not a pattern (`fluid-temperature` in the info line).
 
-1. The other fluid drives of its network take its fluid, as far as they have room.
-2. What does not fit (or everything, if the drive stood outside any network) is kept as
-   **recovered fluid** of that surface, together with the place it came from.
-3. The fluid drives of the same network take the recovered fluid over by themselves as soon as
-   they have room (an export took fluid out, a drive was upgraded or added), a few entries every
-   quarter second; the chat reports it once when all of an entry is back. A fluid drive placed in
-   that network takes it over at once, as far as it has room. Robots rebuilding the ghost of the
-   destroyed drive do exactly that, so a network with construction robots and a spare drive item
-   repairs itself. The network of an entry is that of the ME block the fluid was recovered at (the
-   cable or block next to the destroyed drive); if that block and every ME block next to the place are
-   gone, the recovered fluid waits for the next fluid drive placed anywhere on the surface.
-4. The "open GUI" key on any fluid drive shows the recovered fluid of the surface with a
-   **Take over** button, which moves all of it (from any network) into that drive.
-
-Every step is reported in the chat with a map link: what went into other drives, what was kept as
-recovered fluid, what a drive took over. Recovered fluid is only lost when its surface is deleted,
-and that is reported too. The same happens to a drive removed by another mod without an event: its
-fluid is kept as recovered fluid as soon as the network is next looked at.
-
-**Taking the cells out of a loaded drive item** (the disassembly recipe) works by hand only. The
-drive's fluid goes into the fluid drives of the network of the nearest ME block within 10 tiles of you, as far as they have room; the
-rest becomes recovered fluid (as above), and the chat says which. The item comes back without its
-fluid. Assemblers cannot run the disassembly, because the mod cannot see the fluid of an item an
-assembler consumes.
-
-**Blueprints** do not carry fluid: fluid contents are not blueprint data. A drive built from a
-blueprint (or a copy-paste) starts empty, apart from the recovered fluid it takes over; only the
-drive item carries fluid, on its tags. The **settings** of a fluid interface (import or export, fluid,
-fill level) are kept in blueprints and copied by settings paste and cloning (issue #38); a drive has no
-settings.
-
-**Temperature:** the network stores fluids by name only, without a temperature. Importing drops
-the temperature; an export, and the hand-over to a pattern machine, delivers the fluid at its
-default temperature. Steam therefore loses its heat in the network (it comes out at 15 °C, which
-no steam engine or turbine accepts); the Gregtorio fluids have a single temperature and are not
-affected. A recipe whose fluid box needs a temperature the default does not satisfy is not a
-pattern (`fluid-temperature` in the info line).
+**Old fluid drives** (before step R2: four fluid cells crafted into an ME Fluid Drive) are converted when the save
+is loaded (`docs/ME-REWORK.md`, "Migration of fluids (R2)"): each becomes an ME Drive with four fluid cells of its
+tier holding its fluid; recovered fluid of destroyed drives goes into the cells of its network (else of the
+nearest drive with room); a loaded fluid drive item in an inventory or a chest keeps its item, and its fluid comes
+as fluid cells next to it. Placing an old fluid drive item builds an ME Drive with its four fluid cells (and its
+fluid, if it carried any). The old recovery (recovered fluid, "Take over", pull-in) is gone: a fluid cell keeps its
+fluid wherever it is, and a destroyed drive drops its cells.
 
 ## Design
-
-### Fluid storage
 
 ### Network, cells and storage (issue #68)
 
@@ -405,86 +379,34 @@ network and does nothing when the network does not work. `scripts/fork-me-io.lua
 ticks: the fluid step below, then up to 24 interfaces and buses), `scripts/fork-me-migrate.lua` converts old
 networks, `scripts/fork-me-terminal.lua` is the terminal and routes the GUI events of every ME window.
 
-### Fluid storage
+### Fluid storage (issue #68, R2)
 
-The fluid side lives in `storage.fork_me_fluids` (`scripts/fork-me-fluids.lua`) until step R2 moves fluids
-into cells. An ME Fluid Drive is a passive 1x1 entity without a fluid box;
-its contents are a plain table `{ fluid -> amount }` per drive (`drives[unit_number]`), capped by
-the capacity the prototype file passes through the mod-data `fork-me-fluids` (no duplicated
-numbers). The network total of a fluid is the sum over the fluid drives that are members of that
-ME network (and only while it works); the network is looked up when a total is asked for
-(`network_of`), so merging or splitting networks needs no bookkeeping
-and nothing is ever rebuilt. Keeping the contents per drive rather than per network is what
-makes picking a drive up work: the mined-entity events move the table onto the item as tags
-(`fork_me_fluids`) with a description, the built events read the tags of the consumed item
-(`event.tags` for ghosts and `script_raised_revive`, `event.stack` for robots and platforms,
-`event.consumed_items` for players) and restore the contents, clamped to the capacity. A cloned
-drive starts empty (no duplication). `insert` fills drives that already hold the fluid first,
-then the rest; `remove` takes from the drives in unit-number order.
+Fluids are stored by the same engine as items (`scripts/fork-me-network.lua`): a fluid cell's spec (mod-data
+`fork-me-network`, `cells[name]`) has `kind = "fluid"` and `per_byte = 8`; its contents are keyed
+`fluid/<name>` (the resource keys of autocrafting), amounts may be fractional. `cell_room` gives an item cell
+no room for fluid keys and a fluid cell none for item keys; everything else (`insert_key`, `extract_key`, the
+per-network totals and the index key -> cells, the bytes and types, tags of a cell taken out) is shared.
+The network keeps item and fluid bytes and types apart (`bytes`/`types` and `fbytes`/`ftypes`). The fluid API is
+`insert_fluid`, `extract_fluid`, `fluid_count`, `can_insert_fluid` and `fluid_contents`; `scripts/fork-me-fluids.lua`
+keeps the calls the other modules used (`totals`, `count`, `insert`, `remove`, `capacity` in units = fluid bytes
+times 8) on top of them.
 
-**Recovery** (`storage.fork_me_fluids.recovered`: surface index -> force name -> list of
-`{ position, contents }`). `on_entity_died` and `script_raised_destroy` drop the drive's record
-first, then `salvage` inserts its contents into the drives of the ME network of the nearest member within
-1.5 tiles of its position (10 tiles of the player for the hand disassembly; the same `insert` as the
-interfaces) and adds the rest as an entry. An entry keeps that member (`anchor`). An entry takes the fluid of
-every later salvage in the same network (or at the same spot); at most 32 entries per surface and
-force, more are merged into the last one. Network ids are not stable (merges and splits), so an entry
-stores its anchor and position and its network is looked up when needed: that of the anchor while it is a
-member, else that of a member within 1.5 tiles of the position. A placed drive takes the entries of its own
-network and those without any network. Placing a drive restores the item's
-tags first, then the contents of a drive it replaced (see **Upgrades**), then takes recovered fluid.
-The drive GUI's button takes every entry of the surface. The fluid step also pulls entries into the
-drives that are already in their network: `RECOVERED_PER_STEP` (4) entries per step, round robin
-over every surface and force (cursor `rcursor`), each into the drives of its network now
-(the per-step drive list cache of the interfaces, so a network's drives are listed once
-per step), with the same `insert`. Entries without a network or without room there are skipped. An
-entry sums what it gave away in `moved`; when it is empty it is reported once with that sum and
-dropped.
-A drive record whose entity became invalid without any event is salvaged into an entry at its
-stored position the next time a network total is computed (records carry surface, force and
-position; records from older saves get them on the fly). `on_pre_surface_deleted` drops the
-surface's drives and entries and reports the amounts as lost. The hand disassembly uses
-`on_pre_player_crafted_item`: the consumed drive items are replaced by the same items without tags
-and their fluid is salvaged at the player's position; `on_player_cancelled_crafting` strips the
-tags from returned drive items, so a cancelled craft cannot hand the fluid out twice. Everything is
-exposed on the remote interface for the tests (`recovered`, `salvage_items`, `take_recovered`).
+The **ME Fluid Interface** is a real storage tank (5000 units). Every 15 ticks (the I/O step of
+`scripts/fork-me-io.lua`, which registers `on_nth_tick(15)` and runs the fluid step first) up to 8 interfaces are
+stepped, round robin. Import: the tank's fluid is removed with `remove_fluid`, limited to what the network can
+take (`can_insert_fluid`); this takes the whole fluid segment (pipes and tanks connected without a pump share it
+with the interface, whose own box would only ever hold its share). Export: `want = level - held`, `insert_fluid`
+of `min(want, stored)` at the default temperature. In both directions only what the engine reports as removed or
+inserted is booked, never the requested amount, so fluid is conserved. The status of the last step is shown in
+the panel.
 
-The **ME Fluid Interface** is a real storage tank (5000 units). Every 15 ticks
-(the I/O step of `scripts/fork-me-io.lua`, which registers `on_nth_tick(15)` and runs the fluid step first;
-20, 30 and 60 are taken by autocrafting, molds and terminal) up to 8
-interfaces are stepped, round robin, with one drive list per network and step. Import: the
-tank's fluid is removed with `remove_fluid`, limited to the free capacity of the drives; this
-takes the whole fluid segment (pipes and tanks connected without a pump share it with the
-interface, whose own box would only ever hold its share). Export: `want = level - held`,
-`insert_fluid` of `min(want, stored)` at the default temperature. In both directions only what
-the engine reports as removed or inserted is booked in the drives, never the requested amount,
-so fluid is conserved. The status of the last step (ok, no network, no drive, full, empty, the
-network does not hold the fluid, another fluid blocks the tank) is shown in the panel.
+The **fluid buses** run in the same I/O step as the item buses (`fork-me-io.lua`, `fluid_bus_step`): the import
+bus reads the target's fluid boxes by index and skips input boxes (`production_type == "input"`), takes at most
+what the network can store and writes the rest back into the box; the export bus uses `insert_fluid` (the engine
+picks the box) and books what it reports. 1000 units per visit.
 
-Fluids are stored by name only. One temperature per fluid keeps totals, export and hand-over
-unambiguous; the price is the temperature rule above.
-
-### Upgrades
-
-Factorio 2.0 does not tell a script which entity replaced which: the built events have no
-"replaced entity" field and there is no upgrade event that carries both entities
-(`on_marked_for_upgrade` only marks). The old drive is mined and the new one built at the same
-position of the same surface and force in the same tick, so the script links them by **spot**. The
-runtime test logs the robot event order (`DEVCHECK-RUNTIME-UPGRADE-EVENTS` in the log):
-
-| Path | Events | The mined drive counts as replaced when |
-|---|---|---|
-| Upgrade planner, robots (bigger or smaller drive) | `on_robot_mined_entity` (old), then `on_robot_built_entity` (new), same tick; no `on_robot_pre_mined` | `entity.to_be_upgraded()` is still true in the mined event (a deconstruction gives false) |
-| Upgrade planner on a space platform | `on_space_platform_mined_entity`, then `on_space_platform_built_entity` | the same (`to_be_upgraded()`) |
-| Fast replace by hand (also onto a drive marked for upgrade) | `on_pre_build` (player, position of the new entity), `on_player_mined_entity` (old), `on_built_entity` (new), same tick | the same player had an `on_pre_build` in this tick whose position lies on the mined drive |
-
-A drive that counts as replaced puts nothing onto its item. Its contents are held in
-`storage.fork_me_fluids.replacing["surface:x:y"]` (with force, tick and name), and the drive built at
-that spot takes them in `on_built` (any build path), as far as it has room; the rest goes through
-`salvage` (the network at that spot, then the recovered fluid) and is reported. Held contents that no
-drive took (the build did not happen) are salvaged the same way by the next fluid step, so nothing is
-lost. Should the hand path ever raise the mined event before `on_pre_build`, the drive would not count
-as replaced and its fluid would go onto the old item as before: no loss and no duplication either.
+Fluids are stored by name only. One temperature per fluid keeps totals, export and hand-over unambiguous; the
+price is the temperature rule above.
 
 ### Patterns
 
@@ -548,7 +470,7 @@ Each step the CPU of a job:
    (Molecular Assembler or any other pattern machine, several machines in parallel),
 3. when every step is done, stores the whole pool in the network (result and by-products), items
    with the network's `insert`, fluids with `fluids.insert`. What does not fit stays in the pool
-   ("Storing items and fluids (network or fluid drives full?)").
+   ("Storing items and fluids (network cells full?)").
 
 The machines craft at their own speed and use their own power; the script only moves items and
 fluids. Everything else follows from the pool: the plan makes the total supply equal the total
@@ -592,8 +514,8 @@ Removed entities:
 | Pattern machine without work in it | the job waits for another machine with that recipe; cancel it or place a machine again |
 | Pattern machine with work in it | the job fails; the fluid in its boxes goes back into the job's pool before the machine vanishes (mined-entity hook), items still in it go to whoever mined it, a craft in progress is lost; the pool is returned |
 | Pattern provider | the machine is no longer a pattern; a running job finishes what is already in the machine |
-| Fluid drive during a job | nothing happens to the job: its fluids are in its pool, not in a drive. The drive item carries what the drive held. At the end the pool is stored in the remaining drives, or waits for room |
-| Fluid interface | nothing for jobs; what it holds goes back into the network (as far as the drives have room), its mode, fluid and level are forgotten |
+| A drive or a fluid cell during a job | nothing happens to the job: its items and fluids are in its pool, not in a cell. At the end the pool is stored in the remaining cells, or waits for room |
+| Fluid interface | nothing for jobs; what it holds goes back into the network (as far as the cells have room), its mode, fluid and level are forgotten |
 | Terminal, controller, a cable | jobs without a working network pause ("No ME network"). A job finds its network through its CPU, else through the entity it was started at (terminal, level maintainer), else through the ME block at its position (jobs of older saves) |
 
 ### CPU tiers (issue #38)
@@ -616,7 +538,7 @@ queue and take the next free slot (the path the existing CPU test covers).
   control behavior while its circuit (or logistic) condition is switched on (a freshly wired lamp reads
   `disabled` until its next circuit update, so the flag alone is not trusted), no network: status only. Otherwise the target is the amount,
   or the resource's signal on red plus green (`get_circuit_network(wire).get_signal`). The stock is
-  the network's `count` (normal quality) or the fluid drives' count. Its own job still queued or running:
+  the network's `count` (normal quality) or `fluid_count`. Its own job still queued or running:
   nothing. Stock below target: if an active, not closing job of the network crafts the same key
   (`active_job_for`), nothing; else, if a powered CPU has a free slot (`free_slot`), `M.start` with the
   difference and the maintainer's unit number as the job's `owner`. At most one start per step (a start
@@ -651,9 +573,8 @@ queue and take the next free slot (the path the existing CPU test covers).
   selected, once per second from the cache).
 * The I/O step every 15 ticks: up to 24 ME Interfaces and buses (`docs/ME-REWORK.md`, "Tick budget"), and
   the fluid step, which handles at most 8 fluid interfaces (one `remove_fluid` or
-  `insert_fluid` each), at most 4 recovered entries (nothing when there is no recovered fluid) and
-  the open drive and interface panels. A network total loops over the
-  fluid drives (a few hundred at most, once per network and step), never over tanks or pipes.
+  `insert_fluid` each) and the open interface panels; a network's fluid total is a table lookup (the storage
+  engine's totals), never a loop over tanks, pipes or drives. Fluid buses move up to 1000 units per visit.
 * The terminal step every 60 ticks: the open terminals, the lights of up to 50 changed drives and a sweep
   over 200 network members (members removed without an event).
 * No per-tick loops, no loops over the whole network. State lives in `storage.fork_me_net`, `storage.fork_me_io`,
@@ -674,37 +595,26 @@ CPU records of older saves hold one `job`; they are rebuilt (`jobs = {}`) and th
 record read before the rebuild is converted on the spot (`migrate --from-ref v0.3.1` starts a job with
 the old version and checks that it finishes after the update). Level maintainers and circuit interfaces
 are new, their state is created lazily and rebuilt from the world (settings kept by unit number).
-The fluid state is created lazily; its rebuild (run first, autocrafting reads it) finds the fluid
-drives and interfaces in the world, keeps drive contents by unit number (clamped to the capacity)
-and interface settings, and closes open fluid panels. Recovered fluid is created lazily as well;
-the rebuild drops entries of fluids, surfaces or forces that no longer exist. Loaded fluid drives
-of an older save keep their contents (`devcheck.py migrate` builds such a save with the old
-version and checks it). The layout of `storage.fork_me_fluids` is unchanged; the pull-in cursor, the
-held contents of replaced drives and the players' last build spots are added lazily (held contents
-never outlive a tick; a configuration change salvages any that are left). Recovered fluid of an older
-save is kept and pulled into its network's drives like new entries (`migrate --from-ref v0.3.1`).
+Before the item migration, the fluid migration of step R2 (`run_fluids`) converts the old fluid drives, their
+recovered fluid, the contents held for an upgrade and loaded fluid drive items into fluid cells and drops that
+part of `storage.fork_me_fluids` (rule in `docs/ME-REWORK.md`, "Migration of fluids (R2)"); the fluid module then
+rebuilds its interface records from the world (settings kept by unit number) and closes open panels.
 
 ## Limits and open points
 
 * One temperature per fluid: stored by name, exported at the default temperature. Hot steam loses
   its heat; recipes that need another temperature are not patterns.
-* Drive contents are not part of blueprints: a drive built from a blueprint starts empty, only
-  the item's tags carry fluid. A destroyed drive's fluid is recovered (see **Fluids**): the drives
-  of its network pull it in when they have room (4 entries per quarter second), a newly placed drive
-  takes it at once, the Take over button from any network.
-* Upgrades are linked by spot and tick (see **Upgrades**). The robot upgrade and downgrade run in
-  the engine in the headless test; the hand fast replace is tested through the same functions in the
-  engine's order (no player in a benchmark run) and is untested in the real game, like the chat reports.
-* No per-drive limits on fluid types (no partitioning, no filters, unlike AE2 cells): every drive
-  takes every fluid; `insert` prefers drives that already hold it.
+* Cells are not part of blueprints: a drive built from a blueprint starts empty. A destroyed drive drops its
+  cells with their items and fluids.
+* No cell partitioning (a cell that takes only some fluids) and no drive priorities: a fluid goes into the cells
+  that already hold it first, then into any fluid cell with a free type.
+* Loaded old fluid drive items stored inside ME cells (R1 allowed storing them) are not converted by the
+  migration; placing such an item later gives a drive with its fluid in cells.
 * The export level applies to the interface's own box; pipes and tanks connected without a pump
   share that level, so the segment holds more than `level` in total. Put a pump behind the
   interface to fill a tank.
 * The fluid interface has no circuit connection; the fluid totals reach the circuit network through
   the ME Circuit Interface (issue #38).
-* The disassembly recipe is hand crafting only (the fluid of a loaded item is recovered); a
-  cancelled hand disassembly returns the drive item without its fluid, which stays recovered.
-  Untested in the real game: the headless test calls the same function the craft event calls.
 * Autocrafting plans and crafts only normal quality, no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
 * Network storage (issue #68): no channels, no cell partitioning, no drive priorities, no storage bus; the
@@ -723,8 +633,8 @@ save is kept and pulled into its network's drives like new entries (`migrate --f
   condition in the real lamp GUI, settings paste by hand and the upgrade planner on CPUs are untested in
   the real game (the headless test calls the same functions).
 * A machine whose only input is shared with a belt, inserter or pipe will fight with the network.
-* Balance (costs, speeds, tier), the look of the sprites and the GUIs (terminal fluid grid,
-  drive contents, interface panel) are untested in the real game.
+* Balance (costs, speeds, tier), the look of the sprites and the GUIs (the terminal's fluid entries, the fluid
+  bus window, the interface panel) are untested in the real game.
 
 ## Testing
 
@@ -755,37 +665,32 @@ leave the ingots in storage with empty furnace slots. Then the choice is pasted 
 provider, cleared (the last smelted recipe keeps the furnace a pattern), stored in a blueprint as
 entity tag, and restored on a provider revived from a tagged ghost.
 
-A second network tests the fluids: an import interface with a storage tank of chlorine connected
-to it, an export interface set to 1000 units, a 1k fluid drive, a roboport with construction
-robots, and HV chemical reactors and an EV extractor with fluid recipes behind pattern providers.
-It checks that the tank drains into the network and the export interface holds its level (fluid
-conserved, totals and capacity right), that the export never overfills and re-imports when
-switched, that a drive picked up by script and by robots (deconstruction, then a ghost) carries
-its contents on the item and brings them back (and that the loaded item survives a trip through
-the terminal), that full drives stop the import and keep the fluid in the tank while the panel
-reports it, that a reactor with a pipe on its input is counted under `fluid-pipes` and not a
-pattern, that a too large request reports the missing chlorine and raw silicon exactly, that
-three jobs (fluid in and out, fluid out only, fluid in only) finish with the expected amounts and
-empty machines, and that a reactor mined by robots while it holds a job's chlorine gives it back.
+A second network tests the fluids (issue #68 R2: a drive with four 1k fluid cells): an import interface with a
+storage tank of chlorine connected to it, an export interface set to 1000 units, a roboport with construction
+robots, and HV chemical reactors and an EV extractor with fluid recipes behind pattern providers. It checks that
+the tank drains into the network and the export interface holds its level (fluid conserved, the fluid bytes
+right), that the export never overfills and re-imports when switched, that a fluid cell taken out carries the
+chlorine in its tags, survives a trip through the terminal and brings it back from another slot, that robots
+mining the drive deliver the drive and its four cells (the chlorine in the tags) to a storage chest and the
+rebuilt drive is empty until the cells are back, that full cells stop the import and keep the fluid in the tank
+while the panel reports it, that a reactor with a pipe on its input is counted under `fluid-pipes` and not a
+pattern, that a too large request reports the missing chlorine and raw silicon exactly, that three jobs (fluid in
+and out, fluid out only, fluid in only) finish with the expected amounts and empty machines, and that a reactor
+mined by robots while it holds a job's chlorine gives it back.
 
-A third network tests the recovery: two loaded 1k drives, one of them destroyed (the other takes
-what fits, the rest becomes recovered fluid, totals conserved), its ghost rebuilt by robots (the new
-drive takes the recovered fluid over), the upgrade planner on a loaded drive (robots: the new 4k
-drive holds all of the fluid, the old item comes back into storage without tags), the cells taken out
-of a loaded item inside the network (all fluid in the drives, the item without tags) and outside of
-any network (all recovered, then taken over), a loaded drive removed without an event, and a
-destroyed drive on a second surface that is then deleted. Then the pull-in (issue #43): the network is
-filled up, a disassembly's chlorine is recovered (no room), an export interface takes 5000 water out,
-and the drives must pull the chlorine in by themselves (drives + interface + recovered fluid conserved
-at every check). The upgrade planner then downgrades the full 4k drive to a 1k (robots): the new drive
-holds 32000, the network's last room is filled, the rest is recovered, the old 4k item has no tags.
-Last, a hand fast replace of the other drive by a 4k (`on_pre_build`, the mined event with the old
-item in its buffer, then the build, in the engine's order through the remote interface): the old item
-has no tags, the new drive holds the old drive's fluid and then the recovered fluid of its network,
-and the whole amount is conserved. `devcheck.py migrate --from-ref v0.3.0` builds loaded fluid drives
-with 0.3.0 and checks them (and the recovery) after the update; from v0.3.1 on the old save also holds
-recovered fluid, which must be kept, and after 5000 water leave the network the recovered water of a
-destroyed drive must be pulled in.
+The fluid cell test (another network right of the machine grid) puts an item cell and a fluid cell into one drive
+(each takes only its kind), takes the fluid cell out (water in the tags, the network keeps none, the item cell
+takes no fluid) and puts it back, checks a fluid cell's capacity to the unit, the terminal's entries (items, then
+fluids; search; taking a fluid by hand is refused), the fluid import bus emptying a tank (1000 per visit) and the
+fluid export bus filling one (nothing without a filter), and old fluid drive items placed as ME Drives (four cells
+with the fluid of the tags; 40 000 units on a 1k item: more cells in the free slots, nothing lost).
+
+`devcheck.py migrate` (the old fluid recovery is tested as the migration): the old save has two loaded 1k fluid
+drives in a network, a loaded drive outside any network, recovered chlorine with no network at its place and a
+chest with two loaded drive items. After the update the drives must be ME Drives with four 1k fluid cells holding
+their fluid, the recovered chlorine must be in the nearest drive with room, the items must have lost their tags
+and their water must be in fluid cells in the chest, and the migration report must count the same units before
+and after (`--from-ref v0.3.2` and from a commit with R1, whose old save uses the cable network).
 Issue #38 (four more networks right of the machine grid): a level maintainer that keeps 10 gears, in a
 network with two free job slots, must start exactly one job for 10, never have two active gear jobs, start
 nothing while the stock holds (120 ticks), start one job for exactly the difference after 3 gears are taken

@@ -9,11 +9,11 @@ The rework comes in three steps:
 
 | Step | Content | State |
 |---|---|---|
-| **R1** | the new core: cable graph, controller, drives with cell slots, cells with their contents in tags, the storage API, the terminal, the ME Interface and buses, migration of old networks; autocrafting, level maintainer, circuit interface and fluids moved onto the new API | this document, `docs/AE2.md` |
-| R2 | fluids on cells (fluid cells in drives, like item cells); the fluid drive and its recovery are kept unchanged until then | open |
+| **R1** | the new core: cable graph, controller, drives with cell slots, cells with their contents in tags, the storage API, the terminal, the ME Interface and buses, migration of old networks; autocrafting, level maintainer, circuit interface and fluids moved onto the new API | done (PR #69) |
+| **R2** | fluids on cells: fluid storage cells in the ME Drive, the fluid API of the storage engine, fluids in the terminal grid, the fluid interface on the new API, fluid import and export buses, migration of fluid drives, their recovered fluid and loaded drive items; the old recovery removed | done (this document, "Fluids (R2)") |
 | R3 | proper GUIs for pattern provider, level maintainer, circuit interface, crafting CPUs, interface and buses | open |
 
-This file is the design record: what was decided and why, and what is left for R2 and R3. The player's
+This file is the design record: what was decided and why, and what is left for R3. The player's
 guide is `docs/AE2.md`.
 
 ## Network topology
@@ -279,8 +279,8 @@ on them for coverage lose it (the controllers had no robots and no charging pads
 storage chests of the old ME network stay in those chests: the new network holds only cells. A cable path
 can block a walkway (it collides like a 1x1 entity); the player can move it.
 
-**Fluids** stay as they are until R2: the ME Fluid Drive keeps its contents and its recovery, it is a
-network member like any other, its totals are summed over the fluid drives of the new network. A recovered
+**Fluids** (R1; replaced in R2, see "Migration of fluids (R2)"): the ME Fluid Drive kept its contents and its
+recovery and was a network member like any other, its totals summed over the fluid drives of the new network. A recovered
 fluid entry keeps its position and the ME member it was recovered at (the member nearest to the destroyed
 drive within 1.5 tiles, or to the player within 10 tiles for the hand disassembly of a loaded fluid drive
 item): its network is that member's network while the member exists, else the network of a member within
@@ -321,19 +321,115 @@ left, every block connected, drives with four cells of their tier, the report's 
 items, those items are in the network (the blueprint in an overflow chest), no difference, the 16 cells kept,
 fluids, recovery, patterns and the job as before.
 
-## Open for R2
+## Fluids (R2)
 
-* Fluid cells in the ME Drive (fluid contents in cell tags, like items) instead of the fluid drive with its
-  four fixed cells, with a migration of fluid drives into drives with fluid cells. The fluid recovery then
-  goes away (cells carry their contents).
-* The terminal's fluid grid as part of the item grid (AE2 shows fluids as "items").
-* One temperature per fluid stays (or a temperature per stored fluid).
+### Fluid cell model
+
+A fluid storage cell (`me-1k-fluid-storage-cell` ... `me-256k-fluid-storage-cell`, the existing items, recipes
+unchanged) becomes an item with tags, stack size 1, and goes into an ME Drive slot like an item cell. A drive may
+hold item and fluid cells in any mix.
+
+| Cell | Bytes | Bytes per fluid | Fluids | Units of one fluid |
+|---|---|---|---|---|
+| 1k | 1 024 | 8 | 18 | 8 128 |
+| 4k | 4 096 | 32 | 18 | 32 512 |
+| 16k | 16 384 | 128 | 18 | 130 048 |
+| 64k | 65 536 | 512 | 18 | 520 192 |
+| 256k | 262 144 | 2 048 | 18 | 2 080 768 |
+
+The byte model is the item cells' one, with 8 fluid units per byte (AE2 stores 8 buckets per byte; a Gregtorio
+fluid unit is far smaller than a bucket, and 8 units per byte keeps a cell where the old fluid cell was: 8 000
+units per "1k"). AE2 gives fluid cells fewer types than item cells; 18 is Gregtorio's choice (a cell full of
+different fluids still holds a useful amount of each). Amounts may be fractional (fixed point fluid amounts):
+a fluid's bytes are `ceil(amount / 8)`, an amount below 1e-6 counts as nothing.
+
+**Engine:** one storage engine for items and fluids (`scripts/fork-me-network.lua`). A cell spec has
+`kind = "fluid"` and `per_byte`; fluids are keyed `fluid/<name>` (the resource keys autocrafting has always used).
+`cell_room` gives a cell no room for the other kind, so `insert_key` and `extract_key`, the per-network totals and
+the index key -> cells, cells' tags, drives, spilling and robots work unchanged. Per network the bytes and types
+of fluid cells are kept apart (`fbytes`, `ftypes`, `fbytes_total`, `ftypes_total`). API: `insert_fluid`,
+`extract_fluid`, `fluid_count`, `can_insert_fluid`, `fluid_contents` (and on the remote interface); `contents`
+and `plain_counts` list items only. `scripts/fork-me-fluids.lua` keeps `totals`, `count`, `insert`, `remove` and
+`capacity` for its callers (autocrafting, level maintainer, circuit interface, terminal).
+
+**One temperature per fluid** stays: fluids are stored by name; importing drops the temperature, everything that
+comes out has the fluid's default temperature. Per-temperature storage would make every steam temperature its own
+type, and an export would have to pick one; the cost (hot steam cannot be stored) is documented in `docs/AE2.md`.
+
+### Terminal, interface and buses
+
+* **Terminal:** the fluids are in the main grid after the items (`entries` returns them with `fluid = true` and
+  the key `fluid/<name>`), with their amounts in the tooltip; search and sort apply. The status line shows item and
+  fluid cell bytes and types and both cell counts. Taking a fluid by hand returns `fluid-by-hand` (AE2 needs
+  buckets for that; Factorio has none).
+* **ME Fluid Interface:** unchanged entity and settings (import by default, export with a fluid and a level,
+  blueprint tag `fork_me_fluid_interface`, settings paste, clones), now on the fluid API: import takes what
+  `can_insert_fluid` allows, export takes what the network holds. Its panel shows the fluid bytes and types.
+* **ME Fluid Import / Export Bus** (`me-fluid-import-bus`, `me-fluid-export-bus`, tech `me-fluid-storage`, HV
+  assembler: an item bus, an HV pump, two pipes): R1's bus design with fluid filters. The import bus empties the
+  output boxes of a machine (every box of a tank; input boxes are left alone), the export bus fills its filtered
+  fluids with `insert_fluid` (input boxes of a machine, a tank). 1000 units per visit, in the I/O step.
+
+### Migration of fluids (R2)
+
+`run_fluids` in `scripts/fork-me-migrate.lua`, from `on_configuration_changed`, after the graph rebuild and before
+the item migration (so the new drives are members when old logistic networks are grouped). It reads the old
+state (`storage.fork_me_fluids.drives`, `.recovered`, `.replacing`) and the world:
+
+1. **Old fluid drives** (`me-fluid-drive-1k` ... `-256k`, kept hidden): each is replaced in place by an ME Drive
+   with four fluid cells of its tier holding its fluid. Four cells hold what the old drive held as long as it has
+   few fluid types (the type overhead); otherwise the rest goes into new cells of the same tier in the drive's free
+   slots (`fill_fluids`). The 256k drive's acceleration card goes into a chest next to it.
+2. **Recovered fluid, fluid held for an upgrade, records of vanished drives:** into the fluid cells of the
+   network the entry belonged to (its anchor member, else a member within 1.5 tiles of its position), also when
+   that network has no power; what is left into the nearest drive on the surface with room
+   (`fluid_drives_near`).
+3. **Loaded old fluid drive items** in player inventories (main, trash, cursor) and in containers, logistic
+   containers, cars, cargo wagons and spidertrons: the item stays without tags (placing it gives four empty
+   cells), its fluid comes as fluid cells into the same inventory (next to it on the ground when the inventory is
+   full). Old fluid drive items stored inside ME cells (R1 allowed that) are not converted; placing such an item
+   later fills its new cells from its tags.
+4. Anything without room goes into new fluid cells (the smallest tier that holds it) in an iron chest next to
+   where it was.
+5. The old fluid state is dropped (only the interfaces remain in `storage.fork_me_fluids`); the recovery (pull-in,
+   "Take over", salvage on destruction, the hand disassembly, upgrade spots, the drive window) is removed: cells
+   carry their fluid, a destroyed drive drops its cells.
+6. Every unit is counted before (drives, entries, items) and after (cells filled, cells created), per fluid;
+   `FORK-ME-MIGRATE: fluids: ... units before, ... after, ... all fluid kept` in the log, a chat message on a
+   difference.
+
+Placing an old fluid drive item (hand, robot, platform) builds an ME Drive with its four fluid cells and the
+item's fluid in them (more cells in the free slots if needed, the rest as cells on the ground).
+
+**Totals in the tests:** `migrate --from-ref v0.3.2` and from R1 (`52ec0f3`): 3 old fluid drives (32 000 water;
+8 000 water and 10 000 chlorine; 500 water), 700 recovered chlorine without a network at its place and a chest
+with two loaded items of 777 water each: 52 754 units before, 52 754 after, no cell added, no chest.
+
+### Ticks
+
+Unchanged intervals: the fluid interfaces (8 per step) and the fluid buses (with the item interfaces and buses,
+24 per step) run in the 15-tick I/O step. A fluid total is a table lookup (the engine's totals); the old
+per-step loop over all fluid drives and the recovered-fluid pull-in are gone.
+
+### Tests
+
+`runtime`: the fluid test (a drive with four 1k fluid cells: import, export, a fluid cell's round trip through
+its tags and the terminal, robots mining the drive with its loaded cells and rebuilding it, full cells, a reported
+shortfall, three fluid jobs, a machine mined while it holds a job's fluid) and the fluid cell test (a mixed drive,
+tags, the item cell takes no fluid, a fluid cell's capacity, the terminal's entries and a refused take, the fluid
+import bus emptying a tank, the fluid export bus filling one, old fluid drive items with fluid placed as drives,
+also with more fluid than four cells hold); the level maintainer, circuit interface (water in fluid cells on the
+wire) and settings copy tests on the new fluid storage. `migrate`: the totals above, the network's fluid totals,
+the drives' cells, the untagged items with their cells.
 
 ## Open for R3
 
 * GUIs: pattern provider (pattern slots, AE2 style encoded patterns instead of reading the machine),
   level maintainer (several resources), circuit interface, crafting CPU status, interface (amounts per
-  filter instead of a stack), buses (more filters, speed cards).
-* The terminal's crafting tab in the style of the storage tab; a crafting status window per CPU.
-* Cell partitioning (a cell that takes only some items) and priorities between drives.
+  filter instead of a stack), buses (more filters, speed cards), the fluid interface's panel as a window of its
+  own (today a panel next to the tank GUI).
+* The terminal's crafting tab in the style of the storage tab; a crafting status window per CPU; fluid amounts
+  shown on the buttons in AE2 style (k, M) instead of a floored number.
+* Cell partitioning (a cell that takes only some items or fluids) and priorities between drives.
 * A "view cells" mode in the terminal (per drive and cell).
+* Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
