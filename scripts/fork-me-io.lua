@@ -1,14 +1,17 @@
 --------------------------------------------------------------------------------
 --- FORK AE2: IMPORT AND EXPORT (issue #68, step R1; prototypes/120-fork-ae2.lua, docs/ME-REWORK.md)
----   * ME Interface: a container whose slots can be filtered. A filtered slot is an export slot: the
----     network keeps it filled with its item up to a full stack. Every unfiltered slot is imported: its
----     items go into the network (items the network cannot store stay). Inserters work with it like with
----     a chest. Filters are kept in blueprints (tag fork_me_interface), settings paste and clones.
+---   * ME Interface: a container with up to CONFIG_SLOTS config entries (item, quality, amount; R3, AE2's
+---     config slots). The network keeps the amount of each configured item in the container (fills up, takes
+---     back the surplus); every other item in it is imported into the network (items the network cannot store
+---     stay). Inserters work with it like with a chest. The config is kept in script (rec.config), in
+---     blueprints (tag fork_me_interface = { config }), settings paste and clones. Saves before R3 used the
+---     container's slot filters: they become config entries (one full stack per filtered slot) the first time
+---     the interface is visited, and the filters are cleared (config_of).
 ---   * ME Import Bus / ME Export Bus: face one entity (their direction). The import bus pulls items from the
 ---     entity's output (assembler, furnace result, chest), the export bus puts its filtered items into the
 ---     entity's input (assembler or furnace input: up to one stack each; chest: as far as it has room).
----     Up to MAX_FILTERS filters (import: none = everything), set in a small window (open key), kept in
----     blueprints (tag fork_me_bus), settings paste and clones.
+---     Up to MAX_FILTERS filters (import: none = everything), kept in blueprints (tag fork_me_bus), settings
+---     paste and clones. The windows of both are in scripts/fork-me-windows.lua.
 --- The I/O step runs every STEP_TICKS ticks (shared with the fluid interfaces: this module registers the
 --- interval and calls the fluid step first): at most ENDPOINTS_PER_STEP interfaces and buses, round robin;
 --- an interface handles at most IFACE_SLOTS_PER_VISIT slots per visit, a bus moves BUS_ITEMS items.
@@ -26,8 +29,9 @@ local IFACE_SLOTS_PER_VISIT = 8
 local BUS_ITEMS = 64
 local BUS_FLUID = 1000               -- fluid units a fluid bus moves per visit
 local MAX_FILTERS = 5
+local CONFIG_SLOTS = 9
+local MAX_AMOUNT = 1000000
 local IFACE_TAG, BUS_TAG = "fork_me_interface", "fork_me_bus"
-local BUS_FRAME = "fork_me_bus"
 local FRONT = {
 	[defines.direction.north] = { 0, -1 }, [defines.direction.east] = { 1, 0 },
 	[defines.direction.south] = { 0, 1 }, [defines.direction.west] = { -1, 0 },
@@ -74,9 +78,72 @@ local function filter_of(inv, i)
 	return f.name, q and (type(q) == "string" and q or q.name) or "normal"
 end
 
---- one visit: unfiltered slots into the network, filtered slots topped up from it
+local function clear_filters(inv)
+	for i = 1, #inv do
+		if inv.get_filter(i) then inv.set_filter(i, nil) end
+	end
+end
+
+--- Old filters ({ [slot] = { name, quality } }, the slot filters of saves and blueprints before R3) as config
+--- entries: one full stack per filtered slot, the same item in several slots adds up.
+local function config_from_filters(filters)
+	local out, by_key = {}, {}
+	for i = 1, 18 do
+		local f = filters[i] or filters[tostring(i)]
+		local proto = type(f) == "table" and prototypes.item[f.name]
+		if proto then
+			local key = N.key_of(f.name, f.quality or "normal")
+			if by_key[key] then
+				by_key[key].amount = by_key[key].amount + proto.stack_size
+			elseif #out < CONFIG_SLOTS then
+				by_key[key] = { name = f.name, quality = f.quality or "normal", amount = proto.stack_size }
+				out[#out + 1] = by_key[key]
+			end
+		end
+	end
+	return out
+end
+
+--- A config checked against the prototypes: { [i] = { name, quality, amount } } for i = 1 .. CONFIG_SLOTS
+--- (a list, or a list of { slot = i, ... } as in blueprint tags). Entries without item or with amount 0 stay
+--- (the item is shown, nothing is kept), duplicates of an earlier slot are dropped.
+local function clean_config(config)
+	local out, seen = {}, {}
+	if type(config) ~= "table" then return out end
+	for k, c in pairs(config) do
+		local i = type(c) == "table" and tonumber(c.slot) or tonumber(k)
+		if type(c) == "table" and i and i >= 1 and i <= CONFIG_SLOTS and i == math.floor(i) and prototypes.item[c.name] then
+			local q = (type(c.quality) == "string" and prototypes.quality[c.quality]) and c.quality or "normal"
+			local key = N.key_of(c.name, q)
+			if not seen[key] then
+				seen[key] = true
+				local amount = math.max(0, math.min(MAX_AMOUNT, math.floor(tonumber(c.amount) or 0)))
+				out[i] = { name = c.name, quality = q, amount = amount }
+			end
+		end
+	end
+	return out
+end
+
+--- the config of an interface; the first call on a pre-R3 interface turns its slot filters into config
+local function config_of(rec)
+	if rec.config then return rec.config end
+	local inv = rec.entity.get_inventory(defines.inventory.chest)
+	local filters = {}
+	for i = 1, #inv do
+		local name, q = filter_of(inv, i)
+		if name then filters[i] = { name = name, quality = q } end
+	end
+	rec.config = clean_config(config_from_filters(filters))
+	clear_filters(inv)
+	return rec.config
+end
+
+--- One visit: every configured item is kept at its amount (filled from the network, the surplus taken back),
+--- the other items are imported. At most IFACE_SLOTS_PER_VISIT operations.
 function M.interface_step(rec)
 	local e = rec.entity
+	local config = config_of(rec)
 	local net = N.active_of(e)
 	if not net then
 		local _, why = N.usable(N.network_of(e))
@@ -85,28 +152,35 @@ function M.interface_step(rec)
 	end
 	local inv = e.get_inventory(defines.inventory.chest)
 	local ops, moved = 0, 0
+	local kept = {}
+	for i = 1, CONFIG_SLOTS do
+		local c = config[i]
+		if c then
+			local key = N.key_of(c.name, c.quality)
+			kept[key] = true
+			local have = inv.get_item_count{ name = c.name, quality = c.quality }
+			if have < c.amount then
+				local got = N.extract_to(net, inv, key, c.amount - have)
+				if got > 0 then moved = moved + got ops = ops + 1 end
+			elseif have > c.amount then
+				local can = N.can_insert(net, c.name, c.quality, have - c.amount)
+				local taken = can > 0 and inv.remove{ name = c.name, quality = c.quality, count = can } or 0
+				if taken > 0 then
+					local stored = N.insert(net, c.name, c.quality, taken)
+					if stored < taken then inv.insert{ name = c.name, quality = c.quality, count = taken - stored } end
+					moved = moved + stored
+					ops = ops + 1
+				end
+			end
+		end
+	end
 	local start = rec.slot or 1
 	local size = #inv
 	for k = 0, size - 1 do
 		if ops >= IFACE_SLOTS_PER_VISIT then rec.slot = (start - 1 + k) % size + 1 break end
 		local i = (start - 1 + k) % size + 1
 		local stack = inv[i]
-		local name, q = filter_of(inv, i)
-		if name then
-			local have = stack.valid_for_read and stack.count or 0
-			local want = prototypes.item[name] and prototypes.item[name].stack_size - have or 0
-			if want > 0 and (not stack.valid_for_read or (stack.name == name and stack.quality.name == q)) then
-				local avail = N.count(net, name, q)
-				local give = math.min(want, avail)
-				if give > 0 then
-					local got = N.extract(net, name, q, give)
-					if stack.valid_for_read then stack.count = stack.count + got
-					else stack.set_stack{ name = name, quality = q, count = got } end
-					moved = moved + got
-					ops = ops + 1
-				end
-			end
-		elseif stack.valid_for_read then
+		if stack.valid_for_read and not kept[N.key_of(stack.name, stack.quality.name)] then
 			local n = N.insert_stack(net, stack)
 			if n then moved = moved + n ops = ops + 1 end
 		end
@@ -116,30 +190,80 @@ function M.interface_step(rec)
 	return moved
 end
 
-function M.get_interface_filters(entity)
+--- the config: { [i] = { name, quality, amount } }, i = 1 .. CONFIG_SLOTS (a copy)
+function M.get_interface_config(entity)
 	if kind(entity) ~= "interface" then return nil end
-	local inv = entity.get_inventory(defines.inventory.chest)
 	local out = {}
-	for i = 1, #inv do
-		local name, q = filter_of(inv, i)
-		if name then out[i] = { name = name, quality = q } end
+	for i, c in pairs(config_of(register(state(), entity))) do
+		out[i] = { name = c.name, quality = c.quality, amount = c.amount }
 	end
 	return out
 end
 
-function M.set_interface_filters(entity, filters)
+function M.set_interface_config(entity, config)
 	if kind(entity) ~= "interface" then return false end
-	local inv = entity.get_inventory(defines.inventory.chest)
-	for i = 1, #inv do
-		local f = filters and filters[i]
-		if f and prototypes.item[f.name] then
-			inv.set_filter(i, { name = f.name, quality = f.quality or "normal" })
-		else
-			inv.set_filter(i, nil)
-		end
-	end
+	local rec = register(state(), entity)
+	config_of(rec)
+	rec.config = clean_config(config)
 	return true
 end
+
+--- One config slot: `name` nil clears it. Without `amount` the slot keeps its amount, an item moved from another
+--- slot keeps that slot's amount (the other slot is cleared), a new item starts with one stack.
+function M.set_interface_slot(entity, i, name, quality, amount)
+	if kind(entity) ~= "interface" or not (i >= 1 and i <= CONFIG_SLOTS) then return false end
+	local config = M.get_interface_config(entity)
+	if name and prototypes.item[name] then
+		quality = quality or "normal"
+		local old = config[i]
+		for j, c in pairs(config) do          -- the item moves from another slot
+			if j ~= i and c.name == name and c.quality == quality then
+				if amount == nil then amount = c.amount end
+				config[j] = nil
+			end
+		end
+		if amount == nil then
+			amount = (old and old.name == name and old.quality == quality) and old.amount or prototypes.item[name].stack_size
+		end
+		config[i] = { name = name, quality = quality, amount = amount }
+	else
+		config[i] = nil
+	end
+	return M.set_interface_config(entity, config)
+end
+
+--- the config as a list for blueprint tags (sparse tables do not survive tags): { { slot, name, quality, amount } }
+local function config_tag(config)
+	local out = {}
+	for i = 1, CONFIG_SLOTS do
+		local c = config[i]
+		if c then out[#out + 1] = { slot = i, name = c.name, quality = c.quality, amount = c.amount } end
+	end
+	return out
+end
+
+--- the config from a blueprint tag (R3 { config }, before R3 { filters })
+local function config_from_tag(t)
+	if type(t) ~= "table" then return nil end
+	if type(t.config) == "table" then return t.config end
+	if type(t.filters) == "table" then return config_from_filters(t.filters) end
+	return nil
+end
+
+--- the interface's state for its window: { config, status, contents = { { key, count } } }
+function M.get_interface(entity)
+	if kind(entity) ~= "interface" then return nil end
+	local rec = register(state(), entity)
+	local inv = entity.get_inventory(defines.inventory.chest)
+	local contents = {}
+	for _, item in pairs(inv.get_contents()) do
+		contents[#contents + 1] = { key = N.key_of(item.name, item.quality), count = item.count }
+	end
+	table.sort(contents, function(a, b) return a.key < b.key end)
+	return { config = M.get_interface_config(entity), status = rec.status, contents = contents, slots = CONFIG_SLOTS }
+end
+M.CONFIG_SLOTS = CONFIG_SLOTS
+M.MAX_FILTERS = MAX_FILTERS
 
 --------------------------------------------------------------------------------
 --- buses
@@ -290,60 +414,28 @@ function M.get_bus(entity)
 	return { filters = { table.unpack(rec.filters) }, status = rec.status, target = t and t.valid and t.name or nil }
 end
 
---------------------------------------------------------------------------------
---- bus window (screen frame, the open key)
---------------------------------------------------------------------------------
-
-local function bus_gui_open(player, entity)
-	local frame = player.gui.screen[BUS_FRAME]
-	if frame then frame.destroy() end
-	local rec = register(state(), entity)
-	frame = player.gui.screen.add{ type = "frame", name = BUS_FRAME, direction = "vertical", caption = entity.localised_name,
-		tags = { unit = entity.unit_number } }
-	frame.auto_center = true
-	local help = frame.add{ type = "label", caption = { "fork-me-net." .. rec.kind .. "-help" } }
-	help.style.single_line = false
-	help.style.maximal_width = 300
-	local row = frame.add{ type = "flow", direction = "horizontal" }
-	for i = 1, MAX_FILTERS do
-		if FLUID_BUSES[rec.kind] then
-			row.add{ type = "choose-elem-button", elem_type = "fluid", fluid = rec.filters[i], tags = { fork_me_bus_filter = i } }
-		else
-			row.add{ type = "choose-elem-button", elem_type = "item", item = rec.filters[i], tags = { fork_me_bus_filter = i } }
-		end
-	end
-	frame.add{ type = "label", name = "fork_me_bus_status", caption = { "fork-me-net.bus-" .. (rec.status or "ok") } }
-	player.opened = frame
-end
-
-function M.on_open_input(player, entity)
-	local k = kind(entity)
-	if not BUSES[k] then return false end
-	if player.can_reach_entity(entity) then bus_gui_open(player, entity) end
-	return true
-end
-
-function M.on_gui_elem_changed(event)
-	local el = event.element
-	local index = el and el.valid and el.tags and el.tags.fork_me_bus_filter
-	if not index then return false end
-	local frame = game.get_player(event.player_index).gui.screen[BUS_FRAME]
-	local rec = frame and state().recs[frame.tags.unit]
-	if not (rec and rec.entity.valid) then return true end
+--- one filter of a bus (the window's filter buttons): `name` nil clears it; the list stays packed
+function M.set_bus_filter(entity, index, name)
+	local s = state()
+	if not BUSES[kind(entity)] then return false end
+	local rec = register(s, entity)
 	local list = {}
 	for i = 1, MAX_FILTERS do
-		local v = i == index and el.elem_value or rec.filters[i]
+		local v
+		if i == index then v = name else v = rec.filters[i] end
 		if v then list[#list + 1] = v end
 	end
-	M.set_bus_filters(rec.entity, list)
-	return true
+	return M.set_bus_filters(entity, list)
 end
 
-function M.on_gui_closed(event)
-	local el = event.element
-	if not (el and el.valid and el.name == BUS_FRAME) then return false end
-	el.destroy()
-	return true
+--- the bus's state for its window: { kind, filters, status, target, fluid }
+function M.bus_info(entity)
+	local k = kind(entity)
+	if not BUSES[k] then return nil end
+	register(state(), entity)
+	local b = M.get_bus(entity)
+	b.kind, b.fluid, b.import, b.max = k, FLUID_BUSES[k] == true, IMPORTS[k] == true, MAX_FILTERS
+	return b
 end
 
 --------------------------------------------------------------------------------
@@ -378,9 +470,10 @@ function M.on_built(entity, tags, source)
 	if k ~= "interface" and not BUSES[k] then return end
 	register(state(), entity)
 	if k == "interface" then
-		local t = type(tags) == "table" and tags[IFACE_TAG] or nil
-		if type(t) == "table" then M.set_interface_filters(entity, t.filters)
-		elseif source and source.valid and kind(source) == "interface" then M.set_interface_filters(entity, M.get_interface_filters(source)) end
+		local config = config_from_tag(type(tags) == "table" and tags[IFACE_TAG] or nil)
+		if config then M.set_interface_config(entity, config)
+		elseif source and source.valid and kind(source) == "interface" then M.set_interface_config(entity, M.get_interface_config(source)) end
+		clear_filters(entity.get_inventory(defines.inventory.chest))      -- a blueprint before R3 may carry slot filters
 	else
 		local t = type(tags) == "table" and tags[BUS_TAG] or nil
 		if type(t) == "table" then M.set_bus_filters(entity, t.filters)
@@ -406,7 +499,7 @@ function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
 	if not (src and src.valid and dst and dst.valid and src.name == dst.name) then return end
 	local k = kind(src)
-	if k == "interface" then M.set_interface_filters(dst, M.get_interface_filters(src))
+	if k == "interface" then M.set_interface_config(dst, M.get_interface_config(src))
 	elseif BUSES[k] then
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
@@ -418,8 +511,8 @@ function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
 		local k = kind(entity)
 		if k == "interface" then
-			local f = M.get_interface_filters(entity)
-			if next(f) then bp.set_blueprint_entity_tag(index, IFACE_TAG, { filters = f }) end
+			local config = config_tag(M.get_interface_config(entity))
+			if #config > 0 then bp.set_blueprint_entity_tag(index, IFACE_TAG, { config = config }) end
 		elseif BUSES[k] then
 			local b = M.get_bus(entity)
 			if b and #b.filters > 0 then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters }) end
@@ -427,7 +520,7 @@ function M.tag_blueprint(bp, mapping)
 	end
 end
 
---- rebuild the records from the world; filters of buses are kept by unit number
+--- rebuild the records from the world; filters of buses and the config of interfaces are kept by unit number
 function M.on_configuration_changed()
 	local s = state()
 	local old = s.recs
@@ -441,15 +534,12 @@ function M.on_configuration_changed()
 		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
 			local rec = register(s, e)
 			local o = old[e.unit_number]
-			if o and o.filters then M.set_bus_filters(e, o.filters) end
+			if o and o.filters and BUSES[rec.kind] then M.set_bus_filters(e, o.filters) end
+			if o and o.config and rec.kind == "interface" then rec.config = clean_config(o.config) end
 			rec.target = nil
 		end
 	end
 	table.sort(s.list)
-	for _, player in pairs(game.players) do
-		local frame = player.gui.screen[BUS_FRAME]
-		if frame then frame.destroy() end
-	end
 end
 
 remote.add_interface("gregtorio-me-io", {
@@ -461,12 +551,18 @@ remote.add_interface("gregtorio-me-io", {
 		if k == "interface" then return M.interface_step(rec) end
 		return M.bus_step(rec)
 	end,
-	set_interface_filters = function(entity, filters) return M.set_interface_filters(entity, filters) end,
-	get_interface_filters = function(entity) return M.get_interface_filters(entity) end,
+	set_interface_config = function(entity, config) return M.set_interface_config(entity, config) end,
+	get_interface_config = function(entity) return M.get_interface_config(entity) end,
+	set_interface_slot = function(entity, i, name, quality, amount) return M.set_interface_slot(entity, i, name, quality, amount) end,
+	get_interface = function(entity) return M.get_interface(entity) end,
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,
+	set_bus_filter = function(entity, index, name) return M.set_bus_filter(entity, index, name) end,
 	get_bus = function(entity) return M.get_bus(entity) end,
+	bus_info = function(entity) return M.bus_info(entity) end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
+	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone)
+	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
 })
 
 return M
