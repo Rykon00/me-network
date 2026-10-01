@@ -405,6 +405,13 @@ REQUIRED_RECIPES = [
     "molten-universium-dtpf-resplendent", "molten-transcendent-metal-dtpf-crude", "quantum-force-transformer",
     "metallic-platinum-powder-qft-platinum-dust", "iridium-group-sludge-qft-iridium-dust",
     "naquadah-oxide-mixture-qft-naquadahine-dust", "enriched-naquadah-oxide-mixture-qft-trinium-dust",
+    # phase 6b: the godforge and its products, the stellar catalyst, the MAX line, components, hatches and machines
+    "godforge", "raw-star-matter", "lead-plasma", "thorium-plasma", "naquadria-plasma", "molten-universium-godforge",
+    "spacetime-time-space-separation", "molten-magmatter-from-neutronium", "molten-magmatter-from-infinity",
+    "excited-dimensionally-transcendent-stellar-catalyst", "molten-universium-dtpf-stellar", "magmatter-plate",
+    "magmatter-cable", "planck-processor-mainframe", "max-motor", "max-field-generator", "max-machine-hull",
+    "max-energy-hatch", "max-dynamo-hatch", "max-assembling-machine", "max-electric-blast-furnace",
+    "max-large-plasma-turbine", "max-science-pack-from-magmatter",
 ]
 
 
@@ -506,7 +513,7 @@ def check(a):
     report("sprite sheets too small", sprites)
     report("unlocked but uncraftable recipes", [f"{r}: {why}" for r, why in uncraft])
     required = check_required(m)
-    print(f"\nrequired recipes (issues #35, #36, #39, phase 6a): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
+    print(f"\nrequired recipes (issues #35, #36, #39, phases 6a and 6b): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
     report("required recipes not unlocked or not craftable", required)
     report("draft recipes outside DRAFTS_OK (issue #39)", new_drafts)
     menu_info, menu = check_crafting_menu(m, sec)
@@ -582,6 +589,8 @@ def runtime(a):
         print(f"{label}: {m.group(1) if m else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
     print(f"victory test: {victory.group(1) if victory else 'did not run'}")
+    post = re.search(r"DEVCHECK-RUNTIME-POSTVICTORY (.*)", log)
+    print(f"post-victory test: {post.group(1) if post else 'did not run'}")
     if not me:
         fails.append("ME network test did not run (needs --ticks >= 300)")
     if not mold:
@@ -631,7 +640,11 @@ def runtime(a):
         fails.append("victory test did not run (needs --ticks >= 1500)")
     elif not victory.group(1).startswith("ok"):
         fails.append("victory test failed")
-    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, turbine tier test, recipe test, level maintainer test, crafting CPU tier test, circuit interface test, settings copy test, victory test)", fails)
+    if not post:
+        fails.append("post-victory test did not run (needs --ticks >= 1500)")
+    elif not post.group(1).startswith("ok"):
+        fails.append("post-victory test failed")
+    report("runtime problems (placement, ME network test, mold test, autocrafting test, furnace pattern test, fluid test, fluid recovery test, power test, fuel check test, cooled fluid test, turbine tier test, recipe test, level maintainer test, crafting CPU tier test, circuit interface test, settings copy test, victory test, post-victory test)", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
         print("\nRESULT: PROBLEMS FOUND")
