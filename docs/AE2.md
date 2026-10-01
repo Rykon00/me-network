@@ -17,6 +17,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Terminal | powered screen, the hub: storage, **crafting**, jobs, the drives and cells of the network |
 | ME Interface | 1x1 with 18 slots and 9 config entries (item + amount): keeps those in stock in it, imports everything else |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items out of / put items into the machine or chest they face |
+| ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces becomes network storage, with filters, priority and read/write mode (this page, **ME Storage Bus**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | ME Fluid Interface | small tank: import/export point for fluids |
 | ME Fluid Import Bus, ME Fluid Export Bus | 1x1, rotatable: take fluid out of / put fluid into the machine or tank they face |
@@ -26,7 +27,8 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Circuit Interface | puts the network contents onto a circuit wire (this page, **Circuit network**) |
 
 Techs: `applied-energistics-components` (MV, upstream: fluix cable, ME Controller, ME Interface),
-`logistic-system` (the ME Drive), `me-network` (MV: terminal, 1k/4k/16k cells, buses), `me-storage-64k` (EV),
+`logistic-system` (the ME Drive), `me-network` (MV: terminal, 1k/4k/16k cells, import, export and storage bus,
+underground cable), `me-storage-64k` (EV),
 `me-storage-256k` (IV), `me-autocrafting` (EV), `me-fluid-storage` (EV), `me-fluid-storage-256k` (IV),
 `me-automation` (EV), `me-co-processing` (IV), `me-quantum-crafting` (LuV).
 
@@ -39,7 +41,8 @@ Techs: `applied-energistics-components` (MV, upstream: fluix cable, ME Controlle
    each other connect without a cable (a row of drives next to the controller is one network). Corners do not
    connect. Everything connected is one network. The cable picture shows its connections.
 3. Place **ME Drives** and put **storage cells** into them (see below), and an **ME Terminal** (powered).
-4. Import and export with **ME Interfaces** (inserters, belts) or **buses** (directly on a machine or chest).
+4. Import and export with **ME Interfaces** (inserters, belts) or **buses** (directly on a machine or chest); an
+   **ME Storage Bus** makes a chest part of the network's storage.
 
 The terminal's status line (and the ME Controller's status) tells what is wrong:
 
@@ -99,6 +102,7 @@ Two AE2 storage features decide **which cell** an item or fluid goes into (and c
   Partitioned cells have a yellow frame in the drive window and the Cells tab. The partition travels with the cell
   (also an empty one: "Empty, partitioned for 2 kinds").
 * **Drive priority** (-1000 to 1000, default 0, in the drive window): the priority of every cell in that drive.
+* **Storage buses** (see "ME Storage Bus") take part with their own priority; their filters work like a partition.
 
 The rules (`scripts/fork-me-network.lua`, `insert_key` and `extract_key`):
 
@@ -107,7 +111,8 @@ The rules (`scripts/fork-me-network.lua`, `insert_key` and `extract_key`):
    cell never takes anything else, whatever its priority.
 2. **Taking out** is the reverse: the **lowest priority** first; within one priority the unpartitioned cells
    before the partitioned ones.
-3. Same priority and same rule: the order the cells joined the network (drive by drive, slot by slot).
+3. Same priority and same rule: the order the cells joined the network (drive by drive, slot by slot); cells
+   before storage buses when storing, storage buses before cells when taking out.
 
 So a high priority drive with cells partitioned for ores takes every ore first, and a low priority drive of
 unpartitioned cells is the overflow that is emptied first. A network with one priority and no partition behaves
@@ -156,6 +161,7 @@ their own and open the ME window directly. E or Escape closes it. Open windows r
 | ME Fluid Interface | import/export, fluid, fill level, what the tank holds, status |
 | ME Interface | 9 config rows (item + amount), what it holds, status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus, ME Fluid Import/Export Bus | 5 filters (items or fluids), the entity it faces, status |
+| ME Storage Bus | mode (read and write, read only, write only), priority, 18 filters, how many items it shows, the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
 the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
@@ -182,6 +188,37 @@ side). Open one to set up to 5 item filters (the window also shows the entity it
 
 A bus moves up to 64 items per visit, an interface handles up to 8 slots per visit; every interface and bus is
 visited about every quarter second while there are fewer than 24 of them (more: each less often).
+
+## ME Storage Bus
+
+The **ME Storage Bus** (tech ME Network, MV assembler: an ME Interface, two MV pistons, aluminium plates and fluix
+cable) is AE2's storage bus: rotate it so its green plate faces a **chest, logistic chest or cargo wagon**, connect it
+to the network like any bus, and that inventory becomes storage of the network.
+
+* The **terminal** shows what is in the chest (with the cells' items, as one total); autocrafting, export buses, ME
+  Interfaces, level maintainers and the circuit interface count it and take from it.
+* The network **stores into** the chest by the bus's **filters** and **priority**, together with the drives (see
+  "Partitions and priorities"): a high priority bus with filters is an **input chest** (the network puts those items
+  there first, an inserter or a machine takes them out), a low priority bus without filters an **overflow chest**.
+  At the same priority the cells are filled first and the chest is emptied first.
+* **Mode** (in its window): **Read and write**; **Read only**: the network takes from the chest and shows it, but
+  never puts anything in (a factory's output chest); **Write only**: the network puts items in but does not show or
+  take them (a chest that a train or another factory empties).
+* **Filters**: up to 18 items (with quality). With filters the bus shows and stores only those; without filters every
+  item the network can store.
+* Inserters, players and trains change the chest without the network noticing at once: every bus looks at its
+  chest about every quarter second (with more than 8 storage buses each less often: 50 buses, every 1.75 s). Until
+  then the terminal may show a few items that are gone, or not yet show new ones; taking out always checks the chest
+  first, so nothing is ever duplicated or promised from an empty chest.
+* **One bus per chest**: a second storage bus on the same chest shows "Another ME Storage Bus already uses this
+  inventory" and does nothing until the first one is removed. A storage bus facing an ME block (an interface, a
+  drive, a cable, ...) does nothing either ("Faces an ME block"): no loops.
+* Removing the bus or the chest takes the chest's items out of the network at once (a chest destroyed by another
+  mod without an event: at the bus's next look); nothing is lost, the items stay in the chest.
+* Not shown or moved: spoiling items, items with an inventory or own data (armor, blueprints, ...); fluids (there is
+  no fluid storage bus). Items are taken out by count: a damaged item or a partly used tool or magazine in the chest
+  comes out as a new one would.
+* Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
 
 ## Old saves (from before the rework)
 
@@ -361,6 +398,7 @@ largest amounts first).
 | ME Pattern Provider | furnace recipe choice | yes | yes |
 | ME Interface | config rows (item, quality, amount) | yes | yes (old blueprints with slot filters are converted) |
 | ME Import Bus, ME Export Bus | item filters | yes | yes |
+| ME Storage Bus | mode, priority, item filters | yes | yes |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
 | ME Fluid Interface | import/export, fluid, fill level | yes (shift right click, shift left click) | yes (since issue #38) |
 | ME Fluid Import Bus, ME Fluid Export Bus | fluid filters | yes | yes |
@@ -672,8 +710,9 @@ queue and take the next free slot (the path the existing CPU test covers).
   updates (one `get_contents()`, the fluid totals and one write of the section each).
 * 8 provider rescans per step, planning only on user actions (terminal GUI: while a craft item is
   selected, once per second from the cache).
-* The I/O step every 15 ticks: up to 24 ME Interfaces and buses (`docs/ME-REWORK.md`, "Tick budget"), and
-  the fluid step, which handles at most 8 fluid interfaces (one `remove_fluid` or
+* The I/O step every 15 ticks: up to 24 ME Interfaces and buses (`docs/ME-REWORK.md`, "Tick budget"), 8 storage
+  bus visits (one `get_contents` each, the difference to the last look applied to the network's totals; cost for 50
+  buses in `docs/ME-REWORK.md`, "Storage bus (after R3)"), and the fluid step, which handles at most 8 fluid interfaces (one `remove_fluid` or
   `insert_fluid` each); a network's fluid total is a table lookup (the storage
   engine's totals), never a loop over tanks, pipes or drives. Fluid buses move up to 1000 units per visit.
 * The terminal step every 60 ticks: the open ME windows (at most 30, only players with one open), the lights of
@@ -720,7 +759,7 @@ partitions start empty.
   the ME Circuit Interface (issue #38).
 * Autocrafting plans and crafts only normal quality, no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
-* Network storage (issue #68): no channels, no storage bus, no fuzzy partitions (a partition names exact items
+* Network storage (issue #68): no channels, no fluid storage bus, no fuzzy partitions (a partition names exact items
   and qualities), no "inverted" partitions, no upgrade or speed cards on buses; the terminal search matches
   internal item names only; spoiling items, items with an inventory and damaged items cannot be stored. Old
   ghosts of ME blocks disappear when an old save is loaded (the game removes them before any script runs).
@@ -833,4 +872,13 @@ data and set functions of the drive, cell (partition buttons), controller, provi
 interface, ME Interface (config rows, an item moved to another row keeps its amount) and buses (filter buttons,
 fluid bus); the terminal's kind filter, Cells tab (priority order), craft preview (no pattern, amount 0) and Jobs
 tab. It reports `ME partitions and windows test (issue #68 R3): ok`.
+
+The storage bus test (own network right of the R3 test: a drive with two 1k cells, a terminal and seven storage
+buses on iron chests) checks that a chest's items reach the totals at the bus's visit, a terminal take out of the
+chest, a filtered bus getting its item while an unfiltered one goes into the cells, priority 10 and -10 against the
+cells for storing and taking, read only, write only, a stale look (items taken out by hand: an extract and a
+terminal take get only what is really there and the totals are corrected), two buses on one chest (counted once,
+the second takes over), a bus facing a cable, a chest removed with and without an event, a removed bus, the network's
+totals against cells plus chests after every part, the settings in a blueprint, on a revived ghost, by paste and
+clone, and an inserter's item seen within one visit cycle. It reports `ME storage bus test (issue #68): ok`.
 See `tools/devcheck/README.md`.

@@ -12,6 +12,7 @@ The rework comes in three steps:
 | **R1** | the new core: cable graph, controller, drives with cell slots, cells with their contents in tags, the storage API, the terminal, the ME Interface and buses, migration of old networks; autocrafting, level maintainer, circuit interface and fluids moved onto the new API | done (PR #69) |
 | **R2** | fluids on cells: fluid storage cells in the ME Drive, the fluid API of the storage engine, fluids in the terminal grid, the fluid interface on the new API, fluid import and export buses, migration of fluid drives, their recovered fluid and loaded drive items; the old recovery removed | done (PR #70, "Fluids (R2)") |
 | **R3** | one GUI style and a window for every ME block (replacing the panels next to the game's windows), the terminal as hub (storage, crafting, jobs, cells), the ME Interface's config rows, cell partitions and drive priorities | done (this document, "GUIs, partitions and priorities (R3)") |
+| Storage bus | the ME Storage Bus that R1 left out: a chest or cargo wagon as network storage, with filters, priority and read/write mode | done (this document, "Storage bus (after R3)") |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
 player's guide is `docs/AE2.md`.
@@ -19,8 +20,9 @@ player's guide is `docs/AE2.md`.
 ## Network topology
 
 **Members** ("nodes") are the ME entities: ME Cable, ME Controller, ME Drive, ME Terminal, ME Interface,
-ME Import Bus, ME Export Bus, ME Pattern Provider, the Crafting CPUs, ME Level Maintainer, ME Circuit
-Interface, ME Fluid Drive and ME Fluid Interface. Machines next to a pattern provider are not members.
+ME Import Bus, ME Export Bus, ME Storage Bus, ME Pattern Provider, the Crafting CPUs, ME Level Maintainer, ME
+Circuit Interface, ME Fluid Drive and ME Fluid Interface. Machines next to a pattern provider are not members, nor
+is the chest a storage bus faces.
 
 **Connections:** two members are connected when their tile boxes share an edge (left, right, above,
 below; corners do not count). This is AE2's rule: a cable connects on all four sides, and full blocks
@@ -203,9 +205,10 @@ up to one stack of each in the target. Up to 5 item filters (import: none means 
 window (open key), kept in blueprints, settings paste and clones (tag `fork_me_bus`).
 
 For Gregtorio both are worth having: belts and inserters feed machines through the interface, and a bus
-saves the two inserters (and their power) when one machine is fed from or emptied into the network. Storage
-buses (a chest as network storage) are left out: they would bring back the "network reads chests" model
-the rework removes.
+saves the two inserters (and their power) when one machine is fed from or emptied into the network. R1 left
+storage buses (a chest as network storage) out: they would bring back the "network reads chests" model
+the rework removes. They came after R3 as one more kind of storage next to the cells, bounded per step (see
+"Storage bus (after R3)").
 
 **Throughput** (per I/O step, every 15 ticks): an interface handles up to 8 slots per visit (import all of
 a slot, or top a filtered slot up), a bus moves up to 64 items per visit. At most 24 interfaces and buses
@@ -218,7 +221,7 @@ No new `on_tick`, no new interval:
 
 | Interval | Work |
 |---|---|
-| 15 (was fluids only) | the I/O step: the fluid interfaces and recovered fluid (unchanged, 8 interfaces, 4 entries) and then up to 24 item interfaces and buses |
+| 15 (was fluids only) | the I/O step: the fluid interfaces and recovered fluid (unchanged, 8 interfaces, 4 entries), 8 storage bus visits (after R3) and then up to 24 item interfaces and buses |
 | 20 | autocrafting, level maintainers, circuit interfaces (unchanged) |
 | 60 | open ME windows (R3: at most 30, one per player), drive fill lights of changed drives (up to 50 drives), the sweep for vanished members (200 per step) |
 
@@ -514,11 +517,145 @@ interface config (fill, top-up, surplus back, import of the rest, paste, old fil
 config). The settings copy test lost its check of the panels' anchors. Not testable headless (no player): building
 the windows, the clicks, the replacement of the game's windows; the pull request has a click-through list.
 
+## Storage bus (after R3)
+
+### Decision
+
+R1 left the storage bus out: "they would bring back the 'network reads chests' model the rework removes". That
+model was the problem of the old network as a whole (the logistic network *was* the storage, so nothing could be
+counted, ordered or kept consistent). As one more kind of storage next to the cells it is AE2's storage bus and
+plays the way AE2 players use it: an **input chest** (a high priority bus with filters that the network fills
+first, for a machine that takes from the chest), an **overflow chest** (a low priority bus without filters), or a
+chest or cargo wagon that a factory fills and the network reads (read only). What made the old model costly stays
+bounded: one bus reads one inventory, at most 8 buses per I/O step, never the whole map.
+
+### Model: an external cell
+
+`me-storage-bus` is a rotatable 1x1 member (kind `storage-bus`, 4 kW on the controller, like the other buses). It
+faces a chest, a logistic chest or a cargo wagon (`container`, `logistic-container`, `cargo-wagon`). Its record is
+an **external cell** of the storage engine (`scripts/fork-me-network.lua`, `storage.fork_me_net.ext[unit]`, cell id
+`"<unit>:ext"`): `items` is a snapshot of what the bus shows of the inventory, `partition` its filters, `priority`
+its priority, `hidden` set in write only mode. The network's totals and index include the snapshot like a cell's
+contents, so `count`, `contents`, the terminal, autocrafting plans, the level maintainer and the circuit interface
+see the chest without knowing about buses. The real inventory is reached only through four functions of the bus
+module (`scripts/fork-me-storagebus.lua`, `N.ext_handlers["storage-bus"]`): `room`, `insert`, `count` and
+`extract`. `insert_key` calls `insert` for an external cell and adds what went in to the snapshot; `extract_key`
+calls `count` first, corrects the snapshot and the totals to it, and then `extract`s at most that. A recompute of
+the network (merge, split, rebuild) takes the external cells of its members back in with their snapshot.
+
+**Order:** the bus takes part in R3's order with its priority (-1000 ... 1000, the same range as the drives); its
+filters act as a partition (a filtered bus gets its items before unfiltered storage of the same priority and never
+takes other items). Within one priority and one pass, cells come before storage buses on insertion and storage buses
+before cells on extraction: the network's own storage is filled first, a chest is the overflow and is emptied
+first. (Without this rule the order depended on when the cells were put into the drives, a test found it.)
+
+**Modes:** read and write (default); read only (`room` and `insert` give 0: the network takes from the inventory
+and shows it, never puts anything in); write only (`hidden`: the snapshot stays empty, so the network neither
+shows nor takes from it, but stores into it: AE2's "insert only").
+
+**What the bus shows and moves:** plain items that do not spoil (`get_spoil_ticks` 0 for their quality), of any
+quality, and no item types with own data (items with inventory, tags or entity data, armor, blueprints and other
+planners): the same rule as the cells (`M.storable`), decided per prototype so a visit needs no per-slot reads.
+With filters only the filtered items (exact name and quality). Fluids are not read (no fluid storage bus, see
+"Limits").
+
+### Polling and consistency
+
+Inserters, players, robots and trains change an inventory without an event, so the bus polls it:
+
+* The I/O step (`on_nth_tick(15)` of `scripts/fork-me-io.lua`, no new interval) calls `storage_bus.on_step()`
+  after the fluid step: **8 bus visits per step**, round robin over the buses. A visit checks the target (cached
+  until it is invalid, the bus is rotated or a wagon left; else one `find_entities_filtered` at the tile in front),
+  reads the inventory once (`get_contents`) and passes it to `N.ext_sync`, which applies only the differences to the
+  snapshot, the totals and the index.
+* Everything the network itself does through the bus (insert, extract) updates the snapshot at once, so a visit
+  never counts it twice.
+* **Staleness window:** between two visits of a bus, at most `ceil(buses / 8) × 15` ticks (50 buses: 7 steps, 105
+  ticks, 1.75 s), the snapshot can be off in two ways. Items that came in are not shown yet: the network promises
+  less than there is (safe). Items that went out are still shown: the terminal, a plan or a level maintainer can
+  count on them, but every extraction asks the inventory first (`count`), corrects the snapshot and the totals and
+  takes only what is there; the rest comes from other storage, or the caller gets less. Every caller already
+  handles a shortfall: `extract_to` gives back what the target got too much (the R1 code for this called
+  `remove_item` on a `LuaInventory`, which has no such method: it was never reached before; fixed), a crafting job
+  that cannot take its reservation undoes it ("stock-changed"), jobs and level maintainers retry, an interface or
+  an export bus moves less. So the network never hands out an item that is gone and never duplicates one; a stale
+  number on the screen or in a plan is corrected at the next visit or extraction.
+* Insertion asks the inventory too (`get_insertable_count`, then `insert`): a chest that filled up in the meantime
+  takes what fits, the rest goes to the next storage in the order.
+
+### Rules
+
+* **One bus per inventory:** a second bus facing an inventory that another bus already uses is refused with the
+  status "Another ME Storage Bus already uses this inventory" and shows nothing (`storage.fork_me_sbus.claims`:
+  inventory owner unit -> bus unit). When the first bus is removed or turned away, the second takes over at its
+  next visit. Counting a shared inventory once was the alternative, but two buses can differ in filters, mode and
+  priority: whose settings would apply to the one snapshot? A refusal with a status is clear and costs nothing.
+  This covers two buses of the same network and of different networks.
+* **No loops:** a bus facing an ME block (any member, or any `me-` entity such as an old ME chest) is refused with
+  "Faces an ME block" and does nothing. A storage bus on an ME Interface would show the network its own items.
+* **Removal:** a removed bus (mined, destroyed, script raised destroy) detaches its external cell
+  (`N.on_removed` -> `ext_detach`), the inventory leaves the totals at once. A removed inventory (the removal events
+  now also filter `logistic-container` and `cargo-wagon`) is dropped by its bus at once (`on_removed`: empty
+  snapshot, status "no target"); one removed without an event, or a wagon that drove away, at the bus's next visit or
+  at the first extraction (its `count` is 0). The sweep of vanished members detaches a vanished bus.
+* **Settings:** mode, priority and up to 18 item filters, in the bus's window (`scripts/fork-me-windows.lua`), in
+  blueprints (tag `fork_me_storage_bus = { mode, priority, filters }`, through the blueprint handler of the
+  autocrafting module), by settings paste and by cloning. A change of settings visits the bus at once.
+* **Saves:** a new entity, no migration. `on_configuration_changed`: the graph rebuild keeps the external cells of
+  buses that still exist, then `fork_sbus.on_configuration_changed` registers every bus, forgets the targets and
+  claims and visits each bus once.
+
+### Cost: 50 storage buses on chests of 48 slots
+
+* Per visit: the target check (a validity test; a `find_entities_filtered` only without a target, or for a wagon),
+  one `get_contents` of 48 slots, a Lua loop over at most 48 entries (cached prototype check, filter lookup) and
+  the diff against the snapshot (at most 48 old and 48 new keys, table writes only). About 30 to 50 µs.
+* Per I/O step: 8 visits, about 0.25 to 0.4 ms every 15 ticks, 0.02 to 0.03 ms per tick on average. The step's
+  other work (24 interfaces and buses, 8 fluid interfaces) is unchanged.
+* Each bus is visited every 7 steps (105 ticks): that is the staleness window above.
+* Storage calls: `count` stays a table lookup. Insertion reaches a bus only in the order (usually after the cells
+  of its priority); each bus it reaches costs one `insert`. `can_insert` (the ME Interface's surplus, rare) asks
+  `get_insertable_count` of every bus whose filter and mode allow the item: 50 calls of about a microsecond. An
+  extraction costs one `get_item_count` and one `remove` per bus that shows the item.
+* Memory: a snapshot of at most 48 keys per bus.
+
+### Limits
+
+* No fluid storage bus: a tank's fluid is shared with its pipe segment (`get_fluid_count` reports only the tank's
+  part), two tanks of one segment would show the same fluid twice, and a removal from one tank changes the others.
+  Fluids stay in fluid cells.
+* Items are moved by count (`LuaInventory.insert` / `remove`): the health of damaged items and the durability or
+  ammunition left in partly used tools and magazines in a bus's chest are not kept when the network takes them out
+  (cells refuse such items, a chest cannot). Spoiling items are not shown at all.
+* An import bus or ME Interface that empties a chest a storage bus shows moves the items in a circle (into the
+  network, which may store them back into that chest); AE2 has the same. Give the storage bus a filter or a lower
+  priority.
+* Cargo wagons: only the wagon whose body covers the tile in front of the bus; a train that leaves drops out of the
+  network at the next visit or extraction.
+* Not tested in the real game: the window, cargo wagons (no train in the headless test), the sprite.
+
+### Tests
+
+`devcheck runtime`, "ME storage bus test": own network with a drive (two 1k cells), a terminal and seven storage
+buses on iron chests. The chest's items are counted only after a visit (no event); a terminal take comes out of the
+chest; a filtered bus gets its item, an unfiltered item goes into the cells; priority 10 against the cells gets the
+item first, priority -10 gets it after the cells; extraction from the bus first at -10, from the cells first at 10;
+read only (nothing in, taking works), write only (not shown, not taken from, filled), read and write again; a stale
+snapshot (items taken out by hand: an extract and a terminal take get only the real ones, the totals are corrected);
+two buses on one chest (counted once, one refused, the other takes over when the first is removed); a bus facing a
+cable; a chest removed with an event (at once) and without (at the next visit); a removed bus; after each part the
+network's totals must equal the cells plus what the working buses' chests hold; the settings in a blueprint tag, on
+a revived ghost, by paste and clone, the window's data and a filter button; then an inserter puts wood into a
+chest and the network must show it within one visit cycle (plus the test's own 10 tick granularity). Two mutations
+were checked to fail it: extraction trusting the snapshot instead of the inventory, and no claim (two buses count
+the chest twice). `migrate --from-ref v0.3.2` and every other runtime test pass unchanged.
+
 ## Open points
 
 * Pattern provider with AE2 style encoded patterns (pattern slots) instead of reading the machine next to it;
   a level maintainer with several resources; upgrade and speed cards on buses; more than 5 bus filters.
-* Fuzzy or inverted partitions (AE2 cards); a storage bus (left out on purpose, see "Import and export").
+* Fuzzy or inverted partitions (AE2 cards), also for storage bus filters; a fluid storage bus (see "Storage bus
+  (after R3)", "Limits").
 * Terminal search by localised name (a script cannot read localised names).
 * The windows are checked by hand only (see "Tests (R3)").
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
