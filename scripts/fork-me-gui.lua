@@ -20,6 +20,23 @@ local openers = {}          -- entity name or ME kind (scripts/fork-me-network.l
 local REFRESH_MAX = 30      -- open windows refreshed per step (one per player at most: player.opened)
 
 --------------------------------------------------------------------------------
+--- entities by unit number
+--------------------------------------------------------------------------------
+
+--- The entity of an ME window by its unit number. game.get_entity_by_unit_number returns nil for most entity
+--- types (simple entities, lamps, containers, ...: every ME block), so the ME graph's node registry
+--- (storage.fork_me_net.nodes) is asked first.
+function M.entity_by_unit(unit)
+	if not unit then return nil end
+	local s = storage.fork_me_net
+	local node = s and s.nodes and s.nodes[unit]
+	if node and node.entity and node.entity.valid then return node.entity end
+	local e = game.get_entity_by_unit_number(unit)
+	if e and e.valid then return e end
+	return nil
+end
+
+--------------------------------------------------------------------------------
 --- formatting
 --------------------------------------------------------------------------------
 
@@ -67,7 +84,7 @@ end
 --- the content flow. `tags` go onto the frame (fork_me_window = name is added).
 function M.open_window(player, name, caption, tags)
 	M.close_window(player)
-	local t = { fork_me_window = name }
+	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
 	local frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t }
 	local bar = frame.add{ type = "flow", direction = "horizontal" }
@@ -235,7 +252,7 @@ function M.dispatch(event)
 		M.close_window(player)
 		return true
 	elseif act == "back" then                       -- back to the terminal a drive or cell window came from
-		local via = el.tags.via and game.get_entity_by_unit_number(el.tags.via)
+		local via = M.entity_by_unit(el.tags.via)
 		if via and via.valid then M.open_entity(player, via) else M.close_window(player) end
 		return true
 	end
@@ -249,6 +266,13 @@ end
 function M.on_closed(event)
 	local el = event.element
 	if el and el.valid and el.name == "fork_me_window" then
+		--- the open key's own game action can close the window in the tick it was opened (an entity without a
+		--- vanilla window): keep it open then
+		local player = game.get_player(event.player_index)
+		if el.tags.opened_tick == game.tick and player then
+			player.opened = el
+			return true
+		end
 		el.destroy()
 		return true
 	end
@@ -286,9 +310,9 @@ end
 --- The window's entity (by the unit number in its tags), nil when gone or out of reach. A window opened from a
 --- terminal (tag `via`: the terminal's unit number) needs the terminal in reach, not the entity.
 function M.entity_of(player, frame)
-	local e = frame.tags.unit and game.get_entity_by_unit_number(frame.tags.unit)
+	local e = M.entity_by_unit(frame.tags.unit)
 	if not (e and e.valid) then return nil end
-	local via = frame.tags.via and game.get_entity_by_unit_number(frame.tags.via)
+	local via = M.entity_by_unit(frame.tags.via)
 	if not player.can_reach_entity((via and via.valid) and via or e) then return nil end
 	return e
 end
