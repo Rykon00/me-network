@@ -13,6 +13,7 @@ The rework comes in three steps:
 | **R2** | fluids on cells: fluid storage cells in the ME Drive, the fluid API of the storage engine, fluids in the terminal grid, the fluid interface on the new API, fluid import and export buses, migration of fluid drives, their recovered fluid and loaded drive items; the old recovery removed | done (PR #70, "Fluids (R2)") |
 | **R3** | one GUI style and a window for every ME block (replacing the panels next to the game's windows), the terminal as hub (storage, crafting, jobs, cells), the ME Interface's config rows, cell partitions and drive priorities | done (this document, "GUIs, partitions and priorities (R3)") |
 | Storage bus | the ME Storage Bus that R1 left out: a chest or cargo wagon as network storage, with filters, priority and read/write mode | done (this document, "Storage bus (after R3)") |
+| Fluid storage bus | the ME Fluid Storage Bus: the fluid segment of a tank as network storage, one bus per segment | done (this document, "Fluid storage bus (after the storage bus)") |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
 player's guide is `docs/AE2.md`.
@@ -20,9 +21,9 @@ player's guide is `docs/AE2.md`.
 ## Network topology
 
 **Members** ("nodes") are the ME entities: ME Cable, ME Controller, ME Drive, ME Terminal, ME Interface,
-ME Import Bus, ME Export Bus, ME Storage Bus, ME Pattern Provider, the Crafting CPUs, ME Level Maintainer, ME
+ME Import Bus, ME Export Bus, ME Storage Bus, ME Fluid Storage Bus, ME Pattern Provider, the Crafting CPUs, ME Level Maintainer, ME
 Circuit Interface, ME Fluid Drive and ME Fluid Interface. Machines next to a pattern provider are not members, nor
-is the chest a storage bus faces.
+is the chest a storage bus faces or the tank a fluid storage bus faces.
 
 **Connections:** two members are connected when their tile boxes share an edge (left, right, above,
 below; corners do not count). This is AE2's rule: a cable connects on all four sides, and full blocks
@@ -556,8 +557,8 @@ shows nor takes from it, but stores into it: AE2's "insert only").
 **What the bus shows and moves:** plain items that do not spoil (`get_spoil_ticks` 0 for their quality), of any
 quality, and no item types with own data (items with inventory, tags or entity data, armor, blueprints and other
 planners): the same rule as the cells (`M.storable`), decided per prototype so a visit needs no per-slot reads.
-With filters only the filtered items (exact name and quality). Fluids are not read (no fluid storage bus, see
-"Limits").
+With filters only the filtered items (exact name and quality). Fluids are not read: they have their own bus, see
+"Fluid storage bus".
 
 ### Polling and consistency
 
@@ -621,9 +622,9 @@ Inserters, players, robots and trains change an inventory without an event, so t
 
 ### Limits
 
-* No fluid storage bus: a tank's fluid is shared with its pipe segment (`get_fluid_count` reports only the tank's
-  part), two tanks of one segment would show the same fluid twice, and a removal from one tank changes the others.
-  Fluids stay in fluid cells.
+* Fluids: the item storage bus reads no fluid. A tank's fluid is shared with its pipe segment (`get_fluid_count`
+  reports only the tank's part), so two tanks of one segment would show the same fluid twice; the fluid storage bus
+  therefore stores by segment (see "Fluid storage bus").
 * Items are moved by count (`LuaInventory.insert` / `remove`): the health of damaged items and the durability or
   ammunition left in partly used tools and magazines in a bus's chest are not kept when the network takes them out
   (cells refuse such items, a chest cannot). Spoiling items are not shown at all.
@@ -650,12 +651,134 @@ chest and the network must show it within one visit cycle (plus the test's own 1
 were checked to fail it: extraction trusting the snapshot instead of the inventory, and no claim (two buses count
 the chest twice). `migrate --from-ref v0.3.2` and every other runtime test pass unchanged.
 
+## Fluid storage bus (after the storage bus)
+
+### Decision: the fluid segment is the unit of storage
+
+The item storage bus left fluids out because a tank does not own its fluid: in 2.0 every connected pipe and tank
+forms one **fluid segment** with one fluid, one amount and one temperature, and `get_fluid_count` of a tank reports
+only its share. Two buses on two tanks of one segment would each count the whole segment (or each a share that
+moves with every tick of the fluid system), and taking from one tank changes the other. The **segment** is the unit
+that has a well defined amount, so the bus stores by segment, not by tank:
+
+* **Identity:** `LuaFluidBox.get_fluid_segment_id(box)` of the faced fluid box, key `"s<id>"`. A fluid box that
+  belongs to no segment (tested: a machine's box, also with a pipe on it) is its own storage, key `"u<unit>:<box>"`.
+* **Contents:** `get_fluid_segment_contents(box)` gives the segment's total (one fluid since 2.0; fractional
+  amounts, although the API documents `uint32`).
+* **Insert and extract:** the faced entity's `insert_fluid` / `remove_fluid` act on the whole segment (tested on two
+  tanks joined by a pipe: 60000 inserted into one tank fill both, 50200 units; a removal of 30000 from one tank takes
+  it from the segment). A box without a segment is changed through `LuaFluidBox` (`fluidbox[box] = ...`).
+* **Room:** `LuaFluidBox.get_capacity(box)` is the capacity of the segment (tested: 50200 for two tanks and a pipe)
+  minus its contents; nothing when it holds another fluid or the faced box has a filter for another fluid.
+
+What the engine sees is the same external cell as the item bus (`N.ext_handlers["fluid-storage-bus"]`, keys
+`"fluid/<name>"`); two small engine changes were needed: an external cell gets fractional amounts for fluid keys
+(the item path floors), and its snapshot is cleared below `ZERO` like the cells.
+
+### Claims, splits and merges
+
+* **One bus per segment** (`storage.fork_me_fsbus.claims`: key -> bus unit), the same rule as one bus per inventory:
+  a second bus on the same segment, through any tank of it, gets "Another ME Fluid Storage Bus already uses this fluid
+  segment", shows nothing and takes over at its next visit when the first one goes.
+* **Ids change:** building or removing a pipe merges or splits segments and gives them new ids at once (tested:
+  removing the pipe between two tanks gives one part a new id in the same tick; rebuilding it merges them under the
+  old id). Every visit reads the id again (one API call) and re-claims; a stored claim is never trusted alone: it
+  counts only while that bus's own live id is still the key.
+* **Conflicts in unit order:** when two buses end up on one segment (a merge), the lower unit number keeps it; the
+  other one is cleared at once (empty snapshot, "shared-target"), so the segment is never in two snapshots. When a bus
+  finds a stale claim (the owner's segment got a new id), it takes the segment and visits the old owner at once, which
+  then claims its new segment: a split is complete after one visit.
+* **Ownership in every handler:** `room`, `insert`, `count` and `extract` work only while the bus owns the segment it
+  faces now. Between a split and the next visit a bus therefore takes nothing from a segment it no longer owns (its
+  `count` is 0 and the engine corrects its snapshot), and two buses never take from the same fluid.
+* **Removals:** a removed bus releases its claim and detaches its cell. A removed tank that a bus faces empties that
+  bus's snapshot at once. A removed pipe, underground pipe, pump or tank (the removal events now also filter `pipe`,
+  `pipe-to-ground` and `pump`) marks the bus that owns its segment for the next I/O step (`urgent`, visited before the
+  round robin), so a split is seen within 15 ticks, not after a full cycle.
+
+### Temperature
+
+The network keeps one temperature per fluid (R2: stored by name, what comes out has the fluid's default
+temperature). A segment can hold its fluid at any temperature. Decision: **read it, refuse inserts.**
+
+* The bus counts the segment's fluid at whatever temperature it has, like the fluid import bus: what the network
+  hands out from it has the default temperature (hot steam loses its heat when it leaves through the network, the
+  rule of R2).
+* The network puts nothing into a segment whose temperature differs from the fluid's default by more than 1 degree
+  (status "temperature", shown in the bus's window with the temperature). `insert_fluid` would mix the temperatures:
+  the network's 15 degree steam would cool a 500 degree steam tank (tested: 10 units at 80 degrees into 20200 at 15
+  give 15.03 degrees). An empty segment takes fluid at the default temperature.
+* The alternative, a segment at another temperature not counted at all, would hide a tank the player put a bus on;
+  refusing only inserts keeps the tank's heat intact and its fluid visible. A player who must keep hot steam out of
+  the network's hands puts no read and write bus on it (write only, or no bus).
+
+### Polling, settings, cost
+
+* The I/O step (15 ticks, no new interval) calls `fluid_storage_bus.on_step()` after the item storage buses: first
+  the buses marked by a removal, then **8 visits** round robin. A visit: the target check (cached; a
+  `find_entities_filtered` at the tile in front only without a target or after a rotation, then
+  `get_pipe_connections` per box to pick the box facing the bus), `get_fluid_segment_id`,
+  `get_fluid_segment_contents` and `fluidbox[box]` (the temperature): three API calls and a diff of one key.
+* Every insert and extract works on the real segment (`count` asks the segment before every extraction, `room` the
+  segment's capacity), so a stale snapshot never hands out fluid that is gone. The fluid export bus and the fluid
+  interface's export inserted into their target first and then took from the network without checking the result;
+  with a bus's segment behind the network that could duplicate fluid, so both now take back from the target what the
+  network did not give.
+* Settings: mode (read and write, read only, write only), priority (-1000 ... 1000, shared with the drives and the
+  item buses) and up to 5 fluid filters, in its window, in blueprints (tag `fork_me_fluid_storage_bus`), by settings
+  paste and cloning. The order is the one of the item bus: within one priority cells first for inserts, buses first
+  for extracts; a filtered bus first among the buses.
+
+### Cost: 50 fluid storage buses
+
+* Measured headless (2.0.77, 50 buses on 50 storage tanks in one network, `game.create_profiler`): 1600 visits in
+  20 to 24 ms, **about 12 to 15 µs per visit**, so about 0.1 to 0.12 ms per I/O step (8 visits) every 15 ticks,
+  under 0.01 ms per tick on average.
+* Each bus is visited every `ceil(50 / 8) = 7` steps, 105 ticks (1.75 s): the staleness window. A removal that may
+  split a segment is seen in the next step (the urgent visit).
+* Storage calls: `fluid_count` stays a table lookup. Insertion reaches a bus only in the order (one `get_capacity`,
+  one `get_fluid_segment_contents` and one `insert_fluid`); an extraction one `get_fluid_segment_contents` and one
+  `remove_fluid` per bus that shows the fluid. A removed fluid entity costs one loop over the bus list and one id
+  lookup per fluid box.
+* Memory: one key per bus snapshot, one claim per bus.
+
+### Limits
+
+* A machine's fluid box has no segment: a bus on a machine stores in that one box (`fluidbox` read and write); on a
+  machine with several boxes the box whose pipe connection points at the bus is used (else the first). Rarely useful;
+  tanks are the intended target.
+* Fluid wagons are not supported (no fluid box segment; `create_entity` needs a rail, so untested).
+* The engine may reuse a segment id after the segment is gone; a claim is checked against the owner's live id, so a
+  reused id never lets two buses own one segment.
+* The fluid import bus emptying a tank of a bus's segment, or a fluid export bus filling one, moves fluid in a
+  circle, like the item buses. Give the fluid storage bus a filter or a lower priority.
+* Temperature: inserts into a segment at another temperature are refused; what leaves the network from such a
+  segment has the default temperature (see above).
+* Not tested in the real game: the window, the sprite, a large fluid system under load.
+
+### Tests
+
+`devcheck runtime`, "ME fluid storage bus test": own network with a drive (four 1k fluid cells), a terminal, six
+fluid storage buses on storage tanks, a pump, a fluid export bus and a level maintainer. Two tanks joined by a pipe
+are one segment: counted once after a visit (not before), the second bus refused; the terminal's grid shows the
+fluid and refuses it by hand; an extract (what autocrafting and the export buses call) takes it from the segment.
+Removing the pipe splits the segment: an extract before any visit takes at most what the first bus still owns, then
+the second bus takes its part. A filtered insert goes into its tank, a fluid no bus holds into the cells; priority 10
+and -10 for storing and taking; read only and write only; a stale snapshot (fluid taken out by hand: the extract gets
+only what is there and the totals are corrected); hot steam (status "temperature", counted, the network's steam goes
+into the cells, the tank stays at 500 degrees, taking works); a tank removed with an event, a removed bus, a bus
+facing a cable; after each part the network's fluid must equal the cells plus the segments of the working buses (each
+segment once); the settings in a blueprint tag, on a revived ghost, by paste and clone, the window's data. Then, over
+ticks: the fluid export bus takes from the first segment, the level maintainer counts it ("stocked") and a pump that
+fills a tank is in the network within one visit cycle. Two mutations were checked to fail it: no claim (every bus
+counts its segment: the network shows 2000 of 1000) and `count` trusting the snapshot (the stale extract leaves 100
+phantom units). `migrate --from-ref v0.3.2` and every other runtime test pass unchanged.
+
 ## Open points
 
 * Pattern provider with AE2 style encoded patterns (pattern slots) instead of reading the machine next to it;
   a level maintainer with several resources; upgrade and speed cards on buses; more than 5 bus filters.
-* Fuzzy or inverted partitions (AE2 cards), also for storage bus filters; a fluid storage bus (see "Storage bus
-  (after R3)", "Limits").
+* Fuzzy or inverted partitions (AE2 cards), also for storage bus filters; fluid wagons on the fluid storage bus.
 * Terminal search by localised name (a script cannot read localised names).
 * The windows are checked by hand only (see "Tests (R3)").
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
