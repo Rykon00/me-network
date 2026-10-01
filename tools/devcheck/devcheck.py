@@ -390,7 +390,7 @@ def report(title, items, limit=40):
 
 # Recipes that must stay unlocked by a researchable technology and craftable in the progression model
 # (issue #35: grades 7 and 8, FPIC/APIC, complex SMDs, which the runtime test also crafts once in a machine;
-# issues #39 and #36: the drafts made real and the new endgame materials).
+# issues #39 and #36: the drafts made real and the new endgame materials; phase 6a: plasma forge and QFT).
 REQUIRED_RECIPES = [
     "grade-7-water", "grade-8-water", "quark-creation-catalyst", "fpic-wafer", "apic-wafer", "femto-power-ic",
     "atto-power-ic", "complex-smd-transistor", "complex-smd-resistor", "complex-smd-capacitor", "complex-smd-diode",
@@ -399,6 +399,12 @@ REQUIRED_RECIPES = [
     "lapotronic-energy-orb-cluster", "high-density-plutonium", "plutonium-based-liquid-fuel", "super-coolant",
     "1080k-super-coolant-cell", "molten-fluxed-electrum", "fine-fluxed-electrum-wire", "bedrockium-cable",
     "bedrockium-plate", "molten-quantium", "quantium-cable",
+    # phase 6a: the plasma forge, its catalysts and metals, the quantum force transformer and its recipes
+    "dimensionally-transcendent-plasma-forge", "excited-dimensionally-transcendent-crude-catalyst",
+    "excited-dimensionally-transcendent-resplendent-catalyst", "molten-spacetime-dtpf-crude",
+    "molten-universium-dtpf-resplendent", "molten-transcendent-metal-dtpf-crude", "quantum-force-transformer",
+    "metallic-platinum-powder-qft-platinum-dust", "iridium-group-sludge-qft-iridium-dust",
+    "naquadah-oxide-mixture-qft-naquadahine-dust", "enriched-naquadah-oxide-mixture-qft-trinium-dust",
 ]
 
 
@@ -500,7 +506,7 @@ def check(a):
     report("sprite sheets too small", sprites)
     report("unlocked but uncraftable recipes", [f"{r}: {why}" for r, why in uncraft])
     required = check_required(m)
-    print(f"\nrequired recipes (issues #35, #36, #39): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
+    print(f"\nrequired recipes (issues #35, #36, #39, phase 6a): {len(REQUIRED_RECIPES) - len(required)} of {len(REQUIRED_RECIPES)} unlocked and craftable")
     report("required recipes not unlocked or not craftable", required)
     report("draft recipes outside DRAFTS_OK (issue #39)", new_drafts)
     menu_info, menu = check_crafting_menu(m, sec)

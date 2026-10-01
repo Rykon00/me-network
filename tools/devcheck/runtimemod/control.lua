@@ -1813,9 +1813,10 @@ end
 
 --- New recipes of issue #35 (prototypes/129-fork-water-purification.lua): grades 7 and 8 in the water
 --- purification plant, the FPIC and APIC wafers and chips, the complex SMDs, the quark creation catalyst
---- and recipes that take the new parts; the same for issues #39 and #36. Each machine gets one craft's ingredients (placed above the
---- machine grid, powered like it); once it crafts, its progress is set close to the end (the grades take
---- 25 and 30 s, a mainframe 12 minutes), and the main product must come out.
+--- and recipes that take the new parts; the same for issues #39 and #36 and phase 6a (plasma forge, QFT).
+--- Each machine gets one craft's ingredients (placed above the machine grid, powered like it); once it
+--- crafts, its progress is set close to the end (the grades take 25 and 30 s, a mainframe 12 minutes), and
+--- the main product must come out (a main product with a probability: the craft must finish).
 local RT_Y = -300
 local RT_DEADLINE = 900
 local RT = {
@@ -1851,6 +1852,11 @@ local RT = {
 	{ "uhv-mixer", "naquadah-based-fuel-mk2" },
 	{ "water-purification-plant", "grade-5-water" },
 	{ "zpm-assembly-line", "uxv-energy-hatch" },
+	-- phase 6a (prototypes/139-fork-endgame-multiblocks.lua): a plasma forge recipe (the catalyst and a metal) and
+	-- a quantum force transformer recipe in the real machines
+	{ "dimensionally-transcendent-plasma-forge", "excited-dimensionally-transcendent-crude-catalyst" },
+	{ "dimensionally-transcendent-plasma-forge", "molten-spacetime-dtpf-crude" },
+	{ "quantum-force-transformer", "metallic-platinum-powder-qft-platinum-dust" },
 }
 
 local function rt_product(recipe)
@@ -1898,7 +1904,8 @@ function recipe_test()
 			local p = rt_product(def[2])
 			local made = p.type == "fluid" and e.get_fluid_count(p.name) or
 				e.get_inventory(defines.inventory.crafter_output).get_item_count(p.name)
-			if made >= (p.amount or p.amount_min or 1) - 1e-6 then
+			-- a main product with a probability (the QFT's focused output) may roll nothing: a finished craft counts
+			if made >= (p.amount or p.amount_min or 1) - 1e-6 or ((p.probability or 1) < 1 and e.products_finished > 0) then
 				st.ok[i] = true
 			else
 				if e.crafting_progress > 0 and e.crafting_progress < 0.999 then e.crafting_progress = 0.999 end
