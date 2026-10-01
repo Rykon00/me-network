@@ -195,7 +195,7 @@ local function side_of(b, ob)
 end
 
 --- Underground cable: its direction points along the run under the ground; above ground it connects only on
---- the opposite side (like an underground pipe), under ground to its partner (see find_partner).
+--- the opposite side (like an underground pipe), under ground to its partner (see engine_partner).
 local DIR_BIT = { [defines.direction.north] = 1, [defines.direction.east] = 2, [defines.direction.south] = 4, [defines.direction.west] = 8 }
 local BACK_BIT = { [1] = 4, [2] = 8, [4] = 1, [8] = 2 }
 local DIR_VEC = { [defines.direction.north] = { 0, -1 }, [defines.direction.east] = { 1, 0 },
@@ -208,11 +208,7 @@ local function connects(a, b)
 	return true
 end
 
-local function underground_reach() return mod_data().underground_reach or 10 end
-
---- a paired underground cable shows its run: a dashed fluix line on the ground between the two ends (hidden under
---- buildings, like the cable it stands for); its render object id is kept on both nodes
-local LINK_COLOR = { 0.5, 0.32, 0.8, 0.85 }
+--- render objects of an older version (a dashed line between paired ends): destroyed when the graph is rebuilt
 local function clear_link(node)
 	local id = node and node.link
 	if not id then return end
@@ -221,44 +217,37 @@ local function clear_link(node)
 	node.link = nil
 end
 
-local function draw_link(a, b)
-	clear_link(a)
-	clear_link(b)
-	if not (a.entity.valid and b.entity.valid) then return end
-	local id = rendering.draw_line{
-		color = LINK_COLOR, width = 3, surface = a.entity.surface,
-		from = { entity = a.entity }, to = { entity = b.entity },
-		dash_length = 0.3, gap_length = 0.2, draw_on_ground = true,
-	}.id
-	a.link, b.link = id, id
+--- The underground cable is a pipe-to-ground with its own connection category (prototypes/120-fork-ae2.lua), so the
+--- engine pairs the ends exactly like underground pipes and shows the pairing on hover and while placing. The graph
+--- follows the engine: the partner is the end the underground pipe connection reaches (ahead in the direction).
+local function engine_partner(entity, dir)
+	local v = DIR_VEC[dir]
+	local fb = entity.fluidbox
+	if not (v and fb and #fb > 0) then return nil end
+	for _, other in pairs(fb.get_connections(1)) do
+		local o = other.owner
+		if o and o.valid and o ~= entity and o.name == entity.name then
+			local dx, dy = o.position.x - entity.position.x, o.position.y - entity.position.y
+			if dx * v[1] + dy * v[2] > 0 then return o end
+		end
+	end
+	return nil
 end
 
---- pair two underground nodes (graph edge and line)
+--- the node of the engine's partner (nil if it is no member yet)
+local function find_partner(s, node)
+	local pe = engine_partner(node.entity, node.dir)
+	local o = pe and s.nodes[pe.unit_number]
+	if o and o.entity == pe then return o end
+	return nil
+end
+
+--- pair two underground nodes (graph edge)
 local function link_pair(a, b)
 	local au, bu = a.entity.unit_number, b.entity.unit_number
 	a.partner, b.partner = bu, au
 	a.adj[bu] = true
 	b.adj[au] = true
-	draw_link(a, b)
-end
-
---- The first underground cable within reach in the node's direction. It is the partner if it faces back
---- towards the node and has none yet; any other underground cable on the way blocks (like underground pipes).
-local function find_partner(s, node)
-	local e = node.entity
-	local v = DIR_VEC[node.dir]
-	if not v then return nil end
-	local opposite = (node.dir + 8) % 16
-	for k = 1, underground_reach() + 1 do
-		local pos = { e.position.x + v[1] * k, e.position.y + v[2] * k }
-		local found = e.surface.find_entities_filtered{ position = pos, name = e.name, force = e.force, limit = 1 }[1]
-		if found then
-			local o = s.nodes[found.unit_number]
-			if o and o.entity == found and o.dir == opposite and not o.partner then return o end
-			return nil
-		end
-	end
-	return nil
 end
 
 --- cable picture: 1 + N + 2E + 4S + 8W
@@ -310,11 +299,24 @@ local function changed(s, net)
 	for _, hook in pairs(M.change_hooks) do hook(net) end
 end
 
+local remove_node_graph
+
 --- Register a built member. Returns its node.
 local function add_node(s, entity, kind)
 	local unit = entity.unit_number
 	local node = s.nodes[unit]
 	if node then return node end
+	if kind == "underground" then
+		--- the engine pairs a new end with the nearest one facing it; that end's old partner loses it
+		local pe = engine_partner(entity, entity.direction)
+		local pn = pe and s.nodes[pe.unit_number]
+		local old = pn and pn.partner and pn.partner ~= unit and s.nodes[pn.partner]
+		if old then
+			pn.partner, old.partner = nil, nil
+			remove_node_graph(s, old.entity.unit_number)
+			if old.entity.valid then add_node(s, old.entity, old.kind) end
+		end
+	end
 	node = { entity = entity, kind = kind, adj = {}, box = tile_box(entity), surface = entity.surface.index,
 		force = entity.force.name, position = { x = entity.position.x, y = entity.position.y } }
 	if kind == "underground" then node.dir = entity.direction end
@@ -336,7 +338,7 @@ local function add_node(s, entity, kind)
 	end
 	if kind == "underground" then
 		local partner = find_partner(s, node)
-		if partner then
+		if partner and not partner.partner then
 			link_pair(node, partner)
 			if not nets[partner.net] then
 				nets[partner.net] = true
@@ -378,7 +380,7 @@ local function add_node(s, entity, kind)
 end
 
 --- Unregister a member from the graph (the entity may already be invalid).
-local function remove_node_graph(s, unit)
+function remove_node_graph(s, unit)
 	local node = s.nodes[unit]
 	if not node then return end
 	s.nodes[unit] = nil
@@ -445,6 +447,10 @@ local function remove_node(s, unit)
 	if p and p.entity.valid then
 		remove_node_graph(s, pu)
 		add_node(s, p.entity, p.kind)
+		--- the removed end still exists during the removal event; the engine may pair the partner with an end
+		--- further away once it is gone: checked in the next slow step
+		s.ug_dirty = s.ug_dirty or {}
+		s.ug_dirty[pu] = true
 	end
 end
 
@@ -1856,6 +1862,23 @@ function M.slow_step()
 		if d then draw_leds(s, d) end
 		n = n + 1
 	end
+	--- underground ends that lost their partner: pair them if the engine connected them to another end
+	if s.ug_dirty and next(s.ug_dirty) then
+		local list = {}
+		for unit in pairs(s.ug_dirty) do list[#list + 1] = unit end
+		table.sort(list)
+		s.ug_dirty = {}
+		for _, unit in ipairs(list) do
+			local node = s.nodes[unit]
+			if node and node.kind == "underground" and not node.partner and node.entity.valid then
+				local partner = find_partner(s, node)
+				if partner and not partner.partner then
+					remove_node_graph(s, unit)
+					add_node(s, node.entity, "underground")
+				end
+			end
+		end
+	end
 	--- sweep: members removed without an event
 	local units = {}
 	local count = 0
@@ -1942,7 +1965,7 @@ function M.rebuild()
 			if other and adjacent(b, other.box) and connects(node, other) then node.adj[o.unit_number] = true end
 		end
 	end
-	--- underground cables pair in unit order (each with the first end in reach that faces it)
+	--- underground cables pair as the engine connected them
 	for _, e in ipairs(all) do
 		local node = s.nodes[e.unit_number]
 		if node.kind == "underground" and not node.partner then
@@ -2236,13 +2259,6 @@ remote.add_interface("gregtorio-me-network", {
 	rotated = function(entity) M.on_rotated(entity) end,
 	--- what on_configuration_changed does with the graph (the whole map)
 	rebuild = function() M.rebuild() end,
-	--- true if a paired underground cable shows its line
-	underground_link = function(entity)
-		local s = storage.fork_me_net
-		local node = s and entity and entity.valid and s.nodes[entity.unit_number]
-		local obj = node and node.link and rendering.get_object_by_id(node.link)
-		return obj ~= nil and obj.valid
-	end,
 	--- the unit number of an underground cable's partner, or nil
 	underground_partner = function(entity)
 		local s = storage.fork_me_net
