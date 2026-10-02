@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
---- FORK AE2: IMPORT AND EXPORT (issue #68, step R1; prototypes/120-fork-ae2.lua, docs/ME-REWORK.md)
+--- FORK AE2: IMPORT AND EXPORT (issue #68, step R1; prototypes/network.lua, docs/ME-REWORK.md)
 ---   * ME Interface: a container with up to CONFIG_SLOTS config entries (item, quality, amount; R3, AE2's
 ---     config slots). The network keeps the amount of each configured item in the container (fills up, takes
 ---     back the surplus); every other item in it is imported into the network (items the network cannot store

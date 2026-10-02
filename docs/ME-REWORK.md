@@ -1,5 +1,11 @@
 # ME rework (issue #68): design record
 
+> Written in Gregtorio Continued (issue #68 and its follow-ups; issue numbers are Gregtorio's). Since Gregtorio issue
+> #83 the network is the mod ME Network. The prototype files are named as in this repository (`prototypes/network.lua`
+> was Gregtorio's `120-fork-ae2.lua`, `autocrafting.lua` its 121, `fluids.lua` its 122); the tests that were in
+> Gregtorio's `tools/devcheck` are in this repository's `tools/devcheck`, except the migration of old saves, which
+> stayed in Gregtorio's `migrate`.
+
 Issue #68 replaces the ME network that was built on Factorio's logistic network (controller = roboport
 without robots, drive = logistic storage chest, interface = requester chest) by a network that plays like
 Applied Energistics 2: cables, a controller, drives with storage cells that keep their contents, a
@@ -782,7 +788,7 @@ provider): one machine was one pattern and the provider held nothing. Issue #80 
 item, encoded in a terminal, and a provider holds several. Code: `scripts/fork-me-patterns.lua` (the pattern data and
 item, encode, clear), `scripts/fork-me-autocraft.lua` (provider slots, scan, planner, jobs, arrivals, migration),
 `scripts/fork-me-terminal.lua` (Patterns tab), `scripts/fork-me-windows.lua` (provider window); prototypes in
-`prototypes/121-fork-ae2-autocrafting.lua`. The player's guide: `docs/AE2.md`, "Autocrafting".
+`prototypes/autocrafting.lua`. The player's guide: `docs/AE2.md`, "Autocrafting".
 
 ### The pattern and its item
 

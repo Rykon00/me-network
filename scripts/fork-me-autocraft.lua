@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
---- FORK AE2: AUTOCRAFTING (runtime, see prototypes/121-fork-ae2-autocrafting.lua)
+--- FORK AE2: AUTOCRAFTING (runtime, see prototypes/autocrafting.lua)
 ---
 --- Patterns (issue #80, docs/AE2.md "Patterns", docs/ME-REWORK.md "Encoded patterns"): an ME Pattern Provider
 ---   holds up to 9 encoded patterns (scripts/fork-me-patterns.lua) in its slots; each one is a pattern of the ME
@@ -77,7 +77,7 @@ local TARGET_TYPES = { "assembling-machine", "furnace", "container", "logistic-c
 local BP_TAG = "fork_me_provider"            -- blueprint tag: { priority, patterns = { ["slot"] = pattern } }
 local OLD_TAG = "fork_ae2_recipe"            -- blueprint tag of 0.4.1 and older: the furnace recipe choice
 
---- CPU tiers: entity name -> { jobs, speed } (prototypes/121-fork-ae2-autocrafting.lua)
+--- CPU tiers: entity name -> { jobs, speed } (prototypes/autocrafting.lua)
 local function cpu_specs()
 	local md = prototypes.mod_data["fork-me-autocraft"]
 	return md and md.data.cpus or { [CPU] = { jobs = 1, speed = 1 } }

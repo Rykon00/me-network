@@ -180,7 +180,7 @@ local function migrate_group(g, data, report)
 			for i = 1, #ds.inv do
 				if ds.inv[i].valid_for_read then N.store_in_drive(d, ds.inv[i]) end
 			end
-			if info.extra then
+			if info.extra and prototypes.item[info.extra.name] then
 				extra.insert(info.extra)
 				add(before, info.extra.name .. "@normal", info.extra.count)
 			end
@@ -466,7 +466,7 @@ function M.run_fluids()
 				for name, amount in pairs(contents) do after[name] = (after[name] or 0) + amount - (left[name] or 0) end
 				local defs = N.fluid_cells(info.cell, left)
 				add_fluids(after, fluid_of_defs(defs))
-				if info.extra then defs[#defs + 1] = { name = info.extra.name, count = info.extra.count } end
+				if info.extra and prototypes.item[info.extra.name] then defs[#defs + 1] = { name = info.extra.name, count = info.extra.count } end
 				if #defs > 0 then chest_for(surface_, force, pos, defs, report) end
 			else
 				place_fluid(data, surface_, force, pos, nil, contents, after, report)

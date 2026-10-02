@@ -1,0 +1,14 @@
+{
+  "name": "me-network",
+  "version": "0.1.0",
+  "title": "ME Network",
+  "author": "rykon_",
+  "homepage": "https://github.com/Rykon00/me-network",
+  "factorio_version": "2.0",
+  "dependencies": [
+    "base >= 2.0",
+    "? quality >= 2.0.0",
+    "? space-age >= 2.0.0"
+  ],
+  "description": "An ME storage network inspired by Applied Energistics 2: cables, a controller, drives with storage cells that keep their contents, a terminal, interfaces, import, export and storage buses, autocrafting with encoded patterns and crafting CPUs, level maintainers, and fluids. Works on its own with vanilla recipes; Gregtorio Continued puts it on its GregTech tiers. Source and issues: https://github.com/Rykon00/me-network"
+}

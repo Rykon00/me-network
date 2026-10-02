@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 --- FORK AE2: LEVEL MAINTAINER AND CIRCUIT INTERFACE (issue #38; runtime, see
---- prototypes/121-fork-ae2-autocrafting.lua)
+--- prototypes/autocrafting.lua)
 ---   * ME Level Maintainer: keeps N of one item or fluid in its ME network. When the network holds
 ---     less, it starts a crafting job for the difference (scripts/fork-me-autocraft.lua), provided a
 ---     pattern exists and a powered CPU has a free job slot. It starts no second job while a job of

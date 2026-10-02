@@ -1,12 +1,12 @@
 {
-  "name": "zz-gregtorio-devcheck-runtime",
+  "name": "zz-me-network-devcheck-runtime",
   "version": "1.0.0",
-  "title": "Gregtorio devcheck runtime",
+  "title": "ME Network devcheck runtime",
   "author": "rykon_",
   "factorio_version": "2.0",
-  "description": "Test helper for tools/devcheck: places every craftable machine on a new map. Not meant for normal play.",
+  "description": "Test helper for tools/devcheck: builds ME networks on a new map and runs the runtime tests. Without Gregtorio Continued it adds stand-ins for the few machines and recipes the tests name. Not meant for normal play.",
   "dependencies": [
-    "? Gregtorio",
+    "? me-network",
     "? gregtorio-continued"
   ]
 }

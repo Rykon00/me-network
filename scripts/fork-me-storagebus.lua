@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
---- FORK AE2: ME STORAGE BUS (issue #68; prototypes/120-fork-ae2.lua, docs/ME-REWORK.md "Storage bus")
+--- FORK AE2: ME STORAGE BUS (issue #68; prototypes/network.lua, docs/ME-REWORK.md "Storage bus")
 ---   * A rotatable 1x1 ME block that faces a chest, a logistic chest or a cargo wagon: that inventory
 ---     becomes storage of the network. The terminal shows what is in it, everything that extracts from the
 ---     network can take from it, and inserts go into it by its filter and priority.

@@ -1,0 +1,15 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.1.0
+Date: 2026-10-02
+  Info:
+    - First version as a mod of its own. The ME network was made in Gregtorio Continued (up to its 0.4.x) and moved out of it; Gregtorio Continued 0.5.0 depends on this mod and puts it on its GregTech tiers.
+    - Saves of Gregtorio Continued with an ME network are taken over when they are loaded with Gregtorio Continued 0.5.0 and this mod: cells with their items and fluids, patterns, running jobs, level maintainers and the settings of every block.
+  Features:
+    - ME cables and underground cables connect ME blocks; a network runs with one powered ME Controller.
+    - ME Drive with 10 slots for storage cells (1k to 256k, items or fluids) that keep their contents when taken out; cell partitions and drive priorities.
+    - ME Terminal as the hub: storage with search and sort, crafting with a plan preview, jobs, the drives and cells, encoding patterns.
+    - ME Interface, ME Import Bus, ME Export Bus and their fluid versions; ME Storage Bus on a chest, logistic chest or cargo wagon and ME Fluid Storage Bus on a tank's fluid segment.
+    - Autocrafting: blank patterns encoded into crafting or processing patterns, ME Pattern Provider with 9 pattern slots, ME Molecular Assembler, ME Crafting CPU with two bigger tiers.
+    - ME Level Maintainer (keeps an item or fluid in stock) and ME Circuit Interface (network contents on a circuit wire).
+    - Works on its own with vanilla recipes and technologies (red and green science for the network, up to utility science for the biggest crafting CPU).
+    - A data-stage API (ME_NETWORK, docs/API.md) for mods that want other recipes or technologies for the ME blocks.

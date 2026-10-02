@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Generates the sprites and icons for the ME network (prototypes/120-fork-ae2.lua).
+"""Generates the sprites and icons for the ME network (prototypes/network.lua).
 
 Sources:
   * GregTech 5 machine casings and screen overlays from a checkout of
     GTNewHorizons/GT5-Unofficial (LGPL-3.0), tinted with the GT material color of the tier
-  * existing Gregtorio icons (ME drive, storage housing)
+  * existing icons of this mod (ME drive, storage housing; drawn for Gregtorio, where this network was made)
   * everything else (drive bays, cell LEDs, interface arrows) is drawn here with Pillow
-  * the fluid variants (prototypes/122-fork-ae2-fluids.lua) are derived from the item PNGs
+  * the fluid variants (prototypes/fluids.lua) are derived from the item PNGs
     generated here: the same shapes with blue accents instead of fluix purple
 
     python tools/gen_ae2_sprites.py --gt C:/00_Repositories/GT5-Unofficial   # everything
@@ -20,9 +20,9 @@ Sources:
     python tools/gen_ae2_sprites.py --patterns    # only the blank and encoded pattern icons (issue #80)
 
 Output:
-  graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
+  graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like Gregtorio Continued)
   graphics/icons/fork/me-*.png             32x32 item icons (also pattern provider, molecular assembler,
-                                           crafting CPU of prototypes/121-fork-ae2-autocrafting.lua)
+                                           crafting CPU of prototypes/autocrafting.lua)
   graphics/technology/fork/me-*.png        256x256 technology icons
   fluids (--fluids, or after everything else with --gt):
   graphics/entity/fork/ae2/me-fluid-drive-<tier>.png, me-fluid-interface.png
@@ -160,7 +160,7 @@ def drive_icon(cell):
     return img
 
 
-# --- autocrafting (prototypes/121-fork-ae2-autocrafting.lua) -------------------------------
+# --- autocrafting (prototypes/autocrafting.lua) -------------------------------
 CPU_CYAN = (95, 225, 245)
 CARD = (235, 235, 245)
 
@@ -246,7 +246,7 @@ def autocrafting(gt):
     upscale(load(OUT_ICON / "me-molecular-assembler.png")).save(OUT_TECH / "me-autocrafting.png")
 
 
-# --- fluids (prototypes/122-fork-ae2-fluids.lua) -------------------------------------------
+# --- fluids (prototypes/fluids.lua) -------------------------------------------
 # Derived from the item PNGs written above (not from the GT textures), so this part also runs
 # without a checkout: the AE2 fluid cells look like the item cells with blue accents.
 FLUID = (70, 150, 255)              # accent: cell drop, drive border ring, interface arrows

@@ -6,19 +6,18 @@ current working copy (no zip building/copying after every change).
     python tools/dev_link.py --unlink   # remove the link again
     python tools/dev_link.py --mods-dir PATH
 
-Factorio loads an unpacked mod from a folder named like the mod ("gregtorio-continued"). On
+Factorio loads an unpacked mod from a folder named like the mod ("me-network"). On
 Windows the link is a directory junction (no admin rights needed), elsewhere a symlink.
-Existing gregtorio-continued_*.zip files in the mods folder (for example from the mod portal)
+Existing me-network_*.zip files in the mods folder (for example from the mod portal)
 would compete with the folder, so they are moved next to the mods folder into
-gregtorio-zips-backup/ (nothing is deleted). A link from before 0.3.0 that is still called
-"Gregtorio" and points to this repo is removed (only the link, never the repo).
+me-network-zips-backup/ (nothing is deleted).
 Factorio only reads mods at startup: restart it after pulling changes.
 """
 import argparse, json, os, shutil, subprocess, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OLD_NAMES = ["Gregtorio"]   # name of the mod before 0.3.0
+OLD_NAMES = []             # earlier names of the mod (none)
 
 
 def default_mods_dir():
@@ -70,7 +69,7 @@ def main():
             return
         sys.exit(f"{link} already exists as a real folder - move it away first")
 
-    parked = mods.parent / "gregtorio-zips-backup"   # outside mods/, Factorio would scan it
+    parked = mods.parent / (name + "-zips-backup")   # outside mods/, Factorio would scan it
     for z in sorted(mods.glob(f"{name}_*.zip")):
         parked.mkdir(parents=True, exist_ok=True)
         dst = parked / z.name

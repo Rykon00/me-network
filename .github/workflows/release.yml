@@ -1,0 +1,121 @@
+name: Build & Release
+
+# Every push and pull request: Lua syntax check and zip build. Pull requests into main that change
+# the game must also change changelog.txt (label "no changelog" to skip).
+# Branches: main is development; upstream/release is the published state. A pull request from main
+# into upstream/release must bump "version" in info.json (no tag vX.Y.Z yet) and add its
+# changelog.txt section. When it is merged, this workflow creates the GitHub release vX.Y.Z with
+# the zip and uploads the same zip to the Factorio mod portal. A tag vX.Y.Z pushed by hand
+# releases too.
+# The portal upload needs the repository secret FACTORIO_MOD_API_KEY (an API key from
+# https://factorio.com/profile with the "ModPortal: Upload Mods" permission). Without it, or when
+# the portal already has that version, the upload step is skipped.
+
+on:
+  push:
+    branches: [main, upstream/release]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Changelog entry for game changes (pull requests into main)
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && !contains(github.event.pull_request.labels.*.name, 'no changelog')
+        run: |
+          CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          if echo "$CHANGED" | grep -qE '^(prototypes/|scripts/|locale/|graphics/|control\.lua|data(-updates|-final-fixes)?\.lua|settings.*\.lua)'; then
+            if ! echo "$CHANGED" | grep -qx 'changelog.txt'; then
+              echo "::error::This pull request changes the game but not changelog.txt. Add its lines to the topmost section (the next version), or set the label 'no changelog'."
+              exit 1
+            fi
+          fi
+
+      - name: Lua syntax check (loaded files only)
+        run: |
+          sudo apt-get install -y -qq lua5.4 >/dev/null
+          python3 tools/check_syntax.py --loaded
+
+      - name: Build zip
+        run: python3 tools/build.py --portal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod-zip
+          path: dist/*.zip
+
+      - name: Decide whether this is a release
+        id: rel
+        run: |
+          NAME=$(python3 -c "import json;print(json.load(open('info.json'))['name'])")
+          V=$(python3 -c "import json;print(json.load(open('info.json'))['version'])")
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "zip=dist/${NAME}_${V}.zip" >> "$GITHUB_OUTPUT"
+          RELEASE=false
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} != info.json version $V"; exit 1; }
+            RELEASE=true
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_NAME}" = "upstream/release" ]; then
+            if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
+              echo "Tag v$V exists already: no release."
+            else
+              echo "info.json version $V has no tag yet: release."
+              RELEASE=true
+            fi
+          fi
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+
+      - name: Release pull request checks (version bump, changelog)
+        if: github.event_name == 'pull_request' && github.base_ref == 'upstream/release'
+        run: |
+          V=${{ steps.rel.outputs.version }}
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
+            echo "::error::info.json version $V is released already (tag v$V). Bump the version for this release."
+            exit 1
+          fi
+          grep -q "^Version: $V$" changelog.txt || { echo "::error::changelog.txt has no section 'Version: $V'."; exit 1; }
+          echo "Merging this pull request releases $V (GitHub release and mod portal)."
+
+      - name: GitHub release
+        if: steps.rel.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.rel.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: v${{ steps.rel.outputs.version }}
+          files: ${{ steps.rel.outputs.zip }}
+          body_path: dist/release-notes.md
+
+      - name: Upload to the Factorio mod portal
+        if: steps.rel.outputs.release == 'true'
+        env:
+          API_KEY: ${{ secrets.FACTORIO_MOD_API_KEY }}
+          MOD: ${{ steps.rel.outputs.name }}
+          VERSION: ${{ steps.rel.outputs.version }}
+          ZIP: ${{ steps.rel.outputs.zip }}
+        run: |
+          if [ -z "$API_KEY" ]; then
+            echo "::warning::Secret FACTORIO_MOD_API_KEY is not set: skipping the mod portal upload."
+            exit 0
+          fi
+          if curl -fsS "https://mods.factorio.com/api/mods/$MOD" \
+               | python3 -c "import json,sys,os;d=json.load(sys.stdin);sys.exit(0 if any(r['version']==os.environ['VERSION'] for r in d.get('releases',[])) else 1)"; then
+            echo "The mod portal already has $MOD $VERSION: skipping the upload."
+            exit 0
+          fi
+          UPLOAD_URL=$(curl -fsS -X POST https://mods.factorio.com/api/v2/mods/releases/init_upload \
+                         -H "Authorization: Bearer $API_KEY" -F "mod=$MOD" \
+                       | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('upload_url') or sys.exit('init_upload failed: %s' % d))")
+          RESULT=$(curl -sS -X POST "$UPLOAD_URL" -F "file=@$ZIP")
+          echo "$RESULT"
+          echo "$RESULT" | python3 -c "import json,sys;d=json.load(sys.stdin);sys.exit(0 if d.get('success') else 'upload failed')"
+          echo "Uploaded $MOD $VERSION to https://mods.factorio.com/mod/$MOD"

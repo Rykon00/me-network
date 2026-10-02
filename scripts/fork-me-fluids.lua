@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
---- FORK AE2: FLUIDS IN THE ME NETWORK (runtime; issue #68 step R2, prototypes/122-fork-ae2-fluids.lua)
+--- FORK AE2: FLUIDS IN THE ME NETWORK (runtime; issue #68 step R2, prototypes/fluids.lua)
 ---   * Fluids are stored in fluid storage cells in ME Drives, by the storage engine of
 ---     scripts/fork-me-network.lua (keys "fluid/<name>", one temperature per fluid). This module offers the
 ---     fluid calls the other modules use (totals, count, insert, remove, capacity) on top of it.

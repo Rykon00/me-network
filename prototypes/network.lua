@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
---- FORK AE2: ME NETWORK (issue #68, step R1; design: docs/ME-REWORK.md, guide: docs/AE2.md)
+--- ME NETWORK (Gregtorio issue #68, step R1; design: docs/ME-REWORK.md, guide: docs/AE2.md)
 --- Applied Energistics 2 style, no logistic network:
 ---   * ME Cable        = the fluix cable item places it. 1x1, connects on all four sides; a network is
 ---                       a connected group of ME blocks (cables, controller, drives, terminals, ...).
@@ -18,19 +18,24 @@
 --- saves load; scripts/fork-me-migrate.lua replaces them. Runtime: scripts/fork-me-network.lua (graph,
 --- storage, drives), scripts/fork-me-io.lua (interface, buses). Numbers reach the runtime through the
 --- mod-data "fork-me-network". Sprites and icons: tools/gen_ae2_sprites.py.
+--- Recipes and technologies here are the standalone ones (vanilla items and science); another mod can replace
+--- them through ME_NETWORK (prototypes/api.lua). The prototype names are kept from Gregtorio Continued, where this
+--- network was made: saves find their entities and items by name.
 --------------------------------------------------------------------------------
 
-local ENTITY_PATH = "__gregtorio-continued__/graphics/entity/fork/ae2/"
+local ME = ME_NETWORK
+local ENTITY_PATH = ME.entity_path
+local ICON_PATH = ME.icons
 local ICON_FORK = ICON_PATH .. "fork/"
 
---- cell tier -> "k", assembler category of the cell, speed, old drive data (slots per cell, category, extra
---- ingredient of the old drive item: it is given back when such an item is placed)
+--- cell tier -> "k", old drive data (slots per cell, extra ingredient of the old drive item: it is given back
+--- when such an item is placed, if that item exists)
 local CELLS = {
-	{ tier = "1k",   k = 1,   cell_cat = "lv-assembling-machine-recipes", old_slots = 16 },
-	{ tier = "4k",   k = 4,   cell_cat = "lv-assembling-machine-recipes", old_slots = 32 },
-	{ tier = "16k",  k = 16,  cell_cat = "mv-assembling-machine-recipes", old_slots = 64 },
-	{ tier = "64k",  k = 64,  cell_cat = "hv-assembling-machine-recipes", old_slots = 128 },
-	{ tier = "256k", k = 256, cell_cat = "ev-assembling-machine-recipes", old_slots = 256,
+	{ tier = "1k",   k = 1,   old_slots = 16 },
+	{ tier = "4k",   k = 4,   old_slots = 32 },
+	{ tier = "16k",  k = 16,  old_slots = 64 },
+	{ tier = "64k",  k = 64,  old_slots = 128 },
+	{ tier = "256k", k = 256, old_slots = 256,
 	  extra = { name = "acceleration-card", count = 1 } },
 }
 local OLD_CELLS_PER_DRIVE = 4
@@ -59,18 +64,43 @@ data:extend({
 	{ type = "item-subgroup", name = "fork-me-cells", group = group, order = "b-me-c" },
 })
 
-local function move_to(subgroup, item_name, order)
-	local item = data.raw.item[item_name]
-	if item then item.subgroup = subgroup; item.order = order end
-	local recipe = data.raw.recipe[item_name]
-	if recipe then recipe.subgroup = subgroup; recipe.order = order end
+
+
+
+--------------------------------------------------------------------------------
+--- THE BASIC ITEMS: cable, controller, interface, terminal, the drive and its chest, storage components and the
+--- housing (the items of Gregtorio's upstream file 13-mv-age-item.lua; the entities they place are below)
+--------------------------------------------------------------------------------
+
+local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = "item", name = list[i], amount = list[i + 1] } end return t end
+
+ME.add_item{ name = "fluix-cable", subgroup = "fork-me-network", order = "a0",
+	recipe = { ingredients = I{ "copper-cable", 2, "plastic-bar", 1 }, amount = 2, energy_required = 0.5 } }
+ME.add_item{ name = "me-controller", subgroup = "fork-me-network", order = "a", stack_size = 10,
+	recipe = { ingredients = I{ "steel-plate", 10, "advanced-circuit", 10, "fluix-cable", 4 }, energy_required = 5 } }
+ME.add_item{ name = "me-interface", subgroup = "fork-me-network", order = "b", stack_size = 50,
+	recipe = { ingredients = I{ "iron-chest", 1, "steel-plate", 4, "advanced-circuit", 2, "fluix-cable", 2 }, energy_required = 2 } }
+ME.add_item{ name = "me-terminal", subgroup = "fork-me-network", order = "c", stack_size = 50,
+	recipe = { ingredients = I{ "electronic-circuit", 4, "advanced-circuit", 1, "fluix-cable", 1 }, energy_required = 2 } }
+ME.add_item{ name = "me-chest", subgroup = "fork-me-network", order = "d",
+	recipe = { ingredients = I{ "steel-chest", 1, "electronic-circuit", 4, "fluix-cable", 2 }, energy_required = 2 } }
+ME.add_item{ name = "me-drive", subgroup = "fork-me-drives", order = "a", stack_size = 10,
+	recipe = { ingredients = I{ "me-chest", 1, "steel-plate", 4, "advanced-circuit", 4, "fluix-cable", 2 }, energy_required = 5 } }
+
+--- AE2: a cell is a storage component in a housing; each component is made from three of the tier below
+ME.add_item{ name = "basic-storage-housing", subgroup = "fork-me-cells", order = "a0",
+	recipe = { ingredients = I{ "steel-plate", 2, "plastic-bar", 2 }, energy_required = 2 } }
+local COMPONENTS = {
+	{ "1k",   I{ "electronic-circuit", 4, "copper-cable", 6 } },
+	{ "4k",   I{ "me-1k-storage-component", 3, "advanced-circuit", 2 } },
+	{ "16k",  I{ "me-4k-storage-component", 3, "advanced-circuit", 4 } },
+	{ "64k",  I{ "me-16k-storage-component", 3, "processing-unit", 2 } },
+	{ "256k", I{ "me-64k-storage-component", 3, "processing-unit", 4 } },
+}
+for i, c in ipairs(COMPONENTS) do
+	ME.add_item{ name = "me-" .. c[1] .. "-storage-component", subgroup = "fork-me-cells", order = "a" .. i,
+		recipe = { ingredients = c[2], energy_required = 2 * i } }
 end
-move_to("fork-me-network", "fluix-cable", "a0")
-move_to("fork-me-network", "me-controller", "a")
-move_to("fork-me-network", "me-interface", "b")
-move_to("fork-me-network", "me-terminal", "c")
-move_to("fork-me-network", "me-chest", "d")
-move_to("fork-me-drives", "me-drive", "a")
 
 
 
@@ -84,26 +114,19 @@ for i, c in ipairs(CELLS) do
 	local cell = "me-" .. c.tier .. "-storage-cell"
 	local order = string.format("%02d", i)
 
-	--- cell = storage housing + storage component (unchanged recipe)
-	create_item{
+	--- cell = storage housing + storage component; an item with tags (a recycler would void the contents)
+	local item = ME.add_item{
+		type = "item-with-tags",
 		name = cell,
 		icon = ICON_FORK .. cell .. ".png",
-		category = c.cell_cat,
 		subgroup = "fork-me-cells",
 		order = order,
-		energy_required = 5,
 		stack_size = 1,
-		ingredients = {
+		recipe = { energy_required = 5, auto_recycle = false, ingredients = {
 			{ type = "item", name = "me-" .. c.tier .. "-storage-component", amount = 1 },
 			{ type = "item", name = "basic-storage-housing", amount = 1 },
-		},
+		} },
 	}
-	--- like the fluid drive items (122) and the molds (150): remove, change the type, add again
-	local item = data.raw.item[cell]
-	data.raw.item[cell] = nil
-	item.type = "item-with-tags"
-	data:extend({ item })
-	data.raw.recipe[cell].auto_recycle = false         -- a recycler would void the contents
 	local bytes = c.k * 1024
 	local per_type = c.k * 8
 	cell_data[cell] = { tier = c.tier, bytes = bytes, per_type = per_type, types = MAX_TYPES }
@@ -311,7 +334,6 @@ data:extend({ {
 	localised_description = { "entity-description.me-network-controller" },
 } })
 data.raw.item["me-controller"].place_result = CONTROLLER
-data.raw.item["me-controller"].stack_size = 10
 
 
 
@@ -330,7 +352,6 @@ block{
 	additional_pastable_entities = { DRIVE } },
 }
 data.raw.item["me-drive"].place_result = DRIVE
-data.raw.item["me-drive"].stack_size = 10
 
 
 
@@ -361,7 +382,6 @@ data:extend({ {
 	localised_description = { "entity-description.me-network-interface", tostring(INTERFACE_SLOTS) },
 } })
 data.raw.item["me-interface"].place_result = INTERFACE
-data.raw.item["me-interface"].stack_size = 50
 
 
 
@@ -378,24 +398,18 @@ local function four_way(name)
 end
 
 for _, bus in pairs({
-	{ name = IMPORT_BUS, core = "annihilation-core", order = "b2" },
-	{ name = EXPORT_BUS, core = "formation-core", order = "b3" },
+	{ name = IMPORT_BUS, order = "b2" },
+	{ name = EXPORT_BUS, order = "b3" },
 }) do
-	create_item{
+	ME.add_item{
 		name = bus.name,
 		icon = ICON_FORK .. bus.name .. ".png",
-		category = "mv-assembling-machine-recipes",
 		subgroup = "fork-me-network",
 		order = bus.order,
-		energy_required = 10 * MV_SPEED,
 		stack_size = 50,
 		place_result = bus.name,
-		ingredients = {
-			{ type = "item", name = bus.core, amount = 1 },
-			{ type = "item", name = "mv-piston", amount = 1 },
-			{ type = "item", name = "aluminium-plate", amount = 2 },
-			{ type = "item", name = "fluix-cable", amount = 2 },
-		},
+		recipe = { energy_required = 2, ingredients = I{ "fast-inserter", 1, "advanced-circuit", 1,
+			"steel-plate", 2, "fluix-cable", 2 } },
 	}
 	block{
 		name = bus.name, icon = ICON_FORK .. bus.name .. ".png",
@@ -410,20 +424,14 @@ end
 --- it; runtime: scripts/fork-me-network.lua, find_partner)
 --------------------------------------------------------------------------------
 
-create_item{
+ME.add_item{
 	name = UNDERGROUND,
 	icon = ICON_FORK .. UNDERGROUND .. ".png",
-	category = "mv-assembling-machine-recipes",
 	subgroup = "fork-me-network",
 	order = "a1",
-	energy_required = 5 * MV_SPEED,
 	stack_size = 50,
 	place_result = UNDERGROUND,
-	ingredients = {
-		{ type = "item", name = "fluix-cable", amount = 8 },
-		{ type = "item", name = "aluminium-plate", amount = 2 },
-	},
-	results = { { type = "item", name = UNDERGROUND, amount = 2 } },
+	recipe = { energy_required = 1, amount = 2, ingredients = I{ "fluix-cable", 8, "steel-plate", 2 } },
 }
 --- A real pipe-to-ground whose fluid box has its own connection category: it never connects to pipes or carries
 --- fluid, but the engine pairs the ends exactly like underground pipes (reach, rotation, blocking, dragging) and
@@ -466,21 +474,14 @@ data.raw["simple-entity-with-force"][EXPORT_BUS].additional_pastable_entities = 
 --- storage; AE2's recipe is an interface and two pistons; runtime: scripts/fork-me-storagebus.lua)
 --------------------------------------------------------------------------------
 
-create_item{
+ME.add_item{
 	name = STORAGE_BUS,
 	icon = ICON_FORK .. STORAGE_BUS .. ".png",
-	category = "mv-assembling-machine-recipes",
 	subgroup = "fork-me-network",
 	order = "b4",
-	energy_required = 10 * MV_SPEED,
 	stack_size = 50,
 	place_result = STORAGE_BUS,
-	ingredients = {
-		{ type = "item", name = "me-interface", amount = 1 },
-		{ type = "item", name = "mv-piston", amount = 2 },
-		{ type = "item", name = "aluminium-plate", amount = 2 },
-		{ type = "item", name = "fluix-cable", amount = 2 },
-	},
+	recipe = { energy_required = 2, ingredients = I{ "me-interface", 1, "fast-inserter", 2, "fluix-cable", 2 } },
 }
 block{
 	name = STORAGE_BUS, icon = ICON_FORK .. STORAGE_BUS .. ".png",
@@ -521,7 +522,6 @@ terminal.next_upgrade = nil
 terminal.localised_description = { "entity-description.me-terminal" }
 data:extend({ terminal })
 data.raw.item["me-terminal"].place_result = "me-terminal"
-data.raw.item["me-terminal"].stack_size = 50
 
 --- The "open GUI" key: opens the ME window of a block (scripts/fork-me-gui.lua; works whether or not the
 --- engine opens a window for the entity), or puts the cell in the cursor into a drive
@@ -559,57 +559,18 @@ data:extend({ {
 
 
 --------------------------------------------------------------------------------
---- TECHNOLOGIES
+--- TECHNOLOGIES (standalone: vanilla science; Gregtorio puts them on its tiers through ME_NETWORK.set_technology)
 --------------------------------------------------------------------------------
 
-local function sci(n)
-	local packs = { "automation-science-pack", "logistic-science-pack", "military-science-pack",
-		"chemical-science-pack", "production-science-pack", "utility-science-pack" }
-	local amounts = { SP06, SP05, SP04, SP03, SP02, SP01 }
-	local out = {}
-	for i = 1, n do
-		out[#out + 1] = { packs[i], amounts[#amounts - n + i] }
-	end
-	return out
-end
-
-local function tech(def)
-	local effects = {}
-	for _, r in pairs(def.recipes) do
-		if data.raw.recipe[r] then
-			effects[#effects + 1] = { type = "unlock-recipe", recipe = r }
-			data.raw.recipe[r].enabled = false
-		else
-			log("FORK-AE2: tech " .. def.name .. ": missing recipe " .. r)
-		end
-	end
-	data:extend({ {
-		type = "technology",
-		name = def.name,
-		icon = "__gregtorio-continued__/graphics/technology/fork/" .. def.name .. ".png",
-		icon_size = 256,
-		effects = effects,
-		prerequisites = def.prerequisites,
-		unit = { count = def.count, ingredients = sci(def.packs), time = 30 },
-	} })
-end
-
---- The drive chassis (now the ME Drive itself) and the chest it is made from
-fork_add_unlock("logistic-system", "me-chest")
-fork_add_unlock("logistic-system", "me-drive")
-
---- MV: basic cells, terminal, buses (cable, controller and interface come with Applied Energistics Components)
-tech{ name = "me-network", prerequisites = { "logistic-system" }, packs = 3, count = 400, recipes = {
-	"me-terminal", "computer-monitor", "certus-quartz-bolt", "certus-quartz-screw",
+--- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k
+ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit" }, unit = ME.unit(2, 300), recipes = {
+	"fluix-cable", "me-controller", "me-chest", "me-drive", "me-interface", "me-terminal", "basic-storage-housing",
+	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
 } }
 
---- EV: 64k (the component needs epoxy boards)
-tech{ name = "me-storage-64k", prerequisites = { "me-network", "nanoprocessors", "advanced-hv-machines" },
-	packs = 5, count = 800, recipes = { "me-64k-storage-component", "me-64k-storage-cell" } }
+ME.add_technology{ name = "me-storage-64k", prerequisites = { "me-network", "processing-unit" }, unit = ME.unit(3, 400),
+	recipes = { "me-64k-storage-component", "me-64k-storage-cell" } }
 
---- IV: 256k and the cards (platinum), fiber-reinforced boards for the component
-tech{ name = "me-storage-256k", prerequisites = { "me-storage-64k", "industrial-precision-lathe", "ev-machines" },
-	packs = 6, count = 1000, recipes = { "me-256k-storage-component", "advanced-card", "acceleration-card",
-		"annealed-copper-foil", "fiber-reinforced-epoxy-sheet", "fiber-reinforced-circuit-board",
-		"fiber-reinforced-printed-circuit-board", "me-256k-storage-cell" } }
+ME.add_technology{ name = "me-storage-256k", prerequisites = { "me-storage-64k", "production-science-pack" },
+	unit = ME.unit(4, 600), recipes = { "me-256k-storage-component", "me-256k-storage-cell" } }

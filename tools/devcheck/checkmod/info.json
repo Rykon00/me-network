@@ -1,12 +1,12 @@
 {
-  "name": "zz-gregtorio-devcheck",
+  "name": "zz-me-network-devcheck",
   "version": "1.0.0",
-  "title": "Gregtorio devcheck",
+  "title": "ME Network devcheck",
   "author": "rykon_",
   "factorio_version": "2.0",
-  "description": "Test helper for tools/devcheck: validates and dumps Gregtorio prototypes into the log. Not meant for normal play.",
+  "description": "Test helper for tools/devcheck: validates and dumps the prototypes into the log. Not meant for normal play.",
   "dependencies": [
-    "? Gregtorio",
+    "? me-network",
     "? gregtorio-continued"
   ]
 }
