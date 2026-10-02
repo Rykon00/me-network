@@ -38,3 +38,14 @@ for _, machine_type in pairs({ "assembling-machine", "furnace", "rocket-silo" })
 		machine.additional_pastable_entities = list
 	end
 end
+
+--- Issue #17: the upgrade cards technology costs what ME 64k Storage costs (its prerequisite), unless a mod set it
+--- itself (ME_NETWORK.set_technology). A mod that puts the network on its own tiers (Gregtorio Continued) thereby gets a
+--- researchable cards technology on the 64k tier before it knows about the cards.
+local cards_tech, storage_64k = data.raw.technology["me-upgrade-cards"], data.raw.technology["me-storage-64k"]
+if cards_tech and storage_64k and not ME.customized["me-upgrade-cards"] then
+	cards_tech.unit = table.deepcopy(storage_64k.unit)
+	cards_tech.research_trigger = table.deepcopy(storage_64k.research_trigger)
+	if cards_tech.research_trigger then cards_tech.unit = nil end
+	cards_tech.prerequisites = { "me-storage-64k" }
+end

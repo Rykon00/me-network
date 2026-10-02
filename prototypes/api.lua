@@ -29,6 +29,7 @@ M.technology_path = M.root .. "graphics/technology/fork/"
 M.recipes = M.recipes or {}
 M.technologies = M.technologies or {}
 M.removed = M.removed or {}
+M.customized = M.customized or {}     -- technologies another mod changed with set_technology (data-final-fixes.lua)
 
 local function remember(list, name)
 	for _, n in pairs(list) do if n == name then return end end
@@ -131,6 +132,7 @@ end
 function M.set_technology(name, def)
 	local tech = data.raw.technology[name]
 	if not tech then error("ME_NETWORK.set_technology: no technology " .. name) end
+	M.customized[name] = true
 	if def.prerequisites then tech.prerequisites = def.prerequisites end
 	if def.unit then tech.unit = def.unit end
 	if def.recipes then

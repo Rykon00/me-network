@@ -82,9 +82,9 @@ script.on_event(defines.events.on_player_setup_blueprint, function(event)
 	fork_ae2.on_player_setup_blueprint(event)
 end)
 
---- removed ME members. Mined: an ME Drive's cells (with their items and fluids) and an ME Pattern Provider's
---- encoded patterns go into the mined buffer, the fluid in an ME Interface's sides back into the network; destroyed
---- or removed by a script: the cells and patterns are spilled.
+--- removed ME members. Mined: an ME Drive's cells (with their items and fluids), an ME Pattern Provider's encoded
+--- patterns and an ME Storage Bus's cards go into the mined buffer, the fluid in an ME Interface's sides back into the
+--- network; destroyed or removed by a script: the cells, patterns and cards are spilled.
 --- The I/O module runs first (it looks at the network the entity still belongs to), then the graph is updated.
 local REMOVED_FILTER = {}
 --- (logistic chests, infinity chests and cargo wagons: the inventory of a storage bus leaves the network at once; pipes,
@@ -97,7 +97,7 @@ end
 local function on_mined(event)
 	fork_fluids.on_mined_event(event)
 	fork_io.on_removed(event.entity, true)
-	fork_sbus.on_removed(event.entity)
+	fork_sbus.on_removed(event.entity, event.buffer)
 	fork_ae2.on_removed(event.entity, event.buffer)
 	fork_net.on_removed(event.entity, event.buffer)
 end

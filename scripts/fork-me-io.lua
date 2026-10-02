@@ -16,7 +16,12 @@
 ---     An interface that moved nothing is visited less and less often (issue #5); building a fluid entity next to
 ---     one wakes it.
 ---   * The config and the sides are kept in script (rec.config, rec.sides), in blueprints (tag
----     fork_me_interface = { config, sides }), settings paste and clones.
+---     fork_me_interface = { config, sides, priority }), settings paste and clones.
+---   * Priority (me-network issue #17, -1000 ... 1000, rec.priority): when the network has less of an item or fluid
+---     than the interfaces want, the higher priority interface is filled first. An interface whose row stays short
+---     registers the shortfall in its network (net.short[key][unit] = { priority, amount }, the sums per priority in
+---     net.short_p[key]); an interface takes only what is left after the shortfalls of higher priorities. While no
+---     interface of the map has a priority other than 0 (s.prio empty) nothing is registered: the visit of 0.3.0.
 ---   * ME Import Bus / ME Export Bus: face one entity (their direction). Its kind is found once, when the
 ---     target is resolved, and kept with it (scripts/fork-me-targets.lua): an inventory of the bus's kind, fluid
 ---     boxes, or both (a machine with a fluid recipe). The import bus pulls items from the entity's output
@@ -118,7 +123,91 @@ local function register(s, entity)
 	return rec
 end
 
+--------------------------------------------------------------------------------
+--- interface priority (issue #17): the shortfalls of interfaces by priority, per network and key
+--------------------------------------------------------------------------------
+
+local MAX_PRIORITY = 1000
+
+--- add `n` to the shortfall of priority `p` for `key`
+local function short_sum(net, key, p, n)
+	net.short_p = net.short_p or {}
+	local sums = net.short_p[key]
+	if not sums then
+		sums = {}
+		net.short_p[key] = sums
+	end
+	local now = (sums[p] or 0) + n
+	sums[p] = now > EPS and now or nil
+	if next(sums) == nil then net.short_p[key] = nil end
+end
+
+local function short_del(net, key, unit)
+	local u = net and net.short and net.short[key]
+	local e = u and u[unit]
+	if not e then return end
+	u[unit] = nil
+	if next(u) == nil then net.short[key] = nil end
+	short_sum(net, key, e[1], -e[2])
+end
+
+local function short_put(net, key, unit, p, n)
+	net.short = net.short or {}
+	local u = net.short[key]
+	if not u then
+		u = {}
+		net.short[key] = u
+	end
+	local e = u[unit]
+	if e then short_sum(net, key, e[1], -e[2]) end
+	u[unit] = { p, n }
+	short_sum(net, key, p, n)
+end
+
+--- what the interfaces of a priority above `p` lack of `key` in the network
+local function reserved(net, key, p)
+	local sums = net.short_p and net.short_p[key]
+	if not sums then return 0 end
+	local n = 0
+	for q, v in pairs(sums) do
+		if q > p then n = n + v end
+	end
+	return n
+end
+
+--- the interface's registered shortfalls become `short` ({ key -> amount }, nil: none) in network `net` (nil: drop all)
+local function sync_short(rec, net, short)
+	local unit = rec.entity.unit_number
+	if rec.short and rec.short_net and not (net and rec.short_net == net.id) then
+		local old = N.get(rec.short_net)
+		for key in pairs(rec.short) do short_del(old, key, unit) end
+		rec.short = nil
+	end
+	if not net then
+		rec.short, rec.short_net = nil, nil
+		return
+	end
+	for key in pairs(rec.short or {}) do
+		if not (short and short[key]) then
+			short_del(net, key, unit)
+			rec.short[key] = nil
+		end
+	end
+	local p = rec.priority or 0
+	for key, n in pairs(short or {}) do
+		local e = net.short and net.short[key] and net.short[key][unit]
+		if not (e and e[1] == p and e[2] == n) then short_put(net, key, unit, p, n) end
+		rec.short = rec.short or {}
+		rec.short[key] = true
+	end
+	if rec.short and next(rec.short) == nil then rec.short = nil end
+	rec.short_net = rec.short and net.id or nil
+end
+
 local function drop(s, unit)
+	local rec = s.recs[unit]
+	if rec and rec.short then sync_short(rec, nil) end
+	if s.prio then s.prio[unit] = nil end
 	s.recs[unit] = nil
 	for i = #s.list, 1, -1 do
 		if s.list[i] == unit then table.remove(s.list, i) end
@@ -330,32 +419,38 @@ local function tank_to_network(t, held, net)
 end
 M.tank_to_network = tank_to_network
 
---- keep a side's tank at its row's amount of the row's fluid; returns the status and the amount moved
-local function export_side(t, held, row, net)
+--- keep a side's tank at its row's amount of the row's fluid; returns the status, the amount moved and what the
+--- side still lacks. `p`: the interface's priority when priorities are in use (issue #17: what interfaces of a higher
+--- priority lack is left in the network)
+local function export_side(t, held, row, net, p)
 	local moved = 0
 	if held and held.name ~= row.name then              -- another fluid: into the network first
 		moved = tank_to_network(t, held, net)
 		held = t.fluidbox[1]
 		if held and held.amount <= EPS then held = nil end
-		if held and held.name ~= row.name then return "blocked", moved end
+		if held and held.name ~= row.name then return "blocked", moved, 0 end
 	end
 	local want = math.min(row.amount, volume()) - (held and held.amount or 0)
-	if want <= EPS then return "ok", moved end
+	if want <= EPS then return "ok", moved, 0 end
 	local avail = N.fluid_count(net, row.name)
-	if avail <= EPS then return "empty-network", moved end
+	if avail <= EPS then return "empty-network", moved, want end
+	if p then avail = avail - reserved(net, FLUID_PREFIX .. row.name, p) end
+	if avail <= EPS then return "reserved", moved, want end
 	local inserted = t.insert_fluid{ name = row.name, amount = math.min(want, avail) }
+	local got = 0
 	if inserted > 0 then
-		local got = N.extract_fluid(net, row.name, inserted)
+		got = N.extract_fluid(net, row.name, inserted)
 		--- a storage bus's segment had less than its snapshot: never duplicate
 		if got < inserted - EPS then t.remove_fluid{ name = row.name, amount = inserted - got } end
 		moved = moved + got
 	end
-	return "ok", moved
+	return "ok", moved, math.max(0, want - got)
 end
 
 --- one pass over the four sides; rec.fstatus[d] is what the window shows. Returns the fluid moved (an export side
---- whose fluid the network lacks waits for it: N.wait_for).
-local function interface_sides(rec, net, config)
+--- whose fluid the network lacks waits for it: N.wait_for). `short`: the shortfalls of this visit (issue #17), nil
+--- while priorities are not in use.
+local function interface_sides(rec, net, config, short)
 	local tanks = ensure_tanks(rec)
 	if not tanks then return 0 end
 	local moved = 0
@@ -371,10 +466,12 @@ local function interface_sides(rec, net, config)
 		if setting == "off" then
 			fstatus[d] = "off"
 		elseif type(setting) == "number" and is_fluid_row(config[setting]) then
-			local why, n = export_side(t, held, config[setting], net)
+			local key = FLUID_PREFIX .. config[setting].name
+			local why, n, lack = export_side(t, held, config[setting], net, short and (rec.priority or 0))
 			fstatus[d] = why
 			moved = moved + n
-			if why == "empty-network" then N.wait_for(net, FLUID_PREFIX .. config[setting].name, "io", rec.entity.unit_number, true) end
+			if why == "empty-network" or why == "reserved" then N.wait_for(net, key, "io", rec.entity.unit_number, true) end
+			if short and lack > EPS then short[key] = (short[key] or 0) + lack end
 		elseif held then
 			if rec.exporting and not exports then
 				exports = {}
@@ -416,6 +513,10 @@ function M.interface_step(rec, dt)
 	local inv = e.get_inventory(defines.inventory.chest)
 	local ops, moved = 0, 0
 	local kept = {}
+	--- issue #17: priorities in use somewhere on the map (else nothing is reserved or registered: 0.3.0's visit)
+	local s = storage.fork_me_io
+	local short = ((s.prio and next(s.prio)) or rec.short) and {} or nil
+	local p = rec.priority or 0
 	for i = 1, CONFIG_SLOTS do
 		local c = config[i]
 		if c and not is_fluid_row(c) then
@@ -423,9 +524,12 @@ function M.interface_step(rec, dt)
 			kept[key] = true
 			local have = inv.get_item_count{ name = c.name, quality = c.quality }
 			if have < c.amount then
-				local got = N.extract_to(net, inv, key, c.amount - have)
+				local want = c.amount - have
+				if short then want = math.min(want, math.max(0, N.count_key(net, key) - reserved(net, key, p))) end
+				local got = want > 0 and N.extract_to(net, inv, key, want) or 0
 				if got > 0 then moved = moved + got ops = ops + 1
-				elseif N.count_key(net, key) <= 0 then N.wait_for(net, key, "io", e.unit_number, true) end
+				elseif N.count_key(net, key) <= 0 or short then N.wait_for(net, key, "io", e.unit_number, true) end
+				if short and have + got < c.amount then short[key] = c.amount - have - got end
 			elseif have > c.amount then
 				local can = N.can_insert(net, c.name, c.quality, have - c.amount)
 				local taken = can > 0 and inv.remove{ name = c.name, quality = c.quality, count = can } or 0
@@ -450,9 +554,32 @@ function M.interface_step(rec, dt)
 		end
 	end
 	if ops < max_ops then rec.slot = 1 end
-	moved = moved + interface_sides(rec, net, config)
+	moved = moved + interface_sides(rec, net, config, short)
+	if short then sync_short(rec, net, next(short) and short or nil) end
 	rec.status = "ok"
 	return moved, ops >= max_ops
+end
+
+--- the interface's priority (issue #17; -1000 ... 1000, default 0)
+function M.get_interface_priority(entity)
+	if kind(entity) ~= "interface" then return nil end
+	local s = storage.fork_me_io
+	local rec = s and s.recs[entity.unit_number]
+	return rec and rec.priority or 0
+end
+
+--- Set the priority; the shortfalls it registered go (they are registered again at its next visit, now)
+function M.set_interface_priority(entity, priority)
+	if kind(entity) ~= "interface" then return false end
+	local s = state()
+	local rec = register(s, entity)
+	local p = math.max(-MAX_PRIORITY, math.min(MAX_PRIORITY, math.floor(tonumber(priority) or 0)))
+	rec.priority = p ~= 0 and p or nil
+	s.prio = s.prio or {}
+	s.prio[entity.unit_number] = rec.priority
+	if rec.short then sync_short(rec, nil) end
+	wake(entity.unit_number)
+	return true
 end
 
 --- the config: { [i] = { name, quality, amount } or { type = "fluid", name, amount } }, i = 1 .. CONFIG_SLOTS (a copy)
@@ -607,9 +734,10 @@ local function config_from_tag(t)
 	return nil
 end
 
---- the interface's tag (blueprints, scripts/fork-me-unify.lua): { config, sides }
-function M.interface_tag(config, sides)
-	return { config = config_tag(clean_config(config)), sides = sides_tag(sides) }
+--- the interface's tag (blueprints, scripts/fork-me-unify.lua): { config, sides, priority (issue #17, only when not 0) }
+function M.interface_tag(config, sides, priority)
+	return { config = config_tag(clean_config(config)), sides = sides_tag(sides),
+		priority = priority and priority ~= 0 and priority or nil }
 end
 
 --- the interface's state for its window: { config, sides, status, contents = { { key, count } }, fluids = { [1..4] =
@@ -633,8 +761,14 @@ function M.get_interface(entity)
 			name = held and held.amount > EPS and held.name or nil, amount = held and held.amount or 0,
 			connected = t ~= nil and #t.fluidbox.get_connections(1) > 0 }
 	end
+	local short = {}
+	for key in pairs(rec.short or {}) do
+		local net = N.get(rec.short_net)
+		local e = net and net.short and net.short[key] and net.short[key][entity.unit_number]
+		if e then short[key] = e[2] end
+	end
 	return { config = M.get_interface_config(entity), sides = sides, status = rec.status, contents = contents,
-		fluids = fl, slots = CONFIG_SLOTS, volume = volume() }
+		fluids = fl, slots = CONFIG_SLOTS, volume = volume(), priority = rec.priority or 0, short = short }
 end
 M.CONFIG_SLOTS = CONFIG_SLOTS
 M.MAX_FILTERS = MAX_FILTERS
@@ -907,7 +1041,7 @@ local function visit(rec, unit)
 	local e = rec.entity
 	if not e.valid then
 		destroy_tanks(rec)                    -- an interface removed without an event
-		drop(s, unit)
+		drop(s, unit)                         -- (its shortfalls go too)
 		return
 	end
 	local now = game.tick
@@ -950,10 +1084,14 @@ function M.on_built(entity, tags, source)
 	local rec = register(state(), entity)
 	if k == "interface" then
 		ensure_tanks(rec)
-		local config, sides = config_from_tag(type(tags) == "table" and tags[IFACE_TAG] or nil)
-		if config then M.set_interface_config(entity, config, sides or {})
+		local t = type(tags) == "table" and tags[IFACE_TAG] or nil
+		local config, sides = config_from_tag(t)
+		if config then
+			M.set_interface_config(entity, config, sides or {})
+			if type(t) == "table" and t.priority then M.set_interface_priority(entity, t.priority) end
 		elseif source and source.valid and kind(source) == "interface" then
 			M.set_interface_config(entity, M.get_interface_config(source), M.get_interface_sides(source))
+			M.set_interface_priority(entity, M.get_interface_priority(source))
 		end
 		clear_filters(entity.get_inventory(defines.inventory.chest))      -- a blueprint before R3 may carry slot filters
 	else
@@ -1028,7 +1166,9 @@ function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
 	if not (src and src.valid and dst and dst.valid and src.name == dst.name) then return end
 	local k = kind(src)
-	if k == "interface" then M.set_interface_config(dst, M.get_interface_config(src), M.get_interface_sides(src))
+	if k == "interface" then
+		M.set_interface_config(dst, M.get_interface_config(src), M.get_interface_sides(src))
+		M.set_interface_priority(dst, M.get_interface_priority(src))
 	elseif BUSES[k] then
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
@@ -1041,7 +1181,10 @@ function M.tag_blueprint(bp, mapping)
 		local k = kind(entity)
 		if k == "interface" then
 			local config, sides = M.get_interface_config(entity), M.get_interface_sides(entity)
-			if next(config) or next(sides) then bp.set_blueprint_entity_tag(index, IFACE_TAG, M.interface_tag(config, sides)) end
+			local p = M.get_interface_priority(entity)
+			if next(config) or next(sides) or p ~= 0 then
+				bp.set_blueprint_entity_tag(index, IFACE_TAG, M.interface_tag(config, sides, p))
+			end
 		elseif BUSES[k] then
 			local b = M.get_bus(entity)
 			if b and #b.filters > 0 then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters }) end
@@ -1054,7 +1197,9 @@ end
 function M.on_configuration_changed()
 	local s = state()
 	local old = s.recs
-	s.recs, s.list, s.cursor, s.q = {}, {}, 1, Sched.new()
+	s.recs, s.list, s.cursor, s.q, s.prio = {}, {}, 1, Sched.new(), {}
+	--- issue #17: the shortfalls are registered again at the visits (the networks may be new ones)
+	for _, net in pairs(N.state().nets) do net.short, net.short_p = nil, nil end
 	VOLUME, block_names, by_count_cache = nil, nil, {}
 	local names = {}
 	for _, name in pairs(N.node_names()) do
@@ -1068,6 +1213,10 @@ function M.on_configuration_changed()
 			if BUSES[rec.kind] then M.set_bus_filters(e, o and (o.keys or o.filters) or {}) end
 			if rec.kind == "interface" then
 				if o and o.config then rec.config = clean_config(o.config) end
+				if o and o.priority then
+					rec.priority = o.priority
+					s.prio[e.unit_number] = o.priority
+				end
 				rec.sides = clean_sides(o and o.sides or {}, rec.config or {})
 				rec.tanks = o and o.tanks
 				local fresh = not (o and o.tanks) and #surface.find_entities_filtered{ name = T.SIDE, position = e.position } == 0
@@ -1105,6 +1254,9 @@ remote.add_interface("gregtorio-me-io", {
 	set_interface_side = function(entity, side, value) return M.set_interface_side(entity, side, value) end,
 	get_interface_sides = function(entity) return M.get_interface_sides(entity) end,
 	get_interface = function(entity) return M.get_interface(entity) end,
+	--- issue #17: the interface's priority
+	get_interface_priority = function(entity) return M.get_interface_priority(entity) end,
+	set_interface_priority = function(entity, priority) return M.set_interface_priority(entity, priority) end,
 	--- the four side tanks (north, east, south, west)
 	interface_tanks = function(entity) return M.tanks_of(entity) end,
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,

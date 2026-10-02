@@ -19,6 +19,7 @@ Sources:
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
     python tools/gen_ae2_sprites.py --patterns    # only the blank and encoded pattern icons (issue #80)
     python tools/gen_ae2_sprites.py --unified     # only the ME Interface with its four pipe sides (me-network issue #3)
+    python tools/gen_ae2_sprites.py --cards       # only the upgrade cards and their technology (me-network issue #17)
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like Gregtorio Continued)
@@ -710,6 +711,69 @@ def patterns():
     return written
 
 
+# --- me-network issue #17: upgrade cards --------------------------------------------------
+# AE2's cards drawn with Pillow (placeholders): a dark circuit card with gold contacts on the left, a chip, and the
+# card's own accent colour and sign on the right. The basic card has a gold chip, the advanced one a blue one.
+CARD_BODY = (58, 62, 76)
+CARD_EDGE = (120, 126, 146)
+CONTACT = (225, 185, 70)
+CARDS = {
+    "me-basic-card": ((225, 185, 70), None),
+    "me-advanced-card": ((90, 170, 245), None),
+    "me-capacity-card": ((95, 205, 110), "plus"),
+    "me-overflow-destruction-card": ((235, 60, 50), "cross"),
+    "me-fuzzy-card": ((235, 150, 220), "wave"),
+    "me-inverter-card": ((245, 140, 40), "invert"),
+    "me-equal-distribution-card": ((130, 220, 230), "equal"),
+}
+
+
+def card_icon(accent, sign):
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((2, 7, TILE - 3, TILE - 8), radius=2, fill=CARD_BODY + (255,), outline=CARD_EDGE + (255,))
+    for y in range(10, TILE - 10, 3):                                   # the contacts
+        d.rectangle((3, y, 5, y + 1), fill=CONTACT + (255,))
+    d.rectangle((8, 11, 14, 20), fill=accent + (255,), outline=(30, 30, 36, 255))   # the chip
+    d.line((9, 13, 13, 13), fill=(30, 30, 36, 255))
+    d.line((9, 16, 13, 16), fill=(30, 30, 36, 255))
+    c = (255, 255, 255, 255)
+    if sign == "plus":
+        d.rectangle((21, 12, 23, 20), fill=accent + (255,))
+        d.rectangle((18, 15, 26, 17), fill=accent + (255,))
+    elif sign == "cross":
+        d.line((18, 12, 26, 20), fill=accent + (255,), width=3)
+        d.line((18, 20, 26, 12), fill=accent + (255,), width=3)
+    elif sign == "wave":
+        d.line([(17, 15), (19, 13), (21, 15), (23, 17), (25, 15), (27, 13)], fill=accent + (255,), width=2)
+        d.line([(17, 19), (19, 17), (21, 19), (23, 21), (25, 19), (27, 17)], fill=accent + (255,), width=2)
+    elif sign == "invert":
+        d.polygon([(17, 14), (22, 10), (22, 18)], fill=accent + (255,))      # two arrows against each other
+        d.polygon([(27, 18), (22, 14), (22, 22)], fill=c)
+    elif sign == "equal":
+        d.rectangle((18, 12, 26, 14), fill=accent + (255,))
+        d.rectangle((18, 18, 26, 20), fill=accent + (255,))
+    else:
+        d.line((17, 16, 27, 16), fill=accent + (255,))                    # a circuit trace
+        d.line((22, 11, 22, 21), fill=accent + (255,))
+    return img
+
+
+def cards():
+    written = []
+    for name, (accent, sign) in CARDS.items():
+        path = OUT_ICON / f"{name}.png"
+        card_icon(accent, sign).save(path)
+        written.append(path)
+    tech = Image.new("RGBA", (TILE, TILE))
+    tech.alpha_composite(card_icon(*CARDS["me-capacity-card"]).crop((0, 0, TILE, TILE)), (0, -5))
+    tech.alpha_composite(card_icon(*CARDS["me-inverter-card"]), (0, 5))
+    path = OUT_TECH / "me-upgrade-cards.png"
+    upscale(tech).save(path)
+    written.append(path)
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
@@ -731,13 +795,15 @@ def main():
                     help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
     ap.add_argument("--patterns", action="store_true",
                     help="only the blank and encoded pattern icons (issue #80, drawn with Pillow)")
+    ap.add_argument("--cards", action="store_true",
+                    help="only the upgrade card icons and their technology icon (me-network issue #17, drawn with Pillow)")
     ap.add_argument("--unified", action="store_true",
                     help="only the ME Interface with its pipe sides (me-network issue #3), from the R1 PNGs")
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
-            or a.patterns or a.unified):
+            or a.patterns or a.unified or a.cards):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns or --unified is required")
+                 " --patterns, --unified or --cards is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -784,6 +850,9 @@ def main():
     if a.gt or a.unified:
         written = unified()
         print("ME unified interface sprites:", len(written))
+    if a.gt or a.cards:
+        written = cards()
+        print("ME card icons:", len(written))
 
 
 if __name__ == "__main__":

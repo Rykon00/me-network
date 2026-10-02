@@ -14,10 +14,12 @@
 ---   * ME Level Maintainer: item or fluid, amount, amount from the circuit, the on/off circuit condition, status.
 ---   * ME Circuit Interface: 20 filters, output on/off, status.
 ---   * ME Interface: 9 config rows (an item or a fluid and its amount), the four fluid sides (import, off or a fluid
----     row; what each side's tank holds), the container's content, "Open inventory".
+---     row; what each side's tank holds), the container's content, "Open inventory"; its priority (issue #17).
 ---   * ME Import/Export Bus: 9 filters (items and fluids), status, the entity it faces and what of it the bus uses.
----   * ME Storage Bus: mode (read and write, read only, write only), priority, 18 filters (items and fluids), what
----     it shows (items, or the fluid, amount and temperature of a tank's segment), status, the entity it faces.
+---   * ME Storage Bus: mode (read and write, read only, write only), priority, 18 filters (items and fluids; 9 more per
+---     Capacity Card), what it shows (items, or the fluid, amount and temperature of a tank's segment), status, the
+---     entity it faces; issue #17: its 5 card slots (click with a card in hand, click a card to take it), the cards it
+---     waits for, "filter on extract", "From contents" and "Clear", and a red warning with an Overflow Destruction Card.
 --- (issue #3: the windows of the ME Fluid Interface and the ME Fluid Storage Bus are gone with those blocks)
 --- Every window shows plain data from a `*_data` function and changes things through functions of the
 --- block's module (or the small `set_*` helpers here); the runtime test calls the same functions
@@ -737,6 +739,9 @@ end
 local function open_interface(player, entity)
 	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-gui.interface-help" }, WIDTH)
+	local row = G.row(content)                        -- issue #17: the interface's priority
+	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.interface-priority-tooltip" } }
+	G.number_field(row, io.get_interface_priority(entity), G.act("if_priority"), 70, true).tooltip = { "fork-me-gui.interface-priority-tooltip" }
 	content.add{ type = "flow", name = "fork_me_if_config", direction = "vertical" }
 	G.heading(content, { "fork-me-gui.interface-sides" })
 	content.add{ type = "flow", name = "fork_me_if_sides", direction = "vertical" }
@@ -837,6 +842,12 @@ G.on("if_amount", function(event, player, el)
 	if c then io.set_interface_key(entity, el.tags.index, io.row_key(c), tonumber(el.text) or 0) end
 end)
 
+G.on("if_priority", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then io.set_interface_priority(entity, tonumber(el.text) or 0) end
+end)
+
 G.on("if_side", function(event, player, el)
 	if event.name ~= defines.events.on_gui_selection_state_changed then return end
 	local entity = window_entity(player)
@@ -914,8 +925,23 @@ local function open_storage_bus(player, entity)
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.storage-bus-priority-tooltip" } }
 	G.number_field(row, d.priority, G.act("sbus_priority"), 70, true).tooltip = { "fork-me-gui.storage-bus-priority-tooltip" }
-	content.add{ type = "label", caption = { "fork-me-gui.storage-bus-filters" }, tooltip = { "fork-me-gui.storage-bus-filters-tooltip" } }
+	--- issue #17: the cards, the extract setting, the void warning
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.storage-bus-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_sbus_cards", direction = "horizontal" }
+	G.label(content, "", WIDTH, nil, "fork_me_sbus_want")
+	local void = G.label(content, "", WIDTH, nil, "fork_me_sbus_void")
+	void.style.font_color = { 1, 0.25, 0.2 }
+	void.style.font = "default-bold"
+	content.add{ type = "checkbox", name = "fork_me_sbus_extract", state = d.extract, caption = { "fork-me-gui.storage-bus-extract" },
+		tooltip = { "fork-me-gui.storage-bus-extract-tooltip" }, tags = G.act("sbus_extract") }
+	content.add{ type = "label", name = "fork_me_sbus_filters_caption", caption = { "fork-me-gui.storage-bus-filters" },
+		tooltip = { "fork-me-gui.storage-bus-filters-tooltip" } }
 	content.add{ type = "flow", name = "fork_me_sbus_filters", direction = "vertical" }
+	local buttons = G.row(content)
+	buttons.add{ type = "button", caption = { "fork-me-gui.partition-contents" }, tooltip = { "fork-me-gui.storage-bus-contents-tooltip" },
+		tags = G.act("sbus_contents") }
+	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("sbus_clear") }
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_holds")
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_target")
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_status")
@@ -926,10 +952,28 @@ function M.refresh_storage_bus(player, frame)
 	local entity = G.entity_of(player, frame)
 	local d = entity and M.storage_bus_data(entity)
 	if not d then return false end
-	rebuild(frame, "fork_me_sbus_filters", table.concat(d.filters, ","), function(box)
+	rebuild(frame, "fork_me_sbus_filters", d.max .. ":" .. table.concat(d.filters, ","), function(box)
 		local t = box.add{ type = "table", column_count = 9, style = "filter_slot_table" }
 		for i = 1, d.max do signal_chooser(t, d.filters[i], G.act("sbus_filter", { index = i })) end
 	end)
+	local card_sig = {}
+	for slot = 1, d.slots do card_sig[slot] = d.cards[slot] or "-" end
+	rebuild(frame, "fork_me_sbus_cards", table.concat(card_sig, ","), function(box)
+		for slot = 1, d.slots do
+			local name = d.cards[slot]
+			box.add{ type = "sprite-button", style = "slot_button", sprite = name and ("item/" .. name) or nil,
+				elem_tooltip = name and { type = "item", name = name } or nil,
+				tooltip = { name and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" },
+				tags = G.act("sbus_card", { slot = slot }) }
+		end
+	end)
+	local want = {}
+	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
+	G.find(frame, "fork_me_sbus_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
+	G.find(frame, "fork_me_sbus_void").caption = d.void and { "fork-me-gui.storage-bus-void", G.fmt(d.voided) } or ""
+	G.find(frame, "fork_me_sbus_extract").state = d.extract
+	G.find(frame, "fork_me_sbus_filters_caption").caption = { "fork-me-gui.storage-bus-filters" .. (d.inverted and "-blacklist" or ""),
+		d.max, d.fuzzy and { "fork-me-gui.storage-bus-fuzzy" } or "" }
 	local holds
 	if d.side == "fluid" then
 		local fluid = d.fluid and prototypes.fluid[d.fluid]
@@ -967,6 +1011,33 @@ G.on("sbus_filter", function(event, player, el)
 		sbus.set_filter(entity, el.tags.index, key_of_signal_q(el.elem_value))
 		G.refresh_one(player)
 	end
+end)
+
+G.on("sbus_card", function(event, player, el)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local why = sbus.card_click(entity, el.tags.slot, player.cursor_stack, player.get_main_inventory(), event.shift)
+	if why then player.create_local_flying_text{ text = { "fork-me-gui.card-" .. why }, create_at_cursor = true } end
+	G.refresh_one(player)
+end)
+
+G.on("sbus_extract", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then sbus.set_settings(entity, { extract = el.state }) G.refresh_one(player) end
+end)
+
+G.on("sbus_contents", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if entity then sbus.filters_from_contents(entity) G.refresh_one(player) end
+end)
+
+G.on("sbus_clear", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if entity then sbus.clear_filters(entity) G.refresh_one(player) end
 end)
 
 --------------------------------------------------------------------------------

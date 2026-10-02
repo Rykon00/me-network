@@ -163,9 +163,11 @@ local function paste_storage_bus(dst, recipe, quality, msgs)
 		wanted = only(wanted, side)
 		if #wanted == 0 then return msg(msgs, side == "fluid" and "no-fluids" or "no-items") end
 	end
-	local keys, left = keys_of(wanted, quality, sbus.MAX_FILTERS)
+	--- issue #17: the filters that apply (more with Capacity Cards); only the filters change (mode, priority, cards and
+	--- the other settings stay)
+	local keys, left = keys_of(wanted, quality, info.max)
 	sbus.set_settings(dst, { filters = keys })
-	if #left > 0 then msg(msgs, "filters-full", tostring(sbus.MAX_FILTERS), icons(left)) end
+	if #left > 0 then msg(msgs, "filters-full", tostring(info.max), icons(left)) end
 end
 
 local function paste_bus(dst, recipe, quality, msgs, import)

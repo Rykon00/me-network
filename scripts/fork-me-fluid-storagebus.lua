@@ -73,9 +73,10 @@ local function fluid_of(key)
 	return prototypes.fluid[name] and name or nil
 end
 
-local function allowed(rec, key)
-	return rec.partition == nil or rec.partition[key] == true
-end
+--- may the network put `key` in? (the filters: a whitelist, or a blacklist with an Inverter Card; issue #17)
+local function allowed(rec, key) return N.accepts(rec, key) end
+--- may the network see and take `key`? (the same, unless the bus filters only what goes in)
+local function shown(rec, key) return rec.inonly == true or N.accepts(rec, key) end
 
 --------------------------------------------------------------------------------
 --- the storage behind a bus: the faced fluid box, its segment
@@ -110,6 +111,16 @@ local function contents_of(rec)
 	end
 	if held and held.amount > EPS then return { [held.name] = held.amount }, temp, false end
 	return {}, temp, false
+end
+
+--- issue #17: the fluids of the storage a bus owns now ({ name -> amount }; empty without one): "From contents"
+function M.contents(rec)
+	if not (rec.target and rec.target.valid and rec.box and owns(rec)) then return {} end
+	local out = {}
+	for name, amount in pairs((contents_of(rec))) do
+		if amount > EPS then out[name] = amount end
+	end
+	return out
 end
 
 local function default_temperature(name)
@@ -164,7 +175,7 @@ M.handlers = {
 	end,
 	--- the real amount of `key` in the storage (0 when the bus cannot take from it)
 	count = function(rec, key)
-		if rec.mode == "write" or not allowed(rec, key) then return 0 end
+		if rec.mode == "write" or not shown(rec, key) then return 0 end
 		local name = fluid_of(key)
 		if not (name and owns(rec)) then return 0 end
 		local contents = contents_of(rec)
@@ -186,6 +197,14 @@ M.handlers = {
 		local left = held.amount - n
 		fb[rec.box] = left > EPS and { name = name, amount = left, temperature = held.temperature } or nil
 		return n
+	end,
+	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? Only while the bus owns the
+	--- segment and the segment could take the fluid at all (not while it holds another fluid or is at another
+	--- temperature: then the network puts nothing in, and destroys nothing either)
+	voids = function(rec, key)
+		if rec.mode == "read" or not allowed(rec, key) then return false end
+		local name = fluid_of(key)
+		return name ~= nil and owns(rec) and accepts(rec, name) == true
 	end,
 }
 --- the handler of the storage bus's fluid side (rec.handler) and of old fluid storage buses until they are replaced
@@ -323,7 +342,7 @@ function M.visit(rec, cascade)
 			if amount > EPS then
 				rec.fluid, rec.temp = name, temp
 				local key = PREFIX .. name
-				if rec.mode ~= "write" and allowed(rec, key) then contents[key] = amount end
+				if rec.mode ~= "write" and shown(rec, key) then contents[key] = amount end
 				if temp and math.abs(temp - default_temperature(name)) > TEMP_TOLERANCE then rec.status = "temperature" end
 			end
 		end
