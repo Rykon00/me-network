@@ -39,7 +39,10 @@
   without Space Age; `migrate --from-ref v0.1.0` loads a save of an older version with the working copy (for changes to
   saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
   recipes; without Gregtorio its `data.lua` adds stand-ins with the same names and numbers. See
-  `tools/devcheck/README.md`.
+  `tools/devcheck/README.md`. A change to the runtime's cost (the storage engine, the I/O, autocrafting, the step
+  budgets) runs `devcheck.py bench` (script time per tick, throughput and latencies at 100, 1000 and 5000 endpoints,
+  `--reference` for inserters and robots, `--profile 1000,5000` for where the time goes) and puts its numbers before
+  and after into `docs/PERFORMANCE.md`.
 - Every referenced `__me-network__/...` file must exist (headless Factorio does not load graphics, the real game
   crashes on missing files); `devcheck check` lists missing ones and names missing in `locale/en`.
 - **Changelog:** every change to the game adds its player-facing lines to the topmost section of `changelog.txt` (the

@@ -9,6 +9,10 @@
                                                             # the same with Gregtorio Continued loaded
     python tools/devcheck/devcheck.py migrate --from-ref v0.1.0
                                                             # a save of an older version loaded with the working copy
+    python tools/devcheck/devcheck.py bench                 # script time, throughput and latencies of synthetic
+                                                            # bases of 100, 1000 and 5000 endpoints (docs/PERFORMANCE.md)
+    python tools/devcheck/devcheck.py bench --reference --profile 1000,5000
+                                                            # the same with inserters and robots, and a profile
 
 Everything is kept in .devcheck/ in the repository root (git-ignored). The working copy is linked into the test
 mod folder, so every run tests the current files.
@@ -125,16 +129,21 @@ def remove_path(p):
         shutil.rmtree(p)
 
 
-def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False):
-    """mods/ = this mod (working copy, or `mod_dir`: an older version) + the devcheck helper mods; with Gregtorio its
-    checkout and its dependency zips. base_only: without Space Age and quality."""
+def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False, bench_dir=None):
+    """mods/ = this mod (working copy, or `mod_dir`: an older version or the instrumented copy of `bench --profile`)
+    + the devcheck helper mods (`bench_dir`: the benchmark mod with its config, instead of the check mod); with
+    Gregtorio its checkout and its dependency zips. base_only: without Space Age and quality."""
     MODS.mkdir(parents=True, exist_ok=True)
     for p in MODS.iterdir():
         if p.name in (NAME, GREGTORIO, "mod-list.json") or p.name.startswith(HELPERS):
             remove_path(p)
     link_dir(MODS / NAME, Path(mod_dir) if mod_dir else ROOT)
-    link_dir(MODS / "zz-me-network-devcheck", HERE / "checkmod")
-    enabled = ["base", NAME, "zz-me-network-devcheck"]
+    if bench_dir:
+        link_dir(MODS / "zz-me-network-devcheck-bench", bench_dir)
+        enabled = ["base", NAME, "zz-me-network-devcheck-bench"]
+    else:
+        link_dir(MODS / "zz-me-network-devcheck", HERE / "checkmod")
+        enabled = ["base", NAME, "zz-me-network-devcheck"]
     disabled = ["space-age", "quality", "elevated-rails"] if base_only else []
     if not base_only:
         enabled += ["space-age", "quality", "elevated-rails"]
@@ -491,6 +500,277 @@ def migrate(a):
     return 0 if ok else 1
 
 
+# --------------------------------------------------------------------------------------------
+# bench: synthetic bases (benchmod/), timed with --benchmark-verbose (issue #5, docs/PERFORMANCE.md)
+# --------------------------------------------------------------------------------------------
+
+BENCH_WARMUP = 600
+LATENCY_TICKS = 3700            # after the window: the latency probes (time out after 3600 ticks)
+# the functions the profile times, per module of the instrumented copy (local functions through their upvalue,
+# M.<name> through the module table, and the handler tables of the storage bus)
+PROFILE_WRAP = {
+    "scripts/fork-me-network.lua": ["M.insert", "M.extract", "M.can_insert", "M.insert_partial", "M.insert_stack",
+                                    "M.extract_to", "M.insert_fluid", "M.extract_fluid", "M.can_insert_fluid",
+                                    "M.ext_sync", "M.contents", "M.plain_counts", "M.fluid_contents", "M.storable",
+                                    "M.slow_step", "M.stats", "insert_key", "extract_key", "room_for", "ordered",
+                                    "recompute", "draw_leds", "add_node", "remove_node_graph", "update_power"],
+    "scripts/fork-me-io.lua": ["M.interface_step", "M.bus_step", "M.fluid_bus_step", "import_items", "export_items",
+                               "interface_sides", "tank_to_network", "export_side", "target_of", "ensure_tanks"],
+    "scripts/fork-me-storagebus.lua": ["M.visit", "M.on_step", "resolve", "ITEM.room", "ITEM.insert", "ITEM.count",
+                                       "ITEM.extract"],
+    "scripts/fork-me-fluid-storagebus.lua": ["M.visit", "M.on_step", "claim", "contents_of", "M.handlers.room",
+                                             "M.handlers.insert", "M.handlers.count", "M.handlers.extract"],
+    "scripts/fork-me-autocraft.lua": ["job_step", "maintenance", "scan_provider", "refresh_providers",
+                                      "rebuild_patterns", "make_plan", "M.start", "assign_cpus", "await_index",
+                                      "on_arrival", "awaiting", "cpus_in", "collect_output", "find_crafter",
+                                      "start_lease", "close_lease", "flush_pool", "M.active_job_for", "M.free_slot",
+                                      "M.job", "prune_finished", "job_network", "stock_of", "machine_idle"],
+    "scripts/fork-me-circuit.lua": ["on_step", "maintainer_step", "circuit_step", "network_signals"],
+    "scripts/fork-me-gui.lua": ["M.refresh_all"],
+}
+# values captured at load time that must point at the wrapped function
+PROFILE_REPOINT = {
+    "scripts/fork-me-autocraft.lua": "N.on_arrival = on_arrival\nN.awaiting = awaiting\n",
+}
+
+
+def bench_mod_dir(cfg):
+    """the benchmark mod (benchmod/) with its config.lua, as plain files in .devcheck/bench-mod"""
+    dest = WORK / "bench-mod"
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(HERE / "benchmod", dest, ignore=shutil.ignore_patterns("profile*.lua"))
+    lines = ["return {"] + [f"  {k} = {json.dumps(v) if isinstance(v, str) else str(v).lower()}," for k, v in cfg.items()] + ["}"]
+    (dest / "config.lua").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return dest
+
+
+def instrumented_copy():
+    """a copy of the working tree in .devcheck/bench-profile whose functions are timed (benchmod/profile.lua)"""
+    dest = WORK / "bench-profile"
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(ROOT, dest, ignore=shutil.ignore_patterns(".git", ".devcheck", "dist", "tools", "docs", "*.zip"))
+    for rel, names in PROFILE_WRAP.items():
+        f = dest / rel
+        src = f.read_text(encoding="utf-8")
+        mod = Path(rel).stem.replace("fork-me-", "")
+        lines = []
+        for name in names:
+            last = re.escape(name.split(".")[-1])
+            if "." in name:                                   # M.f, or a field of a handler table
+                found = re.search(r"^function " + re.escape(name) + r"\(|^\s*" + last + r" = function\(", src, re.M)
+            else:                                             # a local function (or a forward declared local)
+                found = re.search(r"^local function " + last + r"\(|^local " + last + r"$", src, re.M)
+            if not found:
+                sys.exit(f"profile: {name} not found in {rel}")
+            lines.append(f'{name} = __BENCH_WRAP("{mod}.{name}", {name})')
+        block = "\n".join(lines) + "\n" + PROFILE_REPOINT.get(rel, "")
+        i = src.rstrip().rfind("\nreturn M")
+        if i < 0:
+            sys.exit(f"profile: no `return M` at the end of {rel}")
+        src = src[:i + 1] + block + src[i + 1:]
+        # captured at load time: the circuit step hook, every on_nth_tick handler
+        src = src.replace("autocraft.step_hooks[#autocraft.step_hooks + 1] = on_step",
+                          "autocraft.step_hooks[#autocraft.step_hooks + 1] = function(s) return on_step(s) end")
+        f.write_text(src, encoding="utf-8")
+    for f in (dest / "scripts").glob("*.lua"):
+        src = f.read_text(encoding="utf-8")
+        f.write_text(src.replace("script.on_nth_tick(", "__BENCH_NTH("), encoding="utf-8")
+    ctl = dest / "control.lua"
+    ctl.write_text((HERE / "benchmod" / "profile.lua").read_text(encoding="utf-8") + "\n" + ctl.read_text(encoding="utf-8")
+                   + (HERE / "benchmod" / "profile-remote.lua").read_text(encoding="utf-8"), encoding="utf-8")
+    return dest
+
+
+def bench_json(log, key):
+    return [json.loads(m) for m in re.findall(rf"DEVCHECK-BENCH-{key} (\{{.*\}})", log)]
+
+
+def timings(log, first, last):
+    """per tick columns of --benchmark-verbose all (ns) for the rows t<first> .. t<last>"""
+    head = re.search(r"^tick,timestamp,(.*)$", log, re.M)
+    if not head:
+        return None
+    cols = head.group(1).rstrip(",").split(",")
+    want = {c: cols.index(c) for c in ("wholeUpdate", "gameUpdate", "entityUpdate", "logisticManagerUpdate",
+                                       "luaGarbageIncremental", "scriptUpdate") if c in cols}
+    rows = {c: [] for c in want}
+    for m in re.finditer(r"^t(\d+),\d+,(.*)$", log, re.M):
+        t = int(m.group(1))
+        if first <= t <= last:
+            vals = m.group(2).rstrip(",").split(",")
+            for c, i in want.items():
+                rows[c].append(int(vals[i]) / 1e6)
+    return rows
+
+
+def stat(values):
+    if not values:
+        return {}
+    s = sorted(values)
+    return {"avg": sum(s) / len(s), "max": s[-1], "p99": s[min(len(s) - 1, int(len(s) * 0.99))],
+            "over5": sum(1 for v in s if v > 5.0)}
+
+
+def median(values):
+    v = sorted(x for x in values if x is not None)
+    return v[len(v) // 2] if v else None
+
+
+def bench_scene(a, scene, size, profile=False):
+    """create the map of one scene and run it (a.runs times, once with --profile); returns the parsed results"""
+    window = a.ticks
+    cfg = {"scene": scene, "size": size, "warmup": BENCH_WARMUP, "window": window,
+           "latency": scene == "me" and not profile, "profile": profile}
+    mod_dir = instrumented_copy() if profile else None
+    prepare_mods(mod_dir=mod_dir, bench_dir=bench_mod_dir(cfg))
+    mapfile = WORK / f"bench-{scene}-{size}{'-profile' if profile else ''}.zip"
+    log = factorio("--create", str(mapfile), *seed_args(a))
+    err = load_errors(log) or not_saved(log)
+    setup = bench_json(log, "SETUP")
+    build = re.search(r"DEVCHECK-BENCH-BUILD (.*)", log)
+    if err or not setup:
+        print(f"  {scene} {size}: the map was not created\n{err or ''}")
+        return None
+    machine = re.search(r"System info: \[(.*?)\]", log)
+    out = {"scene": scene, "size": size, "setup": setup[0], "build": build.group(1) if build else None,
+           "save_bytes": mapfile.stat().st_size, "runs": [], "machine": machine.group(1) if machine else None,
+           "window": window}
+    ticks = BENCH_WARMUP + window + (LATENCY_TICKS if cfg["latency"] else 30)
+    for r in range(1 if profile else a.runs):
+        log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(ticks), "--benchmark-verbose", "all")
+        if not re.search(r"Performed (\d+) updates", log):
+            print(f"  {scene} {size} run {r + 1}: did not run\n{load_errors(log) or ''}")
+            (WORK / f"bench-failed-{scene}-{size}.log").write_text(log, encoding="utf-8")
+            return out
+        tm = timings(log, BENCH_WARMUP + 2, BENCH_WARMUP + window - 3)
+        run = {"timing": {c: stat(v) for c, v in (tm or {}).items()},
+               "throughput": (bench_json(log, "THROUGHPUT") or [None])[0],
+               "latency": (bench_json(log, "LATENCY") or [None])[0],
+               "jobs": (bench_json(log, "JOBS") or [None])[0],
+               "done": "DEVCHECK-BENCH-DONE" in log,
+               "errors": re.findall(r"(Error.*|non-recoverable.*)", log)[:3]}
+        if profile:
+            run["profile"] = [(m.group(1), int(m.group(2)), float(m.group(3)))
+                              for m in re.finditer(r"DEVCHECK-BENCH-PROF (\S+) (\d+) Duration: ([\d.]+)ms", log)]
+            ov = re.search(r"DEVCHECK-BENCH-PROF-OVERHEAD wrapped Duration: ([\d.]+)ms plain Duration: ([\d.]+)ms", log)
+            run["overhead_us"] = (float(ov.group(1)) - float(ov.group(2))) * 1000 if ov else None
+            run["engine"] = [(m.group(1), int(m.group(2)), float(m.group(3)))
+                             for m in re.finditer(r"DEVCHECK-BENCH-ENGINE (.+?) (\d+) Duration: ([\d.]+)ms", log)]
+        out["runs"].append(run)
+        sc = run["timing"].get("scriptUpdate", {})
+        print(f"  {scene} {size} run {r + 1}{' (profile)' if profile else ''}: script "
+              f"{sc.get('avg', 0):.3f} ms/tick avg, {sc.get('max', 0):.2f} max")
+    return out
+
+
+def summarize(res):
+    """the median over the runs of a scene"""
+    runs = [r for r in res["runs"] if r["timing"]]
+    def med(col, key):
+        return median([r["timing"].get(col, {}).get(key) for r in runs])
+    s = {"scene": res["scene"], "size": res["size"], "runs": len(runs), "save_mb": res["save_bytes"] / 1e6,
+         "script_avg": med("scriptUpdate", "avg"), "script_max": med("scriptUpdate", "max"),
+         "script_p99": med("scriptUpdate", "p99"), "script_over5": med("scriptUpdate", "over5"),
+         "gc_avg": med("luaGarbageIncremental", "avg"), "whole_avg": med("wholeUpdate", "avg"),
+         "entity_avg": med("entityUpdate", "avg"), "logistic_avg": med("logisticManagerUpdate", "avg")}
+    tp = [r["throughput"] for r in runs if r["throughput"]]
+    s["throughput"] = tp[0] if tp else None
+    lat = [r["latency"] for r in runs if r["latency"]]
+    if lat:
+        s["latency"] = {k: {"median_s": median([l[k]["median_s"] for l in lat]), "max_s": median([l[k]["max_s"] for l in lat]),
+                            "n": lat[0][k]["n"], "timeouts": max(l[k]["timeouts"] for l in lat)} for k in lat[0]}
+    return s
+
+
+def bench(a):
+    sizes = [int(x) for x in a.sizes.split(",") if x]
+    scenes = ["me"] + (["inserters", "robots"] if a.reference else [])
+    results = {"factorio": (factorio("--version").splitlines() or ["?"])[0], "scenes": [], "profiles": [],
+               "window": a.ticks}
+    print(results["factorio"])
+    problems = []
+    for scene in scenes:
+        for size in sizes:
+            res = bench_scene(a, scene, size)
+            if not res:
+                problems.append(f"{scene} {size}: no map")
+                continue
+            s = summarize(res)
+            s["setup"] = res["setup"]
+            s["build"] = res["build"]
+            results["machine"] = res["machine"]
+            results["scenes"].append(s)
+            for r in res["runs"]:
+                if not r["done"]:
+                    problems.append(f"{scene} {size}: a run did not finish")
+                if r["errors"]:
+                    problems.append(f"{scene} {size}: {r['errors'][0]}")
+                if r.get("jobs") and r["jobs"]["failed"]:
+                    problems.append(f"{scene} {size}: jobs not started: {r['jobs']['failed'][:3]}")
+            if res["setup"].get("fails"):
+                problems.append(f"{scene} {size}: setup problems: {res['setup']['fails'][:3]}")
+            tp = s["throughput"]
+            if tp and tp["conservation"]["problems"]:
+                problems.append(f"{scene} {size}: conservation: {tp['conservation']['problems']} keys differ, "
+                                f"{tp['conservation']['first'][:2]}")
+    for size in [int(x) for x in (a.profile or "").split(",") if x]:
+        res = bench_scene(a, "me", size, profile=True)
+        if res and res["runs"]:
+            results["profiles"].append({"size": size, **res["runs"][0]})
+    print_bench(results)
+    out = WORK / "bench-results.json"
+    out.write_text(json.dumps(results, indent=1), encoding="utf-8")
+    print(f"\nresults: {out}")
+    report("benchmark problems", problems)
+    print("\nRESULT:", "OK" if not problems else "PROBLEMS FOUND")
+    return 0 if not problems else 1
+
+
+def fmt(v, digits=3):
+    return "-" if v is None else f"{v:.{digits}f}"
+
+
+def print_bench(results):
+    print(f"\nmachine: {results.get('machine')}")
+    print("script time per tick (ms, median of the runs; window without the probe ticks):")
+    print(f"  {'scene':10} {'size':>5} {'avg':>7} {'p99':>7} {'max':>7} {'>5ms':>5} {'gc avg':>7} {'whole avg':>9} "
+          f"{'entity':>7} {'logist.':>7} {'save MB':>7}")
+    for s in results["scenes"]:
+        print(f"  {s['scene']:10} {s['size']:>5} {fmt(s['script_avg']):>7} {fmt(s['script_p99']):>7} "
+              f"{fmt(s['script_max'], 2):>7} {fmt(s['script_over5'], 0):>5} {fmt(s['gc_avg']):>7} {fmt(s['whole_avg']):>9} "
+              f"{fmt(s['entity_avg']):>7} {fmt(s['logistic_avg']):>7} {fmt(s['save_mb'], 1):>7}")
+    print("\nthroughput (per second over the window):")
+    for s in results["scenes"]:
+        tp = s["throughput"]
+        if not tp:
+            continue
+        print(f"  {s['scene']} {s['size']}: items {fmt(tp['items_per_s'], 0)}/s, {fmt(tp['items_per_s_per_endpoint'], 2)}/s "
+              f"per endpoint ({tp['endpoints']} endpoints)"
+              + (f", fluid {fmt(tp.get('fluid_per_s'), 0)}/s, provider crafts {fmt(tp.get('provider_crafts_per_s'), 1)}/s, "
+                 f"dry sources {tp.get('dry_sources')}" if s["scene"] == "me" else "")
+              + f"; conservation: {tp['conservation']['keys']} keys, {tp['conservation']['problems']} problems")
+        for kind, c in sorted(tp["categories"].items()):
+            vals = ", ".join(f"{k.replace('_per_s_per_endpoint', '/s/endpoint').replace('_per_s', '/s')} {fmt(v, 2)}"
+                             for k, v in sorted(c.items()) if k != "endpoints")
+            print(f"      {kind:12} {c['endpoints']:>5} endpoints: {vals}")
+    print("\nlatencies (s, median and max over the probes):")
+    for s in results["scenes"]:
+        for k, v in (s.get("latency") or {}).items():
+            print(f"  {s['scene']} {s['size']} {k:12}: median {fmt(v['median_s'], 2)}, max {fmt(v['max_s'], 2)} "
+                  f"({v['n']} probes, {v['timeouts']} timed out)")
+    for p in results["profiles"]:
+        print(f"\nprofile, size {p['size']} (inclusive ms per tick of the window, calls per tick, us per call; "
+              f"wrapper overhead {fmt(p.get('overhead_us'), 2)} us per call):")
+        n_ticks = results["window"]
+        for name, calls, ms in sorted(p.get("profile", []), key=lambda x: -x[2]):
+            print(f"  {name:42} {ms / n_ticks:8.4f} ms/tick {calls / n_ticks:9.2f} calls/tick {ms * 1000 / max(1, calls):9.2f} us/call")
+        print("  engine calls (us per call):")
+        for name, n, ms in p.get("engine", []):
+            print(f"    {name:52} {ms * 1000:10.2f}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -511,7 +791,18 @@ def main():
     p.add_argument("--from-ref", default="v0.1.0", help="the git tag or commit of the old version (default v0.1.0)")
     p.add_argument("--ticks", type=int, default=300)
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
+    p = sub.add_parser("bench")
+    p.add_argument("--sizes", default="100,1000,5000", help="buses and interfaces of the ME scenes (default 100,1000,5000)")
+    p.add_argument("--runs", type=int, default=3, help="benchmark runs per scene, the median is reported (default 3)")
+    p.add_argument("--ticks", type=int, default=3600, help="the measured window in ticks, a multiple of 600 (default 3600)")
+    p.add_argument("--reference", action="store_true", help="also the native scenes: inserters and logistic robots")
+    p.add_argument("--profile", metavar="SIZES", help="also profile these sizes with an instrumented copy (e.g. 1000,5000)")
+    p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     a = ap.parse_args()
+    if a.cmd == "bench":
+        if a.ticks % BENCH_WARMUP:
+            sys.exit(f"--ticks must be a multiple of {BENCH_WARMUP}")
+        return bench(a)
     if a.cmd == "migrate":
         return migrate(a)
     if a.cmd == "setup":
