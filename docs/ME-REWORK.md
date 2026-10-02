@@ -1446,7 +1446,8 @@ the next cell whose partition is empty). Every change is written into the cell's
 table, 2 white wool, calculation processor, 4 iron ingots and chest become an assembling machine 1, 2 plastic bars, an
 advanced circuit, 4 iron plates and an iron chest.
 
-The cell window (drive window, terminal's Cells tab) keeps its partition buttons, so nothing a player uses goes away; it
+The cards are a list in the tags (no gaps: tags keep none; a card taken out closes up the list). The cell window
+(drive window, terminal's Cells tab) keeps its partition buttons, so nothing a player uses goes away; it
 shows the cell's cards but cannot change them. AE2's stricter way (partitions only in the workbench) would make every
 partition a trip to the workbench for no gain: the cards are the only thing that needs the workbench, because they are
 items that have to go somewhere.
@@ -1480,13 +1481,15 @@ buttons, the copy mode, mined and destroyed with a cell) and every card on a cel
   places to change), a 36 slot provider tier (`SLOTS` is one constant; it needs a second prototype and window layout),
   clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
   bus.
-* A level maintainer with several resources; upgrade and speed cards on buses (since issue #3 a bus has 9 filters,
-  items and fluids).
+* A level maintainer with several resources; cards on the import and export bus and the ME Interface (capacity,
+  speed, fuzzy, inverter, redstone, crafting card: the follow-up of issue #17; the card items and `N.card_rules()` are
+  there, the buses need slots, limits from AE2's `InitUpgrades` and the speed setting replaced per bus).
 * Issue #3: an ME Interface keeps four fluids at most (one per side) and takes no surplus back from an export side; a
   fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
   library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block
   keep their old step (their patterns are converted).
-* Fuzzy or inverted partitions (AE2 cards), also for storage bus filters; fluid wagons on the fluid storage bus.
+* Fluid wagons on the fluid storage bus. Issue #17 left: the card icons and the workbench sprite are placeholders;
+  a storage bus with an Overflow Destruction Card facing nothing destroys nothing (AE2 would).
 * Terminal search by localised name (a script cannot read localised names).
 * The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").

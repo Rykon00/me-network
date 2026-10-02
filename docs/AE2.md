@@ -106,7 +106,9 @@ Two AE2 storage features decide **which cell** an item or fluid goes into (and c
   many as the cell has types. A partitioned cell **only** takes those; what it held before stays in it until it is
   taken out. **From contents** restricts the cell to what it holds now, **Clear** removes the partition.
   Partitioned cells have a yellow frame in the drive window and the Cells tab. The partition travels with the cell
-  (also an empty one: "Empty, partitioned for 2 kinds").
+  (also an empty one: "Empty, partitioned for 2 kinds"). The **ME Cell Workbench** sets the partition too, and puts
+  **upgrade cards** into a cell (see "ME Cell Workbench"): with an Inverter Card the partition is a blacklist, with
+  a Fuzzy Card it matches every quality; the cell window shows the cards and what they do.
 * **Drive priority** (-1000 to 1000, default 0, in the drive window): the priority of every cell in that drive.
 * **Storage buses** (see "ME Storage Bus") take part with their own priority; their filters work like a partition
   (with an **Inverter Card** like a blacklist, with a **Fuzzy Card** in every quality: see "Upgrade cards").
@@ -325,10 +327,12 @@ card is made from a component card and one item:
 | Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
-| Equal Distribution Card | advanced card + advanced circuit | storage cells | every kind gets the same share of the cell |
+| Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
 
-The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards and one of each
-other card, `StorageBusPart` and `InitUpgrades`).
+On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
+like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards
+and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell has 4 card slots, a fluid cell 3,
+`BasicStorageCell`).
 
 * **Putting a card in:** open the storage bus and click a card slot with the card in hand (one card of the stack goes
   in); click a card to take it into the hand, shift click into the inventory. A card the bus cannot take, or one more
@@ -342,6 +346,31 @@ other card, `StorageBusPart` and `InitUpgrades`).
   as if it had none.
 * A **Recipe paste** (a crafting machine onto the bus) changes only the filters; cards and settings stay.
 
+## ME Cell Workbench
+
+AE2's Cell Workbench (technology ME Upgrade Cards; an iron chest, 4 iron plates, an advanced circuit and 2 electronic
+circuits). It needs **neither the network nor power** (AE2's does not either): place it anywhere.
+
+* **The cell:** click its slot with a storage cell in hand to put it in (another cell there is swapped into the hand);
+  click the cell to take it, shift click into the inventory. The cell keeps its items all the time; every change is
+  written into it at once.
+* **Partition:** the same buttons as the cell window (items with quality, or fluids for a fluid cell), **From
+  contents** and **Clear**.
+* **Card slots:** an item cell takes 4 cards, a fluid cell 3 (AE2): one each of **Inverter Card** (the partition is a
+  blacklist: the cell takes everything except it), **Fuzzy Card** (item cells: the partition matches every quality),
+  **Equal Distribution Card** (no kind takes more than an equal share of the cell: with a partition of n kinds the
+  bytes left after the kinds' costs divided by n, without one by the cell's 63 types; a 1k cell holds 67 of each kind,
+  partitioned for two kinds 4032 each) and **Overflow Destruction Card** (what the network stores into the cell and does
+  not fit, or exceeds a kind's share, is **destroyed**; a cell without a partition destroys only what it already holds
+  once it cannot take a new kind). Click a slot with a card in hand, click a card to take it.
+* **Keep the partition when the cell is taken out** (AE2's copy mode): the partition stays in the workbench and goes
+  onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
+* The cards are part of the cell (its tags): they travel with it into drives, chests and the network, like its items
+  and partition. Only the workbench puts cards in or takes them out; the cell window (drive window, the terminal's
+  Cells tab) shows them and keeps its partition buttons, so nothing a player used goes away.
+* Mined, the workbench gives its cell back; destroyed, it drops it.
+
+## Old saves (from before the rework)
 ## Old saves (from before the rework)
 
 Old ME networks are converted when the save is loaded (`docs/ME-REWORK.md`, "Migration"): the old controller
@@ -1047,7 +1076,8 @@ partitions start empty.
 * Recipe paste (issue #12) is tested headless through its handler: the shift clicks themselves, the game raising the
   event for each machine and how the flying text of several lines looks need the real game.
 * Balance (costs, speeds, tier) and the look of the sprites are untested in the real game.
-* Upgrade cards and priorities (me-network issue #17), where the mod differs from AE2: "fuzzy" means any quality
+* Upgrade cards and priorities (me-network issue #17), where the mod differs from AE2: partitions can also be set in
+  the cell window (AE2: only in the Cell Workbench); "fuzzy" means any quality
   (Factorio has no damage values or NBT, so AE2's fuzzy modes do not apply); a storage bus with an Overflow
   Destruction Card destroys nothing while it faces nothing, and a tank holding another fluid or at another temperature
   destroys nothing (AE2 voids into a bus without an inventory); items with tags are never destroyed; a storage bus never
@@ -1243,6 +1273,18 @@ gets all, with 40 and 1400 more both end full); the interface priority in a blue
 data; and the pattern fall-back (a provider of priority 10 whose pattern lacks its input: the provider of priority 0 is
 used, the high one once its input is there, the first one's shortfall when neither can run). It reports `ME priority
 test: ok`. A mutation without the reservation was checked to fail it.
+
+The Cell Workbench test (issue #17, part 3, own network: a drive at priority 10 for the cell under test, a backstop
+drive with an item and a fluid cell, four workbenches without a cable) checks an empty workbench, an item cell put in
+(4 card slots), the partition buttons, the cards and their limits (a second inverter, a capacity card and a fifth card
+refused, a card taken out), the partition and cards in the tags of the cell taken out, From contents and Clear on a
+cell with items (they stay), the copy mode (the kept partition onto an empty cell), a fluid cell (3 slots, no fuzzy
+card); then cells made in the workbench in the drive: an inverted fluid cell (water refused, steam taken), the
+inverted item cell (iron refused, wood taken, every quality refused with its fuzzy card; the cell window shows the
+cards), a fuzzy whitelist (copper in two qualities, no stone), equal distribution (67 of a kind in a 1k cell, 4032
+with a partition of two), overflow destruction on a partitioned cell (full, 500 destroyed and counted, another key
+kept, `can_insert`), and workbenches with a cell mined (the cell in the buffer), destroyed and vanished (spilled). It
+reports `ME Cell Workbench test: ok`.
 
 `python tools/devcheck/devcheck.py migrate --from-ref v0.1.0` makes a save with ME Network 0.1.0 (three fluid
 interfaces, the fluid buses and the fluid storage bus with settings and fluid, an item interface next to a pipe with

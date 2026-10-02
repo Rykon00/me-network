@@ -6,6 +6,7 @@ Version: 0.3.0
     - ME Storage Bus: "Filter on extract" (off: the filters decide only what goes in, the network sees and takes everything in the chest), "From contents" and "Clear" for the filters.
     - ME Interface priority: when the network has less of an item or fluid than its interfaces want, the interfaces of the higher priority are filled first. Kept in blueprints, settings paste and clones.
     - Cards are never made or lost: a mined storage bus gives its cards back, a destroyed one drops them; blueprints, settings paste and clones copy which cards a bus has and it takes them from the player or the network.
+    - ME Cell Workbench (needs neither the network nor power): put a storage cell in to set its partition and its upgrade cards, with From contents, Clear and "keep the partition when the cell is taken out". Item cells take 4 cards, fluid cells 3: Inverter Card (the partition is a blacklist), Fuzzy Card (any quality, item cells), Equal Distribution Card (every kind gets the same share) and Overflow Destruction Card (what does not fit is destroyed). The cards travel with the cell; the cell window shows them.
     - Copy a crafting machine's settings (shift + right click) and paste them (shift + left click) onto an ME Interface, ME Storage Bus, ME Import Bus or ME Export Bus to set it up for the machine's recipe, like a requester chest: the interface gets one stack of each item ingredient and a fluid row for each fluid, the storage bus and the export bus filter the ingredients, the import bus the products. Works with every crafting machine (furnaces give their last recipe); a flying text says what did not fit or when the machine has no recipe.
     - Map settings for the network's work per tick: interface and bus visits per tick, storage bus visits per tick, level maintainer checks per tick, circuit interface updates per second, crafting jobs per tick, the speed of the import and export buses (items and fluid per second) and how long an idle bus or storage bus may wait.
   Optimizations:
@@ -17,6 +18,8 @@ Version: 0.3.0
     - Circuit interfaces share one list of the network's signals and write only when it changed.
     - A full storage bus is not asked again for every insert until its next read.
     - Drive lights are recolored instead of redrawn.
+  Graphics:
+    - Icons of the upgrade cards and the ME Cell Workbench (placeholders).
   Changes:
     - The storage bus modes also show AE2's names (bi-directional, extract only, insert only). A blacklist storage bus is not preferred for an item over other storage of its priority (AE2's rule); a recipe pasted onto a storage bus changes only its filters.
     - A level maintainer starts its job as soon as its item is taken below its amount (it was checked in turn: up to 40 seconds in a big network), and checks a circuit target at least every 5 seconds.

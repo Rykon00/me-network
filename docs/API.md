@@ -19,7 +19,7 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   `me-molecular-assembler`, `me-crafting-cpu`, `me-co-processing-cpu`, `me-quantum-crafting-cpu`,
   `me-level-maintainer`, `me-circuit-interface`; since 0.3.0 (issue #17) the upgrade cards `me-basic-card`,
   `me-advanced-card`, `me-capacity-card`, `me-overflow-destruction-card`, `me-fuzzy-card`, `me-inverter-card`,
-  `me-equal-distribution-card` (each with a recipe of the same name); hidden: the old drive items of Gregtorio saves, and since 0.2.0
+  `me-equal-distribution-card` (each with a recipe of the same name) and `me-cell-workbench`; hidden: the old drive items of Gregtorio saves, and since 0.2.0
   (issue #3: the ME Interface and the buses handle fluids) `me-fluid-interface`, `me-fluid-import-bus`,
   `me-fluid-export-bus`, `me-fluid-storage-bus` (no recipe; they place the unified block).
 - `ME_NETWORK.removed`: { old item -> the item that replaced it } for those four. Their recipes are gone: see
@@ -106,4 +106,6 @@ Since 0.3.0 (issue #17): `gregtorio-me-storagebus` has `card_click(bus, slot, cu
 goes in) and report `cards`; `info` reports `cards`, `slots`, `want`, `extract`, `inverted`, `fuzzy`, `void`, `voided`.
 `gregtorio-me-io` has `get_interface_priority` / `set_interface_priority`; `get_interface` reports `priority` and
 `short` (what the interface lacks while priorities are in use). `gregtorio-me-network.voided()` returns what Overflow
-Destruction Cards destroyed on the map, per key.
+Destruction Cards destroyed on the map, per key. `gregtorio-me-workbench` is the ME Cell Workbench's (`info`,
+`cell_click`, `card_click`, `set_partition_slot`, `from_contents`, `clear`, `set_keep`); the drive's cell data reports
+`cards`, `inverted`, `fuzzy`, `equal`, `void`, `voided`.
