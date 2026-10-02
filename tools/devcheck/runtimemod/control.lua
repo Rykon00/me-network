@@ -706,6 +706,10 @@ function me_io_test()
 	me_report("MEIO", "ME import/export", problems, "interface import/export, import and export bus, rotation, paste, blueprint")
 end
 
+--- me-network issue #17: the upgrade cards, the storage bus settings and the priorities (cards.lua)
+cards17 = require("cards")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end })
+
 --- Victory (scripts/fork-victory.lua): researching `victory` must win the game, and go on.
 --- Winning stops the scripts of the benchmark run (no player to continue), so this runs last: as soon
 --- as every other test has reported, at the latest at tick VICTORY_DEADLINE (a test still running
@@ -735,6 +739,7 @@ local function tests_running()
 	check(storage.sched_test and storage.sched_test.done, "ME scheduler")
 	check(storage.cursor_t and storage.cursor_t.done, "open key and cursor")
 	check(storage.paste_t and storage.paste_t.done, "recipe paste")
+	cards17.running(check)
 	return running
 end
 
@@ -1578,6 +1583,7 @@ script.on_nth_tick(10, function()
 	if not (storage.sched_test and storage.sched_test.done) then scheduler_test() end
 	cursor_test()
 	paste_test()
+	cards17.tick()
 	done_test()
 end)
 
@@ -4263,6 +4269,7 @@ script.on_init(function()
 	for _, f in pairs(setup_issue38_tests(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_scheduler_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_paste_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(cards17.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)
