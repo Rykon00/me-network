@@ -17,6 +17,7 @@ Sources:
     python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
     python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
+    python tools/gen_ae2_sprites.py --patterns    # only the blank and encoded pattern icons (issue #80)
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like the rest of Gregtorio)
@@ -648,6 +649,42 @@ def fluid_storage_bus():
     return written
 
 
+# --- issue #80: blank and encoded pattern ----------------------------------------------------
+# A pattern card drawn with Pillow: a dark slate with a fluix rim and a 3x3 grid of crafting slots (AE2's pattern
+# is a card with a grid). The blank card has empty slots; the encoded one has lit slots, an arrow and the result in
+# fluix blue.
+CARD_SLATE = (52, 56, 70)
+CARD_RIM = (110, 116, 135)
+
+
+def pattern_icon(encoded):
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((3, 5, TILE - 4, TILE - 6), radius=3, fill=CARD_SLATE + (255,), outline=CARD_RIM + (255,))
+    d.line((5, 6, TILE - 6, 6), fill=FLUIX + (255,))                     # fluix rim at the top
+    for i, x in enumerate((6, 11, 16)):
+        for j, y in enumerate((9, 14, 19)):
+            if encoded and (i + j) % 2 == 0:
+                d.rectangle((x, y, x + 3, y + 3), fill=CARD + (255,))
+            else:
+                d.rectangle((x, y, x + 3, y + 3), outline=(85, 90, 108, 255))
+    if encoded:
+        d.polygon([(21, 13), (21, 19), (24, 16)], fill=FLUIX_LIGHT + (255,))   # arrow to the result
+        d.rectangle((25, 13, 27, 19), fill=FLUIX_LIGHT + (255,))
+    else:
+        d.rectangle((23, 14, 26, 18), outline=(85, 90, 108, 255))
+    return img
+
+
+def patterns():
+    written = []
+    for name, encoded in (("me-blank-pattern", False), ("me-encoded-pattern", True)):
+        path = OUT_ICON / f"{name}.png"
+        pattern_icon(encoded).save(path)
+        written.append(path)
+    return written
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
@@ -667,10 +704,13 @@ def main():
                     help="only the ME Storage Bus, derived from the R1 PNGs")
     ap.add_argument("--fluid-storage-bus", action="store_true",
                     help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
+    ap.add_argument("--patterns", action="store_true",
+                    help="only the blank and encoded pattern icons (issue #80, drawn with Pillow)")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus):
-        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus or --fluid-storage-bus"
-                 " is required")
+    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
+            or a.patterns):
+        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus"
+                 " or --patterns is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -711,6 +751,9 @@ def main():
     if a.gt or a.fluid_storage_bus:
         written = fluid_storage_bus()
         print("ME fluid storage bus sprites:", len(written))
+    if a.gt or a.patterns:
+        written = patterns()
+        print("ME pattern icons:", len(written))
 
 
 if __name__ == "__main__":

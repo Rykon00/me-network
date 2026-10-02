@@ -2,9 +2,14 @@
 --- FORK AE2: AUTOCRAFTING (side quest, on top of the ME network from 120-fork-ae2.lua)
 ---   * Molecular Assembler = assembling machine for item-only crafting recipes. Set its
 ---                           recipe like any assembler; the recipe becomes a pattern.
----   * Pattern Provider    = small ME block placed next to ANY machine (GT machine, furnace,
----                           Molecular Assembler). The recipe that machine has set becomes a
----                           pattern of the ME network the provider is connected to.
+---   * Pattern Provider    = small ME block with 9 slots for encoded patterns (issue #80), placed
+---                           next to machines (GT machine, furnace, Molecular Assembler) or a chest.
+---                           Each pattern in it is a pattern of the ME network it is connected to:
+---                           a crafting pattern sets its recipe on an assembling machine next to it,
+---                           a processing pattern pushes its inputs into a machine or chest.
+---   * Blank Pattern       = cheap item, encoded in the Patterns tab of the ME Terminal into an
+---     Encoded Pattern       item with tags (stack size 1) that carries the pattern; clearing it
+---                           there gives the blank back (scripts/fork-me-patterns.lua).
 ---   * Crafting CPU        = powered entity of the ME network, runs one crafting job at a time.
 ---                           Two bigger tiers (issue #38) run more jobs at once and move more
 ---                           items per step: Co-Processing (IV) and Quantum (LuV) Crafting CPU.
@@ -52,6 +57,35 @@ create_item{
 		{ type = "item", name = "hv-emitter", amount = 1 },
 	},
 }
+
+--- issue #80: AE2's blank pattern (quartz glass, certus quartz, iron) in Gregtorio's materials, cheap (LV assembler)
+create_item{
+	name = "me-blank-pattern",
+	icon = ICON_FORK .. "me-blank-pattern.png",
+	category = "lv-assembling-machine-recipes",
+	subgroup = "fork-me-network",
+	order = "e1",
+	energy_required = 5 * LV_SPEED,
+	stack_size = 64,
+	ingredients = {
+		{ type = "item", name = "glass", amount = 2 },
+		{ type = "item", name = "certus-quartz", amount = 1 },
+		{ type = "item", name = "aluminium-plate", amount = 1 },
+		{ type = "item", name = "fluix-cable", amount = 1 },
+	},
+}
+
+--- the encoded pattern: no recipe, made from a blank pattern in the ME Terminal (its tag fork_me_pattern holds it)
+data:extend({ {
+	type = "item-with-tags",
+	name = "me-encoded-pattern",
+	icon = ICON_FORK .. "me-encoded-pattern.png",
+	icon_size = 32,
+	subgroup = "fork-me-network",
+	order = "e2",
+	stack_size = 1,
+	localised_description = { "item-description.me-encoded-pattern" },
+} })
 
 create_item{
 	name = "me-molecular-assembler",
@@ -107,6 +141,7 @@ data:extend({ {
 	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 60,
+	additional_pastable_entities = { "me-pattern-provider" },   -- settings paste copies the priority (issue #80)
 	picture = {
 		filename = ENTITY_PATH .. "me-pattern-provider.png",
 		priority = "extra-high",
@@ -402,7 +437,7 @@ local function tech(name, recipes, prerequisites, packs, count)
 	} })
 end
 
-tech("me-autocrafting", { "me-pattern-provider", "me-molecular-assembler", "me-crafting-cpu" }, { "me-storage-64k" }, 5, 600)
+tech("me-autocrafting", { "me-pattern-provider", "me-blank-pattern", "me-molecular-assembler", "me-crafting-cpu" }, { "me-storage-64k" }, 5, 600)
 
 --- issue #38: level maintainer and circuit interface (EV, like the autocrafting they drive), bigger CPUs
 --- at IV (256k cells and acceleration cards, IV components) and LuV (LuV components and hull)
