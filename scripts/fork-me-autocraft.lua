@@ -78,9 +78,13 @@ local BP_TAG = "fork_me_provider"            -- blueprint tag: { priority, patte
 local OLD_TAG = "fork_ae2_recipe"            -- blueprint tag of 0.4.1 and older: the furnace recipe choice
 
 --- CPU tiers: entity name -> { jobs, speed } (prototypes/autocrafting.lua)
+local cpu_specs_cache                -- prototype data, read once per load (reading mod-data copies the table)
 local function cpu_specs()
-	local md = prototypes.mod_data["fork-me-autocraft"]
-	return md and md.data.cpus or { [CPU] = { jobs = 1, speed = 1 } }
+	if not cpu_specs_cache then
+		local md = prototypes.mod_data["fork-me-autocraft"]
+		cpu_specs_cache = md and md.data.cpus or { [CPU] = { jobs = 1, speed = 1 } }
+	end
+	return cpu_specs_cache
 end
 
 local function cpu_spec(name)

@@ -49,9 +49,17 @@ local LED_GREEN, LED_ORANGE, LED_RED = { 0.3, 0.85, 0.4 }, { 1, 0.6, 0.1 }, { 0.
 --- prototype data
 --------------------------------------------------------------------------------
 
+--- Reading `.data` of a mod-data prototype copies the whole table into Lua on every access, and the cell checks of
+--- can_insert ask for a cell's spec once per cell. Prototype data cannot change while a game runs, so it is read once
+--- per load into an upvalue (never into `storage`; every peer reads the same data, so this stays deterministic).
+--- The table is shared: callers must not change it.
+local md_cache
 local function mod_data()
-	local md = prototypes.mod_data["fork-me-network"]
-	return md and md.data or { cells = {}, legacy_drives = {}, drive_slots = 10, names = {}, legacy = {} }
+	if not md_cache then
+		local md = prototypes.mod_data["fork-me-network"]
+		md_cache = md and md.data or { cells = {}, legacy_drives = {}, drive_slots = 10, names = {}, legacy = {} }
+	end
+	return md_cache
 end
 
 local names_cache, names_list

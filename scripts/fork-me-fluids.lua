@@ -25,9 +25,13 @@ M.mined_hooks = {}
 --- prototype data and state
 --------------------------------------------------------------------------------
 
+local md_cache                       -- prototype data, read once per load (reading mod-data copies the table)
 local function mod_data()
-	local md = prototypes.mod_data["fork-me-fluids"]
-	return md and md.data or { interface = {} }
+	if not md_cache then
+		local md = prototypes.mod_data["fork-me-fluids"]
+		md_cache = md and md.data or { interface = {} }
+	end
+	return md_cache
 end
 
 --- the old ME Fluid Interface (issue #3: replaced by scripts/fork-me-unify.lua)
