@@ -23,7 +23,8 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Fluid Interface | small tank: import/export point for fluids |
 | ME Fluid Import Bus, ME Fluid Export Bus | 1x1, rotatable: take fluid out of / put fluid into the machine or tank they face |
 | ME Crafting CPU, Co-Processing and Quantum Crafting CPU | run autocrafting jobs: 1, 2 or 4 at once (this page, **CPU tiers**) |
-| ME Pattern Provider | makes the recipe of the machine next to it a pattern (this page, **Autocrafting**) |
+| ME Pattern Provider | holds 9 encoded patterns; the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
+| Blank / Encoded Pattern | a blank pattern is encoded in the terminal's Patterns tab into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
 | ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
 | ME Circuit Interface | puts the network contents onto a circuit wire (this page, **Circuit network**) |
 
@@ -124,7 +125,7 @@ slot: the source slot's partition, or none) and by cloning.
 ## ME Terminal
 
 Needs power and a working network. It is the hub of the network: a status line (bytes and types of the item and
-fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs, and four
+fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs, and five
 tabs:
 
 * **Storage:** sort (by amount or by name) and **Show: all / items / fluids**. **Left click** an item: a stack into
@@ -140,6 +141,7 @@ tabs:
 * **Cells:** the drives of the network, highest priority first, with their cells (number: fill in percent;
   yellow: partitioned). Click a drive for its window, a cell for its cell window; both have a **Back** button
   to the terminal and need only the terminal in reach.
+* **Patterns** (issue #80, AE2's pattern terminal): encodes blank patterns (see [Patterns](#patterns-encoding-and-clearing)).
 
 ## The ME windows
 
@@ -155,7 +157,7 @@ their own and open the ME window directly. E or Escape closes it. Open windows r
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents** |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, power |
-| ME Pattern Provider | the machines next to it with their recipe (or "no recipe"), why machines cannot be used, the recipe choice for furnaces (click a recipe; again or **Clear** removes it) |
+| ME Pattern Provider | 9 pattern slots (click with an encoded pattern in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | ME Crafting CPU (all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
@@ -266,12 +268,14 @@ logistic network stay there. The game removes ghosts of the old blocks when the 
 
 ## Autocrafting: how to build it
 
-Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks three entities:
+Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks:
 
-| Entity | What it does |
+| Thing | What it does |
 |---|---|
+| **ME Blank Pattern** | cheap item (LV assembler: 2 glass, certus quartz, aluminium plate, fluix cable). Encoded in the ME Terminal's **Patterns** tab |
+| **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
+| **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns**; each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
 | **ME Molecular Assembler** | assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW |
-| **ME Pattern Provider** | 1x1 marker, no power. Placed **next to a machine**, the recipe that machine has set becomes a pattern of the network; for furnaces you choose the recipe in the provider |
 | **ME Crafting CPU** | 2x2, needs power (60 kW), part of the network. Runs one job at a time (bigger CPUs: see [CPU tiers](#cpu-tiers)) |
 
 Step by step:
@@ -280,31 +284,99 @@ Step by step:
    Terminal (powered), all connected.
 2. Connect an **ME Crafting CPU** to the network and power it. One CPU = one job at a time; a second
    CPU, or a bigger one, lets two jobs run in parallel.
-3. For every recipe the network should be able to craft, place a machine, give it power and set the
-   recipe, then put an **ME Pattern Provider on a tile touching the machine** (left, right, above or
-   below) and connect the provider to the network (the machine itself needs no cable). Any assembling machine or furnace works: a
-   Molecular Assembler for crafting recipes, a GT machine (macerator, EBF, wiremill, chemical
-   reactor, ...) for processing recipes. One provider can serve up to four machines around it.
-   Furnaces have no recipe setting: see [Furnaces as pattern machines](#furnaces-as-pattern-machines).
-4. Open the ME Terminal, tab **Crafting**: every item and fluid a pattern can make is listed
+3. Put **blank patterns** into your inventory (or into the network) and encode them in the terminal's
+   **Patterns** tab (below): a **crafting pattern** for each recipe the network should craft.
+4. Place a machine (Molecular Assembler for crafting recipes, a GT machine for processing recipes: macerator, EBF,
+   wiremill, chemical reactor, ...) with power, put an **ME Pattern Provider on a tile touching it** (left, right,
+   above or below) and connect the provider to the network (the machine needs no cable). Open the provider and
+   click a slot with an encoded pattern in hand (or click the provider with a pattern in hand: first free slot).
+   The machine needs **no recipe**: the provider sets the pattern's recipe on it for each job. One machine serves
+   all patterns of its provider (one job at a time), one provider up to four machines around it.
+5. Open the ME Terminal, tab **Crafting**: every item and fluid a pattern can make is listed
    (also at 0 in stock). Click one, enter an amount (items, or fluid units), and read the plan preview:
    `Ready: 12 crafts in 3 steps` with what is taken from storage, or the **missing** items and fluids as
    red slot buttons. With something missing the Craft button stays disabled. Click **Craft**; the job
    appears in the **Jobs** tab (and in the window of the CPU that runs it) with its progress and a
    **Cancel** button.
-5. When the job is done, the result (and any by-products) is in network storage: items in the
-   cells of the ME Drives (items in item cells, fluids in fluid cells).
+6. When the job is done, the result (and any by-products) is in network storage.
 
-Rules for pattern machines:
+### Patterns: encoding and clearing
+
+The terminal's **Patterns** tab:
+
+* **Crafting / Processing** switch.
+* **Crafting pattern:** choose a recipe with the recipe button (the game's recipe chooser, with its search). Only
+  researched recipes are accepted. The inputs and outputs (fluids too) come from the recipe and are shown.
+* **Processing pattern:** up to **9 inputs** and **6 outputs**, each an item or fluid (signal button) with an amount
+  per run. The recipe button fills the rows from a recipe ("Fill from a recipe"), which is the quick way to a
+  furnace pattern. Items with tags (cells, patterns) cannot be inputs or outputs.
+* **Encode** takes one blank pattern from your **hand**, else your **inventory**, else the **network**, and gives
+  the encoded pattern into your hand (where the blank was, or an empty hand), else into your inventory. The line
+  below shows how many blanks are in each place.
+* **Load pattern in hand** copies the pattern you hold into the editor (to change and encode it again).
+* **Clear pattern in hand** turns the encoded pattern you hold back into one blank pattern (AE2: shift right click;
+  a click on an item in the inventory cannot be caught by a mod, so it is this button).
+
+Encoded patterns can be stored in the network like any item (they keep their pattern; equal patterns stack in the
+network), but the planner never uses them as ingredients.
+
+### Crafting patterns: the provider sets the recipe
+
+A crafting pattern names a recipe. For each hand-over the provider looks for an **assembling machine** next to it
+that can make the recipe: its crafting categories, the recipe researched, no fixed recipe of its own, every item
+ingredient fits into a slot, and fluid boxes for the recipe's fluids without pipes (see **Fluids** below).
+
+* A machine that already has the recipe and is idle is used first; else an idle machine is **switched**: the
+  provider calls the game's `set_recipe`. The machine must be idle (no craft in progress). **What is left in it**
+  (items in its input and output, fluid in its boxes) goes **into the network** first; if the network cannot take
+  all of it, the machine is not switched and the job waits. Nothing is lost on a switch.
+* **One machine, many patterns:** a machine works for one job at a time. A job that needs a machine that is busy with
+  another job (or another pattern) **waits** ("Waiting for a free machine") and takes it at the next step after it is
+  free. Jobs take turns (round robin, 8 jobs per step).
+* The machine keeps the recipe of the last job; it is never switched back.
+* **Cannot make it:** a pattern whose machines cannot make the recipe is no pattern of the network: the provider
+  window shows why (`category`: no machine of the right kind, `not-researched`, `fixed-recipe`, `stack`, the fluid
+  reasons, `furnace`: a furnace has no recipe setting), and the crafting tab's info line counts it.
+
+### Processing patterns: furnaces, machines with their own recipe, lines
+
+A processing pattern has free inputs and outputs. The provider **pushes the inputs** into what is next to it:
+
+* a **furnace** (stone, iron or steel furnace, any `furnace` machine): it picks its recipe from the input. Encode the
+  furnace recipe as a processing pattern ("Fill from a recipe" in processing mode). A crafting pattern next to a
+  furnace is no pattern (status `furnace`).
+* an **assembling machine with a recipe of its own** (set by you; the provider never changes it): the inputs go into
+  it like an inserter would put them. A machine without a recipe cannot take a processing pattern (`no-recipe`).
+* a **chest** (iron, steel, logistic chest): the start of a production line. Items only.
+
+**Outputs** come back in two ways, and both count:
+
+1. from the machine's output (items and fluid output boxes), collected when the machine is idle again;
+2. **into the network**, through an ME Import Bus, an ME Interface, a fluid interface or bus, or the terminal: while
+   a job waits for the outputs of a processing pattern, **every item or fluid of those kinds that enters the
+   network is taken by the job first** (up to what its runs still owe), as in AE2. Outputs that a storage bus merely
+   sees appearing in a chest do not count (they are not inserted).
+
+A run is done when all its outputs are back. Until then the job shows "Waiting for the outputs of a processing
+pattern to come back"; with no progress at all for 5 minutes it fails (and gives back what it still holds). What a
+job pushed into a chest is in the line: a cancelled or failed job cannot take it back, and outputs that come back
+later simply go into storage. If a machine takes none of the inputs (wrong recipe, full), they come back into the job
+and that machine is not used again by that job.
+
+### Several patterns for one item: the pattern order
+
+If several patterns make the same item or fluid, they are tried in **pattern order**: providers with a higher
+**priority** first (set in the provider window, -1000 to 1000, default 0), at the same priority the provider built
+first, within a provider by slot. The planner takes the first pattern whose plan needs nothing missing, else the
+first one. Equal patterns in two providers are one pattern: its machines are pooled.
+
+### Rules for pattern machines
 
 * **Dedicate them to the network.** While a job runs the CPU puts ingredients into the machine
-  and takes its products out. Do not feed them with inserters, belts or pipes as well.
-* A machine without a recipe, a provider that is not connected to the network, or a provider that
-  touches no machine is ignored.
-  A furnace without a recipe (no choice in its provider, never smelted anything) is counted as
-  `no-recipe` in the crafting tab's info line.
-  Changing the recipe of a pattern machine changes the pattern (within a few seconds). If it is
-  changed while a job uses it, that job fails and returns its items.
+  and takes its products out, and crafting patterns change its recipe. Do not feed them with inserters, belts or
+  pipes as well.
+* A provider that is not connected to the network, or that touches no machine, makes no pattern; its patterns stay
+  in it.
 * The machine has to work on its own: power (or fuel), a mold in the mold slot if the recipe
   needs one, modules as you like. A machine that cannot run makes the job wait; it fails after
   5 minutes without progress and returns its items.
@@ -312,37 +384,25 @@ Rules for pattern machines:
   or fluid products work as patterns, provided the fluid boxes the recipe uses have **no pipes
   connected**: the network fills the input boxes and drains the output boxes itself. The
   Molecular Assembler has no fluid boxes, so fluid recipes need a GT machine (chemical reactor,
-  extractor, ...). Not usable, and counted per reason in the crafting tab's info line: machines
-  that need more of one ingredient than fits into a machine slot (`stack`), machines without a
-  usable box for the recipe (`fluid-box`: box too small for one craft, no matching box, a furnace),
-  machines with a pipe on a used box (`fluid-pipes`), and recipes that need a fluid temperature
-  the network cannot deliver (`fluid-temperature`, see the temperature rule below).
+  extractor, ...). Not usable, and counted per reason in the crafting tab's info line: patterns
+  that need more of one ingredient than fits into a machine slot (`stack`), no usable box for the recipe
+  (`fluid-box`: box too small for one craft, no matching box, a furnace or a chest with fluids), a pipe on a used
+  box (`fluid-pipes`), and recipes that need a fluid temperature the network cannot deliver (`fluid-temperature`,
+  see the temperature rule below).
 * Only normal quality items are planned and crafted.
 
-### Furnaces as pattern machines
+### Patterns in providers: mining, destroying, blueprints
 
-A furnace (stone, iron or steel furnace, any `furnace` type machine) has no recipe setting: it
-picks the recipe from the item in its input slot. So the **pattern provider holds the recipe**:
-
-1. Place the furnace (with fuel or power) and an ME Pattern Provider touching it, connected to the network.
-2. Click the provider. Its window lists the machines next to it and every recipe the furnaces next
-   to it can make: their crafting categories, researched recipes only, no hidden and no fluid recipes.
-3. Click a recipe. It is the pattern at once, the furnace does not have to smelt it first.
-   Clicking the chosen recipe again, or **Clear**, removes the choice.
-
-The choice belongs to the provider and applies to every furnace next to it that can make the
-recipe; a furnace that cannot make it keeps the recipe it smelted last. It is kept in the save,
-copied with the provider's settings (shift right click on it, shift left click on another
-provider), stored in blueprints and copied when a provider is cloned. Without a choice the
-furnace's last smelted recipe is used (`previous_recipe`), as before; a furnace with neither is
-counted as `no-recipe`.
-
-While a job runs the network puts only the chosen recipe's ingredient into the furnace and
-collects the products, exactly as for an assembling machine. The furnace itself still picks the
-recipe from that ingredient: if another recipe of that furnace has the same input, it may smelt
-that one instead. The window marks such recipes, and a job whose furnace smelts another recipe
-fails ("a furnace smelted another recipe with the same input") and returns its items. None of the
-current smelting recipes share an input.
+* **Mined** (by hand or by robots): the patterns come with the provider (into the inventory or the robot's cargo).
+  **Destroyed**: they drop on the ground. A provider that disappears without an event (removed by another mod's
+  script) drops them where it stood, at the next scan.
+* **Blueprints, copy and paste:** a blueprint keeps the provider's priority and its **patterns as data**. An encoded
+  pattern is an item, so a blueprint never creates one out of nothing: a provider built from a blueprint shows the
+  patterns as "waiting for a blank pattern" (yellow) and **encodes each one from a blank pattern of its network**
+  as soon as the network has one (within a few seconds). Click such a slot to forget it. Old blueprints (0.4.1 and
+  older) with a furnace recipe choice give a processing pattern of that recipe, the same way.
+* **Settings paste** (shift right click, shift left click) and cloning copy the **priority** only; patterns are items
+  and stay where they are.
 
 ## CPU tiers
 
@@ -371,7 +431,7 @@ Tech `me-automation` (EV, needs `me-autocrafting` and Circuit network). The **ME
 a 1x1 block that needs power (30 kW) and is a member of the network.
 
 1. Connect it to the network and power it. Autocrafting must work for the resource: a pattern
-   (provider next to a machine with the recipe) and a Crafting CPU.
+   (an encoded pattern in a provider next to a machine) and a Crafting CPU.
 2. Click it: its ME window opens. Choose the item or fluid in the signal button and type the amount to
    keep (items, or fluid units).
 3. When the network holds less than that amount, the maintainer starts a crafting job for the
@@ -390,7 +450,7 @@ What the window says:
 | Another job of this network is crafting it | waits for that job |
 | Waiting for a Crafting CPU with a free job slot | all slots are busy: the maintainer does not queue jobs, it waits and tries again |
 | Cannot craft the difference, missing: ... | the plan lacks raw materials; it tries again every 5 seconds |
-| No pattern for this item or fluid | no machine with that recipe behind a provider |
+| No pattern for this item or fluid | no usable encoded pattern for it in a provider of the network |
 | Switched off by the circuit condition | see below |
 
 **Circuit network** (connect a red or green wire to the maintainer):
@@ -429,7 +489,7 @@ largest amounts first).
 
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
-| ME Pattern Provider | furnace recipe choice | yes | yes |
+| ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network) | yes (priority) | yes (patterns pending a blank pattern); clone: priority |
 | ME Interface | config rows (item, quality, amount) | yes | yes (old blueprints with slot filters are converted) |
 | ME Import Bus, ME Export Bus | item filters | yes | yes |
 | ME Storage Bus | mode, priority, item filters | yes | yes |
@@ -585,31 +645,30 @@ price is the temperature rule above.
 
 ### Patterns
 
-`storage.fork_ae2.providers` lists every provider. A provider looks at the four tiles around it
-(`find_entities_filtered` on the tile centers), collects the assembling machines and furnaces
-found there (when the provider is a member of a network; the machines need no connection), and reads
-their recipe (`get_recipe()`). For
-furnaces the provider's recipe choice (`providers[unit].recipe`) counts when the furnace can make it
-(category, researched, no fluid) and holds nothing: a furnace that holds or smelts something counts
-with the recipe it runs, so a job notices when the furnace picked another recipe. Without a choice
-`previous_recipe` is used; a furnace with no recipe at all is counted under `no-recipe`. The
-choice is set by `set_recipe` (GUI, settings paste, the blueprint tag `fork_ae2_recipe` on build,
-cloning; the remote interface has the same function), survives `on_configuration_changed`, and
-leases keep the choice they were started with. From all providers of a network the script builds
-`patterns[network id]`: resource key -> recipes that make it, recipe -> machines. A change of the ME
-graph (networks joined or split, a change hook of the network module) rescans every provider before the
-patterns are used next. Resource keys
+Since issue #80 (design record: `docs/ME-REWORK.md`, "Encoded patterns (issue #80)") a pattern is plain data,
+`{ kind = "crafting" | "processing", recipe, inputs, outputs }` (rows `{ key, amount }`, resource keys as below),
+kept in the tag `fork_me_pattern` of an encoded pattern item (`scripts/fork-me-patterns.lua`: validation
+`normalize`, identity `id_of`, tooltip `description`, `encode`, `clear`). A crafting pattern's rows are copied from
+its recipe for the tooltip; the planner and the jobs read the recipe itself. The identity of a pattern is
+`c/<recipe>` or `p/<sorted inputs>><sorted outputs>`: equal patterns in several providers are one pattern.
+
+`storage.fork_ae2.providers[unit]` holds a provider's `slots` (the patterns exactly as they came out of the items),
+`pending` (blueprint patterns waiting for a blank), `priority`, its position (to drop the patterns of a provider that
+vanished), and what the scan found: `patterns[slot] = { id, def, targets }` and `status[slot] = { ok, reason,
+machines }`. A scan looks at the four tiles around the provider (`find_entities_filtered` on the tile centers: assembling
+machines, furnaces, containers, logistic containers) and asks `target_for(entity, pattern)` for each slot: a crafting
+pattern needs an assembling machine that can make the recipe (category, research, fixed recipe, stack, fluid boxes:
+exactly with the recipe set, by size and count before a switch), a processing pattern a machine ("push") or a chest
+("chest"). From all providers, in pattern order (priority descending, unit number, slot), `patterns[network id]`
+holds `items[key] = { pattern ids }`, `defs[id]` and `targets[id]` (each machine once); patterns without a target are
+counted in `ignored[reason]`. A change of the ME graph rescans every provider before the patterns are used next; a
+round robin rescan (8 providers per step) keeps them current and encodes pending blueprint patterns; starting a job
+rescans all providers first, so the plan always sees the world as it is now. Resource keys
 are item names and `fluid/<name>` for fluids; stock, plan, pool, GUI and the remote interface
 use the same keys. A machine with a fluid recipe carries its **fluid map**, built from
-`entity.fluidbox`: which input box (by index) takes which fluid ingredient (the box filter the
-recipe set, or recipe order for unfiltered boxes) and which output boxes hold the fluid products,
-with their capacities. Machines the network cannot use are counted per reason in
-`patterns[net].ignored = { total, [reason] }`: `stack`, `fluid-box` (no matching box, box smaller
-than one craft, an input-output box, a furnace), `fluid-pipes` (a used box has a connection) and
-`fluid-temperature` (the box filter's temperature range excludes the fluid's default). The index
-is rebuilt lazily when a provider rescan finds a change; a round robin rescan (8 providers per
-step) keeps it current. Starting a job rescans all providers first, so the plan always sees the
-world as it is now.
+`entity.fluidbox` after the recipe is set: which input box (by index) takes which fluid ingredient (the box filter
+the recipe set, or recipe order for unfiltered boxes) and which output boxes hold the fluid products, with their
+capacities.
 
 ### Planning
 
@@ -619,8 +678,8 @@ pattern. The resource asked for is always crafted (stock is not counted for the 
 AE2). Runs of a recipe are `ceil(count / expected yield)`; probabilities and ranges use the
 expected value; fluid amounts stay fractional (14.4 molten tin per craft is planned as such).
 Other products of a recipe (by-products) are not credited to the plan (they may not appear),
-they simply end in storage. If a resource has several patterns the first one (alphabetical)
-that needs nothing missing is used. Loops (a resource that needs itself) count as missing and
+they simply end in storage. If a resource has several patterns the first one in pattern order
+(provider priority, provider built first, slot) that needs nothing missing is used, else the first. Loops (a resource that needs itself) count as missing and
 are named in the message. Work is capped at 3000 plan nodes / depth 40 (reported as missing);
 amounts up to 100 000 items or 10 000 000 fluid units. Items with tags (cells, fluid drive items) are
 never counted as stock, so a job cannot strip their contents.
@@ -641,11 +700,23 @@ Each step the CPU of a job:
 1. collects machines that are idle again (no progress, no ingredients left): their products go to
    the pool,
 2. hands batches (up to 16 crafts, limited by the pool, by one stack per item ingredient, by the
-   output slot and by the fluid boxes) to idle machines with the right recipe, in plan order
-   (Molecular Assembler or any other pattern machine, several machines in parallel),
+   output slot and by the fluid boxes) to idle machines of the step's pattern, in plan order
+   (Molecular Assembler or any other pattern machine, several machines in parallel). Crafting patterns:
+   a machine that has the recipe first, else an idle one is switched (`switch_recipe`: its items and fluids into
+   the network with `N.no_arrival`, then `set_recipe`; not when the network cannot take them). Processing
+   patterns: an idle machine gets the inputs as a lease, a chest gets them directly (no lease),
 3. when every step is done, stores the whole pool in the network (result and by-products), items
    with the network's `insert`, fluids with `fluids.insert`. What does not fit stays in the pool
    ("Storing items and fluids (network cells full?)").
+
+A crafting lease counts the crafts the machine made (`products_finished`); a processing lease counts the runs
+whose inputs the machine used (`given` minus what is taken back), and the step counts the runs whose **outputs**
+are back (`step.received`): from the machine's output when the lease ends, or as **arrivals**: the network module
+offers every insert of its public functions (`insert`, `insert_stack`, `insert_partial`, `insert_fluid`) to
+`N.on_arrival` first, and a running job with processing steps that still owe that key takes it into its pool (index
+`storage.fork_ae2.await`: network -> key -> job ids, rebuilt when processing work is handed out, a job ends or the
+graph changes; `can_insert` counts what jobs wait for as room). The jobs' own stores (pools, a machine emptied for a
+switch) set `N.no_arrival`. A job whose processing steps wait only for outputs shows `wait = "outputs"`.
 
 The machines craft at their own speed and use their own power; the script only moves items and
 fluids. Everything else follows from the pool: the plan makes the total supply equal the total
@@ -688,7 +759,7 @@ Removed entities:
 | Crafting CPU | the job pauses (queued), its resources stay in the pool; another free CPU (or a new one) continues it |
 | Pattern machine without work in it | the job waits for another machine with that recipe; cancel it or place a machine again |
 | Pattern machine with work in it | the job fails; the fluid in its boxes goes back into the job's pool before the machine vanishes (mined-entity hook), items still in it go to whoever mined it, a craft in progress is lost; the pool is returned |
-| Pattern provider | the machine is no longer a pattern; a running job finishes what is already in the machine |
+| Pattern provider | its patterns are no patterns any more (mined: into the buffer; destroyed: on the ground); a running job finishes what is already in the machine and waits for another machine of the pattern |
 | A drive or a fluid cell during a job | nothing happens to the job: its items and fluids are in its pool, not in a cell. At the end the pool is stored in the remaining cells, or waits for room |
 | Fluid interface | nothing for jobs; what it holds goes back into the network (as far as the cells have room), its mode, fluid and level are forgotten |
 | Terminal, controller, a cable | jobs without a working network pause ("No ME network"). A job finds its network through its CPU, else through the entity it was started at (terminal, level maintainer), else through the ME block at its position (jobs of older saves) |
@@ -744,7 +815,8 @@ queue and take the next free slot (the path the existing CPU test covers).
   rescan and a plan, like the Craft button; a failed start waits 5 seconds), and 2 circuit interface
   updates (one `get_contents()`, the fluid totals and one write of the section each).
 * 8 provider rescans per step, planning only on user actions (terminal GUI: while a craft item is
-  selected, once per second from the cache).
+  selected, once per second from the cache). An arrival is one table lookup per insert (network, key) when no job
+  waits for that key; the index of waiting jobs is rebuilt only when it changes (no tick of its own).
 * The I/O step every 15 ticks: up to 24 ME Interfaces and buses (`docs/ME-REWORK.md`, "Tick budget"), 8 storage
   bus visits (one `get_contents` each, the difference to the last look applied to the network's totals; cost for 50
   buses in `docs/ME-REWORK.md`, "Storage bus (after R3)"), 8 fluid storage bus visits (three calls on one fluid box
@@ -771,6 +843,14 @@ CPU records of older saves hold one `job`; they are rebuilt (`jobs = {}`) and th
 record read before the rebuild is converted on the spot (`migrate --from-ref v0.3.1` starts a job with
 the old version and checks that it finishes after the update). Level maintainers and circuit interfaces
 are new, their state is created lazily and rebuilt from the world (settings kept by unit number).
+Issue #80 (0.5.0): providers of 0.4.1 and older (`storage.fork_ae2.pattern_version` not set) get encoded patterns for
+what they provided, once: a crafting pattern for the recipe of each assembling machine next to them, a processing
+pattern for each furnace next to them (the recipe chosen in the provider when the furnace can make it, else the one it
+runs, else the one it smelted last), each pattern once, in the slots from 1 (`FORK-ME-MIGRATE: patterns` in the log).
+These patterns are created by the migration (the only place where patterns come from nothing). Saved job steps and
+leases that name a recipe get the pattern that makes it now (the crafting pattern, or the processing pattern migrated
+from that furnace recipe; processing steps count their finished runs as received outputs). The old "read the
+machine's recipe" path and the furnace recipe choice are gone.
 Before the item migration, the fluid migration of step R2 (`run_fluids`) converts the old fluid drives, their
 recovered fluid, the contents held for an upgrade and loaded fluid drive items into fluid cells and drops that
 part of `storage.fork_me_fluids` (rule in `docs/ME-REWORK.md`, "Migration of fluids (R2)"); the fluid module then
@@ -805,8 +885,13 @@ partitions start empty.
 * The ME Interface keeps the container's slot filters of the game (with_filters_and_bar): a filter set by hand in
   its container window only restricts that slot, it is no config. The level maintainer's lamp window is no longer
   shown (its circuit condition is in the ME window).
-* A furnace picks its recipe from its input: if two recipes it can make share an input, the
-  network cannot force the chosen one (the job fails and returns its items).
+* A furnace picks its recipe from its input: a processing pattern whose input fits several of its recipes may be
+  smelted into the wrong product; the job then waits for its outputs and fails after 5 minutes.
+* Encoded patterns (issue #80): no crafting storage on the CPUs (job size limits), no upgrade cards on providers, no
+  substitutions or fuzzy patterns, no "blocking mode" (a provider pushes into a chest as long as it has room), no
+  pattern tier with 36 slots. Clearing a pattern needs the terminal's button (an inventory click cannot be caught).
+  A provider mined by another mod's script (not a player or robot) drops its patterns instead of giving them to
+  that script's inventory.
 * CPU tiers (issue #38) add parallel jobs and speed, not storage: a job's size is not limited by its
   CPU (AE2's crafting storage has no counterpart). The level maintainer keeps one resource per block;
   a circuit signal sets its amount or switches it, but there is no "craft what the circuit asks for"
@@ -838,12 +923,30 @@ a CPU that is removed and replaced during a job, a pattern machine that is remov
 waits for it and then a cancel (checked with a conservation of raw materials), and a GT
 machine as pattern machine.
 
-A furnace network (issue #27) has two fresh iron furnaces with providers: both must be counted as
-`no-recipe`, the recipe options must list only researched smelting recipes, and after the choice
-(`set_recipe`, the function the GUI calls) one furnace must be a pattern at once, smelt a job and
-leave the ingots in storage with empty furnace slots. Then the choice is pasted onto the other
-provider, cleared (the last smelted recipe keeps the furnace a pattern), stored in a blueprint as
-entity tag, and restored on a provider revived from a tagged ghost.
+The furnace test (issues #27 and #80, two iron furnaces with providers) encodes through the terminal's functions: a
+recipe that is not researched is refused; a crafting pattern encoded from a blank of the network (its tags, the
+tooltip, stack size 1) is no pattern next to a furnace (`furnace`); a processing pattern filled from the recipe and
+encoded from the blank in the hand (the hand gets it) is loaded into a new editor and clicked into the provider; the
+plan uses it and a job smelts the ingots into storage with empty furnace slots and an empty pool. Then: the crafting
+pattern is taken into the hand and cleared (a blank again; clearing a blank is refused), settings paste copies the
+priority only, a blueprint carries the priority and the processing pattern, a provider revived from it waits for a
+blank (no item exists) and encodes the pattern once a blank is stored, an old 0.4.1 tag gives a pending processing
+pattern, a mined provider gives its pattern into the buffer (not the pending one), a destroyed one drops it on the
+ground, and one removed without an event drops it at the next scan.
+
+The pattern switching test (issue #80, own network) gives one Molecular Assembler without a recipe three crafting
+patterns (gears, belts, blank patterns) and runs a job of each: the machine is switched each time, and 3 plates and 2
+gears left in it before the belt job end in the network (counted exactly). Two jobs that need the same machine at once
+run one after the other (one waits for the machine, never two leases on it). Two patterns make gears: the crafting
+pattern and a processing pattern on a second assembler with its own gear recipe; at equal priority the provider built
+first wins, provider priority 10 makes the processing pattern first (a job runs it: pushed in, the gears taken out, the
+machine never switched), -10 the crafting one. A level maintainer keeps blank patterns in stock with the blank
+pattern's crafting pattern. The processing line test encodes a processing pattern with free rows (2 copper plates ->
+3 copper cables; an item with tags is refused as a row) from a blank of the network, pushes the inputs of a job into a
+chest; the test script plays the line (plates out, cables into a second chest) and an ME Import Bus brings the cables
+back: the job takes them (it waited for exactly 9), ends done with an empty pool, and waits for nothing afterwards.
+Two mutations were checked to fail these tests: no arrivals (the line job times out waiting for its outputs) and a
+switch that drops what was left in the machine (the counts after the belt job are short).
 
 A second network tests the fluids (issue #68 R2: a drive with four 1k fluid cells): an import interface with a
 storage tank of chlorine connected to it, an export interface set to 1000 units, a roboport with construction
@@ -856,7 +959,8 @@ rebuilt drive is empty until the cells are back, that full cells stop the import
 while the panel reports it, that a reactor with a pipe on its input is counted under `fluid-pipes` and not a
 pattern, that a too large request reports the missing chlorine and raw silicon exactly, that three jobs (fluid in
 and out, fluid out only, fluid in only) finish with the expected amounts and empty machines, and that a reactor
-mined by robots while it holds a job's chlorine gives it back.
+mined by robots while it holds a job's chlorine gives it back. Before that last job the reactor's recipe is cleared: its
+crafting pattern (a fluid recipe) must be usable on a machine without a recipe and set it again (issue #80).
 
 The fluid cell test (another network right of the machine grid) puts an item cell and a fluid cell into one drive
 (each takes only its kind), takes the fluid cell out (water in the tags, the network keeps none, the item cell
@@ -883,6 +987,11 @@ is 500), then only its two filters, then follow 25 more plates. The settings of 
 circuit), a circuit interface (two filters) and a fluid interface (export water 2345) must be blueprint
 tags, come back on the entities built from that blueprint and revived, and be copied by settings paste and
 by cloning. `devcheck.py migrate` checks a job started by the old version.
+`devcheck.py migrate --from-ref v0.4.1` (issue #80) builds providers next to a Molecular Assembler with the gear recipe
+and next to a fresh iron furnace with the smelting recipe chosen in the provider, a gear job and a level maintainer
+keeping 8 gears with the old version; after the update the providers must hold a crafting pattern of the gear recipe
+and a processing pattern of the smelting recipe (both usable, both items craftable, `FORK-ME-MIGRATE: patterns`),
+the old job must finish and the maintainer must then finish a job of its own.
 
 `devcheck.py migrate --from-ref v0.3.2` (issue #68) builds an old logistic ME network with the old version: a
 1k drive with items (also of another quality, and a blueprint the new network cannot store), a requester

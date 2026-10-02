@@ -26,6 +26,14 @@ local M = {}
 --- functions(net) called when a network's members changed (autocrafting drops its pattern cache)
 M.change_hooks = {}
 
+--- Arrivals (issue #80): function(net, key, count) -> amount claimed, set by autocrafting. Every item or fluid that
+--- comes into a network through the public insert functions (import bus, interface, terminal, fluid interface ...)
+--- is offered to it first: a crafting job waiting for the outputs of a processing pattern takes them into its pool
+--- (AE2 behaviour). What it claims counts as stored for the caller. `M.no_arrival` is set while autocrafting stores
+--- its own pools (a job never takes back what a job stores). Plain normal quality keys only.
+M.on_arrival = nil
+M.no_arrival = false
+
 local SWEEP_PER_STEP = 200          -- members checked for validity per slow step
 local LEDS_PER_STEP_N = 50          -- drives whose lights are redrawn per slow step
 local BASE_POWER = 120000           -- W: controller
@@ -1057,10 +1065,25 @@ local function data_of(net, key)
 	return nil
 end
 
+--- the amount of `key` a job waiting for it takes (see M.on_arrival)
+local function arrive(net, key, count)
+	if M.no_arrival or not M.on_arrival or count <= 0 then return 0 end
+	return M.on_arrival(net, key, count) or 0
+end
+
+--- what jobs still wait for of `key` (room for an arrival beyond the cells' room)
+local function awaited(net, key)
+	if M.no_arrival or not M.awaiting then return 0 end
+	return M.awaiting(net, key) or 0
+end
+
 --- the public API: plain items by name and quality; nothing happens when the network does not work
 function M.insert(net, name, quality, count)
 	if not (M.usable(net) and prototypes.item[name]) then return 0 end
-	return insert_key(net, key_of(name, quality), math.floor(count))
+	local key = key_of(name, quality)
+	count = math.floor(count)
+	local claimed = arrive(net, key, count)
+	return claimed + insert_key(net, key, count - claimed)
 end
 
 function M.extract(net, name, quality, count)
@@ -1085,7 +1108,8 @@ end
 
 function M.can_insert(net, name, quality, count)
 	if not M.usable(net) then return 0 end
-	return math.min(math.floor(count), room_for(net, key_of(name, quality)))
+	local key = key_of(name, quality)
+	return math.min(math.floor(count), room_for(net, key) + awaited(net, key))
 end
 
 --- the items: { { key, name, quality, count, data } }, unsorted (fluids: fluid_contents)
@@ -1114,7 +1138,10 @@ end
 --- the fluid API (fluids are stored by name, one temperature per fluid): amounts may be fractional
 function M.insert_fluid(net, name, amount)
 	if not (M.usable(net) and prototypes.fluid[name] and amount and amount > 0) then return 0 end
-	return insert_key(net, FLUID_PREFIX .. name, amount)
+	local key = FLUID_PREFIX .. name
+	local claimed = arrive(net, key, amount)
+	if claimed >= amount then return amount end
+	return claimed + insert_key(net, key, amount - claimed)
 end
 
 function M.extract_fluid(net, name, amount)
@@ -1129,7 +1156,8 @@ end
 
 function M.can_insert_fluid(net, name, amount)
 	if not M.usable(net) then return 0 end
-	return math.min(amount, room_for(net, FLUID_PREFIX .. name))
+	local key = FLUID_PREFIX .. name
+	return math.min(amount, room_for(net, key) + awaited(net, key))
 end
 
 --- { fluid name -> amount }
@@ -1186,7 +1214,8 @@ function M.insert_stack(net, stack)
 	if not ok then return nil, why end
 	local problem, key, data = M.storable(stack)
 	if problem then return nil, problem end
-	local n = insert_key(net, key, stack.count, data)
+	local claimed = data and 0 or arrive(net, key, stack.count)
+	local n = claimed + insert_key(net, key, stack.count - claimed, data)
 	if n <= 0 then return nil, "no-storage" end
 	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
 	return n
@@ -1198,7 +1227,9 @@ function M.insert_partial(net, stack, max)
 	if not ok then return nil, why end
 	local problem, key, data = M.storable(stack)
 	if problem then return nil, problem end
-	local n = insert_key(net, key, math.min(stack.count, math.floor(max)), data)
+	local want = math.min(stack.count, math.floor(max))
+	local claimed = data and 0 or arrive(net, key, want)
+	local n = claimed + insert_key(net, key, want - claimed, data)
 	if n <= 0 then return nil, "no-storage" end
 	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
 	return n
