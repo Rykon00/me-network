@@ -21,7 +21,7 @@ The rework comes in three steps:
 | Storage bus | the ME Storage Bus that R1 left out: a chest or cargo wagon as network storage, with filters, priority and read/write mode | done (this document, "Storage bus (after R3)") |
 | Fluid storage bus | the ME Fluid Storage Bus: the fluid segment of a tank as network storage, one bus per segment | done (this document, "Fluid storage bus (after the storage bus)") |
 | Encoded patterns | issue #80: blank and encoded pattern items, the terminal's Patterns tab, the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
-| Unified I/O | me-network issue #3: one ME Interface, Import Bus, Export Bus and Storage Bus for items and fluids; the four fluid blocks removed and migrated | this document, "Items and fluids in one block (me-network issue #3)" |
+| Unified I/O | me-network issue #3: one ME Interface, Import Bus, Export Bus and Storage Bus for items and fluids; the four fluid blocks removed and migrated | done (this document, "Items and fluids in one block (me-network issue #3)") |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
 player's guide is `docs/AE2.md`.
@@ -988,8 +988,12 @@ becomes the unified block when a save is loaded.
 * **Saves:** item interfaces of saves made before this change get their tanks on the first load. A side that an
   existing pipe, pump or tank already points at is set to *off*, so a pipeline that ran past an interface is not drained
   into the network (logged per interface); the player switches it to import.
-* **Cost:** a visit adds one `fluidbox` read per side (four). An interface without fluid rows whose sides held nothing
-  at the last look reads them only every fourth visit (fluid waits at most four visits in the pipe).
+* **Cost:** a visit that looks at the sides reads one `fluidbox` per side (four). An interface without fluid rows
+  whose sides held nothing at the last look reads them only every fourth visit (fluid waits at most four visits in the
+  pipe); without any pipe on its sides only every 32nd visit, and a fluid entity built next to it (the build event)
+  makes it look at the next visit. So an item-only interface costs what it cost before.
+* **Visit budget:** the 8 fluid interface visits per I/O step of the old fluid interface are gone; ME Interfaces are
+  visited in the 24 visits of interfaces and buses, as before for items.
 
 ### Import and export bus: one target, items and fluids
 
@@ -1010,8 +1014,11 @@ becomes the unified block when a save is loaded.
 * **What it is decided by:** the target. A chest, logistic chest, infinity chest or cargo wagon makes it item storage
   (as the storage bus was); any other entity with a fluid box makes it the storage of that box's fluid segment (as the
   fluid storage bus was: one bus per segment, claims, splits and merges, the temperature rule, the snapshot logic). No
-  target type has both. The record is one external cell (`ext = "storage-bus"`) with `side = "fluid"` while it faces
-  fluid; the engine's handlers dispatch on that field.
+  target type has both. The record is one external cell (`ext = "storage-bus"`) with `side = "fluid"` and
+  `handler = "fluid-storage-bus"` while it faces fluid: the engine looks the handler up by that name
+  (`ext_handlers[cell.handler or cell.ext]`), so a call costs what it cost before (a dispatch function on `side` was
+  measurable: every `room` of every external cell went through it). A bus whose tank is removed has no side until it
+  faces something again.
 * **Visits:** the bus is in the item visit list or the fluid visit list, by its side (8 visits each per I/O step, as
   before), so a base of only item or only fluid storage buses is visited exactly as often as before.
 * **Settings:** mode and priority shared; up to 18 filters, items and fluids mixed: a whitelist of keys (an item
@@ -1059,6 +1066,65 @@ rebuild their records. Idempotent: what it converts disappears.
   item and its unlocks in every technology: Gregtorio Continued 0.5.0 makes these recipes itself
   (`120-fork-me-network-compat.lua`) and keeps loading; the unified blocks keep the GT recipes it gives them.
 
+### Tests (issue #3)
+
+* `devcheck runtime`, "ME unified I/O test" (own network): the interface's four side tanks, an item row and a fluid row
+  (the row takes the side with a pipe: north is the cable), the fluid out of the network equals the side's segment,
+  steam piped into an import side, a side off and on again, a pipe loop from an export side to an import side
+  (`loop`), the blueprint tag with rows and sides (no side tank in the blueprint), a mined interface's fluid back in the
+  network with its tanks gone; an export bus on a chemical reactor with a fluid recipe (boards into the input, phenol into
+  an input box), an import bus on another (the output inventory and an output box, the input box left alone; no fluid
+  with only item filters); a storage bus on a chest, then on a tank (fluid side, extraction), mixed filters, then facing
+  a cable; an old fluid import bus built by a script replaced, ghosts of the old blocks with old tags revived as the
+  unified blocks with their settings, the old items hidden, placing the unified block, without recipe or unlock.
+  The fluid, fluid cell, R3, fluid storage bus and settings copy tests run on the unified blocks.
+* `devcheck migrate --from-ref v0.1.0` (new command, `tools/devcheck/migratemod`): a save of 0.1.0 with three fluid
+  interfaces (import with a tank, export with pipes and fluid, export alone), the fluid import and export bus with
+  filters on tanks, the fluid storage bus (read only, priority 5, a filter) on a tank, an item interface next to a pipe
+  with 100 water, a level maintainer and two patterns naming old items, ghosts of the four old blocks with old tags,
+  old items in a chest, a blueprint with old blocks, old items in the cells and in a cell taken out into the chest.
+  After loading with the working copy: the unified blocks in place with the settings, no old entity, ghost or item,
+  the converted ghosts and blueprint, the maintainer and patterns on the unified item, the item interface's side next
+  to the pipe off (and the pipe not drained after 150 ticks), the cells' old items under the new key, and the fluid of
+  the area (every segment once) plus the cells equal before, after the update and after the I/O steps: 10540 units.
+  Two mutations were checked to fail it: no restoring of the old tank's share (1600 units short) and no "off" for a
+  side that touches an existing pipe (the pipe drained).
+* `devcheck all --with-gregtorio` against Gregtorio Continued 0.5.0 as released (it still makes the old recipes: they
+  are removed in data-final-fixes, four log lines) and against its updated compat file; Gregtorio's own
+  `migrate --from-ref v0.4.1` and `v0.3.2` (the hand-over then the unified blocks).
+
+### Cost: measured (issue #3)
+
+Headless 2.0.77, one network with 4 drives of 256k cells (items and fluids), `--benchmark-verbose all` over 3600
+ticks (from tick 300), the median of 3 runs, `scriptUpdate` per tick; per block one visit of each through the remote
+step, timed with `game.create_profiler` (ms per 100 visits, the range of 3 to 6 runs). Before: main with the fluid
+blocks; after: this change.
+
+| Scenario | Blocks | Script ms/tick before | after |
+|---|---|---|---|
+| items | 100 import and 100 export buses on infinity chests, 100 interfaces with a row, 50 storage buses on chests | 0.083 | 0.079 |
+| fluids | 100 import and 100 export buses on tanks, 50 interfaces importing and 50 exporting through a pipe, 50 storage buses on tanks | 1.66 | 1.01 |
+| mixed | both | 1.06 | 0.55 |
+
+| Visit (ms per 100) | before | after |
+|---|---|---|
+| import bus on a chest | 6.3 to 6.8 | 6.0 to 6.5 |
+| export bus on a chest | 3.9 to 4.1 | 3.7 to 3.9 |
+| storage bus on a chest | 0.54 to 0.55 | 0.54 to 0.63 |
+| interface, items only (the remote step looks at the sides every time; the I/O step every 32nd visit) | 1.6 to 1.7 | 2.2 to 2.3 |
+| import bus on a tank | 120 to 131 | 126 to 134 |
+| export bus on a tank | 3.1 to 3.6 | 2.9 to 3.1 |
+| storage bus on a tank | 0.56 to 0.66 | 0.60 to 0.96 |
+| fluid interface / interface with fluid | 85 to 95 | 70 to 75 |
+
+* The fluid scenarios are cheaper per tick mostly because the old fluid interfaces had 8 visits per step of their own
+  on top of the 24 of interfaces and buses; the per-visit cost of an interface with fluid is lower too (no `stats`
+  of the network before each import).
+* An import visit on a tank is 95 % one call: `can_insert_fluid`, unchanged engine code that costs about 1.1 ms with
+  20 cells because every `cell_spec` copies the mod-data table (`prototypes.mod_data[...].data`, 22 µs per copy).
+  Measured alone, 100 calls took 109 to 114 ms before and 112 to 118 ms after; the import visit's own code is shorter
+  than before (the box prototype is read only for a box with fluid). Caching the mod-data is a separate change.
+
 ### Windows
 
 One window per unified block, with `signal` choosers (items and fluids): the interface (rows with item or fluid and
@@ -1074,7 +1140,12 @@ fluid windows are removed; the old entities are replaced on load, so none of the
   places to change), a 36 slot provider tier (`SLOTS` is one constant; it needs a second prototype and window layout),
   clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
   bus.
-* A level maintainer with several resources; upgrade and speed cards on buses; more than 5 bus filters.
+* A level maintainer with several resources; upgrade and speed cards on buses (since issue #3 a bus has 9 filters,
+  items and fluids).
+* Issue #3: an ME Interface keeps four fluids at most (one per side) and takes no surplus back from an export side; a
+  fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
+  library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block
+  keep their old step (their patterns are converted).
 * Fuzzy or inverted partitions (AE2 cards), also for storage bus filters; fluid wagons on the fluid storage bus.
 * Terminal search by localised name (a script cannot read localised names).
 * The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.
