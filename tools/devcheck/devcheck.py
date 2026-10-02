@@ -410,7 +410,8 @@ RUNTIME_TESTS = (
     ("MESTORAGEBUS", "ME storage bus test"), ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test"),
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
-    ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("DONE", "all tests reported"),
+    ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"),
+    ("DONE", "all tests reported"),
 )
 
 
@@ -478,7 +479,7 @@ def migrate(a):
         print(not_saved(log))
         return 1
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
-    print(f"old save with every old fluid block: {setup.group(1) if setup else 'no result'}")
+    print(f"old save (0.1.0: every old fluid block; 0.2.0 and later: every kind of block): {setup.group(1) if setup else 'no result'}")
     prepare_mods(with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
@@ -487,7 +488,7 @@ def migrate(a):
         print("  migration: " + line)
     unified = re.search(r"DEVCHECK-MIGRATE-UNIFIED (.*)", log)
     fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
-    print(f"the old fluid blocks after the update: {unified.group(1) if unified else 'no result'}")
+    print(f"the blocks after the update: {unified.group(1) if unified else 'no result'}")
     print(f"the fluid after the I/O steps: {fluids.group(1) if fluids else 'no result'}")
     fails = re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log)
     for f in fails:

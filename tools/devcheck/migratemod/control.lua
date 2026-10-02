@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 --- devcheck migrate (issue #3): a save of an older ME Network (0.1.0) with every old fluid block, loaded with the
---- working copy. on_init (old version): a network with item and fluid cells, three ME Fluid Interfaces (import with
+--- working copy (an old version with the unified blocks, 0.2.0 or later: the scenario of issue #5 below). on_init (old version): a network with item and fluid cells, three ME Fluid Interfaces (import with
 --- a tank, export with fluid and pipes, export alone), an ME Fluid Import Bus and Export Bus with filters on tanks,
 --- an ME Fluid Storage Bus (read only, priority, filter) on a tank, an item ME Interface next to a pipe with water,
 --- a level maintainer and a pattern provider that name the old items, ghosts of the four old blocks with their
@@ -68,6 +68,117 @@ end
 
 local function sum(t) local n = 0 for _, v in pairs(t) do n = n + v end return n end
 
+--------------------------------------------------------------------------------
+--- An old version that already has the unified blocks (0.2.0 and later; issue #5): a save of it has every kind of
+--- block in its old state (no queues of the scheduler, no new fields), and when the version number did not change it
+--- is loaded without on_configuration_changed. After the load the network must work: the import bus empties its
+--- chest, the export bus fills its chest, the interface keeps its row and imports the rest, the interface on a tank
+--- imports the tank, the storage buses show the chest and the tank, the circuit interface writes signals, the level
+--- maintainer is checked; the fluid is the same before and after.
+--------------------------------------------------------------------------------
+
+local function unified_old()
+	local v = script.active_mods["me-network"] or "0.0.0"
+	local a, b = v:match("^(%d+)%.(%d+)")
+	return tonumber(a) > 0 or tonumber(b) >= 2
+end
+
+local function setup_unified(s)
+	local fails = {}
+	local eei = place(s, fails, "electric-energy-interface", 2, -4)
+	if eei then eei.power_production = 1e7 eei.electric_buffer_size = 1e8 end
+	place(s, fails, "substation", 5, -4)
+	place(s, fails, "substation", 25, -4)
+	place(s, fails, "substation", 42, -4)                                  -- (not wired to the first one: its own source)
+	local eei2 = place(s, fails, "electric-energy-interface", 45, -4)
+	if eei2 then eei2.power_production = 1e7 eei2.electric_buffer_size = 1e8 end
+	place(s, fails, "me-network-controller", 9, 0)
+	for x = 8, 45 do place(s, fails, "me-cable", x + 0.5, 1.5) end
+	local function drive(x, cell)
+		local d = place(s, fails, "me-drive", x, 0.5)
+		local inv = game.create_inventory(1)
+		for slot = 1, 4 do
+			inv[1].set_stack{ name = cell, count = 1 }
+			if d then remote.call(NET, "insert_cell", d, inv[1], slot) end
+		end
+		inv.destroy()
+		return d
+	end
+	local di = drive(10.5, "me-16k-storage-cell")
+	local df = drive(11.5, "me-1k-fluid-storage-cell")
+	place(s, fails, "me-terminal", 12.5, 0.5)
+	if di then
+		remote.call(NET, "store_in_drive", di, "iron-gear-wheel", 100)
+		remote.call(NET, "store_in_drive", di, "copper-plate", 500)
+	end
+	if df then remote.call(NET, "store_fluid_in_drive", df, "sulfuric-acid", 640) end
+	local south = { direction = defines.direction.south }
+	local ib = place(s, fails, "me-import-bus", 14.5, 2.5, south)
+	local c1 = place(s, fails, "iron-chest", 14.5, 3.5)
+	if c1 then c1.insert{ name = "iron-plate", count = 200 } end
+	local eb = place(s, fails, "me-export-bus", 16.5, 2.5, south)
+	place(s, fails, "iron-chest", 16.5, 3.5)
+	if eb then remote.call(IO, "set_bus_filters", eb, { "iron-gear-wheel" }) end
+	local iface = place(s, fails, "me-network-interface", 18.5, 2.5)
+	if iface then
+		remote.call(IO, "set_interface_config", iface, { [1] = { name = "copper-plate", quality = "normal", amount = 50 } })
+		iface.insert{ name = "stone", count = 30 }
+	end
+	local fi = place(s, fails, "me-network-interface", 24.5, 2.5)          -- the tank's north connection meets its south side
+	local t1 = place(s, fails, "storage-tank", 25.5, 4.5)
+	if t1 then t1.insert_fluid{ name = "crude-oil", amount = 3000 } end
+	local sb = place(s, fails, "me-storage-bus", 30.5, 2.5, south)
+	local c3 = place(s, fails, "iron-chest", 30.5, 3.5)
+	if c3 then c3.insert{ name = "wood", count = 77 } end
+	place(s, fails, "me-storage-bus", 34.5, 2.5, south)
+	local t2 = place(s, fails, "storage-tank", 34.5, 4.5)
+	if t2 then t2.insert_fluid{ name = "lubricant", amount = 4000 } end
+	local ci = place(s, fails, "me-circuit-interface", 38.5, 2.5)
+	local maint = place(s, fails, "me-level-maintainer", 40.5, 2.5)
+	if maint then remote.call("gregtorio-me-circuit", "set_maintainer", maint, "iron-gear-wheel", 500) end
+	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil }
+	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
+		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units)"
+		.. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
+end
+
+--- after the load: what moved (UNIFIED), then the fluid (FLUIDS)
+local function check_unified(st)
+	local s = game.surfaces[1]
+	local function at(name, x, y) return s.find_entity(name, { x, y }) end
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local t = at("me-terminal", 12.5, 0.5)
+	local function count(name) return t and remote.call(NET, "count", t, name) or -1 end
+	local c1, c2, c3 = at("iron-chest", 14.5, 3.5), at("iron-chest", 16.5, 3.5), at("iron-chest", 30.5, 3.5)
+	expect(c1 and c1.get_item_count("iron-plate") == 0 and count("iron-plate") == 200, "import bus: chest "
+		.. tostring(c1 and c1.get_item_count("iron-plate")) .. ", network " .. count("iron-plate"))
+	expect(c2 and c2.get_item_count("iron-gear-wheel") == 100 and count("iron-gear-wheel") == 0, "export bus: chest "
+		.. tostring(c2 and c2.get_item_count("iron-gear-wheel")) .. ", network " .. count("iron-gear-wheel"))
+	local iface = at("me-network-interface", 18.5, 2.5)
+	expect(iface and iface.get_item_count("copper-plate") == 50 and iface.get_item_count("stone") == 0 and count("stone") == 30,
+		"interface: copper " .. tostring(iface and iface.get_item_count("copper-plate")) .. ", stone in it "
+		.. tostring(iface and iface.get_item_count("stone")) .. ", stone in the network " .. count("stone"))
+	expect(count("wood") == 77 and c3 and c3.get_item_count("wood") == 77, "storage bus on a chest: network " .. count("wood"))
+	local fluids = t and remote.call(NET, "fluid_contents", t) or {}
+	expect(math.abs((fluids["crude-oil"] or 0) - 3000) < EPS, "interface on a tank: crude oil in the network " .. tostring(fluids["crude-oil"]))
+	expect(math.abs((fluids["lubricant"] or 0) - 4000) < EPS, "storage bus on a tank: lubricant " .. tostring(fluids["lubricant"]))
+	local ci = at("me-circuit-interface", 38.5, 2.5)
+	local cinfo = ci and remote.call("gregtorio-me-circuit", "get_circuit", ci)
+	expect(cinfo and cinfo.signals and cinfo.signals > 0, "circuit interface: " .. serpent.line(cinfo))
+	local maint = at("me-level-maintainer", 40.5, 2.5)
+	local m = maint and remote.call("gregtorio-me-circuit", "get_maintainer", maint)
+	expect(m and m.status and m.status ~= "no-target" and m.stock ~= nil, "level maintainer not checked: " .. serpent.line(m))
+	local ib = at("me-import-bus", 14.5, 2.5)
+	if remote.interfaces[IO].schedule then
+		local sch = ib and remote.call(IO, "schedule", ib)
+		expect(sch and sch.due and sch.due > game.tick, "the import bus has no due tick: " .. serpent.line(sch))
+	end
+	for _, p in pairs(problems) do L("FAIL", p) end
+	L("UNIFIED", (#problems == 0 and "ok" or "failed") .. " (a save of unified blocks: buses, interfaces, storage buses, circuit "
+		.. "interface and maintainer work after the load)")
+end
+
 script.on_init(function()
 	local s = game.surfaces[1]
 	s.always_day = true
@@ -81,6 +192,7 @@ script.on_init(function()
 		for y = AREA[1][2], AREA[2][2] do tiles[#tiles + 1] = { name = "grass-1", position = { x, y } } end
 	end
 	s.set_tiles(tiles)
+	if unified_old() then setup_unified(s) return end
 	local force = game.forces.player
 	for _, r in pairs({ "me-fluid-interface", "me-fluid-import-bus", "me-fluid-export-bus", "me-fluid-storage-bus" }) do
 		if force.recipes[r] then force.recipes[r].enabled = true end
@@ -300,7 +412,7 @@ end
 
 script.on_configuration_changed(function()
 	local st = storage.mig
-	if not st or st.checked then return end
+	if not st or st.checked or st.unified then return end
 	st.checked = true
 	local problems = {}
 	check(problems)
@@ -315,6 +427,18 @@ end)
 
 script.on_nth_tick(10, function()
 	local st = storage.mig
+	if st and st.unified then
+		st.start = st.start or game.tick
+		if st.ticked or game.tick < st.start + 150 then return end
+		st.ticked = true
+		check_unified(st)
+		local after = fluid_totals(game.surfaces[1])
+		local ok, diff = same_totals(st.before, after)
+		if not ok then L("FAIL", "fluid differs: " .. diff) end
+		L("FLUIDS", (ok and "ok" or "failed") .. " (" .. string.format("%.1f", sum(st.before)) .. " units before, "
+			.. string.format("%.1f", sum(after)) .. " after)")
+		return
+	end
 	if not (st and st.after_tick) or st.ticked or game.tick < st.after_tick then return end
 	st.ticked = true
 	local s = game.surfaces[1]

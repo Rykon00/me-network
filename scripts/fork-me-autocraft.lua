@@ -30,31 +30,32 @@
 ---   is idle again, moves the products into the pool, and at the end everything left in the pool
 ---   (result and by-products) is stored in the network. Cancel and failure give the pool back
 ---   the same way.
---- Work per step: STEP_OPS machine interactions per job (times the speed of its CPU tier), at most
----   MAX_OPS_PER_STEP in all, MAX_JOBS_PER_STEP jobs, PROVIDERS_PER_STEP provider rescans, and the
----   step hooks (level maintainers and circuit interfaces, scripts/fork-me-circuit.lua), one step
----   every STEP_TICKS ticks (15, 30 and 60 are used by the fluid storage, the molds and the terminal,
----   see control.lua).
+--- Work (issue #5: spread over the ticks, M.on_tick from control.lua): each tick the setting "crafting jobs per
+---   tick" jobs are stepped, round robin, each at most once per STEP_TICKS ticks; a step makes STEP_OPS machine
+---   interactions times the speed of the job's CPU tier per STEP_TICKS since the job's last step (up to
+---   MAX_CATCH_UP steps' worth, so a job that waits for its turn catches up). One provider is rescanned every
+---   PROVIDER_SCAN_TICKS ticks, CPUs are assigned every STEP_TICKS ticks, and the tick hooks run every tick (level
+---   maintainers and circuit interfaces, scripts/fork-me-circuit.lua, on their own queues).
 --- State: storage.fork_ae2 only (entities, counts, plain data). GUI state lives in the GUI.
 --------------------------------------------------------------------------------
 
 local fluids = require("scripts.fork-me-fluids")
 local N = require("scripts.fork-me-network")
 local P = require("scripts.fork-me-patterns")
+local Sched = require("scripts.fork-me-schedule")
 
 local M = {}
 
---- functions run at the end of every step (fork-me-circuit.lua); registered at load time, nothing is stored
+--- functions(s, tick) run every tick (fork-me-circuit.lua); registered at load time, nothing is stored
 M.step_hooks = {}
 --- functions(bp, mapping) run when a blueprint is set up, after the providers are tagged
 M.blueprint_hooks = {}
 
-local STEP_TICKS = 20
-local MAX_JOBS_PER_STEP = 8
+local STEP_TICKS = 20           -- a job is stepped at most this often
 local STEP_OPS = 6              -- machine hand-overs / collections per job and step (base CPU)
-local MAX_OPS_PER_STEP = 96     -- all jobs together (4 quantum CPU jobs at full speed)
+local MAX_CATCH_UP = 3          -- steps' worth of operations a late job may make at once
 local MAX_BATCH = 16            -- crafts handed to one machine at once
-local PROVIDERS_PER_STEP = 8
+local PROVIDER_SCAN_TICKS = 2   -- one provider rescan this often (8 per 20 ticks before issue #5)
 local STALL_STEPS = 900         -- steps without progress (5 minutes) until a job fails
 local KEEP_FINISHED_TICKS = 5 * 60 * 60
 local MAX_FINISHED = 12
@@ -547,7 +548,7 @@ local function rebuild_patterns(s)
 		if p.net and p.entity.valid then
 			local net = patterns[p.net]
 			if not net then
-				net = { items = {}, defs = {}, targets = {}, ignored = { total = 0 }, seen = {} }
+				net = { items = {}, defs = {}, targets = {}, ignored = { total = 0 }, seen = {}, prov = {} }
 				patterns[p.net] = net
 			end
 			for slot = 1, SLOTS do
@@ -558,6 +559,8 @@ local function rebuild_patterns(s)
 					net.ignored[st.reason] = (net.ignored[st.reason] or 0) + 1
 				elseif pat then
 					local id = pat.id
+					net.prov[id] = net.prov[id] or {}
+					if net.prov[id][#net.prov[id]] ~= p.unit then net.prov[id][#net.prov[id] + 1] = p.unit end
 					if not net.defs[id] then
 						net.defs[id] = pat.def
 						net.targets[id] = {}
@@ -609,11 +612,11 @@ N.change_hooks[#N.change_hooks + 1] = function()
 	if s then s.graph_dirty, s.await = true, nil end
 end
 
---- bounded slice of the round robin rescan
-local function maintenance(s)
+--- bounded slice of the round robin rescan: `count` providers
+local function maintenance(s, count)
 	local n = #s.plist
 	if n == 0 then return end
-	for _ = 1, math.min(PROVIDERS_PER_STEP, n) do
+	for _ = 1, math.min(count, n) do
 		if s.pcursor > #s.plist then s.pcursor = 1 end
 		local unit = s.plist[s.pcursor]
 		local p = s.providers[unit]
@@ -1030,6 +1033,7 @@ local function finish(s, job, status, reason)
 	remove_value(s.active, job.id)
 	s.finished[#s.finished + 1] = job.id
 	s.await = nil
+	if job.owner and N.wakers.maint then N.wakers.maint(job.owner) end     -- its level maintainer checks again
 end
 
 --- Cancel or fail: stop handing out work, take unused inputs back, keep waiting for machines that
@@ -1505,33 +1509,43 @@ local function prune_finished(s)
 	end
 end
 
-local function on_step(event)
-	local s = storage.fork_ae2
-	if not s then return end
-	if #s.active > 0 then
-		assign_cpus(s)
-		local n = #s.active
-		local count = math.min(MAX_JOBS_PER_STEP, n)
-		local ids = {}
-		for i = 0, count - 1 do ids[#ids + 1] = s.active[(s.jcursor - 1 + i) % n + 1] end
-		s.jcursor = (s.jcursor - 1 + count) % n + 1
-		local budget = MAX_OPS_PER_STEP
-		for _, id in pairs(ids) do
-			local job = s.jobs[id]
-			if job and (job.status == "queued" or job.status == "running") then
-				local work = { ops = math.min(job_ops(s, job), budget) }
-				local given = work.ops
-				job_step(s, job, work)
-				budget = math.max(0, budget - (given - work.ops))
+--- the jobs of this tick: round robin from s.jcursor, each at most once per STEP_TICKS, at most `budget` of them;
+--- a step gets its CPU's operations for every STEP_TICKS since the job's last step (MAX_CATCH_UP at most)
+local function step_jobs(s, tick, budget)
+	local n = #s.active
+	if n == 0 then return end
+	local done = 0
+	for _ = 1, n do
+		if done >= budget or #s.active == 0 then break end
+		if s.jcursor > #s.active then s.jcursor = 1 end
+		local id = s.active[s.jcursor]
+		s.jcursor = s.jcursor + 1
+		local job = s.jobs[id]
+		if job and (job.status == "queued" or job.status == "running") then
+			local since = tick - (job.stepped or (tick - STEP_TICKS))
+			if since >= STEP_TICKS then
+				job.stepped = tick
+				done = done + 1
+				local scale = math.min(math.floor(since / STEP_TICKS), MAX_CATCH_UP)
+				job_step(s, job, { ops = job_ops(s, job) * scale })
 			end
 		end
 	end
-	maintenance(s)
-	prune_finished(s)
-	for _, hook in pairs(M.step_hooks) do hook(s) end
 end
 
-script.on_nth_tick(STEP_TICKS, on_step)
+--- every tick (control.lua): CPUs and pruning every STEP_TICKS, the due jobs, a provider rescan every
+--- PROVIDER_SCAN_TICKS, then the tick hooks (maintainers and circuit interfaces)
+function M.on_tick(tick)
+	local s = storage.fork_ae2
+	if not s then return end
+	if tick % STEP_TICKS == 0 then
+		if #s.active > 0 then assign_cpus(s) end
+		prune_finished(s)
+	end
+	if #s.active > 0 then step_jobs(s, tick, Sched.setting("jobs")) end
+	if tick % PROVIDER_SCAN_TICKS == 0 then maintenance(s, 1) end
+	for _, hook in pairs(M.step_hooks) do hook(s, tick) end
+end
 
 --------------------------------------------------------------------------------
 --- arrivals: outputs of processing patterns that come back into the network (N.on_arrival)
@@ -1683,6 +1697,29 @@ function M.plan(net, key, amount, fresh)
 	return make_plan(s, net, key, math.floor(amount))
 end
 
+--- Issue #5: before a job starts, the providers of its plan's patterns are scanned (not every provider of the map:
+--- 200 of them cost 18 ms); true when a pattern changed (then the plan is made again).
+local function rescan_plan(s, net, plan)
+	local pats = s.patterns[net.id]
+	if not (pats and pats.prov) then return false end
+	local units, seen = {}, {}
+	for _, st in ipairs(plan.steps or {}) do
+		for _, unit in ipairs(pats.prov[st.pid] or {}) do
+			if not seen[unit] then
+				seen[unit] = true
+				units[#units + 1] = unit
+			end
+		end
+	end
+	table.sort(units)
+	local dirty = s.dirty
+	for _, unit in ipairs(units) do
+		local p = s.providers[unit]
+		if p and p.entity.valid then scan_provider(p) else drop_provider(s, unit) end
+	end
+	return s.dirty and not dirty
+end
+
 --- the job step of a planned step
 local function job_step_of(st)
 	local step = { pid = st.pid, def = st.def, kind = st.def.kind, recipe = st.def.recipe, runs = st.runs, issued = 0, done = 0 }
@@ -1703,8 +1740,8 @@ function M.start(entity, key, amount, owner)
 	if not proto_of(key) then return nil, "no-pattern" end
 	local cpus = cpus_in(s, net)
 	if #cpus == 0 then return nil, "no-cpu" end
-	refresh_providers(s)
 	local plan = make_plan(s, net, key, amount)
+	if rescan_plan(s, net, plan) then plan = make_plan(s, net, key, amount) end
 	if plan.no_pattern then return nil, "no-pattern", plan end
 	if not plan.ok then return nil, "missing", plan end
 
