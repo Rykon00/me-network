@@ -176,7 +176,9 @@ M.handlers = {
 		return n
 	end,
 }
-N.ext_handlers[OLD_KIND] = M.handlers     -- records of old fluid storage buses until they are replaced
+--- the handler of the storage bus's fluid side (rec.handler) and of old fluid storage buses until they are replaced
+M.HANDLER = OLD_KIND
+N.ext_handlers[OLD_KIND] = M.handlers
 
 --------------------------------------------------------------------------------
 --- target, claim and visit
@@ -358,7 +360,7 @@ function M.on_removed(entity)
 		r.target, r.target_unit, r.status = nil, nil, "no-target"
 		N.ext_sync(r.unit, {})
 		if r.side == "fluid" and M.lost then          -- no side until it faces something again (the item list)
-			r.side = nil
+			r.side, r.handler = nil, nil
 			M.unlist(r)
 			M.lost(r)
 		end

@@ -13,7 +13,8 @@
 ---     fluid row (its tank is kept at the row's amount from the network). Several sides may share a row; four
 ---     fluids at most at once. Sides whose segment is that of an export side of the same interface import
 ---     nothing (a pipe loop). Mined: the sides' fluid goes into the network; destroyed: it is lost like a tank's.
----     Interfaces without fluid rows whose sides were empty look at them only every IDLE_VISITS + 1 visits.
+---     Interfaces without fluid rows whose sides were empty look at them only every IDLE_VISITS + 1 visits, with no
+---     pipe on any side only every IDLE_UNCONNECTED + 1 visits (building a fluid entity next to one wakes it).
 ---   * The config and the sides are kept in script (rec.config, rec.sides), in blueprints (tag
 ---     fork_me_interface = { config, sides }), settings paste and clones.
 ---   * ME Import Bus / ME Export Bus: face one entity (their direction). Its kind is found once, when the
@@ -48,6 +49,7 @@ local MAX_FILTERS = 9
 local CONFIG_SLOTS = 9
 local MAX_AMOUNT = 1000000
 local IDLE_VISITS = 3                -- visits an idle interface skips its sides (fluid waits in the pipe)
+local IDLE_UNCONNECTED = 31          -- the same without any pipe on its sides (a built pipe wakes it at once)
 local EPS = 1e-6
 local FLUID_PREFIX = "fluid/"
 local IFACE_TAG, BUS_TAG = "fork_me_interface", "fork_me_bus"
@@ -224,6 +226,16 @@ end
 --- interface: the side tanks
 --------------------------------------------------------------------------------
 
+--- rec.fconn: is anything connected to a side? (an idle interface without connections looks at its sides rarely)
+local function refresh_connections(rec)
+	local any = false
+	for _, t in pairs(rec.tanks or {}) do
+		if t.valid and #t.fluidbox.get_connections(1) > 0 then any = true break end
+	end
+	rec.fconn = any or nil
+	rec.fidle = 0
+end
+
 --- The four side tanks of an interface (found on its tile, created where missing). `fresh`: an interface of a save
 --- made before its tanks existed: a side that a pipe, pump or tank already points at is set to "off", so a
 --- pipeline that ran past the interface is not drained into the network. Returns the tanks (nil without the
@@ -256,6 +268,7 @@ local function ensure_tanks(rec, fresh)
 		end
 	end
 	rec.tanks = found
+	refresh_connections(rec)
 	return found
 end
 M.ensure_tanks = ensure_tanks
@@ -357,7 +370,7 @@ local function interface_sides(rec, net, config)
 			fstatus[d] = "import"
 		end
 	end
-	rec.fidle = busy and 0 or IDLE_VISITS
+	rec.fidle = busy and 0 or (rec.fconn and IDLE_VISITS or IDLE_UNCONNECTED)
 end
 
 --- One visit: every configured item is kept at its amount (filled from the network, the surplus taken back),
@@ -823,7 +836,10 @@ function M.on_built(entity, tags, source)
 		return
 	end
 	local k = kind(entity)
-	if k ~= "interface" and not BUSES[k] then return end
+	if k ~= "interface" and not BUSES[k] then
+		if entity and entity.valid and T.has_fluid_boxes(entity) then M.wake_near(entity) end
+		return
+	end
 	local rec = register(state(), entity)
 	if k == "interface" then
 		ensure_tanks(rec)
@@ -842,6 +858,25 @@ function M.on_built(entity, tags, source)
 		else
 			M.set_bus_filters(entity, {})
 		end
+	end
+end
+
+local interface_names
+--- a fluid entity was built: the interfaces next to it look at their sides again at their next visit
+function M.wake_near(entity)
+	local s = storage.fork_me_io
+	if not s then return end
+	if not interface_names then
+		interface_names = {}
+		for _, name in pairs(N.node_names()) do
+			if N.kind_of(name) == "interface" then interface_names[#interface_names + 1] = name end
+		end
+	end
+	local b = entity.bounding_box
+	for _, i in pairs(entity.surface.find_entities_filtered{ name = interface_names,
+		area = { { b.left_top.x - 1, b.left_top.y - 1 }, { b.right_bottom.x + 1, b.right_bottom.y + 1 } } }) do
+		local rec = s.recs[i.unit_number]
+		if rec and rec.tanks then refresh_connections(rec) end
 	end
 end
 
@@ -898,7 +933,7 @@ function M.on_configuration_changed()
 	local s = state()
 	local old = s.recs
 	s.recs, s.list, s.cursor = {}, {}, 1
-	VOLUME = nil
+	VOLUME, interface_names = nil, nil
 	local names = {}
 	for _, name in pairs(N.node_names()) do
 		local k = N.kind_of(name)
@@ -915,6 +950,7 @@ function M.on_configuration_changed()
 				rec.tanks = o and o.tanks
 				local fresh = not (o and o.tanks) and #surface.find_entities_filtered{ name = T.SIDE, position = e.position } == 0
 				ensure_tanks(rec, fresh)
+				refresh_connections(rec)
 				refresh_exporting(rec)
 			end
 			rec.target = nil

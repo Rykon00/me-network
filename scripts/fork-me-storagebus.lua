@@ -13,7 +13,8 @@
 ---     write, read only (the network takes from it, never puts into it) or write only (the network puts into it
 ---     and does not see what is in it). Kept in blueprints (tag fork_me_storage_bus), settings paste and clones.
 ---   * The bus's storage is an "external cell" of the storage engine (scripts/fork-me-network.lua): the
----     record below is that cell (ext = "storage-bus", side = "fluid" while it faces fluid). Its `items` are a
+---     record below is that cell (ext = "storage-bus"; side = "fluid" and handler = "fluid-storage-bus" while it
+---     faces fluid: the engine calls the fluid side's functions directly). Its `items` are a
 ---     snapshot of the inventory or segment; the engine keeps the network's totals and index from it.
 ---   * Consistency: inserters and players change the inventory without an event. The I/O step (15 ticks,
 ---     scripts/fork-me-io.lua) visits VISITS_PER_STEP item side buses round robin (the fluid side has its own list
@@ -155,13 +156,7 @@ local ITEM = {
 	end,
 }
 
-local FLUID = F.handlers
-N.ext_handlers[KIND] = {
-	room = function(rec, key) return (rec.side == "fluid" and FLUID or ITEM).room(rec, key) end,
-	insert = function(rec, key, count) return (rec.side == "fluid" and FLUID or ITEM).insert(rec, key, count) end,
-	count = function(rec, key) return (rec.side == "fluid" and FLUID or ITEM).count(rec, key) end,
-	extract = function(rec, key, count) return (rec.side == "fluid" and FLUID or ITEM).extract(rec, key, count) end,
-}
+N.ext_handlers[KIND] = ITEM             -- the fluid side: N.ext_handlers[F.HANDLER] through rec.handler
 
 --------------------------------------------------------------------------------
 --- target and visit
@@ -233,7 +228,7 @@ local function resolve(s, rec)
 		end
 	end
 	if rec.side ~= side then
-		rec.side = side
+		rec.side, rec.handler = side, side and F.HANDLER or nil
 		N.ext_sync(rec.unit, {})                         -- the other side's snapshot goes
 	end
 	list_side(s, rec)

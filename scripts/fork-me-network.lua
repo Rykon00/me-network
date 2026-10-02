@@ -818,10 +818,10 @@ function M.version() local s = storage.fork_me_net return s and s.version or 0 e
 local function mark_drive(s, unit) s.dirty[unit] = true end
 
 --------------------------------------------------------------------------------
---- external cells: storage that is not a storage cell (the storage bus, scripts/fork-me-storagebus.lua, and the
---- fluid storage bus, scripts/fork-me-fluid-storagebus.lua: fluid keys, fractional amounts). An
---- external cell is a record { ext = <handler name>, items = { key -> count }, data = {}, partition, priority,
---- hidden } kept in s.ext[unit] of its member; its cell id is "<unit>:ext". `items` is a snapshot of what the
+--- external cells: storage that is not a storage cell (the storage bus, scripts/fork-me-storagebus.lua, and its
+--- fluid side, scripts/fork-me-fluid-storagebus.lua: fluid keys, fractional amounts). An
+--- external cell is a record { ext = <kind>, handler = <handler name, if not the kind's>, items = { key -> count },
+--- data = {}, partition, priority, hidden } kept in s.ext[unit] of its member; its cell id is "<unit>:ext". `items` is a snapshot of what the
 --- storage held at the last look (none while `hidden`: write only); the totals and the index of the network
 --- include it like any cell. The handler (M.ext_handlers[name], registered at load time) works on the real
 --- storage: room(cell, key), insert(cell, key, count), count(cell, key) and extract(cell, key, count). The
@@ -834,7 +834,7 @@ local function ext_cid(unit) return unit .. ":ext" end
 
 --- items of `key` a cell can take now
 local function room_in(cell, key)
-	if cell.ext then return M.ext_handlers[cell.ext].room(cell, key) end
+	if cell.ext then return M.ext_handlers[cell.handler or cell.ext].room(cell, key) end
 	return cell_room(cell, cell_spec(cell.name), key)
 end
 
@@ -968,7 +968,7 @@ local function insert_key(net, key, count, data)
 		local cell = net.cells[cid]
 		if cell.ext then                               -- external cell: into the real storage, then the snapshot
 			if data then return end                    -- items with tags only go into cells
-			local n = M.ext_handlers[cell.ext].insert(cell, key, is_fluid_key(key) and left or math.floor(left))
+			local n = M.ext_handlers[cell.handler or cell.ext].insert(cell, key, is_fluid_key(key) and left or math.floor(left))
 			if n <= 0 then return end
 			if not cell.hidden then
 				cell.items[key] = (cell.items[key] or 0) + n
@@ -1052,7 +1052,7 @@ local function extract_key(net, key, count)
 		if left <= 0 then break end
 		local cell = net.cells[cid]
 		if cell.ext then                               -- external cell: the real storage first (staleness)
-			local handler = M.ext_handlers[cell.ext]
+			local handler = M.ext_handlers[cell.handler or cell.ext]
 			local real = handler.count(cell, key)
 			if real ~= (cell.items[key] or 0) then ext_set(net, cid, cell, key, real) end
 			local n = math.min(left, real)
