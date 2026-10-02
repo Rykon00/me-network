@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.1
+  Bugfixes:
+    - A click on an ME block with a tool in hand opened the block's window and ended the tool: blueprints and blueprint books (also from the blueprint library), deconstruction and upgrade planners, the copy-paste and cut tool, selection tools of other mods, red, green and copper wires (a wire now connects to an ME Circuit Interface or Level Maintainer), ghosts, rails, spidertron and artillery remotes, capsules and items being built. The window now opens only when the game would open a chest's window: with an empty hand or a plain item.
+---------------------------------------------------------------------------------------------------
 Version: 0.2.0
 Date: 2026-10-02
   Features:

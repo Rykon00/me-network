@@ -153,7 +153,9 @@ Every ME block has its own window in one style (title bar with close button, dra
 **clicking the block** (the normal open key). Blocks that have a window of the game (terminal, crafting CPUs and
 level maintainer: lamps; circuit interface: constant combinator; ME Interface: container) show the ME window
 instead; the others (drive, controller, buses, pattern provider) have no window of
-their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second.
+their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second. With a tool
+in hand (blueprint, deconstruction or upgrade planner, copy-paste or cut tool, a wire, a ghost, an item to build) a
+click uses the tool and opens no window, as on a chest.
 
 | Block | Window |
 |---|---|

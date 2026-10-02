@@ -401,7 +401,8 @@ RUNTIME_TESTS = (
     ("MESTORAGEBUS", "ME storage bus test"), ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test"),
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
-    ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("DONE", "all tests reported"),
+    ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"),
+    ("CURSOR", "open key and cursor test"), ("DONE", "all tests reported"),
 )
 
 

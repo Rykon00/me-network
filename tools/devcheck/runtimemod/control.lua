@@ -732,6 +732,7 @@ local function tests_running()
 	check(storage.tiers38 and storage.tiers38.done, "crafting CPU tiers")
 	check(storage.circuit38 and storage.circuit38.done, "circuit interface")
 	check(storage.settings38 and storage.settings38.done, "settings copy")
+	check(storage.cursor_t and storage.cursor_t.done, "open key and cursor")
 	return running
 end
 
@@ -1572,6 +1573,7 @@ script.on_nth_tick(10, function()
 	if not (storage.tiers38 and storage.tiers38.done) then cpu_tier_test() end
 	if not (storage.circuit38 and storage.circuit38.done) then circuit_test() end
 	settings_test()
+	cursor_test()
 	done_test()
 end)
 
@@ -3697,6 +3699,79 @@ function settings_test()
 	for _, f in pairs(cfails) do expect(false, f) end
 	check("clone", km, kc, kf)
 	report38("SETTINGS", "settings copy", problems, #problems == 0 and "blueprint, paste and clone of 3 entity types" or nil)
+end
+
+--- The open key with a tool in the cursor (G.click_opens, fork-me-gui.lua): an ME window opens on a click exactly
+--- when the game would open a chest's window. The harness has no player, so the decision is fed real item stacks
+--- of every cursor tool (and the cursor flags a stack cannot hold: a library blueprint, a ghost, a wire being
+--- dragged, a damaged block). Opening the window, the game's own click action and the tool staying in the cursor
+--- need the real game.
+function cursor_test()
+	if storage.cursor_t then return end
+	storage.cursor_t = { done = true }
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local inv = game.create_inventory(1)
+	local stack = inv[1]
+	local n = 0
+	local function case(name, setup, flags, want)
+		n = n + 1
+		stack.clear()
+		local ok, err = pcall(setup)
+		if not ok then expect(false, name .. ": setup failed: " .. tostring(err)) return end
+		local got, why = remote.call("gregtorio-me-terminal", "click_opens", stack, flags or {})
+		expect(got == want, name .. ": " .. tostring(got) .. " (" .. tostring(why) .. "), expected " .. tostring(want))
+	end
+	local function item(name, count) return function() stack.set_stack{ name = name, count = count or 1 } end end
+	local function blueprint()
+		stack.set_stack{ name = "blueprint" }
+		stack.set_blueprint_entities{ { entity_number = 1, name = "small-lamp", position = { 0.5, 0.5 } } }
+	end
+	local none = function() end
+	--- the window opens: an empty hand, plain items, a storage cell and an encoded pattern (quick insert first)
+	case("empty hand", none, nil, true)
+	case("iron plate", item("iron-plate", 50), nil, true)
+	case("module", item("speed-module", 5), nil, true)
+	case("storage cell", item("me-1k-storage-cell"), nil, true)
+	case("blank pattern", item("me-blank-pattern", 5), nil, true)
+	case("repair pack, block not damaged", item("repair-pack", 5), nil, true)
+	--- it does not: tools, wires, ghosts, items being built
+	case("blueprint", blueprint, { blueprint = true }, false)
+	case("blueprint (stack only)", blueprint, nil, false)
+	case("empty blueprint", item("blueprint"), nil, false)
+	case("blueprint book", function()
+		stack.set_stack{ name = "blueprint-book" }
+		local book = stack.get_inventory(defines.inventory.item_main)
+		book.insert{ name = "blueprint" }
+		book[1].set_blueprint_entities{ { entity_number = 1, name = "small-lamp", position = { 0.5, 0.5 } } }
+	end, { blueprint = true }, false)
+	case("empty blueprint book", item("blueprint-book"), nil, false)
+	case("deconstruction planner", item("deconstruction-planner"), nil, false)
+	case("upgrade planner", item("upgrade-planner"), nil, false)
+	case("copy-paste tool", item("copy-paste-tool"), nil, false)
+	case("cut tool", item("cut-paste-tool"), nil, false)
+	case("selection tool of another mod", item("zz-devcheck-selection-tool"), nil, false)
+	case("spidertron remote", item("spidertron-remote"), nil, false)
+	case("artillery targeting remote", item("artillery-targeting-remote"), nil, false)
+	case("red wire", item("red-wire"), nil, false)
+	case("green wire", item("green-wire"), nil, false)
+	case("copper wire", item("copper-wire"), nil, false)
+	case("rail planner", item("rail", 10), nil, false)
+	case("buildable item (belt)", item("transport-belt", 50), nil, false)
+	case("buildable ME block (fluix cable)", item("fluix-cable", 50), nil, false)
+	case("tile item (landfill)", item("landfill", 50), nil, false)
+	case("item with entity data (car)", item("car"), nil, false)
+	case("capsule (fish)", item("raw-fish", 5), nil, false)
+	case("capsule (grenade)", item("grenade", 5), nil, false)
+	case("repair pack, block damaged", item("repair-pack", 5), { damaged = true }, false)
+	--- the cursor flags without a readable stack
+	case("blueprint from the library", none, { blueprint = true }, false)
+	case("library record (book)", none, { record = true }, false)
+	case("ghost in the cursor", none, { ghost = true }, false)
+	case("wire being dragged", none, { wire = true }, false)
+	inv.destroy()
+	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL cursor: " .. p) end
+	log("DEVCHECK-RUNTIME-CURSOR " .. (#problems == 0 and "ok" or "failed") .. " (" .. n .. " cursor states)")
 end
 
 --- The terrain comes from the map seed: trees, rocks, cliffs, water and enemies can be anywhere. The
