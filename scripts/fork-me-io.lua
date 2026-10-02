@@ -13,8 +13,8 @@
 ---     fluid row (its tank is kept at the row's amount from the network). Several sides may share a row; four
 ---     fluids at most at once. Sides whose segment is that of an export side of the same interface import
 ---     nothing (a pipe loop). Mined: the sides' fluid goes into the network; destroyed: it is lost like a tank's.
----     Interfaces without fluid rows whose sides were empty look at them only every IDLE_VISITS + 1 visits, with no
----     pipe on any side only every IDLE_UNCONNECTED + 1 visits (building a fluid entity next to one wakes it).
+---     An interface that moved nothing is visited less and less often (issue #5); building a fluid entity next to
+---     one wakes it.
 ---   * The config and the sides are kept in script (rec.config, rec.sides), in blueprints (tag
 ---     fork_me_interface = { config, sides }), settings paste and clones.
 ---   * ME Import Bus / ME Export Bus: face one entity (their direction). Its kind is found once, when the
@@ -26,30 +26,32 @@
 ---     fluids mixed (keys: item name, "fluid/<name>"), split into an item and a fluid set when they are set
 ---     (import: none = everything, items and fluids; export: none = nothing). Kept in blueprints (tag
 ---     fork_me_bus), settings paste and clones. The windows are in scripts/fork-me-windows.lua.
---- The I/O step runs every STEP_TICKS ticks (shared with the storage buses: this module registers the interval
---- and calls the storage bus visits of scripts/fork-me-storagebus.lua and scripts/fork-me-fluid-storagebus.lua
---- first): at most ENDPOINTS_PER_STEP interfaces and buses, round robin; an interface handles at most
---- IFACE_SLOTS_PER_VISIT item slots per visit and its four sides, a bus moves BUS_ITEMS items and BUS_FLUID units.
---- State: storage.fork_me_io (records by unit number). GUI state lives in the GUI elements.
+--- Visits (issue #5, scripts/fork-me-schedule.lua): every interface and bus is due at a tick (s.q, rec.due); the
+--- on_tick handler of control.lua visits at most the setting "interface and bus visits per tick" of them. After a
+--- visit the next one is MIN_INTERVAL ticks later while the block moved all it was allowed to, later while it moves
+--- little (up to ACTIVE_INTERVAL), and twice as late each time it found nothing to do, up to the idle limit (a
+--- setting). A bus moves its speed (a setting, items and fluid per second) times the ticks since its last visit
+--- (at most MAX_CATCH_UP ticks' worth), so a bus that is visited less often moves more per visit; an interface
+--- handles IFACE_SLOTS_PER_VISIT item slots per 15 ticks since its last visit, and its four sides. A block waiting
+--- for a key the network does not hold (an export bus, an interface's row) wakes when the key comes in
+--- (N.wait_for); its settings, a rotation and a target built in front of it wake it too.
+--- State: storage.fork_me_io (records by unit number, the queue). GUI state lives in the GUI elements.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
 local T = require("scripts.fork-me-targets")
-local storage_bus = require("scripts.fork-me-storagebus")
-local fluid_storage_bus = require("scripts.fork-me-fluid-storagebus")
+local Sched = require("scripts.fork-me-schedule")
 
 local M = {}
 
-local STEP_TICKS = 15                -- 20 (autocrafting), 30 (molds) and 60 (terminal) are taken
-local ENDPOINTS_PER_STEP = 24
-local IFACE_SLOTS_PER_VISIT = 8
-local BUS_ITEMS = 64
-local BUS_FLUID = 1000               -- fluid units a bus moves per visit
+local STEP_TICKS = 15                -- the ticks a visit of the remote `step` stands for (what one visit was before)
+local MIN_INTERVAL = 15              -- ticks between two visits of a block that moved all it was allowed to
+local ACTIVE_INTERVAL = 60           -- ... of a block that moves something but less
+local MAX_CATCH_UP = 600             -- ticks of speed a visit may catch up at most
+local IFACE_SLOTS_PER_VISIT = 8      -- item slots an interface handles per STEP_TICKS since its last visit
 local MAX_FILTERS = 9
 local CONFIG_SLOTS = 9
 local MAX_AMOUNT = 1000000
-local IDLE_VISITS = 3                -- visits an idle interface skips its sides (fluid waits in the pipe)
-local IDLE_UNCONNECTED = 31          -- the same without any pipe on its sides (a built pipe wakes it at once)
 local EPS = 1e-6
 local FLUID_PREFIX = "fluid/"
 local IFACE_TAG, BUS_TAG = "fork_me_interface", "fork_me_bus"
@@ -61,11 +63,36 @@ for i, d in ipairs(SIDES) do SIDE_OF[d] = i end
 local function state()
 	local s = storage.fork_me_io
 	if not s then
-		s = { recs = {}, list = {}, cursor = 1 }
+		s = { recs = {}, list = {}, cursor = 1, q = Sched.new() }
 		storage.fork_me_io = s
 	end
 	return s
 end
+
+--- the queue of the visits; a save from before issue #5 gets one with every block due within a second
+local function queue(s)
+	if s.q then return s.q end
+	s.q = Sched.new()
+	for i, unit in ipairs(s.list) do
+		local rec = s.recs[unit]
+		if rec then
+			rec.due = nil
+			Sched.at(s.q, rec, unit, game.tick + 1 + (i - 1) % 60)
+		end
+	end
+	return s.q
+end
+
+--- visit the block at the next tick (its settings, its target or the network changed)
+local function wake(unit)
+	local s = storage.fork_me_io
+	local rec = s and s.recs[unit]
+	if not rec then return end
+	rec.iv = nil
+	Sched.wake(queue(s), rec, unit, game.tick + 1)
+end
+M.wake = wake
+N.wakers.io = wake
 
 local function kind(entity) return entity and entity.valid and N.kind_of(entity.name) end
 
@@ -86,6 +113,7 @@ local function register(s, entity)
 		rec = { entity = entity, kind = kind(entity), filters = {}, status = "ok" }
 		s.recs[unit] = rec
 		s.list[#s.list + 1] = unit
+		Sched.at(queue(s), rec, unit, game.tick + 1)
 	end
 	return rec
 end
@@ -205,7 +233,6 @@ local function refresh_exporting(rec)
 		if type((rec.sides or {})[d]) == "number" then any = true end
 	end
 	rec.exporting = any or nil
-	rec.fidle = 0
 end
 
 --- the config of an interface; the first call on a pre-R3 interface turns its slot filters into config
@@ -233,7 +260,6 @@ local function refresh_connections(rec)
 		if t.valid and #t.fluidbox.get_connections(1) > 0 then any = true break end
 	end
 	rec.fconn = any or nil
-	rec.fidle = 0
 end
 
 --- The four side tanks of an interface (found on its tile, created where missing). `fresh`: an interface of a save
@@ -304,39 +330,38 @@ local function tank_to_network(t, held, net)
 end
 M.tank_to_network = tank_to_network
 
---- keep a side's tank at its row's amount of the row's fluid
+--- keep a side's tank at its row's amount of the row's fluid; returns the status and the amount moved
 local function export_side(t, held, row, net)
+	local moved = 0
 	if held and held.name ~= row.name then              -- another fluid: into the network first
-		tank_to_network(t, held, net)
+		moved = tank_to_network(t, held, net)
 		held = t.fluidbox[1]
 		if held and held.amount <= EPS then held = nil end
-		if held and held.name ~= row.name then return "blocked" end
+		if held and held.name ~= row.name then return "blocked", moved end
 	end
 	local want = math.min(row.amount, volume()) - (held and held.amount or 0)
-	if want <= EPS then return "ok" end
+	if want <= EPS then return "ok", moved end
 	local avail = N.fluid_count(net, row.name)
-	if avail <= EPS then return "empty-network" end
+	if avail <= EPS then return "empty-network", moved end
 	local inserted = t.insert_fluid{ name = row.name, amount = math.min(want, avail) }
 	if inserted > 0 then
 		local got = N.extract_fluid(net, row.name, inserted)
 		--- a storage bus's segment had less than its snapshot: never duplicate
 		if got < inserted - EPS then t.remove_fluid{ name = row.name, amount = inserted - got } end
+		moved = moved + got
 	end
-	return "ok"
+	return "ok", moved
 end
 
---- one pass over the four sides; rec.fstatus[d] is what the window shows
+--- one pass over the four sides; rec.fstatus[d] is what the window shows. Returns the fluid moved (an export side
+--- whose fluid the network lacks waits for it: N.wait_for).
 local function interface_sides(rec, net, config)
-	if not rec.exporting and (rec.fidle or 0) > 0 then
-		rec.fidle = rec.fidle - 1
-		return
-	end
 	local tanks = ensure_tanks(rec)
-	if not tanks then return end
+	if not tanks then return 0 end
+	local moved = 0
 	local sides = rec.sides or {}
 	local fstatus = rec.fstatus or {}
 	rec.fstatus = fstatus
-	local busy = false
 	local exports                                         -- segment ids of the export sides (a loop check)
 	for d = 1, #SIDES do
 		local t = tanks[d]
@@ -346,10 +371,11 @@ local function interface_sides(rec, net, config)
 		if setting == "off" then
 			fstatus[d] = "off"
 		elseif type(setting) == "number" and is_fluid_row(config[setting]) then
-			busy = true
-			fstatus[d] = export_side(t, held, config[setting], net)
+			local why, n = export_side(t, held, config[setting], net)
+			fstatus[d] = why
+			moved = moved + n
+			if why == "empty-network" then N.wait_for(net, FLUID_PREFIX .. config[setting].name, "io", rec.entity.unit_number, true) end
 		elseif held then
-			busy = true
 			if rec.exporting and not exports then
 				exports = {}
 				for e = 1, #SIDES do
@@ -363,27 +389,30 @@ local function interface_sides(rec, net, config)
 			if id and exports[id] then
 				fstatus[d] = "loop"
 			else
-				local _, why = tank_to_network(t, held, net)
+				local n, why = tank_to_network(t, held, net)
 				fstatus[d] = why
+				moved = moved + n
 			end
 		else
 			fstatus[d] = "import"
 		end
 	end
-	rec.fidle = busy and 0 or (rec.fconn and IDLE_VISITS or IDLE_UNCONNECTED)
+	return moved
 end
 
 --- One visit: every configured item is kept at its amount (filled from the network, the surplus taken back),
---- the other items are imported (at most IFACE_SLOTS_PER_VISIT operations); then the four sides.
-function M.interface_step(rec)
+--- the other items are imported (at most IFACE_SLOTS_PER_VISIT operations per STEP_TICKS since the last visit,
+--- `dt`); then the four sides. Returns the items and fluid moved and whether the operations ran out.
+function M.interface_step(rec, dt)
 	local e = rec.entity
 	local config = config_of(rec)
 	local net = N.active_of(e)
 	if not net then
 		local _, why = N.usable(N.network_of(e))
 		rec.status = why or "no-network"
-		return 0
+		return 0, false
 	end
+	local max_ops = math.max(IFACE_SLOTS_PER_VISIT, math.floor(IFACE_SLOTS_PER_VISIT * math.min(dt or STEP_TICKS, MAX_CATCH_UP) / STEP_TICKS))
 	local inv = e.get_inventory(defines.inventory.chest)
 	local ops, moved = 0, 0
 	local kept = {}
@@ -395,7 +424,8 @@ function M.interface_step(rec)
 			local have = inv.get_item_count{ name = c.name, quality = c.quality }
 			if have < c.amount then
 				local got = N.extract_to(net, inv, key, c.amount - have)
-				if got > 0 then moved = moved + got ops = ops + 1 end
+				if got > 0 then moved = moved + got ops = ops + 1
+				elseif N.count_key(net, key) <= 0 then N.wait_for(net, key, "io", e.unit_number, true) end
 			elseif have > c.amount then
 				local can = N.can_insert(net, c.name, c.quality, have - c.amount)
 				local taken = can > 0 and inv.remove{ name = c.name, quality = c.quality, count = can } or 0
@@ -411,7 +441,7 @@ function M.interface_step(rec)
 	local start = rec.slot or 1
 	local size = #inv
 	for k = 0, size - 1 do
-		if ops >= IFACE_SLOTS_PER_VISIT then rec.slot = (start - 1 + k) % size + 1 break end
+		if ops >= max_ops then rec.slot = (start - 1 + k) % size + 1 break end
 		local i = (start - 1 + k) % size + 1
 		local stack = inv[i]
 		if stack.valid_for_read and not kept[N.key_of(stack.name, stack.quality.name)] then
@@ -419,10 +449,10 @@ function M.interface_step(rec)
 			if n then moved = moved + n ops = ops + 1 end
 		end
 	end
-	if ops < IFACE_SLOTS_PER_VISIT then rec.slot = 1 end
-	interface_sides(rec, net, config)
+	if ops < max_ops then rec.slot = 1 end
+	moved = moved + interface_sides(rec, net, config)
 	rec.status = "ok"
-	return moved
+	return moved, ops >= max_ops
 end
 
 --- the config: { [i] = { name, quality, amount } or { type = "fluid", name, amount } }, i = 1 .. CONFIG_SLOTS (a copy)
@@ -453,6 +483,7 @@ function M.set_interface_config(entity, config, sides)
 	rec.config = clean_config(config)
 	rec.sides = clean_sides(sides or rec.sides, rec.config)
 	refresh_exporting(rec)
+	wake(entity.unit_number)
 	return true
 end
 
@@ -466,6 +497,7 @@ function M.set_interface_side(entity, side, value)
 	elseif type(value) == "number" and is_fluid_row(config[value]) then rec.sides[side] = value
 	else rec.sides[side] = nil end
 	refresh_exporting(rec)
+	wake(entity.unit_number)
 	return true
 end
 
@@ -636,37 +668,80 @@ local function target_of(rec)
 	return nil
 end
 
---- the item part of an import visit: up to BUS_ITEMS from the output inventory
-local function import_items(rec, net, t)
+local by_count_cache = {}
+--- Items the import bus moves by count (issue #5): plain items that cannot be damaged, spoil or carry data, so
+--- every stack of them is the same and the network takes them by name (one check per item type, not per stack).
+--- Decided per prototype and quality, cached per load.
+local function by_count(name, quality)
+	local k = name .. "@" .. quality
+	local v = by_count_cache[k]
+	if v == nil then
+		local p = prototypes.item[name]
+		v = p ~= nil and p.type == "item" and not p.place_result and p.get_spoil_ticks(quality) <= 0
+		by_count_cache[k] = v
+	end
+	return v
+end
+
+--- the item part of an import visit: up to `cap` from the output inventory. Plain items by count (one
+--- get_contents, one remove per item type), the others stack by stack (their data, damage or spoilage decides).
+local function import_items(rec, net, t, cap)
 	local inv = t.get_inventory(rec.t_inv)
 	if not inv then return 0 end
 	local all, set = rec.all, rec.iset
-	local moved = 0
-	for i = 1, #inv do
-		if moved >= BUS_ITEMS then break end
-		local stack = inv[i]
-		if stack.valid_for_read and (all or set[stack.name]) then
-			local n = N.insert_partial(net, stack, BUS_ITEMS - moved)
-			if n then moved = moved + n end
+	local moved, stacks = 0, false
+	for _, c in pairs(inv.get_contents()) do
+		if moved >= cap then break end
+		local q = c.quality or "normal"
+		if all or set[c.name] then
+			if by_count(c.name, q) then
+				local removed = inv.remove{ name = c.name, quality = q, count = math.min(c.count, cap - moved) }
+				if removed > 0 then
+					local stored = N.insert(net, c.name, q, removed)
+					if stored < removed then                  -- the network is full: the rest goes back
+						local back = inv.insert{ name = c.name, quality = q, count = removed - stored }
+						if back < removed - stored then
+							t.surface.spill_item_stack{ position = t.position, stack = { name = c.name, quality = q, count = removed - stored - back } }
+						end
+					end
+					moved = moved + stored
+				end
+			else
+				stacks = true
+			end
+		end
+	end
+	if stacks then
+		for i = 1, #inv do
+			if moved >= cap then break end
+			local stack = inv[i]
+			if stack.valid_for_read and (all or set[stack.name]) and not by_count(stack.name, stack.quality.name) then
+				local n = N.insert_partial(net, stack, cap - moved)
+				if n then moved = moved + n end
+			end
 		end
 	end
 	return moved
 end
 
---- the item part of an export visit: the filtered items into the input inventory
-local function export_items(rec, net, t)
+--- the item part of an export visit: the filtered items into the input inventory, up to `cap`; a filter the network
+--- has none of waits for it (the bus wakes when it comes in)
+local function export_items(rec, net, t, cap)
 	local inv = t.get_inventory(rec.t_inv)
 	if not inv then return 0 end
 	local machine = t.type == "assembling-machine" or t.type == "furnace"
 	local moved = 0
 	for _, name in ipairs(rec.filters) do
-		if moved >= BUS_ITEMS then break end
+		if moved >= cap then break end
 		local proto = prototypes.item[name]
 		if proto then
-			local want = BUS_ITEMS - moved
+			local want = cap - moved
 			if machine then want = math.min(want, proto.stack_size - inv.get_item_count(name)) end
 			if want > 0 then
-				moved = moved + N.extract_to(net, inv, N.key_of(name, "normal"), want)
+				local key = N.key_of(name, "normal")
+				local got = N.extract_to(net, inv, key, want)
+				moved = moved + got
+				if got <= 0 and N.count_key(net, key) <= 0 then N.wait_for(net, key, "io", rec.entity.unit_number, true) end
 			end
 		end
 	end
@@ -675,20 +750,22 @@ end
 
 --- The fluid part of a visit: the import bus empties the output boxes of a machine (any box of a tank) into the
 --- network, the export bus fills its filtered fluids into the entity (insert_fluid: the machine's input boxes, a
---- tank), at the fluid's default temperature. Up to BUS_FLUID units. Returns the units moved.
-function M.fluid_bus_step(rec, net, t)
+--- tank), at the fluid's default temperature. Up to `cap` units (by default what one visit moved before issue #5).
+--- Returns the units moved.
+function M.fluid_bus_step(rec, net, t, cap)
+	cap = cap or Sched.setting("bus_fluid") * STEP_TICKS / 60
 	local fb = t.fluidbox
 	local moved = 0
 	if IMPORTS[rec.kind] then
 		local all, set = rec.all, rec.fset
 		for i = 1, #fb do
-			if moved >= BUS_FLUID then break end
+			if moved >= cap then break end
 			local f = fb[i]
 			if f and f.amount > EPS and (all or set[f.name]) then
 				local p = fb.get_prototype(i)
 				if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
 				if not (p and p.production_type == "input") then
-					local take = N.can_insert_fluid(net, f.name, math.min(f.amount, BUS_FLUID - moved))
+					local take = N.can_insert_fluid(net, f.name, math.min(f.amount, cap - moved))
 					if take > EPS then
 						local left = f.amount - take
 						fb[i] = left > EPS and { name = f.name, amount = left, temperature = f.temperature } or nil
@@ -703,8 +780,11 @@ function M.fluid_bus_step(rec, net, t)
 		end
 	else
 		for _, name in ipairs(rec.ffilters) do
-			if moved >= BUS_FLUID then break end
-			local avail = math.min(N.fluid_count(net, name), BUS_FLUID - moved)
+			if moved >= cap then break end
+			local avail = math.min(N.fluid_count(net, name), cap - moved)
+			if avail <= EPS and N.fluid_count(net, name) <= EPS then
+				N.wait_for(net, FLUID_PREFIX .. name, "io", rec.entity.unit_number, true)
+			end
 			if avail > EPS then
 				local inserted = t.insert_fluid{ name = name, amount = avail }
 				if inserted > 0 then
@@ -719,27 +799,33 @@ function M.fluid_bus_step(rec, net, t)
 	return moved
 end
 
-function M.bus_step(rec)
+--- One visit of a bus. `dt`: the ticks since its last visit (nil: one visit of before issue #5, STEP_TICKS): it moves
+--- its speed times that, at most MAX_CATCH_UP ticks' worth. Returns what it moved and whether that was all it was
+--- allowed to move.
+function M.bus_step(rec, dt)
 	local e = rec.entity
 	local net = N.active_of(e)
 	if not net then
 		local _, why = N.usable(N.network_of(e))
 		rec.status = why or "no-network"
-		return 0
+		return 0, false
 	end
 	local t = target_of(rec)
-	if not t then rec.status = "no-target" return 0 end
+	if not t then rec.status = "no-target" return 0, false end
 	if not rec.iset then M.set_bus_filters(e, rec.filters) end          -- a record of a save before issue #3
+	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
+	local icap = math.max(1, math.floor(Sched.setting("bus_items") * ticks / 60))
+	local fcap = Sched.setting("bus_fluid") * ticks / 60
 	local import = IMPORTS[rec.kind]
-	local moved = 0
+	local items, fluid = 0, 0
 	if rec.t_inv and (rec.all or #rec.filters > 0) then
-		moved = import and import_items(rec, net, t) or export_items(rec, net, t)
+		items = import and import_items(rec, net, t, icap) or export_items(rec, net, t, icap)
 	end
 	if rec.t_fluid and (rec.all or #rec.ffilters > 0) then
-		moved = moved + M.fluid_bus_step(rec, net, t)
+		fluid = M.fluid_bus_step(rec, net, t, fcap)
 	end
 	rec.status = "ok"
-	return moved
+	return items + fluid, items >= icap or fluid >= fcap - EPS
 end
 
 --- Set the filters: a list of keys (item name, "fluid/<name>"; a plain name that is no item but a fluid is that
@@ -766,6 +852,7 @@ function M.set_bus_filters(entity, filters)
 	end
 	rec.keys, rec.filters, rec.ffilters, rec.iset, rec.fset = keys, items, fl, iset, fset
 	rec.all = IMPORTS[k] and #keys == 0 or nil
+	wake(entity.unit_number)
 	return true
 end
 
@@ -808,29 +895,38 @@ end
 --- step, events
 --------------------------------------------------------------------------------
 
-local function on_step()
-	storage_bus.on_step()                     -- the storage buses read their inventories (bounded, round robin)
-	fluid_storage_bus.on_step()               -- the storage buses on fluid read their segments (bounded, round robin)
+local function rec_of(unit)
 	local s = storage.fork_me_io
-	if not s then return end
-	local n = #s.list
-	if n == 0 then return end
-	for _ = 1, math.min(ENDPOINTS_PER_STEP, n) do
-		if s.cursor > #s.list then s.cursor = 1 end
-		local unit = s.list[s.cursor]
-		local rec = s.recs[unit]
-		if rec and rec.entity.valid then
-			if rec.kind == "interface" then M.interface_step(rec) else M.bus_step(rec) end
-			s.cursor = s.cursor + 1
-		else
-			if rec then destroy_tanks(rec) end    -- an interface removed without an event
-			drop(s, unit)
-		end
-		if #s.list == 0 then break end
-	end
+	return s.recs[unit]
 end
 
-script.on_nth_tick(STEP_TICKS, on_step)
+--- one scheduled visit: the block moves what its speed and the ticks since its last visit allow, and is due again
+--- after an interval that follows what it did (Sched.interval)
+local function visit(rec, unit)
+	local s = storage.fork_me_io
+	local e = rec.entity
+	if not e.valid then
+		destroy_tanks(rec)                    -- an interface removed without an event
+		drop(s, unit)
+		return
+	end
+	local now = game.tick
+	local dt = now - (rec.last or (now - MIN_INTERVAL))
+	rec.last = now
+	local moved, full
+	if rec.kind == "interface" then moved, full = M.interface_step(rec, dt) else moved, full = M.bus_step(rec, dt) end
+	--- (0.2.0 visited 24 blocks per 15 ticks: an idle block never waits longer than that cycle)
+	local idle = Sched.idle_limit(Sched.setting("idle"), #s.list, 24 / 15, MIN_INTERVAL)
+	rec.iv = Sched.interval(rec.iv, moved, full, MIN_INTERVAL, ACTIVE_INTERVAL, idle)
+	Sched.at(s.q, rec, unit, now + rec.iv)
+end
+
+--- every tick (control.lua): the interfaces and buses that are due, at most the setting's visits per tick
+function M.on_tick(tick)
+	local s = storage.fork_me_io
+	if not s then return end
+	Sched.run(queue(s), tick, Sched.setting("io"), rec_of, visit)
+end
 
 --- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
 function M.on_built(entity, tags, source)
@@ -846,7 +942,9 @@ function M.on_built(entity, tags, source)
 	end
 	local k = kind(entity)
 	if k ~= "interface" and not BUSES[k] then
-		if entity and entity.valid and T.has_fluid_boxes(entity) then M.wake_near(entity) end
+		if entity and entity.valid and (T.has_fluid_boxes(entity) or T.OUTPUT[entity.type] or T.INPUT[entity.type]) then
+			M.wake_near(entity)
+		end
 		return
 	end
 	local rec = register(state(), entity)
@@ -870,22 +968,34 @@ function M.on_built(entity, tags, source)
 	end
 end
 
-local interface_names
---- a fluid entity was built: the interfaces next to it look at their sides again at their next visit
+local block_names
+--- An entity was built next to blocks: the interfaces next to a fluid entity look at their sides again, the buses
+--- facing it take it as their target; both are visited at the next tick.
 function M.wake_near(entity)
 	local s = storage.fork_me_io
 	if not s then return end
-	if not interface_names then
-		interface_names = {}
+	if not block_names then
+		block_names = {}
 		for _, name in pairs(N.node_names()) do
-			if N.kind_of(name) == "interface" then interface_names[#interface_names + 1] = name end
+			local k = N.kind_of(name)
+			if k == "interface" or BUSES[k] then block_names[#block_names + 1] = name end
 		end
 	end
 	local b = entity.bounding_box
-	for _, i in pairs(entity.surface.find_entities_filtered{ name = interface_names,
+	for _, i in pairs(entity.surface.find_entities_filtered{ name = block_names,
 		area = { { b.left_top.x - 1, b.left_top.y - 1 }, { b.right_bottom.x + 1, b.right_bottom.y + 1 } } }) do
 		local rec = s.recs[i.unit_number]
-		if rec and rec.tanks then refresh_connections(rec) end
+		if rec then
+			if rec.kind == "interface" then
+				if rec.tanks then refresh_connections(rec) wake(i.unit_number) end
+			else
+				local f = T.front(i)
+				if f[1] > b.left_top.x and f[1] < b.right_bottom.x and f[2] > b.left_top.y and f[2] < b.right_bottom.y then
+					rec.target = nil
+					wake(i.unit_number)
+				end
+			end
+		end
 	end
 end
 
@@ -908,7 +1018,10 @@ end
 function M.on_rotated(entity)
 	local s = storage.fork_me_io
 	local rec = s and entity and entity.valid and s.recs[entity.unit_number]
-	if rec then rec.target = nil end
+	if rec then
+		rec.target = nil
+		wake(entity.unit_number)
+	end
 end
 
 function M.on_entity_settings_pasted(event)
@@ -941,8 +1054,8 @@ end
 function M.on_configuration_changed()
 	local s = state()
 	local old = s.recs
-	s.recs, s.list, s.cursor = {}, {}, 1
-	VOLUME, interface_names = nil, nil
+	s.recs, s.list, s.cursor, s.q = {}, {}, 1, Sched.new()
+	VOLUME, block_names, by_count_cache = nil, nil, {}
 	local names = {}
 	for _, name in pairs(N.node_names()) do
 		local k = N.kind_of(name)
@@ -974,11 +1087,16 @@ remote.add_interface("gregtorio-me-io", {
 		local k = kind(entity)
 		if not k then return 0 end
 		local rec = register(state(), entity)
-		if k == "interface" then
-			rec.fidle = 0
-			return M.interface_step(rec)
-		end
-		return M.bus_step(rec)
+		local moved
+		if k == "interface" then moved = M.interface_step(rec) else moved = M.bus_step(rec) end
+		return moved
+	end,
+	--- issue #5: when a block is visited next: { due, interval, last } (the tick of its last visit)
+	schedule = function(entity)
+		local s = storage.fork_me_io
+		local rec = s and entity and entity.valid and s.recs[entity.unit_number]
+		if not rec then return nil end
+		return { due = rec.due, interval = rec.iv, last = rec.last }
 	end,
 	set_interface_config = function(entity, config, sides) return M.set_interface_config(entity, config, sides) end,
 	get_interface_config = function(entity) return M.get_interface_config(entity) end,

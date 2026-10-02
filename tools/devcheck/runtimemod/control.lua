@@ -732,6 +732,7 @@ local function tests_running()
 	check(storage.tiers38 and storage.tiers38.done, "crafting CPU tiers")
 	check(storage.circuit38 and storage.circuit38.done, "circuit interface")
 	check(storage.settings38 and storage.settings38.done, "settings copy")
+	check(storage.sched_test and storage.sched_test.done, "ME scheduler")
 	check(storage.cursor_t and storage.cursor_t.done, "open key and cursor")
 	check(storage.paste_t and storage.paste_t.done, "recipe paste")
 	return running
@@ -1574,6 +1575,7 @@ script.on_nth_tick(10, function()
 	if not (storage.tiers38 and storage.tiers38.done) then cpu_tier_test() end
 	if not (storage.circuit38 and storage.circuit38.done) then circuit_test() end
 	settings_test()
+	if not (storage.sched_test and storage.sched_test.done) then scheduler_test() end
 	cursor_test()
 	paste_test()
 	done_test()
@@ -2361,7 +2363,8 @@ end
 --- against the cells (insert and extract), read only and write only, a stale snapshot (an extract and a terminal
 --- take find only what is really there), two buses on one chest, a bus facing an ME block, a chest removed with
 --- and without an event, a removed bus, the settings in a blueprint tag, on a revived ghost, by paste and clone,
---- the window data; then an inserter puts wood into a chest: the network must show it within one visit cycle.
+--- the window data; then an inserter puts wood into a chest: the network must show it within the storage bus idle
+--- limit (issue #5: an idle bus backs off up to it).
 --------------------------------------------------------------------------------
 
 local SBX, SBY = 300, 125
@@ -2409,7 +2412,10 @@ function storage_bus_test()
 		local problems = st.problems
 		if not st.seen and c7 and c7.get_item_count("wood") > 0 then st.seen = game.tick end
 		local buses = s.count_entities_filtered{ name = "me-storage-bus" }
-		local cycle = 15 * math.ceil(buses / 8) + 10           -- visit cycle plus this test's 10 tick granularity
+		--- issue #5: an idle bus reads its chest at least every storage bus idle limit ticks (the queue may hold it back
+		--- one tick per budget of visits), plus this test's 10 tick granularity
+		local cycle = settings.global["me-network-storage-bus-idle-limit"].value
+			+ math.ceil(buses / settings.global["me-network-storage-bus-visits-per-tick"].value) + 10
 		if st.seen and count("wood") == 1 then
 			if game.tick - st.seen > cycle then problems[#problems + 1] = "wood seen after " .. (game.tick - st.seen) .. " ticks (cycle " .. cycle .. ")" end
 			st.done = true
@@ -2970,7 +2976,8 @@ function fluid_storage_bus_test()
 		end
 		if not st.seen and (seg(t5).water or 0) > 0 then st.seen = game.tick end
 		local buses = (remote.call(NET, "network", t) or {}).fluid_storage_buses or 0   -- the fluid side's visit list
-		local cycle = 15 * math.ceil(buses / 8) + 10           -- visit cycle plus this test's 10 tick granularity
+		local cycle = settings.global["me-network-storage-bus-idle-limit"].value
+			+ math.ceil(buses / settings.global["me-network-storage-bus-visits-per-tick"].value) + 10   -- (issue #5)
 		if st.seen and not st.pump_done and (info(b5).contents or {})["fluid/water"] then
 			st.pump_done = game.tick - st.seen
 			expect(st.pump_done <= cycle, "pump: water seen after " .. st.pump_done .. " ticks (cycle " .. cycle .. ")")
@@ -3703,6 +3710,169 @@ function settings_test()
 	report38("SETTINGS", "settings copy", problems, #problems == 0 and "blueprint, paste and clone of 3 entity types" or nil)
 end
 
+--------------------------------------------------------------------------------
+--- the scheduler (me-network issue #5, scripts/fork-me-schedule.lua): an export bus whose item the network lacks
+--- sleeps and wakes when the item comes in; an import bus facing nothing takes a chest built in front of it at its
+--- next tick; a full storage bus is passed by until its next read (then it takes items again); 300 random inserts and
+--- extracts keep the network's totals equal to the cells plus the storage bus's chest, and every count equal to what
+--- went in minus what came out.
+--------------------------------------------------------------------------------
+
+local SCX, SCY = 380, 40
+local SB = "gregtorio-me-storagebus"
+
+function setup_scheduler_test(s)
+	local fails = {}
+	local function place(name, x, y, extra) return me_place(s, fails, "scheduler", name, x, y, extra) end
+	local eei = place("electric-energy-interface", SCX + 12.5, SCY + 6.5)
+	if eei then
+		eei.power_production = 1e6
+		eei.electric_buffer_size = 1e7
+	end
+	place("substation", SCX + 13, SCY + 2)
+	local north = { direction = defines.direction.north }
+	local members = { place("me-network-controller", SCX + 6, SCY),
+		me_drive(s, fails, "scheduler", SCX + 8.5, SCY + 4.5, { ["iron-plate"] = 1000, ["iron-gear-wheel"] = 500 }),
+		place("me-export-bus", SCX + 2.5, SCY + 0.5, north),              -- E1: copper plates into C1
+		place("me-import-bus", SCX + 3.5, SCY + 0.5, north),              -- I2: nothing in front yet
+		place("me-storage-bus", SCX + 4.5, SCY + 0.5, north) }            -- S1: chest C3, priority 10
+	place("iron-chest", SCX + 2.5, SCY - 0.5)
+	place("iron-chest", SCX + 4.5, SCY - 0.5)
+	me_connect(fails, "scheduler", members)
+	if members[3] then remote.call(IO, "set_bus_filters", members[3], { "copper-plate" }) end
+	if members[5] then remote.call(SB, "set_settings", members[5], { priority = 10 }) end
+	return fails
+end
+
+function scheduler_test()
+	local s = game.surfaces[1]
+	if game.tick < 120 then return end
+	local function find(name, x, y) return s.find_entity(name, { SCX + x, SCY + y }) end
+	local ctrl = find("me-network-controller", 6, 0)
+	local e1, i2, s1 = find("me-export-bus", 2.5, 0.5), find("me-import-bus", 3.5, 0.5), find("me-storage-bus", 4.5, 0.5)
+	local c1, c3 = find("iron-chest", 2.5, -0.5), find("iron-chest", 4.5, -0.5)
+	local st = storage.sched_test
+	if not st then
+		st = { phase = 1, problems = {} }
+		storage.sched_test = st
+	end
+	local problems = st.problems
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish(note)
+		st.done = true
+		me_report("SCHEDULER", "ME scheduler", problems, note)
+	end
+	if not (ctrl and e1 and i2 and s1 and c1 and c3) then
+		problems[#problems + 1] = "a block of the test is missing"
+		finish()
+		return
+	end
+	local function count(name) return remote.call(NET, "count", ctrl, name) end
+	if st.phase == 1 then
+		--- the export bus found no copper: it waits for it
+		expect(c1.get_item_count("copper-plate") == 0, "copper in C1 before there was any")
+		local sch = remote.call(IO, "schedule", e1)
+		if not (sch and sch.due) then
+			problems[#problems + 1] = "the export bus is not scheduled"
+		elseif sch.due <= game.tick + 1 then
+			return                                                  -- due anyway: try again at the next round
+		end
+		remote.call(NET, "insert", ctrl, "copper-plate", 50)
+		sch = remote.call(IO, "schedule", e1)
+		expect(sch and sch.due == game.tick + 1, "the export bus was not woken by its copper (due " .. tostring(sch and sch.due)
+			.. " at tick " .. game.tick .. ")")
+		st.t, st.phase = game.tick, 2
+	elseif st.phase == 2 then
+		if c1.get_item_count("copper-plate") > 0 then
+			st.woken = game.tick - st.t
+			expect(st.woken <= 20, "export bus woke after " .. st.woken .. " ticks")
+			--- a chest with wood built in front of the import bus
+			local c2 = s.create_entity{ name = "iron-chest", position = { SCX + 3.5, SCY - 0.5 }, force = "player", raise_built = true }
+			if c2 then c2.insert{ name = "wood", count = 100 } end
+			local sch = remote.call(IO, "schedule", i2)
+			expect(sch and sch.due == game.tick + 1, "the import bus was not woken by the chest built in front of it (due "
+				.. tostring(sch and sch.due) .. " at tick " .. game.tick .. ")")
+			st.t, st.phase = game.tick, 3
+		elseif game.tick - st.t > 30 then
+			problems[#problems + 1] = "the export bus never woke for its copper"
+			st.phase = 3
+			st.t = game.tick
+		end
+	elseif st.phase == 3 then
+		if count("wood") >= 100 then
+			st.built = game.tick - st.t
+			--- 100 wood at the bus speed (256 items per second) are 24 ticks; the first visit after the wake has only
+			--- the ticks since the bus's last idle visit to spend, the next one comes an active interval (15 ticks)
+			--- later, and this test looks every 10 ticks: 50 at most. (The wake itself is checked above.)
+			expect(st.built <= 50, "the import bus took the built chest's wood after " .. st.built .. " ticks")
+			st.phase = 4
+		elseif game.tick - st.t > 60 then
+			problems[#problems + 1] = "the import bus never took the wood of the chest built in front of it (" .. count("wood") .. ")"
+			st.phase = 4
+		end
+	elseif st.phase == 4 then
+		--- a full storage bus is passed by until its next read
+		local inv = c3.get_inventory(defines.inventory.chest)
+		inv.insert{ name = "iron-plate", count = 100 * #inv }
+		remote.call(SB, "visit", s1)
+		local full = c3.get_item_count("iron-plate")
+		local total = count("iron-plate")
+		local n = remote.call(NET, "insert", ctrl, "iron-plate", 10)
+		expect(n == 10 and count("iron-plate") == total + 10, "insert with a full storage bus: " .. n)
+		expect(c3.get_item_count("iron-plate") == full, "the full chest took plates")
+		inv.remove{ name = "iron-plate", count = 50 }               -- by hand: no event
+		remote.call(NET, "insert", ctrl, "iron-plate", 10)
+		expect(c3.get_item_count("iron-plate") == full - 50, "a full storage bus was asked again before its next read")
+		remote.call(SB, "visit", s1)
+		remote.call(NET, "insert", ctrl, "iron-plate", 10)
+		expect(c3.get_item_count("iron-plate") == full - 40, "after its read the storage bus (priority 10) did not take the plates: "
+			.. c3.get_item_count("iron-plate") .. " of " .. (full - 40))
+		st.phase = 5
+	elseif st.phase == 5 then
+		--- random inserts and extracts: every count is what went in minus what came out, and the totals are the
+		--- cells plus the storage bus's chest
+		local keys = { "iron-plate", "iron-gear-wheel", "copper-plate", "wood", "iron-plate@uncommon", "stone" }
+		local before, moved = {}, {}
+		for _, k in ipairs(keys) do before[k] = remote.call(NET, "contents", ctrl)[k] or 0 moved[k] = 0 end
+		local seed = 7
+		for _ = 1, 300 do
+			seed = (seed * 1103515245 + 12345) % 2147483648
+			local r = math.floor(seed / 65536)
+			local k = keys[r % #keys + 1]
+			local name, q = k:match("^([^@]+)@?(.*)$")
+			q = q ~= "" and q or "normal"
+			local n = math.floor(r / 7) % 120 + 1
+			if r % 2 == 0 then
+				moved[k] = moved[k] + remote.call(NET, "insert", ctrl, name, n, q)
+			else
+				moved[k] = moved[k] - remote.call(NET, "extract", ctrl, name, n, q)
+			end
+		end
+		remote.call(SB, "visit", s1)
+		local contents = remote.call(NET, "contents", ctrl)
+		local cells = {}
+		local d = find("me-drive", 8.5, 4.5)
+		for _, cell in pairs(remote.call(NET, "drive", d)) do
+			for k, n in pairs(cell.items) do cells[k] = (cells[k] or 0) + n end
+		end
+		for _, it in pairs(c3.get_inventory(defines.inventory.chest).get_contents()) do
+			local k = (it.quality or "normal") == "normal" and it.name or (it.name .. "@" .. it.quality)
+			cells[k] = (cells[k] or 0) + it.count
+		end
+		for _, k in ipairs(keys) do
+			expect((contents[k] or 0) == before[k] + moved[k], k .. ": " .. tostring(contents[k]) .. " in the network, "
+				.. (before[k] + moved[k]) .. " expected")
+			expect((cells[k] or 0) == (contents[k] or 0), k .. ": cells and chest hold " .. tostring(cells[k]) .. ", the totals say "
+				.. tostring(contents[k]))
+		end
+		for k, n in pairs(contents) do
+			if not k:find("^fluid/") and (cells[k] or 0) ~= n then problems[#problems + 1] = k .. ": totals " .. n .. ", storage " .. tostring(cells[k]) end
+		end
+		finish("woken after " .. tostring(st.woken) .. " ticks, built chest taken after " .. tostring(st.built) .. " ticks")
+	end
+end
+
+--------------------------------------------------------------------------------
 --- The open key with a tool in the cursor (G.click_opens, fork-me-gui.lua): an ME window opens on a click exactly
 --- when the game would open a chest's window. The harness has no player, so the decision is fed real item stacks
 --- of every cursor tool (and the cursor flags a stack cannot hold: a library blueprint, a ghost, a wire being
@@ -4091,6 +4261,7 @@ script.on_init(function()
 	for _, f in pairs(setup_fluid_storage_bus_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_unified_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_issue38_tests(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_scheduler_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_paste_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end

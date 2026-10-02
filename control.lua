@@ -28,6 +28,8 @@ require("scripts.fork-me-windows")
 local fork_paste = require("scripts.fork-me-recipe-paste")
 --- the one-time hand-over of the state of a Gregtorio Continued save
 local handover = require("scripts.fork-me-handover")
+--- the scheduler's settings (issue #5)
+local sched = require("scripts.fork-me-schedule")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -37,8 +39,9 @@ fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_sbus.tag_blueprin
 local function on_built(entity, tags, event)
 	if fork_unify.on_built(entity, tags) then return end      -- an old fluid block (or its ghost): replaced
 	fork_net.on_built(entity, event)
-	fork_io.on_built(entity, tags)
+	fork_io.on_built(entity, tags)                            -- (any other entity: the buses facing it wake)
 	fork_sbus.on_built(entity, tags)
+	if entity and entity.valid and not fork_net.kind_of(entity.name) then fork_sbus.wake_near(entity) end
 	fork_ae2.on_built(entity, tags)
 	fork_circuit.on_built(entity, tags)
 end
@@ -109,6 +112,20 @@ local function on_destroyed(event)
 end
 script.on_event(defines.events.on_entity_died, on_destroyed, REMOVED_FILTER)
 script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILTER)
+
+--- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
+--- interfaces and buses, storage buses, crafting jobs, provider rescans, level maintainers and circuit interfaces.
+--- The terminal's 60 tick step stays (windows, drive lights, the sweep).
+script.on_event(defines.events.on_tick, function(event)
+	local tick = event.tick
+	fork_io.on_tick(tick)
+	fork_sbus.on_tick(tick)
+	fork_ae2.on_tick(tick)
+end)
+
+script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
+	if event.setting_type == "runtime-global" then sched.on_setting_changed() end
+end)
 
 --- a rotated import, export or storage bus faces another entity
 script.on_event(defines.events.on_player_rotated_entity, function(event)

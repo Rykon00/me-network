@@ -410,7 +410,7 @@ RUNTIME_TESTS = (
     ("MESTORAGEBUS", "ME storage bus test"), ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test"),
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
-    ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"),
+    ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
     ("DONE", "all tests reported"),
 )
@@ -480,7 +480,7 @@ def migrate(a):
         print(not_saved(log))
         return 1
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
-    print(f"old save with every old fluid block: {setup.group(1) if setup else 'no result'}")
+    print(f"old save (0.1.0: every old fluid block; 0.2.0 and later: every kind of block): {setup.group(1) if setup else 'no result'}")
     prepare_mods(with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
@@ -489,7 +489,7 @@ def migrate(a):
         print("  migration: " + line)
     unified = re.search(r"DEVCHECK-MIGRATE-UNIFIED (.*)", log)
     fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
-    print(f"the old fluid blocks after the update: {unified.group(1) if unified else 'no result'}")
+    print(f"the blocks after the update: {unified.group(1) if unified else 'no result'}")
     print(f"the fluid after the I/O steps: {fluids.group(1) if fluids else 'no result'}")
     fails = re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log)
     for f in fails:
@@ -515,19 +515,23 @@ PROFILE_WRAP = {
                                     "M.extract_to", "M.insert_fluid", "M.extract_fluid", "M.can_insert_fluid",
                                     "M.ext_sync", "M.contents", "M.plain_counts", "M.fluid_contents", "M.storable",
                                     "M.slow_step", "M.stats", "insert_key", "extract_key", "room_for", "ordered",
-                                    "recompute", "draw_leds", "add_node", "remove_node_graph", "update_power"],
+                                    "recompute", "draw_leds", "add_node", "remove_node_graph", "update_power",
+                                    "lookups", "holders", "extract_order", "moved_key"],
     "scripts/fork-me-io.lua": ["M.interface_step", "M.bus_step", "M.fluid_bus_step", "import_items", "export_items",
-                               "interface_sides", "tank_to_network", "export_side", "target_of", "ensure_tanks"],
-    "scripts/fork-me-storagebus.lua": ["M.visit", "M.on_step", "resolve", "ITEM.room", "ITEM.insert", "ITEM.count",
-                                       "ITEM.extract"],
-    "scripts/fork-me-fluid-storagebus.lua": ["M.visit", "M.on_step", "claim", "contents_of", "M.handlers.room",
+                               "interface_sides", "tank_to_network", "export_side", "target_of", "ensure_tanks",
+                               "M.on_tick", "visit"],
+    "scripts/fork-me-storagebus.lua": ["M.visit", "M.on_step", "M.on_tick", "resolve", "ITEM.room", "ITEM.insert",
+                                       "ITEM.count", "ITEM.extract"],
+    "scripts/fork-me-fluid-storagebus.lua": ["M.visit", "M.on_step", "M.on_tick", "claim", "contents_of", "M.handlers.room",
                                              "M.handlers.insert", "M.handlers.count", "M.handlers.extract"],
     "scripts/fork-me-autocraft.lua": ["job_step", "maintenance", "scan_provider", "refresh_providers",
                                       "rebuild_patterns", "make_plan", "M.start", "assign_cpus", "await_index",
                                       "on_arrival", "awaiting", "cpus_in", "collect_output", "find_crafter",
                                       "start_lease", "close_lease", "flush_pool", "M.active_job_for", "M.free_slot",
-                                      "M.job", "prune_finished", "job_network", "stock_of", "machine_idle"],
-    "scripts/fork-me-circuit.lua": ["on_step", "maintainer_step", "circuit_step", "network_signals"],
+                                      "M.job", "prune_finished", "job_network", "stock_of", "machine_idle", "M.on_tick",
+                                      "step_jobs", "rescan_plan"],
+    "scripts/fork-me-circuit.lua": ["on_step", "on_tick", "maintainer_step", "circuit_step", "network_signals",
+                                    "signals_of", "visit_maintainer", "visit_circuit"],
     "scripts/fork-me-gui.lua": ["M.refresh_all"],
 }
 # values captured at load time that must point at the wrapped function
@@ -536,23 +540,113 @@ PROFILE_REPOINT = {
 }
 
 
+def _tree_read(d):
+    """Factorio's property tree (mod-settings.dat): -> (version tuple, dict); integers as ("int", type, value)"""
+    import struct
+    pos = 9
+
+    def take(fmt):
+        nonlocal pos
+        v = struct.unpack_from(fmt, d, pos)[0]
+        pos += struct.calcsize(fmt)
+        return v
+
+    def string():
+        nonlocal pos
+        if take("<B"):
+            return ""
+        n = take("<B")
+        if n == 255:
+            n = take("<I")
+        v = d[pos:pos + n].decode("utf-8")
+        pos += n
+        return v
+
+    def tree():
+        t = take("<B")
+        take("<B")
+        if t == 0:
+            return None
+        if t == 1:
+            return bool(take("<B"))
+        if t == 2:
+            return take("<d")
+        if t == 3:
+            return string()
+        if t in (4, 5):
+            return {string(): tree() for _ in range(take("<I"))}
+        if t in (6, 7):
+            return ("int", t, take("<q" if t == 6 else "<Q"))
+        raise ValueError(f"mod-settings.dat: unknown type {t}")
+    return struct.unpack_from("<4H", d, 0), tree()
+
+
+def _tree_write(version, root):
+    import struct
+    out = bytearray(struct.pack("<4H", *version) + bytes([0]))
+
+    def string(v):
+        b = v.encode("utf-8")
+        out.extend(bytes([0]) + (bytes([len(b)]) if len(b) < 255 else bytes([255]) + struct.pack("<I", len(b))) + b)
+
+    def tree(v):
+        if v is None:
+            out.extend(bytes([0, 0]))
+        elif isinstance(v, bool):
+            out.extend(bytes([1, 0, 1 if v else 0]))
+        elif isinstance(v, tuple):
+            out.extend(bytes([v[1], 0]) + struct.pack("<q" if v[1] == 6 else "<Q", v[2]))
+        elif isinstance(v, (int, float)):
+            out.extend(bytes([2, 0]) + struct.pack("<d", float(v)))
+        elif isinstance(v, str):
+            out.extend(bytes([3, 0]))
+            string(v)
+        else:
+            out.extend(bytes([5, 0]) + struct.pack("<I", len(v)))
+            for k, x in v.items():
+                string(k)
+                tree(x)
+    tree(root)
+    return bytes(out)
+
+
+def runtime_settings(values):
+    """mod-settings.dat with exactly these runtime-global settings of this mod (the others at their defaults): a new
+    map takes them (bench --set); called with {} after the benchmark, so the other commands see the defaults"""
+    f = MODS / "mod-settings.dat"
+    version, root = _tree_read(f.read_bytes()) if f.exists() else ((2, 0, 0, 0), {})
+    root = root or {}
+    glob = {k: v for k, v in (root.get("runtime-global") or {}).items() if not k.startswith(NAME + "-")}
+    for k, v in values.items():
+        glob[k] = {"value": ("int", 6, int(v))}
+    root.setdefault("startup", {})
+    root["runtime-global"] = glob
+    root.setdefault("runtime-per-user", {})
+    f.write_bytes(_tree_write(version, root))
+
+
 def bench_mod_dir(cfg):
     """the benchmark mod (benchmod/) with its config.lua, as plain files in .devcheck/bench-mod"""
     dest = WORK / "bench-mod"
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(HERE / "benchmod", dest, ignore=shutil.ignore_patterns("profile*.lua"))
-    lines = ["return {"] + [f"  {k} = {json.dumps(v) if isinstance(v, str) else str(v).lower()}," for k, v in cfg.items()] + ["}"]
+    def lua(v):
+        if isinstance(v, dict):
+            return "{ " + ", ".join(f'["{k}"] = {lua(x)}' for k, x in v.items()) + " }"
+        return json.dumps(v) if isinstance(v, str) else str(v).lower()
+    lines = ["return {"] + [f"  {k} = {lua(v)}," for k, v in cfg.items()] + ["}"]
     (dest / "config.lua").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return dest
 
 
-def instrumented_copy():
-    """a copy of the working tree in .devcheck/bench-profile whose functions are timed (benchmod/profile.lua)"""
+def instrumented_copy(src=None):
+    """a copy of the working tree (or of `src`, an older version) in .devcheck/bench-profile whose functions are timed
+    (benchmod/profile.lua)"""
     dest = WORK / "bench-profile"
     if dest.exists():
         shutil.rmtree(dest)
-    shutil.copytree(ROOT, dest, ignore=shutil.ignore_patterns(".git", ".devcheck", "dist", "tools", "docs", "*.zip"))
+    shutil.copytree(src or ROOT, dest, ignore=shutil.ignore_patterns(".git", ".devcheck", "dist", "tools", "docs", "*.zip"))
     for rel, names in PROFILE_WRAP.items():
         f = dest / rel
         src = f.read_text(encoding="utf-8")
@@ -564,8 +658,9 @@ def instrumented_copy():
                 found = re.search(r"^function " + re.escape(name) + r"\(|^\s*" + last + r" = function\(", src, re.M)
             else:                                             # a local function (or a forward declared local)
                 found = re.search(r"^local function " + last + r"\(|^local " + last + r"$", src, re.M)
-            if not found:
-                sys.exit(f"profile: {name} not found in {rel}")
+            if not found:                                     # (the list covers versions before and after issue #5)
+                print(f"  profile: {name} is not in {rel}, not timed")
+                continue
             lines.append(f'{name} = __BENCH_WRAP("{mod}.{name}", {name})')
         block = "\n".join(lines) + "\n" + PROFILE_REPOINT.get(rel, "")
         i = src.rstrip().rfind("\nreturn M")
@@ -573,8 +668,9 @@ def instrumented_copy():
             sys.exit(f"profile: no `return M` at the end of {rel}")
         src = src[:i + 1] + block + src[i + 1:]
         # captured at load time: the circuit step hook, every on_nth_tick handler
-        src = src.replace("autocraft.step_hooks[#autocraft.step_hooks + 1] = on_step",
-                          "autocraft.step_hooks[#autocraft.step_hooks + 1] = function(s) return on_step(s) end")
+        for hook in ("on_step", "on_tick"):
+            src = src.replace(f"autocraft.step_hooks[#autocraft.step_hooks + 1] = {hook}",
+                              f"autocraft.step_hooks[#autocraft.step_hooks + 1] = function(...) return {hook}(...) end")
         f.write_text(src, encoding="utf-8")
     for f in (dest / "scripts").glob("*.lua"):
         src = f.read_text(encoding="utf-8")
@@ -625,8 +721,10 @@ def bench_scene(a, scene, size, profile=False):
     window = a.ticks
     cfg = {"scene": scene, "size": size, "warmup": BENCH_WARMUP, "window": window,
            "latency": scene == "me" and not profile, "profile": profile}
-    mod_dir = instrumented_copy() if profile else None
+    old = a.old_dir                                       # bench --from-ref: an older version of the mod
+    mod_dir = instrumented_copy(old) if profile else old
     prepare_mods(mod_dir=mod_dir, bench_dir=bench_mod_dir(cfg))
+    runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
     mapfile = WORK / f"bench-{scene}-{size}{'-profile' if profile else ''}.zip"
     log = factorio("--create", str(mapfile), *seed_args(a))
     err = load_errors(log) or not_saved(log)
@@ -690,7 +788,9 @@ def bench(a):
     sizes = [int(x) for x in a.sizes.split(",") if x]
     scenes = ["me"] + (["inserters", "robots"] if a.reference else [])
     results = {"factorio": (factorio("--version").splitlines() or ["?"])[0], "scenes": [], "profiles": [],
-               "window": a.ticks}
+               "window": a.ticks, "ref": a.from_ref or "working copy"}
+    a.old_dir = old_tree(a.from_ref) if a.from_ref else None
+    print("mod:", results["ref"])
     print(results["factorio"])
     problems = []
     for scene in scenes:
@@ -721,8 +821,10 @@ def bench(a):
         res = bench_scene(a, "me", size, profile=True)
         if res and res["runs"]:
             results["profiles"].append({"size": size, **res["runs"][0]})
+    runtime_settings({})
+    results["settings"] = a.set or []
     print_bench(results)
-    out = WORK / "bench-results.json"
+    out = WORK / ("bench-results" + ("-" + re.sub(r"[^A-Za-z0-9._-]", "_", a.from_ref) if a.from_ref else "") + ".json")
     out.write_text(json.dumps(results, indent=1), encoding="utf-8")
     print(f"\nresults: {out}")
     report("benchmark problems", problems)
@@ -800,6 +902,10 @@ def main():
     p.add_argument("--reference", action="store_true", help="also the native scenes: inserters and logistic robots")
     p.add_argument("--profile", metavar="SIZES", help="also profile these sizes with an instrumented copy (e.g. 1000,5000)")
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
+    p.add_argument("--from-ref", help="benchmark this git tag or commit instead of the working copy (the scenes and the "
+                   "harness stay the working copy's)")
+    p.add_argument("--set", action="append", metavar="NAME=VALUE",
+                   help="a runtime setting of me-network for the run, e.g. me-network-io-visits-per-tick=24 (repeatable)")
     a = ap.parse_args()
     if a.cmd == "bench":
         if a.ticks % BENCH_WARMUP:

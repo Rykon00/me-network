@@ -69,10 +69,12 @@ Terminals, CPUs and level maintainers keep their own power connection (lamps), a
   neighbours are found again by a breadth first search over the stored adjacency (no map access). If the
   graph is split, the part with the most members keeps the id, the others get new ids.
 * An entity removed without any event (`destroy()` by another mod) is noticed by a sweep in the terminal
-  step (every 60 ticks, 200 members per step, round robin) and removed the same way from its stored data.
+  step (every 60 ticks, 200 members per step, round robin; since issue #5 from a list taken once per round) and
+  removed the same way from its stored data.
 * The derived data of a network (controllers, status, drives, storage totals, item index, power) is
   recomputed only for the networks a change touched, and only when the change can alter it (a cable
-  joining one network changes nothing but the member count).
+  joining one network changes nothing but the member count; since issue #5 any member but a controller joining or
+  leaving one network without splitting it adds or removes only what it holds).
 * `on_configuration_changed` (and `on_init`) rebuild the graph once from the world, the only scan.
 
 Network ids stay the same across most changes (merge keeps the larger id, split keeps the id on the
@@ -222,11 +224,12 @@ the rework removes. They came after R3 as one more kind of storage next to the c
 **Throughput** (per I/O step, every 15 ticks): an interface handles up to 8 slots per visit (import all of
 a slot, or top a filtered slot up), a bus moves up to 64 items per visit. At most 24 interfaces and buses
 are visited per step (round robin); with more of them each is visited less often, the work per step stays
-bounded.
+bounded. (Issue #5 replaced the steps: see "Scheduler and performance at size".)
 
 ## Tick budget
 
-No new `on_tick`, no new interval:
+The budget of R1 to R3 (issue #5 replaced it by the scheduler and one `on_tick` handler: see "Scheduler and
+performance at size"; the 60 tick step stays). No new `on_tick`, no new interval:
 
 | Interval | Work |
 |---|---|
@@ -383,7 +386,8 @@ type, and an export would have to pick one; the cost (hot steam cannot be stored
 * **ME Fluid Import / Export Bus** (`me-fluid-import-bus`, `me-fluid-export-bus`, tech `me-fluid-storage`, HV
   assembler: an item bus, an HV pump, two pipes): R1's bus design with fluid filters. The import bus empties the
   output boxes of a machine (every box of a tank; input boxes are left alone), the export bus fills its filtered
-  fluids with `insert_fluid` (input boxes of a machine, a tank). 1000 units per visit, in the I/O step.
+  fluids with `insert_fluid` (input boxes of a machine, a tank). 1000 units per visit, in the I/O step (issue #5:
+  the bus's speed times the ticks since its last visit).
 
 ### Migration of fluids (R2)
 
@@ -423,7 +427,7 @@ with two loaded items of 777 water each: 52 754 units before, 52 754 after, no c
 ### Ticks
 
 Unchanged intervals: the fluid interfaces (8 per step) and the fluid buses (with the item interfaces and buses,
-24 per step) run in the 15-tick I/O step. A fluid total is a table lookup (the engine's totals); the old
+24 per step) run in the 15-tick I/O step (issue #5: in the scheduler). A fluid total is a table lookup (the engine's totals); the old
 per-step loop over all fluid drives and the recovered-fluid pull-in are gone.
 
 ### Tests
@@ -573,7 +577,8 @@ With filters only the filtered items (exact name and quality). Fluids are not re
 Inserters, players, robots and trains change an inventory without an event, so the bus polls it:
 
 * The I/O step (`on_nth_tick(15)` of `scripts/fork-me-io.lua`, no new interval) calls `storage_bus.on_step()`
-  after the fluid step: **8 bus visits per step**, round robin over the buses. A visit checks the target (cached
+  after the fluid step: **8 bus visits per step**, round robin over the buses (issue #5: each bus is due at a tick
+  of its own, 8 visits per tick, an unchanged chest is read again after up to 2 s). A visit checks the target (cached
   until it is invalid, the bus is rotated or a wagon left; else one `find_entities_filtered` at the tile in front),
   reads the inventory once (`get_contents`) and passes it to `N.ext_sync`, which applies only the differences to the
   snapshot, the totals and the index.
@@ -723,7 +728,7 @@ temperature). A segment can hold its fluid at any temperature. Decision: **read 
 ### Polling, settings, cost
 
 * The I/O step (15 ticks, no new interval) calls `fluid_storage_bus.on_step()` after the item storage buses: first
-  the buses marked by a removal, then **8 visits** round robin. A visit: the target check (cached; a
+  the buses marked by a removal, then **8 visits** round robin (issue #5: the scheduler, as the item side). A visit: the target check (cached; a
   `find_entities_filtered` at the tile in front only without a target or after a rotation, then
   `get_pipe_connections` per box to pick the box facing the bus), `get_fluid_segment_id`,
   `get_fluid_segment_contents` and `fluidbox[box]` (the temperature): three API calls and a diff of one key.
@@ -852,7 +857,8 @@ job). Decisions:
   waits. What `set_recipe` itself would return is stored too (or spilled at the machine). Nothing is lost.
 * **A machine busy with another pattern:** one lease per machine (`busy[unit] = job`). A step needs an idle machine
   that has the recipe, else an idle one to switch; a busy machine is skipped and the step waits ("machine"). Jobs take
-  turns by the round robin of the step (8 jobs per step); within a job the steps go in plan order. No queue is kept: a
+  turns by the round robin of the step (8 jobs per step; issue #5: one job per tick, each at most every 20 ticks);
+  within a job the steps go in plan order. No queue is kept: a
   machine is taken by the first job that finds it idle.
 * **The machine cannot make the recipe** (category, not researched, fixed recipe, stack, fluid boxes, a furnace): the
   pattern has no target in that provider; with none at all it is no pattern of the network (`ignored[reason]`, shown
@@ -900,7 +906,7 @@ player prefer one route (an AE2 player does it by removing a pattern; here both 
 An encoded pattern is an item, so a blueprint must not create patterns out of nothing. A blueprint keeps the
 provider's priority and its patterns as data (tag `fork_me_provider = { priority, patterns = { ["slot"] = pattern }
 }`). A provider built from it holds them as **pending** (`providers[unit].pending`): the scan (on build, the round
-robin of 8 providers per step, before a job) encodes each pending pattern from a blank pattern of the provider's
+robin of 8 providers per step (issue #5: one every 2 ticks), before a job) encodes each pending pattern from a blank pattern of the provider's
 network (`N.extract` of one blank), so the provider ends up exactly as if the player had encoded and inserted them.
 A slot filled by hand drops its pending pattern; a click on a pending slot forgets it; mining a provider drops pending
 patterns (they were never items). Old blueprints of 0.4.1 and older (tag `fork_ae2_recipe`, the furnace recipe choice)
@@ -1007,7 +1013,8 @@ becomes the unified block when a save is loaded.
   whitelist of both (only item filters: no fluid). Export: no filter exports nothing; each list goes to its own part of
   the target.
 * **Cost:** a visit on a chest does the item calls of the item bus, a visit on a tank the fluid calls of the fluid bus;
-  only a target with both does both. Throughput per visit stays 64 items and 1000 fluid units.
+  only a target with both does both. Throughput per visit stays 64 items and 1000 fluid units (issue #5: the speed
+  times the ticks since the last visit).
 
 ### Storage bus: an item side and a fluid side
 
@@ -1131,6 +1138,152 @@ One window per unified block, with `signal` choosers (items and fluids): the int
 amount, a drop-down per side, the container's content, the sides' fluid), the bus (9 mixed filters, target, status) and
 the storage bus (mode, priority, 18 mixed filters, what it shows: items or the segment's fluid and temperature). The
 fluid windows are removed; the old entities are replaced on load, so none of them can be opened.
+
+## Scheduler and performance at size (me-network issue #5)
+
+Measured first (`devcheck.py bench`, `docs/PERFORMANCE.md`): at 5000 buses and interfaces the fixed steps of R1 cost
+2.7 ms per tick on average and 40 to 100 ms in every I/O tick, a bus moved 1.2 items per second, a storage bus saw a
+change after up to 11 s and a level maintainer reacted after up to 42 s. The profile put three quarters of the time
+into the storage engine (Lua walking every cell per call) and every spike into steps that did all their work in one
+tick. The rework follows the profile.
+
+### The scheduler (`scripts/fork-me-schedule.lua`)
+
+* One `on_tick` handler (control.lua) instead of the 15 and 20 tick steps: interfaces and buses, storage buses (each
+  side), crafting jobs, provider rescans, level maintainers and circuit interfaces. The 60 tick terminal step stays
+  (windows, drive lights, the sweep).
+* **A queue per kind**: `q.due[tick] = { unit, ... }` and `rec.due` in the record. A unit is visited when the tick
+  comes and its record still says that tick; a wake or a reschedule leaves the old entry behind (stale entries are
+  skipped, nothing is searched). Units that do not fit into the tick's budget wait in a backlog (`q.back`, first in
+  first out, each unit moved once) and come before the units of the next ticks. So no tick does more than its
+  budget, and an idle unit costs nothing until it is due.
+* **Intervals.** After a visit: `MIN_INTERVAL` (15 ticks for interfaces and buses, 30 for storage buses) while the
+  unit moved all it was allowed to (or its storage changed), 1.5 times longer while it moves little (interfaces and
+  buses: up to 60 ticks), twice as long while it found nothing, up to the idle limit: the settings (300 and 120
+  ticks), but never longer than the round robin of 0.2.0 took for that many units (`Sched.idle_limit`), so a small
+  network reacts at least as fast as before.
+* **Wakes.** An export bus or an interface row whose key the network does not hold, and a fluid row of an interface
+  side, wait in `net.wait_in[key]` and are due at the next tick when the network gets the key (insert, a storage bus
+  read, a cell put in); a stocked level maintainer waits in `net.wait_below[key]` with its target and is due when the
+  stock falls below it; the end of a maintainer's job wakes it. Settings (filters, config, sides, maintainer
+  settings), a rotation and an entity built in front of a bus or storage bus or next to an interface wake the
+  block. These tables are in `storage` (they decide when a block is visited, so every peer must have them).
+* **Catch-up.** A bus moves its speed (settings: 256 items and 4000 fluid units per second, what one visit moved per
+  15 ticks in 0.2.0) times the ticks since its last visit, at most 600 ticks' worth; an interface handles 8 slots per
+  15 ticks since its last visit. A bus that waits in the backlog moves more when its turn comes: its throughput does
+  not fall with the number of buses.
+* **Budgets** (map settings, `settings.lua`, read once per load and on `on_runtime_mod_setting_changed`; counts of
+  visits, never time):
+
+| Setting | Default | What |
+|---|---|---|
+| `me-network-io-visits-per-tick` | 16 | interfaces, import and export buses |
+| `me-network-storage-bus-visits-per-tick` | 8 | storage bus reads, per side (items, fluid) |
+| `me-network-maintainer-checks-per-tick` | 4 | level maintainers (and one job start per tick) |
+| `me-network-circuit-updates-per-second` | 10 | circuit interfaces (each at most once per 60 ticks) |
+| `me-network-crafting-jobs-per-tick` | 1 | crafting jobs stepped (each at most once per 20 ticks) |
+| `me-network-bus-items-per-second` | 256 | speed of an import or export bus, items |
+| `me-network-bus-fluid-per-second` | 4000 | speed of an import or export bus, fluid |
+| `me-network-idle-limit` | 300 ticks | longest wait of an idle interface or bus |
+| `me-network-storage-bus-idle-limit` | 120 ticks | longest wait of an unchanged storage bus: the latency target of 2 s |
+
+  The defaults come from the benchmark: 16 visits per tick already give every bus of the 5000 scene its full speed
+  (the catch-up), more only shorten the reaction of busy blocks and cost more.
+
+### The storage engine
+
+* **Lookups per network** (`lookups`, kept outside `storage`: a pure function of the network's state, built again
+  after a load, the same on every peer): the priority groups of the insertion order; per group the cells
+  partitioned for a key, the unpartitioned item and fluid cells in order with a pointer to the first one that may
+  still take a new key (cells fill in order; an extraction that frees bytes or a type moves it back), and the
+  storage buses that take inserts, by the kind they face (read only buses are left out). The holders of a key
+  sorted by cell id (the uniform order of R1) or by insertion rank, and the extraction order of a key, are made
+  when asked and dropped when the key's index changes (`idx_add`, `idx_del`). `insert_key`, `extract_key` and
+  `room_for` use them instead of walking every cell; the order of R3 is unchanged.
+* `room_for` (`can_insert`, `can_insert_fluid`) stops once it has found the room asked for and asks the holders in
+  insertion order (cells before storage buses, whose room is an engine read).
+* **A full storage bus** (`cell.full[key]`): a bus that took less of a key than it was offered is passed by for that
+  key until its next read or until something is taken from it. Before, every insert asked every full chest that
+  held the key (about 34 engine calls per insert in the 5000 scene).
+* **Members without a recompute.** A member that joins one network adds only what it holds (a drive its cells, a
+  storage bus already registered its external cell); one removed with at most one neighbour (an endpoint) cannot
+  split the network and takes out only what it held; only a controller, a merge or a split recompute. Building a
+  bus into the 5000 scene costs 0.8 ms instead of 28, removing one 1.3 ms instead of 90, and no provider is
+  rescanned.
+* `insert_key` keeps its state in a module table instead of closures, `extract_to` looks for item data only for
+  keys of items with tags.
+
+### The other modules
+
+* **Import bus**: plain items (type `item`, no place result, no spoilage) are moved by count from one
+  `get_contents` (one `remove` per item type); other items stack by stack as before (their damage, spoilage or data
+  decides). A big chest that is empty at the front is no longer scanned slot by slot.
+* **Autocrafting**: a job is stepped at most every 20 ticks as before, now one job per tick in turns (the setting),
+  with its CPU's operations for each 20 ticks since its last step (up to 3 steps' worth): the cap of 96 operations
+  and 8 jobs per step is gone, so more than 8 jobs no longer slow each other down. One provider rescan every 2 ticks
+  (8 per 20 before). A job start rescans the providers of its plan's patterns only (`rescan_plan`), not every
+  provider; the GUI's fresh plan still rescans all.
+* **Circuit interfaces**: the signals of a network are one list in `storage` (`net.sigs`), made at most once per 60
+  ticks while the contents change and shared by every interface of the network; it is made in one tick and written
+  in the next. An interface writes only when the list changed since its last write; an unfiltered interface reuses
+  one built section per list. The list is sorted by type and name (the 1000 largest amounts are chosen when there are
+  more), so the combinator shows its signals by name. Writing single changed slots was tried and dropped: a
+  section of 900 signals took milliseconds per slot change.
+* **Drive lights** are recolored when a cell's state changes and created or destroyed only when a cell goes in or
+  out. **The sweep** checks 200 members per 60 ticks from a list taken once per round instead of walking every
+  member of the map to find them.
+
+### Saves
+
+No prototype, storage key or remote interface is renamed. New: `settings.lua`, `scripts/fork-me-schedule.lua`, the
+remote function `gregtorio-me-io.schedule` (tests), fields in existing records (`due`, `iv`, `siv`, `last`, `full`,
+`led_state`) and tables (`q` in `fork_me_io`, `fork_me_sbus`, `fork_me_fsbus`; `mq`, `cq` in `fork_ae2`;
+`wait_in`, `wait_out`, `wait_below`, `sigs`, `cver` per network). A save without them gets them on its first tick
+(every unit due within a second): a save of 0.2.0 loaded with the same version number has no
+`on_configuration_changed`, and the hand-over of a Gregtorio save copies the old tables as they are. Tested with
+`devcheck.py migrate --from-ref v0.2.0` (a new scenario of the migrate helper: every kind of block of 0.2.0 works
+after the load, the fluid is the same) and Gregtorio's `migrate --from-ref v0.4.1`.
+
+### What changes for the player
+
+* Throughput: a busy bus moves 256 items per second in any network (0.2.0: 256 per second with fewer than 25
+  interfaces and buses, 1.2 at 5000). Machines fed by buses run at their own speed again in big bases.
+* Reaction: an idle bus or interface waits at most 5 s (setting) and at most as long as in 0.2.0 for that many
+  blocks; it reacts at once to its item coming into the network, its settings, a rotation and a target built in front
+  of it. A storage bus sees a change made by an inserter or a player within 2 s (setting; 0.2.0: up to 11 s at
+  5000 buses, 0.27 s at 100: the old interval is the cap, so small networks are not slower). A level maintainer
+  reacts within a tick of its item being taken below its amount (0.2.0: up to 42 s at 5000), and checks a circuit
+  target at least every 5 s.
+* A full storage bus chest that an inserter empties is used again at the bus's next read (at most the idle limit),
+  not at the next insert.
+* The circuit interface lists its signals by name (still the 1000 largest amounts) and updates about once a second
+  at most, all interfaces of the map together at most 10 per second by default (0.2.0: 2 per 20 ticks in turns).
+* Crafting jobs: more than 8 jobs at once no longer slow each other down; one job alone is stepped every 20 ticks as
+  before.
+
+### Limits
+
+* The worst tick: at 5000 the target of no tick over 5 ms is not met on the test machine. What remains are ticks
+  in which a circuit interface without a filter writes about 900 signals (about 1 ms in the engine, 1.5 ms with the
+  Lua around it) on top of the ordinary work, and long steps of the Lua garbage collector (10 to 25 ms in a few
+  ticks per minute, also in 0.2.0). A combinator section cannot be changed in part cheaply; fewer updates per second
+  (the setting) or filters on the interfaces are the levers. See `docs/PERFORMANCE.md` for the numbers.
+* `on_configuration_changed` still rebuilds the graph from the map: 0.8 s at 5000 endpoints (once per mod update).
+* Removing a cable whose network splits still searches the network (a breadth first search) and recomputes both
+  parts; removing an endpoint does not.
+* The planner copies the stock for each alternative pattern of a key (`snapshot`); a deep tree with many
+  alternatives is not covered by the benchmark.
+
+### Tests
+
+`devcheck.py bench` (`docs/PERFORMANCE.md`, the conservation check under budget pressure: every item and fluid of
+the world counted before and after the window, 891 keys, no difference), the runtime test "ME scheduler test" (an
+export bus waiting for its item is due at the next tick when the item comes in, an import bus is due at the next
+tick when a chest is built in front of it, a full storage bus is passed by until its read and then takes items again,
+300 random inserts and extracts keep every count equal to what went in minus what came out and the totals equal to
+the cells plus the chest; the wake was checked to fail with the key wake removed), the storage bus tests with the
+new latency bound, every other runtime test unchanged, `migrate --from-ref v0.2.0` and `v0.1.0`, Gregtorio's
+`migrate --from-ref v0.4.1`.
 
 ## Open points
 

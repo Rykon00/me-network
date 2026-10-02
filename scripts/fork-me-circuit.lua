@@ -13,26 +13,32 @@
 ---     are removed, so the output always equals the network contents.
 ---   * Settings of both are copied by settings paste and cloning and kept in blueprints (entity tags
 ---     "fork_me_maintainer" and "fork_me_circuit").
---- Work per autocrafting step (every 20 ticks, a step hook of fork-me-autocraft.lua): MAINTAINERS_PER_STEP
---- maintainer checks and at most STARTS_PER_STEP job starts (a start plans with a provider rescan; a
---- maintainer whose start failed waits RETRY_TICKS), CIRCUITS_PER_STEP interface updates, both round
---- robin. Nothing runs per tick.
---- State: storage.fork_ae2.maintainers, mlist, mcursor, circuits, clist, ccursor (created lazily, so
---- older saves need nothing). GUI state lives in the GUI elements (tags).
+--- Work (issue #5, a tick hook of fork-me-autocraft.lua, scripts/fork-me-schedule.lua): every maintainer and circuit
+--- interface is due at a tick (queues s.mq and s.cq); per tick at most the settings "level maintainer checks" and
+--- "circuit interface updates per second" of them, and at most STARTS_PER_TICK job starts (a start plans and rescans the
+--- providers of its plan; a maintainer whose start failed waits RETRY_TICKS). A stocked maintainer sleeps until its
+--- key is taken from the network (N.wait_for) or MAINTAINER_IDLE ticks passed (circuit targets and conditions have
+--- no event); its job's end wakes it. A circuit interface is updated every CIRCUIT_INTERVAL ticks and writes only
+--- when the network's contents changed; the sorted signals of a network are made once per CIRCUIT_INTERVAL and
+--- shared by its interfaces (net.sigs).
+--- State: storage.fork_ae2.maintainers, mlist, mq, circuits, clist, cq (created lazily, so older saves need
+--- nothing). GUI state lives in the GUI elements (tags).
 --------------------------------------------------------------------------------
 
 local autocraft = require("scripts.fork-me-autocraft")
 local fluids = require("scripts.fork-me-fluids")
 local N = require("scripts.fork-me-network")
+local Sched = require("scripts.fork-me-schedule")
 
 local M = {}
 
 local MAINTAINER, CIRCUIT = "me-level-maintainer", "me-circuit-interface"
-local MAINTAINERS_PER_STEP = 4
-local STARTS_PER_STEP = 1
+local STARTS_PER_TICK = 1
 local RETRY_TICKS = 300
-local CIRCUITS_PER_STEP = 2
-local MAX_SIGNALS = 1000            -- per circuit interface, the largest amounts first
+local MAINTAINER_IDLE = 300          -- a stocked maintainer is checked at least this often (5 s)
+local MAINTAINER_BUSY = 60           -- ... one whose job runs, or that waits for a CPU or another job
+local CIRCUIT_INTERVAL = 60
+local MAX_SIGNALS = 1000            -- per circuit interface: the largest amounts, written by type and name
 local MAX_FILTERS = 20
 local SIGNAL_MAX = 2147483647       -- signals are 32 bit
 local MAINT_TAG, CIRCUIT_TAG = "fork_me_maintainer", "fork_me_circuit"
@@ -56,8 +62,31 @@ local function state()
 		s.clist = {}
 		s.ccursor = 1
 	end
+	--- the queues (issue #5); a save from before gets them with every block due within a second
+	if not s.mq then
+		s.mq = Sched.new()
+		for i, unit in ipairs(s.mlist) do
+			local rec = s.maintainers[unit]
+			if rec then Sched.at(s.mq, rec, unit, game.tick + 1 + (i - 1) % 60) end
+		end
+	end
+	if not s.cq then
+		s.cq = Sched.new()
+		for i, unit in ipairs(s.clist) do
+			local rec = s.circuits[unit]
+			if rec then Sched.at(s.cq, rec, unit, game.tick + 1 + (i - 1) % 60) end
+		end
+	end
 	return s
 end
+
+--- a maintainer checks at the next tick (its key was taken from the network, its job ended, its settings changed)
+local function wake_maintainer(unit)
+	local s = storage.fork_ae2
+	local rec = s and s.maintainers and s.maintainers[unit]
+	if rec and s.mq then Sched.wake(s.mq, rec, unit, game.tick + 1) end
+end
+N.wakers.maint = wake_maintainer
 
 --- the working ME network of an entity (scripts/fork-me-network.lua)
 local function network_of(entity)
@@ -122,6 +151,7 @@ local function maintainer_record(s, entity)
 		rec = { entity = entity, amount = 0, circuit = false, status = "no-target" }
 		s.maintainers[unit] = rec
 		s.mlist[#s.mlist + 1] = unit
+		Sched.at(s.mq, rec, unit, game.tick + 1)
 	end
 	return rec
 end
@@ -137,7 +167,7 @@ local function target_of(rec)
 	return rec.amount
 end
 
---- One check. `budget.starts`: job starts left in this step. Sets rec.status (a locale key suffix).
+--- One check. `budget.starts`: job starts left in this tick. Sets rec.status (a locale key suffix).
 local function maintainer_step(rec, budget)
 	local e = rec.entity
 	rec.stock, rec.target = nil, nil
@@ -192,6 +222,7 @@ function M.set_maintainer(entity, key, amount, circuit)
 	if amount ~= nil then rec.amount = clamp_amount(rec.key, amount) end
 	if circuit ~= nil then rec.circuit = circuit and true or false end
 	rec.retry = nil
+	wake_maintainer(entity.unit_number)
 	return true
 end
 
@@ -214,6 +245,7 @@ local function circuit_record(s, entity)
 		rec = { entity = entity, filters = {}, signals = 0 }
 		s.circuits[unit] = rec
 		s.clist[#s.clist + 1] = unit
+		Sched.at(s.cq, rec, unit, game.tick + 1)
 	end
 	return rec
 end
@@ -223,62 +255,126 @@ local function drop_circuit(s, unit)
 	remove_value(s.clist, unit)
 end
 
---- the signals of a network: { { type, name, quality, count } }, largest first, at most MAX_SIGNALS;
---- `filter` (key -> true) limits them to those resources
+--- the parts of a key for its signal: { type, name, quality, order } (`order`: type, name and quality as one string
+--- for the tie-break of the sort); a pure memo, kept per load
+local parsed = {}
+local function parts(key)
+	local p = parsed[key]
+	if p then return p end
+	if is_fluid(key) then
+		local name = fluid_name(key)
+		p = { "fluid", name, nil, "fluid\1" .. name .. "\1" }
+	else
+		local name, q = N.parse_key(key)
+		p = { "item", name, q, "item\1" .. name .. "\1" .. q }
+	end
+	parsed[key] = p
+	return p
+end
+
+--- the signals of a network: { { type, name, quality, count, order } } sorted by type, name and quality (`order`);
+--- `filter` (key -> true) limits them to those resources. Items with tags count under their item and quality; fluids
+--- from 1 unit, rounded down. Issue #5: straight from the network's totals, in a fixed order (the 1000 an interface
+--- writes are chosen by amount in `view`).
 local function network_signals(net, filter)
 	local out, by_item = {}, {}
-	for _, c in pairs(N.contents(net)) do          -- items with tags count under their item and quality
-		if not filter or filter[c.name] then
-			local k = c.name .. "@" .. c.quality
-			local sig = by_item[k]
-			if sig then sig.count = sig.count + c.count
-			else
-				sig = { type = "item", name = c.name, quality = c.quality, count = c.count }
-				by_item[k] = sig
-				out[#out + 1] = sig
+	if N.usable(net) then
+		for key, count in pairs(net.items) do
+			local p = parts(key)
+			if p[1] == "item" then
+				if not filter or filter[p[2]] then
+					local sig = by_item[p[4]]
+					if sig then sig.count = sig.count + count
+					else
+						sig = { type = "item", name = p[2], quality = p[3], count = count, order = p[4] }
+						by_item[p[4]] = sig
+						out[#out + 1] = sig
+					end
+				end
+			elseif count >= 1 and (not filter or filter[key]) then
+				out[#out + 1] = { type = "fluid", name = p[2], count = math.floor(count), order = p[4] }
 			end
 		end
 	end
-	for name, amount in pairs(fluids.totals(net)) do
-		if (not filter or filter["fluid/" .. name]) and amount >= 1 then
-			out[#out + 1] = { type = "fluid", name = name, count = math.floor(amount) }
-		end
-	end
-	table.sort(out, function(a, b)
-		if a.count ~= b.count then return a.count > b.count end
-		if a.type ~= b.type then return a.type < b.type end
-		if a.name ~= b.name then return a.name < b.name end
-		return (a.quality or "") < (b.quality or "")
-	end)
-	while #out > MAX_SIGNALS do out[#out] = nil end
+	--- sorted by the order strings (the string comparison, no Lua comparator)
+	local keys, by_key = {}, {}
+	for i, sig in ipairs(out) do keys[i], by_key[sig.order] = sig.order, sig end
+	table.sort(keys)
+	for i, k in ipairs(keys) do out[i] = by_key[k] end
 	return out
 end
 
---- write the network contents into the interface's first section (the only one)
-local function circuit_step(rec)
+--- The sorted signals of the whole network, shared by its circuit interfaces (in storage, net.sigs, because which
+--- version an interface writes decides the game state): made again when the contents changed (net.cver) and the
+--- last list is CIRCUIT_INTERVAL ticks old.
+local function stale(net)
+	local c = net.sigs
+	return not (c and (c.cver == net.cver or game.tick - c.tick < CIRCUIT_INTERVAL))
+end
+
+local function signals_of(net)
+	if not stale(net) then return net.sigs end
+	local c = { cver = net.cver, tick = game.tick, list = network_signals(net) }
+	net.sigs = c
+	return c
+end
+
+--- the signals an interface writes from a shared list: the filtered ones (filter: key -> true), the MAX_SIGNALS
+--- largest if there are more (ties by type, name and quality), in the list's order
+--- the section of an unfiltered interface per shared list (a pure function of the list, kept per load)
+local built = setmetatable({}, { __mode = "k" })
+
+local function view(list, filter)
+	local out = {}
+	for _, sig in ipairs(list) do
+		if not filter or filter[sig.type == "fluid" and ("fluid/" .. sig.name) or sig.name] then out[#out + 1] = sig end
+	end
+	if #out <= MAX_SIGNALS then return out end
+	local keys, by_key = {}, {}
+	for i, sig in ipairs(out) do
+		local k = string.format("%017.0f", 1e16 - sig.count) .. sig.order
+		keys[i], by_key[k] = k, sig
+	end
+	table.sort(keys)
+	local keep = {}
+	for i = 1, MAX_SIGNALS do keep[by_key[keys[i]]] = true end
+	local top = {}
+	for _, sig in ipairs(out) do if keep[sig] then top[#top + 1] = sig end end
+	return top
+end
+
+--- Write the network contents into the interface's first section (the only one). Issue #5: from the network's
+--- shared list, and nothing while that list is the one the interface wrote last (`force`: write anyway: settings,
+--- a blueprint, a paste). Writing single slots costs more than the whole section once it holds hundreds of signals
+--- (measured: a few hundred slots cost milliseconds), so a changed list is written whole.
+local function circuit_step(rec, force)
 	local e = rec.entity
+	local net = network_of(e)
+	local sigs = net and signals_of(net)
+	local version = sigs and (net.id .. ":" .. sigs.tick .. ":" .. tostring(sigs.cver)) or "-"
+	if not force and rec.version == version then return end
 	local cb = e.get_or_create_control_behavior()
 	for i = cb.sections_count, 2, -1 do cb.remove_section(i) end
 	local section = cb.get_section(1) or cb.add_section()
 	if not section then return end
-	local net = network_of(e)
 	local filter
 	if #rec.filters > 0 then
 		filter = {}
 		for _, key in pairs(rec.filters) do filter[key] = true end
 	end
-	local filters = {}
-	if net then
-		for i, sig in ipairs(network_signals(net, filter)) do
-			filters[i] = {
-				value = { type = sig.type, name = sig.name, quality = sig.quality or "normal", comparator = "=" },
-				min = math.min(sig.count, SIGNAL_MAX),
-			}
+	local filters = not filter and sigs and built[sigs.list]           -- the same list unfiltered: built once
+	if not filters then
+		filters = {}
+		for i, sig in ipairs(sigs and view(sigs.list, filter) or {}) do
+			filters[i] = { value = { type = sig.type, name = sig.name, quality = sig.quality or "normal", comparator = "=" },
+				min = math.min(sig.count, SIGNAL_MAX) }
 		end
+		if not filter and sigs then built[sigs.list] = filters end
 	end
 	section.filters = filters
 	rec.signals = #filters
 	rec.net = net and net.id or nil
+	rec.version = version
 end
 
 --- Set the filter of an interface: a list of keys (items, "fluid/<name>"), empty for everything
@@ -294,7 +390,7 @@ function M.set_circuit_filters(entity, keys)
 		end
 	end
 	rec.filters = list
-	circuit_step(rec)
+	circuit_step(rec, true)
 	return true
 end
 
@@ -373,42 +469,61 @@ M.key_of_signal = key_of_signal
 --- step (a hook of the autocrafting step, every 20 ticks)
 --------------------------------------------------------------------------------
 
-local function on_step(s)
+local budget = { starts = 0 }
+
+local function maintainer_of(unit) return storage.fork_ae2.maintainers[unit] end
+local function circuit_of(unit) return storage.fork_ae2.circuits[unit] end
+
+--- one check, then the next one: soon while something is under way, at the latest after MAINTAINER_IDLE ticks;
+--- a stocked maintainer also wakes when its key is taken from the network
+local function visit_maintainer(rec, unit)
+	local s = storage.fork_ae2
+	if not rec.entity.valid then drop_maintainer(s, unit) return end
+	maintainer_step(rec, budget)
+	local now = game.tick
+	local st = rec.status
+	local next_tick = now + MAINTAINER_IDLE
+	if st == "waiting" then
+		next_tick = now + 1                                      -- no start left in this tick
+	elseif st == "running" or st == "other-job" or st == "no-cpu" then
+		next_tick = now + MAINTAINER_BUSY
+	elseif rec.retry and rec.retry > now then
+		next_tick = math.min(rec.retry, now + MAINTAINER_IDLE)
+	end
+	if st == "stocked" and rec.target then
+		local net = network_of(rec.entity)
+		if net then N.wait_below(net, rec.key, "maint", unit, rec.target) end
+	end
+	Sched.at(s.mq, rec, unit, next_tick)
+end
+
+local function visit_circuit(rec, unit)
+	local s = storage.fork_ae2
+	if not rec.entity.valid then drop_circuit(s, unit) return end
+	local net = network_of(rec.entity)
+	if net and stale(net) then
+		signals_of(net)                                      -- the network's list now, the write at the next tick
+		Sched.at(s.cq, rec, unit, game.tick + 1)
+		return
+	end
+	circuit_step(rec)
+	Sched.at(s.cq, rec, unit, game.tick + CIRCUIT_INTERVAL)
+end
+
+--- every tick (a hook of the autocrafting module): the maintainers and circuit interfaces that are due
+local function on_tick(s, tick)
 	if not (s.maintainers or s.circuits) then return end
 	s = state()
-	local n = #s.mlist
-	if n > 0 then
-		local budget = { starts = STARTS_PER_STEP }
-		for _ = 1, math.min(MAINTAINERS_PER_STEP, n) do
-			if s.mcursor > #s.mlist then s.mcursor = 1 end
-			local unit = s.mlist[s.mcursor]
-			local rec = s.maintainers[unit]
-			if rec and rec.entity.valid then
-				maintainer_step(rec, budget)
-				s.mcursor = s.mcursor + 1
-			else
-				drop_maintainer(s, unit)
-			end
-			if #s.mlist == 0 then break end
-		end
+	if #s.mlist > 0 then
+		budget.starts = STARTS_PER_TICK
+		Sched.run(s.mq, tick, Sched.setting("maintainer"), maintainer_of, visit_maintainer)
 	end
-	n = #s.clist
-	if n > 0 then
-		for _ = 1, math.min(CIRCUITS_PER_STEP, n) do
-			if s.ccursor > #s.clist then s.ccursor = 1 end
-			local unit = s.clist[s.ccursor]
-			local rec = s.circuits[unit]
-			if rec and rec.entity.valid then
-				circuit_step(rec)
-				s.ccursor = s.ccursor + 1
-			else
-				drop_circuit(s, unit)
-			end
-			if #s.clist == 0 then break end
-		end
+	if #s.clist > 0 then
+		--- (every tick, also with a budget of 0: the units due now join the backlog)
+		Sched.run(s.cq, tick, Sched.per_second(Sched.setting("circuit"), tick), circuit_of, visit_circuit)
 	end
 end
-autocraft.step_hooks[#autocraft.step_hooks + 1] = on_step
+autocraft.step_hooks[#autocraft.step_hooks + 1] = on_tick
 
 --------------------------------------------------------------------------------
 --- build, paste, blueprints, clones
@@ -435,7 +550,7 @@ function M.on_built(entity, tags, source)
 			local from = M.get_circuit(source)
 			M.set_circuit_filters(entity, from and from.filters or {})
 		else
-			circuit_step(rec)              -- a blueprint also carries the signals of the moment: replace them
+			circuit_step(rec, true)        -- a blueprint also carries the signals of the moment: replace them
 		end
 	end
 end
@@ -479,8 +594,8 @@ autocraft.blueprint_hooks[#autocraft.blueprint_hooks + 1] = tag_blueprint
 function M.on_configuration_changed()
 	local s = state()
 	local old_m, old_c = s.maintainers, s.circuits
-	s.maintainers, s.mlist, s.mcursor = {}, {}, 1
-	s.circuits, s.clist, s.ccursor = {}, {}, 1
+	s.maintainers, s.mlist, s.mcursor, s.mq = {}, {}, 1, Sched.new()
+	s.circuits, s.clist, s.ccursor, s.cq = {}, {}, 1, Sched.new()
 	for _, surface in pairs(game.surfaces) do
 		for _, e in pairs(surface.find_entities_filtered{ name = { MAINTAINER, CIRCUIT } }) do
 			local unit = e.unit_number
@@ -530,7 +645,7 @@ remote.add_interface("gregtorio-me-circuit", {
 	--- writes the signals of an interface now (what the step does)
 	update_circuit = function(entity)
 		if not (entity and entity.valid and entity.name == CIRCUIT) then return false end
-		circuit_step(circuit_record(state(), entity))
+		circuit_step(circuit_record(state(), entity), true)
 		return true
 	end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,

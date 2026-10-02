@@ -21,9 +21,17 @@
   `on_configuration_changed` (technology effects reset when this mod changed, the graph rebuild, the migrations of
   old Gregtorio networks, the old fluid blocks becoming the unified ones (`scripts/fork-me-unify.lua`, issue #3), the
   modules). The modules use the storage API of `fork-me-network.lua`, never a logistic
-  network. Tick intervals in use: `on_nth_tick` 60 (terminal step: the network's slow step, drive lights, sweep, the
-  refresh of open windows), 20 (autocrafting; `fork-me-circuit.lua` runs as its step hook), 15 (I/O: interfaces,
-  buses, the storage bus visits: 8 per step for the item side and 8 for the fluid side). Processing patterns catch their
+  network. Ticks: `on_nth_tick` 60 (terminal step: the network's slow step, drive lights, sweep, the refresh of open
+  windows) and one `on_tick` handler in control.lua (issue #5, `scripts/fork-me-schedule.lua`): every interface and
+  bus, storage bus (item and fluid side), level maintainer and circuit interface is due at a tick of its own (a queue
+  per kind, `rec.due`, a backlog for what does not fit), crafting jobs are stepped one per tick (each at most every 20
+  ticks), one provider rescan every 2 ticks. The budgets and the bus speed are runtime-global map settings
+  (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side,
+  maintainers 4), circuit interface updates per second (10), crafting jobs per tick (1), bus speed (256 items, 4000
+  fluid per second, times the ticks since the last visit), idle limits (300 and 120 ticks). Never base anything on
+  measured time; a new periodic task gets a queue and a budget, not a step of its own. Blocks waiting for a key wake
+  through `N.wait_for` / `N.wait_below` (in `storage`, per network); what is derived from the state only (the lookups
+  of the storage engine) is kept outside `storage`. Processing patterns catch their
   outputs through the network's insert functions (`N.on_arrival`, no tick). A storage bus is an external cell of the
   storage engine (`N.ext_*`), with an item side and a fluid side (`scripts/fork-me-fluid-storagebus.lua`). Since issue
   #3 the ME Interface, the import, export and storage bus handle items and fluids; the ME Fluid Interface and the ME
@@ -36,8 +44,9 @@
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
   notice, `all --with-gregtorio <Gregtorio checkout>`. Both must end with `RESULT: OK`; `check --base-only` checks
-  without Space Age; `migrate --from-ref v0.1.0` loads a save of an older version with the working copy (for changes to
-  saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
+  without Space Age; `migrate --from-ref v0.1.0` (the old fluid blocks) or `--from-ref v0.2.0` (every kind of
+  unified block, loaded without `on_configuration_changed` while the version number is the same) loads a save of an
+  older version with the working copy (for changes to saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
   recipes; without Gregtorio its `data.lua` adds stand-ins with the same names and numbers. See
   `tools/devcheck/README.md`. A change to the runtime's cost (the storage engine, the I/O, autocrafting, the step
   budgets) runs `devcheck.py bench` (script time per tick, throughput and latencies at 100, 1000 and 5000 endpoints,

@@ -16,10 +16,12 @@
 ---     record below is that cell (ext = "storage-bus"; side = "fluid" and handler = "fluid-storage-bus" while it
 ---     faces fluid: the engine calls the fluid side's functions directly). Its `items` are a
 ---     snapshot of the inventory or segment; the engine keeps the network's totals and index from it.
----   * Consistency: inserters and players change the inventory without an event. The I/O step (15 ticks,
----     scripts/fork-me-io.lua) visits VISITS_PER_STEP item side buses round robin (the fluid side has its own list
----     and budget); a visit reads the inventory once (get_contents) and applies the difference to the snapshot
----     (N.ext_sync). Between two visits the snapshot may be stale; every insert and extract through the bus works
+---   * Consistency: inserters and players change the inventory without an event. Every bus is due at a tick
+---     (issue #5, scripts/fork-me-schedule.lua; the fluid side has its own queue): the on_tick handler of control.lua
+---     visits at most the setting "storage bus visits per tick" of them per side; a visit reads the inventory once
+---     (get_contents) and applies the difference to the snapshot (N.ext_sync). A bus whose inventory changed is read
+---     again after MIN_INTERVAL ticks, one that did not change twice as late each time, up to the storage bus idle
+---     limit (a setting, 2 seconds by default): the longest time until the network sees a change. Between two visits the snapshot may be stale; every insert and extract through the bus works
 ---     on the real inventory (the engine asks `count` before it takes and corrects the snapshot), so the network
 ---     never hands out items that are gone; it may show items that are gone (until the next visit or extract) or
 ---     not yet show items that came in (until the next visit).
@@ -33,11 +35,12 @@
 local N = require("scripts.fork-me-network")
 local T = require("scripts.fork-me-targets")
 local F = require("scripts.fork-me-fluid-storagebus")
+local Sched = require("scripts.fork-me-schedule")
 
 local M = {}
 
 local KIND = "storage-bus"
-local VISITS_PER_STEP = 8           -- item side bus visits per I/O step (every 15 ticks)
+local MIN_INTERVAL = 30             -- ticks until a bus whose inventory changed reads it again
 local MAX_FILTERS = 18
 local MAX_PRIORITY = 1000
 local TAG = "fork_me_storage_bus"   -- blueprint tag: { mode, priority, filters = { keys } }
@@ -60,6 +63,17 @@ local function state()
 	return s
 end
 
+--- the queue of the item side's visits; a save from before issue #5 gets one with every bus due within a second
+local function queue(s)
+	if s.q then return s.q end
+	s.q = Sched.new()
+	for i, unit in ipairs(s.list) do
+		local rec = N.ext_get(unit)
+		if rec then Sched.at(s.q, rec, unit, game.tick + 1 + (i - 1) % 60) end
+	end
+	return s.q
+end
+
 local function is_bus(entity) return entity and entity.valid and N.kind_of(entity.name) == KIND end
 
 --- the record (the external cell) of a bus
@@ -68,9 +82,13 @@ local function rec_of(entity)
 	return rec and rec.ext == KIND and rec or nil
 end
 
-local function listed(list, unit)
-	for _, u in ipairs(list) do if u == unit then return true end end
-	return false
+--- is the bus in the item side's list? (a set beside the list, made when missing)
+local function listed(s, unit)
+	if not s.member then
+		s.member = {}
+		for _, u in ipairs(s.list) do s.member[u] = true end
+	end
+	return s.member[unit] == true
 end
 
 local function unlist(list, unit)
@@ -178,14 +196,22 @@ local function claimed_by_other(s, rec, tu)
 	return false
 end
 
---- put the bus into the visit list of its side (and out of the other one)
+--- put the bus into the visit list of its side (and out of the other one); a bus new to a side is due at once
 local function list_side(s, rec)
 	if rec.side == "fluid" then
-		unlist(s.list, rec.unit)
+		if listed(s, rec.unit) then
+			unlist(s.list, rec.unit)
+			s.member[rec.unit] = nil
+		end
 		F.list(rec)
 	else
 		F.unlist(rec)
-		if not listed(s.list, rec.unit) then s.list[#s.list + 1] = rec.unit end
+		if not listed(s, rec.unit) then
+			s.list[#s.list + 1] = rec.unit
+			s.member[rec.unit] = true
+			rec.siv = nil
+			Sched.at(queue(s), rec, rec.unit, game.tick + 1)
+		end
 	end
 end
 
@@ -230,17 +256,20 @@ local function resolve(s, rec)
 	if rec.side ~= side then
 		rec.side, rec.handler = side, side and F.HANDLER or nil
 		N.ext_sync(rec.unit, {})                         -- the other side's snapshot goes
+		N.ext_touch(rec.unit)                            -- it takes the other kind of keys now (the insertion lists)
 	end
 	list_side(s, rec)
 	rec.status = status or "ok"
 	return rec.target
 end
 
---- One visit: find the target, read its inventory (or segment) once and apply the difference to the network
+--- One visit: find the target, read its inventory (or segment) once and apply the difference to the network.
+--- Returns true when the snapshot or the target changed.
 function M.visit(rec, cascade)
 	local s = state()
 	local e = rec.entity
-	if not e.valid then return end
+	if not e.valid then return false end
+	local before = rec.target
 	local t = resolve(s, rec)
 	if rec.side == "fluid" then return F.visit(rec, cascade) end
 	local contents = {}
@@ -254,33 +283,81 @@ function M.visit(rec, cascade)
 			end
 		end
 	end
-	N.ext_sync(rec.unit, contents)
+	local changed = N.ext_sync(rec.unit, contents) or before ~= rec.target
 	if rec.status == "ok" then
 		local net = N.network_of(e)
 		local ok, why = N.usable(net)
 		if not ok then rec.status = why or "no-network" end
 	end
+	return changed
 end
 --- the fluid side visits through this when its target is gone or the bus was rotated (it may face a chest now)
 F.resolve_visit = function(rec, cascade) return M.visit(rec, cascade) end
 F.lost = function(rec) list_side(state(), rec) end
 
---- the I/O step (scripts/fork-me-io.lua): VISITS_PER_STEP item side buses, round robin
-function M.on_step()
+--- the record of an item side bus that is due (nil when it is gone or on the fluid side now)
+local function item_rec(unit)
+	local rec = N.ext_get(unit)
+	if rec and rec.ext == KIND and rec.side ~= "fluid" then return rec end
+	return nil
+end
+
+local function visit_due(rec, unit)
 	local s = storage.fork_me_sbus
-	if not (s and #s.list > 0) then return end
-	for _ = 1, math.min(VISITS_PER_STEP, #s.list) do
-		if s.cursor > #s.list then s.cursor = 1 end
-		local unit = s.list[s.cursor]
-		local rec = N.ext_get(unit)
-		if rec and rec.entity.valid and rec.ext == KIND and rec.side ~= "fluid" then
-			M.visit(rec)
-			if s.list[s.cursor] == unit then s.cursor = s.cursor + 1 end   -- (a bus that went to the fluid list is gone)
-		else
-			table.remove(s.list, s.cursor)
-			if rec and not rec.entity.valid then N.ext_detach(unit) end
+	if not rec.entity.valid then
+		unlist(s.list, unit)
+		if s.member then s.member[unit] = nil end
+		N.ext_detach(unit)
+		return
+	end
+	local changed = M.visit(rec)
+	if rec.side == "fluid" then return end           -- on the fluid side now: its queue has it
+	--- (0.2.0 read 8 buses per 15 ticks: an idle bus never waits longer than that cycle)
+	local idle = Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)
+	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle)
+	Sched.at(queue(s), rec, unit, game.tick + rec.siv)
+end
+
+--- every tick (control.lua): the item side buses that are due, then the fluid side's
+function M.on_tick(tick)
+	local s = storage.fork_me_sbus
+	if s and #s.list > 0 then Sched.run(queue(s), tick, Sched.setting("storage_bus"), item_rec, visit_due) end
+	F.on_tick(tick)
+end
+
+--- read the inventory or segment at the next tick (an entity was built in front of the bus)
+function M.wake(unit)
+	local rec = N.ext_get(unit)
+	if not (rec and rec.ext == KIND) then return end
+	rec.target = nil
+	if rec.side == "fluid" then
+		F.wake(rec)
+	else
+		local s = storage.fork_me_sbus
+		if s and listed(s, unit) then
+			rec.siv = nil
+			Sched.wake(queue(s), rec, unit, game.tick + 1)
 		end
-		if #s.list == 0 then break end
+	end
+end
+
+local bus_names
+--- an entity was built: the storage buses facing it read it at the next tick
+function M.wake_near(entity)
+	if not (storage.fork_me_sbus and (T.STORAGE[entity.type] or T.has_fluid_boxes(entity))) then return end
+	if not bus_names then
+		bus_names = {}
+		for _, name in pairs(N.node_names()) do
+			if N.kind_of(name) == KIND then bus_names[#bus_names + 1] = name end
+		end
+	end
+	local b = entity.bounding_box
+	for _, bus in pairs(entity.surface.find_entities_filtered{ name = bus_names,
+		area = { { b.left_top.x - 1, b.left_top.y - 1 }, { b.right_bottom.x + 1, b.right_bottom.y + 1 } } }) do
+		local f = T.front(bus)
+		if f[1] > b.left_top.x and f[1] < b.right_bottom.x and f[2] > b.left_top.y and f[2] < b.right_bottom.y then
+			M.wake(bus.unit_number)
+		end
 	end
 end
 
@@ -440,6 +517,7 @@ function M.on_removed(entity)
 		if s then
 			release(s, rec)
 			unlist(s.list, unit)
+			if s.member then s.member[unit] = nil end
 		end
 		F.drop(rec)
 		F.unlist(rec)
@@ -483,9 +561,9 @@ end
 --- again (the fluid side claims its segments in unit order)
 function M.on_configuration_changed()
 	local s = state()
-	s.list, s.cursor, s.claims = {}, 1, {}
+	s.list, s.cursor, s.claims, s.member, s.q = {}, 1, {}, {}, Sched.new()
 	F.reset()
-	plain_cache = {}
+	plain_cache, bus_names = {}, nil
 	local names = {}
 	for _, name in pairs(N.node_names()) do
 		if N.kind_of(name) == KIND then names[#names + 1] = name end
