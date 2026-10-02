@@ -5,7 +5,10 @@
 ---   * ME Drive: the ten cell slots with fill bars, the drive's priority; click a slot to put a cell in or take
 ---     it out, right click a cell for its cell window.
 ---   * Storage cell (from the drive window or the terminal's cells tab): contents, bytes and types, the
----     partition (the items or fluids the cell is restricted to), "Clear" and "From contents".
+---     partition (the items or fluids the cell is restricted to; a blacklist with an Inverter Card), "Clear" and "From
+---     contents", the cell's upgrade cards (shown only: they go in and out in the ME Cell Workbench, issue #17).
+---   * ME Cell Workbench (issue #17): the cell slot, the cell's partition and card slots, "From contents", "Clear" and
+---     the copy mode.
 ---   * ME Controller: network state, members, drives, cells, bytes and types, power.
 ---   * ME Pattern Provider (issue #80): the 9 pattern slots (click with an encoded pattern in hand to put it in,
 ---     click a pattern to take it out), the status of each pattern (usable by how many machines, or why not), the
@@ -33,6 +36,7 @@ local patterns = require("scripts.fork-me-patterns")
 local circuit = require("scripts.fork-me-circuit")
 local io = require("scripts.fork-me-io")
 local sbus = require("scripts.fork-me-storagebus")
+local bench = require("scripts.fork-me-workbench")
 local terminal = require("scripts.fork-me-terminal")
 
 local M = {}
@@ -246,7 +250,11 @@ local function open_cell(player, drive, opts)
 	content.add{ type = "line" }
 	G.heading(content, { "fork-me-gui.partition" })
 	G.label(content, { c.fluid and "fork-me-gui.partition-help-fluid" or "fork-me-gui.partition-help" }, WIDTH)
+	G.label(content, "", WIDTH, nil, "fork_me_cell_mode")
 	content.add{ type = "flow", name = "fork_me_cell_part", direction = "vertical" }
+	local cards = G.row(content)                       -- issue #17: the cell's cards, shown only
+	cards.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.cell-cards-tooltip" } }
+	cards.add{ type = "flow", name = "fork_me_cell_cards", direction = "horizontal" }
 	local buttons = G.row(content)
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("cell_part_clear") }
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-contents" }, tooltip = { "fork-me-gui.partition-contents-tooltip" },
@@ -270,7 +278,24 @@ function M.refresh_cell(player, frame)
 	rebuild(frame, "fork_me_cell_part", c.name .. ":" .. table.concat(c.partition, ","), function(box)
 		build_partition(box, drive, slot)
 	end)
+	G.find(frame, "fork_me_cell_mode").caption = M.cell_mode_caption(c)
+	rebuild(frame, "fork_me_cell_cards", table.concat(c.cards or {}, ","), function(box)
+		if #(c.cards or {}) == 0 then box.add{ type = "label", caption = { "fork-me-gui.cards-none" } } end
+		for _, name in ipairs(c.cards or {}) do
+			box.add{ type = "sprite", sprite = "item/" .. name, elem_tooltip = { type = "item", name = name } }
+		end
+	end)
 	return true
+end
+
+--- what the cards make of a cell's partition (a blacklist, every quality, equal shares, destroys): one line
+function M.cell_mode_caption(c)
+	local parts = { "" }
+	if c.inverted then parts[#parts + 1] = { "fork-me-gui.cell-mode-blacklist" } end
+	if c.fuzzy then parts[#parts + 1] = { "fork-me-gui.cell-mode-fuzzy" } end
+	if c.equal then parts[#parts + 1] = { "fork-me-gui.cell-mode-equal", G.fmt(c.equal) } end
+	if c.void then parts[#parts + 1] = { "fork-me-gui.cell-mode-void" } end
+	return #parts > 1 and parts or ""
 end
 
 G.window("cell", { open = open_cell, refresh = M.refresh_cell })
@@ -291,6 +316,112 @@ end)
 G.on("cell_part_contents", function(event, player)
 	local drive, frame = window_entity(player)
 	if drive then N.partition_from_contents(drive, frame.tags.slot) G.refresh_one(player) end
+end)
+
+--------------------------------------------------------------------------------
+--- ME Cell Workbench (issue #17, part 3)
+--------------------------------------------------------------------------------
+
+function M.workbench_data(entity) return bench.info(entity) end
+
+local function open_workbench(player, entity)
+	local _, content = G.open_window(player, "workbench", caption_of(entity), { unit = entity.unit_number })
+	G.label(content, { "fork-me-gui.workbench-help" }, WIDTH)
+	local row = G.row(content)
+	row.add{ type = "flow", name = "fork_me_wb_slot", direction = "horizontal" }
+	local col = row.add{ type = "flow", direction = "vertical" }
+	G.label(col, "", 300, nil, "fork_me_wb_fill")
+	G.label(col, "", 300, nil, "fork_me_wb_mode")
+	G.heading(content, { "fork-me-gui.partition" })
+	content.add{ type = "flow", name = "fork_me_wb_part", direction = "vertical" }
+	local buttons = G.row(content)
+	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("wb_clear") }
+	buttons.add{ type = "button", caption = { "fork-me-gui.partition-contents" }, tooltip = { "fork-me-gui.partition-contents-tooltip" },
+		tags = G.act("wb_contents") }
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.workbench-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_wb_cards", direction = "horizontal" }
+	content.add{ type = "checkbox", name = "fork_me_wb_keep", state = false, caption = { "fork-me-gui.workbench-keep" },
+		tooltip = { "fork-me-gui.workbench-keep-tooltip" }, tags = G.act("wb_keep") }
+	M.refresh_workbench(player, G.window_of(player))
+end
+
+function M.refresh_workbench(player, frame)
+	local entity = G.entity_of(player, frame)
+	local d = entity and M.workbench_data(entity)
+	if not d then return false end
+	local c = d.cell
+	rebuild(frame, "fork_me_wb_slot", c and c.name or "-", function(box)
+		box.add{ type = "sprite-button", style = "slot_button", sprite = c and ("item/" .. c.name) or nil,
+			tooltip = { c and "fork-me-gui.workbench-cell-tooltip" or "fork-me-gui.workbench-cell-empty" }, tags = G.act("wb_cell") }
+	end)
+	G.find(frame, "fork_me_wb_fill").caption = c and { "fork-me-gui.cell-fill", G.fmt(c.bytes), G.fmt(c.bytes_total), c.types,
+		c.types_total } or { "fork-me-gui.workbench-no-cell" }
+	G.find(frame, "fork_me_wb_mode").caption = c and M.cell_mode_caption(c) or ""
+	local part = c and c.partition or d.config
+	rebuild(frame, "fork_me_wb_part", (c and c.name or "-") .. ":" .. table.concat(part, ","), function(box)
+		if not c then
+			if #part > 0 then box.add{ type = "label", caption = { "fork-me-gui.workbench-kept", #part } } end
+			return
+		end
+		local t = box.add{ type = "table", column_count = 10, style = "filter_slot_table" }
+		local elem_type = c.fluid and "fluid" or "item-with-quality"
+		for i = 1, math.min(c.types_total, #part + 1) do chooser(t, elem_type, part[i], G.act("wb_part", { index = i })) end
+	end)
+	rebuild(frame, "fork_me_wb_cards", (c and c.slots or 0) .. ":" .. table.concat(c and c.cards or {}, ","), function(box)
+		for slot = 1, c and c.slots or 0 do
+			local name = c.cards[slot]
+			box.add{ type = "sprite-button", style = "slot_button", sprite = name and ("item/" .. name) or nil,
+				elem_tooltip = name and { type = "item", name = name } or nil,
+				tooltip = { name and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" },
+				tags = G.act("wb_card", { slot = slot }) }
+		end
+	end)
+	G.find(frame, "fork_me_wb_keep").state = d.keep
+	return true
+end
+
+G.window("workbench", { open = open_workbench, refresh = M.refresh_workbench, entities = { bench.NAME } })
+
+G.on("wb_cell", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	flying(player, bench.cell_click(entity, player.cursor_stack, player.get_main_inventory(), event.shift))
+	G.refresh_one(player)
+end)
+
+G.on("wb_card", function(event, player, el)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local why = bench.card_click(entity, el.tags.slot, player.cursor_stack, player.get_main_inventory(), event.shift)
+	if why then player.create_local_flying_text{ text = { "fork-me-gui.card-" .. why }, create_at_cursor = true } end
+	G.refresh_one(player)
+end)
+
+G.on("wb_part", function(event, player, el)
+	if event.name ~= defines.events.on_gui_elem_changed then return end
+	local entity = window_entity(player)
+	if entity then bench.set_partition_slot(entity, el.tags.index, key_of_elem(el.elem_type, el.elem_value)) G.refresh_one(player) end
+end)
+
+G.on("wb_clear", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if entity then bench.clear(entity) G.refresh_one(player) end
+end)
+
+G.on("wb_contents", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if entity then bench.from_contents(entity) G.refresh_one(player) end
+end)
+
+G.on("wb_keep", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then bench.set_keep(entity, el.state) G.refresh_one(player) end
 end)
 
 --------------------------------------------------------------------------------
@@ -1063,6 +1194,7 @@ remote.add_interface("gregtorio-me-gui", {
 	set_interface_signal = function(entity, i, signal, amount) return M.set_interface_signal(entity, i, signal, amount) end,
 	bus_data = function(entity) return M.bus_data(entity) end,
 	storage_bus_data = function(entity) return M.storage_bus_data(entity) end,
+	workbench_data = function(entity) return M.workbench_data(entity) end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
 	key_of_signal = function(signal) return key_of_signal_q(signal) end,
 })

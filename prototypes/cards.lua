@@ -58,6 +58,37 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	fluid_cell = { slots = 3, limits = { inverter = 1, equal = 1, void = 1 } },
 }
 
+--- The ME Cell Workbench (part 3 of issue #17): one cell, its partition and its card slots. AE2's workbench needs
+--- neither the network nor power (blockentity/misc/CellWorkbenchBlockEntity.java extends AEBaseBlockEntity): no ME
+--- member, no power (scripts/fork-me-workbench.lua). AE2's recipe (crafting table, 2 white wool, calculation processor,
+--- 4 iron ingots, chest) as vanilla items that Gregtorio Continued has too.
+ME.add_item{
+	name = "me-cell-workbench",
+	icon = ICON_FORK .. "me-cell-workbench.png",
+	subgroup = "fork-me-cards",
+	order = "z",
+	stack_size = 10,
+	place_result = "me-cell-workbench",
+	recipe = { energy_required = 2, ingredients = I{ "iron-chest", 1, "iron-plate", 4, "advanced-circuit", 1, "electronic-circuit", 2 } },
+}
+data:extend({ {
+	type = "simple-entity-with-force",
+	name = "me-cell-workbench",
+	icon = ICON_FORK .. "me-cell-workbench.png",
+	icon_size = 32,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = "me-cell-workbench" },
+	placeable_by = { item = "me-cell-workbench", count = 1 },
+	max_health = 150,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	picture = { filename = ME.entity_path .. "me-cell-workbench.png", priority = "high", width = 32, height = 32 },
+	localised_description = { "entity-description.me-cell-workbench" },
+} })
+recipes[#recipes + 1] = "me-cell-workbench"
+
 --- after ME 64k Storage (the advanced card needs a processing unit); its cost follows that technology in
 --- data-final-fixes.lua unless another mod sets it (ME_NETWORK.set_technology)
 ME.add_technology{ name = "me-upgrade-cards", prerequisites = { "me-storage-64k" }, unit = ME.unit(3, 400), recipes = recipes }

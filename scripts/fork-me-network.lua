@@ -566,13 +566,18 @@ local function cell_room(cell, spec, key)
 	local per = spec.per_byte or 8
 	local free = spec.bytes - cell.bytes
 	local have = cell.items[key]
+	local room
 	if have then
-		return math.max(0, math.ceil(have / per - ZERO) * per - have) + math.max(0, free) * per
+		room = math.max(0, math.ceil(have / per - ZERO) * per - have) + math.max(0, free) * per
+	else
+		if cell.types >= spec.types then return 0 end
+		free = free - spec.per_type
+		if free <= 0 then return 0 end
+		room = free * per
 	end
-	if cell.types >= spec.types then return 0 end
-	free = free - spec.per_type
-	if free <= 0 then return 0 end
-	return free * per
+	--- issue #17, an Equal Distribution Card: no key holds more than AE2's share of the cell (cell.eq)
+	if cell.eq then room = math.min(room, math.max(0, cell.eq - (have or 0))) end
+	return room
 end
 
 --- change the count of `key` in a cell by `delta`; returns the change of bytes and types
@@ -642,7 +647,15 @@ local function cell_from_tags(name, tags)
 		end
 	end
 	cell.partition = M.clean_partition(spec, stored.partition)
+	cell.cards = M.clean_cards(spec, stored.cards)              -- issue #17: the cell's upgrade cards
+	if cell.cards then M.apply_cell_cards(cell) end
 	return cell
+end
+M.cell_from_tags = cell_from_tags
+
+--- the cell record of a cell item stack (its contents, partition and cards from the tags)
+function M.cell_from_stack(stack)
+	return cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
 end
 
 --- A partition ({ key -> true } or a list of keys) checked against the cell's kind and the prototypes; nil
@@ -668,6 +681,85 @@ function M.clean_partition(spec, partition)
 	return n > 0 and out or nil
 end
 
+--- Issue #17: a list of card names checked against the cell: cards of the kinds its slots take (item cell: fuzzy,
+--- inverter, equal distribution, overflow destruction; fluid cell: no fuzzy), at most each kind's limit and the slots.
+--- nil when none.
+function M.clean_cards(spec, list)
+	if type(list) ~= "table" or not spec then return nil end
+	local r = M.card_rules()
+	r = spec.kind == "fluid" and r.fluid_cell or r.item_cell
+	local out, n = {}, {}
+	for _, name in ipairs(list) do
+		local kind = type(name) == "string" and prototypes.item[name] and M.card_kind(name)
+		local limit = kind and r.limits[kind]
+		if limit and (n[kind] or 0) < limit and #out < r.slots then
+			n[kind] = (n[kind] or 0) + 1
+			out[#out + 1] = name
+		end
+	end
+	return #out > 0 and out or nil
+end
+
+--- does the cell have a card of `kind`?
+function M.has_card(cell, kind)
+	for _, name in ipairs(cell.cards or {}) do if M.card_kind(name) == kind then return true end end
+	return false
+end
+
+--- AE2's share of one key in a cell with an Equal Distribution Card (BasicCellInventory: the bytes left after the
+--- type costs, divided by the types: the whitelist's size without a fuzzy card, else the cell's type limit)
+local function equal_share(cell, spec)
+	local n = spec.types
+	if cell.partition and not cell.fnames then n = math.min(n, math.max(1, table_size(cell.partition))) end
+	local total = (spec.bytes - spec.per_type * n) * (spec.per_byte or 8)
+	return math.max(0, math.ceil(total / n))
+end
+
+--- The fields the storage engine reads, from a cell's partition and cards: the configured list is `partition` (a
+--- whitelist) or, with an Inverter Card, `deny`; `fnames` (Fuzzy Card), `void` (Overflow Destruction Card), `eq` (Equal
+--- Distribution Card: the share of one key). A cell without cards keeps exactly the fields of 0.3.0.
+function M.apply_cell_cards(cell)
+	local spec = cell_spec(cell.name)
+	if not spec then return end
+	local keys = cell.partition or cell.deny
+	local kinds = {}
+	for _, name in ipairs(cell.cards or {}) do
+		local k = M.card_kind(name)
+		if k then kinds[k] = true end
+	end
+	if kinds.inverter then cell.partition, cell.deny = nil, keys else cell.partition, cell.deny = keys, nil end
+	local names
+	if kinds.fuzzy and keys then
+		for key in pairs(keys) do
+			local n = name_of_key(key)
+			if n then
+				names = names or {}
+				names[n] = true
+			end
+		end
+	end
+	cell.fnames = names
+	cell.void = kinds.void or nil
+	cell.eq = nil
+	if kinds.equal then cell.eq = equal_share(cell, spec) end
+	if cell.cards and #cell.cards == 0 then cell.cards = nil end
+end
+
+--- the configured list of a cell (its whitelist, or its blacklist with an Inverter Card), sorted
+function M.cell_keys(cell)
+	local out = {}
+	for key in pairs(cell.partition or cell.deny or {}) do out[#out + 1] = key end
+	table.sort(out)
+	return out
+end
+
+--- set the configured list of a cell (cleaned; the cards decide whether it is a whitelist or a blacklist)
+function M.set_cell_keys(cell, keys)
+	cell.partition = M.clean_partition(cell_spec(cell.name), keys or {})
+	cell.deny = nil
+	M.apply_cell_cards(cell)
+end
+
 --- "1234" or "12.3"
 local function amount_text(n)
 	if n == math.floor(n) then return string.format("%d", n) end
@@ -681,9 +773,11 @@ local function cell_total(cell)
 	return n
 end
 
---- the item stack definition of a cell (tags and a description when it holds something)
+--- the item stack definition of a cell (tags and a description when it holds something, is partitioned or has cards)
 local function cell_stack(cell)
-	if next(cell.items) == nil and not cell.partition then return { name = cell.name, count = 1 } end
+	local plist = cell.partition or cell.deny                 -- issue #17: a blacklist is kept as the partition
+	local cards = cell.cards and #cell.cards > 0 and { table.unpack(cell.cards) } or nil
+	if next(cell.items) == nil and not plist and not cards then return { name = cell.name, count = 1 } end
 	local items, data = {}, {}
 	local keys = {}
 	for key, count in pairs(cell.items) do
@@ -705,13 +799,14 @@ local function cell_stack(cell)
 		end
 	end
 	local spec = cell_spec(cell.name)
-	if next(cell.items) == nil and cell.partition then        -- an empty partitioned cell keeps its partition
-		return { name = cell.name, count = 1, tags = { [CELL_TAG] = { items = {}, data = {}, partition = cell.partition } },
-			custom_description = { "fork-me-net.cell-partitioned", table_size(cell.partition) } }
+	if next(cell.items) == nil then                           -- an empty cell keeps its partition and cards
+		return { name = cell.name, count = 1, tags = { [CELL_TAG] = { items = {}, data = {}, partition = plist, cards = cards } },
+			custom_description = plist and { "fork-me-net.cell-partitioned", table_size(plist) }
+				or { "fork-me-net.cell-with-cards", #cards } }
 	end
 	return {
 		name = cell.name, count = 1,
-		tags = { [CELL_TAG] = { items = items, data = data, partition = cell.partition } },
+		tags = { [CELL_TAG] = { items = items, data = data, partition = plist, cards = cards } },
 		custom_description = { spec and fluid_cell(spec) and "fork-me-net.fluid-cell-holds" or "fork-me-net.cell-holds",
 			amount_text(cell_total(cell)), cell.types, table.concat(list, ", "),
 			cell.bytes, spec and spec.bytes or 0, #keys > 5 and ", ..." or "" },
@@ -1763,8 +1858,8 @@ end
 local function place_cell(s, d, slot, cell)
 	d.slots[slot] = cell
 	local template = d.slot_partition and d.slot_partition[slot]
-	if template and not cell.partition then
-		cell.partition = M.clean_partition(cell_spec(cell.name), template)
+	if template and not (cell.partition or cell.deny) then
+		M.set_cell_keys(cell, template)                       -- (a cell with an Inverter Card: a blacklist)
 		d.slot_partition[slot] = nil
 	end
 	local unit = d.entity.unit_number
@@ -2012,10 +2107,7 @@ function M.get_partition(drive, slot)
 	local s = storage.fork_me_net
 	local d = s and drive and drive.valid and s.drives[drive.unit_number]
 	local cell = d and d.slots[slot]
-	local out = {}
-	for key in pairs(cell and cell.partition or {}) do out[#out + 1] = key end
-	table.sort(out)
-	return out
+	return cell and M.cell_keys(cell) or {}
 end
 
 --- Restrict the cell in `slot` to `keys` (items "name"/"name@quality", fluids "fluid/<name>"); an empty list
@@ -2025,7 +2117,7 @@ function M.set_partition(drive, slot, keys)
 	local d = drive and drive.valid and s.drives[drive.unit_number]
 	local cell = d and d.slots[slot]
 	if not cell then return false end
-	cell.partition = M.clean_partition(cell_spec(cell.name), keys or {})
+	M.set_cell_keys(cell, keys)
 	touch_order(s, drive.unit_number)
 	mark_drive(s, drive.unit_number)
 	return true
@@ -2108,12 +2200,13 @@ function M.drive_info(drive)
 			local spec = cell_spec(cell.name) or { bytes = 0, types = 0 }
 			local items = {}
 			for k, v in pairs(cell.items) do items[k] = v end
-			local partition = {}
-			for key in pairs(cell.partition or {}) do partition[#partition + 1] = key end
-			table.sort(partition)
 			out[slot] = { name = cell.name, items = items, bytes = cell.bytes, bytes_total = spec.bytes,
 				types = cell.types, types_total = spec.types, state = cell_state(cell), fluid = fluid_cell(spec),
-				partition = partition }
+				partition = M.cell_keys(cell),
+				--- issue #17: the cell's cards (from the Cell Workbench)
+				cards = { table.unpack(cell.cards or {}) }, inverted = cell.deny ~= nil or M.has_card(cell, "inverter"),
+				fuzzy = cell.fnames ~= nil or M.has_card(cell, "fuzzy"), equal = cell.eq, void = cell.void == true,
+				voided = cell.voided or 0 }
 		end
 	end
 	return out
@@ -2358,8 +2451,12 @@ local function vanish(s, unit)
 	if node then remove_node(s, unit) end
 end
 
+--- functions of other modules called at every slow step (the Cell Workbench's sweep, issue #17)
+M.slow_hooks = {}
+
 --- every 60 ticks (from the terminal module): the lights of changed drives, the sweep
 function M.slow_step()
+	for _, f in ipairs(M.slow_hooks) do f() end
 	local s = storage.fork_me_net
 	if not s then return end
 	local n = 0
