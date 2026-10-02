@@ -521,6 +521,27 @@ local function new_cell(name)
 	return { name = name, items = {}, data = {}, bytes = 0, types = 0 }
 end
 
+--- Issue #3: items that were replaced by another one (the old fluid blocks -> the unified blocks; mod-data
+--- "fork-me-fluids", unified.items). Keys of such items are read as the key of the new item wherever stored keys
+--- come back (cell tags, partitions, patterns, level maintainers, circuit filters).
+local alias_map
+function M.alias(name)
+	if not alias_map then
+		local md = prototypes.mod_data["fork-me-fluids"]
+		alias_map = md and md.data.unified and md.data.unified.items or {}
+	end
+	return alias_map[name]
+end
+
+--- the key of the replacing item for a key of a replaced one (items with tags keep their key)
+local function alias_key(key)
+	if type(key) ~= "string" or is_fluid_key(key) or key:find("#", 1, true) then return key end
+	local name, q = parse_key(key)
+	local new = M.alias(name)
+	return new and key_of(new, q) or key
+end
+M.alias_key = alias_key
+
 --- the cell's contents as a fresh record (from the tags of a cell item); unknown items are dropped
 local function cell_from_tags(name, tags)
 	local cell = new_cell(name)
@@ -528,16 +549,22 @@ local function cell_from_tags(name, tags)
 	local stored = type(tags) == "table" and tags[CELL_TAG] or nil
 	if type(stored) ~= "table" or not spec then return cell end
 	local keys = {}
+	local counts, data = {}, {}
 	for key, count in pairs(stored.items or {}) do
-		if type(key) == "string" and type(count) == "number" and count > 0 then keys[#keys + 1] = key end
+		if type(key) == "string" and type(count) == "number" and count > 0 then
+			local k = alias_key(key)                      -- a replaced item counts as its replacement (issue #3)
+			if not counts[k] then keys[#keys + 1] = k end
+			counts[k] = (counts[k] or 0) + count
+			if stored.data and stored.data[key] then data[k] = stored.data[key] end
+		end
 	end
 	table.sort(keys)
 	for _, key in ipairs(keys) do
 		if is_fluid_key(key) then
-			if fluid_cell(spec) and prototypes.fluid[key:sub(#FLUID_PREFIX + 1)] then cell_add(cell, spec, key, stored.items[key]) end
+			if fluid_cell(spec) and prototypes.fluid[key:sub(#FLUID_PREFIX + 1)] then cell_add(cell, spec, key, counts[key]) end
 		elseif not fluid_cell(spec) and prototypes.item[(parse_key(key))] then
-			cell_add(cell, spec, key, math.floor(stored.items[key]))
-			local d = stored.data and stored.data[key]
+			cell_add(cell, spec, key, math.floor(counts[key]))
+			local d = data[key]
 			if type(d) == "table" then cell.data[key] = d end
 		end
 	end
@@ -552,7 +579,7 @@ function M.clean_partition(spec, partition)
 	local keys = {}
 	for k, v in pairs(partition) do
 		local key = type(k) == "string" and v == true and k or (type(v) == "string" and v or nil)
-		if key then keys[#keys + 1] = key end
+		if key then keys[#keys + 1] = alias_key(key) end
 	end
 	table.sort(keys)
 	local out, n = {}, 0
@@ -791,10 +818,10 @@ function M.version() local s = storage.fork_me_net return s and s.version or 0 e
 local function mark_drive(s, unit) s.dirty[unit] = true end
 
 --------------------------------------------------------------------------------
---- external cells: storage that is not a storage cell (the storage bus, scripts/fork-me-storagebus.lua, and the
---- fluid storage bus, scripts/fork-me-fluid-storagebus.lua: fluid keys, fractional amounts). An
---- external cell is a record { ext = <handler name>, items = { key -> count }, data = {}, partition, priority,
---- hidden } kept in s.ext[unit] of its member; its cell id is "<unit>:ext". `items` is a snapshot of what the
+--- external cells: storage that is not a storage cell (the storage bus, scripts/fork-me-storagebus.lua, and its
+--- fluid side, scripts/fork-me-fluid-storagebus.lua: fluid keys, fractional amounts). An
+--- external cell is a record { ext = <kind>, handler = <handler name, if not the kind's>, items = { key -> count },
+--- data = {}, partition, priority, hidden } kept in s.ext[unit] of its member; its cell id is "<unit>:ext". `items` is a snapshot of what the
 --- storage held at the last look (none while `hidden`: write only); the totals and the index of the network
 --- include it like any cell. The handler (M.ext_handlers[name], registered at load time) works on the real
 --- storage: room(cell, key), insert(cell, key, count), count(cell, key) and extract(cell, key, count). The
@@ -807,7 +834,7 @@ local function ext_cid(unit) return unit .. ":ext" end
 
 --- items of `key` a cell can take now
 local function room_in(cell, key)
-	if cell.ext then return M.ext_handlers[cell.ext].room(cell, key) end
+	if cell.ext then return M.ext_handlers[cell.handler or cell.ext].room(cell, key) end
 	return cell_room(cell, cell_spec(cell.name), key)
 end
 
@@ -941,7 +968,7 @@ local function insert_key(net, key, count, data)
 		local cell = net.cells[cid]
 		if cell.ext then                               -- external cell: into the real storage, then the snapshot
 			if data then return end                    -- items with tags only go into cells
-			local n = M.ext_handlers[cell.ext].insert(cell, key, is_fluid_key(key) and left or math.floor(left))
+			local n = M.ext_handlers[cell.handler or cell.ext].insert(cell, key, is_fluid_key(key) and left or math.floor(left))
 			if n <= 0 then return end
 			if not cell.hidden then
 				cell.items[key] = (cell.items[key] or 0) + n
@@ -1025,7 +1052,7 @@ local function extract_key(net, key, count)
 		if left <= 0 then break end
 		local cell = net.cells[cid]
 		if cell.ext then                               -- external cell: the real storage first (staleness)
-			local handler = M.ext_handlers[cell.ext]
+			local handler = M.ext_handlers[cell.handler or cell.ext]
 			local real = handler.count(cell, key)
 			if real ~= (cell.items[key] or 0) then ext_set(net, cid, cell, key, real) end
 			local n = math.min(left, real)
@@ -1177,7 +1204,7 @@ function M.stats(net)
 	for _, cid in ipairs(net.cell_list) do
 		local cell = net.cells[cid]
 		local spec = not cell.ext and cell_spec(cell.name)
-		if cell.ext == "fluid-storage-bus" then fbuses = fbuses + 1
+		if cell.side == "fluid" or cell.ext == "fluid-storage-bus" then fbuses = fbuses + 1   -- a storage bus on fluid
 		elseif cell.ext then buses = buses + 1
 		elseif spec and fluid_cell(spec) then fcells = fcells + 1 else cells = cells + 1 end
 	end
@@ -1934,6 +1961,46 @@ function M.quick_insert(player, entity)
 	local _, why = M.insert_cell(entity, cursor)
 	if why then player.create_local_flying_text{ text = { "fork-me-net.error-" .. why }, create_at_cursor = true } end
 	return true
+end
+
+--------------------------------------------------------------------------------
+--- issue #3: replaced items in the drives (scripts/fork-me-unify.lua)
+--------------------------------------------------------------------------------
+
+--- The cells in the drives hold replaced items under their replacement's key (bytes, types and partitions counted
+--- again, the networks recomputed), the drives' partition templates too. Returns the number of items renamed.
+function M.apply_aliases()
+	local s = storage.fork_me_net
+	if not s then return 0 end
+	local moved, changed = 0, false
+	for _, d in pairs(s.drives) do
+		for slot, cell in pairs(d.slots) do
+			local hit = false
+			for key, n in pairs(cell.items) do
+				if alias_key(key) ~= key then hit = true moved = moved + n end
+			end
+			for key in pairs(cell.partition or {}) do
+				if alias_key(key) ~= key then hit = true end
+			end
+			if hit then
+				d.slots[slot] = cell_from_tags(cell.name, cell_stack(cell).tags)
+				s.dirty[d.entity.unit_number] = true
+				changed = true
+			end
+		end
+		for slot, keys in pairs(d.slot_partition or {}) do
+			local out = {}
+			for i, key in pairs(keys) do
+				out[i] = alias_key(key)
+				if out[i] ~= key then changed = true end
+			end
+			d.slot_partition[slot] = out
+		end
+	end
+	if changed then
+		for _, net in pairs(s.nets) do recompute(s, net) end
+	end
+	return moved
 end
 
 --------------------------------------------------------------------------------

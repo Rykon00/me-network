@@ -1,5 +1,15 @@
 ---------------------------------------------------------------------------------------------------
-Version: 0.1.1
+Version: 0.2.0
+  Features:
+    - The ME Interface handles fluids: its 9 config rows take an item or a fluid, and pipes connect to its four sides. Each side imports what is piped in (the default), is off, or keeps a fluid row's fluid at its amount (up to four fluids at once).
+    - The ME Import Bus and ME Export Bus handle items and fluids: up to 9 filters, items and fluids mixed. On a machine with an inventory and fluid boxes (an assembling machine with a fluid recipe, a chemical plant) one bus does both.
+    - The ME Storage Bus also works on a storage tank: the fluid of the tank and of every pipe and tank connected to it becomes network storage (as the ME Fluid Storage Bus did). Its 18 filters take items and fluids.
+  Changes:
+    - The ME Fluid Interface, ME Fluid Import Bus, ME Fluid Export Bus and ME Fluid Storage Bus are gone: no recipe, no technology unlock. ME Fluid Storage unlocks the fluid storage cells only; the unified blocks move fluids from the start.
+    - Saves: every placed fluid interface, fluid bus and fluid storage bus becomes the unified block in place, with its settings and its fluid. Their ghosts, items (in inventories, chests, cells and blueprints), patterns and level maintainers get the unified block; old blueprints build the unified blocks.
+    - ME Interfaces of older saves get their fluid sides when the game is loaded; a side that an existing pipe already touches is off, so a pipeline running past an interface is not drained (switch it to import in the interface's window).
+  Graphics:
+    - The ME Interface shows a pipe connection on each of its four sides.
   Bugfixes:
     - The ME Storage Bus, ME Import Bus and ME Export Bus did not work with the editor's infinity chest ("Faces no chest, logistic chest or cargo wagon").
     - The status line of the ME Terminal showed the fluid cell numbers shifted by one and "__13__" instead of the number of fluid cells.

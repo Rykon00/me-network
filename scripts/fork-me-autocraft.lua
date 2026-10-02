@@ -2092,7 +2092,6 @@ function M.tag_blueprint(bp, mapping)
 			end
 		end
 	end
-	fluids.tag_blueprint(bp, mapping)
 	for _, hook in pairs(M.blueprint_hooks) do hook(bp, mapping) end
 end
 
