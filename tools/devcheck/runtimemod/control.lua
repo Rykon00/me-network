@@ -1,11 +1,12 @@
---- Places every assembling machine that has an item, gives it a recipe and power, then lets
---- the benchmark run the map. Any runtime error in Gregtorio's scripts or the entities fails
---- the run. Results are logged as DEVCHECK-RUNTIME lines.
---- ME network core (issue #68, prototypes/120-fork-ae2.lua, scripts/fork-me-network.lua, fork-me-io.lua,
+--- Runtime tests of ME Network (tools/devcheck/devcheck.py runtime). They were written in Gregtorio Continued (issue
+--- numbers below are Gregtorio's) and run on vanilla (with the stand-ins of data.lua for the few Gregtorio machines
+--- and recipes they name) and with Gregtorio. Every test builds its own network in on_init and reports a
+--- DEVCHECK-RUNTIME-<KEY> line; DEVCHECK-RUNTIME-DONE when all have reported. Any runtime error fails the run.
+--- ME network core (issue #68, prototypes/network.lua, scripts/fork-me-network.lua, fork-me-io.lua,
 --- fork-me-terminal.lua): cable graph and power, storage cells, the terminal's functions, interface and buses
 --- (me_graph_test, me_cells_test, me_terminal_test, me_io_test). The ME networks of the other tests are laid
 --- out as before and connected by the network's cable router (me_connect).
---- Autocrafting (prototypes/121-fork-ae2-autocrafting.lua, scripts/fork-me-autocraft.lua): a network
+--- Autocrafting (prototypes/autocrafting.lua, scripts/fork-me-autocraft.lua): a network
 --- with a crafting CPU, two Molecular Assemblers with pattern providers (iron plate + 2 iron sticks ->
 --- gear, gear + plate -> transport belt) and raw materials in a drive. Job 1 crafts belts through the
 --- two-level chain, job 2 asks for more than the raw materials allow and must not start, job 3 is
@@ -21,23 +22,14 @@
 --- patterns for one output (provider priority), a processing pattern on a machine with its own recipe, a level
 --- maintainer keeping blank patterns. Processing line (pattern_line_test): a processing pattern pushes into a chest,
 --- the "line" (this script) turns the inputs into outputs in another chest and an import bus brings them back.
---- Fluids (issue #68 step R2, prototypes/122-fork-ae2-fluids.lua, scripts/fork-me-fluids.lua): a network with a
+--- Fluids (issue #68 step R2, prototypes/fluids.lua, scripts/fork-me-fluids.lua): a network with a
 --- drive of four 1k fluid cells, an import interface with a tank of chlorine connected to it, an export interface,
 --- a roboport with construction robots, and pattern machines with fluid recipes (chemical reactors, an extractor).
 --- Checks the import and export totals, a fluid cell taken out (its fluid in the tags), stored in the network and
 --- put back, the drive mined by robots (cells with their fluid in the storage chest) and rebuilt, full cells, a
 --- reported fluid shortfall, and jobs with a fluid ingredient, a fluid product and both. ME fluid cells
 --- (fluid_cell_test): a mixed drive, tags, capacity, the terminal with fluids, the fluid buses, old fluid drive
---- items placed. The old fluid recovery is tested as the migration (migratemod).
---- Molds (prototypes/150-fork-molds.lua): an LV alloy smelter with a mold recipe must stop
---- without a mold, run with a mold in its mold slot and keep the mold there.
---- Endgame power (prototypes/136-fork-power.lua): a plasma turbine and a naquadah reactor under load
---- must burn their fuel and make power; the turbine's output hatch gets the cooled fluid.
---- Fuel check (issue #25): steam and the other generator's fuel stop a generator; the right fuel runs it.
---- Turbine tiers (issue #34): the UHV to UXV plasma turbines under an overload give exactly four amps of
---- their tier and return the cooled fluid of the plasma they burnt.
---- Recipes of issue #35: grades 7 and 8, FPIC/APIC wafers and chips, complex SMDs and the recipes that
---- use them are crafted once each (setup_recipe_test).
+--- items placed. The migration of old Gregtorio saves is tested by Gregtorio's devcheck (migrate).
 --- Issue #38: the level maintainer (one job at a time, stops at N, circuit amount and condition), crafting
 --- CPU tiers (two jobs at once), the circuit interface (network contents on the wire) and the settings of
 --- maintainers, circuit and fluid interfaces in blueprints, settings paste and clones (setup_issue38_tests).
@@ -476,7 +468,12 @@ function me_cells_test()
 		local oi = remote.call(NET, "drive", old)
 		expect(oi[1] and oi[4] and oi[4].name == "me-256k-storage-cell" and not oi[5], "old 256k drive item: " .. serpent.line(oi))
 		local card = s.find_entities_filtered{ name = "item-on-ground", position = old.position, radius = 3 }
-		expect(#card == 1 and card[1].stack.name == "acceleration-card", "the old drive's acceleration card was not given back")
+		--- the old item's extra part comes back if the game has it (Gregtorio's acceleration card), else nothing
+		if prototypes.item["acceleration-card"] then
+			expect(#card == 1 and card[1].stack.name == "acceleration-card", "the old drive's acceleration card was not given back")
+		else
+			expect(#card == 0, "an old drive item without an acceleration card in the game dropped " .. #card .. " items")
+		end
 		for _, g in pairs(card) do g.destroy() end
 		--- robots mine a drive with two loaded cells: drive and cells (with their contents) arrive in the storage chest
 		local rd = s.create_entity{ name = "me-drive", position = { CX + 15.5, CY + 8.5 }, force = "player", raise_built = true }
@@ -713,7 +710,7 @@ end
 --- Winning stops the scripts of the benchmark run (no player to continue), so this runs last: as soon
 --- as every other test has reported, at the latest at tick VICTORY_DEADLINE (a test still running
 --- then is reported as unfinished). Checked from the 10-tick handler below.
-local VICTORY_DEADLINE = 1450
+local DONE_DEADLINE = 1450
 local function tests_running()
 	local running = {}
 	local function check(done, name) if not done then running[#running + 1] = name end end
@@ -721,7 +718,6 @@ local function tests_running()
 	check(storage.me_cells and storage.me_cells.done, "ME cells")
 	check(storage.me_term and storage.me_term.done, "ME terminal")
 	check(storage.me_io and storage.me_io.done, "ME import/export")
-	check(storage.mold_done, "mold")
 	check(storage.autocraft and storage.autocraft.done, "autocrafting")
 	check(storage.furnace and storage.furnace.done, "furnace patterns")
 	check(storage.patswitch and storage.patswitch.done, "pattern recipe switching")
@@ -731,11 +727,6 @@ local function tests_running()
 	check(storage.me_r3 and storage.me_r3.done, "ME partitions and windows")
 	check(storage.me_sbus and storage.me_sbus.done, "ME storage bus")
 	check(storage.me_fsbus and storage.me_fsbus.done, "ME fluid storage bus")
-	check(storage.power_checked, "power")
-	check(storage.fuel and storage.fuel.done, "fuel check")
-	check(storage.cooled and storage.cooled.done, "cooled fluid")
-	check(storage.tiers and storage.tiers.done, "turbine tiers")
-	check(storage.recipe_test and storage.recipe_test.done, "recipes of issue #35")
 	check(storage.maint38 and storage.maint38.done, "level maintainer")
 	check(storage.tiers38 and storage.tiers38.done, "crafting CPU tiers")
 	check(storage.circuit38 and storage.circuit38.done, "circuit interface")
@@ -743,53 +734,14 @@ local function tests_running()
 	return running
 end
 
-function victory_test()
-	if storage.victory_checked then return end
+--- every test has reported (DEVCHECK-RUNTIME-DONE), or the deadline names the ones still running
+local function done_test()
+	if storage.done_reported then return end
 	local running = tests_running()
-	if #running > 0 and game.tick < VICTORY_DEADLINE then return end
-	storage.victory_checked = true
-	local problems = {}
-	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
-	expect(#running == 0, "tests still running at tick " .. game.tick .. ": " .. table.concat(running, ", "))
-	local ok, err = pcall(function() game.forces.player.technologies["victory"].researched = true end)
-	expect(ok, "victory test: " .. tostring(err))
-	--- (can_continue cannot be read before a player chooses to go on; the script passes it, see fork-victory.lua)
-	expect(game.finished, "victory test: researching `victory` did not finish the game")
-	--- Phase 6b: after victory, the post-victory technologies (MAX science) must be researchable. `victory` is
-	--- infinite, so it is no prerequisite; their prerequisites are researched by script, then the engine must
-	--- accept `godforge-upgrades` (the infinite sink) in the research queue, and researching its first level
-	--- must give the godforge's magmatter recipe its productivity and leave the godforge unlocked.
-	local force = game.forces.player
-	local seen = {}
-	local function research_prerequisites(tech)
-		for name, pre in pairs(tech.prerequisites) do
-			if not seen[name] then
-				seen[name] = true
-				research_prerequisites(pre)
-				if not pre.researched then pre.researched = true end
-			end
-		end
-	end
-	local upgrades = force.technologies["godforge-upgrades"]
-	ok, err = pcall(function()
-		research_prerequisites(upgrades)
-		force.research_queue = { "godforge-upgrades" }
-	end)
-	expect(ok, "post-victory test: " .. tostring(err))
-	local queued = force.research_queue[1]
-	expect(queued and queued.name == "godforge-upgrades",
-		"post-victory test: godforge-upgrades was not accepted for research (prerequisites not met)")
-	force.research_queue = {}
-	upgrades.researched = true
-	expect(upgrades.level == 2, "post-victory test: godforge-upgrades is at level " .. upgrades.level .. ", not 2")
-	local bonus = force.recipes["molten-magmatter-from-neutronium"].productivity_bonus
-	expect(math.abs(bonus - 0.05) < 1e-6, "post-victory test: magmatter productivity " .. bonus .. ", not 0.05")
-	expect(force.recipes["godforge"].enabled and force.technologies["max-materials"].enabled,
-		"post-victory test: the godforge recipe is not unlocked")
-	log("DEVCHECK-RUNTIME-POSTVICTORY " .. (#problems == 0 and "ok" or "failed") .. " (godforge-upgrades level 1, "
-		.. (seen["victory"] and "victory is a prerequisite" or "after victory") .. ")")
-	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
-	log("DEVCHECK-RUNTIME-VICTORY " .. (#problems == 0 and "ok" or "failed") .. " (tick " .. game.tick .. ")")
+	if #running > 0 and game.tick < DONE_DEADLINE then return end
+	storage.done_reported = true
+	for _, name in pairs(running) do log("DEVCHECK-RUNTIME-FAIL test still running at tick " .. game.tick .. ": " .. name) end
+	log("DEVCHECK-RUNTIME-DONE " .. (#running == 0 and "ok" or "failed") .. " (tick " .. game.tick .. ")")
 end
 
 local AC_Y = 140
@@ -1316,8 +1268,12 @@ function setup_pattern_tests(s)
 	local fails = {}
 	--- recipe switching: M1 without a recipe behind provider PA (three crafting patterns), M2 with the gear recipe of
 	--- its own behind provider PB (a processing pattern for gears), a level maintainer, two CPUs
-	local m = pattern_network(s, fails, PS_X, PS_Y, { ["iron-plate"] = 200, ["iron-stick"] = 200, glass = 20,
-		["certus-quartz"] = 10, ["aluminium-plate"] = 10, ["fluix-cable"] = 10 }, 2)
+	--- plates and sticks for gears and belts, and the ingredients of ten blank patterns (the recipe of the game)
+	local items = { ["iron-plate"] = 200, ["iron-stick"] = 200 }
+	for _, i in pairs(prototypes.recipe["me-blank-pattern"].ingredients) do
+		items[i.name] = (items[i.name] or 0) + 10 * i.amount
+	end
+	local m = pattern_network(s, fails, PS_X, PS_Y, items, 2)
 	me_place(s, fails, "issue #80", "me-molecular-assembler", PS_X + 14.5, PS_Y + 0.5)
 	m[#m + 1] = me_place(s, fails, "issue #80", "me-pattern-provider", PS_X + 16.5, PS_Y + 0.5)
 	m[#m + 1] = me_place(s, fails, "issue #80", "me-pattern-provider", PS_X + 18.5, PS_Y + 0.5)
@@ -1610,15 +1566,11 @@ script.on_nth_tick(10, function()
 	me_r3_test()
 	storage_bus_test()
 	fluid_storage_bus_test()
-	if not (storage.fuel and storage.fuel.done) then fuel_test() end
-	if not (storage.cooled and storage.cooled.done) then cooled_test() end
-	if not (storage.tiers and storage.tiers.done) then tier_test() end
-	if not (storage.recipe_test and storage.recipe_test.done) then recipe_test() end
 	if not (storage.maint38 and storage.maint38.done) then maintainer_test() end
 	if not (storage.tiers38 and storage.tiers38.done) then cpu_tier_test() end
 	if not (storage.circuit38 and storage.circuit38.done) then circuit_test() end
 	settings_test()
-	victory_test()
+	done_test()
 end)
 
 
@@ -2925,725 +2877,6 @@ function fluid_storage_bus_test()
 	ts.insert_fluid{ name = "water", amount = 5000 }
 end
 
---- Endgame power (prototypes/136-fork-power.lua, scripts/fork-power.lua): a LuV large plasma turbine
---- with helium plasma and a turbine output hatch next to it, and a UV large naquadah reactor with
---- naquadah based fuel MK1, each loaded by an electric energy interface that draws the generator's
---- full output. After 7 s both must have produced power and burnt fuel, and the hatch must hold the
---- cooled fluid (helium) for the plasma the turbine burnt (see the cooled fluid test below).
-local PW_Y = 260                                        -- below the fluid test and its roboport area
-local PW_TICK = 420
-local PW = {
-	turbine = { "luv-large-plasma-turbine", 1.5, PW_Y + 1.5, "helium-plasma", 100, 81.92e6 },
-	hatch = { "turbine-output-hatch", 3.5, PW_Y + 1.5 },
-	reactor = { "uv-large-naquadah-reactor", 42.5, PW_Y + 2.5, "naquadah-based-fuel-mk1", 10, 327.68e6 },
-}
-
-function setup_power_test(s)
-	local fails = {}
-	local function place(def)
-		local ok, e = pcall(function()
-			return s.create_entity{ name = def[1], position = { def[2], def[3] }, force = "player", raise_built = true }
-		end)
-		if not (ok and e) then fails[#fails + 1] = "power test " .. def[1] .. ": " .. tostring(e) return nil end
-		return e
-	end
-	for _, key in pairs({ "turbine", "reactor" }) do
-		local def = PW[key]
-		local g = place(def)
-		if g then
-			local got = g.insert_fluid{ name = def[4], amount = def[5] }
-			if got < def[5] then fails[#fails + 1] = "power test: " .. def[1] .. " took only " .. got .. " " .. def[4] end
-			local ok, err = pcall(function()
-				local eei = s.create_entity{ name = "electric-energy-interface", position = { def[2], def[3] + 6 }, force = "player" }
-				eei.power_production = 0
-				eei.power_usage = def[6] / 60
-				eei.electric_buffer_size = 1e8
-				s.create_entity{ name = "substation", position = { def[2] + 4, def[3] + 6 }, force = "player" }
-			end)
-			if not ok then fails[#fails + 1] = "power test load: " .. tostring(err) end
-		end
-	end
-	place(PW.hatch)
-	return fails
-end
-
-script.on_nth_tick(PW_TICK, function(event)
-	if storage.power_checked or event.tick == 0 then return end
-	storage.power_checked = true
-	local s = game.surfaces[1]
-	local problems = {}
-	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
-	local function find(def) return s.find_entity(def[1], { def[2], def[3] }) end
-	local turbine, hatch, reactor = find(PW.turbine), find(PW.hatch), find(PW.reactor)
-	expect(turbine and hatch and reactor, "power test entities missing")
-	--- an input-output fluid box keeps part of its fluid in the pipeline segment, which
-	--- get_fluid_count does not report
-	local function fluid_in(e, fluid)
-		local seg = e.fluidbox.get_fluid_segment_contents(1)
-		return e.get_fluid_count(fluid) + ((seg and seg[fluid]) or 0)
-	end
-	local summary = ""
-	if #problems == 0 then
-		local seconds = event.tick / 60
-		--- turbine: 81.92 MW on helium plasma (81.92 MJ per unit) burns one unit per second
-		local left = fluid_in(turbine, "helium-plasma")
-		local burnt = PW.turbine[5] - left
-		expect(turbine.energy_generated_last_tick > 0, "plasma turbine generates nothing")
-		expect(burnt > 0.6 * seconds and burnt < 1.2 * seconds, "plasma turbine burnt " .. burnt .. " helium plasma in " .. seconds .. " s")
-		local helium = hatch.get_fluid_count("helium")
-		local owed = remote.call("gregtorio-power", "debt", turbine) + remote.call("gregtorio-power", "energy", turbine) / PW.turbine[6]
-		expect(helium > 0, "the output hatch got no helium")
-		expect(math.abs(helium + owed - burnt) <= cooled_tolerance(burnt), "hatch holds " .. helium .. " helium (+ " .. owed .. " owed) for " .. burnt .. " plasma burnt")
-		expect(hatch.get_fluid_count("helium-plasma") == 0, "plasma leaked into the output hatch")
-		--- reactor: 327.68 MW on fuel MK1 (58.5 GJ per unit) burns 0.0056 units per second
-		local fuel_left = fluid_in(reactor, "naquadah-based-fuel-mk1")
-		local fuel_burnt = PW.reactor[5] - fuel_left
-		expect(reactor.energy_generated_last_tick > 0, "naquadah reactor generates nothing")
-		expect(fuel_burnt > 0.003 * seconds and fuel_burnt < 0.007 * seconds, "naquadah reactor burnt " .. fuel_burnt .. " fuel in " .. seconds .. " s")
-		summary = string.format(" (turbine %.2f plasma -> %.2f helium, %.1f MW; reactor %.4f fuel, %.1f MW)",
-			burnt, helium, turbine.energy_generated_last_tick * 60 / 1e6, fuel_burnt, reactor.energy_generated_last_tick * 60 / 1e6)
-	end
-	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
-	log("DEVCHECK-RUNTIME-POWER " .. (#problems == 0 and "ok" or "failed") .. summary)
-end)
-
---- Fuel check (issue #25, scripts/fork-power.lua): generators on a wrong fluid, each with its own
---- load of the generator's full output and its own network (25 tiles apart). Steam (through a pipe)
---- in a plasma turbine, steam in a naquadah reactor, naquadah fuel in a plasma turbine and plasma in
---- a naquadah reactor must make no power, keep their fluid and show "Wrong fuel"; after the right
---- fuel is put in they run. A running turbine whose plasma is replaced by steam burns steam for at
---- most one check interval (10 ticks, the documented window) and then stops.
-local FC_Y = PW_Y
-local FC_WINDOW_TICKS = 10
-local FC = {
-	--  key            generator                     x      wrong fluid                amount  right fuel                 amount  load (W)
-	{ "steam_turbine", "luv-large-plasma-turbine",   75.5,  "steam",                   100,    "helium-plasma",           100,    81.92e6, pipe = true },
-	{ "steam_reactor", "uv-large-naquadah-reactor",  100.5, "steam",                   500,    "naquadah-based-fuel-mk1", 10,     327.68e6 },
-	{ "fuel_turbine",  "luv-large-plasma-turbine",   125.5, "naquadah-based-fuel-mk1", 10,     "helium-plasma",           100,    81.92e6 },
-	{ "plasma_reactor", "uv-large-naquadah-reactor", 150.5, "helium-plasma",           100,    "naquadah-based-fuel-mk1", 10,     327.68e6 },
-	--- issue #34: the new tiers take the same fuel check (1000 plasma: 7.8 s of the UXV turbine)
-	{ "steam_uxv",     "uxv-large-plasma-turbine",   200.5, "steam",                   100,    "helium-plasma",           1000,   10485.76e6 },
-	{ "fuel_uev",      "uev-large-plasma-turbine",   225.5, "naquadah-based-fuel-mk1", 10,     "helium-plasma",           100,    1310.72e6 },
-	{ "window",        "luv-large-plasma-turbine",   175.5, "steam",                   500,    "helium-plasma",           100,    81.92e6 },
-}
-
---- an input-output fluid box keeps part of its fluid in the pipeline segment (see the power test)
-local function fc_fluid_in(e, fluid)
-	local seg = e.fluidbox.get_fluid_segment_contents(1)
-	return e.get_fluid_count(fluid) + ((seg and seg[fluid]) or 0)
-end
-
-function setup_fuel_test(s)
-	local fails = {}
-	storage.fuel = { gens = {} }
-	for _, def in ipairs(FC) do
-		local ok, err = pcall(function()
-			local y = FC_Y + (def[2]:find("reactor") and 2.5 or 1.5)
-			local g = s.create_entity{ name = def[2], position = { def[3], y }, force = "player", raise_built = true }
-			local first, amount = def[4], def[5]
-			if def[1] == "window" then first, amount = def[6], def[7] end
-			if def.pipe then
-				--- the north connection of the 3x3 turbine is one tile above its top edge
-				local pipe = s.create_entity{ name = "pipe", position = { def[3], y - 2 }, force = "player" }
-				local got = pipe.insert_fluid{ name = first, amount = amount }
-				if got < amount then fails[#fails + 1] = "fuel test: the pipe took only " .. got .. " " .. first end
-			else
-				local got = g.insert_fluid{ name = first, amount = amount }
-				if got < amount then fails[#fails + 1] = "fuel test: " .. def[1] .. " took only " .. got .. " " .. first end
-			end
-			local eei = s.create_entity{ name = "electric-energy-interface", position = { def[3], y + 6 }, force = "player" }
-			eei.power_production = 0
-			eei.power_usage = def[8] / 60
-			eei.electric_buffer_size = math.max(1e8, 2 * def[8] / 60)
-			s.create_entity{ name = "substation", position = { def[3] + 4, y + 6 }, force = "player" }
-			storage.fuel.gens[def[1]] = g
-		end)
-		if not ok then fails[#fails + 1] = "fuel test " .. def[1] .. ": " .. tostring(err) end
-	end
-	return fails
-end
-
---- The window turbine: from the swap on, its plasma is taken out every tick, and on the tick it is
---- empty the steam goes in, so the fuel check (every 10 ticks) meets steam that may have burnt since
-function fuel_window_tick()
-	local st = storage.fuel
-	if not (st and st.phase and not st.window_swapped and not st.done) then return end
-	local def = FC[#FC]
-	local g = st.gens.window
-	if not (g and g.valid) then return end
-	g.remove_fluid{ name = def[6], amount = 1e9 }
-	if fc_fluid_in(g, def[6]) > 0 then return end
-	local got = g.insert_fluid{ name = def[4], amount = def[5] }
-	if math.abs(got - def[5]) > 1e-6 then log("DEVCHECK-RUNTIME-FAIL fuel test: window turbine took only " .. got .. " steam") end
-	st.window_swapped, st.window_stopped = game.tick, g.disabled_by_script
-end
-
-function fuel_test()
-	local st = storage.fuel
-	if not st then return end
-	local tick = game.tick
-	local problems = {}
-	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
-	local function label_key(e)
-		local cs = e.custom_status
-		return cs and type(cs.label) == "table" and cs.label[1] or nil
-	end
-	local function finish(summary)
-		st.done = true
-		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL fuel test: " .. p) end
-		log("DEVCHECK-RUNTIME-FUEL " .. (#problems == 0 and "ok" or "failed") .. (summary or ""))
-	end
-	for _, def in ipairs(FC) do
-		if not (st.gens[def[1]] and st.gens[def[1]].valid) then
-			problems[#problems + 1] = "generator " .. def[1] .. " missing"
-			return finish()
-		end
-	end
-	if not st.phase and tick >= 120 then
-		--- wrong fuels: no power, fluid kept, status set; the window turbine runs on plasma
-		for _, def in ipairs(FC) do
-			local g = st.gens[def[1]]
-			if def[1] == "window" then
-				expect(g.energy_generated_last_tick > 0, "window turbine does not run on plasma")
-				expect(not g.disabled_by_script, "window turbine stopped on plasma")
-			else
-				local left = fc_fluid_in(g, def[4])
-				expect(g.energy_generated_last_tick == 0, def[1] .. " generates " .. g.energy_generated_last_tick .. " J/tick on " .. def[4])
-				expect(math.abs(left - def[5]) < 1e-6, def[1] .. " holds " .. left .. " " .. def[4] .. " of " .. def[5])
-				expect(g.disabled_by_script, def[1] .. " is not stopped")
-				expect(label_key(g) == "entity-status.fork-wrong-fuel", def[1] .. " status " .. serpent.line(g.custom_status))
-			end
-		end
-		if #problems > 0 then return finish() end
-		st.phase, st.drain = "draining", 0
-	elseif st.phase == "draining" then
-		--- swap: empty the stopped ones (removing takes only the entity's share, the segment gives
-		--- the rest back over the next ticks), then put the right fuel in; the window turbine is
-		--- swapped every tick by fuel_window_tick
-		local left = 0
-		for _, def in ipairs(FC) do
-			if def[1] ~= "window" then
-				local g = st.gens[def[1]]
-				g.remove_fluid{ name = def[4], amount = 1e9 }
-				left = left + fc_fluid_in(g, def[4])
-			end
-		end
-		st.drain = st.drain + 1
-		if left > 0 then
-			if st.drain > 30 then
-				problems[#problems + 1] = "could not empty the generators (" .. left .. " left)"
-				return finish()
-			end
-			return
-		end
-		for _, def in ipairs(FC) do
-			if def[1] ~= "window" then
-				local g = st.gens[def[1]]
-				local got = g.insert_fluid{ name = def[6], amount = def[7] }
-				expect(math.abs(got - def[7]) < 1e-6, def[1] .. " took only " .. got .. " " .. def[6] .. " after emptying it")
-			end
-		end
-		st.phase, st.swapped = "right", tick
-		if #problems > 0 then return finish() end
-	elseif st.phase == "right" and st.window_swapped and not st.window_mid and tick >= st.window_swapped + FC_WINDOW_TICKS + 10 then
-		st.window_mid = fc_fluid_in(st.gens.window, FC[#FC][4])
-	elseif st.phase == "right" and st.window_mid and tick >= math.max(st.swapped, st.window_swapped) + 60 then
-		local summary = ""
-		for _, def in ipairs(FC) do
-			local g = st.gens[def[1]]
-			if def[1] == "window" then
-				--- at most one interval of the full output on steam (+1 tick for the check order)
-				local burnt = def[5] - fc_fluid_in(g, def[4])
-				local max = def[8] * (FC_WINDOW_TICKS + 1) / 60 / prototypes.fluid[def[4]].fuel_value
-				expect(burnt <= max, "window turbine burnt " .. burnt .. " steam, more than " .. max)
-				--- a stopped generator keeps its last energy_generated_last_tick: the steam must not move
-				expect(st.window_mid and math.abs(fc_fluid_in(g, def[4]) - st.window_mid) < 1e-6,
-					"window turbine still burns steam (" .. tostring(st.window_mid) .. " -> " .. fc_fluid_in(g, def[4]) .. ")")
-				expect(g.disabled_by_script, "window turbine is not stopped")
-				expect(label_key(g) == "entity-status.fork-wrong-fuel", "window turbine status " .. serpent.line(g.custom_status))
-				summary = string.format(" (window: %.1f steam = %.2f MJ burnt, swapped on tick %d %s)", burnt,
-					burnt * prototypes.fluid[def[4]].fuel_value / 1e6, st.window_swapped,
-					st.window_stopped and "after the turbine had stopped" or "while the turbine ran")
-			else
-				local burnt = def[7] - fc_fluid_in(g, def[6])
-				expect(g.energy_generated_last_tick > 0, def[1] .. " does not run on " .. def[6])
-				expect(burnt > 0, def[1] .. " burnt no " .. def[6])
-				expect(not g.disabled_by_script, def[1] .. " still stopped on " .. def[6])
-				expect(g.custom_status == nil, def[1] .. " still has status " .. serpent.line(g.custom_status))
-			end
-		end
-		return finish(summary)
-	elseif tick > 900 then
-		problems[#problems + 1] = "timed out in phase " .. tostring(st.phase)
-		return finish()
-	end
-end
-
---- Cooled fluid (issue #28, scripts/fork-power.lua): the cooled fluid in a turbine's output hatch
---- must match the plasma it burnt, one unit per unit, within COOLED_TOL (relative) + COOLED_ABS
---- units, whatever the load. Every LuV plasma turbine has its own load (an electric energy interface
---- that draws exactly the given share of 81.92 MW per tick, no buffer), set every tick:
----   full, partial (40 %), burst (full for 5 ticks out of 23, idle in between): a known amount of
----     helium plasma burnt to the last drop, then the hatch must hold exactly that much helium;
----   idle: no load; only the first fill of the load's buffer is burnt, and returned;
----   full_hatch: the hatch starts with 3999 of its 4000 helium, so the rest stays owed; once it is
----     emptied it must get all of it;
----   pair_a, pair_b: two turbines side by side on helium and nitrogen plasma, one hatch each: each
----     hatch gets only its own cooled fluid, in the right amount.
---- A running turbine is compared as hatch + owed + the energy of the current step / fuel value.
-local CO_Y = 370
-local COOLED_TOL, COOLED_ABS = 1e-3, 1e-3
-local CO_DEADLINE = 1300
-local CO_POWER = 81.92e6
-local CO = {
-	--  key           x      plasma            amount  load(tick)                                       hatch x offset
-	{ "full",       200.5, "helium-plasma",   4,     function() return 1 end,                         2 },
-	{ "partial",    225.5, "helium-plasma",   2,     function() return 0.4 end,                       2 },
-	{ "burst",      250.5, "helium-plasma",   1.5,   function(t) return t % 23 < 5 and 1 or 0 end,    2 },
-	{ "idle",       275.5, "helium-plasma",   10,    function() return 0 end,                         2 },
-	{ "full_hatch", 300.5, "helium-plasma",   100,   function() return 1 end,                         2 },
-	{ "pair_a",     330.5, "helium-plasma",   100,   function() return 1 end,                         -2 },
-	{ "pair_b",     333.5, "nitrogen-plasma", 100,   function() return 1 end,                         2 },
-}
-local CO_PREFILL = 3999
-
-function cooled_tolerance(burnt) return COOLED_ABS + COOLED_TOL * burnt end
-
-function setup_cooled_test(s)
-	local fails = {}
-	storage.cooled = { t = {} }
-	for i, def in ipairs(CO) do
-		local ok, err = pcall(function()
-			local g = s.create_entity{ name = "luv-large-plasma-turbine", position = { def[2], CO_Y }, force = "player", raise_built = true }
-			local got = g.insert_fluid{ name = def[3], amount = def[4] }
-			if math.abs(got - def[4]) > 1e-6 then fails[#fails + 1] = "cooled test: " .. def[1] .. " took only " .. got .. " " .. def[3] end
-			local eei = s.create_entity{ name = "electric-energy-interface", position = { def[2], CO_Y + 6 }, force = "player" }
-			eei.power_production = 0
-			eei.power_usage = 0
-			eei.electric_buffer_size = CO_POWER / 60
-			s.create_entity{ name = "substation", position = { def[2] + (def[6] > 0 and 4 or -4), CO_Y + 6 }, force = "player" }
-			local h = s.create_entity{ name = "turbine-output-hatch", position = { def[2] + def[6], CO_Y }, force = "player", raise_built = true }
-			storage.cooled.t[def[1]] = { g = g, eei = eei, h = h, i = i, removed = 0 }
-		end)
-		if not ok then fails[#fails + 1] = "cooled test " .. def[1] .. ": " .. tostring(err) end
-	end
-	local fh = storage.cooled.t.full_hatch
-	if fh then
-		local got = fh.h.insert_fluid{ name = "helium", amount = CO_PREFILL }
-		if math.abs(got - CO_PREFILL) > 1e-6 then fails[#fails + 1] = "cooled test: the full hatch took only " .. got .. " helium" end
-	end
-	return fails
-end
-
---- Every tick: the load of each turbine
-function cooled_load_tick(tick)
-	local st = storage.cooled
-	if not st or st.done then return end
-	for _, c in pairs(st.t) do
-		if c.eei.valid then c.eei.power_usage = CO_POWER / 60 * CO[c.i][5](tick) end
-	end
-end
-
-function cooled_test()
-	local st = storage.cooled
-	if not st then return end
-	local problems = {}
-	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
-	local function finish(summary)
-		st.done = true
-		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL cooled fluid test: " .. p) end
-		log("DEVCHECK-RUNTIME-COOLED " .. (#problems == 0 and "ok" or "failed") .. (summary or ""))
-	end
-	for _, def in ipairs(CO) do
-		local c = st.t[def[1]]
-		if not (c and c.g.valid and c.h.valid and c.eei.valid) then
-			problems[#problems + 1] = def[1] .. " missing"
-			return finish()
-		end
-	end
-	local P = "gregtorio-power"
-	--- the plasma a turbine burnt (entity and segment) and the cooled fluid it returned: in the hatch
-	--- (and taken out of it by the test), owed, and the energy of the current step
-	local function account(c)
-		local def = CO[c.i]
-		local fuel = prototypes.fluid[def[3]].fuel_value
-		local out = def[3] == "helium-plasma" and "helium" or "nitrogen"
-		local seg = c.g.fluidbox.get_fluid_segment_contents(1)
-		local burnt = def[4] - c.g.get_fluid_count(def[3]) - ((seg and seg[def[3]]) or 0)
-		local prefill = def[1] == "full_hatch" and CO_PREFILL or 0
-		local hatch = c.h.get_fluid_count(out) + c.removed - prefill
-		local owed = remote.call(P, "debt", c.g, out)
-		local pending = remote.call(P, "energy", c.g) / fuel
-		return burnt, hatch, owed, pending, out
-	end
-	local function matches(key, c)
-		local burnt, hatch, owed, pending, out = account(c)
-		local ok = math.abs(hatch + owed + pending - burnt) <= cooled_tolerance(burnt)
-		st.worst = math.max(st.worst or 0, math.abs(hatch + owed + pending - burnt) / burnt)
-		expect(ok, string.format("%s: %.6f plasma burnt, hatch got %.6f %s, %.6f owed, %.6f pending", key, burnt, hatch, out, owed, pending))
-		return burnt, hatch + owed + pending - burnt
-	end
-	local tick = game.tick
-	st.dry = st.dry or {}
-	--- the known amounts: burnt to the last drop, stopped for "no fuel", nothing owed or pending
-	for _, key in pairs({ "full", "partial", "burst" }) do
-		local c = st.t[key]
-		if not st.dry[key] then
-			local burnt, hatch, owed, pending = account(c)
-			local amount = CO[c.i][4]
-			if burnt >= amount - 1e-9 and owed < 1e-4 and pending == 0 and c.g.disabled_by_script then
-				st.dry[key] = { tick = tick, hatch = hatch }
-				st.worst = math.max(st.worst or 0, math.abs(hatch - amount) / amount)
-				expect(math.abs(hatch - amount) <= cooled_tolerance(amount),
-					string.format("%s: %.6f plasma burnt, the hatch got %.6f", key, amount, hatch))
-			end
-		end
-	end
-	--- the full hatch: full, the rest owed; then emptied, and it must get everything
-	local fh = st.t.full_hatch
-	if not st.hatch_phase then
-		local burnt, _, owed = account(fh)
-		if burnt >= 3 then
-			expect(math.abs(fh.h.get_fluid_count("helium") - 4000) < 1e-3, "full hatch holds " .. fh.h.get_fluid_count("helium") .. " of 4000")
-			expect(owed > 1.5, "full hatch: only " .. owed .. " helium owed for " .. burnt .. " plasma burnt")
-			matches("full_hatch (full)", fh)
-			st.hatch_owed = owed
-			fh.removed = fh.removed + fh.h.remove_fluid{ name = "helium", amount = 4000 }
-			st.hatch_phase = tick
-		end
-	elseif st.hatch_phase ~= true and tick >= st.hatch_phase + 60 then
-		matches("full_hatch (emptied)", fh)
-		local _, _, owed = account(fh)
-		expect(owed < 0.2, "full hatch: still " .. owed .. " helium owed after it was emptied")
-		st.hatch_phase = true
-	end
-	--- the pair: own fluid only, right amounts
-	if not st.pair_checked and account(st.t.pair_a) >= 3 then
-		matches("pair_a", st.t.pair_a)
-		matches("pair_b", st.t.pair_b)
-		expect(st.t.pair_a.h.get_fluid_count("nitrogen") == 0, "pair_a's hatch got nitrogen")
-		expect(st.t.pair_b.h.get_fluid_count("helium") == 0, "pair_b's hatch got helium")
-		expect(account(st.t.pair_b) > 1, "pair_b burnt only " .. account(st.t.pair_b) .. " nitrogen plasma")
-		st.pair_checked = true
-	end
-	if #problems > 0 then return finish() end
-	if st.dry.full and st.dry.partial and st.dry.burst and st.hatch_phase == true and st.pair_checked then
-		--- idle: only the first fill of its load's buffer (one tick of output each) is burnt
-		local idle_burnt = matches("idle", st.t.idle)
-		expect(idle_burnt < 3 / 60 + 1e-6, "idle turbine burnt " .. idle_burnt .. " plasma")
-		return finish(string.format(" (4/2/1.5 plasma -> %.6f/%.6f/%.6f helium at full/40%%/burst load, worst error %.1e, full hatch owed %.2f)",
-			st.dry.full.hatch, st.dry.partial.hatch, st.dry.burst.hatch, st.worst or 0, st.hatch_owed))
-	end
-	if tick > CO_DEADLINE then
-		local left = {}
-		for _, key in pairs({ "full", "partial", "burst" }) do
-			if not st.dry[key] then
-				local burnt, hatch, owed, pending = account(st.t[key])
-				left[key] = { burnt = burnt, hatch = hatch, owed = owed, pending = pending, stopped = st.t[key].g.disabled_by_script }
-			end
-		end
-		expect(false, "timed out: dry " .. serpent.line(st.dry) .. " (not yet: " .. serpent.line(left) .. ")" .. ", full hatch " .. tostring(st.hatch_phase) .. ", pair " .. tostring(st.pair_checked))
-		return finish()
-	end
-end
-
---- Turbine tiers (issue #34, prototypes/136-fork-power.lua): one UHV to UXV (and MAX, phase 6b) large plasma turbine each
---- and a second UXV one on neon plasma, with an output hatch and a load of twice its output (an electric
---- energy interface in its own network). While it runs, every turbine must generate exactly four amps
---- of its tier per tick (the cap, not the load; fluid_usage_per_tick must let the weakest plasma, neon,
---- reach it too); once its plasma (one to one and a half seconds of full output) is burnt to the last
---- drop, its hatch must hold exactly that much cooled fluid (tolerance of the cooled fluid test).
---- The runtime code is the one of the LuV turbines: the new turbines are only listed in the mod data.
-local TT_Y = -260                                       -- above the machine grid, below the recipe test
-local TT_CHECK_TICK = 20
-local TT_DEADLINE = 600
-local TT = {
-	--  turbine                     x      plasma            amount  cooled fluid    cap (W)
-	{ "uhv-large-plasma-turbine", 100.5, "helium-plasma",   8,      "helium",       655.36e6 },
-	{ "uev-large-plasma-turbine", 125.5, "helium-plasma",   16,     "helium",       1310.72e6 },
-	{ "uiv-large-plasma-turbine", 150.5, "nitrogen-plasma", 30,     "nitrogen",     2621.44e6 },
-	{ "umv-large-plasma-turbine", 175.5, "iron-plasma",     30,     "molten-iron",  5242.88e6 },
-	{ "uxv-large-plasma-turbine", 200.5, "helium-plasma",   128,    "helium",       10485.76e6 },
-	--- the weakest plasma (20.48 MJ): the UXV turbine needs 8.53 of its 9 units per tick for the cap
-	{ "uxv-large-plasma-turbine", 225.5, "neon-plasma",     512,    "neon",         10485.76e6 },
-	--- phase 6b (prototypes/141-fork-max.lua): the MAX turbine, also on the weakest plasma (17.07 of its 18 units)
-	{ "max-large-plasma-turbine", 250.5, "helium-plasma",   256,    "helium",       20971.52e6 },
-	{ "max-large-plasma-turbine", 275.5, "neon-plasma",     960,    "neon",         20971.52e6 },
-}
-
-function setup_tier_test(s)
-	local fails = {}
-	storage.tiers = { t = {}, dry = {} }
-	for i, def in ipairs(TT) do
-		local ok, err = pcall(function()
-			local g = s.create_entity{ name = def[1], position = { def[2], TT_Y }, force = "player", raise_built = true }
-			local got = g.insert_fluid{ name = def[3], amount = def[4] }
-			if math.abs(got - def[4]) > 1e-6 then fails[#fails + 1] = "tier test: " .. def[1] .. " took only " .. got .. " " .. def[3] end
-			local eei = s.create_entity{ name = "electric-energy-interface", position = { def[2], TT_Y + 6 }, force = "player" }
-			eei.power_production = 0
-			eei.power_usage = 2 * def[6] / 60
-			eei.electric_buffer_size = 4 * def[6] / 60
-			s.create_entity{ name = "substation", position = { def[2] + 4, TT_Y + 6 }, force = "player" }
-			local h = s.create_entity{ name = "turbine-output-hatch", position = { def[2] + 2, TT_Y }, force = "player", raise_built = true }
-			storage.tiers.t[i] = { g = g, h = h }
-		end)
-		if not ok then fails[#fails + 1] = "tier test " .. def[1] .. ": " .. tostring(err) end
-	end
-	return fails
-end
-
-function tier_test()
-	local st = storage.tiers
-	if not st then return end
-	local tick = game.tick
-	local problems = {}
-	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
-	local function finish(summary)
-		st.done = true
-		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL turbine tier test: " .. p) end
-		log("DEVCHECK-RUNTIME-TIERS " .. (#problems == 0 and "ok" or "failed") .. (summary or ""))
-	end
-	for i, def in ipairs(TT) do
-		local c = st.t[i]
-		if not (c and c.g.valid and c.h.valid) then
-			problems[#problems + 1] = def[1] .. " missing"
-			return finish()
-		end
-	end
-	--- the cap: four amps of the tier per tick under twice that load, as the prototype says
-	if not st.capped and tick >= TT_CHECK_TICK then
-		for i, def in ipairs(TT) do
-			local g = st.t[i].g
-			local per_tick = def[6] / 60
-			local max = g.prototype.get_max_power_output()
-			expect(math.abs(max - per_tick) <= 1e-6 * per_tick, def[1] .. ": max_power_output " .. max * 60 .. " W, expected " .. def[6])
-			expect(not g.disabled_by_script, def[1] .. " is stopped on " .. def[3] .. " (" .. serpent.line(g.custom_status) .. ")")
-			expect(math.abs(g.energy_generated_last_tick - per_tick) <= 1e-6 * per_tick,
-				string.format("%s generates %.6g W under a load of %.6g W, expected the cap %.6g W", def[1],
-					g.energy_generated_last_tick * 60, 2 * def[6], def[6]))
-		end
-		st.capped = true
-		if #problems > 0 then return finish() end
-	end
-	--- the cooled fluid: burnt to the last drop (stopped for "no fuel", nothing owed or pending)
-	for i, def in ipairs(TT) do
-		local c = st.t[i]
-		if not st.dry[i] then
-			local seg = c.g.fluidbox.get_fluid_segment_contents(1)
-			local burnt = def[4] - c.g.get_fluid_count(def[3]) - ((seg and seg[def[3]]) or 0)
-			local owed = remote.call("gregtorio-power", "debt", c.g, def[5])
-			local pending = remote.call("gregtorio-power", "energy", c.g)
-			if burnt >= def[4] - 1e-9 and owed < 1e-4 and pending == 0 and c.g.disabled_by_script then
-				local hatch = c.h.get_fluid_count(def[5])
-				st.dry[i] = { tick = tick, hatch = hatch }
-				st.worst = math.max(st.worst or 0, math.abs(hatch - def[4]) / def[4])
-				expect(math.abs(hatch - def[4]) <= cooled_tolerance(def[4]),
-					string.format("%s: %.6f %s burnt, the hatch got %.6f %s", def[1], def[4], def[3], hatch, def[5]))
-				expect(c.h.get_fluid_count(def[3]) == 0, def[1] .. ": plasma leaked into the output hatch")
-			end
-		end
-	end
-	if #problems > 0 then return finish() end
-	if st.capped and table_size(st.dry) == #TT then
-		local parts = {}
-		for i, def in ipairs(TT) do
-			parts[#parts + 1] = string.format("%s %.6g MW: %g -> %.6f", def[1]:sub(1, 3), def[6] / 1e6, def[4], st.dry[i].hatch)
-		end
-		return finish(string.format(" (%s; worst error %.1e)", table.concat(parts, ", "), st.worst or 0))
-	end
-	if tick > TT_DEADLINE then
-		expect(false, "timed out: capped " .. tostring(st.capped) .. ", dry " .. serpent.line(st.dry))
-		return finish()
-	end
-end
-
---- New recipes of issue #35 (prototypes/129-fork-water-purification.lua): grades 7 and 8 in the water
---- purification plant, the FPIC and APIC wafers and chips, the complex SMDs, the quark creation catalyst
---- and recipes that take the new parts; the same for issues #39 and #36 and phase 6a (plasma forge, QFT).
---- Each machine gets one craft's ingredients (placed above the machine grid, powered like it); once it
---- crafts, its progress is set close to the end (the grades take 25 and 30 s, a mainframe 12 minutes), and
---- the main product must come out (a main product with a probability: the craft must finish).
-local RT_Y = -300
-local RT_DEADLINE = 900
-local RT = {
-	{ "water-purification-plant", "grade-7-water" },
-	{ "water-purification-plant", "grade-8-water" },
-	{ "uhv-laser-engraver", "fpic-wafer" },
-	{ "uev-laser-engraver", "apic-wafer" },
-	{ "uhv-assembling-machine", "femto-power-ic" },
-	{ "uev-assembling-machine", "atto-power-ic" },
-	{ "uv-assembling-machine", "complex-smd-transistor" },
-	{ "uv-assembling-machine", "complex-smd-resistor" },
-	{ "uv-assembling-machine", "complex-smd-capacitor" },
-	{ "uv-assembling-machine", "complex-smd-diode" },
-	{ "uv-assembling-machine", "complex-smd-inductor" },
-	{ "zpm-assembly-line", "quark-creation-catalyst" },
-	{ "zpm-assembly-line", "uev-energy-hatch" },
-	{ "zpm-assembly-line", "uiv-energy-hatch" },
-	{ "zpm-assembly-line", "fusion-reactor-mk4-controller" },
-	{ "luv-circuit-assembly-line", "wetware-processor-mainframe" },
-	-- issues #39 and #36 (prototypes/137-fork-endgame-materials.lua): the drafts made real, the new
-	-- materials and recipes that take them
-	{ "iv-circuit-assembler", "lapotronic-energy-orb-cluster" },
-	{ "ev-assembling-machine", "wrapped-plutonium-ingot" },
-	{ "hv-implosion-compressor", "high-density-plutonium-nugget" },
-	{ "luv-mixer", "plutonium-based-liquid-fuel" },
-	{ "hv-mixer", "super-coolant" },
-	{ "hv-canning-machine", "1080k-super-coolant-cell" },
-	{ "zpm-electric-blast-furnace", "hot-fluxed-electrum-ingot" },
-	{ "zpm-alloy-blast-smelter", "molten-fluxed-electrum" },
-	{ "uv-electric-blast-furnace", "hot-bedrockium-ingot" },
-	{ "uhv-electric-blast-furnace", "hot-quantium-ingot" },
-	{ "iv-extractor", "molten-quantium" },
-	{ "uhv-mixer", "naquadah-based-fuel-mk2" },
-	{ "water-purification-plant", "grade-5-water" },
-	{ "zpm-assembly-line", "uxv-energy-hatch" },
-	-- phase 6a (prototypes/139-fork-endgame-multiblocks.lua): a plasma forge recipe (the catalyst and a metal) and
-	-- a quantum force transformer recipe in the real machines
-	{ "dimensionally-transcendent-plasma-forge", "excited-dimensionally-transcendent-crude-catalyst" },
-	{ "dimensionally-transcendent-plasma-forge", "molten-spacetime-dtpf-crude" },
-	{ "quantum-force-transformer", "metallic-platinum-powder-qft-platinum-dust" },
-	-- phase 6b (prototypes/140-fork-godforge.lua, 141-fork-max.lua): godforge recipes (star matter, magmatter), the
-	-- stellar catalyst in the plasma forge, a MAX component, a recipe in a MAX machine and the MAX pack from MAX parts
-	{ "godforge", "raw-star-matter" },
-	{ "godforge", "molten-magmatter-from-neutronium" },
-	{ "dimensionally-transcendent-plasma-forge", "excited-dimensionally-transcendent-stellar-catalyst" },
-	{ "zpm-assembly-line", "max-motor" },
-	{ "max-assembling-machine", "maximum-voltage-coil" },
-	{ "uxv-assembling-machine", "max-science-pack-from-magmatter" },
-}
-
-local function rt_product(recipe)
-	local r = prototypes.recipe[recipe]
-	for _, p in pairs(r.products) do
-		if p.name == (r.main_product and r.main_product.name or p.name) then return p end
-	end
-end
-
-function setup_recipe_test(s)
-	local fails = {}
-	storage.recipe_test = { m = {}, ok = {} }
-	local x = -150
-	for i, def in pairs(RT) do
-		local ok, err = pcall(function()
-			local e = s.create_entity{ name = def[1], position = { x, RT_Y }, force = "player", raise_built = true }
-			s.create_entity{ name = "electric-energy-interface", position = { x, RT_Y + 7 }, force = "player" }
-			s.create_entity{ name = "substation", position = { x + 5, RT_Y + 7 }, force = "player" }
-			e.force.recipes[def[2]].enabled = true
-			e.set_recipe(def[2])
-			for _, ing in pairs(prototypes.recipe[def[2]].ingredients) do
-				if ing.type == "item" then
-					local n = e.insert{ name = ing.name, count = ing.amount }
-					assert(n == ing.amount, "only " .. n .. " of " .. ing.amount .. " " .. ing.name .. " fit")
-				else
-					local n = e.insert_fluid{ name = ing.name, amount = ing.amount }
-					assert(math.abs(n - ing.amount) < 1e-6, "only " .. n .. " of " .. ing.amount .. " " .. ing.name .. " fit")
-				end
-			end
-			storage.recipe_test.m[i] = e
-		end)
-		if not ok then fails[#fails + 1] = "recipe test " .. def[2] .. " in " .. def[1] .. ": " .. tostring(err) end
-		x = x + 18
-	end
-	return fails
-end
-
-function recipe_test()
-	local st = storage.recipe_test
-	if not st or st.done then return end
-	local pending = {}
-	for i, def in pairs(RT) do
-		local e = st.m[i]
-		if e and e.valid and not st.ok[i] then
-			local p = rt_product(def[2])
-			local made = p.type == "fluid" and e.get_fluid_count(p.name) or
-				e.get_inventory(defines.inventory.crafter_output).get_item_count(p.name)
-			-- a main product with a probability (the QFT's focused output) may roll nothing: a finished craft counts
-			if made >= (p.amount or p.amount_min or 1) - 1e-6 or ((p.probability or 1) < 1 and e.products_finished > 0) then
-				st.ok[i] = true
-			else
-				if e.crafting_progress > 0 and e.crafting_progress < 0.999 then e.crafting_progress = 0.999 end
-				local status
-				for name, v in pairs(defines.entity_status) do if e.status == v then status = name end end
-				pending[#pending + 1] = def[2] .. " (" .. tostring(status) .. ", progress " .. e.crafting_progress .. ", made " .. made .. ")"
-			end
-		end
-	end
-	local n = 0
-	for _ in pairs(st.ok) do n = n + 1 end
-	if #pending == 0 or game.tick > RT_DEADLINE then
-		st.done = true
-		local problems = {}
-		if n < #RT then problems[#problems + 1] = "recipe test: " .. (#RT - n) .. " of " .. #RT .. " recipes made nothing: " .. table.concat(pending, ", ") end
-		for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
-		log("DEVCHECK-RUNTIME-RECIPES " .. (#problems == 0 and "ok" or "failed") .. " (" .. n .. " of " .. #RT .. " recipes crafted by tick " .. game.tick .. ")")
-	end
-end
-
-local MOLD_Y = 120
-local MOLD_RECIPE = "glass-alloy-smelter"
-local MOLD_DEADLINE = 900                               -- ticks for the first glass with the mold in (361 needed)
-
-function setup_mold_test(s)
-	local ok, err = pcall(function()
-		local eei = s.create_entity{ name = "electric-energy-interface", position = { 0, MOLD_Y }, force = "player" }
-		eei.power_production = 1e6
-		eei.electric_buffer_size = 1e7
-		s.create_entity{ name = "substation", position = { 3, MOLD_Y }, force = "player" }
-		local m = s.create_entity{ name = "lv-alloy-smelter", position = { 6, MOLD_Y }, force = "player", raise_built = true }
-		m.force.recipes[MOLD_RECIPE].enabled = true
-		m.set_recipe(MOLD_RECIPE)
-		m.insert{ name = "glass-dust", count = 20 }
-		storage.mold_machine = m
-	end)
-	if not ok then return { "mold test setup: " .. tostring(err) } end
-	return {}
-end
-
-script.on_event(defines.events.on_tick, function(event)
-	fuel_window_tick()
-	cooled_load_tick(event.tick)
-	local m = storage.mold_machine
-	if storage.mold_done then return end
-	local function glass_made()
-		return m and m.valid and m.get_inventory(defines.inventory.crafter_output or defines.inventory.assembling_machine_output).get_item_count("glass") or 0
-	end
-	--- phase 2 as soon as the first glass is out, at the latest MOLD_DEADLINE ticks after the mold went in
-	local phase
-	if not storage.mold_phase1 and event.tick >= 60 then
-		phase = 1
-		storage.mold_phase1 = event.tick
-	elseif storage.mold_phase1 and (glass_made() > 0 or event.tick >= storage.mold_phase1 + MOLD_DEADLINE) then
-		phase = 2
-		storage.mold_done = true
-	else
-		return
-	end
-	local problems = {}
-	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
-	expect(m and m.valid, "mold test machine missing")
-	if #problems == 0 then
-		local glass = glass_made()
-		local inv = m.get_module_inventory()
-		if phase == 1 then
-			expect(m.disabled_by_script, "mold test: machine without mold is not stopped")
-			expect(glass == 0, "mold test: crafted " .. glass .. " glass without a mold")
-			expect(inv and inv.insert{ name = "mold", count = 1 } == 1, "mold test: mold does not fit into the mold slot")
-		else
-			expect(not m.disabled_by_script, "mold test: machine with mold is still stopped")
-			expect(glass > 0, "mold test: no glass crafted with the mold inserted")
-			expect(inv.get_item_count("mold") == 1, "mold test: mold left the mold slot")
-			expect(m.get_item_count("mold") == 1, "mold test: mold was duplicated or moved")
-			log("DEVCHECK-RUNTIME-MOLD " .. (#problems == 0 and "ok" or "failed") .. " (glass " .. glass .. " after " .. (event.tick - storage.mold_phase1) .. " ticks)")
-		end
-	end
-	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL " .. p) end
-	if #problems > 0 and phase == 1 then
-		storage.mold_done = true
-		log("DEVCHECK-RUNTIME-MOLD failed")
-	end
-end)
-
 --------------------------------------------------------------------------------
 --- issue #38 (scripts/fork-me-circuit.lua, CPU tiers in scripts/fork-me-autocraft.lua): four own networks
 --- right of the machine grid. Level maintainer: keeps 10 gears (exactly one job, then nothing while the
@@ -4184,38 +3417,8 @@ script.on_init(function()
 	s.force_generate_chunk_requests()
 	local removed, water = clear_test_area(s)
 	log("DEVCHECK-RUNTIME-SEED " .. s.map_gen_settings.seed .. " (test area cleared: " .. removed .. " entities, " .. water .. " water tiles)")
-	local recipe_for = {}
-	for rn, r in pairs(prototypes.recipe) do recipe_for[r.category] = recipe_for[r.category] or rn end
-	local x, y, placed, with_recipe, fails = -150, -150, 0, 0, {}
-	for name, p in pairs(prototypes.get_entity_filtered{ { filter = "type", type = "assembling-machine" } }) do
-		if p.items_to_place_this and #p.items_to_place_this > 0 then
-			--- the autocrafting test's network lies in the grid: its cables need free tiles (issue #68)
-			while x >= -12 and x <= 46 and y >= 120 and y <= 160 do
-				x = x + 14
-				if x > 150 then x = -150; y = y + 14 end
-			end
-			local ok, e = pcall(function()
-				return s.create_entity{ name = name, position = { x, y }, force = "player", raise_built = true }
-			end)
-			if ok and e then
-				placed = placed + 1
-				for c, _ in pairs(p.crafting_categories) do
-					if recipe_for[c] and pcall(function() e.set_recipe(recipe_for[c]) end) then
-						with_recipe = with_recipe + 1
-						break
-					end
-				end
-				s.create_entity{ name = "electric-energy-interface", position = { x, y + 7 }, force = "player" }
-				s.create_entity{ name = "substation", position = { x + 5, y + 7 }, force = "player" }
-			else
-				fails[#fails + 1] = name .. ": " .. tostring(e)
-			end
-			x = x + 14
-			if x > 150 then x = -150; y = y + 14 end
-		end
-	end
+	local fails = {}
 	for _, f in pairs(setup_me_network(s)) do fails[#fails + 1] = f end
-	for _, f in pairs(setup_mold_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_autocraft_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_furnace_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_pattern_tests(s)) do fails[#fails + 1] = f end
@@ -4224,12 +3427,7 @@ script.on_init(function()
 	for _, f in pairs(setup_r3_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_storage_bus_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fluid_storage_bus_test(s)) do fails[#fails + 1] = f end
-	for _, f in pairs(setup_power_test(s)) do fails[#fails + 1] = f end
-	for _, f in pairs(setup_fuel_test(s)) do fails[#fails + 1] = f end
-	for _, f in pairs(setup_cooled_test(s)) do fails[#fails + 1] = f end
-	for _, f in pairs(setup_tier_test(s)) do fails[#fails + 1] = f end
-	for _, f in pairs(setup_recipe_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_issue38_tests(s)) do fails[#fails + 1] = f end
-	log("DEVCHECK-RUNTIME placed=" .. placed .. " with_recipe=" .. with_recipe .. " failed=" .. #fails)
+	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)
