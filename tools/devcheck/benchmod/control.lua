@@ -44,9 +44,9 @@ local function log_json(key, t) log("DEVCHECK-BENCH-" .. key .. " " .. helpers.t
 --------------------------------------------------------------------------------
 
 local seed = 12345
-local function rand(n)                -- deterministic, independent of the game's RNG
-	seed = (seed * 1103515245 + 12345) % 2147483648
-	return seed % n + 1
+local function rand(n)                -- deterministic, independent of the game's RNG (the high bits: the low bits of
+	seed = (seed * 1103515245 + 12345) % 2147483648   -- this generator alternate)
+	return math.floor(seed / 65536) % n + 1
 end
 
 local fails = {}
@@ -609,7 +609,8 @@ local function build_me()
 			remote.call(CIRC, "set_maintainer", rec.maint, key, LATENCY_STOCK, false)
 			b.lat_maint[#b.lat_maint + 1] = { entity = rec.maint, key = key }
 		end
-		if k == "circuit" and rec.circuit and rand(2) == 1 then
+		if k == "circuit" and rec.circuit then rec.filtered = rand(2) == 1 end
+		if k == "circuit" and rec.circuit and rec.filtered then
 			local keys = {}
 			for _ = 1, 5 do keys[#keys + 1] = RAW[rand(#RAW)] end
 			remote.call(CIRC, "set_circuit_filters", rec.circuit, keys)
@@ -700,8 +701,27 @@ local function refill(b)
 	end
 end
 
+--- the cells: how many, how many can take a new item type, how full in bytes
+local function cell_stats(b)
+	local spec = prototypes.mod_data["fork-me-network"].data.cells
+	local n, open, bytes, total = 0, 0, 0, 0
+	for _, d in pairs(b.drives or {}) do
+		if d.valid then
+			for _, cell in pairs(remote.call(NET, "drive", d)) do
+				local sp = spec[cell.name]
+				if sp and not sp.kind then
+					n = n + 1
+					bytes, total = bytes + cell.bytes, total + cell.bytes_total
+					if cell.types < cell.types_total and cell.bytes_total - cell.bytes > sp.per_type then open = open + 1 end
+				end
+			end
+		end
+	end
+	return { cells = n, open = open, bytes_used = total > 0 and bytes / total or 0 }
+end
+
 local function probe_me(b)
-	local p = { tick = game.tick, world = count_world(), crafted = crafted(), slots = {} }
+	local p = { tick = game.tick, world = count_world(), crafted = crafted(), slots = {}, cells = cell_stats(b) }
 	for i, rec in ipairs(b.slots) do p.slots[i] = slot_state(rec) end
 	return p
 end
@@ -760,6 +780,7 @@ local function report_me(b, p0, p1)
 		end
 	end
 	out.provider_crafts_per_s = crafts / secs
+	out.cells_before, out.cells_after = p0.cells, p1.cells
 	local checked, bad = conservation(p0.world, p1.world, production(p0.crafted, p1.crafted))
 	out.conservation = { keys = checked, problems = #bad, first = { bad[1], bad[2], bad[3], bad[4], bad[5] } }
 	return out
@@ -1030,6 +1051,39 @@ local function engine_profile(b)
 			filters[#filters + 1] = { value = { type = "item", name = name, quality = "normal", comparator = "=" }, min = i }
 		end
 		time_it("section.filters = " .. #filters .. " signals", 50, function() sec.filters = filters end, out)
+		--- more signals: items in every quality
+		local big = {}
+		for _, q in ipairs({ "normal", "uncommon", "rare", "epic", "legendary" }) do
+			for name in pairs(prototypes.item) do
+				big[#big + 1] = { value = { type = "item", name = name, quality = q, comparator = "=" }, min = #big + 1 }
+			end
+		end
+		for _, n in ipairs({ 100, 400, 700, 1000 }) do
+			local part = {}
+			for i = 1, math.min(n, #big) do part[i] = big[i] end
+			time_it("section.filters = " .. #part .. " signals (qualities)", 20, function() sec.filters = part end, out)
+		end
+	end
+	--- the storage API itself, inside the instrumented copy
+	if remote.interfaces["zz-me-bench-profile"] and remote.interfaces["zz-me-bench-profile"].storage then
+		local chest
+		for _, rec in ipairs(b.slots) do
+			if rec.kind == "exp_chest" and rec.chest and rec.chest.valid then chest = rec.chest break end
+		end
+		if chest then
+			chest.get_inventory(defines.inventory.chest).clear()
+			remote.call("zz-me-bench-profile", "storage", b.anchor, chest, "iron-plate", "water")
+		end
+	end
+	--- one update of a circuit interface without and with a filter (a whole write, through the remote)
+	for _, filtered in ipairs({ false, true }) do
+		for _, rec in ipairs(b.slots) do
+			if rec.kind == "circuit" and rec.circuit and rec.circuit.valid and rec.filtered == filtered then
+				time_it("circuit interface update (" .. (filtered and "5 filters" or "no filter") .. ", remote)", 10,
+					function() remote.call(CIRC, "update_circuit", rec.circuit) end, out)
+				break
+			end
+		end
 	end
 	--- the remote call used by the latency probes, for scale
 	time_it("remote.call count (empty work)", 2000, function() return remote.call(NET, "count", b.anchor, "iron-plate") end, out)
