@@ -7,8 +7,7 @@
     python tools/build.py --no-psd     # leave out Photoshop sources (smaller zip)
     python tools/build.py --portal     # zip for the mod portal (same as --no-psd)
 
-The mod is "gregtorio-continued" (Gregtorio Continued) on the mod portal and in the repo; the
-original "Gregtorio" by Damien Reave keeps its own portal name.
+The mod is "me-network" (ME Network) on the mod portal and in the repo.
 """
 import argparse, json, os, shutil, sys, zipfile
 from pathlib import Path
