@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 --- FORK AE2: ME STORAGE BUS (issue #68; prototypes/network.lua, docs/ME-REWORK.md "Storage bus")
----   * A rotatable 1x1 ME block that faces a chest, a logistic chest or a cargo wagon: that inventory
+---   * A rotatable 1x1 ME block that faces a chest, a logistic chest, the editor's infinity chest or a cargo wagon: that inventory
 ---     becomes storage of the network. The terminal shows what is in it, everything that extracts from the
 ---     network can take from it, and inserts go into it by its filter and priority.
 ---   * Settings: item filters (a whitelist: the bus shows and takes only these items; none = every item),
@@ -42,6 +42,7 @@ local FRONT = {
 local INVENTORY = {
 	["container"] = defines.inventory.chest,
 	["logistic-container"] = defines.inventory.chest,
+	["infinity-container"] = defines.inventory.chest,   -- the editor's infinity chest
 	["cargo-wagon"] = defines.inventory.cargo_wagon,
 }
 --- item types the network cannot hold as plain items (the same rule as the cells, M.storable of the network)

@@ -83,10 +83,10 @@ end)
 --- removed by a script: the cells and patterns are spilled.
 --- The fluid module runs first (it looks at the network the entity still belongs to), then the graph is updated.
 local REMOVED_FILTER = {}
---- (logistic chests and cargo wagons: the inventory of a storage bus leaves the network at once; pipes, underground
+--- (logistic chests, infinity chests and cargo wagons: the inventory of a storage bus leaves the network at once; pipes, underground
 --- pipes and pumps: a removed one may split the fluid segment of a fluid storage bus)
 for _, t in pairs({ "simple-entity-with-force", "storage-tank", "lamp", "electric-energy-interface", "container",
-	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "cargo-wagon", "pipe", "pipe-to-ground",
+	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-wagon", "pipe", "pipe-to-ground",
 	"pump" }) do
 	REMOVED_FILTER[#REMOVED_FILTER + 1] = { filter = "type", type = t }
 end
