@@ -529,6 +529,29 @@ largest amounts first).
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
 | ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
 
+### A machine's recipe onto an ME block
+
+Like a requester chest: **shift + right click** a crafting machine (an assembling machine, a furnace, a rocket silo,
+the GregTech machines of Gregtorio Continued, the machines of every other mod) and **shift + left click** an ME block.
+The block is set up for the machine's recipe; what it had is replaced:
+
+| Paste onto | Result | Kept | Holds |
+|---|---|---|---|
+| ME Interface | config rows = the ingredients in the recipe's order: one full stack of each item (whatever one craft needs), a fluid row of a side's volume for each fluid | sides that are off; a side tied to a fluid that is in the recipe again | 9 rows, 4 fluids |
+| ME Storage Bus | filters = the ingredients: on a chest or cargo wagon the items, on a tank the fluids, facing nothing yet both | mode, priority | 18 filters |
+| ME Export Bus | filters = the ingredients, items and fluids | | 9 filters |
+| ME Import Bus | filters = the **products**, items and fluids | | 9 filters |
+
+* The recipe's quality is the quality of the interface's item rows and of the storage bus's item filters. The
+  import and export bus filter by name: the export bus moves normal quality only (a flying text says so).
+* A furnace that is not smelting gives its last recipe.
+* A new fluid row gets the side a new fluid row gets in the window: the first import side with a pipe, else the first
+  import side (the flying text says that it has no pipe yet). A side tied to a row that goes away imports again.
+* A flying text names what did not fit, a fluid row with no side left (every side off or tied: set one in the
+  window), and a machine without a recipe. Nothing is changed when the recipe has nothing for the block (no
+  ingredients; a storage bus on a chest and a recipe of fluids only, or on a tank and no fluid).
+* A paste between two ME blocks of the same kind copies the settings as before.
+
 ## Fluids
 
 Tech `me-fluid-storage` (EV, needs `me-autocrafting`) unlocks 1k to 64k **fluid storage cells**;
@@ -859,6 +882,18 @@ queue and take the next free slot (the path the existing CPU test covers).
   `storage.fork_ae2` and `storage.fork_me_fluids`; GUI state lives in the GUI elements' tags and
   `storage.fork_me_terminal`.
 
+### Recipe paste (me-network issue #12)
+
+`scripts/fork-me-recipe-paste.lua`. The game raises `on_entity_settings_pasted` for a pair of different entity types
+only when the source prototype lists the target in `additional_pastable_entities`; `data-final-fixes.lua` adds the ME
+Interface, the import, export and storage bus to that list of every `assembling-machine`, `furnace` and `rocket-silo`
+(what other mods put there stays). A machine a mod makes after this mod's data-final-fixes misses the list (the
+runtime test counts every crafting machine that lacks it). The recipe is `get_recipe()` (with its quality), for an
+idle furnace `previous_recipe`. The handler writes through `set_interface_config` / `set_interface_side`,
+`set_bus_filters` and the storage bus's `set_settings`, so blueprint tags and windows read the same state; windows that
+show the block are refreshed at once. The messages are one flying text at the cursor (one line each); the remote
+`gregtorio-me-recipe-paste.paste(source, destination)` returns them (the harness has no player).
+
 ### Existing saves and mod updates
 
 `on_configuration_changed` first rebuilds the ME graph from the world (`scripts/fork-me-network.lua`, the only
@@ -928,6 +963,8 @@ partitions start empty.
   request of several resources at once. Settings paste by hand and the upgrade planner on CPUs are untested in
   the real game (the headless test calls the same functions).
 * A machine whose only input is shared with a belt, inserter or pipe will fight with the network.
+* Recipe paste (issue #12) is tested headless through its handler: the shift clicks themselves, the game raising the
+  event for each machine and how the flying text of several lines looks need the real game.
 * Balance (costs, speeds, tier) and the look of the sprites are untested in the real game.
 
 ## Testing
@@ -1081,6 +1118,18 @@ from), gets mixed filters and faces a cable. An old fluid import bus built by a 
 of the old export bus, fluid interface and fluid storage bus with old tags are revived as the unified blocks with their
 settings; the old items are hidden, place the unified blocks and have no recipe or unlock. It reports
 `ME unified I/O test: ok`.
+
+The recipe paste test (issue #12 of ME Network, own network) checks that every crafting machine prototype lists the
+four ME blocks as pastable (with Gregtorio all GregTech machines too) and calls the paste handler with the event's
+shape: an item recipe and a quality recipe onto an interface (one stack each, the quality), a storage bus (quality
+keys, mode and priority kept) and an export bus (names, the quality message); a chemical reactor's fluid recipe onto an
+interface (the fluid row on the side with a pipe, an off side kept), onto an interface whose side is tied to that fluid
+(kept), then a recipe of two other fluids (the side imports again, two new rows on sides without a pipe, two messages),
+onto the import bus (products) and export bus, onto storage buses on a chest (a recipe of fluids only: unchanged,
+message), on a pipe (fluids) and facing nothing (both); fixture recipes with 20 items and 5 fluids and with 2 items and
+5 fluids (rows, fluids and filters full, no side left); a furnace while smelting and its previous recipe once idle; an
+assembler and a furnace without a recipe; a paste between two ME blocks is left to their own handlers. It reports
+`recipe paste test: ok`.
 
 `python tools/devcheck/devcheck.py migrate --from-ref v0.1.0` makes a save with ME Network 0.1.0 (three fluid
 interfaces, the fluid buses and the fluid storage bus with settings and fluid, an item interface next to a pipe with

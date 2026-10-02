@@ -24,6 +24,8 @@ local fork_fluids = require("scripts.fork-me-fluids")
 local fork_circuit = require("scripts.fork-me-circuit")
 --- the windows of the ME blocks (after the modules whose functions they call)
 require("scripts.fork-me-windows")
+--- a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12)
+local fork_paste = require("scripts.fork-me-recipe-paste")
 --- the one-time hand-over of the state of a Gregtorio Continued save
 local handover = require("scripts.fork-me-handover")
 
@@ -62,13 +64,15 @@ end)
 
 --- the priority of an ME Pattern Provider (its patterns travel in blueprints, see fork-me-autocraft.lua) and the
 --- settings of ME Drives, ME Interfaces, buses, storage buses, Level Maintainers and Circuit Interfaces are
---- copied by settings paste and stored in blueprints (the blueprint handler of fork-me-autocraft.lua tags all of them)
+--- copied by settings paste and stored in blueprints (the blueprint handler of fork-me-autocraft.lua tags all of them);
+--- a crafting machine pasted onto an ME Interface or a bus sets it up for its recipe
 script.on_event(defines.events.on_entity_settings_pasted, function(event)
 	fork_net.on_entity_settings_pasted(event)
 	fork_io.on_entity_settings_pasted(event)
 	fork_sbus.on_entity_settings_pasted(event)
 	fork_ae2.on_entity_settings_pasted(event)
 	fork_circuit.on_entity_settings_pasted(event)
+	fork_paste.on_entity_settings_pasted(event)
 end)
 
 script.on_event(defines.events.on_player_setup_blueprint, function(event)

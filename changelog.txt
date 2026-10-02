@@ -1,5 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.1
+  Features:
+    - Copy a crafting machine's settings (shift + right click) and paste them (shift + left click) onto an ME Interface, ME Storage Bus, ME Import Bus or ME Export Bus to set it up for the machine's recipe, like a requester chest: the interface gets one stack of each item ingredient and a fluid row for each fluid, the storage bus and the export bus filter the ingredients, the import bus the products. Works with every crafting machine (furnaces give their last recipe); a flying text says what did not fit or when the machine has no recipe.
   Bugfixes:
     - A click on an ME block with a tool in hand opened the block's window and ended the tool: blueprints and blueprint books (also from the blueprint library), deconstruction and upgrade planners, the copy-paste and cut tool, selection tools of other mods, red, green and copper wires (a wire now connects to an ME Circuit Interface or Level Maintainer), ghosts, rails, spidertron and artillery remotes, capsules and items being built. The window now opens only when the game would open a chest's window: with an empty hand or a plain item.
 ---------------------------------------------------------------------------------------------------

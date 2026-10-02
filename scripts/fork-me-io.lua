@@ -469,7 +469,8 @@ function M.set_interface_side(entity, side, value)
 	return true
 end
 
---- a free side for a new fluid row: the first import side with something connected, else the first import side
+--- a free side for a new fluid row: the first import side with something connected, else the first import side;
+--- the second value tells whether something is connected to it
 local function free_side(rec)
 	local tanks = ensure_tanks(rec)
 	local sides = rec.sides or {}
@@ -477,10 +478,17 @@ local function free_side(rec)
 	for d = 1, #SIDES do
 		if sides[d] == nil then
 			first = first or d
-			if tanks and #tanks[d].fluidbox.get_connections(1) > 0 then return d end
+			if tanks and #tanks[d].fluidbox.get_connections(1) > 0 then return d, true end
 		end
 	end
-	return first
+	return first, false
+end
+
+--- the side a new fluid row of the interface would get (see free_side; nil: no import side left), and whether a pipe
+--- is connected to it
+function M.free_side(entity)
+	if kind(entity) ~= "interface" then return nil end
+	return free_side(register(state(), entity))
 end
 
 --- One config row by key (item key "name" / "name@quality", or "fluid/<name>"); `key` nil clears it. Without `amount`
@@ -598,6 +606,7 @@ function M.get_interface(entity)
 end
 M.CONFIG_SLOTS = CONFIG_SLOTS
 M.MAX_FILTERS = MAX_FILTERS
+M.side_volume = function() return volume() end      -- the amount a new fluid row gets
 M.SIDES = #SIDES
 
 --------------------------------------------------------------------------------

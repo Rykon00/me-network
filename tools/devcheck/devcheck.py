@@ -411,7 +411,8 @@ RUNTIME_TESTS = (
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"),
-    ("CURSOR", "open key and cursor test"), ("DONE", "all tests reported"),
+    ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
+    ("DONE", "all tests reported"),
 )
 
 
