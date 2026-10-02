@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.1.0
+Date: 2026-10-02
   Info:
     - First version as a mod of its own. The ME network was made in Gregtorio Continued (up to its 0.4.x) and moved out of it; Gregtorio Continued 0.5.0 depends on this mod and puts it on its GregTech tiers.
     - Saves of Gregtorio Continued with an ME network are taken over when they are loaded with Gregtorio Continued 0.5.0 and this mod: cells with their items and fluids, patterns, running jobs, level maintainers and the settings of every block.
