@@ -2410,6 +2410,40 @@ function storage_bus_test()
 		for _, c in pairs(remote.call(NET, "drive", drive)) do n = n + (c.items[name] or 0) end
 		return n
 	end
+	--- the editor's infinity chest (type infinity-container) is a chest for the buses and the storage bus: above the
+	--- cable row an import bus, an export bus and a storage bus on one infinity chest each; removed again, so the
+	--- rest of this test sees the 7 buses and no coal
+	do
+		local north = defines.direction.north
+		local function make(name, x, y, dir)
+			return s.create_entity{ name = name, position = { SBX + x, SBY + y }, direction = dir, force = "player", raise_built = true }
+		end
+		local ci, ce, cs = make("infinity-chest", 12.5, -2.5), make("infinity-chest", 14.5, -2.5), make("infinity-chest", 16.5, -2.5)
+		local ib, eb, sb = make("me-import-bus", 12.5, -1.5, north), make("me-export-bus", 14.5, -1.5, north),
+			make("me-storage-bus", 16.5, -1.5, north)
+		if ci and ce and cs and ib and eb and sb then
+			ci.insert{ name = "coal", count = 10 }
+			remote.call(IO, "step", ib)
+			expect(count("coal") == 10 and ci.get_item_count("coal") == 0 and remote.call(IO, "get_bus", ib).status ~= "no-target",
+				"import bus on an infinity chest: " .. count("coal") .. ", " .. serpent.line(remote.call(IO, "get_bus", ib)))
+			remote.call(IO, "set_bus_filters", eb, { "coal" })
+			remote.call(IO, "step", eb)
+			expect(ce.get_item_count("coal") == 10 and count("coal") == 0,
+				"export bus into an infinity chest: " .. ce.get_item_count("coal") .. ", " .. serpent.line(remote.call(IO, "get_bus", eb)))
+			cs.insert{ name = "coal", count = 25 }
+			visit(sb)
+			local i8 = info(sb)
+			expect(i8.status == "ok" and i8.target == "infinity-chest" and count("coal") == 25, "storage bus on an infinity chest: " .. serpent.line(i8))
+			expect(remote.call(NET, "extract", t, "coal", 5) == 5 and cs.get_item_count("coal") == 20 and count("coal") == 20,
+				"extract from the infinity chest: " .. cs.get_item_count("coal"))
+			cs.destroy{ raise_destroy = true }
+			expect(count("coal") == 0 and info(sb).status == "no-target", "infinity chest removed: coal " .. count("coal"))
+		else
+			expect(false, "infinity chests or their buses not placed")
+		end
+		for _, e in pairs({ ib, eb, sb }) do if e and e.valid then e.destroy{ raise_destroy = true } end end
+		for _, e in pairs({ ci, ce, cs }) do if e and e.valid then e.destroy() end end
+	end
 	--- the network's items must be the cells' plus what the working buses show of their chests (after a visit)
 	local pairs_ = { { b1, c1 }, { b2, c2 }, { b3, c3 }, { b4, c3 }, { b6, c7 } }
 	local function consistent(label)

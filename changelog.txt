@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.1.1
+  Bugfixes:
+    - The ME Storage Bus, ME Import Bus and ME Export Bus did not work with the editor's infinity chest ("Faces no chest, logistic chest or cargo wagon").
+    - The status line of the ME Terminal showed the fluid cell numbers shifted by one and "__13__" instead of the number of fluid cells.
+---------------------------------------------------------------------------------------------------
 Version: 0.1.0
 Date: 2026-10-02
   Info:

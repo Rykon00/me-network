@@ -273,9 +273,11 @@ M.MAX_FILTERS = MAX_FILTERS
 --------------------------------------------------------------------------------
 
 local OUTPUT = { ["assembling-machine"] = defines.inventory.crafter_output, ["furnace"] = defines.inventory.furnace_result,
-	["container"] = defines.inventory.chest, ["logistic-container"] = defines.inventory.chest }
+	["container"] = defines.inventory.chest, ["logistic-container"] = defines.inventory.chest,
+	["infinity-container"] = defines.inventory.chest }
 local INPUT = { ["assembling-machine"] = defines.inventory.crafter_input, ["furnace"] = defines.inventory.furnace_source,
-	["container"] = defines.inventory.chest, ["logistic-container"] = defines.inventory.chest }
+	["container"] = defines.inventory.chest, ["logistic-container"] = defines.inventory.chest,
+	["infinity-container"] = defines.inventory.chest }
 
 local BUSES = { ["import-bus"] = true, ["export-bus"] = true, ["fluid-import-bus"] = true, ["fluid-export-bus"] = true }
 local FLUID_BUSES = { ["fluid-import-bus"] = true, ["fluid-export-bus"] = true }
