@@ -3,6 +3,33 @@
 --- recipes, an iron furnace with a dust recipe. Without Gregtorio this test mod adds stand-ins with the same names and
 --- the same numbers (inputs, outputs, fluid boxes, sizes), so the same tests run on vanilla. With Gregtorio they run
 --- on Gregtorio's own prototypes. The stand-ins are test fixtures, not part of me-network.
+
+--- a selection tool as other mods add them (the cursor test: a click with it opens no ME window); with Gregtorio too
+data:extend({ { type = "selection-tool", name = "zz-devcheck-selection-tool", icon = "__base__/graphics/icons/blueprint.png",
+	stack_size = 1, flags = { "only-in-cursor", "spawnable" },
+	select = { border_color = { 1, 0, 0 }, cursor_box_type = "entity", mode = { "any-entity" } },
+	alt_select = { border_color = { 0, 1, 0 }, cursor_box_type = "entity", mode = { "any-entity" } } } })
+
+--- the recipe paste test (issue #12): a 3x3 machine with six fluid inputs for a recipe with more ingredients than any
+--- ME block holds (data-final-fixes.lua); with Gregtorio too. Made here, so me-network's data-final-fixes.lua adds
+--- the ME blocks to its pastable entities like it does for every other crafting machine.
+do
+	local m = table.deepcopy(data.raw["assembling-machine"]["assembling-machine-2"])
+	m.name = "zz-devcheck-paste-machine"
+	m.crafting_categories = { "zz-devcheck-paste" }
+	m.minable = nil
+	m.next_upgrade = nil
+	m.fast_replaceable_group = nil
+	m.fluid_boxes_off_when_no_fluid_recipe = false
+	m.fluid_boxes = {}
+	for i, pos in ipairs({ { -1, -1 }, { 0, -1 }, { 1, -1 }, { -1, 1 }, { 0, 1 }, { 1, 1 } }) do
+		m.fluid_boxes[i] = { production_type = "input", volume = 1000, pipe_connections = { {
+			flow_direction = "input", direction = pos[2] < 0 and defines.direction.north or defines.direction.south,
+			position = pos } } }
+	end
+	data:extend({ { type = "recipe-category", name = "zz-devcheck-paste" }, m })
+end
+
 if mods["gregtorio-continued"] then return end
 
 local ICON = "__base__/graphics/icons/signal/signal-info.png"

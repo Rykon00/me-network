@@ -733,6 +733,8 @@ local function tests_running()
 	check(storage.circuit38 and storage.circuit38.done, "circuit interface")
 	check(storage.settings38 and storage.settings38.done, "settings copy")
 	check(storage.sched_test and storage.sched_test.done, "ME scheduler")
+	check(storage.cursor_t and storage.cursor_t.done, "open key and cursor")
+	check(storage.paste_t and storage.paste_t.done, "recipe paste")
 	return running
 end
 
@@ -1574,6 +1576,8 @@ script.on_nth_tick(10, function()
 	if not (storage.circuit38 and storage.circuit38.done) then circuit_test() end
 	settings_test()
 	if not (storage.sched_test and storage.sched_test.done) then scheduler_test() end
+	cursor_test()
+	paste_test()
 	done_test()
 end)
 
@@ -3797,7 +3801,10 @@ function scheduler_test()
 	elseif st.phase == 3 then
 		if count("wood") >= 100 then
 			st.built = game.tick - st.t
-			expect(st.built <= 20, "the import bus took the built chest's wood after " .. st.built .. " ticks")
+			--- 100 wood at the bus speed (256 items per second) are 24 ticks; the first visit after the wake has only
+			--- the ticks since the bus's last idle visit to spend, the next one comes an active interval (15 ticks)
+			--- later, and this test looks every 10 ticks: 50 at most. (The wake itself is checked above.)
+			expect(st.built <= 50, "the import bus took the built chest's wood after " .. st.built .. " ticks")
 			st.phase = 4
 		elseif game.tick - st.t > 60 then
 			problems[#problems + 1] = "the import bus never took the wood of the chest built in front of it (" .. count("wood") .. ")"
@@ -3865,6 +3872,351 @@ function scheduler_test()
 	end
 end
 
+--------------------------------------------------------------------------------
+--- The open key with a tool in the cursor (G.click_opens, fork-me-gui.lua): an ME window opens on a click exactly
+--- when the game would open a chest's window. The harness has no player, so the decision is fed real item stacks
+--- of every cursor tool (and the cursor flags a stack cannot hold: a library blueprint, a ghost, a wire being
+--- dragged, a damaged block). Opening the window, the game's own click action and the tool staying in the cursor
+--- need the real game.
+function cursor_test()
+	if storage.cursor_t then return end
+	storage.cursor_t = { done = true }
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local inv = game.create_inventory(1)
+	local stack = inv[1]
+	local n = 0
+	local function case(name, setup, flags, want)
+		n = n + 1
+		stack.clear()
+		local ok, err = pcall(setup)
+		if not ok then expect(false, name .. ": setup failed: " .. tostring(err)) return end
+		local got, why = remote.call("gregtorio-me-terminal", "click_opens", stack, flags or {})
+		expect(got == want, name .. ": " .. tostring(got) .. " (" .. tostring(why) .. "), expected " .. tostring(want))
+	end
+	local function item(name, count) return function() stack.set_stack{ name = name, count = count or 1 } end end
+	local function blueprint()
+		stack.set_stack{ name = "blueprint" }
+		stack.set_blueprint_entities{ { entity_number = 1, name = "small-lamp", position = { 0.5, 0.5 } } }
+	end
+	local none = function() end
+	--- the window opens: an empty hand, plain items, a storage cell and an encoded pattern (quick insert first)
+	case("empty hand", none, nil, true)
+	case("iron plate", item("iron-plate", 50), nil, true)
+	case("module", item("speed-module", 5), nil, true)
+	case("storage cell", item("me-1k-storage-cell"), nil, true)
+	case("blank pattern", item("me-blank-pattern", 5), nil, true)
+	case("repair pack, block not damaged", item("repair-pack", 5), nil, true)
+	--- it does not: tools, wires, ghosts, items being built
+	case("blueprint", blueprint, { blueprint = true }, false)
+	case("blueprint (stack only)", blueprint, nil, false)
+	case("empty blueprint", item("blueprint"), nil, false)
+	case("blueprint book", function()
+		stack.set_stack{ name = "blueprint-book" }
+		local book = stack.get_inventory(defines.inventory.item_main)
+		book.insert{ name = "blueprint" }
+		book[1].set_blueprint_entities{ { entity_number = 1, name = "small-lamp", position = { 0.5, 0.5 } } }
+	end, { blueprint = true }, false)
+	case("empty blueprint book", item("blueprint-book"), nil, false)
+	case("deconstruction planner", item("deconstruction-planner"), nil, false)
+	case("upgrade planner", item("upgrade-planner"), nil, false)
+	case("copy-paste tool", item("copy-paste-tool"), nil, false)
+	case("cut tool", item("cut-paste-tool"), nil, false)
+	case("selection tool of another mod", item("zz-devcheck-selection-tool"), nil, false)
+	case("spidertron remote", item("spidertron-remote"), nil, false)
+	case("artillery targeting remote", item("artillery-targeting-remote"), nil, false)
+	case("red wire", item("red-wire"), nil, false)
+	case("green wire", item("green-wire"), nil, false)
+	case("copper wire", item("copper-wire"), nil, false)
+	case("rail planner", item("rail", 10), nil, false)
+	case("buildable item (belt)", item("transport-belt", 50), nil, false)
+	case("buildable ME block (fluix cable)", item("fluix-cable", 50), nil, false)
+	case("tile item (landfill)", item("landfill", 50), nil, false)
+	case("item with entity data (car)", item("car"), nil, false)
+	case("capsule (fish)", item("raw-fish", 5), nil, false)
+	case("capsule (grenade)", item("grenade", 5), nil, false)
+	case("repair pack, block damaged", item("repair-pack", 5), { damaged = true }, false)
+	--- the cursor flags without a readable stack
+	case("blueprint from the library", none, { blueprint = true }, false)
+	case("library record (book)", none, { record = true }, false)
+	case("ghost in the cursor", none, { ghost = true }, false)
+	case("wire being dragged", none, { wire = true }, false)
+	inv.destroy()
+	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL cursor: " .. p) end
+	log("DEVCHECK-RUNTIME-CURSOR " .. (#problems == 0 and "ok" or "failed") .. " (" .. n .. " cursor states)")
+end
+
+--------------------------------------------------------------------------------
+--- Recipe paste (me-network issue #12, scripts/fork-me-recipe-paste.lua): a crafting machine's recipe pasted onto an
+--- ME Interface, a storage bus, an export and an import bus. The harness has no player, so the event handler is
+--- called with the event's shape (remote `paste`, which returns the flying text's messages); that the game raises
+--- the event for a crafting machine is checked on the prototypes (every crafting machine lists the four blocks in
+--- its additional_pastable_entities, the GregTech machines with Gregtorio too). The cases: an item recipe, a fluid
+--- recipe, a quality recipe, recipes with more ingredients than the blocks hold (the fixtures of runtimemod/data.lua
+--- and data-final-fixes.lua),
+--- a furnace (its current recipe, then its previous one), machines without a recipe, the interface's sides (off
+--- stays, a fluid that comes again keeps its side, a pipe side first, no pipe, no side left), mode and priority of a
+--- storage bus kept, a recipe without items for a chest, and a paste between two ME blocks is no recipe paste.
+--------------------------------------------------------------------------------
+
+local PAX, PAY = 300, 290
+local RP = "gregtorio-me-recipe-paste"
+local PASTE_TARGETS = { "me-network-interface", "me-import-bus", "me-export-bus", "me-storage-bus" }
+
+function setup_paste_test(s)
+	local fails = {}
+	local what = "recipe paste"
+	power(s, fails, what, PAX, PAY)
+	me_place(s, fails, what, "me-network-controller", PAX + 7, PAY)
+	cable_row(s, fails, PAX + 8, PAX + 46, PAY - 1)
+	local south = { direction = defines.direction.south }
+	for _, x in pairs({ 9.5, 12.5, 14.5, 16.5, 18.5, 20.5, 22.5, 24.5 }) do
+		me_place(s, fails, what, "me-network-interface", PAX + x, PAY + 0.5)
+	end
+	me_place(s, fails, what, "pipe", PAX + 10.5, PAY + 0.5)                     -- the east side of interface I1
+	me_place(s, fails, what, "iron-chest", PAX + 26.5, PAY + 1.5)
+	me_place(s, fails, what, "iron-chest", PAX + 28.5, PAY + 1.5)
+	local water = me_place(s, fails, what, "pipe", PAX + 30.5, PAY + 1.5)
+	if water then water.fluidbox[1] = { name = "water", amount = 50 } end
+	for _, x in pairs({ 26.5, 28.5, 30.5, 32.5 }) do me_place(s, fails, what, "me-storage-bus", PAX + x, PAY + 0.5, south) end
+	for _, x in pairs({ 34.5, 36.5, 38.5, 40.5 }) do me_place(s, fails, what, "me-export-bus", PAX + x, PAY + 0.5, south) end
+	for _, x in pairs({ 42.5, 44.5 }) do me_place(s, fails, what, "me-import-bus", PAX + x, PAY + 0.5, south) end
+	--- the machines, away from the blocks
+	local function machine(name, x, recipe, quality)
+		local m = me_place(s, fails, what, name, PAX + x, PAY + 6.5)
+		if m and recipe then
+			m.force.recipes[recipe].enabled = true
+			m.set_recipe(recipe, quality)
+		end
+		return m
+	end
+	machine("me-molecular-assembler", 10.5, "iron-gear-crafting-table")
+	machine("me-molecular-assembler", 14.5, "iron-gear-crafting-table", "uncommon")
+	machine("me-molecular-assembler", 18.5)
+	machine("hv-chemical-reactor", 22.5, "phenolic-circuit-board")
+	machine("hv-chemical-reactor", 26.5, "hydrochloric-acid")
+	machine("zz-devcheck-paste-machine", 30.5, "zz-devcheck-paste-many")
+	machine("zz-devcheck-paste-machine", 34.5, "zz-devcheck-paste-fluids")
+	game.forces.player.recipes["iron-dust-smelter"].enabled = true    -- a furnace only picks enabled recipes
+	for _, x in pairs({ 38, 41 }) do
+		local f = me_place(s, fails, what, "iron-furnace", PAX + x, PAY + 7)
+		if f then f.get_inventory(defines.inventory.fuel).insert{ name = "coal", count = 5 } end
+		if f and x == 38 then f.get_inventory(defines.inventory.furnace_source).insert{ name = "iron-dust", count = 1 } end
+	end
+	return fails
+end
+
+function paste_test()
+	local st = storage.paste_t
+	if (st and st.done) or game.tick < 60 then return end
+	local s = game.surfaces[1]
+	local function find(name, x, y) return s.find_entity(name, { PAX + x, PAY + y }) end
+	local function iface(x) return find("me-network-interface", x, 0.5) end
+	local f1 = find("iron-furnace", 38, 7)
+	if st then
+		--- the furnace's previous recipe: once the furnace is idle, pasted onto export bus E4
+		local idle = f1 and f1.valid and f1.get_recipe() == nil
+		if not idle and game.tick < 1300 then return end
+		st.done = true
+		local problems = st.problems
+		local eb = find("me-export-bus", 40.5, 0.5)
+		local note = st.note or ""
+		if idle and eb then
+			local msgs = remote.call(RP, "paste", f1, eb)
+			local f = remote.call(IO, "get_bus", eb).filters
+			if not (msgs and #msgs == 0 and serpent.line(f) == serpent.line({ "iron-dust" })) then
+				problems[#problems + 1] = "furnace's previous recipe onto an export bus: " .. serpent.line(f) .. " " .. serpent.line(msgs)
+			end
+			note = note .. ", previous recipe at tick " .. game.tick
+		else
+			note = note .. ", the furnace was still busy at tick " .. game.tick .. ": previous recipe not checked"
+		end
+		return me_report("RECIPEPASTE", "recipe paste", problems, note)
+	end
+	st = { problems = {} }
+	storage.paste_t = st
+	local problems = st.problems
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function keys(msgs)
+		local out = {}
+		for _, m in ipairs(msgs or {}) do
+			local k = type(m) == "table" and m[1] or tostring(m)
+			out[#out + 1] = (k:gsub("^fork%-me%-paste%.", ""))
+		end
+		return out
+	end
+	local function has(msgs, key) for _, k in ipairs(keys(msgs)) do if k == key then return true end end return false end
+	local function line(x) return serpent.line(x) end
+
+	--- the game raises the event only for pairs the source prototype lists: every crafting machine lists the blocks
+	local machines, missing = 0, {}
+	for name, p in pairs(prototypes.get_entity_filtered{ { filter = "crafting-machine" } }) do
+		machines = machines + 1
+		local listed = {}
+		for _, t in pairs(p.additional_pastable_entities or {}) do listed[t.name] = true end
+		for _, t in ipairs(PASTE_TARGETS) do
+			if not listed[t] then missing[#missing + 1] = name .. " -> " .. t end
+		end
+	end
+	expect(#missing == 0, "crafting machines that cannot paste onto ME blocks: " .. table.concat(missing, ", ", 1, math.min(#missing, 10)))
+	local gt = prototypes.entity["hv-chemical-reactor"]
+	expect(gt and gt.type == "assembling-machine", "hv-chemical-reactor is no assembling machine")
+
+	local m1, m2, m3 = find("me-molecular-assembler", 10.5, 6.5), find("me-molecular-assembler", 14.5, 6.5), find("me-molecular-assembler", 18.5, 6.5)
+	local r1, r2 = find("hv-chemical-reactor", 22.5, 6.5), find("hv-chemical-reactor", 26.5, 6.5)
+	local mx = find("zz-devcheck-paste-machine", 30.5, 6.5)
+	local f2 = find("iron-furnace", 41, 7)
+	local mf = find("zz-devcheck-paste-machine", 34.5, 6.5)
+	local i1, i2, i3, i4, i5, i6, i7, i8 = iface(9.5), iface(12.5), iface(14.5), iface(16.5), iface(18.5), iface(20.5), iface(22.5), iface(24.5)
+	local sb1, sb2, sb3, sb4 = find("me-storage-bus", 26.5, 0.5), find("me-storage-bus", 28.5, 0.5), find("me-storage-bus", 30.5, 0.5), find("me-storage-bus", 32.5, 0.5)
+	local e1, e2, e3 = find("me-export-bus", 34.5, 0.5), find("me-export-bus", 36.5, 0.5), find("me-export-bus", 38.5, 0.5)
+	local ib1, ib2 = find("me-import-bus", 42.5, 0.5), find("me-import-bus", 44.5, 0.5)
+	if not (m1 and m2 and m3 and r1 and r2 and mx and mf and f1 and f2 and i1 and i2 and i3 and i4 and i5 and i6 and i7 and i8
+		and sb1 and sb2 and sb3 and sb4 and e1 and e2 and e3 and ib1 and ib2) then
+		st.done = true
+		return me_report("RECIPEPASTE", "recipe paste", { "entities missing" })
+	end
+	local volume = remote.call(IO, "get_interface", i1).volume
+	local function stack(name) return prototypes.item[name].stack_size end
+	local function config_line(e)
+		local out = {}
+		for i, c in pairs(remote.call(IO, "get_interface_config", e)) do
+			out[#out + 1] = i .. "=" .. (c.type == "fluid" and ("fluid/" .. c.name) or (c.name .. "@" .. c.quality)) .. ":" .. c.amount
+		end
+		table.sort(out)
+		return table.concat(out, " ")
+	end
+	local function sides(e) return line(remote.call(IO, "get_interface_sides", e)) end
+
+	--- the gear recipe's two items in the recipe's order (Gregtorio's lists the stick first)
+	local gear = {}
+	for _, g in ipairs(prototypes.recipe["iron-gear-crafting-table"].ingredients) do gear[#gear + 1] = g.name end
+	local function gear_rows(q) return "1=" .. gear[1] .. "@" .. q .. ":" .. stack(gear[1]) .. " 2=" .. gear[2] .. "@" .. q .. ":" .. stack(gear[2]) end
+	--- an item recipe onto an interface: its rows are replaced, one stack each
+	remote.call(IO, "set_interface_config", i2, { { name = "copper-plate", quality = "normal", amount = 10 } })
+	local msgs = remote.call(RP, "paste", m1, i2)
+	local want = gear_rows("normal")
+	expect(#keys(msgs) == 0 and config_line(i2) == want, "item recipe onto an interface: " .. config_line(i2) .. " " .. line(keys(msgs)))
+	--- a quality recipe: the rows and the storage bus filters take its quality (mode and priority stay), the export bus
+	--- has no quality and says so
+	msgs = remote.call(RP, "paste", m2, i3)
+	want = gear_rows("uncommon")
+	expect(#keys(msgs) == 0 and config_line(i3) == want, "quality recipe onto an interface: " .. config_line(i3))
+	remote.call(SB, "set_settings", sb1, { mode = "read", priority = 7, filters = { "wood" } })
+	msgs = remote.call(RP, "paste", m2, sb1)
+	local st1 = remote.call(SB, "get_settings", sb1)
+	expect(#keys(msgs) == 0 and line(st1) == line({ mode = "read", priority = 7, filters = { gear[1] .. "@uncommon", gear[2] .. "@uncommon" } }),
+		"quality recipe onto a storage bus: " .. line(st1))
+	msgs = remote.call(RP, "paste", m2, e3)
+	expect(line(remote.call(IO, "get_bus", e3).filters) == line(gear) and line(keys(msgs)) == line({ "bus-quality" }),
+		"quality recipe onto an export bus: " .. line(remote.call(IO, "get_bus", e3).filters) .. " " .. line(keys(msgs)))
+	--- a recipe without item ingredients onto a storage bus on a chest: unchanged, the player is told
+	msgs = remote.call(RP, "paste", r2, sb1)
+	expect(line(keys(msgs)) == line({ "no-items" }) and line(remote.call(SB, "get_settings", sb1)) == line(st1),
+		"fluid-only recipe onto a storage bus on a chest: " .. line(remote.call(SB, "get_settings", sb1)) .. " " .. line(keys(msgs)))
+
+	--- a fluid recipe onto an interface: the fluid row gets the side's volume and the side with a pipe (east); the
+	--- north side stays off
+	remote.call(IO, "set_interface_side", i1, 1, "off")
+	msgs = remote.call(RP, "paste", r1, i1)
+	want = "1=resin-circuit-board@normal:" .. stack("resin-circuit-board") .. " 2=fluid/phenol:" .. volume
+	expect(#keys(msgs) == 0 and config_line(i1) == want and sides(i1) == line({ "off", 2 }),
+		"fluid recipe onto an interface with a pipe: " .. config_line(i1) .. " sides " .. sides(i1) .. " " .. line(keys(msgs)))
+	--- a side tied to a fluid that comes again keeps it; then a recipe without it: the side imports again, the two new
+	--- fluid rows get the next import sides, which have no pipe (the player is told)
+	remote.call(IO, "set_interface_config", i4, { [5] = { type = "fluid", name = "phenol", amount = 100 } }, { [1] = "off", [3] = 5 })
+	msgs = remote.call(RP, "paste", r1, i4)
+	expect(#keys(msgs) == 0 and sides(i4) == line({ [1] = "off", [3] = 2 }), "a fluid's side kept: " .. sides(i4) .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", r2, i4)
+	want = "1=fluid/chlorine:" .. volume .. " 2=fluid/hydrogen:" .. volume
+	expect(config_line(i4) == want and sides(i4) == line({ "off", 1, 2 }) and line(keys(msgs)) == line({ "no-pipe", "no-pipe" }),
+		"two fluids onto sides without a pipe: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
+	--- the fluid recipe onto the buses and storage buses
+	msgs = remote.call(RP, "paste", r1, e1)
+	expect(#keys(msgs) == 0 and line(remote.call(IO, "get_bus", e1).filters) == line({ "resin-circuit-board", "fluid/phenol" }),
+		"fluid recipe onto an export bus: " .. line(remote.call(IO, "get_bus", e1).filters))
+	msgs = remote.call(RP, "paste", r1, ib2)
+	expect(#keys(msgs) == 0 and line(remote.call(IO, "get_bus", ib2).filters) == line({ "phenolic-circuit-board" }),
+		"fluid recipe onto an import bus (its products): " .. line(remote.call(IO, "get_bus", ib2).filters))
+	msgs = remote.call(RP, "paste", r2, ib1)
+	expect(#keys(msgs) == 0 and line(remote.call(IO, "get_bus", ib1).filters) == line({ "fluid/hydrochloric-acid" }),
+		"fluid product onto an import bus: " .. line(remote.call(IO, "get_bus", ib1).filters))
+	local sb3_info = remote.call(SB, "info", sb3)
+	expect(sb3_info and sb3_info.side == "fluid" and sb3_info.target, "storage bus on the pipe is on its fluid side: " .. line(sb3_info and sb3_info.side))
+	msgs = remote.call(RP, "paste", r1, sb3)
+	expect(#keys(msgs) == 0 and line(remote.call(SB, "get_settings", sb3).filters) == line({ "fluid/phenol" }),
+		"fluid recipe onto a storage bus on a tank: " .. line(remote.call(SB, "get_settings", sb3).filters))
+	msgs = remote.call(RP, "paste", r1, sb4)
+	expect(#keys(msgs) == 0 and line(remote.call(SB, "get_settings", sb4).filters) == line({ "resin-circuit-board", "fluid/phenol" }),
+		"fluid recipe onto a storage bus without a target: " .. line(remote.call(SB, "get_settings", sb4).filters))
+
+	--- more ingredients than the blocks hold (20 items and 5 fluids; 2 items and 5 fluids), in the game's order
+	local function fill(recipe)                          -- what the interface takes: 9 rows, 4 fluids
+		local names, fl = {}, 0
+		for _, g in ipairs(prototypes.recipe[recipe].ingredients) do
+			if #names < 9 and (g.type ~= "fluid" or fl < 4) then
+				names[#names + 1] = g.name
+				if g.type == "fluid" then fl = fl + 1 end
+			end
+		end
+		return names, fl
+	end
+	local function row_names(e)
+		local out = {}
+		local cfg = remote.call(IO, "get_interface_config", e)
+		for i = 1, 9 do out[#out + 1] = cfg[i] and cfg[i].name or nil end
+		return out
+	end
+	local many = prototypes.recipe["zz-devcheck-paste-many"].ingredients
+	local names = fill("zz-devcheck-paste-many")
+	msgs = remote.call(RP, "paste", mx, i5)
+	expect(line(row_names(i5)) == line(names) and has(msgs, "rows-full"),
+		"too many ingredients onto an interface: " .. config_line(i5) .. " " .. line(keys(msgs)))
+	local fnames, fl = fill("zz-devcheck-paste-fluids")
+	msgs = remote.call(RP, "paste", mf, i6)
+	expect(fl == 4 and line(row_names(i6)) == line(fnames) and line(keys(msgs)) == line({ "no-pipe", "no-pipe", "no-pipe", "no-pipe", "fluids-full" })
+		and #remote.call(IO, "get_interface_sides", i6) == 4,
+		"five fluids onto an interface: " .. config_line(i6) .. " sides " .. sides(i6) .. " " .. line(keys(msgs)))
+	remote.call(IO, "set_interface_config", i5, {}, { "off", "off", "off" })
+	msgs = remote.call(RP, "paste", mf, i5)
+	local s5 = remote.call(IO, "get_interface_sides", i5)
+	expect(s5[1] == "off" and s5[2] == "off" and s5[3] == "off" and type(s5[4]) == "number"
+		and line(keys(msgs)) == line({ "no-pipe", "no-side", "no-side", "no-side", "fluids-full" }),
+		"fluid rows with no side left: " .. sides(i5) .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", mx, sb2)
+	local f2s = remote.call(SB, "get_settings", sb2).filters
+	local items_only = true
+	for _, k in ipairs(f2s) do if k:find("^fluid/") then items_only = false end end
+	expect(#f2s == 18 and items_only and line(keys(msgs)) == line({ "filters-full" }),
+		"too many items onto a storage bus on a chest: " .. #f2s .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", mx, sb3)
+	expect(#remote.call(SB, "get_settings", sb3).filters == 5 and #keys(msgs) == 0, "five fluids onto a storage bus on a tank")
+	msgs = remote.call(RP, "paste", mx, sb4)
+	expect(#remote.call(SB, "get_settings", sb4).filters == 18 and line(keys(msgs)) == line({ "filters-full" }),
+		"too many ingredients onto a storage bus without a target")
+	msgs = remote.call(RP, "paste", mx, e2)
+	local ef = remote.call(IO, "get_bus", e2).filters
+	local want_ef = {}
+	for i = 1, 9 do want_ef[i] = (many[i].type == "fluid" and "fluid/" or "") .. many[i].name end
+	expect(line(ef) == line(want_ef) and line(keys(msgs)) == line({ "filters-full" }),
+		"too many ingredients onto an export bus: " .. line(ef) .. " " .. line(keys(msgs)))
+
+	--- machines without a recipe: nothing changes, the player is told
+	local before = config_line(i8)
+	msgs = remote.call(RP, "paste", m3, i8)
+	expect(line(keys(msgs)) == line({ "no-recipe" }) and config_line(i8) == before, "assembler without a recipe: " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", f2, e3)
+	expect(line(keys(msgs)) == line({ "no-recipe" }) and line(remote.call(IO, "get_bus", e3).filters) == line(gear),
+		"furnace that never smelted: " .. line(keys(msgs)))
+	--- the furnace while it smelts (its current recipe)
+	local busy = f1.get_recipe() ~= nil
+	msgs = remote.call(RP, "paste", f1, i7)
+	expect(#keys(msgs) == 0 and config_line(i7) == "1=iron-dust@normal:" .. stack("iron-dust"), "furnace onto an interface: " .. config_line(i7) .. " " .. line(keys(msgs)))
+	--- a paste between ME blocks is no recipe paste (their own handlers copy the settings)
+	expect(remote.call(RP, "paste", i1, i2) == nil and remote.call(RP, "paste", e1, e2) == nil, "a paste between ME blocks taken as a recipe paste")
+	st.note = machines .. " crafting machines can paste onto the four blocks, furnace " .. (busy and "smelting" or "already idle") .. " at the first paste"
+end
+
 --- The terrain comes from the map seed: trees, rocks, cliffs, water and enemies can be anywhere. The
 --- tests place their entities by script, which ignores all that, but construction robots do not build
 --- a ghost over a tree or on water, so a robot rebuild timed out on some seeds (issue #47). The whole
@@ -3910,6 +4262,7 @@ script.on_init(function()
 	for _, f in pairs(setup_unified_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_issue38_tests(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_scheduler_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_paste_test(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

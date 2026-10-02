@@ -964,6 +964,9 @@ remote.add_interface("gregtorio-me-terminal", {
 		for _, d in ipairs(M.cells(terminal)) do out[#out + 1] = { unit = d.unit, priority = d.priority, cells = d.cells } end
 		return out
 	end,
+	--- whether a click on an ME block opens its window for a cursor stack and the cursor's other flags
+	--- (fork-me-gui.lua cursor_flags: blueprint, record, ghost, wire, damaged); returns the answer and the reason
+	click_opens = function(stack, flags) return G.click_opens(stack, flags) end,
 	--- open the terminal window for a player (the GUI is built and refreshed: catches errors in the window code)
 	open = function(player, terminal) open(player, terminal) return G.window_of(player) ~= nil end,
 	--- select a tab of the open terminal and refresh it
@@ -1035,12 +1038,14 @@ end
 
 --- the "open GUI" key (linked to the game's own): a cell in the cursor goes into a drive, an encoded pattern into a
 --- pattern provider, else the entity's ME window opens (blocks without a vanilla window: drive, buses, provider,
---- controller)
+--- controller). Nothing happens with a tool in the cursor (blueprint, planner, copy-paste, wire, ghost, an item
+--- being built): the game uses the tool, as it does on a chest (G.click_opens).
 script.on_event("fork-me-terminal-open", function(event)
 	local player = game.get_player(event.player_index)
 	if not (player and player.selected) then return end
 	local e = player.selected
 	G.clear_bypass(player)
+	if not G.click_opens(player.cursor_stack, G.cursor_flags(player, e)) then return end
 	if N.quick_insert(player, e) then return end
 	if autocraft.quick_insert(player, e) then return end
 	G.open_entity(player, e)

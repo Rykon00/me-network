@@ -1,6 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.0
   Features:
+    - Copy a crafting machine's settings (shift + right click) and paste them (shift + left click) onto an ME Interface, ME Storage Bus, ME Import Bus or ME Export Bus to set it up for the machine's recipe, like a requester chest: the interface gets one stack of each item ingredient and a fluid row for each fluid, the storage bus and the export bus filter the ingredients, the import bus the products. Works with every crafting machine (furnaces give their last recipe); a flying text says what did not fit or when the machine has no recipe.
     - Map settings for the network's work per tick: interface and bus visits per tick, storage bus visits per tick, level maintainer checks per tick, circuit interface updates per second, crafting jobs per tick, the speed of the import and export buses (items and fluid per second) and how long an idle bus or storage bus may wait.
   Optimizations:
     - Large networks: interfaces, buses, storage buses, level maintainers, circuit interfaces, crafting jobs and pattern provider rescans are no longer done in fixed steps every 15 or 20 ticks; each one has a tick of its own and the work is spread over all ticks. In a test base of 5000 buses and interfaces the script time fell from 2.7 to 1.3 ms per tick on average and from 357 to 10 ticks over 5 ms per minute, while the network moved 14 times as much.
@@ -16,6 +17,8 @@ Version: 0.3.0
     - A storage bus sees a change made by an inserter or a player within 2 seconds at most (setting), never later than before.
     - More than 8 crafting jobs at once no longer slow each other down.
     - The circuit interface lists its signals by name (still the 1000 largest amounts) and updates at most once a second.
+  Bugfixes:
+    - A click on an ME block with a tool in hand opened the block's window and ended the tool: blueprints and blueprint books (also from the blueprint library), deconstruction and upgrade planners, the copy-paste and cut tool, selection tools of other mods, red, green and copper wires (a wire now connects to an ME Circuit Interface or Level Maintainer), ghosts, rails, spidertron and artillery remotes, capsules and items being built. The window now opens only when the game would open a chest's window: with an empty hand or a plain item.
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.0
 Date: 2026-10-02
