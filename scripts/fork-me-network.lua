@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
---- FORK AE2: ME NETWORK CORE (issue #68, step R1; design: docs/ME-REWORK.md, prototypes/120-fork-ae2.lua)
+--- FORK AE2: ME NETWORK CORE (issue #68, step R1; design: docs/ME-REWORK.md, prototypes/network.lua)
 ---   * Graph: ME blocks ("nodes": cables, controller, drives, terminals, interfaces, buses, pattern
 ---     providers, CPUs, level maintainers, circuit interfaces, fluid drives, fluid interfaces) connect when
 ---     their tile boxes share an edge. A network is a connected component. It works with exactly one
@@ -225,7 +225,7 @@ local function clear_link(node)
 	node.link = nil
 end
 
---- The underground cable is a pipe-to-ground with its own connection category (prototypes/120-fork-ae2.lua), so the
+--- The underground cable is a pipe-to-ground with its own connection category (prototypes/network.lua), so the
 --- engine pairs the ends exactly like underground pipes and shows the pairing on hover and while placing. The graph
 --- follows the engine: the partner is the end the underground pipe connection reaches (ahead in the direction).
 local function engine_partner(entity, dir)
@@ -1790,7 +1790,7 @@ function M.on_built(entity, event)
 				local left = M.fill_fluids(entity, info.cell, fluid)
 				for _, def in ipairs(M.fluid_cells(info.cell, left)) do spill(entity.surface, entity.position, def) end
 			end
-			if info.extra then
+			if info.extra and prototypes.item[info.extra.name] then
 				local player = event.player_index and game.get_player(event.player_index)
 				local got = player and player.insert(info.extra) or 0
 				if got < info.extra.count then spill(entity.surface, entity.position, { name = info.extra.name, count = info.extra.count - got }) end
