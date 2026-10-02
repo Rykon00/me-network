@@ -7,6 +7,8 @@
     python tools/devcheck/devcheck.py all                   # check + runtime
     python tools/devcheck/devcheck.py all --with-gregtorio ../Gregtorio
                                                             # the same with Gregtorio Continued loaded
+    python tools/devcheck/devcheck.py migrate --from-ref v0.1.0
+                                                            # a save of an older version loaded with the working copy
 
 Everything is kept in .devcheck/ in the repository root (git-ignored). The working copy is linked into the test
 mod folder, so every run tests the current files.
@@ -15,9 +17,9 @@ mod folder, so every run tests the current files.
 referenced __me-network__/ file is missing, a sprite sheet is too small, a name is missing in locale/en, a
 technology of this mod cannot be researched, a recipe of this mod is not unlocked by a researchable technology or
 cannot be crafted, or an unlocked recipe of the game cannot be crafted. `runtime` fails when a runtime test fails
-or does not finish.
+or does not finish. `migrate` fails when the old save cannot be made or loaded, or its check reports a problem.
 """
-import argparse, json, os, re, shutil, subprocess, sys, tarfile, urllib.parse, urllib.request
+import argparse, io, json, os, re, shutil, subprocess, sys, tarfile, urllib.parse, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -123,14 +125,14 @@ def remove_path(p):
         shutil.rmtree(p)
 
 
-def prepare_mods(gregtorio=None, with_runtime=False, base_only=False):
-    """mods/ = this mod (working copy) + the devcheck helper mods; with Gregtorio its checkout and its dependency
-    zips. base_only: without Space Age and quality."""
+def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False):
+    """mods/ = this mod (working copy, or `mod_dir`: an older version) + the devcheck helper mods; with Gregtorio its
+    checkout and its dependency zips. base_only: without Space Age and quality."""
     MODS.mkdir(parents=True, exist_ok=True)
     for p in MODS.iterdir():
         if p.name in (NAME, GREGTORIO, "mod-list.json") or p.name.startswith(HELPERS):
             remove_path(p)
-    link_dir(MODS / NAME, ROOT)
+    link_dir(MODS / NAME, Path(mod_dir) if mod_dir else ROOT)
     link_dir(MODS / "zz-me-network-devcheck", HERE / "checkmod")
     enabled = ["base", NAME, "zz-me-network-devcheck"]
     disabled = ["space-age", "quality", "elevated-rails"] if base_only else []
@@ -145,6 +147,9 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False):
     if with_runtime:
         link_dir(MODS / "zz-me-network-devcheck-runtime", HERE / "runtimemod")
         enabled.append("zz-me-network-devcheck-runtime")
+    if with_migrate:
+        link_dir(MODS / "zz-me-network-devcheck-migrate", HERE / "migratemod")
+        enabled.append("zz-me-network-devcheck-migrate")
     (MODS / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in enabled]
                                                     + [{"name": n, "enabled": False} for n in disabled]}))
 
@@ -436,6 +441,56 @@ def runtime(a):
     return 0
 
 
+# --------------------------------------------------------------------------------------------
+# migrate: a save of an older version, loaded with the working copy (issue #3: the old fluid blocks)
+# --------------------------------------------------------------------------------------------
+
+def old_tree(ref):
+    """the mod as it was at `ref` (git archive), unpacked into .devcheck/old-<ref> (plain files, no links)"""
+    dest = WORK / ("old-" + re.sub(r"[^A-Za-z0-9._-]", "_", ref))
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    tar = subprocess.run(["git", "-C", str(ROOT), "archive", "--format=tar", ref], capture_output=True, check=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(tar)) as t:
+        t.extractall(dest)
+    return dest
+
+
+def migrate(a):
+    old = old_tree(a.from_ref)
+    prepare_mods(mod_dir=old, with_migrate=True)
+    print(f"old version: {a.from_ref}")
+    log = factorio("--create", str(WORK / "migrate-map.zip"), *seed_args(a))
+    if load_errors(log):
+        print("could not create the map with the old version:\n" + load_errors(log))
+        return 1
+    if not_saved(log):
+        print(not_saved(log))
+        return 1
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
+    print(f"old save with every old fluid block: {setup.group(1) if setup else 'no result'}")
+    prepare_mods(with_migrate=True)
+    log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
+    ran = re.search(r"Performed (\d+) updates", log)
+    print(f"old save loaded with the working copy: {'ok, ' + ran.group(0) if ran else 'FAILED'}")
+    for line in re.findall(r"FORK-ME-MIGRATE: (.*)", log):
+        print("  migration: " + line)
+    unified = re.search(r"DEVCHECK-MIGRATE-UNIFIED (.*)", log)
+    fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
+    print(f"the old fluid blocks after the update: {unified.group(1) if unified else 'no result'}")
+    print(f"the fluid after the I/O steps: {fluids.group(1) if fluids else 'no result'}")
+    fails = re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log)
+    for f in fails:
+        print("  - " + f)
+    if not ran:
+        print(load_errors(log) or "")
+    ok = ran and setup and setup.group(1).startswith("ok") and unified and unified.group(1).startswith("ok") \
+        and fluids and fluids.group(1).startswith("ok") and not fails
+    print("\nRESULT: " + ("OK" if ok else "PROBLEMS FOUND"))
+    return 0 if ok else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -452,7 +507,13 @@ def main():
         if name in ("runtime", "all"):
             p.add_argument("--ticks", type=int, default=1500)
             p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
+    p = sub.add_parser("migrate")
+    p.add_argument("--from-ref", default="v0.1.0", help="the git tag or commit of the old version (default v0.1.0)")
+    p.add_argument("--ticks", type=int, default=300)
+    p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     a = ap.parse_args()
+    if a.cmd == "migrate":
+        return migrate(a)
     if a.cmd == "setup":
         return setup(a)
     if a.cmd == "check":

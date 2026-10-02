@@ -1,0 +1,11 @@
+{
+  "name": "zz-me-network-devcheck-migrate",
+  "version": "1.0.0",
+  "title": "ME Network devcheck migration",
+  "author": "rykon_",
+  "factorio_version": "2.0",
+  "description": "Test helper for tools/devcheck migrate: builds every old fluid block with settings and fluid with an older ME Network, then checks the save after it is loaded with the working copy. Not meant for normal play.",
+  "dependencies": [
+    "me-network"
+  ]
+}
