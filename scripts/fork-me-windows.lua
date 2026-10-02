@@ -7,8 +7,9 @@
 ---   * Storage cell (from the drive window or the terminal's cells tab): contents, bytes and types, the
 ---     partition (the items or fluids the cell is restricted to), "Clear" and "From contents".
 ---   * ME Controller: network state, members, drives, cells, bytes and types, power.
----   * ME Pattern Provider: the machines next to it with their recipe (or why they are no pattern), the recipe
----     choice for furnaces.
+---   * ME Pattern Provider (issue #80): the 9 pattern slots (click with an encoded pattern in hand to put it in,
+---     click a pattern to take it out), the status of each pattern (usable by how many machines, or why not), the
+---     machines and chests next to it, the priority.
 ---   * ME Crafting CPU: tier, power, the jobs it runs (progress, cancel) and the jobs waiting for a CPU.
 ---   * ME Level Maintainer: item or fluid, amount, amount from the circuit, the on/off circuit condition, status.
 ---   * ME Circuit Interface: 20 filters, output on/off, status.
@@ -26,6 +27,7 @@
 local N = require("scripts.fork-me-network")
 local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
+local patterns = require("scripts.fork-me-patterns")
 local fluids = require("scripts.fork-me-fluids")
 local circuit = require("scripts.fork-me-circuit")
 local io = require("scripts.fork-me-io")
@@ -330,86 +332,143 @@ end
 G.window("controller", { open = open_controller, refresh = M.refresh_controller, entities = { "controller" } })
 
 --------------------------------------------------------------------------------
---- ME Pattern Provider
+--- ME Pattern Provider (issue #80: 9 slots for encoded patterns)
 --------------------------------------------------------------------------------
 
 function M.provider_data(entity) return autocraft.provider_info(entity) end
 
-local function build_provider(box, entity)
+--- the sprite of a pattern slot: the recipe of a crafting pattern, else the first output
+local function pattern_sprite(d)
+	if d.kind == "crafting" and d.recipe and prototypes.recipe[d.recipe] then return "recipe/" .. d.recipe end
+	local first = type(d.outputs) == "table" and d.outputs[1]
+	local key = type(first) == "table" and first.key
+	if type(key) == "string" then
+		if key:sub(1, 6) == "fluid/" then
+			if prototypes.fluid[key:sub(7)] then return "fluid/" .. key:sub(7) end
+		elseif prototypes.item[key] then
+			return "item/" .. key
+		end
+	end
+	return "item/" .. patterns.ENCODED
+end
+M.pattern_sprite = pattern_sprite
+
+--- the status line of a slot (LocalisedString)
+local function slot_status(d)
+	if d.pending then return { "fork-me-pattern.status-pending" } end
+	if d.ok then return { "fork-me-pattern.status-ok", d.machines } end
+	return { "fork-me-pattern.status-" .. (d.reason or "invalid") }
+end
+M.slot_status = slot_status
+
+--- the tooltip of a slot: the pattern's inputs and outputs, then what a click does
+local function slot_tooltip(d)
+	local def = patterns.normalize(d)
+	local text = def and patterns.description(def) or { "fork-me-pattern.status-invalid" }
+	return { "", text, "\n\n", { d.pending and "fork-me-gui.provider-pending-tooltip" or "fork-me-gui.provider-slot-tooltip" } }
+end
+
+local function build_provider_slots(box, entity)
 	local info = M.provider_data(entity)
-	G.heading(box, { "fork-me-gui.provider-machines" })
+	local t = box.add{ type = "table", column_count = 3 }
+	t.style.horizontal_spacing = 8
+	t.style.vertical_spacing = 2
+	for slot = 1, info.slot_count do
+		local d = info.slots[slot]
+		local tags = G.act("prov_slot", { slot = slot })
+		if d then
+			t.add{ type = "sprite-button", sprite = pattern_sprite(d), tooltip = slot_tooltip(d), tags = tags,
+				style = d.pending and "yellow_slot_button" or d.ok and "slot_button" or "red_slot_button" }
+		else
+			t.add{ type = "sprite-button", style = "slot_button", tooltip = { "fork-me-gui.provider-empty-tooltip" }, tags = tags }
+		end
+		local name
+		if not d then name = { "fork-me-gui.provider-slot-empty" }
+		elseif d.kind == "crafting" and d.recipe and prototypes.recipe[d.recipe] then
+			name = { "fork-me-pattern.name-crafting", prototypes.recipe[d.recipe].localised_name }
+		else
+			local first = type(d.outputs) == "table" and d.outputs[1]
+			local desc = first and type(first.key) == "string" and autocraft.describe(first.key)
+			name = { "fork-me-pattern.name-processing", desc and desc.localised_name or "?" }
+		end
+		local l = t.add{ type = "label", caption = name }
+		l.style.width = 170
+		G.label(t, d and slot_status(d) or "", 200)
+	end
+end
+
+local function build_provider_machines(box, entity)
+	local info = M.provider_data(entity)
 	if #info.machines == 0 then
 		G.label(box, { "fork-me-gui.provider-no-machine" }, WIDTH)
+		return
 	end
 	for _, m in ipairs(info.machines) do
 		local row = G.row(box)
 		row.add{ type = "sprite", sprite = "entity/" .. m.name }
+		local proto = prototypes.entity[m.name]
+		local parts = { "", proto and proto.localised_name or m.name }
 		if m.recipe and prototypes.recipe[m.recipe] then
-			row.add{ type = "sprite", sprite = "recipe/" .. m.recipe }
-			row.add{ type = "label", caption = { "", prototypes.recipe[m.recipe].localised_name, m.chosen and { "fork-me-gui.provider-chosen" } or "" } }
-		else
-			row.add{ type = "label", caption = { "fork-me-gui.provider-no-recipe" } }
+			parts[#parts + 1] = { "fork-me-gui.provider-machine-recipe", "[recipe=" .. m.recipe .. "]", prototypes.recipe[m.recipe].localised_name }
 		end
+		if m.busy then parts[#parts + 1] = { "fork-me-gui.provider-machine-busy", m.busy } end
+		G.label(row, parts, WIDTH - 40)
 	end
-	local ignored = { total = 0 }
-	for reason, n in pairs(info.ignored) do ignored[reason] = n ignored.total = ignored.total + n end
-	if ignored.total > 0 then G.label(box, { "", { "fork-me-gui.provider-ignored", ignored.total }, " ", autocraft.ignored_list(ignored) }, WIDTH) end
-	box.add{ type = "line" }
-	G.heading(box, { "fork-me-gui.provider-furnaces" })
-	if info.furnaces == 0 then
-		G.label(box, { "fork-me-provider.no-furnace" }, WIDTH)
-		return
-	end
-	if #info.options == 0 then
-		G.label(box, { "fork-me-provider.no-recipes" }, WIDTH)
-		return
-	end
-	G.label(box, { "fork-me-provider.info", info.furnaces }, WIDTH)
-	local t = G.grid(box, 10)
-	for _, name in ipairs(info.options) do
-		local proto = prototypes.recipe[name]
-		t.add{ type = "sprite-button", sprite = "recipe/" .. name, style = name == info.choice and "yellow_slot_button" or "slot_button",
-			elem_tooltip = { type = "recipe", name = name },
-			tooltip = info.shared[name] and { "fork-me-provider.shared-input" } or nil,
-			tags = G.act("prov_recipe", { recipe = name }) }
-		if not proto then t.children[#t.children].enabled = false end
-	end
-	local choice = info.choice and prototypes.recipe[info.choice]
-	G.label(box, choice and { "fork-me-provider.current", choice.localised_name } or { "fork-me-provider.current-none" }, WIDTH)
-	box.add{ type = "button", caption = { "fork-me-provider.clear" }, tooltip = { "fork-me-provider.clear-tooltip" }, tags = G.act("prov_clear") }
 end
 
 local function provider_sig(entity)
 	local info = M.provider_data(entity)
-	local sig = { tostring(info.choice), info.furnaces, table.concat(info.options, "/") }
-	for _, m in ipairs(info.machines) do sig[#sig + 1] = m.name .. ":" .. tostring(m.recipe) .. ":" .. tostring(m.chosen) end
-	for reason, n in pairs(info.ignored) do sig[#sig + 1] = reason .. n end
-	return table.concat(sig, ",")
+	local sig = { tostring(info.network) }
+	for slot = 1, info.slot_count do
+		local d = info.slots[slot]
+		sig[#sig + 1] = d and (tostring(d.id or d.recipe) .. ":" .. tostring(d.ok) .. ":" .. tostring(d.reason) .. ":"
+			.. tostring(d.machines) .. ":" .. tostring(d.pending)) or "-"
+	end
+	local machines = {}
+	for _, m in ipairs(info.machines) do machines[#machines + 1] = m.unit .. ":" .. tostring(m.recipe) .. ":" .. tostring(m.busy) end
+	return table.concat(sig, ","), table.concat(machines, ",")
 end
 
 local function open_provider(player, entity)
 	local _, content = G.open_window(player, "provider", caption_of(entity), { unit = entity.unit_number })
-	content.add{ type = "flow", name = "fork_me_provider", direction = "vertical" }
+	G.label(content, { "fork-me-gui.provider-help" }, WIDTH)
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.provider-priority-tooltip" } }
+	G.number_field(row, autocraft.get_priority(entity), G.act("prov_priority"), 70, true).tooltip = { "fork-me-gui.provider-priority-tooltip" }
+	G.heading(content, { "fork-me-gui.provider-patterns" })
+	content.add{ type = "flow", name = "fork_me_provider_slots", direction = "vertical" }
+	content.add{ type = "line" }
+	G.heading(content, { "fork-me-gui.provider-machines" })
+	content.add{ type = "flow", name = "fork_me_provider_machines", direction = "vertical" }
+	G.label(content, "", WIDTH, nil, "fork_me_provider_status")
 	M.refresh_provider(player, G.window_of(player))
 end
 
 function M.refresh_provider(player, frame)
 	local entity = G.entity_of(player, frame)
 	if not entity then return false end
-	rebuild(frame, "fork_me_provider", provider_sig(entity), function(box) build_provider(box, entity) end)
+	local slots_sig, machines_sig = provider_sig(entity)
+	rebuild(frame, "fork_me_provider_slots", slots_sig, function(box) build_provider_slots(box, entity) end)
+	rebuild(frame, "fork_me_provider_machines", machines_sig, function(box) build_provider_machines(box, entity) end)
+	local info = M.provider_data(entity)
+	G.find(frame, "fork_me_provider_status").caption = info.network and "" or { "fork-me-net.status-no-network" }
 	return true
 end
 
 G.window("provider", { open = open_provider, refresh = M.refresh_provider, entities = { "provider" } })
 
-G.on("prov_recipe", function(event, player, el)
+G.on("prov_slot", function(event, player, el)
+	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
-	if entity then autocraft.toggle_recipe(entity, el.tags.recipe) G.refresh_one(player) end
+	if not entity then return end
+	flying(player, autocraft.provider_click(player.cursor_stack, player.get_main_inventory(), entity, el.tags.slot, event.shift))
+	G.refresh_one(player)
 end)
 
-G.on("prov_clear", function(event, player)
+G.on("prov_priority", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
 	local entity = window_entity(player)
-	if entity then autocraft.set_recipe(entity, nil) G.refresh_one(player) end
+	if entity then autocraft.set_priority(entity, tonumber(el.text) or 0) end
 end)
 
 --------------------------------------------------------------------------------
