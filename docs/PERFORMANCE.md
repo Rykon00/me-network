@@ -147,6 +147,9 @@ What follows from it:
 
 ## Design of the rework (pull request 2), from the profile
 
+(Written before the rework; what was built and why it differs in places: `docs/ME-REWORK.md`, "Scheduler and
+performance at size". The results are in the next section.)
+
 In the order of the profile:
 
 1. **Storage engine.** Per network and priority, ordered lists that `insert_key`, `extract_key` and `room_for`
@@ -191,3 +194,106 @@ In the order of the profile:
 
 Determinism: every budget is a count of visits or operations, never a measured time; the settings are runtime-global
 (the same for every player); profilers exist only in the benchmark's instrumented copy.
+
+## After the rework (0.3.0, pull request 2)
+
+The same scenes and harness, the median of three runs (`bench --reference --profile 1000,5000`), the default
+settings. What was built is described in `docs/ME-REWORK.md`, "Scheduler and performance at size".
+
+### Script time per tick (ms), before → after
+
+| N | Average | 99th percentile | Worst tick | Ticks over 5 ms (of 3595) | Lua garbage | Whole update |
+|---|---|---|---|---|---|---|
+| 100 | 0.709 → **0.227** | 13.8 → 1.93 | 27.1 → 6.8 | 180 → 2 | 0.055 → 0.039 | 0.99 → 0.44 |
+| 1000 | 0.834 → **0.779** | 16.6 → 2.51 | 46.4 → 12.1 | 215 → 12 | 0.066 → 0.072 | 1.19 → 1.18 |
+| 5000 | 2.675 → **1.262** | 44.8 → 3.28 | 95.0 → 27.4 | 357 → 10 | 0.112 → 0.082 | 3.39 → 2.09 |
+
+The save of the 5000 scene stays 2.4 MB. At 1000 and 5000 the time now buys far more work: every bus of these
+scenes has work for the whole window, and all of them get it (below), where 0.2.0 let them wait.
+
+### Throughput (per second), before → after
+
+| | N = 100 | 1000 | 5000 |
+|---|---|---|---|
+| items, all buses and interfaces | 2082 → 3332 | 5852 → 33 247 | 11 710 → **166 741** |
+| items per endpoint | 20.0 → 32.0 | 5.85 → 33.2 | 2.34 → **33.4** |
+| capacity probe, import bus (warehouse) | 59.2 → **260** | 6.19 → **267** | 1.24 → **261** |
+| capacity probe, export bus (warehouse) | 59.2 → **256** | 6.19 → **256** | 1.24 → **261** |
+| fluid capacity probes (big tank), import / export | 925 → 4056 / 4000 | 95 → 4183 / 4009 | 19 → **4075 / 4076** |
+| import bus on a steel chest (runs dry: 4800 to 9600 items in 60 s) | 48.4 → 62.2 | 6.15 → 79.1 | 1.23 → 79.6 |
+| assembling machine with two buses (out / in) | 0.90 / 1.20 → 0.90 / 1.20 | 1.28 / 1.09 → 0.97 / 1.12 | 0.61 / 0.16 → **0.99 / 1.12** |
+| interface with inserters (in / out) | 9.0 / 9.0 → 9.0 / 9.0 | 10.0 / 8.2 → 10.0 / 10.0 | 6.9 / 2.5 → **10.1 / 10.0** |
+| provider machines, crafts | 1.2 → 1.2 | 17.1 → 17.3 | 282 → 327 |
+
+* A bus moves its speed, 256 items or 4000 fluid units per second, at every size (the capacity probes): 8.5 bulk
+  inserters (30 items/s) or 26 fast inserters (10 items/s) chest to chest, 3.4 pumps (1200 units/s). The steel chests
+  of the import and export buses run dry or full within the window at every size, so their numbers and the totals
+  are what the chests held, not what the buses could move.
+* Machines and the inserters at the interfaces run at their own speed again at 5000 (the assembling machines make
+  gears and cable at their rate: 0.99 items/s out, 1.12 in; the fast inserters at the interfaces 10 items/s).
+* Native cost for comparison: 5000 inserters move 100 000 items/s for 0.34 ms of entity update per tick (3.4 ns of
+  game time per item); the ME scene moves 166 741 items/s (and 1.2 million fluid units/s, 327 crafts/s) for 1.26 ms of
+  script time per tick (7.6 ns per item, the fluid and the crafting included). Robots: about 0.3 items/s per robot
+  at 26 tiles; one bus does what about 850 such robots do.
+
+### Latencies (s, median / worst), before → after, and the targets
+
+| | N = 100 | 1000 | 5000 | Target (5000) |
+|---|---|---|---|---|
+| storage bus sees a chest change | 0.27 / 0.27 → 0.02 / 0.02 | 1.27 / 2.27 → 1.07 / 1.15 | 5.52 / 10.8 → **1.33 / 1.72** | 2: met |
+| level maintainer starts a job | 1.02 / 1.68 → 0.07 / 0.10 | 4.35 / 7.68 → 0.08 / 0.15 | 25.0 / 41.7 → **0.08 / 0.22** | 5: met |
+| the job hands out its first ingredients | 0.33 / 0.33 → 0.02 / 0.02 | 0.33 / 0.67 → 0.13 / 0.15 | 1.00 / 1.33 → 0.07 / 0.87 | |
+
+### Targets of issue #5 (at 5000 buses and interfaces, 500 storage buses, 200 providers, 500 maintainers)
+
+| Target | Before | After | |
+|---|---|---|---|
+| script time under 2 ms per tick on average | 2.675 | **1.262** | met |
+| no tick over 5 ms | 357 ticks, worst 95 ms | 10 ticks, worst 27 ms (99th percentile 3.3 ms) | **not met** (see below) |
+| a busy bus moves what a native setup moves, at 100 and at 5000 | 59 → 1.2 items/s | 256 items/s at every size | met (8.5 bulk inserters) |
+| storage bus change seen within 2 s | 10.8 s | 1.72 s | met |
+| maintainer reacts within 5 s | 41.7 s | 0.22 s | met |
+
+**The worst tick.** What is left over 5 ms, from the worst ticks of single runs at 5000:
+
+* Ticks in which a circuit interface without a filter writes its section: about 900 signals cost about 0.9 ms in the
+  engine (linear, about 1 µs per signal: 59 µs for 100, 935 µs for 1000; measured), plus the Lua around it; on a tick
+  that is busy anyway this passes 5 ms. A section cannot be changed in part cheaply (setting single slots of a section
+  of 900 signals cost milliseconds per changed slot: tried and dropped). The levers are the player's: filters on the
+  interfaces, or fewer updates per second (the setting).
+* Steps of the Lua garbage collector of 10 to 25 ms in a few ticks per minute (the `luaGarbageIncremental` column of
+  the same ticks; 0.2.0 had them too). The rework makes less garbage per moved item (no closures per insert, one
+  section per list for unfiltered interfaces, plain items by count) but the engine's own tables (`get_contents`)
+  remain.
+* The machine: the worst tick of the same code varies between runs by a factor of two to four (other programs, the
+  game client). The 99th percentile (3.3 ms) is the steadier number.
+
+So the 5 ms limit is met by 99.7 % of the ticks but not by every tick; in Lua the remaining spikes are the engine
+writing a big combinator section and the garbage collector.
+
+### Profile after (5000, inclusive ms per tick, µs per call)
+
+| Function | Before | After |
+|---|---|---|
+| interfaces and buses (I/O step / `io.M.on_tick`) | 1.508 | 1.065 (16 visits per tick, 62 µs per visit) |
+| `room_for` / `can_insert_fluid` | 0.899 (3181) | 0.028 (48; the profile adds about 1 µs per timed call inside) |
+| `insert_key` | 0.356 (170) | 0.216 (28, 7.7 calls per tick instead of 2.1) |
+| autocrafting with maintainers and circuit interfaces | 0.569 | 0.421 |
+| circuit interface update | 0.450 (4501) | 0.128 (850) |
+
+The storage API called directly at 5000 (µs per call, before → after): insert 10 and extract 10 of a raw material
+111 → 14; `can_insert` 1000 of it 2077 → 4.7; of an item type the network does not hold 1301 → 3.1; extract into a
+chest and back 127 → 19; `can_insert_fluid` 2197 → 18; insert and extract 100 fluid 840 → 43 (the fluid storage
+buses' segments, AE2's order: storage buses are emptied first). A circuit interface update without a filter 5.4 to
+9.5 ms → 0.9 ms, with 5 filters 1.3 → 0.15 ms. Building one bus into the network 27.6 ms → **0.19 ms**, removing one
+90 ms → **0.47 ms**. The graph rebuild of `on_configuration_changed` is unchanged (0.73 to 0.81 s at 5000; once per
+mod update).
+
+### Settings
+
+The defaults (`settings.lua`) come from these runs: 16 interface and bus visits per tick already give every bus of
+the 5000 scene its full speed through the catch-up (a sweep of 16, 24 and 40 visits per tick moved the same 209 000
+items/s in the scene before the random picks were corrected, at 1.4, 2.9 and 2.6 ms per tick on a noisy machine);
+more visits only shorten the reaction of busy blocks. The storage bus idle limit of 120 ticks is the latency target.
+10 circuit interface updates per second keep the circuit cost at about 0.2 ms per tick with 50 unfiltered
+interfaces.

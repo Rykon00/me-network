@@ -208,9 +208,13 @@ machine with a fluid recipe, a chemical plant) one bus does both; on a chest onl
 | Import | the output of an assembler or furnace, or any slot of a chest, and the fluid in the output boxes of a machine (a tank: all of it), into the network | only those items and fluids; none: everything |
 | Export | from the network into the input of an assembler or furnace (up to a stack of each filtered item) or a chest, and its filtered fluids into the machine's input boxes or the tank, at the fluid's default temperature | the items and fluids to export (none: nothing) |
 
-A bus moves up to 64 items and 1000 units of fluid per visit, an interface handles up to 8 slots and its four sides
-per visit; every interface and bus is visited about every quarter second while there are fewer than 24 of them
-(more: each less often). The unified blocks move fluids as soon as they are built; the network stores fluid in fluid
+A bus moves up to 256 items and 4000 units of fluid per second (map settings "Bus speed"), however many buses the
+map has: a bus that is visited less often moves more per visit. An interface handles 8 slots per quarter second since
+its last visit, and its four sides. A busy block is visited about every quarter second (in a very big network as
+often as the setting "Interface and bus visits per tick" allows); one that found nothing to do waits longer and
+longer, at most 5 seconds (setting "Longest wait of an idle interface or bus") and never longer than in a small
+network, and it wakes at once when its item comes into the network, its settings change, it is rotated or something
+is built in front of it. The unified blocks move fluids as soon as they are built; the network stores fluid in fluid
 storage cells (tech ME Fluid Storage) or in a tank behind a storage bus.
 
 ## ME Storage Bus
@@ -362,7 +366,7 @@ ingredient fits into a slot, and fluid boxes for the recipe's fluids without pip
   all of it, the machine is not switched and the job waits. Nothing is lost on a switch.
 * **One machine, many patterns:** a machine works for one job at a time. A job that needs a machine that is busy with
   another job (or another pattern) **waits** ("Waiting for a free machine") and takes it at the next step after it is
-  free. Jobs take turns (round robin, 8 jobs per step).
+  free. Jobs take turns: one job per tick (setting "Crafting jobs stepped per tick"), each one every 20 ticks at most.
 * The machine keeps the recipe of the last job; it is never switched back.
 * **Cannot make it:** a pattern whose machines cannot make the recipe is no pattern of the network: the provider
   window shows why (`category`: no machine of the right kind, `not-researched`, `fixed-recipe`, `stack`, the fluid
@@ -506,9 +510,10 @@ network. Connect red or green wires to it: they carry
 * only the resources chosen as **filters**: click it, its ME window has up to 20 signal buttons and the
   output on/off switch. Items and fluids only; without filters everything is sent.
 
-The signals are refreshed about once a second (with more than six interfaces a little less often: two
-of them are refreshed every 20 ticks, in turns). The network writes the combinator's signal list: entries
-added by hand are replaced, extra sections are removed; the combinator's on/off switch still turns the
+The signals are refreshed about once a second, and only when the network's contents changed (all circuit interfaces
+of the map together at most 10 times per second, setting "Circuit interface updates per second": with many
+interfaces each one less often). The signals are listed by type and name (the 1000 largest amounts when there are
+more). The network writes the combinator's signal list: entries added by hand are replaced, extra sections are removed; the combinator's on/off switch still turns the
 output off (also in the ME window). Filters are copied by settings paste and kept in blueprints, copy and
 paste, and clones. Since
 issue #68 the ME Controller has no circuit connection (it was a roboport): the Circuit Interface is the way to
@@ -574,8 +579,8 @@ cell (8 000 units per "1k"). An item cell takes no fluid and a fluid cell no ite
 * **Fluid cell partition:** a fluid cell can be partitioned for fluids like an item cell for items (see
   **Partitions and priorities**).
 * **Buses:** the import bus empties the output boxes of the machine it faces (a tank: all of it), the export bus
-  fills its filtered fluids into the machine's input boxes or the tank. Up to 1000 units per visit (a visit about
-  every quarter second while there are fewer than 24 interfaces and buses), fluid filters next to the item filters
+  fills its filtered fluids into the machine's input boxes or the tank. Up to 4000 units per second (setting "Bus
+  speed: fluid per second"), fluid filters next to the item filters
   (import: none means everything), kept in blueprints, settings paste and clones.
 * **Blueprints:** a drive from a blueprint is empty (cells are items; priority and partitions are kept). The rows and
   sides of an ME Interface are kept in blueprints and copied by settings paste and cloning.
@@ -606,8 +611,9 @@ an index item -> cells) and the drives with their cells (`storage.fork_me_net.dr
 build and removal updates them, a breadth first search over the stored adjacency splits a network when a
 member is removed, and a sweep in the terminal step finds members removed without an event. The storage API
 (`insert`, `extract`, `count`, `can_insert`, `contents`, `insert_stack`, `extract_to`, `stats`) works on a
-network and does nothing when the network does not work. `scripts/fork-me-io.lua` runs the I/O step (every 15
-ticks: the fluid step below, then up to 24 interfaces and buses), `scripts/fork-me-migrate.lua` converts old
+network and does nothing when the network does not work. `scripts/fork-me-io.lua` visits the interfaces and buses
+(since issue #5 of ME Network each one at a tick of its own, `scripts/fork-me-schedule.lua`, from the one `on_tick`
+handler of `control.lua`), `scripts/fork-me-migrate.lua` converts old
 networks, `scripts/fork-me-terminal.lua` is the terminal and routes the GUI events of every ME window.
 
 ### Windows (issue #68, R3)
@@ -655,8 +661,8 @@ keeps the calls the other modules used (`totals`, `count`, `insert`, `remove`, `
 times 8) on top of them.
 
 The **ME Interface's sides** (issue #3 of ME Network) are four hidden 1x1 storage tanks of 5000 units on its tile,
-one pipe connection each. The interface is visited in the I/O step (`scripts/fork-me-io.lua`, `on_nth_tick(15)`,
-24 interfaces and buses per step); after its items it looks at its sides. Import side: the tank's fluid is removed
+one pipe connection each. The interface is visited by the scheduler (`scripts/fork-me-io.lua`, issue #5); after its
+items it looks at its sides. Import side: the tank's fluid is removed
 with `remove_fluid`, limited to what the network can take (`can_insert_fluid`); this takes the whole fluid segment.
 Export side: `want = amount - held`, `insert_fluid` of `min(want, stored)` at the default temperature. In both
 directions only what the engine reports as removed or inserted is booked, never the requested amount, so fluid is
@@ -666,7 +672,8 @@ The **buses** move fluids in the same visit as items (`fork-me-io.lua`, `fluid_b
 fluid boxes (decided once, by its prototype, when the target is found): the import
 bus reads the target's fluid boxes by index and skips input boxes (`production_type == "input"`), takes at most
 what the network can store and writes the rest back into the box; the export bus uses `insert_fluid` (the engine
-picks the box) and books what it reports. 1000 units per visit.
+picks the box) and books what it reports. The bus's speed times the ticks since its last visit (1000 units per 15
+ticks by default).
 
 Fluids are stored by name only. One temperature per fluid keeps totals, export and hand-over unambiguous; the
 price is the temperature rule above.
@@ -689,9 +696,10 @@ pattern needs an assembling machine that can make the recipe (category, research
 exactly with the recipe set, by size and count before a switch), a processing pattern a machine ("push") or a chest
 ("chest"). From all providers, in pattern order (priority descending, unit number, slot), `patterns[network id]`
 holds `items[key] = { pattern ids }`, `defs[id]` and `targets[id]` (each machine once); patterns without a target are
-counted in `ignored[reason]`. A change of the ME graph rescans every provider before the patterns are used next; a
-round robin rescan (8 providers per step) keeps them current and encodes pending blueprint patterns; starting a job
-rescans all providers first, so the plan always sees the world as it is now. Resource keys
+counted in `ignored[reason]`. A merge or split of ME networks rescans every provider before the patterns are used
+next; a round robin rescan (one provider every 2 ticks) keeps them current and encodes pending blueprint patterns;
+starting a job rescans the providers of its plan's patterns first (and plans again if one changed), so the plan sees
+its machines as they are now. Resource keys
 are item names and `fluid/<name>` for fluids; stock, plan, pool, GUI and the remote interface
 use the same keys. A machine with a fluid recipe carries its **fluid map**, built from
 `entity.fluidbox` after the recipe is set: which input box (by index) takes which fluid ingredient (the box filter
@@ -799,28 +807,32 @@ The tier numbers come from the mod-data `fork-me-autocraft` (`cpus[name] = { job
 jobs it runs (`cpus[unit].jobs = { [job id] = true }`; a record of an older save with a single `job` is
 converted when it is first read). `assign_cpus` gives a queued job the fastest CPU of its network with
 fewer jobs than slots. A job's machine interactions per step are `STEP_OPS` (6) times the speed of its
-CPU, and all jobs of one step share `MAX_OPS_PER_STEP` (96, four Quantum jobs at full speed): what a job
-does not use goes back to the step's budget. A CPU that is replaced or removed releases its jobs, which
+CPU for every 20 ticks since its last step (at most three steps' worth: a job that waited for its turn catches up). A CPU that is replaced or removed releases its jobs, which
 queue and take the next free slot (the path the existing CPU test covers).
 
 ### Level maintainer and circuit interface (issue #38)
 
-`scripts/fork-me-circuit.lua` keeps `storage.fork_ae2.maintainers` / `mlist` / `mcursor` and `circuits` /
-`clist` / `ccursor` (created lazily) and runs as a step hook of the autocrafting step (every 20 ticks).
+`scripts/fork-me-circuit.lua` keeps `storage.fork_ae2.maintainers` / `mlist` / `mq` and `circuits` /
+`clist` / `cq` (created lazily) and runs as a tick hook of the autocrafting module: each maintainer and interface is
+due at a tick of its own (issue #5, `scripts/fork-me-schedule.lua`).
 
-* **Maintainer check** (4 per step, round robin): no resource, no power, `cb.disabled` of the lamp's
+* **Maintainer check** (4 per tick at most, setting): a stocked maintainer waits until its item is taken below its
+  amount (`N.wait_below`) and is checked at least every 5 seconds (circuit targets and conditions have no event);
+  its job's end wakes it. no resource, no power, `cb.disabled` of the lamp's
   control behavior while its circuit (or logistic) condition is switched on (a freshly wired lamp reads
   `disabled` until its next circuit update, so the flag alone is not trusted), no network: status only. Otherwise the target is the amount,
   or the resource's signal on red plus green (`get_circuit_network(wire).get_signal`). The stock is
   the network's `count` (normal quality) or `fluid_count`. Its own job still queued or running:
   nothing. Stock below target: if an active, not closing job of the network crafts the same key
   (`active_job_for`), nothing; else, if a powered CPU has a free slot (`free_slot`), `M.start` with the
-  difference and the maintainer's unit number as the job's `owner`. At most one start per step (a start
-  rescans the providers and plans); a failed start (missing, no pattern) waits `RETRY_TICKS` (300).
-* **Circuit interface update** (2 per step, round robin): the network's `contents` (with quality; items with
-  tags under their item)
-  and fluid totals (floored, at least 1 unit), filtered by key, sorted by amount, at most 1000, are
-  written as the filters of section 1 of the combinator's control behavior; other sections are removed.
+  difference and the maintainer's unit number as the job's `owner`. At most one start per tick (a start
+  rescans the providers of its plan and plans); a failed start (missing, no pattern) waits `RETRY_TICKS` (300).
+* **Circuit interface update** (10 per second for the whole map, setting; each interface at most every 60 ticks): the
+  network's totals (with quality; items with tags under their item) and fluid totals (floored, at least 1 unit)
+  as one list per network (`net.sigs`, made at most every 60 ticks while the contents change, shared by every
+  interface), filtered by key, the 1000 largest amounts, sorted by type and name, are written as the filters of
+  section 1 of the combinator's control behavior; other sections are removed. An interface writes only when the
+  list changed since its last write.
 * **Settings copy:** blueprint tags `fork_me_maintainer` (`{ key, amount, circuit }`), `fork_me_circuit`
   (`{ filters }`) and `fork_me_fluid_interface` (`{ mode, fluid, level }`), written by the one
   `on_player_setup_blueprint` handler (autocrafting module: providers, then `fluids.tag_blueprint`, then
@@ -832,28 +844,28 @@ queue and take the next free slot (the path the existing CPU test covers).
 
 ### Throughput and UPS
 
-* One shared autocrafting step every 20 ticks (`on_nth_tick(20)`; the I/O step uses 15,
-  the molds 30, the terminal refresh 60).
-* At most 8 jobs per step (round robin), at most 6 machine hand-overs/collections per job per step
-  on the base CPU (12 on a Co-Processing, 24 on a Quantum CPU), at most 96 for all jobs together, so a
-  base CPU job moves up to about 18 machine interactions per second. That matches an assembler line
+* Since issue #5 of ME Network everything runs from one `on_tick` handler, spread over the ticks (the terminal
+  refresh stays at 60 ticks; numbers in `docs/PERFORMANCE.md`).
+* One job per tick (round robin), each at most every 20 ticks, at most 6 machine hand-overs/collections per job per
+  20 ticks on the base CPU (12 on a Co-Processing, 24 on a Quantum CPU), so a base CPU job moves up to about 18
+  machine interactions per second, however many jobs run. That matches an assembler line
   and keeps a step cheap; a job with more machines is throttled by the CPU, a faster CPU lifts it.
-* Level maintainers and circuit interfaces run in the same step: 4 maintainer checks (cheap: a count
-  and a few table lookups) with at most one job start per step (the only expensive part: a provider
-  rescan and a plan, like the Craft button; a failed start waits 5 seconds), and 2 circuit interface
-  updates (one `get_contents()`, the fluid totals and one write of the section each).
-* 8 provider rescans per step, planning only on user actions (terminal GUI: while a craft item is
+* Level maintainers and circuit interfaces: up to 4 maintainer checks per tick (cheap: a count and a few table
+  lookups) with at most one job start per tick (the only expensive part: a rescan of the plan's providers and a
+  plan, like the Craft button; a failed start waits 5 seconds), and circuit interface updates (one list per
+  network and one write of the section each).
+* One provider rescan every 2 ticks, planning only on user actions (terminal GUI: while a craft item is
   selected, once per second from the cache). An arrival is one table lookup per insert (network, key) when no job
   waits for that key; the index of waiting jobs is rebuilt only when it changes (no tick of its own).
-* The I/O step every 15 ticks: up to 24 ME Interfaces and buses (`docs/ME-REWORK.md`, "Tick budget"), 8 storage
-  bus visits (one `get_contents` each, the difference to the last look applied to the network's totals; cost for 50
+* Interfaces and buses: up to 16 visits per tick (`docs/ME-REWORK.md`, "Scheduler and performance at size"), up to 8
+  storage bus visits per tick and side (one `get_contents` each, the difference to the last look applied to the network's totals; cost for 50
   buses in `docs/ME-REWORK.md`, "Storage bus (after R3)"), 8 fluid storage bus visits (three calls on one fluid box
   each, about 15 µs; cost for 50 in `docs/ME-REWORK.md`, "Fluid storage bus"); the ME Interfaces' sides are part of
   their visit (one `remove_fluid` or `insert_fluid` per busy side); a network's fluid total is a table lookup (the
-  storage engine's totals), never a loop over tanks, pipes or drives. Buses move up to 1000 units of fluid per visit.
+  storage engine's totals), never a loop over tanks, pipes or drives. Buses move up to 4000 units of fluid per second.
 * The terminal step every 60 ticks: the open ME windows (at most 30, only players with one open), the lights of
   up to 50 changed drives and a sweep over 200 network members (members removed without an event).
-* No per-tick loops, no loops over the whole network. State lives in `storage.fork_me_net`, `storage.fork_me_io`,
+* No loops over the whole network (the one per-tick handler only takes what is due). State lives in `storage.fork_me_net`, `storage.fork_me_io`,
   `storage.fork_ae2` and `storage.fork_me_fluids`; GUI state lives in the GUI elements' tags and
   `storage.fork_me_terminal`.
 
@@ -1053,7 +1065,7 @@ cells for storing and taking, read only, write only, a stale look (items taken o
 terminal take get only what is really there and the totals are corrected), two buses on one chest (counted once,
 the second takes over), a bus facing a cable, a chest removed with and without an event, a removed bus, the network's
 totals against cells plus chests after every part, the settings in a blueprint, on a revived ghost, by paste and
-clone, and an inserter's item seen within one visit cycle. It reports `ME storage bus test (issue #68): ok`.
+clone, and an inserter's item seen within the storage bus idle limit (2 s). It reports `ME storage bus test (issue #68): ok`.
 
 The fluid storage bus test (own network right of the storage bus test: a drive with four 1k fluid cells, a terminal,
 six fluid storage buses on storage tanks, a pump, a fluid export bus and a level maintainer) checks that two tanks of
@@ -1063,7 +1075,7 @@ a filtered insert into its tank and the rest into the cells, priority 10 and -10
 (fluid taken out by hand), hot steam (counted, nothing put in, the tank keeps its temperature), a removed tank and bus,
 a bus facing a cable, the network's fluid against cells plus segments after every part, the settings in a blueprint,
 on a revived ghost, by paste and clone; then the fluid export bus taking from a segment, a level maintainer counting it
-and a pump's fluid seen within one visit cycle. It reports `ME fluid storage bus test (issue #68): ok`. Since
+and a pump's fluid seen within the storage bus idle limit. It reports `ME fluid storage bus test (issue #68): ok`. Since
 issue #3 of ME Network the buses there are storage buses on tanks (the remote of the old fluid storage bus works on
 them).
 
