@@ -2,11 +2,14 @@ name: Build & Release
 
 # Every push and pull request: Lua syntax check and zip build. Pull requests into main that change
 # the game must also change changelog.txt (label "no changelog" to skip).
-# Branches: main is development; upstream/release is the published state. A pull request from main
-# into upstream/release must bump "version" in info.json (no tag vX.Y.Z yet) and add its
-# changelog.txt section. When it is merged, this workflow creates the GitHub release vX.Y.Z with
-# the zip and uploads the same zip to the Factorio mod portal. A tag vX.Y.Z pushed by hand
-# releases too.
+# Branches: main is development; upstream/release is the published state. A release pull request
+# into upstream/release (from a branch made from main, merged with a merge commit) must bump
+# "version" in info.json (no tag vX.Y.Z yet) and add its changelog.txt section. When it is merged,
+# this workflow creates the GitHub release vX.Y.Z with the zip, uploads the same zip to the
+# Factorio mod portal and fast-forwards main to the merged upstream/release, so main has the
+# version bump too. If main has commits that upstream/release lacks, the push is rejected and the
+# run only warns: then merge upstream/release into main by hand.
+# A tag vX.Y.Z pushed by hand releases too.
 # The portal upload needs the repository secret FACTORIO_MOD_API_KEY (an API key from
 # https://factorio.com/profile with the "ModPortal: Upload Mods" permission). Without it, or when
 # the portal already has that version, the upload step is skipped.
@@ -119,3 +122,8 @@ jobs:
           echo "$RESULT"
           echo "$RESULT" | python3 -c "import json,sys;d=json.load(sys.stdin);sys.exit(0 if d.get('success') else 'upload failed')"
           echo "Uploaded $MOD $VERSION to https://mods.factorio.com/mod/$MOD"
+
+      - name: Fast-forward main to the release
+        if: github.event_name == 'push' && github.ref_name == 'upstream/release'
+        run: |
+          git push origin "HEAD:refs/heads/main" || echo "::warning::main has commits that upstream/release lacks: merge upstream/release into main by hand."
