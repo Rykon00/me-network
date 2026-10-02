@@ -18,6 +18,7 @@ Sources:
     python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
     python tools/gen_ae2_sprites.py --patterns    # only the blank and encoded pattern icons (issue #80)
+    python tools/gen_ae2_sprites.py --unified     # only the ME Interface with its four pipe sides (me-network issue #3)
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like Gregtorio Continued)
@@ -313,6 +314,30 @@ def fluid_interface_sprite():
     c = TILE // 2
     ImageDraw.Draw(img).ellipse((c - 9, c - 9, c + 8, c + 8), outline=PIPE + (255,), width=2)
     return img
+
+
+def unified_interface_sprite():
+    """The ME Interface with its four fluid sides (me-network issue #3): the item interface sprite with a pipe stub
+    (6 x 3 px, the pipe colour with a blue line towards the tile) in the middle of every edge."""
+    img = load(OUT_ENTITY / "me-interface.png")
+    d = ImageDraw.Draw(img)
+    c = TILE // 2
+    for horizontal, edge in ((True, 0), (True, TILE - 3), (False, 0), (False, TILE - 3)):
+        if horizontal:
+            box = (c - 3, edge, c + 2, edge + 2)
+            line = (c - 2, edge + (2 if edge == 0 else 0), c + 1, edge + (2 if edge == 0 else 0))
+        else:
+            box = (edge, c - 3, edge + 2, c + 2)
+            line = (edge + (2 if edge == 0 else 0), c - 2, edge + (2 if edge == 0 else 0), c + 1)
+        d.rectangle(box, fill=PIPE + (255,))
+        d.line(line, fill=FLUID + (255,))
+    return img
+
+
+def unified():
+    path = OUT_ENTITY / "me-interface-unified.png"
+    unified_interface_sprite().save(path)
+    return [path]
 
 
 def fluids():
@@ -706,11 +731,13 @@ def main():
                     help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
     ap.add_argument("--patterns", action="store_true",
                     help="only the blank and encoded pattern icons (issue #80, drawn with Pillow)")
+    ap.add_argument("--unified", action="store_true",
+                    help="only the ME Interface with its pipe sides (me-network issue #3), from the R1 PNGs")
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
-            or a.patterns):
-        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus"
-                 " or --patterns is required")
+            or a.patterns or a.unified):
+        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
+                 " --patterns or --unified is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -754,6 +781,9 @@ def main():
     if a.gt or a.patterns:
         written = patterns()
         print("ME pattern icons:", len(written))
+    if a.gt or a.unified:
+        written = unified()
+        print("ME unified interface sprites:", len(written))
 
 
 if __name__ == "__main__":
