@@ -1,6 +1,11 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.0
   Features:
+    - Upgrade cards as in Applied Energistics 2 (technology ME Upgrade Cards): Basic and Advanced Card, Capacity Card, Overflow Destruction Card, Fuzzy Card, Inverter Card and Equal Distribution Card.
+    - The ME Storage Bus has 5 card slots: each Capacity Card gives 9 more filters (up to 63), an Inverter Card makes the filters a blacklist, a Fuzzy Card makes them match every quality, and an Overflow Destruction Card destroys what the network stores into the bus and does not fit into its chest or tank (shown in red in the window, with the amount destroyed).
+    - ME Storage Bus: "Filter on extract" (off: the filters decide only what goes in, the network sees and takes everything in the chest), "From contents" and "Clear" for the filters.
+    - ME Interface priority: when the network has less of an item or fluid than its interfaces want, the interfaces of the higher priority are filled first. Kept in blueprints, settings paste and clones.
+    - Cards are never made or lost: a mined storage bus gives its cards back, a destroyed one drops them; blueprints, settings paste and clones copy which cards a bus has and it takes them from the player or the network.
     - Copy a crafting machine's settings (shift + right click) and paste them (shift + left click) onto an ME Interface, ME Storage Bus, ME Import Bus or ME Export Bus to set it up for the machine's recipe, like a requester chest: the interface gets one stack of each item ingredient and a fluid row for each fluid, the storage bus and the export bus filter the ingredients, the import bus the products. Works with every crafting machine (furnaces give their last recipe); a flying text says what did not fit or when the machine has no recipe.
     - Map settings for the network's work per tick: interface and bus visits per tick, storage bus visits per tick, level maintainer checks per tick, circuit interface updates per second, crafting jobs per tick, the speed of the import and export buses (items and fluid per second) and how long an idle bus or storage bus may wait.
   Optimizations:
@@ -13,6 +18,7 @@ Version: 0.3.0
     - A full storage bus is not asked again for every insert until its next read.
     - Drive lights are recolored instead of redrawn.
   Changes:
+    - The storage bus modes also show AE2's names (bi-directional, extract only, insert only). A blacklist storage bus is not preferred for an item over other storage of its priority (AE2's rule); a recipe pasted onto a storage bus changes only its filters.
     - A level maintainer starts its job as soon as its item is taken below its amount (it was checked in turn: up to 40 seconds in a big network), and checks a circuit target at least every 5 seconds.
     - A storage bus sees a change made by an inserter or a player within 2 seconds at most (setting), never later than before.
     - More than 8 crafting jobs at once no longer slow each other down.
