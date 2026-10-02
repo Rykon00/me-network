@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
---- FORK AE2: ME FLUID STORAGE BUS (issue #68; prototypes/122-fork-ae2-fluids.lua, docs/ME-REWORK.md "Fluid storage bus")
+--- FORK AE2: ME FLUID STORAGE BUS (issue #68; prototypes/fluids.lua, docs/ME-REWORK.md "Fluid storage bus")
 ---   * A rotatable 1x1 ME block that faces a storage tank (or any entity with a fluid box that is no ME block):
 ---     the fluid of that tank's FLUID SEGMENT becomes storage of the network. A tank shares its fluid with the
 ---     pipes and tanks of its segment, so the segment, not the tank, is the unit of storage: two tanks of one

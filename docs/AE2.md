@@ -1,10 +1,17 @@
-# AE2 in Gregtorio: ME network, autocrafting, fluids and automation
+# ME Network: the network, autocrafting, fluids and automation
+
+> This guide was written in Gregtorio Continued, where the ME network was made (issue numbers are Gregtorio's). The
+> recipes and technology tiers it names (GT materials, voltage tiers, science packs) are the ones in a Gregtorio game.
+> On its own, ME Network uses vanilla recipes and science: the network with red and green science, 64k cells,
+> autocrafting and fluids with blue, 256k and the co-processing CPU with production, the quantum CPU with utility
+> science (`prototypes/network.lua`, `autocrafting.lua`, `fluids.lua`). Everything else here is the same in both.
+
 
 ## What the ME network is
 
 Since issue #68 the ME network plays like Applied Energistics 2: ME blocks connected by ME cables, storage
 cells in drives (with partitions and drive priorities), a terminal as the hub, and one window per block
-(`prototypes/120-fork-ae2.lua`, `scripts/fork-me-network.lua`, `scripts/fork-me-windows.lua`; the design and its
+(`prototypes/network.lua`, `scripts/fork-me-network.lua`, `scripts/fork-me-windows.lua`; the design and its
 reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic network any more.
 
 | Entity | Role |
@@ -504,7 +511,7 @@ largest amounts first).
 
 Tech `me-fluid-storage` (EV, needs `me-autocrafting`) unlocks 1k to 64k **fluid storage cells**, the **ME Fluid
 Interface**, the **ME Fluid Import and Export Bus** and the **ME Fluid Storage Bus**; `me-fluid-storage-256k` (IV, also needs `me-storage-256k`)
-the 256k fluid cell (`prototypes/122-fork-ae2-fluids.lua`). Since issue #68 step R2 fluids are stored like items:
+the 256k fluid cell (`prototypes/fluids.lua`). Since issue #68 step R2 fluids are stored like items:
 in cells in the ME Drive.
 
 | Thing | What it is |
@@ -767,7 +774,7 @@ Removed entities:
 ### CPU tiers (issue #38)
 
 The tier numbers come from the mod-data `fork-me-autocraft` (`cpus[name] = { jobs, speed }`, written by
-`prototypes/121-fork-ae2-autocrafting.lua`), so the runtime has no copy of them. A CPU record holds the
+`prototypes/autocrafting.lua`), so the runtime has no copy of them. A CPU record holds the
 jobs it runs (`cpus[unit].jobs = { [job id] = true }`; a record of an older save with a single `job` is
 converted when it is first read). `assign_cpus` gives a queued job the fastest CPU of its network with
 fewer jobs than slots. A job's machine interactions per step are `STEP_OPS` (6) times the speed of its

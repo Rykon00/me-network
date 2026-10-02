@@ -65,14 +65,31 @@ for n, e in pairs(data.raw.resource) do
 	D("M", n, m.result or "", names(m.results), e.category or "basic-solid")
 end
 for n, e in pairs(data.raw["offshore-pump"] or {}) do D("O", n, e.fluid or "") end
+--- what trees, rocks, plants and asteroid chunks give when mined (vanilla wood, stone, carbon, ice ...)
+for _, t in pairs({ "tree", "simple-entity", "plant", "asteroid-chunk", "fish" }) do
+	for n, e in pairs(data.raw[t] or {}) do
+		local m = e.minable
+		if m then D("M", n, m.result or "", names(m.results), "basic-solid") end
+	end
+end
+--- the fluid of a tile is what an offshore pump on it gives (water, lava, ammonia ...)
+for n, t in pairs(data.raw.tile or {}) do
+	if t.fluid then D("O", "tile:" .. n, t.fluid) end
+end
+--- burnt results: what a burnt fuel leaves (a used fuel cell)
+for t, _ in pairs(defines.prototypes.item) do
+	for n, it in pairs(data.raw[t] or {}) do
+		if it.burnt_result then D("B", n, it.burnt_result) end
+	end
+end
 section("DUMP", dump)
 
---- Every __gregtorio-continued__/ file referenced anywhere, with its owner prototype
+--- Every __me-network__/ file referenced anywhere, with its owner prototype
 local paths, seen = {}, {}
 local function scan(t, owner, depth)
 	if depth > 12 then return end
 	for _, v in pairs(t) do
-		if type(v) == "string" and v:sub(1, 24) == "__gregtorio-continued__/" then
+		if type(v) == "string" and v:sub(1, 15) == "__me-network__/" then
 			local k = v .. "\t" .. owner
 			if not seen[k] then seen[k] = true; paths[#paths + 1] = k end
 		elseif type(v) == "table" then
@@ -102,76 +119,22 @@ for n, e in pairs(data.raw["assembling-machine"]) do
 end
 section("SPRITES", sprites)
 
---- Prototypes with a Gregtorio icon, for locale checks (tools/gen_locale.py input format)
+--- Prototypes with an icon of this mod: their names must be in the locale
 local loc = {}
-local function greg(p) return type(p.icon) == "string" and p.icon:sub(1, 24) == "__gregtorio-continued__/" end
+local function own(p) return type(p.icon) == "string" and p.icon:sub(1, 15) == "__me-network__/" end
 for t, _ in pairs(defines.prototypes.item) do
-	for n, p in pairs(data.raw[t] or {}) do if greg(p) then loc[#loc + 1] = "item-name\t" .. n end end
+	for n, p in pairs(data.raw[t] or {}) do if own(p) and not p.hidden then loc[#loc + 1] = "item-name	" .. n end end
 end
-for n, p in pairs(data.raw.fluid) do if greg(p) then loc[#loc + 1] = "fluid-name\t" .. n end end
 for n, p in pairs(data.raw.technology) do
-	if greg(p) and p.enabled ~= false then loc[#loc + 1] = "technology-name\t" .. n end
+	if own(p) and p.enabled ~= false then loc[#loc + 1] = "technology-name	" .. n end
 end
 for t, _ in pairs(defines.prototypes.entity) do
-	for n, p in pairs(data.raw[t] or {}) do if greg(p) and p.minable then loc[#loc + 1] = "entity-name\t" .. n end end
+	for n, p in pairs(data.raw[t] or {}) do if own(p) and p.minable and not p.hidden then loc[#loc + 1] = "entity-name	" .. n end end
 end
 section("LOCALE", loc)
 
---- Technology icons
-local ti = {}
-for n, t in pairs(data.raw.technology) do
-	if t.enabled ~= false and not t.hidden then ti[#ti + 1] = n .. "\t" .. tostring(t.icon) end
-end
-section("TECHICONS", ti)
-
---- Crafting menu (issue #49): the startup setting and the allow-list of recipes that stay hidden
---- (FORK_CRAFTING_MENU_HIDDEN in prototypes/198-fork-crafting-menu.lua; absent in older versions)
-local cm = {}
-local s = settings.startup["gregtorio-continued-show-machine-recipes"]
-cm[#cm + 1] = "setting\t" .. (s and tostring(s.value) or "absent")
-for kind, list in pairs(FORK_CRAFTING_MENU_HIDDEN or {}) do
-	for name, reason in pairs(list) do cm[#cm + 1] = kind .. "\t" .. name .. "\t" .. reason end
-end
-section("CRAFTMENU", cm)
-
---- Balance data (`devcheck.py check --balance-out`): recipes with amounts and times, machine speeds,
---- technology unit counts. One JSON object per line.
-local bal = {}
-local function stacks(list)
-	local t = {}
-	for _, x in pairs(list or {}) do
-		t[#t + 1] = {
-			name = x.name or x[1], type = x.type or "item", amount = x.amount or x[2],
-			amount_min = x.amount_min, amount_max = x.amount_max, probability = x.probability,
-			catalyst = x.ignored_by_productivity,
-		}
-	end
-	return t
-end
-for n, r in pairs(data.raw.recipe) do
-	bal[#bal + 1] = helpers.table_to_json({
-		kind = "recipe", name = n, category = r.category or "crafting", time = r.energy_required or 0.5,
-		enabled = r.enabled ~= false, hidden = r.hidden == true,
-		ingredients = stacks(r.ingredients), results = stacks(r.results),
-	})
-end
-for _, t in pairs({ "assembling-machine", "furnace", "rocket-silo" }) do
-	for n, e in pairs(data.raw[t] or {}) do
-		bal[#bal + 1] = helpers.table_to_json({
-			kind = "crafter", name = n, speed = e.crafting_speed, categories = e.crafting_categories,
-			energy = e.energy_usage,
-		})
-	end
-end
-for n, tech in pairs(data.raw.technology) do
-	local u = tech.unit
-	bal[#bal + 1] = helpers.table_to_json({
-		kind = "tech", name = n, enabled = tech.enabled ~= false and not tech.hidden,
-		prerequisites = tech.prerequisites or {},
-		unlocks = (function() local e = {} for _, x in pairs(tech.effects or {}) do
-			if x.type == "unlock-recipe" then e[#e + 1] = x.recipe end end return e end)(),
-		count = u and u.count, count_formula = u and u.count_formula, time = u and u.time,
-		ingredients = u and stacks(u.ingredients) or {}, max_level = tech.max_level,
-	})
-end
-section("BALANCE", bal)
+--- The recipes and technologies of me-network (ME_NETWORK, prototypes/api.lua)
+local own_rows = {}
+for _, n in pairs(ME_NETWORK and ME_NETWORK.recipes or {}) do own_rows[#own_rows + 1] = "recipe	" .. n end
+for _, n in pairs(ME_NETWORK and ME_NETWORK.technologies or {}) do own_rows[#own_rows + 1] = "technology	" .. n end
+section("OWN", own_rows)

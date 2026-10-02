@@ -1,5 +1,5 @@
 --------------------------------------------------------------------------------
---- FORK AE2: FLUIDS IN THE ME NETWORK (issue #68, step R2; design: docs/ME-REWORK.md)
+--- ME NETWORK: FLUIDS (Gregtorio issue #68, step R2; design: docs/ME-REWORK.md)
 ---   * Fluid Storage Cell = storage housing + storage component + pump, an item with tags (stack size 1)
 ---                          that goes into the ME Drive like an item cell. It stores fluids by name (one
 ---                          temperature per fluid): k*1024 bytes, k*8 bytes per fluid type, up to 18
@@ -14,27 +14,27 @@
 ---   * The old ME Fluid Drive (four cells crafted in, contents in script state) stays hidden so saves load;
 ---     scripts/fork-me-migrate.lua replaces each one by an ME Drive with four fluid cells of its tier.
 ---     Placing an old fluid drive item gives the same (its fluid goes into the cells).
---- The cell numbers go into the mod-data "fork-me-network" of 120; the interface's numbers into the
+--- The cell numbers go into the mod-data "fork-me-network" of network.lua; the interface's numbers into the
 --- mod-data "fork-me-fluids". Runtime: scripts/fork-me-network.lua (storage), scripts/fork-me-fluids.lua
 --- (fluid interface), scripts/fork-me-io.lua (buses), scripts/fork-me-fluid-storagebus.lua (fluid storage bus).
 --- Sprites and icons: tools/gen_ae2_sprites.py.
 --------------------------------------------------------------------------------
 
-local ENTITY_PATH = "__gregtorio-continued__/graphics/entity/fork/ae2/"
-local ICON_FORK = ICON_PATH .. "fork/"
+local ME = ME_NETWORK
+local ENTITY_PATH = ME.entity_path
+local ICON_FORK = ME.icons .. "fork/"
 
 local UNITS_PER_BYTE = 8
 local FLUID_TYPES = 18
 local OLD_CELLS_PER_DRIVE = 4
 
---- cell tier -> "k", pump of the cell recipe, assembler category of the cell
+--- cell tier -> "k" (the extra item of an old 256k fluid drive item is given back if that item exists)
 local CELLS = {
-	{ tier = "1k",   k = 1,   pump = "lv-pump", cell_cat = "lv-assembling-machine-recipes" },
-	{ tier = "4k",   k = 4,   pump = "lv-pump", cell_cat = "lv-assembling-machine-recipes" },
-	{ tier = "16k",  k = 16,  pump = "mv-pump", cell_cat = "mv-assembling-machine-recipes" },
-	{ tier = "64k",  k = 64,  pump = "hv-pump", cell_cat = "hv-assembling-machine-recipes" },
-	{ tier = "256k", k = 256, pump = "ev-pump", cell_cat = "ev-assembling-machine-recipes",
-	  extra = { name = "acceleration-card", count = 1 } },
+	{ tier = "1k",   k = 1 },
+	{ tier = "4k",   k = 4 },
+	{ tier = "16k",  k = 16 },
+	{ tier = "64k",  k = 64 },
+	{ tier = "256k", k = 256, extra = { name = "acceleration-card", count = 1 } },
 }
 
 local INTERFACE = "me-fluid-interface"
@@ -67,27 +67,20 @@ for i, c in ipairs(CELLS) do
 	local drive = "me-fluid-drive-" .. c.tier
 	local order = string.format("%02d", i)
 
-	--- cell = storage housing + storage component + pump (unchanged recipe)
-	create_item{
+	--- cell = storage housing + storage component + pump; an item with tags (a recycler would void the fluid)
+	local item = ME.add_item{
+		type = "item-with-tags",
 		name = cell,
 		icon = ICON_FORK .. cell .. ".png",
-		category = c.cell_cat,
 		subgroup = "fork-me-fluid-cells",
 		order = order,
-		energy_required = 5,
 		stack_size = 1,
-		ingredients = {
+		recipe = { energy_required = 5, auto_recycle = false, ingredients = {
 			{ type = "item", name = "me-" .. c.tier .. "-storage-component", amount = 1 },
 			{ type = "item", name = "basic-storage-housing", amount = 1 },
-			{ type = "item", name = c.pump, amount = 1 },
-		},
+			{ type = "item", name = "pump", amount = 1 },
+		} },
 	}
-	--- like the item cells (120): remove, change the type, add again
-	local item = data.raw.item[cell]
-	data.raw.item[cell] = nil
-	item.type = "item-with-tags"
-	data:extend({ item })
-	data.raw.recipe[cell].auto_recycle = false         -- a recycler would void the fluid
 	local bytes = c.k * 1024
 	local per_type = c.k * 8
 	net_data.cells[cell] = { tier = c.tier, kind = "fluid", bytes = bytes, per_type = per_type, types = FLUID_TYPES,
@@ -141,21 +134,19 @@ end
 --- ME FLUID INTERFACE (1x1 storage tank; the runtime moves fluid between it and the network)
 --------------------------------------------------------------------------------
 
-create_item{
+ME.add_item{
 	name = INTERFACE,
 	icon = ICON_FORK .. INTERFACE .. ".png",
-	category = "hv-assembling-machine-recipes",
 	subgroup = "fork-me-network",
 	order = "h",
-	energy_required = 10 * HV_SPEED,
 	stack_size = 50,
 	place_result = INTERFACE,
-	ingredients = {
+	recipe = { energy_required = 2, ingredients = {
 		{ type = "item", name = "me-interface", amount = 1 },
-		{ type = "item", name = "hv-pump", amount = 1 },
+		{ type = "item", name = "pump", amount = 1 },
 		{ type = "item", name = "pipe", amount = 4 },
 		{ type = "item", name = "fluix-cable", amount = 2 },
-	},
+	} },
 }
 
 data:extend({ {
@@ -200,7 +191,7 @@ data:extend({ {
 
 
 --------------------------------------------------------------------------------
---- ME FLUID IMPORT / EXPORT / STORAGE BUS (rotatable, like the item buses of 120; the fluid storage bus makes the
+--- ME FLUID IMPORT / EXPORT / STORAGE BUS (rotatable, like the item buses of network.lua; the fluid storage bus makes the
 --- fluid segment of the tank it faces network storage, runtime: scripts/fork-me-fluid-storagebus.lua)
 --------------------------------------------------------------------------------
 
@@ -217,20 +208,18 @@ for _, bus in pairs({
 	{ name = EXPORT_BUS, base = "me-export-bus", order = "h3" },
 	{ name = STORAGE_BUS, base = "me-storage-bus", order = "h4" },
 }) do
-	create_item{
+	ME.add_item{
 		name = bus.name,
 		icon = ICON_FORK .. bus.name .. ".png",
-		category = "hv-assembling-machine-recipes",
 		subgroup = "fork-me-network",
 		order = bus.order,
-		energy_required = 10 * HV_SPEED,
 		stack_size = 50,
 		place_result = bus.name,
-		ingredients = {
+		recipe = { energy_required = 2, ingredients = {
 			{ type = "item", name = bus.base, amount = 1 },
-			{ type = "item", name = "hv-pump", amount = 1 },
+			{ type = "item", name = "pump", amount = 1 },
 			{ type = "item", name = "pipe", amount = 2 },
-		},
+		} },
 	}
 	data:extend({ {
 		type = "simple-entity-with-force",
@@ -269,46 +258,13 @@ data:extend({ {
 
 
 --------------------------------------------------------------------------------
---- TECHNOLOGIES
+--- TECHNOLOGIES (standalone: vanilla science)
 --------------------------------------------------------------------------------
 
-local function sci(n)
-	local packs = { "automation-science-pack", "logistic-science-pack", "military-science-pack",
-		"chemical-science-pack", "production-science-pack", "utility-science-pack" }
-	local amounts = { SP06, SP05, SP04, SP03, SP02, SP01 }
-	local out = {}
-	for i = 1, n do
-		out[#out + 1] = { packs[i], amounts[#amounts - n + i] }
-	end
-	return out
-end
+--- fluid cells up to 64k, the fluid interface, the fluid buses (import, export, storage)
+ME.add_technology{ name = "me-fluid-storage", prerequisites = { "me-storage-64k", "fluid-handling" }, unit = ME.unit(3, 400),
+	recipes = { INTERFACE, IMPORT_BUS, EXPORT_BUS, STORAGE_BUS, "me-1k-fluid-storage-cell", "me-4k-fluid-storage-cell",
+		"me-16k-fluid-storage-cell", "me-64k-fluid-storage-cell" } }
 
-local function tech(def)
-	local effects = {}
-	for _, r in pairs(def.recipes) do
-		if data.raw.recipe[r] then
-			effects[#effects + 1] = { type = "unlock-recipe", recipe = r }
-			data.raw.recipe[r].enabled = false
-		else
-			log("FORK-AE2: tech " .. def.name .. ": missing recipe " .. r)
-		end
-	end
-	data:extend({ {
-		type = "technology",
-		name = def.name,
-		icon = "__gregtorio-continued__/graphics/technology/fork/" .. def.name .. ".png",
-		icon_size = 256,
-		effects = effects,
-		prerequisites = def.prerequisites,
-		unit = { count = def.count, ingredients = sci(def.packs), time = 30 },
-	} })
-end
-
---- EV: fluid cells up to 64k, the fluid interface, the fluid buses (import, export, storage)
-tech{ name = "me-fluid-storage", prerequisites = { "me-autocrafting" }, packs = 5, count = 600, recipes = {
-	INTERFACE, IMPORT_BUS, EXPORT_BUS, STORAGE_BUS, "me-1k-fluid-storage-cell", "me-4k-fluid-storage-cell",
-	"me-16k-fluid-storage-cell", "me-64k-fluid-storage-cell" } }
-
---- IV: 256k fluid cells
-tech{ name = "me-fluid-storage-256k", prerequisites = { "me-fluid-storage", "me-storage-256k" },
-	packs = 6, count = 800, recipes = { "me-256k-fluid-storage-cell" } }
+ME.add_technology{ name = "me-fluid-storage-256k", prerequisites = { "me-fluid-storage", "me-storage-256k" },
+	unit = ME.unit(4, 600), recipes = { "me-256k-fluid-storage-cell" } }

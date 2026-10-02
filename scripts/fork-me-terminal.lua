@@ -1027,10 +1027,11 @@ function M.on_configuration_changed()
 	storage.fork_me_gui_bypass = nil
 end
 
-script.on_init(function()
+--- on_init of the mod (control.lua, after the hand-over of an older Gregtorio Continued's state, if any)
+function M.on_init()
 	state()
 	N.rebuild()
-end)
+end
 
 --- the "open GUI" key (linked to the game's own): a cell in the cursor goes into a drive, an encoded pattern into a
 --- pattern provider, else the entity's ME window opens (blocks without a vanilla window: drive, buses, provider,

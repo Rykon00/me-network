@@ -1,4 +1,4 @@
---- Runs after every mod's data.lua (this mod optionally depends on Gregtorio and gregtorio-continued), but before other mods'
+--- Runs after every mod's data.lua (this mod optionally depends on me-network and gregtorio-continued), but before other mods'
 --- data-updates such as quality's recycling generation, which aborts loading on broken
 --- recipes. Lists every reference to a missing prototype so all problems show up at once.
 local out = {}
