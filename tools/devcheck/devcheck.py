@@ -601,7 +601,9 @@ def runtime(a):
                ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"),
                ("MER3", "ME partitions and windows test (issue #68 R3)"),
                ("MESTORAGEBUS", "ME storage bus test (issue #68)"),
-               ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test (issue #68)"))]
+               ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test (issue #68)"),
+               ("PATSWITCH", "pattern recipe switching test (issue #80)"),
+               ("PATLINE", "processing line test (issue #80)"))]
     for label, m in extras:
         print(f"{label}: {m.group(1) if m else 'did not run'}")
     victory = re.search(r"DEVCHECK-RUNTIME-VICTORY (.*)", log)
@@ -705,6 +707,8 @@ def migrate(a):
     print(f"old save with pattern providers: {setup.group(1) if setup else 'no result'}")
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP-JOB (.*)", log)
     print(f"old save with a crafting job: {setup.group(1) if setup else 'no result'}")
+    setup = re.search(r"DEVCHECK-MIGRATE-SETUP-MAINTAINER (.*)", log)
+    print(f"old save with a level maintainer: {setup.group(1) if setup else 'no result'}")
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP-ITEMS (.*)", log)
     print(f"old save with a logistic ME network (items): {setup.group(1) if setup else 'no result'}")
     prepare_mods(with_migrate=True)
@@ -816,7 +820,7 @@ def main():
     src = m.add_mutually_exclusive_group(required=True)
     src.add_argument("--from-zip", help="older Gregtorio_x.y.z.zip to create the save with")
     src.add_argument("--from-ref", help="git tag or commit of an older version, e.g. 0e935ba (upstream 0.1.9)")
-    m.add_argument("--ticks", type=int, default=300)
+    m.add_argument("--ticks", type=int, default=600)
     m.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     ms = sub.add_parser("menusim", help="run main menu simulations")
     ms.add_argument("--sim", default="nauvis_biter_base_laser_defense", help="simulation name or `all`")

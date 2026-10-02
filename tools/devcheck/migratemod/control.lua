@@ -10,14 +10,16 @@
 --- update (DEVCHECK-MIGRATE-POWER, issue #25), and a LuV plasma turbine on helium plasma under full load
 --- with a turbine output hatch, which must run after the update and return one helium per plasma
 --- (DEVCHECK-MIGRATE-TURBINE, issue #28).
---- Pattern providers (issue #27): in the same network a Molecular Assembler and a fresh iron furnace with
---- providers. After the update the assembler must still be a pattern, the furnace must be counted as
---- "no-recipe", and a recipe chosen in the old provider must make the furnace a pattern
---- (DEVCHECK-MIGRATE-PATTERNS). Versions without pattern providers are skipped.
+--- Pattern providers (issue #27, issue #80): in the same network a Molecular Assembler and a fresh iron furnace
+--- with providers; the furnace's provider has a recipe chosen (versions with the furnace choice). After the update
+--- (issue #80: encoded patterns) the assembler's provider must hold a crafting pattern of the assembler's recipe and
+--- the furnace's provider a processing pattern of the chosen recipe, both usable, and both items must be craftable
+--- (DEVCHECK-MIGRATE-PATTERNS; FORK-ME-MIGRATE lines). Versions without pattern providers are skipped.
 --- Crafting CPU (issue #38 changed its record to several job slots): the old save also has a powered CPU, a
 --- drive with plates and sticks, and a gear job started with the old version on the assembler above. After
 --- the update the job must finish with the gears in storage and the CPU must count as one job slot
---- (DEVCHECK-MIGRATE-JOB).
+--- (DEVCHECK-MIGRATE-JOB). A level maintainer of the old save (versions with it) keeps a few more gears: after
+--- the job it must start a job of its own on the migrated pattern and reach its amount.
 --- Issue #68 (the ME rework): the old save's ME network is a logistic network. It gets an old 1k drive with
 --- items (also of another quality and a blueprint, which the new network cannot store), an old requester
 --- interface with items in its inventory and its trash, an old terminal, a second old controller in the same
@@ -152,9 +154,15 @@ local PT_ASSEMBLER, PT_FURNACE = { 14.5, Y + 8.5 }, { 19, Y + 13 }
 local PT_PROVIDER_A, PT_PROVIDER_F = { 16.5, Y + 8.5 }, { 17.5, Y + 12.5 }
 local PT_RECIPE, PT_FURNACE_RECIPE = "iron-gear-crafting-table", "iron-dust-smelter"
 local JOB_GEARS = 5
+local MAINT_POS, MAINT_KEEP = { 5.5, Y + 16.5 }, JOB_GEARS + 3        -- a level maintainer of the old save (issue #38)
+local CHECK_TICK = 570                                                  -- the job and the maintainer are checked here
 
 --- the version of the old save has the cable network of issue #68 step R1 (and still the old fluid drives)
 function R1() return prototypes.entity["me-network-controller"] ~= nil end
+--- the version of the old save stores fluids in fluid cells already (issue #68 step R2, 0.4.0 and later: the fluid
+--- module has no `unpack_drive` any more): there are no fluid drives to convert, the network of the pattern, job and
+--- maintainer checks is built without them
+function R2() return remote.interfaces[F] ~= nil and not remote.interfaces[F].unpack_drive end
 
 --- after the ME network of the fluid drives exists (its controller)
 local function setup_patterns(place)
@@ -175,8 +183,15 @@ local function setup_patterns(place)
 	end
 	local set = {}
 	for _, k in pairs(remote.call(A, "craftable", p)) do set[k] = true end
-	storage.patterns = { provider = p, ok = set["iron-gear-wheel"] == true }
-	log("DEVCHECK-MIGRATE-SETUP-PATTERNS " .. (set["iron-gear-wheel"] and "ok" or "failed"))
+	--- the furnace's recipe, chosen in its provider (versions with the choice, issue #27)
+	local choice = false
+	if remote.interfaces[A].set_recipe then
+		p.force.recipes[PT_FURNACE_RECIPE].enabled = true
+		choice = remote.call(A, "set_recipe", p, PT_FURNACE_RECIPE) == true
+	end
+	storage.patterns = { provider = p, ok = set["iron-gear-wheel"] == true, choice = choice,
+		assembler_provider = game.surfaces[1].find_entity("me-pattern-provider", PT_PROVIDER_A) }
+	log("DEVCHECK-MIGRATE-SETUP-PATTERNS " .. (set["iron-gear-wheel"] and "ok" or "failed") .. (choice and " (furnace recipe chosen)" or ""))
 	--- a job of the old version on a crafting CPU (own power for the CPU and the assembler)
 	local eei = place("electric-energy-interface", 12, Y + 15)
 	eei.power_production = 1e6
@@ -195,8 +210,12 @@ local function setup_patterns(place)
 		remote.call(NET, "store_in_drive", drive, "iron-plate", 50)
 		remote.call(NET, "store_in_drive", drive, "iron-stick", 50)
 		local ctrl = game.surfaces[1].find_entity("me-network-controller", { 6, Y })
-		remote.call(NET, "connect", { ctrl, cpu, drive, p, game.surfaces[1].find_entity("me-pattern-provider", PT_PROVIDER_A),
-			storage.fluid_old.e1, storage.fluid_old.e2 }, 16)
+		local members = { ctrl, cpu, drive, p, game.surfaces[1].find_entity("me-pattern-provider", PT_PROVIDER_A) }
+		if storage.fluid_old then
+			members[#members + 1] = storage.fluid_old.e1
+			members[#members + 1] = storage.fluid_old.e2
+		end
+		remote.call(NET, "connect", members, 16)
 	else
 		drive = place("me-drive-16k", 8.5, Y + 12.5)
 		drive.insert{ name = "iron-plate", count = 50 }
@@ -205,6 +224,14 @@ local function setup_patterns(place)
 	local id, why = remote.call(A, "start", p, "iron-gear-wheel", JOB_GEARS)
 	storage.job = { id = id, provider = p }
 	log("DEVCHECK-MIGRATE-SETUP-JOB " .. (id and "ok" or ("failed (" .. tostring(why) .. ")")))
+	--- a level maintainer keeping a few more gears than the job makes (it waits while the job runs)
+	if R1() and prototypes.entity["me-level-maintainer"] and remote.interfaces["gregtorio-me-circuit"] then
+		local m = place("me-level-maintainer", MAINT_POS[1], MAINT_POS[2])
+		remote.call(NET, "connect", { game.surfaces[1].find_entity("me-network-controller", { 6, Y }), m }, 16)
+		local ok = remote.call("gregtorio-me-circuit", "set_maintainer", m, "iron-gear-wheel", MAINT_KEEP, false)
+		storage.job.maintainer = ok and m or nil
+		log("DEVCHECK-MIGRATE-SETUP-MAINTAINER " .. (ok and "ok" or "failed"))
+	end
 end
 
 local function check_job()
@@ -233,9 +260,19 @@ local function check_job()
 		expect(gears >= JOB_GEARS, "gears in storage after the job: " .. gears)
 		local n, free, _, slots = remote.call(A, "cpus", p)
 		expect(n == 1 and slots == 1 and free == 1, "the old CPU: " .. n .. " CPUs, " .. tostring(slots) .. " slots, " .. free .. " free")
+		--- the maintainer of the old save: a job of its own on the migrated pattern after the old job, its amount reached
+		local m = st.maintainer
+		if m then
+			local own = false
+			for _, job in pairs(remote.call(A, "jobs", p)) do
+				if job.item == "iron-gear-wheel" and job.owner == m.unit_number and job.status == "done" then own = true end
+			end
+			expect(m.valid and own, "the maintainer of the old save did not finish a job: " .. serpent.line(remote.call("gregtorio-me-circuit", "get_maintainer", m)))
+			expect(gears >= MAINT_KEEP, "gears with the maintainer: " .. gears .. ", it keeps " .. MAINT_KEEP)
+		end
 	end
 	for _, m in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL job: " .. m) end
-	log("DEVCHECK-MIGRATE-JOB " .. (#problems == 0 and "ok" or "failed"))
+	log("DEVCHECK-MIGRATE-JOB " .. (#problems == 0 and "ok" or "failed") .. (st.maintainer and " (and the level maintainer's job)" or ""))
 end
 
 local function check_patterns()
@@ -253,17 +290,33 @@ local function check_patterns()
 		return set
 	end
 	expect(st.ok, "the assembler was no pattern in the old save")
-	expect(p.valid, "the old provider is gone")
-	if p.valid then
-		expect(craftable()["iron-gear-wheel"], "the assembler is no pattern after the update")
-		local ignored = remote.call(A, "ignored", p)
-		expect(ignored["no-recipe"] == 1, "the fresh furnace is not counted as no-recipe: " .. serpent.line(ignored))
+	expect(p.valid and st.assembler_provider and st.assembler_provider.valid, "an old provider is gone")
+	local note = ""
+	if p.valid and st.assembler_provider and st.assembler_provider.valid then
+		--- issue #80: the providers hold encoded patterns for what they provided
 		p.force.recipes[PT_FURNACE_RECIPE].enabled = true
-		expect(remote.call(A, "set_recipe", p, PT_FURNACE_RECIPE), "set_recipe on the old provider failed")
-		expect(craftable()["iron-ingot"], "the furnace is no pattern after choosing its recipe in the old provider")
+		local ia = remote.call(A, "provider_info", st.assembler_provider)
+		local a1 = ia and ia.slots[1]
+		expect(a1 and a1.kind == "crafting" and a1.recipe == PT_RECIPE and a1.ok and not ia.slots[2],
+			"the assembler's provider after the update: " .. serpent.line(ia and ia.slots))
+		expect(craftable()["iron-gear-wheel"], "the assembler is no pattern after the update")
+		local fi = remote.call(A, "provider_info", p)
+		local f1 = fi and fi.slots[1]
+		if st.choice then
+			expect(f1 and f1.kind == "processing" and f1.recipe == PT_FURNACE_RECIPE and f1.ok and f1.machines == 1 and not fi.slots[2],
+				"the furnace's provider after the update: " .. serpent.line(fi and fi.slots))
+			expect(craftable()["iron-ingot"], "the furnace with the old choice is no pattern after the update")
+			local plan = remote.call(A, "plan", p, "iron-ingot", 1)
+			expect(plan and not plan.no_pattern and plan.pids and plan.pids[1] and plan.pids[1]:sub(1, 2) == "p/",
+				"plan of an ingot on the migrated furnace pattern: " .. serpent.line(plan))
+			note = " (crafting pattern " .. PT_RECIPE .. ", processing pattern " .. PT_FURNACE_RECIPE .. ")"
+		else
+			expect(not f1, "a fresh furnace without a choice got a pattern: " .. serpent.line(fi and fi.slots))
+			note = " (crafting pattern " .. PT_RECIPE .. ", the furnace had no recipe)"
+		end
 	end
 	for _, m in pairs(problems) do log("DEVCHECK-MIGRATE-FAIL patterns: " .. m) end
-	log("DEVCHECK-MIGRATE-PATTERNS " .. (#problems == 0 and "ok" or "failed"))
+	log("DEVCHECK-MIGRATE-PATTERNS " .. (#problems == 0 and "ok" or "failed") .. note)
 end
 
 --- issue #68: the old item network (see the top of the file); only for versions with the logistic ME network
@@ -509,6 +562,12 @@ script.on_init(function()
 	else
 		place("me-controller", 6, Y)
 	end
+	if R2() then
+		log("DEVCHECK-MIGRATE-SETUP skipped (fluid cells in this version: no fluid drives to convert)")
+		setup_patterns(place)
+		setup_items(place)
+		return
+	end
 	local d1, d2 = place(DRIVE, FL_D1[1], FL_D1[2]), place(DRIVE, FL_D2[1], FL_D2[2])
 	local lone = place(DRIVE, FL_LONE[1], FL_LONE[2])
 	if R1() then remote.call(NET, "connect", { s.find_entity("me-network-controller", { 6, Y }), d1, d2 }, 16) end
@@ -552,7 +611,7 @@ script.on_nth_tick(30, function(event)
 		storage.job_recipe = true
 		game.forces.player.recipes[PT_RECIPE].enabled = true
 	end
-	if not storage.job_checked and event.tick >= 270 then
+	if not storage.job_checked and event.tick >= CHECK_TICK then
 		storage.job_checked = true
 		check_job()
 	end
