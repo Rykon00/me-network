@@ -918,8 +918,8 @@ function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
 		local k = kind(entity)
 		if k == "interface" then
-			local config = M.get_interface_config(entity)
-			if next(config) then bp.set_blueprint_entity_tag(index, IFACE_TAG, M.interface_tag(config, M.get_interface_sides(entity))) end
+			local config, sides = M.get_interface_config(entity), M.get_interface_sides(entity)
+			if next(config) or next(sides) then bp.set_blueprint_entity_tag(index, IFACE_TAG, M.interface_tag(config, sides)) end
 		elseif BUSES[k] then
 			local b = M.get_bus(entity)
 			if b and #b.filters > 0 then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters }) end

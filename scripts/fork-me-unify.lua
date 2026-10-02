@@ -36,10 +36,16 @@ local function md()
 	return m and m.data or {}
 end
 
---- old entity -> unified entity, old item -> unified item, the old fluid interface's name
+--- old entity -> unified entity, old item -> unified item, the old fluid interface's name (prototype data: read once
+--- per load; the build event asks for every built entity)
+local MAPS
 local function maps()
-	local u = md().unified or {}
-	return u.entities or {}, u.items or {}, (md().interface or {}).name or "me-fluid-interface"
+	if not MAPS then
+		local d = md()
+		local u = d.unified or {}
+		MAPS = { u.entities or {}, u.items or {}, (d.interface or {}).name or "me-fluid-interface" }
+	end
+	return MAPS[1], MAPS[2], MAPS[3]
 end
 
 local function gps(surface, p)
