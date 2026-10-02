@@ -343,3 +343,21 @@ each version, alternating (`bench --sizes 1000,5000 --runs 1 --profile 1000,5000
 Every difference is inside the spread of the runs (the single runs are in the pull request); none of the storage
 calls got slower. What the code adds per call for a network without cards is a few field reads (`cell.void`,
 `cell.deny`, `c.fuzzy`, `ins.void`) and, per interface visit, one look whether any interface of the map has a priority.
+
+### With the Cell Workbench and the cards on cells (pull request 2)
+
+The same scenes (no cell has cards) after both pull requests, `bench` (median of three runs), against the numbers
+before issue #17:
+
+| N | Average | 99th percentile | Worst tick | Ticks over 5 ms | Whole update |
+|---|---|---|---|---|---|
+| 100 | 0.240 → 0.214 | 2.04 → 1.88 | 7.5 → 7.0 | 4 → 3 | 0.463 → 0.411 |
+| 1000 | 0.807 → 0.728 | 2.65 → 2.51 | 11.7 → 11.7 | 14 → 13 | 1.207 → 1.044 |
+| 5000 | 1.333 → 1.228 | 3.52 → 3.46 | 25.1 → 23.8 | 10 → 18 | 2.144 → 1.964 |
+
+Throughput, latencies and the conservation check are again the same to the last digit. Three more profile pairs in
+turns (old version, new version): the storage API calls at 5000 in µs, before → after (medians): count 1.29 → 0.40,
+insert + extract 29.7 → 14.9, `can_insert` 7.4 → 6.5, `can_insert` of a new type 4.7 → 3.1, `extract_to` 29.5 → 20.7,
+`insert_fluid` + `extract_fluid` 64.3 → 44.3; at 1000 every call within ±1 µs. The spread of single runs of the same
+code is larger than any of these differences (the worst tick count of 18 at 5000 is one noisy run of three); the cell
+code adds one field read (`cell.eq`) to `cell_room`.

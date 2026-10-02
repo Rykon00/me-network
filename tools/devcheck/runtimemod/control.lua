@@ -709,6 +709,8 @@ end
 --- me-network issue #17: the upgrade cards, the storage bus settings and the priorities (cards.lua)
 cards17 = require("cards")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
+--- part 3: the ME Cell Workbench and the cards on cells (workbench.lua)
+bench17 = require("workbench")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 
 --- Victory (scripts/fork-victory.lua): researching `victory` must win the game, and go on.
 --- Winning stops the scripts of the benchmark run (no player to continue), so this runs last: as soon
@@ -740,6 +742,7 @@ local function tests_running()
 	check(storage.cursor_t and storage.cursor_t.done, "open key and cursor")
 	check(storage.paste_t and storage.paste_t.done, "recipe paste")
 	cards17.running(check)
+	bench17.running(check)
 	return running
 end
 
@@ -1584,6 +1587,7 @@ script.on_nth_tick(10, function()
 	cursor_test()
 	paste_test()
 	cards17.tick()
+	bench17.tick()
 	done_test()
 end)
 
@@ -4270,6 +4274,7 @@ script.on_init(function()
 	for _, f in pairs(setup_scheduler_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_paste_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cards17.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(bench17.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

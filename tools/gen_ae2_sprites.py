@@ -759,8 +759,37 @@ def card_icon(accent, sign):
     return img
 
 
+# The ME Cell Workbench (issue #17, part 3): a workbench top in the casing colours with a storage cell lying on it and
+# three card slots (one holding a card); a placeholder like the cards.
+BENCH_WOOD = (120, 86, 52)
+BENCH_DARK = (70, 50, 30)
+
+
+def workbench_sprite():
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    d.rectangle((3, 22, 6, 30), fill=BENCH_DARK + (255,))                               # legs
+    d.rectangle((25, 22, 28, 30), fill=BENCH_DARK + (255,))
+    d.rectangle((1, 8, TILE - 2, 22), fill=BENCH_WOOD + (255,), outline=BENCH_DARK + (255,))   # the top
+    d.line((2, 12, TILE - 3, 12), fill=BENCH_DARK + (255,))
+    d.rectangle((4, 2, 13, 16), fill=HOUSING + (255,), outline=(60, 60, 68, 255))      # the cell
+    d.rectangle((6, 4, 11, 7), fill=FLUIX + (255,))
+    d.rectangle((6, 10, 11, 14), fill=(200, 200, 210, 255))
+    for i, x in enumerate((16, 21, 26)):                                                 # card slots
+        d.rectangle((x - 1, 14, x + 3, 19), fill=(40, 40, 48, 255), outline=(110, 110, 120, 255))
+        if i == 0:
+            d.rectangle((x, 15, x + 2, 18), fill=CARDS["me-capacity-card"][0] + (255,))
+    return img
+
+
 def cards():
     written = []
+    path = OUT_ENTITY / "me-cell-workbench.png"
+    workbench_sprite().save(path)
+    written.append(path)
+    path = OUT_ICON / "me-cell-workbench.png"
+    workbench_sprite().save(path)
+    written.append(path)
     for name, (accent, sign) in CARDS.items():
         path = OUT_ICON / f"{name}.png"
         card_icon(accent, sign).save(path)
@@ -796,7 +825,7 @@ def main():
     ap.add_argument("--patterns", action="store_true",
                     help="only the blank and encoded pattern icons (issue #80, drawn with Pillow)")
     ap.add_argument("--cards", action="store_true",
-                    help="only the upgrade card icons and their technology icon (me-network issue #17, drawn with Pillow)")
+                    help="only the upgrade card icons, their technology icon and the ME Cell Workbench (me-network issue #17, drawn with Pillow)")
     ap.add_argument("--unified", action="store_true",
                     help="only the ME Interface with its pipe sides (me-network issue #3), from the R1 PNGs")
     a = ap.parse_args()
