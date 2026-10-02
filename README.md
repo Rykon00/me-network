@@ -12,7 +12,7 @@ and puts it on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lu
 numbers in the code and in `docs/` before 0.1.0 are Gregtorio's.
 
 The player guide is `docs/AE2.md`, the design record `docs/ME-REWORK.md`, the data-stage API for other mods
-`docs/API.md`.
+`docs/API.md`, the measured cost at megabase size `docs/PERFORMANCE.md`.
 
 ## Layout
 
@@ -40,7 +40,7 @@ The repository root is the mod itself.
 | `scripts/fork-me-handover.lua` | takes the ME state of a Gregtorio Continued save once (Gregtorio issue #83) |
 | `graphics/` | sprites, icons and technology icons (`tools/gen_ae2_sprites.py`) |
 | `locale/en/me-network.cfg` | English names and texts |
-| `tools/devcheck/` | headless test harness: static checks and the runtime tests, on vanilla and with Gregtorio (`tools/devcheck/README.md`) |
+| `tools/devcheck/` | headless test harness: static checks and the runtime tests, on vanilla and with Gregtorio, and the benchmark (`bench`, `docs/PERFORMANCE.md`) (`tools/devcheck/README.md`) |
 | `tools/build.py` | builds `dist/me-network_<version>.zip` (`--portal` for the mod portal, `--install` into the mods folder) |
 | `tools/dev_link.py` | links the repository into the Factorio mods folder |
 | `tools/check_syntax.py` | Lua syntax check (`--loaded`: only the files the mod loads) |
@@ -65,6 +65,7 @@ python tools/devcheck/devcheck.py setup         # once (see tools/devcheck/READM
 python tools/devcheck/devcheck.py all           # before every pull request: RESULT: OK
 python tools/devcheck/devcheck.py all --with-gregtorio ../Gregtorio
 python tools/devcheck/devcheck.py migrate --from-ref v0.1.0   # a save of an older version (changes to saved state)
+python tools/devcheck/devcheck.py bench         # script time, throughput and latencies at 100, 1000 and 5000 endpoints
 ```
 
 Releases: `CONTRIBUTING.md`.
