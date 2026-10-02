@@ -557,7 +557,12 @@ M.accepts = accepts
 --- items (fluid units) of `key` the cell can still take; item cells take items, fluid cells fluids
 local function cell_room(cell, spec, key)
 	if fluid_cell(spec) ~= is_fluid_key(key) then return 0 end
-	if (cell.partition or cell.deny) and not accepts(cell, key) then return 0 end   -- partitioned (R3), cards (#17)
+	local p = cell.partition                                  -- partitioned (R3); a fuzzy list or a blacklist (#17)
+	if p then
+		if next(p) and not p[key] and not (cell.fnames and listed(p, cell.fnames, key)) then return 0 end
+	elseif cell.deny and not accepts(cell, key) then
+		return 0
+	end
 	local per = spec.per_byte or 8
 	local free = spec.bytes - cell.bytes
 	local have = cell.items[key]

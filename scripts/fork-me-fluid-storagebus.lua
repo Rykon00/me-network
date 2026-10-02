@@ -74,7 +74,11 @@ local function fluid_of(key)
 end
 
 --- may the network put `key` in? (the filters: a whitelist, or a blacklist with an Inverter Card; issue #17)
-local function allowed(rec, key) return N.accepts(rec, key) end
+local function allowed(rec, key)
+	local p = rec.partition
+	if p then return p[key] == true end                  -- (fluid keys have no quality: a fuzzy list is exact here)
+	return rec.deny == nil or N.accepts(rec, key)
+end
 --- may the network see and take `key`? (the same, unless the bus filters only what goes in)
 local function shown(rec, key) return rec.inonly == true or N.accepts(rec, key) end
 

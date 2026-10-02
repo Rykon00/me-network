@@ -121,10 +121,15 @@ local function plain(name, quality)
 	return v
 end
 
+local accepts = N.accepts
 --- may the network put `key` into the bus? (its filters: a whitelist, or a blacklist with an Inverter Card)
-local function allowed(rec, key) return N.accepts(rec, key) end
+local function allowed(rec, key)
+	local p = rec.partition
+	if p then return p[key] == true or (rec.fnames ~= nil and accepts(rec, key)) end
+	return rec.deny == nil or accepts(rec, key)
+end
 --- may the network see and take `key`? (the same, unless the bus filters only what goes in: issue #17)
-local function shown(rec, key) return rec.inonly == true or N.accepts(rec, key) end
+local function shown(rec, key) return rec.inonly == true or allowed(rec, key) end
 
 --- the target inventory if the bus may use it now (a cargo wagon only while it stands in front of the bus)
 local function inventory_of(rec)
@@ -297,11 +302,12 @@ function M.visit(rec, cascade)
 	local contents = {}
 	local inv = t and inventory_of(rec)
 	if inv and rec.mode ~= "write" then
+		local all = rec.inonly or not (rec.partition or rec.deny)    -- (no filter to check: the common case)
 		for _, it in pairs(inv.get_contents()) do
 			local q = it.quality or "normal"
 			if plain(it.name, q) then
 				local key = N.key_of(it.name, q)
-				if shown(rec, key) then contents[key] = (contents[key] or 0) + it.count end
+				if all or shown(rec, key) then contents[key] = (contents[key] or 0) + it.count end
 			end
 		end
 	end
