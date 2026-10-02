@@ -3,6 +3,13 @@
 --- recipes, an iron furnace with a dust recipe. Without Gregtorio this test mod adds stand-ins with the same names and
 --- the same numbers (inputs, outputs, fluid boxes, sizes), so the same tests run on vanilla. With Gregtorio they run
 --- on Gregtorio's own prototypes. The stand-ins are test fixtures, not part of me-network.
+
+--- a selection tool as other mods add them (the cursor test: a click with it opens no ME window); with Gregtorio too
+data:extend({ { type = "selection-tool", name = "zz-devcheck-selection-tool", icon = "__base__/graphics/icons/blueprint.png",
+	stack_size = 1, flags = { "only-in-cursor", "spawnable" },
+	select = { border_color = { 1, 0, 0 }, cursor_box_type = "entity", mode = { "any-entity" } },
+	alt_select = { border_color = { 0, 1, 0 }, cursor_box_type = "entity", mode = { "any-entity" } } } })
+
 if mods["gregtorio-continued"] then return end
 
 local ICON = "__base__/graphics/icons/signal/signal-info.png"

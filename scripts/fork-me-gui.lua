@@ -220,6 +220,54 @@ function M.clear_bypass(player)
 	if b then b[player.index] = nil end
 end
 
+--------------------------------------------------------------------------------
+--- the open key and the cursor
+--------------------------------------------------------------------------------
+
+--- item types whose click acts on the world (build, select, throw, command a spidertron); the game opens no entity
+--- window then
+local TOOL_TYPES = {
+	["blueprint"] = true, ["blueprint-book"] = true, ["deconstruction-item"] = true, ["upgrade-item"] = true,
+	["copy-paste-tool"] = true, ["selection-tool"] = true, ["spidertron-remote"] = true, ["rail-planner"] = true,
+	["capsule"] = true,
+}
+--- the wires of the shortcut bar are plain items (only in the cursor); a click with one connects a wire
+local WIRES = { ["red-wire"] = true, ["green-wire"] = true, ["copper-wire"] = true }
+
+--- What click_opens() needs to know about a player's cursor besides its stack: a blueprint (also one from the
+--- blueprint library, whose cursor stack is not valid for reading), a library record, a ghost, a wire being dragged.
+--- `entity`: the clicked block (a repair pack repairs a damaged one).
+function M.cursor_flags(player, entity)
+	local ratio = entity and entity.valid and entity.get_health_ratio()
+	return {
+		blueprint = player.is_cursor_blueprint(),
+		record = player.cursor_record ~= nil,
+		ghost = player.cursor_ghost ~= nil,
+		wire = player.drag_target ~= nil,
+		damaged = ratio ~= nil and ratio < 1,
+	}
+end
+
+--- Whether a click on an ME block opens its window: exactly when the game opens the window of an entity with one
+--- (a chest) for the same cursor. The click is the game's "open GUI" control, which is also the build and use
+--- click: with a tool in the cursor the game uses the tool and opens nothing, so the ME window must not open either
+--- (opening it would end the tool's action). `stack`: the cursor stack (or any item stack, nil for none); `flags`:
+--- cursor_flags(). Returns the answer and a short reason.
+function M.click_opens(stack, flags)
+	flags = flags or {}
+	if flags.blueprint or flags.record then return false, "blueprint" end
+	if flags.ghost then return false, "ghost" end
+	if flags.wire then return false, "wire" end
+	if not (stack and stack.valid_for_read) then return true, "empty" end
+	local proto = stack.prototype
+	if TOOL_TYPES[proto.type] or stack.is_selection_tool then return false, proto.type end
+	if WIRES[stack.name] then return false, "wire" end
+	if proto.flags and proto.flags["only-in-cursor"] then return false, "cursor-tool" end
+	if proto.place_result or proto.place_as_tile_result then return false, "build" end
+	if proto.type == "repair-tool" and flags.damaged then return false, "repair" end
+	return true, "item"
+end
+
 --- The open key on an entity, or the vanilla window of an entity that has one: open the ME window instead.
 --- Returns true when the entity has an ME window.
 function M.open_entity(player, entity)
