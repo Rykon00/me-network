@@ -21,6 +21,7 @@ The rework comes in three steps:
 | Storage bus | the ME Storage Bus that R1 left out: a chest or cargo wagon as network storage, with filters, priority and read/write mode | done (this document, "Storage bus (after R3)") |
 | Fluid storage bus | the ME Fluid Storage Bus: the fluid segment of a tank as network storage, one bus per segment | done (this document, "Fluid storage bus (after the storage bus)") |
 | Encoded patterns | issue #80: blank and encoded pattern items, the terminal's Patterns tab, the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
+| Unified I/O | me-network issue #3: one ME Interface, Import Bus, Export Bus and Storage Bus for items and fluids; the four fluid blocks removed and migrated | this document, "Items and fluids in one block (me-network issue #3)" |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
 player's guide is `docs/AE2.md`.
@@ -936,6 +937,134 @@ fluid (crafting patterns of fluid recipes), CPU tier and level maintainer tests 
 migrate --from-ref v0.4.1`: providers on an assembler and on a furnace with a recipe choice, a running job and a level
 maintainer of 0.4.1 work after the update. Not testable headless: the provider window, the Patterns tab, the tooltip
 as the game shows it (the pull request has a click-through list).
+
+## Items and fluids in one block (me-network issue #3)
+
+Issue numbers in this section are me-network's. AE2 has one interface, one import bus, one export bus and one storage
+bus that handle items and fluids; ME Network had a fluid version of each (`me-fluid-interface`, `me-fluid-import-bus`,
+`me-fluid-export-bus`, `me-fluid-storage-bus`). They are merged into `me-network-interface` (item `me-interface`),
+`me-import-bus`, `me-export-bus` and `me-storage-bus`; the fluid blocks are no longer craftable, and every placed one
+becomes the unified block when a save is loaded.
+
+### Engine behaviour this relies on (tested headless, 2.0.77)
+
+* **No entity is a container with fluid boxes**, and a crafting machine is no substitute: an `assembling-machine`
+  accepts only `input` and `output` fluid boxes ("Crafting machine fluidboxes must be input or output types"), and
+  without a recipe its boxes join the pipe's segment id but exchange no fluid with it (a pipe of water next to an input
+  box stayed at its amount, 1000 steam written into a box never reached the pipe on that side, 400 ticks).
+* **Storage tanks on one tile:** four hidden 1x1 `storage-tank`s with an empty collision mask and one pipe connection
+  each, created with the directions north, east, south and west on the container's tile, connect only to the pipe on
+  their own side: four separate fluid segments (water, crude oil, steam in three of them did not mix). `insert_fluid`
+  and `remove_fluid` of such a tank act on its segment; writing `fluidbox[1]` of an unconnected one and building a pipe
+  next to it afterwards merges the fluid into the new segment; `find_entities_filtered` at the tile finds the container
+  and the four tanks.
+* **Destroying a tank loses its share** of the segment (a segment of 3000 water in a 5000 tank and a pipe kept 100
+  after the tank was destroyed). A migration that replaces a tank must count before and after.
+
+### ME Interface: container plus four side tanks
+
+* **Compound:** the container `me-network-interface` stays the block (selection, window, item config, blueprints).
+  When it is built, the script creates four hidden storage tanks `me-network-interface-side` on its tile, one per side
+  (not selectable, not minable, not blueprintable, not destructible, empty collision mask, no graphics). Pipes, pumps
+  and tanks connect to a side like to any tank. The tanks are found again by position (clones, saves) and destroyed
+  with the container.
+* **Config rows:** the 9 rows take an item (with quality) or a fluid, mixed, as in AE2 (`{ name, quality, amount }` or
+  `{ type = "fluid", name, amount }`). Items work as before.
+* **How a side is tied to a fluid:** every side has a setting: *import* (the default), *off*, or a fluid row. A side
+  tied to a row keeps that fluid in its tank at the row's amount (at most 5000, the old fluid interface's volume);
+  several sides may share one row. When a fluid is put into a row, the first import side with a pipe connected gets
+  it (else the first import side); the window has a drop-down per side. A fluid row that no side uses keeps nothing.
+* **How many fluids at once:** four, one per side (a fluid box holds one fluid; a 1x1 block has four sides). Up to nine
+  rows can be fluids, but only those tied to a side are kept. Closest to AE2's 9 mixed slots that a 1x1 block allows
+  without the fluids of two rows sharing one segment.
+* **Import:** a fluid pushed into an import side is moved into the network, the whole segment (pipes up to the next
+  pump), as the fluid interface did. An import side whose segment is the segment of one of the interface's export sides
+  (a pipe loop around the block) is skipped, so the interface does not pump in a circle.
+* **Export:** the side's tank is filled from the network up to the amount (the tank's share of its segment, like the
+  fluid interface's level). Another fluid in an export side goes into the network first. A surplus is not taken back
+  (pipes level out between the tank and the pipes; the fluid interface did the same).
+* **Removal:** mined, the sides' fluid goes into the network first (as the fluid interface's content did); destroyed,
+  it is lost like a tank's; an interface removed without an event loses its tanks at the next I/O step.
+* **Saves:** item interfaces of saves made before this change get their tanks on the first load. A side that an
+  existing pipe, pump or tank already points at is set to *off*, so a pipeline that ran past an interface is not drained
+  into the network (logged per interface); the player switches it to import.
+* **Cost:** a visit adds one `fluidbox` read per side (four). An interface without fluid rows whose sides held nothing
+  at the last look reads them only every fourth visit (fluid waits at most four visits in the pipe).
+
+### Import and export bus: one target, items and fluids
+
+* **Target:** the bus finds the entity in front once (cached until it is gone or the bus is rotated) and keeps what it
+  has: an inventory of the kind the bus uses (`fork-me-targets.lua`: crafter or furnace output for import, input for
+  export, the chest of a container, logistic chest or infinity chest) and fluid boxes (the prototype has fluid boxes,
+  so a chemical plant without a recipe still counts and is used once it has one). A machine with a fluid recipe gets
+  both from one bus; a chest only items, a tank only fluids.
+* **Filters:** up to 9, items and fluids mixed (keys: the item name, `fluid/<name>`), split into an item list and a
+  fluid list when they are set. Import: no filter imports every item and every fluid of the output boxes; filters are a
+  whitelist of both (only item filters: no fluid). Export: no filter exports nothing; each list goes to its own part of
+  the target.
+* **Cost:** a visit on a chest does the item calls of the item bus, a visit on a tank the fluid calls of the fluid bus;
+  only a target with both does both. Throughput per visit stays 64 items and 1000 fluid units.
+
+### Storage bus: an item side and a fluid side
+
+* **What it is decided by:** the target. A chest, logistic chest, infinity chest or cargo wagon makes it item storage
+  (as the storage bus was); any other entity with a fluid box makes it the storage of that box's fluid segment (as the
+  fluid storage bus was: one bus per segment, claims, splits and merges, the temperature rule, the snapshot logic). No
+  target type has both. The record is one external cell (`ext = "storage-bus"`) with `side = "fluid"` while it faces
+  fluid; the engine's handlers dispatch on that field.
+* **Visits:** the bus is in the item visit list or the fluid visit list, by its side (8 visits each per I/O step, as
+  before), so a base of only item or only fluid storage buses is visited exactly as often as before.
+* **Settings:** mode and priority shared; up to 18 filters, items and fluids mixed: a whitelist of keys (an item
+  storage bus with only fluid filters takes no item, as in AE2). Blueprint tag `fork_me_storage_bus` with `filters` as
+  keys; the old tag `fork_me_fluid_storage_bus` (fluid names) is read on old ghosts.
+
+### Saves: the old blocks become the unified ones
+
+`scripts/fork-me-unify.lua`, from `on_configuration_changed` after the graph rebuild (and so after the hand-over of a
+Gregtorio save and the R1/R2 migrations, which may still create old blocks from older saves), before the modules
+rebuild their records. Idempotent: what it converts disappears.
+
+* **Fluid interface:** the segment total of its tank is read, the tank replaced by an ME Interface (same tile, force,
+  last user) with its sides; import mode becomes no config (every side imports); export mode becomes row 1 = its fluid
+  and level, tied to all four sides (the old tank gave the fluid on every side). What the old tank's share was (before
+  minus what the new sides' segments hold) goes into the new sides (the configured ones first), then into the network,
+  so the fluid totals are equal.
+* **Fluid import and export bus:** replaced in place with direction and filters (`fluid/<name>`). **Fluid storage
+  bus:** replaced in place with mode, priority and filters; the old external cell is detached, the new bus visits once,
+  claims its segment again.
+* **Ghosts:** the old entities stay as hidden prototypes with `placeable_by` the unified item, so their ghosts survive
+  loading and robots can build them; the migration turns them into ghosts of the unified block (tags converted), and the
+  build event does the same for a ghost of an old blueprint and for an old entity a robot built from one.
+* **Items:** the four old items stay hidden (no recipe) and place the unified block. Stacks in inventories (players:
+  main, trash, cursor; containers, logistic and infinity chests, cars, cargo wagons, spidertrons) become the unified
+  item, in place, with count and quality. Cells in drives: the key is renamed in the cell (bytes and types recomputed,
+  partitions too) and the networks recounted; a cell in an inventory converts when it is put into a drive. Encoded
+  patterns (provider slots and pattern items), level maintainers and circuit interface filters get the unified key; a
+  crafting pattern of an old recipe becomes the pattern of the unified recipe. Blueprints in inventories (also in books)
+  get the unified entities and tags.
+* **Check:** fluid in the old blocks (and what they held of segments) before, in the new sides and the network after;
+  `FORK-ME-MIGRATE: unified: <n> blocks, <m> ghosts, <k> items, <a> fluid units before, <b> after` in the log, a chat
+  message on a difference.
+
+### Technologies and the API
+
+* **Fluids from the start (AE2):** the unified blocks move fluids as soon as they are built. A technology check would
+  cost a lookup per visit and make the fluid half of a block appear later; the network can only store fluid in fluid
+  cells (`me-fluid-storage` and `me-fluid-storage-256k`, unchanged otherwise) or in a tank behind a storage bus, so
+  fluid storage stays where it was in the tree. `me-fluid-storage` loses the four blocks from its unlocks.
+* **Removed for players:** no item in a recipe or a technology effect; their entity, item, sprites and icons stay as
+  hidden prototypes (a hidden prototype must still have its files).
+* **API:** `ME_NETWORK.removed` lists the removed recipes. `replace_recipe` of such a name is ignored with one log line;
+  `set_technology` skips it like any missing recipe. `data-final-fixes.lua` deletes every recipe that makes a removed
+  item and its unlocks in every technology: Gregtorio Continued 0.5.0 makes these recipes itself
+  (`120-fork-me-network-compat.lua`) and keeps loading; the unified blocks keep the GT recipes it gives them.
+
+### Windows
+
+One window per unified block, with `signal` choosers (items and fluids): the interface (rows with item or fluid and
+amount, a drop-down per side, the container's content, the sides' fluid), the bus (9 mixed filters, target, status) and
+the storage bus (mode, priority, 18 mixed filters, what it shows: items or the segment's fluid and temperature). The
+fluid windows are removed; the old entities are replaced on load, so none of them can be opened.
 
 ## Open points
 
