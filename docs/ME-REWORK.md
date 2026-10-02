@@ -14,6 +14,7 @@ The rework comes in three steps:
 | **R3** | one GUI style and a window for every ME block (replacing the panels next to the game's windows), the terminal as hub (storage, crafting, jobs, cells), the ME Interface's config rows, cell partitions and drive priorities | done (this document, "GUIs, partitions and priorities (R3)") |
 | Storage bus | the ME Storage Bus that R1 left out: a chest or cargo wagon as network storage, with filters, priority and read/write mode | done (this document, "Storage bus (after R3)") |
 | Fluid storage bus | the ME Fluid Storage Bus: the fluid segment of a tank as network storage, one bus per segment | done (this document, "Fluid storage bus (after the storage bus)") |
+| Encoded patterns | issue #80: blank and encoded pattern items, the terminal's Patterns tab, the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
 player's guide is `docs/AE2.md`.
@@ -774,11 +775,172 @@ fills a tank is in the network within one visit cycle. Two mutations were checke
 counts its segment: the network shows 2000 of 1000) and `count` trusting the snapshot (the stale extract leaves 100
 phantom units). `migrate --from-ref v0.3.2` and every other runtime test pass unchanged.
 
+## Encoded patterns (issue #80)
+
+Until 0.4.1 a pattern provider read the recipe of the machines next to it (a furnace: a recipe chosen in the
+provider): one machine was one pattern and the provider held nothing. Issue #80 brings AE2's model: a pattern is an
+item, encoded in a terminal, and a provider holds several. Code: `scripts/fork-me-patterns.lua` (the pattern data and
+item, encode, clear), `scripts/fork-me-autocraft.lua` (provider slots, scan, planner, jobs, arrivals, migration),
+`scripts/fork-me-terminal.lua` (Patterns tab), `scripts/fork-me-windows.lua` (provider window); prototypes in
+`prototypes/121-fork-ae2-autocrafting.lua`. The player's guide: `docs/AE2.md`, "Autocrafting".
+
+### The pattern and its item
+
+* **Data:** `{ kind = "crafting" | "processing", recipe, inputs, outputs }`, rows `{ key, amount }` with the resource
+  keys of autocrafting (item name, `fluid/<name>`). `normalize` validates (prototypes exist, amounts > 0, items whole,
+  each key once, at most 9 inputs and 6 outputs, no items with tags as rows: the planner never moves those) and
+  refreshes a crafting pattern's rows from its recipe. The planner and the jobs read a crafting pattern's recipe
+  itself (probabilities and ranges), a processing pattern's rows (exact).
+* **Identity:** `c/<recipe>` or `p/<sorted inputs>><sorted outputs>`. Equal patterns in several providers are one
+  pattern of the network; their machines are pooled.
+* **Items:** `me-blank-pattern` (plain item, LV assembler recipe in `me-autocrafting`) and `me-encoded-pattern`
+  (item with tags, stack size 1, no recipe). The tag `fork_me_pattern` is the data; the custom description is the
+  tooltip (kind, recipe, inputs, outputs with rich text icons). Encoded patterns can be stored in the network (they
+  are items with tags: kept exactly, equal ones stack in a cell) and are never planning stock.
+* **Encoding** (`P.encode(cursor, inventory, network, pattern)`): the blank comes from the hand, else the inventory,
+  else the network; the encoded pattern replaces a single blank in the hand, or goes into an empty hand, else into
+  the inventory (the blank is taken first so its slot can be the free one; with no room it goes back). Nothing is
+  created or lost: one blank in, one encoded pattern out.
+* **Clearing** (`P.clear(stack)`): an encoded pattern becomes one blank. AE2 does it with shift right click on the item;
+  a mod cannot catch a click on an inventory slot (custom inputs know the selected entity, not the slot), so it is the
+  terminal's "Clear pattern in hand" button.
+
+### Where patterns are encoded: a tab of the ME Terminal
+
+R3 made the terminal the hub of the network (storage, crafting, jobs, cells). AE2 has a separate Pattern Encoding
+Terminal; here a **Patterns** tab fits R3's window design better: no new block, prototype, recipe or graphics, the
+blanks of the network are at hand, and the tab sits next to the Crafting tab where the patterns are used. The tab's
+logic is in functions of the terminal module that the runtime test calls (`new_editor`, `set_editor_recipe`,
+`set_editor_row`, `pattern_of`, `encode`, `clear_pattern`, `load_pattern`, `blanks`); the recipe chooser is the
+game's (with its search), and only recipes the force has unlocked are accepted.
+
+### The provider: 9 slots in script storage
+
+The provider stays a `simple-entity-with-force` (no new prototype type: changing a prototype's type would delete the
+entities of every save). Its patterns are data in `storage.fork_ae2.providers[unit].slots[1..9]` (exactly as they
+came out of the item, validated by the scan), like the cells of a drive. Window and open key: click a slot with a
+pattern in hand to put it in (swap with one in the slot), click to take it out (shift: inventory), click the provider
+with a pattern in hand: first free slot.
+
+| Event | The patterns |
+|---|---|
+| mined by a player or robot | into the event's buffer (the player's inventory, the robot's cargo) |
+| destroyed | dropped on the ground (`spill_item_stack`) |
+| removed by a script with `raise_destroy` | dropped on the ground (the event has no inventory) |
+| gone without an event | dropped where it stood at the next scan (the record keeps surface and position); the force is told |
+| blueprint, copy and paste | see "Blueprints" below |
+| settings paste, clone | the priority only |
+
+### Crafting patterns: switching the recipe
+
+A crafting pattern's targets are the assembling machines next to the provider that can make the recipe: crafting
+category, recipe researched, no other fixed recipe, every item ingredient within a stack, and fluid boxes: with the
+recipe set the exact map (filters, capacity, pipes, temperature); before a switch by count and size of unconnected
+input and output boxes (the exact map is made after `set_recipe`; a machine that fails then is not used again by that
+job). Decisions:
+
+* **Items left in the machine when the recipe changes:** the machine is switched only when idle (no craft in
+  progress); everything in its input and output inventories and fluid boxes goes into the network first (stored with
+  `N.no_arrival`, so no job claims it); if the network cannot take all of it the machine is not switched and the job
+  waits. What `set_recipe` itself would return is stored too (or spilled at the machine). Nothing is lost.
+* **A machine busy with another pattern:** one lease per machine (`busy[unit] = job`). A step needs an idle machine
+  that has the recipe, else an idle one to switch; a busy machine is skipped and the step waits ("machine"). Jobs take
+  turns by the round robin of the step (8 jobs per step); within a job the steps go in plan order. No queue is kept: a
+  machine is taken by the first job that finds it idle.
+* **The machine cannot make the recipe** (category, not researched, fixed recipe, stack, fluid boxes, a furnace): the
+  pattern has no target in that provider; with none at all it is no pattern of the network (`ignored[reason]`, shown
+  per slot in the provider window and counted in the crafting tab's info line).
+* The machine keeps the last recipe; a player's own recipe on such a machine is overwritten ("dedicate machines").
+
+### Processing patterns: output detection
+
+A processing pattern's inputs are pushed into a machine next to the provider (a furnace, an assembling machine with a
+recipe of its own, which is never changed) as a lease, or into a chest next to it (no lease: the start of a line).
+The question of the issue: how does a job know its outputs arrived?
+
+* **Count deltas against expected outputs** (compare the network's count with the count at hand-over) were rejected:
+  any other change of the same item (a player taking it, an import bus importing the same item from elsewhere, another
+  job storing its result, a level maintainer's job) would be counted as an arrival or hide one, and two jobs waiting
+  for the same item could not be told apart.
+* **Chosen: interception of arrivals, as in AE2** (AE2's crafting service offers items entering the network to the
+  CPUs that wait for them). The network module's public insert functions (`insert`, `insert_stack`,
+  `insert_partial`, `insert_fluid`: import bus, ME Interface, fluid import bus, fluid interface, terminal) offer what
+  comes in to `N.on_arrival(net, key, count)` before storing it. A running job with processing steps that still owe
+  `key` (issued runs times the amount, minus what was received) takes it into its pool, at most what it owes, in job
+  order; the rest is stored. Normal quality plain keys only. `can_insert` and `can_insert_fluid` add what jobs wait
+  for (an import bus may import outputs even when the cells are full). Outputs collected from the machine's output
+  when a lease ends count the same way. A storage bus does not insert (it sees a chest change), so outputs that only
+  appear in a chest behind a storage bus do not count (AE2 behaves the same).
+* **Timeout with failure:** a job whose processing steps wait only for outputs shows "Waiting for the outputs of a
+  processing pattern to come back"; every arrival is progress; after `STALL_STEPS` (5 minutes) without progress it
+  fails and gives back its pool. Inputs already pushed into a chest stay in the line; outputs that come later are
+  stored like any import.
+* **A machine that takes none of the inputs** (no matching recipe, full): the inputs come back into the pool when the
+  lease ends, the issued runs are taken back, and the job does not use that machine for the pattern again.
+* Cost: with no job waiting for a key an arrival is two table lookups; the index (network -> key -> job ids) is
+  rebuilt only when processing work is handed out, a job closes or ends, or the graph changes. No tick of its own.
+
+### Several patterns for one output: the pattern order
+
+Rule: providers by **priority** descending (a number in the provider window, -1000 to 1000, default 0, kept in
+blueprints and settings paste), at equal priority by unit number (the provider built first), then by slot. The
+planner tries the patterns in that order and takes the first whose plan needs nothing missing, else the first (the
+rule of 0.4.1, which went alphabetically by recipe name). A priority instead of only the order of building lets the
+player prefer one route (an AE2 player does it by removing a pattern; here both can stay).
+
+### Blueprints: patterns travel as data, never as items
+
+An encoded pattern is an item, so a blueprint must not create patterns out of nothing. A blueprint keeps the
+provider's priority and its patterns as data (tag `fork_me_provider = { priority, patterns = { ["slot"] = pattern }
+}`). A provider built from it holds them as **pending** (`providers[unit].pending`): the scan (on build, the round
+robin of 8 providers per step, before a job) encodes each pending pattern from a blank pattern of the provider's
+network (`N.extract` of one blank), so the provider ends up exactly as if the player had encoded and inserted them.
+A slot filled by hand drops its pending pattern; a click on a pending slot forgets it; mining a provider drops pending
+patterns (they were never items). Old blueprints of 0.4.1 and older (tag `fork_ae2_recipe`, the furnace recipe choice)
+give a pending processing pattern of that recipe. Settings paste and clones copy the priority only.
+
+### Migration (0.4.1 -> 0.5.0)
+
+`storage.fork_ae2.pattern_version` marks saves with encoded patterns. In a save without it,
+`on_configuration_changed` (after the ME graph is rebuilt) gives every provider encoded patterns for what it provided
+under the 0.4.1 rules: a crafting pattern for the recipe of each assembling machine next to it, and a processing
+pattern for each furnace next to it (the provider's recipe choice when the furnace can make it, else the recipe it
+runs, else the one it smelted last; research is not asked, the update has just reset the technology effects), each
+pattern once, in the slots from 1. A furnace without any recipe gets nothing. The migration is the only place where
+patterns appear without a blank; each provider is logged (`FORK-ME-MIGRATE: patterns: provider <unit> at <x,y> on
+<surface>: crafting <recipe>, processing <recipe>`) and the total (`FORK-ME-MIGRATE: patterns: <n> encoded patterns in
+<m> of <k> pattern providers`). Saved jobs: steps and leases that name a recipe get the pattern that makes it now (the
+crafting pattern of the recipe, else the processing pattern migrated from that furnace recipe); a processing step
+counts its finished runs as received outputs, a furnace lease becomes a processing lease. Level maintainers need
+nothing: they ask for items, and the migrated patterns make them.
+
+The old "read the machine's recipe" path and the furnace recipe choice are **removed**, not kept as a mode: a second
+way to make patterns would keep the "one machine is one pattern" model alive next to the new one (two sources for the
+same pattern, two rule sets for furnaces), and the migration covers every running setup.
+
+### Tests (issue #80)
+
+`devcheck runtime`: the furnace test (encode, tags and tooltip data, research check, crafting pattern next to a
+furnace, processing pattern smelting a job, clear, load, paste, blueprint with pending patterns and an old tag, mined,
+destroyed and vanished providers), the pattern switching test (three crafting patterns on one assembler with the
+recipe switched and the leftovers counted, two jobs for one machine, two patterns for one output by priority, a
+processing pattern on a machine with its own recipe, a level maintainer keeping blank patterns), the processing line
+test (a processing pattern into a chest, the outputs back through an import bus, claimed exactly); the autocrafting,
+fluid (crafting patterns of fluid recipes), CPU tier and level maintainer tests run on encoded patterns. `devcheck
+migrate --from-ref v0.4.1`: providers on an assembler and on a furnace with a recipe choice, a running job and a level
+maintainer of 0.4.1 work after the update. Not testable headless: the provider window, the Patterns tab, the tooltip
+as the game shows it (the pull request has a click-through list).
+
 ## Open points
 
-* Pattern provider with AE2 style encoded patterns (pattern slots) instead of reading the machine next to it;
-  a level maintainer with several resources; upgrade and speed cards on buses; more than 5 bus filters.
+* Patterns (issue #80, left open on purpose; the data model keeps room for them): crafting storage on the CPUs (a job
+  size limit per CPU tier), upgrade cards on providers (e.g. a blocking mode: push into a chest only when it is empty),
+  substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's ingredient lookup are the
+  places to change), a 36 slot provider tier (`SLOTS` is one constant; it needs a second prototype and window layout),
+  clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
+  bus.
+* A level maintainer with several resources; upgrade and speed cards on buses; more than 5 bus filters.
 * Fuzzy or inverted partitions (AE2 cards), also for storage bus filters; fluid wagons on the fluid storage bus.
 * Terminal search by localised name (a script cannot read localised names).
-* The windows are checked by hand only (see "Tests (R3)").
+* The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
