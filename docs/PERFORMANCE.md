@@ -297,3 +297,49 @@ items/s in the scene before the random picks were corrected, at 1.4, 2.9 and 2.6
 more visits only shorten the reaction of busy blocks. The storage bus idle limit of 120 ticks is the latency target.
 10 circuit interface updates per second keep the circuit cost at about 0.2 ms per tick with 50 unfiltered
 interfaces.
+
+## Upgrade cards and priorities (0.3.0, issue #17)
+
+The scenes have no cards and no interface priority, so this measures what the new code costs a network that does not
+use it: the filter checks of the storage engine (blacklist, fuzzy list, overflow destruction), the storage bus visit
+and the interface visit with its priority check. The target: no storage call slower.
+
+### Script time per tick (ms, median of three runs, `bench`), before → after
+
+| N | Average | 99th percentile | Worst tick | Ticks over 5 ms | Whole update |
+|---|---|---|---|---|---|
+| 100 | 0.240 → 0.225 | 2.04 → 1.89 | 7.5 → 6.4 | 4 → 3 | 0.463 → 0.443 |
+| 1000 | 0.807 → 0.799 | 2.65 → 2.58 | 11.7 → 10.5 | 14 → 12 | 1.207 → 1.200 |
+| 5000 | 1.333 → 1.315 | 3.52 → 3.46 | 25.1 → 24.8 | 10 → 11 | 2.144 → 2.130 |
+
+Throughput (items and fluid per second, per kind of endpoint), the latencies and the conservation check (891 keys, no
+difference) are the same to the last digit: 166 741 items and 1 219 697 fluid units per second at 5000, a storage bus
+sees a chest change after 1.33 / 1.72 s (median / worst), a level maintainer reacts after 0.08 / 0.22 s.
+
+### Profile: before and after in turns
+
+The first profile after the change showed a storage bus visit about 20 % slower: each item type of a chest went
+through two function calls (`shown`, `N.accepts`). A bus or cell without a blacklist or fuzzy list now checks its
+whitelist inline, and a bus without filters checks nothing per item (the three-run numbers above are from before that
+fix). The machine's noise between two runs of the same code is up to 50 % here, so the profile ran three times for
+each version, alternating (`bench --sizes 1000,5000 --runs 1 --profile 1000,5000`, and the same with
+`--from-ref c00cad8`); the medians, µs per call:
+
+| | 1000 before | 1000 after | 5000 before | 5000 after |
+|---|---|---|---|---|
+| storage API: count | 0.52 | 0.40 | 1.41 | 0.40 |
+| storage API: insert 10 + extract 10 | 13.2 | 12.3 | 19.2 | 19.8 |
+| storage API: can_insert 1000 | 3.19 | 2.96 | 7.20 | 7.26 |
+| storage API: can_insert 1000, a new item type | 4.42 | 4.13 | 4.90 | 3.47 |
+| storage API: extract_to a chest + insert back | 21.1 | 18.0 | 28.6 | 25.9 |
+| storage API: can_insert_fluid 1000 | 3.09 | 3.67 | 26.8 | 26.3 |
+| storage API: insert_fluid + extract_fluid 100 | 19.2 | 15.2 | 69.1 | 62.6 |
+| `insert_key` (in the scene) | 23.6 | 18.1 | 46.9 | 38.1 |
+| `extract_key` | 19.1 | 14.0 | 21.8 | 18.7 |
+| `room_for` | 12.2 | 9.9 | 57.5 | 49.0 |
+| storage bus visit | 26.6 | 17.7 | 21.4 | 19.2 |
+| interface visit (`interface_step`) | 110 | 87 | 119 | 111 |
+
+Every difference is inside the spread of the runs (the single runs are in the pull request); none of the storage
+calls got slower. What the code adds per call for a network without cards is a few field reads (`cell.void`,
+`cell.deny`, `c.fuzzy`, `ins.void`) and, per interface visit, one look whether any interface of the map has a priority.
