@@ -412,6 +412,7 @@ RUNTIME_TESTS = (
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
+    ("CARDS", "ME upgrade card test"), ("PRIORITIES", "ME priority test"),
     ("DONE", "all tests reported"),
 )
 

@@ -1285,6 +1285,193 @@ the cells plus the chest; the wake was checked to fail with the key wake removed
 new latency bound, every other runtime test unchanged, `migrate --from-ref v0.2.0` and `v0.1.0`, Gregtorio's
 `migrate --from-ref v0.4.1`.
 
+## Upgrade cards, storage bus settings, the Cell Workbench and priorities (me-network issue #17)
+
+Issue #17 gives the ME Storage Bus the settings of AE2's storage bus, cells their cards in an ME Cell Workbench, and a
+priority to every block that has one in AE2. Decided by the maintainer: the settings come from **upgrade cards** (items
+with a recipe, put into card slots), "fuzzy" means **any quality**, cells get their cards in a **Cell Workbench**.
+Two pull requests: 1. the cards, the storage bus and the priorities; 2. the workbench and the cards on cells.
+
+### AE2's numbers (from its source)
+
+The guide gives no numbers; they are from AE2's source, branch `forge/1.20.1` (commit 1c2f96e, 2026-09-27), paths under
+`src/main/java/appeng/`:
+
+| What | AE2 | Where |
+|---|---|---|
+| Card slots of the storage bus | 5 | `parts/storagebus/StorageBusPart.java`, `getUpgradeSlots()` returns 5 |
+| Cards the storage bus takes | Capacity 5, Fuzzy 1, Inverter 1, Overflow Destruction ("void") 1; no Equal Distribution | `init/internal/InitUpgrades.java`, `Upgrades.add(..., AEParts.STORAGE_BUS, n)` |
+| Filter slots of the storage bus | 18 + 9 per Capacity Card (63 with five; the config holds 63) | `StorageBusPart.createFilter()`: `18 + getInstalledUpgrades(CAPACITY_CARD) * 9`; `ConfigInventory.configTypes(63)` |
+| Card slots of a cell | item cells 4, fluid cells 3 | `items/storage/BasicStorageCell.java`, `getUpgrades()`: `forItem(is, keyType == items ? 4 : 3)` |
+| Cards a cell takes | item cells: Fuzzy, Inverter, Equal Distribution, Overflow Destruction, 1 each; fluid cells: the same without Fuzzy | `InitUpgrades.java`, the `itemCells` and `fluidCells` loops |
+| Equal Distribution | each type may hold `ceil((total bytes - bytes per type × n) × amount per byte / n)`, n = the number of whitelist entries (a whitelist without fuzzy), else the cell's type limit | `me/cells/BasicCellInventory.java`, constructor (`maxItemsPerType`) |
+| Overflow Destruction on a cell | whatever passes the cell's filter is taken in full; a cell without a partition voids only what it already holds once it cannot take a new type | `BasicCellInventory.insert()` |
+| Overflow Destruction on a bus | whatever passes the filter and the access mode is taken in full | `me/storage/MEInventoryHandler.java`, `insert()` (`voidOverflow ? amount : inserted`) |
+| Filter on extract, what the network sees | settings `FILTER_ON_EXTRACT` (default yes), `STORAGE_FILTER` (default extractable only) | `StorageBusPart`, constructor and `updateTarget()`; `MEInventoryHandler.getAvailableStacks()` |
+| Cell Workbench: network or power | **neither**: the block entity has no grid node | `blockentity/misc/CellWorkbenchBlockEntity.java` extends `AEBaseBlockEntity` (not `AENetworkBlockEntity`) |
+| Workbench copy mode | `CLEAR_ON_REMOVE` (default) or `KEEP_ON_REMOVE`: the partition stays in the workbench and goes onto the next cell whose partition is empty | `CellWorkbenchBlockEntity.onChangeInventory()`, `menu/implementations/CellWorkbenchMenu.java` |
+| Storage priority | inserting: priority groups descending, in each the storages "preferred" for the item first (a whitelist that lists it, or one that holds it), then the rest; extracting: priority ascending | `me/storage/NetworkStorage.java` `insert()` / `extract()`, `MEInventoryHandler.isPreferredStorageFor()` |
+| Interface priority | only stops a lower priority interface from pulling its stock out of a higher priority interface through a storage bus | `helpers/InterfaceLogic.java`, `InterfaceInventory.extract()` |
+| Pattern priority | patterns of higher priority providers first; the crafting calculation falls back to the next pattern when one cannot be crafted | `helpers/patternprovider/PatternProviderLogic.java` `getPatternPriority()` |
+
+### The cards: items, recipes, technology
+
+New items of this mod (`ME_NETWORK.add_item`, stack 64, subgroup `fork-me-cards`), named with `me-` so they never meet
+Gregtorio's `advanced-card` and `acceleration-card`:
+
+| Item | Recipe (standalone, vanilla items) | AE2 | Use |
+|---|---|---|---|
+| `me-basic-card` | 2 iron plates, 2 copper cables, 1 electronic circuit, 1 advanced circuit → 2 | gold, iron, redstone, calculation processor → 2 | component |
+| `me-advanced-card` | 2 iron plates, 1 processing unit, 1 electronic circuit, 1 advanced circuit → 2 | diamond, iron, redstone, calculation processor → 2 | component |
+| `me-capacity-card` | basic card + iron chest | basic card + certus quartz | 9 more filters (storage bus) |
+| `me-overflow-destruction-card` | basic card + advanced circuit | basic card + calculation processor | void what does not fit (storage bus, cells) |
+| `me-fuzzy-card` | advanced card + copper cable | advanced card + white wool | filters in any quality (storage bus, item cells) |
+| `me-inverter-card` | advanced card + decider combinator | advanced card + redstone torch | blacklist (storage bus, cells) |
+| `me-equal-distribution-card` | advanced card + advanced circuit | advanced card + calculation processor | equal room per type (cells) |
+
+The basic card is cheap (red and green circuits), the advanced card dearer (a blue circuit), each card is one component
+and one item (only items that Gregtorio Continued has as well: its game has no plastic bar, so the Fuzzy Card takes a
+copper cable). Technology `me-upgrade-cards` (after ME 64k Storage, which already needs blue circuits) unlocks all seven;
+the second pull request adds the ME Cell Workbench to it. Its cost is that of ME 64k Storage (`data-final-fixes.lua`
+copies it, standalone 400 units of red, green and blue science) unless a mod sets the technology itself
+(`ME_NETWORK.set_technology`, recorded in `ME_NETWORK.customized`): so a mod that puts the network on its own tiers
+gets a researchable cards technology on its 64k tier before it knows the cards. Gregtorio gives them its own recipes in
+its compat file (`ME_NETWORK.replace_recipe` per name in `ME_NETWORK.recipes`).
+
+### Where a block keeps its cards
+
+* **Storage bus:** 5 card slots in its record (the external cell, `rec.cards`, a list of 5 item names), in its window.
+  A click with a card in hand puts one into a free slot (the hand's stack shrinks by one); a click on a card takes it
+  into the hand (shift: into the inventory). A card the bus cannot take (wrong kind, the limit of its kind) is refused
+  with a flying text.
+* **Cells:** the cards are part of the cell's tags (`fork_me_cell.cards`, a list), like its partition and contents; they
+  travel with the cell. Only the ME Cell Workbench puts them in or takes them out.
+
+**A card is never created or lost by script.** The only ways in are a card item from a hand; the only ways out are
+into a hand, an inventory, a mined buffer, the network or the ground:
+
+| Event | The cards |
+|---|---|
+| bus mined (player, robot, platform) | into the mined buffer (the player's or robot's inventory), the rest spilled |
+| bus destroyed, removed by a script event | spilled at the bus |
+| bus vanished without an event (the sweep) | spilled at the position kept in the record |
+| blueprint, copy/paste | the tag `fork_me_storage_bus.cards` names the cards the bus **wants**; a bus built from it has none and takes them from the network (one extract per missing card at its visits, like a provider's pending patterns) |
+| settings paste between buses | the destination wants the source's cards: missing ones are taken from the player's inventory, then the network; cards it has beyond them go into the player's inventory (or the network, else spilled at the player) |
+| clone | wants the source's cards (taken from the network); the source keeps its own |
+| recipe paste (#12) | only the filters change; cards, mode, priority and the new settings stay |
+
+A bus without the cards it wants works as if it had none (18 filters, whitelist, exact quality, no void); its window
+lists what it still waits for. Cards in a cell are part of an item and follow it everywhere.
+
+### The storage bus
+
+Settings in its window and its blueprint tag (`fork_me_storage_bus = { mode, priority, filters, extract, cards }`):
+
+* **Filters**: up to 63 kept (`rec.filters`), the first `18 + 9 × capacity cards` apply. A bus without a Capacity Card
+  uses 18 as before; taking a card out keeps the filters beyond 18 for the next card.
+* **Inverter Card**: the filters are a blacklist. **Fuzzy Card**: a filter matches its item in every quality (fluids
+  have no quality). **Overflow Destruction Card**: what the network stores into this bus and does not fit into the chest
+  (or the tank's segment) is destroyed, for every key the bus accepts by its filters and mode, and only while the bus
+  works on a target (a bus facing nothing destroys nothing: AE2 would). Items with tags never reach a storage bus, so
+  they are never destroyed. The window shows it in red with the amount destroyed so far; the card's tooltip says so.
+* **Filter on extract** (AE2's "filter on extract", default on): the filters decide what the network sees and takes; off,
+  they decide only what goes in, and the network sees and takes everything in the chest that it can hold.
+* **Access**: the three modes stay; their names get AE2's words (read and write = bi-directional, read only = extract
+  only, write only = insert only: the same meanings).
+* **Partition**: "From contents" sets the filters to what the chest or tank holds now (at most the filters that
+  apply), "Clear" removes them; both are plain settings, as in AE2.
+* **What the network sees**: left as it is and documented. Items the network cannot hold (spoiling, with an inventory or
+  data, blueprints) are not shown. AE2's switch would show them as present but not extractable; counts that cannot be
+  taken would mislead every plan, level maintainer and circuit signal, which all trust `count`.
+
+### Into the storage engine without a scan per insert (issue #5)
+
+The engine's lookups (outside `storage`) stay the only way an insert finds its cells. The cell record (a drive cell or
+a storage bus's external cell) gets derived fields, written whenever its settings or cards change (deterministic, so
+every peer has them):
+
+* `partition` stays the **whitelist** of exact keys (as before); `deny` is the **blacklist** (inverter); `fnames` the
+  item names of the list (fuzzy); `void`, `eq` (Equal Distribution) and `inonly` (filter only what goes in) are flags.
+  A block without cards has none of the new fields: every code path of a network without cards is the one of 0.3.0.
+* **Whitelist, exact**: `parts[key]` as before. **Whitelist, fuzzy**: a new index `fparts[name]` per priority group;
+  pass 1 of an insert walks `parts[key]` and then `fparts[name]` (a fuzzy cell is indexed by name only, so it is never
+  visited twice). So a fuzzy filter costs one more table lookup per group, no scan.
+* **Blacklist**: the cell is not "partitioned": it sits in the open lists (`cells`, `ext`) like an unpartitioned cell,
+  and `cell_room` / the bus's `room` refuse a listed key (one lookup). As AE2: a blacklist is not "whitelisted" for an
+  item and gets no preference for it (pass 1 skips it); a blacklist cell that already holds the key is preferred like
+  any holder (pass 2).
+* **Filter only what goes in**: only the snapshot changes (the bus reads everything it can hold, `count` and `extract`
+  ignore the filter); the insert lookups are those of its filter.
+* **Equal Distribution**: `cell_room` caps the room of a key at AE2's per-type limit (arithmetic on the cell's numbers).
+* **Overflow Destruction**: `put()` stores what fits, then takes the rest of the insert when the cell voids that key
+  (AE2's rules above); `room_for` returns "everything" at such a cell, so an import bus or interface asking
+  `can_insert` empties its source into it. A voiding bus is never marked full.
+* `ordered()` marks a network with any card as not uniform (the R1 fast path is for networks without partitions).
+* **Voided items are accounted for**: an insert returns what it stored plus what it destroyed (AE2 does the same: the
+  caller's items are gone). The amount is added to the block's counter (`rec.voided`, shown in its window; a cell's
+  counter is not part of its tags) and to the map's total per key (`storage.fork_me_net.voided[key]`), which the
+  runtime tests' conservation checks add to the network's contents. Waiting blocks are woken only by what was stored.
+
+### Priorities
+
+* **Drive and storage bus**: the order of R3 (`insert_key`, `extract_key`) checked against AE2's four rules. Highest
+  priority first: yes. Same priority, one that already holds the item first: yes (pass 2, after the partitioned ones).
+  Whitelisted cells count as holding it: yes, they even come before the holders (pass 1); AE2 treats both as one
+  "preferred" pass in mount order, the mod's finer order fills partitioned storage first and is kept. Lowest priority
+  first on extraction: yes. Kept: cells before buses on insertion and buses before cells on extraction at one priority.
+  New: a blacklist bus or cell is not preferred (above); a fuzzy whitelist counts as whitelisted for every quality.
+* **ME Interface**: a priority (-1000 to 1000, default 0) in its window, blueprint tag (`fork_me_interface.priority`),
+  settings paste and clones. AE2's code uses it only against storage buses on interfaces, which the mod refuses ("Faces
+  an ME block"); the issue's rule is used instead: when the network has less of a key than the interfaces want, the
+  higher priority interface is filled first. Without sorting interfaces: an interface whose row stays short registers
+  its shortfall per key and priority (`net.short[key][unit] = { p, missing }`, totals `net.short_p[key][p]`, in
+  `storage`: they decide what moves); an interface of priority p may take only what is left after the shortfalls of
+  higher priorities (a sum over the few distinct priorities of that key). A satisfied row, a changed config, priority or
+  network, and a removed interface drop the entry. While no interface of the map has a priority other than 0
+  (`storage.fork_me_io.prio` is empty, every old save) nothing is registered or summed: the visit is the one of 0.3.0.
+* **Pattern provider**: the planner tries a key's patterns in pattern order (provider priority descending, then the
+  provider built first, then the slot) and takes the first whose plan needs nothing missing, else reports the first
+  one's shortfall: AE2's fall-back. A new test checks it.
+* Import and export bus, level maintainer, crafting CPU: no priority, as in AE2.
+
+### The ME Cell Workbench (pull request 2)
+
+A 1x1 block (`me-cell-workbench`, a simple entity with its own window), not an ME member: AE2's workbench needs neither
+the network nor power, so it needs no cable. Its cell is kept in a script inventory of one slot (the cell stays an item
+with its tags); mined, the cell goes into the buffer, destroyed or removed by a script it is spilled. Its window: the
+cell slot (click with a cell in hand, click the cell to take it), the cell's partition (items with quality, or fluids;
+as the cell window has it), the cell's card slots (4 for item cells, 3 for fluid cells, AE2's limits), "From contents",
+"Clear" and AE2's copy mode ("Keep the partition when the cell is taken out": it stays in the workbench and goes onto
+the next cell whose partition is empty). Every change is written into the cell's tags at once. Recipe: AE2's crafting
+table, 2 white wool, calculation processor, 4 iron ingots and chest become an assembling machine 1, 2 plastic bars, an
+advanced circuit, 4 iron plates and an iron chest.
+
+The cell window (drive window, terminal's Cells tab) keeps its partition buttons, so nothing a player uses goes away; it
+shows the cell's cards but cannot change them. AE2's stricter way (partitions only in the workbench) would make every
+partition a trip to the workbench for no gain: the cards are the only thing that needs the workbench, because they are
+items that have to go somewhere.
+
+A cell with an Inverter Card takes everything except its partition; with a Fuzzy Card its partition matches every
+quality; with an Equal Distribution Card no key takes more than AE2's share; with an Overflow Destruction Card it voids
+by AE2's rule. All of it through the fields above.
+
+### Saves
+
+No prototype, storage key or remote interface is renamed. New: the card items, `me-cell-workbench`, the technology, the
+tag fields `cards` (cell tags, storage bus tag) and `extract` (storage bus), `priority` (interface tag), the record fields
+above, `storage.fork_me_net.voided`, `storage.fork_me_io.prio`, `net.short`, `net.short_p`, `storage.fork_me_workbench`
+(workbenches). Buses, cells and interfaces of older saves have none of them: whitelist, exact quality, filter both ways,
+no void, 18 filters, priority 0, as before. `migrate --from-ref v0.2.0` checks it.
+
+### Tests
+
+New runtime tests (`runtimemod/cards.lua`): every card and setting on a chest and a tank (capacity, inverter, fuzzy,
+filter only what goes in, overflow destruction with the conservation check, from contents, clear), cards given back on
+mining and spilled on destruction, never duplicated by paste, blueprint or clone (counted), the insert and extract order
+with mixed priorities, partitions, whitelists and blacklists, two interfaces of different priority competing for a short
+item and a short fluid, the pattern fall-back; with pull request 2 the workbench (cards on item and fluid cells, its
+buttons, the copy mode, mined and destroyed with a cell) and every card on a cell.
+
 ## Open points
 
 * Patterns (issue #80, left open on purpose; the data model keeps room for them): crafting storage on the CPUs (a job

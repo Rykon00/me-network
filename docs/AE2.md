@@ -24,7 +24,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Terminal | powered screen, the hub: storage, **crafting**, jobs, the drives and cells of the network |
 | ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount): keeps those in stock in it, imports everything else (this page, **Import and export**) |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face |
-| ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority and read/write mode (this page, **ME Storage Bus**) |
+| ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | ME Crafting CPU, Co-Processing and Quantum Crafting CPU | run autocrafting jobs: 1, 2 or 4 at once (this page, **CPU tiers**) |
 | ME Pattern Provider | holds 9 encoded patterns; the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
@@ -108,7 +108,8 @@ Two AE2 storage features decide **which cell** an item or fluid goes into (and c
   Partitioned cells have a yellow frame in the drive window and the Cells tab. The partition travels with the cell
   (also an empty one: "Empty, partitioned for 2 kinds").
 * **Drive priority** (-1000 to 1000, default 0, in the drive window): the priority of every cell in that drive.
-* **Storage buses** (see "ME Storage Bus") take part with their own priority; their filters work like a partition.
+* **Storage buses** (see "ME Storage Bus") take part with their own priority; their filters work like a partition
+  (with an **Inverter Card** like a blacklist, with a **Fuzzy Card** in every quality: see "Upgrade cards").
 
 The rules (`scripts/fork-me-network.lua`, `insert_key` and `extract_key`):
 
@@ -119,6 +120,14 @@ The rules (`scripts/fork-me-network.lua`, `insert_key` and `extract_key`):
    before the partitioned ones.
 3. Same priority and same rule: the order the cells joined the network (drive by drive, slot by slot); cells
    before storage buses when storing, storage buses before cells when taking out.
+4. A **blacklist** (a storage bus with an Inverter Card) is not partitioned for anything: it takes what it lets in
+   with the cells "with room" (rule 1, last), never before them for an item, unless it already holds the item. A
+   filter with a Fuzzy Card counts as partitioned for its item in every quality.
+
+These are AE2's four rules ("Import, Export, and Storage"): the highest priority first; at the same priority storage
+that already holds the item first; whitelisted storage counts as holding it (here it even comes first); taking out
+from the lowest priority. AE2 puts whitelisted and holding storage into one pass in the order they joined; the mod's
+finer order fills partitioned storage first.
 
 So a high priority drive with cells partitioned for ores takes every ore first, and a low priority drive of
 unpartitioned cells is the overflow that is emptied first. A network with one priority and no partition behaves
@@ -167,9 +176,9 @@ click uses the tool and opens no window, as on a chest.
 | ME Crafting CPU (all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
-| ME Interface | 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
+| ME Interface | the priority, 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids), the entity it faces and whether the bus uses its items, fluids or both, status |
-| ME Storage Bus | mode (read and write, read only, write only), priority, 18 filters (items and fluids), how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
+| ME Storage Bus | mode (read and write, read only, write only), priority, 5 card slots, 18 filters (9 more per Capacity Card; a blacklist with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
 the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
@@ -195,7 +204,12 @@ Its window has **9 config rows** (AE2's config slots): each an item (with qualit
 * Mined, the fluid in its sides goes into the network; destroyed, it is lost like a tank's. Interfaces of saves from
   before 0.2.0 get their sides when the game is loaded; a side that an existing pipe, pump or tank points at is set
   to **Off**, so a pipeline that ran past the interface is not drained (switch it to Import in the window).
-* The rows and sides are kept in blueprints and copied with the entity settings (shift right click, shift left
+* **Priority** (in its window, -1000 to 1000, default 0; me-network issue #17): when the network has less of an item
+  or fluid than its interfaces want, the interfaces of the higher priority are filled first; one of a lower priority
+  gets only what is left after them (its fluid side says "ME Interfaces of a higher priority lack it"). What an
+  interface already holds stays in it. Interfaces of the same priority share what there is in the order they are
+  visited.
+* The rows, sides and the priority are kept in blueprints and copied with the entity settings (shift right click, shift left
   click) and by cloning. Interfaces of older saves: every filtered slot becomes a config row of one stack (several
   slots with the same item add up), the first time the interface works after the update; the slot filters are
   cleared. Old blueprints with filters are converted the same way.
@@ -232,11 +246,22 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
   "Partitions and priorities"): a high priority bus with filters is an **input chest** (the network puts those items
   there first, an inserter or a machine takes them out), a low priority bus without filters an **overflow chest**.
   At the same priority the cells are filled first and the chest is emptied first.
-* **Mode** (in its window): **Read and write**; **Read only**: the network takes from the chest and shows it, but
-  never puts anything in (a factory's output chest); **Write only**: the network puts items in but does not show or
-  take them (a chest that a train or another factory empties).
-* **Filters**: up to 18 items (with quality) and fluids. With filters the bus shows and stores only those; without
-  filters everything the network can store (a bus with only fluid filters takes no item).
+* **Mode** (in its window): **Read and write** (AE2: bi-directional); **Read only** (AE2: extract only): the network
+  takes from the chest and shows it, but never puts anything in (a factory's output chest); **Write only** (AE2: insert
+  only): the network puts items in but does not show or take them (a chest that a train or another factory empties).
+* **Filters**: 18 items (with quality) and fluids, 9 more with each **Capacity Card** (up to 63). With filters the bus
+  shows and stores only those; without filters everything the network can store (a bus with only fluid filters takes
+  no item). With an **Inverter Card** the filters are a **blacklist**: everything except them; with a **Fuzzy Card** a
+  filter matches its item in **every quality**.
+* **Filter on extract** (a check box, on by default, AE2's setting of the same name): on, the filters decide what goes
+  in and what the network sees and takes; off, they decide only what goes in, and the network sees and takes everything
+  in the chest it can hold (an input chest that also takes back what a machine left in it).
+* **From contents** sets the filters to what the chest holds now (AE2's "partition storage"), **Clear** removes them.
+* **Upgrade cards**: 5 card slots in its window (see **Upgrade cards**): Capacity, Inverter, Fuzzy and Overflow
+  Destruction Card. With an **Overflow Destruction Card** whatever the network stores into the bus and does not fit
+  into the chest is **destroyed** (only what its filters let in, and only while it faces a chest or tank): the window
+  says so in red and counts what it destroyed. Give such a bus a low priority, or it takes everything before the
+  drives.
 * Inserters, players and trains change the chest without the network noticing at once: every bus looks at its
   chest about every quarter second (with more than 8 storage buses each less often: 50 buses, every 1.75 s). Until
   then the terminal may show a few items that are gone, or not yet show new ones; taking out always checks the chest
@@ -246,10 +271,12 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
   drive, a cable, ...) does nothing either ("Faces an ME block"): no loops.
 * Removing the bus or the chest takes the chest's items out of the network at once (a chest destroyed by another
   mod without an event: at the bus's next look); nothing is lost, the items stay in the chest.
-* Not shown or moved: spoiling items, items with an inventory or own data (armor, blueprints, ...). Items are taken
-  out by count: a damaged item or a partly used tool or magazine in the chest
-  comes out as a new one would.
-* Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
+* Not shown or moved: spoiling items, items with an inventory or own data (armor, blueprints, ...). AE2 can show
+  items a bus cannot take as present; here they are not shown at all, because every plan, level maintainer and
+  circuit signal counts on what the network shows. Items are taken out by count: a damaged item or a partly used tool
+  or magazine in the chest comes out as a new one would.
+* Settings (mode, priority, filters, filter on extract) are kept in blueprints, copied by settings paste and by
+  cloning; so is which cards it has, but the cards themselves are items (see **Upgrade cards**).
 
 ## ME Storage Bus on a tank
 
@@ -268,7 +295,10 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
 * The network **stores into** the segment by the bus's **filters** (its fluid filters) and **priority**, together with
   the drives and the item storage buses (see "Partitions and priorities"): at the same priority the fluid cells are
   filled first and the tank is emptied first. A tank takes one fluid: a tank holding crude oil gets no water.
-* **Mode**: read and write, read only, write only, as for the item storage bus.
+* **Mode**: read and write, read only, write only, as for the item storage bus; filters (fluids), "filter on
+  extract", "From contents", "Clear" and the cards too (a Fuzzy Card does nothing for fluids). With an **Overflow
+  Destruction Card** what does not fit into the segment is destroyed; a tank that holds another fluid or is at another
+  temperature takes nothing and destroys nothing.
 * **Temperature**: the network stores one temperature per fluid (see "Fluids"). A tank at another temperature (hot
   steam) is shown and can be taken from (what leaves the network has the fluid's default temperature, as with the
   import bus), but the network puts nothing into it, so the tank keeps its heat. The window shows the
@@ -281,6 +311,36 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
 * A bus facing an ME block (an ME Interface's sides too) does nothing. A machine's fluid box works as a small storage
   of its own (machines are not part of segments); fluid wagons are not supported.
 * Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
+
+## Upgrade cards
+
+AE2's upgrade cards (me-network issue #17, technology **ME Upgrade Cards** after ME 64k Storage, with its cost). Each
+card is made from a component card and one item:
+
+| Card | Recipe (standalone) | Goes into | Does |
+|---|---|---|---|
+| Basic Card (2 per craft) | 2 iron plates, 2 copper cables, an electronic circuit, an advanced circuit | | component |
+| Advanced Card (2 per craft) | 2 iron plates, a processing unit, an electronic circuit, an advanced circuit | | component |
+| Capacity Card | basic card + iron chest | storage bus, up to 5 | 9 more filters each (18 + 9 per card, up to 63) |
+| Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
+| Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
+| Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
+| Equal Distribution Card | advanced card + advanced circuit | storage cells | every kind gets the same share of the cell |
+
+The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards and one of each
+other card, `StorageBusPart` and `InitUpgrades`).
+
+* **Putting a card in:** open the storage bus and click a card slot with the card in hand (one card of the stack goes
+  in); click a card to take it into the hand, shift click into the inventory. A card the bus cannot take, or one more
+  of a kind than it takes, is refused with a flying text.
+* **Cards are items and are never made or lost by the network:** a mined bus gives its cards back (with the bus), a
+  destroyed one drops them, as a drive drops its cells.
+* **Blueprints, copy/paste, settings paste and clones** copy which cards a bus has, not the cards: a bus built from a
+  blueprint takes its cards from the network as soon as the network has them (its window lists the ones it still
+  waits for); a settings paste takes them from your inventory first, then from the network, and puts the cards the
+  bus had beyond them into your inventory. Taking a card out by hand ends the waiting. A bus without its cards works
+  as if it had none.
+* A **Recipe paste** (a crafting machine onto the bus) changes only the filters; cards and settings stay.
 
 ## Old saves (from before the rework)
 
@@ -527,9 +587,9 @@ largest amounts first).
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
 | ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network) | yes (priority) | yes (patterns pending a blank pattern); clone: priority |
-| ME Interface | config rows (item with quality, or fluid; amount), the four sides | yes | yes (old blueprints with slot filters, and of the old fluid interface, are converted) |
+| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority | yes | yes (old blueprints with slot filters, and of the old fluid interface, are converted) |
 | ME Import Bus, ME Export Bus | filters (items and fluids) | yes | yes |
-| ME Storage Bus | mode, priority, filters (items and fluids) | yes | yes |
+| ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
 | ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
@@ -543,7 +603,7 @@ The block is set up for the machine's recipe; what it had is replaced:
 | Paste onto | Result | Kept | Holds |
 |---|---|---|---|
 | ME Interface | config rows = the ingredients in the recipe's order: one full stack of each item (whatever one craft needs), a fluid row of a side's volume for each fluid | sides that are off; a side tied to a fluid that is in the recipe again | 9 rows, 4 fluids |
-| ME Storage Bus | filters = the ingredients: on a chest or cargo wagon the items, on a tank the fluids, facing nothing yet both | mode, priority | 18 filters |
+| ME Storage Bus | filters = the ingredients: on a chest or cargo wagon the items, on a tank the fluids, facing nothing yet both | mode, priority, filter on extract, the cards | 18 filters (9 more per Capacity Card) |
 | ME Export Bus | filters = the ingredients, items and fluids | | 9 filters |
 | ME Import Bus | filters = the **products**, items and fluids | | 9 filters |
 
@@ -640,6 +700,15 @@ network and does nothing when the network does not work. `scripts/fork-me-io.lua
 (since issue #5 of ME Network each one at a tick of its own, `scripts/fork-me-schedule.lua`, from the one `on_tick`
 handler of `control.lua`), `scripts/fork-me-migrate.lua` converts old
 networks, `scripts/fork-me-terminal.lua` is the terminal and routes the GUI events of every ME window.
+
+### Upgrade cards and priorities (me-network issue #17)
+
+Design record: `docs/ME-REWORK.md`, "Upgrade cards, storage bus settings, the Cell Workbench and priorities" (AE2's
+numbers with their source, the cards' storage, how a blacklist, a fuzzy filter, "filter only what goes in" and the void
+fit into the storage engine's lookups, the interface shortfalls). The cards are items (`prototypes/cards.lua`); a
+storage bus keeps them in its record (`rec.cards`, `rec.want`); `apply()` in `scripts/fork-me-storagebus.lua` turns
+filters and cards into `partition`, `deny`, `fnames`, `void` and `inonly`, which `accepts()` and the lookups of
+`scripts/fork-me-network.lua` read. A network without cards takes exactly the code paths of 0.3.0.
 
 ### Windows (issue #68, R3)
 
@@ -952,9 +1021,9 @@ partitions start empty.
   Circuit Interface (issue #38).
 * Autocrafting plans and crafts only normal quality, no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
-* Network storage (issue #68): no channels, no fluid wagons on the storage bus, no fuzzy partitions (a partition names exact items
-  and qualities), no "inverted" partitions, no upgrade or speed cards on buses; the terminal search matches
-  internal item names only; spoiling items, items with an inventory and damaged items cannot be stored. Old
+* Network storage (issue #68): no channels, no fluid wagons on the storage bus, no cards on the import and export bus
+  and the ME Interface (capacity, speed, fuzzy, inverter, redstone and crafting card: a follow-up of me-network issue
+  #17); the terminal search matches internal item names only; spoiling items, items with an inventory and damaged items cannot be stored. Old
   ghosts of ME blocks disappear when an old save is loaded (the game removes them before any script runs).
 * The ME windows cannot be opened in the headless test (no player): their data and set functions are tested,
   building the windows, the clicks and the replacement of the game's windows are checked by hand (click-through
@@ -978,6 +1047,15 @@ partitions start empty.
 * Recipe paste (issue #12) is tested headless through its handler: the shift clicks themselves, the game raising the
   event for each machine and how the flying text of several lines looks need the real game.
 * Balance (costs, speeds, tier) and the look of the sprites are untested in the real game.
+* Upgrade cards and priorities (me-network issue #17), where the mod differs from AE2: "fuzzy" means any quality
+  (Factorio has no damage values or NBT, so AE2's fuzzy modes do not apply); a storage bus with an Overflow
+  Destruction Card destroys nothing while it faces nothing, and a tank holding another fluid or at another temperature
+  destroys nothing (AE2 voids into a bus without an inventory); items with tags are never destroyed; a storage bus never
+  shows what it cannot take (AE2 has a switch); cards a blueprint wants come from the network (AE2's memory card takes
+  them from the player's inventory); interface priority fills the higher priority interface first when the network is
+  short (AE2's code uses it only to stop a lower priority interface from pulling stock out of a higher one through a
+  storage bus, which this mod refuses anyway); partitioned storage is filled before storage that only holds the item
+  (AE2: one pass for both). The card window, the red warning and the flying texts are untested in the real game.
 
 ## Testing
 
@@ -1142,6 +1220,29 @@ message), on a pipe (fluids) and facing nothing (both); fixture recipes with 20 
 5 fluids (rows, fluids and filters full, no side left); a furnace while smelting and its previous recipe once idle; an
 assembler and a furnace without a recipe; a paste between two ME blocks is left to their own handlers. It reports
 `recipe paste test: ok`.
+
+The upgrade card test (me-network issue #17, own network: two drives, storage buses on chests, a tank and nothing)
+checks the defaults of a bus without cards (18 filters, no extra settings), Capacity Cards (30 filters kept, 18, 27 and
+63 apply; a card of another kind and one more than the limit are refused; a card taken out), the Inverter Card (iron
+refused, copper taken; the blacklisted item in the chest not shown, then shown and taken with "filter on extract" off),
+"filter only what goes in" on a whitelist, the Fuzzy Card (another quality only with the card, stored and shown), the
+Overflow Destruction Card on a chest (what fits, the rest destroyed and counted, an unfiltered key kept, `can_insert`,
+the window data) and on a tank, a voiding bus facing nothing (destroys nothing), From contents and Clear, and that no
+card is ever made or lost: every card of the area counted before and after a bus mined (cards in the buffer), destroyed
+and vanished (spilled), a blueprint and a revived ghost (wants the cards, takes one when the network gets it), a
+settings paste (the extra card into the network, the wanted one from it), a clone and a card taken by hand; then a
+recipe paste that changes only the filters. It reports `ME upgrade card test: ok`. Mutations checked to fail it: no
+void, no fuzzy lookup.
+
+The priority test (issue #17, own network) checks the storage order with a blacklist bus built first and a whitelist
+bus at priority 5 (the whitelist gets its item, the blacklist the rest of its priority, a blacklisted item goes to the
+cells before a bus at -5), a partitioned cell behind a higher priority bus, a bus that holds an item before an empty
+cell of its priority, taking out from the lowest priority first; two ME Interfaces of priority 0 and 10 that want 50
+gears and 1000 water (nothing registered while no interface has a priority; with 30 gears and 600 water the high one
+gets all, with 40 and 1400 more both end full); the interface priority in a blueprint, a paste, a clone and the window
+data; and the pattern fall-back (a provider of priority 10 whose pattern lacks its input: the provider of priority 0 is
+used, the high one once its input is there, the first one's shortfall when neither can run). It reports `ME priority
+test: ok`. A mutation without the reservation was checked to fail it.
 
 `python tools/devcheck/devcheck.py migrate --from-ref v0.1.0` makes a save with ME Network 0.1.0 (three fluid
 interfaces, the fluid buses and the fluid storage bus with settings and fluid, an item interface next to a pipe with

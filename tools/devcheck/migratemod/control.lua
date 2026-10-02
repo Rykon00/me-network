@@ -169,6 +169,17 @@ local function check_unified(st)
 	local maint = at("me-level-maintainer", 40.5, 2.5)
 	local m = maint and remote.call("gregtorio-me-circuit", "get_maintainer", maint)
 	expect(m and m.status and m.status ~= "no-target" and m.stock ~= nil, "level maintainer not checked: " .. serpent.line(m))
+	--- me-network issue #17: a storage bus and an interface of the old version have no cards and the defaults
+	local sbus = remote.interfaces["gregtorio-me-storagebus"]
+	if sbus and sbus.card_click then
+		local b = at("me-storage-bus", 30.5, 2.5)
+		local bi = b and remote.call("gregtorio-me-storagebus", "info", b)
+		local bs = b and remote.call("gregtorio-me-storagebus", "get_settings", b)
+		expect(bi and bi.max == 18 and next(bi.cards) == nil and bi.extract and not bi.inverted and not bi.fuzzy and not bi.void
+			and bi.voided == 0 and bs.extract == nil and bs.cards == nil, "old storage bus not at the defaults: " .. serpent.line(bi))
+		expect(iface and remote.call(IO, "get_interface_priority", iface) == 0 and next(remote.call(IO, "get_interface", iface).short) == nil,
+			"old interface: priority or shortfalls")
+	end
 	local ib = at("me-import-bus", 14.5, 2.5)
 	if remote.interfaces[IO].schedule then
 		local sch = ib and remote.call(IO, "schedule", ib)

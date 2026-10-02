@@ -12,6 +12,14 @@
 ---     everything), a priority (-1000 ... 1000, the order of R3 together with the drives) and a mode: read and
 ---     write, read only (the network takes from it, never puts into it) or write only (the network puts into it
 ---     and does not see what is in it). Kept in blueprints (tag fork_me_storage_bus), settings paste and clones.
+---   * Issue #17, AE2's upgrade cards in 5 card slots (rec.cards): Capacity Cards (9 more filters each, up to 5), an
+---     Inverter Card (the filters are a blacklist), a Fuzzy Card (a filter matches every quality), an Overflow
+---     Destruction Card (what the network stores into the bus and does not fit is destroyed); the setting "filter on
+---     extract" (rec.extract false: the filters decide only what goes in). The cards are items: put in and taken out
+---     by hand in the window, given back when the bus is mined, spilled when it is destroyed or vanishes. Blueprints,
+---     settings paste and clones copy which cards a bus wants (rec.want); it takes them from the player (paste) or
+---     the network (at its visits), never out of nothing. apply() turns filters and cards into the fields the
+---     storage engine reads (partition, deny, fnames, void, inonly).
 ---   * The bus's storage is an "external cell" of the storage engine (scripts/fork-me-network.lua): the
 ---     record below is that cell (ext = "storage-bus"; side = "fluid" and handler = "fluid-storage-bus" while it
 ---     faces fluid: the engine calls the fluid side's functions directly). Its `items` are a
@@ -41,9 +49,10 @@ local M = {}
 
 local KIND = "storage-bus"
 local MIN_INTERVAL = 30             -- ticks until a bus whose inventory changed reads it again
-local MAX_FILTERS = 18
+local MAX_FILTERS = 18              -- the filters without a Capacity Card (AE2's 18)
+local FILTER_LIMIT = 63             -- with five Capacity Cards (AE2: 18 + 5 x 9): what a bus keeps
 local MAX_PRIORITY = 1000
-local TAG = "fork_me_storage_bus"   -- blueprint tag: { mode, priority, filters = { keys } }
+local TAG = "fork_me_storage_bus"   -- blueprint tag: { mode, priority, filters = { keys }, extract, cards = { names } }
 local OLD_TAG = "fork_me_fluid_storage_bus"   -- the old ME Fluid Storage Bus's tag: { mode, priority, filters = { fluid names } }
 local MODES = { readwrite = true, read = true, write = true }
 local INVENTORY = T.STORAGE
@@ -112,9 +121,15 @@ local function plain(name, quality)
 	return v
 end
 
+local accepts = N.accepts
+--- may the network put `key` into the bus? (its filters: a whitelist, or a blacklist with an Inverter Card)
 local function allowed(rec, key)
-	return rec.partition == nil or rec.partition[key] == true
+	local p = rec.partition
+	if p then return p[key] == true or (rec.fnames ~= nil and accepts(rec, key)) end
+	return rec.deny == nil or accepts(rec, key)
 end
+--- may the network see and take `key`? (the same, unless the bus filters only what goes in: issue #17)
+local function shown(rec, key) return rec.inonly == true or allowed(rec, key) end
 
 --- the target inventory if the bus may use it now (a cargo wagon only while it stands in front of the bus)
 local function inventory_of(rec)
@@ -158,7 +173,7 @@ local ITEM = {
 	end,
 	--- the real count of `key` in the inventory (0 when the bus cannot take from it)
 	count = function(rec, key)
-		if rec.mode == "write" or not allowed(rec, key) then return 0 end
+		if rec.mode == "write" or not shown(rec, key) then return 0 end
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
@@ -172,6 +187,14 @@ local ITEM = {
 		if not inv then return 0 end
 		return inv.remove{ name = name, quality = q, count = count }
 	end,
+	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? (the bus takes the key and
+	--- works on an inventory now; a bus facing nothing destroys nothing)
+	voids = function(rec, key)
+		if rec.mode == "read" or not allowed(rec, key) then return false end
+		return item_of(key) ~= nil and rec.status == "ok" and inventory_of(rec) ~= nil
+	end,
+	--- the bus's record leaves the storage engine: a card still in it is spilled (a bus that vanished without an event)
+	detached = function(rec) M.spill_cards(rec) end,
 }
 
 N.ext_handlers[KIND] = ITEM             -- the fluid side: N.ext_handlers[F.HANDLER] through rec.handler
@@ -271,15 +294,20 @@ function M.visit(rec, cascade)
 	if not e.valid then return false end
 	local before = rec.target
 	local t = resolve(s, rec)
-	if rec.side == "fluid" then return F.visit(rec, cascade) end
+	if rec.side == "fluid" then
+		local changed = F.visit(rec, cascade)
+		if rec.want then M.fill_cards(rec) end
+		return changed
+	end
 	local contents = {}
 	local inv = t and inventory_of(rec)
 	if inv and rec.mode ~= "write" then
+		local all = rec.inonly or not (rec.partition or rec.deny)    -- (no filter to check: the common case)
 		for _, it in pairs(inv.get_contents()) do
 			local q = it.quality or "normal"
 			if plain(it.name, q) then
 				local key = N.key_of(it.name, q)
-				if allowed(rec, key) then contents[key] = (contents[key] or 0) + it.count end
+				if all or shown(rec, key) then contents[key] = (contents[key] or 0) + it.count end
 			end
 		end
 	end
@@ -289,6 +317,7 @@ function M.visit(rec, cascade)
 		local ok, why = N.usable(net)
 		if not ok then rec.status = why or "no-network" end
 	end
+	if rec.want then M.fill_cards(rec) end
 	return changed
 end
 --- the fluid side visits through this when its target is gone or the bus was rotated (it may face a chest now)
@@ -365,13 +394,221 @@ end
 --- settings
 --------------------------------------------------------------------------------
 
+--------------------------------------------------------------------------------
+--- issue #17: the card slots
+--------------------------------------------------------------------------------
+
+local function rules() return N.card_rules().storage_bus end
+
+--- the cards of a bus by kind: { capacity = n, ... }
+local function card_counts(rec)
+	local out = {}
+	for _, name in pairs(rec.cards or {}) do
+		local kind = N.card_kind(name)
+		if kind then out[kind] = (out[kind] or 0) + 1 end
+	end
+	return out
+end
+
+--- the filters that apply: 18, and 9 more per Capacity Card (AE2)
+local function filter_count(rec)
+	local r = rules()
+	return r.filters + r.per_capacity * (card_counts(rec).capacity or 0)
+end
+
+--- The fields the storage engine reads, from the filters, the cards and the settings: `partition` (whitelist) or
+--- `deny` (blacklist, Inverter Card) of the first filter_count() filters, `fnames` (Fuzzy Card: the item names),
+--- `void` (Overflow Destruction Card), `inonly` (filter only what goes in). A bus without cards and with the default
+--- settings gets exactly the fields of 0.3.0.
+local function apply(rec)
+	local counts = card_counts(rec)
+	local set, names
+	local n = filter_count(rec)
+	for i, key in ipairs(rec.filters or {}) do
+		if i > n then break end
+		set = set or {}
+		set[key] = true
+		if counts.fuzzy and not N.is_fluid_key(key) then
+			names = names or {}
+			names[(N.parse_key(key))] = true
+		end
+	end
+	if counts.inverter then rec.partition, rec.deny = nil, set else rec.partition, rec.deny = set, nil end
+	rec.fnames = names
+	rec.void = counts.void and true or nil
+	rec.inonly = rec.extract == false or nil
+	N.ext_touch(rec.unit)
+end
+
+--- where a bus's cards go when nobody takes them: its position (kept, a bus can vanish without an event)
+local function remember_place(rec)
+	local e = rec.entity
+	if e and e.valid then rec.where = { surface = e.surface.index, x = e.position.x, y = e.position.y } end
+end
+
+--- every card of the bus onto the ground (destroyed, vanished); the slots are empty afterwards
+function M.spill_cards(rec)
+	if not (rec.cards and next(rec.cards)) then return end
+	local e = rec.entity
+	local surface, pos
+	if e and e.valid then surface, pos = e.surface, e.position
+	elseif rec.where then surface, pos = game.get_surface(rec.where.surface), { rec.where.x, rec.where.y } end
+	for slot, name in pairs(rec.cards) do
+		if surface and prototypes.item[name] then N.spill(surface, pos, { name = name, count = 1 }) end
+		rec.cards[slot] = nil
+	end
+end
+
+--- into `target` (LuaInventory or mined buffer), what does not fit onto the ground
+local function give_cards(rec, target)
+	for slot = 1, rules().slots do
+		local name = rec.cards and rec.cards[slot]
+		if name then
+			local got = target and target.valid and prototypes.item[name] and target.insert{ name = name, count = 1 } or 0
+			if got >= 1 then rec.cards[slot] = nil end
+		end
+	end
+	M.spill_cards(rec)
+end
+
+--- can the bus take one more card `name`? (a card of a kind it takes, below that kind's limit, a free slot)
+local function card_fits(rec, name)
+	local kind = N.card_kind(name)
+	local limit = kind and rules().limits[kind]
+	if not limit then return false, "not-here" end
+	if (card_counts(rec)[kind] or 0) >= limit then return false, "limit" end
+	for slot = 1, rules().slots do
+		if not (rec.cards and rec.cards[slot]) then return slot end
+	end
+	return false, "full"
+end
+
+local function install(rec, slot, name)
+	rec.cards = rec.cards or {}
+	rec.cards[slot] = name
+	remember_place(rec)
+end
+
+--- the cards of a bus as a list of names (slot order); nil when it has none
+local function card_list(rec)
+	local out
+	for slot = 1, rules().slots do
+		local name = rec.cards and rec.cards[slot]
+		if name then
+			out = out or {}
+			out[#out + 1] = name
+		end
+	end
+	return out
+end
+
+--- A click on card slot `slot` of the window. With a card in the cursor one card of it goes in (into `slot`, else the
+--- first free slot); with an empty cursor the card in the slot goes into the cursor (`shift`: into `inventory`). Takes
+--- the bus out of waiting for blueprint cards (the player decides now). Returns a reason on failure.
+function M.card_click(entity, slot, cursor, inventory, shift)
+	local rec = rec_of(entity)
+	if not rec then return "no-bus" end
+	if cursor and cursor.valid_for_read then
+		local free, why = card_fits(rec, cursor.name)
+		if not free then return why end
+		if not (rec.cards and rec.cards[slot]) and slot >= 1 and slot <= rules().slots then free = slot end
+		install(rec, free, cursor.name)
+		if cursor.count > 1 then cursor.count = cursor.count - 1 else cursor.clear() end
+	else
+		local name = rec.cards and rec.cards[slot]
+		if not name then return nil end
+		if shift then
+			if not (inventory and inventory.valid and inventory.insert{ name = name, count = 1 } >= 1) then return "inventory-full" end
+		elseif not (cursor and cursor.set_stack{ name = name, count = 1 }) then
+			return "inventory-full"
+		end
+		rec.cards[slot] = nil
+	end
+	rec.want = nil
+	apply(rec)
+	M.visit(rec)
+	return nil
+end
+
+--- the missing ones of `want` (a list of names) for the cards a bus has, as a list
+local function missing_cards(rec, want)
+	local have = {}
+	for _, name in pairs(rec.cards or {}) do have[name] = (have[name] or 0) + 1 end
+	local out = {}
+	for _, name in ipairs(want) do
+		if (have[name] or 0) > 0 then have[name] = have[name] - 1 else out[#out + 1] = name end
+	end
+	return out, have
+end
+
+--- the wanted cards the bus still lacks, taken from the network (one each); rec.want is dropped once nothing is missing
+--- or nothing missing can ever go in
+function M.fill_cards(rec)
+	local want = rec.want
+	if not want then return end
+	local missing = missing_cards(rec, want)
+	local net = N.active_of(rec.entity)
+	local changed = false
+	for _, name in ipairs(missing) do
+		local slot = card_fits(rec, name)
+		if slot and net and N.count(net, name, "normal") >= 1 and N.extract(net, name, "normal", 1) == 1 then
+			install(rec, slot, name)
+			changed = true
+		end
+	end
+	local left = missing_cards(rec, want)
+	local possible = false
+	for _, name in ipairs(left) do if card_fits(rec, name) then possible = true end end
+	if not possible then rec.want = nil end
+	if changed then apply(rec) end
+end
+
+--- The bus is to have the cards `want` (names; a blueprint, a settings paste, a clone). Cards it has beyond them go
+--- to `player` (inventory, else the network, else the ground at the player); missing ones come from the player's
+--- inventory, then from the network, else the bus waits for them (rec.want). `player` nil: only the network.
+function M.want_cards(entity, want, player)
+	local rec = rec_of(entity)
+	if not rec then return false end
+	local list = {}
+	for _, name in ipairs(type(want) == "table" and want or {}) do
+		if type(name) == "string" and N.card_kind(name) and #list < rules().slots then list[#list + 1] = name end
+	end
+	--- what is too many goes first (so the limits leave room for the wanted ones)
+	local _, extra = missing_cards(rec, list)
+	local net = N.active_of(entity)
+	for slot = 1, rules().slots do
+		local name = rec.cards and rec.cards[slot]
+		if name and (extra[name] or 0) > 0 then
+			extra[name] = extra[name] - 1
+			rec.cards[slot] = nil
+			local inv = player and player.valid and player.get_main_inventory()
+			local got = inv and inv.insert{ name = name, count = 1 } or 0
+			if got < 1 and net then got = N.insert(net, name, "normal", 1) end
+			if got < 1 then
+				local where = player and player.valid and player.character and player.character.valid and player.character or entity
+				N.spill(where.surface, where.position, { name = name, count = 1 })
+			end
+		end
+	end
+	local inv = player and player.valid and player.get_main_inventory()
+	for _, name in ipairs(missing_cards(rec, list)) do
+		local slot = card_fits(rec, name)
+		if slot and inv and inv.get_item_count(name) >= 1 and inv.remove{ name = name, count = 1 } == 1 then install(rec, slot, name) end
+	end
+	rec.want = #missing_cards(rec, list) > 0 and list or nil
+	apply(rec)
+	if rec.want then M.fill_cards(rec) end
+	M.visit(rec)
+	return true
+end
+
 --- filters checked against the prototypes: a list of keys ("name", "name@quality", "fluid/<name>"; a plain name
---- that is no item but a fluid is that fluid), at most MAX_FILTERS
+--- that is no item but a fluid is that fluid), at most FILTER_LIMIT (the first filter_count() of them apply)
 local function clean_filters(filters)
 	local out, seen = {}, {}
 	if type(filters) ~= "table" then return out end
 	for _, key in ipairs(filters) do
-		if type(key) == "string" and #out < MAX_FILTERS and not key:find("#", 1, true) then
+		if type(key) == "string" and #out < FILTER_LIMIT and not key:find("#", 1, true) then
 			local k
 			if N.is_fluid_key(key) then
 				if prototypes.fluid[key:sub(7)] then k = key end
@@ -389,15 +626,19 @@ local function clean_filters(filters)
 	return out
 end
 
---- the settings of a bus: { mode, priority, filters = { keys } }
+--- the settings of a bus: { mode, priority, filters = { keys }, extract = false (only when the filters decide only
+--- what goes in), cards = { names } (the cards it has, or waits for; only when there are any) }
 function M.get_settings(entity)
 	local rec = rec_of(entity)
 	if not rec then return nil end
-	return { mode = rec.mode, priority = rec.priority or 0, filters = { table.unpack(rec.filters) } }
+	local out = { mode = rec.mode, priority = rec.priority or 0, filters = { table.unpack(rec.filters) },
+		cards = rec.want and { table.unpack(rec.want) } or card_list(rec) }
+	if rec.extract == false then out.extract = false end
+	return out
 end
 
---- Apply settings (missing fields keep their value). The inventory or segment is read again at once, so the
---- network shows what the new filter and mode allow.
+--- Apply settings (missing fields keep their value; `cards` is not a setting: want_cards). The inventory or segment
+--- is read again at once, so the network shows what the new filter and mode allow.
 function M.set_settings(entity, settings)
 	local rec = rec_of(entity)
 	if not (rec and type(settings) == "table") then return false end
@@ -406,17 +647,10 @@ function M.set_settings(entity, settings)
 		local p = math.floor(tonumber(settings.priority) or 0)
 		rec.priority = math.max(-MAX_PRIORITY, math.min(MAX_PRIORITY, p))
 	end
-	if settings.filters ~= nil then
-		rec.filters = clean_filters(settings.filters)
-		local set
-		for _, key in ipairs(rec.filters) do
-			set = set or {}
-			set[key] = true
-		end
-		rec.partition = set
-	end
+	if settings.filters ~= nil then rec.filters = clean_filters(settings.filters) end
+	if settings.extract == false then rec.extract = false elseif settings.extract ~= nil then rec.extract = nil end
 	rec.hidden = rec.mode == "write" or nil
-	N.ext_touch(rec.unit)
+	apply(rec)
 	M.visit(rec)
 	return true
 end
@@ -430,7 +664,7 @@ function M.set_filter(entity, index, key)
 	local rec = rec_of(entity)
 	if not rec then return false end
 	local list = {}
-	for i = 1, MAX_FILTERS do
+	for i = 1, math.max(#rec.filters, filter_count(rec)) do
 		local v
 		if i == index then v = key else v = rec.filters[i] end
 		if v then list[#list + 1] = v end
@@ -438,8 +672,41 @@ function M.set_filter(entity, index, key)
 	return M.set_filters(entity, list)
 end
 
+--- AE2's "partition storage": the filters become what the chest or the tank's segment holds now (plain items that
+--- the network can hold, in any order of their count; at most the filters that apply)
+function M.filters_from_contents(entity)
+	local rec = rec_of(entity)
+	if not rec then return false end
+	local s = state()
+	local t = resolve(s, rec)
+	local keys = {}
+	if rec.side == "fluid" then
+		local f = F.contents(rec)
+		for name in pairs(f) do keys[#keys + 1] = "fluid/" .. name end
+	else
+		local inv = t and inventory_of(rec)
+		for _, it in pairs(inv and inv.get_contents() or {}) do
+			local q = it.quality or "normal"
+			if plain(it.name, q) then keys[#keys + 1] = N.key_of(it.name, q) end
+		end
+	end
+	table.sort(keys)
+	local n = filter_count(rec)
+	while #keys > n do keys[#keys] = nil end
+	return M.set_settings(entity, { filters = keys })
+end
+
+function M.clear_filters(entity) return M.set_settings(entity, { filters = {} }) end
+
+--- the filters that apply to the bus now (18, more with Capacity Cards)
+function M.max_filters(entity)
+	local rec = rec_of(entity)
+	return rec and filter_count(rec) or MAX_FILTERS
+end
+
 --- the window's data: { side, mode, priority, filters, max, status, target, items, types, contents; on fluid also
---- fluid, amount, temperature, segment }
+--- fluid, amount, temperature, segment; issue #17: cards = { [slot] = name }, slots, want (the cards it waits for),
+--- extract, inverted, fuzzy, void, voided (amount destroyed so far) }
 function M.info(entity)
 	local rec = rec_of(entity)
 	if not rec then return nil end
@@ -449,9 +716,15 @@ function M.info(entity)
 		types = types + 1
 	end
 	local t = rec.target
+	local cards = {}
+	for slot, name in pairs(rec.cards or {}) do cards[slot] = name end
+	local counts = card_counts(rec)
 	local out = { side = rec.side or "item", mode = rec.mode, priority = rec.priority or 0,
-		filters = { table.unpack(rec.filters) }, max = MAX_FILTERS, status = rec.status or "ok",
-		target = t and t.valid and t.name or nil, items = items, types = types, contents = rec.items }
+		filters = { table.unpack(rec.filters) }, max = filter_count(rec), status = rec.status or "ok",
+		target = t and t.valid and t.name or nil, items = items, types = types, contents = rec.items,
+		cards = cards, slots = rules().slots, want = rec.want and missing_cards(rec, rec.want) or nil,
+		extract = rec.extract ~= false, inverted = counts.inverter ~= nil, fuzzy = counts.fuzzy ~= nil,
+		void = rec.void == true, voided = rec.voided or 0 }
 	if rec.side == "fluid" then
 		out.fluid, out.amount, out.temperature, out.segment = rec.fluid, items, rec.temp, rec.seg
 	end
@@ -459,6 +732,7 @@ function M.info(entity)
 end
 
 M.MAX_FILTERS = MAX_FILTERS
+M.FILTER_LIMIT = FILTER_LIMIT
 
 --------------------------------------------------------------------------------
 --- events
@@ -492,28 +766,31 @@ local function settings_of_tags(tags)
 end
 M.settings_of_tags = settings_of_tags
 
---- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
+--- `tags`: blueprint tags of a built ghost; `source`: the original of a clone. The cards of the tag or the source are
+--- wanted, taken from the network (issue #17): never copied.
 function M.on_built(entity, tags, source)
 	if not is_bus(entity) then return end
 	local rec = register(entity)
 	local t = settings_of_tags(tags)
+	if not t and source and is_bus(source) then t = M.get_settings(source) end
 	if t then
 		M.set_settings(entity, t)
-	elseif source and is_bus(source) then
-		M.set_settings(entity, M.get_settings(source))
+		if type(t.cards) == "table" and #t.cards > 0 then M.want_cards(entity, t.cards, nil) end
 	else
 		M.visit(rec)
 	end
 end
 
---- a removed entity: a bus lets its inventory or segment go (the network module drops its cell); an inventory a
---- bus uses leaves the network at once; a removed fluid entity is the fluid side's business
-function M.on_removed(entity)
+--- a removed entity: a bus lets its inventory or segment go (the network module drops its cell); its cards go into
+--- `buffer` (mined) or onto the ground (destroyed, removed by a script); an inventory a bus uses leaves the network at
+--- once; a removed fluid entity is the fluid side's business
+function M.on_removed(entity, buffer)
 	if not (entity and entity.valid and entity.unit_number) then return end
 	local s = storage.fork_me_sbus
 	local unit = entity.unit_number
 	local rec = N.ext_get(unit)
 	if rec and rec.ext == KIND then
+		give_cards(rec, buffer)
 		if s then
 			release(s, rec)
 			unlist(s.list, unit)
@@ -540,9 +817,15 @@ function M.on_rotated(entity)
 	if rec then M.visit(rec) end
 end
 
+--- settings paste between buses: the settings, and the source's cards are wanted (from the player, then the network;
+--- cards beyond them go to the player)
 function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
-	if is_bus(src) and is_bus(dst) then M.set_settings(dst, M.get_settings(src)) end
+	if not (is_bus(src) and is_bus(dst)) then return end
+	local st = M.get_settings(src)
+	if st.extract == nil then st.extract = true end
+	M.set_settings(dst, st)
+	M.want_cards(dst, st.cards or {}, event.player_index and game.get_player(event.player_index) or nil)
 end
 
 --- blueprint hook of the autocrafting module (one on_player_setup_blueprint handler)
@@ -550,7 +833,7 @@ function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
 		if is_bus(entity) then
 			local st = M.get_settings(entity)
-			if st and (st.mode ~= "readwrite" or st.priority ~= 0 or #st.filters > 0) then
+			if st and (st.mode ~= "readwrite" or st.priority ~= 0 or #st.filters > 0 or st.extract == false or st.cards) then
 				bp.set_blueprint_entity_tag(index, TAG, st)
 			end
 		end
@@ -578,6 +861,7 @@ function M.on_configuration_changed()
 		local rec = register(e)
 		rec.target, rec.target_unit, rec.dir, rec.box, rec.seg = nil, nil, nil, nil, nil
 		rec.filters = clean_filters(rec.filters)          -- (a save before issue #3 had item keys only: unchanged)
+		if rec.cards or rec.extract == false then apply(rec) end   -- (no cards before issue #17: the fields stay)
 	end
 	for _, e in ipairs(all) do M.visit(N.ext_get(e.unit_number)) end
 end
@@ -593,13 +877,23 @@ remote.add_interface("gregtorio-me-storagebus", {
 	get_settings = function(entity) return M.get_settings(entity) end,
 	set_settings = function(entity, settings) return M.set_settings(entity, settings) end,
 	set_filter = function(entity, index, key) return M.set_filter(entity, index, key) end,
-	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
+	--- `player_index`: the player of a settings paste (cards from and to its inventory)
+	paste = function(source, destination, player_index)
+		M.on_entity_settings_pasted{ source = source, destination = destination, player_index = player_index }
+	end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
 	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone)
 	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
-	--- what the removal events do for an inventory a bus uses (destroy() raises none)
-	removed = function(entity) M.on_removed(entity) end,
+	--- what the removal events do for an inventory a bus uses (destroy() raises none); `buffer`: a mined bus's cards
+	removed = function(entity, buffer) M.on_removed(entity, buffer) end,
 	rotated = function(entity) M.on_rotated(entity) end,
+	--- issue #17: the card slots (the window's click: a LuaItemStack as the cursor), wanted cards, the partition buttons
+	card_click = function(entity, slot, cursor, inventory, shift) return M.card_click(entity, slot, cursor, inventory, shift) end,
+	want_cards = function(entity, want, player_index)
+		return M.want_cards(entity, want, player_index and game.get_player(player_index) or nil)
+	end,
+	from_contents = function(entity) return M.filters_from_contents(entity) end,
+	clear = function(entity) return M.clear_filters(entity) end,
 })
 
 --- issue #3: the old remote of the ME Fluid Storage Bus works on the storage bus (its fluid side)
