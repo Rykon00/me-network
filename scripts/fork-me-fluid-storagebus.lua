@@ -1,9 +1,11 @@
 --------------------------------------------------------------------------------
---- FORK AE2: ME FLUID STORAGE BUS (issue #68; prototypes/fluids.lua, docs/ME-REWORK.md "Fluid storage bus")
----   * A rotatable 1x1 ME block that faces a storage tank (or any entity with a fluid box that is no ME block):
----     the fluid of that tank's FLUID SEGMENT becomes storage of the network. A tank shares its fluid with the
----     pipes and tanks of its segment, so the segment, not the tank, is the unit of storage: two tanks of one
----     segment hold one amount of fluid and are counted once.
+--- FORK AE2: THE FLUID SIDE OF THE ME STORAGE BUS (issue #68: the ME Fluid Storage Bus; issue #3 of me-network:
+--- one storage bus for items and fluids, scripts/fork-me-storagebus.lua; docs/ME-REWORK.md "Fluid storage bus")
+---   * A storage bus that faces a storage tank (or any entity with a fluid box that is no ME block) makes the fluid
+---     of that tank's FLUID SEGMENT storage of the network. A tank shares its fluid with the pipes and tanks of its
+---     segment, so the segment, not the tank, is the unit of storage: two tanks of one segment hold one amount of
+---     fluid and are counted once. The storage bus module decides the side when it resolves the target
+---     (`take`) and hands the fluid side's visits to this module.
 ---   * Identity: the faced fluid box's segment id (LuaFluidBox.get_fluid_segment_id), "s<id>". A fluid box that
 ---     belongs to no segment (a machine's box) is its own storage, "u<unit>:<box>". One bus per segment: a second
 ---     bus on the same segment, through any of its tanks, gets the status "shared-target" and takes over when the
@@ -11,41 +13,35 @@
 ---     reads the id again, and two buses that end up on one segment are resolved in unit order (the lower unit
 ---     number keeps it, the other is cleared at once, so the segment is never counted twice).
 ---   * Contents: get_fluid_segment_contents, a snapshot per bus applied as a difference in the I/O step (15
----     ticks, scripts/fork-me-io.lua), VISITS_PER_STEP buses round robin, as the item storage bus does. Every
----     insert and extract through the bus works on the real segment: the engine asks `count` (the segment's real
----     amount, 0 when the bus no longer owns the segment) before it takes and corrects the snapshot.
+---     ticks, scripts/fork-me-io.lua), VISITS_PER_STEP fluid side buses round robin (the item side has its own
+---     list). Every insert and extract through the bus works on the real segment: the engine asks `count` (the
+---     segment's real amount, 0 when the bus no longer owns the segment) before it takes and corrects the snapshot.
 ---   * Extract and insert: the faced entity's remove_fluid / insert_fluid act on the whole segment (tested in
 ---     2.0.77); a box without a segment is changed through LuaFluidBox. Insert asks how much fits: the segment's
 ---     capacity (LuaFluidBox.get_capacity is the segment's) minus its contents, nothing if it holds another fluid
 ---     or its filter is another fluid.
 ---   * Temperature (the network keeps one temperature per fluid, R2): the segment's fluid is read at whatever
----     temperature it has, like the fluid import bus (what leaves the network has the fluid's default
----     temperature). Inserts are refused while the segment's temperature differs from the fluid's default by more
----     than TEMP_TOLERANCE (the status "temperature"), so the network never mixes its fluid into hot steam.
----   * Settings: fluid filters (a whitelist; none = every fluid), priority (-1000 ... 1000, shared with the drives
----     and the item storage buses) and mode (read and write, read only, write only). Kept in blueprints (tag
----     fork_me_fluid_storage_bus), settings paste and clones.
---- State: the records live in the network module (storage.fork_me_net.ext, they are external cells); this module
---- keeps the visit list and which bus owns which segment (storage.fork_me_fsbus).
+---     temperature it has, like the import bus (what leaves the network has the fluid's default temperature).
+---     Inserts are refused while the segment's temperature differs from the fluid's default by more than
+---     TEMP_TOLERANCE (the status "temperature"), so the network never mixes its fluid into hot steam.
+--- State: the records are the storage bus's (storage.fork_me_net.ext, external cells, side = "fluid"); this module
+--- keeps the fluid side's visit list and which bus owns which segment (storage.fork_me_fsbus).
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
 
 local M = {}
 
-local KIND = "fluid-storage-bus"
-local VISITS_PER_STEP = 8           -- bus visits per I/O step (every 15 ticks)
-local MAX_FILTERS = 5
-local MAX_PRIORITY = 1000
-local TAG = "fork_me_fluid_storage_bus"   -- blueprint tag: { mode, priority, filters = { fluid names } }
-local MODES = { readwrite = true, read = true, write = true }
+local OLD_KIND = "fluid-storage-bus"      -- the old ME Fluid Storage Bus (records until scripts/fork-me-unify.lua runs)
+local VISITS_PER_STEP = 8                 -- fluid side bus visits per I/O step (every 15 ticks)
 local PREFIX = "fluid/"
 local EPS = 1e-6
 local TEMP_TOLERANCE = 1            -- degrees: a segment this close to the default temperature takes the network's fluid
-local FRONT = {
-	[defines.direction.north] = { 0, -1 }, [defines.direction.east] = { 1, 0 },
-	[defines.direction.south] = { 0, 1 }, [defines.direction.west] = { -1, 0 },
-}
+
+--- the storage bus module's visit (set by it): a visit whose target is gone or turned away resolves the target again
+M.resolve_visit = nil
+--- the storage bus module puts a bus that lost its fluid target into its own visit list (set by it)
+M.lost = nil
 
 local function state()
 	local s = storage.fork_me_fsbus
@@ -56,11 +52,8 @@ local function state()
 	return s
 end
 
-local function is_bus(entity) return entity and entity.valid and N.kind_of(entity.name) == KIND end
-
-local function rec_of(entity)
-	return entity and entity.valid and entity.unit_number and N.ext_get(entity.unit_number) or nil
-end
+--- a record of a bus on fluid (the storage bus's fluid side, or an old fluid storage bus)
+local function on_fluid(rec) return rec ~= nil and (rec.side == "fluid" or rec.ext == OLD_KIND) end
 
 local function fluid_of(key)
 	if not N.is_fluid_key(key) then return nil end
@@ -125,10 +118,10 @@ local function accepts(rec, name)
 end
 
 --------------------------------------------------------------------------------
---- the external cell's functions (called by the storage engine)
+--- the external cell's functions (the storage bus's dispatch calls them on its fluid side)
 --------------------------------------------------------------------------------
 
-N.ext_handlers[KIND] = {
+M.handlers = {
 	--- units of `key` the storage takes now
 	room = function(rec, key)
 		if rec.mode == "read" or not allowed(rec, key) then return 0 end
@@ -183,6 +176,7 @@ N.ext_handlers[KIND] = {
 		return n
 	end,
 }
+N.ext_handlers[OLD_KIND] = M.handlers     -- records of old fluid storage buses until they are replaced
 
 --------------------------------------------------------------------------------
 --- target, claim and visit
@@ -191,11 +185,6 @@ N.ext_handlers[KIND] = {
 local function release(s, rec)
 	if rec.seg and s.claims[rec.seg] == rec.unit then s.claims[rec.seg] = nil end
 	rec.seg = nil
-end
-
-local function drop_target(s, rec)
-	release(s, rec)
-	rec.target, rec.target_unit, rec.box = nil, nil, nil
 end
 
 --- the fluid box of `o` the bus uses: the one with a pipe connection to the bus's tile, else the only one, else
@@ -216,36 +205,39 @@ local function pick_box(o, bus_pos)
 	return first_seg or 1
 end
 
---- the entity in front of the bus; sets rec.target and rec.box, or rec.status
-local function find_target(s, rec)
-	local e = rec.entity
-	local t = rec.target
-	if t and t.valid and rec.dir == e.direction and rec.box then return t end
-	drop_target(s, rec)
-	rec.dir = e.direction
-	local d = FRONT[e.direction] or FRONT[defines.direction.north]
-	rec.status = "no-target"
-	for _, o in pairs(e.surface.find_entities_filtered{ position = { e.position.x + d[1], e.position.y + d[2] } }) do
-		if o.valid and o ~= e then
-			if N.kind_of(o.name) or o.name:sub(1, 3) == "me-" then
-				rec.status = "me-target"                     -- an ME block (the fluid interface too): no loops
-				return nil
-			end
-			local ok, box = false, nil
-			if o.unit_number and o.type ~= "entity-ghost" then ok, box = pcall(pick_box, o, e.position) end
-			if ok and box then
-				rec.target, rec.target_unit, rec.box = o, o.unit_number, box
-				return o
-			end
-		end
-	end
-	return nil
+--- the storage bus resolves its target: can `o` be its fluid storage? (then rec.target, target_unit and box are set)
+function M.take(rec, o)
+	if not (o.unit_number and o.type ~= "entity-ghost") then return false end
+	local ok, box = pcall(pick_box, o, rec.entity.position)
+	if not (ok and box) then return false end
+	rec.target, rec.target_unit, rec.box = o, o.unit_number, box
+	return true
+end
+
+--- the bus leaves its fluid target (its claim goes; the storage bus clears the target)
+function M.drop(rec)
+	local s = storage.fork_me_fsbus
+	if s then release(s, rec) end
+	rec.seg, rec.box, rec.temp, rec.fluid = nil, nil, nil, nil
+end
+
+function M.list(rec)
+	local s = state()
+	for _, u in ipairs(s.list) do if u == rec.unit then return end end
+	s.list[#s.list + 1] = rec.unit
+end
+
+function M.unlist(rec)
+	local s = storage.fork_me_fsbus
+	if not s then return end
+	for i = #s.list, 1, -1 do if s.list[i] == rec.unit then table.remove(s.list, i) end end
+	s.urgent[rec.unit] = nil
 end
 
 --- does bus `other` still own `key`? (it faces the storage and its live key is still `key`)
 local function holds(other, key)
 	local o = N.ext_get(other)
-	if not (o and o.ext == KIND and o.entity.valid and o.seg == key) then return false end
+	if not (on_fluid(o) and o.entity.valid and o.seg == key) then return false end
 	if not (o.target and o.target.valid) then return false end
 	return live_key(o) == key
 end
@@ -270,7 +262,7 @@ local function claim(s, rec, cascade)
 		else
 			s.claims[key] = nil
 			local o = N.ext_get(other)
-			if cascade and o and o.ext == KIND and o.entity.valid then
+			if cascade and on_fluid(o) and o.entity.valid then
 				s.claims[key] = rec.unit
 				rec.seg = key
 				M.visit(o, false)                            -- the other bus moved to another segment: its snapshot now
@@ -282,25 +274,31 @@ local function claim(s, rec, cascade)
 	return key
 end
 
---- One visit: find the target, claim its segment, read the segment once and apply the difference to the network.
---- `cascade` (default true): a stale claim of another bus makes that bus visit too.
+--- One visit of a bus on fluid: claim its segment, read the segment once and apply the difference to the network.
+--- `cascade` (default true): a stale claim of another bus makes that bus visit too. A bus whose target is gone or
+--- that was rotated resolves its target again through the storage bus (it may face a chest now).
 function M.visit(rec, cascade)
 	local s = state()
 	local e = rec.entity
 	if not e.valid then return end
+	local t = rec.target
+	if not (t and t.valid and rec.dir == e.direction and rec.box) then
+		if M.resolve_visit and rec.ext ~= OLD_KIND then return M.resolve_visit(rec, cascade) end
+		N.ext_sync(rec.unit, {})
+		rec.status = "no-target"
+		return
+	end
 	local contents = {}
 	rec.temp, rec.fluid = nil, nil
-	if find_target(s, rec) then
-		rec.status = "ok"
-		if claim(s, rec, cascade ~= false) then
-			local held, temp = contents_of(rec)
-			for name, amount in pairs(held) do
-				if amount > EPS then
-					rec.fluid, rec.temp = name, temp
-					local key = PREFIX .. name
-					if rec.mode ~= "write" and allowed(rec, key) then contents[key] = amount end
-					if temp and math.abs(temp - default_temperature(name)) > TEMP_TOLERANCE then rec.status = "temperature" end
-				end
+	rec.status = "ok"
+	if claim(s, rec, cascade ~= false) then
+		local held, temp = contents_of(rec)
+		for name, amount in pairs(held) do
+			if amount > EPS then
+				rec.fluid, rec.temp = name, temp
+				local key = PREFIX .. name
+				if rec.mode ~= "write" and allowed(rec, key) then contents[key] = amount end
+				if temp and math.abs(temp - default_temperature(name)) > TEMP_TOLERANCE then rec.status = "temperature" end
 			end
 		end
 	end
@@ -323,159 +321,46 @@ function M.on_step()
 		s.urgent = {}
 		for _, unit in ipairs(units) do
 			local rec = N.ext_get(unit)
-			if rec and rec.ext == KIND and rec.entity.valid then M.visit(rec) end
+			if on_fluid(rec) and rec.entity.valid then M.visit(rec) end
 		end
 	end
 	for _ = 1, math.min(VISITS_PER_STEP, #s.list) do
 		if s.cursor > #s.list then s.cursor = 1 end
 		local unit = s.list[s.cursor]
 		local rec = N.ext_get(unit)
-		if rec and rec.entity.valid then
+		if on_fluid(rec) and rec.entity.valid then
 			M.visit(rec)
-			s.cursor = s.cursor + 1
+			if s.list[s.cursor] == unit then s.cursor = s.cursor + 1 end   -- (a bus that went to the item list is gone)
 		else
 			table.remove(s.list, s.cursor)
-			if rec then N.ext_detach(unit) end
+			if rec and not rec.entity.valid then N.ext_detach(unit) end
 		end
 		if #s.list == 0 then break end
 	end
 end
 
---------------------------------------------------------------------------------
---- settings
---------------------------------------------------------------------------------
-
---- filters checked against the prototypes: fluid names, at most MAX_FILTERS
-local function clean_filters(filters)
-	local out, seen = {}, {}
-	if type(filters) ~= "table" then return out end
-	for _, name in ipairs(filters) do
-		if type(name) == "string" and N.is_fluid_key(name) then name = name:sub(#PREFIX + 1) end
-		if type(name) == "string" and not seen[name] and #out < MAX_FILTERS and prototypes.fluid[name] then
-			seen[name] = true
-			out[#out + 1] = name
-		end
-	end
-	return out
-end
-
---- the settings of a bus: { mode, priority, filters = { fluid names } }
-function M.get_settings(entity)
-	local rec = rec_of(entity)
-	if not (rec and rec.ext == KIND) then return nil end
-	return { mode = rec.mode, priority = rec.priority or 0, filters = { table.unpack(rec.filters) } }
-end
-
---- Apply settings (missing fields keep their value); the segment is read again at once
-function M.set_settings(entity, settings)
-	local rec = rec_of(entity)
-	if not (rec and rec.ext == KIND and type(settings) == "table") then return false end
-	if MODES[settings.mode] then rec.mode = settings.mode end
-	if settings.priority ~= nil then
-		local p = math.floor(tonumber(settings.priority) or 0)
-		rec.priority = math.max(-MAX_PRIORITY, math.min(MAX_PRIORITY, p))
-	end
-	if settings.filters ~= nil then
-		rec.filters = clean_filters(settings.filters)
-		local set
-		for _, name in ipairs(rec.filters) do
-			set = set or {}
-			set[PREFIX .. name] = true
-		end
-		rec.partition = set
-	end
-	rec.hidden = rec.mode == "write" or nil
-	N.ext_touch(rec.unit)
-	M.visit(rec)
-	return true
-end
-
-function M.set_mode(entity, mode) return M.set_settings(entity, { mode = mode }) end
-function M.set_priority(entity, priority) return M.set_settings(entity, { priority = priority }) end
-function M.set_filters(entity, filters) return M.set_settings(entity, { filters = filters }) end
-
---- one filter button of the window: `name` nil removes it; the list stays packed
-function M.set_filter(entity, index, name)
-	local rec = rec_of(entity)
-	if not (rec and rec.ext == KIND) then return false end
-	local list = {}
-	for i = 1, MAX_FILTERS do
-		local v
-		if i == index then v = name else v = rec.filters[i] end
-		if v then list[#list + 1] = v end
-	end
-	return M.set_filters(entity, list)
-end
-
---- the window's data: { mode, priority, filters, max, status, target, fluid, amount, temperature, segment, contents }
-function M.info(entity)
-	local rec = rec_of(entity)
-	if not (rec and rec.ext == KIND) then return nil end
-	local amount = 0
-	for _, n in pairs(rec.items) do amount = amount + n end
-	local t = rec.target
-	return { mode = rec.mode, priority = rec.priority or 0, filters = { table.unpack(rec.filters) }, max = MAX_FILTERS,
-		status = rec.status or "ok", target = t and t.valid and t.name or nil, fluid = rec.fluid, amount = amount,
-		temperature = rec.temp, segment = rec.seg, contents = rec.items }
-end
-
-M.MAX_FILTERS = MAX_FILTERS
-
---------------------------------------------------------------------------------
---- events
---------------------------------------------------------------------------------
-
-local function register(entity)
-	local s = state()
-	local unit = entity.unit_number
-	local rec = N.ext_get(unit)
-	if not rec then
-		rec = { ext = KIND, unit = unit, entity = entity, items = {}, data = {}, mode = "readwrite", priority = 0,
-			filters = {}, status = "no-target" }
-		N.ext_attach(entity, rec)
-	end
-	local listed = false
-	for _, u in ipairs(s.list) do if u == unit then listed = true break end end
-	if not listed then s.list[#s.list + 1] = unit end
-	return rec
-end
-
---- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
-function M.on_built(entity, tags, source)
-	if not is_bus(entity) then return end
-	local rec = register(entity)
-	local t = type(tags) == "table" and tags[TAG] or nil
-	if type(t) == "table" then
-		M.set_settings(entity, t)
-	elseif source and is_bus(source) then
-		M.set_settings(entity, M.get_settings(source))
-	else
-		M.visit(rec)
-	end
-end
-
---- A removed entity: a bus gives up its segment (the network module drops its cell). The tank a bus faces leaves
---- the network at once. Any other removed entity with a fluid box (a pipe, a tank of the segment) may split a
---- claimed segment: its owner is visited in the next I/O step (the engine already never takes more than is there).
+--- A removed entity that is no storage bus: the tank a bus faces leaves the network at once. Any other removed
+--- entity with a fluid box (a pipe, a tank of the segment) may split a claimed segment: its owner is visited in the
+--- next I/O step (the engine already never takes more than is there).
 function M.on_removed(entity)
 	local s = storage.fork_me_fsbus
 	if not (s and entity and entity.valid and entity.unit_number) then return end
 	local unit = entity.unit_number
-	local rec = N.ext_get(unit)
-	if rec and rec.ext == KIND then
-		release(s, rec)
-		s.urgent[unit] = nil
-		for i = #s.list, 1, -1 do if s.list[i] == unit then table.remove(s.list, i) end end
-		return
-	end
 	local fb = entity.fluidbox
 	if not (fb and #fb > 0) then return end
+	local lost = {}
 	for _, bus in ipairs(s.list) do
 		local r = N.ext_get(bus)
-		if r and r.target_unit == unit then
-			drop_target(s, r)
-			r.status = "no-target"
-			N.ext_sync(bus, {})
+		if on_fluid(r) and r.target_unit == unit then lost[#lost + 1] = r end
+	end
+	for _, r in ipairs(lost) do
+		M.drop(r)
+		r.target, r.target_unit, r.status = nil, nil, "no-target"
+		N.ext_sync(r.unit, {})
+		if r.side == "fluid" and M.lost then          -- no side until it faces something again (the item list)
+			r.side = nil
+			M.unlist(r)
+			M.lost(r)
 		end
 	end
 	for i = 1, #fb do
@@ -485,69 +370,10 @@ function M.on_removed(entity)
 	end
 end
 
-function M.on_rotated(entity)
-	local rec = is_bus(entity) and rec_of(entity)
-	if rec then M.visit(rec) end
-end
-
-function M.on_entity_settings_pasted(event)
-	local src, dst = event.source, event.destination
-	if is_bus(src) and is_bus(dst) then M.set_settings(dst, M.get_settings(src)) end
-end
-
---- blueprint hook of the autocrafting module (one on_player_setup_blueprint handler)
-function M.tag_blueprint(bp, mapping)
-	for index, entity in pairs(mapping) do
-		if is_bus(entity) then
-			local st = M.get_settings(entity)
-			if st and (st.mode ~= "readwrite" or st.priority ~= 0 or #st.filters > 0) then
-				bp.set_blueprint_entity_tag(index, TAG, st)
-			end
-		end
-	end
-end
-
---- after the graph rebuild: every fluid storage bus has a record and is in the visit list, segments are claimed
---- again in unit order
-function M.on_configuration_changed()
+--- after the graph rebuild (the storage bus module lists its fluid side buses again, in unit order)
+function M.reset()
 	local s = state()
 	s.list, s.cursor, s.claims, s.urgent = {}, 1, {}, {}
-	local names = {}
-	for _, name in pairs(N.node_names()) do
-		if N.kind_of(name) == KIND then names[#names + 1] = name end
-	end
-	if #names == 0 then return end
-	local all = {}
-	for _, surface in pairs(game.surfaces) do
-		for _, e in pairs(surface.find_entities_filtered{ name = names }) do all[#all + 1] = e end
-	end
-	table.sort(all, function(a, b) return a.unit_number < b.unit_number end)
-	for _, e in ipairs(all) do
-		local rec = register(e)
-		rec.target, rec.target_unit, rec.box, rec.dir, rec.seg = nil, nil, nil, nil, nil
-	end
-	for _, e in ipairs(all) do M.visit(N.ext_get(e.unit_number)) end
 end
-
-remote.add_interface("gregtorio-me-fluid-storagebus", {
-	--- one visit now (what the I/O step does)
-	visit = function(entity)
-		local rec = rec_of(entity)
-		if rec and rec.ext == KIND then M.visit(rec) end
-		return rec ~= nil
-	end,
-	--- the I/O step's part of this module (urgent visits, then the round robin)
-	step = function() M.on_step() end,
-	info = function(entity) return M.info(entity) end,
-	get_settings = function(entity) return M.get_settings(entity) end,
-	set_settings = function(entity, settings) return M.set_settings(entity, settings) end,
-	set_filter = function(entity, index, name) return M.set_filter(entity, index, name) end,
-	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
-	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
-	--- what the removal events do (destroy() raises none)
-	removed = function(entity) M.on_removed(entity) end,
-	rotated = function(entity) M.on_rotated(entity) end,
-})
 
 return M

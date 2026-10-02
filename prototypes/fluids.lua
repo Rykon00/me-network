@@ -5,18 +5,21 @@
 ---                          temperature per fluid): k*1024 bytes, k*8 bytes per fluid type, up to 18
 ---                          types, 8 fluid units per byte. Taken out of a drive it carries its fluids in
 ---                          its tags.
----   * ME Fluid Interface = 1x1 storage tank of the network: import (tank -> network, the default) or export
----                          (network -> tank, up to a fill level).
----   * ME Fluid Import / Export Bus = rotatable 1x1 blocks that take fluid out of / put fluid into the
----                          entity they face (tank, machine).
----   * ME Fluid Storage Bus = rotatable 1x1 block: the fluid segment of the tank it faces is storage of the
----                          network (scripts/fork-me-fluid-storagebus.lua).
+---   * ME Interface fluid sides (issue #3) = four hidden 1x1 storage tanks on the ME Interface's tile, one pipe
+---                          connection each (north, east, south, west): pipes connect to the interface through them
+---                          (scripts/fork-me-io.lua).
+---   * The old ME Fluid Interface, ME Fluid Import / Export Bus and ME Fluid Storage Bus (issue #3: the ME Interface
+---                          and the buses handle fluids themselves) stay hidden so saves load them:
+---                          scripts/fork-me-unify.lua replaces each one by the unified block; their items have no
+---                          recipe and place the unified block, their entities are placeable by the unified item
+---                          (so ghosts of old blueprints survive and robots build them; the build event converts them).
 ---   * The old ME Fluid Drive (four cells crafted in, contents in script state) stays hidden so saves load;
 ---     scripts/fork-me-migrate.lua replaces each one by an ME Drive with four fluid cells of its tier.
 ---     Placing an old fluid drive item gives the same (its fluid goes into the cells).
 --- The cell numbers go into the mod-data "fork-me-network" of network.lua; the interface's numbers into the
 --- mod-data "fork-me-fluids". Runtime: scripts/fork-me-network.lua (storage), scripts/fork-me-fluids.lua
---- (fluid interface), scripts/fork-me-io.lua (buses), scripts/fork-me-fluid-storagebus.lua (fluid storage bus).
+--- (the fluid calls), scripts/fork-me-io.lua (interface sides, buses), scripts/fork-me-fluid-storagebus.lua (the fluid
+--- side of the storage bus), scripts/fork-me-unify.lua (the old fluid blocks).
 --- Sprites and icons: tools/gen_ae2_sprites.py.
 --------------------------------------------------------------------------------
 
@@ -37,10 +40,16 @@ local CELLS = {
 	{ tier = "256k", k = 256, extra = { name = "acceleration-card", count = 1 } },
 }
 
-local INTERFACE = "me-fluid-interface"
-local INTERFACE_VOLUME = 5000
-local IMPORT_BUS, EXPORT_BUS = "me-fluid-import-bus", "me-fluid-export-bus"
-local STORAGE_BUS = "me-fluid-storage-bus"   -- the fluid segment of the tank it faces is network storage
+local INTERFACE = "me-fluid-interface"          -- old (issue #3), hidden
+local INTERFACE_VOLUME = 5000                   -- the old fluid interface's tank and each side of the ME Interface
+local IMPORT_BUS, EXPORT_BUS = "me-fluid-import-bus", "me-fluid-export-bus"   -- old (issue #3), hidden
+local STORAGE_BUS = "me-fluid-storage-bus"      -- old (issue #3), hidden
+local SIDE = "me-network-interface-side"        -- a fluid side of the ME Interface
+--- old block -> the unified block (entity and item) that replaces it
+local UNIFIED_ENTITY = { [INTERFACE] = "me-network-interface", [IMPORT_BUS] = "me-import-bus",
+	[EXPORT_BUS] = "me-export-bus", [STORAGE_BUS] = "me-storage-bus" }
+local UNIFIED_ITEM = { [INTERFACE] = "me-interface", [IMPORT_BUS] = "me-import-bus",
+	[EXPORT_BUS] = "me-export-bus", [STORAGE_BUS] = "me-storage-bus" }
 
 
 
@@ -131,22 +140,51 @@ end
 
 
 --------------------------------------------------------------------------------
---- ME FLUID INTERFACE (1x1 storage tank; the runtime moves fluid between it and the network)
+--- THE ME INTERFACE'S FLUID SIDES (issue #3): four of these on the interface's tile, created by the runtime with
+--- the directions north, east, south and west; each connects to the pipe on its side only (tested in 2.0.77)
+--------------------------------------------------------------------------------
+
+data:extend({ {
+	type = "storage-tank",
+	name = SIDE,
+	icon = ICON_FORK .. INTERFACE .. ".png",
+	icon_size = 32,
+	flags = { "not-on-map", "not-blueprintable", "not-deconstructable", "not-upgradable", "hide-alt-info",
+		"no-copy-paste", "not-in-kill-statistics" },
+	hidden = true,
+	selectable_in_game = false,
+	max_health = 400,
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_mask = { layers = {} },                 -- shares the tile with the interface's container
+	fluid_box = {
+		volume = INTERFACE_VOLUME,
+		hide_connection_info = true,
+		pipe_connections = { { direction = defines.direction.north, position = { 0, 0 } } },
+	},
+	window_bounding_box = { { 0, 0 }, { 0, 0 } },
+	flow_length_in_ticks = 360,
+	pictures = { picture = { filename = "__core__/graphics/empty.png", priority = "extra-high", width = 1, height = 1 } },
+	two_direction_only = false,
+	circuit_wire_max_distance = 0,
+	localised_name = { "entity-name.me-network-interface" },
+} })
+
+
+
+--------------------------------------------------------------------------------
+--- THE OLD ME FLUID INTERFACE (1x1 storage tank; issue #3: hidden, replaced by the ME Interface when a save loads)
 --------------------------------------------------------------------------------
 
 ME.add_item{
 	name = INTERFACE,
 	icon = ICON_FORK .. INTERFACE .. ".png",
 	subgroup = "fork-me-network",
-	order = "h",
+	order = "z-h",
 	stack_size = 50,
-	place_result = INTERFACE,
-	recipe = { energy_required = 2, ingredients = {
-		{ type = "item", name = "me-interface", amount = 1 },
-		{ type = "item", name = "pump", amount = 1 },
-		{ type = "item", name = "pipe", amount = 4 },
-		{ type = "item", name = "fluix-cable", amount = 2 },
-	} },
+	place_result = UNIFIED_ENTITY[INTERFACE],
+	hidden = true,
+	recipe = false,
+	localised_description = { "item-description.fork-me-unified", { "item-name." .. UNIFIED_ITEM[INTERFACE] } },
 }
 
 data:extend({ {
@@ -155,7 +193,9 @@ data:extend({ {
 	icon = ICON_FORK .. INTERFACE .. ".png",
 	icon_size = 32,
 	flags = { "placeable-neutral", "player-creation" },
-	minable = { mining_time = 0.2, result = INTERFACE },
+	minable = { mining_time = 0.2, result = UNIFIED_ITEM[INTERFACE] },
+	placeable_by = { item = UNIFIED_ITEM[INTERFACE], count = 1 },
+	hidden = true,
 	max_health = 400,
 	corpse = "small-remnants",
 	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
@@ -182,17 +222,14 @@ data:extend({ {
 	},
 	two_direction_only = false,
 	circuit_wire_max_distance = 0,
-	--- a storage tank has no settings of its own: this lets the game copy the interface's settings
-	--- (mode, fluid, level; the runtime copies them in on_entity_settings_pasted, issue #38)
-	additional_pastable_entities = { INTERFACE },
+	localised_name = { "entity-name.fork-me-legacy", { "item-name." .. INTERFACE } },
 	localised_description = { "entity-description." .. INTERFACE },
 } })
 
 
 
 --------------------------------------------------------------------------------
---- ME FLUID IMPORT / EXPORT / STORAGE BUS (rotatable, like the item buses of network.lua; the fluid storage bus makes the
---- fluid segment of the tank it faces network storage, runtime: scripts/fork-me-fluid-storagebus.lua)
+--- THE OLD ME FLUID IMPORT / EXPORT / STORAGE BUS (issue #3: hidden, replaced by the unified buses when a save loads)
 --------------------------------------------------------------------------------
 
 local function four_way(name)
@@ -204,9 +241,9 @@ local function four_way(name)
 end
 
 for _, bus in pairs({
-	{ name = IMPORT_BUS, base = "me-import-bus", order = "h2" },
-	{ name = EXPORT_BUS, base = "me-export-bus", order = "h3" },
-	{ name = STORAGE_BUS, base = "me-storage-bus", order = "h4" },
+	{ name = IMPORT_BUS, order = "z-h2" },
+	{ name = EXPORT_BUS, order = "z-h3" },
+	{ name = STORAGE_BUS, order = "z-h4" },
 }) do
 	ME.add_item{
 		name = bus.name,
@@ -214,12 +251,10 @@ for _, bus in pairs({
 		subgroup = "fork-me-network",
 		order = bus.order,
 		stack_size = 50,
-		place_result = bus.name,
-		recipe = { energy_required = 2, ingredients = {
-			{ type = "item", name = bus.base, amount = 1 },
-			{ type = "item", name = "pump", amount = 1 },
-			{ type = "item", name = "pipe", amount = 2 },
-		} },
+		place_result = UNIFIED_ENTITY[bus.name],
+		hidden = true,
+		recipe = false,
+		localised_description = { "item-description.fork-me-unified", { "item-name." .. UNIFIED_ITEM[bus.name] } },
 	}
 	data:extend({ {
 		type = "simple-entity-with-force",
@@ -227,8 +262,9 @@ for _, bus in pairs({
 		icon = ICON_FORK .. bus.name .. ".png",
 		icon_size = 32,
 		flags = { "placeable-neutral", "player-creation" },
-		minable = { mining_time = 0.2, result = bus.name },
-		placeable_by = { item = bus.name, count = 1 },
+		minable = { mining_time = 0.2, result = UNIFIED_ITEM[bus.name] },
+		placeable_by = { item = UNIFIED_ITEM[bus.name], count = 1 },
+		hidden = true,
 		max_health = 200,
 		is_military_target = false,
 		corpse = "small-remnants",
@@ -236,7 +272,7 @@ for _, bus in pairs({
 		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 		selection_priority = 60,
 		picture = four_way(bus.name),
-		additional_pastable_entities = { bus.name },
+		localised_name = { "entity-name.fork-me-legacy", { "item-name." .. bus.name } },
 		localised_description = { "entity-description." .. bus.name },
 	} })
 end
@@ -251,7 +287,10 @@ data:extend({ {
 	type = "mod-data",
 	name = "fork-me-fluids",
 	data = {
-		interface = { name = INTERFACE, volume = INTERFACE_VOLUME },
+		interface = { name = INTERFACE, volume = INTERFACE_VOLUME },   -- the old fluid interface (issue #3)
+		side = { name = SIDE, volume = INTERFACE_VOLUME },               -- a fluid side of the ME Interface
+		--- issue #3: the old fluid blocks and what replaces them (scripts/fork-me-unify.lua)
+		unified = { entities = UNIFIED_ENTITY, items = UNIFIED_ITEM },
 	},
 } })
 
@@ -261,10 +300,14 @@ data:extend({ {
 --- TECHNOLOGIES (standalone: vanilla science)
 --------------------------------------------------------------------------------
 
---- fluid cells up to 64k, the fluid interface, the fluid buses (import, export, storage)
+--- fluid cells up to 64k (issue #3: the ME Interface and the buses move fluids from the start, like AE2's)
 ME.add_technology{ name = "me-fluid-storage", prerequisites = { "me-storage-64k", "fluid-handling" }, unit = ME.unit(3, 400),
-	recipes = { INTERFACE, IMPORT_BUS, EXPORT_BUS, STORAGE_BUS, "me-1k-fluid-storage-cell", "me-4k-fluid-storage-cell",
-		"me-16k-fluid-storage-cell", "me-64k-fluid-storage-cell" } }
+	recipes = { "me-1k-fluid-storage-cell", "me-4k-fluid-storage-cell", "me-16k-fluid-storage-cell",
+		"me-64k-fluid-storage-cell" } }
+
+--- issue #3: the old fluid blocks have no recipe; a mod that makes one for them itself (Gregtorio Continued 0.5.0)
+--- loses it in data-final-fixes.lua
+for old in pairs(UNIFIED_ITEM) do ME.removed[old] = UNIFIED_ITEM[old] end
 
 ME.add_technology{ name = "me-fluid-storage-256k", prerequisites = { "me-fluid-storage", "me-storage-256k" },
 	unit = ME.unit(4, 600), recipes = { "me-256k-fluid-storage-cell" } }

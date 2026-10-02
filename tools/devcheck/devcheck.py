@@ -394,6 +394,7 @@ RUNTIME_TESTS = (
     ("PATSWITCH", "pattern recipe switching test"), ("PATLINE", "processing line test"), ("FLUIDS", "fluid test"),
     ("FLUIDCELLS", "ME fluid cell test"), ("MER3", "ME partitions and windows test"),
     ("MESTORAGEBUS", "ME storage bus test"), ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test"),
+    ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("DONE", "all tests reported"),
 )

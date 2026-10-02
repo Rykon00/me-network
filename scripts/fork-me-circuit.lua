@@ -74,7 +74,7 @@ end
 local function valid_key(key)
 	if type(key) ~= "string" then return nil end
 	if is_fluid(key) then return prototypes.fluid[fluid_name(key)] and key or nil end
-	return prototypes.item[key] and key or nil
+	return prototypes.item[key] and (N.alias(key) or key) or nil      -- a replaced item: its replacement (issue #3)
 end
 
 --- SignalID of a key, and the key of a SignalID (items and fluids only)
