@@ -22,13 +22,10 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Drive | 1x1, holds up to 10 storage cells; has a priority |
 | Storage cell (1k ... 256k) | holds the items (AE2 bytes and types); keeps them when taken out of the drive; can be partitioned |
 | ME Terminal | powered screen, the hub: storage, **crafting**, jobs, the drives and cells of the network |
-| ME Interface | 1x1 with 18 slots and 9 config entries (item + amount): keeps those in stock in it, imports everything else |
-| ME Import Bus, ME Export Bus | 1x1, rotatable: pull items out of / put items into the machine or chest they face |
-| ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces becomes network storage, with filters, priority and read/write mode (this page, **ME Storage Bus**) |
-| ME Fluid Storage Bus | 1x1, rotatable: the fluid of the tank it faces, with every pipe and tank connected to it, becomes network storage (this page, **ME Fluid Storage Bus**) |
+| ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount): keeps those in stock in it, imports everything else (this page, **Import and export**) |
+| ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face |
+| ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority and read/write mode (this page, **ME Storage Bus**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
-| ME Fluid Interface | small tank: import/export point for fluids |
-| ME Fluid Import Bus, ME Fluid Export Bus | 1x1, rotatable: take fluid out of / put fluid into the machine or tank they face |
 | ME Crafting CPU, Co-Processing and Quantum Crafting CPU | run autocrafting jobs: 1, 2 or 4 at once (this page, **CPU tiers**) |
 | ME Pattern Provider | holds 9 encoded patterns; the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
 | Blank / Encoded Pattern | a blank pattern is encoded in the terminal's Patterns tab into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
@@ -44,14 +41,14 @@ underground cable), `me-storage-64k` (EV),
 ## Building a network
 
 1. Place an **ME Controller** and give it power (120 kW, plus 4 kW for every drive, interface, bus, pattern
-   provider, circuit interface and fluid block of the network; cables, terminals, CPUs and level maintainers
+   provider and circuit interface of the network; cables, terminals, CPUs and level maintainers
    have their own power connection).
 2. Connect everything else with **ME cables**: a cable connects on all four sides, and ME blocks that touch
    each other connect without a cable (a row of drives next to the controller is one network). Corners do not
    connect. Everything connected is one network. The cable picture shows its connections.
 3. Place **ME Drives** and put **storage cells** into them (see below), and an **ME Terminal** (powered).
-4. Import and export with **ME Interfaces** (inserters, belts) or **buses** (directly on a machine or chest); an
-   **ME Storage Bus** makes a chest part of the network's storage.
+4. Import and export with **ME Interfaces** (inserters, belts, pipes) or **buses** (directly on a machine, chest or
+   tank); an **ME Storage Bus** makes a chest or a tank part of the network's storage.
 
 The terminal's status line (and the ME Controller's status) tells what is wrong:
 
@@ -154,8 +151,8 @@ tabs:
 
 Every ME block has its own window in one style (title bar with close button, drag it by the title bar), opened by
 **clicking the block** (the normal open key). Blocks that have a window of the game (terminal, crafting CPUs and
-level maintainer: lamps; circuit interface: constant combinator; fluid interface: storage tank; ME Interface:
-container) show the ME window instead; the others (drive, controller, buses, pattern provider) have no window of
+level maintainer: lamps; circuit interface: constant combinator; ME Interface: container) show the ME window
+instead; the others (drive, controller, buses, pattern provider) have no window of
 their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second.
 
 | Block | Window |
@@ -168,11 +165,9 @@ their own and open the ME window directly. E or Escape closes it. Open windows r
 | ME Crafting CPU (all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
-| ME Fluid Interface | import/export, fluid, fill level, what the tank holds, status |
-| ME Interface | 9 config rows (item + amount), what it holds, status, **Open inventory** (the container's own window, once) |
-| ME Import/Export Bus, ME Fluid Import/Export Bus | 5 filters (items or fluids), the entity it faces, status |
-| ME Storage Bus | mode (read and write, read only, write only), priority, 18 filters, how many items it shows, the entity it faces, status |
-| ME Fluid Storage Bus | mode, priority, 5 fluid filters, the fluid it shows with amount and temperature, the entity it faces, status |
+| ME Interface | 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
+| ME Import/Export Bus | 9 filters (items and fluids), the entity it faces and whether the bus uses its items, fluids or both, status |
+| ME Storage Bus | mode (read and write, read only, write only), priority, 18 filters (items and fluids), how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
 the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
@@ -180,31 +175,50 @@ same lamp condition, so blueprints and settings paste of the game keep it).
 
 ## Import and export
 
-**ME Interface** (18 slots, like a chest for inserters and belts). Its window has **9 config rows** (AE2's config
-slots): an item (with quality) and an amount. The network keeps exactly that amount of each configured item in the
-interface: it fills up what inserters took and takes back a surplus. Everything else put in is imported into the
-network (items the network cannot store stay in the interface). A new item starts with one stack; choosing an
-item that is in another row moves it with its amount. The config is kept in blueprints and copied with the entity
-settings (shift right click, shift left click) and by cloning. Interfaces of older saves: every filtered slot
-becomes a config row of one stack (several slots with the same item add up), the first time the interface works
-after the update; the slot filters are cleared. Old blueprints with filters are converted the same way.
+**ME Interface** (18 slots, like a chest for inserters and belts, and a tank on each of its four sides for pipes).
+Its window has **9 config rows** (AE2's config slots): each an item (with quality) or a fluid, and an amount.
 
-**ME Import Bus / ME Export Bus** face one machine or chest (rotate them; the plate and the arrow show the
-side). Open one to set up to 5 item filters (the window also shows the entity it faces).
+* **Items:** the network keeps exactly that amount of each configured item in the interface: it fills up what
+  inserters took and takes back a surplus. Everything else put in is imported into the network (items the network
+  cannot store stay in the interface). A new item starts with one stack; choosing an item that is in another row
+  moves it with its amount.
+* **Fluids** (issue #3 of ME Network; before, the ME Fluid Interface did this): pipes, pumps and tanks connect to
+  any of the four sides. Each side is set in the window to **Import** (the default: everything piped in, the whole
+  pipe network up to the next pump, goes into the network), **Off** (neither), or a **fluid row**: the network keeps
+  that side's tank filled with the row's fluid up to the row's amount (at most 5000 units; pipes connected without a
+  pump share the level with the tank). A new fluid row takes the first import side that has a pipe (else the first
+  import side); several sides can keep the same row. A side holds one fluid, so **up to four fluids at once** (AE2's
+  interface holds 9 fluids; a 1x1 block has four sides). A fluid row that no side keeps does nothing. An import side
+  whose pipes run round to an export side of the same interface imports nothing (no pumping in a circle).
+* Mined, the fluid in its sides goes into the network; destroyed, it is lost like a tank's. Interfaces of saves from
+  before 0.2.0 get their sides when the game is loaded; a side that an existing pipe, pump or tank points at is set
+  to **Off**, so a pipeline that ran past the interface is not drained (switch it to Import in the window).
+* The rows and sides are kept in blueprints and copied with the entity settings (shift right click, shift left
+  click) and by cloning. Interfaces of older saves: every filtered slot becomes a config row of one stack (several
+  slots with the same item add up), the first time the interface works after the update; the slot filters are
+  cleared. Old blueprints with filters are converted the same way.
+
+**ME Import Bus / ME Export Bus** face one machine, chest or tank (rotate them; the plate and the arrow show the
+side). Open one to set up to 9 filters, items and fluids mixed (the window also shows the entity it faces and
+whether the bus uses its items, its fluids or both). On a machine with an inventory and fluid boxes (an assembling
+machine with a fluid recipe, a chemical plant) one bus does both; on a chest only items, on a tank only fluids.
 
 | Bus | Takes from / puts into | Filters |
 |---|---|---|
-| Import | the output of an assembler or furnace, or any slot of a chest, into the network | only those items; none: everything |
-| Export | from the network into the input of an assembler or furnace (up to a stack of each filtered item) or a chest | the items to export (none: nothing) |
+| Import | the output of an assembler or furnace, or any slot of a chest, and the fluid in the output boxes of a machine (a tank: all of it), into the network | only those items and fluids; none: everything |
+| Export | from the network into the input of an assembler or furnace (up to a stack of each filtered item) or a chest, and its filtered fluids into the machine's input boxes or the tank, at the fluid's default temperature | the items and fluids to export (none: nothing) |
 
-A bus moves up to 64 items per visit, an interface handles up to 8 slots per visit; every interface and bus is
-visited about every quarter second while there are fewer than 24 of them (more: each less often).
+A bus moves up to 64 items and 1000 units of fluid per visit, an interface handles up to 8 slots and its four sides
+per visit; every interface and bus is visited about every quarter second while there are fewer than 24 of them
+(more: each less often). The unified blocks move fluids as soon as they are built; the network stores fluid in fluid
+storage cells (tech ME Fluid Storage) or in a tank behind a storage bus.
 
 ## ME Storage Bus
 
 The **ME Storage Bus** (tech ME Network, MV assembler: an ME Interface, two MV pistons, aluminium plates and fluix
 cable) is AE2's storage bus: rotate it so its green plate faces a **chest, logistic chest or cargo wagon**, connect it
-to the network like any bus, and that inventory becomes storage of the network.
+to the network like any bus, and that inventory becomes storage of the network. Facing a **storage tank** it makes
+the tank's fluid storage of the network instead (see **ME Storage Bus on a tank**); what it faces decides.
 
 * The **terminal** shows what is in the chest (with the cells' items, as one total); autocrafting, export buses, ME
   Interfaces, level maintainers and the circuit interface count it and take from it.
@@ -215,8 +229,8 @@ to the network like any bus, and that inventory becomes storage of the network.
 * **Mode** (in its window): **Read and write**; **Read only**: the network takes from the chest and shows it, but
   never puts anything in (a factory's output chest); **Write only**: the network puts items in but does not show or
   take them (a chest that a train or another factory empties).
-* **Filters**: up to 18 items (with quality). With filters the bus shows and stores only those; without filters every
-  item the network can store.
+* **Filters**: up to 18 items (with quality) and fluids. With filters the bus shows and stores only those; without
+  filters everything the network can store (a bus with only fluid filters takes no item).
 * Inserters, players and trains change the chest without the network noticing at once: every bus looks at its
   chest about every quarter second (with more than 8 storage buses each less often: 50 buses, every 1.75 s). Until
   then the terminal may show a few items that are gone, or not yet show new ones; taking out always checks the chest
@@ -226,40 +240,39 @@ to the network like any bus, and that inventory becomes storage of the network.
   drive, a cable, ...) does nothing either ("Faces an ME block"): no loops.
 * Removing the bus or the chest takes the chest's items out of the network at once (a chest destroyed by another
   mod without an event: at the bus's next look); nothing is lost, the items stay in the chest.
-* Not shown or moved: spoiling items, items with an inventory or own data (armor, blueprints, ...); fluids (see
-  **ME Fluid Storage Bus**). Items are taken out by count: a damaged item or a partly used tool or magazine in the chest
+* Not shown or moved: spoiling items, items with an inventory or own data (armor, blueprints, ...). Items are taken
+  out by count: a damaged item or a partly used tool or magazine in the chest
   comes out as a new one would.
 * Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
 
-## ME Fluid Storage Bus
+## ME Storage Bus on a tank
 
-The **ME Fluid Storage Bus** (tech ME Fluid Storage, HV assembler: an ME Storage Bus, an HV pump and two pipes) is
-the storage bus for fluids: rotate it so its blue plate faces a **storage tank**, connect it to the network, and the
-fluid in that tank becomes storage of the network.
+An **ME Storage Bus** facing a **storage tank** (or any other entity with a fluid box that is no ME block) makes the
+fluid in that tank storage of the network (issue #3 of ME Network: this was the ME Fluid Storage Bus).
 
 * **What counts is the fluid segment, not the tank.** In Factorio 2.0 every tank and pipe connected to each other
   (without a pump in between) shares one fluid, one amount and one temperature. The bus shows the whole segment: two
   tanks joined by a pipe are one storage of 50200 units. Pumps separate segments.
-* **One bus per segment**: a second fluid storage bus on any tank of the same segment shows "Another ME Fluid
-  Storage Bus already uses this fluid segment" and does nothing until the first one is removed. If you remove the
+* **One bus per segment**: a second storage bus on any tank of the same segment shows "Another ME Storage Bus already
+  uses this fluid segment" and does nothing until the first one is removed. If you remove the
   pipe between two tanks, they become two segments and the second bus takes its tank's part; if you connect two
   segments, the bus that was built first keeps the joined segment and the other one stops counting at once.
-* The **terminal** shows the fluid (one total with the fluid cells); autocrafting, fluid export buses, fluid
-  interfaces, level maintainers and the circuit interface count it and take from it. Fluids cannot be taken by hand.
-* The network **stores into** the segment by the bus's **filters** (up to 5 fluids) and **priority**, together with
+* The **terminal** shows the fluid (one total with the fluid cells); autocrafting, export buses, interfaces, level
+  maintainers and the circuit interface count it and take from it. Fluids cannot be taken by hand.
+* The network **stores into** the segment by the bus's **filters** (its fluid filters) and **priority**, together with
   the drives and the item storage buses (see "Partitions and priorities"): at the same priority the fluid cells are
   filled first and the tank is emptied first. A tank takes one fluid: a tank holding crude oil gets no water.
 * **Mode**: read and write, read only, write only, as for the item storage bus.
 * **Temperature**: the network stores one temperature per fluid (see "Fluids"). A tank at another temperature (hot
   steam) is shown and can be taken from (what leaves the network has the fluid's default temperature, as with the
-  fluid import bus), but the network puts nothing into it, so the tank keeps its heat. The window shows the
+  import bus), but the network puts nothing into it, so the tank keeps its heat. The window shows the
   temperature and "the fluid is not at its default temperature".
 * Pumps and pipes change the segment without the network noticing at once: every bus looks at its segment about
   every quarter second (50 buses: every 1.75 s); taking out always checks the segment first, so no fluid is ever
   duplicated. Removing a pipe or tank of a segment is seen within a quarter second.
 * Removing the bus or its tank takes the fluid out of the network at once; nothing is lost, the fluid stays in the
   tank.
-* A bus facing an ME block (the ME Fluid Interface too) does nothing. A machine's fluid box works as a small storage
+* A bus facing an ME block (an ME Interface's sides too) does nothing. A machine's fluid box works as a small storage
   of its own (machines are not part of segments); fluid wagons are not supported.
 * Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
 
@@ -272,6 +285,16 @@ block of the old network. Further old controllers of the same network become ite
 new cells cannot hold go into iron chests next to the controller (the chat names them). A block that no cable
 can reach (walled in, on water) is named in the chat: connect it yourself. Items in vanilla chests of the old
 logistic network stay there. The game removes ghosts of the old blocks when the save is loaded.
+
+**The old fluid blocks** (ME Network 0.1.0 and Gregtorio Continued before 0.5.0: ME Fluid Interface, ME Fluid
+Import Bus, ME Fluid Export Bus, ME Fluid Storage Bus) become the unified blocks when the save is loaded
+(`docs/ME-REWORK.md`, "Items and fluids in one block"), in place and with their settings: a fluid interface in
+import mode an ME Interface whose sides import, one in export mode an ME Interface with a fluid row of its fluid and
+level kept on all four sides; the fluid buses import and export buses with their fluid filters; a fluid storage bus a
+storage bus with its mode, priority and filters. No fluid is lost (the log line `FORK-ME-MIGRATE: unified` counts
+it). Their ghosts become ghosts of the unified blocks; their items, in inventories, chests, the network's cells, cells
+in chests (when they are put into a drive), blueprints in inventories, patterns and level maintainers, become the
+unified items. An old blueprint from the blueprint library still builds the unified blocks with their settings.
 
 ## Autocrafting: how to build it
 
@@ -497,28 +520,26 @@ largest amounts first).
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
 | ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network) | yes (priority) | yes (patterns pending a blank pattern); clone: priority |
-| ME Interface | config rows (item, quality, amount) | yes | yes (old blueprints with slot filters are converted) |
-| ME Import Bus, ME Export Bus | item filters | yes | yes |
-| ME Storage Bus | mode, priority, item filters | yes | yes |
-| ME Fluid Storage Bus | mode, priority, fluid filters | yes | yes |
+| ME Interface | config rows (item with quality, or fluid; amount), the four sides | yes | yes (old blueprints with slot filters, and of the old fluid interface, are converted) |
+| ME Import Bus, ME Export Bus | filters (items and fluids) | yes | yes |
+| ME Storage Bus | mode, priority, filters (items and fluids) | yes | yes |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
-| ME Fluid Interface | import/export, fluid, fill level | yes (shift right click, shift left click) | yes (since issue #38) |
-| ME Fluid Import Bus, ME Fluid Export Bus | fluid filters | yes | yes |
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
 | ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
 
 ## Fluids
 
-Tech `me-fluid-storage` (EV, needs `me-autocrafting`) unlocks 1k to 64k **fluid storage cells**, the **ME Fluid
-Interface**, the **ME Fluid Import and Export Bus** and the **ME Fluid Storage Bus**; `me-fluid-storage-256k` (IV, also needs `me-storage-256k`)
-the 256k fluid cell (`prototypes/fluids.lua`). Since issue #68 step R2 fluids are stored like items:
-in cells in the ME Drive.
+Tech `me-fluid-storage` (EV, needs `me-autocrafting`) unlocks 1k to 64k **fluid storage cells**;
+`me-fluid-storage-256k` (IV, also needs `me-storage-256k`) the 256k fluid cell (`prototypes/fluids.lua`). Since
+issue #68 step R2 fluids are stored like items: in cells in the ME Drive. The ME Interface and the ME Import, Export
+and Storage Bus move fluids from the start (issue #3 of ME Network, like AE2's); before, the ME Fluid Interface and
+the ME Fluid Import, Export and Storage Bus did that and came with this technology.
 
 | Thing | What it is |
 |---|---|
 | **Fluid storage cell** (1k ... 256k) | storage housing + storage component of the tier + a pump. Goes into an ME Drive slot like an item cell; a drive may hold item and fluid cells in any mix |
-| **ME Fluid Interface** | 1x1 tank of 5000 units with a pipe connection on every side: the import/export point for pipes |
-| **ME Fluid Import Bus / Export Bus** | 1x1, rotatable: takes fluid out of / puts fluid into the machine or tank it faces |
+| **ME Interface** | its four sides (a tank of 5000 units each) are the import/export point for pipes |
+| **ME Import Bus / Export Bus** | 1x1, rotatable: takes fluid out of / puts fluid into the machine or tank it faces |
 
 **Fluid cell capacity** (the item cells' byte model; AE2 gives fluid cells fewer types than item cells, 18 is
 Gregtorio's choice):
@@ -538,29 +559,29 @@ cell (8 000 units per "1k"). An item cell takes no fluid and a fluid cell no ite
   in hand). A fluid cell taken out keeps its fluid; its tooltip lists it ("12345 units of 2 fluids: ...").
 * **Terminal:** the fluids are in the same grid as the items, after them, with their amounts; the search and sort
   apply to them. The status line shows the bytes and types of the fluid cells next to those of the item cells.
-  Fluids cannot be taken by hand: use a fluid interface in export mode or a fluid export bus.
-* **Import (interface):** connect pipes to an ME Fluid Interface. Import is the default mode: everything in the
+  Fluids cannot be taken by hand: use a fluid row of an ME Interface or an export bus.
+* **Import (interface):** connect pipes to a side of an ME Interface. A side imports by default: everything in the
   pipes and tanks connected to it goes into the network. Pipes and tanks connected **without a pump** in between
-  form one fluid segment with the interface, and the whole segment is emptied (a full storage tank within a
-  second). With a pump in front of the interface the fluid arrives at the pump's rate. Import stops when the
-  fluid cells are full.
-* **Export (interface):** click the interface. Its ME window has an Import/Export switch, a fluid selector and a
-  fill level (0 to 5000). In export mode the network fills the interface with the chosen fluid up to that level and
-  refills it as pipes and machines take it. Pipes and tanks connected without a pump share that level with the
-  interface; a pump behind the interface takes the fluid away at its rate. Another fluid still in the tank is
-  imported first (if the cells have room). The window shows what the tank holds and the status (working, no fluid
-  cell, cells full, the network does not hold this fluid, ...).
+  form one fluid segment with the side, and the whole segment is emptied (a full storage tank within a second).
+  With a pump in front of the interface the fluid arrives at the pump's rate. Import stops when the fluid cells are
+  full.
+* **Export (interface):** click the interface, choose a fluid in a config row and its amount (0 to 5000), and tie a
+  side to that row (the first free side with a pipe is tied by itself). The network fills that side with the fluid
+  up to the amount and refills it as pipes and machines take it. Pipes and tanks connected without a pump share that
+  level with the side; a pump behind the interface takes the fluid away at its rate. Another fluid still in the side
+  is imported first (if the cells have room). The window shows what each side holds and, on hover, its status
+  (working, the network has no room, the network does not hold this fluid, ...).
 * **Fluid cell partition:** a fluid cell can be partitioned for fluids like an item cell for items (see
   **Partitions and priorities**).
-* **Fluid buses:** the import bus empties the output boxes of the machine it faces (a tank: all of it), the
-  export bus fills its filtered fluids into the machine's input boxes or the tank. Up to 1000 units per visit (a
-  visit about every quarter second while there are fewer than 24 interfaces and buses), up to 5 fluid filters
-  (import: none means every fluid), kept in blueprints, settings paste and clones.
-* **Blueprints:** a drive from a blueprint is empty (cells are items; priority and partitions are kept). The settings of a fluid interface (import
-  or export, fluid, fill level) are kept in blueprints and copied by settings paste and cloning (issue #38).
+* **Buses:** the import bus empties the output boxes of the machine it faces (a tank: all of it), the export bus
+  fills its filtered fluids into the machine's input boxes or the tank. Up to 1000 units per visit (a visit about
+  every quarter second while there are fewer than 24 interfaces and buses), fluid filters next to the item filters
+  (import: none means everything), kept in blueprints, settings paste and clones.
+* **Blueprints:** a drive from a blueprint is empty (cells are items; priority and partitions are kept). The rows and
+  sides of an ME Interface are kept in blueprints and copied by settings paste and cloning.
 
 **Temperature:** the network stores fluids by name only, without a temperature. Importing drops the temperature;
-an export, a fluid export bus and the hand-over to a pattern machine deliver the fluid at its default
+an export, an export bus and the hand-over to a pattern machine deliver the fluid at its default
 temperature. Steam therefore loses its heat in the network (it comes out at 15 °C, which no steam engine or
 turbine accepts); the Gregtorio fluids have a single temperature and are not affected. A recipe whose fluid box
 needs a temperature the default does not satisfy is not a pattern (`fluid-temperature` in the info line).
@@ -633,16 +654,16 @@ The network keeps item and fluid bytes and types apart (`bytes`/`types` and `fby
 keeps the calls the other modules used (`totals`, `count`, `insert`, `remove`, `capacity` in units = fluid bytes
 times 8) on top of them.
 
-The **ME Fluid Interface** is a real storage tank (5000 units). Every 15 ticks (the I/O step of
-`scripts/fork-me-io.lua`, which registers `on_nth_tick(15)` and runs the fluid step first) up to 8 interfaces are
-stepped, round robin. Import: the tank's fluid is removed with `remove_fluid`, limited to what the network can
-take (`can_insert_fluid`); this takes the whole fluid segment (pipes and tanks connected without a pump share it
-with the interface, whose own box would only ever hold its share). Export: `want = level - held`, `insert_fluid`
-of `min(want, stored)` at the default temperature. In both directions only what the engine reports as removed or
-inserted is booked, never the requested amount, so fluid is conserved. The status of the last step is shown in
-the panel.
+The **ME Interface's sides** (issue #3 of ME Network) are four hidden 1x1 storage tanks of 5000 units on its tile,
+one pipe connection each. The interface is visited in the I/O step (`scripts/fork-me-io.lua`, `on_nth_tick(15)`,
+24 interfaces and buses per step); after its items it looks at its sides. Import side: the tank's fluid is removed
+with `remove_fluid`, limited to what the network can take (`can_insert_fluid`); this takes the whole fluid segment.
+Export side: `want = amount - held`, `insert_fluid` of `min(want, stored)` at the default temperature. In both
+directions only what the engine reports as removed or inserted is booked, never the requested amount, so fluid is
+conserved. An interface without fluid rows whose sides held nothing looks at them only every fourth visit.
 
-The **fluid buses** run in the same I/O step as the item buses (`fork-me-io.lua`, `fluid_bus_step`): the import
+The **buses** move fluids in the same visit as items (`fork-me-io.lua`, `fluid_bus_step`), when their target has
+fluid boxes (decided once, by its prototype, when the target is found): the import
 bus reads the target's fluid boxes by index and skips input boxes (`production_type == "input"`), takes at most
 what the network can store and writes the rest back into the box; the export bus uses `insert_fluid` (the engine
 picks the box) and books what it reports. 1000 units per visit.
@@ -827,9 +848,9 @@ queue and take the next free slot (the path the existing CPU test covers).
 * The I/O step every 15 ticks: up to 24 ME Interfaces and buses (`docs/ME-REWORK.md`, "Tick budget"), 8 storage
   bus visits (one `get_contents` each, the difference to the last look applied to the network's totals; cost for 50
   buses in `docs/ME-REWORK.md`, "Storage bus (after R3)"), 8 fluid storage bus visits (three calls on one fluid box
-  each, about 15 µs; cost for 50 in `docs/ME-REWORK.md`, "Fluid storage bus"), and the fluid step, which handles at most 8 fluid interfaces (one `remove_fluid` or
-  `insert_fluid` each); a network's fluid total is a table lookup (the storage
-  engine's totals), never a loop over tanks, pipes or drives. Fluid buses move up to 1000 units per visit.
+  each, about 15 µs; cost for 50 in `docs/ME-REWORK.md`, "Fluid storage bus"); the ME Interfaces' sides are part of
+  their visit (one `remove_fluid` or `insert_fluid` per busy side); a network's fluid total is a table lookup (the
+  storage engine's totals), never a loop over tanks, pipes or drives. Buses move up to 1000 units of fluid per visit.
 * The terminal step every 60 ticks: the open ME windows (at most 30, only players with one open), the lights of
   up to 50 changed drives and a sweep over 200 network members (members removed without an event).
 * No per-tick loops, no loops over the whole network. State lives in `storage.fork_me_net`, `storage.fork_me_io`,
@@ -875,14 +896,14 @@ partitions start empty.
 
 * Loaded old fluid drive items stored inside ME cells (R1 allowed storing them) are not converted by the
   migration; placing such an item later gives a drive with its fluid in cells.
-* The export level applies to the interface's own box; pipes and tanks connected without a pump
-  share that level, so the segment holds more than `level` in total. Put a pump behind the
-  interface to fill a tank.
-* The fluid interface has no circuit connection; the fluid totals reach the circuit network through
-  the ME Circuit Interface (issue #38).
+* The amount of a fluid row applies to the side's own tank; pipes and tanks connected without a pump share that
+  level, so the segment holds more than the amount in total. Put a pump behind the interface to fill a tank. A
+  surplus in an export side is not taken back. Four fluids at most per interface (one per side).
+* The ME Interface's sides have no circuit connection; the fluid totals reach the circuit network through the ME
+  Circuit Interface (issue #38).
 * Autocrafting plans and crafts only normal quality, no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
-* Network storage (issue #68): no channels, no fluid wagons on the fluid storage bus, no fuzzy partitions (a partition names exact items
+* Network storage (issue #68): no channels, no fluid wagons on the storage bus, no fuzzy partitions (a partition names exact items
   and qualities), no "inverted" partitions, no upgrade or speed cards on buses; the terminal search matches
   internal item names only; spoiling items, items with an inventory and damaged items cannot be stored. Old
   ghosts of ME blocks disappear when an old save is loaded (the game removes them before any script runs).
@@ -1042,5 +1063,27 @@ a filtered insert into its tank and the rest into the cells, priority 10 and -10
 (fluid taken out by hand), hot steam (counted, nothing put in, the tank keeps its temperature), a removed tank and bus,
 a bus facing a cable, the network's fluid against cells plus segments after every part, the settings in a blueprint,
 on a revived ghost, by paste and clone; then the fluid export bus taking from a segment, a level maintainer counting it
-and a pump's fluid seen within one visit cycle. It reports `ME fluid storage bus test (issue #68): ok`.
+and a pump's fluid seen within one visit cycle. It reports `ME fluid storage bus test (issue #68): ok`. Since
+issue #3 of ME Network the buses there are storage buses on tanks (the remote of the old fluid storage bus works on
+them).
+
+The unified I/O test (issue #3 of ME Network, own network) gives an ME Interface an item row and a fluid row (the row
+takes the side with a pipe: north is the cable), checks the item stock, the fluid in the east side and the water out
+of the network, steam piped into the south side imported, the side switched off and on again, a second interface whose
+pipes run from an export side round to an import side (`loop`: nothing imported), the blueprint tag with rows and
+sides (no side tank in the blueprint), and the fluid of a mined interface back in the network with its side tanks gone.
+An export bus on a chemical reactor with a fluid recipe puts boards into its input and phenol into an input box; an
+import bus on another one takes the boards of its output and the fluid of an output box and leaves the input box alone,
+and takes no fluid with only item filters. A storage bus faces a chest (item side), then a tank (fluid side, taken
+from), gets mixed filters and faces a cable. An old fluid import bus built by a script becomes an import bus; ghosts
+of the old export bus, fluid interface and fluid storage bus with old tags are revived as the unified blocks with their
+settings; the old items are hidden, place the unified blocks and have no recipe or unlock. It reports
+`ME unified I/O test: ok`.
+
+`python tools/devcheck/devcheck.py migrate --from-ref v0.1.0` makes a save with ME Network 0.1.0 (three fluid
+interfaces, the fluid buses and the fluid storage bus with settings and fluid, an item interface next to a pipe with
+water, a level maintainer and patterns naming old items, ghosts with old tags, old items in a chest, a blueprint, the
+cells and a cell in the chest) and loads it with the working copy: the unified blocks with the same settings, no old
+entity, ghost or item, the item interface's side next to the pipe off, the same fluid in the area and the cells after
+the update and after 150 ticks of I/O steps.
 See `tools/devcheck/README.md`.

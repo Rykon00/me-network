@@ -13,6 +13,9 @@
 ---                                                 (def.recipes: names, in order) of a technology
 ---   ME_NETWORK.make_molecular_assembler(def)      rebuild the ME Molecular Assembler from another assembling
 ---                                                 machine (base, crafting_categories, crafting_speed, energy_usage)
+---   ME_NETWORK.removed                            items this mod no longer lets players make: { old item ->
+---                                                 the item that replaced it }; their recipes are ignored by
+---                                                 replace_recipe and deleted in data-final-fixes.lua (issue #3)
 --------------------------------------------------------------------------------
 
 ME_NETWORK = ME_NETWORK or {}
@@ -25,6 +28,7 @@ M.entity_path = M.root .. "graphics/entity/fork/ae2/"
 M.technology_path = M.root .. "graphics/technology/fork/"
 M.recipes = M.recipes or {}
 M.technologies = M.technologies or {}
+M.removed = M.removed or {}
 
 local function remember(list, name)
 	for _, n in pairs(list) do if n == name then return end end
@@ -100,6 +104,10 @@ function M.add_technology(def)
 end
 
 function M.replace_recipe(def)
+	if M.removed[def.name] then
+		log("ME-NETWORK: replace_recipe: " .. def.name .. " is no longer made (now " .. M.removed[def.name] .. "), ignored")
+		return
+	end
 	def.type = "recipe"
 	data.raw.recipe[def.name] = nil
 	data:extend({ def })

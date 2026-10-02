@@ -13,12 +13,12 @@
 ---   * ME Crafting CPU: tier, power, the jobs it runs (progress, cancel) and the jobs waiting for a CPU.
 ---   * ME Level Maintainer: item or fluid, amount, amount from the circuit, the on/off circuit condition, status.
 ---   * ME Circuit Interface: 20 filters, output on/off, status.
----   * ME Fluid Interface: mode, fluid, fill level, tank content, status.
----   * ME Interface: 9 config slots (item and amount), the container's content, "Open inventory".
----   * ME Import/Export Bus, ME Fluid Import/Export Bus: 5 filters, status, the entity it faces.
----   * ME Storage Bus: mode (read and write, read only, write only), priority, 18 filters, what it shows,
----     status, the entity it faces.
----   * ME Fluid Storage Bus: the same with 5 fluid filters; what it shows (fluid, amount, temperature).
+---   * ME Interface: 9 config rows (an item or a fluid and its amount), the four fluid sides (import, off or a fluid
+---     row; what each side's tank holds), the container's content, "Open inventory".
+---   * ME Import/Export Bus: 9 filters (items and fluids), status, the entity it faces and what of it the bus uses.
+---   * ME Storage Bus: mode (read and write, read only, write only), priority, 18 filters (items and fluids), what
+---     it shows (items, or the fluid, amount and temperature of a tank's segment), status, the entity it faces.
+--- (issue #3: the windows of the ME Fluid Interface and the ME Fluid Storage Bus are gone with those blocks)
 --- Every window shows plain data from a `*_data` function and changes things through functions of the
 --- block's module (or the small `set_*` helpers here); the runtime test calls the same functions
 --- (remote interface "gregtorio-me-gui"). Nothing is kept in storage: what a window shows lives in its tags.
@@ -28,11 +28,9 @@ local N = require("scripts.fork-me-network")
 local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
 local patterns = require("scripts.fork-me-patterns")
-local fluids = require("scripts.fork-me-fluids")
 local circuit = require("scripts.fork-me-circuit")
 local io = require("scripts.fork-me-io")
 local sbus = require("scripts.fork-me-storagebus")
-local fsbus = require("scripts.fork-me-fluid-storagebus")
 local terminal = require("scripts.fork-me-terminal")
 
 local M = {}
@@ -692,67 +690,36 @@ G.on("circ_on", function(event, player, el)
 end)
 
 --------------------------------------------------------------------------------
---- ME Fluid Interface
+--- ME Interface (issue #3: config rows with items or fluids, the four fluid sides)
 --------------------------------------------------------------------------------
 
-function M.fluid_interface_data(entity)
-	if not (entity and entity.valid and N.kind_of(entity.name) == "fluid-interface") then return nil end
-	if not fluids.get_interface(entity) then fluids.set_interface(entity) end
-	return fluids.get_interface(entity)
+local SIDE_NAMES = { "north", "east", "south", "west" }
+
+--- a SignalID of an item key with quality, or of a fluid key
+local function signal_of_key(key)
+	if not key then return nil end
+	if N.is_fluid_key(key) then return { type = "fluid", name = key:sub(7) } end
+	local name, q = N.parse_key(key)
+	return { type = "item", name = name, quality = q }
 end
 
-local function open_fluid_interface(player, entity)
-	local d = M.fluid_interface_data(entity)
-	local _, content = G.open_window(player, "fluid-interface", caption_of(entity), { unit = entity.unit_number })
-	G.label(content, { "fork-me-fluids.interface-help" }, WIDTH)
-	content.add{ type = "switch", switch_state = d.mode == "export" and "right" or "left",
-		left_label_caption = { "fork-me-fluids.mode-import" }, left_label_tooltip = { "fork-me-fluids.mode-import-tooltip" },
-		right_label_caption = { "fork-me-fluids.mode-export" }, right_label_tooltip = { "fork-me-fluids.mode-export-tooltip" },
-		tags = G.act("fi_mode") }
-	local row = G.row(content)
-	row.add{ type = "label", caption = { "fork-me-fluids.fluid" } }
-	row.add{ type = "choose-elem-button", elem_type = "fluid", fluid = d.fluid, style = "slot_button", tags = G.act("fi_fluid") }
-	row.add{ type = "label", caption = { "fork-me-fluids.level", G.fmt(d.volume) } }
-	G.number_field(row, d.level, G.act("fi_level"), 90)
-	G.label(content, "", WIDTH, nil, "fork_me_fi_held")
-	G.label(content, "", WIDTH, nil, "fork_me_fi_status")
-	M.refresh_fluid_interface(player, G.window_of(player))
+--- the key of a SignalID (items with their quality, fluids); virtual signals give nil
+local function key_of_signal_q(sig)
+	if type(sig) ~= "table" or not sig.name then return nil end
+	if sig.type == "fluid" then return prototypes.fluid[sig.name] and ("fluid/" .. sig.name) or nil end
+	if (sig.type == nil or sig.type == "item") and prototypes.item[sig.name] then
+		local q = sig.quality
+		if type(q) == "table" then q = q.name end
+		return N.key_of(sig.name, q or "normal")
+	end
+	return nil
 end
+M.key_of_signal_q = key_of_signal_q
 
-function M.refresh_fluid_interface(player, frame)
-	local entity = G.entity_of(player, frame)
-	if not entity then return false end
-	local d = M.fluid_interface_data(entity)
-	local held = d.held and prototypes.fluid[d.held.name]
-	G.find(frame, "fork_me_fi_held").caption = held and { "fork-me-gui.tank-holds", G.fmt(d.held.amount), G.fmt(d.volume), held.localised_name }
-		or { "fork-me-gui.tank-empty", G.fmt(d.volume) }
-	G.find(frame, "fork_me_fi_status").caption = { "fork-me-fluids.status-" .. (d.status or "ok") }
-	return true
+local function signal_chooser(parent, key, tags)
+	return parent.add{ type = "choose-elem-button", elem_type = "signal", signal = signal_of_key(key), tags = tags,
+		style = "slot_button" }
 end
-
-G.window("fluid-interface", { open = open_fluid_interface, refresh = M.refresh_fluid_interface, entities = { "fluid-interface" } })
-
-G.on("fi_mode", function(event, player, el)
-	if event.name ~= defines.events.on_gui_switch_state_changed then return end
-	local entity = window_entity(player)
-	if entity then fluids.set_interface(entity, el.switch_state == "right" and "export" or "import") G.refresh_one(player) end
-end)
-
-G.on("fi_fluid", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
-	local entity = window_entity(player)
-	if entity then fluids.set_interface(entity, nil, el.elem_value or false) G.refresh_one(player) end
-end)
-
-G.on("fi_level", function(event, player, el)
-	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
-	local entity = window_entity(player)
-	if entity then fluids.set_interface(entity, nil, nil, tonumber(el.text) or 0) end
-end)
-
---------------------------------------------------------------------------------
---- ME Interface
---------------------------------------------------------------------------------
 
 function M.interface_data(entity) return io.get_interface(entity) end
 
@@ -762,11 +729,17 @@ function M.set_interface_item(entity, i, elem, amount)
 	return io.set_interface_slot(entity, i, nil)
 end
 
+--- a config row from the window's chooser: a SignalID (an item with quality or a fluid; nil clears the row)
+function M.set_interface_signal(entity, i, signal, amount)
+	return io.set_interface_key(entity, i, key_of_signal_q(signal), amount)
+end
+
 local function open_interface(player, entity)
-	local d = M.interface_data(entity)
 	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-gui.interface-help" }, WIDTH)
 	content.add{ type = "flow", name = "fork_me_if_config", direction = "vertical" }
+	G.heading(content, { "fork-me-gui.interface-sides" })
+	content.add{ type = "flow", name = "fork_me_if_sides", direction = "vertical" }
 	G.heading(content, { "fork-me-gui.interface-contents" })
 	local grid = G.grid(content, 9, "fork_me_if_items")
 	grid.parent.style.minimal_width = 40 * 9 + 12
@@ -779,9 +752,25 @@ local function config_sig(config)
 	local out = {}
 	for i = 1, io.CONFIG_SLOTS do
 		local c = config[i]
-		out[i] = c and (c.name .. "@" .. c.quality) or "-"            -- not the amounts: their fields keep the focus
+		out[i] = c and io.row_key(c) or "-"            -- not the amounts: their fields keep the focus
 	end
 	return table.concat(out, ",")
+end
+
+--- the values of a side's drop-down: "import", "off", then the fluid rows; and the selected index
+local function side_choices(d, side)
+	local values, items = { "import", "off" }, { { "fork-me-gui.interface-side-import" }, { "fork-me-gui.interface-side-off" } }
+	local selected = d.sides[side] == "off" and 2 or 1
+	for i = 1, d.slots do
+		local c = d.config[i]
+		if c and c.type == "fluid" then
+			values[#values + 1] = i
+			local proto = prototypes.fluid[c.name]
+			items[#items + 1] = { "fork-me-gui.interface-side-row", i, "[fluid=" .. c.name .. "]", proto and proto.localised_name or c.name }
+			if d.sides[side] == i then selected = #values end
+		end
+	end
+	return values, items, selected
 end
 
 function M.refresh_interface(player, frame)
@@ -794,11 +783,35 @@ function M.refresh_interface(player, frame)
 		local t = box.add{ type = "table", column_count = 6 }
 		for i = 1, d.slots do
 			local c = d.config[i]
-			chooser(t, "item-with-quality", c and N.key_of(c.name, c.quality) or nil, G.act("if_item", { index = i }))
+			signal_chooser(t, c and io.row_key(c) or nil, G.act("if_item", { index = i }))
 			local f = G.number_field(t, c and c.amount or 0, G.act("if_amount", { index = i }), 70)
 			f.enabled = c ~= nil
+			f.tooltip = c and c.type == "fluid" and { "fork-me-gui.interface-fluid-amount", G.fmt(d.volume) } or nil
 		end
 	end)
+	local side_sig = { config_sig(d.config) }
+	for s = 1, io.SIDES do side_sig[#side_sig + 1] = tostring(d.sides[s] or "import") end
+	rebuild(frame, "fork_me_if_sides", table.concat(side_sig, ","), function(box)
+		local t = box.add{ type = "table", column_count = 3 }
+		for s = 1, io.SIDES do
+			t.add{ type = "label", caption = { "fork-me-gui.interface-side-" .. SIDE_NAMES[s] } }
+			local values, items, selected = side_choices(d, s)
+			t.add{ type = "drop-down", items = items, selected_index = selected,
+				tags = G.act("if_side", { side = s, values = values }) }.style.width = 200
+			t.add{ type = "label", name = "fork_me_if_side_" .. s, caption = "" }
+		end
+	end)
+	for s = 1, io.SIDES do
+		local f = d.fluids[s]
+		local label = G.find(frame, "fork_me_if_side_" .. s)
+		if label then
+			local proto = f.name and prototypes.fluid[f.name]
+			local holds = proto and { "fork-me-gui.tank-holds", G.fmt(f.amount), G.fmt(d.volume), proto.localised_name }
+				or { "fork-me-gui.tank-empty", G.fmt(d.volume) }
+			label.caption = { "", holds, f.connected and "" or { "fork-me-gui.interface-side-unconnected" } }
+			label.tooltip = f.status and { "fork-me-gui.interface-side-status-" .. f.status } or nil
+		end
+	end
 	local sig = {}
 	for _, c in ipairs(d.contents) do sig[#sig + 1] = c.key .. "=" .. c.count end
 	rebuild(frame, "fork_me_if_items", table.concat(sig, ","), function(grid)
@@ -813,7 +826,7 @@ G.window("interface", { open = open_interface, refresh = M.refresh_interface, en
 G.on("if_item", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
 	local entity = window_entity(player)
-	if entity then M.set_interface_item(entity, el.tags.index, el.elem_value) G.refresh_one(player) end
+	if entity then M.set_interface_signal(entity, el.tags.index, el.elem_value) G.refresh_one(player) end
 end)
 
 G.on("if_amount", function(event, player, el)
@@ -821,7 +834,15 @@ G.on("if_amount", function(event, player, el)
 	local entity = window_entity(player)
 	if not entity then return end
 	local c = io.get_interface_config(entity)[el.tags.index]
-	if c then io.set_interface_slot(entity, el.tags.index, c.name, c.quality, tonumber(el.text) or 0) end
+	if c then io.set_interface_key(entity, el.tags.index, io.row_key(c), tonumber(el.text) or 0) end
+end)
+
+G.on("if_side", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	io.set_interface_side(entity, el.tags.side, el.tags.values[el.selected_index])
+	G.refresh_one(player)
 end)
 
 G.on("if_inventory", function(event, player)
@@ -830,7 +851,7 @@ G.on("if_inventory", function(event, player)
 end)
 
 --------------------------------------------------------------------------------
---- buses
+--- buses (issue #3: items and fluids mixed in the filters)
 --------------------------------------------------------------------------------
 
 function M.bus_data(entity) return io.bus_info(entity) end
@@ -851,28 +872,26 @@ function M.refresh_bus(player, frame)
 	local d = M.bus_data(entity)
 	rebuild(frame, "fork_me_bus_filters", table.concat(d.filters, ","), function(box)
 		local t = box.add{ type = "table", column_count = d.max, style = "filter_slot_table" }
-		for i = 1, d.max do
-			local key = d.filters[i] and (d.fluid and ("fluid/" .. d.filters[i]) or d.filters[i]) or nil
-			chooser(t, d.fluid and "fluid" or "item", key, G.act("bus_filter", { index = i }))
-		end
+		for i = 1, d.max do signal_chooser(t, d.filters[i], G.act("bus_filter", { index = i })) end
 	end)
 	local target = d.target and prototypes.entity[d.target]
-	G.find(frame, "fork_me_bus_target").caption = target and { "fork-me-gui.bus-target", target.localised_name } or ""
+	local what = d.items and d.fluids and "both" or d.fluids and "fluids" or "items"
+	G.find(frame, "fork_me_bus_target").caption = target
+		and { "fork-me-gui.bus-target-" .. what, target.localised_name } or ""
 	G.find(frame, "fork_me_bus_status").caption = { "fork-me-net.bus-" .. (d.status or "ok") }
 	return true
 end
 
-G.window("bus", { open = open_bus, refresh = M.refresh_bus,
-	entities = { "import-bus", "export-bus", "fluid-import-bus", "fluid-export-bus" } })
+G.window("bus", { open = open_bus, refresh = M.refresh_bus, entities = { "import-bus", "export-bus" } })
 
 G.on("bus_filter", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
 	local entity = window_entity(player)
-	if entity then io.set_bus_filter(entity, el.tags.index, el.elem_value) G.refresh_one(player) end
+	if entity then io.set_bus_filter(entity, el.tags.index, circuit.key_of_signal(el.elem_value)) G.refresh_one(player) end
 end)
 
 --------------------------------------------------------------------------------
---- ME Storage Bus
+--- ME Storage Bus (issue #3: a chest's items or a tank's fluid segment; filters of both)
 --------------------------------------------------------------------------------
 
 local SBUS_MODES = { "readwrite", "read", "write" }
@@ -909,12 +928,21 @@ function M.refresh_storage_bus(player, frame)
 	if not d then return false end
 	rebuild(frame, "fork_me_sbus_filters", table.concat(d.filters, ","), function(box)
 		local t = box.add{ type = "table", column_count = 9, style = "filter_slot_table" }
-		for i = 1, d.max do chooser(t, "item-with-quality", d.filters[i], G.act("sbus_filter", { index = i })) end
+		for i = 1, d.max do signal_chooser(t, d.filters[i], G.act("sbus_filter", { index = i })) end
 	end)
-	G.find(frame, "fork_me_sbus_holds").caption = { "fork-me-gui.storage-bus-holds", G.fmt(d.items), d.types }
+	local holds
+	if d.side == "fluid" then
+		local fluid = d.fluid and prototypes.fluid[d.fluid]
+		holds = fluid and { "fork-me-gui.fluid-storage-bus-holds", G.fmt(d.amount), fluid.localised_name,
+			string.format("%.0f", d.temperature or fluid.default_temperature) } or { "fork-me-gui.fluid-storage-bus-empty" }
+	else
+		holds = { "fork-me-gui.storage-bus-holds", G.fmt(d.items), d.types }
+	end
+	G.find(frame, "fork_me_sbus_holds").caption = holds
 	local target = d.target and prototypes.entity[d.target]
 	G.find(frame, "fork_me_sbus_target").caption = target and { "fork-me-gui.bus-target", target.localised_name } or ""
-	G.find(frame, "fork_me_sbus_status").caption = { "fork-me-net.storage-bus-" .. (d.status or "ok") }
+	G.find(frame, "fork_me_sbus_status").caption = { "fork-me-net." .. (d.side == "fluid" and "fluid-" or "")
+		.. "storage-bus-" .. (d.status or "ok") }
 	return true
 end
 
@@ -936,83 +964,7 @@ G.on("sbus_filter", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
 	local entity = window_entity(player)
 	if entity then
-		sbus.set_filter(entity, el.tags.index, key_of_elem("item-with-quality", el.elem_value))
-		G.refresh_one(player)
-	end
-end)
-
---------------------------------------------------------------------------------
---- ME Fluid Storage Bus
---------------------------------------------------------------------------------
-
-function M.fluid_storage_bus_data(entity) return fsbus.info(entity) end
-
-local function open_fluid_storage_bus(player, entity)
-	local d = M.fluid_storage_bus_data(entity)
-	if not d then return end
-	local _, content = G.open_window(player, "fluid-storage-bus", caption_of(entity), { unit = entity.unit_number })
-	G.label(content, { "fork-me-net.fluid-storage-bus-help" }, WIDTH)
-	local row = G.row(content)
-	row.add{ type = "label", caption = { "fork-me-gui.storage-bus-mode" } }
-	local items, index = {}, 1
-	for i, mode in ipairs(SBUS_MODES) do
-		items[i] = { "fork-me-gui.storage-bus-mode-" .. mode }
-		if mode == d.mode then index = i end
-	end
-	row.add{ type = "drop-down", items = items, selected_index = index, tags = G.act("fsbus_mode") }
-	row = G.row(content)
-	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.fluid-storage-bus-priority-tooltip" } }
-	G.number_field(row, d.priority, G.act("fsbus_priority"), 70, true).tooltip = { "fork-me-gui.fluid-storage-bus-priority-tooltip" }
-	content.add{ type = "label", caption = { "fork-me-gui.fluid-storage-bus-filters" },
-		tooltip = { "fork-me-gui.fluid-storage-bus-filters-tooltip" } }
-	content.add{ type = "flow", name = "fork_me_fsbus_filters", direction = "vertical" }
-	G.label(content, "", WIDTH, nil, "fork_me_fsbus_holds")
-	G.label(content, "", WIDTH, nil, "fork_me_fsbus_target")
-	G.label(content, "", WIDTH, nil, "fork_me_fsbus_status")
-	M.refresh_fluid_storage_bus(player, G.window_of(player))
-end
-
-function M.refresh_fluid_storage_bus(player, frame)
-	local entity = G.entity_of(player, frame)
-	local d = entity and M.fluid_storage_bus_data(entity)
-	if not d then return false end
-	rebuild(frame, "fork_me_fsbus_filters", table.concat(d.filters, ","), function(box)
-		local t = box.add{ type = "table", column_count = d.max, style = "filter_slot_table" }
-		for i = 1, d.max do
-			chooser(t, "fluid", d.filters[i] and ("fluid/" .. d.filters[i]) or nil, G.act("fsbus_filter", { index = i }))
-		end
-	end)
-	local fluid = d.fluid and prototypes.fluid[d.fluid]
-	G.find(frame, "fork_me_fsbus_holds").caption = fluid
-		and { "fork-me-gui.fluid-storage-bus-holds", G.fmt(d.amount), fluid.localised_name,
-			string.format("%.0f", d.temperature or fluid.default_temperature) }
-		or { "fork-me-gui.fluid-storage-bus-empty" }
-	local target = d.target and prototypes.entity[d.target]
-	G.find(frame, "fork_me_fsbus_target").caption = target and { "fork-me-gui.bus-target", target.localised_name } or ""
-	G.find(frame, "fork_me_fsbus_status").caption = { "fork-me-net.fluid-storage-bus-" .. (d.status or "ok") }
-	return true
-end
-
-G.window("fluid-storage-bus", { open = open_fluid_storage_bus, refresh = M.refresh_fluid_storage_bus,
-	entities = { "fluid-storage-bus" } })
-
-G.on("fsbus_mode", function(event, player, el)
-	if event.name ~= defines.events.on_gui_selection_state_changed then return end
-	local entity = window_entity(player)
-	if entity then fsbus.set_mode(entity, SBUS_MODES[el.selected_index] or "readwrite") G.refresh_one(player) end
-end)
-
-G.on("fsbus_priority", function(event, player, el)
-	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
-	local entity = window_entity(player)
-	if entity then fsbus.set_priority(entity, tonumber(el.text) or 0) end
-end)
-
-G.on("fsbus_filter", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
-	local entity = window_entity(player)
-	if entity then
-		fsbus.set_filter(entity, el.tags.index, el.elem_value)
+		sbus.set_filter(entity, el.tags.index, key_of_signal_q(el.elem_value))
 		G.refresh_one(player)
 	end
 end)
@@ -1035,13 +987,13 @@ remote.add_interface("gregtorio-me-gui", {
 	set_maintainer_target = function(entity, signal) return M.set_maintainer_target(entity, signal) end,
 	circuit_data = function(entity) return M.circuit_data(entity) end,
 	set_circuit_filter = function(entity, index, key) return M.set_circuit_filter(entity, index, key) end,
-	fluid_interface_data = function(entity) return M.fluid_interface_data(entity) end,
 	interface_data = function(entity) return M.interface_data(entity) end,
 	set_interface_item = function(entity, i, elem, amount) return M.set_interface_item(entity, i, elem, amount) end,
+	set_interface_signal = function(entity, i, signal, amount) return M.set_interface_signal(entity, i, signal, amount) end,
 	bus_data = function(entity) return M.bus_data(entity) end,
 	storage_bus_data = function(entity) return M.storage_bus_data(entity) end,
-	fluid_storage_bus_data = function(entity) return M.fluid_storage_bus_data(entity) end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
+	key_of_signal = function(signal) return key_of_signal_q(signal) end,
 })
 
 return M

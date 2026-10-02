@@ -15,10 +15,13 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
 - Items: `fluix-cable` (places the ME cable), `me-controller`, `me-interface`, `me-terminal`, `me-chest`, `me-drive`,
   `basic-storage-housing`, `me-1k`...`me-256k-storage-component`, `me-1k`...`me-256k-storage-cell`,
   `me-1k`...`me-256k-fluid-storage-cell`, `me-underground-cable`, `me-import-bus`, `me-export-bus`,
-  `me-storage-bus`, `me-fluid-interface`, `me-fluid-import-bus`, `me-fluid-export-bus`, `me-fluid-storage-bus`,
-  `me-pattern-provider`, `me-blank-pattern`, `me-encoded-pattern` (no recipe), `me-molecular-assembler`,
-  `me-crafting-cpu`, `me-co-processing-cpu`, `me-quantum-crafting-cpu`, `me-level-maintainer`, `me-circuit-interface`;
-  hidden: the old drive items of Gregtorio saves.
+  `me-storage-bus`, `me-pattern-provider`, `me-blank-pattern`, `me-encoded-pattern` (no recipe),
+  `me-molecular-assembler`, `me-crafting-cpu`, `me-co-processing-cpu`, `me-quantum-crafting-cpu`,
+  `me-level-maintainer`, `me-circuit-interface`; hidden: the old drive items of Gregtorio saves, and since 0.2.0
+  (issue #3: the ME Interface and the buses handle fluids) `me-fluid-interface`, `me-fluid-import-bus`,
+  `me-fluid-export-bus`, `me-fluid-storage-bus` (no recipe; they place the unified block).
+- `ME_NETWORK.removed`: { old item -> the item that replaced it } for those four. Their recipes are gone: see
+  `replace_recipe` and "Recipes of removed items" below.
 - Technologies: `me-network`, `me-storage-64k`, `me-storage-256k`, `me-autocrafting`, `me-automation`,
   `me-co-processing`, `me-quantum-crafting`, `me-fluid-storage`, `me-fluid-storage-256k`.
 - Item subgroups: `fork-me-network`, `fork-me-drives`, `fork-me-cells`, `fork-me-fluid-cells`, `fork-me-fluid-drives`.
@@ -28,7 +31,8 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
 ### `ME_NETWORK.replace_recipe(def)`
 
 Replaces the recipe `def.name` by `def`, a full recipe prototype (`type = "recipe"` is set). The technologies that
-unlock that name keep unlocking it.
+unlock that name keep unlocking it. A name in `ME_NETWORK.removed` (an item this mod no longer makes) is ignored with
+one log line.
 
 ```lua
 ME_NETWORK.replace_recipe{
@@ -71,6 +75,13 @@ speed 2.5, 375 kW.
 same fields as Gregtorio's upstream `create_item`, so saves and other mods see the same items). Other mods do not
 need them.
 
+### Recipes of removed items
+
+`data-final-fixes.lua` deletes every recipe that makes an item of `ME_NETWORK.removed` (whichever mod made it) and its
+unlock in every technology, with one log line each. Gregtorio Continued 0.5.0 makes the recipes of the four old fluid
+blocks itself (not through the API) and keeps loading: they are removed there, and the unified blocks keep the
+recipes Gregtorio gives them. A mod should drop those recipes and unlocks from its own files.
+
 ## Runtime
 
 The remote interfaces are `gregtorio-me-network` (storage: `insert`, `extract`, `count`, `contents`,
@@ -78,3 +89,9 @@ The remote interfaces are `gregtorio-me-network` (storage: `insert`, `extract`, 
 `gregtorio-me-fluid-storagebus`, `gregtorio-me-autocraft`, `gregtorio-me-circuit`, `gregtorio-me-fluids`,
 `gregtorio-me-terminal`, `gregtorio-me-gui`, `gregtorio-me-migrate` (names kept from Gregtorio Continued). The tests
 in `tools/devcheck/runtimemod/control.lua` use most of their functions.
+
+Since 0.2.0 (issue #3): `gregtorio-me-io` takes config rows with fluids (`{ type = "fluid", name, amount }`) and the
+sides of an interface (`set_interface_config(entity, config, sides)`, `set_interface_key`, `set_interface_side`,
+`get_interface_sides`, `interface_tanks`), bus filters as keys (item name or `fluid/<name>`); `gregtorio-me-fluid-storagebus`
+works on the storage bus (its fluid side); `gregtorio-me-fluids` keeps the fluid calls (`count`, `totals`, `capacity`,
+`insert`, `remove`), its interface functions are gone with the ME Fluid Interface.

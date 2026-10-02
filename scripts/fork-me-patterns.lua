@@ -35,6 +35,7 @@ M.is_fluid = is_fluid
 local function valid_key(key)
 	if type(key) ~= "string" or key == "" then return false end
 	if is_fluid(key) then return prototypes.fluid[fluid_name(key)] ~= nil end
+	key = N.alias(key) or key                         -- a replaced item (issue #3)
 	local proto = prototypes.item[key]
 	return proto ~= nil and proto.type ~= "item-with-tags"
 end
@@ -82,15 +83,16 @@ local function clean_list(list, max)
 	local out, at = {}, {}
 	for _, row in ipairs(list) do
 		if type(row) ~= "table" or not valid_key(row.key) then return nil end
+		local key = is_fluid(row.key) and row.key or (N.alias(row.key) or row.key)   -- a replaced item (issue #3)
 		local amount = tonumber(row.amount)
 		if not amount or amount <= 0 or amount ~= amount then return nil end
-		if not is_fluid(row.key) then amount = math.floor(amount + 1e-9) end
+		if not is_fluid(key) then amount = math.floor(amount + 1e-9) end
 		amount = math.min(amount, M.MAX_AMOUNT)
 		if amount <= 0 then return nil end
-		if at[row.key] then out[at[row.key]].amount = math.min(M.MAX_AMOUNT, out[at[row.key]].amount + amount)
+		if at[key] then out[at[key]].amount = math.min(M.MAX_AMOUNT, out[at[key]].amount + amount)
 		else
-			out[#out + 1] = { key = row.key, amount = amount }
-			at[row.key] = #out
+			out[#out + 1] = { key = key, amount = amount }
+			at[key] = #out
 		end
 	end
 	if #out == 0 or #out > max then return nil end
@@ -102,7 +104,12 @@ end
 function M.normalize(def)
 	if type(def) ~= "table" then return nil, "invalid" end
 	if def.kind == "crafting" then
-		local proto = type(def.recipe) == "string" and prototypes.recipe[def.recipe]
+		local recipe = def.recipe
+		--- issue #3: the recipe of a replaced item (the old fluid blocks) is the recipe of its replacement
+		if type(recipe) == "string" and N.alias(recipe) and not (prototypes.recipe[recipe] and not prototypes.recipe[recipe].hidden) then
+			recipe = N.alias(recipe)
+		end
+		local proto = type(recipe) == "string" and prototypes.recipe[recipe]
 		if not proto then return nil, "no-recipe" end
 		if proto.hidden then return nil, "hidden" end
 		local inputs, outputs = recipe_lists(proto)

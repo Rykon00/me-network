@@ -727,6 +727,7 @@ local function tests_running()
 	check(storage.me_r3 and storage.me_r3.done, "ME partitions and windows")
 	check(storage.me_sbus and storage.me_sbus.done, "ME storage bus")
 	check(storage.me_fsbus and storage.me_fsbus.done, "ME fluid storage bus")
+	check(storage.unified and storage.unified.done, "ME unified I/O")
 	check(storage.maint38 and storage.maint38.done, "level maintainer")
 	check(storage.tiers38 and storage.tiers38.done, "crafting CPU tiers")
 	check(storage.circuit38 and storage.circuit38.done, "circuit interface")
@@ -1566,6 +1567,7 @@ script.on_nth_tick(10, function()
 	me_r3_test()
 	storage_bus_test()
 	fluid_storage_bus_test()
+	unified_test()
 	if not (storage.maint38 and storage.maint38.done) then maintainer_test() end
 	if not (storage.tiers38 and storage.tiers38.done) then cpu_tier_test() end
 	if not (storage.circuit38 and storage.circuit38.done) then circuit_test() end
@@ -1594,9 +1596,9 @@ local FL_EPS = 1e-3
 --- the layout (everything inside the controller's area, x <= 22 and y <= FL_Y + 16; HV reactors: there is no EV one)
 local FL = {
 	terminal = { "me-terminal", 8.5, FL_Y + 2.5 },
-	iface_a = { "me-fluid-interface", 2.5, FL_Y + 4.5 },
-	iface_b = { "me-fluid-interface", 5.5, FL_Y + 4.5 },
-	tank = { "storage-tank", 3.5, FL_Y + 6.5 },           -- its north connection meets interface A
+	iface_a = { "me-network-interface", 2.5, FL_Y + 4.5 },   -- issue #3: the ME Interface's fluid sides
+	iface_b = { "me-network-interface", 5.5, FL_Y + 4.5 },
+	tank = { "storage-tank", 3.5, FL_Y + 6.5 },           -- its north connection meets interface A's south side
 	idrive = { "me-drive", 12.5, FL_Y + 2.5 },
 	chest = { "iron-chest", 14.5, FL_Y + 2.5 },
 	store = { "storage-chest", 20.5, FL_Y + 2.5 },        -- the robots' storage
@@ -1641,7 +1643,8 @@ function setup_fluid_test(s)
 		{ ["raw-silicon"] = FL_SILICON, ["tin-ingot"] = FL_TIN, ["resin-circuit-board"] = FL_BOARDS })
 	place(FL.chest[1], FL.chest[2], FL.chest[3])
 	place(FL.store[1], FL.store[2], FL.store[3])
-	--- import: a tank connected to interface A (default mode is import); export: interface B stands alone.
+	--- import: a tank connected to interface A's south side (a side imports by default); export: interface B
+	--- stands alone (its north side keeps the exported fluid).
 	--- (No pump: a 2.0 pump moves fluid in proportion to the fill level of its source, a trickle here.)
 	local ia = place(FL.iface_a[1], FL.iface_a[2], FL.iface_a[3])
 	local tank = place(FL.tank[1], FL.tank[2], FL.tank[3])
@@ -1674,6 +1677,21 @@ function fluid_test()
 	local s = game.surfaces[1]
 	local F, A = "gregtorio-me-fluids", "gregtorio-me-autocraft"
 	local function ent(def) return s.find_entity(def[1], { def[2], def[3] }) end
+	--- issue #3: the interfaces' fluid is in their four side tanks; B exports through its north side (row 1)
+	local function tanks_of(e) return remote.call(IO, "interface_tanks", e) or {} end
+	local function held(e, fluid)
+		local n = 0
+		for _, tk in pairs(tanks_of(e)) do n = n + tk.get_fluid_count(fluid) end
+		return n
+	end
+	local function set_export(e, fluid, level)
+		return remote.call(IO, "set_interface_config", e, { [1] = { type = "fluid", name = fluid, amount = level } }, { 1 })
+	end
+	local function set_import(e) return remote.call(IO, "set_interface_config", e, {}, {}) end
+	local function side(e, d)
+		local i = remote.call(IO, "get_interface", e)
+		return i and i.fluids[d] or {}
+	end
 	local terminal = ent(FL.terminal)
 	local net = terminal and remote.call(NET, "network", terminal)
 	local function count(fluid) return terminal and remote.call(F, "count", terminal, fluid) or -1 end
@@ -1704,15 +1722,15 @@ function fluid_test()
 		expect(terminal and a and b and tank and drive, "entities missing")
 		if not (terminal and a and b and tank and drive) then return finish_test() end
 		expect(net and net.ok, "no working ME network at the terminal")
-		expect(#a.fluidbox.get_connections(1) > 0, "interface A is not connected to the tank")
-		expect(#b.fluidbox.get_connections(1) == 0, "interface B must stand alone")
+		expect(tanks_of(a)[3] and #tanks_of(a)[3].fluidbox.get_connections(1) > 0, "interface A's south side is not connected to the tank")
+		expect(tanks_of(b)[1] and #tanks_of(b)[1].fluidbox.get_connections(1) == 0, "interface B must stand alone")
 		local capacity, used = remote.call(F, "capacity", terminal)   -- the import may have run already
 		expect(capacity == 4 * 1024 * 8 and used >= 0 and used <= (8 + math.ceil(FL_TANK_AMOUNT / 8)) * 8, "fluid capacity " .. tostring(capacity) .. "/" .. tostring(used))
-		local ia = remote.call(F, "get_interface", a)
-		expect(ia and ia.mode == "import", "interface A default mode " .. tostring(ia and ia.mode))
-		expect(remote.call(F, "set_interface", b, "export", FL_FLUID, FL_EXPORT_LEVEL), "set_interface failed")
-		local ib = remote.call(F, "get_interface", b)
-		expect(ib and ib.mode == "export" and ib.fluid == FL_FLUID and ib.level == FL_EXPORT_LEVEL, "interface B settings " .. serpent.line(ib))
+		expect(side(a, 3).setting == "import", "interface A's south side by default " .. serpent.line(side(a, 3)))
+		expect(set_export(b, FL_FLUID, FL_EXPORT_LEVEL), "set_interface_config failed")
+		local cb, sb = remote.call(IO, "get_interface_config", b), remote.call(IO, "get_interface_sides", b)
+		expect(cb[1] and cb[1].type == "fluid" and cb[1].name == FL_FLUID and cb[1].amount == FL_EXPORT_LEVEL and sb[1] == 1,
+			"interface B settings " .. serpent.line(cb) .. " " .. serpent.line(sb))
 		if #problems > 0 then return finish_test() end
 		return
 	end
@@ -1727,7 +1745,7 @@ function fluid_test()
 	end
 	local function next_phase(name) st.phase = name st.phase_tick = game.tick end
 	local a, b, tank = ent(FL.iface_a), ent(FL.iface_b), ent(FL.tank)
-	local function in_pipes() return tank.get_fluid_count(FL_FLUID) + a.get_fluid_count(FL_FLUID) end
+	local function in_pipes() return tank.get_fluid_count(FL_FLUID) + held(a, FL_FLUID) end
 	local function job_of(id)
 		local j = remote.call(A, "job", id)
 		for key, n in pairs(j and j.pool or {}) do
@@ -1739,15 +1757,14 @@ function fluid_test()
 	local phase = st.phase
 	if phase == "import" then
 		--- the tank drains into interface A, the network stores it; B (export since tick 60) takes its level out
-		if in_pipes() < 0.01 and near(b.get_fluid_count(FL_FLUID), FL_EXPORT_LEVEL) then
-			local stored, in_b = count(FL_FLUID), b.get_fluid_count(FL_FLUID)
+		if in_pipes() < 0.01 and near(held(b, FL_FLUID), FL_EXPORT_LEVEL) then
+			local stored, in_b = count(FL_FLUID), held(b, FL_FLUID)
 			expect(near(stored + in_b, FL_TANK_AMOUNT), "fluid not conserved: network " .. stored .. " + export " .. in_b)
 			local capacity, used = remote.call(F, "capacity", terminal)
 			expect(used == (8 + math.ceil(stored / 8)) * 8, "used " .. used .. " is not the bytes of " .. stored .. " units")
 			local totals = remote.call(F, "totals", terminal)
 			expect(near(totals[FL_FLUID] or 0, stored), "totals differ from count")
-			local ib = remote.call(F, "get_interface", b)
-			expect(ib and ib.status == "ok", "interface B status " .. tostring(ib and ib.status))
+			expect(side(b, 1).status == "ok", "interface B's north side " .. serpent.line(side(b, 1)))
 			st.import_ticks = game.tick - st.started
 			if #problems > 0 then return finish_test() end
 			return next_phase("export-hold")
@@ -1756,13 +1773,13 @@ function fluid_test()
 	elseif phase == "export-hold" then
 		--- export never overfills and never takes back
 		if game.tick >= st.phase_tick + 60 then
-			expect(near(b.get_fluid_count(FL_FLUID), FL_EXPORT_LEVEL), "export level drifted to " .. b.get_fluid_count(FL_FLUID))
+			expect(near(held(b, FL_FLUID), FL_EXPORT_LEVEL), "export level drifted to " .. held(b, FL_FLUID))
 			expect(near(count(FL_FLUID), FL_TANK_AMOUNT - FL_EXPORT_LEVEL), "network changed while holding: " .. count(FL_FLUID))
-			remote.call(F, "set_interface", b, "import")
+			set_import(b)
 			return next_phase("reimport")
 		end
 	elseif phase == "reimport" then
-		if b.get_fluid_count(FL_FLUID) < 0.01 then
+		if held(b, FL_FLUID) < 0.01 then
 			expect(near(count(FL_FLUID), FL_TANK_AMOUNT), "after re-import the network holds " .. count(FL_FLUID))
 			if #problems > 0 then return finish_test() end
 			--- the fluid cell is taken out: its chlorine travels in its tags
@@ -1838,7 +1855,7 @@ function fluid_test()
 				if inv[i].valid_for_read and inv[i].name == FL_CELL then remote.call(NET, "insert_cell", rebuilt, inv[i]) end
 			end
 			expect(near(count(FL_FLUID), FL_TANK_AMOUNT), "after the cells are back the network holds " .. count(FL_FLUID)
-				.. " (tank " .. in_pipes() .. ", B " .. b.get_fluid_count(FL_FLUID) .. ")")
+				.. " (tank " .. in_pipes() .. ", B " .. held(b, FL_FLUID) .. ")")
 			if #problems > 0 then return finish_test() end
 			--- full cells: the import stops and keeps the fluid in the tank, an export of a fluid the
 			--- network does not hold reports it
@@ -1848,20 +1865,19 @@ function fluid_test()
 			expect(near(count(FL_FLUID), FL_FULL), "cells not full: " .. count(FL_FLUID))
 			expect(remote.call(F, "insert", terminal, FL_FLUID, 10) == 0, "full cells took fluid")
 			tank.insert_fluid{ name = FL_FLUID, amount = 500 }
-			remote.call(F, "set_interface", b, "export", "water", FL_EXPORT_LEVEL)
+			set_export(b, "water", FL_EXPORT_LEVEL)
 			return next_phase("full")
 		end
 		timeout_after(600, "robots building the drive from the ghost (" .. robot_report(s, FL_DRIVE_POS, FL_DRIVE) .. ")")
 	elseif phase == "full" then
 		if game.tick >= st.phase_tick + 40 then
-			local ia, ib = remote.call(F, "get_interface", a), remote.call(F, "get_interface", b)
-			expect(ia and ia.status == "full", "import into full drives: status " .. tostring(ia and ia.status))
+			expect(side(a, 3).status == "full", "import into full drives: " .. serpent.line(side(a, 3)))
 			expect(near(in_pipes(), 500), "fluid left the tank although the drives are full: " .. in_pipes())
 			expect(near(count(FL_FLUID), FL_FULL), "network changed while full: " .. count(FL_FLUID))
-			expect(ib and ib.status == "empty-network", "export of a missing fluid: status " .. tostring(ib and ib.status))
-			expect(b.get_fluid_count("water") == 0, "export interface got water from nowhere")
+			expect(side(b, 1).status == "empty-network", "export of a missing fluid: " .. serpent.line(side(b, 1)))
+			expect(held(b, "water") == 0, "export interface got water from nowhere")
 			expect(near(remote.call(F, "remove", terminal, FL_FLUID, 30000), 30000), "could not take fluid out")
-			remote.call(F, "set_interface", b, "import")
+			set_import(b)
 			return next_phase("full-drain")
 		end
 	elseif phase == "full-drain" then
@@ -1993,9 +2009,9 @@ function setup_fluid_cell_test(s)
 	me_place(s, fails, "fluid cells", "me-drive", FX + 8.5, FY - 0.5)
 	me_place(s, fails, "fluid cells", "me-terminal", FX + 9.5, FY - 0.5)
 	cable_row(s, fails, FX + 10, FX + 11, FY - 1)
-	--- the import bus faces tank 1 (3x3 below it), the export bus tank 2
-	me_place(s, fails, "fluid cells", "me-fluid-import-bus", FX + 8.5, FY + 0.5, { direction = defines.direction.south })
-	me_place(s, fails, "fluid cells", "me-fluid-export-bus", FX + 11.5, FY + 0.5, { direction = defines.direction.south })
+	--- the import bus faces tank 1 (3x3 below it), the export bus tank 2 (issue #3: the unified buses on fluid)
+	me_place(s, fails, "fluid cells", "me-import-bus", FX + 8.5, FY + 0.5, { direction = defines.direction.south })
+	me_place(s, fails, "fluid cells", "me-export-bus", FX + 11.5, FY + 0.5, { direction = defines.direction.south })
 	me_place(s, fails, "fluid cells", "storage-tank", FX + 8.5, FY + 2.5)
 	me_place(s, fails, "fluid cells", "storage-tank", FX + 12.5, FY + 2.5)
 	return fails
@@ -2011,7 +2027,7 @@ function fluid_cell_test()
 	local function near(a, b) return math.abs((a or 0) - (b or 0)) <= 1e-3 end
 	local function find(name, x, y) return s.find_entity(name, { FX + x, FY + y }) end
 	local d, t = find("me-drive", 8.5, -0.5), find("me-terminal", 9.5, -0.5)
-	local ib, eb = find("me-fluid-import-bus", 8.5, 0.5), find("me-fluid-export-bus", 11.5, 0.5)
+	local ib, eb = find("me-import-bus", 8.5, 0.5), find("me-export-bus", 11.5, 0.5)
 	local t1, t2 = find("storage-tank", 8.5, 2.5), find("storage-tank", 12.5, 2.5)
 	if not (d and t and ib and eb and t1 and t2) then
 		return me_report("FLUIDCELLS", "ME fluid cells", { "entities missing" })
@@ -2066,7 +2082,7 @@ function fluid_cell_test()
 	expect(near(moved, 1000) and near(t2.get_fluid_count("water"), 1000) and near(water(), before - 1000),
 		"export bus: moved " .. moved .. ", tank " .. t2.get_fluid_count("water") .. ", network " .. water())
 	local bf = remote.call(IO, "get_bus", eb)
-	expect(bf and serpent.line(bf.filters) == serpent.line({ "water" }), "fluid bus filters " .. serpent.line(bf))
+	expect(bf and serpent.line(bf.filters) == serpent.line({ "fluid/water" }), "fluid bus filters " .. serpent.line(bf))
 	--- old fluid drive items: placing one gives an ME Drive with four fluid cells holding its fluid
 	local old = s.create_entity{ name = "me-drive", position = { FX + 16.5, FY + 6.5 }, force = "player" }
 	inv[4].set_stack{ name = "me-fluid-drive-1k", count = 1 }
@@ -2104,8 +2120,8 @@ function setup_r3_test(s)
 	me_place(s, fails, "R3", "me-drive", RX + 10.5, RY - 0.5)
 	me_place(s, fails, "R3", "me-terminal", RX + 11.5, RY - 0.5)
 	local x = RX
-	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-fluid-import-bus", "me-fluid-export-bus", "me-network-interface",
-		"me-pattern-provider", "me-crafting-cpu", "me-level-maintainer", "me-circuit-interface", "me-fluid-interface" }) do
+	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-network-interface",
+		"me-pattern-provider", "me-crafting-cpu", "me-level-maintainer", "me-circuit-interface" }) do
 		me_place(s, fails, "R3", name, x + 0.5, RY + 6.5)
 		x = x + 4
 	end
@@ -2231,8 +2247,8 @@ function me_r3_test()
 		"fmt " .. remote.call(GUI, "fmt", 1234) .. " " .. remote.call(GUI, "fmt", 2.5e9))
 	local blocks = {}
 	local x = RX
-	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-fluid-import-bus", "me-fluid-export-bus", "me-network-interface",
-		"me-pattern-provider", "me-crafting-cpu", "me-level-maintainer", "me-circuit-interface", "me-fluid-interface" }) do
+	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-network-interface",
+		"me-pattern-provider", "me-crafting-cpu", "me-level-maintainer", "me-circuit-interface" }) do
 		blocks[name] = s.find_entity(name, { x + 0.5, RY + 6.5 })
 		expect(blocks[name] and remote.call(GUI, "has_window", blocks[name]), "no window for " .. name)
 		x = x + 4
@@ -2270,9 +2286,10 @@ function me_r3_test()
 	expect(cdata and serpent.line(cdata.filters) == serpent.line({ "fluid/water" }) and cdata.enabled ~= nil, "circuit_data " .. serpent.line(cdata))
 	remote.call("gregtorio-me-circuit", "set_circuit_enabled", ci, false)
 	expect(remote.call("gregtorio-me-circuit", "get_circuit_enabled", ci) == false, "circuit output switch")
-	local fi = remote.call(GUI, "fluid_interface_data", blocks["me-fluid-interface"])
-	expect(fi and fi.mode and fi.volume and fi.volume > 0, "fluid_interface_data " .. serpent.line(fi))
 	local iface = blocks["me-network-interface"]
+	local fi = remote.call(GUI, "interface_data", iface)
+	expect(fi and fi.volume and fi.volume > 0 and fi.fluids and #fi.fluids == 4 and fi.fluids[1].setting == "import",
+		"interface_data: the fluid sides " .. serpent.line(fi and fi.fluids))
 	local isize = prototypes.item["iron-plate"].stack_size
 	remote.call(GUI, "set_interface_item", iface, 3, { name = "iron-plate", quality = "normal" })
 	local idata = remote.call(GUI, "interface_data", iface)
@@ -2283,18 +2300,35 @@ function me_r3_test()
 	expect(idata.config[5] and idata.config[5].amount == 7 and not idata.config[3], "an item moved to another config slot " .. serpent.line(idata.config))
 	remote.call(GUI, "set_interface_item", iface, 5, nil)
 	expect(next(remote.call(GUI, "interface_data", iface).config) == nil, "config slot cleared")
+	--- issue #3: a fluid row from the window's chooser (a SignalID) takes the first free side, a side drop-down
+	remote.call(GUI, "set_interface_signal", iface, 2, { type = "fluid", name = "water" })
+	idata = remote.call(GUI, "interface_data", iface)
+	expect(idata.config[2] and idata.config[2].type == "fluid" and idata.config[2].amount == idata.volume and idata.sides[1] == 2,
+		"a fluid row " .. serpent.line(idata.config) .. " " .. serpent.line(idata.sides))
+	remote.call(GUI, "set_interface_signal", iface, 2, { type = "item", name = "iron-plate", quality = "normal" })
+	idata = remote.call(GUI, "interface_data", iface)
+	expect(idata.config[2] and idata.config[2].type == nil and idata.sides[1] == nil, "the fluid row became an item row " .. serpent.line(idata))
+	remote.call(GUI, "set_interface_signal", iface, 2, { type = "virtual", name = "signal-A" })
+	expect(next(remote.call(GUI, "interface_data", iface).config) == nil, "a virtual signal clears the row")
 	local bus = blocks["me-export-bus"]
 	remote.call(IO, "set_bus_filter", bus, 1, "iron-plate")
 	remote.call(IO, "set_bus_filter", bus, 3, "copper-plate")
 	local bd = remote.call(GUI, "bus_data", bus)
-	expect(bd and serpent.line(bd.filters) == serpent.line({ "iron-plate", "copper-plate" }) and not bd.fluid and bd.max == 5, "bus_data " .. serpent.line(bd))
+	expect(bd and serpent.line(bd.filters) == serpent.line({ "iron-plate", "copper-plate" }) and bd.max == 9, "bus_data " .. serpent.line(bd))
 	remote.call(IO, "set_bus_filter", bus, 1, nil)
 	expect(serpent.line(remote.call(GUI, "bus_data", bus).filters) == serpent.line({ "copper-plate" }), "bus filter removed")
-	local fbd = remote.call(GUI, "bus_data", blocks["me-fluid-import-bus"])
-	expect(fbd and fbd.fluid and fbd.import, "fluid bus_data " .. serpent.line(fbd))
+	remote.call(IO, "set_bus_filter", bus, 2, "fluid/water")
+	expect(serpent.line(remote.call(GUI, "bus_data", bus).filters) == serpent.line({ "copper-plate", "fluid/water" }), "a fluid bus filter")
+	local fbd = remote.call(GUI, "bus_data", blocks["me-import-bus"])
+	expect(fbd and fbd.import and fbd.max == 9, "import bus_data " .. serpent.line(fbd))
+	local sbd = remote.call(GUI, "storage_bus_data", blocks["me-storage-bus"])
+	expect(sbd and sbd.max == 18 and sbd.side == "item", "storage_bus_data " .. serpent.line(sbd))
 	expect(remote.call(GUI, "key_of_elem", "item-with-quality", { name = "iron-plate", quality = "normal" }) == "iron-plate"
 		and remote.call(GUI, "key_of_elem", "fluid", "water") == "fluid/water"
 		and remote.call(GUI, "key_of_elem", "signal", { type = "virtual", name = "signal-A" }) == nil, "key_of_elem")
+	expect(remote.call(GUI, "key_of_signal", { type = "item", name = "iron-plate", quality = "normal" }) == "iron-plate"
+		and remote.call(GUI, "key_of_signal", { type = "fluid", name = "water" }) == "fluid/water"
+		and remote.call(GUI, "key_of_signal", { type = "virtual", name = "signal-A" }) == nil, "key_of_signal")
 
 	--- the terminal's tabs
 	local items = remote.call(TERM, "entries", t, "", "count", "items")
@@ -2409,6 +2443,40 @@ function storage_bus_test()
 		local n = 0
 		for _, c in pairs(remote.call(NET, "drive", drive)) do n = n + (c.items[name] or 0) end
 		return n
+	end
+	--- the editor's infinity chest (type infinity-container) is a chest for the buses and the storage bus: above the
+	--- cable row an import bus, an export bus and a storage bus on one infinity chest each; removed again, so the
+	--- rest of this test sees the 7 buses and no coal
+	do
+		local north = defines.direction.north
+		local function make(name, x, y, dir)
+			return s.create_entity{ name = name, position = { SBX + x, SBY + y }, direction = dir, force = "player", raise_built = true }
+		end
+		local ci, ce, cs = make("infinity-chest", 12.5, -2.5), make("infinity-chest", 14.5, -2.5), make("infinity-chest", 16.5, -2.5)
+		local ib, eb, sb = make("me-import-bus", 12.5, -1.5, north), make("me-export-bus", 14.5, -1.5, north),
+			make("me-storage-bus", 16.5, -1.5, north)
+		if ci and ce and cs and ib and eb and sb then
+			ci.insert{ name = "coal", count = 10 }
+			remote.call(IO, "step", ib)
+			expect(count("coal") == 10 and ci.get_item_count("coal") == 0 and remote.call(IO, "get_bus", ib).status ~= "no-target",
+				"import bus on an infinity chest: " .. count("coal") .. ", " .. serpent.line(remote.call(IO, "get_bus", ib)))
+			remote.call(IO, "set_bus_filters", eb, { "coal" })
+			remote.call(IO, "step", eb)
+			expect(ce.get_item_count("coal") == 10 and count("coal") == 0,
+				"export bus into an infinity chest: " .. ce.get_item_count("coal") .. ", " .. serpent.line(remote.call(IO, "get_bus", eb)))
+			cs.insert{ name = "coal", count = 25 }
+			visit(sb)
+			local i8 = info(sb)
+			expect(i8.status == "ok" and i8.target == "infinity-chest" and count("coal") == 25, "storage bus on an infinity chest: " .. serpent.line(i8))
+			expect(remote.call(NET, "extract", t, "coal", 5) == 5 and cs.get_item_count("coal") == 20 and count("coal") == 20,
+				"extract from the infinity chest: " .. cs.get_item_count("coal"))
+			cs.destroy{ raise_destroy = true }
+			expect(count("coal") == 0 and info(sb).status == "no-target", "infinity chest removed: coal " .. count("coal"))
+		else
+			expect(false, "infinity chests or their buses not placed")
+		end
+		for _, e in pairs({ ib, eb, sb }) do if e and e.valid then e.destroy{ raise_destroy = true } end end
+		for _, e in pairs({ ci, ce, cs }) do if e and e.valid then e.destroy() end end
 	end
 	--- the network's items must be the cells' plus what the working buses show of their chests (after a visit)
 	local pairs_ = { { b1, c1 }, { b2, c2 }, { b3, c3 }, { b4, c3 }, { b6, c7 } }
@@ -2574,7 +2642,249 @@ function storage_bus_test()
 end
 
 --------------------------------------------------------------------------------
---- ME Fluid Storage Bus (issue #68, scripts/fork-me-fluid-storagebus.lua): own network right of the storage bus test,
+--- Items and fluids in one block (me-network issue #3; scripts/fork-me-io.lua, fork-me-storagebus.lua,
+--- fork-me-unify.lua): own network. The ME Interface with an item row and a fluid row (the fluid row takes the first
+--- side with a pipe), an import side, a side switched off, a pipe loop between an export and an import side, the
+--- fluid of its sides back into the network when it is mined; an export bus on a machine with a fluid recipe (items
+--- into the input inventory, the fluid into an input box), an import bus on such a machine (the output inventory and
+--- an output box; the input box is left alone); a storage bus that faces a chest, then a tank (it becomes the fluid
+--- side), then a cable; mixed filters; the old fluid blocks: built by a script, their ghosts with old tags (revived
+--- with the settings), their items (hidden, placing the unified block, no recipe, no unlock).
+--------------------------------------------------------------------------------
+
+local UX, UY = 300, 240
+
+function setup_unified_test(s)
+	local fails = {}
+	local what = "unified"
+	power(s, fails, what, UX, UY)
+	me_place(s, fails, what, "me-network-controller", UX + 7, UY)
+	me_drive(s, fails, what, UX + 8.5, UY - 0.5, { ["iron-plate"] = 200, ["resin-circuit-board"] = 50 }, "16k")
+	local fd = me_drive(s, fails, what, UX + 9.5, UY - 0.5, {}, "1k", true)
+	if fd then
+		remote.call(NET, "store_fluid_in_drive", fd, "water", 3000)
+		remote.call(NET, "store_fluid_in_drive", fd, "phenol", 2000)
+	end
+	me_place(s, fails, what, "me-terminal", UX + 10.5, UY - 0.5)
+	cable_row(s, fails, UX + 11, UX + 40, UY - 1)
+	local south = { direction = defines.direction.south }
+	--- interface I: a pipe on its east side (exports), steam in a pipe on its south side (imported)
+	me_place(s, fails, what, "me-network-interface", UX + 12.5, UY + 0.5)
+	me_place(s, fails, what, "pipe", UX + 13.5, UY + 0.5)
+	local steam = me_place(s, fails, what, "pipe", UX + 12.5, UY + 1.5)
+	if steam then steam.fluidbox[1] = { name = "steam", amount = 50, temperature = 165 } end
+	--- interface L: one pipe loop from its east side round to its south side
+	me_place(s, fails, what, "me-network-interface", UX + 15.5, UY + 0.5)
+	me_place(s, fails, what, "pipe", UX + 16.5, UY + 0.5)
+	me_place(s, fails, what, "pipe", UX + 16.5, UY + 1.5)
+	me_place(s, fails, what, "pipe", UX + 15.5, UY + 1.5)
+	--- the export bus on reactor R (no power: it does not craft), the import bus on reactor R2
+	me_place(s, fails, what, "me-export-bus", UX + 20.5, UY + 0.5, south)
+	local r = me_place(s, fails, what, "hv-chemical-reactor", UX + 20.5, UY + 2.5)
+	me_place(s, fails, what, "me-import-bus", UX + 25.5, UY + 0.5, south)
+	local r2 = me_place(s, fails, what, "hv-chemical-reactor", UX + 25.5, UY + 2.5)
+	for _, m in pairs({ r, r2 }) do
+		if m then
+			m.force.recipes["phenolic-circuit-board"].enabled = true
+			m.set_recipe("phenolic-circuit-board")
+		end
+	end
+	--- the storage bus on a chest (later a tank)
+	me_place(s, fails, what, "me-storage-bus", UX + 30.5, UY + 0.5, south)
+	local chest = me_place(s, fails, what, "iron-chest", UX + 30.5, UY + 1.5)
+	if chest then chest.insert{ name = "wood", count = 30 } end
+	return fails
+end
+
+function unified_test()
+	if storage.unified or game.tick < 60 then return end
+	storage.unified = { done = true }
+	local s = game.surfaces[1]
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function near(a, b, eps) return math.abs((a or 0) - (b or 0)) <= (eps or 0.01) end
+	local function find(name, x, y) return s.find_entity(name, { UX + x, UY + y }) end
+	local t = find("me-terminal", 10.5, -0.5)
+	local i, l = find("me-network-interface", 12.5, 0.5), find("me-network-interface", 15.5, 0.5)
+	local eb, ib = find("me-export-bus", 20.5, 0.5), find("me-import-bus", 25.5, 0.5)
+	local r, r2 = find("hv-chemical-reactor", 20.5, 2.5), find("hv-chemical-reactor", 25.5, 2.5)
+	local sb, chest = find("me-storage-bus", 30.5, 0.5), find("iron-chest", 30.5, 1.5)
+	local steam_pipe = find("pipe", 12.5, 1.5)
+	if not (t and i and l and eb and ib and r and r2 and sb and chest and steam_pipe) then
+		return me_report("UNIFIED", "ME unified I/O", { "entities missing" })
+	end
+	local net = remote.call(NET, "network", t)
+	expect(net and net.ok, "network " .. serpent.line(net))
+	local function fluid(name) return remote.call(NET, "fluid_count", t, name) end
+	local function item(name) return remote.call(NET, "count", t, name) end
+	local function tanks(e) return remote.call(IO, "interface_tanks", e) or {} end
+	local function side(e, d) return (remote.call(IO, "get_interface", e) or { fluids = {} }).fluids[d] or {} end
+	local function step(e, n) for _ = 1, n or 1 do remote.call(IO, "step", e) end end
+
+	--- the interface: four side tanks on its tile, an item row and a fluid row (which takes the east side: the first
+	--- side with a pipe; north is the cable)
+	expect(#tanks(i) == 4 and s.count_entities_filtered{ name = "me-network-interface-side", position = i.position } == 4,
+		"the interface has " .. #tanks(i) .. " side tanks")
+	expect(remote.call(IO, "set_interface_key", i, 1, "iron-plate", 20), "item row")
+	expect(remote.call(IO, "set_interface_key", i, 2, "fluid/water", 1000), "fluid row")
+	local sides = remote.call(IO, "get_interface_sides", i)
+	expect(sides[2] == 2 and sides[1] == nil and sides[3] == nil, "the fluid row took " .. serpent.line(sides))
+	local water0 = fluid("water")                            -- (the I/O step may have imported the steam already)
+	step(i, 6)
+	local inv = i.get_inventory(defines.inventory.chest)
+	expect(inv.get_item_count("iron-plate") == 20, "item row: " .. inv.get_item_count("iron-plate") .. " plates")
+	local east = tanks(i)[2].fluidbox[1]
+	expect(east and east.name == "water" and near(east.amount, 1000, 0.5), "fluid row: the east side holds " .. serpent.line(east))
+	local seg = tanks(i)[2].fluidbox.get_fluid_segment_contents(1) or {}
+	expect(near(water0 - fluid("water"), seg.water or 0, 0.05), "water out of the network " .. (water0 - fluid("water"))
+		.. ", in the east segment " .. tostring(seg.water))
+	expect(near(fluid("steam"), 50) and (steam_pipe.fluidbox[1] == nil or steam_pipe.fluidbox[1].amount < 1e-3),
+		"import side: steam " .. fluid("steam") .. ", pipe " .. serpent.line(steam_pipe.fluidbox[1]))
+	expect(side(i, 3).status == "import" and side(i, 2).status == "ok", "side status " .. serpent.line(side(i, 2)) .. serpent.line(side(i, 3)))
+	--- a side switched off keeps what is piped in
+	remote.call(IO, "set_interface_side", i, 3, "off")
+	steam_pipe.fluidbox[1] = { name = "steam", amount = 20, temperature = 165 }
+	step(i)
+	expect(near(fluid("steam"), 50) and side(i, 3).status == "off", "an off side imported: " .. fluid("steam"))
+	remote.call(IO, "set_interface_side", i, 3, "import")
+	step(i)
+	expect(near(fluid("steam"), 70), "the side imports again: " .. fluid("steam"))
+	--- the loop: an export side and an import side on one pipe network
+	remote.call(IO, "set_interface_config", l, { [1] = { type = "fluid", name = "water", amount = 500 } }, { [2] = 1 })
+	local w1 = fluid("water")
+	step(l, 8)
+	local lseg = tanks(l)[2].fluidbox.get_fluid_segment_contents(1) or {}
+	expect(tanks(l)[2].fluidbox.get_fluid_segment_id(1) == tanks(l)[3].fluidbox.get_fluid_segment_id(1), "the loop is not one segment")
+	expect(side(l, 3).status == "loop" and near(w1 - fluid("water"), lseg.water or 0, 0.05),
+		"loop: south side " .. serpent.line(side(l, 3)) .. ", out of the network " .. (w1 - fluid("water")) .. ", in the loop " .. tostring(lseg.water))
+	--- the blueprint tag of the interface: rows and sides
+	local bpi = game.create_inventory(1)
+	bpi.insert{ name = "blueprint" }
+	local mapping = bpi[1].create_blueprint{ surface = s, force = "player", area = { { UX + 12, UY }, { UX + 13, UY + 1 } } }
+	remote.call(IO, "tag_blueprint", bpi[1], mapping)
+	local tag
+	for index, e in pairs(mapping or {}) do
+		if e.name == "me-network-interface" then tag = bpi[1].get_blueprint_entity_tag(index, "fork_me_interface") end
+		expect(e.name ~= "me-network-interface-side", "a side tank is in the blueprint")
+	end
+	bpi.destroy()
+	expect(tag and #tag.config == 2 and tag.config[2].type == "fluid" and #tag.sides == 1 and tag.sides[1].side == 2
+		and tag.sides[1].row == 2, "interface tag " .. serpent.line(tag))
+	--- mined: the fluid of the loop goes back into the network, the side tanks go
+	local w2 = fluid("water")
+	local in_loop = (tanks(l)[2].fluidbox.get_fluid_segment_contents(1) or {}).water or 0
+	remote.call(IO, "removed", l, true)
+	local lpos = l.position
+	l.destroy()
+	expect(near(fluid("water"), w2 + in_loop, 0.05), "mined interface: network water " .. fluid("water") .. ", expected " .. (w2 + in_loop))
+	expect(s.count_entities_filtered{ name = "me-network-interface-side", position = lpos } == 0, "side tanks left behind")
+
+	--- the export bus on a machine with a fluid recipe: items into the input inventory, the fluid into an input box
+	remote.call(IO, "set_bus_filters", eb, { "resin-circuit-board", "fluid/phenol" })
+	local bi = remote.call(IO, "bus_info", eb)
+	expect(bi and bi.items and bi.fluids and not bi.import, "export bus info " .. serpent.line(bi))
+	local p0 = fluid("phenol")
+	step(eb)
+	local boards = r.get_inventory(defines.inventory.crafter_input).get_item_count("resin-circuit-board")
+	local phenol = r.get_fluid_count("phenol")
+	expect(boards > 0 and phenol > 0 and near(p0 - fluid("phenol"), phenol), "export bus on a machine: " .. boards .. " boards, "
+		.. phenol .. " phenol, network phenol " .. fluid("phenol"))
+	--- the import bus on such a machine: the output inventory and an output box (the input box is left alone)
+	r2.get_inventory(defines.inventory.crafter_output).insert{ name = "phenolic-circuit-board", count = 10 }
+	local fb = r2.fluidbox
+	local in_box, out_box
+	for k = 1, #fb do
+		local pr = fb.get_prototype(k)
+		if pr and pr.production_type == nil and pr[1] then pr = pr[1] end
+		if pr and pr.production_type == "input" and not in_box then in_box = k end
+		if pr and pr.production_type == "output" and not out_box then out_box = k end
+	end
+	expect(in_box, "reactor boxes " .. tostring(in_box) .. "/" .. tostring(out_box))
+	if in_box then
+		fb[in_box] = { name = "phenol", amount = 7 }
+		local ok = out_box and pcall(function() fb[out_box] = { name = "phenol", amount = 30 } end)
+		local out_held = ok and fb[out_box] and fb[out_box].amount or 0
+		local pb0, pp0 = item("phenolic-circuit-board"), fluid("phenol")
+		step(ib)
+		expect(item("phenolic-circuit-board") == pb0 + 10, "import bus: boards " .. item("phenolic-circuit-board"))
+		expect(near(fluid("phenol"), pp0 + out_held) and near(fb[in_box] and fb[in_box].amount or 0, 7),
+			"import bus: phenol " .. fluid("phenol") .. " (output box had " .. out_held .. "), input box "
+			.. serpent.line(fb[in_box]))
+		--- only item filters: no fluid
+		if ok then fb[out_box] = { name = "phenol", amount = 30 } end
+		remote.call(IO, "set_bus_filters", ib, { "phenolic-circuit-board" })
+		local pp1 = fluid("phenol")
+		step(ib)
+		expect(near(fluid("phenol"), pp1), "an import bus with only item filters took fluid")
+	end
+
+	--- the storage bus: a chest (item side), then a tank (fluid side), then a cable
+	remote.call("gregtorio-me-storagebus", "visit", sb)
+	local si = remote.call("gregtorio-me-storagebus", "info", sb)
+	expect(si and si.side == "item" and item("wood") == 30, "storage bus on a chest " .. serpent.line(si) .. ", wood " .. item("wood"))
+	chest.destroy{ raise_destroy = true }
+	local tank = s.create_entity{ name = "storage-tank", position = { UX + 30.5, UY + 2.5 }, force = "player", raise_built = true }
+	tank.insert_fluid{ name = "lubricant", amount = 700 }
+	remote.call("gregtorio-me-storagebus", "visit", sb)
+	si = remote.call("gregtorio-me-storagebus", "info", sb)
+	net = remote.call(NET, "network", t)
+	expect(si and si.side == "fluid" and si.fluid == "lubricant" and near(fluid("lubricant"), 700) and item("wood") == 0
+		and net.fluid_storage_buses == 1 and net.storage_buses == 0, "storage bus on a tank " .. serpent.line(si) .. ", lubricant "
+		.. fluid("lubricant") .. ", buses " .. tostring(net.fluid_storage_buses) .. "/" .. tostring(net.storage_buses))
+	expect(near(remote.call(NET, "extract_fluid", t, "lubricant", 200), 200) and near(tank.get_fluid_count("lubricant"), 500, 1),
+		"taken from the tank: " .. tank.get_fluid_count("lubricant"))
+	remote.call("gregtorio-me-storagebus", "set_settings", sb, { filters = { "wood", "fluid/lubricant", "water" } })
+	local st = remote.call("gregtorio-me-storagebus", "get_settings", sb)
+	expect(st and serpent.line(st.filters) == serpent.line({ "wood", "fluid/lubricant", "fluid/water" }), "mixed filters " .. serpent.line(st))
+	sb.direction = defines.direction.north                   -- the cable row
+	remote.call("gregtorio-me-storagebus", "rotated", sb)
+	si = remote.call("gregtorio-me-storagebus", "info", sb)
+	expect(si and si.status == "me-target" and si.side == "item" and fluid("lubricant") == 0, "rotated onto the cable " .. serpent.line(si))
+
+	--- the old fluid blocks: one built by a script becomes the unified one; their ghosts become unified ghosts with
+	--- the settings in their tags
+	s.create_entity{ name = "me-fluid-import-bus", position = { UX + 35.5, UY + 0.5 }, direction = defines.direction.south,
+		force = "player", raise_built = true }
+	expect(find("me-fluid-import-bus", 35.5, 0.5) == nil, "an old fluid import bus built by a script stayed")
+	local new = find("me-import-bus", 35.5, 0.5)
+	expect(new and new.direction == defines.direction.south, "no unified import bus in its place")
+	local function ghost(name, x, tags, dir)
+		s.create_entity{ name = "entity-ghost", inner_name = name, position = { UX + x, UY + 4.5 }, direction = dir,
+			force = "player", tags = tags, raise_built = true }
+		local g = s.find_entities_filtered{ type = "entity-ghost", position = { UX + x, UY + 4.5 } }[1]
+		local e
+		if g then _, e = g.revive{ raise_revive = true } end
+		return g, e
+	end
+	local _, e1 = ghost("me-fluid-export-bus", 12.5, { fork_me_bus = { filters = { "water" } } }, defines.direction.east)
+	local b1 = e1 and remote.call(IO, "get_bus", e1)
+	expect(e1 and e1.name == "me-export-bus" and e1.direction == defines.direction.east and b1
+		and serpent.line(b1.filters) == serpent.line({ "fluid/water" }), "old export bus ghost: " .. tostring(e1 and e1.name) .. " " .. serpent.line(b1))
+	local _, e2 = ghost("me-fluid-interface", 14.5, { fork_me_fluid_interface = { mode = "export", fluid = "water", level = 777 } })
+	local c2 = e2 and remote.call(IO, "get_interface_config", e2)
+	local s2 = e2 and remote.call(IO, "get_interface_sides", e2)
+	expect(e2 and e2.name == "me-network-interface" and c2[1] and c2[1].type == "fluid" and c2[1].name == "water" and c2[1].amount == 777
+		and serpent.line(s2) == serpent.line({ 1, 1, 1, 1 }), "old fluid interface ghost: " .. serpent.line(c2) .. " " .. serpent.line(s2))
+	local _, e3 = ghost("me-fluid-storage-bus", 16.5, { fork_me_fluid_storage_bus = { mode = "read", priority = 3, filters = { "water" } } })
+	local g3 = e3 and remote.call("gregtorio-me-storagebus", "get_settings", e3)
+	expect(e3 and e3.name == "me-storage-bus" and g3 and g3.mode == "read" and g3.priority == 3
+		and serpent.line(g3.filters) == serpent.line({ "fluid/water" }), "old fluid storage bus ghost: " .. serpent.line(g3))
+	--- the old items: hidden, they place the unified block, no recipe makes them, no technology unlocks them
+	for old_name, unified in pairs({ ["me-fluid-interface"] = "me-network-interface", ["me-fluid-import-bus"] = "me-import-bus",
+		["me-fluid-export-bus"] = "me-export-bus", ["me-fluid-storage-bus"] = "me-storage-bus" }) do
+		local p = prototypes.item[old_name]
+		expect(p and p.hidden and p.place_result and p.place_result.name == unified, old_name .. ": " .. tostring(p and p.place_result and p.place_result.name))
+		expect(prototypes.recipe[old_name] == nil, "the recipe " .. old_name .. " exists")
+	end
+	for _, eff in pairs(prototypes.technology["me-fluid-storage"].effects) do
+		expect(not (eff.recipe and eff.recipe:find("^me%-fluid%-") and not eff.recipe:find("cell")), "me-fluid-storage unlocks " .. tostring(eff.recipe))
+	end
+	me_report("UNIFIED", "ME unified I/O", problems, "interface rows and sides, buses on machines, storage bus sides, old blocks")
+end
+
+--------------------------------------------------------------------------------
+--- ME Storage Bus on fluid (issue #68, scripts/fork-me-fluid-storagebus.lua; issue #3: the storage bus itself, the
+--- remote of the old fluid storage bus works on it): own network right of the storage bus test,
 --- a drive with four 1k fluid cells, a terminal, fluid storage buses on storage tanks below a cable row. T1 and T2
 --- are one fluid segment (a pipe between them): counted once, the second bus refused; removing the pipe splits
 --- the segment and the second bus takes its part. Then the terminal's entries and an extract (what autocrafting and
@@ -2603,21 +2913,21 @@ function setup_fluid_storage_bus_test(s)
 	me_place(s, fails, what, "storage-tank", FSX + 12.5, FS_CY)
 	me_place(s, fails, what, "pipe", FSX + 14.5, FS_CY + 1)
 	me_place(s, fails, what, "storage-tank", FSX + 16.5, FS_CY, { direction = defines.direction.east })
-	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 12.5, FSY + 0.5, south)     -- B1 on T1
-	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 16.5, FSY + 0.5, south)     -- B2 on T2: same segment
-	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 19.5, FSY + 0.5, { direction = defines.direction.north })  -- B6: a cable
+	me_place(s, fails, what, "me-storage-bus", FSX + 12.5, FSY + 0.5, south)     -- B1 on T1
+	me_place(s, fails, what, "me-storage-bus", FSX + 16.5, FSY + 0.5, south)     -- B2 on T2: same segment
+	me_place(s, fails, what, "me-storage-bus", FSX + 19.5, FSY + 0.5, { direction = defines.direction.north })  -- B6: a cable
 	me_place(s, fails, what, "storage-tank", FSX + 21.5, FS_CY)                         -- T3: filters
-	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 21.5, FSY + 0.5, south)     -- B3
+	me_place(s, fails, what, "me-storage-bus", FSX + 21.5, FSY + 0.5, south)     -- B3
 	me_place(s, fails, what, "storage-tank", FSX + 26.5, FS_CY)                         -- T4: priority, modes, temperature
-	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 26.5, FSY + 0.5, south)     -- B4
+	me_place(s, fails, what, "me-storage-bus", FSX + 26.5, FSY + 0.5, south)     -- B4
 	me_place(s, fails, what, "storage-tank", FSX + 31.5, FS_CY)                         -- T5: filled by the pump
-	me_place(s, fails, what, "me-fluid-storage-bus", FSX + 31.5, FSY + 0.5, south)     -- B5
+	me_place(s, fails, what, "me-storage-bus", FSX + 31.5, FSY + 0.5, south)     -- B5
 	--- the pump (output north into T5's south connection) and its source tank TS (north connection into the pump)
 	me_place(s, fails, what, "pump", FSX + 32.5, FSY + 5, { direction = defines.direction.north })
 	me_place(s, fails, what, "storage-tank", FSX + 33.5, FSY + 7.5)
 	power(s, fails, what, FSX + 36, FSY + 8)
 	--- the fluid export bus into TE, and a level maintainer
-	me_place(s, fails, what, "me-fluid-export-bus", FSX + 35.5, FSY + 0.5, south)
+	me_place(s, fails, what, "me-export-bus", FSX + 35.5, FSY + 0.5, south)
 	me_place(s, fails, what, "storage-tank", FSX + 35.5, FS_CY)
 	me_place(s, fails, what, "me-level-maintainer", FSX + 37.5, FSY + 0.5)
 	return fails
@@ -2638,12 +2948,12 @@ function fluid_storage_bus_test()
 		--- waiting part: the export bus, the maintainer, the pump
 		local problems = st.problems
 		local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
-		local t5, b5 = find("storage-tank", 31.5, cy), find("me-fluid-storage-bus", 31.5, 0.5)
+		local t5, b5 = find("storage-tank", 31.5, cy), find("me-storage-bus", 31.5, 0.5)
 		local te = find("storage-tank", 35.5, cy)
 		local maint = find("me-level-maintainer", 37.5, 0.5)
 		if not st.export_done and te.get_fluid_count("lubricant") > 0 then
 			st.export_done = true
-			remote.call(IO, "set_bus_filters", find("me-fluid-export-bus", 35.5, 0.5), {})   -- one visit is enough
+			remote.call(IO, "set_bus_filters", find("me-export-bus", 35.5, 0.5), {})   -- one visit is enough
 			expect(near(seg(st.t1).lubricant, st.t1_before - te.get_fluid_count("lubricant")),
 				"export bus: T1's segment " .. tostring(seg(st.t1).lubricant) .. ", before " .. st.t1_before .. ", TE " .. te.get_fluid_count("lubricant"))
 		end
@@ -2655,7 +2965,7 @@ function fluid_storage_bus_test()
 			end
 		end
 		if not st.seen and (seg(t5).water or 0) > 0 then st.seen = game.tick end
-		local buses = s.count_entities_filtered{ name = "me-fluid-storage-bus" }
+		local buses = (remote.call(NET, "network", t) or {}).fluid_storage_buses or 0   -- the fluid side's visit list
 		local cycle = 15 * math.ceil(buses / 8) + 10           -- visit cycle plus this test's 10 tick granularity
 		if st.seen and not st.pump_done and (info(b5).contents or {})["fluid/water"] then
 			st.pump_done = game.tick - st.seen
@@ -2678,13 +2988,13 @@ function fluid_storage_bus_test()
 	storage.me_fsbus = st
 	local problems = st.problems
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
-	local function bus(x) return find("me-fluid-storage-bus", x, 0.5) end
+	local function bus(x) return find("me-storage-bus", x, 0.5) end
 	local b1, b2, b6, b3, b4, b5 = bus(12.5), bus(16.5), bus(19.5), bus(21.5), bus(26.5), bus(31.5)
 	local t1, t2 = find("storage-tank", 12.5, cy), find("storage-tank", 16.5, cy)
 	local t3, t4, t5 = find("storage-tank", 21.5, cy), find("storage-tank", 26.5, cy), find("storage-tank", 31.5, cy)
 	local ts, te = find("storage-tank", 33.5, 7.5), find("storage-tank", 35.5, cy)
 	local pipe = find("pipe", 14.5, cy + 1)
-	local ebus, maint = find("me-fluid-export-bus", 35.5, 0.5), find("me-level-maintainer", 37.5, 0.5)
+	local ebus, maint = find("me-export-bus", 35.5, 0.5), find("me-level-maintainer", 37.5, 0.5)
 	if not (t and drive and b1 and b2 and b3 and b4 and b5 and b6 and t1 and t2 and t3 and t4 and t5 and ts and te and pipe
 		and ebus and maint) then
 		st.done = true
@@ -2692,7 +3002,8 @@ function fluid_storage_bus_test()
 	end
 	st.t1 = t1
 	local net = remote.call(NET, "network", t)
-	expect(net and net.ok and net.fluid_storage_buses == 6 and net.storage_buses == 0, "network " .. serpent.line(net))
+	--- B6 faces a cable: no target, no fluid side
+	expect(net and net.ok and net.fluid_storage_buses == 5 and net.storage_buses == 1, "network " .. serpent.line(net))
 	expect(t1.fluidbox.get_fluid_segment_id(1) == t2.fluidbox.get_fluid_segment_id(1), "T1 and T2 are not one segment")
 	local function visit(b) remote.call(FSB, "visit", b) end
 	local function cells(name)
@@ -2722,7 +3033,7 @@ function fluid_storage_bus_test()
 					local allow = {}
 					for _, f in pairs(i.filters) do allow[f] = true end
 					for name, n in pairs(seg(p[2])) do
-						if #i.filters == 0 or allow[name] then want[name] = (want[name] or 0) + n end
+						if #i.filters == 0 or allow["fluid/" .. name] then want[name] = (want[name] or 0) + n end
 					end
 				end
 			end
@@ -2831,13 +3142,14 @@ function fluid_storage_bus_test()
 	expect(near(fcount("lubricant"), part1), "B2 removed: lubricant " .. fcount("lubricant") .. ", T1 " .. part1)
 	consistent("after the removals")
 	net = remote.call(NET, "network", t)
-	expect(net and net.fluid_storage_buses == 5, "fluid storage buses left: " .. serpent.line(net and net.fluid_storage_buses))
+	--- (B3 lost its tank: no side until it faces something again)
+	expect(net and net.fluid_storage_buses == 3, "storage buses on fluid left: " .. serpent.line(net and net.fluid_storage_buses))
 	--- a bus facing an ME block works with nothing
 	visit(b6)
 	expect(info(b6).status == "me-target", "facing a cable: " .. tostring(info(b6).status))
 	--- settings: blueprint tag, a revived ghost with the tag, paste, clone, the window's data
-	local want = { mode = "read", priority = 7, filters = { "lubricant", "water" } }
-	expect(remote.call(FSB, "set_settings", b6, want), "set_settings b6")
+	expect(remote.call(FSB, "set_settings", b6, { mode = "read", priority = 7, filters = { "lubricant", "water" } }), "set_settings b6")
+	local want = { mode = "read", priority = 7, filters = { "fluid/lubricant", "fluid/water" } }   -- plain fluid names: fluids
 	local function same(b, label)
 		local g = remote.call(FSB, "get_settings", b)
 		expect(g and serpent.line(g) == serpent.line(want), label .. ": " .. serpent.line(g))
@@ -2849,24 +3161,24 @@ function fluid_storage_bus_test()
 	remote.call(FSB, "tag_blueprint", bpi[1], mapping)
 	local tag
 	for index, e in pairs(mapping or {}) do
-		if e.name == "me-fluid-storage-bus" then tag = bpi[1].get_blueprint_entity_tag(index, "fork_me_fluid_storage_bus") end
+		if e.name == "me-storage-bus" then tag = bpi[1].get_blueprint_entity_tag(index, "fork_me_storage_bus") end
 	end
 	bpi.destroy()
 	expect(tag and serpent.line(tag) == serpent.line(want), "blueprint tag " .. serpent.line(tag))
-	local ghost = s.create_entity{ name = "entity-ghost", inner_name = "me-fluid-storage-bus", position = { FSX + 26.5, FSY + 12.5 },
-		force = "player", tags = { fork_me_fluid_storage_bus = tag } }
+	local ghost = s.create_entity{ name = "entity-ghost", inner_name = "me-storage-bus", position = { FSX + 26.5, FSY + 12.5 },
+		force = "player", tags = { fork_me_storage_bus = tag } }
 	local _, revived = ghost.revive{ raise_revive = true }
 	if revived then same(revived, "revived ghost") else expect(false, "ghost not revived") end
-	local pasted = s.create_entity{ name = "me-fluid-storage-bus", position = { FSX + 28.5, FSY + 12.5 }, force = "player", raise_built = true }
+	local pasted = s.create_entity{ name = "me-storage-bus", position = { FSX + 28.5, FSY + 12.5 }, force = "player", raise_built = true }
 	remote.call(FSB, "paste", b6, pasted)
 	same(pasted, "pasted")
 	local clone = b6.clone{ position = { FSX + 30.5, FSY + 12.5 } }
 	if clone then same(clone, "clone") else expect(false, "no clone") end
-	local wd = remote.call(GUI, "fluid_storage_bus_data", b6)
-	expect(wd and wd.mode == "read" and wd.priority == 7 and wd.max == 5 and wd.status == "me-target", "window data " .. serpent.line(wd))
-	expect(remote.call(GUI, "has_window", b6), "the fluid storage bus has no window")
+	local wd = remote.call(GUI, "storage_bus_data", b6)
+	expect(wd and wd.mode == "read" and wd.priority == 7 and wd.max == 18 and wd.status == "me-target", "window data " .. serpent.line(wd))
+	expect(remote.call(GUI, "has_window", b6), "the storage bus has no window")
 	remote.call(FSB, "set_filter", b6, 1, nil)
-	expect(serpent.line(remote.call(FSB, "get_settings", b6).filters) == serpent.line({ "water" }), "filter removed")
+	expect(serpent.line(remote.call(FSB, "get_settings", b6).filters) == serpent.line({ "fluid/water" }), "filter removed")
 	--- the waiting part (above): the export bus takes lubricant from T1's segment, a maintainer keeps 100 lubricant,
 	--- the pump fills T5 from TS
 	t1.insert_fluid{ name = "lubricant", amount = 2000 }                     -- enough for the export and the maintainer
@@ -2966,11 +3278,11 @@ function setup_issue38_tests(s)
 	m[#m + 1] = place38(s, fails, "me-circuit-interface", X38 + 2.5, CI_Y + 8.5)
 	place38(s, fails, "small-electric-pole", X38 + 0.5, CI_Y + 8.5)
 	me_connect(fails, "circuit interface", m)
-	--- settings copy: a maintainer, a circuit interface and a fluid interface with settings
+	--- settings copy: a maintainer, a circuit interface and an ME Interface with item and fluid rows and sides
 	m = network38(s, fails, SC_Y, nil)
 	m[#m + 1] = place38(s, fails, "me-level-maintainer", X38 + 2.5, SC_Y + 10.5)
 	m[#m + 1] = place38(s, fails, "me-circuit-interface", X38 + 3.5, SC_Y + 10.5)
-	m[#m + 1] = place38(s, fails, "me-fluid-interface", X38 + 4.5, SC_Y + 10.5)
+	m[#m + 1] = place38(s, fails, "me-network-interface", X38 + 4.5, SC_Y + 10.5)
 	me_connect(fails, "settings copy", m)
 	return fails
 end
@@ -3299,17 +3611,18 @@ function settings_test()
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
 	local m = s.find_entity("me-level-maintainer", { X38 + 2.5, SC_Y + 10.5 })
 	local ci = s.find_entity("me-circuit-interface", { X38 + 3.5, SC_Y + 10.5 })
-	local fi = s.find_entity("me-fluid-interface", { X38 + 4.5, SC_Y + 10.5 })
+	local fi = s.find_entity("me-network-interface", { X38 + 4.5, SC_Y + 10.5 })
 	if not (m and ci and fi) then
 		expect(false, "entities missing")
 		return report38("SETTINGS", "settings copy", problems)
 	end
 	local M_SET = { key = "fluid/water", amount = 1234, circuit = true }
 	local C_SET = { "iron-plate", "fluid/water" }
-	local F_SET = { mode = "export", fluid = "water", level = 2345 }
+	local F_CONFIG = { [1] = { name = "iron-plate", quality = "normal", amount = 50 }, [2] = { type = "fluid", name = "water", amount = 2345 } }
+	local F_SIDES = { [2] = 2, [4] = "off" }
 	remote.call(C38, "set_maintainer", m, M_SET.key, M_SET.amount, M_SET.circuit)
 	remote.call(C38, "set_circuit_filters", ci, C_SET)
-	remote.call(F38, "set_interface", fi, F_SET.mode, F_SET.fluid, F_SET.level)
+	remote.call(IO, "set_interface_config", fi, F_CONFIG, F_SIDES)
 	local function check(what, mm, cc, ff)
 		if mm then
 			local g = remote.call(C38, "get_maintainer", mm)
@@ -3323,9 +3636,10 @@ function settings_test()
 			expect(g and g.signals == 1, what .. ": circuit interface signals " .. tostring(g and g.signals))
 		end
 		if ff then
-			local g = remote.call(F38, "get_interface", ff)
-			expect(g and g.mode == F_SET.mode and g.fluid == F_SET.fluid and g.level == F_SET.level,
-				what .. ": fluid interface settings " .. serpent.line(g))
+			local c, sd = remote.call(IO, "get_interface_config", ff), remote.call(IO, "get_interface_sides", ff)
+			expect(c and c[1] and c[1].name == "iron-plate" and c[1].amount == 50 and c[2] and c[2].type == "fluid"
+				and c[2].name == "water" and c[2].amount == 2345 and serpent.line(sd) == serpent.line(F_SIDES),
+				what .. ": ME Interface settings " .. serpent.line(c) .. " " .. serpent.line(sd))
 		end
 	end
 	check("original", m, ci, fi)
@@ -3340,13 +3654,13 @@ function settings_test()
 	local tagged = {}
 	for index, e in pairs(mapping or {}) do
 		local tag = ({ ["me-level-maintainer"] = "fork_me_maintainer", ["me-circuit-interface"] = "fork_me_circuit",
-			["me-fluid-interface"] = "fork_me_fluid_interface" })[e.name]
+			["me-network-interface"] = "fork_me_interface" })[e.name]
 		if tag then tagged[e.name] = bp.get_blueprint_entity_tag(index, tag) end
 	end
-	local tm, tc, tf = tagged["me-level-maintainer"], tagged["me-circuit-interface"], tagged["me-fluid-interface"]
+	local tm, tc, tf = tagged["me-level-maintainer"], tagged["me-circuit-interface"], tagged["me-network-interface"]
 	expect(tm and tm.key == M_SET.key and tm.amount == M_SET.amount and tm.circuit == M_SET.circuit, "maintainer tag " .. serpent.line(tm))
 	expect(tc and serpent.line(tc.filters) == serpent.line(C_SET), "circuit interface tag " .. serpent.line(tc))
-	expect(tf and tf.mode == F_SET.mode and tf.fluid == F_SET.fluid and tf.level == F_SET.level, "fluid interface tag " .. serpent.line(tf))
+	expect(tf and tf.config and #tf.config == 2 and tf.sides and #tf.sides == 2, "ME Interface tag " .. serpent.line(tf))
 	--- built from the blueprint (ghosts with the tags) and revived: the new entities have the settings
 	local ghosts = bp.build_blueprint{ surface = s, force = "player", position = { X38 + 10, SC_Y + 14 } }
 	local built = {}
@@ -3360,17 +3674,17 @@ function settings_test()
 	built["me-cable"] = nil                         -- the cables that connected the originals are in the blueprint too
 	expect(table_size(built) == 3, "revived from the blueprint: " .. table_size(built) .. " of 3")
 	local cfails = {}
-	connect38(SC_Y, { built["me-level-maintainer"], built["me-circuit-interface"], built["me-fluid-interface"] }, cfails)
-	check("blueprint", built["me-level-maintainer"], built["me-circuit-interface"], built["me-fluid-interface"])
+	connect38(SC_Y, { built["me-level-maintainer"], built["me-circuit-interface"], built["me-network-interface"] }, cfails)
+	check("blueprint", built["me-level-maintainer"], built["me-circuit-interface"], built["me-network-interface"])
 	inv.destroy()
 
 	--- settings paste onto plain entities
 	local pm = s.create_entity{ name = "me-level-maintainer", position = { X38 + 2.5, SC_Y + 12.5 }, force = "player", raise_built = true }
 	local pc = s.create_entity{ name = "me-circuit-interface", position = { X38 + 3.5, SC_Y + 12.5 }, force = "player", raise_built = true }
-	local pf = s.create_entity{ name = "me-fluid-interface", position = { X38 + 4.5, SC_Y + 12.5 }, force = "player", raise_built = true }
+	local pf = s.create_entity{ name = "me-network-interface", position = { X38 + 4.5, SC_Y + 12.5 }, force = "player", raise_built = true }
 	remote.call(C38, "paste", m, pm)
 	remote.call(C38, "paste", ci, pc)
-	remote.call(F38, "paste", fi, pf)
+	remote.call(IO, "paste", fi, pf)
 	connect38(SC_Y, { pm, pc, pf }, cfails)
 	check("paste", pm, pc, pf)
 
@@ -3427,6 +3741,7 @@ script.on_init(function()
 	for _, f in pairs(setup_r3_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_storage_bus_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_fluid_storage_bus_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_unified_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_issue38_tests(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end

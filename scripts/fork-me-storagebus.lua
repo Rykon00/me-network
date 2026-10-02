@@ -1,49 +1,49 @@
 --------------------------------------------------------------------------------
---- FORK AE2: ME STORAGE BUS (issue #68; prototypes/network.lua, docs/ME-REWORK.md "Storage bus")
----   * A rotatable 1x1 ME block that faces a chest, a logistic chest or a cargo wagon: that inventory
----     becomes storage of the network. The terminal shows what is in it, everything that extracts from the
----     network can take from it, and inserts go into it by its filter and priority.
----   * Settings: item filters (a whitelist: the bus shows and takes only these items; none = every item),
----     a priority (-1000 ... 1000, the order of R3 together with the drives) and a mode: read and write,
----     read only (the network takes from it, never puts into it) or write only (the network puts into it and
----     does not see what is in it). Kept in blueprints (tag fork_me_storage_bus), settings paste and clones.
+--- FORK AE2: ME STORAGE BUS (issue #68; issue #3 of me-network: items and fluids; prototypes/network.lua,
+--- docs/ME-REWORK.md "Storage bus" and "Items and fluids in one block")
+---   * A rotatable 1x1 ME block that faces a chest, a logistic chest, the editor's infinity chest or a cargo wagon:
+---     that inventory becomes storage of the network (the item side, this module). Facing any other entity with a
+---     fluid box (a storage tank), the fluid of that box's fluid segment becomes storage of the network (the fluid
+---     side, scripts/fork-me-fluid-storagebus.lua: one bus per segment, the temperature rule). What it faces
+---     decides, when the target is resolved; no target type has both. The terminal shows what is in it,
+---     everything that extracts from the network can take from it, and inserts go into it by its filter and
+---     priority.
+---   * Settings: filters, items and fluids mixed (a whitelist of keys: the bus shows and takes only these; none =
+---     everything), a priority (-1000 ... 1000, the order of R3 together with the drives) and a mode: read and
+---     write, read only (the network takes from it, never puts into it) or write only (the network puts into it
+---     and does not see what is in it). Kept in blueprints (tag fork_me_storage_bus), settings paste and clones.
 ---   * The bus's storage is an "external cell" of the storage engine (scripts/fork-me-network.lua): the
----     record below is that cell. Its `items` are a snapshot of the inventory; the engine keeps the
----     network's totals and index from it.
+---     record below is that cell (ext = "storage-bus"; side = "fluid" and handler = "fluid-storage-bus" while it
+---     faces fluid: the engine calls the fluid side's functions directly). Its `items` are a
+---     snapshot of the inventory or segment; the engine keeps the network's totals and index from it.
 ---   * Consistency: inserters and players change the inventory without an event. The I/O step (15 ticks,
----     scripts/fork-me-io.lua) visits VISITS_PER_STEP buses round robin; a visit reads the inventory once
----     (get_contents) and applies the difference to the snapshot (N.ext_sync). Between two visits the
----     snapshot may be stale; every insert and extract through the bus works on the real inventory (the
----     engine asks `count` before it takes and corrects the snapshot), so the network never hands out
----     items that are gone; it may show items that are gone (until the next visit or extract) or not yet
----     show items that came in (until the next visit).
+---     scripts/fork-me-io.lua) visits VISITS_PER_STEP item side buses round robin (the fluid side has its own list
+---     and budget); a visit reads the inventory once (get_contents) and applies the difference to the snapshot
+---     (N.ext_sync). Between two visits the snapshot may be stale; every insert and extract through the bus works
+---     on the real inventory (the engine asks `count` before it takes and corrects the snapshot), so the network
+---     never hands out items that are gone; it may show items that are gone (until the next visit or extract) or
+---     not yet show items that came in (until the next visit).
 ---   * Rules: one bus per inventory (a second bus on the same inventory is refused with a status and takes
 ---     over when the first one goes); a bus facing an ME block is refused (no loops); removing the bus or
 ---     the inventory drops the inventory from the network.
 --- State: the records live in the network module (storage.fork_me_net.ext, they are the cells); this module
---- keeps the visit list and which bus uses which inventory (storage.fork_me_sbus).
+--- keeps the visit list of the item side and which bus uses which inventory (storage.fork_me_sbus).
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
+local T = require("scripts.fork-me-targets")
+local F = require("scripts.fork-me-fluid-storagebus")
 
 local M = {}
 
 local KIND = "storage-bus"
-local VISITS_PER_STEP = 8           -- bus visits per I/O step (every 15 ticks)
+local VISITS_PER_STEP = 8           -- item side bus visits per I/O step (every 15 ticks)
 local MAX_FILTERS = 18
 local MAX_PRIORITY = 1000
 local TAG = "fork_me_storage_bus"   -- blueprint tag: { mode, priority, filters = { keys } }
+local OLD_TAG = "fork_me_fluid_storage_bus"   -- the old ME Fluid Storage Bus's tag: { mode, priority, filters = { fluid names } }
 local MODES = { readwrite = true, read = true, write = true }
-local FRONT = {
-	[defines.direction.north] = { 0, -1 }, [defines.direction.east] = { 1, 0 },
-	[defines.direction.south] = { 0, 1 }, [defines.direction.west] = { -1, 0 },
-}
---- entity types a storage bus works with, and their inventory
-local INVENTORY = {
-	["container"] = defines.inventory.chest,
-	["logistic-container"] = defines.inventory.chest,
-	["cargo-wagon"] = defines.inventory.cargo_wagon,
-}
+local INVENTORY = T.STORAGE
 --- item types the network cannot hold as plain items (the same rule as the cells, M.storable of the network)
 local NOT_PLAIN = {
 	["item-with-inventory"] = true, ["item-with-tags"] = true, ["item-with-entity-data"] = true, ["blueprint"] = true,
@@ -64,7 +64,17 @@ local function is_bus(entity) return entity and entity.valid and N.kind_of(entit
 
 --- the record (the external cell) of a bus
 local function rec_of(entity)
-	return entity and entity.valid and entity.unit_number and N.ext_get(entity.unit_number) or nil
+	local rec = entity and entity.valid and entity.unit_number and N.ext_get(entity.unit_number) or nil
+	return rec and rec.ext == KIND and rec or nil
+end
+
+local function listed(list, unit)
+	for _, u in ipairs(list) do if u == unit then return true end end
+	return false
+end
+
+local function unlist(list, unit)
+	for i = #list, 1, -1 do if list[i] == unit then table.remove(list, i) end end
 end
 
 --------------------------------------------------------------------------------
@@ -94,16 +104,14 @@ local function inventory_of(rec)
 	if not (t and t.valid) then return nil end
 	if t.type == "cargo-wagon" then                      -- a train moves: the wagon must still cover the tile in front
 		local e = rec.entity
-		local d = FRONT[e.direction] or FRONT[defines.direction.north]
-		local here = e.surface.find_entities_filtered{ position = { e.position.x + d[1], e.position.y + d[2] },
-			type = "cargo-wagon", limit = 1 }[1]
+		local here = e.surface.find_entities_filtered{ position = T.front(e), type = "cargo-wagon", limit = 1 }[1]
 		if here ~= t then return nil end
 	end
 	return t.get_inventory(INVENTORY[t.type])
 end
 
 --------------------------------------------------------------------------------
---- the external cell's functions (called by the storage engine)
+--- the external cell's functions (called by the storage engine); the fluid side's are F.handlers
 --------------------------------------------------------------------------------
 
 local function item_of(key)
@@ -113,7 +121,7 @@ local function item_of(key)
 	return name, q
 end
 
-N.ext_handlers[KIND] = {
+local ITEM = {
 	--- items of `key` the inventory takes now
 	room = function(rec, key)
 		if rec.mode == "read" or not allowed(rec, key) then return 0 end
@@ -148,6 +156,8 @@ N.ext_handlers[KIND] = {
 	end,
 }
 
+N.ext_handlers[KIND] = ITEM             -- the fluid side: N.ext_handlers[F.HANDLER] through rec.handler
+
 --------------------------------------------------------------------------------
 --- target and visit
 --------------------------------------------------------------------------------
@@ -163,27 +173,44 @@ local function claimed_by_other(s, rec, tu)
 	local other = s.claims[tu]
 	if not other or other == rec.unit then return false end
 	local o = N.ext_get(other)
-	if o and o.entity.valid and o.target_unit == tu and o.target and o.target.valid then return true end
-	s.claims[tu] = nil                                   -- a stale claim (bus gone or turned away)
+	if o and o.entity.valid and o.side ~= "fluid" and o.target_unit == tu and o.target and o.target.valid then return true end
+	s.claims[tu] = nil                                   -- a stale claim (bus gone, turned away or on fluid now)
 	return false
 end
 
---- the entity in front of the bus; sets rec.target or rec.status
+--- put the bus into the visit list of its side (and out of the other one)
+local function list_side(s, rec)
+	if rec.side == "fluid" then
+		unlist(s.list, rec.unit)
+		F.list(rec)
+	else
+		F.unlist(rec)
+		if not listed(s.list, rec.unit) then s.list[#s.list + 1] = rec.unit end
+	end
+end
+
+--- The entity in front of the bus: an inventory makes it an item side bus (rec.target, claimed), any other entity
+--- with a fluid box a fluid side bus (F.take: rec.target and rec.box); sets rec.side and rec.status. A valid cached
+--- target is kept.
 local function resolve(s, rec)
 	local e = rec.entity
 	local t = rec.target
-	if t and t.valid and rec.dir == e.direction and (t.type ~= "cargo-wagon" or inventory_of(rec)) then
-		rec.status = "ok"
-		return t
+	if t and t.valid and rec.dir == e.direction then
+		if rec.side == "fluid" then
+			if rec.box then return t end
+		elseif t.type ~= "cargo-wagon" or inventory_of(rec) then
+			rec.status = "ok"
+			return t
+		end
 	end
 	release(s, rec)
+	F.drop(rec)
 	rec.dir = e.direction
-	local d = FRONT[e.direction] or FRONT[defines.direction.north]
-	local status = "no-target"
-	for _, o in pairs(e.surface.find_entities_filtered{ position = { e.position.x + d[1], e.position.y + d[2] } }) do
+	local status, side = "no-target", nil
+	for _, o in pairs(e.surface.find_entities_filtered{ position = T.front(e) }) do
 		if o.valid and o ~= e then
 			if N.kind_of(o.name) or o.name:sub(1, 3) == "me-" then
-				status = "me-target"                     -- an ME block (or an old ME chest): no loops
+				status = "me-target"                     -- an ME block (or an old ME chest, an interface's side): no loops
 				break
 			elseif INVENTORY[o.type] and o.unit_number then
 				if claimed_by_other(s, rec, o.unit_number) then
@@ -194,19 +221,28 @@ local function resolve(s, rec)
 					status = nil
 				end
 				break
+			elseif F.take(rec, o) then
+				side, status = "fluid", nil
+				break
 			end
 		end
 	end
+	if rec.side ~= side then
+		rec.side, rec.handler = side, side and F.HANDLER or nil
+		N.ext_sync(rec.unit, {})                         -- the other side's snapshot goes
+	end
+	list_side(s, rec)
 	rec.status = status or "ok"
 	return rec.target
 end
 
---- One visit: find the target, read its inventory once and apply the difference to the network
-function M.visit(rec)
+--- One visit: find the target, read its inventory (or segment) once and apply the difference to the network
+function M.visit(rec, cascade)
 	local s = state()
 	local e = rec.entity
 	if not e.valid then return end
 	local t = resolve(s, rec)
+	if rec.side == "fluid" then return F.visit(rec, cascade) end
 	local contents = {}
 	local inv = t and inventory_of(rec)
 	if inv and rec.mode ~= "write" then
@@ -225,8 +261,11 @@ function M.visit(rec)
 		if not ok then rec.status = why or "no-network" end
 	end
 end
+--- the fluid side visits through this when its target is gone or the bus was rotated (it may face a chest now)
+F.resolve_visit = function(rec, cascade) return M.visit(rec, cascade) end
+F.lost = function(rec) list_side(state(), rec) end
 
---- the I/O step (scripts/fork-me-io.lua): VISITS_PER_STEP buses, round robin
+--- the I/O step (scripts/fork-me-io.lua): VISITS_PER_STEP item side buses, round robin
 function M.on_step()
 	local s = storage.fork_me_sbus
 	if not (s and #s.list > 0) then return end
@@ -234,12 +273,12 @@ function M.on_step()
 		if s.cursor > #s.list then s.cursor = 1 end
 		local unit = s.list[s.cursor]
 		local rec = N.ext_get(unit)
-		if rec and rec.entity.valid then
+		if rec and rec.entity.valid and rec.ext == KIND and rec.side ~= "fluid" then
 			M.visit(rec)
-			s.cursor = s.cursor + 1
+			if s.list[s.cursor] == unit then s.cursor = s.cursor + 1 end   -- (a bus that went to the fluid list is gone)
 		else
 			table.remove(s.list, s.cursor)
-			if rec then N.ext_detach(unit) end
+			if rec and not rec.entity.valid then N.ext_detach(unit) end
 		end
 		if #s.list == 0 then break end
 	end
@@ -249,17 +288,24 @@ end
 --- settings
 --------------------------------------------------------------------------------
 
---- filters checked against the prototypes: a list of keys ("name" or "name@quality"), at most MAX_FILTERS
+--- filters checked against the prototypes: a list of keys ("name", "name@quality", "fluid/<name>"; a plain name
+--- that is no item but a fluid is that fluid), at most MAX_FILTERS
 local function clean_filters(filters)
 	local out, seen = {}, {}
 	if type(filters) ~= "table" then return out end
 	for _, key in ipairs(filters) do
-		if type(key) == "string" and not seen[key] and #out < MAX_FILTERS and not key:find("#", 1, true)
-			and not N.is_fluid_key(key) then
-			local name, q = N.parse_key(key)
-			if prototypes.item[name] and prototypes.quality[q] then
-				seen[key] = true
-				out[#out + 1] = N.key_of(name, q)
+		if type(key) == "string" and #out < MAX_FILTERS and not key:find("#", 1, true) then
+			local k
+			if N.is_fluid_key(key) then
+				if prototypes.fluid[key:sub(7)] then k = key end
+			else
+				local name, q = N.parse_key(key)
+				if prototypes.item[name] and prototypes.quality[q] then k = N.key_of(name, q)
+				elseif prototypes.fluid[key] then k = "fluid/" .. key end
+			end
+			if k and not seen[k] then
+				seen[k] = true
+				out[#out + 1] = k
 			end
 		end
 	end
@@ -273,7 +319,7 @@ function M.get_settings(entity)
 	return { mode = rec.mode, priority = rec.priority or 0, filters = { table.unpack(rec.filters) } }
 end
 
---- Apply settings (missing fields keep their value). The inventory is read again at once, so the
+--- Apply settings (missing fields keep their value). The inventory or segment is read again at once, so the
 --- network shows what the new filter and mode allow.
 function M.set_settings(entity, settings)
 	local rec = rec_of(entity)
@@ -315,7 +361,8 @@ function M.set_filter(entity, index, key)
 	return M.set_filters(entity, list)
 end
 
---- the window's data: { mode, priority, filters, max, status, target, items, types, unit }
+--- the window's data: { side, mode, priority, filters, max, status, target, items, types, contents; on fluid also
+--- fluid, amount, temperature, segment }
 function M.info(entity)
 	local rec = rec_of(entity)
 	if not rec then return nil end
@@ -325,9 +372,13 @@ function M.info(entity)
 		types = types + 1
 	end
 	local t = rec.target
-	return { mode = rec.mode, priority = rec.priority or 0, filters = { table.unpack(rec.filters) }, max = MAX_FILTERS,
-		status = rec.status or "ok", target = t and t.valid and t.name or nil, items = items, types = types,
-		contents = rec.items }
+	local out = { side = rec.side or "item", mode = rec.mode, priority = rec.priority or 0,
+		filters = { table.unpack(rec.filters) }, max = MAX_FILTERS, status = rec.status or "ok",
+		target = t and t.valid and t.name or nil, items = items, types = types, contents = rec.items }
+	if rec.side == "fluid" then
+		out.fluid, out.amount, out.temperature, out.segment = rec.fluid, items, rec.temp, rec.seg
+	end
+	return out
 end
 
 M.MAX_FILTERS = MAX_FILTERS
@@ -340,23 +391,36 @@ local function register(entity)
 	local s = state()
 	local unit = entity.unit_number
 	local rec = N.ext_get(unit)
-	if not rec then
+	if not (rec and rec.ext == KIND) then
 		rec = { ext = KIND, unit = unit, entity = entity, items = {}, data = {}, mode = "readwrite", priority = 0,
 			filters = {}, status = "no-target" }
 		N.ext_attach(entity, rec)
 	end
-	local listed = false
-	for _, u in ipairs(s.list) do if u == unit then listed = true break end end
-	if not listed then s.list[#s.list + 1] = unit end
+	list_side(s, rec)
 	return rec
 end
+
+--- the settings of a blueprint tag: issue #3 / the item bus's { mode, priority, filters = keys }, or the old fluid
+--- storage bus's { mode, priority, filters = fluid names }
+local function settings_of_tags(tags)
+	if type(tags) ~= "table" then return nil end
+	if type(tags[TAG]) == "table" then return tags[TAG] end
+	local old = tags[OLD_TAG]
+	if type(old) ~= "table" then return nil end
+	local filters = {}
+	for _, name in ipairs(old.filters or {}) do
+		if type(name) == "string" then filters[#filters + 1] = N.is_fluid_key(name) and name or ("fluid/" .. name) end
+	end
+	return { mode = old.mode, priority = old.priority, filters = filters }
+end
+M.settings_of_tags = settings_of_tags
 
 --- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
 function M.on_built(entity, tags, source)
 	if not is_bus(entity) then return end
 	local rec = register(entity)
-	local t = type(tags) == "table" and tags[TAG] or nil
-	if type(t) == "table" then
+	local t = settings_of_tags(tags)
+	if t then
 		M.set_settings(entity, t)
 	elseif source and is_bus(source) then
 		M.set_settings(entity, M.get_settings(source))
@@ -365,19 +429,23 @@ function M.on_built(entity, tags, source)
 	end
 end
 
---- a removed entity: a bus lets its inventory go (the network module drops its cell); an inventory a bus
---- uses leaves the network at once
+--- a removed entity: a bus lets its inventory or segment go (the network module drops its cell); an inventory a
+--- bus uses leaves the network at once; a removed fluid entity is the fluid side's business
 function M.on_removed(entity)
+	if not (entity and entity.valid and entity.unit_number) then return end
 	local s = storage.fork_me_sbus
-	if not (s and entity and entity.valid and entity.unit_number) then return end
 	local unit = entity.unit_number
 	local rec = N.ext_get(unit)
 	if rec and rec.ext == KIND then
-		release(s, rec)
-		for i = #s.list, 1, -1 do if s.list[i] == unit then table.remove(s.list, i) end end
+		if s then
+			release(s, rec)
+			unlist(s.list, unit)
+		end
+		F.drop(rec)
+		F.unlist(rec)
 		return
 	end
-	local bus = s.claims[unit]
+	local bus = s and s.claims[unit]
 	if bus then
 		s.claims[unit] = nil
 		local r = N.ext_get(bus)
@@ -386,6 +454,7 @@ function M.on_removed(entity)
 			N.ext_sync(bus, {})
 		end
 	end
+	F.on_removed(entity)
 end
 
 function M.on_rotated(entity)
@@ -410,10 +479,12 @@ function M.tag_blueprint(bp, mapping)
 	end
 end
 
---- after the graph rebuild: every storage bus has a record and is in the visit list, targets are found again
+--- after the graph rebuild: every storage bus has a record and is in the visit list of its side, targets are found
+--- again (the fluid side claims its segments in unit order)
 function M.on_configuration_changed()
 	local s = state()
 	s.list, s.cursor, s.claims = {}, 1, {}
+	F.reset()
 	plain_cache = {}
 	local names = {}
 	for _, name in pairs(N.node_names()) do
@@ -427,7 +498,8 @@ function M.on_configuration_changed()
 	table.sort(all, function(a, b) return a.unit_number < b.unit_number end)
 	for _, e in ipairs(all) do
 		local rec = register(e)
-		rec.target, rec.target_unit, rec.dir = nil, nil, nil
+		rec.target, rec.target_unit, rec.dir, rec.box, rec.seg = nil, nil, nil, nil, nil
+		rec.filters = clean_filters(rec.filters)          -- (a save before issue #3 had item keys only: unchanged)
 	end
 	for _, e in ipairs(all) do M.visit(N.ext_get(e.unit_number)) end
 end
@@ -448,6 +520,26 @@ remote.add_interface("gregtorio-me-storagebus", {
 	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone)
 	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
 	--- what the removal events do for an inventory a bus uses (destroy() raises none)
+	removed = function(entity) M.on_removed(entity) end,
+	rotated = function(entity) M.on_rotated(entity) end,
+})
+
+--- issue #3: the old remote of the ME Fluid Storage Bus works on the storage bus (its fluid side)
+remote.add_interface("gregtorio-me-fluid-storagebus", {
+	visit = function(entity)
+		local rec = rec_of(entity)
+		if rec then M.visit(rec) end
+		return rec ~= nil
+	end,
+	--- the fluid side's part of the I/O step (urgent visits, then the round robin)
+	step = function() F.on_step() end,
+	info = function(entity) return M.info(entity) end,
+	get_settings = function(entity) return M.get_settings(entity) end,
+	set_settings = function(entity, settings) return M.set_settings(entity, settings) end,
+	set_filter = function(entity, index, key) return M.set_filter(entity, index, key) end,
+	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
+	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
+	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
 	removed = function(entity) M.on_removed(entity) end,
 	rotated = function(entity) M.on_rotated(entity) end,
 })

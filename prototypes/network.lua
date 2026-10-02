@@ -356,7 +356,8 @@ data.raw.item["me-drive"].place_result = DRIVE
 
 
 --------------------------------------------------------------------------------
---- ME INTERFACE (container with filterable slots: filtered = export, the rest = import)
+--- ME INTERFACE (container: config rows of items and fluids, the rest is imported; its four fluid sides are hidden
+--- storage tanks of prototypes/fluids.lua, runtime: scripts/fork-me-io.lua)
 --------------------------------------------------------------------------------
 
 data:extend({ {
@@ -373,8 +374,8 @@ data:extend({ {
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	inventory_size = INTERFACE_SLOTS,
 	inventory_type = "with_filters_and_bar",
-	picture = {
-		filename = ENTITY_PATH .. "me-interface.png",
+	picture = {                                       -- issue #3: with its four pipe sides (tools/gen_ae2_sprites.py --unified)
+		filename = ENTITY_PATH .. "me-interface-unified.png",
 		priority = "extra-high", width = 32, height = 32,
 	},
 	--- a container has no settings of its own: this lets the runtime copy the filters (settings paste)
