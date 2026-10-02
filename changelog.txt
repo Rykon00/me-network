@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.0
+Date: 2026-10-02
   Features:
     - The ME Interface handles fluids: its 9 config rows take an item or a fluid, and pipes connect to its four sides. Each side imports what is piped in (the default), is off, or keeps a fluid row's fluid at its amount (up to four fluids at once).
     - The ME Import Bus and ME Export Bus handle items and fluids: up to 9 filters, items and fluids mixed. On a machine with an inventory and fluid boxes (an assembling machine with a fluid recipe, a chemical plant) one bus does both.
