@@ -8,15 +8,17 @@
 ---     other side would run full or empty (the headroom rule of fork-me-io.lua), not after a fixed period; a block
 ---     blocked on its target's side (source empty, target full, no target) is **probed** instead of visited (one
 ---     cheap engine call at the idle limit, the probe list `q.sl`); a block blocked on the network's side (its key
----     absent, the network full, no network, no power) is **parked**: in no list at all, woken by the network
----     (N.wait_for, N.wait_below, N.wait_usable, the change hooks). A wake puts a unit at the front of the busy list
+---     absent, the network full, no network, no power) is **parked**: not visited, woken by the network (N.wait_for,
+---     N.wait_below, N.wait_usable, the change hooks), with one slow fallback visit about once a minute (a fallback
+---     that finds work is a missed wake, counted). A wake puts a unit at the front of the busy list
 ---     (`q.front`), before the backlog, wherever it was; a unit whose other side ran out (`rec.starve`) goes to the
 ---     front when it comes due, too.
 ---   * The budget of a tick is what is due (the front, the backlog and the units due now), at least the floor and
 ---     at most the ceiling (map settings "at least" / "at most"). The sleepers' share of it, the probes, is capped at
----     the floor whatever the ceiling is, so a network of sleepers never costs more per tick than the budget of
----     0.3.0 did; the busy list gets the rest up to the ceiling. When the ceiling binds, the earliest due come
----     first. Counts, never measured time.
+---     the floor whatever the ceiling is, and the sum of visits and probes stays within the floor while the busy list
+---     does not need more (they keep half of the floor when it does), so a network of sleepers never costs more per
+---     tick than the budget of 0.3.0 did; the busy list gets the rest up to the ceiling. When the ceiling binds, the
+---     earliest due come first. Counts, never measured time.
 ---   * A unit is in a list once per scheduling; an entry whose record says another tick or another list is stale
 ---     and skipped (a wake or a reschedule leaves the old entry behind instead of searching for it). The record
 ---     says where it is: `rec.due` (tick, BACKLOG, FRONT, nil while visited or parked), `rec.sq` (in the probe
@@ -119,7 +121,7 @@ end
 function M.snapshot()
 	local out = {}
 	for name, st in pairs(stats) do
-		out[name] = { visits = st.visits, ticks = st.ticks, due = st.due, backlog_max = st.back_max, starved = st.starved or 0,
+		out[name] = { visits = st.visits, ticks = st.ticks, due = st.due, backlog_max = st.back_max, starved = st.starved or 0, missed = st.missed or 0,
 			backlog_avg = st.ticks > 0 and st.back_sum / st.ticks or 0,
 			idle = percentiles(st.hist[1]), partial = percentiles(st.hist[2]), full = percentiles(st.hist[3]) }
 	end
@@ -230,10 +232,24 @@ function M.forget(q, rec)
 	rec.inq, rec.sq, rec.due = nil, nil, nil
 end
 
---- `rec` is parked for `reason`: in no list, visited again only when something wakes it
-function M.park(q, rec, reason)
+--- `rec` is parked for `reason`: not visited, not probed; woken by the network (or by its module) when what it waits
+--- for happens. A wake that is missed must not stand a block still for ever, silently: a parked block is in the probe
+--- list with one slow fallback visit, about once in PARK_FALLBACK ticks, spread by Sched.slot (the module's probe
+--- function recognises it by `rec.park` and visits it fully). A fallback visit that finds work is a missed wake and is
+--- counted (M.missed): it must be 0 in the tests and the benchmark scenes.
+M.PARK_FALLBACK = 3600
+function M.park(q, rec, unit, reason)
 	M.forget(q, rec)
+	local now = game.tick
+	local spread = math.floor(M.PARK_FALLBACK / 6)
+	M.at(q, rec, unit, M.slot(q, true, unit, now, M.PARK_FALLBACK, spread, spread), true)
 	rec.park = reason
+end
+
+--- a fallback visit of a parked unit of `name` found work: its wake was missed
+function M.missed(name)
+	local st = stats[name] or stat(name)
+	st.missed = (st.missed or 0) + 1
 end
 
 --- the units of `l` due at `tick` join its backlog (a starved unit of the busy list joins the front)
@@ -287,11 +303,12 @@ local function compact(l, field, headfield, head)
 end
 
 --- up to `budget` visits from the list `field` of `l` (`state`: the record state its entries carry); returns them
-local function drain(q, l, field, headfield, state, tick, budget, rec_of, visit, st)
+local function drain(q, l, field, headfield, state, tick, budget, rec_of, visit, st, extra)
 	local back = l[field]
 	local head, n = l[headfield], #back
 	local done = 0
-	while head <= n and done < budget do
+	--- `extra`: units this drain put on another list (a probe that wakes its unit): they count against the budget too
+	while head <= n and done + (extra and extra() or 0) < budget do
 		local unit = back[head]
 		back[head] = false
 		head = head + 1
@@ -332,13 +349,21 @@ function M.run(q, tick, floor, ceiling, rec_of, visit, probe, name)
 	arrive(q, sl, tick, rec_of, ss)
 	floor = floor or 0
 	ceiling = math.max(ceiling or floor, floor)
-	local probed = drain(q, sl, "back", "head", BACKLOG, tick, floor, rec_of, probe or visit, ss)
+	--- what is due on the busy list decides the probes' share: the sum of visits and probes stays within the floor
+	--- while the busy list does not need more (a probe that wakes its block counts for two), and the probes keep half
+	--- of the floor when it does (they wait longer, they are never starved)
+	arrive(q, q, tick, rec_of, st)
+	local need = math.min(ceiling, waiting(q))
+	local pcap = math.max(math.ceil(floor / 2), floor - need)
+	if pcap > floor then pcap = floor end
+	local front0 = #q.front - q.fhead + 1
+	local function woken() return (#q.front - q.fhead + 1) - front0 end
+	local probed = drain(q, sl, "back", "head", BACKLOG, tick, pcap, rec_of, probe or visit, ss, woken)
 	ss.visits = ss.visits + probed
 	local pleft = waiting(sl)
 	ss.back_sum = ss.back_sum + pleft
 	if pleft > ss.back_max then ss.back_max = pleft end
-	--- the busy list: what is due this tick, between the floor and the ceiling
-	arrive(q, q, tick, rec_of, st)
+	--- the busy list: what is due this tick (and what the probes woke), between the floor and the ceiling
 	local due = waiting(q)
 	local budget = math.max(floor, math.min(ceiling - probed, due))
 	local done = drain(q, q, "front", "fhead", FRONT, tick, budget, rec_of, visit, st)

@@ -498,9 +498,11 @@ local function circuit_of(unit) return storage.fork_ae2.circuits[unit] end
 local function visit_maintainer(rec, unit)
 	local s = storage.fork_ae2
 	if not rec.entity.valid then drop_maintainer(s, unit) return end
+	local fallback = rec.park ~= nil                         -- (the slow fallback visit of a parked maintainer)
 	maintainer_step(rec, budget)
 	local now = game.tick
 	local st = rec.status
+	if fallback and st ~= "stocked" and st ~= "no-target" then Sched.missed("maintainer") end   -- (its wake was missed)
 	if st == "waiting" then
 		Sched.at(s.mq, rec, unit, now + 1)                       -- no start left in this tick
 		return 1
@@ -511,7 +513,7 @@ local function visit_maintainer(rec, unit)
 		Sched.at(s.mq, rec, unit, math.min(rec.retry, now + MAINTAINER_IDLE))
 		return 1
 	elseif st == "no-target" then
-		Sched.park(s.mq, rec, "no-target")
+		Sched.park(s.mq, rec, unit, "no-target")
 		return 0
 	end
 	if st == "stocked" and rec.target then
@@ -519,7 +521,7 @@ local function visit_maintainer(rec, unit)
 		if net then
 			N.wait_below(net, rec.key, "maint", unit, rec.target)
 			if not rec.circuit then
-				Sched.park(s.mq, rec, "stocked")
+				Sched.park(s.mq, rec, unit, "stocked")
 				return 0
 			end
 		end
@@ -667,7 +669,7 @@ remote.add_interface("gregtorio-me-circuit", {
 		local rec = unit and s and ((s.maintainers and s.maintainers[unit]) or (s.circuits and s.circuits[unit]))
 		if not rec then return nil end
 		local due = rec.due
-		return { due = (due and due > 0) and due or nil, probing = rec.sq == true, parked = rec.park, front = due == Sched.FRONT,
+		return { due = (due and due > 0) and due or nil, probing = rec.sq == true and not rec.park, parked = rec.park, front = due == Sched.FRONT,
 			backlog = due == Sched.BACKLOG, status = rec.status }
 	end,
 	--- key (false clears it), amount, circuit (take the amount from the circuit signal); nil keeps a value

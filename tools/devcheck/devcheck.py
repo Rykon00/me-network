@@ -495,7 +495,7 @@ RUNTIME_TESTS = (
     ("MESTORAGEBUS", "ME storage bus test"), ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test"),
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
-    ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"),
+    ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
     ("CARDS", "ME upgrade card test"), ("PRIORITIES", "ME priority test"), ("WORKBENCH", "ME Cell Workbench test"),
     ("CARDSLOTS", "ME storage bus card slots test"), ("WBSLOTS", "ME Cell Workbench slots test"),
@@ -1159,6 +1159,9 @@ def scene_problems(scene, size, res, wanted=None):
             problems.append(f"{scene} {size}: {r['errors'][0]}")
         if r.get("jobs") and r["jobs"]["failed"]:
             problems.append(f"{scene} {size}: jobs not started: {r['jobs']['failed'][:3]}")
+        for q, st in (((r.get("service") or {}).get("sched")) or {}).items():
+            if st.get("missed"):
+                problems.append(f"{scene} {size}: {st['missed']} missed wakes in the {q} queue (a parked block found work at its fallback visit)")
         tp = r.get("throughput")
         if tp and tp.get("conservation") and tp["conservation"]["problems"]:
             problems.append(f"{scene} {size}: conservation: {tp['conservation']['problems']} keys differ, "

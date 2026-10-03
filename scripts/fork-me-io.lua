@@ -624,7 +624,7 @@ function M.interface_step(rec, dt)
 	end
 	local start = rec.slot or 1
 	local size = #inv
-	local imported, free = 0, 0
+	local imported, free, isize = 0, 0, nil
 	for k = 0, size - 1 do
 		if ops >= max_ops then rec.slot = (start - 1 + k) % size + 1 break end
 		local i = (start - 1 + k) % size + 1
@@ -632,8 +632,9 @@ function M.interface_step(rec, dt)
 		if stack.valid_for_read then
 			local key = N.key_of(stack.name, stack.quality.name)
 			if not kept[key] then
+				local sname = stack.name
 				local n = N.insert_stack(net, stack)
-				if n then moved = moved + n ops = ops + 1 imported = imported + n
+				if n then moved = moved + n ops = ops + 1 imported = imported + n isize = stack_of(sname)
 				else                                                 -- the network takes none: woken when room appears
 					N.wait_for(net, key, "io", unit, false)
 					N.wait_room(net, "io", unit)
@@ -645,7 +646,7 @@ function M.interface_step(rec, dt)
 	end
 	if ops < max_ops then rec.slot = 1 end
 	if imported > 0 then                                             -- the free slots fill at that rate
-		local tt = math.max(free, 1) * 50 * ticks / imported
+		local tt = math.max(free, 1) * (isize or 50) * ticks / imported      -- (the stack size of what came in)
 		if tt < time then time = tt end
 	end
 	local fmoved, ftime = interface_sides(rec, net, config, short, ticks)
@@ -1335,7 +1336,7 @@ local tick_limit = MAX_CATCH_UP
 
 --- one scheduled visit: the block moves what its speed and the ticks since its last visit allow, and is due again
 --- when the buffer on its other side needs it (the headroom rule); a block with nothing to do is probed or parked
-local function visit(rec, unit)
+local function visit(rec, unit, fallback)
 	local s = storage.fork_me_io
 	local e = rec.entity
 	if not e.valid then
@@ -1354,6 +1355,7 @@ local function visit(rec, unit)
 	end
 	rec.starve = starved or nil
 	if starved then Sched.starved("io") end
+	if fallback and moved > 0 then Sched.missed("io") end            -- (a parked block that finds work: its wake was missed)
 	if block then
 		local was = rec.block
 		rec.block = block
@@ -1364,7 +1366,7 @@ local function visit(rec, unit)
 				s.nonet = s.nonet or {}
 				s.nonet[unit] = true
 			end
-			Sched.park(s.q, rec, block)
+			Sched.park(s.q, rec, unit, block)
 			return 0
 		end
 		local iv = (not was or not rec.iv or rec.iv < MIN_INTERVAL) and MIN_INTERVAL or rec.iv   -- (just blocked: from the shortest)
@@ -1390,6 +1392,10 @@ local function probe(rec, unit)
 		destroy_tanks(rec)
 		drop(s, unit)
 		return
+	end
+	if rec.park then                                          -- the slow fallback of a parked block: a full visit
+		rec.last, rec.left = nil, nil
+		return visit(rec, unit, true)
 	end
 	if probe_work(rec) then
 		rec.last, rec.left = math.max(rec.last or 0, game.tick - idle_limit(s)), nil   -- (as a sleeper of 0.3.0)
@@ -1611,9 +1617,11 @@ remote.add_interface("gregtorio-me-io", {
 		local rec = s and entity and entity.valid and s.recs[entity.unit_number]
 		if not rec then return nil end
 		local due = rec.due
-		return { due = (due and due > 0) and due or nil, interval = rec.iv, last = rec.last, probing = rec.sq == true,
+		return { due = (due and due > 0) and due or nil, interval = rec.iv, last = rec.last, probing = rec.sq == true and not rec.park,
 			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, parked = rec.park, block = rec.block }
 	end,
+	--- tests (issue #38): how often a parked block gets its slow fallback visit (ticks)
+	set_park_fallback = function(ticks) Sched.PARK_FALLBACK = ticks end,
 	--- issue #38: the scheduler's counters of every queue (fork-me-schedule.lua, M.snapshot); `reset` starts them anew
 	sched_stats = function(reset)
 		local snap = Sched.snapshot()
@@ -1647,9 +1655,14 @@ remote.add_interface("gregtorio-me-io", {
 			end
 		end
 		out.io_parked, out.io_kinds = parked, kinds
+		out.io_probing = out.io_probing - parked                        -- (the parked are in the probe list for their fallback)
 		put("storage_bus", sb and sb.q, sb and #sb.list)
 		put("fluid_storage_bus", fsb and fsb.q, fsb and #fsb.list)
 		put("maintainer", ae and ae.mq, ae and ae.mlist and #ae.mlist)
+		local mparked = 0
+		for _, rec in pairs(ae and ae.maintainers or {}) do if rec.park then mparked = mparked + 1 end end
+		out.maintainer_parked = mparked
+		out.maintainer_probing = out.maintainer_probing - mparked
 		put("circuit", ae and ae.cq, ae and ae.clist and #ae.clist)
 		return out
 	end,

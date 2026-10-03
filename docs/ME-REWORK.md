@@ -1226,17 +1226,29 @@ most blocks are limited by their other side, not by their visits. The rework kee
   to do) is not visited but probed: one cheap engine call (`probe_work`: the item count of the source or interface,
   `can_insert` or the input count of a full target, the search for a missing target) at an interval that doubles up
   to the idle limit (the probe list `q.sl`); a change wakes the block into the front, visited in the same tick. The
-  probes of a tick are at most the floor (16 interface and bus visits by default), whatever the ceiling is, so a
-  network of sleepers never costs more per tick than the budget of 0.3.0; the probes of a bigger network wait longer
-  than the idle limit. The storage buses' "probe" is the full read of an unchanged bus and follows the same cap.
+  probes of a tick are at most the floor (16 interface and bus visits by default), whatever the ceiling is, and the
+  sum of visits and probes of a tick stays within the floor while the busy list does not need more (a probe that wakes
+  its block counts for two; when the busy list needs more, the probes keep half of the floor, they wait longer but are
+  never starved), so a network of sleepers never costs more per tick than the budget of 0.3.0; the probes of a bigger
+  network wait longer than the idle limit. The storage buses' "probe" is the full read of an unchanged bus and follows
+  the same rule.
 * **Parked blocks.** A block blocked on the network's side (its key absent, the network full, no network or
-  controller, no power, no filters) is parked: in no list at all, visited again only when the network wakes it:
+  controller, no power, no filters) is parked: not visited, woken by the network (and found by the slow fallback below if a wake is missed):
   `N.wait_for` (the key comes in, or some is taken), `N.wait_room` (a cell joins, a key type leaves),
   `N.wait_usable` (the power is back: the controller of a network with such waiters is read once a second,
   `slow_step`), the change hooks (the graph changed), its settings or a target built in front of it. The waits live
   in the network tables; a network merged into another hands them over, a split or a rebuild fires them all once,
   so no parked block loses its wake. A level maintainer that is stocked with a fixed target is parked the same way
   (`N.wait_below`, its job's end, its settings), one without a key too.
+* **The fallback.** In 0.3.0 the visit every 5 s hid every missed wake; a parked block with a missed wake would stand
+  still for ever, silently. So a parked block is also in the probe list, with one slow fallback visit about once in
+  `Sched.PARK_FALLBACK` (3600) ticks, spread by `Sched.slot` over a sixth of that either side, from the probe budget:
+  the probe function sees `rec.park` and visits the block fully. A fallback visit that finds work (a bus that moved
+  something, a maintainer that left "stocked") is a missed wake: `Sched.missed` counts it per queue (`missed` in
+  `sched_stats`, module-local like the other counters). It is 0 in the runtime tests and in every bench scene
+  (`bench` reports a scene with a missed wake as a problem). `devcheck.py runtime` has a test for every park reason and
+  every way it can end (`runtimemod/parking.lua`), and two cases that lose their wakes on purpose
+  (`gregtorio-me-network.drop_waits`, `gregtorio-me-io.set_park_fallback`) to show that the fallback finds them.
 * **The front.** A wake puts the unit into the busy list's front list (`q.front`), visited before the backlog; a
   unit that is already waiting there or in the busy backlog is as early as it can be.
 * **The budget is what is due.** Per tick a queue visits what is due (the front, the backlog, the units due now),

@@ -711,6 +711,8 @@ cards17 = require("cards")({ me_place = me_place, cable_row = cable_row, power =
 	me_drive = function(...) return me_drive(...) end })
 --- part 3: the ME Cell Workbench and the cards on cells (workbench.lua)
 bench17 = require("workbench")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #38: the parked blocks and their wakes (parking.lua)
+parking38 = require("parking")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
 cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
@@ -747,6 +749,7 @@ local function tests_running()
 	cards17.running(check)
 	bench17.running(check)
 	cpus6.running(check)
+	parking38.running(check)
 	return running
 end
 
@@ -1615,6 +1618,7 @@ script.on_nth_tick(10, function()
 	cards17.tick()
 	bench17.tick()
 	cpus6.tick()
+	parking38.tick()
 	done_test()
 end)
 
@@ -4480,6 +4484,7 @@ script.on_init(function()
 	for _, f in pairs(cards17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bench17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpus6.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(parking38.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

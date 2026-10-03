@@ -1222,50 +1222,51 @@ Order: 1 and 2 together (they are one scheduler change and decide what the later
 
 ## Pull request 2 (issue #38): the scheduler, levers 1 and 2
 
-Measured on the machine of the other sections (i7-8700K, Factorio 2.0.77), the game closed, nothing else running
-but the harness. "Before" is `origin/main` (0.3.0 with the counters of pull request 1). All timings are in turns
-against it, true medians. The design is in `docs/ME-REWORK.md` ("Levers 1 and 2 of issue #38").
+Measured on the machine of the other sections (i7-8700K, Factorio 2.0.77), the game closed, nothing else running but the
+harness. "Before" is `origin/main` (0.3.0 with the counters of pull request 1). All timings are in turns against it, true
+medians. The design is in `docs/ME-REWORK.md` ("Levers 1 and 2 of issue #38").
 
 ### What was built, and what was dropped
 
-A first build gave every busy block a uniform period (`ceil(busy / 120)` visits per tick, "every busy block within
-2 s"). In turns against main it cost 70 % more script time at 5000 and moved nothing more: most blocks are limited
-by the machine or chest on their other side, not by their visits. The target "worst service interval at most 2 s"
-was the wrong proxy and is replaced (table "Targets of issue #38") by what it stood for: no machine in the scenes
-waits for its bus, a block is visited before the buffer on its other side runs full or empty, a woken block is
-visited within a few ticks. The intervals stay a reported measure.
+A first build gave every busy block a uniform period (`ceil(busy / 120)` visits per tick, "every busy block within 2 s"). In
+turns against main it cost 70 % more script time at 5000 and moved nothing more: most blocks are limited by the machine or
+chest on their other side, not by their visits. The target "worst service interval at most 2 s" was the wrong proxy and is
+replaced (table "Targets of issue #38") by what it stood for: no machine in the scenes waits for its bus, a block is visited
+before the buffer on its other side runs full or empty, a woken block is visited within a few ticks. The intervals stay a
+reported measure.
 
-What is in the pull request instead: the next visit of a block with work comes from the headroom on its other side
-(half of the time the buffer lasts, the whole time for a block that moved all its speed allowed, between 15 and 600
-ticks, from a least-loaded tick around it); a block blocked on its target's side is probed (one engine call at a
-growing interval up to the idle limit); a block blocked on the network's side is parked and woken by the network. The
-budget per tick is what is due between the floor and the ceiling; the sleepers' share of it, the probes, is capped
-at the floor whatever the ceiling is, so a network of sleepers never costs more per tick than the budget of 0.3.0.
-Defaults: interface and bus visits 16 to 32, storage bus reads 8 to 24 (per side), maintainer checks 4 to 12, job
-steps 1 to 2 per tick.
+What is in the pull request instead: the next visit of a block with work comes from the headroom on its other side (half of
+the time the buffer lasts, the whole time for a block that moved all its speed allowed, between 15 and 600 ticks, from a
+least-loaded tick around it); a block blocked on its target's side is probed (one engine call at a growing interval up to the
+idle limit); a block blocked on the network's side is parked and woken by the network, with one slow fallback visit about once
+a minute that counts the wakes it had to find (below). The budget per tick is what is due between the floor and the ceiling;
+the sleepers' share of it, the probes, is capped at the floor, and the sum of visits and probes of a tick stays within the floor
+while the busy list does not need more (a probe that wakes its block counts for two; the probes keep half of the floor when the
+busy list needs more, they wait longer, they are never starved). So a network of sleepers never costs more per tick than the
+budget of 0.3.0. Defaults: interface and bus visits 16 to 32, storage bus reads 8 to 24 (per side), maintainer checks 4 to 12,
+job steps 1 to 2 per tick.
 
 ### Script time at 5000: the visits alone, and what the job steps cost and bring
 
-Four rounds in turns, the same map. The job ceiling is the only difference between the three working-copy columns:
-at ceiling 1 a tick steps one job as main does, so that column is the visits alone.
+Four rounds in turns, the same map. The job ceiling is the only difference between the three working-copy columns: at
+ceiling 1 a tick steps one job as main does, so that column is the visits alone.
 
 | N = 5000 | main | visits alone (job ceiling 1) | default (job ceiling 2) | job ceiling 4 |
 |---|---|---|---|---|
-| script avg (ms) | 1.332 | 1.306 | 1.374 | 1.431 |
-| script p99 (ms) | 3.41 | 3.77 | 3.82 | 4.08 |
-| ticks over 5 ms | 11 | 11.5 | 13 | 16.5 |
+| script avg (ms) | 1.187 | 1.172 | 1.255 | 1.294 |
+| script p99 (ms) | 3.11 | 3.33 | 3.45 | 3.54 |
+| ticks over 5 ms | 11.5 | 11 | 9 | 11.5 |
 | provider crafts per second | 327.1 | 327.1 | 344.3 | 341.6 |
 
-* The new visits alone are 2 % under main on the average and 11 % over on the 99th percentile. The average cannot
-  fall much further here: the busy interfaces and fluid sides have buffers of about 10 s, half of that is 5 s, and
-  main's saturated queue already came back after 4.75 s. A probe costs about what an idle visit did (16 µs against
-  about 35 µs, `io.probe` in the profile below). The 99th percentile is higher because main visited exactly 16
-  blocks every tick and the new schedule visits as many as are due, 9.5 on average with peaks.
-* The job steps follow the running jobs. At ceiling 2 they cost 0.07 ms (5 %) and bring 5.3 % more crafts at the
-  providers; at ceiling 4 they cost 0.125 ms and bring less, so the default is 2.
-* The service gains are in the next table: latencies, the backlog, the idle network. The average at 5000 is level
-  with main by design of this pull request; lever 3 (the visit itself, 100 µs per interface visit) is what brings it
-  under.
+* The new visits alone are 1 % under main on the average and 7 % over on the 99th percentile. The average cannot fall much
+  further here: the busy interfaces and fluid sides have buffers of about 10 s, half of that is 5 s, and main's saturated queue
+  already came back after 4.75 s. A probe costs about what an idle visit did (14 µs against about 35 µs, `io.probe` in the
+  profile below). The 99th percentile is higher because main visited exactly 16 blocks every tick and the new schedule visits as
+  many as are due, 9.6 on average with peaks.
+* The job steps follow the running jobs. At ceiling 2 they cost 0.08 ms (7 %) and bring 5.3 % more crafts at the providers;
+  at ceiling 4 they cost 0.12 ms and bring less, so the default is 2.
+* The average at 5000 is level with main by design of this pull request (it is 6 % over with the job steps); lever 3 (the visit
+  itself, 100 µs per interface visit) is what brings it under.
 
 ### `bench --check origin/main`, default settings
 
@@ -1273,145 +1274,202 @@ at ceiling 1 a tick steps one job as main does, so that column is the visits alo
 
 | N = 1000 | Before (origin/main) | After | Verdict |
 |---|---|---|---|
-| script avg ms | 0.811 (0.803 to 0.825) | 0.441 (0.441 to 0.455) | ok |
-| script p99 ms | 2.59 (2.57 to 2.63) | 2.18 (2.17 to 2.23) | ok |
-| ticks over 5 ms | 12 (11 to 13) | 5 (5 to 5) | ok |
-| gc avg ms | 0.0781 (0.0757 to 0.0799) | 0.0534 (0.0528 to 0.0536) | ok |
-| items/s | 33247 (33247 to 33247) | 33003 (33003 to 33003) | ok |
-| fluid/s | 248 585 (248 585 to 248 585) | 239 203 (239 203 to 239 203) | FAIL |
+| script avg ms | 0.723 (0.715 to 0.726) | 0.395 (0.39 to 0.41) | ok |
+| script p99 ms | 2.35 (2.31 to 2.37) | 1.98 (1.93 to 1.98) | ok |
+| ticks over 5 ms | 9 (7 to 10) | 8 (7 to 9) | ok |
+| gc avg ms | 0.0722 (0.0712 to 0.0773) | 0.042 (0.0416 to 0.0427) | ok |
+| items/s | 33247 (33247 to 33247) | 33028 (33028 to 33028) | ok |
+| fluid/s | 248 585 (248 585 to 248 585) | 239 425 (239 425 to 239 425) | FAIL |
 | provider crafts/s | 17 (17 to 17) | 17 (17 to 17) | ok |
 | storage bus latency max s | 1.15 (1.15 to 1.15) | 1.15 (1.15 to 1.15) | ok |
 | maintainer latency max s | 0.15 (0.15 to 0.15) | 0.0833 (0.0833 to 0.0833) | ok |
 | io busy interval p99 ticks | 48.0 (48.0 to 48.0) | 596.0 (596.0 to 596.0) | reported |
 | io backlog max | 527 (527 to 527) | 0 (0 to 0) | ok |
 | pair machines utilisation | 100 % (100 % to 100 %) | 100 % (100 % to 100 %) | ok |
-| burst build ms | 73 (72 to 75) | 80 (78 to 82) | FAIL |
-| burst remove ms | 464 (461 to 471) | 437 (430 to 448) | ok |
-| load first tick ms | 6.67 (6.57 to 6.89) | 6.88 (6.83 to 7.27) | ok |
+| burst build ms | 67 (67 to 68) | 66 (65 to 68) | ok |
+| burst remove ms | 414 (405 to 415) | 409 (409 to 426) | ok |
+| load first tick ms | 6.26 (6.22 to 6.3) | 6.55 (6.41 to 6.59) | ok |
 
 Throughput per kind of endpoint: differs (the scheduling changed).
 
 | N = 5000 | Before (origin/main) | After | Verdict |
 |---|---|---|---|
-| script avg ms | 1.31 (1.31 to 1.35) | 1.39 (1.37 to 1.39) | FAIL |
-| script p99 ms | 3.43 (3.32 to 3.57) | 3.91 (3.73 to 3.95) | FAIL |
-| ticks over 5 ms | 11 (11 to 15) | 12 (11 to 18) | ok |
-| gc avg ms | 0.0859 (0.0788 to 0.0936) | 0.0878 (0.0876 to 0.0989) | ok |
-| items/s | 166741 (166741 to 166741) | 165577 (165577 to 165577) | ok |
-| fluid/s | 1 219 697 (1 219 697 to 1 219 697) | 1 201 139 (1 201 139 to 1 201 139) | ok |
+| script avg ms | 1.19 (1.19 to 1.19) | 1.26 (1.24 to 1.26) | FAIL |
+| script p99 ms | 3.03 (3 to 3.06) | 3.48 (3.45 to 3.49) | FAIL |
+| ticks over 5 ms | 10 (9 to 10) | 11 (10 to 13) | ok |
+| gc avg ms | 0.0745 (0.0733 to 0.076) | 0.0834 (0.0744 to 0.0916) | ok |
+| items/s | 166741 (166741 to 166741) | 165819 (165819 to 165819) | ok |
+| fluid/s | 1 219 697 (1 219 697 to 1 219 697) | 1 201 474 (1 201 474 to 1 201 474) | ok |
 | provider crafts/s | 327 (327 to 327) | 344 (344 to 344) | ok |
-| storage bus latency max s | 1.72 (1.72 to 1.72) | 1.7 (1.7 to 1.7) | ok |
+| storage bus latency max s | 1.72 (1.72 to 1.72) | 1.72 (1.72 to 1.72) | ok |
 | maintainer latency max s | 0.217 (0.217 to 0.217) | 0.0833 (0.0833 to 0.0833) | ok |
-| io busy interval p99 ticks | 345.0 (345.0 to 345.0) | 624.0 (624.0 to 624.0) | reported |
-| io backlog max | 4669 (4669 to 4669) | 772 (772 to 772) | ok |
+| io busy interval p99 ticks | 345.0 (345.0 to 345.0) | 615.0 (615.0 to 615.0) | reported |
+| io backlog max | 4669 (4669 to 4669) | 429 (429 to 429) | ok |
 | pair machines utilisation | 100 % (100 % to 100 %) | 100 % (100 % to 100 %) | ok |
-| burst build ms | 77 (76 to 88) | 83 (80 to 122) | ok |
-| burst remove ms | 790 (790 to 872) | 701 (680 to 712) | ok |
-| load first tick ms | 35.9 (35.7 to 36.8) | 37.4 (36.3 to 38.9) | ok |
+| burst build ms | 69 (68 to 70) | 71 (70 to 129) | ok |
+| burst remove ms | 674 (673 to 677) | 596 (593 to 600) | ok |
+| load first tick ms | 33.1 (33.0 to 33.4) | 33.4 (32.6 to 33.5) | ok |
 
 Throughput per kind of endpoint: differs (the scheduling changed).
 
-The three script metrics at 5000 are over main by 6 % (average), 14 % (99th percentile) and 1 tick (ticks over 5 ms,
-inside the noise) for the reasons above: 0.07 ms of job steps, the probes, and the uneven number of visits per tick.
-At 1000 the average falls by 46 %, the 99th percentile by 16 % and the ticks over 5 ms from 12 to 5.
+The three script metrics at 5000 are over main by 6 % (average), 15 % (99th percentile) and inside the noise (ticks over 5 ms)
+for the reasons above: 0.08 ms of job steps, the probes, and the uneven number of visits per tick. At 1000 the average falls by
+45 %, the 99th percentile by 16 % and the ticks over 5 ms are 9 and 8.
 
-`io busy interval p99` is long on purpose now and is reported, not failed. What fails the check instead is a
-machine of the scene waiting for its bus (`pair machines utilisation`, 100 % on both sides) and, once a reference
-version counts them, visits that arrived at an empty target or a full source (`io starved arrivals`: 3439 in the
-window at 5000, 10 % of the visits; main has no counter, so the check cannot compare it yet).
+`io busy interval p99` is long on purpose now and is reported, not failed. What fails the check instead is a machine of the
+scene waiting for its bus (`pair machines utilisation`, 100 % on both sides) and, once a reference version counts them, visits
+that arrived at an empty target or a full source (`io starved arrivals`: 3428 in the window at 5000, 10 % of the visits; main
+has no counter, so the check cannot compare it yet). Every scene also fails on a missed wake (below): none in any scene.
 
-Two of the failures at 1000 are probably not the scheduler. `fluid/s` is 3.8 % under main; twenty speed-limited
-fluid buses (`cap_fimp`, `cap_fexp`) move their fluid in whole visits of up to 600 ticks' worth, and the 3600-tick
-window counts one visit more or less depending on the phase of each bus (per kind the difference is between +3 % and
--5 % at 5000, the other kinds are equal). `burst build ms` is 7.5 ms over a noise floor of 7.3 ms and not over at
-5000; it was not investigated further.
+**The failure at 1000 is not open.** `fluid/s` is 3.8 % under main in the 3600-tick window. The fluid sources of the scene are
+finite (`dry sources` in the bench output) and main empties some of them faster in the first minute: per kind, `iface_fout`
+moves 49 998 units per second in main and 43 444 here, `cap_fimp` 41 834 and 39 233. Over a window three times as long (three
+rounds in turns) the same kinds are 16 667 and 16 461, 40 608 and 40 004, the total 136 200 against 135 400, 0.6 % under main.
+So the difference is when the finite stock leaves, not how much moves. (`burst build ms` at 1000 failed once by 7.5 ms over a
+noise floor of 7.3 ms; five rounds later it is 69.7 ms in main and 68.8 ms here, and the merge of two networks no longer
+touches the waiting tables when there is nothing waiting.)
 
 ### Service quality, before and after
 
 | N = 1000 | 0.3.0 (pull request 1 series) | After levers 1 and 2 |
 |---|---|---|
-| script time per tick, average (ms) | 0.815 | 0.450 |
-| 99th percentile (ms) | 2.63 | 2.18 |
+| script time per tick, average (ms) | 0.815 | 0.393 |
+| 99th percentile (ms) | 2.63 | 1.96 |
 | interface and bus visits per tick (busy + probes) | 13.6 | 4.0 |
 | io backlog, average | 102 | 0 |
 | busy block (moved all it could): interval median (s) | 0.38 | 0.63 |
 | busy block: 99th percentile (s) | 0.80 | 9.93 |
-| block that moved something: interval median (s) | 1.00 | 3.58 |
-| idle block: interval median / limit (s) | 5.00 | 4.48 |
+| block that moved something: interval median (s) | 1.00 | 3.65 |
+| idle block: interval median / limit (s) | 5.00 | 4.47 |
 | storage bus reads per tick | 0.58 | 0.58 |
 | storage bus sees a chest change, max (s) | 1.15 | 1.15 |
 | level maintainer reacts, max (s) | 0.15 | 0.08 |
 | job steps: interval of a job (s) | 0.33 | 0.33 |
 | provider crafts per second | 17.3 | 17.3 |
 | `pair` machines at their speed (%) | 100 | 100 |
-| items per second | 33247 | 33003 |
+| items per second | 33247 | 33028 |
 
 | N = 5000 | 0.3.0 (pull request 1 series) | After levers 1 and 2 |
 |---|---|---|
-| script time per tick, average (ms) | 1.394 | 1.346 |
-| 99th percentile (ms) | 3.64 | 3.82 |
-| interface and bus visits per tick (busy + probes) | 16.0 | 18.5 |
-| io backlog, average | 3370 | 28 |
-| busy block (moved all it could): interval median (s) | 4.75 | 4.82 |
-| busy block: 99th percentile (s) | 5.75 | 10.40 |
-| block that moved something: interval median (s) | 4.47 | 3.03 |
-| idle block: interval median / limit (s) | 6.43 | 4.70 |
+| script time per tick, average (ms) | 1.394 | 1.262 |
+| 99th percentile (ms) | 3.64 | 3.49 |
+| interface and bus visits per tick (busy + probes) | 16.0 | 18.0 |
+| io backlog, average | 3370 | 15 |
+| busy block (moved all it could): interval median (s) | 4.75 | 4.83 |
+| busy block: 99th percentile (s) | 5.75 | 10.25 |
+| block that moved something: interval median (s) | 4.47 | 3.02 |
+| idle block: interval median / limit (s) | 6.43 | 4.83 |
 | storage bus reads per tick | 2.92 | 2.92 |
-| storage bus sees a chest change, max (s) | 1.72 | 1.70 |
+| storage bus sees a chest change, max (s) | 1.72 | 1.72 |
 | level maintainer reacts, max (s) | 0.22 | 0.08 |
 | job steps: interval of a job (s) | 0.82 | 0.42 |
 | provider crafts per second | 327.1 | 344.3 |
 | `pair` machines at their speed (%) | 100 | 100 |
-| items per second | 166741 | 165577 |
+| items per second | 166741 | 165819 |
 
 | Idle network, N = 1000 | 0.3.0 | After |
 |---|---|---|
-| script time per tick, average (ms) | 0.371 | 0.310 |
+| script time per tick, average (ms) | 0.371 | 0.274 |
 | interface and bus visits per tick | 4.7 | 3.5 |
 | probe interval median (s) | 5.00 | 4.83 |
 | probe interval 99th percentile (s) | 5.00 | 5.00 |
 
 | Idle network, N = 5000 | 0.3.0 | After |
 |---|---|---|
-| script time per tick, average (ms) | 0.846 | 0.639 |
-| interface and bus visits per tick | 16.0 | 17.4 |
-| probe interval median (s) | 6.15 | 4.87 |
-| probe interval 99th percentile (s) | 6.25 | 6.35 |
+| script time per tick, average (ms) | 0.846 | 0.573 |
+| interface and bus visits per tick | 16.0 | 16.1 |
+| probe interval median (s) | 6.15 | 5.25 |
+| probe interval 99th percentile (s) | 6.25 | 6.45 |
 
 
-### Idle network against main, in turns (5000, three rounds)
+### The idle network against main, in turns
 
-| N = 5000, nothing to move | main | now |
+| nothing to move | main | now |
 |---|---|---|
-| script avg (ms) | 0.786 | 0.613 |
-| script p99 (ms) | 2.57 | 2.49 |
-| ticks over 5 ms | 9 | 6 |
-| interface and bus visits and probes per tick | 16.0 | 1.7 + 15.6 |
+| N = 5000: script avg (ms) | 0.740 | 0.577 |
+| N = 5000: script p99 (ms) | 2.43 | 2.37 |
+| N = 5000: visits and probes per tick | 16.0 | 1.7 + 14.4 |
+| N = 20 000: script avg (ms) | 1.233 | 1.243 |
+| N = 20 000: script p99 (ms) | 3.86 | 6.56 |
+| N = 20 000: ticks over 5 ms | 12 | 83 |
+| N = 20 000: visits and probes per tick | 16.0 | 6.7 + 11.7 |
 
-The sleepers are probed, at most 16 per tick, so the probes of a bigger network wait longer than the idle limit
-(5000 idle: probe interval median 4.9 s, 99th percentile 6.4 s, as main's idle interval of 6.2 s). At 20 000 this
-bounds the idle cost to the budget of 0.3.0; **the 20 000 and 50 000 runs were skipped at the maintainer's request,
-so the idle cost, `pair` machines and the ceiling sweep at those sizes are not measured with the final rule**.
-Orientation from the previous rule (probes uncapped, the machine not quiet, one run each): at 20 000 the ceilings 24,
-32 and 64 gave 4.06, 4.34 and 5.19 ms with `pair` machines at 100 % and 636 000, 656 000 and 663 000 items per second
-(main: 2.95 ms, 95 %, 529 000), and the idle network cost more than main because 18 000 sleepers were probed every 5 s.
+At 20 000 the average is level with main since the probes of a tick are bounded by the floor (before: 7.7 visits plus 16.0
+probes per tick, 1.212 ms against 1.562 ms in the maintainer's run). It is not below: the 20 000 idle scene is not idle for
+2000 interfaces that keep moving fluid (107 500 units per second against 63 700 in main, whose queue served them every 21 s)
+and the first 7700 blocks start in a backlog that the busy list drains at up to the ceiling, which is why the visits and
+probes together are 18.4 per tick and not 16. The 99th percentile is the bursts of those interface visits (a fluid interface
+visit moves up to 5000 units), 6.6 against 3.9 ms; that is for lever 3 and its acceptance below.
 
-What the sleepers are in the idle scene at the end of the window (5000 blocks, three runs equal): 500 busy, 4500
-probed: 1650 sources that are empty, 1350 targets that are full, 1500 interfaces with nothing to do; none parked. The
-scene has no block blocked on the network's side. In the scene with 100 networks (5500 blocks) 196 are parked
-for a key the network does not hold. The parking of a key, of power, of a full network and of a missing network is
-tested by `devcheck.py runtime` (`ME scheduler test`).
+### 20 000
+
+The maintainer's run (Linux, quiet, `bench --check origin/main --sizes 20000`, three rounds) of `af50d1e`:
+
+| N = 20 000 | main | af50d1e |
+|---|---|---|
+| script avg (ms) | 2.295 | 2.969 |
+| script p99 (ms) | 6.65 | 13.77 |
+| ticks over 5 ms | 83 | 267 |
+| gc avg (ms) | 0.160 | 0.326 |
+| items per second | 528 700 | 580 700 |
+| `pair` machines (%) | 95.0 | 99.7 |
+| provider crafts per second | 1501 | 1535 |
+| maintainer reaction, median (s) | 3.38 | 0.05 |
+
+and the same on this machine for the final code (three rounds in turns): script avg 2.668 to 3.583 ms (+34 %), p99 5.70 to
+8.25 ms, ticks over 5 ms 72 to 479, gc avg 0.063 to 0.131 ms, items per second 528 700 to 641 500, fluid 3.38 to 4.12 million
+per second, `pair` machines 95.0 to 99.99 %, crafts 1501 to 1535, storage bus latency max 2.82 s on both sides (the storage
+bus reads are capped at the floor of 8 per tick as in main), the busy interval at the 99th percentile 21.0 s in main and
+20.6 s here (the window starts in a backlog of 19 000 blocks that drains at the ceiling). The price at 20 000 (time up by
+a third, the 99th percentile and the ticks over 5 ms up, the garbage doubled, for 10 to 20 % more throughput and the machines
+at their speed) is accepted for this pull request only because lever 3 follows and has to pay it back (below). The ceiling
+sweep of the previous rule (one run each, not quiet; ceilings 24, 32 and 64 gave 4.06, 4.34 and 5.19 ms with `pair` at 100 %)
+is not repeated: the default is 32.
+
+### Parked blocks: the wakes, the fallback, the missed-wakes counter
+
+In 0.3.0 the visit every 5 s hid every missed wake; a parked block with a missed wake would stand still for ever, silently.
+Two things guard that now.
+
+* `devcheck.py runtime` has a test per park reason and per way it can end (`runtimemod/parking.lua`, 20 small networks, each
+  expecting the block to work within a few hundred ticks, far under the fallback of 3600): the key arrives through a storage
+  bus whose chest is filled without an event, through a cell put into a drive and through a crafting job's output; room appears
+  because another block exports, because some of a key is taken, because a cell is added to a drive, a drive is built and a
+  storage bus gets a chest; the network appears (a cable joins a bus, an island with a drive joins, a controller is placed) and
+  splits and joins again; the filter of a block is set and changes; the target is replaced and changes its recipe; a level
+  maintainer is woken by its key being taken and by its settings. **None of these was broken**: the same test on `af50d1e`
+  passes every wake case (the room after a partial extraction was woken at the next slow step there too; it now marks the
+  network on every extraction and wakes the waiting blocks at the next slow step, deterministically). What failed on `af50d1e` are the two cases that lose their
+  wakes on purpose (`drop_waits`): the block stood still, and nothing said so.
+* A parked block is in the probe list with a slow fallback visit, about once in 3600 ticks, spread over 600 ticks either side,
+  from the probe budget. A fallback visit that finds work is a missed wake and is counted (`missed` in `sched_stats`, per
+  queue). It is 0 in every test and every bench scene (`bench` reports a scene with one as a problem, so `bench --check` fails
+  on it); the two deliberate cases show it counts (1 bus, 1 maintainer). The in-game diagnostic of part 3 will show it.
+
+The fallback costs one full visit per parked block per minute, about 40 µs: 100 parked blocks are 0.028 visits per tick,
+1.1 µs. The 100-network scene has 201 parked blocks (key absent) at 5500 blocks: 0.056 visits per tick, 2.2 µs. No scene at 5000 or
+20 000 has a parked block, so the measured cost of the fallback there is zero; a base with 10 000 buses waiting for items would
+pay 2.8 visits per tick, about 0.11 ms.
 
 ### Profile at 5000 after the pull request (inclusive ms per tick, µs per call; one run, the profiler adds 0.9 µs per call)
 
 | Function | ms per tick | Calls per tick | µs per call | main |
 |---|---|---|---|---|
-| `io.visit` | 0.954 | 9.51 | 100.3 | 1.211 ms, 16 calls, 75.7 µs |
-| `io.M.interface_step` | 0.572 | 5.59 | 102.4 | 0.633 ms, 6.68 calls, 94.7 µs |
-| `io.M.bus_step` | 0.276 | 3.92 | 70.4 | 0.453 ms, 9.32 calls, 48.6 µs |
-| `io.probe` | 0.143 | 8.97 | 15.9 | (idle visits inside `io.visit`) |
-| `autocraft.step_jobs` | 0.250 | 1.00 | 250.3 | 0.167 ms |
-| `circuit.on_tick` | 0.180 | 1.00 | 180.3 | 0.221 ms |
+| `io.visit` | 0.891 | 9.61 | 92.7 | 1.211 ms, 16 calls, 75.7 µs |
+| `io.M.interface_step` | 0.552 | 5.67 | 97.4 | 0.633 ms, 6.68 calls, 94.7 µs |
+| `io.M.bus_step` | 0.250 | 3.94 | 63.3 | 0.453 ms, 9.32 calls, 48.6 µs |
+| `io.probe` | 0.121 | 8.41 | 14.4 | (idle visits inside `io.visit`) |
+| `autocraft.step_jobs` | 0.238 | 1.00 | 237.5 | 0.167 ms |
+| `circuit.on_tick` | 0.185 | 1.00 | 185.1 | 0.221 ms |
 | `circuit.visit_maintainer` | 0 | 0 | | 0.040 ms |
 
-An interface visit costs 102 µs and is 60 % of the visit time: that is what lever 3 starts with.
+An interface visit costs 97 µs and is 62 % of the visit time.
+
+### What lever 3 has to deliver
+
+The pull request goes through with the script time at 5000 about level with main. Lever 3 with 4 (the visit itself and the
+garbage) has to pay it back, starting where these numbers point: a probe costs as much as an empty visit, so the cost is the Lua
+around the engine call (the record and target lookup, the network lookup, the scheduling itself), not the call. Acceptance:
+`bench --check v0.3.0` green on script average, 99th percentile and ticks over 5 ms at 5000 and at 20 000, with the average at
+5000 clearly below 0.3.0 and the idle network at 20 000 not above it; the garbage per tick at 20 000 back to the level of 0.3.0
+or below.
