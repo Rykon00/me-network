@@ -435,10 +435,11 @@ local function build_me()
 	b.cpus = {}
 	local ncpu
 	if prototypes.entity["me-256k-crafting-storage"] then
-		--- issue #6: one multiblock CPU per job (and two spare), each a row of 19 blocks left of the spine (sixteen 256k
+		--- issue #6: one multiblock CPU per job and eight spare (the quantum CPUs had at least eight free slots for the
+		--- level maintainers and the latency probes), each a row of 19 blocks left of the spine (sixteen 256k
 		--- crafting storages, 4 MiB: the jobs of 5000 items of the scene need up to about 2 MiB; three co-processors: as
 		--- fast as a quantum CPU), a free row between two CPUs
-		ncpu = jobs + 2
+		ncpu = jobs + 8
 		for k = 0, ncpu - 1 do
 			local y = Y0 + 3 + 2 * k
 			b.cpus[#b.cpus + 1] = member(place("me-256k-crafting-storage", p1(X0 - 2, y)))
