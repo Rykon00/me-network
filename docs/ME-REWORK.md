@@ -1473,11 +1473,195 @@ with mixed priorities, partitions, whitelists and blacklists, two interfaces of 
 item and a short fluid, the pattern fall-back; with pull request 2 the workbench (cards on item and fluid cells, its
 buttons, the copy mode, mined and destroyed with a cell) and every card on a cell.
 
+## Crafting CPUs as multiblocks (me-network issue #6)
+
+Issue #6 makes the crafting CPU an AE2 multiblock. **Decided by the maintainer** (AE2 guide, "Crafting CPU
+multiblock"): a CPU is a **solid rectangle** of crafting blocks with no gaps and **at least one crafting storage**, no
+core block; a group that is not a rectangle forms no CPU and shows a status. Blocks: crafting storage 1k to 256k
+(required), crafting unit (filler), crafting co-processing unit (speed), crafting monitor (shows the job). **One job per
+CPU**, any number of CPUs per network; touching crafting blocks are one group. A CPU is in the network when one of its
+blocks touches a cable or another ME block. The plan preview shows the bytes of a job and the CPUs that can take it; a
+job that fits no free CPU is not started (a level maintainer waits). The CPU window shows the size, used and total
+crafting storage, the co-processors and the job. What follows is the part "to design".
+
+### AE2's numbers (from its source)
+
+Branch `forge/1.20.1` (commit 1c2f96e, 2026-09-27), paths under `src/main/java/appeng/`:
+
+| What | AE2 | Where |
+|---|---|---|
+| Storage of a block | 1k, 4k, 16k, 64k, 256k = 1024 × k bytes; unit, co-processor and monitor 0 | `block/crafting/CraftingUnitType.java` |
+| Co-processors | each one is one more pattern push per crafting tick: `coprocessors + 1` operations | `crafting/execution/CraftingCpuLogic.java`, `tickCraftingLogic()` |
+| Bytes of a request | every node of the crafting tree adds its requested amount × 8 / amount per byte (8 items or 8 buckets per byte in a cell): **1 byte per item, 1 byte per bucket**, "crafting storage is 8 times bigger than normal storage, this is intentional" | `crafting/inv/ICraftingSimulationState.java` `addStackBytes()`, `crafting/CraftingTreeNode.java` `request()` |
+| Bytes of a craft | 1 byte per craft (process) | `crafting/CraftingTreeProcess.java` `request()`: `inv.addBytes(times)` |
+| Bytes of the tree | 8 bytes per node of the tree | `crafting/CraftingCalculation.java`: `addBytes(tree.getNodeCount() * 8)` |
+
+### The bytes a job needs
+
+AE2's rule, counted per step of our plan instead of per node of AE2's tree (the planner merges every request of a
+pattern into one step):
+
+    bytes = the amount ordered
+          + for every step: runs × (1 + the item ingredients of one run) + the fluid ingredients of all runs / 10
+          + 8 × (steps + resources taken from storage)
+
+Items cost 1 byte each, fluids 1 byte per 10 units (rounded up per step and fluid; the ordered amount too). Every
+ingredient counts, whether it comes from storage, from a step or from the surplus of a step, as in AE2. For a tree
+without shared intermediates the total is exactly AE2's (each AE2 node is a step or a resource from storage); a shared
+intermediate costs its 8 bytes once instead of once per use.
+
+Why 10 units per byte and not AE2's ratio: AE2 counts 1 byte per bucket (1000 mB), the same 8 : 1 to its cells as for
+items. This mod's fluid cells hold 8 units per byte like items, so AE2's ratio would be 1 byte per unit; but Factorio
+recipes use about ten times more fluid units than items (vanilla: 20 petroleum gas per 2 plastic bars, 5 sulfuric acid
+per processing unit; Gregtorio: 144 units of molten metal per ingot), so a byte per unit would make a fluid job ten times
+the size of the item job next to it. One number, `fluid_units_per_byte` in the mod-data `fork-me-autocraft`.
+
+Two worked examples (vanilla recipes, plates in storage):
+
+* **100 electronic circuits** (1 iron plate + 3 copper cables; 1 copper plate → 2 cables). Steps: copper cable 150
+  runs, electronic circuit 100 runs; from storage: iron plates, copper plates.
+  100 (ordered) + 150 × (1 + 1) + 100 × (1 + 1 + 3) + 8 × (2 + 2) = 100 + 300 + 500 + 32 = **932 bytes**: fits the
+  smallest CPU (one 1k crafting storage, 1024 bytes).
+* **50 processing units** (20 electronic circuits, 2 advanced circuits, 5 sulfuric acid; an advanced circuit is 2
+  plastic bars, 2 electronic circuits, 4 copper cables); plastic, acid and plates from storage. Steps: copper cable
+  2000 runs (3600 + 400 cables), electronic circuit 1200 runs (1000 + 200), advanced circuit 100 runs, processing unit
+  50 runs. 50 + 2000 × 2 + 1200 × 5 + 100 × (1 + 2 + 2 + 4) + 50 × (1 + 20 + 2) + 250 / 10 + 8 × (4 + 4)
+  = 50 + 4000 + 6000 + 900 + 1150 + 25 + 64 = **12 189 bytes**: a 16k crafting storage (or four 4k).
+
+The planner returns `plan.bytes`; a job keeps `job.bytes`. Jobs of older saves have none: it is computed from their
+steps the first time it is needed (the resources taken from storage are then unknown and not counted).
+
+### The blocks
+
+All are 1x1 blocks (`simple-entity-with-force`, no power connection of their own, like the ME Pattern Provider),
+members of the ME network (graph kind `crafting`): they draw their power through the ME Controller, like a drive.
+Without power, or without a working network, a CPU is not usable (its job waits: "No ME network").
+
+| Block | Storage | Effect | Power | Recipe (standalone) | Technology |
+|---|---|---|---|---|---|
+| ME Crafting Unit (`me-crafting-unit`) | 0 | filler | 4 kW | 4 iron plates, 2 advanced circuits, 2 fluix cables, 1 electronic circuit | `me-autocrafting` |
+| ME 1k Crafting Storage (`me-1k-crafting-storage`) | 1 024 bytes | | 4 kW | crafting unit + 1k storage component | `me-autocrafting` |
+| ME 4k Crafting Storage (`me-4k-crafting-storage`) | 4 096 | | 8 kW | crafting unit + 4k component | `me-autocrafting` |
+| ME 16k Crafting Storage (`me-16k-crafting-storage`) | 16 384 | | 16 kW | crafting unit + 16k component | `me-co-processing` |
+| ME 64k Crafting Storage (`me-64k-crafting-storage`) | 65 536 | | 32 kW | crafting unit + 64k component | `me-co-processing` |
+| ME 256k Crafting Storage (`me-256k-crafting-storage`) | 262 144 | | 64 kW | crafting unit + 256k component | `me-quantum-crafting` |
+| ME Crafting Co-Processing Unit (`me-crafting-co-processing-unit`) | 0 | +1x speed | 32 kW | crafting unit + 1 processing unit | `me-co-processing` |
+| ME Crafting Monitor (`me-crafting-monitor`) | 0 | shows the job | 4 kW | crafting unit + 1 small lamp + 1 electronic circuit | `me-autocrafting` |
+
+The recipes follow AE2 (crafting unit: iron, calculation and logic processors, fluix cable; a crafting storage is a
+crafting unit and the storage component of the same size; the co-processing unit a crafting unit and an engineering
+processor; the monitor a crafting unit and a storage monitor), with vanilla items that Gregtorio Continued has too. The
+first CPU (a 1k crafting storage: a crafting unit and a 1k component) is cheap when `me-autocrafting` is researched and
+takes the jobs of the example above. The numbers reach the runtime through the mod-data `fork-me-autocraft`
+(`blocks[name] = { bytes, coprocessors, monitor, power }`), the network reads the power per block from it.
+
+**What a co-processor does:** a job hands work to its pattern machines in steps (one job per tick, each job at most
+every 20 ticks, the setting "crafting jobs per tick" unchanged). A step makes 6 machine hand-overs or collections times
+the speed of its CPU; the speed is **1 + the co-processors** (AE2: `coprocessors + 1` pushes per tick). A CPU with 3
+co-processors is as fast as the old ME Quantum Crafting CPU (4x, 24 hand-overs per step, about 72 per second). At most
+**16 co-processors count** (17x, 102 hand-overs per step): more may be built but add nothing. AE2 has no limit; here
+one step of one job runs in one tick, and the cap keeps that step at about the cost of four Quantum CPU jobs.
+
+The legacy CPU tiers' technologies keep their names and get the new blocks: `me-co-processing` unlocks the
+co-processing unit and the 16k and 64k crafting storage, `me-quantum-crafting` the 256k crafting storage. A mod that set
+these technologies itself (Gregtorio Continued replaces their recipe lists with `ME_NETWORK.set_technology`) would leave
+the new recipes unlocked by nothing, so `data-final-fixes.lua` adds every crafting block recipe that no technology
+unlocks to its technology above: Gregtorio games get the blocks on Gregtorio's tiers until its compat file gives them GT
+recipes.
+
+### Finding the rectangle: kept up to date on build and removal
+
+The pattern is the graph's (`add_node` / `remove_node_graph`): nothing is scanned while nothing changes, a build merges,
+a removal looks at one group only. State in `storage.fork_ae2` (created lazily: older saves have none):
+
+* `cblocks[unit] = { entity, x, y, surface, group }`: every crafting block, by its tile;
+* `cgrid["surface:x:y"] = unit`: the tile index, so neighbours are four table lookups, no `find_entities`;
+* `groups[id] = { blocks = { unit = true }, n, x1, y1, x2, y2, bytes, coprocessors, monitors = { unit = true },
+  status, job, anchor }`: one group of touching blocks.
+
+**Built** (also by robots, from a blueprint, cloned): the block looks up its four neighbour tiles. No neighbour: a new
+group. One or more groups: they are merged into the largest (the blocks of the smaller ones are moved, O(smaller)); the
+bounding box, the bytes, the co-processors and the monitors are added. **Removed** (mined, destroyed, or found vanished
+by the network's sweep, which calls a hook of this module): the block leaves its group and its tile; with one neighbour
+in the group the group cannot split (the box is computed again if the block was on its edge, O(group)); with more, one
+breadth first search over the group's blocks through `cgrid` finds the parts, each becomes a group (O(group)). Since all
+blocks are 1x1 and cannot overlap, a group is a **solid rectangle exactly when `n = (x2 - x1 + 1) × (y2 - y1 + 1)`**.
+Status: `ok` (a rectangle with storage), `not-rectangle`, `no-storage` (a rectangle of units, co-processors and
+monitors only). `on_configuration_changed` builds the groups once from the map (next to the graph's own rebuild).
+
+What the player sees: a block of a CPU shows its lit picture, a block of a group that is no CPU its dark one
+(`graphics_variation`, set only when a group's status changes); the window of any block names the status ("Not a
+crafting CPU: 7 blocks do not fill their 3 x 3 area" / "Not a crafting CPU: it has no crafting storage"); the plan
+preview lists only groups that are CPUs. A monitor draws the job's item and amount on its face (two render objects per
+monitor, changed when its CPU starts or ends a job, never per tick).
+
+### A running job when its CPU changes
+
+A job's items and fluids are not in the CPU: they are in the job's pool (`storage.fork_ae2.jobs[id].pool`), and the
+machines it leased keep crafting. So nothing has to be cancelled to avoid a loss, and the rule is the one that the old
+CPUs have since issue #38 ("a job on a removed CPU pauses and goes on on the next free one"):
+
+* **A block of its CPU is removed** (or the group stops being a CPU): the job **pauses** with everything it holds
+  (status "Waiting for a free CPU"); the next CPU assignment (at most 20 ticks later) gives it a free CPU of its network
+  with enough bytes, **the rest of its own CPU included** if that is still a CPU and big enough. If no CPU has room it
+  waits ("Waiting for a CPU with at least N bytes"); **Cancel** gives everything back as always. AE2 cancels the job
+  and returns its items; here the items never left the network's books, and pausing keeps the work done in machines.
+* **A block is added**: the job stays if the group is still a CPU with enough bytes (a co-processor added to a running
+  CPU makes the job faster at once); otherwise it pauses as above.
+* **Two CPUs merged** by a block between them: the group keeps the job with the lower id if it fits; the other job
+  pauses and takes another CPU.
+
+### The old CPUs (migration)
+
+The three single-entity CPUs of Gregtorio issue #38 (`me-crafting-cpu`: 1 job; `me-co-processing-cpu`: 2 jobs, 2x;
+`me-quantum-crafting-cpu`: 4 jobs, 4x) stay as **legacy blocks**: same prototypes, same storage records
+(`storage.fork_ae2.cpus`, `job.cpu`), same job slots and speed, **no byte limit**, so no save loses or stops a running
+job. They can no longer be crafted: their names are in `ME_NETWORK.removed` (so `replace_recipe` ignores them and
+`data-final-fixes.lua` deletes every recipe that makes them, Gregtorio's too); their items stay usable (a player who
+holds one can still place it), their descriptions say "legacy". No prototype and no storage key is renamed.
+
+Why not replace each by a multiblock: a 2x2 entity cannot become a rectangle of 1x1 blocks in its place without
+moving or destroying what stands around it, and a Co-Processing CPU (two jobs) would need two separate CPUs that do not
+touch, so the conversion would have to place new blocks where the player built other things. Keeping them is free:
+the job code already knows two kinds of CPUs.
+
+Assignment order of a waiting job: the multiblock CPUs of its network that are free and have enough bytes, **the
+smallest storage first** (big CPUs stay free for big jobs), then the most co-processors, then the group made first;
+then the legacy CPUs with a free slot, fastest first (as before). Starting a job (the Craft button, a level maintainer)
+needs such a CPU **now**: otherwise the start is refused with "needs N bytes; the biggest CPU of this network has M"
+or "every CPU that can take it is busy", and a level maintainer waits and tries again. (Before, a job could be queued
+behind busy legacy CPUs; jobs that are queued in a save keep waiting and start when a slot is free.)
+
+### Graphics
+
+`tools/gen_ae2_sprites.py --crafting-cpu <GT5-Unofficial>` draws the eight blocks in AE2's layout (a casing frame
+around a face: the storage blocks with a coloured chip per size, the co-processor with a blue core, the monitor with a
+screen) from GT5-Unofficial's casings and Pillow shapes, each in a dark (no CPU) and a lit (CPU) variant, and their
+icons and the three technology icons stay. **Not from AE2's own crafting block textures:** they are licensed CC BY-NC-SA
+3.0 (AE2's README: "Textures and Models"), which is not compatible with this mod's GPLv3 and with the mod portal
+(non-commercial, share-alike under another license); `README.md` says so for every graphic of this mod.
+
+### Saves
+
+New: the eight block prototypes and items, the record fields `job.bytes`, `job.group`, the tables `cblocks`, `cgrid`,
+`groups`, `next_group` in `storage.fork_ae2` (created lazily; `migrate --from-ref v0.2.0` loads without
+`on_configuration_changed`). The hand-over list of Gregtorio saves is unchanged (`fork_ae2` is handed over whole; a
+Gregtorio save has no groups).
+
+### Tests
+
+Runtime (`runtimemod/cpus.lua`): the smallest CPU (one 1k crafting storage) runs a job and refuses a too big one; a
+rectangle with every block kind (storage, unit, co-processors, monitor: bytes, speed, monitor objects); a group that is
+not a rectangle and one without storage (status, not offered); two CPUs running two jobs at once; a job too big for
+every CPU (refused, the maintainer waits); a block removed during a job (pauses, goes on on the rest or another CPU,
+nothing lost); a blueprint and a clone of a CPU (form a CPU); the legacy CPUs (slots, speed, no byte limit). Migration:
+`migrate --from-ref v0.2.0` with running jobs on all three legacy CPUs, which must finish after the load. Bench: the
+scene's CPUs are multiblocks (the legacy Quantum CPU with `--from-ref` of an older version); script time unchanged.
+
 ## Open points
 
-* Patterns (issue #80, left open on purpose; the data model keeps room for them): crafting storage on the CPUs (a job
-  size limit per CPU tier), upgrade cards on providers (e.g. a blocking mode: push into a chest only when it is empty),
-  substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's ingredient lookup are the
+* Patterns (issue #80, left open on purpose; the data model keeps room for them): upgrade cards on providers
+  (e.g. a blocking mode: push into a chest only when it is empty), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's ingredient lookup are the
   places to change), a 36 slot provider tier (`SLOTS` is one constant; it needs a second prototype and window layout),
   clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
   bus.
