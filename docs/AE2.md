@@ -3,8 +3,8 @@
 > This guide was written in Gregtorio Continued, where the ME network was made (issue numbers are Gregtorio's). The
 > recipes and technology tiers it names (GT materials, voltage tiers, science packs) are the ones in a Gregtorio game.
 > On its own, ME Network uses vanilla recipes and science: the network with red and green science, 64k cells,
-> autocrafting and fluids with blue, 256k and the co-processing CPU with production, the quantum CPU with utility
-> science (`prototypes/network.lua`, `autocrafting.lua`, `fluids.lua`). Everything else here is the same in both.
+> autocrafting and fluids with blue, 256k storage, the co-processing unit and the 16k and 64k crafting storage with
+> production, the 256k crafting storage with utility science (`prototypes/network.lua`, `autocrafting.lua`, `fluids.lua`). Everything else here is the same in both.
 
 
 ## What the ME network is
@@ -26,7 +26,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face |
 | ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
-| ME Crafting CPU, Co-Processing and Quantum Crafting CPU | run autocrafting jobs: 1, 2 or 4 at once (this page, **CPU tiers**) |
+| Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns; the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
 | Blank / Encoded Pattern | a blank pattern is encoded in the terminal's Patterns tab into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
 | ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
@@ -175,7 +175,8 @@ click uses the tool and opens no window, as on a chest.
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents** |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, power |
 | ME Pattern Provider | 9 pattern slots (click with an encoded pattern in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
-| ME Crafting CPU (all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
+| Crafting block (any block of a Crafting CPU) | see **Crafting CPUs** |
+| ME Crafting CPU (legacy, all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
@@ -401,14 +402,15 @@ Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks:
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
 | **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns**; each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
 | **ME Molecular Assembler** | assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW |
-| **ME Crafting CPU** | 2x2, needs power (60 kW), part of the network. Runs one job at a time (bigger CPUs: see [CPU tiers](#cpu-tiers)) |
+| **Crafting blocks** | 1x1 members of the network; a solid rectangle of them with at least one **crafting storage** is a Crafting CPU running one job (see [Crafting CPUs](#crafting-cpus)). The first: a single **ME 1k Crafting Storage** |
 
 Step by step:
 
 1. Build an ME network: ME Controller (powered), at least one ME Drive with cells and items, an ME
    Terminal (powered), all connected.
-2. Connect an **ME Crafting CPU** to the network and power it. One CPU = one job at a time; a second
-   CPU, or a bigger one, lets two jobs run in parallel.
+2. Build a **Crafting CPU** touching the network: the smallest is one **ME 1k Crafting Storage** next to a cable.
+   One CPU = one job at a time, of at most its crafting storage in bytes; a second CPU (not touching the first)
+   lets two jobs run in parallel.
 3. Put **blank patterns** into your inventory (or into the network) and encode them in the terminal's
    **Patterns** tab (below): a **crafting pattern** for each recipe the network should craft.
 4. Place a machine (Molecular Assembler for crafting recipes, a GT machine for processing recipes: macerator, EBF,
@@ -529,26 +531,60 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
 * **Settings paste** (shift right click, shift left click) and cloning copy the **priority** only; patterns are items
   and stay where they are.
 
-## CPU tiers
+## Crafting CPUs
 
-Two bigger Crafting CPUs (issue #38) run several jobs at once and hand work to the pattern machines
-faster. They are 2x2 like the ME Crafting CPU, need power, and belong to the network they stand in.
+A Crafting CPU is built, as in AE2, from **crafting blocks** (issue #6). Every block is 1x1, a member of the ME network
+like any ME block (it draws its power through the ME Controller; without power the CPU waits). **Any group of touching
+crafting blocks that is a solid rectangle (no gaps) and holds at least one crafting storage is one Crafting CPU.**
+There is no core block, and any number of CPUs may be in a network; two CPUs must not touch (touching blocks are one
+group).
 
-| Entity | Tech (tier) | Jobs at once | Speed | Power | Recipe (main parts) |
+| Block | Crafting storage | What it does | Power | Recipe (standalone) | Technology |
 |---|---|---|---|---|---|
-| ME Crafting CPU | `me-autocrafting` (EV) | 1 | 1x (6 machine hand-overs per job every 20 ticks) | 60 kW | EV hull, ME controller, 2 64k cells |
-| **ME Co-Processing Crafting CPU** | `me-co-processing` (IV, after `me-storage-256k` and IV components) | 2 | 2x | 240 kW | ME Crafting CPU, IV hull, 2 256k cells, 4 acceleration cards, 4 IV circuits (IV assembler) |
-| **ME Quantum Crafting CPU** | `me-quantum-crafting` (LuV, after `me-co-processing` and LuV machines) | 4 | 4x | 960 kW | Co-Processing CPU, LuV hull, 2 LuV emitters, 8 acceleration cards, 4 LuV circuits (LuV assembler) |
+| ME Crafting Unit | | fills the rectangle | 4 kW | 4 iron plates, 2 advanced circuits, 2 fluix cables, 1 electronic circuit | `me-autocrafting` |
+| ME 1k Crafting Storage | 1 024 bytes | holds the job | 4 kW | crafting unit + 1k storage component | `me-autocrafting` |
+| ME 4k Crafting Storage | 4 096 bytes | | 8 kW | crafting unit + 4k storage component | `me-autocrafting` |
+| ME 16k Crafting Storage | 16 384 bytes | | 16 kW | crafting unit + 16k storage component | `me-co-processing` |
+| ME 64k Crafting Storage | 65 536 bytes | | 32 kW | crafting unit + 64k storage component | `me-co-processing` |
+| ME 256k Crafting Storage | 262 144 bytes | | 64 kW | crafting unit + 256k storage component | `me-quantum-crafting` |
+| ME Crafting Co-Processing Unit | | the CPU hands work to the machines once more per step | 32 kW | crafting unit + processing unit | `me-co-processing` |
+| ME Crafting Monitor | | shows the job | 4 kW | crafting unit + small lamp + electronic circuit | `me-autocrafting` |
 
-* The job slots of all CPUs in the network are the number of jobs that run at once. The crafting
-  tab shows them: `Crafting CPUs: 1, job slots: 2 (free: 1)`. A new job takes the fastest CPU with a
-  free slot; with none free it waits (`Waiting for a free CPU`).
-* **Speed** is how many machines a job can load and empty per step. It matters when a job has many
-  pattern machines for the same recipe: a job on the base CPU keeps about 18 machine hand-overs per
-  second going, on a Quantum CPU four times that. The machines still craft at their own speed.
-* **Upgrading:** the upgrade planner (or fast replace by hand) swaps a CPU for the next tier. A job on
-  the replaced CPU pauses for a moment and goes on on the new one (or on any other free slot), with
-  everything it holds.
+* **The smallest CPU** is a single 1k crafting storage touching a cable: it runs a job of 100 electronic circuits from
+  plates (932 bytes). Bigger CPUs: more or bigger storage blocks in one rectangle (their bytes add up), filled up with
+  crafting units, co-processing units and monitors as you like.
+* **Bytes of a job** (AE2's rule): the amount ordered, plus for every step of the plan its crafts and all the
+  ingredients of those crafts (1 byte per item, 1 byte per 10 fluid units), plus 8 bytes per step and per item or
+  fluid taken from storage. 100 electronic circuits need 932 bytes, 50 processing units from plates, plastic and acid
+  12 189 bytes (a 16k crafting storage).
+* **One job per CPU.** A job starts only when a CPU of the network is free and big enough; it takes the smallest one
+  that fits. Otherwise the Craft button tells why ("needs N bytes, the biggest CPU has M", or "every CPU that can take
+  it is busy") and starts nothing; a level maintainer waits and tries again.
+* **Speed:** every co-processing unit lets the CPU hand one more batch to the pattern machines per step: a CPU with n
+  co-processors is 1 + n times as fast (at most 16 count). It matters when a job has many machines for the same
+  pattern; the machines still craft at their own speed. Three co-processors make a CPU as fast as the old Quantum CPU.
+* **Not a CPU:** a group with a gap or a corner missing, or one without crafting storage, is no CPU: its blocks stay
+  dark (the blocks of a CPU are lit).
+* **Changing a running CPU:** remove a block and the job **pauses** with everything it holds (nothing is lost: its
+  items and fluids are kept by the job, not by the blocks). It goes on as soon as a free CPU of the network is big
+  enough, which may be what is left of its own CPU; until then it shows "Paused: waiting for a free CPU with at least
+  N bytes", and **Cancel** gives everything back. A block added to a running CPU (a co-processor) helps at once.
+* Blueprints, copy and paste and cloning build the blocks; they form a CPU when the rectangle is complete.
+
+### The old Crafting CPUs (legacy)
+
+The single 2x2 CPUs of earlier versions (issue #38) are **legacy blocks**: they can no longer be crafted, but those in
+a save, or in your inventory, keep working as before, and their running jobs go on through the update on the same CPU:
+
+| Entity | Jobs at once | Speed | Power |
+|---|---|---|---|
+| ME Crafting CPU | 1 | 1x (6 machine hand-overs per job every 20 ticks) | 60 kW |
+| ME Co-Processing Crafting CPU | 2 | 2x | 240 kW |
+| ME Quantum Crafting CPU | 4 | 4x | 960 kW |
+
+They have no byte limit. A job takes a free multiblock CPU first, a legacy CPU with a free slot after that. A job is
+no longer queued behind busy CPUs: with every slot busy, the start is refused. The upgrade planner still swaps the
+legacy tiers (a job on the replaced CPU pauses and goes on on the new one).
 
 ## Keeping items in stock: ME Level Maintainer
 
@@ -556,7 +592,7 @@ Tech `me-automation` (EV, needs `me-autocrafting` and Circuit network). The **ME
 a 1x1 block that needs power (30 kW) and is a member of the network.
 
 1. Connect it to the network and power it. Autocrafting must work for the resource: a pattern
-   (an encoded pattern in a provider next to a machine) and a Crafting CPU.
+   (an encoded pattern in a provider next to a machine) and a Crafting CPU big enough for the difference.
 2. Click it: its ME window opens. Choose the item or fluid in the signal button and type the amount to
    keep (items, or fluid units).
 3. When the network holds less than that amount, the maintainer starts a crafting job for the
@@ -573,7 +609,9 @@ What the window says:
 | Enough in stock | nothing to do |
 | Crafting job N is running | its job; the progress is also in the terminal's job list |
 | Another job of this network is crafting it | waits for that job |
-| Waiting for a Crafting CPU with a free job slot | all slots are busy: the maintainer does not queue jobs, it waits and tries again |
+| Waiting for a Crafting CPU with a free job slot | all CPUs are busy: the maintainer does not queue jobs, it waits and tries again |
+| Waiting for a free Crafting CPU that is big enough for the job | the CPUs that could take the job are busy |
+| Waiting: the job is bigger than every Crafting CPU of this network | add crafting storage (or keep a smaller amount) |
 | Cannot craft the difference, missing: ... | the plan lacks raw materials; it tries again every 5 seconds |
 | No pattern for this item or fluid | no usable encoded pattern for it in a provider of the network |
 | Switched off by the circuit condition | see below |
@@ -851,8 +889,9 @@ storage. If something is missing the job does not start and nothing is taken.
 Starting a job takes the planned resources out of the network into the job's own **pool**
 (`storage.fork_ae2.jobs[id].pool`, plain counts per key, so it saves, loads and syncs like any
 storage table); items with the network's `extract`, fluids with `fluids.remove`. Reserving at the start
-means nothing can be stolen by other jobs or by players taking items while the job runs. A job
-with no free CPU waits ("Waiting for a free CPU") with its resources reserved.
+means nothing can be stolen by other jobs or by players taking items while the job runs. A job starts only on a
+free CPU that is big enough (issue #6); a job whose CPU changed or went waits ("Waiting for a free CPU") with its
+resources reserved.
 
 Each step the CPU of a job:
 
@@ -921,6 +960,7 @@ Removed entities:
 | Pattern provider | its patterns are no patterns any more (mined: into the buffer; destroyed: on the ground); a running job finishes what is already in the machine and waits for another machine of the pattern |
 | A drive or a fluid cell during a job | nothing happens to the job: its items and fluids are in its pool, not in a cell. At the end the pool is stored in the remaining cells, or waits for room |
 | Fluid interface | nothing for jobs; what it holds goes back into the network (as far as the cells have room), its mode, fluid and level are forgotten |
+| A block of a multiblock Crafting CPU (issue #6) | the job pauses (queued) with its pool and its leases, and takes the next free CPU with enough bytes, the rest of its own CPU included |
 | Terminal, controller, a cable | jobs without a working network pause ("No ME network"). A job finds its network through its CPU, else through the entity it was started at (terminal, level maintainer), else through the ME block at its position (jobs of older saves) |
 
 ### CPU tiers (issue #38)
@@ -932,6 +972,16 @@ converted when it is first read). `assign_cpus` gives a queued job the fastest C
 fewer jobs than slots. A job's machine interactions per step are `STEP_OPS` (6) times the speed of its
 CPU for every 20 ticks since its last step (at most three steps' worth: a job that waited for its turn catches up). A CPU that is replaced or removed releases its jobs, which
 queue and take the next free slot (the path the existing CPU test covers).
+
+### Crafting CPUs as multiblocks (issue #6)
+
+Design record: `docs/ME-REWORK.md`, "Crafting CPUs as multiblocks". In short: the groups of touching crafting blocks
+are kept in `storage.fork_ae2` (`cblocks`, `cgrid`, `groups`) from the build and removal events (a vanished block from
+the network's sweep), merged on a build and split by one search over the group on a removal; a group is a CPU when its
+block count fills its bounding box and it has storage. `make_plan` returns `bytes`; `M.start` picks the CPU at once
+(`pick_cpu`: free multiblock CPUs that fit, smallest first, then legacy CPUs with a slot) or refuses the job
+(`cpu-too-small`, `no-free-cpu`). `assign_cpus` only places jobs that were paused. Nothing of this runs while no
+block is built or removed.
 
 ### Level maintainer and circuit interface (issue #38)
 
@@ -1062,13 +1112,14 @@ partitions start empty.
   shown (its circuit condition is in the ME window).
 * A furnace picks its recipe from its input: a processing pattern whose input fits several of its recipes may be
   smelted into the wrong product; the job then waits for its outputs and fails after 5 minutes.
-* Encoded patterns (issue #80): no crafting storage on the CPUs (job size limits), no upgrade cards on providers, no
+* Encoded patterns (issue #80): no upgrade cards on providers, no
   substitutions or fuzzy patterns, no "blocking mode" (a provider pushes into a chest as long as it has room), no
   pattern tier with 36 slots. Clearing a pattern needs the terminal's button (an inventory click cannot be caught).
   A provider mined by another mod's script (not a player or robot) drops its patterns instead of giving them to
   that script's inventory.
-* CPU tiers (issue #38) add parallel jobs and speed, not storage: a job's size is not limited by its
-  CPU (AE2's crafting storage has no counterpart). The level maintainer keeps one resource per block;
+* Crafting CPUs (issue #6): no choice of the CPU in the terminal (the smallest free one that fits is taken), no
+  "requests from players only / automation only" mode; the legacy CPUs have no byte limit. The level maintainer
+  keeps one resource per block;
   a circuit signal sets its amount or switches it, but there is no "craft what the circuit asks for"
   request of several resources at once. Settings paste by hand and the upgrade planner on CPUs are untested in
   the real game (the headless test calls the same functions).
@@ -1168,12 +1219,20 @@ nothing while the stock holds (120 ticks), start one job for exactly the differe
 out, take 14 from a constant combinator's signal with "amount from the circuit", start nothing while the
 lamp's circuit condition is false and start the job for 20 once it is true. A Co-Processing CPU runs two gear
 jobs at once (both running at the start, both with a machine crafting at the same time, 12 hand-overs per
-step, no free slot), a third job waits and is cancelled, and a Quantum CPU put in its place has four slots.
+step, no free slot), a third job is refused (issue #6), and a Quantum CPU put in its place has four slots.
 A circuit interface wired to a pole must carry exactly the network's items and floored fluids (500.5 water
 is 500), then only its two filters, then follow 25 more plates. The settings of a maintainer (a fluid, 1234,
 circuit), a circuit interface (two filters) and a fluid interface (export water 2345) must be blueprint
 tags, come back on the entities built from that blueprint and revived, and be copied by settings paste and
 by cloning. `devcheck.py migrate` checks a job started by the old version.
+Issue #6 (`runtimemod/cpus.lua`, its own network): the smallest CPU (one 1k crafting storage: 1024 bytes, speed 1), a
+3x2 rectangle of every block kind (5120 bytes, two co-processors: speed 3, a monitor), an L of three blocks and a row
+of two units (no CPU, dark pictures), the bytes of a gear plan (5 per gear + 24), a job too big for every CPU
+(refused with the bytes, nothing taken; a level maintainer waits), two jobs on the two CPUs at once and a third one
+refused, a block removed during a job (the job pauses, goes on on the 2x2 rest of its CPU, is cancelled: every plate
+and stick back), the CPU rebuilt, a clone and a blueprint of it (each forms a CPU of its own), a legacy CPU that takes
+the job too big for every multiblock. `devcheck.py migrate --from-ref v0.2.0` loads a save with a running job on each
+of the three legacy CPUs: each must end done on the CPU it started on.
 `devcheck.py migrate --from-ref v0.4.1` (issue #80) builds providers next to a Molecular Assembler with the gear recipe
 and next to a fresh iron furnace with the smelting recipe chosen in the provider, a gear job and a level maintainer
 keeping 8 gears with the old version; after the update the providers must hold a crafting pattern of the gear recipe

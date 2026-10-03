@@ -1623,7 +1623,9 @@ holds one can still place it), their descriptions say "legacy". No prototype and
 Why not replace each by a multiblock: a 2x2 entity cannot become a rectangle of 1x1 blocks in its place without
 moving or destroying what stands around it, and a Co-Processing CPU (two jobs) would need two separate CPUs that do not
 touch, so the conversion would have to place new blocks where the player built other things. Keeping them is free:
-the job code already knows two kinds of CPUs.
+the job code already knows two kinds of CPUs. When the mod is updated (`on_configuration_changed`) a job stays on its
+legacy CPU; before, every job was queued again and took the fastest free slot (`migrate --from-ref v0.2.0` checks that
+the three jobs of the old save end on the CPUs they started on).
 
 Assignment order of a waiting job: the multiblock CPUs of its network that are free and have enough bytes, **the
 smallest storage first** (big CPUs stay free for big jobs), then the most co-processors, then the group made first;
