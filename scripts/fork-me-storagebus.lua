@@ -16,7 +16,8 @@
 ---     Inverter Card (the filters are a blacklist), a Fuzzy Card (a filter matches every quality), an Overflow
 ---     Destruction Card (what the network stores into the bus and does not fit is destroyed); the setting "filter on
 ---     extract" (rec.extract false: the filters decide only what goes in). The cards are items: put in and taken out
----     by hand in the window, given back when the bus is mined, spilled when it is destroyed or vanishes. Blueprints,
+---     by hand in the window (issue #28: the slots of a script inventory, rec.inv, beside the player's inventory;
+---     sync() checks them), given back when the bus is mined, spilled when it is destroyed or vanishes. Blueprints,
 ---     settings paste and clones copy which cards a bus wants (rec.want); it takes them from the player (paste) or
 ---     the network (at its visits), never out of nothing. apply() turns filters and cards into the fields the
 ---     storage engine reads (partition, deny, fnames, void, inonly).
@@ -44,6 +45,7 @@ local N = require("scripts.fork-me-network")
 local T = require("scripts.fork-me-targets")
 local F = require("scripts.fork-me-fluid-storagebus")
 local Sched = require("scripts.fork-me-schedule")
+local G = require("scripts.fork-me-gui")
 
 local M = {}
 
@@ -194,7 +196,7 @@ local ITEM = {
 		return item_of(key) ~= nil and rec.status == "ok" and inventory_of(rec) ~= nil
 	end,
 	--- the bus's record leaves the storage engine: a card still in it is spilled (a bus that vanished without an event)
-	detached = function(rec) M.spill_cards(rec) end,
+	detached = function(rec) M.detach(rec) end,
 }
 
 N.ext_handlers[KIND] = ITEM             -- the fluid side: N.ext_handlers[F.HANDLER] through rec.handler
@@ -446,46 +448,83 @@ local function remember_place(rec)
 	if e and e.valid then rec.where = { surface = e.surface.index, x = e.position.x, y = e.position.y } end
 end
 
---- every card of the bus onto the ground (destroyed, vanished); the slots are empty afterwards
+--- Issue #28: the card slots are a script inventory (rec.inv), the one the bus's window shows beside the player's
+--- inventory. Its stacks are the cards; rec.cards ({ [slot] = name }) is what apply(), the window and the settings read,
+--- made from the slots by sync() and by every function here that moves a card. A bus of a save before issue #28 kept
+--- only the names: its inventory is made here, with a card item for each name (the version number may not change, so
+--- no on_configuration_changed has to run first).
+function M.inv_of(rec)
+	local inv = rec.inv
+	if inv and inv.valid then return inv end
+	local e = rec.entity
+	inv = game.create_inventory(rules().slots, e and e.valid and e.localised_name or { "entity-name.me-storage-bus" })
+	for slot, name in pairs(rec.cards or {}) do
+		if type(slot) == "number" and slot <= #inv and type(name) == "string" and prototypes.item[name] then
+			inv[slot].set_stack{ name = name, count = 1 }
+		end
+	end
+	rec.inv = inv
+	return inv
+end
+local inv_of = M.inv_of
+
+--- every stack in the card slots onto the ground (destroyed, vanished); the slots are empty afterwards
 function M.spill_cards(rec)
-	if not (rec.cards and next(rec.cards)) then return end
+	local inv = inv_of(rec)
 	local e = rec.entity
 	local surface, pos
 	if e and e.valid then surface, pos = e.surface, e.position
 	elseif rec.where then surface, pos = game.get_surface(rec.where.surface), { rec.where.x, rec.where.y } end
-	for slot, name in pairs(rec.cards) do
-		if surface and prototypes.item[name] then N.spill(surface, pos, { name = name, count = 1 }) end
-		rec.cards[slot] = nil
+	for slot = 1, #inv do
+		local stack = inv[slot]
+		if stack.valid_for_read and surface then
+			surface.spill_item_stack{ position = pos, stack = stack, allow_belts = false }
+			stack.clear()
+		end
 	end
+	rec.cards = {}
 end
 
---- into `target` (LuaInventory or mined buffer), what does not fit onto the ground
+--- into `target` (LuaInventory or mined buffer), what does not fit onto the ground: everything in the slots, also an
+--- item a sync has not seen yet
 local function give_cards(rec, target)
-	for slot = 1, rules().slots do
-		local name = rec.cards and rec.cards[slot]
-		if name then
-			local got = target and target.valid and prototypes.item[name] and target.insert{ name = name, count = 1 } or 0
-			if got >= 1 then rec.cards[slot] = nil end
+	local inv = inv_of(rec)
+	for slot = 1, #inv do
+		local stack = inv[slot]
+		if stack.valid_for_read and target and target.valid then
+			local got = target.insert(stack)
+			if got >= stack.count then stack.clear() elseif got > 0 then stack.count = stack.count - got end
 		end
 	end
 	M.spill_cards(rec)
 end
 
---- can the bus take one more card `name`? (a card of a kind it takes, below that kind's limit, a free slot)
+--- the record and its inventory leave (the storage engine dropped the cell): what is still in the slots is spilled
+function M.detach(rec)
+	M.spill_cards(rec)
+	if rec.inv and rec.inv.valid and rec.inv.is_empty() then rec.inv.destroy() end
+end
+
+--- can the bus take one more card `name`? (a card of a kind it takes, below that kind's limit, an empty slot)
 local function card_fits(rec, name)
 	local kind = N.card_kind(name)
 	local limit = kind and rules().limits[kind]
 	if not limit then return false, "not-here" end
 	if (card_counts(rec)[kind] or 0) >= limit then return false, "limit" end
+	local inv = inv_of(rec)
 	for slot = 1, rules().slots do
-		if not (rec.cards and rec.cards[slot]) then return slot end
+		if not inv[slot].valid_for_read then return slot end
 	end
 	return false, "full"
 end
 
-local function install(rec, slot, name)
+--- one card into the empty slot `slot`: from `from` (a LuaItemStack: one of it is moved, quality and all) or a new
+--- stack of `name` (taken from the network by the caller)
+local function install(rec, slot, name, from)
+	local inv = inv_of(rec)
+	if from then inv[slot].transfer_stack(from, 1) else inv[slot].set_stack{ name = name, count = 1 } end
 	rec.cards = rec.cards or {}
-	rec.cards[slot] = name
+	rec.cards[slot] = inv[slot].valid_for_read and inv[slot].name or nil
 	remember_place(rec)
 end
 
@@ -502,27 +541,93 @@ local function card_list(rec)
 	return out
 end
 
---- A click on card slot `slot` of the window. With a card in the cursor one card of it goes in (into `slot`, else the
---- first free slot); with an empty cursor the card in the slot goes into the cursor (`shift`: into `inventory`). Takes
---- the bus out of waiting for blueprint cards (the player decides now). Returns a reason on failure.
+--- Issue #28: the card slots after a player changed them (or the refresh's backstop). One card per slot, of a kind the
+--- bus takes, within its kind's limit: the cards that were in their slot already are kept first, then the new ones in
+--- slot order; a second card of one stack goes into an empty slot when it may, else back to `back` (G.give_back: the
+--- player, a LuaInventory, nil for the ground at the bus) with every other item. rec.cards follows the slots; a change
+--- takes the bus out of waiting for blueprint cards (the player decides now). Returns true when the slots or the
+--- cards changed.
+function M.sync(rec, back)
+	local inv = inv_of(rec)
+	local r = rules()
+	local old = rec.cards or {}
+	local counts, kept, moved = {}, {}, false
+	local function take(name)
+		local kind = N.card_kind(name)
+		local limit = kind and r.limits[kind]
+		if not limit or (counts[kind] or 0) >= limit then return false end
+		counts[kind] = (counts[kind] or 0) + 1
+		return true
+	end
+	for pass = 1, 2 do
+		for slot = 1, math.min(#inv, r.slots) do
+			local stack = inv[slot]
+			if stack.valid_for_read and not kept[slot] and (old[slot] == stack.name) == (pass == 1) and take(stack.name) then
+				kept[slot] = true
+			end
+		end
+	end
+	for slot = 1, #inv do
+		local stack = inv[slot]
+		if stack.valid_for_read then
+			local extra = kept[slot] and stack.count - 1 or stack.count
+			while extra > 0 do
+				local free
+				if N.card_kind(stack.name) then
+					for i = 1, math.min(#inv, r.slots) do
+						if not inv[i].valid_for_read then free = i break end
+					end
+				end
+				if free and take(stack.name) then
+					inv[free].transfer_stack(stack, 1)
+					kept[free] = true
+					extra = extra - 1
+				else
+					G.give_back(back, stack, rec.entity, extra)
+					extra = 0
+				end
+				moved = true
+			end
+		end
+	end
+	local cards, changed = {}, moved
+	for slot = 1, r.slots do
+		local stack = inv[slot]
+		cards[slot] = kept[slot] and stack.valid_for_read and stack.name or nil
+		if cards[slot] ~= old[slot] then changed = true end
+	end
+	if not changed then return false end
+	rec.cards = cards
+	rec.want = nil
+	remember_place(rec)
+	apply(rec)
+	M.visit(rec)
+	return true
+end
+
+--- A click on card slot `slot` of the window (before issue #28; kept for the remote interface). With a card in the
+--- cursor one card of it goes in (into `slot`, else the first empty slot); with an empty cursor the card in the slot
+--- goes into the cursor (`shift`: into `inventory`). Takes the bus out of waiting for blueprint cards. Returns a reason
+--- on failure.
 function M.card_click(entity, slot, cursor, inventory, shift)
 	local rec = rec_of(entity)
 	if not rec then return "no-bus" end
+	local inv = inv_of(rec)
 	if cursor and cursor.valid_for_read then
 		local free, why = card_fits(rec, cursor.name)
 		if not free then return why end
-		if not (rec.cards and rec.cards[slot]) and slot >= 1 and slot <= rules().slots then free = slot end
-		install(rec, free, cursor.name)
-		if cursor.count > 1 then cursor.count = cursor.count - 1 else cursor.clear() end
+		if slot >= 1 and slot <= rules().slots and not inv[slot].valid_for_read then free = slot end
+		install(rec, free, nil, cursor)
 	else
-		local name = rec.cards and rec.cards[slot]
-		if not name then return nil end
+		local stack = slot >= 1 and slot <= #inv and inv[slot]
+		if not (stack and stack.valid_for_read) then return nil end
 		if shift then
-			if not (inventory and inventory.valid and inventory.insert{ name = name, count = 1 } >= 1) then return "inventory-full" end
-		elseif not (cursor and cursor.set_stack{ name = name, count = 1 }) then
+			if not (inventory and inventory.valid and inventory.insert(stack) >= 1) then return "inventory-full" end
+			stack.clear()
+		elseif not (cursor and cursor.transfer_stack(stack)) then
 			return "inventory-full"
 		end
-		rec.cards[slot] = nil
+		if rec.cards then rec.cards[slot] = nil end
 	end
 	rec.want = nil
 	apply(rec)
@@ -569,6 +674,7 @@ end
 function M.want_cards(entity, want, player)
 	local rec = rec_of(entity)
 	if not rec then return false end
+	local inv = inv_of(rec)
 	local list = {}
 	for _, name in ipairs(type(want) == "table" and want or {}) do
 		if type(name) == "string" and N.card_kind(name) and #list < rules().slots then list[#list + 1] = name end
@@ -576,24 +682,27 @@ function M.want_cards(entity, want, player)
 	--- what is too many goes first (so the limits leave room for the wanted ones)
 	local _, extra = missing_cards(rec, list)
 	local net = N.active_of(entity)
+	local pinv = player and player.valid and player.get_main_inventory()
 	for slot = 1, rules().slots do
 		local name = rec.cards and rec.cards[slot]
-		if name and (extra[name] or 0) > 0 then
+		local stack = inv[slot]
+		if name and (extra[name] or 0) > 0 and stack.valid_for_read then
 			extra[name] = extra[name] - 1
 			rec.cards[slot] = nil
-			local inv = player and player.valid and player.get_main_inventory()
-			local got = inv and inv.insert{ name = name, count = 1 } or 0
-			if got < 1 and net then got = N.insert(net, name, "normal", 1) end
-			if got < 1 then
+			local got = pinv and pinv.insert(stack) or 0
+			if got >= stack.count then stack.clear() end
+			if stack.valid_for_read and net and N.insert(net, stack.name, stack.quality.name, stack.count) >= stack.count then stack.clear() end
+			if stack.valid_for_read then
 				local where = player and player.valid and player.character and player.character.valid and player.character or entity
-				N.spill(where.surface, where.position, { name = name, count = 1 })
+				where.surface.spill_item_stack{ position = where.position, stack = stack, allow_belts = false }
+				stack.clear()
 			end
 		end
 	end
-	local inv = player and player.valid and player.get_main_inventory()
 	for _, name in ipairs(missing_cards(rec, list)) do
 		local slot = card_fits(rec, name)
-		if slot and inv and inv.get_item_count(name) >= 1 and inv.remove{ name = name, count = 1 } == 1 then install(rec, slot, name) end
+		local from = slot and pinv and pinv.find_item_stack(name)
+		if from then install(rec, slot, nil, from) end
 	end
 	rec.want = #missing_cards(rec, list) > 0 and list or nil
 	apply(rec)
@@ -702,6 +811,18 @@ function M.clear_filters(entity) return M.set_settings(entity, { filters = {} })
 function M.max_filters(entity)
 	local rec = rec_of(entity)
 	return rec and filter_count(rec) or MAX_FILTERS
+end
+
+--- issue #28: the inventory of the card slots (the window shows it), and its check after a change (`back`: the player
+--- who changed it, or a LuaInventory; what may not be there goes there)
+function M.inventory(entity)
+	local rec = rec_of(entity)
+	return rec and inv_of(rec) or nil
+end
+
+function M.sync_entity(entity, back)
+	local rec = rec_of(entity)
+	return rec ~= nil and M.sync(rec, back)
 end
 
 --- the window's data: { side, mode, priority, filters, max, status, target, items, types, contents; on fluid also
@@ -861,6 +982,7 @@ function M.on_configuration_changed()
 		local rec = register(e)
 		rec.target, rec.target_unit, rec.dir, rec.box, rec.seg = nil, nil, nil, nil, nil
 		rec.filters = clean_filters(rec.filters)          -- (a save before issue #3 had item keys only: unchanged)
+		inv_of(rec)                                       -- issue #28: the card names of an older save become the slots' cards
 		if rec.cards or rec.extract == false then apply(rec) end   -- (no cards before issue #17: the fields stay)
 	end
 	for _, e in ipairs(all) do M.visit(N.ext_get(e.unit_number)) end
@@ -894,6 +1016,10 @@ remote.add_interface("gregtorio-me-storagebus", {
 	end,
 	from_contents = function(entity) return M.filters_from_contents(entity) end,
 	clear = function(entity) return M.clear_filters(entity) end,
+	--- issue #28: the card slots' inventory, and what a change by a player does (`back`: a LuaInventory standing for the
+	--- player's inventory); returns true when the slots or the cards changed
+	inventory = function(entity) return M.inventory(entity) end,
+	sync = function(entity, back) return M.sync_entity(entity, back) end,
 })
 
 --- issue #3: the old remote of the ME Fluid Storage Bus works on the storage bus (its fluid side)

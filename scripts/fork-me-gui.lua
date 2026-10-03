@@ -9,7 +9,15 @@
 ---     entity), def.refresh(player, frame) for the bounded refresh of open windows, def.entities (names whose
 ---     click opens it). open_entity() is called by the open key (simple entities have no vanilla GUI) and by
 ---     on_gui_opened (lamps, combinators, tanks, containers: the vanilla window is replaced at once).
---- Nothing here keeps state in storage: what a window shows lives in its elements' tags.
+---   * Issue #28 (docs/ME-REWORK.md "Windows next to the player's inventory"): a window that shows an inventory is a
+---     frame in player.gui.relative anchored to the game's window of a script inventory, which is the player's
+---     `opened` GUI: the game shows the player's real inventory and the inventory's slots, the ME frame beside them.
+---     The game raises no event for a change of a script inventory; the player's main inventory and cursor events
+---     (on_inventory_changed) and the refresh call the window's sync(player, frame, inventory), which checks the slots
+---     (what may not be there goes back: give_back) and makes the block's record follow them.
+--- State: what a window shows lives in its elements' tags; the inventory of a player's open window in
+--- storage.fork_me_gui_open[player_index] = { inventory, own (the player's own inventory: emptied and destroyed on
+--- close), tick (opened) }.
 --------------------------------------------------------------------------------
 
 local M = {}
@@ -90,15 +98,107 @@ function M.act(act, data)
 	return t
 end
 
---- A window: destroys the player's ME window, builds frame, title bar and content frame. Returns the frame and
---- the content flow. `tags` go onto the frame (fork_me_window = name is added).
-function M.open_window(player, name, caption, tags)
-	M.close_window(player)
+--------------------------------------------------------------------------------
+--- windows: a frame beside the game's window of a script inventory (issue #28), or a screen frame
+--------------------------------------------------------------------------------
+
+--- the frame stands right of the game's window of a script inventory (the maintainer's probe on issue #28). The anchor
+--- has no name, so it matches any script inventory: the frame exists only while ours is the opened GUI.
+local ANCHOR = { gui = defines.relative_gui_type.script_inventory_gui, position = defines.relative_gui_position.right }
+
+local function open_state()
+	local s = storage.fork_me_gui_open
+	if not s then
+		s = {}
+		storage.fork_me_gui_open = s
+	end
+	return s
+end
+
+--- the inventory of the player's open window (nil for a window without one), and its record
+function M.inventory_of(player)
+	local s = storage.fork_me_gui_open
+	local r = s and s[player.index]
+	if r and r.inventory and r.inventory.valid then return r.inventory, r end
+	return nil
+end
+
+--- is `inventory` the player's opened GUI?
+local function is_opened(player, inventory)
+	return player.opened_gui_type == defines.gui_type.script_inventory and player.opened == inventory
+end
+
+--- the players whose open window shows `inventory` (two players at one block share the block's inventory)
+function M.viewers(inventory)
+	local out = {}
+	for index, r in pairs(storage.fork_me_gui_open or {}) do
+		if r.inventory and r.inventory.valid and r.inventory == inventory then
+			local p = game.get_player(index)
+			if p then out[#out + 1] = p end
+		end
+	end
+	return out
+end
+
+--- the player's open ME window (or nil), and its name
+function M.window_of(player)
+	local frame = player.gui.relative.fork_me_window
+	if frame and frame.valid then return frame, frame.tags.fork_me_window end
+	frame = player.gui.screen.fork_me_window
+	if frame and frame.valid then return frame, frame.tags.fork_me_window end
+	return nil
+end
+
+--- Close the player's window: the window's sync and close run, an inventory of the player's own is emptied into the
+--- player's inventory and destroyed, the frames go. `write_opened`: the opened GUI is set to nil when it is still the
+--- window's inventory (not when the game closes it, nor when another window replaces it).
+local function teardown(player, write_opened)
+	local frame, name = M.window_of(player)
+	local def = name and windows[name]
+	local s = storage.fork_me_gui_open
+	local r = s and s[player.index]
+	if r then
+		s[player.index] = nil
+		local inv = r.inventory
+		if inv and inv.valid then
+			if def and frame then
+				if def.sync then def.sync(player, frame, inv) end
+				if def.close then def.close(player, frame, inv) end
+			end
+			if r.own then
+				for i = 1, #inv do M.give_back(player, inv[i]) end
+				inv.destroy()
+			elseif write_opened and player.connected and is_opened(player, inv) then
+				player.opened = nil
+			end
+		end
+	end
+	for _, root in pairs({ player.gui.relative, player.gui.screen }) do
+		local f = root.fork_me_window
+		if f and f.valid then f.destroy() end
+	end
+end
+
+function M.close_window(player) teardown(player, true) end
+
+--- A window: closes the player's ME window, builds frame, title bar and content frame. Returns the frame and the
+--- content flow. `tags` go onto the frame (fork_me_window = name is added). With `inventory` (a script inventory) the
+--- frame is anchored beside the game's window of it and the inventory becomes the player's opened GUI; `own`: it is the
+--- player's own (emptied and destroyed on close). Without, a screen frame is the opened GUI (R3).
+function M.open_window(player, name, caption, tags, inventory, own)
+	teardown(player, false)
 	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
-	local frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t }
+	local frame
+	if inventory then
+		--- the record first: the on_gui_closed of the window this one replaces names the old inventory
+		open_state()[player.index] = { inventory = inventory, own = own or nil, tick = game.tick }
+		frame = player.gui.relative.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t, anchor = ANCHOR }
+	else
+		frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t }
+	end
 	local bar = frame.add{ type = "flow", direction = "horizontal" }
-	bar.drag_target = frame
+	if not inventory then bar.drag_target = frame end
 	bar.style.horizontal_spacing = 8
 	bar.add{ type = "label", caption = caption, style = "frame_title", ignored_by_interaction = true }
 	local drag = bar.add{ type = "empty-widget", style = "draggable_space_header", ignored_by_interaction = true }
@@ -110,21 +210,49 @@ function M.open_window(player, name, caption, tags)
 	local inner = frame.add{ type = "frame", style = "inside_shallow_frame_with_padding", direction = "vertical" }
 	local content = inner.add{ type = "flow", name = "fork_me_content", direction = "vertical" }
 	content.style.vertical_spacing = 6
-	frame.auto_center = true
-	player.opened = frame
+	if inventory then
+		if not is_opened(player, inventory) then player.opened = inventory end
+	else
+		frame.auto_center = true
+		player.opened = frame
+	end
 	return frame, content
 end
 
---- the player's open ME window (or nil), and its name
-function M.window_of(player)
-	local frame = player.gui.screen.fork_me_window
-	if frame and frame.valid then return frame, frame.tags.fork_me_window end
-	return nil
-end
-
-function M.close_window(player)
-	local frame = player.gui.screen.fork_me_window
-	if frame and frame.valid then frame.destroy() end
+--- Where an item that may not be in a slot goes, never deleted: `to` a LuaPlayer (main inventory, else the ground at
+--- the player), a LuaInventory (else the ground at `entity`) or nil (the ground at `entity`). `count`: only that many
+--- of the stack (default all). The stack is empty or `count` smaller afterwards.
+function M.give_back(to, stack, entity, count)
+	if not (stack and stack.valid_for_read) then return end
+	count = math.min(count or stack.count, stack.count)
+	if count <= 0 then return end
+	if count < stack.count then                        -- a part: through a stack of its own
+		local tmp = game.create_inventory(1)
+		tmp[1].transfer_stack(stack, count)
+		M.give_back(to, tmp[1], entity)
+		tmp.destroy()
+		return
+	end
+	local surface, position
+	if to and to.valid and to.object_name == "LuaPlayer" then
+		local inv = to.get_main_inventory()
+		if inv then
+			local n = inv.insert(stack)
+			if n >= stack.count then stack.clear() return end
+			if n > 0 then stack.count = stack.count - n end
+		end
+		local c = to.character
+		if c and c.valid then surface, position = c.surface, c.position else surface, position = to.surface, to.position end
+	elseif to and to.valid and to.object_name == "LuaInventory" then
+		local n = to.insert(stack)
+		if n >= stack.count then stack.clear() return end
+		if n > 0 then stack.count = stack.count - n end
+	end
+	if not surface and entity and entity.valid then surface, position = entity.surface, entity.position end
+	if surface then
+		surface.spill_item_stack{ position = position, stack = stack, allow_belts = false }
+		stack.clear()
+	end
 end
 
 --- a label that wraps at `width` pixels
@@ -292,7 +420,8 @@ function M.open_entity(player, entity)
 	if not player.can_reach_entity(entity) then return true end
 	local frame, name = M.window_of(player)
 	if frame and frame.tags.unit == entity.unit_number and not frame.tags.via and windows[name] and open == windows[name].open then
-		player.opened = frame                         -- already open (the open key and on_gui_opened both fire)
+		local inv = M.inventory_of(player)            -- already open (the open key and on_gui_opened both fire)
+		if not inv then player.opened = frame elseif not is_opened(player, inv) then player.opened = inv end
 		return true
 	end
 	open(player, entity)
@@ -322,6 +451,25 @@ end
 
 --- on_gui_closed: our window was closed (E, Escape, another GUI opened)
 function M.on_closed(event)
+	if event.gui_type == defines.gui_type.script_inventory then
+		local player = game.get_player(event.player_index)
+		local s = storage.fork_me_gui_open
+		local r = player and s and s[player.index]
+		if not r then return false end
+		local inv, closed = r.inventory, event.inventory
+		if not (inv and inv.valid) then                   -- the block was removed: its inventory went with it
+			teardown(player, false)
+			return true
+		end
+		if not (closed and closed.valid and closed == inv) then return false end
+		--- the open key's own game action can close the window in the tick it was opened: keep it open then
+		if r.tick == game.tick then
+			player.opened = inv
+			return true
+		end
+		teardown(player, false)
+		return true
+	end
 	local el = event.element
 	if el and el.valid and el.name == "fork_me_window" then
 		--- the open key's own game action can close the window in the tick it was opened (an entity without a
@@ -343,11 +491,21 @@ function M.refresh_all()
 	local n = 0
 	for _, player in pairs(game.connected_players) do
 		local frame, name = M.window_of(player)
-		if frame and n < REFRESH_MAX then
+		local inv = M.inventory_of(player)
+		local s = storage.fork_me_gui_open
+		local stale = s and s[player.index] and not inv     -- (the block and its inventory were removed)
+		if (frame or inv or stale) and n < REFRESH_MAX then
 			n = n + 1
-			local def = windows[name]
-			if not def then
-				frame.destroy()
+			local def = frame and windows[name]
+			if not def or stale then
+				teardown(player, true)
+			elseif inv then
+				if not is_opened(player, inv) then
+					teardown(player, false)                    -- dying or another GUI closed it without an event
+				else
+					if def.sync then def.sync(player, frame, inv) end   -- (the backstop: a move inside the inventory)
+					if frame.valid and def.refresh and def.refresh(player, frame) == false then teardown(player, true) end
+				end
 			elseif player.opened ~= frame then
 				frame.destroy()                            -- dying or another GUI closed it without an event
 			else
@@ -362,7 +520,31 @@ end
 function M.refresh_one(player)
 	local frame, name = M.window_of(player)
 	local def = frame and windows[name]
-	if def and def.refresh and def.refresh(player, frame) == false and frame.valid then frame.destroy() end
+	if def and def.refresh and def.refresh(player, frame) == false and frame.valid then teardown(player, true) end
+end
+
+--- refresh every window that shows `inventory`
+function M.refresh_viewers(inventory)
+	for _, p in ipairs(M.viewers(inventory)) do M.refresh_one(p) end
+end
+
+--- on_player_main_inventory_changed, on_player_cursor_stack_changed: the player may have moved an item into or out of
+--- the inventory of the open window. The window's sync checks the slots; when it changed something every window on the
+--- same inventory is refreshed. A player without an ME window inventory costs one lookup.
+function M.on_inventory_changed(event)
+	local s = storage.fork_me_gui_open
+	local r = s and s[event.player_index]
+	if not (r and r.inventory and r.inventory.valid) then return end
+	local player = game.get_player(event.player_index)
+	local frame, name = M.window_of(player)
+	local def = frame and windows[name]
+	if not (def and def.sync) then return end
+	if def.sync(player, frame, r.inventory) then M.refresh_viewers(r.inventory) end
+end
+
+--- a player left the game (no on_gui_closed then): the window closes, an inventory of their own is emptied first
+function M.on_left(player)
+	if player and player.valid then teardown(player, false) end
 end
 
 --- The window's entity (by the unit number in its tags), nil when gone or out of reach. A window opened from a
@@ -383,7 +565,7 @@ end
 
 --- after a mod update every open ME window is closed (a window built by an older version may lack elements)
 function M.close_all()
-	for _, player in pairs(game.players) do M.close_window(player) end
+	for _, player in pairs(game.players) do teardown(player, true) end
 end
 
 return M
