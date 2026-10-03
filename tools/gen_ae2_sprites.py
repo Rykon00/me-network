@@ -3,7 +3,8 @@
 
 Sources:
   * GregTech 5 machine casings and screen overlays from a checkout of
-    GTNewHorizons/GT5-Unofficial (LGPL-3.0), tinted with the GT material color of the tier
+    GTNewHorizons/GT5-Unofficial (LGPL-3.0), tinted with the GT material color of the tier; for the upgrade
+    cards its circuit boards, circuits, an SMD chip and the signs of its machine GUI buttons (--cards)
   * existing icons of this mod (ME drive, storage housing; drawn for Gregtorio, where this network was made)
   * everything else (drive bays, cell LEDs, interface arrows) is drawn here with Pillow
   * the fluid variants (prototypes/fluids.lua) are derived from the item PNGs
@@ -19,7 +20,12 @@ Sources:
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
     python tools/gen_ae2_sprites.py --patterns    # only the blank and encoded pattern icons (issue #80)
     python tools/gen_ae2_sprites.py --unified     # only the ME Interface with its four pipe sides (me-network issue #3)
-    python tools/gen_ae2_sprites.py --cards       # only the upgrade cards and their technology (me-network issue #17)
+    python tools/gen_ae2_sprites.py --cards C:/00_Repositories/GT5-Unofficial   # only the upgrade cards (from GT
+                                                  # boards, chips and GUI signs), their technology and the ME Cell
+                                                  # Workbench (me-network issues #17 and #20)
+    python tools/gen_ae2_sprites.py --thumbnail   # only thumbnail.png, from the drive and terminal PNGs (issue #20)
+    python tools/gen_ae2_sprites.py --sheet docs/graphics-review/issue-20.png   # contact sheet of the issue #20
+                                                  # graphics next to origin/main (can follow any other switch)
 
 Output:
   graphics/entity/fork/ae2/*.png           entity sprites (32 px per tile, like Gregtorio Continued)
@@ -711,96 +717,332 @@ def patterns():
     return written
 
 
-# --- me-network issue #17: upgrade cards --------------------------------------------------
-# AE2's cards drawn with Pillow (placeholders): a dark circuit card with gold contacts on the left, a chip, and the
-# card's own accent colour and sign on the right. The basic card has a gold chip, the advanced one a blue one.
-CARD_BODY = (58, 62, 76)
-CARD_EDGE = (120, 126, 146)
-CONTACT = (225, 185, 70)
-CARDS = {
-    "me-basic-card": ((225, 185, 70), None),
-    "me-advanced-card": ((90, 170, 245), None),
-    "me-capacity-card": ((95, 205, 110), "plus"),
-    "me-overflow-destruction-card": ((235, 60, 50), "cross"),
-    "me-fuzzy-card": ((235, 150, 220), "wave"),
-    "me-inverter-card": ((245, 140, 40), "invert"),
-    "me-equal-distribution-card": ((130, 220, 230), "equal"),
+# --- me-network issues #17 and #20: upgrade cards, their technology, the ME Cell Workbench ----------------
+# Made from GT5-Unofficial textures, like the blocks (no textures of Applied Energistics 2, see README "License"). As
+# in AE2 every card is made from a basic or an advanced card and shows that card's body: a GT circuit board (the
+# coated basic board, gray, or the epoxy board, blue; items/gt.metaitem.03/7 and 6) cut to a card with gold contacts
+# on the left. The two components carry a GT circuit in the middle (the basic and the good circuit); the cards made
+# from them carry a GT SMD chip next to the contacts and, on the right, the sign of a GT machine GUI button in a
+# colour of their own, so that they are told apart at 32 px:
+#   capacity              plus_large (green)        fuzzy                 analog: a wave, "about" (magenta)
+#   inverter              disable: a slashed ring   equal distribution    cyclic: round robin arrows (cyan)
+#                         (orange)
+# The Overflow Destruction Card is a warning: a yellow triangle with a black "!" (drawn) and black and yellow hazard
+# stripes along the card's bottom edge.
+CARD_OUTLINE = (30, 30, 38)
+CONTACT = (230, 190, 70)
+CONTACT_DARK = (150, 115, 35)
+HAZARD = (250, 205, 40)
+CARD_BOX = (1, 6, TILE - 2, 26)    # the card: 30 x 21 px
+CARD_CHIP = "items/gt.metaitem.03/75"   # SMD chip of the cards made from a component
+CARD_BASES = {                # base -> (GT board texture of the body, GT circuit of the component card, body colour)
+    "basic": ("items/gt.metaitem.03/7", "items/gt.metaitem.01/701", (200, 200, 205)),
+    "advanced": ("items/gt.metaitem.03/6", "items/gt.metaitem.01/702", (45, 85, 200)),
 }
+CARDS = {                     # name -> (base card, GT GUI texture of the sign, its colour)
+    "me-basic-card": ("basic", None, None),
+    "me-advanced-card": ("advanced", None, None),
+    "me-capacity-card": ("basic", "gui/overlay_button/plus_large", (70, 200, 90)),
+    "me-overflow-destruction-card": ("basic", "warning", HAZARD),
+    "me-fuzzy-card": ("advanced", "gui/overlay_button/analog", (235, 95, 215)),
+    "me-inverter-card": ("advanced", "gui/overlay_button/disable", (245, 120, 30)),
+    "me-equal-distribution-card": ("advanced", "gui/overlay_button/cyclic", (60, 225, 210)),
+}
+CARD_SIGN_MAX = 20            # px; larger GT signs (the 24 px ring of "disable") are scaled down to it
 
 
-def card_icon(accent, sign):
+def gt_texture(gt, rel):
+    """A GT5-Unofficial texture (assets/gregtech/textures/<rel>.png), its first frame."""
+    img = load(gt / "src/main/resources/assets/gregtech/textures" / (rel + ".png"))
+    return img.crop((0, 0, img.width, img.width))
+
+
+def opaque(img):
+    return img.crop(img.getchannel("A").getbbox())
+
+
+def card_board(gt, base):
+    """The card body: the GT board texture (its rim cut off) tiled over the card, gold contacts on the left."""
+    tex = gt_texture(gt, CARD_BASES[base][0]).crop((1, 1, GT_PX - 1, GT_PX - 1))
+    fill = Image.new("RGBA", (TILE, TILE))
+    for y in range(0, TILE, tex.height):
+        for x in range(0, TILE, tex.width):
+            fill.alpha_composite(tex, (x, y))
+    mask = Image.new("L", (TILE, TILE))
+    ImageDraw.Draw(mask).rounded_rectangle(CARD_BOX, radius=3, fill=255)
     img = Image.new("RGBA", (TILE, TILE))
+    img.paste(fill, (0, 0), mask)
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle((2, 7, TILE - 3, TILE - 8), radius=2, fill=CARD_BODY + (255,), outline=CARD_EDGE + (255,))
-    for y in range(10, TILE - 10, 3):                                   # the contacts
-        d.rectangle((3, y, 5, y + 1), fill=CONTACT + (255,))
-    d.rectangle((8, 11, 14, 20), fill=accent + (255,), outline=(30, 30, 36, 255))   # the chip
-    d.line((9, 13, 13, 13), fill=(30, 30, 36, 255))
-    d.line((9, 16, 13, 16), fill=(30, 30, 36, 255))
-    c = (255, 255, 255, 255)
-    if sign == "plus":
-        d.rectangle((21, 12, 23, 20), fill=accent + (255,))
-        d.rectangle((18, 15, 26, 17), fill=accent + (255,))
-    elif sign == "cross":
-        d.line((18, 12, 26, 20), fill=accent + (255,), width=3)
-        d.line((18, 20, 26, 12), fill=accent + (255,), width=3)
-    elif sign == "wave":
-        d.line([(17, 15), (19, 13), (21, 15), (23, 17), (25, 15), (27, 13)], fill=accent + (255,), width=2)
-        d.line([(17, 19), (19, 17), (21, 19), (23, 21), (25, 19), (27, 17)], fill=accent + (255,), width=2)
-    elif sign == "invert":
-        d.polygon([(17, 14), (22, 10), (22, 18)], fill=accent + (255,))      # two arrows against each other
-        d.polygon([(27, 18), (22, 14), (22, 22)], fill=c)
-    elif sign == "equal":
-        d.rectangle((18, 12, 26, 14), fill=accent + (255,))
-        d.rectangle((18, 18, 26, 20), fill=accent + (255,))
-    else:
-        d.line((17, 16, 27, 16), fill=accent + (255,))                    # a circuit trace
-        d.line((22, 11, 22, 21), fill=accent + (255,))
+    d.rounded_rectangle(CARD_BOX, radius=3, outline=CARD_OUTLINE + (255,))
+    for y in range(9, 24, 3):
+        d.rectangle((2, y, 4, y + 1), fill=CONTACT + (255,))
+        d.point((4, y + 1), fill=CONTACT_DARK + (255,))
     return img
 
 
-# The ME Cell Workbench (issue #17, part 3): a workbench top in the casing colours with a storage cell lying on it and
-# three card slots (one holding a card); a placeholder like the cards.
-BENCH_WOOD = (120, 86, 52)
-BENCH_DARK = (70, 50, 30)
+def card_sign(img, colour):
+    """A GT GUI sign in `colour`, its light and shade kept, with a 1 px dark outline (1 px larger on each side)."""
+    if max(img.size) > CARD_SIGN_MAX:
+        s = CARD_SIGN_MAX / max(img.size)
+        img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
+    w, h = img.size
+    mask = img.getchannel("A").point(lambda v: 255 if v > 100 else 0)
+    src, m = img.load(), mask.load()
+    lums = [sum(src[x, y][:3]) / 3 for y in range(h) for x in range(w) if m[x, y]]
+    lo, hi = min(lums), max(lums)
+    sign = Image.new("RGBA", (w, h))
+    px = sign.load()
+    for y in range(h):
+        for x in range(w):
+            if m[x, y]:
+                t = 1.0 if hi - lo < 40 else (sum(src[x, y][:3]) / 3 - lo) / (hi - lo)   # flat signs: one colour
+                t = 0.6 + 0.4 * t
+                px[x, y] = tuple(int(CARD_OUTLINE[i] + (colour[i] - CARD_OUTLINE[i]) * t) for i in range(3)) + (255,)
+    out = Image.new("RGBA", (w + 2, h + 2))
+    dark = Image.new("RGBA", (w, h), CARD_OUTLINE + (255,))
+    for dx in range(3):
+        for dy in range(3):
+            out.paste(dark, (dx, dy), mask)
+    out.alpha_composite(sign, (1, 1))
+    return out
+
+
+def warning_sign():
+    """21 x 19: a yellow triangle with a dark rim and a black "!"."""
+    img = Image.new("RGBA", (21, 19))
+    d = ImageDraw.Draw(img)
+    d.polygon([(10, 0), (20, 18), (0, 18)], fill=CARD_OUTLINE + (255,))
+    d.polygon([(10, 3), (18, 17), (2, 17)], fill=HAZARD + (255,))
+    d.rectangle((9, 7, 11, 12), fill=CARD_OUTLINE + (255,))
+    d.rectangle((9, 14, 11, 15), fill=CARD_OUTLINE + (255,))
+    return img
+
+
+def card_icon(gt, name):
+    base, sign, colour = CARDS[name]
+    img = card_board(gt, base)
+    mid = (CARD_BOX[1] + CARD_BOX[3] + 1) // 2
+    if sign is None:                                                         # a component: its GT circuit in the middle
+        circuit = opaque(gt_texture(gt, CARD_BASES[base][1]))
+        img.alpha_composite(circuit, (17 - circuit.width // 2, mid - circuit.height // 2))
+        return img
+    chip = opaque(gt_texture(gt, CARD_CHIP))
+    img.alpha_composite(chip, (6, mid - chip.height // 2))
+    if sign == "warning":
+        stripes = Image.new("RGBA", (TILE, TILE))
+        ds = ImageDraw.Draw(stripes)
+        ds.rounded_rectangle(CARD_BOX, radius=3, fill=HAZARD + (255,))
+        ds.rectangle((0, 0, TILE, CARD_BOX[3] - 5), fill=(0, 0, 0, 0))       # only the bottom edge
+        for x in range(-4, TILE, 4):
+            ds.polygon([(x, CARD_BOX[3]), (x + 2, CARD_BOX[3]), (x + 5, CARD_BOX[3] - 4), (x + 3, CARD_BOX[3] - 4)],
+                       fill=CARD_OUTLINE + (255,))
+        img.alpha_composite(stripes)
+        ImageDraw.Draw(img).rounded_rectangle(CARD_BOX, radius=3, outline=CARD_OUTLINE + (255,))
+        w = warning_sign()
+        img.alpha_composite(w, (TILE - 1 - w.width, 2))
+        return img
+    s = card_sign(opaque(gt_texture(gt, sign)), colour)
+    img.alpha_composite(s, (TILE - 1 - s.width, mid - s.height // 2))
+    return img
+
+
+def cards_tech(gt):
+    """256x256: three cards fanned out (Overflow Destruction behind, Fuzzy, Capacity in front)."""
+    img = Image.new("RGBA", (40, 40))
+    for i, name in enumerate(("me-overflow-destruction-card", "me-fuzzy-card", "me-capacity-card")):
+        img.alpha_composite(card_icon(gt, name), (i * 4, i * 5))
+    return upscale(img)
+
+
+# The ME Cell Workbench: a 1x1 block like the other ME blocks (the MV casing edge of the interface sprite, a dark top)
+# with a storage cell lying in a cradle on the left and four card slots on the right, two of them holding a card.
+# Its shadow is a separate PNG (draw_as_shadow): the block's outline moved down and to the right.
+WORKBENCH_SHADOW = (6, 4)          # pixels the shadow falls to the east and the south
 
 
 def workbench_sprite():
-    img = Image.new("RGBA", (TILE, TILE))
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
     d = ImageDraw.Draw(img)
-    d.rectangle((3, 22, 6, 30), fill=BENCH_DARK + (255,))                               # legs
-    d.rectangle((25, 22, 28, 30), fill=BENCH_DARK + (255,))
-    d.rectangle((1, 8, TILE - 2, 22), fill=BENCH_WOOD + (255,), outline=BENCH_DARK + (255,))   # the top
-    d.line((2, 12, TILE - 3, 12), fill=BENCH_DARK + (255,))
-    d.rectangle((4, 2, 13, 16), fill=HOUSING + (255,), outline=(60, 60, 68, 255))      # the cell
-    d.rectangle((6, 4, 11, 7), fill=FLUIX + (255,))
-    d.rectangle((6, 10, 11, 14), fill=(200, 200, 210, 255))
-    for i, x in enumerate((16, 21, 26)):                                                 # card slots
-        d.rectangle((x - 1, 14, x + 3, 19), fill=(40, 40, 48, 255), outline=(110, 110, 120, 255))
-        if i == 0:
-            d.rectangle((x, 15, x + 2, 18), fill=CARDS["me-capacity-card"][0] + (255,))
+    d.rectangle((3, 2, TILE - 4, 3), fill=FLUIX + (255,))                  # fluix rim at the top of the work surface
+    d.rectangle((5, 6, 14, 27), fill=(12, 12, 16, 255), outline=(60, 60, 72, 255))   # the cradle
+    d.rectangle((7, 8, 12, 25), fill=HOUSING + (255,), outline=(70, 70, 80, 255))    # the cell in it
+    d.rectangle((8, 10, 11, 17), fill=(30, 30, 36, 255))                   # its component window
+    d.rectangle((9, 12, 10, 15), fill=FLUIX_LIGHT + (255,))
+    d.rectangle((9, 21, 10, 22), fill=(95, 225, 120, 255))                  # its LED
+    slots = ((17, 7), (17, 17), (23, 7), (23, 17))
+    held = {0: "me-capacity-card", 3: "me-inverter-card"}
+    for i, (x, y) in enumerate(slots):
+        d.rectangle((x, y, x + 4, y + 7), fill=(12, 12, 16, 255), outline=(85, 85, 100, 255))
+        if i in held:
+            base, _, colour = CARDS[held[i]]
+            d.rectangle((x + 1, y + 1, x + 3, y + 6), fill=CARD_BASES[base][2] + (255,))
+            d.rectangle((x + 1, y + 3, x + 3, y + 5), fill=colour + (255,))
     return img
 
 
-def cards():
+def workbench_shadow():
+    dx, dy = WORKBENCH_SHADOW
+    img = Image.new("RGBA", (TILE + dx, TILE + dy))
+    ImageDraw.Draw(img).rectangle((dx, dy, TILE + dx - 1, TILE + dy - 1), fill=(0, 0, 0, 160))
+    return img
+
+
+def cards(gt):
     written = []
-    path = OUT_ENTITY / "me-cell-workbench.png"
-    workbench_sprite().save(path)
-    written.append(path)
-    path = OUT_ICON / "me-cell-workbench.png"
-    workbench_sprite().save(path)
-    written.append(path)
-    for name, (accent, sign) in CARDS.items():
-        path = OUT_ICON / f"{name}.png"
-        card_icon(accent, sign).save(path)
+
+    def save(img, path):
+        img.save(path)
         written.append(path)
-    tech = Image.new("RGBA", (TILE, TILE))
-    tech.alpha_composite(card_icon(*CARDS["me-capacity-card"]).crop((0, 0, TILE, TILE)), (0, -5))
-    tech.alpha_composite(card_icon(*CARDS["me-inverter-card"]), (0, 5))
-    path = OUT_TECH / "me-upgrade-cards.png"
-    upscale(tech).save(path)
-    written.append(path)
+
+    for name in CARDS:
+        save(card_icon(gt, name), OUT_ICON / f"{name}.png")
+    save(cards_tech(gt), OUT_TECH / "me-upgrade-cards.png")
+    bench = workbench_sprite()
+    save(bench, OUT_ENTITY / "me-cell-workbench.png")
+    save(workbench_shadow(), OUT_ENTITY / "me-cell-workbench-shadow.png")
+    save(bench, OUT_ICON / "me-cell-workbench.png")
     return written
+
+
+# --- me-network issue #20: the mod's thumbnail -------------------------------------------------------
+# 144x144 from the mod's own sprites at twice their size: an ME Drive with lit cells and an ME Terminal side by side,
+# joined by ME cable underneath, on a dark background with a fluix glow.
+THUMB = 144
+
+
+def lit_drive():
+    """The drive sprite with a cell in every bay, lit as the runtime draws it (scripts/fork-me-network.lua: LED_*)."""
+    img = load(OUT_ENTITY / "me-drive.png")
+    d = ImageDraw.Draw(img)
+    colours = [(77, 217, 102)] * 10
+    colours[3], colours[8] = (255, 153, 25), (77, 217, 102)
+    for slot in range(10):
+        x0, y0 = DRIVE_BAY_X[slot % 2], DRIVE_BAY_Y[slot // 2]
+        d.rectangle((x0 + 1, y0 + 1, x0 + 8, y0 + 2), fill=colours[slot] + (255,))
+    return img
+
+
+def thumbnail():
+    img = Image.new("RGBA", (THUMB, THUMB), (18, 16, 26, 255))
+    glow = Image.new("RGBA", (THUMB, THUMB))
+    dg = ImageDraw.Draw(glow)
+    for r in range(70, 0, -2):                                              # soft fluix glow from the middle
+        a = int(90 * (1 - r / 70) ** 1.5)
+        dg.ellipse((THUMB // 2 - r, THUMB // 2 - 8 - r, THUMB // 2 + r, THUMB // 2 - 8 + r), fill=FLUIX + (a,))
+    img.alpha_composite(glow)
+    terminal = load(OUT_ENTITY / "me-terminal-off.png")
+    terminal.alpha_composite(load(OUT_ENTITY / "me-terminal-on.png"))
+    parts = ((lit_drive(), (8, 21)), (terminal, (72, 21)),
+             (cable_variation(1 | 2), (8, 85)), (cable_variation(1 | 8), (72, 85)))
+    shadow = Image.new("RGBA", (THUMB, THUMB))
+    for part, pos in parts[:2]:                                             # the blocks cast a shadow
+        ImageDraw.Draw(shadow).rectangle((pos[0] + 6, pos[1] + 6, pos[0] + 69, pos[1] + 69), fill=(0, 0, 0, 120))
+    img.alpha_composite(shadow)
+    for part, pos in parts[2:] + parts[:2]:                                 # cable first, the blocks on top
+        img.alpha_composite(up(part), pos)
+    return img.convert("RGB")
+
+
+# --- me-network issue #20: contact sheet -------------------------------------------------------------
+# One PNG of the issue #20 graphics for the pull request: the cards at 32 px in inventory slots (as the player sees
+# them) and enlarged, the placeholders of origin/main next to them, the technology icon, the workbench on the ground
+# with its shadow and the thumbnail.
+SHEET_BG, SHEET_PANEL, SHEET_TEXT, SHEET_DIM = (34, 34, 38), (52, 52, 58), (235, 235, 235), (150, 150, 160)
+SLOT_BG, SLOT_EDGE = (66, 64, 66), (40, 38, 40)
+GROUND = (88, 78, 52)
+
+
+def before(path, ref="origin/main"):
+    """The PNG at `ref` (None when it does not exist there)."""
+    import io
+    import subprocess
+    rel = path.relative_to(ROOT).as_posix()
+    r = subprocess.run(["git", "-C", str(ROOT), "show", f"{ref}:{rel}"], capture_output=True)
+    return Image.open(io.BytesIO(r.stdout)).convert("RGBA") if r.returncode == 0 else None
+
+
+def slot(img, size=40):
+    """An inventory slot (Factorio's slot is 40 px around a 32 px icon) holding `img`."""
+    s = Image.new("RGBA", (size, size), SLOT_EDGE + (255,))
+    ImageDraw.Draw(s).rectangle((1, 1, size - 2, size - 2), fill=SLOT_BG + (255,))
+    s.alpha_composite(img, ((size - img.width) // 2, (size - img.height) // 2))
+    return s
+
+
+def contact_sheet(out):
+    from PIL import ImageFont
+    font = ImageFont.load_default(size=14)
+    small = ImageFont.load_default(size=12)
+    W = 1180
+    img = Image.new("RGBA", (W, 1080), SHEET_BG + (255,))
+    d = ImageDraw.Draw(img)
+
+    def title(y, text):
+        d.text((16, y), text, font=font, fill=SHEET_TEXT)
+
+    d.text((16, 12), "me-network issue #20: graphics of the upgrade cards, the ME Cell Workbench and the thumbnail",
+           font=font, fill=SHEET_TEXT)
+    d.text((16, 32), "tools/gen_ae2_sprites.py --cards <GT5-Unofficial> --thumbnail (cards: GT boards, chips and GUI "
+           "signs; workbench and thumbnail: the mod's own GT-derived sprites; no AE2 textures)", font=small,
+           fill=SHEET_DIM)
+
+    # 1. the cards as the player sees them: a row of inventory slots at 1x and at 2x
+    names = list(CARDS)
+    title(60, "Upgrade cards in inventory slots, 32 px (1x) and 2x")
+    for i, name in enumerate(names):
+        img.alpha_composite(slot(load(OUT_ICON / f"{name}.png")), (16 + i * 42, 84))
+        img.alpha_composite(up(slot(load(OUT_ICON / f"{name}.png"))), (340 + i * 82, 84))
+    # 2. every card enlarged with its name, the placeholder of origin/main below it
+    title(180, "Each card at 4x (new) and the placeholder of origin/main at 2x")
+    for i, name in enumerate(names):
+        x = 16 + i * 164
+        d.rectangle((x, 204, x + 156, 420), fill=SHEET_PANEL)
+        img.alpha_composite(up(load(OUT_ICON / f"{name}.png"), 4), (x + 14, 210))
+        d.text((x + 6, 342), name.replace("me-", "").replace("-card", ""), font=small, fill=SHEET_TEXT)
+        old = before(OUT_ICON / f"{name}.png")
+        if old:
+            d.text((x + 6, 362), "before:", font=small, fill=SHEET_DIM)
+            img.alpha_composite(up(old, 2), (x + 70, 356))
+    # 3. technology icon, new and old
+    title(440, "Technology me-upgrade-cards (256 px), new and before")
+    d.rectangle((16, 464, 16 + 264, 464 + 264), fill=SHEET_PANEL)
+    img.alpha_composite(load(OUT_TECH / "me-upgrade-cards.png"), (20, 468))
+    old = before(OUT_TECH / "me-upgrade-cards.png")
+    if old:
+        d.rectangle((296, 464, 296 + 136, 464 + 136), fill=SHEET_PANEL)
+        img.alpha_composite(old.resize((128, 128), Image.LANCZOS), (300, 468))
+        d.text((300, 604), "before (at 128 px)", font=small, fill=SHEET_DIM)
+    # 4. the workbench: on the ground with its shadow at 1x and 4x, its icon in a slot, the old sprite
+    x0 = 460
+    d.text((x0, 440), "ME Cell Workbench: entity with shadow on the ground (4x, 1x), item icon, before", font=font,
+           fill=SHEET_TEXT)
+    ground = Image.new("RGBA", (200, 200), GROUND + (255,))
+    big = Image.new("RGBA", (TILE + WORKBENCH_SHADOW[0], TILE + WORKBENCH_SHADOW[1]))
+    big.alpha_composite(load(OUT_ENTITY / "me-cell-workbench-shadow.png"))
+    big.alpha_composite(load(OUT_ENTITY / "me-cell-workbench.png"))
+    ground.alpha_composite(up(big, 4), (16, 16))
+    img.alpha_composite(ground, (x0, 464))
+    small_ground = Image.new("RGBA", (64, 64), GROUND + (255,))
+    small_ground.alpha_composite(big, (14, 14))
+    img.alpha_composite(small_ground, (x0 + 216, 464))
+    img.alpha_composite(slot(load(OUT_ICON / "me-cell-workbench.png")), (x0 + 216, 540))
+    d.text((x0 + 216, 586), "icon", font=small, fill=SHEET_DIM)
+    old = before(OUT_ENTITY / "me-cell-workbench.png")
+    if old:
+        img.alpha_composite(up(old, 4), (x0 + 300, 464))
+        d.text((x0 + 300, 596), "before (4x)", font=small, fill=SHEET_DIM)
+    # 5. the thumbnail
+    title(750, "thumbnail.png (144 px) at 1x and 2x, and before")
+    thumb = load(ROOT / "thumbnail.png")
+    img.alpha_composite(thumb, (16, 774))
+    img.alpha_composite(up(thumb, 2) if thumb.width <= 144 else thumb, (176, 774))
+    old = before(ROOT / "thumbnail.png")
+    if old:
+        img.alpha_composite(old.resize((144, 144), Image.LANCZOS), (480, 774))
+        d.text((480, 922), "before", font=small, fill=SHEET_DIM)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out)
+    return [out]
 
 
 def main():
@@ -824,15 +1066,21 @@ def main():
                     help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
     ap.add_argument("--patterns", action="store_true",
                     help="only the blank and encoded pattern icons (issue #80, drawn with Pillow)")
-    ap.add_argument("--cards", action="store_true",
-                    help="only the upgrade card icons, their technology icon and the ME Cell Workbench (me-network issue #17, drawn with Pillow)")
+    ap.add_argument("--cards", type=Path, metavar="GT",
+                    help="only the upgrade card icons, their technology icon and the ME Cell Workbench with its shadow "
+                         "(me-network issues #17 and #20): the cards from the textures of the GT5-Unofficial checkout "
+                         "GT, the workbench from the interface PNG")
+    ap.add_argument("--thumbnail", action="store_true",
+                    help="only thumbnail.png, from the drive, terminal and cable PNGs (me-network issue #20)")
+    ap.add_argument("--sheet", type=Path, metavar="PNG",
+                    help="writes a contact sheet of the issue #20 graphics (new and origin/main) to PNG")
     ap.add_argument("--unified", action="store_true",
                     help="only the ME Interface with its pipe sides (me-network issue #3), from the R1 PNGs")
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
-            or a.patterns or a.unified or a.cards):
+            or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns, --unified or --cards is required")
+                 " --patterns, --unified, --cards, --thumbnail or --sheet is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -880,8 +1128,14 @@ def main():
         written = unified()
         print("ME unified interface sprites:", len(written))
     if a.gt or a.cards:
-        written = cards()
+        written = cards(a.gt or a.cards)
         print("ME card icons:", len(written))
+    if a.gt or a.thumbnail:
+        thumbnail().save(ROOT / "thumbnail.png")
+        print("thumbnail.png")
+    if a.sheet:
+        contact_sheet(a.sheet)
+        print("contact sheet:", a.sheet)
 
 
 if __name__ == "__main__":
