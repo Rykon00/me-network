@@ -3,7 +3,8 @@
 
 Sources:
   * GregTech 5 machine casings and screen overlays from a checkout of
-    GTNewHorizons/GT5-Unofficial (LGPL-3.0), tinted with the GT material color of the tier
+    GTNewHorizons/GT5-Unofficial (LGPL-3.0), tinted with the GT material color of the tier; for the upgrade
+    cards its circuit boards, circuits, an SMD chip and the signs of its machine GUI buttons (--cards)
   * existing icons of this mod (ME drive, storage housing; drawn for Gregtorio, where this network was made)
   * everything else (drive bays, cell LEDs, interface arrows) is drawn here with Pillow
   * the fluid variants (prototypes/fluids.lua) are derived from the item PNGs
@@ -19,8 +20,9 @@ Sources:
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
     python tools/gen_ae2_sprites.py --patterns    # only the blank and encoded pattern icons (issue #80)
     python tools/gen_ae2_sprites.py --unified     # only the ME Interface with its four pipe sides (me-network issue #3)
-    python tools/gen_ae2_sprites.py --cards       # only the upgrade cards, their technology and the ME Cell Workbench
-                                                  # (me-network issues #17 and #20)
+    python tools/gen_ae2_sprites.py --cards C:/00_Repositories/GT5-Unofficial   # only the upgrade cards (from GT
+                                                  # boards, chips and GUI signs), their technology and the ME Cell
+                                                  # Workbench (me-network issues #17 and #20)
     python tools/gen_ae2_sprites.py --thumbnail   # only thumbnail.png, from the drive and terminal PNGs (issue #20)
     python tools/gen_ae2_sprites.py --sheet docs/graphics-review/issue-20.png   # contact sheet of the issue #20
                                                   # graphics next to origin/main (can follow any other switch)
@@ -716,111 +718,139 @@ def patterns():
 
 
 # --- me-network issues #17 and #20: upgrade cards, their technology, the ME Cell Workbench ----------------
-# Drawn with Pillow (no textures of Applied Energistics 2, see README "License"). As in AE2 every card is made from a
-# basic or an advanced card and shows that card's body: steel gray (basic) or blue (advanced), gold contacts on the
-# left, a chip. The cards made from them carry a big round badge with a white sign on the right, each in a colour of
-# its own so that they are told apart at 32 px; the Overflow Destruction Card is a warning: a yellow triangle with a
-# black "!" and black and yellow hazard stripes along the card's bottom edge.
+# Made from GT5-Unofficial textures, like the blocks (no textures of Applied Energistics 2, see README "License"). As
+# in AE2 every card is made from a basic or an advanced card and shows that card's body: a GT circuit board (the
+# coated basic board, gray, or the epoxy board, blue; items/gt.metaitem.03/7 and 6) cut to a card with gold contacts
+# on the left. The two components carry a GT circuit in the middle (the basic and the good circuit); the cards made
+# from them carry a GT SMD chip next to the contacts and, on the right, the sign of a GT machine GUI button in a
+# colour of their own, so that they are told apart at 32 px:
+#   capacity              plus_large (green)        fuzzy                 analog: a wave, "about" (magenta)
+#   inverter              disable: a slashed ring   equal distribution    cyclic: round robin arrows (cyan)
+#                         (orange)
+# The Overflow Destruction Card is a warning: a yellow triangle with a black "!" (drawn) and black and yellow hazard
+# stripes along the card's bottom edge.
 CARD_OUTLINE = (30, 30, 38)
 CONTACT = (230, 190, 70)
 CONTACT_DARK = (150, 115, 35)
-CARD_BASES = {                # base -> (body, highlight, shade, die of its chip)
-    "basic": ((165, 168, 180), (210, 212, 222), (115, 118, 130), (230, 190, 70)),
-    "advanced": ((65, 105, 200), (120, 160, 240), (40, 65, 140), (110, 235, 245)),
-}
-WHITE = (255, 255, 255)
 HAZARD = (250, 205, 40)
-CARDS = {                     # name -> (base card, badge colour, sign)
+CARD_BOX = (1, 6, TILE - 2, 26)    # the card: 30 x 21 px
+CARD_CHIP = "items/gt.metaitem.03/75"   # SMD chip of the cards made from a component
+CARD_BASES = {                # base -> (GT board texture of the body, GT circuit of the component card, body colour)
+    "basic": ("items/gt.metaitem.03/7", "items/gt.metaitem.01/701", (200, 200, 205)),
+    "advanced": ("items/gt.metaitem.03/6", "items/gt.metaitem.01/702", (45, 85, 200)),
+}
+CARDS = {                     # name -> (base card, GT GUI texture of the sign, its colour)
     "me-basic-card": ("basic", None, None),
     "me-advanced-card": ("advanced", None, None),
-    "me-capacity-card": ("basic", (60, 185, 80), "plus"),
-    "me-overflow-destruction-card": ("basic", HAZARD, "warning"),
-    "me-fuzzy-card": ("advanced", (225, 80, 200), "waves"),
-    "me-inverter-card": ("advanced", (245, 135, 30), "not"),
-    "me-equal-distribution-card": ("advanced", (40, 200, 190), "bars"),
+    "me-capacity-card": ("basic", "gui/overlay_button/plus_large", (70, 200, 90)),
+    "me-overflow-destruction-card": ("basic", "warning", HAZARD),
+    "me-fuzzy-card": ("advanced", "gui/overlay_button/analog", (235, 95, 215)),
+    "me-inverter-card": ("advanced", "gui/overlay_button/disable", (245, 120, 30)),
+    "me-equal-distribution-card": ("advanced", "gui/overlay_button/cyclic", (60, 225, 210)),
 }
+CARD_SIGN_MAX = 20            # px; larger GT signs (the 24 px ring of "disable") are scaled down to it
 
 
-def card_body(base, chip_box):
-    """32x32: the card (30 x 21 px) with its contacts on the left and a chip at `chip_box`."""
-    body, light, shade, die = CARD_BASES[base]
+def gt_texture(gt, rel):
+    """A GT5-Unofficial texture (assets/gregtech/textures/<rel>.png), its first frame."""
+    img = load(gt / "src/main/resources/assets/gregtech/textures" / (rel + ".png"))
+    return img.crop((0, 0, img.width, img.width))
+
+
+def opaque(img):
+    return img.crop(img.getchannel("A").getbbox())
+
+
+def card_board(gt, base):
+    """The card body: the GT board texture (its rim cut off) tiled over the card, gold contacts on the left."""
+    tex = gt_texture(gt, CARD_BASES[base][0]).crop((1, 1, GT_PX - 1, GT_PX - 1))
+    fill = Image.new("RGBA", (TILE, TILE))
+    for y in range(0, TILE, tex.height):
+        for x in range(0, TILE, tex.width):
+            fill.alpha_composite(tex, (x, y))
+    mask = Image.new("L", (TILE, TILE))
+    ImageDraw.Draw(mask).rounded_rectangle(CARD_BOX, radius=3, fill=255)
     img = Image.new("RGBA", (TILE, TILE))
+    img.paste(fill, (0, 0), mask)
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle((1, 5, TILE - 2, 25), radius=3, fill=body + (255,), outline=CARD_OUTLINE + (255,))
-    d.line((4, 6, TILE - 5, 6), fill=light + (255,))                       # light top edge, shaded bottom edge
-    d.line((4, 24, TILE - 5, 24), fill=shade + (255,))
-    for y in range(9, 22, 3):                                                # the contacts
+    d.rounded_rectangle(CARD_BOX, radius=3, outline=CARD_OUTLINE + (255,))
+    for y in range(9, 24, 3):
         d.rectangle((2, y, 4, y + 1), fill=CONTACT + (255,))
         d.point((4, y + 1), fill=CONTACT_DARK + (255,))
-    x0, y0, x1, y1 = chip_box
-    for x in range(x0 + 1, x1, 2):                                           # chip legs
-        d.point((x, y0 - 1), fill=shade + (255,))
-        d.point((x, y1 + 1), fill=shade + (255,))
-    d.rectangle(chip_box, fill=(40, 40, 50, 255), outline=CARD_OUTLINE + (255,))
-    d.rectangle((x0 + 2, y0 + 2, x1 - 2, y1 - 2), fill=die + (255,))
-    return img, d
-
-
-def component_card(base):
-    """Basic and advanced card: a big chip in the middle, traces from the contacts to it."""
-    img, d = card_body(base, (13, 9, 23, 20))
-    _, light, shade, die = CARD_BASES[base]
-    for y in (11, 15, 18):
-        d.line((6, y, 11, y), fill=shade + (255,))
-    d.line((25, 12, 28, 12), fill=shade + (255,))
-    d.line((25, 17, 28, 17), fill=shade + (255,))
-    if base == "advanced":                                                   # the advanced chip has a bright core
-        d.rectangle((17, 13, 19, 16), fill=WHITE + (255,))
     return img
 
 
-def upgrade_card(base, colour, sign):
-    """A card made from the basic or advanced card: a narrow chip on the left, the badge with its sign on the right."""
-    img, d = card_body(base, (6, 10, 10, 20))
-    c = colour + (255,)
-    w = WHITE + (255,)
-    if sign == "warning":
-        stripe = Image.new("RGBA", (TILE, TILE))
-        ds = ImageDraw.Draw(stripe)
-        ds.rounded_rectangle((1, 5, TILE - 2, 25), radius=3, fill=HAZARD + (255,))   # hazard stripes on the bottom edge
-        ds.rectangle((0, 0, TILE, 21), fill=(0, 0, 0, 0))
-        for x in range(-4, TILE, 4):
-            ds.polygon([(x, 25), (x + 2, 25), (x + 5, 22), (x + 3, 22)], fill=CARD_OUTLINE + (255,))
-        img.alpha_composite(stripe)
-        d = ImageDraw.Draw(img)
-        d.rounded_rectangle((1, 5, TILE - 2, 25), radius=3, outline=CARD_OUTLINE + (255,))
-        d.polygon([(21, 2), (31, 21), (11, 21)], fill=CARD_OUTLINE + (255,))   # the triangle with a dark rim
-        d.polygon([(21, 5), (29, 20), (13, 20)], fill=c)
-        d.rectangle((20, 9, 22, 15), fill=CARD_OUTLINE + (255,))           # the "!"
-        d.rectangle((20, 17, 22, 18), fill=CARD_OUTLINE + (255,))
+def card_sign(img, colour):
+    """A GT GUI sign in `colour`, its light and shade kept, with a 1 px dark outline (1 px larger on each side)."""
+    if max(img.size) > CARD_SIGN_MAX:
+        s = CARD_SIGN_MAX / max(img.size)
+        img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
+    w, h = img.size
+    mask = img.getchannel("A").point(lambda v: 255 if v > 100 else 0)
+    src, m = img.load(), mask.load()
+    lums = [sum(src[x, y][:3]) / 3 for y in range(h) for x in range(w) if m[x, y]]
+    lo, hi = min(lums), max(lums)
+    sign = Image.new("RGBA", (w, h))
+    px = sign.load()
+    for y in range(h):
+        for x in range(w):
+            if m[x, y]:
+                t = 1.0 if hi - lo < 40 else (sum(src[x, y][:3]) / 3 - lo) / (hi - lo)   # flat signs: one colour
+                t = 0.6 + 0.4 * t
+                px[x, y] = tuple(int(CARD_OUTLINE[i] + (colour[i] - CARD_OUTLINE[i]) * t) for i in range(3)) + (255,)
+    out = Image.new("RGBA", (w + 2, h + 2))
+    dark = Image.new("RGBA", (w, h), CARD_OUTLINE + (255,))
+    for dx in range(3):
+        for dy in range(3):
+            out.paste(dark, (dx, dy), mask)
+    out.alpha_composite(sign, (1, 1))
+    return out
+
+
+def warning_sign():
+    """21 x 19: a yellow triangle with a dark rim and a black "!"."""
+    img = Image.new("RGBA", (21, 19))
+    d = ImageDraw.Draw(img)
+    d.polygon([(10, 0), (20, 18), (0, 18)], fill=CARD_OUTLINE + (255,))
+    d.polygon([(10, 3), (18, 17), (2, 17)], fill=HAZARD + (255,))
+    d.rectangle((9, 7, 11, 12), fill=CARD_OUTLINE + (255,))
+    d.rectangle((9, 14, 11, 15), fill=CARD_OUTLINE + (255,))
+    return img
+
+
+def card_icon(gt, name):
+    base, sign, colour = CARDS[name]
+    img = card_board(gt, base)
+    mid = (CARD_BOX[1] + CARD_BOX[3] + 1) // 2
+    if sign is None:                                                         # a component: its GT circuit in the middle
+        circuit = opaque(gt_texture(gt, CARD_BASES[base][1]))
+        img.alpha_composite(circuit, (17 - circuit.width // 2, mid - circuit.height // 2))
         return img
-    d.ellipse((12, 6, 30, 24), fill=CARD_OUTLINE + (255,))                  # the badge with a dark rim
-    d.ellipse((13, 7, 29, 23), fill=c)
-    if sign == "plus":
-        d.rectangle((20, 10, 22, 20), fill=w)
-        d.rectangle((16, 14, 26, 16), fill=w)
-    elif sign == "waves":                                                    # two tildes: "about the same"
-        for y in (12, 17):
-            d.line([(15, y + 1), (17, y - 1), (19, y - 1), (23, y + 1), (25, y + 1), (27, y - 1)], fill=w, width=2)
-    elif sign == "not":                                                      # a ring with a slash: the filter inverted
-        d.ellipse((15, 9, 27, 21), outline=w, width=2)
-        d.line((17, 19, 25, 11), fill=w, width=2)
-    elif sign == "bars":                                                     # three equal bars: an equal share each
-        for x in (16, 20, 24):
-            d.rectangle((x, 10, x + 2, 20), fill=w)
+    chip = opaque(gt_texture(gt, CARD_CHIP))
+    img.alpha_composite(chip, (6, mid - chip.height // 2))
+    if sign == "warning":
+        stripes = Image.new("RGBA", (TILE, TILE))
+        ds = ImageDraw.Draw(stripes)
+        ds.rounded_rectangle(CARD_BOX, radius=3, fill=HAZARD + (255,))
+        ds.rectangle((0, 0, TILE, CARD_BOX[3] - 5), fill=(0, 0, 0, 0))       # only the bottom edge
+        for x in range(-4, TILE, 4):
+            ds.polygon([(x, CARD_BOX[3]), (x + 2, CARD_BOX[3]), (x + 5, CARD_BOX[3] - 4), (x + 3, CARD_BOX[3] - 4)],
+                       fill=CARD_OUTLINE + (255,))
+        img.alpha_composite(stripes)
+        ImageDraw.Draw(img).rounded_rectangle(CARD_BOX, radius=3, outline=CARD_OUTLINE + (255,))
+        w = warning_sign()
+        img.alpha_composite(w, (TILE - 1 - w.width, 2))
+        return img
+    s = card_sign(opaque(gt_texture(gt, sign)), colour)
+    img.alpha_composite(s, (TILE - 1 - s.width, mid - s.height // 2))
     return img
 
 
-def card_icon(name):
-    base, colour, sign = CARDS[name]
-    return upgrade_card(base, colour, sign) if sign else component_card(base)
-
-
-def cards_tech():
+def cards_tech(gt):
     """256x256: three cards fanned out (Overflow Destruction behind, Fuzzy, Capacity in front)."""
     img = Image.new("RGBA", (40, 40))
     for i, name in enumerate(("me-overflow-destruction-card", "me-fuzzy-card", "me-capacity-card")):
-        img.alpha_composite(card_icon(name), (i * 4, i * 5))
+        img.alpha_composite(card_icon(gt, name), (i * 4, i * 5))
     return upscale(img)
 
 
@@ -840,12 +870,13 @@ def workbench_sprite():
     d.rectangle((9, 12, 10, 15), fill=FLUIX_LIGHT + (255,))
     d.rectangle((9, 21, 10, 22), fill=(95, 225, 120, 255))                  # its LED
     slots = ((17, 7), (17, 17), (23, 7), (23, 17))
-    held = {0: CARDS["me-capacity-card"][1], 3: CARDS["me-inverter-card"][1]}
+    held = {0: "me-capacity-card", 3: "me-inverter-card"}
     for i, (x, y) in enumerate(slots):
         d.rectangle((x, y, x + 4, y + 7), fill=(12, 12, 16, 255), outline=(85, 85, 100, 255))
         if i in held:
-            d.rectangle((x + 1, y + 1, x + 3, y + 6), fill=CARD_BASES["basic"][0] + (255,))
-            d.rectangle((x + 1, y + 3, x + 3, y + 5), fill=held[i] + (255,))
+            base, _, colour = CARDS[held[i]]
+            d.rectangle((x + 1, y + 1, x + 3, y + 6), fill=CARD_BASES[base][2] + (255,))
+            d.rectangle((x + 1, y + 3, x + 3, y + 5), fill=colour + (255,))
     return img
 
 
@@ -856,7 +887,7 @@ def workbench_shadow():
     return img
 
 
-def cards():
+def cards(gt):
     written = []
 
     def save(img, path):
@@ -864,8 +895,8 @@ def cards():
         written.append(path)
 
     for name in CARDS:
-        save(card_icon(name), OUT_ICON / f"{name}.png")
-    save(cards_tech(), OUT_TECH / "me-upgrade-cards.png")
+        save(card_icon(gt, name), OUT_ICON / f"{name}.png")
+    save(cards_tech(gt), OUT_TECH / "me-upgrade-cards.png")
     bench = workbench_sprite()
     save(bench, OUT_ENTITY / "me-cell-workbench.png")
     save(workbench_shadow(), OUT_ENTITY / "me-cell-workbench-shadow.png")
@@ -951,8 +982,9 @@ def contact_sheet(out):
 
     d.text((16, 12), "me-network issue #20: graphics of the upgrade cards, the ME Cell Workbench and the thumbnail",
            font=font, fill=SHEET_TEXT)
-    d.text((16, 32), "tools/gen_ae2_sprites.py --cards --thumbnail (drawn with Pillow and from the mod's own sprites; "
-           "no AE2 textures)", font=small, fill=SHEET_DIM)
+    d.text((16, 32), "tools/gen_ae2_sprites.py --cards <GT5-Unofficial> --thumbnail (cards: GT boards, chips and GUI "
+           "signs; workbench and thumbnail: the mod's own GT-derived sprites; no AE2 textures)", font=small,
+           fill=SHEET_DIM)
 
     # 1. the cards as the player sees them: a row of inventory slots at 1x and at 2x
     names = list(CARDS)
@@ -1034,9 +1066,10 @@ def main():
                     help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
     ap.add_argument("--patterns", action="store_true",
                     help="only the blank and encoded pattern icons (issue #80, drawn with Pillow)")
-    ap.add_argument("--cards", action="store_true",
+    ap.add_argument("--cards", type=Path, metavar="GT",
                     help="only the upgrade card icons, their technology icon and the ME Cell Workbench with its shadow "
-                         "(me-network issues #17 and #20, drawn with Pillow; the workbench from the interface PNG)")
+                         "(me-network issues #17 and #20): the cards from the textures of the GT5-Unofficial checkout "
+                         "GT, the workbench from the interface PNG")
     ap.add_argument("--thumbnail", action="store_true",
                     help="only thumbnail.png, from the drive, terminal and cable PNGs (me-network issue #20)")
     ap.add_argument("--sheet", type=Path, metavar="PNG",
@@ -1095,7 +1128,7 @@ def main():
         written = unified()
         print("ME unified interface sprites:", len(written))
     if a.gt or a.cards:
-        written = cards()
+        written = cards(a.gt or a.cards)
         print("ME card icons:", len(written))
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
