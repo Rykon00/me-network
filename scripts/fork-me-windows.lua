@@ -324,7 +324,11 @@ end)
 
 function M.workbench_data(entity) return bench.info(entity) end
 
+--- the workbench is no node of the ME graph: its window finds it through the workbench's own records
+G.entity_lookup(bench.by_unit)
+
 local function open_workbench(player, entity)
+	bench.info(entity)                                -- a workbench without a record yet gets one (the lookup needs it)
 	local _, content = G.open_window(player, "workbench", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-gui.workbench-help" }, WIDTH)
 	local row = G.row(content)

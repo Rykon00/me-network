@@ -25,12 +25,22 @@ local REFRESH_MAX = 30      -- open windows refreshed per step (one per player a
 
 --- The entity of an ME window by its unit number. game.get_entity_by_unit_number returns nil for most entity
 --- types (simple entities, lamps, containers, ...: every ME block), so the ME graph's node registry
---- (storage.fork_me_net.nodes) is asked first.
+--- (storage.fork_me_net.nodes) is asked first, then the lookups of the blocks that are no graph nodes (the ME Cell
+--- Workbench: entity_lookup). A block with a window that neither finds gets an empty window that the next refresh
+--- closes; the runtime test "ME partitions and windows" checks every block of its map.
+local lookups = {}          -- function(unit) -> entity or nil
+
+function M.entity_lookup(fn) lookups[#lookups + 1] = fn end
+
 function M.entity_by_unit(unit)
 	if not unit then return nil end
 	local s = storage.fork_me_net
 	local node = s and s.nodes and s.nodes[unit]
 	if node and node.entity and node.entity.valid then return node.entity end
+	for _, fn in ipairs(lookups) do
+		local found = fn(unit)
+		if found and found.valid then return found end
+	end
 	local e = game.get_entity_by_unit_number(unit)
 	if e and e.valid then return e end
 	return nil

@@ -2263,6 +2263,21 @@ function me_r3_test()
 		x = x + 4
 	end
 	for _, e in pairs({ d1, t, ctrl }) do expect(remote.call(GUI, "has_window", e), "no window for " .. e.name) end
+	--- Every block with a window is found again by the unit number its window keeps in its tags: a window whose
+	--- entity is not found stays empty and is closed by the next refresh (the ME Cell Workbench did, it is no node
+	--- of the ME graph). All blocks of the test map, so a new block is covered when a test places it.
+	local lost, seen = {}, 0
+	--- not these: the three interfaces that the cells test places without a build event on purpose
+	local unbuilt = { [(CX + 2.5) .. ":" .. (CY + 10.5)] = true, [(CX + 4.5) .. ":" .. (CY + 10.5)] = true,
+		[(CX + 6.5) .. ":" .. (CY + 10.5)] = true }
+	for _, e in pairs(s.find_entities_filtered{ force = "player" }) do
+		if e.unit_number and remote.call(GUI, "has_window", e) and not unbuilt[e.position.x .. ":" .. e.position.y] then
+			seen = seen + 1
+			if remote.call(TERM, "entity_by_unit", e.unit_number) ~= e then lost[e.name] = (lost[e.name] or 0) + 1 end
+		end
+	end
+	expect(seen > 20 and next(lost) == nil, "windows that cannot find their entity by unit number: " .. serpent.line(lost)
+		.. " (" .. seen .. " blocks with a window)")
 	local dd = remote.call(GUI, "drive_data", d1)
 	expect(dd and dd.priority == 7 and dd.online and dd.cells[1] and dd.cells[2].partition[1] == "copper-plate", "drive_data " .. serpent.line(dd))
 	local cd = remote.call(GUI, "cell_data", d1, 1)

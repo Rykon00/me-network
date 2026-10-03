@@ -321,5 +321,12 @@ remote.add_interface("gregtorio-me-workbench", {
 	sweep = function() M.sweep() end,
 })
 
+--- the workbench of a window by its unit number (it is no node of the ME graph, which the windows ask first)
+function M.by_unit(unit)
+	local s = storage.fork_me_workbench
+	local rec = s and s.recs[unit]
+	return rec and rec.entity and rec.entity.valid and rec.entity or nil
+end
+
 M.NAME = NAME
 return M
