@@ -253,7 +253,122 @@ return function(H)
 			.. "copy mode, inverter/fuzzy/equal/void cells in a drive, mined/destroyed/vanished")
 	end
 
-	function T.tick() workbench_test() end
-	function T.running(check) check(storage.wb17 and storage.wb17.done, "ME Cell Workbench") end
+	--- issue #28: the workbench's script inventory (slot 1 the cell, slots 2 to 5 its cards) changed the way a player
+	--- changes it; `back` stands for the player's inventory, `hands` for the place a cell is taken to
+	local function slots_test()
+		local st = storage.wb28
+		if (st and st.done) or game.tick < 100 then return end
+		st = { problems = {}, done = true }
+		storage.wb28 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local s = game.surfaces[1]
+		local w = s.create_entity{ name = "me-cell-workbench", position = { WX + 22.5, WY + 4.5 }, force = "player", raise_built = true }
+		local inv = w and remote.call(WB, "inventory", w)
+		if not inv then return me_report("WBSLOTS", "ME Cell Workbench slots", { "no workbench or no inventory" }) end
+		local back = game.create_inventory(20)
+		local hands = game.create_inventory(5)
+		local function sync(places) return remote.call(WB, "sync", w, back, places or {}) end
+		local function info() return remote.call(WB, "info", w) or {} end
+		local function tag_cards(stack)
+			local t = stack.valid_for_read and stack.is_item_with_tags and stack.tags.fork_me_cell
+			return t and t.cards or {}
+		end
+		local function cards_in(i)
+			local n = 0
+			for _, name in pairs(CARD) do n = n + i.get_item_count(name) end
+			return n
+		end
+		--- every card: items in the slots, back and hands, and the ones in the tags of the cells there
+		local function all_cards()
+			local n = cards_in(inv) + cards_in(back) + cards_in(hands)
+			for _, i in pairs({ inv, back, hands }) do
+				for k = 1, #i do if i[k].valid_for_read and i[k].is_item_with_tags then n = n + #tag_cards(i[k]) end end
+			end
+			return n
+		end
+		expect(#inv == 5 and inv.is_empty(), "a new workbench: " .. #inv .. " slots")
+		--- a cell with two cards in its tags arrives: the cards become the card slots' items, its tags lose them
+		inv[1].set_stack{ name = "me-1k-storage-cell", count = 1,
+			tags = { fork_me_cell = { items = {}, partition = { wood = true }, cards = { CARD.inverter, CARD.fuzzy } } } }
+		local total = all_cards()
+		expect(sync() == true, "the cell's arrival reports no change")
+		expect(#tag_cards(inv[1]) == 0 and cards_in(inv) == 2 and info().cell and #info().cell.cards == 2 and info().cell.inverted
+			and line(info().cell.partition) == line({ "wood" }), "arrived: tags " .. line(tag_cards(inv[1])) .. ", slots " .. cards_in(inv)
+			.. ", info " .. line(info().cell and info().cell.cards))
+		--- a third card is taken, a second inverter card and an iron plate go back
+		inv[4].set_stack{ name = CARD.void, count = 1 }
+		inv[5].set_stack{ name = CARD.inverter, count = 1 }
+		total = total + 2
+		sync()
+		inv[5].set_stack{ name = "iron-plate", count = 3 }
+		sync()
+		expect(cards_in(inv) == 3 and back.get_item_count(CARD.inverter) == 1 and back.get_item_count("iron-plate") == 3 and info().cell.void,
+			"cards: " .. cards_in(inv) .. " in the slots, inverter back " .. back.get_item_count(CARD.inverter))
+		--- the cell taken to the player's hands (the engine keeps its item_number): found, the cards go into its tags
+		hands[1].transfer_stack(inv[1])
+		sync({ hands })
+		expect(#tag_cards(hands[1]) == 3 and cards_in(inv) == 0 and info().cell == nil, "the cell left: tags " .. line(tag_cards(hands[1]))
+			.. ", slots " .. cards_in(inv))
+		expect(all_cards() == total, "cards after the cell left: " .. all_cards() .. "/" .. total)
+		--- a card without a cell goes back
+		inv[3].set_stack{ name = CARD.equal, count = 1 }
+		total = total + 1
+		sync()
+		expect(not inv[3].valid_for_read and back.get_item_count(CARD.equal) == 1, "a card without a cell stayed")
+		--- the cell put into a card slot: moved to slot 1, its cards back in the slots
+		inv[4].transfer_stack(hands[1])
+		sync()
+		expect(inv[1].valid_for_read and inv[1].name == "me-1k-storage-cell" and cards_in(inv) == 3 and #tag_cards(inv[1]) == 0,
+			"a cell in slot 4: slot 1 " .. line(inv[1].valid_for_read and inv[1].name) .. ", slots " .. cards_in(inv))
+		--- a cell that leaves to a place nobody looks at: its cards go back to the player as items (never two copies)
+		hands[2].transfer_stack(inv[1])
+		sync({})
+		expect(#tag_cards(hands[2]) == 0 and cards_in(inv) == 0 and all_cards() == total, "an unfound cell: tags "
+			.. line(tag_cards(hands[2])) .. ", slots " .. cards_in(inv) .. ", all " .. all_cards() .. "/" .. total)
+		--- a fluid cell takes 3 cards and no fuzzy card: the fuzzy card goes back, the card in slot 5 moves up
+		inv[1].set_stack{ name = "me-1k-fluid-storage-cell", count = 1 }
+		sync()
+		for slot, name in pairs({ [2] = CARD.inverter, [3] = CARD.fuzzy, [5] = CARD.void }) do
+			back.remove{ name = name, count = 1 }
+			inv[slot].set_stack{ name = name, count = 1 }
+		end
+		sync()
+		expect(not inv[5].valid_for_read and cards_in(inv) == 2 and info().cell and info().cell.slots == 3
+			and back.get_item_count(CARD.fuzzy) == 1 and #info().cell.cards == 2,
+			"a fluid cell with the item cell's cards: " .. line(info().cell and info().cell.cards) .. ", fuzzy back " .. back.get_item_count(CARD.fuzzy))
+		--- the old click takes the cell with its cards
+		local hand = game.create_inventory(1)
+		remote.call(WB, "cell_click", w, hand[1], back, false)
+		expect(hand[1].valid_for_read and #tag_cards(hand[1]) == 2 and cards_in(inv) == 0, "the click took the cell: tags "
+			.. line(tag_cards(hand[1])))
+		--- mined with a card no sync has seen yet: it goes into the cell's tags, the cell into the buffer
+		remote.call(WB, "cell_click", w, hand[1], back, false)
+		back.remove{ name = CARD.equal, count = 1 }
+		inv[4].set_stack{ name = CARD.equal, count = 1 }
+		local buffer = game.create_inventory(5)
+		remote.call(WB, "removed", w, buffer)
+		w.destroy()
+		local cell = buffer.find_item_stack("me-1k-fluid-storage-cell")
+		expect(cell and #tag_cards(cell) == 3 and cards_in(buffer) == 0, "mined: " .. line(cell and tag_cards(cell)))
+		local n = cards_in(back) + cards_in(hands) + (cell and #tag_cards(cell) or 0)
+		for k = 1, #hands do if hands[k].valid_for_read and hands[k].is_item_with_tags then n = n + #tag_cards(hands[k]) end end
+		expect(n == total, "cards after mining: " .. n .. "/" .. total)
+		hand.destroy()
+		buffer.destroy()
+		hands.destroy()
+		back.destroy()
+		me_report("WBSLOTS", "ME Cell Workbench slots", problems, "tag cards to the slots and back, limits, a wrong item, the cell "
+			.. "found in the hand, a card without a cell, a cell in a card slot, an unfound cell, a fluid cell, mined with an unseen card")
+	end
+
+	function T.tick()
+		workbench_test()
+		slots_test()
+	end
+	function T.running(check)
+		check(storage.wb17 and storage.wb17.done, "ME Cell Workbench")
+		check(storage.wb28 and storage.wb28.done, "ME Cell Workbench slots")
+	end
 	return T
 end
