@@ -175,7 +175,7 @@ click uses the tool and opens no window, as on a chest.
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents** |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, power |
 | ME Pattern Provider | 9 pattern slots (click with an encoded pattern in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
-| Crafting block (any block of a Crafting CPU) | see **Crafting CPUs** |
+| Crafting block (any block of a Crafting CPU) | the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
 | ME Crafting CPU (legacy, all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
@@ -564,7 +564,15 @@ group).
   co-processors is 1 + n times as fast (at most 16 count). It matters when a job has many machines for the same
   pattern; the machines still craft at their own speed. Three co-processors make a CPU as fast as the old Quantum CPU.
 * **Not a CPU:** a group with a gap or a corner missing, or one without crafting storage, is no CPU: its blocks stay
-  dark (the blocks of a CPU are lit).
+  dark (the blocks of a CPU are lit) and its window says why ("its 7 blocks do not fill their 3 x 3 area", "it has
+  no crafting storage").
+* **The plan preview** in the terminal's Crafting tab shows the bytes the job needs and the CPUs of the network: those
+  that can take it now, those big enough but busy, those too small (each with its number, size, bytes and
+  co-processors). The Craft button is off when no CPU can take it now.
+* **The CPU window** (click any block of the CPU): status, size, crafting storage used by its job and total,
+  co-processors and speed, monitors, and the job with its progress and **Cancel**.
+* **ME Crafting Monitor:** shows the item or fluid the CPU is crafting and the amount on its face (several monitors
+  all show it).
 * **Changing a running CPU:** remove a block and the job **pauses** with everything it holds (nothing is lost: its
   items and fluids are kept by the job, not by the blocks). It goes on as soon as a free CPU of the network is big
   enough, which may be what is left of its own CPU; until then it shows "Paused: waiting for a free CPU with at least

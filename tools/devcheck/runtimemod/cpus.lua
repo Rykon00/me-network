@@ -8,6 +8,7 @@
 --- returns { setup, tick, running } like cards.lua.
 
 local NET, AC, C = "gregtorio-me-network", "gregtorio-me-autocraft", "gregtorio-me-circuit"
+local TERM, GUI = "gregtorio-me-terminal", "gregtorio-me-gui"
 local X, Y = 300, -300
 local GEAR, GEAR_RECIPE = "iron-gear-wheel", "iron-gear-crafting-table"
 local PLATES, STICKS = 2000, 4000
@@ -102,6 +103,17 @@ return function(H)
 			expect(n == 2 and free == 2 and powered == 2 and slots == 2, "CPUs of the network (only A and B): " .. n .. " " .. free .. " " .. powered .. " " .. slots)
 			local plan = remote.call(AC, "plan", t, GEAR, 150)
 			expect(plan and plan.ok and plan.bytes == 5 * 150 + 24, "the plan of 150 gears: " .. line(plan and plan.bytes))
+			--- part 2: the plan preview names the bytes and the CPUs (A and B fit 774 bytes, B alone 1524, none 5524)
+			local pv = remote.call(TERM, "craft_preview", t, GEAR, 150)
+			expect(pv.ok and pv.bytes == 774 and #pv.cpu_list == 2 and pv.cpu_list[1].fits and pv.cpu_list[1].free
+				and pv.cpu_list[1].bytes == 1024 and pv.cpu_list[2].bytes == 5120, "preview of 150 gears: " .. line(pv.cpu_list))
+			pv = remote.call(TERM, "craft_preview", t, GEAR, 300)
+			expect(pv.ok and not pv.cpu_list[1].fits and pv.cpu_list[2].fits, "preview of 300 gears: " .. line(pv.cpu_list))
+			pv = remote.call(TERM, "craft_preview", t, GEAR, BIG)
+			expect(not pv.ok and pv.reason == "cpu-too-small" and pv.biggest == 5120, "preview of a job too big: " .. line({ pv.reason, pv.biggest }))
+			expect(remote.call(GUI, "has_window", a), "a crafting block opens no window")
+			local wd = remote.call(GUI, "crafting_cpu_data", find("me-crafting-unit", 22, 1))
+			expect(wd and wd.status == "not-rectangle" and wd.width == 2 and wd.height == 2, "the window data of the L: " .. line(wd))
 			--- too big for every CPU: refused, nothing taken; a level maintainer waits
 			local id1, why, _, bytes, biggest = remote.call(AC, "start", t, GEAR, BIG)
 			expect(id1 == nil and why == "cpu-too-small" and bytes == 5 * BIG + 24 and biggest == 5120,
@@ -130,6 +142,10 @@ return function(H)
 			expect(xa.group == info(a).id and xa.ops == 6 and xa.bytes == 74, "job A: " .. line({ xa.group, xa.ops, xa.bytes }))
 			expect(xb.group == info(b1).id and xb.ops == 18, "job B on the co-processor CPU: " .. line({ xb.group, xb.ops }))
 			expect(info(b1).used == 124 and info(b1).job and info(b1).job.id == jb, "B's window data: " .. line(info(b1)))
+			local mon = remote.call(AC, "monitor", find("me-crafting-monitor", 18, 1))
+			expect(mon and mon.sprite == "item/" .. GEAR and mon.text == "20" and mon.job == jb, "the monitor: " .. line(mon))
+			local pv = remote.call(TERM, "craft_preview", t, GEAR, 5)
+			expect(not pv.ok and pv.reason == "no-free-cpu", "preview while both CPUs run: " .. line({ pv.reason }))
 			st.ja, st.jb, st.phase, st.tick = ja, jb, "two", game.tick
 			return
 		end
@@ -144,6 +160,7 @@ return function(H)
 			end
 			expect(xa.status == "done" and xb.status == "done", "the two jobs ended as " .. xa.status .. ", " .. xb.status)
 			expect(st.overlap, "the two jobs never had a machine crafting at the same time")
+			expect(remote.call(AC, "monitor", find("me-crafting-monitor", 18, 1)) == nil, "the monitor still shows the ended job")
 			expect(count(GEAR) == 30, "gears after the two jobs: " .. count(GEAR))
 			conserved("after the two jobs")
 			--- a job that only B can take (300 gears: 1524 bytes)

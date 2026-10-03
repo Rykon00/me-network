@@ -124,4 +124,6 @@ Destruction Cards destroyed on the map, per key. `gregtorio-me-workbench` is the
 Since 0.3.0 (issue #6): `gregtorio-me-autocraft` `plan` reports `bytes`; `start` returns `id, why, missing, bytes,
 biggest` with the new reasons `cpu-too-small` and `no-free-cpu` (a job needs a free CPU when it starts); `job` and
 `jobs` report `bytes` and `group`; `group_info(block)` is the multiblock CPU of a crafting block (`status`, `blocks`,
-`width`, `height`, `bytes`, `used`, `coprocessors`, `speed`, `monitors`, `job`).
+`width`, `height`, `bytes`, `used`, `coprocessors`, `speed`, `monitors`, `job`). `cpu_list(entity, bytes)` lists the CPUs of the network in the
+order a job takes them (`fits`, `free`); `monitor(block)` is what a crafting monitor shows. `gregtorio-me-terminal`
+`craft_preview` reports `bytes`, `biggest` and `cpu_list`; `gregtorio-me-gui` has `crafting_cpu_data(block)`.

@@ -110,8 +110,10 @@ function M.entries(net, filter, sort, kind)
 end
 
 --- The crafting tab's preview for `amount` of `key`: { ok, reason, runs, steps, reserve = { key -> n },
---- missing = { key -> n }, loops, cpus, free }. reason: "no-network", "bad-amount", "no-cpu", "missing",
---- "no-pattern" or nil when it can start.
+--- missing = { key -> n }, loops, cpus, free, bytes, cpu_list }. reason: "no-network", "bad-amount", "no-cpu",
+--- "missing", "no-pattern", "cpu-too-small" (no CPU is big enough), "no-free-cpu" (those that are, are busy) or nil
+--- when it can start. Issue #6: `bytes` is the crafting storage the job needs, `cpu_list` the CPUs of the network in
+--- the order a job takes them (autocraft.cpu_list: fits, free).
 function M.craft_preview(terminal, key, amount)
 	local net, why = network(terminal)
 	if not net then return { ok = false, reason = "no-network", why = why } end
@@ -122,9 +124,19 @@ function M.craft_preview(terminal, key, amount)
 	if not plan then out.reason = "bad-amount" return out end
 	out.reserve, out.missing, out.loops = plan.reserve or {}, plan.missing or {}, plan.loops or {}
 	out.runs, out.steps = plan.runs or 0, #(plan.steps or {})
+	out.bytes, out.cpu_list = plan.bytes, plan.bytes and autocraft.cpu_list(net, plan.bytes) or {}
+	local fits, free, biggest = false, false, 0
+	for _, c in ipairs(out.cpu_list) do
+		if c.fits then fits = true end
+		if c.fits and c.free then free = true end
+		if c.bytes and c.bytes > biggest then biggest = c.bytes end
+	end
+	out.biggest = biggest
 	if plan.no_pattern then out.reason = "no-pattern"
 	elseif not plan.ok then out.reason = "missing"
 	elseif total == 0 then out.reason = "no-cpu"
+	elseif not fits then out.reason = "cpu-too-small"
+	elseif not free then out.reason = "no-free-cpu"
 	else out.ok = true end
 	return out
 end
@@ -373,6 +385,7 @@ local function build_crafting(tab)
 	pick.add{ type = "button", name = "fork_me_craft", caption = { "fork-me-craft.craft" }, style = "confirm_button",
 		tags = G.act("term_craft") }
 	G.label(tab, "", WIDTH, nil, "fork_me_plan")
+	G.label(tab, "", WIDTH, nil, "fork_me_plan_cpus").visible = false
 	local plan = tab.add{ type = "table", name = "fork_me_plan_grid", column_count = COLUMNS, style = "filter_slot_table" }
 	plan.visible = false
 end
@@ -515,6 +528,7 @@ local function refresh_crafting(st, frame, net)
 		name.caption = { "fork-me-gui.craft-pick" }
 		plan_label.caption = ""
 		plan_grid.visible = false
+		G.find(frame, "fork_me_plan_cpus").visible = false
 		button.enabled = false
 		return
 	end
@@ -522,7 +536,8 @@ local function refresh_crafting(st, frame, net)
 	name.caption = d.localised_name
 	local p = M.craft_preview(st.entity, st.pick, st.amount)
 	button.enabled = p.ok
-	local psig = { tostring(p.ok), tostring(p.reason), p.runs, p.steps }
+	local psig = { tostring(p.ok), tostring(p.reason), p.runs, p.steps, tostring(p.bytes) }
+	for _, c in ipairs(p.cpu_list or {}) do psig[#psig + 1] = c.kind .. c.id .. tostring(c.free) .. tostring(c.fits) .. (c.bytes or "") end
 	for k, n in pairs(p.reserve) do psig[#psig + 1] = "r" .. k .. "=" .. n end
 	for k, n in pairs(p.missing) do psig[#psig + 1] = "m" .. k .. "=" .. n end
 	psig = table.concat(psig, ",")
@@ -531,11 +546,14 @@ local function refresh_crafting(st, frame, net)
 	if p.reason == "bad-amount" then plan_label.caption = { "fork-me-craft.bad-amount" }
 	elseif p.reason == "no-cpu" then plan_label.caption = { "fork-me-craft.no-cpu" }
 	elseif p.reason == "no-pattern" then plan_label.caption = { "fork-me-craft.error-no-pattern" }
+	elseif p.reason == "cpu-too-small" or p.reason == "no-free-cpu" then
+		plan_label.caption = { "fork-me-craft.error-" .. p.reason, G.fmt(p.bytes), G.fmt(p.biggest or 0) }
 	elseif p.reason == "missing" then
 		local text = { "", { "fork-me-gui.plan-missing" } }
 		if next(p.loops) then text[#text + 1] = { "fork-me-craft.plan-loop", autocraft.item_list(p.loops, 4) } end
 		plan_label.caption = text
 	else plan_label.caption = { "fork-me-gui.plan-ok", p.runs, p.steps } end
+	M.plan_cpus(G.find(frame, "fork_me_plan_cpus"), p)
 	plan_grid.clear()
 	local function add(list, style, tip)
 		local keys = {}
@@ -550,6 +568,40 @@ local function refresh_crafting(st, frame, net)
 	add(p.missing, "red_slot_button", { "fork-me-gui.missing-tooltip" })
 	add(p.reserve, nil, { "fork-me-gui.uses-tooltip" })
 	plan_grid.visible = #plan_grid.children > 0
+end
+
+--- the name of a CPU of autocraft.cpu_list: "Crafting CPU 3 (2x3, 5k, 2 co-processors)" or the legacy entity's name
+function M.cpu_name(c)
+	if c.kind == "legacy" then return { "fork-me-craft.cpu-legacy", { "entity-name." .. c.name } } end
+	return { "fork-me-craft.cpu-name", c.id, c.width, c.height, G.fmt(c.bytes), c.coprocessors }
+end
+
+--- Issue #6: the line under the plan: the bytes the job needs and the CPUs of the network (free ones that fit, busy
+--- ones that fit, those that are too small)
+function M.plan_cpus(label, p)
+	if not (p.bytes and p.reason ~= "missing" and p.reason ~= "no-pattern" and p.reason ~= "bad-amount" and p.cpu_list and #p.cpu_list > 0) then
+		label.visible = false
+		return
+	end
+	local groups = { free = { "" }, busy = { "" }, small = { "" } }
+	local n = { free = 0, busy = 0, small = 0 }
+	for _, c in ipairs(p.cpu_list) do
+		local which = not c.fits and "small" or c.free and "free" or "busy"
+		n[which] = n[which] + 1
+		if n[which] <= 4 then
+			local list = groups[which]
+			if n[which] > 1 then list[#list + 1] = ", " end
+			list[#list + 1] = M.cpu_name(c)
+		elseif n[which] == 5 then
+			groups[which][#groups[which] + 1] = ", ..."
+		end
+	end
+	local text = { "", { "fork-me-craft.plan-bytes", G.fmt(p.bytes) } }
+	for _, which in ipairs({ "free", "busy", "small" }) do
+		if n[which] > 0 then text[#text + 1] = { "fork-me-craft.plan-cpus-" .. which, groups[which] } end
+	end
+	label.caption = text
+	label.visible = true
 end
 
 local function status_text(j)

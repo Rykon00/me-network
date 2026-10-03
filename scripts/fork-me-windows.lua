@@ -645,6 +645,64 @@ end
 G.window("cpu", { open = open_cpu, refresh = M.refresh_cpu, entities = { "cpu" } })
 
 --------------------------------------------------------------------------------
+--- a crafting block (issue #6): the window of its Crafting CPU (any block of it)
+--------------------------------------------------------------------------------
+
+function M.crafting_cpu_data(entity) return autocraft.group_info(entity) end
+
+local function open_crafting_cpu(player, entity)
+	local _, content = G.open_window(player, "crafting-cpu", caption_of(entity), { unit = entity.unit_number })
+	G.label(content, "", WIDTH, nil, "fork_me_ccpu_status")
+	G.label(content, "", WIDTH, nil, "fork_me_ccpu_info")
+	local bar = content.add{ type = "progressbar", name = "fork_me_ccpu_bar", value = 0 }
+	bar.style.horizontally_stretchable = true
+	G.heading(content, { "fork-me-gui.ccpu-job" })
+	content.add{ type = "table", name = "fork_me_ccpu_job", column_count = 5 }
+	G.label(content, { "fork-me-gui.ccpu-help" }, WIDTH)
+	M.refresh_crafting_cpu(player, G.window_of(player))
+end
+
+function M.refresh_crafting_cpu(player, frame)
+	local entity = G.entity_of(player, frame)
+	if not entity then return false end
+	local d = M.crafting_cpu_data(entity)
+	if not d then return false end
+	local status
+	if d.status == "not-rectangle" then
+		status = { "fork-me-gui.ccpu-not-rectangle", d.blocks, d.width, d.height }
+	elseif d.status == "no-storage" then
+		status = { "fork-me-gui.ccpu-no-storage" }
+	elseif not d.network then
+		status = { "fork-me-net.status-no-network" }
+	elseif not d.working then
+		status = { "fork-me-gui.ccpu-not-working" }
+	else
+		status = { "fork-me-gui.ccpu-ok", d.id }
+	end
+	G.find(frame, "fork_me_ccpu_status").caption = status
+	G.find(frame, "fork_me_ccpu_info").caption = { "fork-me-gui.ccpu-info", d.width, d.height, d.blocks, G.fmt(d.used),
+		G.fmt(d.bytes), d.coprocessors, d.speed, d.monitors }
+	G.find(frame, "fork_me_ccpu_bar").value = d.bytes > 0 and math.min(1, d.used / d.bytes) or 0
+	local jobs = {}
+	local j = d.job
+	if j then
+		jobs[1] = { id = j.id, item = j.item, amount = j.amount, status = j.closing and (j.closing == "done" and "delivering" or "cancelling") or j.status,
+			wait = j.wait, done = j.done, total = j.total, bytes = j.bytes,
+			active = not j.closing and (j.status == "queued" or j.status == "running") }
+	end
+	local t = G.find(frame, "fork_me_ccpu_job")
+	local sig = j and (j.id .. ":" .. tostring(jobs[1].status) .. ":" .. tostring(j.wait) .. ":" .. j.done) or "none"
+	if t.tags.sig ~= sig then
+		t.tags = { sig = sig }
+		terminal.job_rows(t, jobs)
+		if not j then t.add{ type = "label", caption = { "fork-me-gui.ccpu-idle" } } end
+	end
+	return true
+end
+
+G.window("crafting-cpu", { open = open_crafting_cpu, refresh = M.refresh_crafting_cpu, entities = { "crafting" } })
+
+--------------------------------------------------------------------------------
 --- ME Level Maintainer
 --------------------------------------------------------------------------------
 
@@ -1185,6 +1243,7 @@ remote.add_interface("gregtorio-me-gui", {
 	controller_data = function(entity) return M.controller_data(entity) end,
 	provider_data = function(entity) return M.provider_data(entity) end,
 	cpu_data = function(entity) return M.cpu_data(entity) end,
+	crafting_cpu_data = function(entity) return M.crafting_cpu_data(entity) end,
 	maintainer_data = function(entity) return M.maintainer_data(entity) end,
 	set_maintainer_target = function(entity, signal) return M.set_maintainer_target(entity, signal) end,
 	circuit_data = function(entity) return M.circuit_data(entity) end,

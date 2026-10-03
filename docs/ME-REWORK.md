@@ -1611,6 +1611,16 @@ CPUs have since issue #38 ("a job on a removed CPU pauses and goes on on the nex
 * **Two CPUs merged** by a block between them: the group keeps the job with the lower id if it fits; the other job
   pauses and takes another CPU.
 
+### Plan preview, CPU window, monitor (pull request 2)
+
+`M.cpu_list(net, bytes)` gives the CPUs in the order a job takes them, each with `fits` and `free`; the terminal's
+`craft_preview` adds `bytes`, `cpu_list` and the reasons `cpu-too-small` / `no-free-cpu` (the Craft button is off),
+and a line lists the CPUs that can take the job now, the busy ones that are big enough and the ones too small. The
+window of a crafting block (`crafting-cpu`, kind `crafting`) reads `M.group_info`. A monitor's two render objects
+(`storage.fork_ae2.monitors[unit]`) are made by a group hook when its CPU gets a job and destroyed when the job ends
+or the group changes; they show the ordered amount, which does not change while the job runs, so nothing is redrawn
+per tick.
+
 ### The old CPUs (migration)
 
 The three single-entity CPUs of Gregtorio issue #38 (`me-crafting-cpu`: 1 job; `me-co-processing-cpu`: 2 jobs, 2x;
