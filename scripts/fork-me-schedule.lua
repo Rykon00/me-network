@@ -1,38 +1,55 @@
 --------------------------------------------------------------------------------
---- ME NETWORK: THE SCHEDULER (issue #5; docs/PERFORMANCE.md, docs/ME-REWORK.md "Tick budget")
----   * Every periodic visit (interfaces and buses, storage buses, level maintainers, circuit interfaces, provider
----     rescans) is due at a tick: a queue keeps, per tick, the units due then (`q.due[tick] = { unit, ... }`) and the
----     record keeps its due tick (`rec.due`). One on_tick handler (control.lua) runs each queue with its budget of
----     visits per tick; units that do not fit move to the next tick, in order. So no step does all its work in one
----     tick, and an idle unit costs nothing until it is due.
----   * A unit is in a list once per scheduling; an entry whose record says another tick is stale and skipped (a wake
----     or a reschedule leaves the old entry behind instead of searching for it). Units that were due but did not fit
----     wait in the backlog, first in first out, before the units of the next ticks.
----   * Budgets are counts of visits (runtime mod settings, the same for every player), never measured time.
----   * Counters (issue #38, `M.snapshot`): per queue the visits, the units that came due, the backlog left at the end
----     of each tick, and the ticks between two visits of a unit by what the visit found (nothing to do, something,
----     all it was allowed to move). The record keeps its last visit tick (`rec.vis`); the counters live in this
----     module, never in storage: they describe this peer's run and decide nothing, the benchmark and the in-game
+--- ME NETWORK: THE SCHEDULER (issue #5, issue #38 levers 1 and 2; docs/PERFORMANCE.md, docs/ME-REWORK.md)
+---   * Every periodic visit (interfaces and buses, storage buses, level maintainers, circuit interfaces) is due at
+---     a tick: a queue keeps, per tick, the units due then (`l.due[tick] = { unit, ... }`) and the record keeps its
+---     due tick (`rec.due`). One on_tick handler (control.lua) runs each queue; units that do not fit into the
+---     tick's budget wait in the backlog, first in first out, before the units of later ticks.
+---   * When a unit is due is the module's decision (issue #38): a block with work is due when the buffer on its
+---     other side would run full or empty (the headroom rule of fork-me-io.lua), not after a fixed period; a block
+---     blocked on its target's side (source empty, target full, no target) is **probed** instead of visited (one
+---     cheap engine call at the idle limit, the probe list `q.sl`); a block blocked on the network's side (its key
+---     absent, the network full, no network, no power) is **parked**: in no list at all, woken by the network
+---     (N.wait_for, N.wait_below, N.wait_usable, the change hooks). A wake puts a unit at the front of the busy list
+---     (`q.front`), before the backlog, wherever it was; a unit whose other side ran out (`rec.starve`) goes to the
+---     front when it comes due, too.
+---   * The budget of a tick is what is due (the front, the backlog and the units due now), at least the floor and
+---     at most the ceiling (map settings "at least" / "at most"); the probes are not capped (they cost next to
+---     nothing) except where the probe is a full read (the storage buses: their ceiling). When the ceiling binds,
+---     the earliest due come first. Counts, never measured time.
+---   * A unit is in a list once per scheduling; an entry whose record says another tick or another list is stale
+---     and skipped (a wake or a reschedule leaves the old entry behind instead of searching for it). The record
+---     says where it is: `rec.due` (tick, BACKLOG, FRONT, nil while visited or parked), `rec.sq` (in the probe
+---     list), `rec.inq` (the tag of the queue it is counted in; nil while parked), `rec.park` (why it is parked).
+---   * Counters (`M.snapshot`): per list the visits, the units that came due, the backlog left at the end of each
+---     tick, and the ticks between two visits of a unit by what the visit found (nothing to do, something, all it
+---     was allowed to move). The record keeps its last visit tick (`rec.vis`); the counters live in this module,
+---     never in storage: they differ between the peers of a game and decide nothing, the benchmark and the in-game
 ---     diagnostic read them. Reset on load.
 --- State: the queues live in the modules' own storage tables; the settings are read once per load and on change.
 --------------------------------------------------------------------------------
 
 local M = {}
 
---- runtime-global settings (settings.lua): read once per load and when a player changes them
+--- runtime-global settings (settings.lua): read once per load and when a player changes them. The visits per tick
+--- of a kind of block have a floor (`io`, ...; what a tick visits at least while units wait) and a ceiling
+--- (`io_max`, ...; what it visits at most, whatever is due).
 local SETTINGS = {
 	io = "me-network-io-visits-per-tick",
+	io_max = "me-network-io-visits-per-tick-max",
 	storage_bus = "me-network-storage-bus-visits-per-tick",
+	storage_bus_max = "me-network-storage-bus-visits-per-tick-max",
 	maintainer = "me-network-maintainer-checks-per-tick",
+	maintainer_max = "me-network-maintainer-checks-per-tick-max",
 	circuit = "me-network-circuit-updates-per-second",
 	jobs = "me-network-crafting-jobs-per-tick",
+	jobs_max = "me-network-crafting-jobs-per-tick-max",
 	bus_items = "me-network-bus-items-per-second",
 	bus_fluid = "me-network-bus-fluid-per-second",
 	idle = "me-network-idle-limit",
 	storage_bus_idle = "me-network-storage-bus-idle-limit",
 }
-M.DEFAULTS = { io = 16, storage_bus = 8, maintainer = 4, circuit = 10, jobs = 1, bus_items = 256, bus_fluid = 4000,
-	idle = 300, storage_bus_idle = 120 }
+M.DEFAULTS = { io = 16, io_max = 48, storage_bus = 8, storage_bus_max = 24, maintainer = 4, maintainer_max = 12,
+	circuit = 10, jobs = 1, jobs_max = 4, bus_items = 256, bus_fluid = 4000, idle = 300, storage_bus_idle = 120 }
 local values
 
 function M.setting(key)
@@ -49,7 +66,7 @@ end
 function M.on_setting_changed() values = nil end
 
 --------------------------------------------------------------------------------
---- counters (issue #38): per queue name { visits, ticks, due, back_sum, back_max, hist = { [class + 1] = { [dt] = n } } }
+--- counters (issue #38): per list name { visits, ticks, due, back_sum, back_max, hist = { [class + 1] = { [dt] = n } } }
 --- with class 0: the visit found nothing to do, 1: it moved something, 2: it moved all it was allowed to
 --------------------------------------------------------------------------------
 
@@ -90,7 +107,7 @@ local function percentiles(h)
 	return { n = n, avg = sum / n, median = med, p99 = p99, max = keys[#keys], min = keys[1] }
 end
 
---- the counters as plain numbers: per queue name the visits, ticks run, units that came due, the average and the
+--- the counters as plain numbers: per list name the visits, ticks run, units that came due, the average and the
 --- longest backlog at the end of a tick, and the interval statistics (ticks) by class (idle, partial, full)
 function M.snapshot()
 	local out = {}
@@ -106,98 +123,228 @@ function M.reset_stats()
 	for name in pairs(stats) do stats[name] = nil end
 end
 
---- the units waiting in the backlog of `q` now
-function M.backlog(q)
-	return q.back and (#q.back - (q.head or 1) + 1) or 0
+--------------------------------------------------------------------------------
+--- the queue
+--------------------------------------------------------------------------------
+
+local BACKLOG, FRONT = -1, -2
+M.BACKLOG, M.FRONT = BACKLOG, FRONT
+
+local function new_list() return { due = {}, back = {}, head = 1, n = 0 } end
+
+--- a new queue; `tag`: its name in the records (unique per queue of the mod)
+function M.new(tag)
+	local q = new_list()
+	q.front, q.fhead, q.sl, q.tag = {}, 1, new_list(), tag
+	return q
 end
 
---- a queue: { due = { [tick] = { unit, ... } }, back = { unit, ... }, head }. `back` is the backlog: units that were
---- due and did not fit into their tick's budget, in order (rec.due = BACKLOG while they wait there); they come first.
-local BACKLOG = -1
-function M.new() return { due = {}, back = {}, head = 1 } end
+--- A queue of 0.3.0 (one list, no counts) gets its front and probe lists and its tag; `recs`: the records the
+--- module has scheduled in it (every one counts as busy until its next visit says otherwise)
+function M.upgrade(q, recs, tag)
+	if q.sl then return q end
+	q.front, q.fhead, q.sl, q.tag = q.front or {}, q.fhead or 1, new_list(), tag
+	q.n = 0
+	for _, rec in pairs(recs) do
+		if rec.due ~= nil then
+			rec.inq, rec.sq = tag, nil
+			q.n = q.n + 1
+		end
+	end
+	return q
+end
 
---- `unit` (record `rec`) is due at `tick` (at least the next tick)
-function M.at(q, rec, unit, tick)
+local function list_of(q, rec) return rec.sq and q.sl or q end
+
+--- the accounting when `rec` is scheduled in list `l` of `q`
+local function enter(q, rec, l)
+	if rec.inq == q.tag then
+		local old = list_of(q, rec)
+		if old == l then return end
+		old.n = old.n - 1
+	else
+		rec.inq = q.tag                               -- (a record counted in another queue was forgotten there)
+	end
+	l.n = l.n + 1
+	rec.sq = (l == q.sl) or nil
+	rec.park = nil
+end
+
+--- `unit` (record `rec`) is due at `tick` (at least the next tick): a visit, or a probe (`probe`)
+function M.at(q, rec, unit, tick, probe)
 	local now = game.tick
 	if tick <= now then tick = now + 1 end
+	local l = probe and q.sl or q
+	enter(q, rec, l)
 	rec.due = tick
-	local list = q.due[tick]
+	local list = l.due[tick]
 	if not list then
 		list = {}
-		q.due[tick] = list
+		l.due[tick] = list
 	end
 	list[#list + 1] = unit
 end
 
---- due at `tick` unless it is due earlier already (a wake); a unit in the backlog is due as soon as possible anyway
-function M.wake(q, rec, unit, tick)
-	tick = math.max(tick or 0, game.tick + 1)
-	if rec.due == BACKLOG then return end
-	if rec.due and rec.due <= tick and rec.due > game.tick then return end
-	M.at(q, rec, unit, tick)
+--- The tick for a unit that wants to come back in about `iv` ticks, anywhere from `early` ticks sooner to `late`
+--- ticks later: of four ticks in that window, picked by a hash of the unit number, the one with the fewest units
+--- already due (the lists of `q` are state, so every peer picks alike). Blocks of one interval then drift apart and
+--- the load per tick stays flat, also for the consecutive units of one blueprint. `probe`: the probe list.
+local EMPTY = {}
+function M.slot(q, probe, unit, now, iv, early, late)
+	if early + late <= 0 then return now + iv end
+	local due = (probe and q.sl or q).due
+	local lo, span = now + iv - early, early + late + 1
+	local h = (unit * 2654435761) % 4294967296
+	local best, load = lo, math.huge
+	for j = 0, 3 do
+		local t = lo + math.floor(((h + j * 1640531527) % 4294967296) / 4294967296 * span)
+		local n = #(due[t] or EMPTY)
+		if n < load then best, load = t, n end
+	end
+	return best
 end
 
---- Run the units due: first the backlog, then the units due at `tick`. `rec_of(unit)` gives the record (nil: gone),
---- `visit(rec, unit)` visits it (and schedules it again with M.at, or drops it) and returns what it found (the
---- class of the counters, nil: not counted). At most `budget` visits; the units due at `tick` that do not fit go to
---- the end of the backlog (each unit is moved once, whatever the backlog's length). `name` is the queue's name in
---- the counters. Returns the number of visits.
-function M.run(q, tick, budget, rec_of, visit, name)
-	local back = q.back
-	if not back then                                   -- a queue of an earlier version of this module
-		back = {}
-		q.back, q.head = back, 1
-	end
-	local st = stats[name or "?"] or stat(name or "?")
-	st.ticks = st.ticks + 1
-	local list = q.due[tick]
-	if list then
-		q.due[tick] = nil
-		st.due = st.due + #list
-		for i = 1, #list do
-			local unit = list[i]
-			local rec = rec_of(unit)
-			if rec and rec.due == tick then
+--- a wake: the unit goes to the front of the busy list (before the backlog), from wherever it was, parked or not;
+--- a unit that waits there already, or in the busy backlog, is as early as it can be. (`tick` is accepted for the
+--- callers of 0.3.0 and ignored: a wake is always the next tick.)
+function M.wake(q, rec, unit, tick)
+	if not rec.sq and rec.inq == q.tag and (rec.due == FRONT or rec.due == BACKLOG) then return end
+	enter(q, rec, q)
+	rec.due = FRONT
+	q.front[#q.front + 1] = unit
+end
+
+--- `rec` leaves the scheduler (its block is gone, or it moves to another queue)
+function M.forget(q, rec)
+	rec.park = nil
+	if rec.inq ~= q.tag then return end
+	local l = list_of(q, rec)
+	l.n = l.n - 1
+	rec.inq, rec.sq, rec.due = nil, nil, nil
+end
+
+--- `rec` is parked for `reason`: in no list, visited again only when something wakes it
+function M.park(q, rec, reason)
+	M.forget(q, rec)
+	rec.park = reason
+end
+
+--- the units of `l` due at `tick` join its backlog (a starved unit of the busy list joins the front)
+local function arrive(q, l, tick, rec_of, st)
+	local list = l.due[tick]
+	if not list then return end
+	l.due[tick] = nil
+	st.due = st.due + #list
+	local back, front = l.back, l.front
+	for i = 1, #list do
+		local unit = list[i]
+		local rec = rec_of(unit)
+		if rec and rec.due == tick and list_of(q, rec) == l then
+			if front and rec.starve then
+				rec.due = FRONT
+				front[#front + 1] = unit
+			else
 				rec.due = BACKLOG
 				back[#back + 1] = unit
 			end
 		end
 	end
-	local head, n = q.head, #back
-	if head > n then return 0 end
+end
+
+--- one visit (or probe) of `unit` with its counters
+local function visit_one(rec, unit, tick, visit, st)
+	rec.due = nil
+	local last = rec.vis
+	rec.vis = tick
+	local class = visit(rec, unit)
+	if class and last then
+		local h = st.hist[class + 1]
+		local dt = tick - last
+		h[dt] = (h[dt] or 0) + 1
+	end
+end
+
+--- the visited front of the list `back` with `head` is dropped now and then
+local function compact(l, field, headfield, head)
+	local back = l[field]
+	local n = #back
+	if head > n then
+		l[field], l[headfield] = {}, 1
+	elseif head > 1024 and head > n / 2 then
+		local rest = {}
+		for i = head, n do rest[#rest + 1] = back[i] end
+		l[field], l[headfield] = rest, 1
+	else
+		l[headfield] = head
+	end
+end
+
+--- up to `budget` visits from the list `field` of `l` (`state`: the record state its entries carry); returns them
+local function drain(q, l, field, headfield, state, tick, budget, rec_of, visit, st)
+	local back = l[field]
+	local head, n = l[headfield], #back
 	local done = 0
 	while head <= n and done < budget do
 		local unit = back[head]
 		back[head] = false
 		head = head + 1
 		local rec = rec_of(unit)
-		if rec and rec.due == BACKLOG then
+		if rec and rec.due == state and list_of(q, rec) == l then
 			done = done + 1
-			rec.due = nil
-			local last = rec.vis
-			rec.vis = tick
-			local class = visit(rec, unit)
-			if class and last then
-				local h = st.hist[class + 1]
-				local dt = tick - last
-				h[dt] = (h[dt] or 0) + 1
-			end
+			visit_one(rec, unit, tick, visit, st)
 		end
 	end
-	local left = n - head + 1
+	compact(l, field, headfield, head)
+	return done
+end
+
+local function waiting(l)
+	local n = #l.back - l.head + 1
+	if l.front then n = n + #l.front - l.fhead + 1 end
+	return n < 0 and 0 or n
+end
+
+--- Run the queue: the probes that are due (`probe(rec, unit)`: one cheap check; it wakes the unit or probes it again
+--- later, and returns the class of the counters), then the busy list: the woken and starved units first, then the
+--- backlog with the units due at `tick` appended, at most the budget: what is due, at least `floor`, at most
+--- `ceiling`. `rec_of(unit)` gives the record (nil: gone), `visit(rec, unit)` visits it (and schedules it again
+--- with M.at, probes, parks or forgets it) and returns what it found (the class of the counters, nil: not
+--- counted). `name` is the queue's name in the counters (the probe list is `name .. "_probe"`). `probe_cap`: the
+--- probes per tick at most (nil: all that are due; the storage buses, whose probe is a full read, pass their
+--- ceiling). Returns the visits.
+function M.run(q, tick, floor, ceiling, rec_of, visit, probe, name, probe_cap)
+	name = name or "?"
+	if not q.sl then                                   -- (a queue of an earlier version its module did not upgrade)
+		q.front, q.fhead, q.sl, q.n, q.tag = q.front or {}, q.fhead or 1, new_list(), q.n or 0, q.tag or name
+	end
+	local st = stats[name] or stat(name)
+	st.ticks = st.ticks + 1
+	--- the probes first: a probe that finds work wakes its unit into the front, visited in this very tick
+	local sl = q.sl
+	local ss = stats[name .. "_probe"] or stat(name .. "_probe")
+	ss.ticks = ss.ticks + 1
+	arrive(q, sl, tick, rec_of, ss)
+	local probed = drain(q, sl, "back", "head", BACKLOG, tick, probe_cap or math.huge, rec_of, probe or visit, ss)
+	ss.visits = ss.visits + probed
+	local pleft = waiting(sl)
+	ss.back_sum = ss.back_sum + pleft
+	if pleft > ss.back_max then ss.back_max = pleft end
+	--- the busy list: what is due this tick, between the floor and the ceiling
+	arrive(q, q, tick, rec_of, st)
+	local due = waiting(q)
+	local budget = math.max(floor or 0, math.min(math.max(ceiling or floor or 0, floor or 0), due))
+	local done = drain(q, q, "front", "fhead", FRONT, tick, budget, rec_of, visit, st)
+	done = done + drain(q, q, "back", "head", BACKLOG, tick, budget - done, rec_of, visit, st)
+	local left = waiting(q)
 	st.visits = st.visits + done
 	st.back_sum = st.back_sum + left
 	if left > st.back_max then st.back_max = left end
-	if head > n then
-		q.back, q.head = {}, 1
-	elseif head > 1024 and head > n / 2 then             -- drop the visited front now and then
-		local rest = {}
-		for i = head, n do rest[#rest + 1] = back[i] end
-		q.back, q.head = rest, 1
-	else
-		q.head = head
-	end
-	return done
+	return done + probed
+end
+
+--- the steps or visits of this tick for `n` units that each want one every `every` ticks, between the settings
+function M.load_budget(n, every, floor, ceiling)
+	return math.max(floor, math.min(math.max(ceiling or floor, floor), math.ceil(n / every)))
 end
 
 --- a budget given per second, as visits in this tick (spread evenly: the same ticks on every peer)
@@ -205,10 +352,23 @@ function M.per_second(rate, tick)
 	return math.floor(tick * rate / 60) - math.floor((tick - 1) * rate / 60)
 end
 
+--- the units waiting in the busy backlog of `q` now (the front is not a backlog: woken this tick, served next
+--- tick), and in its probe backlog
+function M.backlog(q)
+	local n = #q.back - q.head + 1
+	return n < 0 and 0 or n, q.sl and waiting(q.sl) or 0
+end
+
+--- the units scheduled in the busy and in the probe list of `q`
+function M.counts(q)
+	return q.n or 0, q.sl and q.sl.n or 0
+end
+
 --- the number of units in the queue's lists (stale entries included; tests)
 function M.size(q)
-	local n = #(q.back or {}) - (q.head or 1) + 1
+	local n = waiting(q) + (q.sl and waiting(q.sl) or 0)
 	for _, list in pairs(q.due) do n = n + #list end
+	if q.sl then for _, list in pairs(q.sl.due) do n = n + #list end end
 	return n
 end
 
@@ -227,6 +387,19 @@ function M.interval(iv, moved, full, min, active_max, idle)
 		return math.min(math.floor(iv * 1.5), math.max(active_max, min))
 	end
 	return math.min(iv * 2, idle)
+end
+
+--- The next visit from the headroom on the other side (issue #38): `time` is the ticks until the buffer there runs
+--- full or empty at the rate this visit saw (math.huge when nothing moves), `full` whether the block moved all its
+--- speed allowed (then the catch-up covers the wait and the headroom time itself is the interval, else about half
+--- of it, so the visit comes before the buffer runs out). Between `min` and `max` ticks.
+local HEADROOM_SHARE = 0.5
+function M.headroom(time, full, min, max)
+	if not time or time ~= time or time >= max then return max end
+	local t = full and time or time * HEADROOM_SHARE
+	if t > max then return max end
+	if t < min then return min end
+	return math.floor(t)
 end
 
 return M

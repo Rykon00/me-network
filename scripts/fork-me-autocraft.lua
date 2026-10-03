@@ -1918,7 +1918,8 @@ function M.on_tick(tick)
 		if #s.active > 0 then assign_cpus(s) end
 		prune_finished(s)
 	end
-	if #s.active > 0 then step_jobs(s, tick, Sched.setting("jobs")) end
+	--- issue #38: the steps per tick follow the running jobs (each stepped every STEP_TICKS), between the settings
+	if #s.active > 0 then step_jobs(s, tick, Sched.load_budget(#s.active, STEP_TICKS, Sched.setting("jobs"), Sched.setting("jobs_max"))) end
 	if tick % PROVIDER_SCAN_TICKS == 0 then maintenance(s, 1) end
 	for _, hook in pairs(M.step_hooks) do hook(s, tick) end
 end

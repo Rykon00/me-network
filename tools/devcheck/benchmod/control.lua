@@ -992,9 +992,9 @@ local function machine_report(b, p0, p1)
 end
 
 --- the service quality of the window: the scheduler's counters since the first probe, the backlogs sampled every
---- SAMPLE_TICKS, the machines, the mod's Lua heap
+--- SAMPLE_TICKS, the blocks' states now (busy, probing, parked and why: issue #38), the machines, the mod's Lua heap
 local function service_report(b, p0, p1)
-	return { sched = sched_stats(true), backlog_samples = b.samples or {}, machines = machine_report(b, p0, p1),
+	return { sched = sched_stats(true), backlog_samples = b.samples or {}, blocks = backlogs(), machines = machine_report(b, p0, p1),
 		memory_kb = mod_memory_kb(), own_memory_kb = collectgarbage("count") }
 end
 

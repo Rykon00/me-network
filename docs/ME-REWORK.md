@@ -1190,6 +1190,72 @@ tick. The rework follows the profile.
   The defaults come from the benchmark: 16 visits per tick already give every bus of the 5000 scene its full speed
   (the catch-up), more only shorten the reaction of busy blocks and cost more.
 
+### Levers 1 and 2 of issue #38: the headroom rule, probes and parked blocks
+
+Measured first (`docs/PERFORMANCE.md`, "Round two"): with one list per queue and a constant budget, the idle blocks
+spent the budget (a third of the visits at 5000 found nothing), every block waited its turn in one line (a busy bus
+was visited every 4.75 s at 5000, every 21 s at 20 000), and a wake did nothing for a block already waiting. A first
+rework (a sleep list and a budget of ceil(busy / 120) visits: "every busy block within 2 s") was measured and
+dropped: a uniform period for every busy block cost 70 % more script time at 5000 and moved nothing more, because
+most blocks are limited by their other side, not by their visits. The rework keeps the queues in `storage` and adds:
+
+* **The headroom rule.** When a block with work is due comes from the buffer on its other side, not from a period.
+  An export bus into a machine or chest keeps what the target held of each filtered item after the visit
+  (`rec.tgt`) and sees at the next visit what the target used since; an import bus what the source gathered since
+  it was emptied and how much room is left (`rec.left`; the slots times the stack size); the fluid sides the same
+  with the boxes' capacities (`rec.fleft`, `rec.fcap`); an interface per row (its amount and what was taken), for
+  its imports (the free slots) and per side (the side tank's volume). From rate and headroom the step knows when
+  the buffer would run empty or full, and the block comes back at about half of that time (`Sched.headroom`), the
+  whole time while it moved all its speed allowed (then the catch-up covers the wait), between MIN_INTERVAL (15
+  ticks) and MAX_CATCH_UP (600). A block whose other side had run out on arrival (a machine with an empty input or
+  a full output, a row that ran empty) is served sooner (half the interval) and before the backlog next time
+  (`rec.starve`, the front). A visit that cannot know the rate yet (the first fill of a row or a target, the first
+  fluid into a box, the first look at a source after a wake) comes back after MIN_INTERVAL to learn it, and a rest
+  that an import visit left in the source (it moved all its speed allowed) brings it back when the bus's speed
+  covers that rest. A block woken out of the probe list keeps the catch-up of a sleeper of 0.3.0 (the ticks since its
+  last visit, at most the idle limit); one woken out of a park, whose wait has no bound, starts with one minimum
+  visit's worth and the headroom rule takes over. Blocks that got the same interval from the same tick would come due
+  in lockstep for ever and the ceiling would serve them in bursts (at 5000 the backlog reached 481 and the 99th
+  percentile 5 ms): a block comes back at the least loaded of four ticks around its interval (`Sched.slot`: a hash of
+  its unit number picks the four, the load is the number of units already due there, so it is state and the same on
+  every peer), up to 20 % sooner, and up to 20 % later when its interval is half of the headroom time (never later for
+  a block that moved all its speed allowed, sits at the catch-up limit or is probed). Everything comes from what the
+  visit reads anyway; the one extra read is `get_item_count` per filter of an export bus into a chest (a machine had
+  it before).
+* **Probes.** A block blocked on its target's side (source empty, target full, no target, an interface with nothing
+  to do) is not visited but probed: one cheap engine call (`probe_work`: the item count of the source or interface,
+  `can_insert` or the input count of a full target, the search for a missing target) at an interval that doubles up
+  to the idle limit (the probe list `q.sl`); a change wakes the block into the front, visited in the same tick. The
+  probes are not capped, except for the storage buses, whose "probe" is the full read of an unchanged bus: those
+  share the storage bus ceiling.
+* **Parked blocks.** A block blocked on the network's side (its key absent, the network full, no network or
+  controller, no power, no filters) is parked: in no list at all, visited again only when the network wakes it:
+  `N.wait_for` (the key comes in, or some is taken), `N.wait_room` (a cell joins, a key type leaves),
+  `N.wait_usable` (the power is back: the controller of a network with such waiters is read once a second,
+  `slow_step`), the change hooks (the graph changed), its settings or a target built in front of it. The waits live
+  in the network tables; a network merged into another hands them over, a split or a rebuild fires them all once,
+  so no parked block loses its wake. A level maintainer that is stocked with a fixed target is parked the same way
+  (`N.wait_below`, its job's end, its settings), one without a key too.
+* **The front.** A wake puts the unit into the busy list's front list (`q.front`), visited before the backlog; a
+  unit that is already waiting there or in the busy backlog is as early as it can be.
+* **The budget is what is due.** Per tick a queue visits what is due (the front, the backlog, the units due now),
+  at least the floor and at most the ceiling (the settings "at least" and "at most"); when the ceiling binds, the
+  earliest due come first and the starved blocks before them. No time, no count of a kind: the ceiling bounds the
+  script time of a big base, the floor only matters while more is due than it says. The counts (`q.n`, `q.sl.n`)
+  are kept by the visits, wakes and removals themselves (`Sched.at`, `Sched.wake`, `Sched.park`, `Sched.forget`),
+  so every peer schedules alike; the module-local counters of the benchmark decide nothing. The crafting jobs' steps
+  per tick follow the running jobs (`Sched.load_budget`); the maintainers and both storage bus sides use the same
+  lists (a storage bus that did not change is read at its growing interval from the probe list).
+* **Saves.** New fields in the queues (`front`, `fhead`, `sl`, `n`, `tag`), the records (`sq`, `inq`, `vis`,
+  `park`, `block`, `seen`, `starve`, `tgt`, `left`, `fleft`, `fcap`) and the networks (`wait_use`, `wait_room`);
+  a queue of 0.3.0 gets them at its first use (`Sched.upgrade`: every scheduled record counts as busy until its
+  next visit), so a 0.3.0 save loaded without `on_configuration_changed` works on (tested by `migrate --from-ref
+  v0.3.0`). The schedule after a save and a load is the one of an unbroken run: `devcheck.py runtime` saves the test
+  map at tick 500 through a headless server and RCON, loads the save and compares a digest of every block's schedule
+  and the queues' counts at ticks 1000 and 1400 with the unbroken run; the scheduler test parks an export bus for
+  its key and for its power and checks both wakes.
+  and the queues' counts at ticks 1000 and 1400 with the unbroken run.
+
 ### The storage engine
 
 * **Lookups per network** (`lookups`, kept outside `storage`: a pure function of the network's state, built again

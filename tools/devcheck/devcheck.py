@@ -504,6 +504,105 @@ RUNTIME_TESTS = (
 )
 
 
+SAVELOAD_TICK = 500             # the runtime map is saved at this tick of a server run and loaded again (issue #38)
+RCON_PORT = 27815
+
+
+def rcon(sock, kind, body, req_id):
+    """one Source RCON request (kind 3: auth, 2: command) and its response body"""
+    import struct
+    data = body.encode("utf-8")
+    packet = struct.pack("<iii", 4 + 4 + len(data) + 2, req_id, kind) + data + b"\x00\x00"
+    sock.sendall(packet)
+    head = b""
+    while len(head) < 4:
+        chunk = sock.recv(4 - len(head))
+        if not chunk:
+            raise OSError("rcon: connection closed")
+        head += chunk
+    size = struct.unpack("<i", head)[0]
+    rest = b""
+    while len(rest) < size:
+        chunk = sock.recv(size - len(rest))
+        if not chunk:
+            raise OSError("rcon: connection closed")
+        rest += chunk
+    rid, rtype = struct.unpack("<ii", rest[:8])
+    if kind == 3 and rid == -1:
+        raise OSError("rcon: authentication refused")
+    return rest[8:-2].decode("utf-8", errors="replace")
+
+
+def saveload(mapfile, ticks, extra_args=()):
+    """The map runs as a headless server (real time, nobody connected) until SAVELOAD_TICK, saves through RCON
+    (`game.server_save`) and quits; the save is then run with `--benchmark` to `ticks`. Returns the benchmark log
+    of the loaded save, or None and a reason. (`--benchmark` cannot save: `game.auto_save` writes nothing there.)"""
+    import socket, time
+    binary = FACTORIO / ("bin/x64/factorio.exe" if os.name == "nt" else "bin/x64/factorio")
+    settings = WORK / "server-settings.json"
+    settings.write_text(json.dumps({"name": "devcheck", "description": "the save-and-load half of devcheck runtime",
+                                    "visibility": {"public": False, "lan": False}, "auto_pause": False,
+                                    "require_user_verification": False, "max_players": 1}), encoding="utf-8")
+    saves = FACTORIO / "saves"
+    saves.mkdir(exist_ok=True)
+    save = saves / "devcheck-mid.zip"
+    if save.exists():
+        save.unlink()
+    server_log = WORK / "saveload-server.log"
+    start = WORK / "saveload-start.zip"                 # (a copy: the server saves the map back when it quits)
+    shutil.copy2(mapfile, start)
+    with open(server_log, "w", encoding="utf-8") as out:
+        proc = subprocess.Popen([str(binary), "--mod-directory", str(MODS), "--start-server", str(start),
+                                 "--server-settings", str(settings), "--bind", "127.0.0.1",
+                                 "--rcon-bind", f"127.0.0.1:{RCON_PORT}", "--rcon-password", "devcheck", *extra_args],
+                                stdout=out, stderr=subprocess.STDOUT)
+        sock = None
+        deadline = time.time() + 120
+        try:
+            while time.time() < deadline and proc.poll() is None:
+                try:
+                    sock = socket.create_connection(("127.0.0.1", RCON_PORT), timeout=5)
+                    rcon(sock, 3, "devcheck", 1)
+                    break
+                except OSError:
+                    sock = None
+                    time.sleep(0.5)
+            if not sock:
+                return None, "the server did not start or answer RCON (" + str(server_log) + ")"
+            while time.time() < deadline:
+                t = rcon(sock, 2, "/silent-command rcon.print(game.tick)", 2).strip()
+                if t.isdigit() and int(t) >= SAVELOAD_TICK:
+                    break
+                time.sleep(0.2)
+            else:
+                return None, "the server never reached tick " + str(SAVELOAD_TICK)
+            saved_at = int(t)
+            rcon(sock, 2, '/silent-command game.server_save("devcheck-mid")', 3)
+            size = -1
+            while time.time() < deadline:
+                if save.exists() and save.stat().st_size == size and size > 0:
+                    break
+                size = save.stat().st_size if save.exists() else -1
+                time.sleep(0.5)
+            else:
+                return None, "the server did not write the save"
+            try:
+                rcon(sock, 2, "/quit", 4)
+            except OSError:
+                pass
+        finally:
+            if sock:
+                sock.close()
+            try:
+                proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    log = factorio("--benchmark", str(save), "--benchmark-ticks", str(ticks - saved_at))
+    if not re.search(r"Performed (\d+) updates", log):
+        return None, "the loaded save did not run: " + (load_errors(log) or "")
+    return log, saved_at
+
+
 def runtime(a):
     prepare_mods(gregtorio=a.with_gregtorio, with_runtime=True)
     print(f"mods: base, Space Age, quality{' + Gregtorio Continued' if a.with_gregtorio else ''}")
@@ -528,6 +627,31 @@ def runtime(a):
             fails.append(f"{label} did not run (needs --ticks >= 1500)")
         elif not m.group(1).startswith("ok"):
             fails.append(f"{label} failed")
+    # issue #38: the same map saved in the middle of its run and loaded again must schedule like the unbroken run
+    if not getattr(a, "no_saveload", False):
+        digests = dict(re.findall(r"DEVCHECK-RUNTIME-SCHEDULE (\d+) (.*)", log))
+        log_b, why = saveload(WORK / "runtime-map.zip", a.ticks)
+        if not log_b:
+            print(f"schedule after a save and load: {why}")
+            fails.append("save and load: " + str(why))
+        else:
+            digests_b = dict(re.findall(r"DEVCHECK-RUNTIME-SCHEDULE (\d+) (.*)", log_b))
+            fails_b = re.findall(r"DEVCHECK-RUNTIME-FAIL (.*)", log_b)
+            problems = [f"after the load: {f}" for f in fails_b]
+            if not digests or not digests_b:
+                problems.append("no schedule digest in the " + ("unbroken" if not digests else "loaded") + " run")
+            for tick, d in sorted(digests.items(), key=lambda kv: int(kv[0])):
+                other = digests_b.get(tick)
+                if other is None:
+                    problems.append(f"the loaded run has no schedule digest at tick {tick}")
+                elif other != d:
+                    a_parts, b_parts = d.split(" "), other.split(" ")
+                    diff = [x for x in a_parts if x not in b_parts][:3]
+                    problems.append(f"the schedule at tick {tick} differs after the load: {diff}")
+            n = len((next(iter(digests.values())) if digests else "").split(" "))
+            print(f"schedule after a save and load test: {'ok' if not problems else 'failed'} (saved at tick {why}, "
+                  f"digests at ticks {', '.join(sorted(digests, key=int))} with {n} entries{' equal' if not problems else ''})")
+            fails += problems
     report("runtime problems", fails)
     if err or not ran or fails:
         print(err.group(1) if err else "")
@@ -604,7 +728,8 @@ PROFILE_WRAP = {
                                     "M.active_of", "M.network_of", "M.usable", "M.count_key"],
     "scripts/fork-me-io.lua": ["M.interface_step", "M.bus_step", "M.fluid_bus_step", "import_items", "export_items",
                                "interface_sides", "tank_to_network", "export_side", "target_of", "ensure_tanks",
-                               "M.on_tick", "visit", "M.on_built", "M.on_removed", "config_of", "by_count"],
+                               "M.on_tick", "visit", "probe", "probe_work", "probe_mark", "stack_of", "spread",
+                               "M.on_built", "M.on_removed", "config_of", "by_count"],
     "scripts/fork-me-storagebus.lua": ["M.visit", "M.on_step", "M.on_tick", "resolve", "ITEM.room", "ITEM.insert",
                                        "ITEM.count", "ITEM.extract", "M.on_built", "M.on_removed", "inventory_of"],
     "scripts/fork-me-fluid-storagebus.lua": ["M.visit", "M.on_step", "M.on_tick", "claim", "contents_of", "M.handlers.room",
@@ -620,7 +745,7 @@ PROFILE_WRAP = {
                                       "M.on_built", "M.on_removed"],
     "scripts/fork-me-circuit.lua": ["on_step", "on_tick", "maintainer_step", "circuit_step", "network_signals",
                                     "signals_of", "visit_maintainer", "visit_circuit"],
-    "scripts/fork-me-schedule.lua": ["M.run", "M.at", "M.wake"],
+    "scripts/fork-me-schedule.lua": ["M.run", "M.at", "M.wake", "M.park", "M.headroom"],
     "scripts/fork-me-gui.lua": ["M.refresh_all"],
     "scripts/fork-me-terminal.lua": ["M.entries"],
 }
@@ -816,8 +941,12 @@ def stat(values):
 
 
 def median(values):
+    """the true median: the middle value, or the mean of the two middle values of an even number"""
     v = sorted(x for x in values if x is not None)
-    return v[len(v) // 2] if v else None
+    if not v:
+        return None
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
 
 
 def load_report(log, rows):
@@ -1119,9 +1248,10 @@ def print_service(s):
     print(f"  {scene_label(s)} {s['size']}: mod heap {fmt(sv.get('memory_kb'), 0)} kB")
     print(f"    {'queue':18} {'visits/tick':>11} {'due/tick':>9} {'backlog avg':>11} {'backlog max':>11} "
           f"{'busy interval s: median':>23} {'p99':>7} {'max':>7} {'n':>7} | {'idle interval s: median':>23} {'p99':>7} {'max':>7} {'n':>7}")
-    for q in ("io", "storage_bus", "fluid_storage_bus", "maintainer", "circuit", "jobs"):
+    for q in ("io", "io_probe", "storage_bus", "storage_bus_probe", "fluid_storage_bus", "fluid_storage_bus_probe",
+              "maintainer", "maintainer_probe", "circuit", "jobs"):
         st = sched.get(q)
-        if not st:
+        if not st or not (st.get("visits") or st.get("due")):
             continue
         ticks = st.get("ticks") or 0
         full, part, idle = st.get("full") or {}, st.get("partial") or {}, st.get("idle") or {}
@@ -1137,6 +1267,15 @@ def print_service(s):
             print(f"    {'  io, moved all it could':18} {'':>11} {'':>9} {'':>11} {'':>11} {ticks_s(full.get('median')):>23} "
                   f"{ticks_s(full.get('p99')):>7} {ticks_s(full.get('max')):>7} {fmt(full.get('n'), 0):>7} | "
                   f"{'(moved some)':>23} {ticks_s(part.get('median')):>7} {ticks_s(part.get('p99')):>7} {fmt(part.get('n'), 0):>7}")
+    blocks = sv.get("blocks") or {}
+    if blocks.get("io_units"):
+        kinds = blocks.get("io_kinds") or {}
+        why = ", ".join(f"{k.split(':', 1)[1]} {int(v)}" for k, v in sorted(kinds.items()))
+        print(f"    blocks at the window end: {int(blocks.get('io_units', 0))} interfaces and buses: busy {int(blocks.get('io_busy', 0))}, "
+              f"probing {int(blocks.get('io_probing', 0))}, parked {int(blocks.get('io_parked', 0))} ({why}); "
+              f"storage buses busy {int(blocks.get('storage_bus_busy', 0))}, probing {int(blocks.get('storage_bus_probing', 0))}; "
+              f"maintainers busy {int(blocks.get('maintainer_busy', 0))}, probing {int(blocks.get('maintainer_probing', 0))} "
+              f"of {int(blocks.get('maintainer_units', 0))}")
     samples = sv.get("backlog_samples") or []
     if samples:
         print("    backlog over the window (io / storage bus / fluid storage bus / maintainer / circuit), one sample per 5 s:")
@@ -1264,12 +1403,12 @@ CHECK_METRICS = [
 
 def bench_check(a):
     """`--check REF`: the maps of the reference and of the working copy are made once; then both are run in turns
-    (ref, wc, ref, wc, ...: `--runs` rounds). For every metric the medians are compared; a metric of the working copy
+    (ref, wc, ref, wc, ...: `--runs` rounds, at least three). For every metric the medians are compared; a metric of the working copy
     that is worse than the reference by more than the measured noise (the larger spread of the two versions' runs,
     at least the metric's floor share of the reference) fails the check. Throughput that differs at all is reported: the
     scheduling changed."""
     sizes = [int(x) for x in a.sizes.split(",") if x]
-    runs = max(2, a.runs)
+    runs = max(3, a.runs)
     ref_dir = old_tree(a.check)
     print(f"check: working copy against {a.check}, {runs} rounds in turns, sizes {sizes}")
     print((factorio("--version").splitlines() or ["?"])[0])
@@ -1346,6 +1485,7 @@ def main():
         if name in ("runtime", "all"):
             p.add_argument("--ticks", type=int, default=1500)
             p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
+            p.add_argument("--no-saveload", action="store_true", help="skip the save-and-load half (the server run)")
     p = sub.add_parser("migrate")
     p.add_argument("--from-ref", default="v0.1.0", help="the git tag or commit of the old version (default v0.1.0)")
     p.add_argument("--ticks", type=int, default=300)
@@ -1371,7 +1511,7 @@ def main():
     p.add_argument("--planner-targets", type=int, default=5, help="items the planner is timed on, the deepest first (default 5)")
     p.add_argument("--with-gregtorio", metavar="DIR", help="load this Gregtorio Continued checkout as well (the planner on its recipes)")
     p.add_argument("--check", metavar="REF", help="run the working copy and this git ref in turns and fail when a number is "
-                   "worse by more than the measured noise (--runs rounds, at least 2)")
+                   "worse by more than the measured noise (--runs rounds, at least 3)")
     a = ap.parse_args()
     if a.cmd == "bench":
         if a.ticks % BENCH_WARMUP:

@@ -43,7 +43,9 @@
   more (Gregtorio no longer has ME code), so the list is fixed.
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
-  notice, `all --with-gregtorio <Gregtorio checkout>`. Both must end with `RESULT: OK`; `check --base-only` checks
+  notice, `all --with-gregtorio <Gregtorio checkout>`. `runtime` also saves the test map at tick 500 through a headless
+  server (RCON on 127.0.0.1:27815) and checks that the schedule after the load is the unbroken run's: anything that
+  decides when a block is visited must live in `storage`. Both must end with `RESULT: OK`; `check --base-only` checks
   without Space Age; `migrate --from-ref v0.1.0` (the old fluid blocks) or `--from-ref v0.2.0` (every kind of
   unified block, loaded without `on_configuration_changed` while the version number is the same) loads a save of an
   older version with the working copy (for changes to saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
