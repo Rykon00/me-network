@@ -432,9 +432,21 @@ local function build_me()
 		if i <= LATENCY_RECIPES then lat_recipes[#lat_recipes + 1] = r else reg_recipes[#reg_recipes + 1] = r end
 	end
 	local jobs = math.max(1, math.floor(m.provider / 4))
-	local ncpu = math.ceil(jobs / 4) + 2
 	b.cpus = {}
-	for k = 0, ncpu - 1 do b.cpus[#b.cpus + 1] = member(place("me-quantum-crafting-cpu", X0 - 2, Y0 + 3 + 2 * k)) end
+	local ncpu
+	if prototypes.entity["me-256k-crafting-storage"] then
+		--- issue #6: one multiblock CPU per job (and two spare), each a row of four blocks left of the spine (a 256k
+		--- crafting storage and three co-processors: as fast as a quantum CPU), a free row between two CPUs
+		ncpu = jobs + 2
+		for k = 0, ncpu - 1 do
+			local y = Y0 + 3 + 2 * k
+			b.cpus[#b.cpus + 1] = member(place("me-256k-crafting-storage", p1(X0 - 2, y)))
+			for dx = 3, 5 do member(place("me-crafting-co-processing-unit", p1(X0 - dx, y))) end
+		end
+	else                                                     -- (bench --from-ref of a version before issue #6)
+		ncpu = math.ceil(jobs / 4) + 2
+		for k = 0, ncpu - 1 do b.cpus[#b.cpus + 1] = member(place("me-quantum-crafting-cpu", X0 - 2, Y0 + 3 + 2 * k)) end
+	end
 	if Y0 + 3 + 2 * ncpu > Y0 + (rows - 1) * PITCH then fail("too many CPUs for the spine") end
 	--- the slots
 	b.slots, b.drives, b.count = {}, {}, {}
