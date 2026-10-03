@@ -559,6 +559,13 @@ end
 
 --- on_gui_closed: our window was closed (E, Escape, another GUI opened)
 function M.on_closed(event)
+	if event.gui_type == defines.gui_type.script_inventory then
+		--- a save made with #30 (same version number, no close_all): its frame anchored to a script inventory goes
+		local player = game.get_player(event.player_index)
+		local old = player and player.gui.relative.fork_me_window
+		if old and old.valid then old.destroy() end
+		return false
+	end
 	local el = event.element
 	if el and el.valid and el.name == "fork_me_window" then
 		--- the open key's own game action can close the window in the tick it was opened (an entity without a
