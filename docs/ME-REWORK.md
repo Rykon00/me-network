@@ -1690,8 +1690,9 @@ script inventory are gone.
 
 * `G.open_window(player, name, caption, tags, pane)`: a frame `fork_me_window` in `player.gui.screen`, the player's
   `opened` GUI (E and Escape close it, as before #30), one title bar (caption, drag handle, close button), then a
-  horizontal flow `fork_me_body` with, when `pane` is set, the inventory pane and then the content frame
-  (`inside_shallow_frame_with_padding`). Without `pane` it is the window of R3 (the other windows until pull request B).
+  horizontal flow `fork_me_body` with the inventory pane and then the content frame (`inside_shallow_frame_with_padding`).
+  Every window has the pane (pull request B; `pane = false` would leave it out, no window does). `def.hint` is a line
+  under the pane's caption (the storing windows: "shift + click stores in the network").
 * The pane: a frame `inside_shallow_frame_with_padding` with the label "Character", a scroll pane (maximal height 600)
   and a table of 10 columns (`filter_slot_table`), one `slot_button` per slot of the main inventory, named `s<slot>`,
   with the item's sprite, count (`number`), quality (`quality`, the bottom left mark) and the game's item tooltip
@@ -1704,8 +1705,10 @@ script inventory are gone.
   the item stays in the cursor); with an empty cursor it takes the item into the cursor, with shift into the inventory.
 * The pane's clicks (`G.inventory_click`, the same for every window): left click picks the stack up (the slot gets the
   hand), or puts the cursor's stack down, merges it with the same item and quality or swaps it; right click takes half
-  the stack, or puts one item of the cursor's stack down; shift + click sends the stack to the block (`def.shift`). The
-  terminal (pull request B) stores it in the network; control + click there may store every stack of that item.
+  the stack, or puts one item of the cursor's stack down; shift + click sends the stack to the block (`def.shift`);
+  control + click calls `def.control` (every stack of that item; the windows without one treat it as shift + click).
+  A refusal's message comes from `def.message(reason)` (the network module's reasons: `G.net_message`, status-* or
+  error-* of [fork-me-net]) or `fork-me-gui.refused-<reason>`.
 * The block's slots are slot buttons too (`G.stack_button`, `G.render_slot`), with the action `block_slot`
   (`G.block_click` calls `def.click`).
 * Following the real inventory: `on_player_main_inventory_changed` and `on_player_cursor_stack_changed` call
@@ -1731,11 +1734,11 @@ script inventory are gone.
 |---|---|---|
 | ME Storage Bus (PR A) | the 5 card slots: the bus's inventory `rec.inv` (#30) | its cards into the empty card slots, one each, within the kind's limit |
 | ME Cell Workbench (PR A) | the cell slot and the card slots: the workbench's inventory (slot 1 the cell, 2 to 5 its cards, #30) | a cell into the empty cell slot; a card into a card slot the cell takes |
-| ME Drive (PR B) | the 10 cell slots: the drive's records (`N.drive_click`, unchanged: a cell becomes an item with its contents when it leaves) | a cell into the first free slot (`N.insert_cell`) |
-| Storage cell (PR B) | none (partition buttons) | as the drive it came from |
-| ME Pattern Provider (PR B) | the 9 pattern slots (`autocraft.provider_click`, unchanged) | an encoded pattern into the first free slot |
-| ME Terminal (PR B) | none: its own "Your inventory" grid and "store all of it" go away | the stack is stored in the network (control + click: every stack of that item) |
-| Interface, import and export bus, controller, level maintainer, circuit interface, crafting CPU and the legacy CPUs (PR B) | none | the stack is stored in the network, when the block has a working network; else refused |
+| ME Drive (PR B) | the 10 cell slots: the drive's records (`N.drive_click`, unchanged: a cell is refused unless it is one, and becomes an item with its contents when it leaves) | a cell into the first free slot (`N.insert_cell`; not a cell, or a full drive: refused) |
+| Storage cell (PR B) | none (partition buttons) | a cell into a free slot of the drive the window belongs to |
+| ME Pattern Provider (PR B) | the 9 pattern slots (`autocraft.provider_click`, unchanged) | an encoded pattern into the first free slot (`autocraft.insert_pattern`) |
+| ME Terminal (PR B) | none: its own "Your inventory" grid and its "store all of it" are gone, the storage grid is taller | the stack is stored in the network (`store_stack`); control + click: every stack of that item (`store_inventory_item`) |
+| Interface, import and export bus, controller, level maintainer, circuit interface, crafting block and the legacy CPUs (PR B) | none | the stack is stored in the block's network (`M.store_shift`: `N.insert_stack`, which needs a working network); control + click every stack of that item (`M.store_all`) |
 
 Since every move into and out of a block is a click the mod handles, nothing goes in that has to come back: the slot
 rules are checked before the move (`card_fits`, the cell rules), and the sync of #30 is only the backstop for the
@@ -1758,6 +1761,14 @@ Two players at one block see the same slots: the block's slots are refreshed aft
 window at the refresh (60 ticks); each player's pane is their own inventory.
 
 ### Tests
+
+Pull request B: the window test ("ME partitions and windows") checks that every registered window (remote `windows`) has
+the pane and a shift + click target, then clicks through `inventory_click`: the terminal stores a stack (shift), every
+stack of an item (control) and refuses a blueprint; an interface, import bus, export bus, level maintainer, circuit
+interface, legacy CPU and the controller store a stack (fresh blocks on the terminal's network), an interface without
+a working network refuses; control + click at an interface stores every stack; the drive takes a cell into a free slot,
+refuses iron plates and, full, refuses a cell; the cell window of that drive takes a cell; the provider takes an encoded
+pattern and refuses iron plates. The crafting CPU test stores a stack through a crafting block's window.
 
 The harness has no player, so every rule runs through the GUI module's functions (remote `inventory_click` and
 `block_click` of `gregtorio-me-gui`) with a script inventory standing in for the player's main inventory and a slot of

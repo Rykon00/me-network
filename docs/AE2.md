@@ -147,8 +147,10 @@ tabs:
   your hand; with something in hand, the click stores that instead. **Right click**: one item into your hand (one
   more of the same item). **Shift click**: a stack into your inventory. Items with tags (loaded cells) have a
   yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).
-  Below: **your inventory**: click an item there to store all of it, right click to store one stack. "Store item
-  in hand" stores the cursor. Amounts are shown as 999, 1.2k, 12k, 1.5M, 2.5G everywhere.
+  **Storing:** your inventory is on the left of the window (issue #28): **shift + click** a stack there to store it
+  in the network, **control + click** to store every stack of that item; what the network cannot take (a blueprint,
+  an item that spoils, a damaged one, no room) stays with a short message. What you take out appears there at once.
+  "Store item in hand" stores the cursor. Amounts are shown as 999, 1.2k, 12k, 1.5M, 2.5G everywhere.
 * **Crafting:** every item and fluid a pattern can make, in the same grid (the picked one in yellow). Pick one,
   enter the amount: the plan preview lists the crafts and steps, and as slot buttons what is **missing** (red) and
   what is taken from storage. **Craft** starts the job (see **Autocrafting** below).
@@ -161,12 +163,15 @@ tabs:
 ## The ME windows
 
 Every ME block has its own window in one style (title bar with close button, drag it by the title bar), opened by
-**clicking the block** (the normal open key). Issue #28: the windows of the **ME Storage Bus** and the **ME Cell
-Workbench** show **your inventory** on their left ("Character"), and the block's slots (cards, cell) in the window:
-click a stack in your inventory to pick it up, put it down, merge or swap it, right click for half a stack, **shift +
-click to put it into the block**; click a slot of the block with an item in hand to put it in (what does not belong
-there is refused with a message and stays in your hand), click it with an empty hand to take the item, shift + click
-to take it into your inventory (the other windows follow). Blocks that have a window of the game (terminal, crafting CPUs and
+**clicking the block** (the normal open key). Issue #28: **every ME window shows your inventory on its left**
+("Character"), the block's slots (cards, cell, cells of a drive, patterns) in the window: click a stack in your
+inventory to pick it up, put it down, merge or swap it, right click for half a stack, **shift + click to put it into
+the block** (a card into a card slot, a cell into the workbench or a free drive slot, a pattern into a free provider
+slot; in the terminal and every block without slots of its own (interface, import and export bus, controller, level
+maintainer, circuit interface, crafting CPUs) it is **stored in the network**, control + click stores every stack of
+that item). What the block cannot take stays where it is, with a short message. Click a slot of the block with an item
+in hand to put it in (what does not belong there is refused and stays in your hand), click it with an empty hand to
+take the item, shift + click to take it into your inventory. Blocks that have a window of the game (terminal, crafting CPUs and
 level maintainer: lamps; circuit interface: constant combinator; ME Interface: container) show the ME window
 instead; the others (drive, controller, buses, pattern provider) have no window of
 their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second. With a tool
@@ -175,11 +180,11 @@ click uses the tool and opens no window, as on a chest.
 
 | Block | Window |
 |---|---|
-| ME Terminal | the hub above |
-| ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window |
-| Storage cell | contents, fill, partition buttons, **Clear**, **From contents** |
+| ME Terminal | the hub above; shift + click in your inventory stores |
+| ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
+| Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, power |
-| ME Pattern Provider | 9 pattern slots (click with an encoded pattern in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
+| ME Pattern Provider | 9 pattern slots (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | Crafting block (any block of a Crafting CPU) | the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
 | ME Crafting CPU (legacy, all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |

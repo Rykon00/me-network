@@ -5,8 +5,10 @@
 ---   * Storage tab: sort (amount or name), kind (all, items, fluids), one grid with the items and then the
 ---     fluids. Left click on an item: a stack into the cursor (with something in the cursor: that is stored
 ---     instead); right click: one item into the cursor; shift click: a stack into the inventory. Fluids are
----     shown with their amounts; they cannot be taken by hand. Below: the player's inventory (click: store all
----     of that item, right click: one stack).
+---     shown with their amounts; they cannot be taken by hand. Issue #28: the window shows the player's inventory on
+---     its left (scripts/fork-me-gui.lua, the pane): shift + click there stores the stack in the network, control +
+---     click every stack of that item (store_stack, store_inventory_item); it replaces the terminal's own grid of
+---     the player's inventory.
 ---   * Crafting tab (scripts/fork-me-autocraft.lua): every item or fluid a pattern can make, in the storage
 ---     grid's style. A click picks it: amount field, the plan preview (what is taken from storage, what is
 ---     missing, as slot buttons) and the Craft button.
@@ -366,10 +368,7 @@ local function build_storage(tab)
 	row.add{ type = "button", caption = { "fork-me-terminal.store-hand" }, tags = G.act("term_store") }
 	G.label(tab, { "fork-me-net.terminal-help" }, WIDTH)
 	G.label(tab, "", WIDTH, nil, "fork_me_status").visible = false
-	scroll_table(tab, "fork_me_grid", COLUMNS, 6 * 40 + 8)
-	tab.add{ type = "line" }
-	G.heading(tab, { "fork-me-net.inventory" })
-	scroll_table(tab, "fork_me_inv_grid", COLUMNS, 3 * 40 + 8)
+	scroll_table(tab, "fork_me_grid", COLUMNS, 9 * 40 + 8)
 end
 
 local function build_crafting(tab)
@@ -455,23 +454,15 @@ end
 M.open = open
 
 local function refresh_storage(player, st, frame, net)
-	local status, grid, inv_grid = G.find(frame, "fork_me_status"), G.find(frame, "fork_me_grid"), G.find(frame, "fork_me_inv_grid")
+	local status, grid = G.find(frame, "fork_me_status"), G.find(frame, "fork_me_grid")
 	local items = M.entries(net, st.filter, st.sort, st.kind)
-	local main = player.get_main_inventory()
-	local own = main and main.get_contents() or {}
-	table.sort(own, function(a, b)
-		if a.name ~= b.name then return a.name < b.name end
-		return (a.quality or "normal") < (b.quality or "normal")
-	end)
 	--- unchanged since the last refresh: keep the buttons (and their open tooltips)
 	local sig = { st.sort or "count", st.kind or "all" }
 	for i = 1, math.min(#items, MAX_BUTTONS) do sig[#sig + 1] = items[i].key .. "=" .. items[i].count end
-	for _, c in ipairs(own) do sig[#sig + 1] = "inv/" .. c.name .. "/" .. (c.quality or "normal") .. "=" .. c.count end
 	sig = table.concat(sig, ",")
 	if st.shown == sig then return end
 	st.shown = sig
 	grid.clear()
-	inv_grid.clear()
 	status.visible = false
 	if #items == 0 then
 		status.caption = { "fork-me-terminal.empty" }
@@ -483,12 +474,6 @@ local function refresh_storage(player, st, frame, net)
 	for i = 1, math.min(#items, MAX_BUTTONS) do
 		local c = items[i]
 		G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil)
-	end
-	for _, c in ipairs(own) do
-		if prototypes.item[c.name] then
-			local q = c.quality or "normal"
-			G.slot(inv_grid, N.key_of(c.name, q), c.count, G.act("term_inv", { name = c.name, quality = q }))
-		end
 	end
 end
 
@@ -804,8 +789,22 @@ function M.refresh(player, frame)
 	return true
 end
 
+--- issue #28: shift + click in the inventory pane stores the stack, control + click every stack of that item
 G.window("terminal", { open = open, refresh = function(player, frame) return M.refresh(player, frame) end,
-	entities = { "me-terminal" } })
+	entities = { "me-terminal" }, hint = { "fork-me-gui.store-help" },
+	shift = function(entity, stack)
+		local n, why = M.store_stack(entity, stack)
+		if not n then return why end
+		if n == 0 then return "no-storage" end
+		return nil
+	end,
+	control = function(entity, stack, inv)
+		local n, why = M.store_inventory_item(inv, entity, stack.name, stack.quality.name, true)
+		if not n then return why end
+		if n == 0 then return "no-storage" end
+		return nil
+	end,
+	message = G.net_message })
 
 --------------------------------------------------------------------------------
 --- actions
@@ -855,15 +854,6 @@ G.on("term_take", function(event, player, el)
 	if not (st and event.name == defines.events.on_gui_click) then return end
 	local mode = event.shift and "inventory" or event.button == defines.mouse_button_type.right and "one" or "stack"
 	local _, why = M.take(player, st.entity, el.tags.key, mode)
-	report(player, why)
-	M.refresh(player)
-end)
-
-G.on("term_inv", function(event, player, el)
-	local st = st_of(player)
-	if not (st and event.name == defines.events.on_gui_click) then return end
-	local _, why = M.store_inventory_item(player.get_main_inventory(), st.entity, el.tags.name, el.tags.quality,
-		event.button ~= defines.mouse_button_type.right)
 	report(player, why)
 	M.refresh(player)
 end)

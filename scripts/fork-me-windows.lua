@@ -80,6 +80,45 @@ local function caption_of(entity)
 	return entity.localised_name
 end
 
+--- Issue #28, shift + click in the window of a block without slots of its own: the stack is stored in the block's
+--- network (as the terminal stores it; the block needs a working network). Returns the reason when nothing was stored.
+function M.store_shift(entity, stack)
+	local net = N.network_of(entity)
+	if not net then return "no-network" end
+	local n, why = N.insert_stack(net, stack)
+	if not n then return why end
+	return nil
+end
+
+--- control + click there: every stack of that item and quality in the inventory is stored
+function M.store_all(entity, stack, inv)
+	local net = N.network_of(entity)
+	if not net then return "no-network" end
+	local name, q = stack.name, stack.quality.name
+	local stored, why = 0, nil
+	for i = 1, #inv do
+		local s = inv[i]
+		if s.valid_for_read and s.name == name and s.quality.name == q then
+			local n, w = N.insert_stack(net, s)
+			if n then stored = stored + n else why = w break end
+		end
+	end
+	if stored == 0 then return why or "no-storage" end
+	return nil
+end
+
+--- the window definition's fields of a block whose shift + click stores into the network
+local function storing(def)
+	def.shift, def.control, def.message, def.hint = M.store_shift, M.store_all, G.net_message, { "fork-me-gui.store-help" }
+	return def
+end
+
+--- a cell shift-clicked into a drive (the drive window, and a cell window of that drive): into its first free slot
+local function cell_into_drive(drive, stack)
+	local _, why = N.insert_cell(drive, stack)
+	return why
+end
+
 local function flying(player, why)
 	if why then player.create_local_flying_text{ text = { "fork-me-net.error-" .. why }, create_at_cursor = true } end
 end
@@ -180,7 +219,8 @@ function M.refresh_drive(player, frame)
 	return true
 end
 
-G.window("drive", { open = open_drive, refresh = M.refresh_drive, entities = { "drive" } })
+G.window("drive", { open = open_drive, refresh = M.refresh_drive, entities = { "drive" }, shift = cell_into_drive,
+	message = G.net_message })
 
 G.on("drive_priority", function(event, player, el)
 	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
@@ -312,7 +352,7 @@ function M.cell_mode_caption(c)
 	return #parts > 1 and parts or ""
 end
 
-G.window("cell", { open = open_cell, refresh = M.refresh_cell })
+G.window("cell", { open = open_cell, refresh = M.refresh_cell, shift = cell_into_drive, message = G.net_message })
 
 G.on("cell_part", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
@@ -463,7 +503,7 @@ function M.refresh_controller(player, frame)
 	return true
 end
 
-G.window("controller", { open = open_controller, refresh = M.refresh_controller, entities = { "controller" } })
+G.window("controller", storing({ open = open_controller, refresh = M.refresh_controller, entities = { "controller" } }))
 
 --------------------------------------------------------------------------------
 --- ME Pattern Provider (issue #80: 9 slots for encoded patterns)
@@ -589,7 +629,11 @@ function M.refresh_provider(player, frame)
 	return true
 end
 
-G.window("provider", { open = open_provider, refresh = M.refresh_provider, entities = { "provider" } })
+G.window("provider", { open = open_provider, refresh = M.refresh_provider, entities = { "provider" },
+	shift = function(entity, stack)                    -- an encoded pattern into the first free slot
+		local _, why = autocraft.insert_pattern(entity, stack)
+		return why
+	end, message = G.net_message })
 
 G.on("prov_slot", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
@@ -645,7 +689,7 @@ function M.refresh_cpu(player, frame)
 	return true
 end
 
-G.window("cpu", { open = open_cpu, refresh = M.refresh_cpu, entities = { "cpu" } })
+G.window("cpu", storing({ open = open_cpu, refresh = M.refresh_cpu, entities = { "cpu" } }))
 
 --------------------------------------------------------------------------------
 --- a crafting block (issue #6): the window of its Crafting CPU (any block of it)
@@ -703,7 +747,7 @@ function M.refresh_crafting_cpu(player, frame)
 	return true
 end
 
-G.window("crafting-cpu", { open = open_crafting_cpu, refresh = M.refresh_crafting_cpu, entities = { "crafting" } })
+G.window("crafting-cpu", storing({ open = open_crafting_cpu, refresh = M.refresh_crafting_cpu, entities = { "crafting" } }))
 
 --------------------------------------------------------------------------------
 --- ME Level Maintainer
@@ -762,7 +806,7 @@ function M.refresh_maintainer(player, frame)
 	return true
 end
 
-G.window("maintainer", { open = open_maintainer, refresh = M.refresh_maintainer, entities = { "maintainer" } })
+G.window("maintainer", storing({ open = open_maintainer, refresh = M.refresh_maintainer, entities = { "maintainer" } }))
 
 G.on("maint_target", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
@@ -867,7 +911,7 @@ function M.refresh_circuit(player, frame)
 	return true
 end
 
-G.window("circuit", { open = open_circuit, refresh = M.refresh_circuit, entities = { "circuit" } })
+G.window("circuit", storing({ open = open_circuit, refresh = M.refresh_circuit, entities = { "circuit" } }))
 
 G.on("circ_filter", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
@@ -1018,7 +1062,7 @@ function M.refresh_interface(player, frame)
 	return true
 end
 
-G.window("interface", { open = open_interface, refresh = M.refresh_interface, entities = { "interface" } })
+G.window("interface", storing({ open = open_interface, refresh = M.refresh_interface, entities = { "interface" } }))
 
 G.on("if_item", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
@@ -1085,7 +1129,7 @@ function M.refresh_bus(player, frame)
 	return true
 end
 
-G.window("bus", { open = open_bus, refresh = M.refresh_bus, entities = { "import-bus", "export-bus" } })
+G.window("bus", storing({ open = open_bus, refresh = M.refresh_bus, entities = { "import-bus", "export-bus" } }))
 
 G.on("bus_filter", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
@@ -1248,9 +1292,11 @@ remote.add_interface("gregtorio-me-gui", {
 	key_of_signal = function(signal) return key_of_signal_q(signal) end,
 	--- issue #28: a click on slot `slot` of the inventory pane of `entity`'s window (`mode` "left", "right", "shift"), for
 	--- a cursor stack and an inventory standing for the player's; returns the reason of a refusal and "picked"
-	inventory_click = function(cursor, inventory, slot, mode, entity)
-		return G.inventory_click(cursor, inventory, slot, mode, G.def_of(entity), entity)
+	inventory_click = function(cursor, inventory, slot, mode, entity, window)
+		return G.inventory_click(cursor, inventory, slot, mode, window and G.def_named(window) or G.def_of(entity), entity)
 	end,
+	--- every registered window: { [name] = { pane = true, shift = has a shift + click target, control, message } }
+	windows = function() return G.window_list() end,
 	--- a click on slot `slot` of the block in `entity`'s window (its cards, its cell); returns the reason of a refusal
 	block_click = function(entity, slot, cursor, inventory, shift)
 		return G.block_click(G.def_of(entity), entity, slot, cursor, inventory, shift)
