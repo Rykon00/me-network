@@ -2369,9 +2369,100 @@ function me_r3_test()
 	local prev0 = remote.call(TERM, "craft_preview", t, "iron-gear-wheel", 0)
 	expect(prev0 and prev0.reason == "bad-amount", "craft preview amount 0 " .. serpent.line(prev0))
 	expect(#remote.call(TERM, "jobs", t) == 0, "jobs tab")
+
+	--- issue #28: every window has the inventory pane and a shift + click target; the targets of each block, clicked
+	--- through the GUI module with a script inventory standing for the player's
+	local wins = remote.call(GUI, "windows")
+	local without = {}
+	for name, w in pairs(wins) do if not (w.pane and w.shift) then without[#without + 1] = name end end
+	expect(#without == 0 and table_size(wins) >= 13, "windows without the pane or a shift + click target: " .. serpent.line(without)
+		.. " of " .. table_size(wins))
+	local pinv = game.create_inventory(20)
+	local hold = game.create_inventory(1)
+	local function click(e, slot, mode, window) return remote.call(GUI, "inventory_click", hold[1], pinv, slot, mode, e, window) end
+	local function count(name) return remote.call(NET, "count", t, name) end
+	--- the terminal: shift + click stores the stack, control + click every stack of that item, a blueprint is refused
+	pinv[1].set_stack{ name = "stone", count = 10 }
+	pinv[2].set_stack{ name = "stone", count = 7 }
+	local st0 = count("stone")
+	local why = click(t, 1, "shift")
+	expect(why == nil and count("stone") == st0 + 10 and not pinv[1].valid_for_read and pinv[2].count == 7,
+		"terminal shift + click: " .. tostring(why) .. ", network " .. count("stone"))
+	pinv[1].set_stack{ name = "stone", count = 5 }
+	why = click(t, 2, "control")
+	expect(why == nil and count("stone") == st0 + 22 and pinv.get_item_count("stone") == 0, "terminal control + click: " .. tostring(why)
+		.. ", network " .. count("stone"))
+	pinv[4].set_stack{ name = "blueprint", count = 1 }
+	why = click(t, 4, "shift")
+	expect(why == "cannot-store" and pinv[4].valid_for_read, "a blueprint shift-clicked at the terminal: " .. tostring(why))
+	--- the blocks without slots store into their network (new ones in a row right of the terminal: on its network)
+	local row = {}
+	for i, name in ipairs({ "me-network-interface", "me-import-bus", "me-export-bus", "me-level-maintainer", "me-circuit-interface" }) do
+		row[#row + 1] = s.create_entity{ name = name, position = { RX + 11.5 + i, RY - 0.5 }, force = "player", raise_built = true }
+	end
+	row[#row + 1] = s.create_entity{ name = "me-crafting-cpu", position = { RX + 18, RY }, force = "player", raise_built = true }
+	row[#row + 1] = ctrl
+	for _, e in pairs(row) do
+		pinv[5].set_stack{ name = "stone-brick", count = 3 }
+		local b0 = count("stone-brick")
+		why = click(e, 5, "shift")
+		expect(why == nil and count("stone-brick") == b0 + 3 and not pinv[5].valid_for_read, "shift + click stores at " .. e.name .. ": "
+			.. tostring(why))
+	end
+	expect(click(ctrl, 4, "shift") == "cannot-store" and pinv[4].valid_for_read, "a blueprint shift-clicked at the controller")
+	pinv[6].set_stack{ name = "stone-brick", count = 2 }
+	pinv[7].set_stack{ name = "stone-brick", count = 4 }
+	local b0 = count("stone-brick")
+	why = click(row[1], 6, "control")
+	expect(why == nil and count("stone-brick") == b0 + 6 and pinv.get_item_count("stone-brick") == 0, "control + click at the interface: "
+		.. tostring(why))
+	local lone = s.create_entity{ name = "me-network-interface", position = { RX + 30.5, RY + 22.5 }, force = "player", raise_built = true }
+	pinv[5].set_stack{ name = "stone-brick", count = 3 }
+	why = lone and click(lone, 5, "shift")
+	expect((why == "no-network" or why == "no-controller") and pinv[5].count == 3, "shift + click at an interface without a network: " .. tostring(why))
+	if lone then lone.destroy() end
+	pinv[5].clear()
+	--- the drive: a cell into a free slot, an iron plate refused, a full drive refused; the cell window of that drive too
+	local function n_cells(d)
+		local n = 0
+		for _ in pairs(remote.call(NET, "drive", d)) do n = n + 1 end
+		return n
+	end
+	local c0 = n_cells(d3)
+	pinv[8].set_stack{ name = "me-1k-storage-cell", count = 1 }
+	why = click(d3, 8, "shift")
+	expect(why == nil and not pinv[8].valid_for_read and n_cells(d3) == c0 + 1, "shift + click of a cell at the drive: " .. tostring(why))
+	pinv[9].set_stack{ name = "iron-plate", count = 5 }
+	why = click(d3, 9, "shift")
+	expect(why == "not-a-cell" and pinv[9].count == 5, "shift + click of iron plates at the drive: " .. tostring(why))
+	pinv[8].set_stack{ name = "me-1k-storage-cell", count = 1 }
+	why = click(d3, 8, "shift", "cell")
+	expect(why == nil and n_cells(d3) == c0 + 2, "shift + click of a cell in the cell window: " .. tostring(why))
+	for _ = 1, 10 do
+		pinv[8].set_stack{ name = "me-1k-storage-cell", count = 1 }
+		why = click(d3, 8, "shift")
+		if why then break end
+	end
+	expect(why == "drive-full" and pinv[8].valid_for_read and n_cells(d3) == 10, "a full drive: " .. tostring(why) .. ", " .. n_cells(d3))
+	pinv[8].clear()
+	--- the pattern provider: an encoded pattern into a free slot, an iron plate refused
+	local prov = blocks["me-pattern-provider"]
+	pinv[10].set_stack{ name = "me-blank-pattern", count = 1 }
+	remote.call(TERM, "encode_def", false, pinv, false, { kind = "crafting", recipe = "me-blank-pattern" })
+	local _, pi = pinv.find_item_stack("me-encoded-pattern")
+	why = pi and click(prov, pi, "shift")
+	local pd2 = remote.call(GUI, "provider_data", prov)
+	expect(pi and why == nil and pinv.get_item_count("me-encoded-pattern") == 0 and pd2.slots[1], "shift + click of a pattern at the provider: "
+		.. tostring(why))
+	why = click(prov, 9, "shift")
+	expect(why == "not-a-pattern" and pinv[9].count == 5, "shift + click of iron plates at the provider: " .. tostring(why))
+	for i = 1, #row - 1 do if row[i].valid then row[i].destroy{ raise_destroy = true } end end
+	hold.destroy()
+	pinv.destroy()
 	inv.destroy()
 	me_report("MER3", "ME partitions and windows", problems,
-		"partitions, priorities, insert/extract order, drive blueprint/paste/clone, window data and set functions, terminal tabs")
+		"partitions, priorities, insert/extract order, drive blueprint/paste/clone, window data and set functions, terminal tabs, "
+		.. "every window with the pane and its shift + click target")
 end
 
 --------------------------------------------------------------------------------

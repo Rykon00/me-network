@@ -164,10 +164,12 @@ function M.stack_button(parent, s, tags, tooltip)
 	return btn
 end
 
---- the left pane: "Character", a scroll pane, a table of 10 columns (filled by update_pane)
-local function build_pane(parent)
+--- the left pane: "Character" (`hint`: what shift + click does there, as its tooltip and a line below), a scroll pane,
+--- a table of 10 columns (filled by update_pane)
+local function build_pane(parent, hint)
 	local box = parent.add{ type = "frame", name = "fork_me_pane", style = "inside_shallow_frame_with_padding", direction = "vertical" }
-	box.add{ type = "label", caption = { "fork-me-gui.character" }, style = "caption_label" }
+	box.add{ type = "label", caption = { "fork-me-gui.character" }, style = "caption_label", tooltip = hint }
+	if hint then M.label(box, hint, PANE_COLUMNS * 40) end
 	local scroll = box.add{ type = "scroll-pane", name = "fork_me_inv_scroll", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = PANE_HEIGHT
 	scroll.add{ type = "table", name = "fork_me_inv", column_count = PANE_COLUMNS, style = "filter_slot_table" }
@@ -225,8 +227,9 @@ end
 
 --- A window: closes the player's ME window, builds frame, title bar and content frame; the frame is the player's
 --- opened GUI. Returns the frame and the content flow. `tags` go onto the frame (fork_me_window = name is added).
---- `pane` (issue #28): the player's inventory, drawn on the left of the content.
+--- Issue #28: every window has the pane, the player's inventory drawn on the left of the content (`pane` false: none).
 function M.open_window(player, name, caption, tags, pane)
+	pane = pane ~= false
 	M.close_window(player)
 	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
@@ -243,7 +246,7 @@ function M.open_window(player, name, caption, tags, pane)
 		tooltip = { "gui.close-instruction" }, tags = M.act("close") }
 	local body = frame.add{ type = "flow", name = "fork_me_body", direction = "horizontal" }
 	body.style.horizontal_spacing = 12
-	if pane then build_pane(body) end
+	if pane then build_pane(body, windows[name] and windows[name].hint) end
 	local inner = body.add{ type = "frame", style = "inside_shallow_frame_with_padding", direction = "vertical" }
 	inner.style.vertically_stretchable = true
 	local content = inner.add{ type = "flow", name = "fork_me_content", direction = "vertical" }
@@ -262,14 +265,16 @@ end
 --- A click on slot `slot` of the inventory pane, for a cursor stack and the main inventory (the window's function and
 --- the tests'). `mode`: "left" (pick the stack up; with a stack in the cursor: put it down, merge or swap), "right"
 --- (half the stack into the cursor; with a stack in the cursor: put one item down), "shift" (the stack goes to the
---- block: `def.shift(entity, stack, inv)`). Returns the reason a block refused, and "picked" as the second value when
---- the cursor took the whole stack (the caller marks the slot with the hand).
+--- block: `def.shift(entity, stack, inv)`), "control" (every stack of that item goes to the block: `def.control`, or
+--- `def.shift` for this stack when the window has none). Returns the reason a block refused, and "picked" as the
+--- second value when the cursor took the whole stack (the caller marks the slot with the hand).
 function M.inventory_click(cursor, inv, slot, mode, def, entity)
 	local stack = inv and slot >= 1 and slot <= #inv and inv[slot]
 	if not stack then return nil end
-	if mode == "shift" then
+	if mode == "shift" or mode == "control" then
 		if not stack.valid_for_read then return nil end
 		if not (def and def.shift and entity and entity.valid) then return "no-target" end
+		if mode == "control" and def.control then return def.control(entity, stack, inv) end
 		return def.shift(entity, stack, inv)
 	end
 	if not cursor then return nil end
@@ -299,8 +304,11 @@ function M.block_click(def, entity, slot, cursor, inv, shift)
 	return def.click(entity, slot, cursor, inv, shift)
 end
 
-local function refused(player, why)
-	if why then player.create_local_flying_text{ text = { "fork-me-gui.refused-" .. why }, create_at_cursor = true } end
+--- the short message of a refusal: the window's own text for its reasons (def.message), else fork-me-gui.refused-*
+local function refused(player, why, def)
+	if not why then return end
+	local text = def and def.message and def.message(why) or { "fork-me-gui.refused-" .. why }
+	player.create_local_flying_text{ text = text, create_at_cursor = true }
 end
 
 --- Where an item that may not be in a slot goes, never deleted: `to` a LuaPlayer (main inventory, else the ground at
@@ -414,7 +422,9 @@ function M.on(act, fn) actions[act] = fn end
 --- or ME kinds } }; refresh returns false to close the window. Issue #28, a window with the inventory pane and slots of
 --- its block: shift = function(entity, stack, inventory) (where a shift-clicked stack of the player's inventory goes;
 --- returns the reason when the block takes none of it) and click = function(entity, slot, cursor, inventory, shift)
---- (a click on the block's slot; returns the reason of a refusal, nothing moves then)
+--- (a click on the block's slot; returns the reason of a refusal, nothing moves then); optional hint (a line under
+--- the pane's caption), control = function(entity,
+--- stack, inventory) (control + click: every stack of that item) and message = function(reason) (the refusal's text)
 function M.window(name, def)
 	windows[name] = def
 	for _, entity_name in pairs(def.entities or {}) do openers[entity_name] = def.open end
@@ -537,7 +547,8 @@ function M.dispatch(event)
 		if not (entity and inv) then return true end
 		local why, picked
 		if act == "inv_slot" then
-			local mode = event.shift and "shift" or event.button == defines.mouse_button_type.right and "right" or "left"
+			local mode = event.control and "control" or event.shift and "shift"
+				or event.button == defines.mouse_button_type.right and "right" or "left"
 			why, picked = M.inventory_click(player.cursor_stack, inv, el.tags.slot, mode, def, entity)
 			if picked then
 				local slot = el.tags.slot
@@ -546,7 +557,7 @@ function M.dispatch(event)
 		else
 			why = M.block_click(def, entity, el.tags.slot, player.cursor_stack, inv, event.shift)
 		end
-		refused(player, why)
+		refused(player, why, def)
 		M.update_pane(player)
 		M.refresh_one(player)
 		return true
@@ -653,6 +664,23 @@ function M.close_all()
 	end
 	storage.fork_me_gui_open = nil
 	storage.fork_me_gui_pane = nil
+end
+
+--- the text of a reason of the network module ([fork-me-net]: the network's state is a status-*, the rest error-*)
+local NET_STATUS = { ["no-network"] = true, ["no-controller"] = true, ["conflict"] = true, ["no-power"] = true,
+	["no-power-terminal"] = true }
+function M.net_message(why) return { "fork-me-net." .. (NET_STATUS[why] and "status-" or "error-") .. why } end
+
+--- the definition of the window `name` (the tests' clicks in a window that no entity opens, the cell window)
+function M.def_named(name) return windows[name] end
+
+--- every registered window and what its pane does (the test that no window stays without one)
+function M.window_list()
+	local out = {}
+	for name, def in pairs(windows) do
+		out[name] = { pane = true, shift = def.shift ~= nil, control = def.control ~= nil, message = def.message ~= nil }
+	end
+	return out
 end
 
 --- the window definition of an entity's window (the tests' clicks)
