@@ -557,6 +557,8 @@ local function status_text(j)
 		return j.wait and { "fork-me-craft.wait-" .. j.wait } or { "fork-me-craft.status-running" }
 	elseif j.status == "failed" then
 		return { "fork-me-craft.status-failed", j.reason or "" }
+	elseif j.status == "queued" and j.wait == "cpu-bytes" and j.bytes then
+		return { "fork-me-craft.status-queued-bytes", G.fmt(j.bytes) }
 	end
 	return { "fork-me-craft.status-" .. j.status }
 end
@@ -839,6 +841,8 @@ G.on("term_craft", function(event, player)
 		st.jobs_shown = nil
 	elseif why == "missing" then
 		player.print({ "fork-me-craft.plan-missing", autocraft.item_list(plan.missing, 8) })
+	elseif why == "cpu-too-small" or why == "no-free-cpu" then
+		player.print({ "fork-me-craft.error-" .. why, G.fmt(plan.bytes), G.fmt(plan.biggest or 0) })
 	else
 		player.print({ "fork-me-craft.error-" .. why })
 	end

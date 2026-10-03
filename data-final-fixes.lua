@@ -49,3 +49,25 @@ if cards_tech and storage_64k and not ME.customized["me-upgrade-cards"] then
 	if cards_tech.research_trigger then cards_tech.unit = nil end
 	cards_tech.prerequisites = { "me-storage-64k" }
 end
+
+--- Issue #6: a crafting block recipe (the multiblock crafting CPUs) that no technology unlocks, because another mod
+--- replaced the recipe list of its technology (ME_NETWORK.set_technology: Gregtorio Continued sets me-autocrafting,
+--- me-co-processing and me-quantum-crafting), is unlocked by its technology of this mod again; a mod that gives the
+--- recipe to a technology of its own keeps that.
+local unlocked = {}
+for _, tech in pairs(data.raw.technology) do
+	for _, e in pairs(tech.effects or {}) do
+		if e.type == "unlock-recipe" then unlocked[e.recipe] = true end
+	end
+end
+local blocks = {}
+for name in pairs(ME.crafting_block_tech or {}) do blocks[#blocks + 1] = name end
+table.sort(blocks)
+for _, name in ipairs(blocks) do
+	local tech = data.raw.technology[ME.crafting_block_tech[name]]
+	if data.raw.recipe[name] and not unlocked[name] and tech then
+		tech.effects = tech.effects or {}
+		tech.effects[#tech.effects + 1] = { type = "unlock-recipe", recipe = name }
+		data.raw.recipe[name].enabled = false
+	end
+end

@@ -85,6 +85,8 @@ local function kinds()
 	k["me-fluid-interface"] = "fluid-interface"
 	local ac = prototypes.mod_data["fork-me-autocraft"]
 	for name in pairs(ac and ac.data.cpus or {}) do k[name] = "cpu" end
+	--- issue #6: the blocks of the multiblock crafting CPUs (scripts/fork-me-autocraft.lua finds the CPUs among them)
+	for name in pairs(ac and ac.data.blocks or {}) do k[name] = "crafting" end
 	k["me-fluid-import-bus"] = "fluid-import-bus"
 	k["me-fluid-export-bus"] = "fluid-export-bus"
 	k["me-fluid-storage-bus"] = "fluid-storage-bus"
@@ -96,6 +98,18 @@ local function kinds()
 end
 
 local POWERED_SELF = { cable = true, underground = true, controller = true, terminal = true, cpu = true, maintainer = true }
+
+--- issue #6: the power (W) of a crafting block drawn through the controller (mod-data "fork-me-autocraft", blocks)
+local block_power_cache
+local function member_power(node)
+	if node.kind ~= "crafting" then return MEMBER_POWER end
+	if not block_power_cache then
+		local ac = prototypes.mod_data["fork-me-autocraft"]
+		block_power_cache = {}
+		for name, b in pairs(ac and ac.data.blocks or {}) do block_power_cache[name] = b.power end
+	end
+	return node.entity.valid and block_power_cache[node.entity.name] or MEMBER_POWER
+end
 --- (the old ME Fluid Drives are no members since issue #68 step R2: scripts/fork-me-migrate.lua replaces them)
 
 --- the entity names of all members, sorted (cached: the filter of every find_entities_filtered of the graph)
@@ -1008,15 +1022,15 @@ local function drive_cells(net, s, f)
 	end
 end
 
---- set the controller's power use: base + per member without its own power
+--- set the controller's power use: base + per member without its own power (a crafting block: its own number)
 local function update_power(s, net)
 	net.power_dirty = nil
 	local members = 0
 	for unit in pairs(net.nodes) do
 		local node = s.nodes[unit]
-		if node and not POWERED_SELF[node.kind] then members = members + 1 end
+		if node and not POWERED_SELF[node.kind] then members = members + member_power(node) end
 	end
-	net.power = BASE_POWER + MEMBER_POWER * members
+	net.power = BASE_POWER + members
 	for unit in pairs(net.controllers) do
 		local node = s.nodes[unit]
 		if node and node.entity.valid then node.entity.power_usage = net.power / 60 end
@@ -2448,8 +2462,13 @@ local function vanish(s, unit)
 		s.dirty[unit] = nil
 	end
 	M.ext_detach(unit)
+	for _, f in ipairs(M.vanish_hooks) do f(unit) end
 	if node then remove_node(s, unit) end
 end
+
+--- functions(unit) of other modules called for a member that vanished without an event (issue #6: a crafting block
+--- leaves its CPU)
+M.vanish_hooks = {}
 
 --- functions of other modules called at every slow step (the Cell Workbench's sweep, issue #17)
 M.slow_hooks = {}
