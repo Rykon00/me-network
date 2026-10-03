@@ -16,8 +16,8 @@
 ---     Inverter Card (the filters are a blacklist), a Fuzzy Card (a filter matches every quality), an Overflow
 ---     Destruction Card (what the network stores into the bus and does not fit is destroyed); the setting "filter on
 ---     extract" (rec.extract false: the filters decide only what goes in). The cards are items: put in and taken out
----     by hand in the window (issue #28: the slots of a script inventory, rec.inv, beside the player's inventory;
----     sync() checks them), given back when the bus is mined, spilled when it is destroyed or vanishes. Blueprints,
+---     by hand in the window (issue #28: the items of a script inventory, rec.inv, shown as slots next to the
+---     player's inventory drawn by the window; card_click and shift_in refuse a wrong card before it moves), given back when the bus is mined, spilled when it is destroyed or vanishes. Blueprints,
 ---     settings paste and clones copy which cards a bus wants (rec.want); it takes them from the player (paste) or
 ---     the network (at its visits), never out of nothing. apply() turns filters and cards into the fields the
 ---     storage engine reads (partition, deny, fnames, void, inonly).
@@ -448,8 +448,8 @@ local function remember_place(rec)
 	if e and e.valid then rec.where = { surface = e.surface.index, x = e.position.x, y = e.position.y } end
 end
 
---- Issue #28: the card slots are a script inventory (rec.inv), the one the bus's window shows beside the player's
---- inventory. Its stacks are the cards; rec.cards ({ [slot] = name }) is what apply(), the window and the settings read,
+--- Issue #28: the card slots are a script inventory (rec.inv) whose slots the bus's window shows. Its stacks are the
+--- cards; rec.cards ({ [slot] = name }) is what apply(), the window and the settings read,
 --- made from the slots by sync() and by every function here that moves a card. A bus of a save before issue #28 kept
 --- only the names: its inventory is made here, with a card item for each name (the version number may not change, so
 --- no on_configuration_changed has to run first).
@@ -541,7 +541,8 @@ local function card_list(rec)
 	return out
 end
 
---- Issue #28: the card slots after a player changed them (or the refresh's backstop). One card per slot, of a kind the
+--- Issue #28: the card slots checked (the migration's backstop and the tests; the window's clicks refuse before they
+--- move anything, so this finds nothing to do after them). One card per slot, of a kind the
 --- bus takes, within its kind's limit: the cards that were in their slot already are kept first, then the new ones in
 --- slot order; a second card of one stack goes into an empty slot when it may, else back to `back` (G.give_back: the
 --- player, a LuaInventory, nil for the ground at the bus) with every other item. rec.cards follows the slots; a change
@@ -605,10 +606,10 @@ function M.sync(rec, back)
 	return true
 end
 
---- A click on card slot `slot` of the window (before issue #28; kept for the remote interface). With a card in the
---- cursor one card of it goes in (into `slot`, else the first empty slot); with an empty cursor the card in the slot
---- goes into the cursor (`shift`: into `inventory`). Takes the bus out of waiting for blueprint cards. Returns a reason
---- on failure.
+--- A click on card slot `slot` of the window. With a card in the cursor one card of it goes in (into `slot`, else the
+--- first empty slot); a card the bus does not take, one beyond its kind's limit or one without an empty slot is refused
+--- before anything moves (the reason is returned, the cursor keeps it). With an empty cursor the card in the slot goes
+--- into the cursor (`shift`: into `inventory`). Takes the bus out of waiting for blueprint cards.
 function M.card_click(entity, slot, cursor, inventory, shift)
 	local rec = rec_of(entity)
 	if not rec then return "no-bus" end
@@ -629,6 +630,28 @@ function M.card_click(entity, slot, cursor, inventory, shift)
 		end
 		if rec.cards then rec.cards[slot] = nil end
 	end
+	rec.want = nil
+	apply(rec)
+	M.visit(rec)
+	return nil
+end
+
+--- Issue #28: shift + click on stack `stack` of the player's inventory in the bus's window: its cards go into the empty
+--- slots, one each, as far as the kind's limit allows; the rest stays in the stack. Returns the reason when none goes
+--- in (nothing moved then).
+function M.shift_in(entity, stack)
+	local rec = rec_of(entity)
+	if not rec then return "no-bus" end
+	if not (stack and stack.valid_for_read) then return nil end
+	local moved, why = 0, nil
+	while stack.valid_for_read do
+		local free
+		free, why = card_fits(rec, stack.name)
+		if not free then break end
+		install(rec, free, nil, stack)
+		moved = moved + 1
+	end
+	if moved == 0 then return why end
 	rec.want = nil
 	apply(rec)
 	M.visit(rec)
@@ -813,7 +836,7 @@ function M.max_filters(entity)
 	return rec and filter_count(rec) or MAX_FILTERS
 end
 
---- issue #28: the inventory of the card slots (the window shows it), and its check after a change (`back`: the player
+--- issue #28: the inventory of the card slots (the window shows its slots), and its check after a change (`back`: the player
 --- who changed it, or a LuaInventory; what may not be there goes there)
 function M.inventory(entity)
 	local rec = rec_of(entity)
@@ -1020,6 +1043,8 @@ remote.add_interface("gregtorio-me-storagebus", {
 	--- player's inventory); returns true when the slots or the cards changed
 	inventory = function(entity) return M.inventory(entity) end,
 	sync = function(entity, back) return M.sync_entity(entity, back) end,
+	--- shift + click on a stack of the player's inventory in the window: its cards into the empty slots
+	shift_in = function(entity, stack) return M.shift_in(entity, stack) end,
 })
 
 --- issue #3: the old remote of the ME Fluid Storage Bus works on the storage bus (its fluid side)

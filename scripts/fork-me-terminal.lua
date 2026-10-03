@@ -1119,7 +1119,7 @@ script.on_event(defines.events.on_gui_closed, function(event)
 	G.on_closed(event)
 end)
 
---- issue #28: the inventory of an open ME window changes only through the player's cursor and main inventory
+--- issue #28: the inventory pane of an open ME window follows the player's main inventory and cursor
 script.on_event({ defines.events.on_player_main_inventory_changed, defines.events.on_player_cursor_stack_changed }, function(event)
 	G.on_inventory_changed(event)
 end)
@@ -1142,7 +1142,7 @@ end)
 
 script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
-	if storage.fork_me_gui_open then storage.fork_me_gui_open[event.player_index] = nil end
+	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[event.player_index] = nil end
 end)
 
 return M
