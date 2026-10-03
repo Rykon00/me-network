@@ -19,7 +19,7 @@ Version: 0.3.0
     - A full storage bus is not asked again for every insert until its next read.
     - Drive lights are recolored instead of redrawn.
   Graphics:
-    - Icons of the upgrade cards and the ME Cell Workbench (placeholders).
+    - Real icons for the seven upgrade cards (each with a sign and colour of its own; the Overflow Destruction Card is a warning sign), the ME Upgrade Cards technology, the ME Cell Workbench (with a shadow) and the mod thumbnail.
   Changes:
     - The storage bus modes also show AE2's names (bi-directional, extract only, insert only). A blacklist storage bus is not preferred for an item over other storage of its priority (AE2's rule); a recipe pasted onto a storage bus changes only its filters.
     - A level maintainer starts its job as soon as its item is taken below its amount (it was checked in turn: up to 40 seconds in a big network), and checks a circuit target at least every 5 seconds.

@@ -84,7 +84,13 @@ data:extend({ {
 	corpse = "small-remnants",
 	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
-	picture = { filename = ME.entity_path .. "me-cell-workbench.png", priority = "high", width = 32, height = 32 },
+	picture = { layers = {
+		{ filename = ME.entity_path .. "me-cell-workbench.png", priority = "high", width = 32, height = 32 },
+		--- its shadow: tools/gen_ae2_sprites.py WORKBENCH_SHADOW (6, 4) px to the east and the south, the PNG's top left
+		--- at the block's top left
+		{ filename = ME.entity_path .. "me-cell-workbench-shadow.png", priority = "high", width = 38, height = 36,
+		  shift = { 3 / 32, 2 / 32 }, draw_as_shadow = true },
+	} },
 	localised_description = { "entity-description.me-cell-workbench" },
 } })
 recipes[#recipes + 1] = "me-cell-workbench"
