@@ -17,14 +17,29 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   `me-1k`...`me-256k-fluid-storage-cell`, `me-underground-cable`, `me-import-bus`, `me-export-bus`,
   `me-storage-bus`, `me-pattern-provider`, `me-blank-pattern`, `me-encoded-pattern` (no recipe),
   `me-molecular-assembler`, `me-crafting-cpu`, `me-co-processing-cpu`, `me-quantum-crafting-cpu`,
-  `me-level-maintainer`, `me-circuit-interface`; hidden: the old drive items of Gregtorio saves, and since 0.2.0
+  `me-level-maintainer`, `me-circuit-interface`; since 0.3.0 (issue #17) the upgrade cards `me-basic-card`,
+  `me-advanced-card`, `me-capacity-card`, `me-overflow-destruction-card`, `me-fuzzy-card`, `me-inverter-card`,
+  `me-equal-distribution-card` (each with a recipe of the same name) and `me-cell-workbench`; since 0.3.0 (issue #6)
+  the crafting blocks of the multiblock crafting CPUs `me-crafting-unit`, `me-1k`...`me-256k-crafting-storage`,
+  `me-crafting-co-processing-unit`, `me-crafting-monitor` (each with a recipe of the same name; subgroup
+  `fork-me-crafting-cpu`), while `me-crafting-cpu`, `me-co-processing-cpu` and `me-quantum-crafting-cpu` are legacy
+  blocks without a recipe (in `ME_NETWORK.removed`); hidden: the old drive items of Gregtorio saves, and since 0.2.0
   (issue #3: the ME Interface and the buses handle fluids) `me-fluid-interface`, `me-fluid-import-bus`,
   `me-fluid-export-bus`, `me-fluid-storage-bus` (no recipe; they place the unified block).
-- `ME_NETWORK.removed`: { old item -> the item that replaced it } for those four. Their recipes are gone: see
+- `ME_NETWORK.removed`: { old item -> the item that replaced it } for those four and the three legacy CPUs (0.3.0).
+  Their recipes are gone: see
   `replace_recipe` and "Recipes of removed items" below.
 - Technologies: `me-network`, `me-storage-64k`, `me-storage-256k`, `me-autocrafting`, `me-automation`,
-  `me-co-processing`, `me-quantum-crafting`, `me-fluid-storage`, `me-fluid-storage-256k`.
-- Item subgroups: `fork-me-network`, `fork-me-drives`, `fork-me-cells`, `fork-me-fluid-cells`, `fork-me-fluid-drives`.
+  `me-co-processing`, `me-quantum-crafting`, `me-fluid-storage`, `me-fluid-storage-256k`, `me-upgrade-cards` (0.3.0:
+  after `me-storage-64k`, whose cost it takes in `data-final-fixes.lua` unless a mod sets it with `set_technology`).
+  Since 0.3.0 (issue #6) `me-autocrafting` unlocks the crafting unit, the 1k and 4k crafting storage and the monitor,
+  `me-co-processing` the co-processing unit and the 16k and 64k crafting storage, `me-quantum-crafting` the 256k
+  crafting storage (`ME_NETWORK.crafting_block_tech`: recipe -> technology). A crafting block recipe that no
+  technology unlocks after every mod's changes (a mod replaced the recipe list with `set_technology`) gets its unlock
+  on that technology again in `data-final-fixes.lua`; give the recipe to a technology of your own to move it.
+- `ME_NETWORK.customized`: { technology name -> true } for every technology changed with `set_technology` (0.3.0).
+- Item subgroups: `fork-me-network`, `fork-me-drives`, `fork-me-cells`, `fork-me-fluid-cells`, `fork-me-fluid-drives`,
+  `fork-me-cards` (0.3.0), `fork-me-crafting-cpu` (0.3.0).
 
 ## Functions
 
@@ -78,7 +93,8 @@ need them.
 ### Recipes of removed items
 
 `data-final-fixes.lua` deletes every recipe that makes an item of `ME_NETWORK.removed` (whichever mod made it) and its
-unlock in every technology, with one log line each. Gregtorio Continued 0.5.0 makes the recipes of the four old fluid
+unlock in every technology, with one log line each (since 0.3.0 also the recipes Gregtorio Continued gives the three
+legacy CPUs). Gregtorio Continued 0.5.0 makes the recipes of the four old fluid
 blocks itself (not through the API) and keeps loading: they are removed there, and the unified blocks keep the
 recipes Gregtorio gives them. A mod should drop those recipes and unlocks from its own files.
 
@@ -95,3 +111,19 @@ sides of an interface (`set_interface_config(entity, config, sides)`, `set_inter
 `get_interface_sides`, `interface_tanks`), bus filters as keys (item name or `fluid/<name>`); `gregtorio-me-fluid-storagebus`
 works on the storage bus (its fluid side); `gregtorio-me-fluids` keeps the fluid calls (`count`, `totals`, `capacity`,
 `insert`, `remove`), its interface functions are gone with the ME Fluid Interface.
+
+Since 0.3.0 (issue #17): `gregtorio-me-storagebus` has `card_click(bus, slot, cursor, inventory, shift)`,
+`want_cards(bus, names, player_index)`, `from_contents`, `clear`; its settings take `extract = false` (filter only what
+goes in) and report `cards`; `info` reports `cards`, `slots`, `want`, `extract`, `inverted`, `fuzzy`, `void`, `voided`.
+`gregtorio-me-io` has `get_interface_priority` / `set_interface_priority`; `get_interface` reports `priority` and
+`short` (what the interface lacks while priorities are in use). `gregtorio-me-network.voided()` returns what Overflow
+Destruction Cards destroyed on the map, per key. `gregtorio-me-workbench` is the ME Cell Workbench's (`info`,
+`cell_click`, `card_click`, `set_partition_slot`, `from_contents`, `clear`, `set_keep`); the drive's cell data reports
+`cards`, `inverted`, `fuzzy`, `equal`, `void`, `voided`.
+
+Since 0.3.0 (issue #6): `gregtorio-me-autocraft` `plan` reports `bytes`; `start` returns `id, why, missing, bytes,
+biggest` with the new reasons `cpu-too-small` and `no-free-cpu` (a job needs a free CPU when it starts); `job` and
+`jobs` report `bytes` and `group`; `group_info(block)` is the multiblock CPU of a crafting block (`status`, `blocks`,
+`width`, `height`, `bytes`, `used`, `coprocessors`, `speed`, `monitors`, `job`). `cpu_list(entity, bytes)` lists the CPUs of the network in the
+order a job takes them (`fits`, `free`); `monitor(block)` is what a crafting monitor shows. `gregtorio-me-terminal`
+`craft_preview` reports `bytes`, `biggest` and `cpu_list`; `gregtorio-me-gui` has `crafting_cpu_data(block)`.

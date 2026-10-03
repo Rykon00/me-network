@@ -21,9 +21,17 @@
   `on_configuration_changed` (technology effects reset when this mod changed, the graph rebuild, the migrations of
   old Gregtorio networks, the old fluid blocks becoming the unified ones (`scripts/fork-me-unify.lua`, issue #3), the
   modules). The modules use the storage API of `fork-me-network.lua`, never a logistic
-  network. Tick intervals in use: `on_nth_tick` 60 (terminal step: the network's slow step, drive lights, sweep, the
-  refresh of open windows), 20 (autocrafting; `fork-me-circuit.lua` runs as its step hook), 15 (I/O: interfaces,
-  buses, the storage bus visits: 8 per step for the item side and 8 for the fluid side). Processing patterns catch their
+  network. Ticks: `on_nth_tick` 60 (terminal step: the network's slow step, drive lights, sweep, the refresh of open
+  windows) and one `on_tick` handler in control.lua (issue #5, `scripts/fork-me-schedule.lua`): every interface and
+  bus, storage bus (item and fluid side), level maintainer and circuit interface is due at a tick of its own (a queue
+  per kind, `rec.due`, a backlog for what does not fit), crafting jobs are stepped one per tick (each at most every 20
+  ticks), one provider rescan every 2 ticks. The budgets and the bus speed are runtime-global map settings
+  (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side,
+  maintainers 4), circuit interface updates per second (10), crafting jobs per tick (1), bus speed (256 items, 4000
+  fluid per second, times the ticks since the last visit), idle limits (300 and 120 ticks). Never base anything on
+  measured time; a new periodic task gets a queue and a budget, not a step of its own. Blocks waiting for a key wake
+  through `N.wait_for` / `N.wait_below` (in `storage`, per network); what is derived from the state only (the lookups
+  of the storage engine) is kept outside `storage`. Processing patterns catch their
   outputs through the network's insert functions (`N.on_arrival`, no tick). A storage bus is an external cell of the
   storage engine (`N.ext_*`), with an item side and a fluid side (`scripts/fork-me-fluid-storagebus.lua`). Since issue
   #3 the ME Interface, the import, export and storage bus handle items and fluids; the ME Fluid Interface and the ME
@@ -36,10 +44,14 @@
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
   notice, `all --with-gregtorio <Gregtorio checkout>`. Both must end with `RESULT: OK`; `check --base-only` checks
-  without Space Age; `migrate --from-ref v0.1.0` loads a save of an older version with the working copy (for changes to
-  saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
+  without Space Age; `migrate --from-ref v0.1.0` (the old fluid blocks) or `--from-ref v0.2.0` (every kind of
+  unified block, loaded without `on_configuration_changed` while the version number is the same) loads a save of an
+  older version with the working copy (for changes to saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
   recipes; without Gregtorio its `data.lua` adds stand-ins with the same names and numbers. See
-  `tools/devcheck/README.md`.
+  `tools/devcheck/README.md`. A change to the runtime's cost (the storage engine, the I/O, autocrafting, the step
+  budgets) runs `devcheck.py bench` (script time per tick, throughput and latencies at 100, 1000 and 5000 endpoints,
+  `--reference` for inserters and robots, `--profile 1000,5000` for where the time goes) and puts its numbers before
+  and after into `docs/PERFORMANCE.md`.
 - Every referenced `__me-network__/...` file must exist (headless Factorio does not load graphics, the real game
   crashes on missing files); `devcheck check` lists missing ones and names missing in `locale/en`.
 - **Changelog:** every change to the game adds its player-facing lines to the topmost section of `changelog.txt` (the
@@ -47,3 +59,21 @@
   release pull request into `upstream/release`.
 - Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`, `--r2`,
   `--patterns` and the other switches for parts, see its docstring).
+- **Issues and the board:** every open issue of this repository and of its sister repository is on the project board
+  "Gregtorio Continued Backlog" (https://github.com/users/Rykon00/projects/1). The board only follows the issue state: a
+  closed issue moves to Done and is archived a day later; nothing else moves a card. So the pull request that finishes an
+  issue has `Closes #N` in its **description** (a number in the title or "Refs" does not close it); with several pull
+  requests for one issue the last one closes it and the others say `Refs #N`. Work that is left over goes into a new
+  issue, named in the pull request, so the old one can close. When you start on an issue, set its status on the board to
+  "In Progress" if `gh project` works for you (`gh project item-list 1 --owner Rykon00`, then `gh project item-edit`; the
+  token needs the scope `project`); if it does not, say so in your report and go on. An issue the maintainer has to do or
+  test in the game himself is titled `[Task-Ingame]`, not `[Task]`.
+- **Local sessions on the maintainer's Windows machine:** `C:\00_Repositories\me-network` is linked into the Factorio mods
+  folder, so never switch branches or edit files there. Work in **one** worktree next to it
+  (`git worktree add ..\me-network-<topic> -b <branch> origin/main`). Do not add more worktrees to compare versions: use
+  `git show <ref>:<path>`, `git diff <ref>` or `devcheck.py ... --from-ref <ref>`; a second checkout that cannot be
+  avoided is yours to remove as well. A `.devcheck` may hold junctions (to the Steam install's `data` folder, to the
+  mod checkouts): `git worktree remove`, `rm -r` and PowerShell's `Remove-Item -Recurse` follow junctions on Windows
+  and empty what they point to. So when your pull request is open, clean up in this order and say so in your report:
+  remove every junction under `.devcheck` with `cmd /c rmdir <junction>`, then run `git worktree remove <path>` from
+  the linked clone. The branch stays on GitHub; follow-up work makes a new worktree from it.

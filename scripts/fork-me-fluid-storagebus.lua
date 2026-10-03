@@ -12,9 +12,9 @@
 ---     first one goes. Building or removing pipes merges and splits segments and changes their ids; every visit
 ---     reads the id again, and two buses that end up on one segment are resolved in unit order (the lower unit
 ---     number keeps it, the other is cleared at once, so the segment is never counted twice).
----   * Contents: get_fluid_segment_contents, a snapshot per bus applied as a difference in the I/O step (15
----     ticks, scripts/fork-me-io.lua), VISITS_PER_STEP fluid side buses round robin (the item side has its own
----     list). Every insert and extract through the bus works on the real segment: the engine asks `count` (the
+---   * Contents: get_fluid_segment_contents, a snapshot per bus applied as a difference at its visits (issue #5:
+---     its own queue, scripts/fork-me-schedule.lua, with the item side's budget and intervals; the buses marked by a
+---     removal first). Every insert and extract through the bus works on the real segment: the engine asks `count` (the
 ---     segment's real amount, 0 when the bus no longer owns the segment) before it takes and corrects the snapshot.
 ---   * Extract and insert: the faced entity's remove_fluid / insert_fluid act on the whole segment (tested in
 ---     2.0.77); a box without a segment is changed through LuaFluidBox. Insert asks how much fits: the segment's
@@ -29,11 +29,12 @@
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
+local Sched = require("scripts.fork-me-schedule")
 
 local M = {}
 
 local OLD_KIND = "fluid-storage-bus"      -- the old ME Fluid Storage Bus (records until scripts/fork-me-unify.lua runs)
-local VISITS_PER_STEP = 8                 -- fluid side bus visits per I/O step (every 15 ticks)
+local MIN_INTERVAL = 30                   -- ticks until a bus whose segment changed reads it again
 local PREFIX = "fluid/"
 local EPS = 1e-6
 local TEMP_TOLERANCE = 1            -- degrees: a segment this close to the default temperature takes the network's fluid
@@ -52,6 +53,17 @@ local function state()
 	return s
 end
 
+--- the queue of the fluid side's visits; a save from before issue #5 gets one with every bus due within a second
+local function queue(s)
+	if s.q then return s.q end
+	s.q = Sched.new()
+	for i, unit in ipairs(s.list) do
+		local rec = N.ext_get(unit)
+		if rec then Sched.at(s.q, rec, unit, game.tick + 1 + (i - 1) % 60) end
+	end
+	return s.q
+end
+
 --- a record of a bus on fluid (the storage bus's fluid side, or an old fluid storage bus)
 local function on_fluid(rec) return rec ~= nil and (rec.side == "fluid" or rec.ext == OLD_KIND) end
 
@@ -61,9 +73,14 @@ local function fluid_of(key)
 	return prototypes.fluid[name] and name or nil
 end
 
+--- may the network put `key` in? (the filters: a whitelist, or a blacklist with an Inverter Card; issue #17)
 local function allowed(rec, key)
-	return rec.partition == nil or rec.partition[key] == true
+	local p = rec.partition
+	if p then return p[key] == true end                  -- (fluid keys have no quality: a fuzzy list is exact here)
+	return rec.deny == nil or N.accepts(rec, key)
 end
+--- may the network see and take `key`? (the same, unless the bus filters only what goes in)
+local function shown(rec, key) return rec.inonly == true or N.accepts(rec, key) end
 
 --------------------------------------------------------------------------------
 --- the storage behind a bus: the faced fluid box, its segment
@@ -98,6 +115,16 @@ local function contents_of(rec)
 	end
 	if held and held.amount > EPS then return { [held.name] = held.amount }, temp, false end
 	return {}, temp, false
+end
+
+--- issue #17: the fluids of the storage a bus owns now ({ name -> amount }; empty without one): "From contents"
+function M.contents(rec)
+	if not (rec.target and rec.target.valid and rec.box and owns(rec)) then return {} end
+	local out = {}
+	for name, amount in pairs((contents_of(rec))) do
+		if amount > EPS then out[name] = amount end
+	end
+	return out
 end
 
 local function default_temperature(name)
@@ -152,7 +179,7 @@ M.handlers = {
 	end,
 	--- the real amount of `key` in the storage (0 when the bus cannot take from it)
 	count = function(rec, key)
-		if rec.mode == "write" or not allowed(rec, key) then return 0 end
+		if rec.mode == "write" or not shown(rec, key) then return 0 end
 		local name = fluid_of(key)
 		if not (name and owns(rec)) then return 0 end
 		local contents = contents_of(rec)
@@ -174,6 +201,14 @@ M.handlers = {
 		local left = held.amount - n
 		fb[rec.box] = left > EPS and { name = name, amount = left, temperature = held.temperature } or nil
 		return n
+	end,
+	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? Only while the bus owns the
+	--- segment and the segment could take the fluid at all (not while it holds another fluid or is at another
+	--- temperature: then the network puts nothing in, and destroys nothing either)
+	voids = function(rec, key)
+		if rec.mode == "read" or not allowed(rec, key) then return false end
+		local name = fluid_of(key)
+		return name ~= nil and owns(rec) and accepts(rec, name) == true
 	end,
 }
 --- the handler of the storage bus's fluid side (rec.handler) and of old fluid storage buses until they are replaced
@@ -227,6 +262,16 @@ function M.list(rec)
 	local s = state()
 	for _, u in ipairs(s.list) do if u == rec.unit then return end end
 	s.list[#s.list + 1] = rec.unit
+	rec.siv = nil
+	Sched.at(queue(s), rec, rec.unit, game.tick + 1)
+end
+
+--- read the segment at the next tick
+function M.wake(rec)
+	local s = storage.fork_me_fsbus
+	if not s then return end
+	rec.siv = nil
+	Sched.wake(queue(s), rec, rec.unit, game.tick + 1)
 end
 
 function M.unlist(rec)
@@ -278,18 +323,20 @@ end
 
 --- One visit of a bus on fluid: claim its segment, read the segment once and apply the difference to the network.
 --- `cascade` (default true): a stale claim of another bus makes that bus visit too. A bus whose target is gone or
---- that was rotated resolves its target again through the storage bus (it may face a chest now).
+--- that was rotated resolves its target again through the storage bus (it may face a chest now). Returns true when
+--- the snapshot or the segment changed.
 function M.visit(rec, cascade)
 	local s = state()
 	local e = rec.entity
-	if not e.valid then return end
+	if not e.valid then return false end
 	local t = rec.target
 	if not (t and t.valid and rec.dir == e.direction and rec.box) then
 		if M.resolve_visit and rec.ext ~= OLD_KIND then return M.resolve_visit(rec, cascade) end
-		N.ext_sync(rec.unit, {})
+		local changed = N.ext_sync(rec.unit, {})
 		rec.status = "no-target"
-		return
+		return changed
 	end
+	local seg = rec.seg
 	local contents = {}
 	rec.temp, rec.fluid = nil, nil
 	rec.status = "ok"
@@ -299,21 +346,43 @@ function M.visit(rec, cascade)
 			if amount > EPS then
 				rec.fluid, rec.temp = name, temp
 				local key = PREFIX .. name
-				if rec.mode ~= "write" and allowed(rec, key) then contents[key] = amount end
+				if rec.mode ~= "write" and shown(rec, key) then contents[key] = amount end
 				if temp and math.abs(temp - default_temperature(name)) > TEMP_TOLERANCE then rec.status = "temperature" end
 			end
 		end
 	end
-	N.ext_sync(rec.unit, contents)
+	local changed = N.ext_sync(rec.unit, contents) or seg ~= rec.seg
 	if rec.status == "ok" or rec.status == "temperature" then
 		local net = N.network_of(e)
 		local ok, why = N.usable(net)
 		if not ok then rec.status = why or "no-network" end
 	end
+	return changed
 end
 
---- the I/O step (scripts/fork-me-io.lua): first the buses marked by a removal, then VISITS_PER_STEP buses, round robin
-function M.on_step()
+local function fluid_rec(unit)
+	local rec = N.ext_get(unit)
+	if on_fluid(rec) then return rec end
+	return nil
+end
+
+local function visit_due(rec, unit)
+	local s = storage.fork_me_fsbus
+	if not rec.entity.valid then
+		for i = #s.list, 1, -1 do if s.list[i] == unit then table.remove(s.list, i) end end
+		N.ext_detach(unit)
+		return
+	end
+	local changed = M.visit(rec)
+	if not on_fluid(rec) then return end                -- on the item side now: its queue has it
+	local idle = Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)   -- (as the item side)
+	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle)
+	Sched.at(queue(s), rec, unit, game.tick + rec.siv)
+end
+
+--- every tick (from the storage bus module): first the buses marked by a removal, then the buses that are due, at
+--- most the setting "storage bus visits per tick"
+function M.on_tick(tick)
 	local s = storage.fork_me_fsbus
 	if not (s and #s.list > 0) then return end
 	if next(s.urgent) then
@@ -326,20 +395,11 @@ function M.on_step()
 			if on_fluid(rec) and rec.entity.valid then M.visit(rec) end
 		end
 	end
-	for _ = 1, math.min(VISITS_PER_STEP, #s.list) do
-		if s.cursor > #s.list then s.cursor = 1 end
-		local unit = s.list[s.cursor]
-		local rec = N.ext_get(unit)
-		if on_fluid(rec) and rec.entity.valid then
-			M.visit(rec)
-			if s.list[s.cursor] == unit then s.cursor = s.cursor + 1 end   -- (a bus that went to the item list is gone)
-		else
-			table.remove(s.list, s.cursor)
-			if rec and not rec.entity.valid then N.ext_detach(unit) end
-		end
-		if #s.list == 0 then break end
-	end
+	Sched.run(queue(s), tick, Sched.setting("storage_bus"), fluid_rec, visit_due)
 end
+
+--- the remote's step (tests): what the fluid side does in one tick
+function M.on_step() M.on_tick(game.tick) end
 
 --- A removed entity that is no storage bus: the tank a bus faces leaves the network at once. Any other removed
 --- entity with a fluid box (a pipe, a tank of the segment) may split a claimed segment: its owner is visited in the
@@ -375,7 +435,7 @@ end
 --- after the graph rebuild (the storage bus module lists its fluid side buses again, in unit order)
 function M.reset()
 	local s = state()
-	s.list, s.cursor, s.claims, s.urgent = {}, 1, {}, {}
+	s.list, s.cursor, s.claims, s.urgent, s.q = {}, 1, {}, {}, Sched.new()
 end
 
 return M

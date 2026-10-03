@@ -1,0 +1,9 @@
+{
+  "name": "zz-me-network-devcheck-bench",
+  "version": "0.0.1",
+  "title": "ME Network devcheck: benchmark scenes",
+  "author": "rykon_",
+  "factorio_version": "2.0",
+  "description": "Test helper of tools/devcheck (devcheck.py bench): builds a synthetic ME base of a given size, counts what it moves and how long its reactions take. Never part of the mod.",
+  "dependencies": ["base", "me-network", "? space-age", "? quality"]
+}

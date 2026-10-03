@@ -17,10 +17,12 @@
 ---   drains them). Patterns the network cannot use are counted per reason (see pattern_problem).
 ---   Several patterns for one output: by provider priority (higher first), then the provider built first, then the
 ---   slot; the planner takes the first one that needs nothing missing.
---- CPU: a Crafting CPU runs one job at a time, the bigger tiers (issue #38, mod-data
----   "fork-me-autocraft") several, and hand more work to the machines per step (speed). The job
----   slots of all CPUs in the network are the number of parallel jobs. Jobs wait ("queued") until a
----   slot is free.
+--- CPU (issue #6, docs/ME-REWORK.md "Crafting CPUs as multiblocks"): a group of touching crafting blocks (1x1) that
+---   is a solid rectangle with at least one crafting storage is a Crafting CPU. It runs one job, which must fit its
+---   bytes (plan.bytes, AE2's rule); its co-processors make it hand more work to the machines per step (speed). The
+---   groups are kept up to date on build and removal (add_block / remove_block), never scanned. The single-entity CPUs
+---   of issue #38 (mod-data "fork-me-autocraft", cpus) are legacy blocks: several jobs, their speed, no byte limit.
+---   A job whose CPU changes or goes pauses ("queued") with everything it holds and takes the next CPU that fits.
 --- Planning: recursive over the patterns, storage first, loops recognised, missing raw
 ---   materials reported before anything is started (M.plan). Items and fluids are both
 ---   "resources", keyed by the item name or "fluid/<name>" (fluid storage: fork-me-fluids.lua).
@@ -30,31 +32,32 @@
 ---   is idle again, moves the products into the pool, and at the end everything left in the pool
 ---   (result and by-products) is stored in the network. Cancel and failure give the pool back
 ---   the same way.
---- Work per step: STEP_OPS machine interactions per job (times the speed of its CPU tier), at most
----   MAX_OPS_PER_STEP in all, MAX_JOBS_PER_STEP jobs, PROVIDERS_PER_STEP provider rescans, and the
----   step hooks (level maintainers and circuit interfaces, scripts/fork-me-circuit.lua), one step
----   every STEP_TICKS ticks (15, 30 and 60 are used by the fluid storage, the molds and the terminal,
----   see control.lua).
+--- Work (issue #5: spread over the ticks, M.on_tick from control.lua): each tick the setting "crafting jobs per
+---   tick" jobs are stepped, round robin, each at most once per STEP_TICKS ticks; a step makes STEP_OPS machine
+---   interactions times the speed of the job's CPU tier per STEP_TICKS since the job's last step (up to
+---   MAX_CATCH_UP steps' worth, so a job that waits for its turn catches up). One provider is rescanned every
+---   PROVIDER_SCAN_TICKS ticks, CPUs are assigned every STEP_TICKS ticks, and the tick hooks run every tick (level
+---   maintainers and circuit interfaces, scripts/fork-me-circuit.lua, on their own queues).
 --- State: storage.fork_ae2 only (entities, counts, plain data). GUI state lives in the GUI.
 --------------------------------------------------------------------------------
 
 local fluids = require("scripts.fork-me-fluids")
 local N = require("scripts.fork-me-network")
 local P = require("scripts.fork-me-patterns")
+local Sched = require("scripts.fork-me-schedule")
 
 local M = {}
 
---- functions run at the end of every step (fork-me-circuit.lua); registered at load time, nothing is stored
+--- functions(s, tick) run every tick (fork-me-circuit.lua); registered at load time, nothing is stored
 M.step_hooks = {}
 --- functions(bp, mapping) run when a blueprint is set up, after the providers are tagged
 M.blueprint_hooks = {}
 
-local STEP_TICKS = 20
-local MAX_JOBS_PER_STEP = 8
+local STEP_TICKS = 20           -- a job is stepped at most this often
 local STEP_OPS = 6              -- machine hand-overs / collections per job and step (base CPU)
-local MAX_OPS_PER_STEP = 96     -- all jobs together (4 quantum CPU jobs at full speed)
+local MAX_CATCH_UP = 3          -- steps' worth of operations a late job may make at once
 local MAX_BATCH = 16            -- crafts handed to one machine at once
-local PROVIDERS_PER_STEP = 8
+local PROVIDER_SCAN_TICKS = 2   -- one provider rescan this often (8 per 20 ticks before issue #5)
 local STALL_STEPS = 900         -- steps without progress (5 minutes) until a job fails
 local KEEP_FINISHED_TICKS = 5 * 60 * 60
 local MAX_FINISHED = 12
@@ -91,9 +94,27 @@ local function cpu_spec(name)
 	return cpu_specs()[name]
 end
 
+--- issue #6: the crafting blocks (name -> { bytes, coprocessors, monitor, power }) and the byte rule's numbers
+local blocks_cache, fluid_per_byte, max_coprocessors
+local function block_specs()
+	if not blocks_cache then
+		local md = prototypes.mod_data["fork-me-autocraft"]
+		local d = md and md.data or {}
+		blocks_cache = d.blocks or {}
+		fluid_per_byte = d.fluid_units_per_byte or 10
+		max_coprocessors = d.max_coprocessors or 16
+	end
+	return blocks_cache
+end
+
+local function block_spec(name)
+	return block_specs()[name]
+end
+
 local function cpu_names()
 	local names = {}
 	for name in pairs(cpu_specs()) do names[#names + 1] = name end
+	for name in pairs(block_specs()) do names[#names + 1] = name end
 	table.sort(names)
 	return names
 end
@@ -547,7 +568,7 @@ local function rebuild_patterns(s)
 		if p.net and p.entity.valid then
 			local net = patterns[p.net]
 			if not net then
-				net = { items = {}, defs = {}, targets = {}, ignored = { total = 0 }, seen = {} }
+				net = { items = {}, defs = {}, targets = {}, ignored = { total = 0 }, seen = {}, prov = {} }
 				patterns[p.net] = net
 			end
 			for slot = 1, SLOTS do
@@ -558,6 +579,8 @@ local function rebuild_patterns(s)
 					net.ignored[st.reason] = (net.ignored[st.reason] or 0) + 1
 				elseif pat then
 					local id = pat.id
+					net.prov[id] = net.prov[id] or {}
+					if net.prov[id][#net.prov[id]] ~= p.unit then net.prov[id][#net.prov[id] + 1] = p.unit end
 					if not net.defs[id] then
 						net.defs[id] = pat.def
 						net.targets[id] = {}
@@ -609,11 +632,11 @@ N.change_hooks[#N.change_hooks + 1] = function()
 	if s then s.graph_dirty, s.await = true, nil end
 end
 
---- bounded slice of the round robin rescan
-local function maintenance(s)
+--- bounded slice of the round robin rescan: `count` providers
+local function maintenance(s, count)
 	local n = #s.plist
 	if n == 0 then return end
-	for _ = 1, math.min(PROVIDERS_PER_STEP, n) do
+	for _ = 1, math.min(count, n) do
 		if s.pcursor > #s.plist then s.pcursor = 1 end
 		local unit = s.plist[s.pcursor]
 		local p = s.providers[unit]
@@ -761,6 +784,29 @@ end
 
 local NO_PATTERNS = { items = {}, defs = {}, targets = {}, ignored = { total = 0 } }
 
+--- issue #6: crafting storage bytes of `amount` of `key`: 1 per item, 1 per fluid_units_per_byte fluid units (rounded up)
+local function key_bytes(key, amount)
+	if is_fluid(key) then
+		block_specs()
+		return math.ceil(amount / fluid_per_byte - 1e-9)
+	end
+	return math.ceil(amount - 1e-9)
+end
+
+--- The bytes a job needs (AE2's rule per plan step, docs/ME-REWORK.md "The bytes a job needs"): the amount ordered,
+--- per step its runs and the ingredients of all its runs, 8 per step and per resource taken from storage (`reserved`:
+--- their number; unknown for a job of an older save, counted as 0). `steps`: { def, runs }.
+local function plan_bytes(key, amount, steps, reserved)
+	local bytes = key_bytes(key, amount) + 8 * (#steps + (reserved or 0))
+	for _, st in ipairs(steps) do
+		bytes = bytes + st.runs
+		for _, ing in pairs(P.ingredients(st.def)) do
+			bytes = bytes + key_bytes(key_of(ing), ing.amount * st.runs)
+		end
+	end
+	return bytes
+end
+
 --- Plan `amount` of `key` for the network `net`.
 --- Returns { ok, missing = {key -> count}, loops = {key -> true}, steps = { {pid, def, runs} },
 --- reserve = {key -> count taken from storage}, runs, too_complex }
@@ -780,10 +826,10 @@ local function make_plan(s, net, key, amount)
 		steps[#steps + 1] = { pid = pid, def = patterns.defs[pid], runs = step.runs }
 		runs = runs + step.runs
 	end
-	local reserve = {}
-	for k, v in pairs(ctx.reserve) do if v > 0 then reserve[k] = v end end
+	local reserve, reserved = {}, 0
+	for k, v in pairs(ctx.reserve) do if v > 0 then reserve[k] = v reserved = reserved + 1 end end
 	return { ok = ctx.missing_n == 0, missing = ctx.missing, loops = ctx.loops, steps = steps,
-		reserve = reserve, runs = runs, too_complex = ctx.too_complex }
+		reserve = reserve, runs = runs, too_complex = ctx.too_complex, bytes = plan_bytes(key, amount, steps, reserved) }
 end
 
 --------------------------------------------------------------------------------
@@ -837,6 +883,304 @@ local function cpus_in(s, net)
 end
 
 --------------------------------------------------------------------------------
+--- multiblock CPUs (issue #6): groups of touching crafting blocks, kept up to date on build and removal like the
+--- network graph (no scan while nothing changes). All blocks are 1x1 and cannot overlap, so a group is a solid
+--- rectangle exactly when its block count fills its bounding box.
+---   s.cblocks[unit] = { entity, x, y, surface, group }    every crafting block, by its tile
+---   s.cgrid["surface:x:y"] = unit                         the tile index: neighbours are four lookups
+---   s.groups[id] = { id, blocks = { unit = true }, n, x1, y1, x2, y2, bytes, coprocessors, monitors = { unit = true },
+---                    status, job, anchor, surface }       status "ok", "not-rectangle" or "no-storage"
+--------------------------------------------------------------------------------
+
+--- functions(group) run when a group's blocks, status or job changed (the crafting monitors)
+M.group_hooks = {}
+
+local SIDES = { { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
+
+local function cstate(s)
+	if not s.groups then s.cblocks, s.cgrid, s.groups, s.next_group = {}, {}, {}, 1 end
+	return s
+end
+
+local function grid_key(surface, x, y) return surface .. ":" .. x .. ":" .. y end
+
+--- the units of the crafting blocks on the four tiles next to block `b` (in `group` only, when given)
+local function block_neighbours(s, b, group)
+	local out = {}
+	for _, d in ipairs(SIDES) do
+		local u = s.cgrid[grid_key(b.surface, b.x + d[1], b.y + d[2])]
+		local o = u and s.cblocks[u]
+		if o and (not group or o.group == group) then out[#out + 1] = u end
+	end
+	return out
+end
+
+--- the group's sums and box from its blocks (after a removal)
+local function recount_group(s, g)
+	g.n, g.bytes, g.coprocessors, g.monitors, g.anchor = 0, 0, 0, {}, nil
+	g.x1, g.y1, g.x2, g.y2 = nil, nil, nil, nil
+	local units = {}
+	for unit in pairs(g.blocks) do units[#units + 1] = unit end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local b = s.cblocks[unit]
+		local spec = b.entity.valid and block_spec(b.entity.name) or { bytes = 0, coprocessors = 0 }
+		g.n = g.n + 1
+		g.bytes = g.bytes + spec.bytes
+		g.coprocessors = g.coprocessors + spec.coprocessors
+		if spec.monitor then g.monitors[unit] = true end
+		if not g.anchor and b.entity.valid then g.anchor = b.entity end
+		g.x1, g.y1 = math.min(g.x1 or b.x, b.x), math.min(g.y1 or b.y, b.y)
+		g.x2, g.y2 = math.max(g.x2 or b.x, b.x), math.max(g.y2 or b.y, b.y)
+	end
+end
+
+local function add_to_group(g, unit, b)
+	local spec = block_spec(b.entity.name)
+	g.blocks[unit] = true
+	b.group = g.id
+	g.n = g.n + 1
+	g.bytes = g.bytes + spec.bytes
+	g.coprocessors = g.coprocessors + spec.coprocessors
+	if spec.monitor then g.monitors[unit] = true end
+	if not (g.anchor and g.anchor.valid) then g.anchor = b.entity end
+	g.x1, g.y1 = math.min(g.x1 or b.x, b.x), math.min(g.y1 or b.y, b.y)
+	g.x2, g.y2 = math.max(g.x2 or b.x, b.x), math.max(g.y2 or b.y, b.y)
+end
+
+local function new_group(s, surface)
+	local id = s.next_group
+	s.next_group = id + 1
+	local g = { id = id, blocks = {}, n = 0, bytes = 0, coprocessors = 0, monitors = {}, surface = surface }
+	s.groups[id] = g
+	return g
+end
+
+--- the bytes a job needs (jobs of older saves: from their steps)
+local function job_bytes(job)
+	if not job.bytes then job.bytes = plan_bytes(job.item, job.amount, job.steps) end
+	return job.bytes
+end
+
+--- a job whose CPU group changed or went: it pauses with everything it holds and takes the next CPU that fits
+--- (a closing job needs no CPU and simply goes on)
+local function pause_group_job(s, g)
+	local job = g.job and s.jobs[g.job]
+	g.job = nil
+	if not (job and job.group == g.id) then return end
+	job.group = nil
+	if job.status == "running" and not job.closing then
+		job.status = "queued"
+		job.wait = nil
+	end
+end
+
+local function group_changed(g)
+	for _, hook in pairs(M.group_hooks) do hook(g) end
+end
+
+--- status, pictures (dark: no CPU, lit: a CPU) and the job of a group whose blocks changed
+local function settle_group(s, g)
+	local was = g.status
+	local rect = g.n == (g.x2 - g.x1 + 1) * (g.y2 - g.y1 + 1)
+	g.status = not rect and "not-rectangle" or g.bytes <= 0 and "no-storage" or "ok"
+	if g.status ~= was then
+		local variation = g.status == "ok" and 2 or 1
+		for unit in pairs(g.blocks) do
+			local e = s.cblocks[unit].entity
+			if e.valid then e.graphics_variation = variation end
+		end
+	end
+	local job = g.job and s.jobs[g.job]
+	if job and not (g.status == "ok" and g.bytes >= job_bytes(job)) then pause_group_job(s, g) end
+	group_changed(g)
+end
+
+--- a crafting block was built (or cloned): it joins the groups next to it (merged into the largest)
+local function add_block(s, entity)
+	cstate(s)
+	local unit = entity.unit_number
+	if s.cblocks[unit] then return end
+	local b = { entity = entity, x = math.floor(entity.position.x), y = math.floor(entity.position.y), surface = entity.surface.index }
+	s.cblocks[unit] = b
+	s.cgrid[grid_key(b.surface, b.x, b.y)] = unit
+	local ids, seen = {}, {}
+	for _, u in ipairs(block_neighbours(s, b)) do
+		local id = s.cblocks[u].group
+		if not seen[id] then seen[id] = true ids[#ids + 1] = id end
+	end
+	table.sort(ids, function(a, c)
+		if s.groups[a].n ~= s.groups[c].n then return s.groups[a].n > s.groups[c].n end
+		return a < c
+	end)
+	local g = ids[1] and s.groups[ids[1]] or new_group(s, b.surface)
+	--- merged groups: the job with the lowest id stays (if it still fits), the others pause
+	local jobs = {}
+	if g.job then jobs[#jobs + 1] = g.job end
+	for i = 2, #ids do
+		local other = s.groups[ids[i]]
+		if other.job then jobs[#jobs + 1] = other.job end
+		pause_group_job(s, other)
+		for u in pairs(other.blocks) do add_to_group(g, u, s.cblocks[u]) end
+		s.groups[other.id] = nil
+		group_changed(other)
+	end
+	table.sort(jobs)
+	if jobs[1] and jobs[1] ~= g.job then
+		pause_group_job(s, g)
+		local job = s.jobs[jobs[1]]
+		if job and job.status == "queued" and not job.closing then
+			g.job, job.group, job.status = job.id, g.id, "running"
+		end
+	end
+	add_to_group(g, unit, b)
+	entity.graphics_variation = g.status == "ok" and 2 or 1      -- (settle_group sets every block when the status changes)
+	settle_group(s, g)
+end
+
+--- a crafting block was removed (mined, destroyed, or vanished without an event): it leaves its group, which may split
+local function remove_block(s, unit)
+	local b = s.cblocks and s.cblocks[unit]
+	if not b then return end
+	s.cblocks[unit] = nil
+	local k = grid_key(b.surface, b.x, b.y)
+	if s.cgrid[k] == unit then s.cgrid[k] = nil end
+	local g = s.groups[b.group]
+	if not g then return end
+	g.blocks[unit] = nil
+	if s.monitors and s.monitors[unit] then
+		for _, obj in pairs(s.monitors[unit]) do if type(obj) ~= "number" and obj.valid then obj.destroy() end end
+		s.monitors[unit] = nil
+	end
+	if next(g.blocks) == nil then
+		pause_group_job(s, g)
+		s.groups[g.id] = nil
+		g.n = 0
+		group_changed(g)
+		return
+	end
+	local starts = block_neighbours(s, b, g.id)
+	local parts
+	if #starts <= 1 then
+		parts = { g.blocks }
+	else
+		--- one breadth first search over the group's blocks finds its parts
+		parts = {}
+		local seen = {}
+		table.sort(starts)
+		for _, start in ipairs(starts) do
+			if not seen[start] then
+				local part, queue, i = {}, { start }, 1
+				seen[start] = true
+				while queue[i] do
+					local u = queue[i]
+					i = i + 1
+					part[u] = true
+					for _, v in ipairs(block_neighbours(s, s.cblocks[u], g.id)) do
+						if not seen[v] then seen[v] = true queue[#queue + 1] = v end
+					end
+				end
+				parts[#parts + 1] = part
+			end
+		end
+	end
+	if #parts > 1 then
+		local function size(p) local n = 0 for _ in pairs(p) do n = n + 1 end return n end
+		local sizes = {}
+		for i, p in ipairs(parts) do sizes[i] = { p = p, n = size(p), first = i } end
+		table.sort(sizes, function(a, c) if a.n ~= c.n then return a.n > c.n end return a.first < c.first end)
+		g.blocks = sizes[1].p                              -- the largest part keeps the group (and its job, if it fits)
+		for i = 2, #sizes do
+			local part = new_group(s, g.surface)
+			part.blocks = sizes[i].p
+			for u in pairs(part.blocks) do s.cblocks[u].group = part.id end
+			recount_group(s, part)
+			settle_group(s, part)
+		end
+	end
+	recount_group(s, g)
+	settle_group(s, g)
+end
+
+--- the working network of a group (that of its blocks), nil when it has none or it does not work
+local function group_network(g)
+	if not (g.anchor and g.anchor.valid) then return nil end
+	return N.active_of(g.anchor)
+end
+
+--- the network of a group, working or not
+local function group_network_any(g)
+	return g.anchor and g.anchor.valid and N.network_of(g.anchor) or nil
+end
+
+--- speed of a group: 1 + its co-processors (at most max_coprocessors count)
+local function group_speed(g)
+	block_specs()
+	return 1 + math.min(g.coprocessors, max_coprocessors)
+end
+
+--- the multiblock CPUs of a network (groups that are CPUs), smallest storage first, then the fastest, then the oldest
+local function groups_in(s, net)
+	local list = {}
+	for _, g in pairs(cstate(s).groups) do
+		if g.status == "ok" then
+			local n = group_network_any(g)
+			if n and n.id == net.id then list[#list + 1] = g end
+		end
+	end
+	table.sort(list, function(a, b)
+		if a.bytes ~= b.bytes then return a.bytes < b.bytes end
+		if a.coprocessors ~= b.coprocessors then return a.coprocessors > b.coprocessors end
+		return a.id < b.id
+	end)
+	return list
+end
+
+--- The CPU a job of `bytes` gets now in `net`: a free multiblock CPU that is big enough, else a legacy CPU with a free
+--- slot. Returns the group or the legacy record (and its kind), or nil and why: "no-cpu" (none at all),
+--- "cpu-too-small" (no CPU of the network is big enough; also the biggest one's bytes), "no-free-cpu".
+local function pick_cpu(s, net, bytes)
+	local biggest, any = 0, false
+	for _, g in ipairs(groups_in(s, net)) do
+		any = true
+		if g.bytes > biggest then biggest = g.bytes end
+		if g.bytes >= bytes and not g.job and group_network(g) then return g, "group" end
+	end
+	local legacy = cpus_in(s, net)
+	for _, rec in ipairs(legacy) do
+		if cpu_powered(rec.entity) and cpu_load(rec) < cpu_slots(rec) then return rec, "legacy" end
+	end
+	if not any and #legacy == 0 then return nil, "no-cpu" end
+	if #legacy == 0 and biggest < bytes then return nil, "cpu-too-small", biggest end
+	return nil, "no-free-cpu", biggest
+end
+
+--- The CPUs of a network for the plan preview (issue #6), in the order a job takes them: { kind = "group" or "legacy",
+--- id (group id or unit number), name (legacy: entity name), bytes (nil: no limit), coprocessors, speed, width,
+--- height, free, fits } (`bytes`: the job's; fits = big enough, free = can take a job now)
+function M.cpu_list(net, bytes)
+	local s = state()
+	local out = {}
+	for _, g in ipairs(groups_in(s, net)) do
+		out[#out + 1] = { kind = "group", id = g.id, bytes = g.bytes, coprocessors = g.coprocessors, speed = group_speed(g),
+			width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1, free = not g.job and group_network(g) ~= nil,
+			fits = g.bytes >= (bytes or 0) }
+	end
+	for _, rec in ipairs(cpus_in(s, net)) do
+		local spec = cpu_spec(rec.entity.name)
+		out[#out + 1] = { kind = "legacy", id = rec.entity.unit_number, name = rec.entity.name, speed = spec and spec.speed or 1,
+			free = cpu_powered(rec.entity) and cpu_load(rec) < cpu_slots(rec), fits = true }
+	end
+	return out
+end
+
+local function give_group(g, job)
+	g.job, job.group, job.cpu, job.status = job.id, g.id, nil, "running"
+	if g.anchor and g.anchor.valid then job.pos = { x = g.anchor.position.x, y = g.anchor.position.y } end
+	group_changed(g)
+end
+
+--------------------------------------------------------------------------------
 --- jobs
 --------------------------------------------------------------------------------
 
@@ -844,6 +1188,8 @@ end
 --- its position (jobs of older saves)
 local function job_network(job)
 	local s = state()
+	local g = job.group and s.groups and s.groups[job.group]
+	if g and group_network_any(g) then return group_network(g) end
 	local rec = job.cpu and s.cpus[job.cpu]
 	if rec and rec.entity.valid and N.network_of(rec.entity) then return N.active_of(rec.entity) end
 	if job.anchor and job.anchor.valid and N.network_of(job.anchor) then return N.active_of(job.anchor) end
@@ -1018,6 +1364,12 @@ local function release_cpu(s, job)
 	local rec = job.cpu and s.cpus[job.cpu]
 	if rec then cpu_jobs(rec)[job.id] = nil end
 	job.cpu = nil
+	local g = job.group and s.groups and s.groups[job.group]
+	job.group = nil
+	if g and g.job == job.id then
+		g.job = nil
+		group_changed(g)
+	end
 end
 
 --- The job is over one way or the other; keep it visible for a while
@@ -1030,6 +1382,7 @@ local function finish(s, job, status, reason)
 	remove_value(s.active, job.id)
 	s.finished[#s.finished + 1] = job.id
 	s.await = nil
+	if job.owner and N.wakers.maint then N.wakers.maint(job.owner) end     -- its level maintainer checks again
 end
 
 --- Cancel or fail: stop handing out work, take unused inputs back, keep waiting for machines that
@@ -1049,21 +1402,36 @@ local function begin_closing(s, job, final_status, reason)
 	s.await = nil
 end
 
+--- Queued jobs (paused: their CPU changed or went; or queued in an older save) take a free CPU of their network: a
+--- multiblock CPU with enough bytes (the smallest first), else a legacy CPU with a free slot (the fastest first).
 local function assign_cpus(s)
 	for _, id in pairs(s.active) do
 		local job = s.jobs[id]
 		if job and job.status == "queued" and not job.closing then
 			local net = job_network(job)
 			if net then
-				for _, rec in ipairs(cpus_in(s, net)) do
-					if cpu_load(rec) < cpu_slots(rec) then
-						cpu_jobs(rec)[job.id] = true
-						job.cpu = rec.entity.unit_number
-						job.pos = { x = rec.entity.position.x, y = rec.entity.position.y }
-						job.status = "running"
+				local bytes = job_bytes(job)
+				local given = false
+				for _, g in ipairs(groups_in(s, net)) do
+					if not g.job and g.bytes >= bytes then
+						give_group(g, job)
+						given = true
 						break
 					end
 				end
+				if not given then
+					for _, rec in ipairs(cpus_in(s, net)) do
+						if cpu_load(rec) < cpu_slots(rec) then
+							cpu_jobs(rec)[job.id] = true
+							job.cpu = rec.entity.unit_number
+							job.pos = { x = rec.entity.position.x, y = rec.entity.position.y }
+							job.status = "running"
+							given = true
+							break
+						end
+					end
+				end
+				job.wait = not given and "cpu-bytes" or nil
 			end
 		end
 	end
@@ -1284,6 +1652,8 @@ end
 
 --- machine interactions a job may use in this step: STEP_OPS times the speed of its CPU tier
 local function job_ops(s, job)
+	local g = job.group and s.groups and s.groups[job.group]
+	if g then return STEP_OPS * group_speed(g) end
 	local rec = job.cpu and s.cpus[job.cpu]
 	local spec = rec and rec.entity.valid and cpu_spec(rec.entity.name)
 	return STEP_OPS * (spec and spec.speed or 1)
@@ -1332,7 +1702,16 @@ local function job_step(s, job, work)
 	local net = job_network(job)
 	if not net then set_wait(job, "no-network") return end
 	local cpu_rec = job.cpu and s.cpus[job.cpu]
-	if not job.closing then
+	local group = job.group and s.groups and s.groups[job.group]
+	if group and not job.closing then
+		if not (group.job == job.id and group.status == "ok") then     -- (settle_group pauses it; never seen)
+			release_cpu(s, job)
+			job.status = "queued"
+			set_wait(job, nil)
+			return
+		end
+		if group.anchor and group.anchor.valid then job.pos = { x = group.anchor.position.x, y = group.anchor.position.y } end
+	elseif not job.closing then
 		if not (cpu_rec and cpu_rec.entity.valid) then       -- CPU removed: pause until another one is free
 			release_cpu(s, job)
 			job.status = "queued"
@@ -1505,33 +1884,43 @@ local function prune_finished(s)
 	end
 end
 
-local function on_step(event)
-	local s = storage.fork_ae2
-	if not s then return end
-	if #s.active > 0 then
-		assign_cpus(s)
-		local n = #s.active
-		local count = math.min(MAX_JOBS_PER_STEP, n)
-		local ids = {}
-		for i = 0, count - 1 do ids[#ids + 1] = s.active[(s.jcursor - 1 + i) % n + 1] end
-		s.jcursor = (s.jcursor - 1 + count) % n + 1
-		local budget = MAX_OPS_PER_STEP
-		for _, id in pairs(ids) do
-			local job = s.jobs[id]
-			if job and (job.status == "queued" or job.status == "running") then
-				local work = { ops = math.min(job_ops(s, job), budget) }
-				local given = work.ops
-				job_step(s, job, work)
-				budget = math.max(0, budget - (given - work.ops))
+--- the jobs of this tick: round robin from s.jcursor, each at most once per STEP_TICKS, at most `budget` of them;
+--- a step gets its CPU's operations for every STEP_TICKS since the job's last step (MAX_CATCH_UP at most)
+local function step_jobs(s, tick, budget)
+	local n = #s.active
+	if n == 0 then return end
+	local done = 0
+	for _ = 1, n do
+		if done >= budget or #s.active == 0 then break end
+		if s.jcursor > #s.active then s.jcursor = 1 end
+		local id = s.active[s.jcursor]
+		s.jcursor = s.jcursor + 1
+		local job = s.jobs[id]
+		if job and (job.status == "queued" or job.status == "running") then
+			local since = tick - (job.stepped or (tick - STEP_TICKS))
+			if since >= STEP_TICKS then
+				job.stepped = tick
+				done = done + 1
+				local scale = math.min(math.floor(since / STEP_TICKS), MAX_CATCH_UP)
+				job_step(s, job, { ops = job_ops(s, job) * scale })
 			end
 		end
 	end
-	maintenance(s)
-	prune_finished(s)
-	for _, hook in pairs(M.step_hooks) do hook(s) end
 end
 
-script.on_nth_tick(STEP_TICKS, on_step)
+--- every tick (control.lua): CPUs and pruning every STEP_TICKS, the due jobs, a provider rescan every
+--- PROVIDER_SCAN_TICKS, then the tick hooks (maintainers and circuit interfaces)
+function M.on_tick(tick)
+	local s = storage.fork_ae2
+	if not s then return end
+	if tick % STEP_TICKS == 0 then
+		if #s.active > 0 then assign_cpus(s) end
+		prune_finished(s)
+	end
+	if #s.active > 0 then step_jobs(s, tick, Sched.setting("jobs")) end
+	if tick % PROVIDER_SCAN_TICKS == 0 then maintenance(s, 1) end
+	for _, hook in pairs(M.step_hooks) do hook(s, tick) end
+end
 
 --------------------------------------------------------------------------------
 --- arrivals: outputs of processing patterns that come back into the network (N.on_arrival)
@@ -1638,10 +2027,16 @@ function M.describe(key)
 	return { key = key, name = key, fluid = false, sprite = "item/" .. key, localised_name = proto.localised_name }
 end
 
---- Crafting CPUs of the network: CPUs, free job slots, powered CPUs, job slots (a base CPU has one)
+--- Crafting CPUs of the network: CPUs, free job slots, powered CPUs, job slots (a multiblock CPU and a base CPU have
+--- one; a multiblock CPU is powered when its network works)
 function M.cpu_summary(net)
 	local s = state()
 	local total, free, powered, slots = 0, 0, 0, 0
+	for _, g in ipairs(groups_in(s, net)) do
+		total, slots = total + 1, slots + 1
+		if not g.job then free = free + 1 end
+		if group_network(g) then powered = powered + 1 end
+	end
 	for _, rec in pairs(cpus_in(s, net)) do
 		total = total + 1
 		local n = cpu_slots(rec)
@@ -1655,6 +2050,9 @@ end
 --- true when a powered CPU of the network has a free job slot (a new job would run at once)
 function M.free_slot(net)
 	local s = state()
+	for _, g in ipairs(groups_in(s, net)) do
+		if not g.job and group_network(g) then return true end
+	end
 	for _, rec in pairs(cpus_in(s, net)) do
 		if cpu_powered(rec.entity) and cpu_load(rec) < cpu_slots(rec) then return true end
 	end
@@ -1683,6 +2081,29 @@ function M.plan(net, key, amount, fresh)
 	return make_plan(s, net, key, math.floor(amount))
 end
 
+--- Issue #5: before a job starts, the providers of its plan's patterns are scanned (not every provider of the map:
+--- 200 of them cost 18 ms); true when a pattern changed (then the plan is made again).
+local function rescan_plan(s, net, plan)
+	local pats = s.patterns[net.id]
+	if not (pats and pats.prov) then return false end
+	local units, seen = {}, {}
+	for _, st in ipairs(plan.steps or {}) do
+		for _, unit in ipairs(pats.prov[st.pid] or {}) do
+			if not seen[unit] then
+				seen[unit] = true
+				units[#units + 1] = unit
+			end
+		end
+	end
+	table.sort(units)
+	local dirty = s.dirty
+	for _, unit in ipairs(units) do
+		local p = s.providers[unit]
+		if p and p.entity.valid then scan_provider(p) else drop_provider(s, unit) end
+	end
+	return s.dirty and not dirty
+end
+
 --- the job step of a planned step
 local function job_step_of(st)
 	local step = { pid = st.pid, def = st.def, kind = st.def.kind, recipe = st.def.recipe, runs = st.runs, issued = 0, done = 0 }
@@ -1692,7 +2113,9 @@ end
 
 --- Start a job for `amount` of `key` in the network of `entity` (a network member such as the
 --- terminal). `owner`: unit number of the level maintainer that asked for it (nil for a player).
---- Returns the job id, or nil, a reason key and the plan.
+--- Returns the job id, or nil, a reason key and the plan. Issue #6: the job needs a CPU now (a free multiblock CPU
+--- with plan.bytes, or a free slot of a legacy CPU): else "cpu-too-small" (plan.biggest: the biggest CPU's bytes) or
+--- "no-free-cpu".
 function M.start(entity, key, amount, owner)
 	local s = state()
 	local net = network_of(entity)
@@ -1701,12 +2124,16 @@ function M.start(entity, key, amount, owner)
 	if amount < 1 then return nil, "bad-amount" end
 	if amount > (is_fluid(key) and MAX_FLUID_AMOUNT or MAX_AMOUNT) then return nil, "too-many" end
 	if not proto_of(key) then return nil, "no-pattern" end
-	local cpus = cpus_in(s, net)
-	if #cpus == 0 then return nil, "no-cpu" end
-	refresh_providers(s)
+	if #cpus_in(s, net) == 0 and #groups_in(s, net) == 0 then return nil, "no-cpu" end
 	local plan = make_plan(s, net, key, amount)
+	if rescan_plan(s, net, plan) then plan = make_plan(s, net, key, amount) end
 	if plan.no_pattern then return nil, "no-pattern", plan end
 	if not plan.ok then return nil, "missing", plan end
+	local cpu, kind, biggest = pick_cpu(s, net, plan.bytes)
+	if not cpu then
+		plan.biggest = biggest
+		return nil, kind, plan
+	end
 
 	local pool, taken = {}, {}
 	local function undo()
@@ -1738,10 +2165,17 @@ function M.start(entity, key, amount, owner)
 		id = id, item = key, amount = amount, status = "queued", steps = steps, pool = pool, leases = {},
 		total_runs = total, done_runs = 0, idle = 0, tick = game.tick,
 		surface = entity.surface.index, force = entity.force.index,
-		pos = { x = entity.position.x, y = entity.position.y }, owner = owner, anchor = entity,
+		pos = { x = entity.position.x, y = entity.position.y }, owner = owner, anchor = entity, bytes = plan.bytes,
 	}
 	s.active[#s.active + 1] = id
-	assign_cpus(s)
+	local job = s.jobs[id]
+	if kind == "group" then
+		give_group(cpu, job)
+	else
+		cpu_jobs(cpu)[id] = true
+		job.cpu, job.status = cpu.entity.unit_number, "running"
+		job.pos = { x = cpu.entity.position.x, y = cpu.entity.position.y }
+	end
 	return id, nil, plan
 end
 
@@ -1777,6 +2211,7 @@ function M.jobs(net)
 					id = job.id, item = job.item, amount = job.amount, status = status, wait = job.wait,
 					reason = job.reason, done = job.done_runs, total = job.total_runs,
 					active = job.status == "queued" or job.status == "running", owner = job.owner,
+					bytes = job_bytes(job), group = job.group,
 				}
 			end
 		end
@@ -1799,7 +2234,7 @@ function M.job(id)
 	end
 	return { id = job.id, item = job.item, amount = job.amount, status = job.status, closing = job.closing,
 		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool,
-		leases = #job.leases, owner = job.owner, cpu = job.cpu, ops = job_ops(s, job),
+		leases = #job.leases, owner = job.owner, cpu = job.cpu, ops = job_ops(s, job), group = job.group, bytes = job_bytes(job),
 		cpu_name = rec and rec.entity.valid and rec.entity.name or nil, steps = steps, reason = job.reason, problem = job.problem }
 end
 
@@ -1853,6 +2288,8 @@ local function register(s, entity)
 	elseif cpu_spec(entity.name) then
 		local unit = entity.unit_number
 		s.cpus[unit] = s.cpus[unit] or { entity = entity, jobs = {} }
+	elseif block_spec(entity.name) then
+		add_block(s, entity)
 	end
 end
 
@@ -2118,7 +2555,7 @@ end
 --- `tags`: the blueprint tags of a built ghost; `source`: the original of a cloned entity (its priority is copied,
 --- its patterns are items and stay with it)
 function M.on_built(entity, tags, source)
-	if not (entity and entity.valid and (entity.name == PROVIDER or cpu_spec(entity.name))) then return end
+	if not (entity and entity.valid and (entity.name == PROVIDER or cpu_spec(entity.name) or block_spec(entity.name))) then return end
 	register(state(), entity)
 	if entity.name ~= PROVIDER then return end
 	if type(tags) == "table" and (tags[BP_TAG] or tags[OLD_TAG]) then
@@ -2131,6 +2568,11 @@ end
 --- A provider is mined (its patterns go into `buffer`), destroyed or removed by a script (`buffer` nil: they are
 --- dropped on the ground). Patterns waiting for a blank are forgotten (they were never items).
 function M.on_removed(entity, buffer)
+	if entity and entity.valid and block_spec(entity.name) then          -- a crafting block leaves its CPU (issue #6)
+		local s = storage.fork_ae2
+		if s then remove_block(s, entity.unit_number) end
+		return
+	end
 	if not (entity and entity.valid and entity.name == PROVIDER) then return end
 	local s = storage.fork_ae2
 	local p = s and s.providers[entity.unit_number]
@@ -2169,6 +2611,71 @@ function M.on_mined(entity)
 end
 fluids.mined_hooks[#fluids.mined_hooks + 1] = M.on_mined
 
+--- The crafting monitors (issue #6): each monitor of a CPU that runs a job shows the job's item or fluid and its amount
+--- (two render objects, kept in s.monitors[unit]); redrawn only when its CPU's blocks, status or job change.
+local function amount_text(n)
+	if n >= 1e6 then return string.format("%.1fM", n / 1e6) end
+	if n >= 1e4 then return string.format("%.0fk", n / 1e3) end
+	return tostring(math.floor(n))
+end
+
+local function clear_monitor(s, unit)
+	local r = s.monitors and s.monitors[unit]
+	if not r then return end
+	for _, obj in pairs(r) do
+		if type(obj) ~= "number" and obj.valid then obj.destroy() end
+	end
+	s.monitors[unit] = nil
+end
+
+local function draw_monitors(g)
+	local s = storage.fork_ae2
+	if not (s and s.cblocks) then return end
+	s.monitors = s.monitors or {}
+	local live = s.groups[g.id] == g and g.n > 0
+	local job = live and g.status == "ok" and g.job and s.jobs[g.job]
+	local sprite = job and (is_fluid(job.item) and ("fluid/" .. fluid_name(job.item)) or ("item/" .. job.item))
+	if sprite and not helpers.is_valid_sprite_path(sprite) then sprite = nil end
+	for unit in pairs(g.monitors) do
+		local b = s.cblocks[unit]
+		local e = b and b.entity
+		local shown = s.monitors[unit]
+		if not (live and job and sprite and e and e.valid) then
+			clear_monitor(s, unit)
+		elseif not (shown and shown.job == job.id) then
+			clear_monitor(s, unit)
+			s.monitors[unit] = {
+				icon = rendering.draw_sprite{ sprite = sprite, target = { entity = e, offset = { 0, -0.1 } }, surface = e.surface,
+					x_scale = 0.55, y_scale = 0.55, render_layer = "higher-object-under" },
+				text = rendering.draw_text{ text = amount_text(job.amount), target = { entity = e, offset = { 0, 0.12 } },
+					surface = e.surface, color = { 0.6, 0.95, 1 }, scale = 0.6, alignment = "center", render_layer = "higher-object-under" },
+				job = job.id,
+			}
+		end
+	end
+end
+M.group_hooks[#M.group_hooks + 1] = draw_monitors
+
+--- a crafting block that vanished without an event (found by the network's sweep)
+N.vanish_hooks[#N.vanish_hooks + 1] = function(unit)
+	local s = storage.fork_ae2
+	if s then remove_block(s, unit) end
+end
+
+--- The window data of a crafting block (issue #6): its group's size, status, bytes, co-processors, speed, monitors,
+--- network and job. nil for anything else.
+function M.group_info(entity)
+	if not (entity and entity.valid and block_spec(entity.name)) then return nil end
+	local s = cstate(state())
+	if not s.cblocks[entity.unit_number] then add_block(s, entity) end
+	local g = s.groups[s.cblocks[entity.unit_number].group]
+	local monitors = 0
+	for _ in pairs(g.monitors) do monitors = monitors + 1 end
+	local job = g.job and M.job(g.job)
+	return { id = g.id, status = g.status, blocks = g.n, width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1,
+		bytes = g.bytes, used = job and job.bytes or 0, coprocessors = g.coprocessors, speed = group_speed(g),
+		monitors = monitors, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job }
+end
 --------------------------------------------------------------------------------
 --- migration (issue #80): providers of 0.4.1 and older read the recipe of the machines next to them (furnaces:
 --- a recipe chosen in the provider). Each gets encoded patterns for what it provided, so running setups, level
@@ -2301,6 +2808,8 @@ function M.on_configuration_changed()
 	end
 	s.providers, s.plist, s.pcursor, s.patterns, s.dirty, s.await = {}, {}, 1, {}, true, nil
 	s.cpus = {}
+	s.cblocks, s.cgrid, s.groups = {}, {}, {}             -- issue #6: the groups are built again from the blocks
+	s.next_group = s.next_group or 1
 	local names = cpu_names()
 	names[#names + 1] = PROVIDER
 	local all = {}
@@ -2330,14 +2839,25 @@ function M.on_configuration_changed()
 	refresh_providers(s)
 	ensure_patterns(s)
 	s.busy = {}
+	for _, rec in pairs(s.cpus) do rec.job, rec.jobs = nil, {} end
 	for _, id in pairs(shallow(s.active)) do
 		local job = s.jobs[id]
 		if not job then
 			remove_value(s.active, id)
 		else
 			if legacy then migrate_job(s, job) end
-			job.cpu = nil
-			if job.status == "running" and not job.closing then job.status = "queued" end
+			--- issue #6: a job stays on its legacy CPU (while it is one, with a slot); every other job is queued and
+			--- takes the next CPU that fits (multiblock groups are built again, they lose their jobs)
+			local rec = job.cpu and s.cpus[job.cpu]
+			job.cpu, job.group = nil, nil
+			if job.status == "running" and not job.closing then
+				if rec and rec.entity.valid and cpu_load(rec) < cpu_slots(rec) then
+					cpu_jobs(rec)[job.id] = true
+					job.cpu = rec.entity.unit_number
+				else
+					job.status = "queued"
+				end
+			end
 			for _, lease in pairs(shallow(job.leases)) do
 				local step = job.steps[lease.step]
 				if lease.machine.valid and step and step.def then
@@ -2359,13 +2879,12 @@ function M.on_configuration_changed()
 			end
 		end
 	end
-	for _, rec in pairs(s.cpus) do rec.job, rec.jobs = nil, {} end
 end
 
 --- Other mods and the devcheck runtime test use the same code paths. Resource keys are item names
 --- or "fluid/<fluid name>".
 remote.add_interface("gregtorio-me-autocraft", {
-	--- { ok, missing = {key -> count}, runs, steps, loops, reserve, pids } or nil
+	--- { ok, missing = {key -> count}, runs, steps, loops, reserve, pids, bytes } or nil
 	plan = function(entity, key, amount)
 		local net = network_of(entity)
 		local p = net and M.plan(net, key, amount, true)
@@ -2373,13 +2892,28 @@ remote.add_interface("gregtorio-me-autocraft", {
 		local pids = {}
 		for i, st in ipairs(p.steps) do pids[i] = st.pid end
 		return { ok = p.ok, missing = p.missing, runs = p.runs, steps = #p.steps, loops = p.loops,
-			reserve = p.reserve, no_pattern = p.no_pattern, pids = pids }
+			reserve = p.reserve, no_pattern = p.no_pattern, pids = pids, bytes = p.bytes }
 	end,
 	start = function(entity, key, amount)
 		local id, why, p = M.start(entity, key, amount)
-		return id, why, p and p.missing
+		return id, why, p and p.missing, p and p.bytes, p and p.biggest
 	end,
 	cancel = function(id) return M.cancel(id) end,
+	--- issue #6: the CPU (group) of a crafting block: { id, status, blocks, width, height, bytes, used, coprocessors,
+	--- speed, monitors, network, working, job }
+	group_info = function(block) return M.group_info(block) end,
+	--- the CPUs of the network of `entity` for a job of `bytes` (the plan preview)
+	cpu_list = function(entity, bytes)
+		local net = N.network_of(entity)
+		return net and M.cpu_list(net, bytes) or {}
+	end,
+	--- the render objects of a crafting monitor: { icon = sprite path, text } or nil
+	monitor = function(block)
+		local s = storage.fork_ae2
+		local r = block and block.valid and s and s.monitors and s.monitors[block.unit_number]
+		if not (r and r.icon.valid and r.text.valid) then return nil end
+		return { sprite = r.icon.sprite, text = r.text.text, job = r.job }
+	end,
 	job = function(id) return M.job(id) end,
 	craftable = function(entity)
 		local net = network_of(entity)

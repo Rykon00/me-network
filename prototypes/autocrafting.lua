@@ -219,6 +219,83 @@ ME.add_item{
 local cpu_data = {}
 for _, t in ipairs(CPU_TIERS) do cpu_data[t.name] = { jobs = t.jobs, speed = t.speed } end
 
+--- issue #6: the three single-entity CPUs are legacy blocks. They keep working (job slots, speed, no byte limit), but
+--- no recipe makes them any more (data-final-fixes.lua also deletes the recipes another mod gives them); a player who
+--- holds one can still place it. Their technologies unlock the crafting blocks below.
+for _, t in ipairs(CPU_TIERS) do
+	ME.removed[t.name] = "me-1k-crafting-storage"
+	data.raw.item[t.name].localised_description = { "item-description.fork-me-legacy-cpu" }
+end
+
+
+
+--------------------------------------------------------------------------------
+--- CRAFTING CPU MULTIBLOCKS (issue #6, docs/ME-REWORK.md "Crafting CPUs as multiblocks"): 1x1 crafting blocks; any
+--- group of touching blocks that is a solid rectangle with at least one crafting storage is a Crafting CPU running one
+--- job (scripts/fork-me-autocraft.lua). The blocks are ME network members without a power connection of their own:
+--- the ME Controller draws their power (`power`, in W, read by scripts/fork-me-network.lua). Picture variation 1: the
+--- block of a group that is no CPU (dark), 2: of a CPU (lit). AE2's numbers: block/crafting/CraftingUnitType.java.
+--------------------------------------------------------------------------------
+
+--- name, bytes of crafting storage, co-processors, monitor, power, order, recipe (besides the crafting unit), tech
+local BLOCKS = {
+	{ name = "me-crafting-unit", bytes = 0, power = 4000, order = "h0",
+	  ingredients = I{ "iron-plate", 4, "advanced-circuit", 2, "fluix-cable", 2, "electronic-circuit", 1 }, tech = "me-autocrafting" },
+	{ name = "me-1k-crafting-storage", bytes = 1024, power = 4000, order = "h1", component = "me-1k-storage-component", tech = "me-autocrafting" },
+	{ name = "me-4k-crafting-storage", bytes = 4096, power = 8000, order = "h2", component = "me-4k-storage-component", tech = "me-autocrafting" },
+	{ name = "me-16k-crafting-storage", bytes = 16384, power = 16000, order = "h3", component = "me-16k-storage-component", tech = "me-co-processing" },
+	{ name = "me-64k-crafting-storage", bytes = 65536, power = 32000, order = "h4", component = "me-64k-storage-component", tech = "me-co-processing" },
+	{ name = "me-256k-crafting-storage", bytes = 262144, power = 64000, order = "h5", component = "me-256k-storage-component", tech = "me-quantum-crafting" },
+	{ name = "me-crafting-co-processing-unit", bytes = 0, coprocessors = 1, power = 32000, order = "h6",
+	  ingredients = I{ "me-crafting-unit", 1, "processing-unit", 1 }, tech = "me-co-processing" },
+	{ name = "me-crafting-monitor", bytes = 0, monitor = true, power = 4000, order = "h7",
+	  ingredients = I{ "me-crafting-unit", 1, "small-lamp", 1, "electronic-circuit", 1 }, tech = "me-autocrafting" },
+}
+
+data:extend({ { type = "item-subgroup", name = "fork-me-crafting-cpu", group = data.raw["item-subgroup"]["fork-me-network"].group,
+	order = "b-me-c" } })
+
+local block_data, block_tech = {}, {}
+for _, b in ipairs(BLOCKS) do
+	local ingredients = b.ingredients or I{ "me-crafting-unit", 1, b.component, 1 }
+	local description = b.bytes > 0 and { "entity-description.fork-me-crafting-storage", tostring(b.bytes) }
+		or { "entity-description." .. b.name }
+	ME.add_item{
+		name = b.name,
+		icon = ICON_FORK .. b.name .. ".png",
+		subgroup = "fork-me-crafting-cpu",
+		order = b.order,
+		stack_size = 50,
+		place_result = b.name,
+		localised_description = description,
+		recipe = { energy_required = 2, ingredients = ingredients },
+	}
+	data:extend({ {
+		type = "simple-entity-with-force",
+		name = b.name,
+		icon = ICON_FORK .. b.name .. ".png",
+		icon_size = 32,
+		flags = { "placeable-neutral", "player-creation" },
+		minable = { mining_time = 0.2, result = b.name },
+		placeable_by = { item = b.name, count = 1 },
+		max_health = 200,
+		is_military_target = false,
+		corpse = "small-remnants",
+		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+		fast_replaceable_group = "me-crafting-block",
+		--- the sheet holds the dark and the lit picture side by side (tools/gen_ae2_sprites.py --crafting-cpu)
+		pictures = {
+			{ filename = ENTITY_PATH .. b.name .. ".png", priority = "high", width = 32, height = 32, x = 0 },
+			{ filename = ENTITY_PATH .. b.name .. ".png", priority = "high", width = 32, height = 32, x = 32 },
+		},
+		localised_description = description,
+	} })
+	block_data[b.name] = { bytes = b.bytes, coprocessors = b.coprocessors or 0, monitor = b.monitor or false, power = b.power }
+	block_tech[b.tech] = block_tech[b.tech] or {}
+	table.insert(block_tech[b.tech], b.name)
+end
+
 
 
 --------------------------------------------------------------------------------
@@ -309,7 +386,9 @@ data:extend({ circuit })
 data:extend({ {
 	type = "mod-data",
 	name = "fork-me-autocraft",
-	data = { cpus = cpu_data },
+	--- issue #6: the crafting blocks; a fluid ingredient costs 1 byte per this many units (items 1 byte each); at most
+	--- this many co-processors of a CPU count
+	data = { cpus = cpu_data, blocks = block_data, fluid_units_per_byte = 10, max_coprocessors = 16 },
 } })
 
 
@@ -318,13 +397,27 @@ data:extend({ {
 --- TECHNOLOGIES (standalone: vanilla science)
 --------------------------------------------------------------------------------
 
+--- issue #6: the legacy CPUs have no recipe any more (ME.removed: data-final-fixes.lua drops their unlocks); the
+--- technologies unlock the crafting blocks (block_tech)
+local function with_blocks(tech, recipes)
+	for _, name in ipairs(block_tech[tech] or {}) do recipes[#recipes + 1] = name end
+	return recipes
+end
+
 ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2" }, unit = ME.unit(3, 500),
-	recipes = { "me-pattern-provider", "me-blank-pattern", "me-molecular-assembler", "me-crafting-cpu" } }
+	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-blank-pattern", "me-molecular-assembler" }) }
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs
 ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "circuit-network" }, unit = ME.unit(3, 500),
 	recipes = { "me-level-maintainer", "me-circuit-interface" } }
 ME.add_technology{ name = "me-co-processing", prerequisites = { "me-autocrafting", "me-storage-256k" },
-	unit = ME.unit(4, 800), recipes = { "me-co-processing-cpu" } }
+	unit = ME.unit(4, 800), recipes = with_blocks("me-co-processing", {}) }
 ME.add_technology{ name = "me-quantum-crafting", prerequisites = { "me-co-processing", "utility-science-pack" },
-	unit = ME.unit(5, 1000), recipes = { "me-quantum-crafting-cpu" } }
+	unit = ME.unit(5, 1000), recipes = with_blocks("me-quantum-crafting", {}) }
+
+--- issue #6: data-final-fixes.lua puts a crafting block recipe that no technology unlocks (another mod replaced the
+--- technology's recipe list) back on its technology
+ME.crafting_block_tech = {}
+for tech, names in pairs(block_tech) do
+	for _, name in ipairs(names) do ME.crafting_block_tech[name] = tech end
+end

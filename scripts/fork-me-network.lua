@@ -85,6 +85,8 @@ local function kinds()
 	k["me-fluid-interface"] = "fluid-interface"
 	local ac = prototypes.mod_data["fork-me-autocraft"]
 	for name in pairs(ac and ac.data.cpus or {}) do k[name] = "cpu" end
+	--- issue #6: the blocks of the multiblock crafting CPUs (scripts/fork-me-autocraft.lua finds the CPUs among them)
+	for name in pairs(ac and ac.data.blocks or {}) do k[name] = "crafting" end
 	k["me-fluid-import-bus"] = "fluid-import-bus"
 	k["me-fluid-export-bus"] = "fluid-export-bus"
 	k["me-fluid-storage-bus"] = "fluid-storage-bus"
@@ -96,6 +98,18 @@ local function kinds()
 end
 
 local POWERED_SELF = { cable = true, underground = true, controller = true, terminal = true, cpu = true, maintainer = true }
+
+--- issue #6: the power (W) of a crafting block drawn through the controller (mod-data "fork-me-autocraft", blocks)
+local block_power_cache
+local function member_power(node)
+	if node.kind ~= "crafting" then return MEMBER_POWER end
+	if not block_power_cache then
+		local ac = prototypes.mod_data["fork-me-autocraft"]
+		block_power_cache = {}
+		for name, b in pairs(ac and ac.data.blocks or {}) do block_power_cache[name] = b.power end
+	end
+	return node.entity.valid and block_power_cache[node.entity.name] or MEMBER_POWER
+end
 --- (the old ME Fluid Drives are no members since issue #68 step R2: scripts/fork-me-migrate.lua replaces them)
 
 --- the entity names of all members, sorted (cached: the filter of every find_entities_filtered of the graph)
@@ -112,6 +126,11 @@ function M.kind_of(name) return kinds()[name] end
 
 local function cell_spec(name) return mod_data().cells[name] end
 M.cell_spec = cell_spec
+
+--- issue #17: the card slots and limits of the blocks (prototypes/cards.lua, AE2's numbers) and what a card item does
+--- ("capacity", "void", "fuzzy", "inverter", "equal"; nil: no card)
+function M.card_rules() return mod_data().cards end
+function M.card_kind(name) return name and mod_data().cards.kinds[name] or nil end
 
 local function drive_slots() return mod_data().drive_slots or 10 end
 
@@ -284,6 +303,7 @@ local function update_cable(s, node)
 end
 
 local recompute
+local net_cell
 
 --- every member of the networks `ids` is visited once; split components get new ids (the largest keeps it)
 local function components(s, net, starts)
@@ -386,9 +406,22 @@ local function add_node(s, entity, kind)
 	node.net = net.id
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
-	if (kind == "cable" or kind == "underground") and #order == 1 then
-		s.version = s.version + 1                  -- only the member count changed (and the power)
+	if #order == 1 and kind ~= "controller" then
+		--- issue #5: a member that joins one network changes no totals of it, except a drive (its cells) and a storage
+		--- bus already registered (its external cell): no recompute, no rescan of every provider
+		s.version = s.version + 1
 		net.power_dirty = true
+		if kind == "drive" then
+			net.drives[unit] = true
+			local d = s.drives[unit]
+			for slot = 1, drive_slots() do
+				local cell = d and d.slots[slot]
+				local cid = unit .. ":" .. slot
+				if cell and not net.cells[cid] then net_cell(net, cid, cell, 1) end
+			end
+		end
+		local cell = s.ext and s.ext[unit]
+		if cell and not net.cells[unit .. ":ext"] then net_cell(net, unit .. ":ext", cell, 1) end
 	else
 		changed(s, net)
 	end
@@ -419,13 +452,21 @@ function remove_node_graph(s, unit)
 		s.version = s.version + 1
 		return
 	end
-	local comps = components(s, net, neighbours)
+	--- a member with one neighbour (a bus, an interface, a drive at the end of a cable) cannot split the network
+	local comps = #neighbours <= 1 and { neighbours } or components(s, net, neighbours)
 	if #comps <= 1 then
-		if node.kind == "cable" or node.kind == "underground" then
+		if node.kind == "controller" then
+			changed(s, net)
+		else
+			--- issue #5: no recompute; whatever storage the member still had in the network leaves it
 			s.version = s.version + 1
 			net.power_dirty = true
-		else
-			changed(s, net)
+			net.drives[unit] = nil
+			for slot = 1, drive_slots() do
+				local cid = unit .. ":" .. slot
+				if net.cells[cid] then net_cell(net, cid, net.cells[cid], -1) end
+			end
+			if net.cells[unit .. ":ext"] then net_cell(net, unit .. ":ext", net.cells[unit .. ":ext"], -1) end
 		end
 		return
 	end
@@ -494,20 +535,63 @@ local function type_bytes(spec, count)
 	return spec.per_type + math.ceil(count / (spec.per_byte or 8) - ZERO)
 end
 
+--- the item name of an item key (nil for a fluid key), remembered per key
+local key_names = {}
+local function name_of_key(key)
+	local n = key_names[key]
+	if n == nil then
+		n = not is_fluid_key(key) and (parse_key(key)) or false
+		key_names[key] = n
+	end
+	return n or nil
+end
+
+--- is `key` in a filter list? `set`: exact keys; `fnames`: the item names of the list with a Fuzzy Card (issue #17:
+--- any quality)
+local function listed(set, fnames, key)
+	if set[key] then return true end
+	if fnames then
+		local n = name_of_key(key)
+		return n ~= nil and fnames[n] == true
+	end
+	return false
+end
+
+--- Does the filter of a cell (a drive cell or a storage bus) let `key` in? `partition` is a whitelist (R3), `deny` a
+--- blacklist (issue #17, an Inverter Card), `fnames` makes either match every quality (a Fuzzy Card).
+local function accepts(cell, key)
+	local p = cell.partition
+	if p and next(p) then return listed(p, cell.fnames, key) end
+	local d = cell.deny
+	if d then return not listed(d, cell.fnames, key) end
+	return true
+end
+M.accepts = accepts
+
 --- items (fluid units) of `key` the cell can still take; item cells take items, fluid cells fluids
 local function cell_room(cell, spec, key)
 	if fluid_cell(spec) ~= is_fluid_key(key) then return 0 end
-	if cell.partition and next(cell.partition) and not cell.partition[key] then return 0 end   -- partitioned (R3)
+	local p = cell.partition                                  -- partitioned (R3); a fuzzy list or a blacklist (#17)
+	if p then
+		if next(p) and not p[key] and not (cell.fnames and listed(p, cell.fnames, key)) then return 0 end
+	elseif cell.deny and not accepts(cell, key) then
+		return 0
+	end
 	local per = spec.per_byte or 8
 	local free = spec.bytes - cell.bytes
 	local have = cell.items[key]
+	local room
 	if have then
-		return math.max(0, math.ceil(have / per - ZERO) * per - have) + math.max(0, free) * per
+		room = math.max(0, math.ceil(have / per - ZERO) * per - have) + math.max(0, free) * per
+	else
+		if cell.types >= spec.types then return 0 end
+		free = free - spec.per_type
+		if free <= 0 then return 0 end
+		room = free * per
 	end
-	if cell.types >= spec.types then return 0 end
-	free = free - spec.per_type
-	if free <= 0 then return 0 end
-	return free * per
+	--- issue #17, an Equal Distribution Card: no key holds more than AE2's share of the cell (cell.eq)
+	if cell.eq then room = math.min(room, math.max(0, cell.eq - (have or 0))) end
+	return room
 end
 
 --- change the count of `key` in a cell by `delta`; returns the change of bytes and types
@@ -577,7 +661,15 @@ local function cell_from_tags(name, tags)
 		end
 	end
 	cell.partition = M.clean_partition(spec, stored.partition)
+	cell.cards = M.clean_cards(spec, stored.cards)              -- issue #17: the cell's upgrade cards
+	if cell.cards then M.apply_cell_cards(cell) end
 	return cell
+end
+M.cell_from_tags = cell_from_tags
+
+--- the cell record of a cell item stack (its contents, partition and cards from the tags)
+function M.cell_from_stack(stack)
+	return cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
 end
 
 --- A partition ({ key -> true } or a list of keys) checked against the cell's kind and the prototypes; nil
@@ -603,6 +695,85 @@ function M.clean_partition(spec, partition)
 	return n > 0 and out or nil
 end
 
+--- Issue #17: a list of card names checked against the cell: cards of the kinds its slots take (item cell: fuzzy,
+--- inverter, equal distribution, overflow destruction; fluid cell: no fuzzy), at most each kind's limit and the slots.
+--- nil when none.
+function M.clean_cards(spec, list)
+	if type(list) ~= "table" or not spec then return nil end
+	local r = M.card_rules()
+	r = spec.kind == "fluid" and r.fluid_cell or r.item_cell
+	local out, n = {}, {}
+	for _, name in ipairs(list) do
+		local kind = type(name) == "string" and prototypes.item[name] and M.card_kind(name)
+		local limit = kind and r.limits[kind]
+		if limit and (n[kind] or 0) < limit and #out < r.slots then
+			n[kind] = (n[kind] or 0) + 1
+			out[#out + 1] = name
+		end
+	end
+	return #out > 0 and out or nil
+end
+
+--- does the cell have a card of `kind`?
+function M.has_card(cell, kind)
+	for _, name in ipairs(cell.cards or {}) do if M.card_kind(name) == kind then return true end end
+	return false
+end
+
+--- AE2's share of one key in a cell with an Equal Distribution Card (BasicCellInventory: the bytes left after the
+--- type costs, divided by the types: the whitelist's size without a fuzzy card, else the cell's type limit)
+local function equal_share(cell, spec)
+	local n = spec.types
+	if cell.partition and not cell.fnames then n = math.min(n, math.max(1, table_size(cell.partition))) end
+	local total = (spec.bytes - spec.per_type * n) * (spec.per_byte or 8)
+	return math.max(0, math.ceil(total / n))
+end
+
+--- The fields the storage engine reads, from a cell's partition and cards: the configured list is `partition` (a
+--- whitelist) or, with an Inverter Card, `deny`; `fnames` (Fuzzy Card), `void` (Overflow Destruction Card), `eq` (Equal
+--- Distribution Card: the share of one key). A cell without cards keeps exactly the fields of 0.3.0.
+function M.apply_cell_cards(cell)
+	local spec = cell_spec(cell.name)
+	if not spec then return end
+	local keys = cell.partition or cell.deny
+	local kinds = {}
+	for _, name in ipairs(cell.cards or {}) do
+		local k = M.card_kind(name)
+		if k then kinds[k] = true end
+	end
+	if kinds.inverter then cell.partition, cell.deny = nil, keys else cell.partition, cell.deny = keys, nil end
+	local names
+	if kinds.fuzzy and keys then
+		for key in pairs(keys) do
+			local n = name_of_key(key)
+			if n then
+				names = names or {}
+				names[n] = true
+			end
+		end
+	end
+	cell.fnames = names
+	cell.void = kinds.void or nil
+	cell.eq = nil
+	if kinds.equal then cell.eq = equal_share(cell, spec) end
+	if cell.cards and #cell.cards == 0 then cell.cards = nil end
+end
+
+--- the configured list of a cell (its whitelist, or its blacklist with an Inverter Card), sorted
+function M.cell_keys(cell)
+	local out = {}
+	for key in pairs(cell.partition or cell.deny or {}) do out[#out + 1] = key end
+	table.sort(out)
+	return out
+end
+
+--- set the configured list of a cell (cleaned; the cards decide whether it is a whitelist or a blacklist)
+function M.set_cell_keys(cell, keys)
+	cell.partition = M.clean_partition(cell_spec(cell.name), keys or {})
+	cell.deny = nil
+	M.apply_cell_cards(cell)
+end
+
 --- "1234" or "12.3"
 local function amount_text(n)
 	if n == math.floor(n) then return string.format("%d", n) end
@@ -616,9 +787,11 @@ local function cell_total(cell)
 	return n
 end
 
---- the item stack definition of a cell (tags and a description when it holds something)
+--- the item stack definition of a cell (tags and a description when it holds something, is partitioned or has cards)
 local function cell_stack(cell)
-	if next(cell.items) == nil and not cell.partition then return { name = cell.name, count = 1 } end
+	local plist = cell.partition or cell.deny                 -- issue #17: a blacklist is kept as the partition
+	local cards = cell.cards and #cell.cards > 0 and { table.unpack(cell.cards) } or nil
+	if next(cell.items) == nil and not plist and not cards then return { name = cell.name, count = 1 } end
 	local items, data = {}, {}
 	local keys = {}
 	for key, count in pairs(cell.items) do
@@ -640,13 +813,14 @@ local function cell_stack(cell)
 		end
 	end
 	local spec = cell_spec(cell.name)
-	if next(cell.items) == nil and cell.partition then        -- an empty partitioned cell keeps its partition
-		return { name = cell.name, count = 1, tags = { [CELL_TAG] = { items = {}, data = {}, partition = cell.partition } },
-			custom_description = { "fork-me-net.cell-partitioned", table_size(cell.partition) } }
+	if next(cell.items) == nil then                           -- an empty cell keeps its partition and cards
+		return { name = cell.name, count = 1, tags = { [CELL_TAG] = { items = {}, data = {}, partition = plist, cards = cards } },
+			custom_description = plist and { "fork-me-net.cell-partitioned", table_size(plist) }
+				or { "fork-me-net.cell-with-cards", #cards } }
 	end
 	return {
 		name = cell.name, count = 1,
-		tags = { [CELL_TAG] = { items = items, data = data, partition = cell.partition } },
+		tags = { [CELL_TAG] = { items = items, data = data, partition = plist, cards = cards } },
 		custom_description = { spec and fluid_cell(spec) and "fork-me-net.fluid-cell-holds" or "fork-me-net.cell-holds",
 			amount_text(cell_total(cell)), cell.types, table.concat(list, ", "),
 			cell.bytes, spec and spec.bytes or 0, #keys > 5 and ", ..." or "" },
@@ -663,8 +837,133 @@ local function cell_state(cell)
 	return "room"
 end
 
+--------------------------------------------------------------------------------
+--- issue #5: the index of a key, with what depends on it
+--------------------------------------------------------------------------------
+
+--- Derived lookups per network (the insertion order by priority group and kind, the sorted holders of a key, the
+--- extraction order of a key). They are a pure function of the network's state, so they are kept outside `storage`
+--- (no save size; after a load they are built again and give the same results on every peer). `cache[net]` is valid
+--- while net.order is the table it was built from (ordered() makes a new one whenever the order changes) and the
+--- holders of a key are dropped whenever the key's index changes (idx_add, idx_del).
+local cache = setmetatable({}, { __mode = "k" })
+
+--- "<unit>:<slot>" -> the drive's unit number (false for an external cell), remembered per cell id
+local cid_units = {}
+local function cid_unit(cid)
+	local u = cid_units[cid]
+	if u == nil then
+		u = tonumber(cid:match("^(%d+):%d+$")) or false
+		cid_units[cid] = u
+	end
+	return u
+end
+
+--- Endpoints waiting for a key (issue #5): net.wait_in[key] = { [unit] = kind } wake when the network gets more of
+--- the key, net.wait_out[key] when it loses some (one wake per registration). In storage, because they decide when
+--- an endpoint is visited. M.wakers[kind](unit) is set by the module of that kind at load time.
+M.wakers = {}
+
+local function fire(net, waits, key)
+	local w = waits[key]
+	if not w then return end
+	waits[key] = nil
+	local units = {}
+	for unit in pairs(w) do units[#units + 1] = unit end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local f = M.wakers[w[unit]]
+		if f then f(unit) end
+	end
+end
+
+--- endpoints waiting for the amount of `key` to fall below their threshold (net.wait_below[key] = { [unit] =
+--- { kind, amount } }): the ones whose threshold it is below now wake
+local function fire_below(net, key)
+	local w = net.wait_below[key]
+	local have = net.items[key] or 0
+	local units = {}
+	for unit, v in pairs(w) do
+		if have < v[2] then units[#units + 1] = unit end
+	end
+	if #units == 0 then return end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local kind = w[unit][1]
+		w[unit] = nil
+		local f = M.wakers[kind]
+		if f then f(unit) end
+	end
+	if next(w) == nil then net.wait_below[key] = nil end
+end
+
+--- the network's amount of `key` went up (`up`) or down: the version of its contents and the waiting endpoints
+local function moved_key(net, key, up)
+	net.cver = (net.cver or 0) + 1
+	local waits = up and net.wait_in or net.wait_out
+	if waits and waits[key] then fire(net, waits, key) end
+	if not up and net.wait_below and net.wait_below[key] then fire_below(net, key) end
+end
+
+--- `unit` (an endpoint of `kind`) wakes when the network gets more of `key` (`up`) or loses some
+function M.wait_for(net, key, kind, unit, up)
+	local field = up and "wait_in" or "wait_out"
+	local waits = net[field]
+	if not waits then
+		waits = {}
+		net[field] = waits
+	end
+	local w = waits[key]
+	if not w then
+		w = {}
+		waits[key] = w
+	end
+	w[unit] = kind
+end
+
+--- `unit` (an endpoint of `kind`) wakes when the network's amount of `key` falls below `amount`
+function M.wait_below(net, key, kind, unit, amount)
+	local waits = net.wait_below
+	if not waits then
+		waits = {}
+		net.wait_below = waits
+	end
+	local w = waits[key]
+	if not w then
+		w = {}
+		waits[key] = w
+	end
+	w[unit] = { kind, amount }
+end
+
+local function drop_holders(net, key)
+	local c = cache[net]
+	if c then c.hs[key], c.hr[key], c.xs[key] = nil, nil, nil end
+end
+
+local function idx_add(net, key, cid)
+	local idx = net.index[key]
+	if not idx then
+		idx = {}
+		net.index[key] = idx
+	end
+	if not idx[cid] then
+		idx[cid] = true
+		drop_holders(net, key)
+	end
+end
+
+local function idx_del(net, key, cid)
+	local idx = net.index[key]
+	if idx and idx[cid] then
+		idx[cid] = nil
+		if next(idx) == nil then net.index[key] = nil end
+		drop_holders(net, key)
+	end
+end
+
 --- add (sign 1) or remove (sign -1) the cell's contents to or from the network's totals and index
-local function net_cell(net, cid, cell, sign)
+function net_cell(net, cid, cell, sign)
 	local spec = not cell.ext and cell_spec(cell.name)
 	if not (spec or cell.ext) then return end
 	net.order_dirty = true
@@ -684,17 +983,27 @@ local function net_cell(net, cid, cell, sign)
 		net[p .. "types"] = net[p .. "types"] + sign * cell.types
 		net[p .. "types_total"] = net[p .. "types_total"] + sign * spec.types
 	end
+	local waits = sign > 0 and net.wait_in or net.wait_out
+	local woken
 	for key, count in pairs(cell.items) do
 		local now = (net.items[key] or 0) + sign * count
 		net.items[key] = now > ZERO and now or nil
-		local idx = net.index[key]
-		if sign > 0 then
-			if not idx then idx = {} net.index[key] = idx end
-			idx[cid] = true
-		elseif idx then
-			idx[cid] = nil
-			if next(idx) == nil then net.index[key] = nil end
+		if sign > 0 then idx_add(net, key, cid) else idx_del(net, key, cid) end
+		if waits and waits[key] then
+			woken = woken or {}
+			woken[#woken + 1] = key
 		end
+	end
+	net.cver = (net.cver or 0) + 1
+	if woken then
+		table.sort(woken)
+		for _, key in ipairs(woken) do fire(net, waits, key) end
+	end
+	if sign < 0 and net.wait_below then
+		local keys = {}
+		for key in pairs(cell.items) do if net.wait_below[key] then keys[#keys + 1] = key end end
+		table.sort(keys)
+		for _, key in ipairs(keys) do if net.wait_below[key] then fire_below(net, key) end end
 	end
 end
 
@@ -713,15 +1022,15 @@ local function drive_cells(net, s, f)
 	end
 end
 
---- set the controller's power use: base + per member without its own power
+--- set the controller's power use: base + per member without its own power (a crafting block: its own number)
 local function update_power(s, net)
 	net.power_dirty = nil
 	local members = 0
 	for unit in pairs(net.nodes) do
 		local node = s.nodes[unit]
-		if node and not POWERED_SELF[node.kind] then members = members + 1 end
+		if node and not POWERED_SELF[node.kind] then members = members + member_power(node) end
 	end
-	net.power = BASE_POWER + MEMBER_POWER * members
+	net.power = BASE_POWER + members
 	for unit in pairs(net.controllers) do
 		local node = s.nodes[unit]
 		if node and node.entity.valid then node.entity.power_usage = net.power / 60 end
@@ -831,7 +1140,9 @@ local function mark_drive(s, unit) s.dirty[unit] = true end
 --- external cell is a record { ext = <kind>, handler = <handler name, if not the kind's>, items = { key -> count },
 --- data = {}, partition, priority, hidden } kept in s.ext[unit] of its member; its cell id is "<unit>:ext". `items` is a snapshot of what the
 --- storage held at the last look (none while `hidden`: write only); the totals and the index of the network
---- include it like any cell. The handler (M.ext_handlers[name], registered at load time) works on the real
+--- include it like any cell. `full[key]` (issue #5): the storage took less of the key than it was offered, so
+--- inserts pass it by until its next read (ext_sync) or until something is taken from it; a full chest is not
+--- asked again by every insert. The handler (M.ext_handlers[name], registered at load time) works on the real
 --- storage: room(cell, key), insert(cell, key, count), count(cell, key) and extract(cell, key, count). The
 --- engine asks `count` before it takes, so the network never hands out what is no longer there.
 --------------------------------------------------------------------------------
@@ -842,27 +1153,25 @@ local function ext_cid(unit) return unit .. ":ext" end
 
 --- items of `key` a cell can take now
 local function room_in(cell, key)
-	if cell.ext then return M.ext_handlers[cell.handler or cell.ext].room(cell, key) end
+	if cell.ext then
+		if cell.full and cell.full[key] then return 0 end
+		return M.ext_handlers[cell.handler or cell.ext].room(cell, key)
+	end
 	return cell_room(cell, cell_spec(cell.name), key)
 end
 
---- set an external cell's snapshot of `key` to `n`, the network's totals and index with it
+--- set an external cell's snapshot of `key` to `n`, the network's totals and index with it; true when it changed
 local function ext_set(net, cid, cell, key, n)
 	local old = cell.items[key] or 0
 	if n < ZERO then n = 0 end
-	if n == old then return end
+	if n == old then return false end
 	cell.items[key] = n > 0 and n or nil
-	if not (net and net.cells[cid] == cell) then return end
+	if not (net and net.cells[cid] == cell) then return true end
 	local now = (net.items[key] or 0) + n - old
 	net.items[key] = now > ZERO and now or nil
-	local idx = net.index[key]
-	if n > 0 then
-		if not idx then idx = {} net.index[key] = idx end
-		idx[cid] = true
-	elseif idx then
-		idx[cid] = nil
-		if next(idx) == nil then net.index[key] = nil end
-	end
+	if n > 0 then idx_add(net, key, cid) else idx_del(net, key, cid) end
+	moved_key(net, key, n > old)
+	return true
 end
 
 function M.ext_get(unit)
@@ -886,25 +1195,33 @@ function M.ext_detach(unit)
 	local s = storage.fork_me_net
 	local cell = s and s.ext and s.ext[unit]
 	if not cell then return end
+	local h = M.ext_handlers[cell.ext]
+	if h and h.detached then h.detached(cell) end     -- issue #17: a card still in it is spilled, never lost
 	local node = s.nodes[unit]
 	local net = node and s.nets[node.net]
 	if net and net.cells[ext_cid(unit)] == cell then net_cell(net, ext_cid(unit), cell, -1) end
 	s.ext[unit] = nil
 end
 
---- the snapshot of an external cell is now `contents` ({ key -> count }): only the differences are applied
+--- the snapshot of an external cell is now `contents` ({ key -> count }): only the differences are applied; returns
+--- true when the snapshot changed
 function M.ext_sync(unit, contents)
 	local s = storage.fork_me_net
 	local cell = s and s.ext and s.ext[unit]
-	if not cell then return end
+	if not cell then return false end
 	local node = s.nodes[unit]
 	local net = node and s.nets[node.net]
 	local cid = ext_cid(unit)
 	if cell.hidden then contents = {} end
+	cell.full = nil                                    -- read again: room is asked again (issue #5)
+	local changed = false
 	for key in pairs(cell.items) do
-		if not contents[key] then ext_set(net, cid, cell, key, 0) end
+		if not contents[key] and ext_set(net, cid, cell, key, 0) then changed = true end
 	end
-	for key, n in pairs(contents) do ext_set(net, cid, cell, key, n) end
+	for key, n in pairs(contents) do
+		if ext_set(net, cid, cell, key, n) then changed = true end
+	end
+	return changed
 end
 
 --- the priority or partition of an external cell changed: its network sorts its cells again
@@ -915,24 +1232,13 @@ function M.ext_touch(unit)
 	if net then net.order_dirty = true end
 end
 
---- items of `key` the network can take
-local function room_for(net, key)
-	local n = 0
-	for cid in pairs(net.index[key] or {}) do
-		n = n + room_in(net.cells[cid], key)
-	end
-	for _, cid in ipairs(net.cell_list) do
-		local cell = net.cells[cid]
-		if not cell.items[key] then n = n + room_in(cell, key) end
-	end
-	return n
-end
+local EMPTY = {}
 
 --- the priority of a cell: of the drive it is in ("<unit>:<slot>"), or of the external cell
 local function cell_priority(s, net, cid)
 	local cell = net.cells[cid]
 	if cell and cell.ext then return cell.priority or 0 end
-	local d = s.drives[tonumber(cid:match("^(%d+):"))]
+	local d = s.drives[cid_unit(cid)]
 	return d and d.priority or 0
 end
 
@@ -947,7 +1253,8 @@ local function ordered(s, net)
 	for i, cid in ipairs(net.cell_list) do
 		local p = cell_priority(s, net, cid)
 		prios[p] = true
-		if net.cells[cid].partition or net.cells[cid].ext then parts = true end   -- an external cell: never uniform
+		local cell = net.cells[cid]
+		if cell.partition or cell.ext or cell.cards then parts = true end   -- an external cell or cards: never uniform
 		list[i] = { cid = cid, p = p, i = i, ext = net.cells[cid].ext and 1 or 0 }
 	end
 	--- within one priority the cells before the external storage (storage buses): the network's own storage first
@@ -965,87 +1272,300 @@ local function ordered(s, net)
 end
 M.ordered = ordered
 
---- Store up to `count` of `key`. Order (R3, docs/ME-REWORK.md "Partitions and priorities"): drives of higher
---- priority first; within one priority the cells partitioned for the key first, then the cells that hold it,
---- then any cell with room (a partitioned cell only takes its keys).
-local function insert_key(net, key, count, data)
-	if count <= 0 then return 0 end
-	local s = state()
-	local left = count
-	local function put(cid)
+--- can the cell take a key it does not hold yet? (types and bytes; its kind and partition are the caller's)
+local function open_cell(cell, spec)
+	return cell.types < spec.types and spec.bytes - cell.bytes - spec.per_type > 0
+end
+
+--- Issue #17: does the cell destroy what it cannot store of `key` (an Overflow Destruction Card)? AE2's rules
+--- (BasicCellInventory.insert, MEInventoryHandler.insert): a cell voids what passes its filter, one without a
+--- partition only while it can take a new type or already holds the key; a storage bus voids what its filter and mode
+--- let in while it works on a target (its handler's `voids`). Items with tags (`data`) are never destroyed.
+local function voids(cell, key, data)
+	if not cell.void or data then return false end
+	if cell.ext then
+		local h = M.ext_handlers[cell.handler or cell.ext]
+		return h.voids ~= nil and h.voids(cell, key) == true
+	end
+	local spec = cell_spec(cell.name)
+	if not spec or fluid_cell(spec) ~= is_fluid_key(key) or not accepts(cell, key) then return false end
+	if cell.partition or cell.deny then return true end
+	return cell.items[key] ~= nil or open_cell(cell, spec)
+end
+
+--- The lookups of a network (issue #5), built from the insertion order: its priority groups in order, each with
+--- the cells partitioned for a key (`parts[key]`; issue #17: a fuzzy whitelist by item name in `fparts[name]`, `fuzzy`
+--- says that there is one), the unpartitioned cells (and blacklists) by kind (`cells.item`, `cells.fluid`) with
+--- the position of the first one that may still take a new key (`first`; cells fill in order, an extraction moves it
+--- back), the unpartitioned storage buses that take inserts by the kind they face (`ext`); `at[cid]` = { g, rank,
+--- kind, pos }. The holders of a key sorted by cell id (`hs`, the uniform order of R1) or by rank (`hr`) and the
+--- extraction order of a key (`xs`) are made when asked and dropped when the key's index changes.
+local function lookups(s, net)
+	local order = ordered(s, net)
+	local c = cache[net]
+	if c and c.order == order then return c end
+	c = { order = order, groups = {}, at = {}, hs = {}, hr = {}, xs = {} }
+	cache[net] = c
+	local g
+	for rank, o in ipairs(order) do
+		if not (g and g.p == o.p) then
+			g = { p = o.p, parts = {}, fparts = {}, cells = { item = {}, fluid = {} }, ext = { item = {}, fluid = {} },
+				first = { item = 1, fluid = 1 } }
+			c.groups[#c.groups + 1] = g
+		end
+		local cid = o.cid
 		local cell = net.cells[cid]
-		if cell.ext then                               -- external cell: into the real storage, then the snapshot
-			if data then return end                    -- items with tags only go into cells
-			local n = M.ext_handlers[cell.handler or cell.ext].insert(cell, key, is_fluid_key(key) and left or math.floor(left))
-			if n <= 0 then return end
+		local at = { g = g, rank = rank }
+		c.at[cid] = at
+		if cell.partition then
+			--- issue #17: a fuzzy whitelist is found by the item name (any quality), its fluid keys as they are
+			local fnames = cell.fnames
+			for key in pairs(cell.partition) do
+				if not (fnames and name_of_key(key)) then
+					local l = g.parts[key]
+					if not l then
+						l = {}
+						g.parts[key] = l
+					end
+					l[#l + 1] = cid
+				end
+			end
+			for name in pairs(fnames or EMPTY) do
+				local l = g.fparts[name]
+				if not l then
+					l = {}
+					g.fparts[name] = l
+					c.fuzzy = true
+				end
+				l[#l + 1] = cid
+			end
+		elseif cell.ext then
+			if cell.mode ~= "read" then                -- read only: it never takes anything
+				local list = (cell.side == "fluid" or cell.ext == "fluid-storage-bus") and g.ext.fluid or g.ext.item
+				list[#list + 1] = cid
+			end
+		else
+			local kind = fluid_cell(cell_spec(cell.name)) and "fluid" or "item"
+			local list = g.cells[kind]
+			list[#list + 1] = cid
+			at.kind, at.pos = kind, #list
+		end
+	end
+	return c
+end
+
+--- the holders of `key`, sorted by cell id (by_rank false) or by their rank in the insertion order
+local function holders(net, c, key, by_rank)
+	local field = by_rank and "hr" or "hs"
+	local l = c[field][key]
+	if l then return l end
+	l = {}
+	for cid in pairs(net.index[key] or EMPTY) do l[#l + 1] = cid end
+	if by_rank then
+		local at = c.at
+		table.sort(l, function(a, b) return at[a].rank < at[b].rank end)
+	else
+		table.sort(l)
+	end
+	c[field][key] = l
+	return l
+end
+
+--- an extraction freed bytes or a type of a cell: it may take new keys again
+local function reopen(net, cid)
+	local c = cache[net]
+	local at = c and c.order == net.order and not net.order_dirty and c.at[cid]
+	if at and at.kind and at.pos < at.g.first[at.kind] then at.g.first[at.kind] = at.pos end
+end
+
+--- Items of `key` the network can take; with `want` it stops counting once it has found that much. A cell that
+--- destroys what it cannot store (issue #17) takes everything.
+local function room_for(net, key, want)
+	local n = 0
+	local c = lookups(state(), net)
+	for _, cid in ipairs(holders(net, c, key, true)) do         -- in insertion order: cells before storage buses
+		local cell = net.cells[cid]
+		if cell.void and voids(cell, key) then return want or math.huge end
+		n = n + room_in(cell, key)
+		if want and n >= want then return n end
+	end
+	local kind = is_fluid_key(key) and "fluid" or "item"
+	local fname = c.fuzzy and name_of_key(key)
+	for _, g in ipairs(c.groups) do
+		for _, cid in ipairs(g.parts[key] or EMPTY) do
+			local cell = net.cells[cid]
+			if not cell.items[key] then
+				if cell.void and voids(cell, key) then return want or math.huge end
+				n = n + room_in(cell, key)
+				if want and n >= want then return n end
+			end
+		end
+		for _, cid in ipairs(fname and g.fparts[fname] or EMPTY) do    -- a fuzzy whitelist (issue #17)
+			local cell = net.cells[cid]
+			if not cell.items[key] then
+				if cell.void and voids(cell, key) then return want or math.huge end
+				n = n + room_in(cell, key)
+				if want and n >= want then return n end
+			end
+		end
+		local list = g.cells[kind]
+		local i = g.first[kind]
+		while list[i] do                                         -- closed cells at the front: no room for a new key
+			local cell = net.cells[list[i]]
+			if open_cell(cell, cell_spec(cell.name)) then break end
+			i = i + 1
+		end
+		g.first[kind] = i
+		for k = i, #list do
+			local cell = net.cells[list[k]]
+			if not cell.items[key] then
+				if cell.void and voids(cell, key) then return want or math.huge end
+				n = n + cell_room(cell, cell_spec(cell.name), key)
+				if want and n >= want then return n end
+			end
+		end
+		for _, cid in ipairs(g.ext[kind]) do
+			local cell = net.cells[cid]
+			if not cell.items[key] then
+				if cell.void and voids(cell, key) then return want or math.huge end
+				n = n + room_in(cell, key)
+				if want and n >= want then return n end
+			end
+		end
+	end
+	return n
+end
+
+--- the insertion in progress (insert_key; module-level instead of closures, so an insert makes no garbage); `void`:
+--- what cells with an Overflow Destruction Card destroyed of it (issue #17)
+local ins = { net = nil, key = nil, left = 0, data = nil, s = nil, void = 0 }
+
+--- Issue #17: the rest of the insert is destroyed by `cell`. Counted on the cell (its window) and per key for the map
+--- (storage.fork_me_net.voided: the conservation checks of the tests add it).
+local function void_rest(cell)
+	local n, key, s = ins.left, ins.key, ins.s
+	cell.voided = (cell.voided or 0) + n
+	s.voided = s.voided or {}
+	s.voided[key] = (s.voided[key] or 0) + n
+	ins.void = ins.void + n
+	ins.left = 0
+end
+
+--- into one cell; true when nothing is left
+local function put(cid)
+	local net, key = ins.net, ins.key
+	local cell = net.cells[cid]
+	if cell.ext then                               -- external cell: into the real storage, then the snapshot
+		if ins.data then return false end          -- items with tags only go into cells
+		if cell.full and cell.full[key] then return false end
+		local want = is_fluid_key(key) and ins.left or math.floor(ins.left)
+		local n = M.ext_handlers[cell.handler or cell.ext].insert(cell, key, want)
+		local void = n < want and cell.void and voids(cell, key)
+		if n < want and not void then              -- no more room for the key: not asked again until its next read
+			cell.full = cell.full or {}
+			cell.full[key] = true
+		end
+		if n > 0 then
 			if not cell.hidden then
 				cell.items[key] = (cell.items[key] or 0) + n
 				net.items[key] = (net.items[key] or 0) + n
-				local idx = net.index[key]
-				if not idx then idx = {} net.index[key] = idx end
-				idx[cid] = true
+				idx_add(net, key, cid)
 			end
-			left = left - n
-			if left < ZERO then left = 0 end
-			return
+			ins.left = ins.left - n
+			if ins.left < ZERO then ins.left = 0 end
 		end
-		local spec = cell_spec(cell.name)
-		local n = math.min(left, cell_room(cell, spec, key))
-		if n <= 0 then return end
+		if void and ins.left > 0 then void_rest(cell) end
+		return ins.left <= 0
+	end
+	local spec = cell_spec(cell.name)
+	local n = math.min(ins.left, cell_room(cell, spec, key))
+	if n > 0 then
 		local db, dt = cell_add(cell, spec, key, n)
-		if data and not cell.data[key] then cell.data[key] = data end
+		if ins.data and not cell.data[key] then cell.data[key] = ins.data end
 		local p = fluid_cell(spec) and "f" or ""
 		net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
 		net.items[key] = (net.items[key] or 0) + n
-		local idx = net.index[key]
-		if not idx then idx = {} net.index[key] = idx end
-		idx[cid] = true
-		left = left - n
-		if left < ZERO then left = 0 end
-		mark_drive(s, tonumber(cid:match("^(%d+):")))
+		idx_add(net, key, cid)
+		ins.left = ins.left - n
+		if ins.left < ZERO then ins.left = 0 end
+		mark_drive(ins.s, cid_unit(cid))
 	end
-	local order, uniform = ordered(s, net)
-	if uniform then                                    -- one priority, no partition: the cells that hold it first
-		local held = {}
-		for cid in pairs(net.index[key] or {}) do held[#held + 1] = cid end
-		table.sort(held)
-		for _, cid in ipairs(held) do
-			if left <= 0 then break end
-			put(cid)
-		end
-		for _, cid in ipairs(net.cell_list) do
-			if left <= 0 then break end
-			if not net.cells[cid].items[key] then put(cid) end
-		end
-		return count - left
+	if cell.void and ins.left > 0 and voids(cell, key, ins.data) then void_rest(cell) end
+	return ins.left <= 0
+end
+
+--- pass 3 of group `g`: the unpartitioned cells of `kind` without the key, from the first that may take a new key
+--- (closed cells at the front are skipped for good, until an extraction opens one); true when nothing is left
+local function put_open(net, g, kind, key)
+	local list = g.cells[kind]
+	local i = g.first[kind]
+	while list[i] do
+		local cell = net.cells[list[i]]
+		if open_cell(cell, cell_spec(cell.name)) then break end
+		i = i + 1
 	end
-	local i = 1
-	while order[i] and left > 0 do
-		local p, j = order[i].p, i
-		while order[j] and order[j].p == p do j = j + 1 end      -- cells i .. j-1 have priority p
-		for pass = 1, 3 do
-			for k = i, j - 1 do
-				if left <= 0 then break end
-				local cell = net.cells[order[k].cid]
-				local part = cell.partition
-				local hit = (pass == 1 and part and part[key]) or (pass == 2 and not part and cell.items[key])
-					or (pass == 3 and not part and not cell.items[key])
-				if hit then put(order[k].cid) end
+	g.first[kind] = i
+	for k = i, #list do
+		local cid = list[k]
+		if not net.cells[cid].items[key] and put(cid) then return true end
+	end
+	return false
+end
+
+--- Store up to `count` of `key`. Order (R3, docs/ME-REWORK.md "Partitions and priorities"): drives of higher
+--- priority first; within one priority the cells partitioned for the key first, then the cells that hold it,
+--- then any cell with room (a partitioned cell only takes its keys). Issue #5: the passes use the lookups of the
+--- network instead of walking every cell.
+local function insert_key(net, key, count, data)
+	if count <= 0 then return 0 end
+	local s = state()
+	ins.net, ins.key, ins.left, ins.data, ins.s, ins.void = net, key, count, data, s, 0
+	local c = lookups(s, net)
+	local kind = is_fluid_key(key) and "fluid" or "item"
+	if net.uniform then                                -- one priority, no partition: the cells that hold it first
+		for _, cid in ipairs(holders(net, c, key, false)) do
+			if put(cid) then break end
+		end
+		if ins.left > 0 and c.groups[1] then put_open(net, c.groups[1], kind, key) end
+	else
+		local hr = holders(net, c, key, true)
+		local h = 1
+		local fname = c.fuzzy and name_of_key(key)
+		for _, g in ipairs(c.groups) do
+			if ins.left <= 0 then break end
+			for _, cid in ipairs(g.parts[key] or EMPTY) do               -- 1: partitioned for the key
+				if put(cid) then break end
+			end
+			if fname and ins.left > 0 then                                -- 1: a fuzzy whitelist (issue #17)
+				for _, cid in ipairs(g.fparts[fname] or EMPTY) do
+					if put(cid) then break end
+				end
+			end
+			while hr[h] and c.at[hr[h]].g == g do                         -- 2: the cells that hold it
+				local cid = hr[h]
+				h = h + 1
+				if ins.left > 0 and not net.cells[cid].partition then put(cid) end
+			end
+			if ins.left > 0 and not put_open(net, g, kind, key) then     -- 3: any cell, then storage buses
+				for _, cid in ipairs(g.ext[kind]) do
+					if not net.cells[cid].items[key] and put(cid) then break end
+				end
 			end
 		end
-		i = j
 	end
+	local left = ins.left
+	ins.net, ins.data = nil, nil
+	if left + ins.void < count then moved_key(net, key, true) end   -- something was stored (not only destroyed)
 	return count - left
 end
 
-local function extract_key(net, key, count)
-	if count <= 0 or not net.items[key] then return 0 end
-	local s = state()
-	local left = count
-	--- extraction is the reverse of insertion: lower drive priority first, storage buses before cells of the same
-	--- priority, unpartitioned before partitioned
+--- the extraction order of `key`: lower priority first, storage buses before cells of the same priority,
+--- unpartitioned before partitioned, then by cell id
+local function extract_order(s, net, c, key)
+	local l = c.xs[key]
+	if l then return l end
 	local held = {}
-	for cid in pairs(net.index[key] or {}) do
+	for cid in pairs(net.index[key] or EMPTY) do
 		local cell = net.cells[cid]
 		held[#held + 1] = { cid = cid, p = cell_priority(s, net, cid), part = cell.partition and 1 or 0, ext = cell.ext and 0 or 1 }
 	end
@@ -1055,8 +1575,20 @@ local function extract_key(net, key, count)
 		if a.part ~= b.part then return a.part < b.part end
 		return a.cid < b.cid
 	end)
-	for _, h in ipairs(held) do
-		local cid = h.cid
+	l = {}
+	for i, h in ipairs(held) do l[i] = h.cid end
+	c.xs[key] = l
+	return l
+end
+
+local function extract_key(net, key, count)
+	if count <= 0 or not net.items[key] then return 0 end
+	local s = state()
+	local left = count
+	--- extraction is the reverse of insertion: lower drive priority first, storage buses before cells of the same
+	--- priority, unpartitioned before partitioned
+	local c = lookups(s, net)
+	for _, cid in ipairs(extract_order(s, net, c, key)) do
 		if left <= 0 then break end
 		local cell = net.cells[cid]
 		if cell.ext then                               -- external cell: the real storage first (staleness)
@@ -1066,8 +1598,9 @@ local function extract_key(net, key, count)
 			local n = math.min(left, real)
 			local got = n > 0 and handler.extract(cell, key, n) or 0
 			if got > 0 then
+				cell.full = nil
 				cell.items[key] = real - got > ZERO and (real - got) or nil   -- net.items: below, with the others
-				if not cell.items[key] and net.index[key] then net.index[key][cid] = nil end
+				if not cell.items[key] then idx_del(net, key, cid) end
 				left = left - got
 				if left < ZERO then left = 0 end
 			end
@@ -1080,14 +1613,16 @@ local function extract_key(net, key, count)
 				net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
 				left = left - n
 				if left < ZERO then left = 0 end
-				if not cell.items[key] and net.index[key] then net.index[key][cid] = nil end
-				mark_drive(s, tonumber(cid:match("^(%d+):")))
+				if not cell.items[key] then idx_del(net, key, cid) end
+				if (db < 0 or dt < 0) and not cell.partition then reopen(net, cid) end
+				mark_drive(s, cid_unit(cid))
 			end
 		end
 	end
 	local now = (net.items[key] or 0) - (count - left)
 	net.items[key] = now > ZERO and now or nil
 	if net.index[key] and next(net.index[key]) == nil then net.index[key] = nil end
+	if left < count then moved_key(net, key, false) end
 	return count - left
 end
 
@@ -1144,7 +1679,8 @@ end
 function M.can_insert(net, name, quality, count)
 	if not M.usable(net) then return 0 end
 	local key = key_of(name, quality)
-	return math.min(math.floor(count), room_for(net, key) + awaited(net, key))
+	count = math.floor(count)
+	return math.min(count, room_for(net, key, count) + awaited(net, key))
 end
 
 --- the items: { { key, name, quality, count, data } }, unsorted (fluids: fluid_contents)
@@ -1192,7 +1728,7 @@ end
 function M.can_insert_fluid(net, name, amount)
 	if not M.usable(net) then return 0 end
 	local key = FLUID_PREFIX .. name
-	return math.min(amount, room_for(net, key) + awaited(net, key))
+	return math.min(amount, room_for(net, key, amount) + awaited(net, key))
 end
 
 --- { fluid name -> amount }
@@ -1274,7 +1810,7 @@ end
 local function stack_def(net, key, count)
 	local name, q = parse_key(key)
 	local def = { name = name, quality = q, count = count }
-	local data = data_of(net, key)
+	local data = key:find("#", 1, true) and data_of(net, key)        -- only items with tags have data
 	if data then
 		def.tags = data.tags
 		if data.description then def.custom_description = data.description end
@@ -1336,8 +1872,8 @@ end
 local function place_cell(s, d, slot, cell)
 	d.slots[slot] = cell
 	local template = d.slot_partition and d.slot_partition[slot]
-	if template and not cell.partition then
-		cell.partition = M.clean_partition(cell_spec(cell.name), template)
+	if template and not (cell.partition or cell.deny) then
+		M.set_cell_keys(cell, template)                       -- (a cell with an Inverter Card: a blacklist)
 		d.slot_partition[slot] = nil
 	end
 	local unit = d.entity.unit_number
@@ -1415,8 +1951,8 @@ local function store_key_in_drive(s, d, unit, key, amount, data)
 					local p = fluid_cell(spec) and "f" or ""
 					net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
 					net.items[key] = (net.items[key] or 0) + n
-					net.index[key] = net.index[key] or {}
-					net.index[key][cid] = true
+					idx_add(net, key, cid)
+					moved_key(net, key, true)
 				end
 				left = left - n
 				if left < ZERO then left = 0 end
@@ -1585,10 +2121,7 @@ function M.get_partition(drive, slot)
 	local s = storage.fork_me_net
 	local d = s and drive and drive.valid and s.drives[drive.unit_number]
 	local cell = d and d.slots[slot]
-	local out = {}
-	for key in pairs(cell and cell.partition or {}) do out[#out + 1] = key end
-	table.sort(out)
-	return out
+	return cell and M.cell_keys(cell) or {}
 end
 
 --- Restrict the cell in `slot` to `keys` (items "name"/"name@quality", fluids "fluid/<name>"); an empty list
@@ -1598,7 +2131,7 @@ function M.set_partition(drive, slot, keys)
 	local d = drive and drive.valid and s.drives[drive.unit_number]
 	local cell = d and d.slots[slot]
 	if not cell then return false end
-	cell.partition = M.clean_partition(cell_spec(cell.name), keys or {})
+	M.set_cell_keys(cell, keys)
 	touch_order(s, drive.unit_number)
 	mark_drive(s, drive.unit_number)
 	return true
@@ -1681,12 +2214,13 @@ function M.drive_info(drive)
 			local spec = cell_spec(cell.name) or { bytes = 0, types = 0 }
 			local items = {}
 			for k, v in pairs(cell.items) do items[k] = v end
-			local partition = {}
-			for key in pairs(cell.partition or {}) do partition[#partition + 1] = key end
-			table.sort(partition)
 			out[slot] = { name = cell.name, items = items, bytes = cell.bytes, bytes_total = spec.bytes,
 				types = cell.types, types_total = spec.types, state = cell_state(cell), fluid = fluid_cell(spec),
-				partition = partition }
+				partition = M.cell_keys(cell),
+				--- issue #17: the cell's cards (from the Cell Workbench)
+				cards = { table.unpack(cell.cards or {}) }, inverted = cell.deny ~= nil or M.has_card(cell, "inverter"),
+				fuzzy = cell.fnames ~= nil or M.has_card(cell, "fuzzy"), equal = cell.eq, void = cell.void == true,
+				voided = cell.voided or 0 }
 		end
 	end
 	return out
@@ -1708,6 +2242,7 @@ local function spill(surface, position, def)
 	surface.spill_item_stack{ position = position, stack = inv[1], allow_belts = false }
 	inv.destroy()
 end
+M.spill = spill
 
 --- the drive's lights are kept as render object ids (numbers)
 local function clear_leds(d)
@@ -1715,26 +2250,40 @@ local function clear_leds(d)
 		local obj = type(id) == "number" and rendering.get_object_by_id(id)
 		if obj and obj.valid then obj.destroy() end
 	end
-	d.leds = {}
+	d.leds, d.led_state = {}, {}
 end
 
---- redraw the lights of a drive: one rectangle per cell, colored by its fill state
+--- the lights of a drive: one rectangle per cell, colored by its fill state. Issue #5: a light is created when a cell
+--- goes in, destroyed when it goes out and only recolored when the cell's state changes (d.led_state[slot]); every
+--- other redraw request costs one state check per slot.
 local function draw_leds(s, d)
-	clear_leds(d)
 	local e = d.entity
-	if not e.valid then return end
+	if not e.valid then clear_leds(d) return end
+	d.leds = d.leds or {}
+	d.led_state = d.led_state or {}
 	for slot = 1, drive_slots() do
 		local cell = d.slots[slot]
+		local id = d.leds[slot]
+		local obj = type(id) == "number" and rendering.get_object_by_id(id) or nil
+		if obj and not obj.valid then obj = nil end
 		if cell then
-			local col, row = (slot - 1) % 2, math.floor((slot - 1) / 2)
-			local x0, y0 = BAY_X[col + 1], BAY_Y[row + 1]
 			local st = cell_state(cell)
-			d.leds[slot] = rendering.draw_rectangle{
-				color = st == "full" and LED_RED or st == "high" and LED_ORANGE or LED_GREEN,
-				filled = true, surface = e.surface,
-				left_top = { entity = e, offset = { (x0 + 1 - OFF) / 32, (y0 + 1 - OFF) / 32 } },
-				right_bottom = { entity = e, offset = { (x0 + 9 - OFF) / 32, (y0 + 3 - OFF) / 32 } },
-			}.id
+			local color = st == "full" and LED_RED or st == "high" and LED_ORANGE or LED_GREEN
+			if not obj then
+				local col, row = (slot - 1) % 2, math.floor((slot - 1) / 2)
+				local x0, y0 = BAY_X[col + 1], BAY_Y[row + 1]
+				d.leds[slot] = rendering.draw_rectangle{
+					color = color, filled = true, surface = e.surface,
+					left_top = { entity = e, offset = { (x0 + 1 - OFF) / 32, (y0 + 1 - OFF) / 32 } },
+					right_bottom = { entity = e, offset = { (x0 + 9 - OFF) / 32, (y0 + 3 - OFF) / 32 } },
+				}.id
+			elseif d.led_state[slot] ~= st then
+				obj.color = color
+			end
+			d.led_state[slot] = st
+		else
+			if obj then obj.destroy() end
+			d.leds[slot], d.led_state[slot] = nil, nil
 		end
 	end
 end
@@ -1913,11 +2462,20 @@ local function vanish(s, unit)
 		s.dirty[unit] = nil
 	end
 	M.ext_detach(unit)
+	for _, f in ipairs(M.vanish_hooks) do f(unit) end
 	if node then remove_node(s, unit) end
 end
 
+--- functions(unit) of other modules called for a member that vanished without an event (issue #6: a crafting block
+--- leaves its CPU)
+M.vanish_hooks = {}
+
+--- functions of other modules called at every slow step (the Cell Workbench's sweep, issue #17)
+M.slow_hooks = {}
+
 --- every 60 ticks (from the terminal module): the lights of changed drives, the sweep
 function M.slow_step()
+	for _, f in ipairs(M.slow_hooks) do f() end
 	local s = storage.fork_me_net
 	if not s then return end
 	local n = 0
@@ -1945,18 +2503,20 @@ function M.slow_step()
 			end
 		end
 	end
-	--- sweep: members removed without an event
-	local units = {}
-	local count = 0
-	for unit, node in pairs(s.nodes) do
-		count = count + 1
-		if count >= s.sweep and #units < SWEEP_PER_STEP then units[#units + 1] = unit end
+	--- sweep: members removed without an event. Issue #5: a list of the members is taken once per round and checked
+	--- SWEEP_PER_STEP at a time (walking the whole map's members to find the next 200 cost 3 ms at 20 000 members)
+	if not s.sweep_list or (s.sweep or 1) > #s.sweep_list then
+		local list = {}
+		for unit in pairs(s.nodes) do list[#list + 1] = unit end
+		table.sort(list)
+		s.sweep_list, s.sweep = list, 1
 	end
-	s.sweep = (#units < SWEEP_PER_STEP) and 1 or (s.sweep + SWEEP_PER_STEP)
-	for _, unit in ipairs(units) do
-		local node = s.nodes[unit]
-		if node and not node.entity.valid then vanish(s, unit) end
+	local list, i = s.sweep_list, s.sweep
+	for k = i, math.min(#list, i + SWEEP_PER_STEP - 1) do
+		local node = s.nodes[list[k]]
+		if node and not node.entity.valid then vanish(s, list[k]) end
 	end
+	s.sweep = i + SWEEP_PER_STEP
 end
 
 --- the open key on a drive with a cell in the cursor: the cell goes into the first free slot (true when it did
@@ -2021,7 +2581,7 @@ function M.rebuild()
 	local old_drives = s.drives
 	for _, node in pairs(s.nodes) do clear_link(node) end
 	s.nodes, s.nets, s.version = {}, {}, s.version + 1
-	s.drives, s.dirty, s.sweep = {}, {}, 1
+	s.drives, s.dirty, s.sweep, s.sweep_list = {}, {}, 1, nil
 	local names = M.node_names()
 	local all = {}
 	for _, surface in pairs(game.surfaces) do
@@ -2052,7 +2612,12 @@ function M.rebuild()
 	local old_ext = s.ext
 	s.ext = {}
 	for unit, cell in pairs(old_ext) do
-		if cell.entity and cell.entity.valid and kinds()[cell.entity.name] == cell.ext then s.ext[unit] = cell end
+		if cell.entity and cell.entity.valid and kinds()[cell.entity.name] == cell.ext then
+			s.ext[unit] = cell
+		else
+			local h = M.ext_handlers[cell.ext]
+			if h and h.detached then h.detached(cell) end   -- (issue #28: the cards in its slots are spilled, never lost)
+		end
 	end
 	--- nodes without links first, then the links, then the components
 	for _, e in ipairs(all) do
@@ -2348,6 +2913,11 @@ remote.add_interface("gregtorio-me-network", {
 	end,
 	--- a click on a slot of the drive window, for a cursor stack and a main inventory
 	drive_click = function(cursor, inventory, drive, slot, shift) return M.drive_click(cursor, inventory, drive, slot, shift) end,
+	--- issue #17: what Overflow Destruction Cards destroyed on the map so far, per key
+	voided = function()
+		local s = storage.fork_me_net
+		return s and s.voided or {}
+	end,
 	--- cables from members[1]'s network to every other member; returns cables placed, unreached members
 	connect = function(members, margin) return M.connect(members, margin) end,
 	--- what the sweep does with members removed without an event (now, for the whole map)

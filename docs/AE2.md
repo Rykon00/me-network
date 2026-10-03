@@ -3,8 +3,8 @@
 > This guide was written in Gregtorio Continued, where the ME network was made (issue numbers are Gregtorio's). The
 > recipes and technology tiers it names (GT materials, voltage tiers, science packs) are the ones in a Gregtorio game.
 > On its own, ME Network uses vanilla recipes and science: the network with red and green science, 64k cells,
-> autocrafting and fluids with blue, 256k and the co-processing CPU with production, the quantum CPU with utility
-> science (`prototypes/network.lua`, `autocrafting.lua`, `fluids.lua`). Everything else here is the same in both.
+> autocrafting and fluids with blue, 256k storage, the co-processing unit and the 16k and 64k crafting storage with
+> production, the 256k crafting storage with utility science (`prototypes/network.lua`, `autocrafting.lua`, `fluids.lua`). Everything else here is the same in both.
 
 
 ## What the ME network is
@@ -24,9 +24,9 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Terminal | powered screen, the hub: storage, **crafting**, jobs, the drives and cells of the network |
 | ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount): keeps those in stock in it, imports everything else (this page, **Import and export**) |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face |
-| ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority and read/write mode (this page, **ME Storage Bus**) |
+| ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
-| ME Crafting CPU, Co-Processing and Quantum Crafting CPU | run autocrafting jobs: 1, 2 or 4 at once (this page, **CPU tiers**) |
+| Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns; the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
 | Blank / Encoded Pattern | a blank pattern is encoded in the terminal's Patterns tab into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
 | ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
@@ -106,9 +106,12 @@ Two AE2 storage features decide **which cell** an item or fluid goes into (and c
   many as the cell has types. A partitioned cell **only** takes those; what it held before stays in it until it is
   taken out. **From contents** restricts the cell to what it holds now, **Clear** removes the partition.
   Partitioned cells have a yellow frame in the drive window and the Cells tab. The partition travels with the cell
-  (also an empty one: "Empty, partitioned for 2 kinds").
+  (also an empty one: "Empty, partitioned for 2 kinds"). The **ME Cell Workbench** sets the partition too, and puts
+  **upgrade cards** into a cell (see "ME Cell Workbench"): with an Inverter Card the partition is a blacklist, with
+  a Fuzzy Card it matches every quality; the cell window shows the cards and what they do.
 * **Drive priority** (-1000 to 1000, default 0, in the drive window): the priority of every cell in that drive.
-* **Storage buses** (see "ME Storage Bus") take part with their own priority; their filters work like a partition.
+* **Storage buses** (see "ME Storage Bus") take part with their own priority; their filters work like a partition
+  (with an **Inverter Card** like a blacklist, with a **Fuzzy Card** in every quality: see "Upgrade cards").
 
 The rules (`scripts/fork-me-network.lua`, `insert_key` and `extract_key`):
 
@@ -119,6 +122,14 @@ The rules (`scripts/fork-me-network.lua`, `insert_key` and `extract_key`):
    before the partitioned ones.
 3. Same priority and same rule: the order the cells joined the network (drive by drive, slot by slot); cells
    before storage buses when storing, storage buses before cells when taking out.
+4. A **blacklist** (a storage bus with an Inverter Card) is not partitioned for anything: it takes what it lets in
+   with the cells "with room" (rule 1, last), never before them for an item, unless it already holds the item. A
+   filter with a Fuzzy Card counts as partitioned for its item in every quality.
+
+These are AE2's four rules ("Import, Export, and Storage"): the highest priority first; at the same priority storage
+that already holds the item first; whitelisted storage counts as holding it (here it even comes first); taking out
+from the lowest priority. AE2 puts whitelisted and holding storage into one pass in the order they joined; the mod's
+finer order fills partitioned storage first.
 
 So a high priority drive with cells partitioned for ores takes every ore first, and a low priority drive of
 unpartitioned cells is the overflow that is emptied first. A network with one priority and no partition behaves
@@ -136,8 +147,10 @@ tabs:
   your hand; with something in hand, the click stores that instead. **Right click**: one item into your hand (one
   more of the same item). **Shift click**: a stack into your inventory. Items with tags (loaded cells) have a
   yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).
-  Below: **your inventory**: click an item there to store all of it, right click to store one stack. "Store item
-  in hand" stores the cursor. Amounts are shown as 999, 1.2k, 12k, 1.5M, 2.5G everywhere.
+  **Storing:** your inventory is on the left of the window (issue #28): **shift + click** a stack there to store it
+  in the network, **control + click** to store every stack of that item; what the network cannot take (a blueprint,
+  an item that spoils, a damaged one, no room) stays with a short message. What you take out appears there at once.
+  "Store item in hand" stores the cursor. Amounts are shown as 999, 1.2k, 12k, 1.5M, 2.5G everywhere.
 * **Crafting:** every item and fluid a pattern can make, in the same grid (the picked one in yellow). Pick one,
   enter the amount: the plan preview lists the crafts and steps, and as slot buttons what is **missing** (red) and
   what is taken from storage. **Craft** starts the job (see **Autocrafting** below).
@@ -150,24 +163,35 @@ tabs:
 ## The ME windows
 
 Every ME block has its own window in one style (title bar with close button, drag it by the title bar), opened by
-**clicking the block** (the normal open key). Blocks that have a window of the game (terminal, crafting CPUs and
+**clicking the block** (the normal open key). Issue #28: **every ME window shows your inventory on its left**
+("Character"), the block's slots (cards, cell, cells of a drive, patterns) in the window: click a stack in your
+inventory to pick it up, put it down, merge or swap it, right click for half a stack, **shift + click to put it into
+the block** (a card into a card slot, a cell into the workbench or a free drive slot, a pattern into a free provider
+slot; in the terminal and every block without slots of its own (interface, import and export bus, controller, level
+maintainer, circuit interface, crafting CPUs) it is **stored in the network**, control + click stores every stack of
+that item). What the block cannot take stays where it is, with a short message. Click a slot of the block with an item
+in hand to put it in (what does not belong there is refused and stays in your hand), click it with an empty hand to
+take the item, shift + click to take it into your inventory. Blocks that have a window of the game (terminal, crafting CPUs and
 level maintainer: lamps; circuit interface: constant combinator; ME Interface: container) show the ME window
 instead; the others (drive, controller, buses, pattern provider) have no window of
-their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second.
+their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second. With a tool
+in hand (blueprint, deconstruction or upgrade planner, copy-paste or cut tool, a wire, a ghost, an item to build) a
+click uses the tool and opens no window, as on a chest.
 
 | Block | Window |
 |---|---|
-| ME Terminal | the hub above |
-| ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window |
-| Storage cell | contents, fill, partition buttons, **Clear**, **From contents** |
+| ME Terminal | the hub above; shift + click in your inventory stores |
+| ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
+| Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, power |
-| ME Pattern Provider | 9 pattern slots (click with an encoded pattern in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
-| ME Crafting CPU (all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
+| ME Pattern Provider | 9 pattern slots (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
+| Crafting block (any block of a Crafting CPU) | the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
+| ME Crafting CPU (legacy, all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
-| ME Interface | 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
+| ME Interface | the priority, 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids), the entity it faces and whether the bus uses its items, fluids or both, status |
-| ME Storage Bus | mode (read and write, read only, write only), priority, 18 filters (items and fluids), how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
+| ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; a blacklist with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
 the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
@@ -193,7 +217,12 @@ Its window has **9 config rows** (AE2's config slots): each an item (with qualit
 * Mined, the fluid in its sides goes into the network; destroyed, it is lost like a tank's. Interfaces of saves from
   before 0.2.0 get their sides when the game is loaded; a side that an existing pipe, pump or tank points at is set
   to **Off**, so a pipeline that ran past the interface is not drained (switch it to Import in the window).
-* The rows and sides are kept in blueprints and copied with the entity settings (shift right click, shift left
+* **Priority** (in its window, -1000 to 1000, default 0; me-network issue #17): when the network has less of an item
+  or fluid than its interfaces want, the interfaces of the higher priority are filled first; one of a lower priority
+  gets only what is left after them (its fluid side says "ME Interfaces of a higher priority lack it"). What an
+  interface already holds stays in it. Interfaces of the same priority share what there is in the order they are
+  visited.
+* The rows, sides and the priority are kept in blueprints and copied with the entity settings (shift right click, shift left
   click) and by cloning. Interfaces of older saves: every filtered slot becomes a config row of one stack (several
   slots with the same item add up), the first time the interface works after the update; the slot filters are
   cleared. Old blueprints with filters are converted the same way.
@@ -208,9 +237,13 @@ machine with a fluid recipe, a chemical plant) one bus does both; on a chest onl
 | Import | the output of an assembler or furnace, or any slot of a chest, and the fluid in the output boxes of a machine (a tank: all of it), into the network | only those items and fluids; none: everything |
 | Export | from the network into the input of an assembler or furnace (up to a stack of each filtered item) or a chest, and its filtered fluids into the machine's input boxes or the tank, at the fluid's default temperature | the items and fluids to export (none: nothing) |
 
-A bus moves up to 64 items and 1000 units of fluid per visit, an interface handles up to 8 slots and its four sides
-per visit; every interface and bus is visited about every quarter second while there are fewer than 24 of them
-(more: each less often). The unified blocks move fluids as soon as they are built; the network stores fluid in fluid
+A bus moves up to 256 items and 4000 units of fluid per second (map settings "Bus speed"), however many buses the
+map has: a bus that is visited less often moves more per visit. An interface handles 8 slots per quarter second since
+its last visit, and its four sides. A busy block is visited about every quarter second (in a very big network as
+often as the setting "Interface and bus visits per tick" allows); one that found nothing to do waits longer and
+longer, at most 5 seconds (setting "Longest wait of an idle interface or bus") and never longer than in a small
+network, and it wakes at once when its item comes into the network, its settings change, it is rotated or something
+is built in front of it. The unified blocks move fluids as soon as they are built; the network stores fluid in fluid
 storage cells (tech ME Fluid Storage) or in a tank behind a storage bus.
 
 ## ME Storage Bus
@@ -226,11 +259,22 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
   "Partitions and priorities"): a high priority bus with filters is an **input chest** (the network puts those items
   there first, an inserter or a machine takes them out), a low priority bus without filters an **overflow chest**.
   At the same priority the cells are filled first and the chest is emptied first.
-* **Mode** (in its window): **Read and write**; **Read only**: the network takes from the chest and shows it, but
-  never puts anything in (a factory's output chest); **Write only**: the network puts items in but does not show or
-  take them (a chest that a train or another factory empties).
-* **Filters**: up to 18 items (with quality) and fluids. With filters the bus shows and stores only those; without
-  filters everything the network can store (a bus with only fluid filters takes no item).
+* **Mode** (in its window): **Read and write** (AE2: bi-directional); **Read only** (AE2: extract only): the network
+  takes from the chest and shows it, but never puts anything in (a factory's output chest); **Write only** (AE2: insert
+  only): the network puts items in but does not show or take them (a chest that a train or another factory empties).
+* **Filters**: 18 items (with quality) and fluids, 9 more with each **Capacity Card** (up to 63). With filters the bus
+  shows and stores only those; without filters everything the network can store (a bus with only fluid filters takes
+  no item). With an **Inverter Card** the filters are a **blacklist**: everything except them; with a **Fuzzy Card** a
+  filter matches its item in **every quality**.
+* **Filter on extract** (a check box, on by default, AE2's setting of the same name): on, the filters decide what goes
+  in and what the network sees and takes; off, they decide only what goes in, and the network sees and takes everything
+  in the chest it can hold (an input chest that also takes back what a machine left in it).
+* **From contents** sets the filters to what the chest holds now (AE2's "partition storage"), **Clear** removes them.
+* **Upgrade cards**: 5 card slots in its window (see **Upgrade cards**): Capacity, Inverter, Fuzzy and Overflow
+  Destruction Card. With an **Overflow Destruction Card** whatever the network stores into the bus and does not fit
+  into the chest is **destroyed** (only what its filters let in, and only while it faces a chest or tank): the window
+  says so in red and counts what it destroyed. Give such a bus a low priority, or it takes everything before the
+  drives.
 * Inserters, players and trains change the chest without the network noticing at once: every bus looks at its
   chest about every quarter second (with more than 8 storage buses each less often: 50 buses, every 1.75 s). Until
   then the terminal may show a few items that are gone, or not yet show new ones; taking out always checks the chest
@@ -240,10 +284,12 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
   drive, a cable, ...) does nothing either ("Faces an ME block"): no loops.
 * Removing the bus or the chest takes the chest's items out of the network at once (a chest destroyed by another
   mod without an event: at the bus's next look); nothing is lost, the items stay in the chest.
-* Not shown or moved: spoiling items, items with an inventory or own data (armor, blueprints, ...). Items are taken
-  out by count: a damaged item or a partly used tool or magazine in the chest
-  comes out as a new one would.
-* Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
+* Not shown or moved: spoiling items, items with an inventory or own data (armor, blueprints, ...). AE2 can show
+  items a bus cannot take as present; here they are not shown at all, because every plan, level maintainer and
+  circuit signal counts on what the network shows. Items are taken out by count: a damaged item or a partly used tool
+  or magazine in the chest comes out as a new one would.
+* Settings (mode, priority, filters, filter on extract) are kept in blueprints, copied by settings paste and by
+  cloning; so is which cards it has, but the cards themselves are items (see **Upgrade cards**).
 
 ## ME Storage Bus on a tank
 
@@ -262,7 +308,10 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
 * The network **stores into** the segment by the bus's **filters** (its fluid filters) and **priority**, together with
   the drives and the item storage buses (see "Partitions and priorities"): at the same priority the fluid cells are
   filled first and the tank is emptied first. A tank takes one fluid: a tank holding crude oil gets no water.
-* **Mode**: read and write, read only, write only, as for the item storage bus.
+* **Mode**: read and write, read only, write only, as for the item storage bus; filters (fluids), "filter on
+  extract", "From contents", "Clear" and the cards too (a Fuzzy Card does nothing for fluids). With an **Overflow
+  Destruction Card** what does not fit into the segment is destroyed; a tank that holds another fluid or is at another
+  temperature takes nothing and destroys nothing.
 * **Temperature**: the network stores one temperature per fluid (see "Fluids"). A tank at another temperature (hot
   steam) is shown and can be taken from (what leaves the network has the fluid's default temperature, as with the
   import bus), but the network puts nothing into it, so the tank keeps its heat. The window shows the
@@ -276,6 +325,70 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
   of its own (machines are not part of segments); fluid wagons are not supported.
 * Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
 
+## Upgrade cards
+
+AE2's upgrade cards (me-network issue #17, technology **ME Upgrade Cards** after ME 64k Storage, with its cost). Each
+card is made from a component card and one item:
+
+| Card | Recipe (standalone) | Goes into | Does |
+|---|---|---|---|
+| Basic Card (2 per craft) | 2 iron plates, 2 copper cables, an electronic circuit, an advanced circuit | | component |
+| Advanced Card (2 per craft) | 2 iron plates, a processing unit, an electronic circuit, an advanced circuit | | component |
+| Capacity Card | basic card + iron chest | storage bus, up to 5 | 9 more filters each (18 + 9 per card, up to 63) |
+| Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
+| Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
+| Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
+| Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
+
+On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
+like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards
+and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell has 4 card slots, a fluid cell 3,
+`BasicStorageCell`).
+
+* **Putting a card in:** open the storage bus (your inventory is on the left of its window) and shift + click the card
+  in your inventory: a stack goes into the empty card slots, one card each. Or click a card slot with the card in hand
+  (one card of the stack goes in). A card the bus cannot take (an Equal Distribution Card), one more of a kind than it
+  takes, a card for which no slot is left and anything that is no card are refused with a message and stay where they
+  are. Click a card to take it into the hand, shift + click into your inventory.
+* **Cards are items and are never made or lost by the network:** a mined bus gives its cards back (with the bus), a
+  destroyed one drops them, as a drive drops its cells.
+* **Blueprints, copy/paste, settings paste and clones** copy which cards a bus has, not the cards: a bus built from a
+  blueprint takes its cards from the network as soon as the network has them (its window lists the ones it still
+  waits for); a settings paste takes them from your inventory first, then from the network, and puts the cards the
+  bus had beyond them into your inventory. Taking a card out by hand ends the waiting. A bus without its cards works
+  as if it had none.
+* A **Recipe paste** (a crafting machine onto the bus) changes only the filters; cards and settings stay.
+
+## ME Cell Workbench
+
+AE2's Cell Workbench (technology ME Upgrade Cards; an iron chest, 4 iron plates, an advanced circuit and 2 electronic
+circuits). It needs **neither the network nor power** (AE2's does not either): place it anywhere.
+
+* **The cell:** shift + click a storage cell in your inventory (on the left of the window), or click the cell slot with
+  a cell in hand (another cell there is swapped into the hand, with its cards); click the cell to take it, shift +
+  click into your inventory. Anything else is refused with a message. The cell keeps its items all the time; every
+  change of the partition is written into it at once.
+* **Partition:** the same buttons as the cell window (items with quality, or fluids for a fluid cell), **From
+  contents** and **Clear**.
+* **Card slots:** an item cell takes 4 cards, a fluid cell 3 (AE2): one each of **Inverter Card** (the partition is a
+  blacklist: the cell takes everything except it), **Fuzzy Card** (item cells: the partition matches every quality),
+  **Equal Distribution Card** (no kind takes more than an equal share of the cell: with a partition of n kinds the
+  bytes left after the kinds' costs divided by n, without one by the cell's 63 types; a 1k cell holds 67 of each kind,
+  partitioned for two kinds 4032 each) and **Overflow Destruction Card** (what the network stores into the cell and does
+  not fit, or exceeds a kind's share, is **destroyed**; a cell without a partition destroys only what it already holds
+  once it cannot take a new kind). Shift + click a card in your inventory, or click a card slot with it in hand; a card
+  the cell cannot take, a second one of a kind and a card without a cell are refused. While the cell lies in the
+  workbench its cards are the items in its card slots; taking the cell out puts them into it.
+* **Keep the partition when the cell is taken out** (AE2's copy mode): the partition stays in the workbench and goes
+  onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
+* The cards are part of the cell (its tags): they travel with it into drives, chests and the network, like its items
+  and partition. Only the workbench puts cards in or takes them out; the cell window (drive window, the terminal's
+  Cells tab) shows them and keeps its partition buttons, so nothing a player used goes away.
+* Mined, the workbench gives its cell back (with the cards of its slots in it); destroyed, it drops it.
+* Two players at one workbench or storage bus see the same slots; what one of them puts in or takes out the other sees
+  at once.
+
+## Old saves (from before the rework)
 ## Old saves (from before the rework)
 
 Old ME networks are converted when the save is loaded (`docs/ME-REWORK.md`, "Migration"): the old controller
@@ -306,14 +419,15 @@ Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks:
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
 | **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns**; each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
 | **ME Molecular Assembler** | assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW |
-| **ME Crafting CPU** | 2x2, needs power (60 kW), part of the network. Runs one job at a time (bigger CPUs: see [CPU tiers](#cpu-tiers)) |
+| **Crafting blocks** | 1x1 members of the network; a solid rectangle of them with at least one **crafting storage** is a Crafting CPU running one job (see [Crafting CPUs](#crafting-cpus)). The first: a single **ME 1k Crafting Storage** |
 
 Step by step:
 
 1. Build an ME network: ME Controller (powered), at least one ME Drive with cells and items, an ME
    Terminal (powered), all connected.
-2. Connect an **ME Crafting CPU** to the network and power it. One CPU = one job at a time; a second
-   CPU, or a bigger one, lets two jobs run in parallel.
+2. Build a **Crafting CPU** touching the network: the smallest is one **ME 1k Crafting Storage** next to a cable.
+   One CPU = one job at a time, of at most its crafting storage in bytes; a second CPU (not touching the first)
+   lets two jobs run in parallel.
 3. Put **blank patterns** into your inventory (or into the network) and encode them in the terminal's
    **Patterns** tab (below): a **crafting pattern** for each recipe the network should craft.
 4. Place a machine (Molecular Assembler for crafting recipes, a GT machine for processing recipes: macerator, EBF,
@@ -362,7 +476,7 @@ ingredient fits into a slot, and fluid boxes for the recipe's fluids without pip
   all of it, the machine is not switched and the job waits. Nothing is lost on a switch.
 * **One machine, many patterns:** a machine works for one job at a time. A job that needs a machine that is busy with
   another job (or another pattern) **waits** ("Waiting for a free machine") and takes it at the next step after it is
-  free. Jobs take turns (round robin, 8 jobs per step).
+  free. Jobs take turns: one job per tick (setting "Crafting jobs stepped per tick"), each one every 20 ticks at most.
 * The machine keeps the recipe of the last job; it is never switched back.
 * **Cannot make it:** a pattern whose machines cannot make the recipe is no pattern of the network: the provider
   window shows why (`category`: no machine of the right kind, `not-researched`, `fixed-recipe`, `stack`, the fluid
@@ -434,26 +548,68 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
 * **Settings paste** (shift right click, shift left click) and cloning copy the **priority** only; patterns are items
   and stay where they are.
 
-## CPU tiers
+## Crafting CPUs
 
-Two bigger Crafting CPUs (issue #38) run several jobs at once and hand work to the pattern machines
-faster. They are 2x2 like the ME Crafting CPU, need power, and belong to the network they stand in.
+A Crafting CPU is built, as in AE2, from **crafting blocks** (issue #6). Every block is 1x1, a member of the ME network
+like any ME block (it draws its power through the ME Controller; without power the CPU waits). **Any group of touching
+crafting blocks that is a solid rectangle (no gaps) and holds at least one crafting storage is one Crafting CPU.**
+There is no core block, and any number of CPUs may be in a network; two CPUs must not touch (touching blocks are one
+group).
 
-| Entity | Tech (tier) | Jobs at once | Speed | Power | Recipe (main parts) |
+| Block | Crafting storage | What it does | Power | Recipe (standalone) | Technology |
 |---|---|---|---|---|---|
-| ME Crafting CPU | `me-autocrafting` (EV) | 1 | 1x (6 machine hand-overs per job every 20 ticks) | 60 kW | EV hull, ME controller, 2 64k cells |
-| **ME Co-Processing Crafting CPU** | `me-co-processing` (IV, after `me-storage-256k` and IV components) | 2 | 2x | 240 kW | ME Crafting CPU, IV hull, 2 256k cells, 4 acceleration cards, 4 IV circuits (IV assembler) |
-| **ME Quantum Crafting CPU** | `me-quantum-crafting` (LuV, after `me-co-processing` and LuV machines) | 4 | 4x | 960 kW | Co-Processing CPU, LuV hull, 2 LuV emitters, 8 acceleration cards, 4 LuV circuits (LuV assembler) |
+| ME Crafting Unit | | fills the rectangle | 4 kW | 4 iron plates, 2 advanced circuits, 2 fluix cables, 1 electronic circuit | `me-autocrafting` |
+| ME 1k Crafting Storage | 1 024 bytes | holds the job | 4 kW | crafting unit + 1k storage component | `me-autocrafting` |
+| ME 4k Crafting Storage | 4 096 bytes | | 8 kW | crafting unit + 4k storage component | `me-autocrafting` |
+| ME 16k Crafting Storage | 16 384 bytes | | 16 kW | crafting unit + 16k storage component | `me-co-processing` |
+| ME 64k Crafting Storage | 65 536 bytes | | 32 kW | crafting unit + 64k storage component | `me-co-processing` |
+| ME 256k Crafting Storage | 262 144 bytes | | 64 kW | crafting unit + 256k storage component | `me-quantum-crafting` |
+| ME Crafting Co-Processing Unit | | the CPU hands work to the machines once more per step | 32 kW | crafting unit + processing unit | `me-co-processing` |
+| ME Crafting Monitor | | shows the job | 4 kW | crafting unit + small lamp + electronic circuit | `me-autocrafting` |
 
-* The job slots of all CPUs in the network are the number of jobs that run at once. The crafting
-  tab shows them: `Crafting CPUs: 1, job slots: 2 (free: 1)`. A new job takes the fastest CPU with a
-  free slot; with none free it waits (`Waiting for a free CPU`).
-* **Speed** is how many machines a job can load and empty per step. It matters when a job has many
-  pattern machines for the same recipe: a job on the base CPU keeps about 18 machine hand-overs per
-  second going, on a Quantum CPU four times that. The machines still craft at their own speed.
-* **Upgrading:** the upgrade planner (or fast replace by hand) swaps a CPU for the next tier. A job on
-  the replaced CPU pauses for a moment and goes on on the new one (or on any other free slot), with
-  everything it holds.
+* **The smallest CPU** is a single 1k crafting storage touching a cable: it runs a job of 100 electronic circuits from
+  plates (932 bytes). Bigger CPUs: more or bigger storage blocks in one rectangle (their bytes add up), filled up with
+  crafting units, co-processing units and monitors as you like.
+* **Bytes of a job** (AE2's rule): the amount ordered, plus for every step of the plan its crafts and all the
+  ingredients of those crafts (1 byte per item, 1 byte per 10 fluid units), plus 8 bytes per step and per item or
+  fluid taken from storage. 100 electronic circuits need 932 bytes, 50 processing units from plates, plastic and acid
+  12 189 bytes (a 16k crafting storage).
+* **One job per CPU.** A job starts only when a CPU of the network is free and big enough; it takes the smallest one
+  that fits. Otherwise the Craft button tells why ("needs N bytes, the biggest CPU has M", or "every CPU that can take
+  it is busy") and starts nothing; a level maintainer waits and tries again.
+* **Speed:** every co-processing unit lets the CPU hand one more batch to the pattern machines per step: a CPU with n
+  co-processors is 1 + n times as fast (at most 16 count). It matters when a job has many machines for the same
+  pattern; the machines still craft at their own speed. Three co-processors make a CPU as fast as the old Quantum CPU.
+* **Not a CPU:** a group with a gap or a corner missing, or one without crafting storage, is no CPU: its blocks stay
+  dark (the blocks of a CPU are lit) and its window says why ("its 7 blocks do not fill their 3 x 3 area", "it has
+  no crafting storage").
+* **The plan preview** in the terminal's Crafting tab shows the bytes the job needs and the CPUs of the network: those
+  that can take it now, those big enough but busy, those too small (each with its number, size, bytes and
+  co-processors). The Craft button is off when no CPU can take it now.
+* **The CPU window** (click any block of the CPU): status, size, crafting storage used by its job and total,
+  co-processors and speed, monitors, and the job with its progress and **Cancel**.
+* **ME Crafting Monitor:** shows the item or fluid the CPU is crafting and the amount on its face (several monitors
+  all show it).
+* **Changing a running CPU:** remove a block and the job **pauses** with everything it holds (nothing is lost: its
+  items and fluids are kept by the job, not by the blocks). It goes on as soon as a free CPU of the network is big
+  enough, which may be what is left of its own CPU; until then it shows "Paused: waiting for a free CPU with at least
+  N bytes", and **Cancel** gives everything back. A block added to a running CPU (a co-processor) helps at once.
+* Blueprints, copy and paste and cloning build the blocks; they form a CPU when the rectangle is complete.
+
+### The old Crafting CPUs (legacy)
+
+The single 2x2 CPUs of earlier versions (issue #38) are **legacy blocks**: they can no longer be crafted, but those in
+a save, or in your inventory, keep working as before, and their running jobs go on through the update on the same CPU:
+
+| Entity | Jobs at once | Speed | Power |
+|---|---|---|---|
+| ME Crafting CPU | 1 | 1x (6 machine hand-overs per job every 20 ticks) | 60 kW |
+| ME Co-Processing Crafting CPU | 2 | 2x | 240 kW |
+| ME Quantum Crafting CPU | 4 | 4x | 960 kW |
+
+They have no byte limit. A job takes a free multiblock CPU first, a legacy CPU with a free slot after that. A job is
+no longer queued behind busy CPUs: with every slot busy, the start is refused. The upgrade planner still swaps the
+legacy tiers (a job on the replaced CPU pauses and goes on on the new one).
 
 ## Keeping items in stock: ME Level Maintainer
 
@@ -461,7 +617,7 @@ Tech `me-automation` (EV, needs `me-autocrafting` and Circuit network). The **ME
 a 1x1 block that needs power (30 kW) and is a member of the network.
 
 1. Connect it to the network and power it. Autocrafting must work for the resource: a pattern
-   (an encoded pattern in a provider next to a machine) and a Crafting CPU.
+   (an encoded pattern in a provider next to a machine) and a Crafting CPU big enough for the difference.
 2. Click it: its ME window opens. Choose the item or fluid in the signal button and type the amount to
    keep (items, or fluid units).
 3. When the network holds less than that amount, the maintainer starts a crafting job for the
@@ -478,7 +634,9 @@ What the window says:
 | Enough in stock | nothing to do |
 | Crafting job N is running | its job; the progress is also in the terminal's job list |
 | Another job of this network is crafting it | waits for that job |
-| Waiting for a Crafting CPU with a free job slot | all slots are busy: the maintainer does not queue jobs, it waits and tries again |
+| Waiting for a Crafting CPU with a free job slot | all CPUs are busy: the maintainer does not queue jobs, it waits and tries again |
+| Waiting for a free Crafting CPU that is big enough for the job | the CPUs that could take the job are busy |
+| Waiting: the job is bigger than every Crafting CPU of this network | add crafting storage (or keep a smaller amount) |
 | Cannot craft the difference, missing: ... | the plan lacks raw materials; it tries again every 5 seconds |
 | No pattern for this item or fluid | no usable encoded pattern for it in a provider of the network |
 | Switched off by the circuit condition | see below |
@@ -506,9 +664,10 @@ network. Connect red or green wires to it: they carry
 * only the resources chosen as **filters**: click it, its ME window has up to 20 signal buttons and the
   output on/off switch. Items and fluids only; without filters everything is sent.
 
-The signals are refreshed about once a second (with more than six interfaces a little less often: two
-of them are refreshed every 20 ticks, in turns). The network writes the combinator's signal list: entries
-added by hand are replaced, extra sections are removed; the combinator's on/off switch still turns the
+The signals are refreshed about once a second, and only when the network's contents changed (all circuit interfaces
+of the map together at most 10 times per second, setting "Circuit interface updates per second": with many
+interfaces each one less often). The signals are listed by type and name (the 1000 largest amounts when there are
+more). The network writes the combinator's signal list: entries added by hand are replaced, extra sections are removed; the combinator's on/off switch still turns the
 output off (also in the ME window). Filters are copied by settings paste and kept in blueprints, copy and
 paste, and clones. Since
 issue #68 the ME Controller has no circuit connection (it was a roboport): the Circuit Interface is the way to
@@ -520,12 +679,35 @@ largest amounts first).
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
 | ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network) | yes (priority) | yes (patterns pending a blank pattern); clone: priority |
-| ME Interface | config rows (item with quality, or fluid; amount), the four sides | yes | yes (old blueprints with slot filters, and of the old fluid interface, are converted) |
+| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority | yes | yes (old blueprints with slot filters, and of the old fluid interface, are converted) |
 | ME Import Bus, ME Export Bus | filters (items and fluids) | yes | yes |
-| ME Storage Bus | mode, priority, filters (items and fluids) | yes | yes |
+| ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
 | ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
+
+### A machine's recipe onto an ME block
+
+Like a requester chest: **shift + right click** a crafting machine (an assembling machine, a furnace, a rocket silo,
+the GregTech machines of Gregtorio Continued, the machines of every other mod) and **shift + left click** an ME block.
+The block is set up for the machine's recipe; what it had is replaced:
+
+| Paste onto | Result | Kept | Holds |
+|---|---|---|---|
+| ME Interface | config rows = the ingredients in the recipe's order: one full stack of each item (whatever one craft needs), a fluid row of a side's volume for each fluid | sides that are off; a side tied to a fluid that is in the recipe again | 9 rows, 4 fluids |
+| ME Storage Bus | filters = the ingredients: on a chest or cargo wagon the items, on a tank the fluids, facing nothing yet both | mode, priority, filter on extract, the cards | 18 filters (9 more per Capacity Card) |
+| ME Export Bus | filters = the ingredients, items and fluids | | 9 filters |
+| ME Import Bus | filters = the **products**, items and fluids | | 9 filters |
+
+* The recipe's quality is the quality of the interface's item rows and of the storage bus's item filters. The
+  import and export bus filter by name: the export bus moves normal quality only (a flying text says so).
+* A furnace that is not smelting gives its last recipe.
+* A new fluid row gets the side a new fluid row gets in the window: the first import side with a pipe, else the first
+  import side (the flying text says that it has no pipe yet). A side tied to a row that goes away imports again.
+* A flying text names what did not fit, a fluid row with no side left (every side off or tied: set one in the
+  window), and a machine without a recipe. Nothing is changed when the recipe has nothing for the block (no
+  ingredients; a storage bus on a chest and a recipe of fluids only, or on a tank and no fluid).
+* A paste between two ME blocks of the same kind copies the settings as before.
 
 ## Fluids
 
@@ -574,8 +756,8 @@ cell (8 000 units per "1k"). An item cell takes no fluid and a fluid cell no ite
 * **Fluid cell partition:** a fluid cell can be partitioned for fluids like an item cell for items (see
   **Partitions and priorities**).
 * **Buses:** the import bus empties the output boxes of the machine it faces (a tank: all of it), the export bus
-  fills its filtered fluids into the machine's input boxes or the tank. Up to 1000 units per visit (a visit about
-  every quarter second while there are fewer than 24 interfaces and buses), fluid filters next to the item filters
+  fills its filtered fluids into the machine's input boxes or the tank. Up to 4000 units per second (setting "Bus
+  speed: fluid per second"), fluid filters next to the item filters
   (import: none means everything), kept in blueprints, settings paste and clones.
 * **Blueprints:** a drive from a blueprint is empty (cells are items; priority and partitions are kept). The rows and
   sides of an ME Interface are kept in blueprints and copied by settings paste and cloning.
@@ -606,9 +788,19 @@ an index item -> cells) and the drives with their cells (`storage.fork_me_net.dr
 build and removal updates them, a breadth first search over the stored adjacency splits a network when a
 member is removed, and a sweep in the terminal step finds members removed without an event. The storage API
 (`insert`, `extract`, `count`, `can_insert`, `contents`, `insert_stack`, `extract_to`, `stats`) works on a
-network and does nothing when the network does not work. `scripts/fork-me-io.lua` runs the I/O step (every 15
-ticks: the fluid step below, then up to 24 interfaces and buses), `scripts/fork-me-migrate.lua` converts old
+network and does nothing when the network does not work. `scripts/fork-me-io.lua` visits the interfaces and buses
+(since issue #5 of ME Network each one at a tick of its own, `scripts/fork-me-schedule.lua`, from the one `on_tick`
+handler of `control.lua`), `scripts/fork-me-migrate.lua` converts old
 networks, `scripts/fork-me-terminal.lua` is the terminal and routes the GUI events of every ME window.
+
+### Upgrade cards and priorities (me-network issue #17)
+
+Design record: `docs/ME-REWORK.md`, "Upgrade cards, storage bus settings, the Cell Workbench and priorities" (AE2's
+numbers with their source, the cards' storage, how a blacklist, a fuzzy filter, "filter only what goes in" and the void
+fit into the storage engine's lookups, the interface shortfalls). The cards are items (`prototypes/cards.lua`); a
+storage bus keeps them in its record (`rec.cards`, `rec.want`); `apply()` in `scripts/fork-me-storagebus.lua` turns
+filters and cards into `partition`, `deny`, `fnames`, `void` and `inonly`, which `accepts()` and the lookups of
+`scripts/fork-me-network.lua` read. A network without cards takes exactly the code paths of 0.3.0.
 
 ### Windows (issue #68, R3)
 
@@ -626,6 +818,16 @@ each shows data from a `*_data` function and changes things through a function o
 `set_*` helper; the remote interface `gregtorio-me-gui` exposes the same functions to the runtime test. Nothing of a
 window is in storage except the terminal's tab, search, sort, kind and picked craft
 (`storage.fork_me_terminal[player]`).
+
+Issue #28 (`docs/ME-REWORK.md`, "Windows with the player's inventory"): a window can have the **inventory pane**, the
+player's main inventory drawn by the mod on the left of the content (`G.open_window(..., pane)`): one slot button per
+slot, updated through `on_player_main_inventory_changed` and `on_player_cursor_stack_changed` for the slots that changed
+only (`G.update_pane`, signatures in `storage.fork_me_gui_pane[player]`). Its clicks (`G.inventory_click`) pick up, put
+down, merge, swap and halve stacks like the game's, and shift + click hands the stack to the window's `shift`; the
+block's slots are buttons whose click goes to the window's `click`, which refuses a wrong item before anything moves.
+The storage bus keeps its cards in its inventory (`rec.inv`, `rec.cards` follows it); the Cell Workbench keeps the cell
+in slot 1 and, while it is there, the cell's cards as items in slots 2 to 5 (they go into its tags when it is taken
+out).
 
 ### Partitions and priorities (issue #68, R3)
 
@@ -655,8 +857,8 @@ keeps the calls the other modules used (`totals`, `count`, `insert`, `remove`, `
 times 8) on top of them.
 
 The **ME Interface's sides** (issue #3 of ME Network) are four hidden 1x1 storage tanks of 5000 units on its tile,
-one pipe connection each. The interface is visited in the I/O step (`scripts/fork-me-io.lua`, `on_nth_tick(15)`,
-24 interfaces and buses per step); after its items it looks at its sides. Import side: the tank's fluid is removed
+one pipe connection each. The interface is visited by the scheduler (`scripts/fork-me-io.lua`, issue #5); after its
+items it looks at its sides. Import side: the tank's fluid is removed
 with `remove_fluid`, limited to what the network can take (`can_insert_fluid`); this takes the whole fluid segment.
 Export side: `want = amount - held`, `insert_fluid` of `min(want, stored)` at the default temperature. In both
 directions only what the engine reports as removed or inserted is booked, never the requested amount, so fluid is
@@ -666,7 +868,8 @@ The **buses** move fluids in the same visit as items (`fork-me-io.lua`, `fluid_b
 fluid boxes (decided once, by its prototype, when the target is found): the import
 bus reads the target's fluid boxes by index and skips input boxes (`production_type == "input"`), takes at most
 what the network can store and writes the rest back into the box; the export bus uses `insert_fluid` (the engine
-picks the box) and books what it reports. 1000 units per visit.
+picks the box) and books what it reports. The bus's speed times the ticks since its last visit (1000 units per 15
+ticks by default).
 
 Fluids are stored by name only. One temperature per fluid keeps totals, export and hand-over unambiguous; the
 price is the temperature rule above.
@@ -689,9 +892,10 @@ pattern needs an assembling machine that can make the recipe (category, research
 exactly with the recipe set, by size and count before a switch), a processing pattern a machine ("push") or a chest
 ("chest"). From all providers, in pattern order (priority descending, unit number, slot), `patterns[network id]`
 holds `items[key] = { pattern ids }`, `defs[id]` and `targets[id]` (each machine once); patterns without a target are
-counted in `ignored[reason]`. A change of the ME graph rescans every provider before the patterns are used next; a
-round robin rescan (8 providers per step) keeps them current and encodes pending blueprint patterns; starting a job
-rescans all providers first, so the plan always sees the world as it is now. Resource keys
+counted in `ignored[reason]`. A merge or split of ME networks rescans every provider before the patterns are used
+next; a round robin rescan (one provider every 2 ticks) keeps them current and encodes pending blueprint patterns;
+starting a job rescans the providers of its plan's patterns first (and plans again if one changed), so the plan sees
+its machines as they are now. Resource keys
 are item names and `fluid/<name>` for fluids; stock, plan, pool, GUI and the remote interface
 use the same keys. A machine with a fluid recipe carries its **fluid map**, built from
 `entity.fluidbox` after the recipe is set: which input box (by index) takes which fluid ingredient (the box filter
@@ -720,8 +924,9 @@ storage. If something is missing the job does not start and nothing is taken.
 Starting a job takes the planned resources out of the network into the job's own **pool**
 (`storage.fork_ae2.jobs[id].pool`, plain counts per key, so it saves, loads and syncs like any
 storage table); items with the network's `extract`, fluids with `fluids.remove`. Reserving at the start
-means nothing can be stolen by other jobs or by players taking items while the job runs. A job
-with no free CPU waits ("Waiting for a free CPU") with its resources reserved.
+means nothing can be stolen by other jobs or by players taking items while the job runs. A job starts only on a
+free CPU that is big enough (issue #6); a job whose CPU changed or went waits ("Waiting for a free CPU") with its
+resources reserved.
 
 Each step the CPU of a job:
 
@@ -790,6 +995,7 @@ Removed entities:
 | Pattern provider | its patterns are no patterns any more (mined: into the buffer; destroyed: on the ground); a running job finishes what is already in the machine and waits for another machine of the pattern |
 | A drive or a fluid cell during a job | nothing happens to the job: its items and fluids are in its pool, not in a cell. At the end the pool is stored in the remaining cells, or waits for room |
 | Fluid interface | nothing for jobs; what it holds goes back into the network (as far as the cells have room), its mode, fluid and level are forgotten |
+| A block of a multiblock Crafting CPU (issue #6) | the job pauses (queued) with its pool and its leases, and takes the next free CPU with enough bytes, the rest of its own CPU included |
 | Terminal, controller, a cable | jobs without a working network pause ("No ME network"). A job finds its network through its CPU, else through the entity it was started at (terminal, level maintainer), else through the ME block at its position (jobs of older saves) |
 
 ### CPU tiers (issue #38)
@@ -799,28 +1005,42 @@ The tier numbers come from the mod-data `fork-me-autocraft` (`cpus[name] = { job
 jobs it runs (`cpus[unit].jobs = { [job id] = true }`; a record of an older save with a single `job` is
 converted when it is first read). `assign_cpus` gives a queued job the fastest CPU of its network with
 fewer jobs than slots. A job's machine interactions per step are `STEP_OPS` (6) times the speed of its
-CPU, and all jobs of one step share `MAX_OPS_PER_STEP` (96, four Quantum jobs at full speed): what a job
-does not use goes back to the step's budget. A CPU that is replaced or removed releases its jobs, which
+CPU for every 20 ticks since its last step (at most three steps' worth: a job that waited for its turn catches up). A CPU that is replaced or removed releases its jobs, which
 queue and take the next free slot (the path the existing CPU test covers).
+
+### Crafting CPUs as multiblocks (issue #6)
+
+Design record: `docs/ME-REWORK.md`, "Crafting CPUs as multiblocks". In short: the groups of touching crafting blocks
+are kept in `storage.fork_ae2` (`cblocks`, `cgrid`, `groups`) from the build and removal events (a vanished block from
+the network's sweep), merged on a build and split by one search over the group on a removal; a group is a CPU when its
+block count fills its bounding box and it has storage. `make_plan` returns `bytes`; `M.start` picks the CPU at once
+(`pick_cpu`: free multiblock CPUs that fit, smallest first, then legacy CPUs with a slot) or refuses the job
+(`cpu-too-small`, `no-free-cpu`). `assign_cpus` only places jobs that were paused. Nothing of this runs while no
+block is built or removed.
 
 ### Level maintainer and circuit interface (issue #38)
 
-`scripts/fork-me-circuit.lua` keeps `storage.fork_ae2.maintainers` / `mlist` / `mcursor` and `circuits` /
-`clist` / `ccursor` (created lazily) and runs as a step hook of the autocrafting step (every 20 ticks).
+`scripts/fork-me-circuit.lua` keeps `storage.fork_ae2.maintainers` / `mlist` / `mq` and `circuits` /
+`clist` / `cq` (created lazily) and runs as a tick hook of the autocrafting module: each maintainer and interface is
+due at a tick of its own (issue #5, `scripts/fork-me-schedule.lua`).
 
-* **Maintainer check** (4 per step, round robin): no resource, no power, `cb.disabled` of the lamp's
+* **Maintainer check** (4 per tick at most, setting): a stocked maintainer waits until its item is taken below its
+  amount (`N.wait_below`) and is checked at least every 5 seconds (circuit targets and conditions have no event);
+  its job's end wakes it. no resource, no power, `cb.disabled` of the lamp's
   control behavior while its circuit (or logistic) condition is switched on (a freshly wired lamp reads
   `disabled` until its next circuit update, so the flag alone is not trusted), no network: status only. Otherwise the target is the amount,
   or the resource's signal on red plus green (`get_circuit_network(wire).get_signal`). The stock is
   the network's `count` (normal quality) or `fluid_count`. Its own job still queued or running:
   nothing. Stock below target: if an active, not closing job of the network crafts the same key
   (`active_job_for`), nothing; else, if a powered CPU has a free slot (`free_slot`), `M.start` with the
-  difference and the maintainer's unit number as the job's `owner`. At most one start per step (a start
-  rescans the providers and plans); a failed start (missing, no pattern) waits `RETRY_TICKS` (300).
-* **Circuit interface update** (2 per step, round robin): the network's `contents` (with quality; items with
-  tags under their item)
-  and fluid totals (floored, at least 1 unit), filtered by key, sorted by amount, at most 1000, are
-  written as the filters of section 1 of the combinator's control behavior; other sections are removed.
+  difference and the maintainer's unit number as the job's `owner`. At most one start per tick (a start
+  rescans the providers of its plan and plans); a failed start (missing, no pattern) waits `RETRY_TICKS` (300).
+* **Circuit interface update** (10 per second for the whole map, setting; each interface at most every 60 ticks): the
+  network's totals (with quality; items with tags under their item) and fluid totals (floored, at least 1 unit)
+  as one list per network (`net.sigs`, made at most every 60 ticks while the contents change, shared by every
+  interface), filtered by key, the 1000 largest amounts, sorted by type and name, are written as the filters of
+  section 1 of the combinator's control behavior; other sections are removed. An interface writes only when the
+  list changed since its last write.
 * **Settings copy:** blueprint tags `fork_me_maintainer` (`{ key, amount, circuit }`), `fork_me_circuit`
   (`{ filters }`) and `fork_me_fluid_interface` (`{ mode, fluid, level }`), written by the one
   `on_player_setup_blueprint` handler (autocrafting module: providers, then `fluids.tag_blueprint`, then
@@ -832,30 +1052,42 @@ queue and take the next free slot (the path the existing CPU test covers).
 
 ### Throughput and UPS
 
-* One shared autocrafting step every 20 ticks (`on_nth_tick(20)`; the I/O step uses 15,
-  the molds 30, the terminal refresh 60).
-* At most 8 jobs per step (round robin), at most 6 machine hand-overs/collections per job per step
-  on the base CPU (12 on a Co-Processing, 24 on a Quantum CPU), at most 96 for all jobs together, so a
-  base CPU job moves up to about 18 machine interactions per second. That matches an assembler line
+* Since issue #5 of ME Network everything runs from one `on_tick` handler, spread over the ticks (the terminal
+  refresh stays at 60 ticks; numbers in `docs/PERFORMANCE.md`).
+* One job per tick (round robin), each at most every 20 ticks, at most 6 machine hand-overs/collections per job per
+  20 ticks on the base CPU (12 on a Co-Processing, 24 on a Quantum CPU), so a base CPU job moves up to about 18
+  machine interactions per second, however many jobs run. That matches an assembler line
   and keeps a step cheap; a job with more machines is throttled by the CPU, a faster CPU lifts it.
-* Level maintainers and circuit interfaces run in the same step: 4 maintainer checks (cheap: a count
-  and a few table lookups) with at most one job start per step (the only expensive part: a provider
-  rescan and a plan, like the Craft button; a failed start waits 5 seconds), and 2 circuit interface
-  updates (one `get_contents()`, the fluid totals and one write of the section each).
-* 8 provider rescans per step, planning only on user actions (terminal GUI: while a craft item is
+* Level maintainers and circuit interfaces: up to 4 maintainer checks per tick (cheap: a count and a few table
+  lookups) with at most one job start per tick (the only expensive part: a rescan of the plan's providers and a
+  plan, like the Craft button; a failed start waits 5 seconds), and circuit interface updates (one list per
+  network and one write of the section each).
+* One provider rescan every 2 ticks, planning only on user actions (terminal GUI: while a craft item is
   selected, once per second from the cache). An arrival is one table lookup per insert (network, key) when no job
   waits for that key; the index of waiting jobs is rebuilt only when it changes (no tick of its own).
-* The I/O step every 15 ticks: up to 24 ME Interfaces and buses (`docs/ME-REWORK.md`, "Tick budget"), 8 storage
-  bus visits (one `get_contents` each, the difference to the last look applied to the network's totals; cost for 50
+* Interfaces and buses: up to 16 visits per tick (`docs/ME-REWORK.md`, "Scheduler and performance at size"), up to 8
+  storage bus visits per tick and side (one `get_contents` each, the difference to the last look applied to the network's totals; cost for 50
   buses in `docs/ME-REWORK.md`, "Storage bus (after R3)"), 8 fluid storage bus visits (three calls on one fluid box
   each, about 15 µs; cost for 50 in `docs/ME-REWORK.md`, "Fluid storage bus"); the ME Interfaces' sides are part of
   their visit (one `remove_fluid` or `insert_fluid` per busy side); a network's fluid total is a table lookup (the
-  storage engine's totals), never a loop over tanks, pipes or drives. Buses move up to 1000 units of fluid per visit.
+  storage engine's totals), never a loop over tanks, pipes or drives. Buses move up to 4000 units of fluid per second.
 * The terminal step every 60 ticks: the open ME windows (at most 30, only players with one open), the lights of
   up to 50 changed drives and a sweep over 200 network members (members removed without an event).
-* No per-tick loops, no loops over the whole network. State lives in `storage.fork_me_net`, `storage.fork_me_io`,
+* No loops over the whole network (the one per-tick handler only takes what is due). State lives in `storage.fork_me_net`, `storage.fork_me_io`,
   `storage.fork_ae2` and `storage.fork_me_fluids`; GUI state lives in the GUI elements' tags and
   `storage.fork_me_terminal`.
+
+### Recipe paste (me-network issue #12)
+
+`scripts/fork-me-recipe-paste.lua`. The game raises `on_entity_settings_pasted` for a pair of different entity types
+only when the source prototype lists the target in `additional_pastable_entities`; `data-final-fixes.lua` adds the ME
+Interface, the import, export and storage bus to that list of every `assembling-machine`, `furnace` and `rocket-silo`
+(what other mods put there stays). A machine a mod makes after this mod's data-final-fixes misses the list (the
+runtime test counts every crafting machine that lacks it). The recipe is `get_recipe()` (with its quality), for an
+idle furnace `previous_recipe`. The handler writes through `set_interface_config` / `set_interface_side`,
+`set_bus_filters` and the storage bus's `set_settings`, so blueprint tags and windows read the same state; windows that
+show the block are refreshed at once. The messages are one flying text at the cursor (one line each); the remote
+`gregtorio-me-recipe-paste.paste(source, destination)` returns them (the harness has no player).
 
 ### Existing saves and mod updates
 
@@ -903,9 +1135,9 @@ partitions start empty.
   Circuit Interface (issue #38).
 * Autocrafting plans and crafts only normal quality, no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
-* Network storage (issue #68): no channels, no fluid wagons on the storage bus, no fuzzy partitions (a partition names exact items
-  and qualities), no "inverted" partitions, no upgrade or speed cards on buses; the terminal search matches
-  internal item names only; spoiling items, items with an inventory and damaged items cannot be stored. Old
+* Network storage (issue #68): no channels, no fluid wagons on the storage bus, no cards on the import and export bus
+  and the ME Interface (capacity, speed, fuzzy, inverter, redstone and crafting card: a follow-up of me-network issue
+  #17); the terminal search matches internal item names only; spoiling items, items with an inventory and damaged items cannot be stored. Old
   ghosts of ME blocks disappear when an old save is loaded (the game removes them before any script runs).
 * The ME windows cannot be opened in the headless test (no player): their data and set functions are tested,
   building the windows, the clicks and the replacement of the game's windows are checked by hand (click-through
@@ -915,18 +1147,31 @@ partitions start empty.
   shown (its circuit condition is in the ME window).
 * A furnace picks its recipe from its input: a processing pattern whose input fits several of its recipes may be
   smelted into the wrong product; the job then waits for its outputs and fails after 5 minutes.
-* Encoded patterns (issue #80): no crafting storage on the CPUs (job size limits), no upgrade cards on providers, no
+* Encoded patterns (issue #80): no upgrade cards on providers, no
   substitutions or fuzzy patterns, no "blocking mode" (a provider pushes into a chest as long as it has room), no
   pattern tier with 36 slots. Clearing a pattern needs the terminal's button (an inventory click cannot be caught).
   A provider mined by another mod's script (not a player or robot) drops its patterns instead of giving them to
   that script's inventory.
-* CPU tiers (issue #38) add parallel jobs and speed, not storage: a job's size is not limited by its
-  CPU (AE2's crafting storage has no counterpart). The level maintainer keeps one resource per block;
+* Crafting CPUs (issue #6): no choice of the CPU in the terminal (the smallest free one that fits is taken), no
+  "requests from players only / automation only" mode; the legacy CPUs have no byte limit. The level maintainer
+  keeps one resource per block;
   a circuit signal sets its amount or switches it, but there is no "craft what the circuit asks for"
   request of several resources at once. Settings paste by hand and the upgrade planner on CPUs are untested in
   the real game (the headless test calls the same functions).
 * A machine whose only input is shared with a belt, inserter or pipe will fight with the network.
+* Recipe paste (issue #12) is tested headless through its handler: the shift clicks themselves, the game raising the
+  event for each machine and how the flying text of several lines looks need the real game.
 * Balance (costs, speeds, tier) and the look of the sprites are untested in the real game.
+* Upgrade cards and priorities (me-network issue #17), where the mod differs from AE2: partitions can also be set in
+  the cell window (AE2: only in the Cell Workbench); "fuzzy" means any quality
+  (Factorio has no damage values or NBT, so AE2's fuzzy modes do not apply); a storage bus with an Overflow
+  Destruction Card destroys nothing while it faces nothing, and a tank holding another fluid or at another temperature
+  destroys nothing (AE2 voids into a bus without an inventory); items with tags are never destroyed; a storage bus never
+  shows what it cannot take (AE2 has a switch); cards a blueprint wants come from the network (AE2's memory card takes
+  them from the player's inventory); interface priority fills the higher priority interface first when the network is
+  short (AE2's code uses it only to stop a lower priority interface from pulling stock out of a higher one through a
+  storage bus, which this mod refuses anyway); partitioned storage is filled before storage that only holds the item
+  (AE2: one pass for both). The card window, the red warning and the flying texts are untested in the real game.
 
 ## Testing
 
@@ -1009,12 +1254,20 @@ nothing while the stock holds (120 ticks), start one job for exactly the differe
 out, take 14 from a constant combinator's signal with "amount from the circuit", start nothing while the
 lamp's circuit condition is false and start the job for 20 once it is true. A Co-Processing CPU runs two gear
 jobs at once (both running at the start, both with a machine crafting at the same time, 12 hand-overs per
-step, no free slot), a third job waits and is cancelled, and a Quantum CPU put in its place has four slots.
+step, no free slot), a third job is refused (issue #6), and a Quantum CPU put in its place has four slots.
 A circuit interface wired to a pole must carry exactly the network's items and floored fluids (500.5 water
 is 500), then only its two filters, then follow 25 more plates. The settings of a maintainer (a fluid, 1234,
 circuit), a circuit interface (two filters) and a fluid interface (export water 2345) must be blueprint
 tags, come back on the entities built from that blueprint and revived, and be copied by settings paste and
 by cloning. `devcheck.py migrate` checks a job started by the old version.
+Issue #6 (`runtimemod/cpus.lua`, its own network): the smallest CPU (one 1k crafting storage: 1024 bytes, speed 1), a
+3x2 rectangle of every block kind (5120 bytes, two co-processors: speed 3, a monitor), an L of three blocks and a row
+of two units (no CPU, dark pictures), the bytes of a gear plan (5 per gear + 24), a job too big for every CPU
+(refused with the bytes, nothing taken; a level maintainer waits), two jobs on the two CPUs at once and a third one
+refused, a block removed during a job (the job pauses, goes on on the 2x2 rest of its CPU, is cancelled: every plate
+and stick back), the CPU rebuilt, a clone and a blueprint of it (each forms a CPU of its own), a legacy CPU that takes
+the job too big for every multiblock. `devcheck.py migrate --from-ref v0.2.0` loads a save with a running job on each
+of the three legacy CPUs: each must end done on the CPU it started on.
 `devcheck.py migrate --from-ref v0.4.1` (issue #80) builds providers next to a Molecular Assembler with the gear recipe
 and next to a fresh iron furnace with the smelting recipe chosen in the provider, a gear job and a level maintainer
 keeping 8 gears with the old version; after the update the providers must hold a crafting pattern of the gear recipe
@@ -1053,7 +1306,7 @@ cells for storing and taking, read only, write only, a stale look (items taken o
 terminal take get only what is really there and the totals are corrected), two buses on one chest (counted once,
 the second takes over), a bus facing a cable, a chest removed with and without an event, a removed bus, the network's
 totals against cells plus chests after every part, the settings in a blueprint, on a revived ghost, by paste and
-clone, and an inserter's item seen within one visit cycle. It reports `ME storage bus test (issue #68): ok`.
+clone, and an inserter's item seen within the storage bus idle limit (2 s). It reports `ME storage bus test (issue #68): ok`.
 
 The fluid storage bus test (own network right of the storage bus test: a drive with four 1k fluid cells, a terminal,
 six fluid storage buses on storage tanks, a pump, a fluid export bus and a level maintainer) checks that two tanks of
@@ -1063,7 +1316,7 @@ a filtered insert into its tank and the rest into the cells, priority 10 and -10
 (fluid taken out by hand), hot steam (counted, nothing put in, the tank keeps its temperature), a removed tank and bus,
 a bus facing a cable, the network's fluid against cells plus segments after every part, the settings in a blueprint,
 on a revived ghost, by paste and clone; then the fluid export bus taking from a segment, a level maintainer counting it
-and a pump's fluid seen within one visit cycle. It reports `ME fluid storage bus test (issue #68): ok`. Since
+and a pump's fluid seen within the storage bus idle limit. It reports `ME fluid storage bus test (issue #68): ok`. Since
 issue #3 of ME Network the buses there are storage buses on tanks (the remote of the old fluid storage bus works on
 them).
 
@@ -1079,6 +1332,70 @@ from), gets mixed filters and faces a cable. An old fluid import bus built by a 
 of the old export bus, fluid interface and fluid storage bus with old tags are revived as the unified blocks with their
 settings; the old items are hidden, place the unified blocks and have no recipe or unlock. It reports
 `ME unified I/O test: ok`.
+
+The recipe paste test (issue #12 of ME Network, own network) checks that every crafting machine prototype lists the
+four ME blocks as pastable (with Gregtorio all GregTech machines too) and calls the paste handler with the event's
+shape: an item recipe and a quality recipe onto an interface (one stack each, the quality), a storage bus (quality
+keys, mode and priority kept) and an export bus (names, the quality message); a chemical reactor's fluid recipe onto an
+interface (the fluid row on the side with a pipe, an off side kept), onto an interface whose side is tied to that fluid
+(kept), then a recipe of two other fluids (the side imports again, two new rows on sides without a pipe, two messages),
+onto the import bus (products) and export bus, onto storage buses on a chest (a recipe of fluids only: unchanged,
+message), on a pipe (fluids) and facing nothing (both); fixture recipes with 20 items and 5 fluids and with 2 items and
+5 fluids (rows, fluids and filters full, no side left); a furnace while smelting and its previous recipe once idle; an
+assembler and a furnace without a recipe; a paste between two ME blocks is left to their own handlers. It reports
+`recipe paste test: ok`.
+
+The upgrade card test (me-network issue #17, own network: two drives, storage buses on chests, a tank and nothing)
+checks the defaults of a bus without cards (18 filters, no extra settings), Capacity Cards (30 filters kept, 18, 27 and
+63 apply; a card of another kind and one more than the limit are refused; a card taken out), the Inverter Card (iron
+refused, copper taken; the blacklisted item in the chest not shown, then shown and taken with "filter on extract" off),
+"filter only what goes in" on a whitelist, the Fuzzy Card (another quality only with the card, stored and shown), the
+Overflow Destruction Card on a chest (what fits, the rest destroyed and counted, an unfiltered key kept, `can_insert`,
+the window data) and on a tank, a voiding bus facing nothing (destroys nothing), From contents and Clear, and that no
+card is ever made or lost: every card of the area counted before and after a bus mined (cards in the buffer), destroyed
+and vanished (spilled), a blueprint and a revived ghost (wants the cards, takes one when the network gets it), a
+settings paste (the extra card into the network, the wanted one from it), a clone and a card taken by hand; then a
+recipe paste that changes only the filters. It reports `ME upgrade card test: ok`. Mutations checked to fail it: no
+void, no fuzzy lookup.
+
+The priority test (issue #17, own network) checks the storage order with a blacklist bus built first and a whitelist
+bus at priority 5 (the whitelist gets its item, the blacklist the rest of its priority, a blacklisted item goes to the
+cells before a bus at -5), a partitioned cell behind a higher priority bus, a bus that holds an item before an empty
+cell of its priority, taking out from the lowest priority first; two ME Interfaces of priority 0 and 10 that want 50
+gears and 1000 water (nothing registered while no interface has a priority; with 30 gears and 600 water the high one
+gets all, with 40 and 1400 more both end full); the interface priority in a blueprint, a paste, a clone and the window
+data; and the pattern fall-back (a provider of priority 10 whose pattern lacks its input: the provider of priority 0 is
+used, the high one once its input is there, the first one's shortfall when neither can run). It reports `ME priority
+test: ok`. A mutation without the reservation was checked to fail it.
+
+The Cell Workbench test (issue #17, part 3, own network: a drive at priority 10 for the cell under test, a backstop
+drive with an item and a fluid cell, four workbenches without a cable) checks an empty workbench, an item cell put in
+(4 card slots), the partition buttons, the cards and their limits (a second inverter, a capacity card and a fifth card
+refused, a card taken out), the partition and cards in the tags of the cell taken out, From contents and Clear on a
+cell with items (they stay), the copy mode (the kept partition onto an empty cell), a fluid cell (3 slots, no fuzzy
+card); then cells made in the workbench in the drive: an inverted fluid cell (water refused, steam taken), the
+inverted item cell (iron refused, wood taken, every quality refused with its fuzzy card; the cell window shows the
+cards), a fuzzy whitelist (copper in two qualities, no stone), equal distribution (67 of a kind in a 1k cell, 4032
+with a partition of two), overflow destruction on a partitioned cell (full, 500 destroyed and counted, another key
+kept, `can_insert`), and workbenches with a cell mined (the cell in the buffer), destroyed and vanished (spilled). It
+reports `ME Cell Workbench test: ok`.
+
+The slot tests of issue #28 change the script inventories the way a player does, with an inventory standing for the
+player's: the storage bus card slots (a card taken, a wrong item back, the inverter limit, a stack of capacity cards
+spread over the empty slots, a full bus, an Equal Distribution Card refused, a card taken out, the cards that were there
+first, the settings after a move inside the inventory, mined with an item no sync has seen: `ME storage bus card slots
+test: ok`) and the Cell Workbench slots (a cell's tag cards become items and go back into its tags when it is found in
+the hand, limits and a wrong item, a card without a cell, a cell put into a card slot, a cell that is not found, a fluid
+cell with an item cell's cards, mined with a card no sync has seen; no card made or lost: `ME Cell Workbench slots test:
+ok`). `migrate --from-ref <main before #28>` loads a save with cards on a storage bus and a cell with cards in a
+workbench: the cards are items in the inventories after the load.
+
+The pane tests of issue #28 click through `inventory_click` and `block_click` of `gregtorio-me-gui`, with a script
+inventory standing for the player's: shift + click of cards (spread over the empty slots, the inverter limit), of a
+wrong item, of a cell, a second cell and a card without a cell into the workbench (refused, nothing moves); clicks on the
+block's slots with a wrong item, a card, on a full bus, with an empty hand and with shift; the workbench's cell into the
+hand with its cards and back, a swap of two cells; half a stack, one item put down, merge, pick up, put down and swap
+in the pane; no card made or lost (`ME window pane test (storage bus): ok`, `ME window pane test (workbench): ok`).
 
 `python tools/devcheck/devcheck.py migrate --from-ref v0.1.0` makes a save with ME Network 0.1.0 (three fluid
 interfaces, the fluid buses and the fluid storage bus with settings and fluid, an item interface next to a pipe with

@@ -5,8 +5,10 @@
 ---   * Storage tab: sort (amount or name), kind (all, items, fluids), one grid with the items and then the
 ---     fluids. Left click on an item: a stack into the cursor (with something in the cursor: that is stored
 ---     instead); right click: one item into the cursor; shift click: a stack into the inventory. Fluids are
----     shown with their amounts; they cannot be taken by hand. Below: the player's inventory (click: store all
----     of that item, right click: one stack).
+---     shown with their amounts; they cannot be taken by hand. Issue #28: the window shows the player's inventory on
+---     its left (scripts/fork-me-gui.lua, the pane): shift + click there stores the stack in the network, control +
+---     click every stack of that item (store_stack, store_inventory_item); it replaces the terminal's own grid of
+---     the player's inventory.
 ---   * Crafting tab (scripts/fork-me-autocraft.lua): every item or fluid a pattern can make, in the storage
 ---     grid's style. A click picks it: amount field, the plan preview (what is taken from storage, what is
 ---     missing, as slot buttons) and the Craft button.
@@ -110,8 +112,10 @@ function M.entries(net, filter, sort, kind)
 end
 
 --- The crafting tab's preview for `amount` of `key`: { ok, reason, runs, steps, reserve = { key -> n },
---- missing = { key -> n }, loops, cpus, free }. reason: "no-network", "bad-amount", "no-cpu", "missing",
---- "no-pattern" or nil when it can start.
+--- missing = { key -> n }, loops, cpus, free, bytes, cpu_list }. reason: "no-network", "bad-amount", "no-cpu",
+--- "missing", "no-pattern", "cpu-too-small" (no CPU is big enough), "no-free-cpu" (those that are, are busy) or nil
+--- when it can start. Issue #6: `bytes` is the crafting storage the job needs, `cpu_list` the CPUs of the network in
+--- the order a job takes them (autocraft.cpu_list: fits, free).
 function M.craft_preview(terminal, key, amount)
 	local net, why = network(terminal)
 	if not net then return { ok = false, reason = "no-network", why = why } end
@@ -122,9 +126,19 @@ function M.craft_preview(terminal, key, amount)
 	if not plan then out.reason = "bad-amount" return out end
 	out.reserve, out.missing, out.loops = plan.reserve or {}, plan.missing or {}, plan.loops or {}
 	out.runs, out.steps = plan.runs or 0, #(plan.steps or {})
+	out.bytes, out.cpu_list = plan.bytes, plan.bytes and autocraft.cpu_list(net, plan.bytes) or {}
+	local fits, free, biggest = false, false, 0
+	for _, c in ipairs(out.cpu_list) do
+		if c.fits then fits = true end
+		if c.fits and c.free then free = true end
+		if c.bytes and c.bytes > biggest then biggest = c.bytes end
+	end
+	out.biggest = biggest
 	if plan.no_pattern then out.reason = "no-pattern"
 	elseif not plan.ok then out.reason = "missing"
 	elseif total == 0 then out.reason = "no-cpu"
+	elseif not fits then out.reason = "cpu-too-small"
+	elseif not free then out.reason = "no-free-cpu"
 	else out.ok = true end
 	return out
 end
@@ -354,10 +368,7 @@ local function build_storage(tab)
 	row.add{ type = "button", caption = { "fork-me-terminal.store-hand" }, tags = G.act("term_store") }
 	G.label(tab, { "fork-me-net.terminal-help" }, WIDTH)
 	G.label(tab, "", WIDTH, nil, "fork_me_status").visible = false
-	scroll_table(tab, "fork_me_grid", COLUMNS, 6 * 40 + 8)
-	tab.add{ type = "line" }
-	G.heading(tab, { "fork-me-net.inventory" })
-	scroll_table(tab, "fork_me_inv_grid", COLUMNS, 3 * 40 + 8)
+	scroll_table(tab, "fork_me_grid", COLUMNS, 9 * 40 + 8)
 end
 
 local function build_crafting(tab)
@@ -373,6 +384,7 @@ local function build_crafting(tab)
 	pick.add{ type = "button", name = "fork_me_craft", caption = { "fork-me-craft.craft" }, style = "confirm_button",
 		tags = G.act("term_craft") }
 	G.label(tab, "", WIDTH, nil, "fork_me_plan")
+	G.label(tab, "", WIDTH, nil, "fork_me_plan_cpus").visible = false
 	local plan = tab.add{ type = "table", name = "fork_me_plan_grid", column_count = COLUMNS, style = "filter_slot_table" }
 	plan.visible = false
 end
@@ -442,23 +454,15 @@ end
 M.open = open
 
 local function refresh_storage(player, st, frame, net)
-	local status, grid, inv_grid = G.find(frame, "fork_me_status"), G.find(frame, "fork_me_grid"), G.find(frame, "fork_me_inv_grid")
+	local status, grid = G.find(frame, "fork_me_status"), G.find(frame, "fork_me_grid")
 	local items = M.entries(net, st.filter, st.sort, st.kind)
-	local main = player.get_main_inventory()
-	local own = main and main.get_contents() or {}
-	table.sort(own, function(a, b)
-		if a.name ~= b.name then return a.name < b.name end
-		return (a.quality or "normal") < (b.quality or "normal")
-	end)
 	--- unchanged since the last refresh: keep the buttons (and their open tooltips)
 	local sig = { st.sort or "count", st.kind or "all" }
 	for i = 1, math.min(#items, MAX_BUTTONS) do sig[#sig + 1] = items[i].key .. "=" .. items[i].count end
-	for _, c in ipairs(own) do sig[#sig + 1] = "inv/" .. c.name .. "/" .. (c.quality or "normal") .. "=" .. c.count end
 	sig = table.concat(sig, ",")
 	if st.shown == sig then return end
 	st.shown = sig
 	grid.clear()
-	inv_grid.clear()
 	status.visible = false
 	if #items == 0 then
 		status.caption = { "fork-me-terminal.empty" }
@@ -470,12 +474,6 @@ local function refresh_storage(player, st, frame, net)
 	for i = 1, math.min(#items, MAX_BUTTONS) do
 		local c = items[i]
 		G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil)
-	end
-	for _, c in ipairs(own) do
-		if prototypes.item[c.name] then
-			local q = c.quality or "normal"
-			G.slot(inv_grid, N.key_of(c.name, q), c.count, G.act("term_inv", { name = c.name, quality = q }))
-		end
 	end
 end
 
@@ -515,6 +513,7 @@ local function refresh_crafting(st, frame, net)
 		name.caption = { "fork-me-gui.craft-pick" }
 		plan_label.caption = ""
 		plan_grid.visible = false
+		G.find(frame, "fork_me_plan_cpus").visible = false
 		button.enabled = false
 		return
 	end
@@ -522,7 +521,8 @@ local function refresh_crafting(st, frame, net)
 	name.caption = d.localised_name
 	local p = M.craft_preview(st.entity, st.pick, st.amount)
 	button.enabled = p.ok
-	local psig = { tostring(p.ok), tostring(p.reason), p.runs, p.steps }
+	local psig = { tostring(p.ok), tostring(p.reason), p.runs, p.steps, tostring(p.bytes) }
+	for _, c in ipairs(p.cpu_list or {}) do psig[#psig + 1] = c.kind .. c.id .. tostring(c.free) .. tostring(c.fits) .. (c.bytes or "") end
 	for k, n in pairs(p.reserve) do psig[#psig + 1] = "r" .. k .. "=" .. n end
 	for k, n in pairs(p.missing) do psig[#psig + 1] = "m" .. k .. "=" .. n end
 	psig = table.concat(psig, ",")
@@ -531,11 +531,14 @@ local function refresh_crafting(st, frame, net)
 	if p.reason == "bad-amount" then plan_label.caption = { "fork-me-craft.bad-amount" }
 	elseif p.reason == "no-cpu" then plan_label.caption = { "fork-me-craft.no-cpu" }
 	elseif p.reason == "no-pattern" then plan_label.caption = { "fork-me-craft.error-no-pattern" }
+	elseif p.reason == "cpu-too-small" or p.reason == "no-free-cpu" then
+		plan_label.caption = { "fork-me-craft.error-" .. p.reason, G.fmt(p.bytes), G.fmt(p.biggest or 0) }
 	elseif p.reason == "missing" then
 		local text = { "", { "fork-me-gui.plan-missing" } }
 		if next(p.loops) then text[#text + 1] = { "fork-me-craft.plan-loop", autocraft.item_list(p.loops, 4) } end
 		plan_label.caption = text
 	else plan_label.caption = { "fork-me-gui.plan-ok", p.runs, p.steps } end
+	M.plan_cpus(G.find(frame, "fork_me_plan_cpus"), p)
 	plan_grid.clear()
 	local function add(list, style, tip)
 		local keys = {}
@@ -552,11 +555,47 @@ local function refresh_crafting(st, frame, net)
 	plan_grid.visible = #plan_grid.children > 0
 end
 
+--- the name of a CPU of autocraft.cpu_list: "Crafting CPU 3 (2x3, 5k, 2 co-processors)" or the legacy entity's name
+function M.cpu_name(c)
+	if c.kind == "legacy" then return { "fork-me-craft.cpu-legacy", { "entity-name." .. c.name } } end
+	return { "fork-me-craft.cpu-name", c.id, c.width, c.height, G.fmt(c.bytes), c.coprocessors }
+end
+
+--- Issue #6: the line under the plan: the bytes the job needs and the CPUs of the network (free ones that fit, busy
+--- ones that fit, those that are too small)
+function M.plan_cpus(label, p)
+	if not (p.bytes and p.reason ~= "missing" and p.reason ~= "no-pattern" and p.reason ~= "bad-amount" and p.cpu_list and #p.cpu_list > 0) then
+		label.visible = false
+		return
+	end
+	local groups = { free = { "" }, busy = { "" }, small = { "" } }
+	local n = { free = 0, busy = 0, small = 0 }
+	for _, c in ipairs(p.cpu_list) do
+		local which = not c.fits and "small" or c.free and "free" or "busy"
+		n[which] = n[which] + 1
+		if n[which] <= 4 then
+			local list = groups[which]
+			if n[which] > 1 then list[#list + 1] = ", " end
+			list[#list + 1] = M.cpu_name(c)
+		elseif n[which] == 5 then
+			groups[which][#groups[which] + 1] = ", ..."
+		end
+	end
+	local text = { "", { "fork-me-craft.plan-bytes", G.fmt(p.bytes) } }
+	for _, which in ipairs({ "free", "busy", "small" }) do
+		if n[which] > 0 then text[#text + 1] = { "fork-me-craft.plan-cpus-" .. which, groups[which] } end
+	end
+	label.caption = text
+	label.visible = true
+end
+
 local function status_text(j)
 	if j.status == "running" then
 		return j.wait and { "fork-me-craft.wait-" .. j.wait } or { "fork-me-craft.status-running" }
 	elseif j.status == "failed" then
 		return { "fork-me-craft.status-failed", j.reason or "" }
+	elseif j.status == "queued" and j.wait == "cpu-bytes" and j.bytes then
+		return { "fork-me-craft.status-queued-bytes", G.fmt(j.bytes) }
 	end
 	return { "fork-me-craft.status-" .. j.status }
 end
@@ -750,8 +789,22 @@ function M.refresh(player, frame)
 	return true
 end
 
+--- issue #28: shift + click in the inventory pane stores the stack, control + click every stack of that item
 G.window("terminal", { open = open, refresh = function(player, frame) return M.refresh(player, frame) end,
-	entities = { "me-terminal" } })
+	entities = { "me-terminal" }, hint = { "fork-me-gui.store-help" },
+	shift = function(entity, stack)
+		local n, why = M.store_stack(entity, stack)
+		if not n then return why end
+		if n == 0 then return "no-storage" end
+		return nil
+	end,
+	control = function(entity, stack, inv)
+		local n, why = M.store_inventory_item(inv, entity, stack.name, stack.quality.name, true)
+		if not n then return why end
+		if n == 0 then return "no-storage" end
+		return nil
+	end,
+	message = G.net_message })
 
 --------------------------------------------------------------------------------
 --- actions
@@ -805,15 +858,6 @@ G.on("term_take", function(event, player, el)
 	M.refresh(player)
 end)
 
-G.on("term_inv", function(event, player, el)
-	local st = st_of(player)
-	if not (st and event.name == defines.events.on_gui_click) then return end
-	local _, why = M.store_inventory_item(player.get_main_inventory(), st.entity, el.tags.name, el.tags.quality,
-		event.button ~= defines.mouse_button_type.right)
-	report(player, why)
-	M.refresh(player)
-end)
-
 G.on("term_pick", function(event, player, el)
 	local st = st_of(player)
 	if not st then return end
@@ -839,6 +883,8 @@ G.on("term_craft", function(event, player)
 		st.jobs_shown = nil
 	elseif why == "missing" then
 		player.print({ "fork-me-craft.plan-missing", autocraft.item_list(plan.missing, 8) })
+	elseif why == "cpu-too-small" or why == "no-free-cpu" then
+		player.print({ "fork-me-craft.error-" .. why, G.fmt(plan.bytes), G.fmt(plan.biggest or 0) })
 	else
 		player.print({ "fork-me-craft.error-" .. why })
 	end
@@ -964,6 +1010,9 @@ remote.add_interface("gregtorio-me-terminal", {
 		for _, d in ipairs(M.cells(terminal)) do out[#out + 1] = { unit = d.unit, priority = d.priority, cells = d.cells } end
 		return out
 	end,
+	--- whether a click on an ME block opens its window for a cursor stack and the cursor's other flags
+	--- (fork-me-gui.lua cursor_flags: blueprint, record, ghost, wire, damaged); returns the answer and the reason
+	click_opens = function(stack, flags) return G.click_opens(stack, flags) end,
 	--- open the terminal window for a player (the GUI is built and refreshed: catches errors in the window code)
 	open = function(player, terminal) open(player, terminal) return G.window_of(player) ~= nil end,
 	--- select a tab of the open terminal and refresh it
@@ -1035,12 +1084,14 @@ end
 
 --- the "open GUI" key (linked to the game's own): a cell in the cursor goes into a drive, an encoded pattern into a
 --- pattern provider, else the entity's ME window opens (blocks without a vanilla window: drive, buses, provider,
---- controller)
+--- controller). Nothing happens with a tool in the cursor (blueprint, planner, copy-paste, wire, ghost, an item
+--- being built): the game uses the tool, as it does on a chest (G.click_opens).
 script.on_event("fork-me-terminal-open", function(event)
 	local player = game.get_player(event.player_index)
 	if not (player and player.selected) then return end
 	local e = player.selected
 	G.clear_bypass(player)
+	if not G.click_opens(player.cursor_stack, G.cursor_flags(player, e)) then return end
 	if N.quick_insert(player, e) then return end
 	if autocraft.quick_insert(player, e) then return end
 	G.open_entity(player, e)
@@ -1058,6 +1109,15 @@ script.on_event(defines.events.on_gui_closed, function(event)
 	G.on_closed(event)
 end)
 
+--- issue #28: the inventory pane of an open ME window follows the player's main inventory and cursor
+script.on_event({ defines.events.on_player_main_inventory_changed, defines.events.on_player_cursor_stack_changed }, function(event)
+	G.on_inventory_changed(event)
+end)
+
+script.on_event(defines.events.on_player_left_game, function(event)
+	G.on_left(game.get_player(event.player_index))
+end)
+
 script.on_event({ defines.events.on_gui_click, defines.events.on_gui_text_changed, defines.events.on_gui_elem_changed,
 	defines.events.on_gui_confirmed, defines.events.on_gui_checked_state_changed,
 	defines.events.on_gui_switch_state_changed, defines.events.on_gui_selection_state_changed,
@@ -1072,6 +1132,7 @@ end)
 
 script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
+	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[event.player_index] = nil end
 end)
 
 return M

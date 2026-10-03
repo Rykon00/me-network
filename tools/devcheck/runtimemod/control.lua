@@ -10,7 +10,7 @@
 --- with a crafting CPU, two Molecular Assemblers with pattern providers (iron plate + 2 iron sticks ->
 --- gear, gear + plate -> transport belt) and raw materials in a drive. Job 1 crafts belts through the
 --- two-level chain, job 2 asks for more than the raw materials allow and must not start, job 3 is
---- queued behind job 1 (one CPU) and cancelled; its items must come back.
+--- refused while job 1 runs on the only CPU (issue #6: a job needs a free CPU) and takes nothing.
 --- Encoded patterns (issue #80, scripts/fork-me-patterns.lua): every provider gets its patterns the way a player
 --- gives them (blank patterns encoded through the terminal's functions, put into its slots: give_patterns).
 --- Furnace and pattern items (furnace_test): encoding a crafting and a processing pattern (tags, tooltip data, not
@@ -706,6 +706,15 @@ function me_io_test()
 	me_report("MEIO", "ME import/export", problems, "interface import/export, import and export bus, rotation, paste, blueprint")
 end
 
+--- me-network issue #17: the upgrade cards, the storage bus settings and the priorities (cards.lua)
+cards17 = require("cards")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end })
+--- part 3: the ME Cell Workbench and the cards on cells (workbench.lua)
+bench17 = require("workbench")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
+cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end })
+
 --- Victory (scripts/fork-victory.lua): researching `victory` must win the game, and go on.
 --- Winning stops the scripts of the benchmark run (no player to continue), so this runs last: as soon
 --- as every other test has reported, at the latest at tick VICTORY_DEADLINE (a test still running
@@ -732,6 +741,12 @@ local function tests_running()
 	check(storage.tiers38 and storage.tiers38.done, "crafting CPU tiers")
 	check(storage.circuit38 and storage.circuit38.done, "circuit interface")
 	check(storage.settings38 and storage.settings38.done, "settings copy")
+	check(storage.sched_test and storage.sched_test.done, "ME scheduler")
+	check(storage.cursor_t and storage.cursor_t.done, "open key and cursor")
+	check(storage.paste_t and storage.paste_t.done, "recipe paste")
+	cards17.running(check)
+	bench17.running(check)
+	cpus6.running(check)
 	return running
 end
 
@@ -850,17 +865,12 @@ local function autocraft_test()
 			"job 2 missing " .. serpent.line(missing) .. ", expected plates " .. want_plates .. " sticks " .. want_sticks)
 		expect(count("iron-plate") == plates_before and count("iron-stick") == sticks_before, "job 2 took items although it did not start")
 
-		--- job 3: one CPU only, so it waits; cancelling gives everything back
+		--- job 3: one CPU only and it is busy: the start is refused (issue #6: a job needs a free CPU) and takes nothing
 		local plates3, sticks3 = count("iron-plate"), count("iron-stick")
-		local id3 = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, per_run)
-		expect(id3, "job 3 did not start")
-		if id3 then
-			local j3 = remote.call("gregtorio-me-autocraft", "job", id3)
-			expect(j3 and j3.status == "queued", "job 3 should wait for the CPU (status " .. tostring(j3 and j3.status) .. ")")
-			expect(count("iron-plate") == plates3 - 2 and count("iron-stick") == sticks3 - 2, "job 3 did not reserve its items")
-			remote.call("gregtorio-me-autocraft", "cancel", id3)
-			st.job3, st.plates3, st.sticks3 = id3, plates3, sticks3
-		end
+		local id3, why3 = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, per_run)
+		expect(id3 == nil and why3 == "no-free-cpu", "job 3 must be refused while the CPU is busy (" .. tostring(id3) .. ", " .. tostring(why3) .. ")")
+		expect(count("iron-plate") == plates3 and count("iron-stick") == sticks3, "the refused job 3 took items")
+		if id3 then remote.call("gregtorio-me-autocraft", "cancel", id3) end
 		if #problems > 0 then return finish_test() end
 		return
 	end
@@ -897,16 +907,9 @@ local function autocraft_test()
 	local phase = st.phase or "job1"
 	if phase == "job1" then
 		st.phase_tick = st.phase_tick or st.started
-		local j1, j3 = job_of(st.job1), st.job3 and job_of(st.job3)
-		if j3 and j3.status == "cancelled" and not st.j3_checked then
-			st.j3_checked = true
-			--- the cancelled job's plates/sticks are back (job 1 keeps its own reservation)
-			expect(count("iron-plate") == st.plates3 and count("iron-stick") == st.sticks3,
-				"job 3 cancelled but items not returned: plates " .. count("iron-plate") .. "/" .. st.plates3 .. " sticks " .. count("iron-stick") .. "/" .. st.sticks3)
-		end
+		local j1 = job_of(st.job1)
 		if j1 and (j1.status == "done" or j1.status == "failed") then
 			expect(j1.status == "done", "job 1 ended as " .. j1.status)
-			expect(st.j3_checked, "job 3 was never cancelled")
 			expect(count(AC_ITEM) == st.belts, "job 1 result: " .. count(AC_ITEM) .. " " .. AC_ITEM .. ", expected " .. st.belts)
 			expect(count("iron-plate") == AC_PLATES - 2 * st.runs, "plates after job 1: " .. count("iron-plate"))
 			expect(count("iron-stick") == AC_STICKS - 2 * st.runs, "sticks after job 1: " .. count("iron-stick"))
@@ -1572,6 +1575,12 @@ script.on_nth_tick(10, function()
 	if not (storage.tiers38 and storage.tiers38.done) then cpu_tier_test() end
 	if not (storage.circuit38 and storage.circuit38.done) then circuit_test() end
 	settings_test()
+	if not (storage.sched_test and storage.sched_test.done) then scheduler_test() end
+	cursor_test()
+	paste_test()
+	cards17.tick()
+	bench17.tick()
+	cpus6.tick()
 	done_test()
 end)
 
@@ -1636,7 +1645,7 @@ function setup_fluid_test(s)
 	place("substation", 3, FL_Y)
 	place("substation", 16, FL_Y + 4)
 	local ctrl = place("me-network-controller", 6, FL_Y)
-	local cpu = place("me-crafting-cpu", 10, FL_Y)
+	local cpu = place("me-quantum-crafting-cpu", 10, FL_Y)       -- three jobs at once (issue #6: no queue behind a busy CPU)
 	local term = place(FL.terminal[1], FL.terminal[2], FL.terminal[3])
 	local fdrive = me_drive(s, fails, "fluids", FL_DRIVE_POS[1], FL_DRIVE_POS[2], {}, "1k", true)
 	local idrive = me_drive(s, fails, "fluids", FL.idrive[2], FL.idrive[3],
@@ -2254,6 +2263,21 @@ function me_r3_test()
 		x = x + 4
 	end
 	for _, e in pairs({ d1, t, ctrl }) do expect(remote.call(GUI, "has_window", e), "no window for " .. e.name) end
+	--- Every block with a window is found again by the unit number its window keeps in its tags: a window whose
+	--- entity is not found stays empty and is closed by the next refresh (the ME Cell Workbench did, it is no node
+	--- of the ME graph). All blocks of the test map, so a new block is covered when a test places it.
+	local lost, seen = {}, 0
+	--- not these: the three interfaces that the cells test places without a build event on purpose
+	local unbuilt = { [(CX + 2.5) .. ":" .. (CY + 10.5)] = true, [(CX + 4.5) .. ":" .. (CY + 10.5)] = true,
+		[(CX + 6.5) .. ":" .. (CY + 10.5)] = true }
+	for _, e in pairs(s.find_entities_filtered{ force = "player" }) do
+		if e.unit_number and remote.call(GUI, "has_window", e) and not unbuilt[e.position.x .. ":" .. e.position.y] then
+			seen = seen + 1
+			if remote.call(TERM, "entity_by_unit", e.unit_number) ~= e then lost[e.name] = (lost[e.name] or 0) + 1 end
+		end
+	end
+	expect(seen > 20 and next(lost) == nil, "windows that cannot find their entity by unit number: " .. serpent.line(lost)
+		.. " (" .. seen .. " blocks with a window)")
 	local dd = remote.call(GUI, "drive_data", d1)
 	expect(dd and dd.priority == 7 and dd.online and dd.cells[1] and dd.cells[2].partition[1] == "copper-plate", "drive_data " .. serpent.line(dd))
 	local cd = remote.call(GUI, "cell_data", d1, 1)
@@ -2345,9 +2369,100 @@ function me_r3_test()
 	local prev0 = remote.call(TERM, "craft_preview", t, "iron-gear-wheel", 0)
 	expect(prev0 and prev0.reason == "bad-amount", "craft preview amount 0 " .. serpent.line(prev0))
 	expect(#remote.call(TERM, "jobs", t) == 0, "jobs tab")
+
+	--- issue #28: every window has the inventory pane and a shift + click target; the targets of each block, clicked
+	--- through the GUI module with a script inventory standing for the player's
+	local wins = remote.call(GUI, "windows")
+	local without = {}
+	for name, w in pairs(wins) do if not (w.pane and w.shift) then without[#without + 1] = name end end
+	expect(#without == 0 and table_size(wins) >= 13, "windows without the pane or a shift + click target: " .. serpent.line(without)
+		.. " of " .. table_size(wins))
+	local pinv = game.create_inventory(20)
+	local hold = game.create_inventory(1)
+	local function click(e, slot, mode, window) return remote.call(GUI, "inventory_click", hold[1], pinv, slot, mode, e, window) end
+	local function count(name) return remote.call(NET, "count", t, name) end
+	--- the terminal: shift + click stores the stack, control + click every stack of that item, a blueprint is refused
+	pinv[1].set_stack{ name = "stone", count = 10 }
+	pinv[2].set_stack{ name = "stone", count = 7 }
+	local st0 = count("stone")
+	local why = click(t, 1, "shift")
+	expect(why == nil and count("stone") == st0 + 10 and not pinv[1].valid_for_read and pinv[2].count == 7,
+		"terminal shift + click: " .. tostring(why) .. ", network " .. count("stone"))
+	pinv[1].set_stack{ name = "stone", count = 5 }
+	why = click(t, 2, "control")
+	expect(why == nil and count("stone") == st0 + 22 and pinv.get_item_count("stone") == 0, "terminal control + click: " .. tostring(why)
+		.. ", network " .. count("stone"))
+	pinv[4].set_stack{ name = "blueprint", count = 1 }
+	why = click(t, 4, "shift")
+	expect(why == "cannot-store" and pinv[4].valid_for_read, "a blueprint shift-clicked at the terminal: " .. tostring(why))
+	--- the blocks without slots store into their network (new ones in a row right of the terminal: on its network)
+	local row = {}
+	for i, name in ipairs({ "me-network-interface", "me-import-bus", "me-export-bus", "me-level-maintainer", "me-circuit-interface" }) do
+		row[#row + 1] = s.create_entity{ name = name, position = { RX + 11.5 + i, RY - 0.5 }, force = "player", raise_built = true }
+	end
+	row[#row + 1] = s.create_entity{ name = "me-crafting-cpu", position = { RX + 18, RY }, force = "player", raise_built = true }
+	row[#row + 1] = ctrl
+	for _, e in pairs(row) do
+		pinv[5].set_stack{ name = "stone-brick", count = 3 }
+		local b0 = count("stone-brick")
+		why = click(e, 5, "shift")
+		expect(why == nil and count("stone-brick") == b0 + 3 and not pinv[5].valid_for_read, "shift + click stores at " .. e.name .. ": "
+			.. tostring(why))
+	end
+	expect(click(ctrl, 4, "shift") == "cannot-store" and pinv[4].valid_for_read, "a blueprint shift-clicked at the controller")
+	pinv[6].set_stack{ name = "stone-brick", count = 2 }
+	pinv[7].set_stack{ name = "stone-brick", count = 4 }
+	local b0 = count("stone-brick")
+	why = click(row[1], 6, "control")
+	expect(why == nil and count("stone-brick") == b0 + 6 and pinv.get_item_count("stone-brick") == 0, "control + click at the interface: "
+		.. tostring(why))
+	local lone = s.create_entity{ name = "me-network-interface", position = { RX + 30.5, RY + 22.5 }, force = "player", raise_built = true }
+	pinv[5].set_stack{ name = "stone-brick", count = 3 }
+	why = lone and click(lone, 5, "shift")
+	expect((why == "no-network" or why == "no-controller") and pinv[5].count == 3, "shift + click at an interface without a network: " .. tostring(why))
+	if lone then lone.destroy() end
+	pinv[5].clear()
+	--- the drive: a cell into a free slot, an iron plate refused, a full drive refused; the cell window of that drive too
+	local function n_cells(d)
+		local n = 0
+		for _ in pairs(remote.call(NET, "drive", d)) do n = n + 1 end
+		return n
+	end
+	local c0 = n_cells(d3)
+	pinv[8].set_stack{ name = "me-1k-storage-cell", count = 1 }
+	why = click(d3, 8, "shift")
+	expect(why == nil and not pinv[8].valid_for_read and n_cells(d3) == c0 + 1, "shift + click of a cell at the drive: " .. tostring(why))
+	pinv[9].set_stack{ name = "iron-plate", count = 5 }
+	why = click(d3, 9, "shift")
+	expect(why == "not-a-cell" and pinv[9].count == 5, "shift + click of iron plates at the drive: " .. tostring(why))
+	pinv[8].set_stack{ name = "me-1k-storage-cell", count = 1 }
+	why = click(d3, 8, "shift", "cell")
+	expect(why == nil and n_cells(d3) == c0 + 2, "shift + click of a cell in the cell window: " .. tostring(why))
+	for _ = 1, 10 do
+		pinv[8].set_stack{ name = "me-1k-storage-cell", count = 1 }
+		why = click(d3, 8, "shift")
+		if why then break end
+	end
+	expect(why == "drive-full" and pinv[8].valid_for_read and n_cells(d3) == 10, "a full drive: " .. tostring(why) .. ", " .. n_cells(d3))
+	pinv[8].clear()
+	--- the pattern provider: an encoded pattern into a free slot, an iron plate refused
+	local prov = blocks["me-pattern-provider"]
+	pinv[10].set_stack{ name = "me-blank-pattern", count = 1 }
+	remote.call(TERM, "encode_def", false, pinv, false, { kind = "crafting", recipe = "me-blank-pattern" })
+	local _, pi = pinv.find_item_stack("me-encoded-pattern")
+	why = pi and click(prov, pi, "shift")
+	local pd2 = remote.call(GUI, "provider_data", prov)
+	expect(pi and why == nil and pinv.get_item_count("me-encoded-pattern") == 0 and pd2.slots[1], "shift + click of a pattern at the provider: "
+		.. tostring(why))
+	why = click(prov, 9, "shift")
+	expect(why == "not-a-pattern" and pinv[9].count == 5, "shift + click of iron plates at the provider: " .. tostring(why))
+	for i = 1, #row - 1 do if row[i].valid then row[i].destroy{ raise_destroy = true } end end
+	hold.destroy()
+	pinv.destroy()
 	inv.destroy()
 	me_report("MER3", "ME partitions and windows", problems,
-		"partitions, priorities, insert/extract order, drive blueprint/paste/clone, window data and set functions, terminal tabs")
+		"partitions, priorities, insert/extract order, drive blueprint/paste/clone, window data and set functions, terminal tabs, "
+		.. "every window with the pane and its shift + click target")
 end
 
 --------------------------------------------------------------------------------
@@ -2357,7 +2472,8 @@ end
 --- against the cells (insert and extract), read only and write only, a stale snapshot (an extract and a terminal
 --- take find only what is really there), two buses on one chest, a bus facing an ME block, a chest removed with
 --- and without an event, a removed bus, the settings in a blueprint tag, on a revived ghost, by paste and clone,
---- the window data; then an inserter puts wood into a chest: the network must show it within one visit cycle.
+--- the window data; then an inserter puts wood into a chest: the network must show it within the storage bus idle
+--- limit (issue #5: an idle bus backs off up to it).
 --------------------------------------------------------------------------------
 
 local SBX, SBY = 300, 125
@@ -2405,7 +2521,10 @@ function storage_bus_test()
 		local problems = st.problems
 		if not st.seen and c7 and c7.get_item_count("wood") > 0 then st.seen = game.tick end
 		local buses = s.count_entities_filtered{ name = "me-storage-bus" }
-		local cycle = 15 * math.ceil(buses / 8) + 10           -- visit cycle plus this test's 10 tick granularity
+		--- issue #5: an idle bus reads its chest at least every storage bus idle limit ticks (the queue may hold it back
+		--- one tick per budget of visits), plus this test's 10 tick granularity
+		local cycle = settings.global["me-network-storage-bus-idle-limit"].value
+			+ math.ceil(buses / settings.global["me-network-storage-bus-visits-per-tick"].value) + 10
 		if st.seen and count("wood") == 1 then
 			if game.tick - st.seen > cycle then problems[#problems + 1] = "wood seen after " .. (game.tick - st.seen) .. " ticks (cycle " .. cycle .. ")" end
 			st.done = true
@@ -2966,7 +3085,8 @@ function fluid_storage_bus_test()
 		end
 		if not st.seen and (seg(t5).water or 0) > 0 then st.seen = game.tick end
 		local buses = (remote.call(NET, "network", t) or {}).fluid_storage_buses or 0   -- the fluid side's visit list
-		local cycle = 15 * math.ceil(buses / 8) + 10           -- visit cycle plus this test's 10 tick granularity
+		local cycle = settings.global["me-network-storage-bus-idle-limit"].value
+			+ math.ceil(buses / settings.global["me-network-storage-bus-visits-per-tick"].value) + 10   -- (issue #5)
 		if st.seen and not st.pump_done and (info(b5).contents or {})["fluid/water"] then
 			st.pump_done = game.tick - st.seen
 			expect(st.pump_done <= cycle, "pump: water seen after " .. st.pump_done .. " ticks (cycle " .. cycle .. ")")
@@ -3467,9 +3587,8 @@ function cpu_tier_test()
 		expect(ja.ops == 12 and jb.ops == 12, "hand-overs per step on the co-processing CPU: " .. ja.ops .. ", " .. jb.ops)
 		local _, free2 = remote.call(AC38, "cpus", terminal)
 		expect(free2 == 0, "free slots with two jobs: " .. free2)
-		local c = remote.call(AC38, "start", terminal, LM_ITEM, 1)
-		local jc = c and remote.call(AC38, "job", c)
-		expect(jc and jc.status == "queued", "a third job must wait for a slot: " .. tostring(jc and jc.status))
+		local c, why = remote.call(AC38, "start", terminal, LM_ITEM, 1)
+		expect(c == nil and why == "no-free-cpu", "a third job must be refused while both slots run (issue #6): " .. tostring(c) .. " " .. tostring(why))
 		if c then remote.call(AC38, "cancel", c) end
 		st.a, st.b, st.c = a, b, c
 		if #problems > 0 then return finish() end
@@ -3699,6 +3818,513 @@ function settings_test()
 	report38("SETTINGS", "settings copy", problems, #problems == 0 and "blueprint, paste and clone of 3 entity types" or nil)
 end
 
+--------------------------------------------------------------------------------
+--- the scheduler (me-network issue #5, scripts/fork-me-schedule.lua): an export bus whose item the network lacks
+--- sleeps and wakes when the item comes in; an import bus facing nothing takes a chest built in front of it at its
+--- next tick; a full storage bus is passed by until its next read (then it takes items again); 300 random inserts and
+--- extracts keep the network's totals equal to the cells plus the storage bus's chest, and every count equal to what
+--- went in minus what came out.
+--------------------------------------------------------------------------------
+
+local SCX, SCY = 380, 40
+local SB = "gregtorio-me-storagebus"
+
+function setup_scheduler_test(s)
+	local fails = {}
+	local function place(name, x, y, extra) return me_place(s, fails, "scheduler", name, x, y, extra) end
+	local eei = place("electric-energy-interface", SCX + 12.5, SCY + 6.5)
+	if eei then
+		eei.power_production = 1e6
+		eei.electric_buffer_size = 1e7
+	end
+	place("substation", SCX + 13, SCY + 2)
+	local north = { direction = defines.direction.north }
+	local members = { place("me-network-controller", SCX + 6, SCY),
+		me_drive(s, fails, "scheduler", SCX + 8.5, SCY + 4.5, { ["iron-plate"] = 1000, ["iron-gear-wheel"] = 500 }),
+		place("me-export-bus", SCX + 2.5, SCY + 0.5, north),              -- E1: copper plates into C1
+		place("me-import-bus", SCX + 3.5, SCY + 0.5, north),              -- I2: nothing in front yet
+		place("me-storage-bus", SCX + 4.5, SCY + 0.5, north) }            -- S1: chest C3, priority 10
+	place("iron-chest", SCX + 2.5, SCY - 0.5)
+	place("iron-chest", SCX + 4.5, SCY - 0.5)
+	me_connect(fails, "scheduler", members)
+	if members[3] then remote.call(IO, "set_bus_filters", members[3], { "copper-plate" }) end
+	if members[5] then remote.call(SB, "set_settings", members[5], { priority = 10 }) end
+	return fails
+end
+
+function scheduler_test()
+	local s = game.surfaces[1]
+	if game.tick < 120 then return end
+	local function find(name, x, y) return s.find_entity(name, { SCX + x, SCY + y }) end
+	local ctrl = find("me-network-controller", 6, 0)
+	local e1, i2, s1 = find("me-export-bus", 2.5, 0.5), find("me-import-bus", 3.5, 0.5), find("me-storage-bus", 4.5, 0.5)
+	local c1, c3 = find("iron-chest", 2.5, -0.5), find("iron-chest", 4.5, -0.5)
+	local st = storage.sched_test
+	if not st then
+		st = { phase = 1, problems = {} }
+		storage.sched_test = st
+	end
+	local problems = st.problems
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function finish(note)
+		st.done = true
+		me_report("SCHEDULER", "ME scheduler", problems, note)
+	end
+	if not (ctrl and e1 and i2 and s1 and c1 and c3) then
+		problems[#problems + 1] = "a block of the test is missing"
+		finish()
+		return
+	end
+	local function count(name) return remote.call(NET, "count", ctrl, name) end
+	if st.phase == 1 then
+		--- the export bus found no copper: it waits for it
+		expect(c1.get_item_count("copper-plate") == 0, "copper in C1 before there was any")
+		local sch = remote.call(IO, "schedule", e1)
+		if not (sch and sch.due) then
+			problems[#problems + 1] = "the export bus is not scheduled"
+		elseif sch.due <= game.tick + 1 then
+			return                                                  -- due anyway: try again at the next round
+		end
+		remote.call(NET, "insert", ctrl, "copper-plate", 50)
+		sch = remote.call(IO, "schedule", e1)
+		expect(sch and sch.due == game.tick + 1, "the export bus was not woken by its copper (due " .. tostring(sch and sch.due)
+			.. " at tick " .. game.tick .. ")")
+		st.t, st.phase = game.tick, 2
+	elseif st.phase == 2 then
+		if c1.get_item_count("copper-plate") > 0 then
+			st.woken = game.tick - st.t
+			expect(st.woken <= 20, "export bus woke after " .. st.woken .. " ticks")
+			--- a chest with wood built in front of the import bus
+			local c2 = s.create_entity{ name = "iron-chest", position = { SCX + 3.5, SCY - 0.5 }, force = "player", raise_built = true }
+			if c2 then c2.insert{ name = "wood", count = 100 } end
+			local sch = remote.call(IO, "schedule", i2)
+			expect(sch and sch.due == game.tick + 1, "the import bus was not woken by the chest built in front of it (due "
+				.. tostring(sch and sch.due) .. " at tick " .. game.tick .. ")")
+			st.t, st.phase = game.tick, 3
+		elseif game.tick - st.t > 30 then
+			problems[#problems + 1] = "the export bus never woke for its copper"
+			st.phase = 3
+			st.t = game.tick
+		end
+	elseif st.phase == 3 then
+		if count("wood") >= 100 then
+			st.built = game.tick - st.t
+			--- 100 wood at the bus speed (256 items per second) are 24 ticks; the first visit after the wake has only
+			--- the ticks since the bus's last idle visit to spend, the next one comes an active interval (15 ticks)
+			--- later, and this test looks every 10 ticks: 50 at most. (The wake itself is checked above.)
+			expect(st.built <= 50, "the import bus took the built chest's wood after " .. st.built .. " ticks")
+			st.phase = 4
+		elseif game.tick - st.t > 60 then
+			problems[#problems + 1] = "the import bus never took the wood of the chest built in front of it (" .. count("wood") .. ")"
+			st.phase = 4
+		end
+	elseif st.phase == 4 then
+		--- a full storage bus is passed by until its next read
+		local inv = c3.get_inventory(defines.inventory.chest)
+		inv.insert{ name = "iron-plate", count = 100 * #inv }
+		remote.call(SB, "visit", s1)
+		local full = c3.get_item_count("iron-plate")
+		local total = count("iron-plate")
+		local n = remote.call(NET, "insert", ctrl, "iron-plate", 10)
+		expect(n == 10 and count("iron-plate") == total + 10, "insert with a full storage bus: " .. n)
+		expect(c3.get_item_count("iron-plate") == full, "the full chest took plates")
+		inv.remove{ name = "iron-plate", count = 50 }               -- by hand: no event
+		remote.call(NET, "insert", ctrl, "iron-plate", 10)
+		expect(c3.get_item_count("iron-plate") == full - 50, "a full storage bus was asked again before its next read")
+		remote.call(SB, "visit", s1)
+		remote.call(NET, "insert", ctrl, "iron-plate", 10)
+		expect(c3.get_item_count("iron-plate") == full - 40, "after its read the storage bus (priority 10) did not take the plates: "
+			.. c3.get_item_count("iron-plate") .. " of " .. (full - 40))
+		st.phase = 5
+	elseif st.phase == 5 then
+		--- random inserts and extracts: every count is what went in minus what came out, and the totals are the
+		--- cells plus the storage bus's chest
+		local keys = { "iron-plate", "iron-gear-wheel", "copper-plate", "wood", "iron-plate@uncommon", "stone" }
+		local before, moved = {}, {}
+		for _, k in ipairs(keys) do before[k] = remote.call(NET, "contents", ctrl)[k] or 0 moved[k] = 0 end
+		local seed = 7
+		for _ = 1, 300 do
+			seed = (seed * 1103515245 + 12345) % 2147483648
+			local r = math.floor(seed / 65536)
+			local k = keys[r % #keys + 1]
+			local name, q = k:match("^([^@]+)@?(.*)$")
+			q = q ~= "" and q or "normal"
+			local n = math.floor(r / 7) % 120 + 1
+			if r % 2 == 0 then
+				moved[k] = moved[k] + remote.call(NET, "insert", ctrl, name, n, q)
+			else
+				moved[k] = moved[k] - remote.call(NET, "extract", ctrl, name, n, q)
+			end
+		end
+		remote.call(SB, "visit", s1)
+		local contents = remote.call(NET, "contents", ctrl)
+		local cells = {}
+		local d = find("me-drive", 8.5, 4.5)
+		for _, cell in pairs(remote.call(NET, "drive", d)) do
+			for k, n in pairs(cell.items) do cells[k] = (cells[k] or 0) + n end
+		end
+		for _, it in pairs(c3.get_inventory(defines.inventory.chest).get_contents()) do
+			local k = (it.quality or "normal") == "normal" and it.name or (it.name .. "@" .. it.quality)
+			cells[k] = (cells[k] or 0) + it.count
+		end
+		for _, k in ipairs(keys) do
+			expect((contents[k] or 0) == before[k] + moved[k], k .. ": " .. tostring(contents[k]) .. " in the network, "
+				.. (before[k] + moved[k]) .. " expected")
+			expect((cells[k] or 0) == (contents[k] or 0), k .. ": cells and chest hold " .. tostring(cells[k]) .. ", the totals say "
+				.. tostring(contents[k]))
+		end
+		for k, n in pairs(contents) do
+			if not k:find("^fluid/") and (cells[k] or 0) ~= n then problems[#problems + 1] = k .. ": totals " .. n .. ", storage " .. tostring(cells[k]) end
+		end
+		finish("woken after " .. tostring(st.woken) .. " ticks, built chest taken after " .. tostring(st.built) .. " ticks")
+	end
+end
+
+--------------------------------------------------------------------------------
+--- The open key with a tool in the cursor (G.click_opens, fork-me-gui.lua): an ME window opens on a click exactly
+--- when the game would open a chest's window. The harness has no player, so the decision is fed real item stacks
+--- of every cursor tool (and the cursor flags a stack cannot hold: a library blueprint, a ghost, a wire being
+--- dragged, a damaged block). Opening the window, the game's own click action and the tool staying in the cursor
+--- need the real game.
+function cursor_test()
+	if storage.cursor_t then return end
+	storage.cursor_t = { done = true }
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local inv = game.create_inventory(1)
+	local stack = inv[1]
+	local n = 0
+	local function case(name, setup, flags, want)
+		n = n + 1
+		stack.clear()
+		local ok, err = pcall(setup)
+		if not ok then expect(false, name .. ": setup failed: " .. tostring(err)) return end
+		local got, why = remote.call("gregtorio-me-terminal", "click_opens", stack, flags or {})
+		expect(got == want, name .. ": " .. tostring(got) .. " (" .. tostring(why) .. "), expected " .. tostring(want))
+	end
+	local function item(name, count) return function() stack.set_stack{ name = name, count = count or 1 } end end
+	local function blueprint()
+		stack.set_stack{ name = "blueprint" }
+		stack.set_blueprint_entities{ { entity_number = 1, name = "small-lamp", position = { 0.5, 0.5 } } }
+	end
+	local none = function() end
+	--- the window opens: an empty hand, plain items, a storage cell and an encoded pattern (quick insert first)
+	case("empty hand", none, nil, true)
+	case("iron plate", item("iron-plate", 50), nil, true)
+	case("module", item("speed-module", 5), nil, true)
+	case("storage cell", item("me-1k-storage-cell"), nil, true)
+	case("blank pattern", item("me-blank-pattern", 5), nil, true)
+	case("repair pack, block not damaged", item("repair-pack", 5), nil, true)
+	--- it does not: tools, wires, ghosts, items being built
+	case("blueprint", blueprint, { blueprint = true }, false)
+	case("blueprint (stack only)", blueprint, nil, false)
+	case("empty blueprint", item("blueprint"), nil, false)
+	case("blueprint book", function()
+		stack.set_stack{ name = "blueprint-book" }
+		local book = stack.get_inventory(defines.inventory.item_main)
+		book.insert{ name = "blueprint" }
+		book[1].set_blueprint_entities{ { entity_number = 1, name = "small-lamp", position = { 0.5, 0.5 } } }
+	end, { blueprint = true }, false)
+	case("empty blueprint book", item("blueprint-book"), nil, false)
+	case("deconstruction planner", item("deconstruction-planner"), nil, false)
+	case("upgrade planner", item("upgrade-planner"), nil, false)
+	case("copy-paste tool", item("copy-paste-tool"), nil, false)
+	case("cut tool", item("cut-paste-tool"), nil, false)
+	case("selection tool of another mod", item("zz-devcheck-selection-tool"), nil, false)
+	case("spidertron remote", item("spidertron-remote"), nil, false)
+	case("artillery targeting remote", item("artillery-targeting-remote"), nil, false)
+	case("red wire", item("red-wire"), nil, false)
+	case("green wire", item("green-wire"), nil, false)
+	case("copper wire", item("copper-wire"), nil, false)
+	case("rail planner", item("rail", 10), nil, false)
+	case("buildable item (belt)", item("transport-belt", 50), nil, false)
+	case("buildable ME block (fluix cable)", item("fluix-cable", 50), nil, false)
+	case("tile item (landfill)", item("landfill", 50), nil, false)
+	case("item with entity data (car)", item("car"), nil, false)
+	case("capsule (fish)", item("raw-fish", 5), nil, false)
+	case("capsule (grenade)", item("grenade", 5), nil, false)
+	case("repair pack, block damaged", item("repair-pack", 5), { damaged = true }, false)
+	--- the cursor flags without a readable stack
+	case("blueprint from the library", none, { blueprint = true }, false)
+	case("library record (book)", none, { record = true }, false)
+	case("ghost in the cursor", none, { ghost = true }, false)
+	case("wire being dragged", none, { wire = true }, false)
+	inv.destroy()
+	for _, p in pairs(problems) do log("DEVCHECK-RUNTIME-FAIL cursor: " .. p) end
+	log("DEVCHECK-RUNTIME-CURSOR " .. (#problems == 0 and "ok" or "failed") .. " (" .. n .. " cursor states)")
+end
+
+--------------------------------------------------------------------------------
+--- Recipe paste (me-network issue #12, scripts/fork-me-recipe-paste.lua): a crafting machine's recipe pasted onto an
+--- ME Interface, a storage bus, an export and an import bus. The harness has no player, so the event handler is
+--- called with the event's shape (remote `paste`, which returns the flying text's messages); that the game raises
+--- the event for a crafting machine is checked on the prototypes (every crafting machine lists the four blocks in
+--- its additional_pastable_entities, the GregTech machines with Gregtorio too). The cases: an item recipe, a fluid
+--- recipe, a quality recipe, recipes with more ingredients than the blocks hold (the fixtures of runtimemod/data.lua
+--- and data-final-fixes.lua),
+--- a furnace (its current recipe, then its previous one), machines without a recipe, the interface's sides (off
+--- stays, a fluid that comes again keeps its side, a pipe side first, no pipe, no side left), mode and priority of a
+--- storage bus kept, a recipe without items for a chest, and a paste between two ME blocks is no recipe paste.
+--------------------------------------------------------------------------------
+
+local PAX, PAY = 300, 290
+local RP = "gregtorio-me-recipe-paste"
+local PASTE_TARGETS = { "me-network-interface", "me-import-bus", "me-export-bus", "me-storage-bus" }
+
+function setup_paste_test(s)
+	local fails = {}
+	local what = "recipe paste"
+	power(s, fails, what, PAX, PAY)
+	me_place(s, fails, what, "me-network-controller", PAX + 7, PAY)
+	cable_row(s, fails, PAX + 8, PAX + 46, PAY - 1)
+	local south = { direction = defines.direction.south }
+	for _, x in pairs({ 9.5, 12.5, 14.5, 16.5, 18.5, 20.5, 22.5, 24.5 }) do
+		me_place(s, fails, what, "me-network-interface", PAX + x, PAY + 0.5)
+	end
+	me_place(s, fails, what, "pipe", PAX + 10.5, PAY + 0.5)                     -- the east side of interface I1
+	me_place(s, fails, what, "iron-chest", PAX + 26.5, PAY + 1.5)
+	me_place(s, fails, what, "iron-chest", PAX + 28.5, PAY + 1.5)
+	local water = me_place(s, fails, what, "pipe", PAX + 30.5, PAY + 1.5)
+	if water then water.fluidbox[1] = { name = "water", amount = 50 } end
+	for _, x in pairs({ 26.5, 28.5, 30.5, 32.5 }) do me_place(s, fails, what, "me-storage-bus", PAX + x, PAY + 0.5, south) end
+	for _, x in pairs({ 34.5, 36.5, 38.5, 40.5 }) do me_place(s, fails, what, "me-export-bus", PAX + x, PAY + 0.5, south) end
+	for _, x in pairs({ 42.5, 44.5 }) do me_place(s, fails, what, "me-import-bus", PAX + x, PAY + 0.5, south) end
+	--- the machines, away from the blocks
+	local function machine(name, x, recipe, quality)
+		local m = me_place(s, fails, what, name, PAX + x, PAY + 6.5)
+		if m and recipe then
+			m.force.recipes[recipe].enabled = true
+			m.set_recipe(recipe, quality)
+		end
+		return m
+	end
+	machine("me-molecular-assembler", 10.5, "iron-gear-crafting-table")
+	machine("me-molecular-assembler", 14.5, "iron-gear-crafting-table", "uncommon")
+	machine("me-molecular-assembler", 18.5)
+	machine("hv-chemical-reactor", 22.5, "phenolic-circuit-board")
+	machine("hv-chemical-reactor", 26.5, "hydrochloric-acid")
+	machine("zz-devcheck-paste-machine", 30.5, "zz-devcheck-paste-many")
+	machine("zz-devcheck-paste-machine", 34.5, "zz-devcheck-paste-fluids")
+	game.forces.player.recipes["iron-dust-smelter"].enabled = true    -- a furnace only picks enabled recipes
+	for _, x in pairs({ 38, 41 }) do
+		local f = me_place(s, fails, what, "iron-furnace", PAX + x, PAY + 7)
+		if f then f.get_inventory(defines.inventory.fuel).insert{ name = "coal", count = 5 } end
+		if f and x == 38 then f.get_inventory(defines.inventory.furnace_source).insert{ name = "iron-dust", count = 1 } end
+	end
+	return fails
+end
+
+function paste_test()
+	local st = storage.paste_t
+	if (st and st.done) or game.tick < 60 then return end
+	local s = game.surfaces[1]
+	local function find(name, x, y) return s.find_entity(name, { PAX + x, PAY + y }) end
+	local function iface(x) return find("me-network-interface", x, 0.5) end
+	local f1 = find("iron-furnace", 38, 7)
+	if st then
+		--- the furnace's previous recipe: once the furnace is idle, pasted onto export bus E4
+		local idle = f1 and f1.valid and f1.get_recipe() == nil
+		if not idle and game.tick < 1300 then return end
+		st.done = true
+		local problems = st.problems
+		local eb = find("me-export-bus", 40.5, 0.5)
+		local note = st.note or ""
+		if idle and eb then
+			local msgs = remote.call(RP, "paste", f1, eb)
+			local f = remote.call(IO, "get_bus", eb).filters
+			if not (msgs and #msgs == 0 and serpent.line(f) == serpent.line({ "iron-dust" })) then
+				problems[#problems + 1] = "furnace's previous recipe onto an export bus: " .. serpent.line(f) .. " " .. serpent.line(msgs)
+			end
+			note = note .. ", previous recipe at tick " .. game.tick
+		else
+			note = note .. ", the furnace was still busy at tick " .. game.tick .. ": previous recipe not checked"
+		end
+		return me_report("RECIPEPASTE", "recipe paste", problems, note)
+	end
+	st = { problems = {} }
+	storage.paste_t = st
+	local problems = st.problems
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local function keys(msgs)
+		local out = {}
+		for _, m in ipairs(msgs or {}) do
+			local k = type(m) == "table" and m[1] or tostring(m)
+			out[#out + 1] = (k:gsub("^fork%-me%-paste%.", ""))
+		end
+		return out
+	end
+	local function has(msgs, key) for _, k in ipairs(keys(msgs)) do if k == key then return true end end return false end
+	local function line(x) return serpent.line(x) end
+
+	--- the game raises the event only for pairs the source prototype lists: every crafting machine lists the blocks
+	local machines, missing = 0, {}
+	for name, p in pairs(prototypes.get_entity_filtered{ { filter = "crafting-machine" } }) do
+		machines = machines + 1
+		local listed = {}
+		for _, t in pairs(p.additional_pastable_entities or {}) do listed[t.name] = true end
+		for _, t in ipairs(PASTE_TARGETS) do
+			if not listed[t] then missing[#missing + 1] = name .. " -> " .. t end
+		end
+	end
+	expect(#missing == 0, "crafting machines that cannot paste onto ME blocks: " .. table.concat(missing, ", ", 1, math.min(#missing, 10)))
+	local gt = prototypes.entity["hv-chemical-reactor"]
+	expect(gt and gt.type == "assembling-machine", "hv-chemical-reactor is no assembling machine")
+
+	local m1, m2, m3 = find("me-molecular-assembler", 10.5, 6.5), find("me-molecular-assembler", 14.5, 6.5), find("me-molecular-assembler", 18.5, 6.5)
+	local r1, r2 = find("hv-chemical-reactor", 22.5, 6.5), find("hv-chemical-reactor", 26.5, 6.5)
+	local mx = find("zz-devcheck-paste-machine", 30.5, 6.5)
+	local f2 = find("iron-furnace", 41, 7)
+	local mf = find("zz-devcheck-paste-machine", 34.5, 6.5)
+	local i1, i2, i3, i4, i5, i6, i7, i8 = iface(9.5), iface(12.5), iface(14.5), iface(16.5), iface(18.5), iface(20.5), iface(22.5), iface(24.5)
+	local sb1, sb2, sb3, sb4 = find("me-storage-bus", 26.5, 0.5), find("me-storage-bus", 28.5, 0.5), find("me-storage-bus", 30.5, 0.5), find("me-storage-bus", 32.5, 0.5)
+	local e1, e2, e3 = find("me-export-bus", 34.5, 0.5), find("me-export-bus", 36.5, 0.5), find("me-export-bus", 38.5, 0.5)
+	local ib1, ib2 = find("me-import-bus", 42.5, 0.5), find("me-import-bus", 44.5, 0.5)
+	if not (m1 and m2 and m3 and r1 and r2 and mx and mf and f1 and f2 and i1 and i2 and i3 and i4 and i5 and i6 and i7 and i8
+		and sb1 and sb2 and sb3 and sb4 and e1 and e2 and e3 and ib1 and ib2) then
+		st.done = true
+		return me_report("RECIPEPASTE", "recipe paste", { "entities missing" })
+	end
+	local volume = remote.call(IO, "get_interface", i1).volume
+	local function stack(name) return prototypes.item[name].stack_size end
+	local function config_line(e)
+		local out = {}
+		for i, c in pairs(remote.call(IO, "get_interface_config", e)) do
+			out[#out + 1] = i .. "=" .. (c.type == "fluid" and ("fluid/" .. c.name) or (c.name .. "@" .. c.quality)) .. ":" .. c.amount
+		end
+		table.sort(out)
+		return table.concat(out, " ")
+	end
+	local function sides(e) return line(remote.call(IO, "get_interface_sides", e)) end
+
+	--- the gear recipe's two items in the recipe's order (Gregtorio's lists the stick first)
+	local gear = {}
+	for _, g in ipairs(prototypes.recipe["iron-gear-crafting-table"].ingredients) do gear[#gear + 1] = g.name end
+	local function gear_rows(q) return "1=" .. gear[1] .. "@" .. q .. ":" .. stack(gear[1]) .. " 2=" .. gear[2] .. "@" .. q .. ":" .. stack(gear[2]) end
+	--- an item recipe onto an interface: its rows are replaced, one stack each
+	remote.call(IO, "set_interface_config", i2, { { name = "copper-plate", quality = "normal", amount = 10 } })
+	local msgs = remote.call(RP, "paste", m1, i2)
+	local want = gear_rows("normal")
+	expect(#keys(msgs) == 0 and config_line(i2) == want, "item recipe onto an interface: " .. config_line(i2) .. " " .. line(keys(msgs)))
+	--- a quality recipe: the rows and the storage bus filters take its quality (mode and priority stay), the export bus
+	--- has no quality and says so
+	msgs = remote.call(RP, "paste", m2, i3)
+	want = gear_rows("uncommon")
+	expect(#keys(msgs) == 0 and config_line(i3) == want, "quality recipe onto an interface: " .. config_line(i3))
+	remote.call(SB, "set_settings", sb1, { mode = "read", priority = 7, filters = { "wood" } })
+	msgs = remote.call(RP, "paste", m2, sb1)
+	local st1 = remote.call(SB, "get_settings", sb1)
+	expect(#keys(msgs) == 0 and line(st1) == line({ mode = "read", priority = 7, filters = { gear[1] .. "@uncommon", gear[2] .. "@uncommon" } }),
+		"quality recipe onto a storage bus: " .. line(st1))
+	msgs = remote.call(RP, "paste", m2, e3)
+	expect(line(remote.call(IO, "get_bus", e3).filters) == line(gear) and line(keys(msgs)) == line({ "bus-quality" }),
+		"quality recipe onto an export bus: " .. line(remote.call(IO, "get_bus", e3).filters) .. " " .. line(keys(msgs)))
+	--- a recipe without item ingredients onto a storage bus on a chest: unchanged, the player is told
+	msgs = remote.call(RP, "paste", r2, sb1)
+	expect(line(keys(msgs)) == line({ "no-items" }) and line(remote.call(SB, "get_settings", sb1)) == line(st1),
+		"fluid-only recipe onto a storage bus on a chest: " .. line(remote.call(SB, "get_settings", sb1)) .. " " .. line(keys(msgs)))
+
+	--- a fluid recipe onto an interface: the fluid row gets the side's volume and the side with a pipe (east); the
+	--- north side stays off
+	remote.call(IO, "set_interface_side", i1, 1, "off")
+	msgs = remote.call(RP, "paste", r1, i1)
+	want = "1=resin-circuit-board@normal:" .. stack("resin-circuit-board") .. " 2=fluid/phenol:" .. volume
+	expect(#keys(msgs) == 0 and config_line(i1) == want and sides(i1) == line({ "off", 2 }),
+		"fluid recipe onto an interface with a pipe: " .. config_line(i1) .. " sides " .. sides(i1) .. " " .. line(keys(msgs)))
+	--- a side tied to a fluid that comes again keeps it; then a recipe without it: the side imports again, the two new
+	--- fluid rows get the next import sides, which have no pipe (the player is told)
+	remote.call(IO, "set_interface_config", i4, { [5] = { type = "fluid", name = "phenol", amount = 100 } }, { [1] = "off", [3] = 5 })
+	msgs = remote.call(RP, "paste", r1, i4)
+	expect(#keys(msgs) == 0 and sides(i4) == line({ [1] = "off", [3] = 2 }), "a fluid's side kept: " .. sides(i4) .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", r2, i4)
+	want = "1=fluid/chlorine:" .. volume .. " 2=fluid/hydrogen:" .. volume
+	expect(config_line(i4) == want and sides(i4) == line({ "off", 1, 2 }) and line(keys(msgs)) == line({ "no-pipe", "no-pipe" }),
+		"two fluids onto sides without a pipe: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
+	--- the fluid recipe onto the buses and storage buses
+	msgs = remote.call(RP, "paste", r1, e1)
+	expect(#keys(msgs) == 0 and line(remote.call(IO, "get_bus", e1).filters) == line({ "resin-circuit-board", "fluid/phenol" }),
+		"fluid recipe onto an export bus: " .. line(remote.call(IO, "get_bus", e1).filters))
+	msgs = remote.call(RP, "paste", r1, ib2)
+	expect(#keys(msgs) == 0 and line(remote.call(IO, "get_bus", ib2).filters) == line({ "phenolic-circuit-board" }),
+		"fluid recipe onto an import bus (its products): " .. line(remote.call(IO, "get_bus", ib2).filters))
+	msgs = remote.call(RP, "paste", r2, ib1)
+	expect(#keys(msgs) == 0 and line(remote.call(IO, "get_bus", ib1).filters) == line({ "fluid/hydrochloric-acid" }),
+		"fluid product onto an import bus: " .. line(remote.call(IO, "get_bus", ib1).filters))
+	local sb3_info = remote.call(SB, "info", sb3)
+	expect(sb3_info and sb3_info.side == "fluid" and sb3_info.target, "storage bus on the pipe is on its fluid side: " .. line(sb3_info and sb3_info.side))
+	msgs = remote.call(RP, "paste", r1, sb3)
+	expect(#keys(msgs) == 0 and line(remote.call(SB, "get_settings", sb3).filters) == line({ "fluid/phenol" }),
+		"fluid recipe onto a storage bus on a tank: " .. line(remote.call(SB, "get_settings", sb3).filters))
+	msgs = remote.call(RP, "paste", r1, sb4)
+	expect(#keys(msgs) == 0 and line(remote.call(SB, "get_settings", sb4).filters) == line({ "resin-circuit-board", "fluid/phenol" }),
+		"fluid recipe onto a storage bus without a target: " .. line(remote.call(SB, "get_settings", sb4).filters))
+
+	--- more ingredients than the blocks hold (20 items and 5 fluids; 2 items and 5 fluids), in the game's order
+	local function fill(recipe)                          -- what the interface takes: 9 rows, 4 fluids
+		local names, fl = {}, 0
+		for _, g in ipairs(prototypes.recipe[recipe].ingredients) do
+			if #names < 9 and (g.type ~= "fluid" or fl < 4) then
+				names[#names + 1] = g.name
+				if g.type == "fluid" then fl = fl + 1 end
+			end
+		end
+		return names, fl
+	end
+	local function row_names(e)
+		local out = {}
+		local cfg = remote.call(IO, "get_interface_config", e)
+		for i = 1, 9 do out[#out + 1] = cfg[i] and cfg[i].name or nil end
+		return out
+	end
+	local many = prototypes.recipe["zz-devcheck-paste-many"].ingredients
+	local names = fill("zz-devcheck-paste-many")
+	msgs = remote.call(RP, "paste", mx, i5)
+	expect(line(row_names(i5)) == line(names) and has(msgs, "rows-full"),
+		"too many ingredients onto an interface: " .. config_line(i5) .. " " .. line(keys(msgs)))
+	local fnames, fl = fill("zz-devcheck-paste-fluids")
+	msgs = remote.call(RP, "paste", mf, i6)
+	expect(fl == 4 and line(row_names(i6)) == line(fnames) and line(keys(msgs)) == line({ "no-pipe", "no-pipe", "no-pipe", "no-pipe", "fluids-full" })
+		and #remote.call(IO, "get_interface_sides", i6) == 4,
+		"five fluids onto an interface: " .. config_line(i6) .. " sides " .. sides(i6) .. " " .. line(keys(msgs)))
+	remote.call(IO, "set_interface_config", i5, {}, { "off", "off", "off" })
+	msgs = remote.call(RP, "paste", mf, i5)
+	local s5 = remote.call(IO, "get_interface_sides", i5)
+	expect(s5[1] == "off" and s5[2] == "off" and s5[3] == "off" and type(s5[4]) == "number"
+		and line(keys(msgs)) == line({ "no-pipe", "no-side", "no-side", "no-side", "fluids-full" }),
+		"fluid rows with no side left: " .. sides(i5) .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", mx, sb2)
+	local f2s = remote.call(SB, "get_settings", sb2).filters
+	local items_only = true
+	for _, k in ipairs(f2s) do if k:find("^fluid/") then items_only = false end end
+	expect(#f2s == 18 and items_only and line(keys(msgs)) == line({ "filters-full" }),
+		"too many items onto a storage bus on a chest: " .. #f2s .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", mx, sb3)
+	expect(#remote.call(SB, "get_settings", sb3).filters == 5 and #keys(msgs) == 0, "five fluids onto a storage bus on a tank")
+	msgs = remote.call(RP, "paste", mx, sb4)
+	expect(#remote.call(SB, "get_settings", sb4).filters == 18 and line(keys(msgs)) == line({ "filters-full" }),
+		"too many ingredients onto a storage bus without a target")
+	msgs = remote.call(RP, "paste", mx, e2)
+	local ef = remote.call(IO, "get_bus", e2).filters
+	local want_ef = {}
+	for i = 1, 9 do want_ef[i] = (many[i].type == "fluid" and "fluid/" or "") .. many[i].name end
+	expect(line(ef) == line(want_ef) and line(keys(msgs)) == line({ "filters-full" }),
+		"too many ingredients onto an export bus: " .. line(ef) .. " " .. line(keys(msgs)))
+
+	--- machines without a recipe: nothing changes, the player is told
+	local before = config_line(i8)
+	msgs = remote.call(RP, "paste", m3, i8)
+	expect(line(keys(msgs)) == line({ "no-recipe" }) and config_line(i8) == before, "assembler without a recipe: " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", f2, e3)
+	expect(line(keys(msgs)) == line({ "no-recipe" }) and line(remote.call(IO, "get_bus", e3).filters) == line(gear),
+		"furnace that never smelted: " .. line(keys(msgs)))
+	--- the furnace while it smelts (its current recipe)
+	local busy = f1.get_recipe() ~= nil
+	msgs = remote.call(RP, "paste", f1, i7)
+	expect(#keys(msgs) == 0 and config_line(i7) == "1=iron-dust@normal:" .. stack("iron-dust"), "furnace onto an interface: " .. config_line(i7) .. " " .. line(keys(msgs)))
+	--- a paste between ME blocks is no recipe paste (their own handlers copy the settings)
+	expect(remote.call(RP, "paste", i1, i2) == nil and remote.call(RP, "paste", e1, e2) == nil, "a paste between ME blocks taken as a recipe paste")
+	st.note = machines .. " crafting machines can paste onto the four blocks, furnace " .. (busy and "smelting" or "already idle") .. " at the first paste"
+end
+
 --- The terrain comes from the map seed: trees, rocks, cliffs, water and enemies can be anywhere. The
 --- tests place their entities by script, which ignores all that, but construction robots do not build
 --- a ghost over a tree or on water, so a robot rebuild timed out on some seeds (issue #47). The whole
@@ -3743,6 +4369,11 @@ script.on_init(function()
 	for _, f in pairs(setup_fluid_storage_bus_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_unified_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(setup_issue38_tests(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_scheduler_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(setup_paste_test(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(cards17.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(bench17.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(cpus6.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

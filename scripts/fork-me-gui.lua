@@ -9,7 +9,14 @@
 ---     entity), def.refresh(player, frame) for the bounded refresh of open windows, def.entities (names whose
 ---     click opens it). open_entity() is called by the open key (simple entities have no vanilla GUI) and by
 ---     on_gui_opened (lamps, combinators, tanks, containers: the vanilla window is replaced at once).
---- Nothing here keeps state in storage: what a window shows lives in its elements' tags.
+---   * Issue #28 (docs/ME-REWORK.md "Windows next to the player's inventory"): a window can have the inventory pane:
+---     the player's main inventory drawn by the mod on the left of the content (update_pane: only the buttons whose
+---     slot changed; on_player_main_inventory_changed and on_player_cursor_stack_changed, nothing per tick). Its
+---     clicks (inventory_click) work like the game's: pick up, put down, merge, swap, half a stack, and shift + click
+---     sends the stack to the block (the window's `shift`). The block's slots in the content are buttons too
+---     (block_click: the window's `click` refuses a wrong item before anything moves).
+--- State: what a window shows lives in its elements' tags; the slot signatures of a pane in
+--- storage.fork_me_gui_pane[player_index] = { size, sigs }.
 --------------------------------------------------------------------------------
 
 local M = {}
@@ -25,12 +32,22 @@ local REFRESH_MAX = 30      -- open windows refreshed per step (one per player a
 
 --- The entity of an ME window by its unit number. game.get_entity_by_unit_number returns nil for most entity
 --- types (simple entities, lamps, containers, ...: every ME block), so the ME graph's node registry
---- (storage.fork_me_net.nodes) is asked first.
+--- (storage.fork_me_net.nodes) is asked first, then the lookups of the blocks that are no graph nodes (the ME Cell
+--- Workbench: entity_lookup). A block with a window that neither finds gets an empty window that the next refresh
+--- closes; the runtime test "ME partitions and windows" checks every block of its map.
+local lookups = {}          -- function(unit) -> entity or nil
+
+function M.entity_lookup(fn) lookups[#lookups + 1] = fn end
+
 function M.entity_by_unit(unit)
 	if not unit then return nil end
 	local s = storage.fork_me_net
 	local node = s and s.nodes and s.nodes[unit]
 	if node and node.entity and node.entity.valid then return node.entity end
+	for _, fn in ipairs(lookups) do
+		local found = fn(unit)
+		if found and found.valid then return found end
+	end
 	local e = game.get_entity_by_unit_number(unit)
 	if e and e.valid then return e end
 	return nil
@@ -80,9 +97,139 @@ function M.act(act, data)
 	return t
 end
 
---- A window: destroys the player's ME window, builds frame, title bar and content frame. Returns the frame and
---- the content flow. `tags` go onto the frame (fork_me_window = name is added).
-function M.open_window(player, name, caption, tags)
+--------------------------------------------------------------------------------
+--- windows: one screen frame; issue #28: with the player's inventory drawn by the mod on the left (the pane)
+--------------------------------------------------------------------------------
+
+local PANE_COLUMNS = 10
+local PANE_HEIGHT = 600
+--- LuaItemStacks of the main inventory's slots per player: only a cache for reading (indexing a slot makes a new
+--- object each time; the values are always read from the game), so it is no game state and is not saved
+local slot_cache = {}
+
+local function pane_state()
+	local s = storage.fork_me_gui_pane
+	if not s then
+		s = {}
+		storage.fork_me_gui_pane = s
+	end
+	return s
+end
+
+--- the player's open ME window (or nil), and its name
+function M.window_of(player)
+	local frame = player.gui.screen.fork_me_window
+	if frame and frame.valid then return frame, frame.tags.fork_me_window end
+	return nil
+end
+
+function M.close_window(player)
+	local frame = player.gui.screen.fork_me_window
+	if frame and frame.valid then frame.destroy() end
+	local s = storage.fork_me_gui_pane
+	if s then s[player.index] = nil end
+	slot_cache[player.index] = nil
+end
+
+--- the table of the pane's slot buttons (named "s<slot>"), or nil
+local function pane_table(frame)
+	local body = frame and frame.valid and frame.fork_me_body
+	local pane = body and body.fork_me_pane
+	local scroll = pane and pane.fork_me_inv_scroll
+	return scroll and scroll.fork_me_inv
+end
+
+--- Show a stack on a slot button: sprite, count, quality and the game's item tooltip; `hand`: the empty slot the
+--- cursor's stack came from (the game's hand mark). `s` may be nil or empty.
+function M.render_slot(btn, s, hand)
+	if s and s.valid_for_read then
+		local name = s.name
+		local q = script.feature_flags.quality and s.quality.name or "normal"
+		btn.sprite = "item/" .. name
+		btn.number = (s.count > 1 or s.prototype.stack_size > 1) and s.count or nil
+		btn.quality = q ~= "normal" and q or nil
+		btn.elem_tooltip = { type = "item-with-quality", name = name, quality = q }
+	else
+		btn.sprite = hand and "utility/hand" or ""
+		btn.number = nil
+		btn.quality = nil
+		btn.elem_tooltip = nil
+	end
+end
+
+--- a slot button for the stack `s` (a block's slot), acting with `tags`
+function M.stack_button(parent, s, tags, tooltip)
+	local btn = parent.add{ type = "sprite-button", style = "slot_button", tags = tags, tooltip = tooltip }
+	M.render_slot(btn, s)
+	return btn
+end
+
+--- the left pane: "Character" (`hint`: what shift + click does there, as its tooltip and a line below), a scroll pane,
+--- a table of 10 columns (filled by update_pane)
+local function build_pane(parent, hint)
+	local box = parent.add{ type = "frame", name = "fork_me_pane", style = "inside_shallow_frame_with_padding", direction = "vertical" }
+	box.add{ type = "label", caption = { "fork-me-gui.character" }, style = "caption_label", tooltip = hint }
+	if hint then M.label(box, hint, PANE_COLUMNS * 40) end
+	local scroll = box.add{ type = "scroll-pane", name = "fork_me_inv_scroll", horizontal_scroll_policy = "never" }
+	scroll.style.maximal_height = PANE_HEIGHT
+	scroll.add{ type = "table", name = "fork_me_inv", column_count = PANE_COLUMNS, style = "filter_slot_table" }
+end
+
+--- The pane follows the main inventory: every slot's signature (name and count, or the hand mark) is compared with
+--- the one shown, and only the buttons whose signature changed are set again (the quality is read for those only:
+--- reading it costs twice as much as name and count, measured). `quality`: the quality of every filled slot is read
+--- and compared too (the refresh, with the quality mod: a change of quality alone). A new window or a changed
+--- inventory size builds the table and sets every button. Returns the number of buttons set.
+function M.update_pane(player, quality)
+	local frame = M.window_of(player)
+	local t = pane_table(frame)
+	local inv = t and player.get_main_inventory()
+	if not inv then return 0 end
+	local ps = pane_state()
+	local st = ps[player.index]
+	local n = #inv
+	local full = false
+	if not st or st.size ~= n then
+		st = { size = n, sigs = {}, quals = {} }
+		ps[player.index] = st
+		t.clear()
+		for i = 1, n do t.add{ type = "sprite-button", name = "s" .. i, style = "slot_button", tags = M.act("inv_slot", { slot = i }) } end
+		full = true
+	end
+	quality = quality and script.feature_flags.quality and not full
+	local cache = slot_cache[player.index]
+	if not (cache and cache.inv == inv and cache.n == n) then
+		cache = { inv = inv, n = n }
+		for i = 1, n do cache[i] = inv[i] end
+		slot_cache[player.index] = cache
+	end
+	local hand = player.hand_location
+	local hand_slot = hand and hand.inventory == inv.index and hand.slot or nil
+	local sigs, quals, set = st.sigs, st.quals, 0
+	for i = 1, n do
+		local s = cache[i]
+		local sig, filled
+		if s.valid_for_read then
+			sig = s.name .. "#" .. s.count
+			filled = true
+		elseif i == hand_slot then sig = "hand"
+		else sig = "" end
+		local q = quality and filled and s.quality.name or nil
+		if full or sig ~= sigs[i] or (q and q ~= quals[i]) then
+			sigs[i] = sig
+			quals[i] = filled and script.feature_flags.quality and (q or s.quality.name) or nil
+			M.render_slot(t["s" .. i], s, i == hand_slot)
+			set = set + 1
+		end
+	end
+	return set
+end
+
+--- A window: closes the player's ME window, builds frame, title bar and content frame; the frame is the player's
+--- opened GUI. Returns the frame and the content flow. `tags` go onto the frame (fork_me_window = name is added).
+--- Issue #28: every window has the pane, the player's inventory drawn on the left of the content (`pane` false: none).
+function M.open_window(player, name, caption, tags, pane)
+	pane = pane ~= false
 	M.close_window(player)
 	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
@@ -97,24 +244,107 @@ function M.open_window(player, name, caption, tags)
 	drag.style.right_margin = 4
 	bar.add{ type = "sprite-button", style = "frame_action_button", sprite = "utility/close",
 		tooltip = { "gui.close-instruction" }, tags = M.act("close") }
-	local inner = frame.add{ type = "frame", style = "inside_shallow_frame_with_padding", direction = "vertical" }
+	local body = frame.add{ type = "flow", name = "fork_me_body", direction = "horizontal" }
+	body.style.horizontal_spacing = 12
+	if pane then build_pane(body, windows[name] and windows[name].hint) end
+	local inner = body.add{ type = "frame", style = "inside_shallow_frame_with_padding", direction = "vertical" }
+	inner.style.vertically_stretchable = true
 	local content = inner.add{ type = "flow", name = "fork_me_content", direction = "vertical" }
 	content.style.vertical_spacing = 6
 	frame.auto_center = true
 	player.opened = frame
+	if pane then M.update_pane(player, true) end
 	return frame, content
 end
 
---- the player's open ME window (or nil), and its name
-function M.window_of(player)
-	local frame = player.gui.screen.fork_me_window
-	if frame and frame.valid then return frame, frame.tags.fork_me_window end
-	return nil
+--- the same item and quality? (a stack merges into another only then)
+local function same_item(a, b)
+	return a.name == b.name and a.quality.name == b.quality.name
 end
 
-function M.close_window(player)
-	local frame = player.gui.screen.fork_me_window
-	if frame and frame.valid then frame.destroy() end
+--- A click on slot `slot` of the inventory pane, for a cursor stack and the main inventory (the window's function and
+--- the tests'). `mode`: "left" (pick the stack up; with a stack in the cursor: put it down, merge or swap), "right"
+--- (half the stack into the cursor; with a stack in the cursor: put one item down), "shift" (the stack goes to the
+--- block: `def.shift(entity, stack, inv)`), "control" (every stack of that item goes to the block: `def.control`, or
+--- `def.shift` for this stack when the window has none). Returns the reason a block refused, and "picked" as the
+--- second value when the cursor took the whole stack (the caller marks the slot with the hand).
+function M.inventory_click(cursor, inv, slot, mode, def, entity)
+	local stack = inv and slot >= 1 and slot <= #inv and inv[slot]
+	if not stack then return nil end
+	if mode == "shift" or mode == "control" then
+		if not stack.valid_for_read then return nil end
+		if not (def and def.shift and entity and entity.valid) then return "no-target" end
+		if mode == "control" and def.control then return def.control(entity, stack, inv) end
+		return def.shift(entity, stack, inv)
+	end
+	if not cursor then return nil end
+	if mode == "right" then
+		if cursor.valid_for_read then
+			if not stack.valid_for_read or same_item(stack, cursor) then stack.transfer_stack(cursor, 1) end
+		elseif stack.valid_for_read then
+			cursor.transfer_stack(stack, math.ceil(stack.count / 2))
+		end
+		return nil
+	end
+	if cursor.valid_for_read then
+		if not stack.valid_for_read or same_item(stack, cursor) then stack.transfer_stack(cursor)
+		else stack.swap_stack(cursor) end
+		return nil
+	end
+	if not stack.valid_for_read then return nil end
+	cursor.transfer_stack(stack)
+	return nil, "picked"
+end
+
+--- A click on slot `slot` of the block in the window (its cards, its cell): `def.click(entity, slot, cursor, inv,
+--- shift)` puts the cursor's item in (refused before anything moves when it does not belong there), takes the item into
+--- the cursor or (shift) into the inventory. Returns the reason of a refusal.
+function M.block_click(def, entity, slot, cursor, inv, shift)
+	if not (def and def.click and entity and entity.valid) then return "no-target" end
+	return def.click(entity, slot, cursor, inv, shift)
+end
+
+--- the short message of a refusal: the window's own text for its reasons (def.message), else fork-me-gui.refused-*
+local function refused(player, why, def)
+	if not why then return end
+	local text = def and def.message and def.message(why) or { "fork-me-gui.refused-" .. why }
+	player.create_local_flying_text{ text = text, create_at_cursor = true }
+end
+
+--- Where an item that may not be in a slot goes, never deleted: `to` a LuaPlayer (main inventory, else the ground at
+--- the player), a LuaInventory (else the ground at `entity`) or nil (the ground at `entity`). `count`: only that many
+--- of the stack (default all). The stack is empty or `count` smaller afterwards.
+function M.give_back(to, stack, entity, count)
+	if not (stack and stack.valid_for_read) then return end
+	count = math.min(count or stack.count, stack.count)
+	if count <= 0 then return end
+	if count < stack.count then                        -- a part: through a stack of its own
+		local tmp = game.create_inventory(1)
+		tmp[1].transfer_stack(stack, count)
+		M.give_back(to, tmp[1], entity)
+		tmp.destroy()
+		return
+	end
+	local surface, position
+	if to and to.valid and to.object_name == "LuaPlayer" then
+		local inv = to.get_main_inventory()
+		if inv then
+			local n = inv.insert(stack)
+			if n >= stack.count then stack.clear() return end
+			if n > 0 then stack.count = stack.count - n end
+		end
+		local c = to.character
+		if c and c.valid then surface, position = c.surface, c.position else surface, position = to.surface, to.position end
+	elseif to and to.valid and to.object_name == "LuaInventory" then
+		local n = to.insert(stack)
+		if n >= stack.count then stack.clear() return end
+		if n > 0 then stack.count = stack.count - n end
+	end
+	if not surface and entity and entity.valid then surface, position = entity.surface, entity.position end
+	if surface then
+		surface.spill_item_stack{ position = position, stack = stack, allow_belts = false }
+		stack.clear()
+	end
 end
 
 --- a label that wraps at `width` pixels
@@ -189,7 +419,12 @@ end
 function M.on(act, fn) actions[act] = fn end
 
 --- a window: { open = function(player, entity, opts), refresh = function(player, frame), entities = { entity names
---- or ME kinds } }; refresh returns false to close the window
+--- or ME kinds } }; refresh returns false to close the window. Issue #28, a window with the inventory pane and slots of
+--- its block: shift = function(entity, stack, inventory) (where a shift-clicked stack of the player's inventory goes;
+--- returns the reason when the block takes none of it) and click = function(entity, slot, cursor, inventory, shift)
+--- (a click on the block's slot; returns the reason of a refusal, nothing moves then); optional hint (a line under
+--- the pane's caption), control = function(entity,
+--- stack, inventory) (control + click: every stack of that item) and message = function(reason) (the refusal's text)
 function M.window(name, def)
 	windows[name] = def
 	for _, entity_name in pairs(def.entities or {}) do openers[entity_name] = def.open end
@@ -218,6 +453,54 @@ end
 function M.clear_bypass(player)
 	local b = storage.fork_me_gui_bypass
 	if b then b[player.index] = nil end
+end
+
+--------------------------------------------------------------------------------
+--- the open key and the cursor
+--------------------------------------------------------------------------------
+
+--- item types whose click acts on the world (build, select, throw, command a spidertron); the game opens no entity
+--- window then
+local TOOL_TYPES = {
+	["blueprint"] = true, ["blueprint-book"] = true, ["deconstruction-item"] = true, ["upgrade-item"] = true,
+	["copy-paste-tool"] = true, ["selection-tool"] = true, ["spidertron-remote"] = true, ["rail-planner"] = true,
+	["capsule"] = true,
+}
+--- the wires of the shortcut bar are plain items (only in the cursor); a click with one connects a wire
+local WIRES = { ["red-wire"] = true, ["green-wire"] = true, ["copper-wire"] = true }
+
+--- What click_opens() needs to know about a player's cursor besides its stack: a blueprint (also one from the
+--- blueprint library, whose cursor stack is not valid for reading), a library record, a ghost, a wire being dragged.
+--- `entity`: the clicked block (a repair pack repairs a damaged one).
+function M.cursor_flags(player, entity)
+	local ratio = entity and entity.valid and entity.get_health_ratio()
+	return {
+		blueprint = player.is_cursor_blueprint(),
+		record = player.cursor_record ~= nil,
+		ghost = player.cursor_ghost ~= nil,
+		wire = player.drag_target ~= nil,
+		damaged = ratio ~= nil and ratio < 1,
+	}
+end
+
+--- Whether a click on an ME block opens its window: exactly when the game opens the window of an entity with one
+--- (a chest) for the same cursor. The click is the game's "open GUI" control, which is also the build and use
+--- click: with a tool in the cursor the game uses the tool and opens nothing, so the ME window must not open either
+--- (opening it would end the tool's action). `stack`: the cursor stack (or any item stack, nil for none); `flags`:
+--- cursor_flags(). Returns the answer and a short reason.
+function M.click_opens(stack, flags)
+	flags = flags or {}
+	if flags.blueprint or flags.record then return false, "blueprint" end
+	if flags.ghost then return false, "ghost" end
+	if flags.wire then return false, "wire" end
+	if not (stack and stack.valid_for_read) then return true, "empty" end
+	local proto = stack.prototype
+	if TOOL_TYPES[proto.type] or stack.is_selection_tool then return false, proto.type end
+	if WIRES[stack.name] then return false, "wire" end
+	if proto.flags and proto.flags["only-in-cursor"] then return false, "cursor-tool" end
+	if proto.place_result or proto.place_as_tile_result then return false, "build" end
+	if proto.type == "repair-tool" and flags.damaged then return false, "repair" end
+	return true, "item"
 end
 
 --- The open key on an entity, or the vanilla window of an entity that has one: open the ME window instead.
@@ -255,6 +538,29 @@ function M.dispatch(event)
 		local via = M.entity_by_unit(el.tags.via)
 		if via and via.valid then M.open_entity(player, via) else M.close_window(player) end
 		return true
+	elseif act == "inv_slot" or act == "block_slot" then   -- issue #28: the inventory pane and the block's slots
+		if event.name ~= defines.events.on_gui_click then return true end
+		local frame, name = M.window_of(player)
+		local def = name and windows[name]
+		local entity = frame and M.entity_of(player, frame)
+		local inv = player.get_main_inventory()
+		if not (entity and inv) then return true end
+		local why, picked
+		if act == "inv_slot" then
+			local mode = event.control and "control" or event.shift and "shift"
+				or event.button == defines.mouse_button_type.right and "right" or "left"
+			why, picked = M.inventory_click(player.cursor_stack, inv, el.tags.slot, mode, def, entity)
+			if picked then
+				local slot = el.tags.slot
+				pcall(function() player.hand_location = { inventory = inv.index, slot = slot } end)
+			end
+		else
+			why = M.block_click(def, entity, el.tags.slot, player.cursor_stack, inv, event.shift)
+		end
+		refused(player, why, def)
+		M.update_pane(player)
+		M.refresh_one(player)
+		return true
 	end
 	local fn = actions[act]
 	if not fn then return false end
@@ -264,6 +570,13 @@ end
 
 --- on_gui_closed: our window was closed (E, Escape, another GUI opened)
 function M.on_closed(event)
+	if event.gui_type == defines.gui_type.script_inventory then
+		--- a save made with #30 (same version number, no close_all): its frame anchored to a script inventory goes
+		local player = game.get_player(event.player_index)
+		local old = player and player.gui.relative.fork_me_window
+		if old and old.valid then old.destroy() end
+		return false
+	end
 	local el = event.element
 	if el and el.valid and el.name == "fork_me_window" then
 		--- the open key's own game action can close the window in the tick it was opened (an entity without a
@@ -273,14 +586,14 @@ function M.on_closed(event)
 			player.opened = el
 			return true
 		end
-		el.destroy()
+		if player then M.close_window(player) else el.destroy() end
 		return true
 	end
 	return false
 end
 
 --- every 60 ticks (terminal module): refresh the open windows (one per player), close those whose entity is
---- gone or out of reach
+--- gone or out of reach; a window with the inventory pane sets every slot once (a change of quality alone)
 function M.refresh_all()
 	local n = 0
 	for _, player in pairs(game.connected_players) do
@@ -289,12 +602,16 @@ function M.refresh_all()
 			n = n + 1
 			local def = windows[name]
 			if not def then
-				frame.destroy()
+				M.close_window(player)
 			elseif player.opened ~= frame then
-				frame.destroy()                            -- dying or another GUI closed it without an event
+				M.close_window(player)                     -- dying or another GUI closed it without an event
 			else
 				local ok = def.refresh and def.refresh(player, frame)
-				if ok == false then frame.destroy() end
+				if ok == false then
+					M.close_window(player)
+				elseif storage.fork_me_gui_pane and storage.fork_me_gui_pane[player.index] then
+					M.update_pane(player, true)
+				end
 			end
 		end
 	end
@@ -304,7 +621,21 @@ end
 function M.refresh_one(player)
 	local frame, name = M.window_of(player)
 	local def = frame and windows[name]
-	if def and def.refresh and def.refresh(player, frame) == false and frame.valid then frame.destroy() end
+	if def and def.refresh and def.refresh(player, frame) == false and frame.valid then M.close_window(player) end
+end
+
+--- on_player_main_inventory_changed, on_player_cursor_stack_changed (issue #28): the inventory pane of the player's
+--- window follows the real inventory and the hand. A player without a pane costs one lookup.
+function M.on_inventory_changed(event)
+	local s = storage.fork_me_gui_pane
+	if not (s and s[event.player_index]) then return end
+	local player = game.get_player(event.player_index)
+	if player then M.update_pane(player) end
+end
+
+--- a player left the game: the window closes
+function M.on_left(player)
+	if player and player.valid then M.close_window(player) end
 end
 
 --- The window's entity (by the unit number in its tags), nil when gone or out of reach. A window opened from a
@@ -323,9 +654,41 @@ function M.back_button(parent, via)
 	return parent.add{ type = "button", caption = { "fork-me-gui.back" }, tags = M.act("back", { via = via }) }
 end
 
---- after a mod update every open ME window is closed (a window built by an older version may lack elements)
+--- after a mod update every open ME window is closed (a window built by an older version may lack elements; the
+--- frames anchored beside a script inventory of #30 too)
 function M.close_all()
-	for _, player in pairs(game.players) do M.close_window(player) end
+	for _, player in pairs(game.players) do
+		M.close_window(player)
+		local old = player.gui.relative.fork_me_window
+		if old and old.valid then old.destroy() end
+	end
+	storage.fork_me_gui_open = nil
+	storage.fork_me_gui_pane = nil
+end
+
+--- the text of a reason of the network module ([fork-me-net]: the network's state is a status-*, the rest error-*)
+local NET_STATUS = { ["no-network"] = true, ["no-controller"] = true, ["conflict"] = true, ["no-power"] = true,
+	["no-power-terminal"] = true }
+function M.net_message(why) return { "fork-me-net." .. (NET_STATUS[why] and "status-" or "error-") .. why } end
+
+--- the definition of the window `name` (the tests' clicks in a window that no entity opens, the cell window)
+function M.def_named(name) return windows[name] end
+
+--- every registered window and what its pane does (the test that no window stays without one)
+function M.window_list()
+	local out = {}
+	for name, def in pairs(windows) do
+		out[name] = { pane = true, shift = def.shift ~= nil, control = def.control ~= nil, message = def.message ~= nil }
+	end
+	return out
+end
+
+--- the window definition of an entity's window (the tests' clicks)
+function M.def_of(entity)
+	if not (entity and entity.valid) then return nil end
+	local open = openers[entity.name] or (M.kind_of and openers[M.kind_of(entity.name) or ""])
+	for _, def in pairs(windows) do if def.open == open then return def end end
+	return nil
 end
 
 return M
