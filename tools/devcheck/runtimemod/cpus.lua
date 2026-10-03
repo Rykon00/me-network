@@ -112,6 +112,13 @@ return function(H)
 			pv = remote.call(TERM, "craft_preview", t, GEAR, BIG)
 			expect(not pv.ok and pv.reason == "cpu-too-small" and pv.biggest == 5120, "preview of a job too big: " .. line({ pv.reason, pv.biggest }))
 			expect(remote.call(GUI, "has_window", a), "a crafting block opens no window")
+			--- issue #28: shift + click in a crafting block's window stores the stack in the network
+			local pinv = game.create_inventory(2)
+			pinv[1].set_stack{ name = "stone", count = 3 }
+			local s0 = count("stone")
+			local w = remote.call(GUI, "inventory_click", pinv[2], pinv, 1, "shift", a)
+			expect(w == nil and count("stone") == s0 + 3 and not pinv[1].valid_for_read, "shift + click in a crafting block's window: " .. tostring(w))
+			pinv.destroy()
 			local wd = remote.call(GUI, "crafting_cpu_data", find("me-crafting-unit", 22, 1))
 			expect(wd and wd.status == "not-rectangle" and wd.width == 2 and wd.height == 2, "the window data of the L: " .. line(wd))
 			--- too big for every CPU: refused, nothing taken; a level maintainer waits
