@@ -31,15 +31,21 @@
 ---     fluids mixed (keys: item name, "fluid/<name>"), split into an item and a fluid set when they are set
 ---     (import: none = everything, items and fluids; export: none = nothing). Kept in blueprints (tag
 ---     fork_me_bus), settings paste and clones. The windows are in scripts/fork-me-windows.lua.
---- Visits (issue #5, scripts/fork-me-schedule.lua): every interface and bus is due at a tick (s.q, rec.due); the
---- on_tick handler of control.lua visits at most the setting "interface and bus visits per tick" of them. After a
---- visit the next one is MIN_INTERVAL ticks later while the block moved all it was allowed to, later while it moves
---- little (up to ACTIVE_INTERVAL), and twice as late each time it found nothing to do, up to the idle limit (a
---- setting). A bus moves its speed (a setting, items and fluid per second) times the ticks since its last visit
---- (at most MAX_CATCH_UP ticks' worth), so a bus that is visited less often moves more per visit; an interface
---- handles IFACE_SLOTS_PER_VISIT item slots per 15 ticks since its last visit, and its four sides. A block waiting
---- for a key the network does not hold (an export bus, an interface's row) wakes when the key comes in
---- (N.wait_for); its settings, a rotation and a target built in front of it wake it too.
+--- Visits (issue #5, issue #38; scripts/fork-me-schedule.lua): every interface and bus is due at a tick (s.q,
+--- rec.due); the on_tick handler of control.lua visits what is due, at most the setting "at most" per tick. When a
+--- block is due comes from the buffer on its other side (the headroom rule): a visit knows what the target holds
+--- of the bus's items after it inserted and what the target used since the last visit, or what the source
+--- gathered and how much room it has left, so it knows when that buffer would run empty or full and comes back
+--- at about half of that time (the whole time while the block moves all its speed allows: the catch-up covers
+--- the wait), between MIN_INTERVAL and MAX_CATCH_UP; a block whose other side had run out (a machine without
+--- input, an output full) is served before the backlog next time. A block blocked on its target's side (source
+--- empty, target full, no target, an interface with nothing to do) is not visited but probed: one cheap engine
+--- call at the idle limit (a setting), and visited at once when the probe sees a change. A block blocked on the
+--- network's side (its key absent, the network full, no network, no power, no filters) is parked: visited again
+--- only when the network wakes it (N.wait_for, N.wait_room, N.wait_usable, a change of the graph, its settings).
+--- A bus moves its speed (a setting, items and fluid per second) times the ticks since its last visit (at most
+--- MAX_CATCH_UP ticks' worth), so a bus that is visited less often moves more per visit; an interface handles
+--- IFACE_SLOTS_PER_VISIT item slots per 15 ticks since its last visit, and its four sides.
 --- State: storage.fork_me_io (records by unit number, the queue). GUI state lives in the GUI elements.
 --------------------------------------------------------------------------------
 
@@ -68,33 +74,56 @@ for i, d in ipairs(SIDES) do SIDE_OF[d] = i end
 local function state()
 	local s = storage.fork_me_io
 	if not s then
-		s = { recs = {}, list = {}, cursor = 1, q = Sched.new() }
+		s = { recs = {}, list = {}, cursor = 1, q = Sched.new("io") }
 		storage.fork_me_io = s
 	end
 	return s
 end
 
---- the queue of the visits; a save from before issue #5 gets one with every block due within a second
+--- the queue of the visits; a save from before issue #5 gets one with every block due within a second, a queue
+--- of 0.3.0 its probe list and counts (issue #38)
 local function queue(s)
-	if s.q then return s.q end
-	s.q = Sched.new()
-	for i, unit in ipairs(s.list) do
-		local rec = s.recs[unit]
-		if rec then
-			rec.due = nil
-			Sched.at(s.q, rec, unit, game.tick + 1 + (i - 1) % 60)
+	local q = s.q
+	if q and q.sl then return q end
+	if not q then
+		q = Sched.new("io")
+		s.q = q
+		for i, unit in ipairs(s.list) do
+			local rec = s.recs[unit]
+			if rec then
+				rec.due, rec.inq, rec.sq = nil, nil, nil
+				Sched.at(q, rec, unit, game.tick + 1 + (i - 1) % 60)
+			end
 		end
+		return q
 	end
-	return s.q
+	local recs = {}
+	for _, unit in ipairs(s.list) do
+		local rec = s.recs[unit]
+		if rec then recs[#recs + 1] = rec end
+	end
+	return Sched.upgrade(q, recs, "io")
 end
 
---- visit the block at the next tick (its settings, its target or the network changed)
+--- the idle limit of the interfaces and buses (0.2.0 visited 24 blocks per 15 ticks: an idle block never waits
+--- longer than that cycle took)
+local function idle_limit(s)
+	return Sched.idle_limit(Sched.setting("idle"), #s.list, 24 / 15, MIN_INTERVAL)
+end
+
+--- visit the block before everything else (its settings, its target or the network changed)
 local function wake(unit)
 	local s = storage.fork_me_io
 	local rec = s and s.recs[unit]
 	if not rec then return end
-	rec.iv = nil
-	Sched.wake(queue(s), rec, unit, game.tick + 1)
+	if rec.park then
+		rec.last, rec.left = nil, nil                         -- (parked: how long it could have moved is unknown)
+	elseif rec.sq then
+		rec.last, rec.left = math.max(rec.last or 0, game.tick - idle_limit(s)), nil   -- (as a sleeper of 0.3.0)
+	end
+	rec.iv, rec.block, rec.seen = nil, nil, nil
+	if s.nonet then s.nonet[unit] = nil end
+	Sched.wake(queue(s), rec, unit)
 end
 M.wake = wake
 N.wakers.io = wake
@@ -109,6 +138,18 @@ local VOLUME = nil                   -- side_volume(), read once per load (proto
 local function volume()
 	VOLUME = VOLUME or side_volume()
 	return VOLUME
+end
+
+--- the stack size of an item (the headroom of a slot), cached per load
+local stack_cache = {}
+local function stack_of(name)
+	local v = stack_cache[name]
+	if not v then
+		local proto = prototypes.item[name]
+		v = proto and proto.stack_size or 50
+		stack_cache[name] = v
+	end
+	return v
 end
 
 local function register(s, entity)
@@ -207,6 +248,8 @@ end
 local function drop(s, unit)
 	local rec = s.recs[unit]
 	if rec and rec.short then sync_short(rec, nil) end
+	if rec then Sched.forget(queue(s), rec) end
+	if s.nonet then s.nonet[unit] = nil end
 	if s.prio then s.prio[unit] = nil end
 	s.recs[unit] = nil
 	for i = #s.list, 1, -1 do
@@ -450,10 +493,11 @@ end
 --- one pass over the four sides; rec.fstatus[d] is what the window shows. Returns the fluid moved (an export side
 --- whose fluid the network lacks waits for it: N.wait_for). `short`: the shortfalls of this visit (issue #17), nil
 --- while priorities are not in use.
-local function interface_sides(rec, net, config, short)
+local function interface_sides(rec, net, config, short, dt)
 	local tanks = ensure_tanks(rec)
-	if not tanks then return 0 end
-	local moved = 0
+	if not tanks then return 0, math.huge end
+	local moved, time = 0, math.huge
+	dt = dt or STEP_TICKS
 	local sides = rec.sides or {}
 	local fstatus = rec.fstatus or {}
 	rec.fstatus = fstatus
@@ -472,6 +516,10 @@ local function interface_sides(rec, net, config, short)
 			moved = moved + n
 			if why == "empty-network" or why == "reserved" then N.wait_for(net, key, "io", rec.entity.unit_number, true) end
 			if short and lack > EPS then short[key] = (short[key] or 0) + lack end
+			if n + lack > EPS then                                   -- the side is drained at (n + lack) per dt
+				local tt = math.min(config[setting].amount, volume()) * dt / (n + lack)
+				if tt < time then time = tt end
+			end
 		elseif held then
 			if rec.exporting and not exports then
 				exports = {}
@@ -489,27 +537,39 @@ local function interface_sides(rec, net, config, short)
 				local n, why = tank_to_network(t, held, net)
 				fstatus[d] = why
 				moved = moved + n
+				if n > EPS then                                      -- the side fills at n per dt
+					local tt = volume() * dt / n
+					if tt < time then time = tt end
+				elseif why == "full" then                            -- the network takes none: woken when room appears
+					N.wait_for(net, FLUID_PREFIX .. held.name, "io", rec.entity.unit_number, false)
+					N.wait_room(net, "io", rec.entity.unit_number)
+				end
 			end
 		else
 			fstatus[d] = "import"
 		end
 	end
-	return moved
+	return moved, time
 end
 
 --- One visit: every configured item is kept at its amount (filled from the network, the surplus taken back),
 --- the other items are imported (at most IFACE_SLOTS_PER_VISIT operations per STEP_TICKS since the last visit,
---- `dt`); then the four sides. Returns the items and fluid moved and whether the operations ran out.
+--- `dt`); then the four sides. Returns the items and fluid moved, whether the operations ran out, the ticks until
+--- the next visit (the headroom rule over the rows, the imports and the sides), why it is blocked when nothing
+--- moved ("idle": probed; an interface is never parked for a missing key, an inserter may feed it any time),
+--- whether a row had run empty, and its network.
 function M.interface_step(rec, dt)
 	local e = rec.entity
 	local config = config_of(rec)
 	local net = N.active_of(e)
 	if not net then
-		local _, why = N.usable(N.network_of(e))
+		local n0 = N.network_of(e)
+		local _, why = N.usable(n0)
 		rec.status = why or "no-network"
-		return 0, false
+		return 0, false, nil, (n0 and why == "no-power") and "no-power" or "no-network", false, n0
 	end
-	local max_ops = math.max(IFACE_SLOTS_PER_VISIT, math.floor(IFACE_SLOTS_PER_VISIT * math.min(dt or STEP_TICKS, MAX_CATCH_UP) / STEP_TICKS))
+	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
+	local max_ops = math.max(IFACE_SLOTS_PER_VISIT, math.floor(IFACE_SLOTS_PER_VISIT * ticks / STEP_TICKS))
 	local inv = e.get_inventory(defines.inventory.chest)
 	local ops, moved = 0, 0
 	local kept = {}
@@ -517,6 +577,13 @@ function M.interface_step(rec, dt)
 	local s = storage.fork_me_io
 	local short = ((s.prio and next(s.prio)) or rec.short) and {} or nil
 	local p = rec.priority or 0
+	local unit = e.unit_number
+	local time, starved = math.huge, false
+	local rows = rec.rows                                     -- what each row held after its last visit
+	if not rows then
+		rows = {}
+		rec.rows = rows
+	end
 	for i = 1, CONFIG_SLOTS do
 		local c = config[i]
 		if c and not is_fluid_row(c) then
@@ -527,9 +594,18 @@ function M.interface_step(rec, dt)
 				local want = c.amount - have
 				if short then want = math.min(want, math.max(0, N.count_key(net, key) - reserved(net, key, p))) end
 				local got = want > 0 and N.extract_to(net, inv, key, want) or 0
+				if have == 0 and got > 0 then starved = true end        -- (a row that had run empty)
 				if got > 0 then moved = moved + got ops = ops + 1
-				elseif N.count_key(net, key) <= 0 or short then N.wait_for(net, key, "io", e.unit_number, true) end
+				elseif N.count_key(net, key) <= 0 or short then N.wait_for(net, key, "io", unit, true) end
 				if short and have + got < c.amount then short[key] = c.amount - have - got end
+				local after = have + got                              -- the row is taken at (amount - have) per dt
+				if rows[i] == nil then
+					if got > 0 then time = MIN_INTERVAL end           -- (the first fill: the rate is unknown, look again soon)
+				elseif after > 0 then
+					local tt = after * ticks / (c.amount - have)
+					if tt < time then time = tt end
+				end
+				rows[i] = after
 			elseif have > c.amount then
 				local can = N.can_insert(net, c.name, c.quality, have - c.amount)
 				local taken = can > 0 and inv.remove{ name = c.name, quality = c.quality, count = can } or 0
@@ -538,26 +614,49 @@ function M.interface_step(rec, dt)
 					if stored < taken then inv.insert{ name = c.name, quality = c.quality, count = taken - stored } end
 					moved = moved + stored
 					ops = ops + 1
+					local tt = stack_of(c.name) * ticks / (have - c.amount)   -- the surplus comes in at that rate
+					if tt < time then time = tt end
+				elseif can <= 0 then
+					N.wait_for(net, key, "io", unit, false)               -- (room appears when some is taken)
 				end
 			end
 		end
 	end
 	local start = rec.slot or 1
 	local size = #inv
+	local imported, free, isize = 0, 0, nil
 	for k = 0, size - 1 do
 		if ops >= max_ops then rec.slot = (start - 1 + k) % size + 1 break end
 		local i = (start - 1 + k) % size + 1
 		local stack = inv[i]
-		if stack.valid_for_read and not kept[N.key_of(stack.name, stack.quality.name)] then
-			local n = N.insert_stack(net, stack)
-			if n then moved = moved + n ops = ops + 1 end
+		if stack.valid_for_read then
+			local key = N.key_of(stack.name, stack.quality.name)
+			if not kept[key] then
+				local sname = stack.name
+				local n = N.insert_stack(net, stack)
+				if n then moved = moved + n ops = ops + 1 imported = imported + n isize = stack_of(sname)
+				else                                                 -- the network takes none: woken when room appears
+					N.wait_for(net, key, "io", unit, false)
+					N.wait_room(net, "io", unit)
+				end
+			end
+		else
+			free = free + 1
 		end
 	end
 	if ops < max_ops then rec.slot = 1 end
-	moved = moved + interface_sides(rec, net, config, short)
+	if imported > 0 then                                             -- the free slots fill at that rate
+		local tt = math.max(free, 1) * (isize or 50) * ticks / imported      -- (the stack size of what came in)
+		if tt < time then time = tt end
+	end
+	local fmoved, ftime = interface_sides(rec, net, config, short, ticks)
+	moved = moved + fmoved
+	if ftime < time then time = ftime end
 	if short then sync_short(rec, net, next(short) and short or nil) end
 	rec.status = "ok"
-	return moved, ops >= max_ops
+	local full = ops >= max_ops
+	if moved <= 0 then return 0, false, nil, "idle", false, net end
+	return moved, full, Sched.headroom(time, full, MIN_INTERVAL, MAX_CATCH_UP), nil, starved, net
 end
 
 --- the interface's priority (issue #17; -1000 ... 1000, default 0)
@@ -819,29 +918,37 @@ end
 
 --- the item part of an import visit: up to `cap` from the output inventory. Plain items by count (one
 --- get_contents, one remove per item type), the others stack by stack (their data, damage or spoilage decides).
-local function import_items(rec, net, t, cap)
+--- `info` (issue #38): what the source held of the bus's items (`held`), its slots and its biggest item (the room),
+--- and whether the network took nothing (`netfull`).
+local function import_items(rec, net, t, cap, info)
 	local inv = t.get_inventory(rec.t_inv)
 	if not inv then return 0 end
 	local all, set = rec.all, rec.iset
-	local moved, stacks = 0, false
+	local unit = rec.entity.unit_number
+	local moved, stacks, held, main, mainc = 0, false, 0, nil, 0
 	for _, c in pairs(inv.get_contents()) do
-		if moved >= cap then break end
-		local q = c.quality or "normal"
 		if all or set[c.name] then
-			if by_count(c.name, q) then
-				local removed = inv.remove{ name = c.name, quality = q, count = math.min(c.count, cap - moved) }
-				if removed > 0 then
-					local stored = N.insert(net, c.name, q, removed)
-					if stored < removed then                  -- the network is full: the rest goes back
-						local back = inv.insert{ name = c.name, quality = q, count = removed - stored }
-						if back < removed - stored then
-							t.surface.spill_item_stack{ position = t.position, stack = { name = c.name, quality = q, count = removed - stored - back } }
+			held = held + c.count
+			if c.count > mainc then main, mainc = c.name, c.count end
+			if moved < cap then
+				local q = c.quality or "normal"
+				if by_count(c.name, q) then
+					local removed = inv.remove{ name = c.name, quality = q, count = math.min(c.count, cap - moved) }
+					if removed > 0 then
+						local stored = N.insert(net, c.name, q, removed)
+						if stored < removed then                  -- the network is full: the rest goes back
+							local back = inv.insert{ name = c.name, quality = q, count = removed - stored }
+							if back < removed - stored then
+								t.surface.spill_item_stack{ position = t.position, stack = { name = c.name, quality = q, count = removed - stored - back } }
+							end
+							info.netfull = true
+							N.wait_for(net, N.key_of(c.name, q), "io", unit, false)   -- (room appears when some is taken)
 						end
+						moved = moved + stored
 					end
-					moved = moved + stored
+				else
+					stacks = true
 				end
-			else
-				stacks = true
 			end
 		end
 	end
@@ -851,31 +958,63 @@ local function import_items(rec, net, t, cap)
 			local stack = inv[i]
 			if stack.valid_for_read and (all or set[stack.name]) and not by_count(stack.name, stack.quality.name) then
 				local n = N.insert_partial(net, stack, cap - moved)
-				if n then moved = moved + n end
+				if n then moved = moved + n
+				else
+					info.netfull = true
+					N.wait_for(net, N.key_of(stack.name, stack.quality.name), "io", unit, false)
+				end
 			end
 		end
 	end
+	info.held, info.main, info.slots = held, main, #inv
 	return moved
 end
 
 --- the item part of an export visit: the filtered items into the input inventory, up to `cap`; a filter the network
---- has none of waits for it (the bus wakes when it comes in)
-local function export_items(rec, net, t, cap)
+--- has none of waits for it (the bus wakes when it comes in). `info` (issue #38): the time (ticks) until the target
+--- runs out of one of the items at the rate it used them since the last visit (`rec.tgt` keeps what the target held
+--- after each visit), whether it had run out on arrival (`starved`), whether it takes nothing (`blocked`) or the
+--- network lacks a key (`nokey`).
+local function export_items(rec, net, t, cap, info)
 	local inv = t.get_inventory(rec.t_inv)
 	if not inv then return 0 end
 	local machine = t.type == "assembling-machine" or t.type == "furnace"
 	local moved = 0
+	local tgt = rec.tgt
+	if not tgt then
+		tgt = {}
+		rec.tgt = tgt
+	end
+	local dt = info.dt or STEP_TICKS
 	for _, name in ipairs(rec.filters) do
-		if moved >= cap then break end
-		local proto = prototypes.item[name]
-		if proto then
+		if prototypes.item[name] then
+			local have = inv.get_item_count(name)
+			local prev = tgt[name]
+			if prev and prev > 0 and have == 0 then info.starved = true end
+			local used = prev and prev - have or 0
 			local want = cap - moved
-			if machine then want = math.min(want, proto.stack_size - inv.get_item_count(name)) end
+			if machine then want = math.min(want, stack_of(name) - have) end
+			local got = 0
 			if want > 0 then
 				local key = N.key_of(name, "normal")
-				local got = N.extract_to(net, inv, key, want)
+				got = N.extract_to(net, inv, key, want)
+				if got <= 0 then
+					if N.count_key(net, key) <= 0 then
+						N.wait_for(net, key, "io", rec.entity.unit_number, true)
+						info.nokey = true
+					else
+						info.blocked = true                      -- the target takes nothing: full
+					end
+				end
 				moved = moved + got
-				if got <= 0 and N.count_key(net, key) <= 0 then N.wait_for(net, key, "io", rec.entity.unit_number, true) end
+			end
+			local after = have + got
+			tgt[name] = after
+			if used > 0 and after > 0 then
+				local tt = after * dt / used
+				if tt < info.time then info.time = tt end
+			elseif not prev and got > 0 then
+				info.time = MIN_INTERVAL                         -- (the rate is unknown yet: look again soon)
 			end
 		end
 	end
@@ -885,47 +1024,80 @@ end
 --- The fluid part of a visit: the import bus empties the output boxes of a machine (any box of a tank) into the
 --- network, the export bus fills its filtered fluids into the entity (insert_fluid: the machine's input boxes, a
 --- tank), at the fluid's default temperature. Up to `cap` units (by default what one visit moved before issue #5).
---- Returns the units moved.
-function M.fluid_bus_step(rec, net, t, cap)
+--- Returns the units moved. `info` (issue #38, see export_items): the import side learns the rate a box fills and
+--- its capacity (`rec.fleft`: what was left in each box), the export side the capacity of what it fills
+--- (`rec.fcap`, the most it ever inserted) and the rate that drains it.
+function M.fluid_bus_step(rec, net, t, cap, info)
 	cap = cap or Sched.setting("bus_fluid") * STEP_TICKS / 60
+	info = info or { time = math.huge }
+	local dt = info.dt or STEP_TICKS
 	local fb = t.fluidbox
 	local moved = 0
+	local unit = rec.entity.unit_number
 	if IMPORTS[rec.kind] then
 		local all, set = rec.all, rec.fset
+		local fleft = rec.fleft or {}
 		for i = 1, #fb do
-			if moved >= cap then break end
 			local f = fb[i]
 			if f and f.amount > EPS and (all or set[f.name]) then
 				local p = fb.get_prototype(i)
 				if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
 				if not (p and p.production_type == "input") then
-					local take = N.can_insert_fluid(net, f.name, math.min(f.amount, cap - moved))
-					if take > EPS then
-						local left = f.amount - take
-						fb[i] = left > EPS and { name = f.name, amount = left, temperature = f.temperature } or nil
-						local stored = N.insert_fluid(net, f.name, take)
-						if stored < take - EPS then                 -- cannot happen (room was checked), but never lose fluid
-							t.insert_fluid{ name = f.name, amount = take - stored, temperature = f.temperature }
+					local capf = fb.get_capacity(i)
+					local arrived = f.amount - (fleft[i] or 0)
+					if f.amount >= capf - EPS then info.starved = true end           -- a full box: the machine waited
+					local left = f.amount
+					if cap - moved > EPS then
+						local take = N.can_insert_fluid(net, f.name, math.min(f.amount, cap - moved))
+						if take > EPS then
+							left = f.amount - take
+							fb[i] = left > EPS and { name = f.name, amount = left, temperature = f.temperature } or nil
+							local stored = N.insert_fluid(net, f.name, take)
+							if stored < take - EPS then                 -- cannot happen (room was checked), but never lose fluid
+								t.insert_fluid{ name = f.name, amount = take - stored, temperature = f.temperature }
+							end
+							moved = moved + stored
+						else
+							info.netfull = true
+							N.wait_for(net, FLUID_PREFIX .. f.name, "io", unit, false)
 						end
-						moved = moved + stored
+					end
+					fleft[i] = left
+					if left > EPS then                                   -- a rest: back when the bus's speed covers it
+						local tt = math.max(MIN_INTERVAL, left * 60 / Sched.setting("bus_fluid"))
+						if tt < info.time then info.time = tt end
+					end
+					if arrived > EPS then
+						local tt = (capf - left) * dt / arrived
+						if tt < info.time then info.time = tt end
 					end
 				end
+			else
+				fleft[i] = nil
 			end
 		end
+		rec.fleft = fleft
 	else
 		for _, name in ipairs(rec.ffilters) do
-			if moved >= cap then break end
-			local avail = math.min(N.fluid_count(net, name), cap - moved)
-			if avail <= EPS and N.fluid_count(net, name) <= EPS then
-				N.wait_for(net, FLUID_PREFIX .. name, "io", rec.entity.unit_number, true)
-			end
-			if avail > EPS then
-				local inserted = t.insert_fluid{ name = name, amount = avail }
+			local total = N.fluid_count(net, name)
+			if total <= EPS then
+				N.wait_for(net, FLUID_PREFIX .. name, "io", unit, true)
+				info.nokey = true
+			elseif cap - moved > EPS then
+				local inserted = t.insert_fluid{ name = name, amount = math.min(total, cap - moved) }
 				if inserted > 0 then
 					local got = N.extract_fluid(net, name, inserted)
 					--- a storage bus's segment had less than its snapshot: never duplicate
 					if got < inserted - EPS then t.remove_fluid{ name = name, amount = inserted - got } end
 					moved = moved + got
+					local fcap = rec.fcap or 0
+					if rec.fcap and got >= fcap * 0.95 then info.starved = true end   -- it took all it can hold: it had run dry
+					if got > fcap then fcap = got end
+					local tt = rec.fcap and fcap * dt / got or MIN_INTERVAL      -- (no capacity known yet: look again soon)
+					rec.fcap = fcap
+					if tt < info.time then info.time = tt end
+				else
+					info.blocked = true                                  -- the target takes nothing: full
 				end
 			end
 		end
@@ -934,32 +1106,72 @@ function M.fluid_bus_step(rec, net, t, cap)
 end
 
 --- One visit of a bus. `dt`: the ticks since its last visit (nil: one visit of before issue #5, STEP_TICKS): it moves
---- its speed times that, at most MAX_CATCH_UP ticks' worth. Returns what it moved and whether that was all it was
---- allowed to move.
+--- its speed times that, at most MAX_CATCH_UP ticks' worth. Returns what it moved, whether that was all it was
+--- allowed to move, the ticks until its next visit (the headroom rule), why it is blocked when it moved nothing
+--- (nil otherwise), whether its other side had run out, and its network.
 function M.bus_step(rec, dt)
 	local e = rec.entity
 	local net = N.active_of(e)
 	if not net then
-		local _, why = N.usable(N.network_of(e))
+		local n0 = N.network_of(e)
+		local _, why = N.usable(n0)
 		rec.status = why or "no-network"
-		return 0, false
+		return 0, false, nil, (n0 and why == "no-power") and "no-power" or "no-network", false, n0
 	end
 	local t = target_of(rec)
-	if not t then rec.status = "no-target" return 0, false end
+	if not t then
+		rec.status = "no-target"
+		return 0, false, nil, "no-target", false, net
+	end
 	if not rec.iset then M.set_bus_filters(e, rec.filters) end          -- a record of a save before issue #3
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
 	local icap = math.max(1, math.floor(Sched.setting("bus_items") * ticks / 60))
 	local fcap = Sched.setting("bus_fluid") * ticks / 60
 	local import = IMPORTS[rec.kind]
 	local items, fluid = 0, 0
-	if rec.t_inv and (rec.all or #rec.filters > 0) then
-		items = import and import_items(rec, net, t, icap) or export_items(rec, net, t, icap)
+	local info = { time = math.huge, dt = ticks }
+	local has_items = rec.t_inv and (rec.all or #rec.filters > 0)
+	local has_fluid = rec.t_fluid and (rec.all or #rec.ffilters > 0)
+	if has_items then
+		items = import and import_items(rec, net, t, icap, info) or export_items(rec, net, t, icap, info)
 	end
-	if rec.t_fluid and (rec.all or #rec.ffilters > 0) then
-		fluid = M.fluid_bus_step(rec, net, t, fcap)
-	end
+	if has_fluid then fluid = M.fluid_bus_step(rec, net, t, fcap, info) end
 	rec.status = "ok"
-	return items + fluid, items >= icap or fluid >= fcap - EPS
+	local moved = items + fluid
+	local full = items >= icap or fluid >= fcap - EPS
+	if moved <= 0 then
+		if not (has_items or has_fluid) then return 0, false, nil, "unset", false, net end
+		if info.netfull then return 0, false, nil, "net-full", false, net end
+		if import then
+			rec.left = 0                                      -- (seen empty: what the next visit finds arrived since)
+			return 0, false, nil, "empty", false, net
+		end
+		if info.blocked or not info.nokey then return 0, false, nil, "full", false, net end
+		return 0, false, nil, "no-key", false, net
+	end
+	if import and has_items then
+		--- the source gathered `held` since it was emptied (minus what was left): it fills its room in about that;
+		--- after a wake the rest is unknown (what is there was there before): look again soon and learn the rate
+		local held = info.held or 0
+		local known = rec.left ~= nil
+		local arrived = held - (rec.left or 0)
+		local left = held - items
+		rec.left = left > 0 and left or 0
+		if left > 0 then                                         -- a rest: back when the bus's speed covers it
+			local tt = math.max(MIN_INTERVAL, left * 60 / Sched.setting("bus_items"))
+			if tt < info.time then info.time = tt end
+		end
+		if not known then
+			info.time = MIN_INTERVAL
+		elseif arrived > 0 and info.slots and info.main then
+			local size = info.slots * stack_of(info.main)
+			local room = size - left
+			if held * 10 >= size * 9 then info.starved = true end      -- (nearly full on arrival: the machine had stopped)
+			local tt = room * ticks / arrived
+			if tt < info.time then info.time = tt end
+		end
+	end
+	return moved, full, Sched.headroom(info.time, full, MIN_INTERVAL, MAX_CATCH_UP), nil, info.starved or false, net
 end
 
 --- Set the filters: a list of keys (item name, "fluid/<name>"; a plain name that is no item but a fluid is that
@@ -1034,9 +1246,97 @@ local function rec_of(unit)
 	return s.recs[unit]
 end
 
+--- blocked on the network's side: parked, woken by the network (the step registered N.wait_for; the rest here)
+local NET_SIDE = { ["no-key"] = true, ["net-full"] = true, ["no-network"] = true, ["no-power"] = true, unset = true }
+
+--- what the probe of a blocked block compares against: the items the source or the interface holds (one engine
+--- call), plus the fluid of an interface's connected sides or of the source's boxes
+local function probe_mark(rec)
+	local e = rec.entity
+	if rec.kind == "interface" then
+		local n = e.get_inventory(defines.inventory.chest).get_item_count()
+		local tanks = rec.tanks
+		if tanks then
+			local sides = rec.sides or {}
+			for d = 1, #SIDES do
+				local t = tanks[d]
+				if sides[d] ~= "off" and t and t.valid then
+					local f = t.fluidbox[1]
+					if f then n = n + math.floor(f.amount) end
+				end
+			end
+		end
+		return n
+	end
+	local t = rec.target
+	if not (t and t.valid) then return 0 end
+	local n = 0
+	if rec.t_inv then
+		local inv = t.get_inventory(rec.t_inv)
+		if inv then n = inv.get_item_count() end
+	end
+	if rec.t_fluid then
+		local fb = t.fluidbox
+		for i = 1, #fb do
+			local f = fb[i]
+			if f then n = n + math.floor(f.amount) end
+		end
+	end
+	return n
+end
+
+--- the cheap check of a probed block: did its other side change? (true: visit it now)
+local function probe_work(rec)
+	local b = rec.block
+	if b == "no-target" then return target_of(rec) ~= nil end
+	if rec.kind == "interface" or b == "empty" then return probe_mark(rec) ~= rec.seen end
+	--- "full": does the export target take something again?
+	local t = rec.target
+	if not (t and t.valid) then return true end
+	if rec.t_inv then
+		local inv = t.get_inventory(rec.t_inv)
+		if inv then
+			local machine = t.type == "assembling-machine" or t.type == "furnace"
+			for _, name in ipairs(rec.filters) do
+				if prototypes.item[name] then
+					if machine then
+						if inv.get_item_count(name) < stack_of(name) then return true end
+					elseif inv.can_insert{ name = name } then
+						return true
+					end
+				end
+			end
+		end
+	end
+	if rec.t_fluid and #rec.ffilters > 0 then
+		local fb = t.fluidbox
+		for i = 1, #fb do
+			local f = fb[i]
+			if not f or f.amount < fb.get_capacity(i) - EPS then return true end
+		end
+	end
+	return false
+end
+
+--- Blocks that got the same interval from the same tick would come due in the same tick for ever, and the ceiling
+--- would serve them in bursts (the backlog reached 481 at 5000 and the 99th percentile 5 ms): a block comes back
+--- at the least loaded of four ticks around its interval (Sched.slot): up to 20 % sooner, and up to 20 % later
+--- when the interval is half of the headroom time (a margin of 40 % is left), never later for a block that moved
+--- all its speed allowed (its interval is the whole headroom time), sits at the catch-up limit or is probed.
+--- Never below MIN_INTERVAL, never above MAX_CATCH_UP.
+local function when(q, probe, unit, now, iv, late_ok)
+	if iv <= MIN_INTERVAL then return now + iv end
+	local early = math.min(math.floor(iv * 0.2), iv - MIN_INTERVAL)
+	local late = late_ok and math.min(math.floor(iv * 0.2), MAX_CATCH_UP - iv) or 0
+	return Sched.slot(q, probe, unit, now, iv, early, late)
+end
+
+--- the idle limit of this tick (computed once per tick for the probes and visits of M.on_tick)
+local tick_limit = MAX_CATCH_UP
+
 --- one scheduled visit: the block moves what its speed and the ticks since its last visit allow, and is due again
---- after an interval that follows what it did (Sched.interval)
-local function visit(rec, unit)
+--- when the buffer on its other side needs it (the headroom rule); a block with nothing to do is probed or parked
+local function visit(rec, unit, fallback)
 	local s = storage.fork_me_io
 	local e = rec.entity
 	if not e.valid then
@@ -1047,21 +1347,88 @@ local function visit(rec, unit)
 	local now = game.tick
 	local dt = now - (rec.last or (now - MIN_INTERVAL))
 	rec.last = now
-	local moved, full
-	if rec.kind == "interface" then moved, full = M.interface_step(rec, dt) else moved, full = M.bus_step(rec, dt) end
-	--- (0.2.0 visited 24 blocks per 15 ticks: an idle block never waits longer than that cycle)
-	local idle = Sched.idle_limit(Sched.setting("idle"), #s.list, 24 / 15, MIN_INTERVAL)
-	rec.iv = Sched.interval(rec.iv, moved, full, MIN_INTERVAL, ACTIVE_INTERVAL, idle)
-	Sched.at(s.q, rec, unit, now + rec.iv)
-	if moved <= 0 then return 0 end
+	local moved, full, nextiv, block, starved, net
+	if rec.kind == "interface" then
+		moved, full, nextiv, block, starved, net = M.interface_step(rec, dt)
+	else
+		moved, full, nextiv, block, starved, net = M.bus_step(rec, dt)
+	end
+	rec.starve = starved or nil
+	if starved then Sched.starved("io") end
+	if fallback and moved > 0 then Sched.missed("io") end            -- (a parked block that finds work: its wake was missed)
+	if block then
+		local was = rec.block
+		rec.block = block
+		if NET_SIDE[block] then
+			if block == "no-power" and net then N.wait_usable(net, "io", unit) end
+			if block == "net-full" and net then N.wait_room(net, "io", unit) end
+			if block == "no-network" then
+				s.nonet = s.nonet or {}
+				s.nonet[unit] = true
+			end
+			Sched.park(s.q, rec, unit, block)
+			return 0
+		end
+		local iv = (not was or not rec.iv or rec.iv < MIN_INTERVAL) and MIN_INTERVAL or rec.iv   -- (just blocked: from the shortest)
+		iv = iv * 2
+		if iv > tick_limit then iv = tick_limit end
+		rec.iv = iv
+		rec.seen = probe_mark(rec)
+		Sched.at(s.q, rec, unit, when(s.q, true, unit, now, iv, false), true)
+		return 0
+	end
+	rec.block, rec.seen = nil, nil
+	if starved then nextiv = math.max(MIN_INTERVAL, math.floor(nextiv / 2)) end   -- (its other side had run out: sooner)
+	rec.iv = nextiv
+	Sched.at(s.q, rec, unit, when(s.q, false, unit, now, nextiv, not full and not starved and nextiv < MAX_CATCH_UP))
 	return full and 2 or 1
 end
 
---- every tick (control.lua): the interfaces and buses that are due, at most the setting's visits per tick
+--- one probe of a blocked block: one cheap check; a change wakes the block, else the next probe comes later
+local function probe(rec, unit)
+	local s = storage.fork_me_io
+	local e = rec.entity
+	if not e.valid then
+		destroy_tanks(rec)
+		drop(s, unit)
+		return
+	end
+	if rec.park then                                          -- the slow fallback of a parked block: a full visit
+		rec.last, rec.left = nil, nil
+		return visit(rec, unit, true)
+	end
+	if probe_work(rec) then
+		rec.last, rec.left = math.max(rec.last or 0, game.tick - idle_limit(s)), nil   -- (as a sleeper of 0.3.0)
+		Sched.wake(s.q, rec, unit)
+		return 1
+	end
+	local iv = rec.iv
+	iv = (iv and iv >= MIN_INTERVAL) and iv * 2 or MIN_INTERVAL * 2
+	if iv > tick_limit then iv = tick_limit end
+	rec.iv = iv
+	local now = game.tick
+	Sched.at(s.q, rec, unit, when(s.q, true, unit, now, iv, false), true)
+	return 0
+end
+
+--- every tick (control.lua): the probes that are due, then the interfaces and buses that are due, between the
+--- settings "at least" and "at most"
 function M.on_tick(tick)
 	local s = storage.fork_me_io
 	if not s then return end
-	Sched.run(queue(s), tick, Sched.setting("io"), rec_of, visit, "io")
+	tick_limit = idle_limit(s)
+	Sched.run(queue(s), tick, Sched.setting("io"), Sched.setting("io_max"), rec_of, visit, probe, "io")
+end
+
+--- a change of the graph: the blocks parked for want of a network try again (they park again if nothing changed)
+N.change_hooks[#N.change_hooks + 1] = function()
+	local s = storage.fork_me_io
+	if not (s and s.nonet and next(s.nonet)) then return end
+	local units = {}
+	for unit in pairs(s.nonet) do units[#units + 1] = unit end
+	table.sort(units)
+	s.nonet = {}
+	for _, unit in ipairs(units) do wake(unit) end
 end
 
 --- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
@@ -1199,7 +1566,7 @@ end
 function M.on_configuration_changed()
 	local s = state()
 	local old = s.recs
-	s.recs, s.list, s.cursor, s.q, s.prio = {}, {}, 1, Sched.new(), {}
+	s.recs, s.list, s.cursor, s.q, s.prio = {}, {}, 1, Sched.new("io"), {}
 	--- issue #17: the shortfalls are registered again at the visits (the networks may be new ones)
 	for _, net in pairs(N.state().nets) do net.short, net.short_p = nil, nil end
 	VOLUME, block_names, by_count_cache = nil, nil, {}
@@ -1242,25 +1609,62 @@ remote.add_interface("gregtorio-me-io", {
 		if k == "interface" then moved = M.interface_step(rec) else moved = M.bus_step(rec) end
 		return moved
 	end,
-	--- issue #5: when a block is visited next: { due, interval, last } (the tick of its last visit)
+	--- issue #5: when a block is visited next: { due, interval, last } (the tick of its last visit); issue #38:
+	--- `probing` (in the probe list, `block` says why), `parked` (why; no visit until a wake), `front` (woken, visited
+	--- before the backlog), `backlog` (due, waiting)
 	schedule = function(entity)
 		local s = storage.fork_me_io
 		local rec = s and entity and entity.valid and s.recs[entity.unit_number]
 		if not rec then return nil end
-		return { due = rec.due, interval = rec.iv, last = rec.last }
+		local due = rec.due
+		return { due = (due and due > 0) and due or nil, interval = rec.iv, last = rec.last, probing = rec.sq == true and not rec.park,
+			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, parked = rec.park, block = rec.block }
 	end,
+	--- tests (issue #38): how often a parked block gets its slow fallback visit (ticks)
+	set_park_fallback = function(ticks) Sched.PARK_FALLBACK = ticks end,
 	--- issue #38: the scheduler's counters of every queue (fork-me-schedule.lua, M.snapshot); `reset` starts them anew
 	sched_stats = function(reset)
 		local snap = Sched.snapshot()
 		if reset then Sched.reset_stats() end
 		return snap
 	end,
-	--- the units waiting in the backlogs now, by queue (the benchmark samples it over time)
+	--- the units waiting in the backlogs now, by queue, and (issue #38) the units in each queue's busy and sleep
+	--- list and the units the module has at all (the benchmark samples it over time; the tests check the counts)
 	backlogs = function()
 		local io_s, sb, fsb, ae = storage.fork_me_io, storage.fork_me_sbus, storage.fork_me_fsbus, storage.fork_ae2
-		return { io = io_s and io_s.q and Sched.backlog(io_s.q) or 0, storage_bus = sb and sb.q and Sched.backlog(sb.q) or 0,
-			fluid_storage_bus = fsb and fsb.q and Sched.backlog(fsb.q) or 0,
-			maintainer = ae and ae.mq and Sched.backlog(ae.mq) or 0, circuit = ae and ae.cq and Sched.backlog(ae.cq) or 0 }
+		local out = {}
+		local function put(name, q, units)
+			local back, pback = 0, 0
+			local busy, probing = 0, 0
+			if q then
+				back, pback = Sched.backlog(q)
+				busy, probing = Sched.counts(q)
+			end
+			out[name], out[name .. "_probe_backlog"] = back, pback
+			out[name .. "_busy"], out[name .. "_probing"], out[name .. "_units"] = busy, probing, units or 0
+		end
+		put("io", io_s and io_s.q, io_s and #io_s.list)
+		--- the parked blocks and why, the probed blocks and why (a walk over the records: tests and the benchmark)
+		local kinds, parked = {}, 0
+		for _, rec in pairs(io_s and io_s.recs or {}) do
+			if rec.park then
+				parked = parked + 1
+				kinds["parked:" .. rec.park] = (kinds["parked:" .. rec.park] or 0) + 1
+			elseif rec.sq then
+				kinds["probe:" .. (rec.block or "?")] = (kinds["probe:" .. (rec.block or "?")] or 0) + 1
+			end
+		end
+		out.io_parked, out.io_kinds = parked, kinds
+		out.io_probing = out.io_probing - parked                        -- (the parked are in the probe list for their fallback)
+		put("storage_bus", sb and sb.q, sb and #sb.list)
+		put("fluid_storage_bus", fsb and fsb.q, fsb and #fsb.list)
+		put("maintainer", ae and ae.mq, ae and ae.mlist and #ae.mlist)
+		local mparked = 0
+		for _, rec in pairs(ae and ae.maintainers or {}) do if rec.park then mparked = mparked + 1 end end
+		out.maintainer_parked = mparked
+		out.maintainer_probing = out.maintainer_probing - mparked
+		put("circuit", ae and ae.cq, ae and ae.clist and #ae.clist)
+		return out
 	end,
 	--- the Lua heap of this mod in kilobytes (the benchmark's long run watches it grow)
 	lua_memory = function() return collectgarbage("count") end,

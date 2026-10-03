@@ -53,15 +53,33 @@ local function state()
 	return s
 end
 
---- the queue of the fluid side's visits; a save from before issue #5 gets one with every bus due within a second
+--- the queue of the fluid side's visits; a save from before issue #5 gets one with every bus due within a second,
+--- a queue of 0.3.0 its probe list and counts (issue #38)
 local function queue(s)
-	if s.q then return s.q end
-	s.q = Sched.new()
-	for i, unit in ipairs(s.list) do
-		local rec = N.ext_get(unit)
-		if rec then Sched.at(s.q, rec, unit, game.tick + 1 + (i - 1) % 60) end
+	local q = s.q
+	if q and q.sl then return q end
+	if not q then
+		q = Sched.new("fsbus")
+		s.q = q
+		for i, unit in ipairs(s.list) do
+			local rec = N.ext_get(unit)
+			if rec then
+				rec.due, rec.inq, rec.sq = nil, nil, nil
+				Sched.at(q, rec, unit, game.tick + 1 + (i - 1) % 60)
+			end
+		end
+		return q
 	end
-	return s.q
+	local recs = {}
+	for _, unit in ipairs(s.list) do
+		local rec = N.ext_get(unit)
+		if rec then recs[#recs + 1] = rec end
+	end
+	return Sched.upgrade(q, recs, "fsbus")
+end
+
+local function idle_limit(s)
+	return Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)   -- (as the item side)
 end
 
 --- a record of a bus on fluid (the storage bus's fluid side, or an old fluid storage bus)
@@ -266,12 +284,12 @@ function M.list(rec)
 	Sched.at(queue(s), rec, rec.unit, game.tick + 1)
 end
 
---- read the segment at the next tick
+--- read the segment before everything else
 function M.wake(rec)
 	local s = storage.fork_me_fsbus
 	if not s then return end
 	rec.siv = nil
-	Sched.wake(queue(s), rec, rec.unit, game.tick + 1)
+	Sched.wake(queue(s), rec, rec.unit)
 end
 
 function M.unlist(rec)
@@ -279,6 +297,7 @@ function M.unlist(rec)
 	if not s then return end
 	for i = #s.list, 1, -1 do if s.list[i] == rec.unit then table.remove(s.list, i) end end
 	s.urgent[rec.unit] = nil
+	Sched.forget(queue(s), rec)
 end
 
 --- does bus `other` still own `key`? (it faces the storage and its live key is still `key`)
@@ -370,19 +389,19 @@ local function visit_due(rec, unit)
 	local s = storage.fork_me_fsbus
 	if not rec.entity.valid then
 		for i = #s.list, 1, -1 do if s.list[i] == unit then table.remove(s.list, i) end end
+		Sched.forget(queue(s), rec)
 		N.ext_detach(unit)
 		return
 	end
 	local changed = M.visit(rec)
 	if not on_fluid(rec) then return end                -- on the item side now: its queue has it
-	local idle = Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)   -- (as the item side)
-	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle)
-	Sched.at(queue(s), rec, unit, game.tick + rec.siv)
+	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle_limit(s))
+	Sched.at(queue(s), rec, unit, game.tick + rec.siv, not changed)
 	return changed and 1 or 0
 end
 
---- every tick (from the storage bus module): first the buses marked by a removal, then the buses that are due, at
---- most the setting "storage bus visits per tick"
+--- every tick (from the storage bus module): first the buses marked by a removal, then the buses that are due,
+--- between the settings "at least" and "at most" (an unchanged bus is read at its growing interval: the probe list)
 function M.on_tick(tick)
 	local s = storage.fork_me_fsbus
 	if not (s and #s.list > 0) then return end
@@ -396,7 +415,8 @@ function M.on_tick(tick)
 			if on_fluid(rec) and rec.entity.valid then M.visit(rec) end
 		end
 	end
-	Sched.run(queue(s), tick, Sched.setting("storage_bus"), fluid_rec, visit_due, "fluid_storage_bus")
+	Sched.run(queue(s), tick, Sched.setting("storage_bus"), Sched.setting("storage_bus_max"), fluid_rec, visit_due, visit_due,
+		"fluid_storage_bus")
 end
 
 --- the remote's step (tests): what the fluid side does in one tick
@@ -436,7 +456,7 @@ end
 --- after the graph rebuild (the storage bus module lists its fluid side buses again, in unit order)
 function M.reset()
 	local s = state()
-	s.list, s.cursor, s.claims, s.urgent, s.q = {}, 1, {}, {}, Sched.new()
+	s.list, s.cursor, s.claims, s.urgent, s.q = {}, 1, {}, {}, Sched.new("fsbus")
 end
 
 return M

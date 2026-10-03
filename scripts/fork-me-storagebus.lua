@@ -74,15 +74,34 @@ local function state()
 	return s
 end
 
---- the queue of the item side's visits; a save from before issue #5 gets one with every bus due within a second
+--- the queue of the item side's visits; a save from before issue #5 gets one with every bus due within a second,
+--- a queue of 0.3.0 its probe list and counts (issue #38)
 local function queue(s)
-	if s.q then return s.q end
-	s.q = Sched.new()
-	for i, unit in ipairs(s.list) do
-		local rec = N.ext_get(unit)
-		if rec then Sched.at(s.q, rec, unit, game.tick + 1 + (i - 1) % 60) end
+	local q = s.q
+	if q and q.sl then return q end
+	if not q then
+		q = Sched.new("sbus")
+		s.q = q
+		for i, unit in ipairs(s.list) do
+			local rec = N.ext_get(unit)
+			if rec then
+				rec.due, rec.inq, rec.sq = nil, nil, nil
+				Sched.at(q, rec, unit, game.tick + 1 + (i - 1) % 60)
+			end
+		end
+		return q
 	end
-	return s.q
+	local recs = {}
+	for _, unit in ipairs(s.list) do
+		local rec = N.ext_get(unit)
+		if rec then recs[#recs + 1] = rec end
+	end
+	return Sched.upgrade(q, recs, "sbus")
+end
+
+--- the idle limit of the item side (0.2.0 read 8 buses per 15 ticks: an idle bus never waits longer than that cycle)
+local function idle_limit(s)
+	return Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)
 end
 
 local function is_bus(entity) return entity and entity.valid and N.kind_of(entity.name) == KIND end
@@ -227,6 +246,7 @@ local function list_side(s, rec)
 		if listed(s, rec.unit) then
 			unlist(s.list, rec.unit)
 			s.member[rec.unit] = nil
+			Sched.forget(queue(s), rec)
 		end
 		F.list(rec)
 	else
@@ -338,22 +358,26 @@ local function visit_due(rec, unit)
 	if not rec.entity.valid then
 		unlist(s.list, unit)
 		if s.member then s.member[unit] = nil end
+		Sched.forget(queue(s), rec)
 		N.ext_detach(unit)
 		return
 	end
 	local changed = M.visit(rec)
 	if rec.side == "fluid" then return end           -- on the fluid side now: its queue has it
-	--- (0.2.0 read 8 buses per 15 ticks: an idle bus never waits longer than that cycle)
-	local idle = Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)
-	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle)
-	Sched.at(queue(s), rec, unit, game.tick + rec.siv)
+	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle_limit(s))
+	Sched.at(queue(s), rec, unit, game.tick + rec.siv, not changed)   -- (unchanged: asleep until then)
 	return changed and 1 or 0
 end
 
---- every tick (control.lua): the item side buses that are due, then the fluid side's
+--- every tick (control.lua): the item side buses that are due (the reads per tick are what is due, between the
+--- settings "at least" and "at most"; an unchanged bus is read at its growing interval, the probe list), then the
+--- fluid side's
 function M.on_tick(tick)
 	local s = storage.fork_me_sbus
-	if s and #s.list > 0 then Sched.run(queue(s), tick, Sched.setting("storage_bus"), item_rec, visit_due, "storage_bus") end
+	if s and #s.list > 0 then
+		Sched.run(queue(s), tick, Sched.setting("storage_bus"), Sched.setting("storage_bus_max"), item_rec, visit_due, visit_due,
+			"storage_bus")
+	end
 	F.on_tick(tick)
 end
 
@@ -368,7 +392,7 @@ function M.wake(unit)
 		local s = storage.fork_me_sbus
 		if s and listed(s, unit) then
 			rec.siv = nil
-			Sched.wake(queue(s), rec, unit, game.tick + 1)
+			Sched.wake(queue(s), rec, unit)
 		end
 	end
 end
@@ -939,6 +963,7 @@ function M.on_removed(entity, buffer)
 		if s then
 			release(s, rec)
 			unlist(s.list, unit)
+			Sched.forget(queue(s), rec)
 			if s.member then s.member[unit] = nil end
 		end
 		F.drop(rec)
@@ -989,7 +1014,7 @@ end
 --- again (the fluid side claims its segments in unit order)
 function M.on_configuration_changed()
 	local s = state()
-	s.list, s.cursor, s.claims, s.member, s.q = {}, 1, {}, {}, Sched.new()
+	s.list, s.cursor, s.claims, s.member, s.q = {}, 1, {}, {}, Sched.new("sbus")
 	F.reset()
 	plain_cache, bus_names = {}, nil
 	local names = {}
@@ -1013,6 +1038,14 @@ function M.on_configuration_changed()
 end
 
 remote.add_interface("gregtorio-me-storagebus", {
+	--- issue #38 (tests): when the bus reads next: { due, interval, probing, front, backlog, side }
+	schedule = function(entity)
+		local rec = rec_of(entity)
+		if not rec then return nil end
+		local due = rec.due
+		return { due = (due and due > 0) and due or nil, interval = rec.siv, probing = rec.sq == true,
+			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, side = rec.side or "item" }
+	end,
 	--- one visit now (what the I/O step does)
 	visit = function(entity)
 		local rec = rec_of(entity)
