@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.0
+Date: 2026-10-03
   Features:
     - Upgrade cards as in Applied Energistics 2 (technology ME Upgrade Cards): Basic and Advanced Card, Capacity Card, Overflow Destruction Card, Fuzzy Card, Inverter Card and Equal Distribution Card.
     - The ME Storage Bus has 5 card slots: each Capacity Card gives 9 more filters (up to 63), an Inverter Card makes the filters a blacklist, a Fuzzy Card makes them match every quality, and an Overflow Destruction Card destroys what the network stores into the bus and does not fit into its chest or tank (shown in red in the window, with the amount destroyed).
