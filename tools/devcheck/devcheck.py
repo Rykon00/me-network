@@ -1381,7 +1381,10 @@ def print_bench(results):
 # ------------------------------------------------------------------------------------------------
 
 # (name, how to read it from a run, lower is better, floor: a difference under this share of the reference is never a
-# regression; 2 % for averages over the window, 10 % for what one tick or one event gives)
+# regression; 2 % for averages over the window, 10 % for what one tick or one event gives, optionally False: reported,
+# never failed. Since pull request 2 of issue #38 the busy interval is long on purpose (a block is visited when the
+# buffer on its other side needs it), so it is reported; what fails is a machine of the scene waiting for its bus
+# (pair utilisation) and visits that arrived at an empty target or a full source (starved arrivals).)
 CHECK_METRICS = [
     ("script avg ms", lambda r: r["timing"].get("scriptUpdate", {}).get("avg"), True, 0.02),
     ("script p99 ms", lambda r: r["timing"].get("scriptUpdate", {}).get("p99"), True, 0.05),
@@ -1392,7 +1395,8 @@ CHECK_METRICS = [
     ("provider crafts/s", lambda r: (r.get("throughput") or {}).get("provider_crafts_per_s"), False, 0.02),
     ("storage bus latency max s", lambda r: ((r.get("latency") or {}).get("storage_bus") or {}).get("max_s"), True, 0.02),
     ("maintainer latency max s", lambda r: ((r.get("latency") or {}).get("maintainer") or {}).get("max_s"), True, 0.02),
-    ("io busy interval p99 ticks", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("full", {}).get("p99"), True, 0.02),
+    ("io busy interval p99 ticks", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("full", {}).get("p99"), True, 0.02, False),
+    ("io starved arrivals", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("starved"), True, 0.10),
     ("io backlog max", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("backlog_max"), True, 0.02),
     ("pair machines utilisation", lambda r: (((r.get("service") or {}).get("machines") or {}).get("pair") or {}).get("utilisation"), False, 0.02),
     ("burst build ms", lambda r: ((r.get("burst") or {}).get("build") or {}).get("ms"), True, 0.10),
@@ -1434,7 +1438,8 @@ def bench_check(a):
                 problems += scene_problems(f"{tag}", size, {"runs": [run], "setup": maps[tag][1]["setup"]})
         per = {"size": size, "metrics": []}
         print(f"\n  size {size}: {'metric':28} {'reference':>22} {'working copy':>22}  verdict")
-        for name, get, lower, floor in CHECK_METRICS:
+        for name, get, lower, floor, *rest in CHECK_METRICS:
+            fails = rest[0] if rest else True
             rv = [get(r) for r in runs_of["ref"]]
             wv = [get(r) for r in runs_of["wc"]]
             rv = [v for v in rv if v is not None]
@@ -1444,7 +1449,7 @@ def bench_check(a):
             rm, wm = median(rv), median(wv)
             noise = max(max(rv) - min(rv), max(wv) - min(wv), abs(rm) * floor)
             worse = (wm - rm) if lower else (rm - wm)
-            verdict = "FAIL" if worse > noise else "ok"
+            verdict = ("FAIL" if fails else "reported") if worse > noise else "ok"
             if verdict == "FAIL":
                 failed.append(f"{size}: {name}: {rm:.4g} -> {wm:.4g} (noise {noise:.3g})")
             per["metrics"].append({"name": name, "ref": rv, "wc": wv, "ref_median": rm, "wc_median": wm, "noise": noise, "verdict": verdict})

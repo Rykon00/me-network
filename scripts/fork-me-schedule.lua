@@ -13,9 +13,10 @@
 ---     (`q.front`), before the backlog, wherever it was; a unit whose other side ran out (`rec.starve`) goes to the
 ---     front when it comes due, too.
 ---   * The budget of a tick is what is due (the front, the backlog and the units due now), at least the floor and
----     at most the ceiling (map settings "at least" / "at most"); the probes are not capped (they cost next to
----     nothing) except where the probe is a full read (the storage buses: their ceiling). When the ceiling binds,
----     the earliest due come first. Counts, never measured time.
+---     at most the ceiling (map settings "at least" / "at most"). The sleepers' share of it, the probes, is capped at
+---     the floor whatever the ceiling is, so a network of sleepers never costs more per tick than the budget of
+---     0.3.0 did; the busy list gets the rest up to the ceiling. When the ceiling binds, the earliest due come
+---     first. Counts, never measured time.
 ---   * A unit is in a list once per scheduling; an entry whose record says another tick or another list is stale
 ---     and skipped (a wake or a reschedule leaves the old entry behind instead of searching for it). The record
 ---     says where it is: `rec.due` (tick, BACKLOG, FRONT, nil while visited or parked), `rec.sq` (in the probe
@@ -48,8 +49,8 @@ local SETTINGS = {
 	idle = "me-network-idle-limit",
 	storage_bus_idle = "me-network-storage-bus-idle-limit",
 }
-M.DEFAULTS = { io = 16, io_max = 48, storage_bus = 8, storage_bus_max = 24, maintainer = 4, maintainer_max = 12,
-	circuit = 10, jobs = 1, jobs_max = 4, bus_items = 256, bus_fluid = 4000, idle = 300, storage_bus_idle = 120 }
+M.DEFAULTS = { io = 16, io_max = 32, storage_bus = 8, storage_bus_max = 24, maintainer = 4, maintainer_max = 12,
+	circuit = 10, jobs = 1, jobs_max = 2, bus_items = 256, bus_fluid = 4000, idle = 300, storage_bus_idle = 120 }
 local values
 
 function M.setting(key)
@@ -82,6 +83,12 @@ local function stat(name)
 	return st
 end
 
+--- a visit of a unit of `name` arrived at an empty target or a full source (its other side had run out)
+function M.starved(name)
+	local st = stats[name] or stat(name)
+	st.starved = (st.starved or 0) + 1
+end
+
 --- one interval sample of `dt` ticks for a unit of `name` whose visit found `class` (units outside the queues: jobs)
 function M.sample(name, dt, class)
 	local h = (stats[name] or stat(name)).hist[(class or 0) + 1]
@@ -112,7 +119,7 @@ end
 function M.snapshot()
 	local out = {}
 	for name, st in pairs(stats) do
-		out[name] = { visits = st.visits, ticks = st.ticks, due = st.due, backlog_max = st.back_max,
+		out[name] = { visits = st.visits, ticks = st.ticks, due = st.due, backlog_max = st.back_max, starved = st.starved or 0,
 			backlog_avg = st.ticks > 0 and st.back_sum / st.ticks or 0,
 			idle = percentiles(st.hist[1]), partial = percentiles(st.hist[2]), full = percentiles(st.hist[3]) }
 	end
@@ -309,10 +316,9 @@ end
 --- backlog with the units due at `tick` appended, at most the budget: what is due, at least `floor`, at most
 --- `ceiling`. `rec_of(unit)` gives the record (nil: gone), `visit(rec, unit)` visits it (and schedules it again
 --- with M.at, probes, parks or forgets it) and returns what it found (the class of the counters, nil: not
---- counted). `name` is the queue's name in the counters (the probe list is `name .. "_probe"`). `probe_cap`: the
---- probes per tick at most (nil: all that are due; the storage buses, whose probe is a full read, pass their
---- ceiling). Returns the visits.
-function M.run(q, tick, floor, ceiling, rec_of, visit, probe, name, probe_cap)
+--- counted). `name` is the queue's name in the counters (the probe list is `name .. "_probe"`). The probes of a
+--- tick are at most `floor`; the busy list gets `ceiling` less the probes done, at least `floor`. Returns the visits.
+function M.run(q, tick, floor, ceiling, rec_of, visit, probe, name)
 	name = name or "?"
 	if not q.sl then                                   -- (a queue of an earlier version its module did not upgrade)
 		q.front, q.fhead, q.sl, q.n, q.tag = q.front or {}, q.fhead or 1, new_list(), q.n or 0, q.tag or name
@@ -324,7 +330,9 @@ function M.run(q, tick, floor, ceiling, rec_of, visit, probe, name, probe_cap)
 	local ss = stats[name .. "_probe"] or stat(name .. "_probe")
 	ss.ticks = ss.ticks + 1
 	arrive(q, sl, tick, rec_of, ss)
-	local probed = drain(q, sl, "back", "head", BACKLOG, tick, probe_cap or math.huge, rec_of, probe or visit, ss)
+	floor = floor or 0
+	ceiling = math.max(ceiling or floor, floor)
+	local probed = drain(q, sl, "back", "head", BACKLOG, tick, floor, rec_of, probe or visit, ss)
 	ss.visits = ss.visits + probed
 	local pleft = waiting(sl)
 	ss.back_sum = ss.back_sum + pleft
@@ -332,7 +340,7 @@ function M.run(q, tick, floor, ceiling, rec_of, visit, probe, name, probe_cap)
 	--- the busy list: what is due this tick, between the floor and the ceiling
 	arrive(q, q, tick, rec_of, st)
 	local due = waiting(q)
-	local budget = math.max(floor or 0, math.min(math.max(ceiling or floor or 0, floor or 0), due))
+	local budget = math.max(floor, math.min(ceiling - probed, due))
 	local done = drain(q, q, "front", "fhead", FRONT, tick, budget, rec_of, visit, st)
 	done = done + drain(q, q, "back", "head", BACKLOG, tick, budget - done, rec_of, visit, st)
 	local left = waiting(q)

@@ -5,7 +5,7 @@ Version: 0.3.1
     - A block with nothing to do on its machine's side (an empty source, a full target) only looks there now and then with one cheap check; a block waiting for the network (its item missing, the network full, no power) costs nothing until the network wakes it, and so does a stocked level maintainer until its item is taken.
     - A block that wakes (its item comes into the network, the power is back, something is built in front of it, its settings change) is visited before the line, not at its end; a level maintainer whose item was taken reacts within a tick again in a big base.
   Changes:
-    - Map settings: the visits per tick of interfaces and buses, storage buses, level maintainers and crafting jobs are floors now ("at least"), and each has a ceiling ("at most": 48 interface and bus visits, 24 storage bus reads, 12 maintainer checks, 4 job steps per tick by default) that bounds the script time of a big base.
+    - Map settings: the visits per tick of interfaces and buses, storage buses, level maintainers and crafting jobs are floors now ("at least"), and each has a ceiling ("at most": 32 interface and bus visits, 24 storage bus reads, 12 maintainer checks, 2 job steps per tick by default) that bounds the script time of a big base.
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.0
 Date: 2026-10-03

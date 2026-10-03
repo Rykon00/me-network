@@ -1353,6 +1353,7 @@ local function visit(rec, unit)
 		moved, full, nextiv, block, starved, net = M.bus_step(rec, dt)
 	end
 	rec.starve = starved or nil
+	if starved then Sched.starved("io") end
 	if block then
 		local was = rec.block
 		rec.block = block

@@ -415,8 +415,8 @@ function M.on_tick(tick)
 			if on_fluid(rec) and rec.entity.valid then M.visit(rec) end
 		end
 	end
-	local ceiling = Sched.setting("storage_bus_max")
-	Sched.run(queue(s), tick, Sched.setting("storage_bus"), ceiling, fluid_rec, visit_due, visit_due, "fluid_storage_bus", ceiling)
+	Sched.run(queue(s), tick, Sched.setting("storage_bus"), Sched.setting("storage_bus_max"), fluid_rec, visit_due, visit_due,
+		"fluid_storage_bus")
 end
 
 --- the remote's step (tests): what the fluid side does in one tick

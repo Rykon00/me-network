@@ -375,8 +375,8 @@ end
 function M.on_tick(tick)
 	local s = storage.fork_me_sbus
 	if s and #s.list > 0 then
-		local ceiling = Sched.setting("storage_bus_max")
-		Sched.run(queue(s), tick, Sched.setting("storage_bus"), ceiling, item_rec, visit_due, visit_due, "storage_bus", ceiling)
+		Sched.run(queue(s), tick, Sched.setting("storage_bus"), Sched.setting("storage_bus_max"), item_rec, visit_due, visit_due,
+			"storage_bus")
 	end
 	F.on_tick(tick)
 end

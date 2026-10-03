@@ -1226,8 +1226,9 @@ most blocks are limited by their other side, not by their visits. The rework kee
   to do) is not visited but probed: one cheap engine call (`probe_work`: the item count of the source or interface,
   `can_insert` or the input count of a full target, the search for a missing target) at an interval that doubles up
   to the idle limit (the probe list `q.sl`); a change wakes the block into the front, visited in the same tick. The
-  probes are not capped, except for the storage buses, whose "probe" is the full read of an unchanged bus: those
-  share the storage bus ceiling.
+  probes of a tick are at most the floor (16 interface and bus visits by default), whatever the ceiling is, so a
+  network of sleepers never costs more per tick than the budget of 0.3.0; the probes of a bigger network wait longer
+  than the idle limit. The storage buses' "probe" is the full read of an unchanged bus and follows the same cap.
 * **Parked blocks.** A block blocked on the network's side (its key absent, the network full, no network or
   controller, no power, no filters) is parked: in no list at all, visited again only when the network wakes it:
   `N.wait_for` (the key comes in, or some is taken), `N.wait_room` (a cell joins, a key type leaves),
@@ -1239,8 +1240,9 @@ most blocks are limited by their other side, not by their visits. The rework kee
 * **The front.** A wake puts the unit into the busy list's front list (`q.front`), visited before the backlog; a
   unit that is already waiting there or in the busy backlog is as early as it can be.
 * **The budget is what is due.** Per tick a queue visits what is due (the front, the backlog, the units due now),
-  at least the floor and at most the ceiling (the settings "at least" and "at most"); when the ceiling binds, the
-  earliest due come first and the starved blocks before them. No time, no count of a kind: the ceiling bounds the
+  at least the floor and at most the ceiling (the settings "at least" and "at most"; defaults 16 and 32 for
+  interfaces and buses, job steps 1 and 2); the probes take at most the floor of it and the busy list the rest, at
+  least the floor again; when the ceiling binds, the earliest due come first and the starved blocks before them. No time, no count of a kind: the ceiling bounds the
   script time of a big base, the floor only matters while more is due than it says. The counts (`q.n`, `q.sl.n`)
   are kept by the visits, wakes and removals themselves (`Sched.at`, `Sched.wake`, `Sched.park`, `Sched.forget`),
   so every peer schedules alike; the module-local counters of the benchmark decide nothing. The crafting jobs' steps

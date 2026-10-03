@@ -55,7 +55,8 @@
   from the scheduler's counters at 100 to 50 000 endpoints, `--idle`, `--networks`, `--long`, the build burst, the planner
   scene, `--reference` for inserters and robots, `--profile 1000,5000` for where the time goes) and puts its numbers
   before and after into `docs/PERFORMANCE.md`, measured in turns (`bench --check <ref>` fails a number that is worse
-  than the measured noise). A chain of long runs goes into a second work folder (`ME_DEVCHECK_WORK`), never into the
+  than the measured noise; the busy interval is only reported, since issue #38 a block is visited when the buffer on
+  its other side needs it). A chain of long runs goes into a second work folder (`ME_DEVCHECK_WORK`), never into the
   one a quick test uses.
 - Every referenced `__me-network__/...` file must exist (headless Factorio does not load graphics, the real game
   crashes on missing files); `devcheck check` lists missing ones and names missing in `locale/en`.
