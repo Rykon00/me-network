@@ -1053,13 +1053,15 @@ local function visit(rec, unit)
 	local idle = Sched.idle_limit(Sched.setting("idle"), #s.list, 24 / 15, MIN_INTERVAL)
 	rec.iv = Sched.interval(rec.iv, moved, full, MIN_INTERVAL, ACTIVE_INTERVAL, idle)
 	Sched.at(s.q, rec, unit, now + rec.iv)
+	if moved <= 0 then return 0 end
+	return full and 2 or 1
 end
 
 --- every tick (control.lua): the interfaces and buses that are due, at most the setting's visits per tick
 function M.on_tick(tick)
 	local s = storage.fork_me_io
 	if not s then return end
-	Sched.run(queue(s), tick, Sched.setting("io"), rec_of, visit)
+	Sched.run(queue(s), tick, Sched.setting("io"), rec_of, visit, "io")
 end
 
 --- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
@@ -1247,6 +1249,21 @@ remote.add_interface("gregtorio-me-io", {
 		if not rec then return nil end
 		return { due = rec.due, interval = rec.iv, last = rec.last }
 	end,
+	--- issue #38: the scheduler's counters of every queue (fork-me-schedule.lua, M.snapshot); `reset` starts them anew
+	sched_stats = function(reset)
+		local snap = Sched.snapshot()
+		if reset then Sched.reset_stats() end
+		return snap
+	end,
+	--- the units waiting in the backlogs now, by queue (the benchmark samples it over time)
+	backlogs = function()
+		local io_s, sb, fsb, ae = storage.fork_me_io, storage.fork_me_sbus, storage.fork_me_fsbus, storage.fork_ae2
+		return { io = io_s and io_s.q and Sched.backlog(io_s.q) or 0, storage_bus = sb and sb.q and Sched.backlog(sb.q) or 0,
+			fluid_storage_bus = fsb and fsb.q and Sched.backlog(fsb.q) or 0,
+			maintainer = ae and ae.mq and Sched.backlog(ae.mq) or 0, circuit = ae and ae.cq and Sched.backlog(ae.cq) or 0 }
+	end,
+	--- the Lua heap of this mod in kilobytes (the benchmark's long run watches it grow)
+	lua_memory = function() return collectgarbage("count") end,
 	set_interface_config = function(entity, config, sides) return M.set_interface_config(entity, config, sides) end,
 	get_interface_config = function(entity) return M.get_interface_config(entity) end,
 	set_interface_slot = function(entity, i, name, quality, amount) return M.set_interface_slot(entity, i, name, quality, amount) end,

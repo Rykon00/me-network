@@ -347,12 +347,13 @@ local function visit_due(rec, unit)
 	local idle = Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)
 	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle)
 	Sched.at(queue(s), rec, unit, game.tick + rec.siv)
+	return changed and 1 or 0
 end
 
 --- every tick (control.lua): the item side buses that are due, then the fluid side's
 function M.on_tick(tick)
 	local s = storage.fork_me_sbus
-	if s and #s.list > 0 then Sched.run(queue(s), tick, Sched.setting("storage_bus"), item_rec, visit_due) end
+	if s and #s.list > 0 then Sched.run(queue(s), tick, Sched.setting("storage_bus"), item_rec, visit_due, "storage_bus") end
 	F.on_tick(tick)
 end
 

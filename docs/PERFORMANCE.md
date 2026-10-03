@@ -398,3 +398,824 @@ needs as many free CPUs as jobs it wants to start at once, which the old Quantum
 | `job_step` | 3600 | 582 ms (the jobs' own work, unchanged code path) |
 
 The multiblock costs no script time while nothing is built or removed.
+
+## Round two (issue #38): the extended benchmark and the 0.3.0 baseline
+
+Issue #38 asks for half the script time, no spikes and 50 000 endpoints. Its first pull request changes no runtime
+behaviour: it extends the benchmark so that the problem is visible, measures 0.3.0 with it and ranks the levers from
+the profile. The only runtime change is the scheduler's counters (below), which cost nothing measurable.
+
+### Method, what is new
+
+* **Sizes.** 20 000 and 50 000 buses and interfaces next to 100, 1000 and 5000 (where the machine stops: below).
+* **Service quality.** The scheduler (`scripts/fork-me-schedule.lua`) counts, per queue (interfaces and buses,
+  storage buses, fluid storage buses, level maintainers, circuit interfaces; the crafting jobs through their own
+  sample): the visits, the units that came due, the backlog left at the end of each tick, and the ticks between two
+  visits of the same unit, kept apart by what the visit found: the unit moved all it was allowed to (a **busy**
+  block: the budget, not the block, decided when it was served), it moved something, or it found nothing to do
+  (**idle**). The record keeps its last visit tick (`rec.vis`); the counters live in the module, never in `storage`
+  (they describe one peer's run and decide nothing; the benchmark reads them through the remote
+  `gregtorio-me-io.sched_stats`, the in-game diagnostic of part 3 will). The benchmark resets them at the first probe
+  and reports them at the second, samples the backlogs every 5 s, and looks at the scene's machines at the second
+  probe: working, waiting for ingredients or output full, and the crafts they made against what their speed allowed
+  in the window (utilisation). A `pair` machine of the scene (an assembling machine fed and emptied by two buses)
+  that is not at 100 % waits for its buses.
+* **Idle network** (`bench --idle`): the same scene with every source empty, every sink blocked (a chest full of
+  another item, a full tank), no recipe on the machines and no job. What the network costs when nothing moves.
+* **Several networks** (`--networks 10,100`): the same blocks on K networks of size / K, one below the other (the
+  latency probes and the 855 item types of the variety only in the first; the others hold the raw materials and
+  the maintainers' items).
+* **Long run** (`--long 30`): one run of 30 minutes at 5000, reported per 5 minutes: script time, the garbage
+  collector, the mod's Lua heap (`collectgarbage("count")` through the remote `lua_memory`) and the backlogs.
+* **Build burst** (`--burst 1000`, part of every run, after the latency probes): 1000 ME blocks connected to the
+  network (364 cables from the spine to a new row, 159 import buses and 159 storage buses on chests, 318 interfaces)
+  built in one tick with `raise_built` and removed in one tick with `raise_destroy`, then 1000 plain chests the same
+  way (the mod's handlers run for every entity of the map): the time of each loop and the script time of its tick.
+* **Open windows**: headless Factorio has no player, so the GUI itself cannot be measured. The profile times what
+  each window computes at a refresh instead: the terminal's sorted contents list (`entries`, every 60 ticks while it
+  is open, also for the search), the crafting preview, the jobs and cells tabs, and the data of every block window.
+* **Planner** (`--planner`, `--with-gregtorio DIR` for GregTech): every enabled recipe of the game with at most 9
+  inputs and 6 outputs, whole products without a chance, not recycling and not items with data, as a processing
+  pattern (the planner does not care which machine would make it), kept when it is on a shortest path of its main
+  product (loops out, alternatives of equal depth in); the raw materials (nothing makes them) in cells. The planner
+  is timed on the five deepest items (five plans of 1 and of 100), then one job of 10 is started per target.
+* **Load**: the wall time from `Loading map` to the scripts' checksums, and the script time of the first ticks after
+  the load, when the queues and the storage engine's lookups come up.
+* **Engine's share** (`--engine-share`): the scene with every entity of the mod destroyed after the build and
+  nothing registered (the chests, tanks, machines, inserters and power stay). Its whole update, against the normal
+  scene's whole update minus its script time, is what the ME entities cost the engine (the interfaces' four hidden
+  side tanks each, the controller's power, the lamps of the maintainers and crafting blocks).
+* **In turns** (`bench --check <ref>`): the maps of the working copy and of a reference are made once and run
+  alternately (ref, working copy, ref, ...), three rounds; every number is compared by its median and fails when the
+  working copy is worse by more than the measured noise (the larger spread of the two versions, at least 2 % of the
+  reference). Throughput that differs at all is reported: the scheduling changed.
+* **Map guard**: every map the harness creates is removed before `--create` and must exist afterwards. Before, a
+  Factorio that failed to start would have left the previous run's map for the next step to load: a `migrate` run
+  could pass on a stale map. (`setup` also finds the Steam install on Windows now and copies its `bin/` next to a
+  config folder of its own, so the harness runs while the game is open.)
+
+
+### Baseline of 0.3.0 (with the counters), script time per tick (ms)
+
+Three runs per scene, the median per value; the window of 60 s from tick 600. Headless Factorio 2.0.77 (the Steam build's binary) on the i7-8700K of the earlier sections; running at the same time: the Factorio game client, Chrome, Spotify, Steam and the Claude desktop app, so the numbers sit 5 to 10 % above the quieter runs of 0.3.0 (1.26 to 1.33 ms at 5000 then, 1.30 to 1.41 here); the planner scene with Gregtorio and the engine-share rerun at 100 to 5000 ran at the same time in two work folders. The variants are the ME scene with the same blocks: idle (nothing to move), split over 10 and 100 networks, and without the ME entities (the engine's share).
+
+| Scene | N | Average | 99th percentile | Worst tick | Ticks over 5 ms | Lua garbage (avg / worst step) | Whole update | Engine (whole minus script) | Save |
+|---|---|---|---|---|---|---|---|---|---|
+| ME | 100 | 0.235 | 1.94 | 7.2 | 3 | 0.038 / 2.9 | 0.46 | 0.22 | 1.0 MB |
+| idle | 100 | 0.182 | 1.88 | 7.2 | 6 | 0.035 / 1.7 | 0.39 | 0.21 | 1.0 MB |
+| 10 networks | 100 | 0.416 | 1.88 | 8.3 | 2 | 0.044 / 4.0 | 0.67 | 0.25 | 1.1 MB |
+| 100 networks | 100 | 0.857 | 2.10 | 20.7 | 2 | 0.073 / 29.7 | 1.32 | 0.47 | 2.0 MB |
+| without ME entities | 100 | 0.005 | 0.02 | 0.2 | 0 | 0.030 / 0.4 | 0.21 | 0.20 | 1.0 MB |
+| ME | 1000 | 0.815 | 2.63 | 12.0 | 11 | 0.081 / 15.4 | 1.25 | 0.44 | 1.3 MB |
+| idle | 1000 | 0.371 | 2.30 | 8.1 | 7 | 0.053 / 7.5 | 0.63 | 0.26 | 1.3 MB |
+| 10 networks | 1000 | 0.846 | 2.37 | 15.2 | 10 | 0.088 / 18.3 | 1.29 | 0.44 | 1.3 MB |
+| 100 networks | 1000 | 0.957 | 2.30 | 22.9 | 2 | 0.083 / 35.7 | 1.46 | 0.50 | 2.1 MB |
+| without ME entities | 1000 | 0.005 | 0.02 | 0.2 | 0 | 0.031 / 0.9 | 0.25 | 0.24 | 1.0 MB |
+| ME | 5000 | 1.394 | 3.64 | 26.6 | 12 | 0.092 / 39.6 | 2.28 | 0.88 | 2.5 MB |
+| idle | 5000 | 0.846 | 2.80 | 23.4 | 8 | 0.094 / 37.8 | 1.38 | 0.54 | 2.4 MB |
+| 10 networks | 5000 | 1.019 | 2.74 | 28.9 | 4 | 0.079 / 53.5 | 1.84 | 0.82 | 2.6 MB |
+| 100 networks | 5000 | 1.092 | 2.56 | 39.3 | 3 | 0.074 / 33.9 | 1.93 | 0.84 | 3.2 MB |
+| without ME entities | 5000 | 0.007 | 0.02 | 0.2 | 0 | 0.041 / 4.9 | 0.53 | 0.52 | 1.3 MB |
+| ME | 20000 | 2.948 | 6.45 | 60.8 | 143 | 0.067 / 37.3 | 5.31 | 2.37 | 6.7 MB |
+| idle | 20000 | 1.382 | 4.20 | 45.1 | 14 | 0.079 / 84.8 | 2.67 | 1.29 | 6.5 MB |
+| without ME entities | 20000 | 0.013 | 0.03 | 0.4 | 0 | 0.057 / 27.3 | 2.13 | 2.11 | 2.1 MB |
+| ME | 50000 | 6.782 | 14.97 | 91.5 | 2667 | 0.092 / 69.3 | 11.79 | 5.01 | 15.1 MB |
+| 30-minute run | 5000 | 1.074 | 3.06 | 45.1 | 299 | 0.086 / 44.5 | 1.75 | 0.68 | 2.5 MB |
+
+Native reference scenes (the same counting):
+
+| Scene | N | Script avg | Entity update | Logistics | Whole update | Items/s |
+|---|---|---|---|---|---|---|
+| inserters | 100 | 0.005 | 0.012 | 0.000 | 0.20 | 2000 |
+| inserters | 1000 | 0.005 | 0.064 | 0.000 | 0.25 | 20000 |
+| inserters | 5000 | 0.007 | 0.352 | 0.000 | 0.59 | 100000 |
+| robots | 100 | 0.005 | 0.013 | 0.014 | 0.21 | 66 |
+| robots | 1000 | 0.005 | 0.015 | 0.034 | 0.24 | 70 |
+| robots | 5000 | 0.005 | 0.045 | 0.015 | 0.26 | 374 |
+
+### Throughput (per second over the window)
+
+| Scene | N | Items/s | per endpoint | Fluid/s | Provider crafts/s | Capacity probe import / export (items/s per bus) | Fluid probe import / export | Interface in / out | Pair machine out / in | Conservation |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ME | 100 | 3332 | 32.04 | 32778 | 1.2 | 259.55 / 256.00 | 4055.56 / 4000.00 | 9.00 / 9.00 | 0.90 / 1.20 | 891 keys, 0 differ |
+| idle | 100 | 0 | 0.00 | 93 | 0.0 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 891 keys, 0 differ |
+| 10 networks | 100 | 11731 | 61.74 | 178794 | 12.3 | 257.46 / 166.55 | 4023.06 / 4000.00 | 9.50 / 6.50 | 0.82 / 1.20 | 891 keys, 0 differ |
+| 100 networks | 100 | 95511 | 56.18 | 1801684 | 120.5 | 261.87 / 144.17 | 4097.97 / 3994.63 | 9.89 / 5.61 | 0.90 / 1.12 | 891 keys, 0 differ |
+| without ME entities | 100 | 18 | 0.17 | 0 | 0.0 | 0.00 / 0.00 | 0.00 / 0.00 | 0.44 / 0.44 | 0.00 / 0.00 | 28 keys, 0 differ |
+| ME | 1000 | 33247 | 33.25 | 248585 | 17.3 | 267.35 / 256.23 | 4183.44 / 4008.56 | 10.00 / 10.01 | 0.97 / 1.12 | 891 keys, 0 differ |
+| idle | 1000 | 0 | 0.00 | 1310 | 0.0 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 891 keys, 0 differ |
+| 10 networks | 1000 | 34431 | 33.11 | 330662 | 12.3 | 267.47 / 176.32 | 4189.56 / 4010.33 | 8.57 / 7.75 | 0.96 / 1.13 | 891 keys, 0 differ |
+| 100 networks | 1000 | 108020 | 56.85 | 1793640 | 120.5 | 258.18 / 153.68 | 4038.88 / 4013.94 | 9.94 / 6.56 | 0.96 / 1.07 | 891 keys, 0 differ |
+| without ME entities | 1000 | 89 | 0.09 | 0 | 0.0 | 0.00 / 0.00 | 0.00 / 0.00 | 0.22 / 0.22 | 0.00 / 0.00 | 31 keys, 0 differ |
+| ME | 5000 | 166741 | 33.35 | 1219697 | 327.1 | 260.69 / 260.58 | 4075.33 / 4076.42 | 10.10 / 10.00 | 0.99 / 1.12 | 891 keys, 0 differ |
+| idle | 5000 | 0 | 0.00 | 28969 | 0.0 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 | 891 keys, 0 differ |
+| 10 networks | 5000 | 167644 | 33.53 | 1219974 | 66.5 | 261.29 / 260.43 | 4084.58 / 4077.71 | 10.10 / 10.00 | 0.97 / 1.13 | 891 keys, 0 differ |
+| 100 networks | 5000 | 202663 | 36.85 | 2431347 | 120.5 | 260.08 / 147.24 | 4064.28 / 4071.03 | 8.11 / 6.53 | 0.97 / 1.16 | 891 keys, 0 differ |
+| without ME entities | 5000 | 337 | 0.07 | 0 | 0.0 | 0.00 / 0.00 | 0.00 / 0.00 | 0.17 / 0.17 | 0.00 / 0.00 | 31 keys, 0 differ |
+| ME | 20000 | 528686 | 26.43 | 3379369 | 1501.5 | 102.10 / 102.74 | 1595.33 / 1605.33 | 9.47 / 5.02 | 1.38 / 0.89 | 891 keys, 0 differ |
+| idle | 20000 | 3513 | 0.18 | 63739 | 0.0 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.88 | 0.00 / 0.00 | 891 keys, 0 differ |
+| without ME entities | 20000 | 1029 | 0.05 | 0 | 0.0 | 0.00 / 0.00 | 0.00 / 0.00 | 0.13 / 0.13 | 0.00 / 0.00 | 31 keys, 0 differ |
+| ME | 50000 | 343455 | 6.87 | 4449231 | 1733.0 | 15.62 / 15.62 | 242.80 / 242.80 | 7.12 / 2.36 | 0.71 / 0.23 | 891 keys, 0 differ |
+| 30-minute run | 5000 | 14735 | 2.95 | 83333 | 89.7 | 44.44 / 43.11 | 555.56 / 555.56 | 2.72 / 2.62 | 0.96 / 1.12 | 891 keys, 0 differ |
+
+### Latencies (s, median / worst of the probes)
+
+| Scene | N | Storage bus sees a chest change | Level maintainer starts a job | The job hands out its first ingredients |
+|---|---|---|---|---|
+| ME | 100 | 0.02 / 0.02 | 0.07 / 0.10 | 0.02 / 0.02 |
+| idle | 100 | 0.02 / 0.02 | 0.07 / 0.10 | 0.02 / 0.02 |
+| 10 networks | 100 | 0.00 / 0.00 | 0.05 / 0.08 | 0.17 / 0.17 |
+| 100 networks | 100 | 1.02 / 1.02 | 0.05 / 0.08 | 1.67 / 1.67 |
+| ME | 1000 | 1.07 / 1.15 | 0.08 / 0.15 | 0.13 / 0.15 |
+| idle | 1000 | 1.07 / 1.15 | 0.08 / 0.15 | 0.02 / 0.02 |
+| 10 networks | 1000 | 1.02 / 1.02 | 0.07 / 0.12 | 0.15 / 0.17 |
+| 100 networks | 1000 | 0.00 / 0.00 | 0.05 / 0.08 | 1.67 / 1.67 |
+| ME | 5000 | 1.33 / 1.72 | 0.08 / 0.22 | 0.07 / 0.87 |
+| idle | 5000 | 1.33 / 1.72 | 0.08 / 0.22 | 0.02 / 0.02 |
+| 10 networks | 5000 | 1.03 / 1.08 | 0.08 / 0.18 | 0.80 / 0.82 |
+| 100 networks | 5000 | 1.02 / 1.02 | 0.05 / 0.08 | 1.67 / 1.67 |
+| ME | 20000 | 1.33 / 2.82 | 3.38 / 60.00 | 0.60 / 60.00 |
+| idle | 20000 | 1.33 / 2.82 | 3.38 / 60.00 | 0.02 / 60.00 |
+| ME | 50000 | 3.32 / 7.02 | 10.22 / 15.88 | 3.58 / 7.75 |
+
+### Service quality (the scheduler's counters over the window)
+
+Visits and units due per tick, the backlog at the end of a tick (average / longest), and the ticks between two visits of the same block by what the visit found: a busy block moved all it was allowed to (for jobs: the ticks between two steps of a job), an idle one found nothing.
+
+| Scene | N | Queue | Visits per tick | Due per tick | Backlog avg / max | Busy block: interval median / 99th / worst (s), n | Idle block: interval median / 99th / worst (s), n |
+|---|---|---|---|---|---|---|---|
+| ME | 100 | io | 2.52 | 2.52 | 0.0 / 0 | 0.25 / 0.25 / 1.08, 4016 | 1.08 / 1.08 / 1.08, 2718 |
+| ME | 100 | storage_bus | 0.23 | 0.23 | 0.0 / 0 | - / - / -, 0 | 0.50 / 0.50 / 0.50, 840 |
+| ME | 100 | fluid_storage_bus | 0.10 | 0.10 | 0.0 / 0 | - / - / -, 0 | 0.50 / 0.50 / 0.50, 360 |
+| ME | 100 | maintainer | 0.05 | 0.05 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 180 |
+| ME | 100 | circuit | 0.05 | 0.05 | 0.2 / 1 | 0.10 / 1.10 / 1.10, 110 | - / - / -, 0 |
+| ME | 100 | jobs | - | - | 0.0 / 0 | 0.33 / 0.33 / 0.33, 180 | - / - / -, 0 |
+| idle | 100 | io | 1.62 | 1.62 | 0.0 / 0 | 1.00 / 1.00 / 1.00, 600 | 1.08 / 1.08 / 1.08, 5244 |
+| idle | 100 | storage_bus | 0.23 | 0.23 | 0.0 / 0 | - / - / -, 0 | 0.50 / 0.50 / 0.50, 840 |
+| idle | 100 | fluid_storage_bus | 0.10 | 0.10 | 0.0 / 0 | - / - / -, 0 | 0.50 / 0.50 / 0.50, 360 |
+| idle | 100 | maintainer | 0.05 | 0.05 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 180 |
+| idle | 100 | circuit | 0.05 | 0.05 | 0.2 / 1 | 0.10 / 1.10 / 1.10, 110 | - / - / -, 0 |
+| 10 networks | 100 | io | 7.05 | 7.12 | 0.0 / 0 | 0.25 / 0.25 / 1.98, 20348 | 1.98 / 1.98 / 1.98, 1833 |
+| 10 networks | 100 | storage_bus | 0.33 | 0.33 | 0.0 / 0 | - / - / -, 0 | 0.50 / 0.50 / 0.50, 1200 |
+| 10 networks | 100 | fluid_storage_bus | 0.33 | 0.33 | 0.0 / 0 | - / - / -, 0 | 0.50 / 0.50 / 0.50, 1200 |
+| 10 networks | 100 | maintainer | 0.08 | 0.08 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 300 |
+| 10 networks | 100 | circuit | 0.17 | 0.17 | 9.8 / 10 | - / - / -, 0 | - / - / -, 0 |
+| 10 networks | 100 | jobs | - | - | 0.0 / 0 | 0.33 / 0.33 / 0.33, 1800 | - / - / -, 0 |
+| 100 networks | 100 | io | 16.00 | 16.06 | 899.9 / 1191 | 1.17 / 4.72 / 5.23, 38369 | 5.85 / 6.15 / 6.22, 5958 |
+| 100 networks | 100 | storage_bus | 0.83 | 0.83 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 3000 |
+| 100 networks | 100 | fluid_storage_bus | 0.83 | 0.83 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 3000 |
+| 100 networks | 100 | maintainer | 0.68 | 0.68 | 0.0 / 0 | 5.00 / 5.00 / 5.00, 12 | 5.00 / 5.00 / 5.00, 2448 |
+| 100 networks | 100 | circuit | 0.17 | 0.17 | 99.8 / 100 | - / - / -, 0 | - / - / -, 0 |
+| 100 networks | 100 | jobs | - | - | 0.0 / 0 | 1.67 / 1.67 / 1.67, 3600 | - / - / -, 0 |
+| ME | 1000 | io | 13.65 | 13.58 | 102.3 / 527 | 1.00 / 1.53 / 5.53, 22398 | 5.00 / 5.25 / 5.53, 6569 |
+| ME | 1000 | storage_bus | 0.58 | 0.58 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 2100 |
+| ME | 1000 | fluid_storage_bus | 0.53 | 0.53 | 0.0 / 0 | - / - / -, 0 | 0.95 / 0.95 / 0.95, 1890 |
+| ME | 1000 | maintainer | 0.35 | 0.35 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 1260 |
+| ME | 1000 | circuit | 0.17 | 0.17 | 11.0 / 11 | 2.10 / 2.10 / 2.10, 540 | - / - / -, 0 |
+| ME | 1000 | jobs | - | - | 0.0 / 0 | 0.33 / 0.33 / 0.33, 1800 | - / - / -, 0 |
+| idle | 1000 | io | 4.67 | 4.67 | 0.0 / 0 | 1.00 / 1.00 / 1.00, 6000 | 5.00 / 5.00 / 5.00, 10800 |
+| idle | 1000 | storage_bus | 0.58 | 0.58 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 2100 |
+| idle | 1000 | fluid_storage_bus | 0.53 | 0.53 | 0.0 / 0 | - / - / -, 0 | 0.95 / 0.95 / 0.95, 1890 |
+| idle | 1000 | maintainer | 0.35 | 0.35 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 1260 |
+| idle | 1000 | circuit | 0.17 | 0.17 | 11.0 / 11 | 2.10 / 2.10 / 2.10, 540 | - / - / -, 0 |
+| 10 networks | 1000 | io | 15.04 | 15.24 | 113.3 / 553 | 0.28 / 0.83 / 5.53, 24849 | 5.00 / 5.35 / 5.57, 7787 |
+| 10 networks | 1000 | storage_bus | 0.58 | 0.58 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 2100 |
+| 10 networks | 1000 | fluid_storage_bus | 0.53 | 0.53 | 0.0 / 0 | - / - / -, 0 | 0.95 / 0.95 / 0.95, 1890 |
+| 10 networks | 1000 | maintainer | 0.35 | 0.35 | 0.0 / 0 | 5.00 / 5.00 / 5.00, 108 | 5.00 / 5.00 / 5.00, 1152 |
+| 10 networks | 1000 | circuit | 0.17 | 0.17 | 16.6 / 18 | 1.70 / 1.80 / 2.70, 200 | - / - / -, 0 |
+| 10 networks | 1000 | jobs | - | - | 0.0 / 0 | 0.33 / 0.33 / 0.33, 1800 | - / - / -, 0 |
+| 100 networks | 1000 | io | 16.00 | 16.06 | 1045.4 / 1422 | 1.30 / 5.02 / 5.47, 35664 | 5.97 / 6.35 / 6.40, 6547 |
+| 100 networks | 1000 | storage_bus | 0.83 | 0.83 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 3000 |
+| 100 networks | 1000 | fluid_storage_bus | 0.83 | 0.83 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 3000 |
+| 100 networks | 1000 | maintainer | 0.68 | 0.68 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 2460 |
+| 100 networks | 1000 | circuit | 0.17 | 0.17 | 99.8 / 100 | - / - / -, 0 | - / - / -, 0 |
+| 100 networks | 1000 | jobs | - | - | 0.0 / 0 | 1.67 / 1.67 / 1.67, 3600 | - / - / -, 0 |
+| ME | 5000 | io | 16.00 | 15.47 | 3370.3 / 4669 | 4.47 / 5.58 / 9.27, 29109 | 6.43 / 8.65 / 9.27, 19721 |
+| ME | 5000 | storage_bus | 2.92 | 2.92 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 10500 |
+| ME | 5000 | fluid_storage_bus | 1.25 | 1.25 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 4500 |
+| ME | 5000 | maintainer | 1.68 | 1.68 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 6060 |
+| ME | 5000 | circuit | 0.17 | 0.17 | 91.0 / 91 | 10.10 / 10.10 / 10.10, 540 | - / - / -, 0 |
+| ME | 5000 | jobs | - | - | 0.0 / 0 | 0.82 / 0.83 / 1.63, 3600 | - / - / -, 0 |
+| idle | 5000 | io | 16.00 | 15.16 | 1523.5 / 4136 | 2.18 / 5.05 / 5.22, 12355 | 6.15 / 6.25 / 6.27, 45245 |
+| idle | 5000 | storage_bus | 2.92 | 2.92 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 10500 |
+| idle | 5000 | fluid_storage_bus | 1.25 | 1.25 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 4500 |
+| idle | 5000 | maintainer | 1.68 | 1.68 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 6060 |
+| idle | 5000 | circuit | 0.17 | 0.17 | 91.0 / 91 | 10.10 / 10.10 / 10.10, 540 | - / - / -, 0 |
+| 10 networks | 5000 | io | 16.00 | 15.47 | 3386.6 / 4670 | 4.48 / 5.57 / 9.15, 29363 | 6.43 / 8.63 / 9.27, 19428 |
+| 10 networks | 5000 | storage_bus | 2.92 | 2.92 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 10500 |
+| 10 networks | 5000 | fluid_storage_bus | 1.25 | 1.25 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 4500 |
+| 10 networks | 5000 | maintainer | 1.68 | 1.68 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 6060 |
+| 10 networks | 5000 | circuit | 0.17 | 0.17 | 93.5 / 97 | 10.20 / 10.60 / 10.60, 381 | - / - / -, 0 |
+| 10 networks | 5000 | jobs | - | - | 0.0 / 0 | 0.83 / 0.83 / 0.83, 3600 | - / - / -, 0 |
+| 100 networks | 5000 | io | 16.00 | 15.52 | 3980.2 / 5165 | 5.15 / 6.08 / 9.52, 23501 | 6.93 / 9.23 / 9.58, 19686 |
+| 100 networks | 5000 | storage_bus | 3.33 | 3.33 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 12000 |
+| 100 networks | 5000 | fluid_storage_bus | 1.67 | 1.67 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 6000 |
+| 100 networks | 5000 | maintainer | 1.68 | 1.68 | 0.0 / 0 | 5.00 / 5.00 / 5.00, 12 | 5.00 / 5.00 / 5.00, 6048 |
+| 100 networks | 5000 | circuit | 0.17 | 0.17 | 99.8 / 100 | - / - / -, 0 | - / - / -, 0 |
+| 100 networks | 5000 | jobs | - | - | 0.0 / 0 | 1.67 / 1.67 / 1.67, 3600 | - / - / -, 0 |
+| ME | 0 | jobs | - | - | 0.0 / 0 | 0.33 / 0.33 / 0.33, 179 | - / - / -, 0 |
+| ME | 20000 | io | 16.00 | 15.78 | 19434.8 / 19705 | 20.88 / 21.15 / 21.15, 27503 | 20.78 / 21.23 / 21.60, 12316 |
+| ME | 20000 | storage_bus | 8.00 | 8.00 | 440.0 / 440 | - / - / -, 0 | 2.92 / 2.92 / 2.92, 28800 |
+| ME | 20000 | fluid_storage_bus | 5.00 | 5.00 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 18000 |
+| ME | 20000 | maintainer | 4.00 | 4.00 | 805.0 / 805 | 8.35 / 8.37 / 8.37, 122 | 8.35 / 8.37 / 8.37, 14278 |
+| ME | 20000 | circuit | 0.17 | 0.17 | 391.0 / 391 | 40.10 / 40.10 / 40.10, 270 | - / - / -, 0 |
+| ME | 20000 | jobs | - | - | 0.0 / 0 | 3.30 / 3.33 / 6.63, 3600 | - / - / -, 0 |
+| idle | 20000 | io | 16.00 | 15.19 | 18720.2 / 19559 | 20.48 / 20.75 / 20.83, 4853 | 20.87 / 21.07 / 21.07, 42347 |
+| idle | 20000 | storage_bus | 8.00 | 8.00 | 440.0 / 440 | - / - / -, 0 | 2.92 / 2.92 / 2.92, 28800 |
+| idle | 20000 | fluid_storage_bus | 5.00 | 5.00 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 18000 |
+| idle | 20000 | maintainer | 4.00 | 4.00 | 805.0 / 805 | 8.35 / 8.37 / 8.37, 122 | 8.35 / 8.37 / 8.37, 14278 |
+| idle | 20000 | circuit | 0.17 | 0.17 | 391.0 / 391 | 40.10 / 40.10 / 40.10, 270 | - / - / -, 0 |
+| ME | 50000 | io | 16.00 | 15.97 | 49669.2 / 49719 | 52.13 / 52.27 / 52.27, 12142 | 52.13 / 52.13 / 52.13, 899 |
+| ME | 50000 | storage_bus | 8.00 | 8.00 | 2540.0 / 2540 | - / - / -, 0 | 7.28 / 7.30 / 7.30, 28800 |
+| ME | 50000 | fluid_storage_bus | 8.00 | 8.00 | 540.0 / 540 | - / - / -, 0 | 3.12 / 3.13 / 3.13, 28800 |
+| ME | 50000 | maintainer | 4.00 | 4.00 | 3805.0 / 3805 | - / - / -, 0 | 20.85 / 20.87 / 20.87, 11795 |
+| ME | 50000 | circuit | 0.17 | 0.17 | 991.0 / 991 | - / - / -, 0 | - / - / -, 0 |
+| ME | 50000 | jobs | - | - | 0.0 / 0 | 8.30 / 8.33 / 16.63, 3400 | - / - / -, 0 |
+| 30-minute run | 5000 | io | 16.00 | 15.97 | 1601.4 / 4669 | 2.52 / 5.32 / 9.27, 590807 | 6.17 / 7.73 / 9.27, 1113142 |
+| 30-minute run | 5000 | storage_bus | 2.92 | 2.92 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 315000 |
+| 30-minute run | 5000 | fluid_storage_bus | 1.25 | 1.25 | 0.0 / 0 | - / - / -, 0 | 2.00 / 2.00 / 2.00, 135000 |
+| 30-minute run | 5000 | maintainer | 1.68 | 1.68 | 0.0 / 0 | - / - / -, 0 | 5.00 / 5.00 / 5.00, 181800 |
+| 30-minute run | 5000 | circuit | 0.17 | 0.17 | 91.0 / 91 | 10.10 / 10.10 / 10.10, 16200 | - / - / -, 0 |
+| 30-minute run | 5000 | jobs | - | - | 0.0 / 0 | 0.50 / 0.83 / 1.63, 108000 | - / - / -, 0 |
+
+The io backlog sampled every 5 s over the window:
+
+* ME 100, io backlog every 5 s: 0 0 0 0 0 0 0 0 0 0 0; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 18397 kB
+* idle 100, io backlog every 5 s: 0 0 0 0 0 0 0 0 0 0 0; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 19144 kB
+* 10 networks 100, io backlog every 5 s: 0 0 0 0 0 0 0 0 0 0 0; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 24298 kB
+* 100 networks 100, io backlog every 5 s: 1184 1062 1032 867 786 770 843 950 877 801 773; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 99411 kB
+* without ME entities 100, io backlog every 5 s: 0 0 0 0 0 0 0 0 0 0 0; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 1553 kB
+* ME 1000, io backlog every 5 s: 508 336 126 57 0 0 0 0 0 0 0; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 37295 kB
+* idle 1000, io backlog every 5 s: 0 0 0 0 0 0 0 0 0 0 0; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 38682 kB
+* 10 networks 1000, io backlog every 5 s: 513 357 173 74 37 37 39 12 3 8 7; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 37692 kB
+* 100 networks 1000, io backlog every 5 s: 1330 1296 1068 1006 1026 1006 1055 979 898 866 936; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 102862 kB
+* without ME entities 1000, io backlog every 5 s: 0 0 0 0 0 0 0 0 0 0 0; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 1553 kB
+* ME 5000, io backlog every 5 s: 4475 4255 4159 3808 3286 3287 3137 2483 2837 2625 2499; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 110554 kB
+* idle 5000, io backlog every 5 s: 3296 1653 1721 1103 1112 1148 1123 1131 1110 1128 1125; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 69412 kB
+* 10 networks 5000, io backlog every 5 s: 4474 4277 4167 3837 3308 3325 3136 2506 2876 2597 2507; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 156122 kB
+* 100 networks 5000, io backlog every 5 s: 4956 4794 4661 4256 4183 4013 3200 3794 3207 3273 3368; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 156387 kB
+* without ME entities 5000, io backlog every 5 s: 0 0 0 0 0 0 0 0 0 0 0; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 1553 kB
+* ME 20000, io backlog every 5 s: 19704 19703 19585 19579 19565 19565 19313 19320 19284 19299 18947; storage bus: 440 440 440 440 440 440 440 440 440 440 440; mod heap 293311 kB
+* idle 20000, io backlog every 5 s: 19559 19558 19134 19134 19134 19134 18296 18296 18296 18296 17877; storage bus: 440 440 440 440 440 440 440 440 440 440 440; mod heap 326693 kB
+* without ME entities 20000, io backlog every 5 s: 0 0 0 0 0 0 0 0 0 0 0; storage bus: 0 0 0 0 0 0 0 0 0 0 0; mod heap 1553 kB
+* ME 50000, io backlog every 5 s: 49704 49704 49704 49703 49711 49710 49713 49712 49586 49583 49564; storage bus: 2540 2540 2540 2540 2540 2540 2540 2540 2540 2540 2540; mod heap 1118843 kB
+* 30-minute run 5000, io backlog every 5 s: 4475 4255 4159 3808 3286 3287 3137 2483 2837 2625 2499 2663 2604 2592 2609 2613 2625 2589 2602 2623 2593 2602 2622 2600 2593 2617 2607 2591 2611 2622 2588 2595 2598 2555 2570 2595 2566 2572 2586 2568 2567 2581 2570 2558 2579 2583 2560 2576 2597 2533 2485 2460 2433 2410 2424 2408 2415 2420 2414 2415 2409 2416 2409 2384 2382 2354 2359 2366 2356 2358 2372 2362 2365 2362 2359 2368 2363 2358 2361 2357 2363 2360 2361 2365 2362 2359 2361 2360 2362 2364 2224 2033 2075 2004 1967 1985 1800 1486 1464 1493 1489 1479 1476 1479 1480 1474 1476 1475 1480 1476 1476 1479 1474 1477 1477 1476 1474 1476 1476 1475 1475 1477 1478 1479 1471 1458 1449 1447 1448 1449 1449 1450 1448 1444 1449 1456 1453 1450 1447 1449 1450 1453 1450 1450 1450 1450 1450 1448 1451 1452 1454 1453 1452 1452 1450 1452 1453 1454 1452 1451 1451 1451 1452 1452 1452 1451 1453 1452 1452 1453 1451 1452 1451 1451 1451 1451 1450 1453 1452 1448 1445 1451 1451 1449 1452 1450 1448 1446 1450 1449 1455 1453 1334 1083 1096 1121 1123 1121 1124 1120 1125 1120 1120 1122 1120 1122 1121 1120 1120 1120 1120 1124 1124 1120 1121 1120 1121 1125 1120 1120 1120 1122 1120 1120 1120 1120 1120 1120 1121 1123 1120 1120 1121 1123 1121 1124 1120 1125 1120 1120 1122 1120 1122 1121 1120 1120 1120 1120 1124 1124 1120 1121 1120 1121 1125 1120 1120 1120 1122 1120 1120 1120 1120 1120 1120 1121 1123 1120 1120 1121 1123 1121 1124 1120 1125 1120 1120 1122 1120 1122 1121 1120 1120 1120 1120 1124 1124 1120 1121 1120 1121 1125 1120 1120 1120 1122 1120 1120 1120 1120 1120 1120 1121 1123 1120 1120 1121 1123 1121 1124 1120 1125 1120 1120 1122 1120 1122 1121 1120 1120 1120 1120 1124 1124 1120 1121 1120 1121 1125 1120 1120 1120 1122 1120 1120 1120 1120 1120 1120 1121 1123 1120 1120 1121 1123 1121 1124 1120 1125 1120 1120 1122 1120 1122 1121 1120 1120 1120 1120; storage bus: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0; mod heap 79718 kB
+
+### The scene's machines at the end of the window
+
+| Scene | N | Machines | Working | Waiting for ingredients | Output full | Other | Crafts of possible | Utilisation |
+|---|---|---|---|---|---|---|---|---|
+| ME | 100 | pair (5) | 5 | 0 | 0 | 0 | 450 / 450 | 100.0 % |
+| ME | 100 | provider (9) | 0 | 8 | 1 | 0 | 74 / 895 | 8.3 % |
+| idle | 100 | pair (5) | 0 | 0 | 0 | 5 | 0 / 0 | 0.0 % |
+| idle | 100 | provider (9) | 0 | 9 | 0 | 0 | 0 / 895 | 0.0 % |
+| 10 networks | 100 | pair (10) | 10 | 0 | 0 | 0 | 900 / 900 | 100.0 % |
+| 10 networks | 100 | provider (25) | 0 | 15 | 10 | 0 | 740 / 1680 | 44.0 % |
+| 100 networks | 100 | pair (100) | 100 | 0 | 0 | 0 | 9000 / 9000 | 100.0 % |
+| 100 networks | 100 | provider (205) | 100 | 105 | 0 | 0 | 7232 / 9780 | 73.9 % |
+| without ME entities | 100 | pair (5) | 0 | 5 | 0 | 0 | 0 / 450 | 0.0 % |
+| ME | 1000 | pair (50) | 50 | 0 | 0 | 0 | 4500 / 4500 | 100.0 % |
+| ME | 1000 | provider (45) | 9 | 35 | 1 | 0 | 1039 / 5932 | 17.5 % |
+| idle | 1000 | pair (50) | 0 | 0 | 0 | 50 | 0 / 0 | 0.0 % |
+| idle | 1000 | provider (45) | 0 | 45 | 0 | 0 | 0 / 5932 | 0.0 % |
+| 10 networks | 1000 | pair (50) | 50 | 0 | 0 | 0 | 4500 / 4500 | 100.0 % |
+| 10 networks | 1000 | provider (45) | 0 | 35 | 10 | 0 | 740 / 1930 | 38.3 % |
+| 100 networks | 1000 | pair (100) | 100 | 0 | 0 | 0 | 9000 / 9000 | 100.0 % |
+| 100 networks | 1000 | provider (205) | 100 | 105 | 0 | 0 | 7232 / 9780 | 73.9 % |
+| without ME entities | 1000 | pair (50) | 0 | 50 | 0 | 0 | 0 / 4500 | 0.0 % |
+| ME | 5000 | pair (250) | 250 | 0 | 0 | 0 | 22500 / 22500 | 100.0 % |
+| ME | 5000 | provider (205) | 155 | 44 | 6 | 0 | 19625 / 29935 | 65.6 % |
+| idle | 5000 | pair (250) | 0 | 0 | 0 | 250 | 0 / 0 | 0.0 % |
+| idle | 5000 | provider (205) | 0 | 205 | 0 | 0 | 0 / 29935 | 0.0 % |
+| 10 networks | 5000 | pair (250) | 250 | 0 | 0 | 0 | 22500 / 22500 | 100.0 % |
+| 10 networks | 5000 | provider (205) | 49 | 155 | 1 | 0 | 3987 / 22405 | 17.8 % |
+| 100 networks | 5000 | pair (200) | 200 | 0 | 0 | 0 | 18000 / 18000 | 100.0 % |
+| 100 networks | 5000 | provider (205) | 100 | 105 | 0 | 0 | 7232 / 9780 | 73.9 % |
+| without ME entities | 5000 | pair (250) | 0 | 250 | 0 | 0 | 0 / 22500 | 0.0 % |
+| ME | 20000 | pair (1000) | 1000 | 0 | 0 | 0 | 85512 / 90000 | 95.0 % |
+| ME | 20000 | provider (805) | 682 | 70 | 53 | 0 | 90087 / 119842 | 75.2 % |
+| idle | 20000 | pair (1000) | 0 | 0 | 0 | 1000 | 0 / 0 | 0.0 % |
+| idle | 20000 | provider (805) | 0 | 805 | 0 | 0 | 0 / 119842 | 0.0 % |
+| without ME entities | 20000 | pair (1000) | 0 | 1000 | 0 | 0 | 0 / 90000 | 0.0 % |
+| ME | 50000 | pair (2500) | 1667 | 0 | 833 | 0 | 125135 / 225000 | 55.6 % |
+| ME | 50000 | provider (2005) | 797 | 170 | 1038 | 0 | 103982 / 298808 | 34.8 % |
+| 30-minute run | 5000 | pair (250) | 250 | 0 | 0 | 0 | 675000 / 675000 | 100.0 % |
+| 30-minute run | 5000 | provider (205) | 79 | 126 | 0 | 0 | 161508 / 898050 | 18.0 % |
+
+### Load and the build burst
+
+| Scene | N | Load (s) | First tick (ms) | Second tick | First second (sum / max) | Burst build 1000 (ms: loop / tick) | Burst remove 1000 | Plain build 1000 | Plain remove 1000 |
+|---|---|---|---|---|---|---|---|---|---|
+| ME | 100 | 0.14 | 1.4 | 1.8 | 26.5 / 3.4 | 70.8 / 71.0 | 390.4 / 390.9 | 22.3 / 22.4 | 7.5 / 7.6 |
+| idle | 100 | 0.14 | 1.4 | 1.7 | 18.7 / 3.4 | 75.4 / 75.5 | 398.8 / 399.3 | 23.6 / 23.7 | 7.4 / 7.5 |
+| 10 networks | 100 | 0.14 | 4.1 | 1.7 | 34.9 / 4.1 | 69.9 / 70.1 | 423.9 / 424.5 | 23.0 / 23.2 | 7.6 / 7.7 |
+| 100 networks | 100 | 0.16 | 26.9 | 3.1 | 95.3 / 26.9 | 71.1 / 72.0 | 456.1 / 456.9 | 25.9 / 26.6 | 7.6 / 8.6 |
+| without ME entities | 100 | 0.14 | 0.0 | 0.0 | 0.3 / 0.0 | - | - | - | - |
+| ME | 1000 | 0.14 | 6.7 | 3.6 | 86.8 / 6.7 | 69.7 / 70.4 | 477.5 / 478.2 | 22.4 / 23.1 | 7.5 / 8.0 |
+| idle | 1000 | 0.15 | 6.5 | 3.6 | 66.7 / 6.5 | 87.6 / 87.9 | 459.9 / 460.6 | 21.4 / 21.7 | 7.5 / 7.8 |
+| 10 networks | 1000 | 0.15 | 9.5 | 2.5 | 83.9 / 9.5 | 72.7 / 73.2 | 495.4 / 496.5 | 23.3 / 24.3 | 7.7 / 8.6 |
+| 100 networks | 1000 | 0.18 | 27.5 | 3.6 | 100.2 / 27.5 | 70.8 / 71.6 | 483.1 / 484.0 | 25.8 / 26.8 | 8.4 / 9.2 |
+| without ME entities | 1000 | 0.14 | 0.0 | 0.0 | 0.3 / 0.0 | - | - | - | - |
+| ME | 5000 | 0.27 | 36.8 | 18.7 | 197.1 / 36.8 | 75.5 / 76.4 | 847.5 / 848.7 | 22.4 / 23.4 | 7.7 / 8.8 |
+| idle | 5000 | 0.26 | 35.2 | 17.2 | 133.4 / 35.2 | 72.4 / 73.1 | 734.0 / 734.5 | 25.2 / 25.8 | 7.7 / 8.2 |
+| 10 networks | 5000 | 0.26 | 39.4 | 8.4 | 136.0 / 39.4 | 103.7 / 105.2 | 591.3 / 592.2 | 22.6 / 24.0 | 7.1 / 8.0 |
+| 100 networks | 5000 | 0.28 | 50.6 | 8.9 | 142.6 / 50.6 | 73.5 / 74.4 | 625.2 / 625.9 | 24.7 / 25.6 | 7.6 / 8.5 |
+| without ME entities | 5000 | 0.18 | 0.1 | 0.0 | 0.5 / 0.1 | - | - | - | - |
+| ME | 20000 | 1.50 | 161.9 | 93.0 | 577.8 / 161.9 | 80.3 / 81.4 | 1625.5 / 1629.6 | 23.6 / 26.2 | 7.9 / 9.5 |
+| idle | 20000 | 1.55 | 149.1 | 83.3 | 365.0 / 149.1 | 87.9 / 89.0 | 1679.9 / 1680.8 | 24.4 / 25.4 | 7.9 / 8.8 |
+| without ME entities | 20000 | 0.30 | 0.0 | 0.0 | 0.8 / 0.0 | - | - | - | - |
+| ME | 50000 | 12.57 | 477.7 | 255.3 | 1460.0 / 477.7 | 264.7 / 273.1 | 3775.8 / 3782.3 | 23.0 / 27.3 | 7.3 / 14.2 |
+
+### Planner
+
+#### Vanilla with Space Age
+
+* 321 recipes on shortest paths of 345 usable: 243 processing patterns at chests, 78 crafting patterns at machines ({'assembling-machine-2': 3, 'biochamber': 1, 'chemical-plant': 2, 'cryogenic-plant': 1, 'electromagnetic-plant': 1, 'foundry': 2, 'oil-refinery': 1}), 0 with fluids but no machine; 305 items, 18 raw items and 5 raw fluids in stock, deepest tree 9, items per depth [15, 24, 47, 58, 64, 59, 24, 7, 7]; patterns the network cannot use: {'total': 8, 'fluid-box': 8}. Script time of the window with the jobs: 0.276 ms average, 1.38 99th percentile.
+
+| Target (depth) | Amount | Result | Steps | Runs | Missing | Plan (ms) |
+|---|---|---|---|---|---|---|
+| fusion-generator (9) | 1 | missing | 26 | 8234 | 3 fluid/molten-iron,stone,fluid/fluoroketone-cold | 20.5 |
+| fusion-generator (9) | 100 | missing | 26 | 822527 | 3 fluid/molten-iron,stone,fluid/fluoroketone-cold | 15.7 |
+| fusion-reactor (9) | 1 | missing | 26 | 40201 | 3 fluid/molten-iron,stone,fluid/fluoroketone-cold | 20.8 |
+| fusion-reactor (9) | 100 | missing | 26 | 4019484 | 6 fluid/molten-iron,stone,copper-ore,fluid/ammoniacal-solution | 22.3 |
+| fusion-reactor-equipment (9) | 1 | missing | 35 | 69640 | 3 fluid/molten-iron,stone,fluid/fluoroketone-cold | 17.2 |
+| fusion-reactor-equipment (9) | 100 | missing | 35 | 6962187 | 8 fluid/molten-iron,stone,copper-ore,fluid/ammoniacal-solution | 23.0 |
+| me-256k-crafting-storage (9) | 1 | ok | 20 | 5038 | 0  | 21.1 |
+| me-256k-crafting-storage (9) | 100 | ok | 20 | 503588 | 0  | 16.3 |
+| promethium-science-pack (9) | 1 | missing | 26 | 171 | 1 stone | 21.6 |
+| promethium-science-pack (9) | 100 | missing | 26 | 1498 | 1 stone | 21.6 |
+
+| Job start of 10 | Result | ms |
+|---|---|---|
+| fusion-generator | missing | 8.9 |
+| fusion-reactor | missing | 13.6 |
+| fusion-reactor-equipment | missing | 11.5 |
+| me-256k-crafting-storage | ok | 6.7 |
+| promethium-science-pack | missing | 32.2 |
+#### Gregtorio Continued (GregTech recipes)
+
+* 2650 recipes on shortest paths of 3673 usable: 1658 processing patterns at chests, 992 crafting patterns at machines ({'assembling-machine-2': 1, 'bacterial-vat': 1, 'biochamber': 1, 'chemical-plant': 1, 'coke-oven': 1, 'component-assembly-line': 1, 'cryogenic-plant': 1, 'dimensionally-transcendent-plasma-forge': 2, 'electromagnetic-plant': 1, 'ev-alloy-blast-smelter': 4, 'ev-assembling-machine': 9, 'ev-autoclave': 1, 'ev-canning-machine': 3, 'ev-centrifuge': 1, 'ev-chemical-bath': 1, 'ev-circuit-assembler': 3, 'ev-cracker': 1, 'ev-cutting-machine': 2, 'ev-electric-blast-furnace': 6, 'ev-electrolyzer': 3, 'ev-extractor': 6, 'ev-fluid-solidifier': 14, 'ev-greenhouse': 1, 'ev-large-chemical-reactor': 14, 'ev-laser-engraver': 1, 'ev-microverse-projector': 1, 'ev-mixer': 2, 'ev-ore-washer': 3, 'ev-pyrolyse-oven': 1, 'ev-short-distillation-tower': 1, 'ev-tall-distillation-tower': 1, 'ev-vacuum-freezer': 2, 'fluid-nuclear-reactor': 1, 'foundry': 1, 'fusion-reactor-mk1': 1, 'fusion-reactor-mk2': 2, 'fusion-reactor-mk3': 1, 'fusion-reactor-mk4': 1, 'fusion-reactor-mk5': 1, 'godforge': 1, 'iv-alloy-blast-smelter': 1, 'iv-assembling-machine': 1, 'iv-chemical-bath': 1, 'iv-circuit-assembler': 1, 'iv-cutting-machine': 1, 'iv-electric-blast-furnace': 2, 'iv-extractor': 3, 'iv-fluid-shaper': 1, 'iv-industrial-mixer': 1, 'iv-large-chemical-reactor': 2, 'iv-short-distillation-tower': 1, 'iv-tall-distillation-tower': 1, 'large-heat-exchanger': 1, 'luv-assembling-machine': 1, 'luv-assembly-line': 1, 'luv-autoclave': 1, 'luv-circuit-assembly-line': 1, 'luv-electric-blast-furnace': 2, 'luv-extractor': 1, 'luv-fluid-solidifier': 1, 'luv-large-chemical-reactor': 1, 'luv-laser-engraver': 1, 'luv-mixer': 1, 'max-alloy-blast-smelter': 1, 'max-assembling-machine': 2, 'max-electric-blast-furnace': 6, 'max-extractor': 2, 'max-fluid-solidifier': 8, 'max-laser-engraver': 1, 'max-mixer': 1, 'max-vacuum-freezer': 1, 'neutron-activator': 1, 'oil-refinery': 1, 'water-purification-plant': 1, 'zpm-assembly-line': 2}), 0 with fluids but no machine; 2363 items, 193 raw items and 33 raw fluids in stock, deepest tree 32, items per depth [104, 62, 57, 96, 70, 105, 103, 113, 129, 137, 136, 150, 97, 40, 37, 85, 91, 55, 40, 54, 94, 87, 83, 74, 105, 54, 36, 32, 18, 12, 5, 2]; patterns the network cannot use: {'total': 41, 'stack': 18, 'fluid-box': 23}. Script time of the window with the jobs: 0.259 ms average, 1.13 99th percentile.
+
+| Target (depth) | Amount | Result | Steps | Runs | Missing | Plan (ms) |
+|---|---|---|---|---|---|---|
+| eternity-wire (32) | 1 | missing | 3 | 3 | 2 eternity-dust,fluid/argon | 480.6 |
+| eternity-wire (32) | 100 | missing | 3 | 150 | 2 eternity-dust,fluid/argon | 447.8 |
+| eternity-ingot (31) | 1 | missing | 2 | 2 | 2 eternity-dust,fluid/argon | 437.4 |
+| eternity-ingot (31) | 100 | missing | 2 | 200 | 2 eternity-dust,fluid/argon | 489.8 |
+| uxv-assembling-machine (31) | 1 | missing | 5 | 7 | 8 uxv-conveyor-module,fluid/molten-spacetime,fluid/molten-flerovium,fluid/excited-dimensionally-transcendent-crude-catalyst | 489.7 |
+| uxv-assembling-machine (31) | 100 | missing | 5 | 360 | 8 uxv-conveyor-module,fluid/molten-spacetime,fluid/molten-flerovium,fluid/excited-dimensionally-transcendent-crude-catalyst | 482.2 |
+| uxv-chemical-bath (31) | 1 | missing | 5 | 32 | 9 bronze-ingot,iron-plate,tin-plate,glass-dust | 404.1 |
+| uxv-chemical-bath (31) | 100 | missing | 5 | 255 | 9 bronze-ingot,iron-plate,tin-plate,glass-dust | 349.2 |
+| uxv-circuit-assembler (31) | 1 | missing | 5 | 7 | 8 uxv-conveyor-module,fluid/molten-spacetime,fluid/molten-flerovium,fluid/excited-dimensionally-transcendent-crude-catalyst | 401.1 |
+| uxv-circuit-assembler (31) | 100 | missing | 5 | 360 | 8 uxv-conveyor-module,fluid/molten-spacetime,fluid/molten-flerovium,fluid/excited-dimensionally-transcendent-crude-catalyst | 395.0 |
+
+| Job start of 10 | Result | ms |
+|---|---|---|
+| eternity-wire | missing | 281.6 |
+| eternity-ingot | missing | 254.8 |
+| uxv-assembling-machine | missing | 284.0 |
+| uxv-chemical-bath | missing | 191.3 |
+| uxv-circuit-assembler | missing | 252.4 |
+
+### Long run (30 minutes at 5000)
+
+| Minute | Script avg | 99th | Worst | Ticks over 5 ms | GC avg | Mod heap (kB) | Backlogs io / storage bus / fluid / maintainer / circuit |
+|---|---|---|---|---|---|---|---|
+| 5 | 1.331 | 3.38 | 37.1 | 59 | 0.093 | 99189 | 2415 / 0 / 0 / 0 / 91 |
+| 10 | 1.151 | 3.11 | 36.4 | 51 | 0.091 | 90515 | 1475 / 0 / 0 / 0 / 91 |
+| 15 | 1.051 | 2.94 | 38.1 | 49 | 0.084 | 116457 | 1448 / 0 / 0 / 0 / 91 |
+| 20 | 0.981 | 2.84 | 45.1 | 47 | 0.081 | 75619 | 1120 / 0 / 0 / 0 / 91 |
+| 25 | 0.959 | 2.84 | 35.1 | 44 | 0.087 | 70669 | 1120 / 0 / 0 / 0 / 91 |
+
+At the end of the run: mod heap 79718 kB.
+
+### Profiles
+
+
+#### Profile at 1000 (inclusive ms per tick of the window, calls per tick, µs per call; wrapper overhead 0.88 µs per call)
+
+| Function | ms per tick | Calls per tick | µs per call |
+|---|---|---|---|
+| `schedule.M.run` | 1.1455 | 5.00 | 229.1 |
+| `io.M.on_tick` | 0.9624 | 1.00 | 962.4 |
+| `io.visit` | 0.9167 | 13.65 | 67.2 |
+| `io.M.interface_step` | 0.4352 | 4.90 | 88.8 |
+| `io.M.bus_step` | 0.3912 | 8.75 | 44.7 |
+| `autocraft.M.on_tick` | 0.2821 | 1.00 | 282.1 |
+| `circuit.on_tick` | 0.1558 | 1.00 | 155.8 |
+| `circuit.visit_circuit` | 0.1372 | 0.17 | 823.2 |
+| `network.M.extract_to` | 0.1330 | 5.92 | 22.5 |
+| `io.import_items` | 0.1305 | 3.80 | 34.4 |
+| `network.insert_key` | 0.1151 | 7.13 | 16.2 |
+| `circuit.circuit_step` | 0.1038 | 0.15 | 691.9 |
+| `network.M.insert_stack` | 0.1018 | 2.95 | 34.5 |
+| `io.interface_sides` | 0.1002 | 4.90 | 20.5 |
+| `network.extract_key` | 0.0995 | 7.81 | 12.7 |
+| `network.M.active_of` | 0.0937 | 15.16 | 6.2 |
+| `io.export_items` | 0.0834 | 2.96 | 28.2 |
+| `network.M.insert` | 0.0730 | 2.97 | 24.6 |
+| `autocraft.maintenance` | 0.0723 | 0.50 | 144.6 |
+| `autocraft.scan_provider` | 0.0701 | 0.50 | 140.1 |
+| `io.M.fluid_bus_step` | 0.0658 | 2.77 | 23.8 |
+| `autocraft.step_jobs` | 0.0479 | 1.00 | 47.9 |
+| `storagebus.M.on_tick` | 0.0424 | 1.00 | 42.4 |
+| `autocraft.job_step` | 0.0413 | 0.50 | 82.7 |
+| `io.export_side` | 0.0405 | 1.54 | 26.3 |
+| `network.M.network_of` | 0.0388 | 17.27 | 2.2 |
+| `network.M.extract_fluid` | 0.0383 | 2.25 | 17.0 |
+| `network.M.usable` | 0.0378 | 35.58 | 1.1 |
+| `network.lookups` | 0.0332 | 15.69 | 2.1 |
+| `circuit.signals_of` | 0.0307 | 0.17 | 184.1 |
+| `circuit.network_signals` | 0.0304 | 0.02 | 1825.3 |
+| `network.M.storable` | 0.0234 | 3.43 | 6.8 |
+| `schedule.M.at` | 0.0226 | 15.27 | 1.5 |
+| `network.M.insert_fluid` | 0.0221 | 0.73 | 30.2 |
+| `fluid-storagebus.M.on_tick` | 0.0184 | 1.00 | 18.4 |
+| `autocraft.on_arrival` | 0.0164 | 7.13 | 2.3 |
+| `network.M.insert_partial` | 0.0149 | 0.48 | 31.2 |
+| `io.target_of` | 0.0148 | 8.75 | 1.7 |
+| `storagebus.M.visit` | 0.0130 | 0.58 | 22.3 |
+| `network.moved_key` | 0.0129 | 14.94 | 0.9 |
+
+Engine calls and window data (µs per call):
+
+| Call | µs |
+|---|---|
+| chest48.get_inventory | 0.5 |
+| chest48.get_contents | 0.3 |
+| inv.get_item_count{name} | 0.6 |
+| inv.get_insertable_count{name} | 0.6 |
+| inv.insert+remove 10 | 1.4 |
+| inv[i] read + valid_for_read | 0.4 |
+| find_entities_filtered{position} | 2.3 |
+| entity.valid + direction | 0.3 |
+| fluidbox[1] read | 2.1 |
+| get_fluid_segment_id | 0.4 |
+| get_fluid_segment_contents | 0.6 |
+| fluidbox.get_capacity | 0.3 |
+| insert_fluid+remove_fluid 100 | 1.4 |
+| long segment: get_fluid_segment_contents | 0.6 |
+| long segment: insert_fluid+remove_fluid 100 | 1.6 |
+| chest800.get_contents | 18.8 |
+| chest800.get_item_count{name} | 1.9 |
+| chest800.get_insertable_count{name} | 1.0 |
+| section.filters = 405 signals | 280.6 |
+| section.filters = 100 signals (qualities) | 61.6 |
+| section.filters = 400 signals (qualities) | 278.9 |
+| section.filters = 700 signals (qualities) | 577.2 |
+| section.filters = 1000 signals (qualities) | 990.5 |
+| storage API: count | 0.5 |
+| storage API: insert 10 + extract 10 (iron-plate) | 9.6 |
+| storage API: can_insert 1000 (iron-plate) | 2.3 |
+| storage API: can_insert 1000 (a new item type) | 3.3 |
+| storage API: extract_to a chest 10 + insert back | 14.6 |
+| storage API: can_insert_fluid 1000 (water) | 2.3 |
+| storage API: insert_fluid 100 + extract_fluid 100 (water) | 13.9 |
+| circuit interface update (no filter, remote) | 907.7 |
+| circuit interface update (5 filters, remote) | 131.6 |
+| remote.call count (empty work) | 3.2 |
+| window: terminal entries (all, by count) | 6522.6 |
+| window: terminal entries (items, by name) | 7677.7 |
+| window: terminal entries (search 'iron') | 2002.6 |
+| window: terminal craft preview (100) | 884.4 |
+| window: terminal jobs | 81.4 |
+| window: terminal cells | 2847.1 |
+| window: interface data (get_interface) | 40.4 |
+| window: bus data (bus_info) | 9.1 |
+| window: storage bus data (info) | 17.3 |
+| window: drive data (drive) | 680.3 |
+| window: maintainer data (get_maintainer) | 6.2 |
+| window: circuit interface data (get_circuit) | 8.4 |
+| window: provider data (provider_info) | 126.5 |
+| window: crafting CPU data (group_info) | 30.7 |
+| window: controller data (network) | 89.3 |
+| build one import bus (raise_built) | 157.2 |
+| remove one import bus (raise_destroy) | 121.6 |
+| graph rebuild (on_configuration_changed) | 193278.0 |
+
+#### Profile at 5000 (inclusive ms per tick of the window, calls per tick, µs per call; wrapper overhead 0.92 µs per call)
+
+| Function | ms per tick | Calls per tick | µs per call |
+|---|---|---|---|
+| `schedule.M.run` | 1.6242 | 5.00 | 324.8 |
+| `io.M.on_tick` | 1.2948 | 1.00 | 1294.8 |
+| `io.visit` | 1.2114 | 16.00 | 75.7 |
+| `io.M.interface_step` | 0.6325 | 6.68 | 94.7 |
+| `autocraft.M.on_tick` | 0.4638 | 1.00 | 463.8 |
+| `io.M.bus_step` | 0.4532 | 9.32 | 48.6 |
+| `network.insert_key` | 0.2328 | 7.69 | 30.3 |
+| `circuit.on_tick` | 0.2211 | 1.00 | 221.1 |
+| `network.M.insert_stack` | 0.1750 | 3.91 | 44.8 |
+| `autocraft.step_jobs` | 0.1673 | 1.00 | 167.3 |
+| `circuit.visit_circuit` | 0.1644 | 0.17 | 986.4 |
+| `io.import_items` | 0.1607 | 3.81 | 42.1 |
+| `autocraft.job_step` | 0.1602 | 1.00 | 160.2 |
+| `io.interface_sides` | 0.1553 | 6.68 | 23.2 |
+| `network.M.extract_to` | 0.1494 | 6.48 | 23.1 |
+| `circuit.circuit_step` | 0.1290 | 0.15 | 860.3 |
+| `storagebus.M.on_tick` | 0.1257 | 1.00 | 125.7 |
+| `network.extract_key` | 0.1183 | 7.73 | 15.3 |
+| `network.M.active_of` | 0.1174 | 20.68 | 5.7 |
+| `io.M.fluid_bus_step` | 0.0871 | 3.50 | 24.9 |
+| `io.export_items` | 0.0846 | 2.94 | 28.8 |
+| `network.M.insert` | 0.0696 | 1.89 | 36.8 |
+| `autocraft.maintenance` | 0.0680 | 0.50 | 136.0 |
+| `autocraft.scan_provider` | 0.0658 | 0.50 | 131.7 |
+| `storagebus.M.visit` | 0.0598 | 2.92 | 20.5 |
+| `network.M.network_of` | 0.0547 | 26.35 | 2.1 |
+| `network.M.insert_partial` | 0.0524 | 1.30 | 40.3 |
+| `io.export_side` | 0.0520 | 1.88 | 27.6 |
+| `network.M.usable` | 0.0473 | 47.88 | 1.0 |
+| `network.M.insert_fluid` | 0.0465 | 0.59 | 79.5 |
+| `network.M.extract_fluid` | 0.0460 | 2.33 | 19.7 |
+| `circuit.visit_maintainer` | 0.0402 | 1.68 | 23.9 |
+| `fluid-storagebus.M.on_tick` | 0.0384 | 1.00 | 38.4 |
+| `schedule.M.at` | 0.0378 | 22.02 | 1.7 |
+| `network.lookups` | 0.0356 | 16.01 | 2.2 |
+| `network.M.storable` | 0.0334 | 5.21 | 6.4 |
+| `circuit.signals_of` | 0.0327 | 0.17 | 196.4 |
+| `circuit.network_signals` | 0.0325 | 0.02 | 1950.1 |
+| `network.M.can_insert_fluid` | 0.0265 | 0.59 | 45.2 |
+| `fluid-storagebus.M.visit` | 0.0254 | 1.25 | 20.3 |
+
+Engine calls and window data (µs per call):
+
+| Call | µs |
+|---|---|
+| chest48.get_inventory | 0.6 |
+| chest48.get_contents | 0.4 |
+| inv.get_item_count{name} | 0.6 |
+| inv.get_insertable_count{name} | 3.8 |
+| inv.insert+remove 10 | 5.6 |
+| inv[i] read + valid_for_read | 2.7 |
+| find_entities_filtered{position} | 1.9 |
+| entity.valid + direction | 0.3 |
+| fluidbox[1] read | 0.5 |
+| get_fluid_segment_id | 0.3 |
+| get_fluid_segment_contents | 0.6 |
+| fluidbox.get_capacity | 0.3 |
+| insert_fluid+remove_fluid 100 | 1.4 |
+| long segment: get_fluid_segment_contents | 0.6 |
+| long segment: insert_fluid+remove_fluid 100 | 1.4 |
+| chest800.get_contents | 15.0 |
+| chest800.get_item_count{name} | 1.1 |
+| chest800.get_insertable_count{name} | 1.1 |
+| section.filters = 405 signals | 279.6 |
+| section.filters = 100 signals (qualities) | 67.8 |
+| section.filters = 400 signals (qualities) | 278.8 |
+| section.filters = 700 signals (qualities) | 605.9 |
+| section.filters = 1000 signals (qualities) | 989.7 |
+| storage API: count | 0.5 |
+| storage API: insert 10 + extract 10 (iron-plate) | 14.8 |
+| storage API: can_insert 1000 (iron-plate) | 5.8 |
+| storage API: can_insert 1000 (a new item type) | 3.4 |
+| storage API: extract_to a chest 10 + insert back | 19.8 |
+| storage API: can_insert_fluid 1000 (water) | 17.5 |
+| storage API: insert_fluid 100 + extract_fluid 100 (water) | 42.3 |
+| circuit interface update (no filter, remote) | 973.6 |
+| circuit interface update (5 filters, remote) | 109.5 |
+| remote.call count (empty work) | 3.1 |
+| window: terminal entries (all, by count) | 6828.9 |
+| window: terminal entries (items, by name) | 5838.3 |
+| window: terminal entries (search 'iron') | 3577.8 |
+| window: terminal craft preview (100) | 2812.9 |
+| window: terminal jobs | 693.6 |
+| window: terminal cells | 14947.8 |
+| window: interface data (get_interface) | 41.7 |
+| window: bus data (bus_info) | 10.0 |
+| window: storage bus data (info) | 17.3 |
+| window: drive data (drive) | 562.7 |
+| window: maintainer data (get_maintainer) | 6.3 |
+| window: circuit interface data (get_circuit) | 4.5 |
+| window: provider data (provider_info) | 131.6 |
+| window: crafting CPU data (group_info) | 33.4 |
+| window: controller data (network) | 461.9 |
+| build one import bus (raise_built) | 164.1 |
+| remove one import bus (raise_destroy) | 461.0 |
+| graph rebuild (on_configuration_changed) | 915500.1 |
+
+#### Profile at 20000 (inclusive ms per tick of the window, calls per tick, µs per call; wrapper overhead 0.85 µs per call)
+
+| Function | ms per tick | Calls per tick | µs per call |
+|---|---|---|---|
+| `schedule.M.run` | 3.4832 | 5.00 | 696.6 |
+| `io.M.on_tick` | 2.8406 | 1.00 | 2840.6 |
+| `io.visit` | 2.7352 | 16.00 | 170.9 |
+| `io.M.interface_step` | 1.3783 | 6.36 | 216.7 |
+| `io.M.bus_step` | 1.1980 | 9.64 | 124.3 |
+| `network.insert_key` | 1.1211 | 18.51 | 60.6 |
+| `autocraft.M.on_tick` | 0.7208 | 1.00 | 720.8 |
+| `network.M.insert_stack` | 0.6515 | 10.08 | 64.6 |
+| `io.import_items` | 0.5173 | 3.85 | 134.3 |
+| `storagebus.M.on_tick` | 0.3846 | 1.00 | 384.6 |
+| `autocraft.step_jobs` | 0.3548 | 1.00 | 354.8 |
+| `io.M.fluid_bus_step` | 0.3518 | 3.68 | 95.7 |
+| `autocraft.job_step` | 0.3461 | 1.00 | 346.1 |
+| `network.extract_key` | 0.3171 | 7.97 | 39.8 |
+| `io.interface_sides` | 0.3164 | 6.36 | 49.7 |
+| `network.M.extract_to` | 0.2980 | 5.97 | 50.0 |
+| `network.M.insert_fluid` | 0.2934 | 1.39 | 210.7 |
+| `circuit.on_tick` | 0.2829 | 1.00 | 282.9 |
+| `network.M.insert_partial` | 0.2341 | 4.35 | 53.9 |
+| `network.M.insert` | 0.2148 | 2.69 | 79.7 |
+| `network.extract_order` | 0.1637 | 7.97 | 20.5 |
+| `io.export_items` | 0.1616 | 2.90 | 55.7 |
+| `storagebus.M.visit` | 0.1611 | 8.00 | 20.1 |
+| `network.M.active_of` | 0.1594 | 25.25 | 6.3 |
+| `circuit.visit_circuit` | 0.1569 | 0.17 | 941.5 |
+| `io.tank_to_network` | 0.1548 | 0.56 | 278.6 |
+| `fluid-storagebus.M.on_tick` | 0.1444 | 1.00 | 144.4 |
+| `network.M.can_insert_fluid` | 0.1385 | 1.39 | 99.5 |
+| `network.room_for` | 0.1260 | 1.40 | 90.3 |
+| `circuit.circuit_step` | 0.1206 | 0.15 | 803.9 |
+| `network.M.extract_fluid` | 0.1056 | 2.43 | 43.4 |
+| `fluid-storagebus.M.visit` | 0.1026 | 5.00 | 20.5 |
+| `circuit.visit_maintainer` | 0.0933 | 4.00 | 23.3 |
+| `network.M.storable` | 0.0837 | 14.43 | 5.8 |
+| `io.export_side` | 0.0819 | 1.59 | 51.4 |
+| `network.M.network_of` | 0.0784 | 39.75 | 2.0 |
+| `network.holders` | 0.0778 | 19.91 | 3.9 |
+| `autocraft.find_crafter` | 0.0748 | 3.31 | 22.6 |
+| `network.M.usable` | 0.0745 | 73.99 | 1.0 |
+| `autocraft.maintenance` | 0.0719 | 0.50 | 143.9 |
+
+Engine calls and window data (µs per call):
+
+| Call | µs |
+|---|---|
+| chest48.get_inventory | 0.8 |
+| chest48.get_contents | 0.3 |
+| inv.get_item_count{name} | 0.6 |
+| inv.get_insertable_count{name} | 0.6 |
+| inv.insert+remove 10 | 1.7 |
+| inv[i] read + valid_for_read | 0.4 |
+| find_entities_filtered{position} | 2.1 |
+| entity.valid + direction | 0.3 |
+| stack: prototype+spoil+item+health+tags (M.storable) | 0.7 |
+| fluidbox[1] read | 0.6 |
+| get_fluid_segment_id | 0.3 |
+| get_fluid_segment_contents | 0.7 |
+| fluidbox.get_capacity | 0.3 |
+| insert_fluid+remove_fluid 100 | 1.5 |
+| long segment: get_fluid_segment_contents | 0.7 |
+| long segment: insert_fluid+remove_fluid 100 | 1.5 |
+| chest800.get_contents | 15.7 |
+| chest800.get_item_count{name} | 1.1 |
+| chest800.get_insertable_count{name} | 1.1 |
+| section.filters = 405 signals | 305.4 |
+| section.filters = 100 signals (qualities) | 68.2 |
+| section.filters = 400 signals (qualities) | 298.2 |
+| section.filters = 700 signals (qualities) | 628.2 |
+| section.filters = 1000 signals (qualities) | 1206.9 |
+| storage API: count | 0.4 |
+| storage API: insert 10 + extract 10 (iron-plate) | 43.4 |
+| storage API: can_insert 1000 (iron-plate) | 26.3 |
+| storage API: can_insert 1000 (a new item type) | 4.1 |
+| storage API: extract_to a chest 10 + insert back | 44.2 |
+| storage API: can_insert_fluid 1000 (water) | 70.4 |
+| storage API: insert_fluid 100 + extract_fluid 100 (water) | 160.9 |
+| circuit interface update (no filter, remote) | 928.2 |
+| circuit interface update (5 filters, remote) | 111.3 |
+| remote.call count (empty work) | 2.9 |
+| window: terminal entries (all, by count) | 6550.9 |
+| window: terminal entries (items, by name) | 7298.5 |
+| window: terminal entries (search 'iron') | 2131.4 |
+| window: terminal craft preview (100) | 2668.7 |
+| window: terminal jobs | 1550.2 |
+| window: terminal cells | 57377.9 |
+| window: interface data (get_interface) | 46.9 |
+| window: bus data (bus_info) | 10.1 |
+| window: storage bus data (info) | 17.3 |
+| window: drive data (drive) | 592.0 |
+| window: maintainer data (get_maintainer) | 6.5 |
+| window: circuit interface data (get_circuit) | 5.6 |
+| window: provider data (provider_info) | 151.7 |
+| window: crafting CPU data (group_info) | 37.6 |
+| window: controller data (network) | 3265.8 |
+| build one import bus (raise_built) | 163.3 |
+| remove one import bus (raise_destroy) | 1982.5 |
+| graph rebuild (on_configuration_changed) | 3748020.1 |
+
+
+### The premise of the issue, checked
+
+The issue was written from the 0.3.0 numbers of this page, not from a measurement of the scheduler. Checked against
+the code (`scripts/fork-me-schedule.lua`, `fork-me-io.lua`) and the counters:
+
+* **The budget is a constant.** True: 16 interface and bus visits per tick at every size (the setting), 8 per
+  storage bus side, 4 maintainer checks, 10 circuit updates per second, 1 crafting job step per tick. At 100 the
+  interfaces and buses need 2.5 visits per tick, at 1000 13.7, at 5000 the budget is used in every tick and
+  3370 blocks wait in the backlog on average (4669 at most); at 20 000 19435
+  wait, at 50 000 49669. But the time is not constant: 1.394 ms at 5000, 2.948 at
+  20 000, 6.782 at 50 000, because a visit does the work of the ticks since the block's last visit (an
+  interface handles 8 slots per 15 ticks of waiting, a bus moves 256 items per second of waiting): the budget caps
+  the visits, not the work, and the work follows the throughput.
+* **"A busy block is served about every 5 s at 5000."** True, and measured for the first time: a block that moved
+  all it was allowed to is due again after 15 ticks, but it is visited again after 4.75 s (median),
+  5.75 s (99th percentile), 5.85 s at worst; at 1000 after 0.38 / 0.80 s, at 100 after
+  the 15 ticks. At 20 000: 20.77 / 21.02 s, at 50 000: 52.03 /
+  52.27 s. The reason is the backlog: every block that is due and does not fit waits in **one**
+  first-in-first-out list, busy and idle alike, and a wake does nothing for a block already in it (`Sched.wake`
+  returns), so the interval of every block is about (the blocks due per tick) / 16, whatever the block does. The
+  `pair` machines of the scene still run at 100 % at 5000: the catch-up (a bus moves its speed times
+  the ticks since its last visit) hides the interval as long as the chest or machine on the other side holds what
+  piles up. At 20 000 they run at 95 %, at 50 000 at 56 %.
+* **Where idle blocks go.** They stay in the same queue. A block that found nothing doubles its interval up to the
+  idle limit (300 ticks, the setting; never longer than the round robin of 0.2.0 took, `Sched.idle_limit`) and is
+  visited at that interval forever, from the same budget: at 5000, 5.5 of the 16 visits per tick find
+  nothing to do (34 % of all visits), and the **idle** scene, where nothing can move at all, still
+  costs 0.846 ms per tick against 1.394 for the working scene: all 16 visits per tick find nothing,
+  the storage buses are read every 2 s whether they changed or not (2.9 reads per tick), the maintainers checked
+  every 5 s (1.7 per tick), one provider rescanned every 2 ticks, and the circuit interfaces written in turns.
+* **The other budgets saturate too.** At 20 000 the 2000 storage buses are read every 2.92 s (8 reads per
+  tick), so a storage bus sees a chest change after up to 2.82 s (the target of issue #5 was 2 s), the
+  2000 level maintainers are checked every 8.35 s (4 per tick) with 805 waiting, and
+  a maintainer whose stock was taken reacts after 3.38 s (median; one of the five probes not within
+  60 s): its wake finds it in the backlog already, where a wake does nothing, and its job needs a free CPU. The 400
+  circuit interfaces are each written every 40.10 s.
+* **Memory.** The mod's Lua heap is 108 MB at 5000 and 286 MB at 20 000 (the records of the
+  blocks, the cells' item tables, the lookups), the save 6.7 MB; the long run below says whether it grows.
+* **What the backlog does.** It serialises everything that is due beyond the budget, each unit once, in the order
+  the units came due. There is no priority of busy over idle units and none for a woken unit; its length was not
+  reported anywhere (the counters do now). The circuit interfaces show the same effect in small: 100 interfaces at
+  10 updates per second are each written every 10.10 s (the "at most once per 60 ticks" of the code
+  never applies), with 91 of them waiting at any time.
+* **Jobs.** One job step per tick, each job at most every 20 ticks, catch-up at most 3 steps' worth: the 50 jobs at
+  5000 are stepped every 0.82 s (full speed through the catch-up); at 20 000 the 200 jobs every
+  3.30 s, which is 30 % of their speed, at 50 000 the 500 jobs every 8.30 s.
+* **Several networks.** The queue is one for the whole map, so 100 networks of 50 blocks have the same service
+  interval as one network of 5000 (4.92 s median), but they cost less per tick
+  (1.092 against 1.394 ms): the storage engine's lists are shorter in a small network (the
+  variety of 855 item types sits in the first network only, which flatters the number a little).
+
+So the issue's first point stands, including its number; what it did not say is that the idle blocks are the ones
+spending the budget, and that the lever is not "more visits" but **who gets a visit**: idle blocks must leave the
+budget, and the budget must follow the load by a time-free rule.
+
+### What the new scenes show
+
+* **Long run** (30 minutes at 5000): the script time falls from 1.331 ms in the first five minutes to
+  0.959 in the last (the scene's sources run dry and more blocks go idle), the backlog shrinks with them,
+  the garbage collector's average stays at 0.087 ms and the mod's Lua heap moves between 69 and
+  114 MB with the collector's cycles: nothing grows.
+* **Planner.** Vanilla with Space Age: 321 recipes as patterns, trees of depth 9, a plan of the deepest
+  items costs 20.8 ms (35 steps), and the crafting tab computes such a plan at every refresh of
+  its preview. Gregtorio Continued: 2650 recipes at 75 kinds of machines, trees of depth
+  32, and a plan of one of the deepest items costs **437.4 ms** although it stops after
+  5 steps at materials the scene cannot make (products with a chance, and 41 patterns
+  whose machines' fluid boxes do not fit the recipe as the scene placed them): the planner walks every pattern of
+  the network and copies the stock per alternative before it finds that out. Every refresh of the crafting tab's
+  preview computes such a plan (lever 11).
+* **Engine share.** The ME entities cost the engine 0.36 ms per tick at 5000 and 0.25
+  at 20 000 (the scene's whole update minus its script time, against the same scene with every ME entity removed
+  before anything was registered): the 2000 hidden side tanks of the interfaces in the fluid system, 20 000 electric
+  consumers, the lamps.
+* **Load.** Loading the 5000 save takes 0.3 s, the 20 000 save 1.5 s, the 50 000 save
+  12.6 s (script.dat alone is most of it: the records of every block, the cells' item tables); the first
+  tick after the load costs 37 / 162 / 478 ms.
+* **50 000.** The machine builds and runs the scene (a minute to build, 15.1 MB save, 1093 MB of
+  Lua heap, 2667 of 3595 ticks over 5 ms); a busy block is visited every 52.03 s, the storage buses
+  are read every 7.28 s, the maintainers checked every 20.85 s, the 1000 circuit interfaces
+  were not all written once in the window, and 833 of the 2500 `pair` machines stand with a full output. This is
+  where the constant budget ends; the issue's size target needs lever 2.
+
+### Targets of issue #38, confirmed or corrected
+
+| Target | 0.3.0 measured here | Verdict |
+|---|---|---|
+| average script time at 5000: at most 0.6 ms | 1.394 ms (the game client and the browser were running: 1.26 to 1.41 in the quieter runs of 0.3.0) | kept: in the profile 68 % of the mod's tick goes to the interface and bus visits, a third of which find nothing (plan 1), and the visit itself has about 20 µs of lookups and table churn to lose (plan 3) |
+| average at 20 000 / 50 000: at most 1.5 / 3 ms | 2.948 / 6.782 ms | kept. The constant budget does not bound the time: a visit moves what its block gathered since the last one (the catch-up, up to 600 ticks' worth), so the work per tick follows the throughput of the scene and the per-visit cost grows with the storage engine's lists; the idle variant at 20 000 costs 1.382 ms because the storage buses (2000 at 8 reads per tick) and the maintainers (2000 at 4 checks per tick) saturate their budgets too. The target is read together with the service target: **at most 1.5 ms at 20 000 and 3 ms at 50 000 with a busy interval under 2 s** |
+| idle network at 5000: at most 0.1 ms | 0.846 ms | kept as a direction, corrected to **at most 0.2 ms**: 0.1 ms leaves no room for what has no event: the storage bus reads (500 buses at 2 s are 4 reads per tick of about 20 µs), the maintainers' checks of circuit conditions and the provider rescans |
+| 99th percentile at 5000: at most 2 ms | 3.64 ms | kept |
+| ticks over 5 ms at 5000, the mod's own time: none | 12 per minute | corrected to **none from the mod's own work**: the Lua garbage collector's steps (up to 40 ms in one tick, `luaGarbageIncremental`) are the engine's scheduling of the collector; less garbage per visit (plan 4) shortens them, the ticks themselves cannot be promised. The mod's own spikes are the section writes of unfiltered circuit interfaces (0.99 ms for 1000 signals in the engine) on a busy tick |
+| worst service interval of a busy block at every size: at most 2 s | 5.75 s at 5000, 21.02 s at 20 000, 52.27 s at 50 000 (99th percentiles) | kept, as the 99th percentile (the worst single interval is one block woken into a full backlog), and **median under 0.5 s** added |
+| machines waiting for their bus: none in the scenes | `pair` machines at 100 / 95 / 56 % | kept |
+| cost per moved item: at most 5 ns | **0.50 µs** of script time per moved item at 5000 (fluid and crafting included), against 0.21 µs of entity update per item for the 5000 inserters of the reference scene: 2.4 times. (The 7.6 and 3.4 ns of the 0.3.0 page divided milliseconds per tick by items per second; the ratio was right, the unit was not.) | corrected to **at most 0.33 µs per moved item** (the issue's 5 ns in the same convention: two thirds of today) |
+| Lua garbage per tick at 5000: at most half | 0.092 ms | kept |
+| a blueprint of 1000 blocks built or removed: no tick over 16 ms | build 75 ms, removal **848 ms** (1000 plain chests: 22 and 8 ms, the mod's handlers included) | kept for the build as a direction (**at most 30 ms**: 1000 events the engine delivers one by one, each with its registration), **corrected for the removal to at most 50 ms**. The removal's problem is one full search of the network per removed cable (plan 5) |
+| graph rebuild on a mod update at 5000: at most 0.3 s | 0.92 s | kept |
+| an open terminal on the full network: no tick over 2 ms because of it | the sorted contents list behind it costs **6.8 ms** per refresh (every 60 ticks while the window is open), the cells tab 14.9 ms, the crafting preview 2.8 ms; the GUI work on top is not measurable headless | kept for the data side (**at most 0.5 ms per refresh when nothing changed, 2 ms when everything did**); the GUI side is the maintainer's in-game test |
+| load: the first ticks after loading | 37 and 19 ms in the first two ticks at 5000, 162 ms at 20 000 | new target: **no tick over 16 ms after a load at 20 000** |
+| several networks | 100 networks of 50 cost 1.092 ms against 1.394 for one of 5000 | new target: **no number of the single network gets worse when the same blocks are split over 100 networks** (the per-network tables must stay cheap) |
+
+### The ranked plan
+
+Each lever with its expected gain from the profile, its risk for saves and its order. One lever or one closely
+related group per pull request; a lever whose measured gain is under 5 % of the script time is dropped and recorded
+here as tried.
+
+| # | Lever | What changes | Expected gain (from the profile) | Risk for saves | Pull request |
+|---|---|---|---|---|---|
+| 1 | **Idle blocks leave the budget.** A block that found nothing for its idle limit goes to a sleep list: it is polled from a budget of its own (one visit per tick per 300 sleepers, so every sleeper is still seen within its limit) and comes back the moment a wake hits it (its key arrives, a target is built, its settings change). The busy queue keeps the 16 visits for blocks that have work, and a woken block goes to the front of it (today a wake does nothing for a block that already waits in the backlog, so at 20 000 a maintainer reacts after 3.4 s instead of a tick). | The io queue no longer serialises idle and busy blocks: at 5000 5.5 of the 16 visits per tick find nothing today. Busy interval 99th percentile from 5.75 s to about 0.3 s at 5000 while the number of busy blocks stays under 240 (16 per tick times 15 ticks); idle network from 0.846 to about 0.3 ms at 5000 (what is left: storage bus reads, provider rescans, maintainers). | Low: a flag per record and a second list in the module's storage table; a save without them has every block in the busy queue, as today. Behaviour unchanged: the same blocks are visited, idle ones at most as late as their limit. | 2 |
+| 2 | **The budget follows the load, time-free.** The blocks that matter are the ones that hit their cap at their last visit (they moved all the budget allowed: the visit, not the chest or machine, limits them); a block that moved less is limited by the other side and loses nothing by waiting longer. Visits per tick = max(setting, ceil(cap hitters / 120)): every cap hitter is served within 2 s whatever the size, the setting stays the floor, and the count is state, not time. The same rule for crafting jobs (steps per tick = max(setting, ceil(active jobs / 20))), for the storage bus reads (reads per tick = max(setting, ceil(buses / idle limit))) and for the maintainers. | Service: cap hitters at a 99th percentile under 2 s and a median under 0.5 s at every size; `pair` machines at 100 % at 20 000 and 50 000; jobs at full speed above 60 jobs; storage buses at their 2 s. Cost: at 20 000 about 2555 blocks hit their cap (21 visits per tick for the 2 s bound: about 3.64 ms at today's 171 µs per visit, less once a visit moves 2 s of items instead of 20 s and with lever 3); at 50 000 3607 blocks (30 visits per tick). | None for saves (counts, no state). It changes when blocks are visited, so throughput numbers of the scenes change: `bench --check` reports it, the conservation check and the runtime tests guard the behaviour. | 2 (with 1) |
+| 3 | **The visit itself.** From the profile: `N.active_of` (network lookup plus `usable` with its controller check) per visit and per storage call, `target_of` revalidation, `get_contents` and the per-type `remove`/`insert` of the import bus, `extract_to` with a fresh stack table per call, the `by_count` string key per item type. Cache the network id and the usable flag per tick on the record, build the ItemStackDefinition tables once per module, look up `by_count` by prototype table instead of a concatenated string, and skip the fluid side of a bus whose target has no fluid boxes without a call. | 76 µs per visit in the profile at 5000 (`io.visit` inclusive; about 10 of them are the profiler's own wrappers), 171 at 20 000; the engine calls inside are about a third. Target 35 µs at 5000: about 0.49 ms per tick (a third of the script time). | None (no state). | 3 |
+| 4 | **Garbage.** Scratch tables for the engine call arguments (insert, remove, insert_fluid, set_stack), the `extract_to` definition, `get_contents` replaced by `get_item_count` where one key is asked; the holders and extract-order lists kept instead of rebuilt after every index change; the circuit signal list built in place. | GC average 0.092 ms per tick at 5000, the collector's steps of 10 to 25 ms in a few ticks per minute: fewer allocations per visit halve the garbage; the steps' length follows the allocation rate. Measured by `luaGarbageIncremental` and the worst-tick count. | None. | 3 (with 3) or 4 |
+| 5 | **Removal and build burst.** A removed cable runs `components()`, a breadth-first search over the whole network, once per cable: 364 cables in one tick are 364 searches of 20 000 nodes (848 ms). Defer the split check: mark the network and run one search per network at the end of the tick (the same tick, before anything reads the graph; deterministic), and search from the smaller side first with an early stop when the neighbours meet. Build: the `find_entities_filtered` per neighbour and the per-module registration are kept, the drive LED redraws batched. | Removal of 1000 blocks from 848 ms to the order of the build (75 ms); the build from 75 toward 30 ms. The graph rebuild of `on_configuration_changed` (0.92 s) gets the same single pass. | Medium: the graph code is the one place where a mistake splits or merges networks wrongly; the runtime tests cover join, split, conflict and sweep, and the burst scene checks the conservation after the removal. | 5 |
+| 6 | **Provider rescans.** One provider is rescanned every 2 ticks whatever happens (0.068 ms per tick at 5000, idle or not), because a pattern put into a provider raises no event. Rescan a provider at most every 5 s each (the round robin over the providers with a budget that follows their count, as lever 2), and at once when its network changes or a pattern is inserted through the mod's own functions (which already know). | 0.068 ms per tick at every size, most of the idle cost after lever 1. | None (a scan interval per provider in storage, lazily). | 4 |
+| 7 | **Circuit interfaces.** The write of a section of 900 signals (about 1 ms in the engine) only when the list changed is in place; what is left is the list build (`network_signals`: parse and sort about 900 keys, 1.95 ms per build) once per network and 60 ticks while anything moves. Keep the list incrementally: the network's `cver` already counts changes; keep the signal entries keyed by resource and re-sort only when a count crossed another (or sort by name once and keep it, the 1000 largest chosen by a running threshold). | 0.221 ms per tick at 5000 (10 writes per second); halving the build saves a tenth of that; the engine's write stays. Spikes: a write on a busy tick passes 5 ms; a smaller default of the signal count would be a behaviour change and is left to the player. | None. | 6 (dropped if under 5 %) |
+| 8 | **Windows.** The terminal's `entries` builds and sorts the whole contents list (6.8 ms at 5000) every 60 ticks while the window is open and compares a signature string. Cache the sorted list per network and version (`net.cver`), rebuild only the buttons whose entry changed, bound the refresh to the visible page. | A refresh of an open terminal from 6.8 ms to under 0.5 ms when nothing changed; the GUI side is measured by the maintainer in the game. | None. | 6 |
+| 9 | **Load.** The first two ticks after a load cost 37 and 19 ms at 5000, 162 ms at 20 000: the lookups of every network and the signal lists are built at their first use, all in the first tick. Build them per network when that network is first touched (already) but spread the first visits: the queues' first ticks put every unit due within a second instead of the first tick. | No tick over 16 ms after a load at 20 000. | None. | 5 (with 5) |
+| 10 | **Engine share.** The ME entities cost the engine 0.36 ms per tick at 5000 (the whole update of the scene without them against the normal scene's whole update minus script): the interfaces' four hidden side tanks each (2000 tanks in the fluid system), the controllers and crafting blocks as electric consumers, the maintainers' and monitors' lamps. Create an interface's side tank only when its side is set (import sides need a tank only while a pipe touches them), make the crafting blocks' power one consumer per CPU. | Up to 0.36 ms of engine time at 5000 that no script lever reaches. | Medium: the side tanks hold fluid in saves; a migration must keep every drop (the fluid test of `migrate` covers it). | 7 (last; dropped if the share is under 0.1 ms) |
+| 11 | **Planner.** `make_plan` builds `stock_of(net)` (every plain item of the network) and the pattern index per call, copies the stock for every alternative pattern (`snapshot`) and walks the tree again for each of the five plans a job start makes: 20.8 ms per plan on 321 vanilla patterns, **437.4 ms** on 2650 GregTech patterns, at every refresh of the crafting tab's preview and at every job start of a level maintainer. Keep the plan cached per network version (`cver`), key and amount while nothing changed; take the stock lazily per key; cut the alternatives' copies to the keys they touch. | A preview from 437.4 to a few ms on GregTech when nothing changed, a job start of a maintainer the same; the planner's node limit (3000) and depth limit (40) stay. | None (the plan is a pure function of the state). | 6 (with 7 and 8) |
+
+Order: 1 and 2 together (they are one scheduler change and decide what the later numbers mean), then 3 with 4 (the visit, measured in turns), then 5 with 9 (graph and load), 6, then 7, 8 and 11 (the circuit list, the windows and the planner: what a player with an open window pays), 10 last. Part 3 (the in-game diagnostic) comes after 2, when the counters have their final shape.

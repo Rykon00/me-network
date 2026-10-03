@@ -3877,6 +3877,12 @@ function scheduler_test()
 	end
 	local function count(name) return remote.call(NET, "count", ctrl, name) end
 	if st.phase == 1 then
+		--- issue #38: the scheduler's counters (visits, backlog, intervals) are readable and count the visits so far
+		local stats = remote.call(IO, "sched_stats", false)
+		local io_st = stats and stats.io
+		expect(io_st and io_st.visits > 0 and io_st.ticks > 0 and io_st.idle and io_st.full, "sched_stats has no io counters")
+		local bl = remote.call(IO, "backlogs")
+		expect(bl and bl.io == 0, "backlogs: the io queue should be empty in a small network")
 		--- the export bus found no copper: it waits for it
 		expect(c1.get_item_count("copper-plate") == 0, "copper in C1 before there was any")
 		local sch = remote.call(IO, "schedule", e1)

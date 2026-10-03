@@ -375,6 +375,7 @@ local function circuit_step(rec, force)
 	rec.signals = #filters
 	rec.net = net and net.id or nil
 	rec.version = version
+	return true
 end
 
 --- Set the filter of an interface: a list of keys (items, "fluid/<name>"), empty for everything
@@ -495,6 +496,7 @@ local function visit_maintainer(rec, unit)
 		if net then N.wait_below(net, rec.key, "maint", unit, rec.target) end
 	end
 	Sched.at(s.mq, rec, unit, next_tick)
+	return (st == "stocked" or st == "no-target") and 0 or 1
 end
 
 local function visit_circuit(rec, unit)
@@ -506,8 +508,9 @@ local function visit_circuit(rec, unit)
 		Sched.at(s.cq, rec, unit, game.tick + 1)
 		return
 	end
-	circuit_step(rec)
+	local written = circuit_step(rec)
 	Sched.at(s.cq, rec, unit, game.tick + CIRCUIT_INTERVAL)
+	return written and 1 or 0
 end
 
 --- every tick (a hook of the autocrafting module): the maintainers and circuit interfaces that are due
@@ -516,11 +519,11 @@ local function on_tick(s, tick)
 	s = state()
 	if #s.mlist > 0 then
 		budget.starts = STARTS_PER_TICK
-		Sched.run(s.mq, tick, Sched.setting("maintainer"), maintainer_of, visit_maintainer)
+		Sched.run(s.mq, tick, Sched.setting("maintainer"), maintainer_of, visit_maintainer, "maintainer")
 	end
 	if #s.clist > 0 then
 		--- (every tick, also with a budget of 0: the units due now join the backlog)
-		Sched.run(s.cq, tick, Sched.per_second(Sched.setting("circuit"), tick), circuit_of, visit_circuit)
+		Sched.run(s.cq, tick, Sched.per_second(Sched.setting("circuit"), tick), circuit_of, visit_circuit, "circuit")
 	end
 end
 autocraft.step_hooks[#autocraft.step_hooks + 1] = on_tick

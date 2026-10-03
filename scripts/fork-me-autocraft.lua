@@ -1899,6 +1899,7 @@ local function step_jobs(s, tick, budget)
 		if job and (job.status == "queued" or job.status == "running") then
 			local since = tick - (job.stepped or (tick - STEP_TICKS))
 			if since >= STEP_TICKS then
+				if job.stepped then Sched.sample("jobs", since, 1) end
 				job.stepped = tick
 				done = done + 1
 				local scale = math.min(math.floor(since / STEP_TICKS), MAX_CATCH_UP)
