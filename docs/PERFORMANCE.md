@@ -361,3 +361,40 @@ insert + extract 29.7 → 14.9, `can_insert` 7.4 → 6.5, `can_insert` of a new 
 `insert_fluid` + `extract_fluid` 64.3 → 44.3; at 1000 every call within ±1 µs. The spread of single runs of the same
 code is larger than any of these differences (the worst tick count of 18 at 5000 is one noisy run of three); the cell
 code adds one field read (`cell.eq`) to `cell_room`.
+
+## Crafting CPUs as multiblocks (0.3.0, issue #6)
+
+What issue #6 adds to the runtime: the groups of crafting blocks are kept up to date in the build and removal events
+only (`add_block`, `remove_block`, `settle_group`); a job's step asks its group for the network (`group_network`, one
+table read and `N.active_of`) instead of its CPU entity; `M.start` and `assign_cpus` pick a CPU (`pick_cpu`,
+`groups_in`), which runs only when a job starts or is paused. Nothing runs per tick for a CPU, a block or a monitor.
+
+The scene's CPUs are multiblocks since this issue (`benchmod`: one CPU per job and eight spare, each a row of sixteen
+256k crafting storages and three co-processors, as fast as the Quantum CPU; the biggest job of 5000 items needs about
+2 MiB); `--from-ref` of an older version builds Quantum CPUs as before. Runs in turns with the version before
+(`bench --sizes 1000,5000 --runs 3`, and the same with `--from-ref origin/main`), on a machine with a second Factorio
+running (its noise: the same code gave 1.0 and 0.9 ms at 1000, 1.4 and 3.0 ms at 5000 in two series).
+
+### Script time per tick (ms, median of three runs), before → after
+
+| N | Average | 99th percentile | Worst tick | Ticks over 5 ms | Whole update |
+|---|---|---|---|---|---|
+| 1000 | 0.940 / 0.833 → 0.875 / 0.825 | 3.43 / 2.71 → 3.01 / 2.72 | 14.4 / 12.2 → 12.5 / 15.6 | 14 / 14 → 15 / 10 | 1.369 / 1.253 → 1.297 / 1.244 |
+| 5000 | 1.360 / 1.361 → 1.408 / 1.327 | 3.56 / 3.57 → 4.01 / 3.40 | 27.5 / 24.3 → 27.8 / 27.0 | 13 / 15 → 13 / 10 | 2.208 / 2.205 → 2.252 / 2.143 |
+
+(two series each; the first "after" series had two spare CPUs, the second eight.) Throughput, the provider crafts
+(17.3 and 327.1 per second) and the conservation check are the same to the last digit; the latencies too (storage
+bus 1.07 / 1.33 s, level maintainer 0.08 s, first hand-over of a job 0.13 / 0.07 s). With only two spare CPUs the
+maintainer probes waited up to 5 s (their retry) for a free CPU: a job no longer queues behind a busy CPU, so a scene
+needs as many free CPUs as jobs it wants to start at once, which the old Quantum CPUs gave with their spare slots.
+
+### Profile (5000, one run, `--profile 5000`)
+
+| Function | Calls in the window (3600 ticks) | Time |
+|---|---|---|
+| `add_block`, `remove_block`, `settle_group`, `groups_in`, `pick_cpu`, `plan_bytes` | 0 | 0 |
+| `group_network` (a job's network, from `job_network`) | 3600 | 9.8 ms (2.7 µs per call) |
+| `assign_cpus` | 180 | 2.9 ms |
+| `job_step` | 3600 | 582 ms (the jobs' own work, unchanged code path) |
+
+The multiblock costs no script time while nothing is built or removed.

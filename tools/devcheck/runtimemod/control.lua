@@ -10,7 +10,7 @@
 --- with a crafting CPU, two Molecular Assemblers with pattern providers (iron plate + 2 iron sticks ->
 --- gear, gear + plate -> transport belt) and raw materials in a drive. Job 1 crafts belts through the
 --- two-level chain, job 2 asks for more than the raw materials allow and must not start, job 3 is
---- queued behind job 1 (one CPU) and cancelled; its items must come back.
+--- refused while job 1 runs on the only CPU (issue #6: a job needs a free CPU) and takes nothing.
 --- Encoded patterns (issue #80, scripts/fork-me-patterns.lua): every provider gets its patterns the way a player
 --- gives them (blank patterns encoded through the terminal's functions, put into its slots: give_patterns).
 --- Furnace and pattern items (furnace_test): encoding a crafting and a processing pattern (tags, tooltip data, not
@@ -711,6 +711,9 @@ cards17 = require("cards")({ me_place = me_place, cable_row = cable_row, power =
 	me_drive = function(...) return me_drive(...) end })
 --- part 3: the ME Cell Workbench and the cards on cells (workbench.lua)
 bench17 = require("workbench")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
+cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end })
 
 --- Victory (scripts/fork-victory.lua): researching `victory` must win the game, and go on.
 --- Winning stops the scripts of the benchmark run (no player to continue), so this runs last: as soon
@@ -743,6 +746,7 @@ local function tests_running()
 	check(storage.paste_t and storage.paste_t.done, "recipe paste")
 	cards17.running(check)
 	bench17.running(check)
+	cpus6.running(check)
 	return running
 end
 
@@ -861,17 +865,12 @@ local function autocraft_test()
 			"job 2 missing " .. serpent.line(missing) .. ", expected plates " .. want_plates .. " sticks " .. want_sticks)
 		expect(count("iron-plate") == plates_before and count("iron-stick") == sticks_before, "job 2 took items although it did not start")
 
-		--- job 3: one CPU only, so it waits; cancelling gives everything back
+		--- job 3: one CPU only and it is busy: the start is refused (issue #6: a job needs a free CPU) and takes nothing
 		local plates3, sticks3 = count("iron-plate"), count("iron-stick")
-		local id3 = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, per_run)
-		expect(id3, "job 3 did not start")
-		if id3 then
-			local j3 = remote.call("gregtorio-me-autocraft", "job", id3)
-			expect(j3 and j3.status == "queued", "job 3 should wait for the CPU (status " .. tostring(j3 and j3.status) .. ")")
-			expect(count("iron-plate") == plates3 - 2 and count("iron-stick") == sticks3 - 2, "job 3 did not reserve its items")
-			remote.call("gregtorio-me-autocraft", "cancel", id3)
-			st.job3, st.plates3, st.sticks3 = id3, plates3, sticks3
-		end
+		local id3, why3 = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, per_run)
+		expect(id3 == nil and why3 == "no-free-cpu", "job 3 must be refused while the CPU is busy (" .. tostring(id3) .. ", " .. tostring(why3) .. ")")
+		expect(count("iron-plate") == plates3 and count("iron-stick") == sticks3, "the refused job 3 took items")
+		if id3 then remote.call("gregtorio-me-autocraft", "cancel", id3) end
 		if #problems > 0 then return finish_test() end
 		return
 	end
@@ -908,16 +907,9 @@ local function autocraft_test()
 	local phase = st.phase or "job1"
 	if phase == "job1" then
 		st.phase_tick = st.phase_tick or st.started
-		local j1, j3 = job_of(st.job1), st.job3 and job_of(st.job3)
-		if j3 and j3.status == "cancelled" and not st.j3_checked then
-			st.j3_checked = true
-			--- the cancelled job's plates/sticks are back (job 1 keeps its own reservation)
-			expect(count("iron-plate") == st.plates3 and count("iron-stick") == st.sticks3,
-				"job 3 cancelled but items not returned: plates " .. count("iron-plate") .. "/" .. st.plates3 .. " sticks " .. count("iron-stick") .. "/" .. st.sticks3)
-		end
+		local j1 = job_of(st.job1)
 		if j1 and (j1.status == "done" or j1.status == "failed") then
 			expect(j1.status == "done", "job 1 ended as " .. j1.status)
-			expect(st.j3_checked, "job 3 was never cancelled")
 			expect(count(AC_ITEM) == st.belts, "job 1 result: " .. count(AC_ITEM) .. " " .. AC_ITEM .. ", expected " .. st.belts)
 			expect(count("iron-plate") == AC_PLATES - 2 * st.runs, "plates after job 1: " .. count("iron-plate"))
 			expect(count("iron-stick") == AC_STICKS - 2 * st.runs, "sticks after job 1: " .. count("iron-stick"))
@@ -1588,6 +1580,7 @@ script.on_nth_tick(10, function()
 	paste_test()
 	cards17.tick()
 	bench17.tick()
+	cpus6.tick()
 	done_test()
 end)
 
@@ -1652,7 +1645,7 @@ function setup_fluid_test(s)
 	place("substation", 3, FL_Y)
 	place("substation", 16, FL_Y + 4)
 	local ctrl = place("me-network-controller", 6, FL_Y)
-	local cpu = place("me-crafting-cpu", 10, FL_Y)
+	local cpu = place("me-quantum-crafting-cpu", 10, FL_Y)       -- three jobs at once (issue #6: no queue behind a busy CPU)
 	local term = place(FL.terminal[1], FL.terminal[2], FL.terminal[3])
 	local fdrive = me_drive(s, fails, "fluids", FL_DRIVE_POS[1], FL_DRIVE_POS[2], {}, "1k", true)
 	local idrive = me_drive(s, fails, "fluids", FL.idrive[2], FL.idrive[3],
@@ -3488,9 +3481,8 @@ function cpu_tier_test()
 		expect(ja.ops == 12 and jb.ops == 12, "hand-overs per step on the co-processing CPU: " .. ja.ops .. ", " .. jb.ops)
 		local _, free2 = remote.call(AC38, "cpus", terminal)
 		expect(free2 == 0, "free slots with two jobs: " .. free2)
-		local c = remote.call(AC38, "start", terminal, LM_ITEM, 1)
-		local jc = c and remote.call(AC38, "job", c)
-		expect(jc and jc.status == "queued", "a third job must wait for a slot: " .. tostring(jc and jc.status))
+		local c, why = remote.call(AC38, "start", terminal, LM_ITEM, 1)
+		expect(c == nil and why == "no-free-cpu", "a third job must be refused while both slots run (issue #6): " .. tostring(c) .. " " .. tostring(why))
 		if c then remote.call(AC38, "cancel", c) end
 		st.a, st.b, st.c = a, b, c
 		if #problems > 0 then return finish() end
@@ -4275,6 +4267,7 @@ script.on_init(function()
 	for _, f in pairs(setup_paste_test(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cards17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bench17.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(cpus6.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

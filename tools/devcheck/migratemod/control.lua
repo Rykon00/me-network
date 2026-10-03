@@ -14,6 +14,7 @@ local NET, IO, FL, SB = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me
 local AREA = { { -10, -12 }, { 80, 30 } }
 local EPS = 0.5
 
+local AC = "gregtorio-me-autocraft"
 local function L(key, msg) log("DEVCHECK-MIGRATE-" .. key .. " " .. msg) end
 
 local function place(s, fails, name, x, y, extra)
@@ -92,7 +93,10 @@ local function setup_unified(s)
 	place(s, fails, "substation", 42, -4)                                  -- (not wired to the first one: its own source)
 	local eei2 = place(s, fails, "electric-energy-interface", 45, -4)
 	if eei2 then eei2.power_production = 1e7 eei2.electric_buffer_size = 1e8 end
-	place(s, fails, "me-network-controller", 9, 0)
+	local ctrl = place(s, fails, "me-network-controller", 9, 0)
+	--- issue #6: the save is made at tick 0; the controller gets its energy by script before anything asks whether the
+	--- network works (that answer is kept for the tick), so the jobs below can start
+	if ctrl then ctrl.energy = 1e9 end
 	for x = 8, 45 do place(s, fails, "me-cable", x + 0.5, 1.5) end
 	local function drive(x, cell)
 		local d = place(s, fails, "me-drive", x, 0.5)
@@ -136,7 +140,38 @@ local function setup_unified(s)
 	local ci = place(s, fails, "me-circuit-interface", 38.5, 2.5)
 	local maint = place(s, fails, "me-level-maintainer", 40.5, 2.5)
 	if maint then remote.call("gregtorio-me-circuit", "set_maintainer", maint, "iron-gear-wheel", 500) end
-	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil }
+	--- me-network issue #6: the three legacy CPUs, each running a job (copper cables on three Molecular Assemblers)
+	local jobs = {}
+	local term = s.find_entity("me-terminal", { 12.5, 0.5 })
+	--- copper cables are not unlocked at the start with Space Age: its technology researched (the load runs
+	--- on_configuration_changed, which resets the technology effects)
+	for _, tech in pairs(game.forces.player.technologies) do
+		for _, e in pairs(tech.prototype.effects) do
+			if e.type == "unlock-recipe" and e.recipe == "copper-cable" then tech.researched = true end
+		end
+	end
+	game.forces.player.recipes["copper-cable"].enabled = true
+	for _, x in pairs({ 28.5, 32.5, 36.5 }) do
+		local m = place(s, fails, "me-molecular-assembler", x, -1.5)
+		local p = place(s, fails, "me-pattern-provider", x, 0.5)
+		local inv = game.create_inventory(1)
+		inv.insert{ name = "me-blank-pattern", count = 1 }
+		remote.call("gregtorio-me-terminal", "encode_def", false, inv, false, { kind = "crafting", recipe = "copper-cable" })
+		local stack = inv.find_item_stack("me-encoded-pattern")
+		if not (m and p and stack and remote.call(AC, "insert_pattern", p, stack)) then fails[#fails + 1] = "pattern at " .. x end
+		inv.destroy()
+	end
+	for i, cpu in ipairs({ { "me-crafting-cpu", 19 }, { "me-co-processing-cpu", 22 }, { "me-quantum-crafting-cpu", 25 } }) do
+		local c = place(s, fails, cpu[1], cpu[2], 0)
+		local id, why
+		if term then id, why = remote.call(AC, "start", term, "copper-cable", 8) end
+		local j = id and remote.call(AC, "job", id)
+		if not (c and j and j.status == "running" and j.cpu_name == cpu[1]) then
+			fails[#fails + 1] = "job " .. i .. " on " .. cpu[1] .. ": " .. tostring(why) .. " " .. serpent.line(j and { j.status, j.cpu_name })
+		end
+		jobs[i] = { id = id, cpu = cpu[1] }
+	end
+	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, jobs = jobs }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units)"
 		.. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
@@ -185,9 +220,16 @@ local function check_unified(st)
 		local sch = ib and remote.call(IO, "schedule", ib)
 		expect(sch and sch.due and sch.due > game.tick, "the import bus has no due tick: " .. serpent.line(sch))
 	end
+	--- me-network issue #6: the jobs on the three legacy CPUs went on and are done (each 8 copper cables)
+	for i, j in ipairs(st.jobs or {}) do
+		local info = j.id and remote.call(AC, "job", j.id)
+		expect(info and info.status == "done" and info.done == info.total and j.after == j.cpu, "job " .. i .. " on the legacy " .. j.cpu .. ": "
+			.. serpent.line(info and { info.status, info.done, info.total, info.wait, j.after }))
+	end
+	if st.jobs then expect(count("copper-cable") == 24, "copper cables of the three jobs: " .. count("copper-cable")) end
 	for _, p in pairs(problems) do L("FAIL", p) end
 	L("UNIFIED", (#problems == 0 and "ok" or "failed") .. " (a save of unified blocks: buses, interfaces, storage buses, circuit "
-		.. "interface and maintainer work after the load)")
+		.. "interface and maintainer work after the load; the jobs running on the three legacy CPUs are done)")
 end
 
 script.on_init(function()
@@ -439,6 +481,12 @@ end)
 script.on_nth_tick(10, function()
 	local st = storage.mig
 	if st and st.unified then
+		if not st.start then                                    -- issue #6: the CPU each job runs on after the load
+			for _, j in ipairs(st.jobs or {}) do
+				local info = j.id and remote.call(AC, "job", j.id)
+				j.after = info and info.cpu_name
+			end
+		end
 		st.start = st.start or game.tick
 		if st.ticked or game.tick < st.start + 150 then return end
 		st.ticked = true

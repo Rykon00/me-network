@@ -24,6 +24,9 @@ Sources:
                                                   # boards, chips and GUI signs), their technology and the ME Cell
                                                   # Workbench (me-network issues #17 and #20)
     python tools/gen_ae2_sprites.py --thumbnail   # only thumbnail.png, from the drive and terminal PNGs (issue #20)
+    python tools/gen_ae2_sprites.py --crafting-cpu C:/00_Repositories/GT5-Unofficial   # only the crafting blocks of
+                                                  # the multiblock crafting CPUs (me-network issue #6): GT casings and
+                                                  # screens, faces drawn here (not AE2's textures: CC BY-NC-SA)
     python tools/gen_ae2_sprites.py --sheet docs/graphics-review/issue-20.png   # contact sheet of the issue #20
                                                   # graphics next to origin/main (can follow any other switch)
 
@@ -252,6 +255,69 @@ def autocrafting(gt):
     icon.alpha_composite(lit)
     flat_icon(icon).save(OUT_ICON / "me-crafting-cpu.png")
     upscale(load(OUT_ICON / "me-molecular-assembler.png")).save(OUT_TECH / "me-autocrafting.png")
+
+
+# --- crafting CPU multiblocks (me-network issue #6, prototypes/autocrafting.lua) ----------------------------
+# 1x1 blocks: the EV casing (the legacy CPU's) around a dark face; each sheet holds the block of a group that is no CPU
+# (dark: the face's colours dimmed, no light) and of a CPU (lit) side by side, 64x32. The item icon is the lit block.
+# AE2's crafting block textures are not used: they are CC BY-NC-SA 3.0 (see README.md, License).
+CRAFTING_STORAGE = {"1k": CELLS["1k"][0], "4k": CELLS["4k"][0], "16k": CELLS["16k"][0], "64k": CELLS["64k"][0],
+                    "256k": CELLS["256k"][0]}
+
+
+def dim(rgb, f=0.35):
+    return tuple(int(c * f) for c in rgb)
+
+
+def crafting_face(gt, kind, lit, colour=None):
+    """16x16: the EV casing with the block's face (unit: four chips; storage: a memory chip in the size's colour with
+    three cell bars; co-processor: a fluix core with traces; monitor: a GT screen)."""
+    img = hull(gt, "EV")
+    d = ImageDraw.Draw(img)
+    def c(rgb):
+        return (rgb if lit else dim(rgb)) + (255,)
+    if kind == "monitor":
+        if lit:
+            screen = frames_of(load(gt_path(gt, "gregtech:iconsets/OVERLAY_SCREEN")))[0]
+            img.alpha_composite(tint(screen.copy(), CPU_CYAN))
+        else:
+            img.alpha_composite(frames_of(load(gt_path(gt, "gregtech:iconsets/SCREEN_OFF")))[0])
+        return img
+    d.rectangle((2, 2, 13, 13), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+    if kind == "unit":
+        for x, y in ((4, 4), (9, 4), (4, 9), (9, 9)):
+            d.rectangle((x, y, x + 2, y + 2), fill=(45, 45, 55, 255), outline=(85, 85, 100, 255))
+            d.point((x + 1, y + 1), fill=c(CPU_CYAN))
+    elif kind == "storage":
+        d.rectangle((4, 4, 11, 11), fill=(45, 45, 55, 255), outline=c(colour))
+        for y in (6, 8, 10):
+            d.line((6, y - 1, 9, y - 1), fill=c(colour))
+        for x in (3, 12):                                   # the chip's pins
+            for y in (5, 7, 9):
+                d.point((x, y), fill=(150, 150, 160, 255))
+    elif kind == "coprocessor":
+        for x0, y0, x1, y1 in ((3, 7, 5, 8), (10, 7, 12, 8), (7, 3, 8, 5), (7, 10, 8, 12)):
+            d.rectangle((x0, y0, x1, y1), fill=c(FLUIX))
+        d.rectangle((5, 5, 10, 10), fill=c(FLUIX), outline=c(FLUIX_LIGHT))
+        d.rectangle((7, 7, 8, 8), fill=c((235, 225, 255)))
+    return img
+
+
+def crafting_cpu(gt):
+    """the eight crafting blocks: entity sheets (dark | lit) and item icons"""
+    blocks = [("me-crafting-unit", "unit", None), ("me-crafting-co-processing-unit", "coprocessor", None),
+              ("me-crafting-monitor", "monitor", None)]
+    blocks += [(f"me-{k}-crafting-storage", "storage", rgb) for k, rgb in CRAFTING_STORAGE.items()]
+    written = []
+    for name, kind, colour in blocks:
+        dark, lit = up(crafting_face(gt, kind, False, colour)), up(crafting_face(gt, kind, True, colour))
+        sheet = Image.new("RGBA", (2 * TILE, TILE))
+        sheet.paste(dark, (0, 0))
+        sheet.paste(lit, (TILE, 0))
+        sheet.save(OUT_ENTITY / f"{name}.png")
+        lit.save(OUT_ICON / f"{name}.png")
+        written += [OUT_ENTITY / f"{name}.png", OUT_ICON / f"{name}.png"]
+    return written
 
 
 # --- fluids (prototypes/fluids.lua) -------------------------------------------
@@ -1074,13 +1140,16 @@ def main():
                     help="only thumbnail.png, from the drive, terminal and cable PNGs (me-network issue #20)")
     ap.add_argument("--sheet", type=Path, metavar="PNG",
                     help="writes a contact sheet of the issue #20 graphics (new and origin/main) to PNG")
+    ap.add_argument("--crafting-cpu", type=Path, metavar="GT",
+                    help="only the crafting blocks of the multiblock crafting CPUs (me-network issue #6), from the "
+                         "casings and screens of the GT5-Unofficial checkout GT")
     ap.add_argument("--unified", action="store_true",
                     help="only the ME Interface with its pipe sides (me-network issue #3), from the R1 PNGs")
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
-            or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet):
+            or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns, --unified, --cards, --thumbnail or --sheet is required")
+                 " --patterns, --unified, --cards, --crafting-cpu, --thumbnail or --sheet is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -1130,6 +1199,9 @@ def main():
     if a.gt or a.cards:
         written = cards(a.gt or a.cards)
         print("ME card icons:", len(written))
+    if a.gt or a.crafting_cpu:
+        written = crafting_cpu(a.gt or a.crafting_cpu)
+        print("ME crafting block sprites:", len(written))
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
         print("thumbnail.png")

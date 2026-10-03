@@ -530,6 +530,8 @@ PROFILE_WRAP = {
                                       "on_arrival", "awaiting", "cpus_in", "collect_output", "find_crafter",
                                       "start_lease", "close_lease", "flush_pool", "M.active_job_for", "M.free_slot",
                                       "M.job", "prune_finished", "job_network", "stock_of", "machine_idle", "M.on_tick",
+                                      "groups_in", "pick_cpu", "add_block", "remove_block", "settle_group",
+                                      "plan_bytes", "group_network",
                                       "step_jobs", "rescan_plan"],
     "scripts/fork-me-circuit.lua": ["on_step", "on_tick", "maintainer_step", "circuit_step", "network_signals",
                                     "signals_of", "visit_maintainer", "visit_circuit"],
