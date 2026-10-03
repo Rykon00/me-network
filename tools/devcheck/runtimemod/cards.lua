@@ -616,10 +616,100 @@ return function(H)
 			.. "a full bus, equal distribution refused, taken out, old cards first, mined with an unseen item")
 	end
 
+	--------------------------------------------------------------------------------
+	--- issue #28: the window's inventory pane and card slots, clicked through the GUI module's functions with a script
+	--- inventory standing for the player's main inventory and a slot of another one for the cursor
+	--------------------------------------------------------------------------------
+
+	local function pane_test()
+		local st = storage.pane28
+		if (st and st.done) or game.tick < 110 then return end
+		st = { problems = {}, done = true }
+		storage.pane28 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local s = game.surfaces[1]
+		local b = s.create_entity{ name = "me-storage-bus", position = { CX + 38.5, CY + 6.5 }, force = "player", raise_built = true }
+		local binv = b and remote.call(SB, "inventory", b)
+		if not binv then return me_report("PANE", "ME window pane (storage bus)", { "no bus or no inventory" }) end
+		local pinv = game.create_inventory(20)                 -- the player's main inventory
+		local hold = game.create_inventory(1)
+		local cursor = hold[1]
+		local function click(slot, mode) return remote.call(GUI, "inventory_click", cursor, pinv, slot, mode, b) end
+		local function bclick(slot, shift) return remote.call(GUI, "block_click", b, slot, cursor, pinv, shift) end
+		local function info() return remote.call(SB, "info", b) or {} end
+		local function n(i, name) return i.get_item_count(name) end
+		local function all_cards()
+			local c = 0
+			for _, name in pairs(CARD) do c = c + n(binv, name) + n(pinv, name) + n(hold, name) end
+			return c
+		end
+		pinv[1].set_stack{ name = CARD.capacity, count = 3 }
+		pinv[2].set_stack{ name = "iron-plate", count = 10 }
+		pinv[3].set_stack{ name = CARD.inverter, count = 2 }
+		local total = all_cards()
+		--- shift + click: a card into the first slot that takes it (a stack: one per empty slot)
+		expect(click(1, "shift") == nil and n(binv, CARD.capacity) == 3 and not pinv[1].valid_for_read and info().max == 18 + 3 * 9,
+			"shift + click of three capacity cards: " .. n(binv, CARD.capacity) .. " in the bus")
+		--- a wrong item is refused and stays
+		local why = click(2, "shift")
+		expect(why == "not-here" and n(pinv, "iron-plate") == 10 and n(binv, "iron-plate") == 0, "shift + click of iron plates: " .. tostring(why))
+		--- the kind's limit: one inverter card goes in, the other stays, a second try is refused
+		click(3, "shift")
+		why = click(3, "shift")
+		expect(n(binv, CARD.inverter) == 1 and pinv[3].valid_for_read and pinv[3].count == 1 and why == "limit",
+			"shift + click of two inverter cards: " .. n(binv, CARD.inverter) .. " in, " .. tostring(why))
+		--- a click on a block slot with a wrong item in the cursor: refused, nothing moves
+		cursor.set_stack{ name = "iron-plate", count = 5 }
+		why = bclick(5, false)
+		expect(why == "not-here" and cursor.valid_for_read and cursor.count == 5 and not binv[5].valid_for_read,
+			"iron plates on a card slot: " .. tostring(why))
+		pinv[10].transfer_stack(cursor)
+		--- with a card in the cursor: one card goes in, the rest stays in the cursor
+		cursor.set_stack{ name = CARD.fuzzy, count = 2 }
+		total = total + 2
+		expect(bclick(5, false) == nil and binv[5].valid_for_read and binv[5].name == CARD.fuzzy and cursor.count == 1 and info().fuzzy,
+			"a fuzzy card clicked into slot 5: cursor " .. (cursor.valid_for_read and cursor.count or 0))
+		--- a full bus refuses, the card stays in the cursor
+		cursor.set_stack{ name = CARD.void, count = 1 }          -- (replaces the fuzzy card left in the cursor: the same total)
+		why = bclick(1, false)
+		expect(why == "full" and cursor.valid_for_read and cursor.name == CARD.void, "a full bus took a card: " .. tostring(why))
+		pinv[11].transfer_stack(cursor)
+		--- an empty cursor takes the card; shift + click takes it into the inventory
+		expect(bclick(1, false) == nil and cursor.valid_for_read and cursor.name == CARD.capacity and info().max == 18 + 2 * 9,
+			"a card taken into the cursor: max " .. line(info().max))
+		pinv[12].transfer_stack(cursor)
+		expect(bclick(2, true) == nil and not binv[2].valid_for_read and n(pinv, CARD.capacity) == 2,
+			"a card shift-clicked into the inventory: " .. n(pinv, CARD.capacity))
+		expect(all_cards() == total, "cards made or lost by the clicks: " .. all_cards() .. "/" .. total)
+		--- the pane's own clicks: half a stack, one item put down, merge, pick up, put down, swap
+		pinv[5].set_stack{ name = "stone", count = 10 }
+		expect(click(5, "right") == nil and cursor.valid_for_read and cursor.count == 5 and pinv[5].count == 5, "half a stack: cursor "
+			.. (cursor.valid_for_read and cursor.count or 0))
+		click(6, "right")
+		expect(pinv[6].valid_for_read and pinv[6].count == 1 and cursor.count == 4, "right click with a stack in the cursor puts one down")
+		click(5, "left")
+		expect(not cursor.valid_for_read and pinv[5].count == 9, "left click merges: " .. pinv[5].count)
+		local _, picked = click(5, "left")
+		expect(picked == "picked" and cursor.valid_for_read and cursor.count == 9 and not pinv[5].valid_for_read, "left click picks the stack up")
+		click(7, "left")
+		expect(not cursor.valid_for_read and pinv[7].valid_for_read and pinv[7].count == 9, "left click puts the stack down")
+		cursor.set_stack{ name = "wood", count = 3 }
+		click(2, "left")
+		expect(cursor.valid_for_read and cursor.name == "iron-plate" and pinv[2].name == "wood", "left click swaps")
+		cursor.clear()
+		hold.destroy()
+		pinv.destroy()
+		me_report("PANE", "ME window pane (storage bus)", problems, "shift + click of cards, a wrong item and the limit refused, "
+			.. "block slot clicks with a wrong item, a card, a full bus, an empty cursor, shift; half a stack, put one, merge, "
+			.. "pick, put, swap; no card made or lost")
+	end
+
 	function T.tick()
 		cards_test()
 		priorities_test()
 		slots_test()
+		pane_test()
 	end
 
 	--- for tests_running() of control.lua
@@ -627,6 +717,7 @@ return function(H)
 		check(storage.cards17 and storage.cards17.done, "ME upgrade cards")
 		check(storage.prio17 and storage.prio17.done, "ME priorities")
 		check(storage.slots28 and storage.slots28.done, "ME storage bus card slots")
+		check(storage.pane28 and storage.pane28.done, "ME window pane (storage bus)")
 	end
 
 	return T

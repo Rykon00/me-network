@@ -6,12 +6,12 @@
 ---     partition when the cell is taken out": it stays in the workbench and goes onto the next cell whose partition
 ---     is empty). AE2's workbench needs neither the network nor power (its block entity has no grid node): this one is
 ---     no ME member and needs no cable.
----   * Issue #28 (docs/ME-REWORK.md "Windows next to the player's inventory"): the workbench's script inventory of 5
----     slots (rec.inv) is what its window shows beside the player's inventory: slot 1 the cell, slots 2 to 5 its cards.
----     While a cell lies in the workbench its cards are those items and not in its tags (never both). A cell that
----     arrives gives its tag cards to the slots; a cell that left (found by its item_number in the cursor or the main
----     inventory of a player of the window, in the same tick) gets the slots' cards written into its tags. sync()
----     checks the slots after every change: what may not be there goes back to the player.
+---   * Issue #28 (docs/ME-REWORK.md "Windows with the player's inventory"): the workbench's script inventory of 5
+---     slots (rec.inv), whose slots its window shows next to the player's inventory: slot 1 the cell, slots 2 to 5 its
+---     cards. While a cell lies in the workbench its cards are those items and not in its tags (never both). A cell that
+---     arrives gives its tag cards to the slots; a cell taken out by a click gets them into its tags before it moves.
+---     cell_click, card_click and shift_in refuse a wrong item before it moves. sync() is the backstop (the migration,
+---     the removal): what may not be there goes back, a cell that left is looked for by its item_number.
 ---   * The cell stays an item, and every change is written into its tags at once (N.cell_stack), with its contents
 ---     untouched.
 ---   * Mined: the cards into the cell's tags, the cell into the buffer; destroyed or removed by a script: spilled; a
@@ -211,7 +211,7 @@ local function signature(rec, inv)
 	return table.concat(out, ",")
 end
 
---- Issue #28: the slots after a player changed them (or the refresh's backstop). `back`: where what may not be there
+--- Issue #28: the slots checked (after every click, the migration, the removal). `back`: where what may not be there
 --- goes (G.give_back: the player, a LuaInventory, nil for the ground); `places`: where a cell that left is looked for
 --- (the cursors and main inventories of the window's players). Exactly one cell, in slot 1 (the one that was there is
 --- kept, another goes back); a cell that left gets the card slots' cards into its tags when it is found (else they stay);
@@ -299,9 +299,9 @@ function M.sync_entity(entity, back, places)
 	return rec ~= nil and M.sync(rec, back, places)
 end
 
---- A click on the cell (before issue #28; kept for the remote interface): a cell in the cursor goes in (a cell there is
---- swapped into the cursor, with its cards); with an empty cursor the cell goes into the cursor (`shift`: into
---- `inventory`), with its cards. Returns a reason on failure.
+--- A click on the cell slot: a cell in the cursor goes in (a cell there is swapped into the cursor, with its cards;
+--- anything else is refused before it moves); with an empty cursor the cell goes into the cursor (`shift`: into
+--- `inventory`), with its cards. Returns the reason of a refusal.
 function M.cell_click(entity, cursor, inventory, shift)
 	local rec = rec_of(entity)
 	if not rec then return "no-workbench" end
@@ -394,9 +394,10 @@ function M.set_keep(entity, keep)
 	return true
 end
 
---- A click on card `slot` of the cell (before issue #28; kept for the remote interface): a card in the cursor goes in
---- (into that card slot, else the first empty one), a click on a card takes it into the cursor (`shift`: into
---- `inventory`). Returns a reason on failure.
+--- A click on card slot `slot` of the cell (the inventory's slot `slot` + 1): a card in the cursor goes in (into that
+--- slot, else the first empty one; a card the cell does not take, one beyond its kind's limit, one without a free slot
+--- or without a cell is refused before anything moves), a click on a card takes it into the cursor (`shift`: into
+--- `inventory`). Returns the reason of a refusal.
 function M.card_click(entity, slot, cursor, inventory, shift)
 	local rec = rec_of(entity)
 	local stack, cell
@@ -416,15 +417,8 @@ function M.card_click(entity, slot, cursor, inventory, shift)
 		if not free then return "full" end
 		inv[free].transfer_stack(cursor, 1)
 	else
-		--- the slot-th card (slot order)
-		local at, n = nil, 0
-		for i = 2, #inv do
-			if inv[i].valid_for_read then
-				n = n + 1
-				if n == slot then at = i break end
-			end
-		end
-		if not at then return nil end
+		local at = slot + 1
+		if not (at >= 2 and at <= #inv and inv[at].valid_for_read) then return nil end
 		if shift then
 			if not (inventory and inventory.valid and inventory.insert(inv[at]) >= 1) then return "inventory-full" end
 			inv[at].clear()
@@ -433,6 +427,24 @@ function M.card_click(entity, slot, cursor, inventory, shift)
 		end
 	end
 	M.sync(rec, inventory, {})
+	return nil
+end
+
+--- Issue #28: shift + click on stack `stack` of the player's inventory in the workbench's window: a cell goes into the
+--- empty cell slot, cards into the card slots (one each, as the cell takes them). Returns the reason when nothing goes
+--- in (nothing moved then).
+function M.shift_in(entity, stack, inventory)
+	local rec = rec_of(entity)
+	if not rec then return "no-workbench" end
+	if not (stack and stack.valid_for_read) then return nil end
+	if is_cell(stack) then
+		if inv_of(rec)[1].valid_for_read then return "occupied" end
+		return M.cell_click(entity, stack, inventory, false)
+	end
+	if not N.card_kind(stack.name) then return "not-here" end
+	local why = M.card_click(entity, 1, stack, inventory, false)
+	if why then return why end
+	while stack.valid_for_read and not M.card_click(entity, 1, stack, inventory, false) do end
 	return nil
 end
 
@@ -532,7 +544,7 @@ end
 
 remote.add_interface("gregtorio-me-workbench", {
 	info = function(entity) return M.info(entity) end,
-	--- the window's clicks before issue #28: `cursor` a LuaItemStack, `inventory` a LuaInventory
+	--- the window's clicks on the cell slot and a card slot: `cursor` a LuaItemStack, `inventory` a LuaInventory
 	cell_click = function(entity, cursor, inventory, shift) return M.cell_click(entity, cursor, inventory, shift) end,
 	card_click = function(entity, slot, cursor, inventory, shift) return M.card_click(entity, slot, cursor, inventory, shift) end,
 	set_partition_slot = function(entity, index, key) return M.set_partition_slot(entity, index, key) end,
@@ -543,6 +555,8 @@ remote.add_interface("gregtorio-me-workbench", {
 	--- for the player's inventory; `places`: LuaItemStacks and LuaInventories where a cell that left is looked for)
 	inventory = function(entity) return M.inventory(entity) end,
 	sync = function(entity, back, places) return M.sync_entity(entity, back, places) end,
+	--- shift + click on a stack of the player's inventory in the window: a cell into the cell slot, cards after it
+	shift_in = function(entity, stack, inventory) return M.shift_in(entity, stack, inventory) end,
 	--- what the removal events do (`buffer`: mined)
 	removed = function(entity, buffer) M.on_removed(entity, buffer) end,
 	sweep = function() M.sweep() end,

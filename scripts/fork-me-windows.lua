@@ -7,8 +7,9 @@
 ---   * Storage cell (from the drive window or the terminal's cells tab): contents, bytes and types, the
 ---     partition (the items or fluids the cell is restricted to; a blacklist with an Inverter Card), "Clear" and "From
 ---     contents", the cell's upgrade cards (shown only: they go in and out in the ME Cell Workbench, issue #17).
----   * ME Cell Workbench (issue #17): the cell's partition, "From contents", "Clear" and the copy mode; issue #28: the
----     cell and its cards are the slots of the workbench's inventory, beside the player's inventory.
+---   * ME Cell Workbench (issue #17): the cell slot and its card slots, the cell's partition, "From contents", "Clear"
+---     and the copy mode; issue #28: the player's inventory beside it (shift + click: a cell into the cell slot, a card
+---     into a card slot).
 ---   * ME Controller: network state, members, drives, cells, bytes and types, power.
 ---   * ME Pattern Provider (issue #80): the 9 pattern slots (click with an encoded pattern in hand to put it in,
 ---     click a pattern to take it out), the status of each pattern (usable by how many machines, or why not), the
@@ -21,8 +22,8 @@
 ---   * ME Import/Export Bus: 9 filters (items and fluids), status, the entity it faces and what of it the bus uses.
 ---   * ME Storage Bus: mode (read and write, read only, write only), priority, 18 filters (items and fluids; 9 more per
 ---     Capacity Card), what it shows (items, or the fluid, amount and temperature of a tank's segment), status, the
----     entity it faces; issue #17: its 5 card slots (issue #28: the slots of its inventory, beside the player's
----     inventory), the cards it waits for, "filter on extract", "From contents" and "Clear", and a red warning with an Overflow Destruction Card.
+---     entity it faces; issue #17: its 5 card slots (issue #28: the player's inventory beside them, shift + click puts a
+---     card in), the cards it waits for, "filter on extract", "From contents" and "Clear", and a red warning with an Overflow Destruction Card.
 --- (issue #3: the windows of the ME Fluid Interface and the ME Fluid Storage Bus are gone with those blocks)
 --- Every window shows plain data from a `*_data` function and changes things through functions of the
 --- block's module (or the small `set_*` helpers here); the runtime test calls the same functions
@@ -60,6 +61,19 @@ local function rebuild(frame, name, sig, build)
 	box.clear()
 	box.tags = { sig = sig }
 	build(box)
+end
+
+--- Issue #28: the slots `first` .. `last` of a block's inventory `inv` as slot buttons (block_slot: the window's
+--- click), rebuilt when a stack changed; `tip(slot, stack)` gives a button's tooltip
+local function block_slots(frame, name, inv, first, last, tip)
+	local sig = { tostring(first), tostring(last) }
+	for i = first, last do
+		local st = inv[i]
+		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name) or "-"
+	end
+	rebuild(frame, name, table.concat(sig, ","), function(box)
+		for i = first, last do G.stack_button(box, inv[i], G.act("block_slot", { slot = i }), tip and tip(i, inv[i]) or nil) end
+	end)
 end
 
 local function caption_of(entity)
@@ -327,22 +341,26 @@ function M.workbench_data(entity) return bench.info(entity) end
 --- the workbench is no node of the ME graph: its window finds it through the workbench's own records
 G.entity_lookup(bench.by_unit)
 
---- issue #28: the cell and its cards are the slots of the workbench's inventory, which the game shows beside the
---- player's inventory; this frame stands next to it
+--- issue #28: the window has the player's inventory on its left; the cell slot and the card slots are the slots of the
+--- workbench's inventory (slot 1 the cell, 2 to 5 its cards)
 local function open_workbench(player, entity)
-	local inv = bench.inventory(entity)               -- (a workbench without a record yet gets one: the lookup needs it)
-	if not inv then return end
-	local _, content = G.open_window(player, "workbench", caption_of(entity), { unit = entity.unit_number }, inv)
+	if not bench.inventory(entity) then return end    -- (a workbench without a record yet gets one: the lookup needs it)
+	local _, content = G.open_window(player, "workbench", caption_of(entity), { unit = entity.unit_number }, true)
 	G.label(content, { "fork-me-gui.workbench-help" }, WIDTH)
-	G.label(content, "", WIDTH, nil, "fork_me_wb_fill")
-	G.label(content, "", WIDTH, nil, "fork_me_wb_mode")
+	local row = G.row(content)
+	row.add{ type = "flow", name = "fork_me_wb_cell", direction = "horizontal" }
+	local col = row.add{ type = "flow", direction = "vertical" }
+	G.label(col, "", 300, nil, "fork_me_wb_fill")
+	G.label(col, "", 300, nil, "fork_me_wb_mode")
 	G.heading(content, { "fork-me-gui.partition" })
 	content.add{ type = "flow", name = "fork_me_wb_part", direction = "vertical" }
 	local buttons = G.row(content)
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("wb_clear") }
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-contents" }, tooltip = { "fork-me-gui.partition-contents-tooltip" },
 		tags = G.act("wb_contents") }
-	G.label(content, "", WIDTH, nil, "fork_me_wb_cards").tooltip = { "fork-me-gui.workbench-cards-tooltip" }
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.workbench-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_wb_cards", direction = "horizontal" }
 	content.add{ type = "checkbox", name = "fork_me_wb_keep", state = false, caption = { "fork-me-gui.workbench-keep" },
 		tooltip = { "fork-me-gui.workbench-keep-tooltip" }, tags = G.act("wb_keep") }
 	M.refresh_workbench(player, G.window_of(player))
@@ -366,30 +384,24 @@ function M.refresh_workbench(player, frame)
 		local elem_type = c.fluid and "fluid" or "item-with-quality"
 		for i = 1, math.min(c.types_total, #part + 1) do chooser(t, elem_type, part[i], G.act("wb_part", { index = i })) end
 	end)
-	G.find(frame, "fork_me_wb_cards").caption = c and { "fork-me-gui.workbench-card-slots", c.slots } or ""
+	local inv = bench.inventory(entity)
+	block_slots(frame, "fork_me_wb_cell", inv, 1, 1, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.workbench-cell-tooltip" or "fork-me-gui.workbench-cell-empty" }
+	end)
+	block_slots(frame, "fork_me_wb_cards", inv, 2, 1 + (c and c.slots or 4), function(_, st)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or (c and "fork-me-gui.card-slot-empty" or "fork-me-gui.workbench-card-no-cell") }
+	end)
 	G.find(frame, "fork_me_wb_keep").state = d.keep
 	return true
 end
 
---- the places where a cell taken out of the workbench is: the cursors and main inventories of its window's players
-local function hands_of(players)
-	local out = {}
-	for _, p in ipairs(players) do
-		if p.valid then
-			if p.cursor_stack then out[#out + 1] = p.cursor_stack end
-			local inv = p.get_main_inventory()
-			if inv then out[#out + 1] = inv end
-		end
-	end
-	return out
-end
-
-local function sync_workbench(player, frame, inv)
-	local entity = G.entity_by_unit(frame.tags.unit)
-	return entity ~= nil and bench.sync_entity(entity, player, hands_of(G.viewers(inv)))
-end
-
-G.window("workbench", { open = open_workbench, refresh = M.refresh_workbench, sync = sync_workbench, entities = { bench.NAME } })
+--- issue #28: shift + click in the inventory pane, and a click on the cell slot (slot 1) or a card slot (2 to 5)
+G.window("workbench", { open = open_workbench, refresh = M.refresh_workbench, entities = { bench.NAME },
+	shift = function(entity, stack, inv) return bench.shift_in(entity, stack, inv) end,
+	click = function(entity, slot, cursor, inv, shift)
+		if slot == 1 then return bench.cell_click(entity, cursor, inv, shift) end
+		return bench.card_click(entity, slot - 1, cursor, inv, shift)
+	end })
 
 G.on("wb_part", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
@@ -1092,8 +1104,8 @@ function M.storage_bus_data(entity) return sbus.info(entity) end
 local function open_storage_bus(player, entity)
 	local d = M.storage_bus_data(entity)
 	if not d then return end
-	local inv = sbus.inventory(entity)               -- issue #28: the card slots, shown by the game beside this frame
-	local _, content = G.open_window(player, "storage-bus", caption_of(entity), { unit = entity.unit_number }, inv)
+	--- issue #28: the player's inventory on the left, the card slots in the window
+	local _, content = G.open_window(player, "storage-bus", caption_of(entity), { unit = entity.unit_number }, true)
 	G.label(content, { "fork-me-net.storage-bus-help" }, WIDTH)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.storage-bus-mode" } }
@@ -1106,8 +1118,10 @@ local function open_storage_bus(player, entity)
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.storage-bus-priority-tooltip" } }
 	G.number_field(row, d.priority, G.act("sbus_priority"), 70, true).tooltip = { "fork-me-gui.storage-bus-priority-tooltip" }
-	--- issue #17: the cards (issue #28: in the slots of the game's window), the extract setting, the void warning
-	G.label(content, { "fork-me-gui.storage-bus-card-slots" }, WIDTH).tooltip = { "fork-me-gui.storage-bus-cards-tooltip" }
+	--- issue #17: the cards, the extract setting, the void warning
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.storage-bus-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_sbus_cards", direction = "horizontal" }
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_want")
 	local void = G.label(content, "", WIDTH, nil, "fork_me_sbus_void")
 	void.style.font_color = { 1, 0.25, 0.2 }
@@ -1135,6 +1149,9 @@ function M.refresh_storage_bus(player, frame)
 		local t = box.add{ type = "table", column_count = 9, style = "filter_slot_table" }
 		for i = 1, d.max do signal_chooser(t, d.filters[i], G.act("sbus_filter", { index = i })) end
 	end)
+	block_slots(frame, "fork_me_sbus_cards", sbus.inventory(entity), 1, d.slots, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end)
 	local want = {}
 	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_sbus_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
@@ -1158,13 +1175,10 @@ function M.refresh_storage_bus(player, frame)
 	return true
 end
 
-local function sync_storage_bus(player, frame)
-	local entity = G.entity_by_unit(frame.tags.unit)
-	return entity ~= nil and sbus.sync_entity(entity, player)
-end
-
-G.window("storage-bus", { open = open_storage_bus, refresh = M.refresh_storage_bus, sync = sync_storage_bus,
-	entities = { "storage-bus" } })
+--- issue #28: shift + click in the inventory pane puts cards in, a click on a card slot puts in or takes out
+G.window("storage-bus", { open = open_storage_bus, refresh = M.refresh_storage_bus, entities = { "storage-bus" },
+	shift = function(entity, stack) return sbus.shift_in(entity, stack) end,
+	click = function(entity, slot, cursor, inv, shift) return sbus.card_click(entity, slot, cursor, inv, shift) end })
 
 G.on("sbus_mode", function(event, player, el)
 	if event.name ~= defines.events.on_gui_selection_state_changed then return end
@@ -1232,6 +1246,15 @@ remote.add_interface("gregtorio-me-gui", {
 	workbench_data = function(entity) return M.workbench_data(entity) end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
 	key_of_signal = function(signal) return key_of_signal_q(signal) end,
+	--- issue #28: a click on slot `slot` of the inventory pane of `entity`'s window (`mode` "left", "right", "shift"), for
+	--- a cursor stack and an inventory standing for the player's; returns the reason of a refusal and "picked"
+	inventory_click = function(cursor, inventory, slot, mode, entity)
+		return G.inventory_click(cursor, inventory, slot, mode, G.def_of(entity), entity)
+	end,
+	--- a click on slot `slot` of the block in `entity`'s window (its cards, its cell); returns the reason of a refusal
+	block_click = function(entity, slot, cursor, inventory, shift)
+		return G.block_click(G.def_of(entity), entity, slot, cursor, inventory, shift)
+	end,
 })
 
 return M

@@ -414,6 +414,7 @@ RUNTIME_TESTS = (
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
     ("CARDS", "ME upgrade card test"), ("PRIORITIES", "ME priority test"), ("WORKBENCH", "ME Cell Workbench test"),
     ("CARDSLOTS", "ME storage bus card slots test"), ("WBSLOTS", "ME Cell Workbench slots test"),
+    ("PANE", "ME window pane test (storage bus)"), ("WBPANE", "ME window pane test (workbench)"),
     ("DONE", "all tests reported"),
 )
 
