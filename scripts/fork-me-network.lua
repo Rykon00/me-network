@@ -2612,7 +2612,12 @@ function M.rebuild()
 	local old_ext = s.ext
 	s.ext = {}
 	for unit, cell in pairs(old_ext) do
-		if cell.entity and cell.entity.valid and kinds()[cell.entity.name] == cell.ext then s.ext[unit] = cell end
+		if cell.entity and cell.entity.valid and kinds()[cell.entity.name] == cell.ext then
+			s.ext[unit] = cell
+		else
+			local h = M.ext_handlers[cell.ext]
+			if h and h.detached then h.detached(cell) end   -- (issue #28: the cards in its slots are spilled, never lost)
+		end
 	end
 	--- nodes without links first, then the links, then the components
 	for _, e in ipairs(all) do

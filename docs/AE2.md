@@ -161,7 +161,10 @@ tabs:
 ## The ME windows
 
 Every ME block has its own window in one style (title bar with close button, drag it by the title bar), opened by
-**clicking the block** (the normal open key). Blocks that have a window of the game (terminal, crafting CPUs and
+**clicking the block** (the normal open key). Issue #28: the windows of the **ME Storage Bus** and the **ME Cell
+Workbench** open next to **your own inventory** (the game's window, with sorting, filters and drag and drop): its
+slots on the left of the ME window are the block's cards (and the workbench's cell), filled like a chest's slots (the
+other windows follow). Blocks that have a window of the game (terminal, crafting CPUs and
 level maintainer: lamps; circuit interface: constant combinator; ME Interface: container) show the ME window
 instead; the others (drive, controller, buses, pattern provider) have no window of
 their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second. With a tool
@@ -181,7 +184,7 @@ click uses the tool and opens no window, as on a chest.
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids), the entity it faces and whether the bus uses its items, fluids or both, status |
-| ME Storage Bus | mode (read and write, read only, write only), priority, 5 card slots, 18 filters (9 more per Capacity Card; a blacklist with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
+| ME Storage Bus | next to your inventory with its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; a blacklist with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
 the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
@@ -335,9 +338,11 @@ like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slo
 and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell has 4 card slots, a fluid cell 3,
 `BasicStorageCell`).
 
-* **Putting a card in:** open the storage bus and click a card slot with the card in hand (one card of the stack goes
-  in); click a card to take it into the hand, shift click into the inventory. A card the bus cannot take, or one more
-  of a kind than it takes, is refused with a flying text.
+* **Putting a card in:** open the storage bus: its 5 card slots stand next to your inventory. Put cards in like into
+  a chest: click, shift + click from the inventory, drag. Each slot holds one card; more of a stack go into the empty
+  slots. A card the bus cannot take (an Equal Distribution Card), one more of a kind than it takes, a card for which no
+  slot is left and anything that is no card go back into your inventory (onto the ground when it is full). Take a
+  card out the same way.
 * **Cards are items and are never made or lost by the network:** a mined bus gives its cards back (with the bus), a
   destroyed one drops them, as a drive drops its cells.
 * **Blueprints, copy/paste, settings paste and clones** copy which cards a bus has, not the cards: a bus built from a
@@ -352,9 +357,10 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
 AE2's Cell Workbench (technology ME Upgrade Cards; an iron chest, 4 iron plates, an advanced circuit and 2 electronic
 circuits). It needs **neither the network nor power** (AE2's does not either): place it anywhere.
 
-* **The cell:** click its slot with a storage cell in hand to put it in (another cell there is swapped into the hand);
-  click the cell to take it, shift click into the inventory. The cell keeps its items all the time; every change is
-  written into it at once.
+* **The cell:** the workbench's window stands next to your inventory with 5 slots: the first is the cell, the others
+  its card slots. Put a storage cell into the first slot like into a chest (click, shift + click, drag; one put into
+  another slot moves to the first). The cell keeps its items all the time; every change of the partition is written
+  into it at once.
 * **Partition:** the same buttons as the cell window (items with quality, or fluids for a fluid cell), **From
   contents** and **Clear**.
 * **Card slots:** an item cell takes 4 cards, a fluid cell 3 (AE2): one each of **Inverter Card** (the partition is a
@@ -363,13 +369,17 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   bytes left after the kinds' costs divided by n, without one by the cell's 63 types; a 1k cell holds 67 of each kind,
   partitioned for two kinds 4032 each) and **Overflow Destruction Card** (what the network stores into the cell and does
   not fit, or exceeds a kind's share, is **destroyed**; a cell without a partition destroys only what it already holds
-  once it cannot take a new kind). Click a slot with a card in hand, click a card to take it.
+  once it cannot take a new kind). Put the cards into the slots after the cell; a card the cell cannot take, a second
+  one of a kind, a card without a cell and anything else go back into your inventory. While the cell lies in the
+  workbench its cards are those items; taking the cell out puts them into it.
 * **Keep the partition when the cell is taken out** (AE2's copy mode): the partition stays in the workbench and goes
   onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
 * The cards are part of the cell (its tags): they travel with it into drives, chests and the network, like its items
   and partition. Only the workbench puts cards in or takes them out; the cell window (drive window, the terminal's
   Cells tab) shows them and keeps its partition buttons, so nothing a player used goes away.
-* Mined, the workbench gives its cell back; destroyed, it drops it.
+* Mined, the workbench gives its cell back (with the cards of its slots in it); destroyed, it drops it.
+* Two players at one workbench or storage bus see the same slots; what one of them puts in or takes out the other sees
+  at once.
 
 ## Old saves (from before the rework)
 ## Old saves (from before the rework)
@@ -801,6 +811,16 @@ each shows data from a `*_data` function and changes things through a function o
 `set_*` helper; the remote interface `gregtorio-me-gui` exposes the same functions to the runtime test. Nothing of a
 window is in storage except the terminal's tab, search, sort, kind and picked craft
 (`storage.fork_me_terminal[player]`).
+
+Issue #28 (`docs/ME-REWORK.md`, "Windows next to the player's inventory"): a window that shows a script inventory is a
+frame in `player.gui.relative` anchored to the game's window of that inventory (`script_inventory_gui`, right), and the
+inventory is the player's `opened` GUI; the inventory is titled with the block's name (`create_inventory`'s
+`gui_title`). Its record is `storage.fork_me_gui_open[player]`. The game raises no event for a change of a script
+inventory, so `on_player_main_inventory_changed` and `on_player_cursor_stack_changed` (and the refresh, as a backstop)
+call the window's `sync`, which checks the slots, sends what may not be there back to the player and makes the block's
+record follow the slots. The storage bus keeps its cards in its inventory (`rec.inv`, `rec.cards` follows it); the Cell
+Workbench keeps the cell in slot 1 and, while it is there, the cell's cards as items in slots 2 to 5 (a cell that
+leaves is found by its `item_number` in the hands of the window's players and gets them into its tags).
 
 ### Partitions and priorities (issue #68, R3)
 
@@ -1352,6 +1372,16 @@ cards), a fuzzy whitelist (copper in two qualities, no stone), equal distributio
 with a partition of two), overflow destruction on a partitioned cell (full, 500 destroyed and counted, another key
 kept, `can_insert`), and workbenches with a cell mined (the cell in the buffer), destroyed and vanished (spilled). It
 reports `ME Cell Workbench test: ok`.
+
+The slot tests of issue #28 change the script inventories the way a player does, with an inventory standing for the
+player's: the storage bus card slots (a card taken, a wrong item back, the inverter limit, a stack of capacity cards
+spread over the empty slots, a full bus, an Equal Distribution Card refused, a card taken out, the cards that were there
+first, the settings after a move inside the inventory, mined with an item no sync has seen: `ME storage bus card slots
+test: ok`) and the Cell Workbench slots (a cell's tag cards become items and go back into its tags when it is found in
+the hand, limits and a wrong item, a card without a cell, a cell put into a card slot, a cell that is not found, a fluid
+cell with an item cell's cards, mined with a card no sync has seen; no card made or lost: `ME Cell Workbench slots test:
+ok`). `migrate --from-ref <main before #28>` loads a save with cards on a storage bus and a cell with cards in a
+workbench: the cards are items in the inventories after the load.
 
 `python tools/devcheck/devcheck.py migrate --from-ref v0.1.0` makes a save with ME Network 0.1.0 (three fluid
 interfaces, the fluid buses and the fluid storage bus with settings and fluid, an item interface next to a pipe with

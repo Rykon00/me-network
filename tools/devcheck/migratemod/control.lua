@@ -161,7 +161,10 @@ local function setup_unified(s)
 		if not (m and p and stack and remote.call(AC, "insert_pattern", p, stack)) then fails[#fails + 1] = "pattern at " .. x end
 		inv.destroy()
 	end
-	for i, cpu in ipairs({ { "me-crafting-cpu", 19 }, { "me-co-processing-cpu", 22 }, { "me-quantum-crafting-cpu", 25 } }) do
+	--- (an old version with the multiblock CPUs of issue #6 starts no new job on a legacy CPU: no jobs then)
+	local legacy_jobs = not prototypes.entity["me-crafting-unit"]
+	if not legacy_jobs then jobs = nil end
+	for i, cpu in ipairs(legacy_jobs and { { "me-crafting-cpu", 19 }, { "me-co-processing-cpu", 22 }, { "me-quantum-crafting-cpu", 25 } } or {}) do
 		local c = place(s, fails, cpu[1], cpu[2], 0)
 		local id, why
 		if term then id, why = remote.call(AC, "start", term, "copper-cable", 8) end
@@ -171,9 +174,42 @@ local function setup_unified(s)
 		end
 		jobs[i] = { id = id, cpu = cpu[1] }
 	end
-	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, jobs = jobs }
+	--- me-network issue #28: an old version with upgrade cards (0.3.0 / main before #28) keeps a storage bus's cards as
+	--- names in its record and a workbench's cell (its cards in its tags) in an inventory of one slot: a bus with two
+	--- cards and a workbench with a cell that has a partition and two cards
+	local cards
+	if remote.interfaces[SB] and remote.interfaces[SB].card_click and prototypes.entity["me-cell-workbench"] then
+		cards = true
+		local bus = place(s, fails, "me-storage-bus", 43.5, 2.5, south)
+		local wb = place(s, fails, "me-cell-workbench", 20.5, 8.5)
+		local inv = game.create_inventory(2)
+		local hand = inv[1]
+		local function card(name)
+			hand.set_stack{ name = name, count = 1 }
+			return hand
+		end
+		if bus then
+			if remote.call(SB, "card_click", bus, 1, card("me-capacity-card"), inv, false)
+				or remote.call(SB, "card_click", bus, 3, card("me-inverter-card"), inv, false) then
+				fails[#fails + 1] = "cards on the storage bus"
+			end
+		end
+		if wb then
+			local WB = "gregtorio-me-workbench"
+			hand.set_stack{ name = "me-4k-storage-cell", count = 1 }
+			remote.call(WB, "cell_click", wb, hand, inv, false)
+			remote.call(WB, "set_partition_slot", wb, 1, "wood")
+			if remote.call(WB, "card_click", wb, 1, card("me-inverter-card"), inv, false)
+				or remote.call(WB, "card_click", wb, 2, card("me-overflow-destruction-card"), inv, false) then
+				fails[#fails + 1] = "cards on the workbench's cell"
+			end
+		end
+		inv.destroy()
+	end
+	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, jobs = jobs, cards = cards }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
-		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units)"
+		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
+		.. (jobs and "; jobs on the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "") .. ")"
 		.. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
 end
 
@@ -227,9 +263,29 @@ local function check_unified(st)
 			.. serpent.line(info and { info.status, info.done, info.total, info.wait, j.after }))
 	end
 	if st.jobs then expect(count("copper-cable") == 24, "copper cables of the three jobs: " .. count("copper-cable")) end
+	--- me-network issue #28: the cards of the old save are items in the script inventories now, none lost or doubled
+	if st.cards and remote.interfaces[SB].inventory then
+		local bus = at("me-storage-bus", 43.5, 2.5)
+		local inv = bus and remote.call(SB, "inventory", bus)
+		local bi = bus and remote.call(SB, "info", bus)
+		expect(inv and inv.get_item_count("me-capacity-card") == 1 and inv.get_item_count("me-inverter-card") == 1
+			and inv[1].valid_for_read and inv[3].valid_for_read and bi.max == 27 and bi.inverted,
+			"storage bus cards after the load: " .. serpent.line(inv and inv.get_contents()) .. " " .. serpent.line(bi and bi.cards))
+		local WB = "gregtorio-me-workbench"
+		local wb = at("me-cell-workbench", 20.5, 8.5)
+		local winv = wb and remote.call(WB, "inventory", wb)
+		local wi = wb and remote.call(WB, "info", wb)
+		local cell = winv and winv[1]
+		local tagged = cell and cell.valid_for_read and cell.is_item_with_tags and cell.tags.fork_me_cell
+		expect(winv and #winv == 5 and cell.valid_for_read and cell.name == "me-4k-storage-cell" and tagged and not tagged.cards
+			and winv.get_item_count("me-inverter-card") == 1 and winv.get_item_count("me-overflow-destruction-card") == 1
+			and wi.cell and wi.cell.inverted and wi.cell.void and serpent.line(wi.cell.partition) == serpent.line({ "wood" }),
+			"workbench after the load: " .. serpent.line(winv and winv.get_contents()) .. " " .. serpent.line(wi and wi.cell))
+	end
 	for _, p in pairs(problems) do L("FAIL", p) end
 	L("UNIFIED", (#problems == 0 and "ok" or "failed") .. " (a save of unified blocks: buses, interfaces, storage buses, circuit "
-		.. "interface and maintainer work after the load; the jobs running on the three legacy CPUs are done)")
+		.. "interface and maintainer work after the load" .. (st.jobs and "; the jobs running on the three legacy CPUs are done" or "")
+		.. (st.cards and "; the cards of a storage bus and a workbench's cell are items in their inventories" or "") .. ")")
 end
 
 script.on_init(function()

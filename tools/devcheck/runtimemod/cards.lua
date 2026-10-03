@@ -525,15 +525,108 @@ return function(H)
 			.. "two interfaces on a short item and a short fluid; interface priority copied; pattern fall-back")
 	end
 
+	--------------------------------------------------------------------------------
+	--- issue #28: the card slots are the bus's script inventory (the window shows it beside the player's inventory);
+	--- what a player puts in is checked by the sync (here with a LuaInventory standing for the player's inventory)
+	--------------------------------------------------------------------------------
+
+	local function slots_test()
+		local st = storage.slots28
+		if (st and st.done) or game.tick < 100 then return end
+		st = { problems = {}, done = true }
+		storage.slots28 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local s = game.surfaces[1]
+		local b = s.create_entity{ name = "me-storage-bus", position = { CX + 36.5, CY + 6.5 }, force = "player", raise_built = true }
+		local inv = b and remote.call(SB, "inventory", b)
+		if not inv then return me_report("CARDSLOTS", "ME storage bus card slots", { "no bus or no inventory" }) end
+		local back = game.create_inventory(20)                   -- the player's inventory
+		local function info() return remote.call(SB, "info", b) or {} end
+		local function sync() return remote.call(SB, "sync", b, back) end
+		local function cards_in(i)
+			local n = 0
+			for _, name in pairs(CARD) do n = n + i.get_item_count(name) end
+			return n
+		end
+		expect(#inv == 5 and inv.is_empty() and info().max == 18, "a new bus: " .. #inv .. " slots, max " .. line(info().max))
+		--- a card put in is taken
+		inv[1].set_stack{ name = CARD.capacity, count = 1 }
+		expect(sync() == true and info().cards[1] == CARD.capacity and info().max == 27, "a capacity card in slot 1: " .. line(info().cards)
+			.. " max " .. line(info().max))
+		expect(sync() == false, "a second sync without a change reports a change")
+		--- a wrong item goes back
+		inv[2].set_stack{ name = "iron-plate", count = 10 }
+		sync()
+		expect(not inv[2].valid_for_read and back.get_item_count("iron-plate") == 10, "iron plates in a card slot: "
+			.. back.get_item_count("iron-plate") .. " back")
+		--- three inverter cards in one slot: one stays (AE2's limit), two go back
+		inv[3].set_stack{ name = CARD.inverter, count = 3 }
+		sync()
+		expect(inv[3].valid_for_read and inv[3].count == 1 and back.get_item_count(CARD.inverter) == 2 and info().inverted,
+			"three inverter cards: " .. (inv[3].valid_for_read and inv[3].count or 0) .. " kept, " .. back.get_item_count(CARD.inverter) .. " back")
+		--- four capacity cards in one slot: spread over the empty slots, the one beyond the slots goes back
+		inv[4].set_stack{ name = CARD.capacity, count = 4 }
+		sync()
+		local caps = 0
+		for i = 1, 5 do if inv[i].valid_for_read and inv[i].name == CARD.capacity then caps = caps + inv[i].count end end
+		expect(caps == 4 and back.get_item_count(CARD.capacity) == 1 and info().max == 18 + 4 * 9,
+			"four capacity cards spread: " .. caps .. " in the slots, " .. back.get_item_count(CARD.capacity) .. " back, max " .. line(info().max))
+		--- a full bus refuses: the inventory takes nothing more, the old click says why
+		local hand = game.create_inventory(1)
+		hand[1].set_stack{ name = CARD.fuzzy, count = 1 }
+		expect(inv.insert{ name = CARD.fuzzy, count = 1 } == 0 and remote.call(SB, "card_click", b, 1, hand[1], back, false) == "full",
+			"a full bus took a fuzzy card")
+		--- a card the bus does not take (Equal Distribution) goes back
+		back.insert(inv[5])
+		inv[5].clear()
+		sync()
+		inv[5].set_stack{ name = CARD.equal, count = 1 }
+		sync()
+		expect(not inv[5].valid_for_read and back.get_item_count(CARD.equal) == 1, "an equal distribution card in a bus")
+		--- a card taken out by the player: the filters follow
+		back.insert(inv[1])
+		inv[1].clear()
+		sync()
+		expect(info().max == 18 + 2 * 9 and info().cards[1] == nil, "a capacity card taken out: max " .. line(info().max))
+		--- the cards that were in their slot come first: a new inverter card in slot 1 goes back, the old one in slot 3 stays
+		back.remove{ name = CARD.inverter, count = 1 }
+		inv[1].set_stack{ name = CARD.inverter, count = 1 }
+		sync()
+		expect(not inv[1].valid_for_read and inv[3].valid_for_read and inv[3].name == CARD.inverter, "the old inverter card was replaced")
+		--- the settings name the slots' cards, also of a stack moved to another slot of the inventory
+		inv[1].transfer_stack(inv[3])
+		sync()
+		local g = remote.call(SB, "get_settings", b)
+		expect(g and g.cards and #g.cards == 3 and info().cards[1] == CARD.inverter and info().inverted, "settings after a move: " .. line(g and g.cards))
+		--- mined with an item that no sync has seen yet: everything into the buffer, no card made or lost
+		local before = cards_in(inv) + cards_in(back)
+		inv[3].set_stack{ name = "copper-plate", count = 5 }
+		local buffer = game.create_inventory(10)
+		remote.call(SB, "removed", b, buffer)
+		b.destroy()
+		remote.call(NET, "sweep")
+		expect(cards_in(buffer) == 3 and buffer.get_item_count("copper-plate") == 5 and cards_in(buffer) + cards_in(back) == before,
+			"mined: " .. line(buffer.get_contents()))
+		expect(not inv.valid, "the inventory of a removed bus is not destroyed")
+		hand.destroy()
+		buffer.destroy()
+		back.destroy()
+		me_report("CARDSLOTS", "ME storage bus card slots", problems, "a card taken, a wrong item back, the limit, a stack spread, "
+			.. "a full bus, equal distribution refused, taken out, old cards first, mined with an unseen item")
+	end
+
 	function T.tick()
 		cards_test()
 		priorities_test()
+		slots_test()
 	end
 
 	--- for tests_running() of control.lua
 	function T.running(check)
 		check(storage.cards17 and storage.cards17.done, "ME upgrade cards")
 		check(storage.prio17 and storage.prio17.done, "ME priorities")
+		check(storage.slots28 and storage.slots28.done, "ME storage bus card slots")
 	end
 
 	return T
