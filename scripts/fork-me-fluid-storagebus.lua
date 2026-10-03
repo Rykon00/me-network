@@ -378,6 +378,7 @@ local function visit_due(rec, unit)
 	local idle = Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)   -- (as the item side)
 	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle)
 	Sched.at(queue(s), rec, unit, game.tick + rec.siv)
+	return changed and 1 or 0
 end
 
 --- every tick (from the storage bus module): first the buses marked by a removal, then the buses that are due, at
@@ -395,7 +396,7 @@ function M.on_tick(tick)
 			if on_fluid(rec) and rec.entity.valid then M.visit(rec) end
 		end
 	end
-	Sched.run(queue(s), tick, Sched.setting("storage_bus"), fluid_rec, visit_due)
+	Sched.run(queue(s), tick, Sched.setting("storage_bus"), fluid_rec, visit_due, "fluid_storage_bus")
 end
 
 --- the remote's step (tests): what the fluid side does in one tick

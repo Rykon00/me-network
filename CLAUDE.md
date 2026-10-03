@@ -49,9 +49,12 @@
   older version with the working copy (for changes to saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
   recipes; without Gregtorio its `data.lua` adds stand-ins with the same names and numbers. See
   `tools/devcheck/README.md`. A change to the runtime's cost (the storage engine, the I/O, autocrafting, the step
-  budgets) runs `devcheck.py bench` (script time per tick, throughput and latencies at 100, 1000 and 5000 endpoints,
-  `--reference` for inserters and robots, `--profile 1000,5000` for where the time goes) and puts its numbers before
-  and after into `docs/PERFORMANCE.md`.
+  budgets) runs `devcheck.py bench` (script time per tick, throughput, latencies and the service quality of every kind of block
+  from the scheduler's counters at 100 to 50 000 endpoints, `--idle`, `--networks`, `--long`, the build burst, the planner
+  scene, `--reference` for inserters and robots, `--profile 1000,5000` for where the time goes) and puts its numbers
+  before and after into `docs/PERFORMANCE.md`, measured in turns (`bench --check <ref>` fails a number that is worse
+  than the measured noise). A chain of long runs goes into a second work folder (`ME_DEVCHECK_WORK`), never into the
+  one a quick test uses.
 - Every referenced `__me-network__/...` file must exist (headless Factorio does not load graphics, the real game
   crashes on missing files); `devcheck check` lists missing ones and names missing in `locale/en`.
 - **Changelog:** every change to the game adds its player-facing lines to the topmost section of `changelog.txt` (the

@@ -4,9 +4,22 @@
 ---   scene "me": a synthetic base of `size` buses and interfaces on one ME network (the mix below), with storage
 ---     buses (size / 10), pattern providers with running jobs (size / 25), level maintainers (size / 10), circuit
 ---     interfaces (size / 50) and drives with 256k cells that are about 70 % full and hold about 2000 item types.
+---     Variants (issue #38): `networks` = K builds K such networks of size / K each, one below the other (the
+---     latency probes and the item variety only in the first); `idle` leaves every source empty and blocks every
+---     sink, sets no recipe on the machines and starts no job, so the network has nothing to move; `noent` destroys
+---     every entity of the mod after the build (the engine's share: the same scene without the ME entities).
+---   scene "planner": every usable recipe of the game as a processing pattern (deep trees, with Gregtorio its
+---     recipes), the raw materials in cells; the planner and a job start are timed on the deepest items.
 ---   scene "inserters": the same number of chest -> inserter -> chest lines (half fast, half bulk inserters).
 ---   scene "robots": size / 10 requester chests (each emptied by a bulk inserter) served by logistic robots from
 ---     passive provider chests.
+--- Service quality (issue #38): the scheduler's counters (remote gregtorio-me-io.sched_stats: visits, backlog, the
+--- ticks between two visits of a block by what the visit found) are reset at the first probe and reported at the
+--- second with the backlog sampled every SAMPLE_TICKS and the state of the scene's machines (working, waiting for
+--- ingredients, output full, and crafts made against what their speed allows). `slice` logs the Lua heap of the
+--- mod, the counters and the backlogs every so many ticks (the long run). `burst` builds that many ME blocks in one
+--- tick after the probes (cables, buses on chests, interfaces, storage buses, connected to the network) and removes
+--- them in one tick, then the same number of plain chests, each timed.
 --- Timeline (game ticks): the scene is built in on_init; at `warmup` the first probe counts everything (and turns
 --- the profiler of an instrumented mod copy on); at `warmup + window` the second probe counts again and reports the
 --- throughput and the conservation check; then the latency probes run (scene "me": a storage bus sees a chest change,
@@ -36,6 +49,11 @@ local RAW = { "iron-plate", "copper-plate", "steel-plate", "stone", "stone-brick
 	"sulfur", "battery", "electric-engine-unit", "processing-unit", "concrete", "low-density-structure", "solid-fuel",
 	"explosives", "rail" }
 local PAIR_RECIPES = { "iron-gear-wheel", "copper-cable", "iron-stick", "pipe" }
+local BLOCKERS = { "stone", "coal" }  -- idle scene: a sink chest is filled with one of these, so nothing fits in
+local PART_GAP = 12                   -- tiles between two networks of the `networks` variant
+local SAMPLE_TICKS = 300              -- the backlogs are sampled this often inside the window (one remote call)
+local BURST_Y = -40                   -- the build burst's cable row (above the scene and the profile's fixtures)
+local STATUS = defines.entity_status
 
 local function log_json(key, t) log("DEVCHECK-BENCH-" .. key .. " " .. helpers.table_to_json(t)) end
 
@@ -83,6 +101,42 @@ local function chest_fill(chest, name, stacks)
 	return chest.insert{ name = name, count = size * stacks }
 end
 
+--- idle scene: fill every slot of a sink chest with an item the bus or inserter does not deliver
+local function block_chest(chest, item)
+	local blocker = item == BLOCKERS[1] and BLOCKERS[2] or BLOCKERS[1]
+	chest_fill(chest, blocker, #chest.get_inventory(defines.inventory.chest))
+end
+
+--- the scheduler's counters of the mod (issue #38; nil with a version that has none, bench --from-ref)
+local function sched_stats(reset)
+	local io = remote.interfaces[IO]
+	if io and io.sched_stats then return remote.call(IO, "sched_stats", reset) end
+	return nil
+end
+
+local function backlogs()
+	local io = remote.interfaces[IO]
+	if io and io.backlogs then return remote.call(IO, "backlogs") end
+	return nil
+end
+
+local function mod_memory_kb()
+	local io = remote.interfaces[IO]
+	if io and io.lua_memory then return remote.call(IO, "lua_memory") end
+	return nil
+end
+
+--- every technology researched, except one whose research ends the game (Gregtorio's `victory`: a finished game
+--- does not simulate in a headless benchmark, so the run would perform its ticks in no time and measure nothing)
+local function research_all(force)
+	for name, tech in pairs(force.technologies) do
+		if name ~= "victory" and not tech.researched then
+			local ok = pcall(function() tech.researched = true end)
+			if not ok then fail("research " .. name) end
+		end
+	end
+end
+
 local function power_row(gy, x1, x2)
 	--- substations (2x2) every 16 tiles, an energy interface next to each one (no copper wire needed)
 	local x = x1
@@ -101,8 +155,8 @@ local function new_surface(w, h)
 	local s = game.create_surface(SURFACE, { width = w + 64, height = h + 64, peaceful_mode = true })
 	s.generate_with_lab_tiles = true
 	s.always_day = true
-	for cx = -1, math.ceil((w + 32) / 32) do
-		for cy = -1, math.ceil((h + 32) / 32) do s.request_to_generate_chunks({ cx * 32 + 16, cy * 32 + 16 }, 0) end
+	for cx = -3, math.ceil((w + 32) / 32) do
+		for cy = -3, math.ceil((h + 32) / 32) do s.request_to_generate_chunks({ cx * 32 + 16, cy * 32 + 16 }, 0) end
 	end
 	s.force_generate_chunk_requests()
 	return s
@@ -180,10 +234,12 @@ local function count_world()
 			end
 		end
 	end
-	if b.anchor and b.anchor.valid then
-		for _, j in pairs(remote.call(AC, "jobs", b.anchor)) do
-			local job = remote.call(AC, "job", j.id)
-			for key, n in pairs(job and job.pool or {}) do add(out, key, n) end
+	for _, anchor in ipairs(b.anchors or { b.anchor }) do
+		if anchor and anchor.valid then
+			for _, j in pairs(remote.call(AC, "jobs", anchor)) do
+				local job = remote.call(AC, "job", j.id)
+				for key, n in pairs(job and job.pool or {}) do add(out, key, n) end
+			end
 		end
 	end
 	return out
@@ -316,7 +372,7 @@ end
 
 --- cell contents: a list of { key -> count } for 256k item cells (about `fill` of the cells used), every raw material
 --- in millions, every other plain item in every quality a few hundred times
-local function pack_cells(ncells, fill, reserved)
+local function pack_cells(ncells, fill, reserved, variety_wanted)
 	local spec = prototypes.mod_data["fork-me-network"].data.cells["me-256k-storage-cell"]
 	local per_byte = spec.per_byte or 8
 	local qualities = {}
@@ -329,7 +385,7 @@ local function pack_cells(ncells, fill, reserved)
 	for name in pairs(prototypes.item) do names[#names + 1] = name end
 	table.sort(names)
 	for _, name in ipairs(names) do
-		if plain(name) and not raw[name] and name ~= PROBE_ITEM and not reserved[name] then
+		if variety_wanted and plain(name) and not raw[name] and name ~= PROBE_ITEM and not reserved[name] then
 			for _, q in ipairs(qualities) do variety[#variety + 1] = key_of(name, q) end
 		end
 	end
@@ -408,54 +464,78 @@ local function inserter(name, tx, ty, from)
 	return place(name, x, y, from)
 end
 
-local function build_me()
-	local b = storage.b
-	local force = game.forces.player
-	force.research_all_technologies()
-	local m = mix(C.size)
+--- the geometry of one network (a part) of `size` buses and interfaces: the mix, the slot kinds in order, the
+--- slots per row and side, rows, width and height. Only the first part has the latency probes (and the item
+--- variety in its cells); the other parts need fewer drives.
+local function part_geometry(size, first)
+	local m = mix(size)
+	if not first then
+		m.lat_provider, m.lat_maint = 0, 0
+		m.drive = math.max(2, math.floor(size / 50 + 0.5))
+	end
 	local kinds = interleave(m)
 	local spr = math.max(10, math.ceil(math.sqrt(#kinds) * 0.8))             -- slots per row and side
 	local rows = math.ceil(#kinds / (2 * spr))
-	local width, height = SLOT * spr, rows * PITCH
-	new_surface(width + 16, height + 16)
-	--- power: a row of substations above every cable row's north side and below its south side
-	for r = 0, rows do power_row(Y0 - 6 + r * PITCH, X0 - 4, X0 + width + 2) end
-	--- the spine, the controller and the CPUs on the left
-	for y = Y0, Y0 + (rows - 1) * PITCH do place("me-cable", p1(X0 - 1, y)) end
-	local members = {}
-	local function member(e) if e then members[#members + 1] = e end return e end
-	b.anchor = member(place("me-network-controller", X0 - 2, Y0 + 1))
+	return { m = m, kinds = kinds, spr = spr, rows = rows, width = SLOT * spr, height = rows * PITCH }
+end
+
+--- the pattern recipes split into the latency probes' and the regular ones
+local function split_recipes(force)
 	local recipes = pattern_recipes(force)
 	if #recipes < LATENCY_RECIPES + 4 then fail("only " .. #recipes .. " pattern recipes") end
 	local lat_recipes, reg_recipes = {}, {}
 	for i, r in ipairs(recipes) do
 		if i <= LATENCY_RECIPES then lat_recipes[#lat_recipes + 1] = r else reg_recipes[#reg_recipes + 1] = r end
 	end
-	local jobs = math.max(1, math.floor(m.provider / 4))
-	b.cpus = {}
+	return lat_recipes, reg_recipes
+end
+
+--- Place one part (network) with its first cable row at `Y`: power, spine, controller, CPUs and the slots. The ME
+--- members go into `members` (registered by the caller in one pass). Returns the part record.
+local function place_part(b, geo, Y, index, first, members)
+	local m, kinds, spr, rows, width = geo.m, geo.kinds, geo.spr, geo.rows, geo.width
+	local idle = C.idle
+	local part = { index = index, cpus = {}, slots = {}, y = Y, rows = rows }
+	local function member(e) if e then members[#members + 1] = e end return e end
+	--- power: a row of substations above every cable row's north side and below its south side
+	for r = 0, rows do power_row(Y - 6 + r * PITCH, X0 - 4, X0 + width + 2) end
+	--- the spine, the controller and the CPUs on the left
+	for y = Y, Y + (rows - 1) * PITCH do place("me-cable", p1(X0 - 1, y)) end
+	part.anchor = member(place("me-network-controller", X0 - 2, Y + 1))
+	local lat_recipes, reg_recipes = split_recipes(game.forces.player)
+	part.lat_recipes, part.reg_recipes = lat_recipes, reg_recipes
+	local jobs = idle and 0 or math.max(1, math.floor(m.provider / 4))
+	part.jobs = jobs
 	local ncpu
 	if prototypes.entity["me-256k-crafting-storage"] then
-		--- issue #6: one multiblock CPU per job and eight spare (the quantum CPUs had at least eight free slots for the
-		--- level maintainers and the latency probes), each a row of 19 blocks left of the spine (sixteen 256k
-		--- crafting storages, 4 MiB: the jobs of 5000 items of the scene need up to about 2 MiB; three co-processors: as
-		--- fast as a quantum CPU), a free row between two CPUs
-		ncpu = jobs + 8
+		--- issue #6: one multiblock CPU per job and eight spare in the first part (the quantum CPUs had at least eight
+		--- free slots for the level maintainers and the latency probes; the other parts' maintainers are stocked),
+		--- each a row of 19 blocks left of the spine (sixteen 256k crafting storages, 4 MiB: the jobs of 5000 items
+		--- of the scene need up to about 2 MiB; three co-processors: as fast as a quantum CPU), a free row between
+		--- two CPUs; a part too low for its CPUs gets more columns, joined by two cables
+		ncpu = jobs + (first and 8 or 1)
+		local per_col = math.max(1, math.floor((rows * PITCH - 3) / 2))
 		for k = 0, ncpu - 1 do
-			local y = Y0 + 3 + 2 * k
-			b.cpus[#b.cpus + 1] = member(place("me-256k-crafting-storage", p1(X0 - 2, y)))
-			for dx = 3, 17 do member(place("me-256k-crafting-storage", p1(X0 - dx, y))) end
-			for dx = 18, 20 do member(place("me-crafting-co-processing-unit", p1(X0 - dx, y))) end
+			local col, row = math.floor(k / per_col), k % per_col
+			local y, xb = Y + 3 + 2 * row, X0 - 21 * col
+			part.cpus[#part.cpus + 1] = member(place("me-256k-crafting-storage", p1(xb - 2, y)))
+			for dx = 3, 17 do member(place("me-256k-crafting-storage", p1(xb - dx, y))) end
+			for dx = 18, 20 do member(place("me-crafting-co-processing-unit", p1(xb - dx, y))) end
+			if col > 0 then
+				place("me-cable", p1(xb, y))
+				place("me-cable", p1(xb - 1, y))
+			end
 		end
 	else                                                     -- (bench --from-ref of a version before issue #6)
 		ncpu = math.ceil(jobs / 4) + 2
-		for k = 0, ncpu - 1 do b.cpus[#b.cpus + 1] = member(place("me-quantum-crafting-cpu", X0 - 2, Y0 + 3 + 2 * k)) end
+		for k = 0, ncpu - 1 do part.cpus[#part.cpus + 1] = member(place("me-quantum-crafting-cpu", X0 - 2, Y + 3 + 2 * k)) end
+		if Y + 3 + 2 * ncpu > Y + (rows - 1) * PITCH then fail("too many CPUs for the spine") end
 	end
-	if Y0 + 3 + 2 * ncpu > Y0 + (rows - 1) * PITCH then fail("too many CPUs for the spine") end
+	part.ncpu = ncpu
 	--- the slots
-	b.slots, b.drives, b.count = {}, {}, {}
 	local n, lat_i, prov_i = 0, 0, 0
 	for r = 0, rows - 1 do
-		local y0 = Y0 + r * PITCH
+		local y0 = Y + r * PITCH
 		for x = X0, X0 + width - 1 do place("me-cable", p1(x, y0)) end
 		for _, s in ipairs({ -1, 1 }) do
 			for j = 0, spr - 1 do
@@ -466,25 +546,26 @@ local function build_me()
 				local x = X0 + SLOT * j
 				local by = y0 + s                                  -- the tile next to the cable
 				local dir = s < 0 and defines.direction.north or defines.direction.south
-				local back = s < 0 and defines.direction.south or defines.direction.north
 				local cy = y0 + 3 * s                              -- center tile of a 3x3 target
-				local rec = { kind = kind }
+				local rec = { kind = kind, part = index }
 				b.slots[#b.slots + 1] = rec
+				part.slots[#part.slots + 1] = #b.slots
 				local item = RAW[rand(#RAW)]
 				local fluid = FLUIDS[rand(#FLUIDS)]
 				if kind == "imp_chest" then
 					rec.bus = member(place("me-import-bus", x + 1.5, by + 0.5, dir))
 					rec.chest = place("steel-chest", p1(x + 1, y0 + 2 * s))
 					rec.item = item
-					if rec.chest then chest_fill(rec.chest, item, 48) end
+					if rec.chest and not idle then chest_fill(rec.chest, item, 48) end
 				elseif kind == "exp_chest" then
 					rec.bus = member(place("me-export-bus", x + 1.5, by + 0.5, dir))
 					rec.chest = place("steel-chest", p1(x + 1, y0 + 2 * s))
 					rec.filters = { item }
+					if rec.chest and idle then block_chest(rec.chest, item) end
 				elseif kind == "pair" then
 					local recipe = PAIR_RECIPES[rand(#PAIR_RECIPES)]
 					rec.machine = place("assembling-machine-2", x + 1.5, cy + 0.5)
-					if rec.machine then rec.machine.set_recipe(recipe) end
+					if rec.machine and not idle then rec.machine.set_recipe(recipe) end
 					rec.recipe = recipe
 					rec.exp = member(place("me-export-bus", x + 0.5, by + 0.5, dir))
 					rec.imp = member(place("me-import-bus", x + 2.5, by + 0.5, dir))
@@ -494,23 +575,27 @@ local function build_me()
 					rec.chest = place("zz-bench-warehouse", p1(x + 1, y0 + 2 * s))
 					rec.item = item
 					rec.filters = { item }
+					if rec.chest and idle and kind == "cap_exp" then block_chest(rec.chest, item) end
 				elseif kind == "cap_fimp" or kind == "cap_fexp" then
 					rec.bus = member(place(kind == "cap_fimp" and "me-import-bus" or "me-export-bus", x + 1.5, by + 0.5, dir))
 					rec.tank = place("zz-bench-big-tank", x + 1.5, cy + 0.5)
 					rec.fluid = fluid
 					rec.filters = { "fluid/" .. fluid }
+					if rec.tank and idle and kind == "cap_fexp" then rec.tank.insert_fluid{ name = fluid, amount = 1000000 } end
 				elseif kind == "imp_tank" or kind == "exp_tank" then
 					rec.bus = member(place(kind == "imp_tank" and "me-import-bus" or "me-export-bus", x + 1.5, by + 0.5, dir))
 					rec.tank = place("storage-tank", x + 1.5, cy + 0.5)
 					if kind == "imp_tank" then rec.fluid = fluid end
-					if kind == "imp_tank" and rec.tank then rec.tank.insert_fluid{ name = fluid, amount = 25000 } end
+					if rec.tank and ((kind == "imp_tank" and not idle) or (kind == "exp_tank" and idle)) then
+						rec.tank.insert_fluid{ name = fluid, amount = 25000 }
+					end
 					rec.filters = kind == "exp_tank" and { "fluid/" .. fluid } or {}
 				elseif kind == "iface_items" then
 					local ix = x + 1
 					rec.iface = member(place("me-network-interface", p1(ix, by)))
 					rec.src = place("steel-chest", p1(ix, y0 + 3 * s))
 					rec.src_item = RAW[rand(#RAW)]
-					if rec.src then chest_fill(rec.src, rec.src_item, 48) end
+					if rec.src and not idle then chest_fill(rec.src, rec.src_item, 48) end
 					rec.ins = inserter("fast-inserter", ix, y0 + 2 * s, dir)      -- from the source chest into the interface
 					rec.out_item = item
 					rec.eins = inserter("fast-inserter", ix + 1, by, defines.direction.west)   -- from the interface east
@@ -519,6 +604,7 @@ local function build_me()
 						rec.eins.set_filter(1, item)
 					end
 					rec.sink = place("steel-chest", p1(ix + 2, by))
+					if rec.sink and idle then block_chest(rec.sink, item) end
 				elseif kind == "iface_fin" or kind == "iface_fout" then
 					--- the interface touches the tank's connection: north slots on the tank's south one, south slots
 					--- on its north one
@@ -528,7 +614,9 @@ local function build_me()
 					rec.iface = member(place("me-network-interface", p1(ix, by)))
 					rec.side = s < 0 and 1 or 3
 					rec.fluid = fluid
-					if kind == "iface_fin" and rec.tank then rec.tank.insert_fluid{ name = fluid, amount = 25000 } end
+					if rec.tank and ((kind == "iface_fin" and not idle) or (kind == "iface_fout" and idle)) then
+						rec.tank.insert_fluid{ name = fluid, amount = 25000 }
+					end
 				elseif kind == "sb_chest" then
 					rec.bus = member(place("me-storage-bus", x + 1.5, by + 0.5, dir))
 					rec.chest = place("steel-chest", p1(x + 1, y0 + 2 * s))
@@ -566,21 +654,25 @@ local function build_me()
 			end
 		end
 	end
-	--- the graph in one pass (the map scan of on_configuration_changed), then every module registers its blocks
-	local prof = game.create_profiler()
-	remote.call(NET, "rebuild")
-	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
-	prof.stop()
-	log({ "", "DEVCHECK-BENCH-BUILD registered ", #members, " members: ", prof })
-	--- cells: item drives about 70 % full, fluid drives
+	return part
+end
+
+--- the cells, settings, patterns and probes of a placed and registered part
+local function configure_part(b, part, first)
+	local lat_recipes, reg_recipes = part.lat_recipes, part.reg_recipes
 	local reserved = {}
-	for _, r in ipairs(lat_recipes) do reserved[prototypes.recipe[r].products[1].name] = LATENCY_STOCK end
+	if first then
+		for _, r in ipairs(lat_recipes) do reserved[prototypes.recipe[r].products[1].name] = LATENCY_STOCK end
+	else                                              -- no variety: the maintainers' items must still be in stock
+		for _, r in ipairs(reg_recipes) do reserved[prototypes.recipe[r].products[1].name] = 300 end
+	end
 	local idrives, fdrives = {}, {}
-	for _, rec in ipairs(b.slots) do
+	for _, i in ipairs(part.slots) do
+		local rec = b.slots[i]
 		if rec.kind == "drive" and rec.drive then idrives[#idrives + 1] = rec.drive end
 		if rec.kind == "fdrive" and rec.drive then fdrives[#fdrives + 1] = rec.drive end
 	end
-	local cells, types = pack_cells(#idrives * 10, 0.7, reserved)
+	local cells, types = pack_cells(#idrives * 10, 0.7, reserved, first)
 	for i, items in ipairs(cells) do
 		insert_cell(idrives[math.floor((i - 1) / 10) + 1], "me-256k-storage-cell", items, (i - 1) % 10 + 1)
 	end
@@ -597,9 +689,10 @@ local function build_me()
 	--- the settings of every block
 	local maint_keys = {}
 	for _, r in ipairs(reg_recipes) do maint_keys[#maint_keys + 1] = prototypes.recipe[r].products[1].name end
-	lat_i = 0
-	b.lat_maint, b.sb_probe = {}, {}
-	for _, rec in ipairs(b.slots) do
+	local lat_i = 0
+	local probes = {}
+	for _, i in ipairs(part.slots) do
+		local rec = b.slots[i]
 		local k = rec.kind
 		if (k == "exp_chest" or k == "exp_tank") and rec.bus then remote.call(IO, "set_bus_filters", rec.bus, rec.filters) end
 		if (k == "cap_exp" or k == "cap_fexp") and rec.bus then remote.call(IO, "set_bus_filters", rec.bus, rec.filters) end
@@ -612,7 +705,7 @@ local function build_me()
 		end
 		if k == "sb_chest" and rec.bus then
 			if rec.settings then remote.call(SB, "set_settings", rec.bus, rec.settings)
-			else b.sb_probe[#b.sb_probe + 1] = rec.chest end
+			else probes[#probes + 1] = rec.chest end
 		end
 		if (k == "provider" or k == "lat_provider") and rec.provider and rec.recipe then give_pattern(rec.provider, rec.recipe) end
 		if k == "maint" and rec.maint then
@@ -631,21 +724,87 @@ local function build_me()
 			remote.call(CIRC, "set_circuit_filters", rec.circuit, keys)
 		end
 	end
-	--- the storage bus probes: 20 chests spread over all (the buses are visited in unit order)
-	local spread = {}
-	for i = 1, math.min(20, #b.sb_probe) do spread[i] = b.sb_probe[math.floor((i - 1) * #b.sb_probe / math.min(20, #b.sb_probe)) + 1] end
-	b.sb_probe = spread
+	if first then
+		--- the storage bus probes: 20 chests spread over all (the buses are visited in unit order)
+		local spread = {}
+		for i = 1, math.min(20, #probes) do spread[i] = probes[math.floor((i - 1) * #probes / math.min(20, #probes)) + 1] end
+		b.sb_probe = spread
+	end
 	--- jobs on the providers (started at warmup / 2, when the controller has power): a quarter as many as
 	--- providers, each for more than the run makes
-	b.job_keys = {}
-	for i = 1, jobs do
-		b.job_keys[i] = prototypes.recipe[reg_recipes[(i - 1) % #reg_recipes + 1]].products[1].name
+	for i = 1, part.jobs do
+		b.job_keys[#b.job_keys + 1] = { anchor = part.anchor, key = prototypes.recipe[reg_recipes[(i - 1) % #reg_recipes + 1]].products[1].name }
 	end
+	return types
+end
+
+--- `noent`: every entity of the mod goes (the members, the interfaces' side tanks), nothing is registered any more
+local function strip_me()
+	local n = 0
+	for _, e in pairs(surface().find_entities_filtered{}) do
+		if e.valid and e.name:find("^me%-") then
+			e.destroy()
+			n = n + 1
+		end
+	end
+	log("DEVCHECK-BENCH-STRIP " .. n)
+end
+
+local function build_me()
+	local b = storage.b
+	research_all(game.forces.player)
+	local K = math.max(1, C.networks or 1)
+	local geos, total_h, max_w = {}, 0, 0
+	for k = 1, K do
+		local size = math.floor(C.size / K) + (k <= C.size % K and 1 or 0)
+		geos[k] = part_geometry(size, k == 1)
+		total_h = total_h + geos[k].height + (k < K and PART_GAP or 0)
+		max_w = math.max(max_w, geos[k].width)
+	end
+	new_surface(max_w + 16, total_h + 16)
+	b.slots, b.drives, b.count, b.parts, b.anchors, b.lat_maint, b.sb_probe, b.job_keys = {}, {}, {}, {}, {}, {}, {}, {}
+	local members = {}
+	local y = Y0
+	for k = 1, K do
+		local part = place_part(b, geos[k], y, k, k == 1, members)
+		b.parts[k] = part
+		b.anchors[k] = part.anchor
+		y = y + geos[k].height + PART_GAP
+	end
+	b.anchor = b.parts[1].anchor
+	b.cpus = b.parts[1].cpus
+	if C.noent then
+		--- the engine's share: the ME entities are placed like the rest and destroyed again before the mod ever
+		--- registers them (nothing to sweep, no cells to spill); the chests, tanks, machines, inserters and power stay
+		log_json("SETUP", { scene = "me", size = C.size, networks = K, idle = false, noent = true, slots = #b.slots,
+			counts = b.count, members = #members, entities = #surface().find_entities_filtered{}, fails = fails })
+		strip_me()
+		return
+	end
+	--- the graph in one pass (the map scan of on_configuration_changed), then every module registers its blocks
+	local prof = game.create_profiler()
+	remote.call(NET, "rebuild")
+	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
+	prof.stop()
+	log({ "", "DEVCHECK-BENCH-BUILD registered ", #members, " members: ", prof })
+	local types = 0
+	for k = 1, K do types = types + configure_part(b, b.parts[k], k == 1) end
 	local net = remote.call(NET, "network", b.anchor)
-	log_json("SETUP", { scene = "me", size = C.size, slots = #kinds, rows = rows, slots_per_row = 2 * spr, counts = b.count,
-		members = net and net.members or 0, cells = net and net.cells or 0, fluid_cells = net and net.fluid_cells or 0,
-		storage_buses = net and net.storage_buses or 0, fluid_storage_buses = net and net.fluid_storage_buses or 0,
-		item_types = types, recipes = #reg_recipes, jobs = jobs, cpus = ncpu, network_ok = net and net.ok or false,
+	local members_all, cells_all, fcells_all, sb_all, fsb_all = 0, 0, 0, 0, 0
+	for k = 1, K do
+		local nk = remote.call(NET, "network", b.anchors[k])
+		if nk then
+			members_all, cells_all, fcells_all = members_all + (nk.members or 0), cells_all + (nk.cells or 0), fcells_all + (nk.fluid_cells or 0)
+			sb_all, fsb_all = sb_all + (nk.storage_buses or 0), fsb_all + (nk.fluid_storage_buses or 0)
+		end
+	end
+	local rows = 0
+	for k = 1, K do rows = rows + geos[k].rows end
+	log_json("SETUP", { scene = "me", size = C.size, networks = K, idle = C.idle or false, noent = C.noent or false,
+		slots = #b.slots, rows = rows, slots_per_row = 2 * geos[1].spr, counts = b.count,
+		members = members_all, cells = cells_all, fluid_cells = fcells_all,
+		storage_buses = sb_all, fluid_storage_buses = fsb_all, item_types = types, recipes = #b.parts[1].reg_recipes,
+		jobs = #b.job_keys, cpus = b.parts[1].ncpu, network_ok = net and net.ok or false,
 		entities = #surface().find_entities_filtered{}, fails = fails })
 end
 
@@ -694,6 +853,7 @@ end
 
 --- sources full, sinks empty at the start of the window (before the count, so the conservation check sees it)
 local function refill(b)
+	if C.idle then return end
 	for _, rec in ipairs(b.slots) do
 		local k = rec.kind
 		if (k == "imp_chest" or k == "cap_imp") and rec.chest and rec.chest.valid then
@@ -801,13 +961,56 @@ local function report_me(b, p0, p1)
 	return out
 end
 
+--- the scene's machines at the second probe: how many work, wait for ingredients or have a full output, and the
+--- crafts they made against what their speed allowed in the window (`utilisation`)
+local function machine_report(b, p0, p1)
+	local secs = (p1.tick - p0.tick) / 60
+	local out = {}
+	for _, rec in ipairs(b.slots) do
+		local m = (rec.kind == "pair" or rec.kind == "provider" or rec.kind == "lat_provider") and rec.machine
+		if m and m.valid then
+			local group = rec.kind == "pair" and "pair" or "provider"
+			local t = out[group] or { n = 0, working = 0, no_ingredients = 0, full_output = 0, other = 0, crafts = 0, possible = 0 }
+			out[group] = t
+			t.n = t.n + 1
+			local st = m.status
+			if st == STATUS.working then t.working = t.working + 1
+			elseif st == STATUS.item_ingredient_shortage or st == STATUS.no_ingredients or st == STATUS.fluid_ingredient_shortage then
+				t.no_ingredients = t.no_ingredients + 1
+			elseif st == STATUS.full_output then t.full_output = t.full_output + 1
+			else t.other = t.other + 1 end
+			local r = m.get_recipe()
+			if r then
+				local v0, v1 = p0.crafted[m.unit_number], p1.crafted[m.unit_number]
+				if v0 and v1 then t.crafts = t.crafts + (v1[1] - v0[1]) end
+				t.possible = t.possible + secs * m.crafting_speed / r.energy
+			end
+		end
+	end
+	for _, t in pairs(out) do t.utilisation = t.possible > 0 and t.crafts / t.possible or 0 end
+	return out
+end
+
+--- the service quality of the window: the scheduler's counters since the first probe, the backlogs sampled every
+--- SAMPLE_TICKS, the machines, the mod's Lua heap
+local function service_report(b, p0, p1)
+	return { sched = sched_stats(true), backlog_samples = b.samples or {}, machines = machine_report(b, p0, p1),
+		memory_kb = mod_memory_kb(), own_memory_kb = collectgarbage("count") }
+end
+
+--- a slice of the long run: the heap, the counters (not reset) and the backlogs now
+local function slice_report(b)
+	log_json("SLICE", { tick = game.tick, memory_kb = mod_memory_kb(), own_memory_kb = collectgarbage("count"),
+		backlogs = backlogs(), sched = sched_stats(false) })
+end
+
 --------------------------------------------------------------------------------
 --- reference scenes: inserters, robots
 --------------------------------------------------------------------------------
 
 local function build_inserters()
 	local b = storage.b
-	game.forces.player.research_all_technologies()
+	research_all(game.forces.player)
 	local n = C.size
 	local per_row = 200
 	local rows = math.ceil(n / per_row)
@@ -834,7 +1037,7 @@ end
 local function build_robots()
 	local b = storage.b
 	local force = game.forces.player
-	force.research_all_technologies()
+	research_all(force)
 	local pairs_n = math.max(10, math.floor(C.size / 10))
 	local per_row = 100
 	local rows = math.ceil(pairs_n / per_row)
@@ -904,6 +1107,351 @@ local function report_native(b, p0, p1)
 	out.items_per_s_per_endpoint = total / secs / math.max(1, n)
 	out.endpoints = n
 	local checked, bad = conservation(p0.world, p1.world, {})
+	out.conservation = { keys = checked, problems = #bad, first = { bad[1], bad[2], bad[3], bad[4], bad[5] } }
+	return out
+end
+
+--------------------------------------------------------------------------------
+--- planner scene: every usable recipe as a processing pattern, the planner timed on the deepest items
+--------------------------------------------------------------------------------
+
+local function res_key(e) return e.type == "fluid" and ("fluid/" .. e.name) or e.name end
+
+--- The recipes the planner gets as processing patterns: enabled, not hidden, no recycling, at most 9 inputs and 6
+--- outputs, whole products without a chance. Each gets the depth of its main product: raw keys (nothing makes them)
+--- are 0, a product is one more than its deepest input; a recipe that is not on a shortest path of its main product
+--- (loops, roundabout ways) is left out, so the trees are deep but finite.
+local function planner_recipes(force)
+	local R = {}
+	for name, r in pairs(prototypes.recipe) do
+		local fr = force.recipes[name]
+		if fr and fr.enabled and not r.hidden and r.category ~= "recycling" and not name:find("%-recycling$")
+			and #r.ingredients > 0 and #r.ingredients <= 9 and #r.products > 0 and #r.products <= 6 then
+			local ok, ins, outs, inset = true, {}, {}, {}
+			--- (items with own data, the cells and patterns, are never stored by name: no pattern names them)
+			local function tagged(e) return e.type == "item" and prototypes.item[e.name] and prototypes.item[e.name].type == "item-with-tags" end
+			for _, i in pairs(r.ingredients) do
+				if tagged(i) then ok = false end
+				ins[#ins + 1] = { key = res_key(i), amount = i.amount }
+				inset[res_key(i)] = true
+			end
+			for _, pr in pairs(r.products) do
+				local amt = pr.amount or ((pr.amount_min or 0) + (pr.amount_max or 0)) / 2
+				if (pr.probability or 1) < 1 or amt <= 0 or (pr.type == "item" and amt ~= math.floor(amt)) or inset[res_key(pr)] or tagged(pr) then ok = false end
+				outs[#outs + 1] = { key = res_key(pr), amount = amt }
+			end
+			if ok then
+				local main = r.main_product and res_key(r.main_product) or outs[1].key
+				R[#R + 1] = { name = name, inputs = ins, outputs = outs, main = main }
+			end
+		end
+	end
+	table.sort(R, function(a, c) return a.name < c.name end)
+	--- depths
+	local produced, depth = {}, {}
+	for _, r in ipairs(R) do for _, o in ipairs(r.outputs) do produced[o.key] = true end end
+	for _, r in ipairs(R) do for _, i in ipairs(r.inputs) do if not produced[i.key] then depth[i.key] = 0 end end end
+	for _ = 1, 2 do                                  -- the second pass: keys only loops make (water) count as raw
+		local changed = true
+		while changed do
+			changed = false
+			for _, r in ipairs(R) do
+				local d, ok = 0, true
+				for _, i in ipairs(r.inputs) do
+					local di = depth[i.key]
+					if not di then ok = false break end
+					if di > d then d = di end
+				end
+				if ok then
+					for _, o in ipairs(r.outputs) do
+						if not depth[o.key] or depth[o.key] > d + 1 then
+							depth[o.key] = d + 1
+							changed = true
+						end
+					end
+				end
+			end
+		end
+		for _, r in ipairs(R) do for _, i in ipairs(r.inputs) do if not depth[i.key] then depth[i.key] = 0 end end end
+	end
+	local kept, max_depth, items = {}, 0, {}
+	for _, r in ipairs(R) do
+		local d = 0
+		for _, i in ipairs(r.inputs) do if depth[i.key] > d then d = depth[i.key] end end
+		if depth[r.main] == d + 1 then
+			kept[#kept + 1] = r
+			items[r.main] = depth[r.main]
+			if d + 1 > max_depth then max_depth = d + 1 end
+		end
+	end
+	local raw = {}
+	for _, r in ipairs(kept) do for _, i in ipairs(r.inputs) do if depth[i.key] == 0 then raw[i.key] = true end end end
+	return kept, items, raw, max_depth, #R
+end
+
+--- cells holding `amount` of every key in `keys` (items; fluids into fluid cells)
+local function stock_cells(keys, amount, fluid)
+	local spec = prototypes.mod_data["fork-me-network"].data.cells[fluid and "me-256k-fluid-storage-cell" or "me-256k-storage-cell"]
+	local per_byte = spec.per_byte or 8
+	local cells, cur = {}, nil
+	for _, key in ipairs(keys) do
+		local need = spec.per_type + math.ceil(amount / per_byte)
+		if not cur or cur.types >= spec.types or cur.bytes + need > spec.bytes then
+			cur = { items = {}, bytes = 0, types = 0 }
+			cells[#cells + 1] = cur
+		end
+		cur.items[key] = amount
+		cur.types, cur.bytes = cur.types + 1, cur.bytes + need
+	end
+	local out = {}
+	for i, c in ipairs(cells) do out[i] = c.items end
+	return out
+end
+
+--- The machine prototype that makes recipe `name` as a crafting pattern: an assembling machine with the recipe's
+--- category, no other fixed recipe and enough fluid boxes (inputs and outputs, none of both kinds), the first by
+--- name. nil for a recipe without fluids: a processing pattern next to a chest does for it.
+local machine_cache = {}
+local function machine_for(name)
+	local proto = prototypes.recipe[name]
+	local fin, fout = 0, 0
+	for _, i in pairs(proto.ingredients) do if i.type == "fluid" then fin = fin + 1 end end
+	for _, pr in pairs(proto.products) do if pr.type == "fluid" then fout = fout + 1 end end
+	if fin + fout == 0 then return nil end
+	local key = proto.category .. ":" .. fin .. ":" .. fout
+	if machine_cache[key] ~= nil then return machine_cache[key] or nil end
+	local names = {}
+	for ename, m in pairs(prototypes.entity) do
+		if m.type == "assembling-machine" and not m.hidden and m.crafting_categories[proto.category]
+			and (not m.fixed_recipe or m.fixed_recipe == "" or m.fixed_recipe == name) then
+			names[#names + 1] = ename
+		end
+	end
+	table.sort(names)
+	local found = false
+	for _, ename in ipairs(names) do
+		local m = prototypes.entity[ename]
+		local ins, outs, bad = 0, 0, false
+		for _, fb in ipairs(m.fluidbox_prototypes or {}) do
+			if fb.production_type == "input" then ins = ins + 1
+			elseif fb.production_type == "output" then outs = outs + 1
+			elseif fb.production_type == "input-output" then bad = true end
+		end
+		if not bad and ins >= fin and outs >= fout then
+			found = ename
+			break
+		end
+	end
+	machine_cache[key] = found
+	return found or nil
+end
+
+local function footprint(ename)
+	local box = prototypes.entity[ename].collision_box
+	return math.ceil(box.right_bottom.x - box.left_top.x - 0.01), math.ceil(box.right_bottom.y - box.left_top.y - 0.01)
+end
+
+local function build_planner()
+	local b = storage.b
+	local force = game.forces.player
+	research_all(force)
+	local recipes, items, raw, max_depth, usable = planner_recipes(force)
+	local raw_items, raw_fluids = {}, {}
+	for key in pairs(raw) do
+		if key:find("^fluid/") then raw_fluids[#raw_fluids + 1] = key else raw_items[#raw_items + 1] = key end
+	end
+	table.sort(raw_items)
+	table.sort(raw_fluids)
+	--- the deepest items as targets (a key the planner can make from the patterns)
+	local deep = {}
+	for key, d in pairs(items) do
+		if not key:find("^fluid/") and prototypes.item[key] then deep[#deep + 1] = { key = key, depth = d } end
+	end
+	table.sort(deep, function(a, c) if a.depth ~= c.depth then return a.depth > c.depth end return a.key < c.key end)
+	b.targets = {}
+	for i = 1, math.min(C.planner_targets or 5, #deep) do b.targets[i] = deep[i] end
+	--- recipes without fluids: processing patterns at a chest; with fluids: crafting patterns at a machine of the
+	--- recipe's category (grouped by machine); without a machine: left out
+	local chest_recipes, by_machine, machine_names, no_machine = {}, {}, {}, {}
+	for _, r in ipairs(recipes) do
+		local m = machine_for(r.name)
+		local fluids = false
+		for _, i in ipairs(r.inputs) do if i.key:find("^fluid/") then fluids = true end end
+		for _, o in ipairs(r.outputs) do if o.key:find("^fluid/") then fluids = true end end
+		if not fluids then chest_recipes[#chest_recipes + 1] = r
+		elseif m then
+			if not by_machine[m] then
+				by_machine[m] = {}
+				machine_names[#machine_names + 1] = m
+			end
+			by_machine[m][#by_machine[m] + 1] = r
+		else
+			no_machine[#no_machine + 1] = r.name
+		end
+	end
+	table.sort(machine_names)
+	--- the layout: rows of providers along cable rows; chest rows (3 tiles per provider, 4 per row) first, then a
+	--- row per machine kind (the machine north of its provider, touching it; w + 1 tiles per provider, h + 3 per row)
+	local per_row = 100
+	local plan = {}                                      -- { kind = "chest" | ename, recipes, providers, pitch, slot }
+	local nprov = math.ceil(#chest_recipes / 9)
+	for k = 1, math.ceil(nprov / per_row) do
+		local first = (k - 1) * per_row * 9 + 1
+		local list = {}
+		for i = first, math.min(#chest_recipes, first + per_row * 9 - 1) do list[#list + 1] = chest_recipes[i] end
+		plan[#plan + 1] = { kind = "chest", recipes = list, pitch = 4, slot = 3, w = 1, h = 1 }
+	end
+	for _, m in ipairs(machine_names) do
+		local w, h = footprint(m)
+		local list = by_machine[m]
+		local n = math.ceil(#list / 9)
+		for k = 1, math.ceil(n / per_row) do
+			local first = (k - 1) * per_row * 9 + 1
+			local part = {}
+			for i = first, math.min(#list, first + per_row * 9 - 1) do part[#part + 1] = list[i] end
+			plan[#plan + 1] = { kind = m, recipes = part, pitch = h + 3, slot = w + 1, w = w, h = h }
+		end
+	end
+	local icells = stock_cells(raw_items, 1000000, false)
+	local fcells = stock_cells(raw_fluids, 1000000, true)
+	local idrives, fdrives = math.max(1, math.ceil(#icells / 10)), math.max(1, math.ceil(#fcells / 10))
+	local width = 0
+	for _, row in ipairs(plan) do width = math.max(width, math.ceil(#row.recipes / 9) * row.slot) end
+	width = width + 4 + 2 * (idrives + fdrives)
+	local height = 0
+	for _, row in ipairs(plan) do height = height + row.pitch end
+	new_surface(width + 16, math.max(height, 12) + 40)
+	local members = {}
+	local function member(e) if e then members[#members + 1] = e end return e end
+	--- power: substations every 16 tiles above every cable row's north side
+	local y = Y0
+	for _, row in ipairs(plan) do
+		power_row(y - row.h - 3, X0 - 4, X0 + width + 2)
+		y = y + row.pitch
+	end
+	power_row(y + 2, X0 - 4, X0 + width + 2)
+	for yy = Y0, math.max(y, Y0 + 6) do place("me-cable", p1(X0 - 1, yy)) end   -- the spine (down to the CPU rows)
+	b.anchor = member(place("me-network-controller", X0 - 2, Y0 + 1))
+	b.anchors = { b.anchor }
+	b.cpus, b.slots = {}, {}
+	for k = 0, 1 do
+		local cy = Y0 + 3 + 2 * k
+		b.cpus[#b.cpus + 1] = member(place("me-256k-crafting-storage", p1(X0 - 2, cy)))
+		for dx = 3, 17 do member(place("me-256k-crafting-storage", p1(X0 - dx, cy))) end
+		for dx = 18, 20 do member(place("me-crafting-co-processing-unit", p1(X0 - dx, cy))) end
+	end
+	b.providers, b.drives = {}, {}
+	local machines = {}
+	y = Y0
+	for ri, row in ipairs(plan) do
+		for x = X0, X0 + width - 1 do place("me-cable", p1(x, y)) end
+		if ri == 1 then
+			for i = 1, idrives + fdrives do b.drives[#b.drives + 1] = member(place("me-drive", p1(X0 + 2 * i - 2, y + 1))) end
+		end
+		local x = X0 + 2 * (idrives + fdrives) + 4
+		row.providers = {}
+		for i = 1, #row.recipes, 9 do
+			local prov = member(place("me-pattern-provider", p1(x, y - 1)))
+			if row.kind == "chest" then
+				place("steel-chest", p1(x + 1, y - 1))                       -- the processing target next to the provider
+			else
+				--- the machine north of the provider, its bottom row of tiles touching the provider's tile
+				local m = place(row.kind, x + 0.5, y - 1 - row.h / 2)
+				if m then machines[row.kind] = (machines[row.kind] or 0) + 1 end
+			end
+			if prov then
+				b.providers[#b.providers + 1] = prov
+				row.providers[#row.providers + 1] = prov
+			end
+			x = x + row.slot
+		end
+		y = y + row.pitch
+	end
+	local prof = game.create_profiler()
+	remote.call(NET, "rebuild")
+	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
+	prof.stop()
+	log({ "", "DEVCHECK-BENCH-BUILD registered ", #members, " members: ", prof })
+	for i, cell in ipairs(icells) do insert_cell(b.drives[math.floor((i - 1) / 10) + 1], "me-256k-storage-cell", cell, (i - 1) % 10 + 1) end
+	for i, cell in ipairs(fcells) do insert_cell(b.drives[idrives + math.floor((i - 1) / 10) + 1], "me-256k-fluid-storage-cell", cell, (i - 1) % 10 + 1) end
+	--- the patterns, 9 per provider
+	local inv = game.create_inventory(2)
+	local encoded, bad, processing, crafting = 0, 0, 0, 0
+	for _, row in ipairs(plan) do
+		for i, r in ipairs(row.recipes) do
+			local prov = row.providers[math.floor((i - 1) / 9) + 1]
+			if prov then
+				inv.clear()
+				inv.insert{ name = "me-blank-pattern", count = 1 }
+				local def
+				if row.kind == "chest" then
+					def = { kind = "processing", inputs = r.inputs, outputs = r.outputs, recipe = r.name }
+					processing = processing + 1
+				else
+					def = { kind = "crafting", recipe = r.name }
+					crafting = crafting + 1
+				end
+				local where, why = remote.call(TERM, "encode_def", false, inv, false, def)
+				local stack = inv.find_item_stack("me-encoded-pattern")
+				if where and stack and remote.call(AC, "insert_pattern", prov, stack) then encoded = encoded + 1
+				else
+					bad = bad + 1
+					if bad <= 5 then fail("pattern " .. r.name .. ": " .. tostring(why)) end
+				end
+			end
+		end
+	end
+	inv.destroy()
+	local depths = {}
+	for _, d in pairs(items) do depths[d] = (depths[d] or 0) + 1 end
+	table.sort(no_machine)
+	log_json("SETUP", { scene = "planner", size = C.size, recipes = #recipes, usable_recipes = usable, encoded = encoded,
+		processing = processing, crafting = crafting, no_machine = #no_machine, no_machine_first = { no_machine[1], no_machine[2], no_machine[3], no_machine[4], no_machine[5] },
+		machines = machines, rejected = bad, items = table_size(items), raw_items = #raw_items, raw_fluids = #raw_fluids,
+		max_depth = max_depth, depths = depths, providers = #b.providers, targets = b.targets,
+		entities = #surface().find_entities_filtered{}, fails = fails })
+end
+
+--- the planner on every target: five plans of 1 and of 100 timed (the providers scanned first, as the terminal
+--- does), then one job of 10 started; the patterns the network cannot use, by reason
+local function planner_probe(b)
+	local started = {}
+	for _, t in ipairs(b.targets) do
+		for _, amount in ipairs({ 1, 100 }) do
+			local p = game.create_profiler()
+			local plan
+			for _ = 1, 5 do plan = remote.call(AC, "plan", b.anchor, t.key, amount) end
+			p.stop()
+			p.divide(5)
+			local status = plan and (plan.ok and "ok" or (plan.no_pattern and "no-pattern" or "missing")) or "nil"
+			local missing, names = 0, {}
+			for k in pairs(plan and plan.missing or {}) do
+				missing = missing + 1
+				if #names < 4 then names[#names + 1] = k end
+			end
+			log({ "", "DEVCHECK-BENCH-PLAN ", t.key, " depth ", t.depth, " amount ", amount, " steps ", plan and plan.steps or -1,
+				" runs ", plan and plan.runs or -1, " missing ", missing, " ", status, " ", p, " ", table.concat(names, ",") })
+		end
+		local p = game.create_profiler()
+		local id, why = remote.call(AC, "start", b.anchor, t.key, 10)
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-PLAN-START ", t.key, " ", id and "ok" or tostring(why), " ", p })
+		if id then started[#started + 1] = id end
+	end
+	b.jobs = started
+	log_json("JOBS", { started = #started, failed = {} })
+	log_json("PLANNER", { ignored = remote.call(AC, "ignored", b.anchor) })
+end
+
+local function report_planner(b, p0, p1)
+	local out = { seconds = (p1.tick - p0.tick) / 60, categories = {}, endpoints = 0, items_per_s = 0, items_per_s_per_endpoint = 0 }
+	local jobs = {}
+	for _, id in ipairs(b.jobs or {}) do
+		local j = remote.call(AC, "job", id)
+		if j then jobs[#jobs + 1] = { id = id, status = j.status, done = j.done, leases = j.leases } end
+	end
+	out.jobs = jobs
+	local checked, bad = conservation(p0.world, p1.world, production(p0.crafted, p1.crafted))
 	out.conservation = { keys = checked, problems = #bad, first = { bad[1], bad[2], bad[3], bad[4], bad[5] } }
 	return out
 end
@@ -1102,6 +1650,58 @@ local function engine_profile(b)
 	end
 	--- the remote call used by the latency probes, for scale
 	time_it("remote.call count (empty work)", 2000, function() return remote.call(NET, "count", b.anchor, "iron-plate") end, out)
+	--- issue #38: what the windows compute at a refresh (the GUI itself needs a player: not measured headless). A
+	--- terminal on the spine (left of it, between the controller and the first CPU row).
+	local term = s.create_entity{ name = "me-terminal", position = { X0 - 1.5, Y0 + 2.5 }, force = "player", raise_built = true }
+	if term and term.valid then
+		local job_key = b.job_keys and b.job_keys[1] and b.job_keys[1].key or "iron-gear-wheel"
+		time_it("window: terminal entries (all, by count)", 20, function() return remote.call(TERM, "entries", term, "", "count", "all") end, out)
+		time_it("window: terminal entries (items, by name)", 20, function() return remote.call(TERM, "entries", term, "", "name", "items") end, out)
+		time_it("window: terminal entries (search 'iron')", 20, function() return remote.call(TERM, "entries", term, "iron", "count", "all") end, out)
+		time_it("window: terminal craft preview (100)", 20, function() return remote.call(TERM, "craft_preview", term, job_key, 100) end, out)
+		time_it("window: terminal jobs", 20, function() return remote.call(TERM, "jobs", term) end, out)
+		time_it("window: terminal cells", 20, function() return remote.call(TERM, "cells", term) end, out)
+	end
+	local one = {}
+	for _, rec in ipairs(b.slots) do
+		local k = rec.kind
+		if not one[k] then one[k] = rec end
+	end
+	if one.iface_items and one.iface_items.iface and one.iface_items.iface.valid then
+		local e = one.iface_items.iface
+		time_it("window: interface data (get_interface)", 100, function() return remote.call(IO, "get_interface", e) end, out)
+	end
+	if one.imp_chest and one.imp_chest.bus and one.imp_chest.bus.valid then
+		local e = one.imp_chest.bus
+		time_it("window: bus data (bus_info)", 100, function() return remote.call(IO, "bus_info", e) end, out)
+	end
+	if one.sb_chest and one.sb_chest.bus and one.sb_chest.bus.valid then
+		local e = one.sb_chest.bus
+		time_it("window: storage bus data (info)", 100, function() return remote.call(SB, "info", e) end, out)
+	end
+	if one.drive and one.drive.drive and one.drive.drive.valid then
+		local e = one.drive.drive
+		time_it("window: drive data (drive)", 100, function() return remote.call(NET, "drive", e) end, out)
+	end
+	if one.maint and one.maint.maint and one.maint.maint.valid then
+		local e = one.maint.maint
+		time_it("window: maintainer data (get_maintainer)", 100, function() return remote.call(CIRC, "get_maintainer", e) end, out)
+	end
+	if one.circuit and one.circuit.circuit and one.circuit.circuit.valid then
+		local e = one.circuit.circuit
+		time_it("window: circuit interface data (get_circuit)", 100, function() return remote.call(CIRC, "get_circuit", e) end, out)
+	end
+	if one.provider and one.provider.provider and one.provider.provider.valid then
+		local e = one.provider.provider
+		time_it("window: provider data (provider_info)", 100, function() return remote.call(AC, "provider_info", e) end, out)
+	end
+	if b.cpus and b.cpus[1] and b.cpus[1].valid and prototypes.entity["me-256k-crafting-storage"] then
+		local e = b.cpus[1]
+		time_it("window: crafting CPU data (group_info)", 100, function() return remote.call(AC, "group_info", e) end, out)
+	end
+	if b.anchor and b.anchor.valid then
+		time_it("window: controller data (network)", 100, function() return remote.call(NET, "network", b.anchor) end, out)
+	end
 	--- what building and removing one block costs in this network (the graph recompute of a member)
 	if tank_bus and tank_bus.valid then
 		local x, y = X0 - 0.5, Y0 - 0.5                       -- above the spine's first cable
@@ -1124,36 +1724,149 @@ local function engine_profile(b)
 end
 
 --------------------------------------------------------------------------------
---- events
+--- build burst (issue #38): `C.burst` ME blocks built in one tick and removed in one tick, connected to the
+--- network (a cable column from the spine's top up to a cable row; import and storage buses on chests north of the
+--- row, interfaces south of it), then the same number of plain chests, each timed. The devcheck reads the ticks'
+--- script time from the verbose log as well.
 --------------------------------------------------------------------------------
 
-local function on_latency_tick()
+local function burst_layout(n)
+	local col = Y0 - 1 - (BURST_Y + 1) + 1                -- cables from (X0 - 1, Y0 - 1) up to (X0 - 1, BURST_Y + 1)
+	local row = math.max(1, math.floor((n - col) / 3))     -- cable row, a bus per tile north, an interface per tile south
+	return col, row
+end
+
+local function burst_build(b, n)
+	local s = surface()
+	local col, row = burst_layout(n)
+	local made = {}
+	for y = Y0 - 1, BURST_Y + 1, -1 do made[#made + 1] = s.create_entity{ name = "me-cable", position = { p1(X0 - 1, y) }, force = "player", raise_built = true } end
+	for i = 0, row - 1 do made[#made + 1] = s.create_entity{ name = "me-cable", position = { p1(X0 - 1 + i, BURST_Y) }, force = "player", raise_built = true } end
+	for i = 0, row - 1 do
+		local name = i % 2 == 0 and "me-import-bus" or "me-storage-bus"
+		made[#made + 1] = s.create_entity{ name = name, position = { p1(X0 - 1 + i, BURST_Y - 1) }, force = "player", direction = defines.direction.north, raise_built = true }
+	end
+	for i = 0, row - 1 do made[#made + 1] = s.create_entity{ name = "me-network-interface", position = { p1(X0 - 1 + i, BURST_Y + 1) }, force = "player", raise_built = true } end
+	local out, kinds = {}, {}
+	for _, e in ipairs(made) do
+		if e and e.valid then
+			out[#out + 1] = e
+			kinds[e.name] = (kinds[e.name] or 0) + 1
+		end
+	end
+	log("DEVCHECK-BENCH-BURST-KINDS " .. serpent.line(kinds) .. " of " .. #made .. " placed")
+	return out
+end
+
+local function burst_remove(list)
+	local n = 0
+	for _, e in ipairs(list) do
+		if e.valid then
+			e.destroy{ raise_destroy = true }
+			n = n + 1
+		end
+	end
+	return n
+end
+
+local function on_burst_tick()
 	local b = storage.b
-	if latency_tick(b) then
+	local t = game.tick - b.burst_t0
+	local n = C.burst
+	local s = surface()
+	if t == 1 then
+		local col, row = burst_layout(n)
+		s.request_to_generate_chunks({ X0 + row / 2, BURST_Y }, math.ceil(row / 64) + 2)
+		s.force_generate_chunk_requests()
+		b.burst_chests = {}
+		for i = 0, row - 1 do                                -- the targets of the buses, plain entities, no event
+			local c = place("steel-chest", p1(X0 - 1 + i, BURST_Y - 2))
+			if c then
+				chest_fill(c, RAW[i % #RAW + 1], 2)
+				b.burst_chests[#b.burst_chests + 1] = c
+			end
+		end
+	elseif t == 10 then
+		local p = game.create_profiler()
+		b.burst_made = burst_build(b, n)
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST build ", #b.burst_made, " ", game.tick, " ", p })
+	elseif t == 70 then
+		local p = game.create_profiler()
+		local k = burst_remove(b.burst_made)
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST remove ", k, " ", game.tick, " ", p })
+		b.burst_made = nil
+	elseif t == 130 then
+		local p = game.create_profiler()
+		local made = {}
+		local col, row = burst_layout(n)
+		local k = 0
+		for y = 0, math.ceil(n / row) do
+			for i = 0, row - 1 do
+				if k < n then
+					k = k + 1
+					made[#made + 1] = s.create_entity{ name = "steel-chest", position = { p1(X0 - 1 + i, BURST_Y - 4 - y) }, force = "player", raise_built = true }
+				end
+			end
+		end
+		p.stop()
+		b.burst_made = made
+		log({ "", "DEVCHECK-BENCH-BURST plain-build ", #made, " ", game.tick, " ", p })
+	elseif t == 190 then
+		local p = game.create_profiler()
+		local k = burst_remove(b.burst_made)
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST plain-remove ", k, " ", game.tick, " ", p })
+		b.burst_made = nil
+	elseif t >= 200 then
 		b.phase = "done"
 		script.on_event(defines.events.on_tick, nil)
 		log("DEVCHECK-BENCH-DONE")
 	end
 end
 
+local function finish(b)
+	if C.burst and C.burst > 0 and C.scene == "me" and not C.noent then
+		b.phase = "burst"
+		b.burst_t0 = game.tick
+		script.on_event(defines.events.on_tick, on_burst_tick)
+	else
+		b.phase = "done"
+		script.on_event(defines.events.on_tick, nil)
+		log("DEVCHECK-BENCH-DONE")
+	end
+end
+
+--------------------------------------------------------------------------------
+--- events
+--------------------------------------------------------------------------------
+
+local function on_latency_tick()
+	local b = storage.b
+	if latency_tick(b) then finish(b) end
+end
+
 script.on_init(function()
 	storage.b = { phase = "warmup" }
 	if C.scene == "me" then build_me()
+	elseif C.scene == "planner" then build_planner()
 	elseif C.scene == "inserters" then build_inserters()
 	else build_robots() end
 end)
 
 script.on_load(function()
-	if storage.b and storage.b.phase == "latency" then script.on_event(defines.events.on_tick, on_latency_tick) end
+	if storage.b and storage.b.phase == "latency" then script.on_event(defines.events.on_tick, on_latency_tick)
+	elseif storage.b and storage.b.phase == "burst" then script.on_event(defines.events.on_tick, on_burst_tick) end
 end)
 
 --- the probes: at `warmup` and at `warmup + window` (the window is a multiple of the warm-up)
 local function start_jobs(b)
 	b.jobs = {}
 	local bad = {}
-	for _, key in ipairs(b.job_keys or {}) do
-		local id, why = remote.call(AC, "start", b.anchor, key, 5000)
-		if id then b.jobs[#b.jobs + 1] = id else bad[#bad + 1] = key .. ": " .. tostring(why) end
+	for _, j in ipairs(b.job_keys or {}) do
+		local id, why = remote.call(AC, "start", j.anchor, j.key, 5000)
+		if id then b.jobs[#b.jobs + 1] = id else bad[#bad + 1] = j.key .. ": " .. tostring(why) end
 	end
 	--- a look at the first fluid import interface (its sides)
 	for _, rec in ipairs(b.slots) do
@@ -1166,30 +1879,52 @@ local function start_jobs(b)
 	log_json("JOBS", { started = #b.jobs, failed = bad })
 end
 
---- warmup / 2: the jobs start; then the probes at `warmup` and at `warmup + window` (a multiple of the warm-up)
-script.on_nth_tick(C.warmup / 2, function(event)
+local function probe(b)
+	if C.scene == "me" then return probe_me(b) end
+	if C.scene == "planner" then return { tick = game.tick, world = count_world(), crafted = crafted(), slots = {} } end
+	return probe_native(b)
+end
+
+--- warmup / 2: the jobs start; then the probes at `warmup` and at `warmup + window` (a multiple of the warm-up);
+--- in between the backlogs are sampled every SAMPLE_TICKS and a SLICE logged every `slice` ticks
+script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 	local b = storage.b
-	if event.tick == C.warmup / 2 and C.scene == "me" then
+	local tick = event.tick
+	if tick == C.warmup / 2 and C.scene == "me" and not C.noent then
 		start_jobs(b)
-	elseif event.tick == C.warmup then
+	elseif tick == C.warmup then
 		if C.scene == "me" then refill(b) end
-		b.p0 = C.scene == "me" and probe_me(b) or probe_native(b)
+		b.p0 = probe(b)
+		if C.scene == "planner" then planner_probe(b) end
+		sched_stats(true)                                     -- the counters start with the window
+		b.samples = {}
 		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "enable") end
 		log("DEVCHECK-BENCH-PROBE0 " .. game.tick)
-	elseif event.tick == C.warmup + C.window then
+	elseif tick == C.warmup + C.window then
 		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "report") end
-		local p1 = C.scene == "me" and probe_me(b) or probe_native(b)
+		local p1 = probe(b)
 		log("DEVCHECK-BENCH-PROBE1 " .. game.tick)
-		log_json("THROUGHPUT", C.scene == "me" and report_me(b, b.p0, p1) or report_native(b, b.p0, p1))
+		if C.scene == "me" then log_json("THROUGHPUT", report_me(b, b.p0, p1))
+		elseif C.scene == "planner" then log_json("THROUGHPUT", report_planner(b, b.p0, p1))
+		else log_json("THROUGHPUT", report_native(b, b.p0, p1)) end
+		if C.scene == "me" or C.scene == "planner" then log_json("SERVICE", service_report(b, b.p0, p1)) end
 		b.p0 = nil
-		if C.profile and C.scene == "me" then engine_profile(b) end
-		if C.scene == "me" and C.latency and not C.profile then
+		if C.profile and C.scene == "me" and not C.noent then engine_profile(b) end
+		if C.scene == "me" and C.latency and not C.profile and not C.noent then
 			latency_start(b)
 			b.phase = "latency"
 			script.on_event(defines.events.on_tick, on_latency_tick)
 		else
-			b.phase = "done"
-			log("DEVCHECK-BENCH-DONE")
+			finish(b)
 		end
+	elseif tick > C.warmup and tick < C.warmup + C.window then
+		if tick % SAMPLE_TICKS == 0 and b.samples then
+			local bl = backlogs()
+			if bl then
+				bl.tick = tick
+				b.samples[#b.samples + 1] = bl
+			end
+		end
+		if C.slice and (tick - C.warmup) % C.slice == 0 then slice_report(b) end
 	end
 end)
