@@ -1670,6 +1670,152 @@ nothing lost); a blueprint and a clone of a CPU (form a CPU); the legacy CPUs (s
 `migrate --from-ref v0.2.0` with running jobs on all three legacy CPUs, which must finish after the load. Bench: the
 scene's CPUs are multiblocks (the legacy Quantum CPU with `--from-ref` of an older version); script time unchanged.
 
+## Windows next to the player's inventory (me-network issue #28)
+
+The ME windows were free frames in `player.gui.screen`: the game showed no inventory next to them, and cards, cells
+and patterns went in only by a click with the item in hand. The maintainer's probe in the game (comment "Probe in the
+game and decision" on #28) decided the way: **every ME window is a frame in `player.gui.relative` anchored to
+`script_inventory_gui`, and the player's opened GUI is a script inventory**. The game then shows its own window: the
+player's real inventory (sorting, filters, drag and drop, shift + click) on the left, the script inventory's slots on
+the right, and the ME frame beside it.
+
+### What it relies on (Factorio 2.0.77 API, checked headless where a headless game can)
+
+* `LuaControl::opened` takes a `LuaInventory` (write and read); writing another GUI or `nil` asks the open one to close,
+  which raises `on_gui_closed` with `gui_type = defines.gui_type.script_inventory` and `event.inventory`. E, Escape and
+  opening another GUI (a chest, the character screen, another ME window) all end there.
+* `LuaGameScript::create_inventory(size, gui_title)`: `gui_title` (a LocalisedString) is the title of the game's window
+  for this inventory. Every ME inventory gets the block's name as its title, so the core string `[gui] script-inventory`
+  ("Script inventory", what the probe showed for an inventory without a title) is not needed for our windows. It is
+  **not** overridden in our locale: the override would rename the script inventory windows of every other mod as well
+  and would never show for ours. If the game ignores `gui_title`, the override is a one-line follow-up. Headless:
+  the inventory is created with its title.
+* `LuaGuiElement` anchors: `anchor = { gui = defines.relative_gui_type.script_inventory_gui, position =
+  defines.relative_gui_position.right }`. An anchor without `name` matches every script inventory window, also another
+  mod's. So the ME frame exists only while our inventory is the opened GUI: it is destroyed in `on_gui_closed` and by the
+  refresh when `player.opened` is no longer our inventory.
+* Script inventories (headless): `supports_filters()` is false (`set_filter` fails: "Given inventory does not have
+  filters") and they have no bar; `sort_and_merge` works. So no slot can be limited by the engine: every slot rule is a
+  script check after the change. `LuaInventory` compares with `==` (also after a save and load, also against the
+  objects of `game.get_script_inventories()`). `destroy()` works only on script inventories and deletes what they hold:
+  an inventory is destroyed only after it has been emptied.
+* There is no event for a change of a script inventory. A player can only move items into or out of it from their
+  cursor or main inventory, so `on_player_main_inventory_changed` and `on_player_cursor_stack_changed` (both "in the
+  same tick, not instantly") fire for every such move. Moving an item between two slots of the script inventory changes
+  neither; the 60 tick refresh (`refresh_all`) checks the open inventories as a backstop. Nothing runs per tick.
+* An item with tags (a storage cell) has a `LuaItemStack::item_number` that stays the same while the game moves the
+  stack (headless: kept by `transfer_stack`; `set_stack` makes a new one). This finds a cell that left the ME Cell
+  Workbench in the cursor or main inventory of the player who took it (below).
+
+### The one mechanism (`scripts/fork-me-gui.lua`)
+
+* `G.window(name, { open, refresh, entities, sync, close })`: as before, plus `sync(player, frame, inventory)` (check the
+  slots after a change: what may not be there goes back, the block's record follows the slots; returns true when
+  something changed) and `close(player, frame, inventory)` (a window with an inventory of the player's own empties it).
+* `G.open_window(player, name, caption, tags, inventory)`: with an inventory the frame is built in `player.gui.relative`
+  with the anchor above (title bar with caption and close button; a relative frame cannot be dragged), the open window
+  of the player is torn down first, `storage.fork_me_gui_open[player.index] = { inventory, own }` is set **before**
+  `player.opened = inventory` (so the `on_gui_closed` of the previous window, which names the previous inventory, is
+  not taken for the new one), and `opened` is only written when it is not already that inventory. Without an inventory
+  it is the screen frame of R3 (the windows of pull request 2 until they get theirs).
+* `G.window_of(player)`: the relative frame `fork_me_window` (else the screen frame). `G.inventory_of(player)`: the
+  inventory the window shows.
+* `G.close_window(player)`: `sync`, then `close`, the frame destroyed, the record removed, `player.opened = nil` when it
+  is still our inventory. The close button does this.
+* `G.on_closed(event)`: `gui_type == script_inventory` and `event.inventory == ` the player's record: close as above
+  (without writing `opened`). The rule of R3 stays: a close in the tick the window was opened (the open key's own game
+  action on a simple entity) re-opens it instead.
+* `G.on_inventory_changed(event)` (the two player events): a player without an ME window costs one table lookup;
+  otherwise `sync` of the window, and when it changed something every window that shows **the same inventory** is
+  refreshed (two players at one block see each other's moves at once).
+* `G.refresh_all()` (60 ticks, at most 30 windows): the window is closed when `player.opened` is no longer its inventory
+  (death, a disconnect: no `on_gui_closed` then) or its entity is gone or out of reach; otherwise `sync`, then
+  `refresh`. Players who left the game: their window is closed in `on_player_left_game` (their inventory of their own
+  is emptied into their inventory first).
+* `G.entity_of(player, frame)`: unchanged (the entity by the unit number in the tags; a window opened from the terminal,
+  tag `via`, needs the terminal in reach). Opened from the terminal (drive, cell; pull request 2): the window shows the
+  drive's inventory too, its Back button opens the terminal again (a new `open_window`: the drive's inventory is
+  replaced by the terminal's).
+* The tool click rule of issue #13 (`G.click_opens`) is unchanged: it decides before any window is opened. A click with
+  a plain item in hand (a card) opens the window with the card still in the cursor, so the next click on a slot puts it
+  in. A cell in hand on a drive and an encoded pattern on a provider still go straight in (`quick_insert`).
+* `G.close_all()` (on a mod update, from the terminal's `on_configuration_changed`): every window, relative or screen,
+  is closed as above; old screen frames are destroyed.
+* `G.give_back(to, stack, entity)`: where an item that may not be in a slot goes. `to` is the player who moved it (main
+  inventory, else the ground at the player) or, without a player (a test, a removal), a `LuaInventory` (else the ground
+  at the block). Never deleted.
+
+### Per window: the inventory and what its slots mean
+
+| Window | Inventory | Owner, created, destroyed | Slots |
+|---|---|---|---|
+| ME Storage Bus (PR 1) | 5 slots | the bus's record (`rec.inv`); created with the record or lazily by `inv_of`; destroyed when the record goes (after its cards went into the mined buffer or onto the ground) | the card slots: one card each, of a kind the bus takes, within its kind's limit |
+| ME Cell Workbench (PR 1) | 5 slots (titled; the untitled one of 0.3.0 is replaced by `inv_of`, its stack moved) | the workbench's record (`rec.inv`) as before | slot 1 the cell; slots 2 to 5 its cards (4 for an item cell, 3 for a fluid cell, slot 5 then stays empty) |
+| ME Drive (PR 2) | 10 slots | the drive's record | its cells (below) |
+| ME Pattern Provider (PR 2) | 9 slots | the provider's record | encoded patterns |
+| Storage cell window (PR 2, from a drive) | the drive's | | |
+| Terminal, controller, interface, import and export bus, level maintainer, circuit interface, crafting CPU, molecular assembler (if it opens one) (PR 2) | 10 slots | **the player** (`storage.fork_me_gui_open`, `own`); created when the window opens, emptied and destroyed when it closes | "store into the network": what is put in is stored at the next sync (cells, patterns and items with data as the terminal's "store" does); what the network cannot take goes back. No working network: everything goes back. Replaces the terminal's "Your inventory" grid |
+
+**ME Storage Bus.** The slots are the cards: `rec.inv` is the truth, `rec.cards` (slot -> name) is what the storage engine
+and the window read, rebuilt by `sync` from the slots. `sync` keeps first the cards that were already in their slot,
+then the new ones in slot order; a card beyond its kind's limit, a card the bus does not take (Equal Distribution), a
+second card in one slot and any other item go back. Every way a card comes or goes works on the slots: the window's old
+click (`card_click`, kept for the remote interface and the tests), the wanted cards of a blueprint, paste or clone
+(`want_cards`, `fill_cards`), the removal (`give_cards`: everything in the slots, also an item `sync` has not seen yet,
+into the buffer, the rest spilled; a vanished bus: spilled at `rec.where` by the sweep). The window keeps mode,
+priority, filters, extract, wanted cards, the void warning; its card buttons are gone (the slots are the game's).
+
+**ME Cell Workbench.** Slot 1 is the cell; while it lies in the workbench, **its cards are the items in slots 2 to 5 and
+not in its tags**. A cell that arrives (an `item_number` other than `rec.cell`): its tag cards become those items, its
+tags lose them, then AE2's put rule (its partition is kept, or the kept partition goes onto it). A cell that left: its
+item is looked up by `item_number` in the cursor and main inventory of every player whose window shows this inventory
+(the player who took it is one of them, and the lookup runs in the same tick, before that player can act again); the
+cards in slots 2 to 5 are written into its tags and the slots emptied. If it is not found, the workbench has no cell
+any more and its cards go back to the player as items: never two copies (the tags never name a card that is also an
+item), at worst a cell comes out without its cards and the player gets them in the inventory. A cell moved within the inventory to a card slot is moved back to slot 1 by the
+sync. No cell: cards go back. Mined, destroyed, vanished: the cards are written into the cell's tags, the cell (and
+anything else in the slots) goes into the buffer or onto the ground. The window keeps partition, Clear, From contents
+and the copy mode; the cell button and the card buttons are gone. `info` reads the cards from the slots.
+
+**ME Drive (pull request 2).** A cell in a drive is a record (`d.slots`), not an item: its contents change all the time.
+The drive's inventory shows each cell as a cell item whose tags name only the drive and slot; when such an item leaves
+the inventory, it is found as above and gets the cell's full tags (`N.cell_stack`) while the cell leaves the drive
+(`N.take_cell`); a cell put into a free slot is inserted (`N.insert_cell`) and its slot item becomes the placeholder. A
+placeholder that is not found keeps the cell in the drive; one met anywhere else (in a drive, a workbench, the network)
+is refused and goes back.
+
+**ME Pattern Provider (pull request 2).** Encoded patterns never change, so the provider's slots hold the real pattern
+items (`rec.inv`), and the pattern data the planner reads follows them at each sync (the pending patterns of a blueprint
+stay as today until the network gives them).
+
+### Migration
+
+No prototype, storage key or remote interface is renamed; the new storage key is `storage.fork_me_gui_open` (open
+windows, per player). Saves of 0.2.0 have no cards and no workbench; saves of `main` (0.3.0, not released) keep a storage
+bus's cards as names in `rec.cards` and a workbench's cell (with its cards in its tags) in an untitled inventory. The
+version number does not change, so `on_configuration_changed` may not run: the conversion is lazy, in `inv_of(rec)`,
+which every function reaches before it touches the cards: a bus without `rec.inv` gets one and a card item for every
+name in `rec.cards`; a workbench whose inventory has one slot gets the new one, its cell is moved over and its tag cards
+become items in slots 2 to 5. `on_configuration_changed` calls `inv_of` for every record as well. Cells in drives and
+patterns in providers are not touched in pull request 1. Tests: `migrate --from-ref v0.2.0` (cells, patterns, a storage
+bus without cards) and `migrate --from-ref <main>` (cards on a storage bus, a cell with cards in a workbench).
+
+### Multiplayer: two players at one block
+
+Both open the same `rec.inv`: the game shows both the same slots, each player's move raises that player's event, the
+`sync` of the inventory runs once per move and both windows are refreshed. What goes back goes to the player who moved
+it. Two moves in one tick (A takes the workbench's cell, B a card) are two syncs: the first finds the cell in A's hands
+and writes the cards still in the slots, B's card is already B's. The "store into the network" slots are per player.
+
+### Tests
+
+The harness cannot open a window, so every slot rule runs through the modules' functions on the real inventory
+(remote `inventory` and `sync` of `gregtorio-me-storagebus` and `gregtorio-me-workbench`, with a `LuaInventory` as the
+player's inventory): a card put into a bus's inventory is taken, a wrong item and a card beyond its limit go back, a full
+bus refuses; the workbench's cell arrives (its tag cards become items), leaves (found, the cards written into its tags),
+a card without a cell goes back; the removal of both with items that the sync has not seen. The generic window test
+(every block with a window found by its unit number) stays. In the game: the `[Task-Ingame]` issue of each pull request.
+
 ## Open points
 
 * Patterns (issue #80, left open on purpose; the data model keeps room for them): upgrade cards on providers
