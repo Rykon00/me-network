@@ -68,6 +68,19 @@
   "In Progress" if `gh project` works for you (`gh project item-list 1 --owner Rykon00`, then `gh project item-edit`; the
   token needs the scope `project`); if it does not, say so in your report and go on. An issue the maintainer has to do or
   test in the game himself is titled `[Task-Ingame]`, not `[Task]`.
+- **Close what is handled:** an issue is closed as soon as it is handled, never left for later, because an open issue
+  is a card in Todo that says work is waiting. Whoever handles it closes it, with a comment that names the pull request
+  or the reason:
+  - work done by a pull request into `main`: `Closes #N` in its description (the rule above);
+  - a **release**: the release pull request goes into `upstream/release`, where a closing keyword in the description
+    closes nothing. Put `Closes #N` for the release issue into the **message of the release commit** (it reaches `main`
+    through the workflow's fast-forward), and after the release check that the issue is closed; close it by hand if
+    not;
+  - a `[Task-Ingame]` issue: when the maintainer says he tested it (in the chat or in the issue), close it; what he
+    found goes into new issues first;
+  - an issue that was superseded, became pointless or turned out wrong: close it as "not planned" with the reason and
+    the issue that replaces it.
+  Before you report, list the open issues (`gh issue list`) and close or name every one your work touched.
 - **Local sessions on the maintainer's Windows machine:** `C:\00_Repositories\me-network` is linked into the Factorio mods
   folder, so never switch branches or edit files there. Work in **one** worktree next to it
   (`git worktree add ..\me-network-<topic> -b <branch> origin/main`). Do not add more worktrees to compare versions: use
