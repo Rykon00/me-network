@@ -59,6 +59,15 @@
   release pull request into `upstream/release`.
 - Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`, `--r2`,
   `--patterns` and the other switches for parts, see its docstring).
+- **Issues and the board:** every open issue of this repository and of its sister repository is on the project board
+  "Gregtorio Continued Backlog" (https://github.com/users/Rykon00/projects/1). The board only follows the issue state: a
+  closed issue moves to Done and is archived a day later; nothing else moves a card. So the pull request that finishes an
+  issue has `Closes #N` in its **description** (a number in the title or "Refs" does not close it); with several pull
+  requests for one issue the last one closes it and the others say `Refs #N`. Work that is left over goes into a new
+  issue, named in the pull request, so the old one can close. When you start on an issue, set its status on the board to
+  "In Progress" if `gh project` works for you (`gh project item-list 1 --owner Rykon00`, then `gh project item-edit`; the
+  token needs the scope `project`); if it does not, say so in your report and go on. An issue the maintainer has to do or
+  test in the game himself is titled `[Task-Ingame]`, not `[Task]`.
 - **Local sessions on the maintainer's Windows machine:** `C:\00_Repositories\me-network` is linked into the Factorio mods
   folder, so never switch branches or edit files there. Work in **one** worktree next to it
   (`git worktree add ..\me-network-<topic> -b <branch> origin/main`). Do not add more worktrees to compare versions: use
