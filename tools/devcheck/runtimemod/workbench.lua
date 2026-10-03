@@ -362,13 +362,104 @@ return function(H)
 			.. "found in the hand, a card without a cell, a cell in a card slot, an unfound cell, a fluid cell, mined with an unseen card")
 	end
 
+	--- issue #28: the workbench window's inventory pane and slots, clicked through the GUI module's functions (a script
+	--- inventory stands for the player's main inventory, a slot of another one for the cursor)
+	local function pane_test()
+		local st = storage.wbpane28
+		if (st and st.done) or game.tick < 110 then return end
+		st = { problems = {}, done = true }
+		storage.wbpane28 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local s = game.surfaces[1]
+		local w = s.create_entity{ name = "me-cell-workbench", position = { WX + 24.5, WY + 4.5 }, force = "player", raise_built = true }
+		local winv = w and remote.call(WB, "inventory", w)
+		if not winv then return me_report("WBPANE", "ME window pane (workbench)", { "no workbench or no inventory" }) end
+		local pinv = game.create_inventory(20)
+		local hold = game.create_inventory(1)
+		local cursor = hold[1]
+		local function click(slot, mode) return remote.call(GUI, "inventory_click", cursor, pinv, slot, mode, w) end
+		local function bclick(slot, shift) return remote.call(GUI, "block_click", w, slot, cursor, pinv, shift) end
+		local function tag_cards(stack)
+			local t = stack.valid_for_read and stack.is_item_with_tags and stack.tags.fork_me_cell
+			return t and t.cards or {}
+		end
+		local function cards_in(i)
+			local c = 0
+			for _, name in pairs(CARD) do c = c + i.get_item_count(name) end
+			return c
+		end
+		local function all_cards()
+			local c = cards_in(winv) + cards_in(pinv) + cards_in(hold)
+			for _, i in pairs({ winv, pinv, hold }) do
+				for k = 1, #i do if i[k].valid_for_read and i[k].is_item_with_tags then c = c + #tag_cards(i[k]) end end
+			end
+			return c
+		end
+		pinv[1].set_stack{ name = "me-1k-storage-cell", count = 1,
+			tags = { fork_me_cell = { items = {}, partition = { wood = true }, cards = { CARD.inverter } } } }
+		pinv[2].set_stack{ name = "iron-plate", count = 10 }
+		pinv[3].set_stack{ name = CARD.fuzzy, count = 1 }
+		pinv[4].set_stack{ name = "me-4k-storage-cell", count = 1 }
+		local total = all_cards()
+		--- shift + click: a wrong item, a card without a cell, then the cell (its tag card becomes a card slot's item)
+		local why = remote.call(GUI, "inventory_click", cursor, pinv, 2, "shift", w)
+		expect(why == "not-here" and pinv[2].count == 10, "shift + click of iron plates: " .. tostring(why))
+		why = click(3, "shift")
+		expect(why == "no-cell" and pinv[3].valid_for_read, "shift + click of a card without a cell: " .. tostring(why))
+		expect(click(1, "shift") == nil and winv[1].valid_for_read and winv[1].name == "me-1k-storage-cell" and #tag_cards(winv[1]) == 0
+			and winv.get_item_count(CARD.inverter) == 1 and not pinv[1].valid_for_read, "shift + click of the cell")
+		why = click(4, "shift")
+		expect(why == "occupied" and pinv[4].valid_for_read, "shift + click of a second cell: " .. tostring(why))
+		expect(click(3, "shift") == nil and winv.get_item_count(CARD.fuzzy) == 1 and not pinv[3].valid_for_read, "shift + click of a card")
+		--- block slot clicks with a wrong item in the cursor: refused, nothing moves
+		cursor.set_stack{ name = "iron-plate", count = 3 }
+		why = bclick(4, false)
+		expect(why == "not-here" and cursor.count == 3 and not winv[4].valid_for_read, "iron plates on a card slot: " .. tostring(why))
+		why = bclick(1, false)
+		expect(why == "not-a-cell" and cursor.count == 3 and winv[1].name == "me-1k-storage-cell", "iron plates on the cell slot: " .. tostring(why))
+		pinv[10].transfer_stack(cursor)
+		--- the cell into the cursor: its cards go with it into its tags
+		expect(bclick(1, false) == nil and cursor.valid_for_read and #tag_cards(cursor) == 2 and cards_in(winv) == 0,
+			"the cell taken into the cursor: tags " .. serpent.line(tag_cards(cursor)))
+		--- a card clicked on a card slot without a cell is refused
+		local cell = game.create_inventory(1)
+		cell[1].transfer_stack(cursor)
+		cursor.set_stack{ name = CARD.void, count = 1 }
+		total = total + 1
+		why = bclick(2, false)
+		expect(why == "no-cell" and cursor.valid_for_read and cursor.name == CARD.void, "a card without a cell: " .. tostring(why))
+		pinv[11].transfer_stack(cursor)
+		--- the cell back from the cursor, then swapped with the second cell: the first comes back with its cards
+		cursor.transfer_stack(cell[1])
+		bclick(1, false)
+		expect(cards_in(winv) == 2 and not cursor.valid_for_read, "the cell clicked back: " .. cards_in(winv) .. " cards in the slots")
+		cursor.transfer_stack(pinv[4])
+		bclick(1, false)
+		expect(cursor.valid_for_read and cursor.name == "me-1k-storage-cell" and #tag_cards(cursor) == 2 and winv[1].name == "me-4k-storage-cell"
+			and cards_in(winv) == 0, "swap: the cursor holds " .. tostring(cursor.valid_for_read and cursor.name) .. " with "
+			.. serpent.line(tag_cards(cursor)))
+		pinv[4].transfer_stack(cursor)
+		--- shift + click on the cell slot: the cell into the inventory
+		expect(bclick(1, true) == nil and not winv[1].valid_for_read and pinv.get_item_count("me-4k-storage-cell") == 1,
+			"the cell shift-clicked into the inventory")
+		expect(all_cards() == total, "cards made or lost by the clicks: " .. all_cards() .. "/" .. total)
+		cell.destroy()
+		hold.destroy()
+		pinv.destroy()
+		me_report("WBPANE", "ME window pane (workbench)", problems, "shift + click of a wrong item, a card without a cell, the cell, "
+			.. "a second cell, a card; block slot clicks with a wrong item, the cell into the cursor and back, a swap, shift")
+	end
+
 	function T.tick()
 		workbench_test()
 		slots_test()
+		pane_test()
 	end
 	function T.running(check)
 		check(storage.wb17 and storage.wb17.done, "ME Cell Workbench")
 		check(storage.wb28 and storage.wb28.done, "ME Cell Workbench slots")
+		check(storage.wbpane28 and storage.wbpane28.done, "ME window pane (workbench)")
 	end
 	return T
 end
