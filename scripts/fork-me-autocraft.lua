@@ -1048,6 +1048,10 @@ local function remove_block(s, unit)
 	local g = s.groups[b.group]
 	if not g then return end
 	g.blocks[unit] = nil
+	if s.monitors and s.monitors[unit] then
+		for _, obj in pairs(s.monitors[unit]) do if type(obj) ~= "number" and obj.valid then obj.destroy() end end
+		s.monitors[unit] = nil
+	end
 	if next(g.blocks) == nil then
 		pause_group_job(s, g)
 		s.groups[g.id] = nil
@@ -1149,6 +1153,25 @@ local function pick_cpu(s, net, bytes)
 	if not any and #legacy == 0 then return nil, "no-cpu" end
 	if #legacy == 0 and biggest < bytes then return nil, "cpu-too-small", biggest end
 	return nil, "no-free-cpu", biggest
+end
+
+--- The CPUs of a network for the plan preview (issue #6), in the order a job takes them: { kind = "group" or "legacy",
+--- id (group id or unit number), name (legacy: entity name), bytes (nil: no limit), coprocessors, speed, width,
+--- height, free, fits } (`bytes`: the job's; fits = big enough, free = can take a job now)
+function M.cpu_list(net, bytes)
+	local s = state()
+	local out = {}
+	for _, g in ipairs(groups_in(s, net)) do
+		out[#out + 1] = { kind = "group", id = g.id, bytes = g.bytes, coprocessors = g.coprocessors, speed = group_speed(g),
+			width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1, free = not g.job and group_network(g) ~= nil,
+			fits = g.bytes >= (bytes or 0) }
+	end
+	for _, rec in ipairs(cpus_in(s, net)) do
+		local spec = cpu_spec(rec.entity.name)
+		out[#out + 1] = { kind = "legacy", id = rec.entity.unit_number, name = rec.entity.name, speed = spec and spec.speed or 1,
+			free = cpu_powered(rec.entity) and cpu_load(rec) < cpu_slots(rec), fits = true }
+	end
+	return out
 end
 
 local function give_group(g, job)
@@ -2588,6 +2611,51 @@ function M.on_mined(entity)
 end
 fluids.mined_hooks[#fluids.mined_hooks + 1] = M.on_mined
 
+--- The crafting monitors (issue #6): each monitor of a CPU that runs a job shows the job's item or fluid and its amount
+--- (two render objects, kept in s.monitors[unit]); redrawn only when its CPU's blocks, status or job change.
+local function amount_text(n)
+	if n >= 1e6 then return string.format("%.1fM", n / 1e6) end
+	if n >= 1e4 then return string.format("%.0fk", n / 1e3) end
+	return tostring(math.floor(n))
+end
+
+local function clear_monitor(s, unit)
+	local r = s.monitors and s.monitors[unit]
+	if not r then return end
+	for _, obj in pairs(r) do
+		if type(obj) ~= "number" and obj.valid then obj.destroy() end
+	end
+	s.monitors[unit] = nil
+end
+
+local function draw_monitors(g)
+	local s = storage.fork_ae2
+	if not (s and s.cblocks) then return end
+	s.monitors = s.monitors or {}
+	local live = s.groups[g.id] == g and g.n > 0
+	local job = live and g.status == "ok" and g.job and s.jobs[g.job]
+	local sprite = job and (is_fluid(job.item) and ("fluid/" .. fluid_name(job.item)) or ("item/" .. job.item))
+	if sprite and not helpers.is_valid_sprite_path(sprite) then sprite = nil end
+	for unit in pairs(g.monitors) do
+		local b = s.cblocks[unit]
+		local e = b and b.entity
+		local shown = s.monitors[unit]
+		if not (live and job and sprite and e and e.valid) then
+			clear_monitor(s, unit)
+		elseif not (shown and shown.job == job.id) then
+			clear_monitor(s, unit)
+			s.monitors[unit] = {
+				icon = rendering.draw_sprite{ sprite = sprite, target = { entity = e, offset = { 0, -0.1 } }, surface = e.surface,
+					x_scale = 0.55, y_scale = 0.55, render_layer = "higher-object-under" },
+				text = rendering.draw_text{ text = amount_text(job.amount), target = { entity = e, offset = { 0, 0.12 } },
+					surface = e.surface, color = { 0.6, 0.95, 1 }, scale = 0.6, alignment = "center", render_layer = "higher-object-under" },
+				job = job.id,
+			}
+		end
+	end
+end
+M.group_hooks[#M.group_hooks + 1] = draw_monitors
+
 --- a crafting block that vanished without an event (found by the network's sweep)
 N.vanish_hooks[#N.vanish_hooks + 1] = function(unit)
 	local s = storage.fork_ae2
@@ -2834,6 +2902,18 @@ remote.add_interface("gregtorio-me-autocraft", {
 	--- issue #6: the CPU (group) of a crafting block: { id, status, blocks, width, height, bytes, used, coprocessors,
 	--- speed, monitors, network, working, job }
 	group_info = function(block) return M.group_info(block) end,
+	--- the CPUs of the network of `entity` for a job of `bytes` (the plan preview)
+	cpu_list = function(entity, bytes)
+		local net = N.network_of(entity)
+		return net and M.cpu_list(net, bytes) or {}
+	end,
+	--- the render objects of a crafting monitor: { icon = sprite path, text } or nil
+	monitor = function(block)
+		local s = storage.fork_ae2
+		local r = block and block.valid and s and s.monitors and s.monitors[block.unit_number]
+		if not (r and r.icon.valid and r.text.valid) then return nil end
+		return { sprite = r.icon.sprite, text = r.text.text, job = r.job }
+	end,
 	job = function(id) return M.job(id) end,
 	craftable = function(entity)
 		local net = network_of(entity)
