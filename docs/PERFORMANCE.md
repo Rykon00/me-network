@@ -1657,3 +1657,70 @@ bus waiting for an absent key, an import bus on an empty chest, an interface), c
 state: one parked for `no-key`, two probing), that the window since the load is the scheduler's own counters and that a window
 between two copies is their difference, and logs every line rendered by the engine: `devcheck.py runtime` fails on a missing
 locale key or an unfilled parameter.
+
+## Pull request 6 (issue #43): the storage engine's insert and its garbage
+
+Round three starts where the profile of 20 000 pointed (`bench --profile 20000`, inclusive, per tick, profiler overhead 1 µs per call):
+`insert_key` was 2.98 ms of the 5.4 ms of `io.visit` (**55 %**), 116 µs per call, with 28 calls of `put` per insert (1.63 ms): every cell
+that holds the key was asked for room in the order of the cells, the full ones first, so a network with many full cells of a common
+item (a base) paid for all of them at every insert. The fluid interface visit that the 99th percentile of pull request 4 pointed at
+is the same cost: `tank_to_network` 392 µs per call, `insert_fluid` 220 µs, `can_insert_fluid` 96 µs (`room_for` walks the same
+holders).
+
+### What was changed
+
+* **A cursor per key over the holders** (`first_holder` in `scripts/fork-me-network.lua`): the full internal cells at the front of a
+  key's list of holders are skipped for good, until an extraction frees bytes or a type in one of them (`reopen`: the cursors of
+  every key that cell holds go back to it if they had passed it, found by a binary search of the sorted list). The order of AE2 is
+  the same (the first cell with room, by drive priority and slot): a skipped cell is one that `put` would have refused without a
+  trace. Never skipped: a storage bus (its room is the chest's), a cell that destroys overflow. The ranked walk of `insert_key`,
+  the plain walk of a network of one priority and `room_for` (its own cursor, partitioned cells counted) use it. A card or a list
+  of a cell changing starts every cursor again (`room_gen`). The cursor belongs to the list it was made for and is reused, so it
+  makes no garbage. The ranked walk also stops when nothing is left to store.
+* **Garbage**: the sorted lists of the engine (`holders`, `extract_order`) without a table per cell and a closure per rebuild
+  (module-level comparators, scratch tables); the interface decides whether to walk its slots with `get_item_count()` against
+  what its rows hold, not with `get_contents` (a table per item type, per visit).
+* **`bench`**: a new metric, `lua alloc KB per tick`: the Lua memory the mod allocates in 300 ticks after the window with the
+  collector stopped (deterministic: the same number in every round, no timing noise; the reference needs the remote
+  `lua_memory("stop" | "restart")` to be measured: `bench --check` of a ref older than this pull request reports it as `-`). The garbage
+  of the window is collected at once afterwards; without that its debt had shown up as a slower build burst.
+* Tests: `ME holder cursor test` (a network of one drive and one of two drives of different priority: fill, take 500 out of the
+  first cell, take a second key out of it, expect the next insert in the first cell and the room right; checked to fail when the
+  reopen is switched off), and every storage, priority, card, partition and conservation test as before.
+
+### Numbers (quiet machine, game closed, in turns, medians; 5000: five rounds, 20 000: three)
+
+| N = 5000 | v0.3.0 | before (#44) | this pull request |
+|---|---|---|---|
+| script avg (ms) | 1.271 | 1.242 | **1.197** |
+| script p99 (ms) | 3.255 | 3.604 | 3.445 |
+| ticks over 5 ms | 10 | 13 | 12 |
+| gc avg (ms) | 0.083 | 0.071 | 0.081 |
+| Lua allocated (KB per tick) | 70.4 | | **67.4** |
+| items per second / `pair` machines | 166 700 / 100 % | 165 800 / 100 % | 165 800 / 100 % |
+| burst remove / build 1000 (ms) | 743 / 70.5 | 465 / 68.3 | 456 / 68.9 |
+
+| N = 20 000 | v0.3.0 | before (#44) | this pull request |
+|---|---|---|---|
+| script avg (ms) | 2.815 | 3.698 | **2.811** |
+| script p99 (ms) | 6.08 | 9.60 | 6.88 |
+| ticks over 5 ms | 97 | 579 | 145 |
+| gc avg (ms) | 0.090 | 0.132 | 0.094 |
+| Lua allocated (KB per tick) | 97.8 | | 118.9 (21 % more items moved) |
+| items per second / `pair` machines | 528 700 / 95.0 % | 638 400 / 99.7 % | 638 400 / 99.7 % |
+| burst remove / build 1000 (ms) | 1534 / 79.1 | 786 / 78.0 | 831 / 76.9 |
+| idle network, avg (ms) / p99 (ms) / ticks over 5 ms | 1.294 / 3.98 / 15 | 1.242 / 6.75 / 81 | **1.214** / 6.08 / 67 |
+| idle network, Lua allocated (KB per tick) | 71.4 | | **53.5** |
+
+The average at 20 000 is back to 0.3.0's while the network moves 21 % more items and the machines run at their speed, 24 % under
+pull request 4; the garbage per tick is under 0.3.0's at 5000 and in the idle network, and per moved item at 20 000.
+
+### What is still above 0.3.0, and why
+
+`bench --check v0.3.0` (three rounds, 5000 and 20 000) is green on everything but three numbers: the 99th percentile at 5000
+(3.484 against 3.197 ms), at 20 000 (6.457 against 5.668 ms) and the ticks over 5 ms at 20 000 (120 against 93). Two causes are
+measured. First, what is not I/O: with the interfaces and buses switched off, 0.3.0 runs at 0.340 ms and p99 1.49 ms at 5000, this
+code at 0.438 ms and 1.68 ms (the load-following job steps, the default of two per tick, cost 0.07 ms of it and the storage bus probes
+0.03 ms; they buy `provider crafts` 327 to 344 and the maintainer reaction 0.22 to 0.08 s). Second, the busy list at 20 000 is a standing
+backlog and a tick visits 24 blocks (16 in 0.3.0, and every tick with 24 dear visits is one of the ticks at the top). Neither is a
+bug of this change; both are what pull request 2 chose.
