@@ -1473,3 +1473,66 @@ around the engine call (the record and target lookup, the network lookup, the sc
 `bench --check v0.3.0` green on script average, 99th percentile and ticks over 5 ms at 5000 and at 20 000, with the average at
 5000 clearly below 0.3.0 and the idle network at 20 000 not above it; the garbage per tick at 20 000 back to the level of 0.3.0
 or below.
+
+## Pull request 3 (issue #38): the burst and what a change of the graph wakes
+
+The maintainer's run of `bench --check origin/main --sizes 5000,20000` on the merged scheduler found two things: removing
+1000 blocks at 20 000 took 1341 / 1295 / 1314 ms on main and 3653 / 2999 / 2584 ms with the scheduler (at 5000 it got better,
+852 to 574 ms), and the build burst at 5000 once took 344 ms against 64 to 82. The guess was that a change of the graph wakes
+every block of the network, so 1000 removals would wake 20 000 blocks each. The counters say otherwise, and what they found
+is below.
+
+### What the removal of 1000 blocks costs at 20 000
+
+`bench --profile 20000` with the burst profiled (`DEVCHECK-BENCH-PROF-BURST remove`, new) and the scheduler's wake counter
+(`wakes` in `sched_stats`, new):
+
+* **Wakes in the burst: 0.** A removed block never wakes the other blocks of its network: `remove_node_graph` clears the
+  node's own waits and the split of a network (the `components()` search of lever 5) wakes only the waiting blocks that moved
+  to a new part. The guess is not the cause.
+* **`io.drop` scanned the list of all buses and interfaces** (`s.list`, 20 000 entries) to remove one: about 1.5 ms per
+  removal, 476 removals of buses in the burst, 0.7 s. It is O(1) now (`Sched.list_remove`, a position map kept beside the
+  array, built again once for a save that does not have it).
+* **`components()`** is the rest (lever 5, not part of this pull request): one breadth-first search of the network per removed
+  cable.
+* **Garbage.** The collector's cost follows the memory allocated far more than the live heap (a run with 20 % more live heap
+  cost 9 % more in the collector). A burst allocates what its searches and its removals build.
+
+What the scheduler did add, found while looking for the wakes: a block parked for want of a network (`no-network`) was in a
+global list (`s.nonet`) that **every** change of any graph walked and woke completely, whatever network it was on. One cable
+placed next to a base woke every unconnected block of the map, and the blocks went to sleep again at their next visit. That
+wake was real, though it is not the burst's cost (the burst scene has no such blocks). A block parked for want
+of a network or of power now waits on its **own** network (`wait_usable`, the same list as the power wait): a change of that
+network, or the slow step's look at its power, wakes it, and a change of any other network does not. Units that left a network
+are skipped when it fires, a split wakes only the waiters that moved to a new part, and a merge takes the waiters of the other
+network along (`net.wunits`, the index of the waiting units by kind). `runtimemod/parking.lua` has the case (21): a lone import
+bus without a network and an export bus without a key keep `parked` and their `due` while a cable merges a small network
+elsewhere; it fails on the code of pull request 2 and passes now.
+
+### Numbers (quiet machine, game closed, in turns, medians of the rounds)
+
+`bench` of `v0.3.0` against pull request 2 (`ec49624`) and this pull request (`bdba9db`); 5000 with five rounds, 20 000 with
+three. The scheduler is the same code in the last two columns for everything but the wakes of the parked blocks: throughput and
+the scheduler's counters are equal to the digit, the script time differs by the noise (20 000: 3.84 and 3.76 ms).
+
+| | v0.3.0 | pull request 2 | this pull request |
+|---|---|---|---|
+| burst remove 1000 at 5000 (ms) | 749 (738 to 761) | 654 (640 to 675) | **463** (453 to 464) |
+| burst build 1000 at 5000 (ms) | 73 (70 to 75) | 117 (75 to 136) | **70** (68 to 73) |
+| burst remove 1000 at 20 000 (ms) | 1554 (1453 to 1568) | 1851 (1845 to 1876) | **778** (753 to 817) |
+| burst build 1000 at 20 000 (ms) | 77 (73 to 89) | 82 (81 to 93) | 79 (78 to 83) |
+
+* The removal at 20 000 is half of 0.3.0 and 42 % of pull request 2; at 5000 it is 62 % of 0.3.0. (The maintainer's Linux run
+  saw a slowdown of 2 to 3 times from pull request 2 here, this machine 19 %; the size of the effect differs between the
+  machines, the cure is the same: the list scan is gone.)
+* The build at 5000 is back to the 68 to 73 ms of 0.3.0 and the spread of 75 to 136 ms is not seen in five rounds. The cause of
+  that spread is not nailed down: a bimodal 74 / 125 ms had been seen before, which fits a collector step landing in the
+  burst, but this was not shown. It stays in view: the burst is part of every `bench` run.
+* The burst at 20 000 is in the series of this branch (`bench --burst 1000` at every size, default).
+* `mod heap alive kB` of the pull request 2 column is not comparable (its tree has no collection before the reading).
+
+### Diagnostics added
+
+`bench --profile ... --alloc` also prints the memory every wrapped function allocates (KB per tick, per call; the collector is
+stopped in the window: use `--ticks 600`), the wake counter is in the scheduler's snapshot, and the service report shows the
+heap alive after a collection (`mod heap alive kB`, report only, not a pass/fail metric).
