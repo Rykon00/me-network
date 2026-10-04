@@ -786,6 +786,32 @@ as fluid cells next to it. Placing an old fluid drive item builds an ME Drive wi
 fluid, if it carried any). The old recovery (recovered fluid, "Take over", pull-in) is gone: a fluid cell keeps its
 fluid wherever it is, and a destroyed drive drops its cells.
 
+## What the network costs: /me-stats
+
+`/me-stats` prints, in the chat, what the ME network near you does. It works for every player (no admin rights) and costs
+nothing while you do not use it.
+
+* `/me-stats`: the network of the ME block you have open, otherwise of the nearest ME block within 10 tiles.
+  * **Members** by kind (controller, cables, drives, interfaces, buses, level maintainers, crafting blocks, ...).
+  * **Interfaces and buses** by state: *busy* (they have work and are visited when their machine's buffer needs it),
+    *probing* (they wait for something on the machine's side: `empty` source, `full` target, `no-target`, `idle`; one cheap
+    look now and then) and *parked* (they wait for the network: `no-key`, the item is not in the network, `net-full`,
+    `no-network`, `no-power`; they cost nothing until the network wakes them, with one slow look a minute as a safety net).
+    A network with many parked blocks and few busy ones is quiet; a network with all blocks busy and a high backlog is
+    where a base starts to cost script time.
+  * **Level maintainers** and **crafting**: the CPUs (and how many have a job) and the jobs running or queued.
+  * **The scheduler of the whole map** over the last minute (a window of one to two minutes, or since the load): per kind of
+    block the visits per tick against the budget of the map settings (the first number is "at least", the second "at most"),
+    the probes per tick, the average backlog (blocks that were due and waited), the *starved* arrivals (a visit that found
+    its machine's chest empty or its tank full: the machine ran dry), the *missed wakes* (a parked block whose slow look
+    found work: a bug; "0" is right) and the wakes, and the time between two visits of a block that had work (median, 99th
+    percentile, longest). The counters are your own: they start at zero when you load the game and are not saved.
+* `/me-stats all`: one line per network of the map (up to 25), then the scheduler.
+
+The command reads counters the scheduler keeps anyway; once every 3600 ticks it copies them for the window. Its
+numbers and its cost are in `docs/PERFORMANCE.md`. Tests: `ME stats command test` in `devcheck.py runtime`, which also
+renders the lines through the engine and fails on a missing locale key.
+
 ## Design
 
 ### Network, cells and storage (issue #68)

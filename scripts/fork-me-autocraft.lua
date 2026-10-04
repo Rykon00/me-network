@@ -2224,6 +2224,17 @@ function M.jobs(net)
 	return out
 end
 
+--- The crafting CPUs of a network and how many of them have a job (the in-game diagnostic, issue #38)
+function M.cpu_report(net)
+	local s = state()
+	local cpus, busy = 0, 0
+	for _, g in ipairs(groups_in(s, net)) do
+		cpus = cpus + 1
+		if g.job then busy = busy + 1 end
+	end
+	return { cpus = cpus, busy = busy }
+end
+
 function M.job(id)
 	local s = state()
 	local job = s.jobs[id]

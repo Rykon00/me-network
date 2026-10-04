@@ -128,8 +128,72 @@ function M.snapshot()
 	return out
 end
 
+--- The last minute (the in-game diagnostic, scripts/fork-me-stats.lua): the counters are copied every WINDOW_TICKS
+--- (`M.mark`, one call per tick from control.lua) and a report is the difference to the copy before the latest one: it
+--- covers between one and two windows, or everything since the load. Never saved: every peer has its own.
+local WINDOW_TICKS = 3600
+M.WINDOW_TICKS = WINDOW_TICKS
+local marks, loaded = {}, nil
+
 function M.reset_stats()
 	for name in pairs(stats) do stats[name] = nil end
+	marks, loaded = {}, nil
+end
+
+local function copy_hist(h)
+	local out = {}
+	for dt, c in pairs(h) do out[dt] = c end
+	return out
+end
+
+--- called every tick: copies the counters at the start of each window
+function M.mark(tick)
+	loaded = loaded or tick
+	if tick % WINDOW_TICKS ~= 0 then return end
+	local copy = { tick = tick, q = {} }
+	for name, st in pairs(stats) do
+		copy.q[name] = { visits = st.visits, ticks = st.ticks, due = st.due, back_sum = st.back_sum, starved = st.starved or 0,
+			missed = st.missed or 0, wakes = st.wakes or 0,
+			hist = { copy_hist(st.hist[1]), copy_hist(st.hist[2]), copy_hist(st.hist[3]) } }
+	end
+	marks.old, marks.cur = marks.cur, copy
+end
+
+local function delta_hist(now, before)
+	local out = {}
+	for dt, c in pairs(now) do
+		local d = c - (before and before[dt] or 0)
+		if d > 0 then out[dt] = d end
+	end
+	return out
+end
+
+--- The counters of the window ending at `tick`: { span (ticks), q = { [name] = { ticks, visits, due, starved, missed,
+--- missed_total, wakes, backlog_avg, work, idle } } } where `work` and `idle` are the statistics (n, median, p99, max)
+--- of the ticks between two visits of a unit that found work, and of a unit that found nothing.
+function M.window(tick)
+	local base = marks.old or { tick = loaded or tick, q = {} }
+	local out = { span = tick - base.tick, q = {} }
+	for name, st in pairs(stats) do
+		local b = base.q[name]
+		local bh = b and b.hist
+		local ticks = st.ticks - (b and b.ticks or 0)
+		local work = {}
+		for k = 2, 3 do
+			for dt, c in pairs(delta_hist(st.hist[k], bh and bh[k])) do work[dt] = (work[dt] or 0) + c end
+		end
+		local idle = delta_hist(st.hist[1], bh and bh[1])
+		if ticks > 0 or next(work) or next(idle) then
+			out.q[name] = {
+				ticks = ticks, visits = st.visits - (b and b.visits or 0), due = st.due - (b and b.due or 0),
+				starved = (st.starved or 0) - (b and b.starved or 0), missed = (st.missed or 0) - (b and b.missed or 0),
+				missed_total = st.missed or 0, wakes = (st.wakes or 0) - (b and b.wakes or 0),
+				backlog_avg = ticks > 0 and (st.back_sum - (b and b.back_sum or 0)) / ticks or 0,
+				work = percentiles(work), idle = percentiles(idle),
+			}
+		end
+	end
+	return out
 end
 
 --------------------------------------------------------------------------------

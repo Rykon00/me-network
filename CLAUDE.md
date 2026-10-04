@@ -29,7 +29,9 @@
   (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side,
   maintainers 4), circuit interface updates per second (10), crafting jobs per tick (1), bus speed (256 items, 4000
   fluid per second, times the ticks since the last visit), idle limits (300 and 120 ticks). Never base anything on
-  measured time; a new periodic task gets a queue and a budget, not a step of its own. Blocks waiting for a key wake
+  measured time; a new periodic task gets a queue and a budget, not a step of its own. The command `/me-stats` (`scripts/fork-me-stats.lua`,
+  issue #38 part 3) prints the scheduler's counters of the last minute and a network's blocks by state: a new queue is added to its `QUEUES` table and
+  to the locale (`[me-stats]`). Blocks waiting for a key wake
   through `N.wait_for` / `N.wait_below` (in `storage`, per network); what is derived from the state only (the lookups
   of the storage engine) is kept outside `storage`. Processing patterns catch their
   outputs through the network's insert functions (`N.on_arrival`, no tick). A storage bus is an external cell of the
