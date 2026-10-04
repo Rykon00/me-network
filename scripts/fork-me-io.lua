@@ -584,7 +584,7 @@ end
 --- `dt`); then the four sides. Returns the items and fluid moved, whether the operations ran out, the ticks until
 --- the next visit (the headroom rule over the rows, the imports and the sides), why it is blocked when nothing
 --- moved ("idle": probed; an interface is never parked for a missing key, an inserter may feed it any time),
---- whether a row had run empty, and its network.
+--- whether a row had run empty, its network, and the ticks until its buffer runs out at the rate this visit saw.
 function M.interface_step(rec, dt)
 	local e = rec.entity
 	local config = config_of(rec)
@@ -707,7 +707,7 @@ function M.interface_step(rec, dt)
 	rec.status = "ok"
 	local full = ops >= max_ops
 	if moved <= 0 then return 0, false, nil, "idle", false, net end
-	return moved, full, Sched.headroom(time, full, MIN_INTERVAL, MAX_CATCH_UP, rec.sh), nil, starved or sstarved, net
+	return moved, full, Sched.headroom(time, full, MIN_INTERVAL, MAX_CATCH_UP, rec.sh), nil, starved or sstarved, net, time
 end
 
 --- the interface's priority (issue #17; -1000 ... 1000, default 0)
@@ -1140,14 +1140,22 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 				N.wait_for(net, FLUID_PREFIX .. name, "io", unit, true)
 				info.nokey = true
 			elseif cap - moved > EPS then
-				local inserted = t.insert_fluid{ name = name, amount = math.min(total, cap - moved) }
+				local want = math.min(total, cap - moved)
+				local inserted = t.insert_fluid{ name = name, amount = want }
 				if inserted > 0 then
 					local got = N.extract_fluid(net, name, inserted)
 					--- a storage bus's segment had less than its snapshot: never duplicate
 					if got < inserted - EPS then t.remove_fluid{ name = name, amount = inserted - got } end
 					moved = moved + got
+					--- it had run dry when the target's room ended the insert and it took about the most it ever took that way
+					--- (`rec.froom`); an insert the bus's speed ended says nothing of the target (issue #51: it counted as a dry
+					--- target at every visit of a bus into a big tank)
+					if inserted < want - EPS then
+						local froom = rec.froom
+						if froom and got >= froom * 0.95 then info.starved = true end
+						if not froom or got > froom then rec.froom = got end
+					end
 					local fcap = rec.fcap or 0
-					if rec.fcap and got >= fcap * 0.95 then info.starved = true end   -- it took all it can hold: it had run dry
 					if got > fcap then fcap = got end
 					local tt = rec.fcap and fcap * dt / got or MIN_INTERVAL      -- (no capacity known yet: look again soon)
 					rec.fcap = fcap
@@ -1164,7 +1172,8 @@ end
 --- One visit of a bus. `dt`: the ticks since its last visit (nil: one visit of before issue #5, STEP_TICKS): it moves
 --- its speed times that, at most MAX_CATCH_UP ticks' worth. Returns what it moved, whether that was all it was
 --- allowed to move, the ticks until its next visit (the headroom rule), why it is blocked when it moved nothing
---- (nil otherwise), whether its other side had run out, and its network.
+--- (nil otherwise), whether its other side had run out, its network, and the ticks until the buffer on its other side
+--- runs out at the rate this visit saw (math.huge: unknown).
 function M.bus_step(rec, dt)
 	local e = rec.entity
 	local net = N.active_of(e)
@@ -1229,7 +1238,7 @@ function M.bus_step(rec, dt)
 			if tt < info.time then info.time = tt end
 		end
 	end
-	return moved, full, Sched.headroom(info.time, full, MIN_INTERVAL, MAX_CATCH_UP, rec.sh), nil, info.starved or false, net
+	return moved, full, Sched.headroom(info.time, full, MIN_INTERVAL, MAX_CATCH_UP, rec.sh), nil, info.starved or false, net, info.time
 end
 
 --- Set the filters: a list of keys (item name, "fluid/<name>"; a plain name that is no item but a fluid is that
@@ -1405,14 +1414,16 @@ local function visit(rec, unit, fallback)
 	local now = game.tick
 	local dt = now - (rec.last or (now - MIN_INTERVAL))
 	rec.last = now
-	local moved, full, nextiv, block, starved, net
+	local moved, full, nextiv, block, starved, net, time
 	if rec.kind == "interface" then
-		moved, full, nextiv, block, starved, net = M.interface_step(rec, dt)
+		moved, full, nextiv, block, starved, net, time = M.interface_step(rec, dt)
 	else
-		moved, full, nextiv, block, starved, net = M.bus_step(rec, dt)
+		moved, full, nextiv, block, starved, net, time = M.bus_step(rec, dt)
 	end
 	rec.starve = starved or nil
-	if starved then Sched.starved("io") end
+	--- issue #51: how long the other side had been out, from the tick the visit before expected it to run out (`rec.outt`)
+	if starved then Sched.starved("io", rec.outt and now - rec.outt or nil) end
+	rec.outt = (not block and time and time < math.huge) and math.floor(now + time) or nil
 	if not block then Sched.learn(rec, starved) end
 	if fallback and moved > 0 then Sched.missed("io") end            -- (a parked block that finds work: its wake was missed)
 	if block then
@@ -1436,8 +1447,12 @@ local function visit(rec, unit, fallback)
 	end
 	rec.block, rec.seen = nil, nil
 	if starved then nextiv = math.max(MIN_INTERVAL, math.floor(nextiv / 2)) end   -- (its other side had run out: sooner)
+	--- issue #51: while the busy blocks are few against the floor, the floor's room is spent on margin, not saved
+	local cap = Sched.margin_cap(s.q, Sched.setting("io"), MIN_INTERVAL)
+	local capped = nextiv > cap
+	if capped then nextiv = cap end
 	rec.iv = nextiv
-	Sched.at(s.q, rec, unit, when(s.q, false, unit, now, nextiv, not full and not starved and nextiv < MAX_CATCH_UP))
+	Sched.at(s.q, rec, unit, when(s.q, false, unit, now, nextiv, not full and not starved and not capped and nextiv < MAX_CATCH_UP))
 	return full and 2 or 1
 end
 
@@ -1672,7 +1687,13 @@ remote.add_interface("gregtorio-me-io", {
 		if not rec then return nil end
 		local due = rec.due
 		return { due = (due and due > 0) and due or nil, interval = rec.iv, last = rec.last, probing = rec.sq == true and not rec.park,
-			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, parked = rec.park, block = rec.block }
+			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, parked = rec.park, block = rec.block,
+			starve = rec.starve or false }
+	end,
+	--- issue #51: the longest a busy interface or bus waits now (the margin of a short busy list), in ticks
+	margin_cap = function()
+		local s = storage.fork_me_io
+		return s and Sched.margin_cap(queue(s), Sched.setting("io"), MIN_INTERVAL) or nil
 	end,
 	--- tests (issue #38): how often a parked block gets its slow fallback visit (ticks)
 	set_park_fallback = function(ticks) Sched.PARK_FALLBACK = ticks end,

@@ -85,10 +85,25 @@ local function stat(name)
 	return st
 end
 
---- a visit of a unit of `name` arrived at an empty target or a full source (its other side had run out)
-function M.starved(name)
+--- A visit of a unit of `name` arrived at an empty target or a full source (its other side had run out). `out` (issue
+--- #51): the ticks since the visit before expected the other side to run out, at the rate it saw (nil: no rate known);
+--- negative when it ran out sooner than that rate said. Counted: how many, a histogram of `out` where it is not negative,
+--- and how many ran out sooner.
+function M.starved(name, out)
 	local st = stats[name] or stat(name)
 	st.starved = (st.starved or 0) + 1
+	if out then
+		if out < 0 then
+			st.sooner = (st.sooner or 0) + 1
+		else
+			local h = st.outs
+			if not h then
+				h = {}
+				st.outs = h
+			end
+			h[out] = (h[out] or 0) + 1
+		end
+	end
 end
 
 --- one interval sample of `dt` ticks for a unit of `name` whose visit found `class` (units outside the queues: jobs)
@@ -122,6 +137,7 @@ function M.snapshot()
 	local out = {}
 	for name, st in pairs(stats) do
 		out[name] = { visits = st.visits, ticks = st.ticks, due = st.due, backlog_max = st.back_max, starved = st.starved or 0, missed = st.missed or 0, wakes = st.wakes or 0,
+			sooner = st.sooner or 0, out = percentiles(st.outs or {}),
 			backlog_avg = st.ticks > 0 and st.back_sum / st.ticks or 0,
 			idle = percentiles(st.hist[1]), partial = percentiles(st.hist[2]), full = percentiles(st.hist[3]) }
 	end
@@ -153,7 +169,7 @@ function M.mark(tick)
 	local copy = { tick = tick, q = {} }
 	for name, st in pairs(stats) do
 		copy.q[name] = { visits = st.visits, ticks = st.ticks, due = st.due, back_sum = st.back_sum, starved = st.starved or 0,
-			missed = st.missed or 0, wakes = st.wakes or 0,
+			missed = st.missed or 0, wakes = st.wakes or 0, sooner = st.sooner or 0, outs = copy_hist(st.outs or {}),
 			hist = { copy_hist(st.hist[1]), copy_hist(st.hist[2]), copy_hist(st.hist[3]) } }
 	end
 	marks.old, marks.cur = marks.cur, copy
@@ -169,8 +185,10 @@ local function delta_hist(now, before)
 end
 
 --- The counters of the window ending at `tick`: { span (ticks), q = { [name] = { ticks, visits, due, starved, missed,
---- missed_total, wakes, backlog_avg, work, idle } } } where `work` and `idle` are the statistics (n, median, p99, max)
---- of the ticks between two visits of a unit that found work, and of a unit that found nothing.
+--- missed_total, wakes, backlog_avg, work, idle, out, sooner } } } where `work` and `idle` are the statistics (n, median,
+--- p99, max) of the ticks between two visits of a unit that found work, and of a unit that found nothing, `out` those of
+--- the ticks a starved arrival's other side had been out (by the rate seen the visit before), `sooner` the starved
+--- arrivals whose other side ran out sooner than that rate said.
 function M.window(tick)
 	local base = marks.old or { tick = loaded or tick, q = {} }
 	local out = { span = tick - base.tick, q = {} }
@@ -188,6 +206,7 @@ function M.window(tick)
 				ticks = ticks, visits = st.visits - (b and b.visits or 0), due = st.due - (b and b.due or 0),
 				starved = (st.starved or 0) - (b and b.starved or 0), missed = (st.missed or 0) - (b and b.missed or 0),
 				missed_total = st.missed or 0, wakes = (st.wakes or 0) - (b and b.wakes or 0),
+				sooner = (st.sooner or 0) - (b and b.sooner or 0), out = percentiles(delta_hist(st.outs or {}, b and b.outs)),
 				backlog_avg = ticks > 0 and (st.back_sum - (b and b.back_sum or 0)) / ticks or 0,
 				work = percentiles(work), idle = percentiles(idle),
 			}
@@ -460,6 +479,21 @@ function M.run(q, tick, floor, ceiling, rec_of, visit, probe, name)
 	st.back_sum = st.back_sum + left
 	if left > st.back_max then st.back_max = left end
 	return done + probed
+end
+
+--- Issue #51: the longest a unit with work waits while the busy list is short against the floor. With `n` units in the
+--- busy list and a floor of `floor` visits per tick, the busy units take at most MARGIN of the floor (one visit per tick
+--- at the default floor of 16) when each comes back after n / (floor * MARGIN) ticks; a unit is never due later than
+--- that, whatever its buffer says (at least `min`). So the room a small base leaves in the floor buys margin against a
+--- buffer that empties faster than the visit before measured (an inserter's swings, a machine's crafts), at a cost of at
+--- most one visit per tick; where the busy units are many the cap lies beyond the headroom intervals and changes nothing
+--- (5000 interfaces and buses of the benchmark: about 2100 busy units, a cap of 2100 ticks against at most 600). In the
+--- scene at the maintainer's size (189 interfaces and buses, 83 busy) a margin of 1/64 left starved arrivals, 1/32 none:
+--- 1/16 is twice that. Counts and a setting: the same on every peer.
+M.MARGIN = 1 / 16
+function M.margin_cap(q, floor, min)
+	local cap = math.ceil((q.n or 0) / (math.max(floor or 1, 1) * M.MARGIN))
+	return cap < min and min or cap
 end
 
 --- the steps or visits of this tick for `n` units that each want one every `every` ticks, between the settings

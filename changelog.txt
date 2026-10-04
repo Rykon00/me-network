@@ -15,6 +15,10 @@ Version: 0.3.1
     - Updating the mod in a big base rebuilds the network graph faster (0.8 s to 0.5 s at 5000 buses and interfaces).
   Changes:
     - Map settings: the visits per tick of interfaces and buses, storage buses, level maintainers and crafting jobs are floors now ("at least"), and each has a ceiling ("at most": 32 interface and bus visits, 24 storage bus reads, 12 maintainer checks, 2 job steps per tick by default) that bounds the script time of a big base.
+    - In a base with few busy interfaces and buses the spare visit budget buys margin instead of being saved (issue #51): a bus or interface with work waits at most as many ticks as there are busy ones (at the default budget, never less than 15), so a machine whose input runs out faster than its bus expected no longer waits for it. It costs at most one visit per tick; a big base, where the budget is used, is not affected.
+    - /me-stats: the starved arrivals show how long the machine's side had been empty or full (an estimate from the rate of the visit before), and times under a second are shown in ticks.
+  Bugfixes:
+    - An export bus with a fluid filter that fills a large tank or fluid box counted as starved at every visit (in /me-stats) and was visited more often than it needed: only an insert that the target's room ended counts now.
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.0
 Date: 2026-10-03

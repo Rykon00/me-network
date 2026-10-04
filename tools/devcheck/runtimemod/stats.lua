@@ -89,6 +89,20 @@ return function(H)
 				and q.missed_total == c.missed, "the window since the load is not the scheduler's counters: "
 				.. serpent.line(q, { comment = false }) .. " against " .. serpent.line({ c.visits, c.ticks, c.starved, c.wakes, c.missed }))
 			expect(q and q.visits > 0 and w.span > 0, "no visits in the window")
+			--- issue #51: the starved arrivals carry how long the other side had been out, and the texts of it render
+			expect(q and q.out and q.sooner ~= nil and c.out and c.sooner ~= nil, "the window or the counters lack the starved arrivals' times: "
+				.. serpent.line(q and { q.out, q.sooner }, { comment = false }))
+			local samples = {
+				remote.call(STATS, "starved_text", { starved = 46, out = { n = 30, median = 7, max = 26 }, sooner = 16 }),
+				remote.call(STATS, "starved_text", { starved = 5, out = { n = 0 }, sooner = 5 }),
+				remote.call(STATS, "starved_text", { starved = 3, out = { n = 3, median = 90, max = 600 }, sooner = 0 }),
+				remote.call(STATS, "span", 1), remote.call(STATS, "span", 59), remote.call(STATS, "span", 600),
+			}
+			expect(type(samples[1]) == "table" and samples[1][1] == "me-stats.starved" and type(samples[2]) == "table"
+				and samples[2][1] == "me-stats.starved-sooner" and samples[4][1] == "me-stats.ticks" and samples[6][1] == "me-stats.seconds",
+				"starved and time texts: " .. serpent.line(samples, { comment = false }))
+			expect(remote.call(STATS, "starved_text", { starved = 0, out = { n = 0 }, sooner = 0 }) == "0", "no starved arrival is not plain 0")
+			for _, l in ipairs(samples) do log({ "", "DEVCHECK-STATS-LINE ", l }) end
 			--- the lines
 			local lines = remote.call(STATS, "run", ctrl, "")
 			local keys = keys_of(lines)

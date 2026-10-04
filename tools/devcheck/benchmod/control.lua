@@ -49,9 +49,44 @@ local RAW = { "iron-plate", "copper-plate", "steel-plate", "stone", "stone-brick
 	"sulfur", "battery", "electric-engine-unit", "processing-unit", "concrete", "low-density-structure", "solid-fuel",
 	"explosives", "rail" }
 local PAIR_RECIPES = { "iron-gear-wheel", "copper-cable", "iron-stick", "pipe" }
+
+--- The `pair` recipes an assembling machine 2 can make from one item ingredient: the vanilla four where they are such a
+--- recipe, else (Gregtorio renames or replaces them) the first recipes of that shape by name; and the RAW items that
+--- exist. With vanilla both lists stay as they are, so the scenes and their random picks are the same.
+local function fit_lists()
+	local am = prototypes.entity["assembling-machine-2"]
+	local function fits(name)
+		local r = prototypes.recipe[name]
+		if not (r and not r.hidden and am and am.crafting_categories[r.category]) then return false end
+		if #r.ingredients ~= 1 or r.ingredients[1].type ~= "item" or #r.products ~= 1 or r.products[1].type ~= "item" then return false end
+		local fr = game.forces.player.recipes[name]
+		return fr ~= nil and fr.enabled
+	end
+	local pairs_ok = {}
+	for _, name in ipairs(PAIR_RECIPES) do if fits(name) then pairs_ok[#pairs_ok + 1] = name end end
+	if #pairs_ok < #PAIR_RECIPES then
+		local names = {}
+		for name in pairs(prototypes.recipe) do names[#names + 1] = name end
+		table.sort(names)
+		for _, name in ipairs(names) do
+			if #pairs_ok >= #PAIR_RECIPES then break end
+			local seen = false
+			for _, p in ipairs(pairs_ok) do if p == name then seen = true end end
+			if not seen and fits(name) then pairs_ok[#pairs_ok + 1] = name end
+		end
+	end
+	PAIR_RECIPES = pairs_ok
+end
+do                                    -- (the RAW items that exist, at every load: the profile and the probes use them later)
+	local raw = {}
+	for _, name in ipairs(RAW) do if prototypes.item[name] then raw[#raw + 1] = name end end
+	RAW = raw
+end
 local BLOCKERS = { "stone", "coal" }  -- idle scene: a sink chest is filled with one of these, so nothing fits in
 local PART_GAP = 12                   -- tiles between two networks of the `networks` variant
 local SAMPLE_TICKS = 300              -- the backlogs are sampled this often inside the window (one remote call)
+local STEADY_TICKS = 1200             -- issue #51: the starved arrivals are also counted from this tick of the window on, after
+                                      -- the first visits at the sources filled and the sinks emptied at its start
 local ALLOC_FROM, ALLOC_TICKS = 300, 300 -- after the window: the Lua memory the mod allocates in 300 ticks, the collector stopped (issue #43)
 local BURST_Y = -40                   -- the build burst's cable row (above the scene and the profile's fixtures)
 local STATUS = defines.entity_status
@@ -335,6 +370,12 @@ end
 --- the counts of each slot kind for `size` buses and interfaces. A machine (`pair`) has two buses: the export bus
 --- feeds its input, the import bus empties its output. The capacity probes (`cap_*`) work on a warehouse of 800 slots
 --- or a tank of 1 000 000 units (test fixtures, data.lua): what one bus can move when its target never runs out.
+--- the scene at the maintainer's size (`base`, issues #50 and #51): his network of 2158 members on Gregtorio Continued,
+--- 1767 cables and 2 underground cables (here: 1769 cables), 189 interfaces and buses (the mix below scaled to 189),
+--- 184 storage buses (70 % on chests, 30 % on tanks), 8 drives (one of them for fluid cells), 7 terminals, the controller;
+--- no pattern providers, level maintainers, circuit interfaces or crafting CPUs (his network has none)
+local BASE = { cables = 1769, storage_buses = 184, drives = 7, fdrives = 1, terminals = 7 }
+
 local function mix(size)
 	local function pct(p) return math.max(1, math.floor(size * p / 100 + 0.5)) end
 	local function cap() return math.max(2, math.floor(size / 100 + 0.5)) end
@@ -346,14 +387,21 @@ local function mix(size)
 		provider = math.max(2, math.floor(size / 25 + 0.5)), maint = math.max(2, math.floor(size / 10 + 0.5)),
 		circuit = math.max(1, math.floor(size / 50 + 0.5)), drive = math.max(8, math.floor(size / 50 + 0.5)),
 		fdrive = math.max(1, math.floor(size / 250 + 0.5)), lat_provider = LATENCY_RECIPES, lat_maint = LATENCY_RECIPES,
+		terminal = 0,
 	}
+	if C.base then
+		m.sb_chest = math.floor(BASE.storage_buses * 0.7 + 0.5)
+		m.sb_tank = BASE.storage_buses - m.sb_chest
+		m.drive, m.fdrive, m.terminal = BASE.drives, BASE.fdrives, BASE.terminals
+		m.provider, m.maint, m.circuit, m.lat_provider, m.lat_maint = 0, 0, 0, 0, 0
+	end
 	return m
 end
 
 --- the slot kinds spread evenly over the slots (largest remainder first, so every kind is everywhere)
 local ORDER = { "imp_chest", "exp_chest", "pair", "imp_tank", "exp_tank", "cap_imp", "cap_exp", "cap_fimp", "cap_fexp",
 	"iface_items", "iface_fin", "iface_fout",
-	"sb_chest", "sb_tank", "provider", "maint", "circuit", "drive", "fdrive", "lat_provider", "lat_maint" }
+	"sb_chest", "sb_tank", "provider", "maint", "circuit", "drive", "fdrive", "lat_provider", "lat_maint", "terminal" }
 local function interleave(m)
 	local total = 0
 	for _, k in ipairs(ORDER) do total = total + m[k] end
@@ -498,17 +546,23 @@ local function place_part(b, geo, Y, index, first, members)
 	local idle = C.idle
 	local part = { index = index, cpus = {}, slots = {}, y = Y, rows = rows }
 	local function member(e) if e then members[#members + 1] = e end return e end
+	local ncables = 0
+	local function cable(x, y)
+		if place("me-cable", x, y) then ncables = ncables + 1 end   -- (cables join through the rebuild, not registered)
+	end
 	--- power: a row of substations above every cable row's north side and below its south side
 	for r = 0, rows do power_row(Y - 6 + r * PITCH, X0 - 4, X0 + width + 2) end
 	--- the spine, the controller and the CPUs on the left
-	for y = Y, Y + (rows - 1) * PITCH do place("me-cable", p1(X0 - 1, y)) end
+	for y = Y, Y + (rows - 1) * PITCH do cable(p1(X0 - 1, y)) end
 	part.anchor = member(place("me-network-controller", X0 - 2, Y + 1))
 	local lat_recipes, reg_recipes = split_recipes(game.forces.player)
 	part.lat_recipes, part.reg_recipes = lat_recipes, reg_recipes
-	local jobs = idle and 0 or math.max(1, math.floor(m.provider / 4))
+	local jobs = (idle or C.base) and 0 or math.max(1, math.floor(m.provider / 4))
 	part.jobs = jobs
 	local ncpu
-	if prototypes.entity["me-256k-crafting-storage"] then
+	if C.base then
+		ncpu = 0                                                 -- (the maintainer's network has no CPU)
+	elseif prototypes.entity["me-256k-crafting-storage"] then
 		--- issue #6: one multiblock CPU per job and eight spare in the first part (the quantum CPUs had at least eight
 		--- free slots for the level maintainers and the latency probes; the other parts' maintainers are stocked),
 		--- each a row of 19 blocks left of the spine (sixteen 256k crafting storages, 4 MiB: the jobs of 5000 items
@@ -537,7 +591,7 @@ local function place_part(b, geo, Y, index, first, members)
 	local n, lat_i, prov_i = 0, 0, 0
 	for r = 0, rows - 1 do
 		local y0 = Y + r * PITCH
-		for x = X0, X0 + width - 1 do place("me-cable", p1(x, y0)) end
+		for x = X0, X0 + width - 1 do cable(p1(x, y0)) end
 		for _, s in ipairs({ -1, 1 }) do
 			for j = 0, spr - 1 do
 				n = n + 1
@@ -651,10 +705,26 @@ local function place_part(b, geo, Y, index, first, members)
 				elseif kind == "drive" or kind == "fdrive" then
 					rec.drive = member(place("me-drive", x + 1.5, by + 0.5))
 					if rec.drive then b.drives[#b.drives + 1] = rec.drive end
+				elseif kind == "terminal" then
+					rec.terminal = member(place("me-terminal", p1(x + 1, by)))
 				end
 			end
 		end
 	end
+	if C.base then
+		--- the rest of the 1769 cables: a block of cable columns left of the power, joined to the spine by a row
+		local y = Y + 3
+		for x = X0 - 9, X0 - 2 do cable(p1(x, y)) end
+		local x, height = X0 - 10, math.max(4, rows * PITCH - 8)
+		while ncables < BASE.cables do
+			for dy = 0, height - 1 do
+				if ncables >= BASE.cables then break end
+				cable(p1(x, y + dy))
+			end
+			x = x - 1
+		end
+	end
+	part.cables = ncables
 	return part
 end
 
@@ -754,6 +824,7 @@ end
 local function build_me()
 	local b = storage.b
 	research_all(game.forces.player)
+	fit_lists()
 	local K = math.max(1, C.networks or 1)
 	local geos, total_h, max_w = {}, 0, 0
 	for k = 1, K do
@@ -802,7 +873,7 @@ local function build_me()
 	local rows = 0
 	for k = 1, K do rows = rows + geos[k].rows end
 	log_json("SETUP", { scene = "me", size = C.size, networks = K, idle = C.idle or false, noent = C.noent or false,
-		slots = #b.slots, rows = rows, slots_per_row = 2 * geos[1].spr, counts = b.count,
+		slots = #b.slots, rows = rows, slots_per_row = 2 * geos[1].spr, counts = b.count, cables = b.parts[1].cables,
 		members = members_all, cells = cells_all, fluid_cells = fcells_all,
 		storage_buses = sb_all, fluid_storage_buses = fsb_all, item_types = types, recipes = #b.parts[1].reg_recipes,
 		jobs = #b.job_keys, cpus = b.parts[1].ncpu, network_ok = net and net.ok or false,
@@ -995,7 +1066,12 @@ end
 --- the service quality of the window: the scheduler's counters since the first probe, the backlogs sampled every
 --- SAMPLE_TICKS, the blocks' states now (busy, probing, parked and why: issue #38), the machines, the mod's Lua heap
 local function service_report(b, p0, p1)
-	return { sched = sched_stats(true), backlog_samples = b.samples or {}, blocks = backlogs(), machines = machine_report(b, p0, p1),
+	local sched = sched_stats(true)
+	local steady
+	if b.steady0 and sched and sched.io then
+		steady = { starved = (sched.io.starved or 0) - b.steady0, ticks = game.tick - b.steady_tick }
+	end
+	return { sched = sched, io_steady = steady, backlog_samples = b.samples or {}, blocks = backlogs(), machines = machine_report(b, p0, p1),
 		memory_kb = mod_memory_kb(), own_memory_kb = collectgarbage("count"), live_kb = mod_memory_kb(true) }
 end
 
@@ -1877,6 +1953,8 @@ script.on_load(function()
 	elseif storage.b and storage.b.phase == "burst" then script.on_event(defines.events.on_tick, on_burst_tick) end
 end)
 
+
+
 --- the probes: at `warmup` and at `warmup + window` (the window is a multiple of the warm-up)
 local function start_jobs(b)
 	b.jobs = {}
@@ -1942,6 +2020,10 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		mod_memory_kb(true)                                   -- the garbage of the 300 ticks is collected now, not in the ticks that follow
 		b.alloc0 = nil
 	elseif tick > C.warmup and tick < C.warmup + C.window then
+		if tick == C.warmup + STEADY_TICKS and C.window > 2 * STEADY_TICKS then
+			local st = sched_stats(false)
+			b.steady0, b.steady_tick = st and st.io and st.io.starved or 0, tick
+		end
 		if tick % SAMPLE_TICKS == 0 and b.samples then
 			local bl = backlogs()
 			if bl then

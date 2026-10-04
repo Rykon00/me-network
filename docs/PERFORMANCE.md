@@ -1859,3 +1859,124 @@ ticks fall depends on the heap the run started with (a variant that adds the old
 the numbers back towards the old ones). The sum is the same; the check, which looks at the 99th percentile of one window, reads the
 shift as a regression. It is stated here and not hidden: a window that starts after the transient (the warm-up is 600 ticks, the
 transient 2000) would measure the steady tick, which is the same before and after.
+
+## Round four (issues #50 and #51): the maintainer's size
+
+The maintainer's own base is one network of 2158 members (1767 cables, 2 underground cables, 189 interfaces and buses, 184
+storage buses, 8 drives, 7 terminals) on Gregtorio Continued. In his game the mod costs 0.13 ms per tick with no window
+open, and `/me-stats` showed 46 starved arrivals in 319 visits while the scheduler used about 1 % of its floor (issue #51).
+The scenes of 5000 and 20 000 describe bases far beyond that, so round four starts with a scene of his size.
+
+### The scene at the maintainer's size (`bench --sizes base`)
+
+One network of 2158 members: the controller, 1769 cables (a block of cable columns joined to the spine fills the scene's
+cable rows up to the count), the 189 interfaces and buses in the mix of the ME scene (34 import buses on chests, 23 export
+buses into chests, 9 `pair` machines with their two buses, 15 import and 15 export buses on tanks, 38 interfaces with an
+item row and inserters, 19 interfaces importing a tank, 19 exporting into one, 8 capacity probes), 184 storage buses (129
+on chests, 55 on tanks), 7 drives of 256k item cells and one of fluid cells, 7 terminals; no pattern providers, level
+maintainers, circuit interfaces or crafting CPUs (his network has none), no build burst. It runs with and without
+Gregtorio Continued (`--with-gregtorio`). The window is the one of the other scenes; as there, the sources are filled and the
+sinks emptied at its start, so the first visits arrive at full sources and empty sinks.
+
+### Pull request 10 (issue #51): starved arrivals and the idle budget
+
+#### What the starved arrivals were
+
+Every starved arrival of the scene was logged with the rule that called it, and a second run polled the other side of every
+block in every tick (an instrumented copy, not part of the pull request). On main (6137ad8), in the window of 3600 ticks:
+
+| rule (scripts/fork-me-io.lua) | starved arrivals | in the last 40 s of the window | the other side, polled every tick |
+|---|---|---|---|
+| export bus, fluid: "it took at least 95 % of the most it ever took" | 499 | 320 | never empty: the bus's speed, not the tank, ended the insert |
+| import bus, items: the chest at least 90 % full | 34 | 0 | full from the window's start (the bench fills the sources) |
+| export bus, items: the target had run empty | 25 | 0 | emptied at the window's start (the bench empties the sinks) |
+| interface side: the tank had run out / was full | 19 + 19 | 0 | the window's start |
+| import bus, fluid: a full box | 17 | 0 | the window's start |
+| interface row: the row had run empty | 19 | 15 | out for 1 to 26 ticks, 7 in the median |
+
+* **A counting error.** An export bus with a fluid filter that inserts its speed's worth into a big tank or fluid box took
+  "the most it ever took" at every visit and was counted as starved at every visit after the second; a starved visit halves
+  the next interval and drops the learned share to its floor, so these buses also came back every 15 or 119 ticks. Fixed: the
+  bus is starved only when the target's room ended the insert and it took about the most it ever took that way
+  (`rec.froom`, a new field of the record, made at the first such insert).
+* **The real ones are short.** What remains in steady state are interface rows emptied by inserters, which take in bursts;
+  the row had been empty for a tick to half a second. In 11 of the 19 the learned share stood at 0.85; the others sat at the
+  cap of 600 ticks with a share of 0.55 to 0.6, where the rate had jumped by more than 40 %. The share alone is not the
+  cause.
+
+#### The margin
+
+With the count fixed, the headroom rule still saves visits that a small base has no use for: the scene used 0.46 of at least
+16 visits per tick. The second option of the issue (no busy block waits longer than `busy / F` ticks) would bind at 5000 too:
+2146 busy blocks at the end of the window, `busy / F` = 134 ticks against a median interval of 293 ticks, nearly twice the
+visits there. The cap is therefore a share of the floor, not all of it: a busy block never waits longer than
+`n / (F × MARGIN)` ticks (at least 15; `n` the units of the busy list, `F` the floor, `Sched.margin_cap`), so the busy blocks
+spend at most `F × MARGIN` visits per tick on margin. The share was measured on the scene (three runs each, medians):
+
+| N = base | script avg (ms) | visits per tick | starved in the window / in its last 40 s |
+|---|---|---|---|
+| main | 0.104 | 0.46 | 632 / 335 |
+| count fixed, no cap | 0.106 | 0.46 | 133 / 15 |
+| cap with MARGIN 1/64 (332 ticks) | 0.115 | 0.51 | 129 / 9 |
+| cap with MARGIN 1/32 (166 ticks) | 0.133 | 0.76 | 117 / **0** |
+| **cap with MARGIN 1/16 (83 ticks)** | **0.162** | **1.27** | 114 / **0** |
+| cap with MARGIN 1/4 (21 ticks) | 0.331 | 4.39 | 108 / 0 |
+
+MARGIN is 1/16: twice the share where the scene's starved arrivals end, at most one visit per tick at the default floor of
+16, whatever the number of busy blocks. At 5000 the cap is about 2100 ticks and at 20 000 more, beyond the 600 ticks the
+headroom rule ever waits, so it changes nothing there. The busy list's count and the floor are state and a map setting: the
+same on every peer, and the save and load schedule test passes. The starved arrivals left in the window are the first visits
+after the bench fills the sources and empties the sinks; main has them too.
+
+`/me-stats` now says how long the other side had been out at a starved arrival: the visit records the tick it expects its
+buffer to run out at the rate it saw (`rec.outt`), and a starved arrival counts `now - outt` (the estimate) or, when that is
+negative, "ran out sooner than that rate said". Times under a second are shown in ticks ("median 0.0 s" was a block visited
+within a tick or two). The benchmark reports the starved arrivals of the steady part of the window (from 1200 ticks after its
+start) as `io starved, steady part`.
+
+#### Numbers (quiet machine, game closed, `bench --check origin/main --sizes base,5000,20000`, three rounds in turns, medians)
+
+| | origin/main | this pull request | verdict |
+|---|---|---|---|
+| base: script avg (ms) | 0.113 (0.106 to 0.113) | **0.165** (0.162 to 0.165) | +0.052 ms, by design |
+| base: script p99 (ms) / ticks over 5 ms | 0.478 / 0 | 0.486 / 0 | ok |
+| base: gc avg (ms) | 0.0326 | 0.0331 | ok |
+| base: starved arrivals, window / steady part | 632 / 335 | 114 / **0** | |
+| base: busy interval p99 (ticks) | 594 | 168 | |
+| base: `pair` machines, items/s, fluid/s | 100 %, 6819, 45 790 | 100 %, 6799, 47 590 | |
+| 5000: script avg (ms) | 1.190 | 1.199 | ok |
+| 5000: p99 (ms) / ticks over 5 ms | 3.643 / 10 | 3.651 / 13 | ok |
+| 5000: gc avg (ms) / Lua allocated (KB per tick) | 0.0864 / 55.14 | 0.0871 / 54.97 | ok |
+| 5000: starved arrivals, window / steady part | 4538 / 967 | 4383 / 838 | ok |
+| 5000: items/s, `pair` machines | 165 800, 100 % | 165 700, 100 % | ok |
+| 20 000: script avg (ms) | 2.885 | 2.949 | ok (noise 0.088) |
+| 20 000: p99 (ms) / ticks over 5 ms | 7.451 / 164 | 7.142 / 186 | ok |
+| 20 000: gc avg (ms) / Lua allocated (KB per tick) | 0.127 / 102.5 | 0.118 / 101.8 | ok |
+| 20 000: starved arrivals, window / steady part | 23 220 / 9014 | 21 460 / 7973 | ok |
+| 20 000: items/s, fluid/s, `pair` machines | 638 400, 4.12 M, 99.7 % | 638 900, 4.09 M, 99.9 % | ok |
+
+With Gregtorio Continued (`bench --check origin/main --sizes base --with-gregtorio`, three rounds in turns; the `pair` machines
+make the first one-ingredient recipes of an assembling machine 2 there, as Gregtorio renames the vanilla four):
+
+| N = base, Gregtorio | origin/main | this pull request |
+|---|---|---|
+| script avg (ms) | 0.120 | 0.196 (+0.076) |
+| script p99 (ms) / ticks over 5 ms | 0.476 / 0 | 0.601 / 0 |
+| gc avg (ms) / Lua allocated (KB per tick) | 0.060 / 5.19 | 0.073 / 8.51 |
+| starved arrivals, window / steady part | 624 / 333 | 129 / 15 |
+| busy interval p99 (ticks) | 594 | 155 |
+| items/s, fluid/s, `pair` machines | 4623, 46 320, 67.0 % | 4734, 47 570, 67.0 % |
+
+The 15 starved arrivals left with Gregtorio all come from one interface whose row item the network itself had run out of:
+visits between the row running empty and the next arrival found nothing to take, and the visit after an import bus brought
+some refilled the row and counted it (polled every tick: out for 5 to 800 ticks). No visit plan helps there; main has the same.
+The `pair` machines stand at 67 % in both versions for a reason outside the scheduler (the same in both).
+
+`regressions beyond the noise: 1` (vanilla), the script average at the base size (by design); everything else at 5000 and 20 000 is green. The noise of the machine: the rounds spread by up to 0.007 ms at the base size (6 %), 0.07 ms at 5000 (6 %), 0.09 ms at 20 000 (3 %).
+
+The script time at the maintainer's size rises by 0.05 ms per tick (+46 % of 0.113 ms; in his game 0.13 ms would become
+about 0.18 ms), the price of one visit per tick; in return no visit of the scene arrives at a target that had run out. The
+`lua alloc KB per tick` of the base scene is negative in both versions (-3.2 and -3.8): the heap shrinks in the 300 ticks
+with the mod's collector stopped, so at this size the engine's own collection steps go on and the number says nothing about
+the allocation (at 5000 it is the same in every round, as before). That metric needs another method for small scenes: issue
+named at the end of round four.
