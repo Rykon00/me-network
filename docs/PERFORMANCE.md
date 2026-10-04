@@ -1713,7 +1713,7 @@ holders).
 | idle network, Lua allocated (KB per tick) | 71.4 | | **53.5** |
 
 The average at 20 000 is back to 0.3.0's while the network moves 21 % more items and the machines run at their speed, 24 % under
-pull request 4; the garbage per tick is under 0.3.0's at 5000 and in the idle network, and per moved item at 20 000.
+pull request 4; the garbage per tick is under 0.3.0's at 5000 and in the idle network, and the same per moved item at 20 000 (0.186 against 0.185 KB per thousand items per second).
 
 ### What is still above 0.3.0, and why
 
