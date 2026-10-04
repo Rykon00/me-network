@@ -661,15 +661,38 @@ local function plain_item(name)
 	return proto ~= nil and proto.type ~= "item-with-tags"
 end
 
-local function stock_of(net)
-	local stock = {}
-	for name, count in pairs(N.plain_counts(net)) do
-		if plain_item(name) then stock[name] = count end
+--- The ingredients and products of a pattern, made once per pattern definition (issue #43): a crafting pattern reads them
+--- from the recipe prototype, which makes a new table of tables at every access (7 µs and garbage); nothing that uses them
+--- changes them. Per load and weak: nothing is saved. The job steps and (issue #50) the planner use them.
+local ing_cache = setmetatable({}, { __mode = "k" })
+local prod_cache = setmetatable({}, { __mode = "k" })
+local function def_ingredients(def)
+	local l = ing_cache[def]
+	if not l then
+		l = P.ingredients(def)
+		ing_cache[def] = l
 	end
-	for name, amount in pairs(fluids.totals(net)) do
-		stock[FLUID_PREFIX .. name] = amount
+	return l
+end
+local function def_products(def)
+	local l = prod_cache[def]
+	if not l then
+		l = P.products(def)
+		prod_cache[def] = l
 	end
-	return stock
+	return l
+end
+
+--- What the plan finds of `key` in storage (issue #50: read when the plan first asks, not the whole stock per plan): the
+--- plain items (not with data, no quality) and the fluids of a usable network, as stock_of of 0.3.0 had them.
+local storable = {}                               -- key -> true when the plan may take it from storage (per load)
+local function base_count(net, key)
+	local ok = storable[key]
+	if ok == nil then
+		ok = is_fluid(key) or (not key:find("[@#]") and plain_item(key))
+		storable[key] = ok
+	end
+	return ok and net.items[key] or 0
 end
 
 --- expected units of `key` per run of a pattern (its products), and whether that amount is certain
@@ -686,29 +709,65 @@ local function product_yield(products, key)
 	return total, exact
 end
 
+--- Issue #50: what a plan node reads of a pattern, made once per pattern definition (weak, per load): the yield of a key
+--- (product_yield) and the ingredients as { key, amount } in the order of def_ingredients
+local yield_cache = setmetatable({}, { __mode = "k" })
+local inputs_cache = setmetatable({}, { __mode = "k" })
+local function def_yield(def, key)
+	local per = yield_cache[def]
+	if not per then
+		per = {}
+		yield_cache[def] = per
+	end
+	local y = per[key]
+	if not y then
+		local total, exact = product_yield(def_products(def), key)
+		y = { total, exact }
+		per[key] = y
+	end
+	return y[1], y[2]
+end
+local function def_inputs(def)
+	local l = inputs_cache[def]
+	if not l then
+		l = {}
+		for _, ing in pairs(def_ingredients(def)) do l[#l + 1] = { key_of(ing), ing.amount } end
+		inputs_cache[def] = l
+	end
+	return l
+end
+
 local function copy_map(t)
 	local c = {}
 	for k, v in pairs(t) do c[k] = v end
 	return c
 end
 
-local function snapshot(ctx)
-	local steps = {}
-	for k, v in pairs(ctx.steps) do steps[k] = { pid = v.pid, runs = v.runs } end
-	return {
-		stock = copy_map(ctx.stock), surplus = copy_map(ctx.surplus), reserve = copy_map(ctx.reserve),
-		missing = copy_map(ctx.missing), loops = copy_map(ctx.loops), steps = steps,
-		order = { table.unpack(ctx.order) }, missing_n = ctx.missing_n,
-	}
+--- Issue #50: the alternatives of a key are tried on the same tables, undone to where they started, instead of on a copy of
+--- the whole state each (the stock of a GregTech network is thousands of keys, copied twice per alternative). While an
+--- alternative is tried (`ctx.alt` > 0) every write is journaled as (table, key, value before); `undo` writes them back in
+--- the reverse order. The state after an undo is the state the copy of 0.3.0 held.
+local function jset(ctx, t, k, v)
+	if ctx.alt > 0 then
+		local log, n = ctx.log, ctx.logn
+		log[n + 1], log[n + 2], log[n + 3] = t, k, t[k]
+		ctx.logn = n + 3
+	end
+	t[k] = v
 end
 
-local function restore(ctx, snap)
-	for k, v in pairs(snap) do ctx[k] = v end
+local function undo(ctx, mark)
+	local log = ctx.log
+	for i = ctx.logn - 2, mark + 1, -3 do
+		log[i][log[i + 1]] = log[i + 2]
+		log[i], log[i + 1], log[i + 2] = nil, nil, nil
+	end
+	ctx.logn = mark
 end
 
 local function add_missing(ctx, key, count)
-	ctx.missing[key] = (ctx.missing[key] or 0) + count
-	ctx.missing_n = ctx.missing_n + count
+	jset(ctx, ctx.missing, key, (ctx.missing[key] or 0) + count)
+	jset(ctx, ctx, "missing_n", ctx.missing_n + count)
 end
 
 local need
@@ -716,23 +775,25 @@ local need
 --- make `count` of `key` with one pattern: its ingredients are needed `runs` times
 local function apply_pattern(ctx, pid, key, count, path, depth)
 	local def = ctx.patterns.defs[pid]
-	local yield, exact = product_yield(P.products(def), key)
+	local yield, exact = def_yield(def, key)
 	if yield <= 0 then add_missing(ctx, key, count) return end
 	local runs = math.ceil(count / yield - 1e-9)
-	for _, ing in pairs(P.ingredients(def)) do
-		need(ctx, key_of(ing), ing.amount * runs, path, depth + 1, false)
+	local inputs = def_inputs(def)
+	for i = 1, #inputs do
+		local ing = inputs[i]
+		need(ctx, ing[1], ing[2] * runs, path, depth + 1, false)
 	end
 	local step = ctx.steps[pid]
 	if not step then
 		step = { pid = pid, runs = 0 }
-		ctx.steps[pid] = step
-		ctx.order[#ctx.order + 1] = pid              -- ingredients were planned first: dependencies come first
+		jset(ctx, ctx.steps, pid, step)
+		jset(ctx, ctx.order, #ctx.order + 1, pid)    -- ingredients were planned first: dependencies come first
 	end
-	step.runs = step.runs + runs
+	jset(ctx, step, "runs", step.runs + runs)
 	if exact then                                    -- surplus of a certain yield can be used by later demand
 		local over = runs * yield - count
 		if not is_fluid(key) then over = math.floor(over + 1e-9) end
-		if over > 1e-9 then ctx.surplus[key] = (ctx.surplus[key] or 0) + over end
+		if over > 1e-9 then jset(ctx, ctx.surplus, key, (ctx.surplus[key] or 0) + over) end
 	end
 end
 
@@ -745,19 +806,54 @@ function need(ctx, key, count, path, depth, top)
 		return
 	end
 	if not top then
-		local t = math.min(ctx.surplus[key] or 0, count)
-		ctx.surplus[key] = (ctx.surplus[key] or 0) - t
-		count = count - t
-		t = math.min(ctx.stock[key] or 0, count)
-		ctx.stock[key] = (ctx.stock[key] or 0) - t
-		ctx.reserve[key] = (ctx.reserve[key] or 0) + t
-		count = count - t
+		--- the surplus of earlier steps first, then the stock (jset written out, the hot path of a plan; the
+		--- first read of a key takes its stock from the network and keeps what was read in `ctx.base`)
+		local logging = ctx.alt > 0
+		local log, n = ctx.log, ctx.logn
+		local surplus = ctx.surplus
+		local sur = surplus[key]
+		if sur and sur > 0 then
+			local t = sur < count and sur or count
+			if logging then
+				log[n + 1], log[n + 2], log[n + 3] = surplus, key, sur
+				n = n + 3
+			end
+			surplus[key] = sur - t
+			count = count - t
+		end
+		if count <= 1e-9 then
+			ctx.logn = n
+			return
+		end
+		local stock = ctx.stock
+		local have = stock[key]
+		if have == nil then
+			have = ctx.usable and base_count(ctx.net, key) or 0
+			stock[key] = have
+			ctx.base[key] = have
+		end
+		local demand = ctx.demand
+		demand[key] = (demand[key] or 0) + count             -- (all asked of the stock, every alternative: kept plans)
+		if have > 0 then
+			local t = have < count and have or count
+			local reserve = ctx.reserve
+			local r = reserve[key]
+			if logging then
+				log[n + 1], log[n + 2], log[n + 3] = stock, key, have
+				log[n + 4], log[n + 5], log[n + 6] = reserve, key, r
+				n = n + 6
+			end
+			stock[key] = have - t
+			reserve[key] = (r or 0) + t
+			count = count - t
+		end
+		ctx.logn = n
 		if count <= 1e-9 then return end
 	end
 	local pids = ctx.patterns.items[key]
 	if not pids then add_missing(ctx, key, count) return end
 	if path[key] then
-		ctx.loops[key] = true
+		jset(ctx, ctx.loops, key, true)
 		add_missing(ctx, key, count)
 		return
 	end
@@ -766,18 +862,20 @@ function need(ctx, key, count, path, depth, top)
 		apply_pattern(ctx, pids[1], key, count, path, depth)
 	else
 		--- several patterns (in pattern order: provider priority, provider, slot): the first one that needs
-		--- nothing that is missing
-		local start = snapshot(ctx)
+		--- nothing that is missing; each tried from the state before the first (undone)
+		local mark, missing0 = ctx.logn, ctx.missing_n
+		ctx.alt = ctx.alt + 1
 		local chosen
 		for i, pid in ipairs(pids) do
-			restore(ctx, snapshot(start))
+			undo(ctx, mark)
 			apply_pattern(ctx, pid, key, count, path, depth)
-			if ctx.missing_n == start.missing_n then chosen = i break end
+			if ctx.missing_n == missing0 then chosen = i break end
 		end
 		if not chosen then
-			restore(ctx, snapshot(start))
+			undo(ctx, mark)
 			apply_pattern(ctx, pids[1], key, count, path, depth)
 		end
+		ctx.alt = ctx.alt - 1
 	end
 	path[key] = nil
 end
@@ -800,25 +898,68 @@ local function plan_bytes(key, amount, steps, reserved)
 	local bytes = key_bytes(key, amount) + 8 * (#steps + (reserved or 0))
 	for _, st in ipairs(steps) do
 		bytes = bytes + st.runs
-		for _, ing in pairs(P.ingredients(st.def)) do
+		for _, ing in pairs(def_ingredients(st.def)) do
 			bytes = bytes + key_bytes(key_of(ing), ing.amount * st.runs)
 		end
 	end
 	return bytes
 end
 
+--- Issue #50: kept plans. A plan is a pure function of the network's patterns (the table `ensure_patterns` builds anew at
+--- every change: its identity says whether they changed) and of the stock it read. A kept plan holds what each key read from
+--- storage was (`base`) and how much was asked of it in all (`demand`, every alternative tried counted): it is the plan the
+--- network would make now when the patterns are the same table and every key it read holds the same amount, or held and
+--- holds at least all that was asked of it (then every take was whole, before and now). Anything else (a stock below what
+--- was asked, a pattern added or removed, a provider or machine built or removed, the network joined, split or without
+--- power) makes a new plan. Kept per network id, key and amount, outside `storage`: a peer that has none makes the same
+--- plan fresh, so every peer acts alike. The crafting CPUs are not part of a plan (the preview reads them every time).
+local KEEP_PER_NETWORK = 16
+local kept_plans = {}                              -- network id -> { [key .. "|" .. amount] = { patterns, base, demand, plan } }
+local kept_stats = { hits = 0, misses = 0 }
+
+local function kept_valid(entry, net, patterns)
+	if entry.patterns ~= patterns then return false end
+	local usable = N.usable(net) and true or false
+	local demand = entry.demand
+	for key, was in pairs(entry.base) do
+		local now = usable and base_count(net, key) or 0
+		if now ~= was then
+			local d = demand[key] or 0
+			if was < d or now < d then return false end
+		end
+	end
+	return true
+end
+
+--- a copy of a plan's tables a caller may change (M.start sets `biggest`, a maintainer keeps `missing`)
+local function plan_copy(p)
+	local c = copy_map(p)
+	c.missing, c.loops, c.reserve = copy_map(p.missing), copy_map(p.loops), copy_map(p.reserve)
+	c.steps = { table.unpack(p.steps) }
+	return c
+end
+
 --- Plan `amount` of `key` for the network `net`.
 --- Returns { ok, missing = {key -> count}, loops = {key -> true}, steps = { {pid, def, runs} },
---- reserve = {key -> count taken from storage}, runs, too_complex }
-local function make_plan(s, net, key, amount)
+--- reserve = {key -> count taken from storage}, runs, too_complex }. `fresh_only`: never a kept plan (tests).
+local function make_plan(s, net, key, amount, fresh_only)
 	local patterns = ensure_patterns(s)[net.id] or NO_PATTERNS
-	local ctx = {
-		patterns = patterns, stock = stock_of(net), surplus = {}, reserve = {}, missing = {}, loops = {},
-		steps = {}, order = {}, missing_n = 0, nodes = 0,
-	}
 	if not patterns.items[key] then
 		return { ok = false, missing = { [key] = amount }, loops = {}, steps = {}, reserve = {}, runs = 0, no_pattern = true }
 	end
+	local per = kept_plans[net.id]
+	local id = key .. "|" .. amount
+	local entry = per and per[id]
+	if entry and not fresh_only and kept_valid(entry, net, patterns) then
+		kept_stats.hits = kept_stats.hits + 1
+		return plan_copy(entry.plan)
+	end
+	kept_stats.misses = kept_stats.misses + 1
+	local ctx = {
+		patterns = patterns, net = net, usable = N.usable(net) and true or false, stock = {}, base = {}, demand = {},
+		surplus = {}, reserve = {}, missing = {}, loops = {}, steps = {}, order = {}, missing_n = 0, nodes = 0,
+		alt = 0, log = {}, logn = 0,
+	}
 	need(ctx, key, amount, {}, 0, true)
 	local steps, runs = {}, 0
 	for _, pid in ipairs(ctx.order) do
@@ -828,8 +969,18 @@ local function make_plan(s, net, key, amount)
 	end
 	local reserve, reserved = {}, 0
 	for k, v in pairs(ctx.reserve) do if v > 0 then reserve[k] = v reserved = reserved + 1 end end
-	return { ok = ctx.missing_n == 0, missing = ctx.missing, loops = ctx.loops, steps = steps,
-		reserve = reserve, runs = runs, too_complex = ctx.too_complex, bytes = plan_bytes(key, amount, steps, reserved) }
+	local plan = { ok = ctx.missing_n == 0, missing = ctx.missing, loops = ctx.loops, steps = steps,
+		reserve = reserve, runs = runs, too_complex = ctx.too_complex, bytes = plan_bytes(key, amount, steps, reserved),
+		nodes = ctx.nodes }
+	if not fresh_only then
+		if not per or table_size(per) >= KEEP_PER_NETWORK then
+			per = {}
+			kept_plans[net.id] = per
+		end
+		per[id] = { patterns = patterns, base = ctx.base, demand = ctx.demand, plan = plan }
+		return plan_copy(plan)
+	end
+	return plan
 end
 
 --------------------------------------------------------------------------------
@@ -1210,30 +1361,9 @@ local function pool_add(job, key, count)
 	job.pool[key] = now
 end
 
---- the ingredients and products of a job step (its pattern; a crafting pattern reads its recipe)
---- The ingredients and products of a step's pattern, made once per pattern definition (issue #43): a crafting pattern read them
---- from the recipe prototype, which makes a new table of tables at every access (7 µs and garbage, ten times per tick at 5000
---- members); nothing that uses them changes them. Per load and weak: nothing is saved.
-local ing_cache = setmetatable({}, { __mode = "k" })
-local prod_cache = setmetatable({}, { __mode = "k" })
-local function step_ingredients(step)
-	local def = step.def
-	local l = ing_cache[def]
-	if not l then
-		l = P.ingredients(def)
-		ing_cache[def] = l
-	end
-	return l
-end
-local function step_products(step)
-	local def = step.def
-	local l = prod_cache[def]
-	if not l then
-		l = P.products(def)
-		prod_cache[def] = l
-	end
-	return l
-end
+--- the ingredients and products of a job step (its pattern; a crafting pattern reads its recipe): def_ingredients above
+local function step_ingredients(step) return def_ingredients(step.def) end
+local function step_products(step) return def_products(step.def) end
 
 --- runs of a processing step whose outputs are all back (received)
 local function processing_done(step)
@@ -2097,12 +2227,15 @@ end
 
 --- `fresh` rescans all pattern providers first (user actions); the GUI preview uses the cache
 --- that the round robin rescan keeps current.
-function M.plan(net, key, amount, fresh)
+function M.plan(net, key, amount, fresh, fresh_only)
 	local s = state()
 	if not (proto_of(key) and amount and amount >= 1) then return nil end
 	if fresh then refresh_providers(s) end
-	return make_plan(s, net, key, math.floor(amount))
+	return make_plan(s, net, key, math.floor(amount), fresh_only)
 end
+
+--- issue #50: { hits, misses } of the kept plans since the load (tests, the benchmark)
+function M.kept_plan_stats() return { hits = kept_stats.hits, misses = kept_stats.misses } end
 
 --- Issue #5: before a job starts, the providers of its plan's patterns are scanned (not every provider of the map:
 --- 200 of them cost 18 ms); true when a pattern changed (then the plan is made again).
@@ -2919,15 +3052,18 @@ end
 --- or "fluid/<fluid name>".
 remote.add_interface("gregtorio-me-autocraft", {
 	--- { ok, missing = {key -> count}, runs, steps, loops, reserve, pids, bytes } or nil
-	plan = function(entity, key, amount)
+	plan = function(entity, key, amount, fresh_only)
 		local net = network_of(entity)
-		local p = net and M.plan(net, key, amount, true)
+		local p = net and M.plan(net, key, amount, true, fresh_only)
 		if not p then return nil end
-		local pids = {}
-		for i, st in ipairs(p.steps) do pids[i] = st.pid end
+		local pids, runs_of = {}, {}
+		for i, st in ipairs(p.steps) do pids[i], runs_of[i] = st.pid, st.runs end
 		return { ok = p.ok, missing = p.missing, runs = p.runs, steps = #p.steps, loops = p.loops,
-			reserve = p.reserve, no_pattern = p.no_pattern, pids = pids, bytes = p.bytes }
+			reserve = p.reserve, no_pattern = p.no_pattern, pids = pids, step_runs = runs_of, bytes = p.bytes,
+			too_complex = p.too_complex, nodes = p.nodes }
 	end,
+	--- issue #50: the kept plans' { hits, misses } since the load
+	kept_plan_stats = function() return M.kept_plan_stats() end,
 	start = function(entity, key, amount)
 		local id, why, p = M.start(entity, key, amount)
 		return id, why, p and p.missing, p and p.bytes, p and p.biggest

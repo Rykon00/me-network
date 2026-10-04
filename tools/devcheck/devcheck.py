@@ -497,6 +497,7 @@ RUNTIME_TESTS = (
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
     ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"),
+    ("PLANS", "ME kept plans test"),
     ("HOLDERS", "ME holder cursor test"),
     ("GRAPH", "ME graph removal test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
@@ -1004,8 +1005,13 @@ def plan_report(log):
     starts = [{"key": m.group(1), "status": m.group(2), "ms": float(m.group(3))}
               for m in re.finditer(r"DEVCHECK-BENCH-PLAN-START (\S+) (\S+) Duration: ([\d.]+)ms", log)]
     ignored = bench_json(log, "PLANNER")
+    kept = {(m.group(1), int(m.group(2))): float(m.group(3))
+            for m in re.finditer(r"DEVCHECK-BENCH-PLAN-KEPT (\S+) amount (\d+) Duration: ([\d.]+)ms", log)}
+    for pl in plans:
+        pl["kept_ms"] = kept.get((pl["key"], pl["amount"]))
     stock = bench_json(log, "PLANSTOCK")
-    return {"plans": plans, "fails": fails, "starts": starts, "stock": stock[0] if stock else None, "ignored": ignored[0].get("ignored") if ignored else None}
+    digests = {f"{m.group(1)} {m.group(2)}": m.group(3) for m in re.finditer(r"DEVCHECK-BENCH-PLANDIGEST (\S+) (\d+) (.*)", log)}
+    return {"plans": plans, "fails": fails, "starts": starts, "stock": stock[0] if stock else None, "digests": digests, "ignored": ignored[0].get("ignored") if ignored else None}
 
 
 # the scene at the maintainer's size (issue #50, #51): `--sizes base` is one network of 2158 members (1767 cables and two
@@ -1215,9 +1221,33 @@ def scene_problems(scene, size, res, wanted=None):
     return problems
 
 
+def compare_plans(a):
+    """`--compare-plans REF` (issue #50): the planner scene with that version and with the working copy, one run each; every
+    plan of its sample (the deepest items and every n-th item of the chain of usable patterns, amounts 1 and 37: fresh plans,
+    never a kept one) must be the same: ok, missing, taken from storage, the patterns and their order, runs, loops, bytes."""
+    ref_dir = old_tree(a.compare_plans)
+    digests = {}
+    for tag, mod_dir in (("ref", ref_dir), ("wc", None)):
+        res = bench_scene(argparse.Namespace(**{**vars(a), "runs": 1, "old_dir": mod_dir}), "planner", 0)
+        if not res or not res["runs"] or not res["runs"][0].get("plan"):
+            print(f"  {tag}: the planner scene did not run")
+            return 1
+        digests[tag] = res["runs"][0]["plan"].get("digests") or {}
+    ref, wc = digests["ref"], digests["wc"]
+    diff = [k for k in sorted(set(ref) | set(wc)) if ref.get(k) != wc.get(k)]
+    print(f"\nplans compared with {a.compare_plans}: {len(ref)} of the reference, {len(wc)} of the working copy, {len(diff)} differ")
+    for k in diff[:10]:
+        print(f"  {k}:\n    ref {ref.get(k)}\n    wc  {wc.get(k)}")
+    ok = not diff and len(ref) > 0 and len(ref) == len(wc)
+    print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
+    return 0 if ok else 1
+
+
 def bench(a):
     if a.check:
         return bench_check(a)
+    if getattr(a, "compare_plans", None):
+        return compare_plans(a)
     sizes = parse_sizes(a.sizes)
     results = {"factorio": (factorio("--version").splitlines() or ["?"])[0], "scenes": [], "profiles": [],
                "window": a.ticks, "ref": a.from_ref or "working copy", "gregtorio": a.with_gregtorio}
@@ -1413,7 +1443,8 @@ def print_bench(results):
                   f"{[(t.get('key'), t.get('depth')) for t in ((s['plan'].get('stock') or {}).get('targets') or [])]}")
             for pl in s["plan"]["plans"]:
                 print(f"  plan {pl['key']} (depth {pl['depth']}) x{pl['amount']}: {pl['status']}, {pl['steps']} steps, "
-                      f"{pl['runs']} runs, {pl['missing']} missing {pl.get('missing_keys') or ''}: {fmt(pl['ms'], 2)} ms")
+                      f"{pl['runs']} runs, {pl['missing']} missing {pl.get('missing_keys') or ''}: {fmt(pl['ms'], 2)} ms fresh, "
+                      f"{fmt(pl.get('kept_ms'), 3)} ms a refresh")
             for pl in s["plan"].get("fails") or []:
                 print(f"  failing plan {pl['key']} (depth {pl['depth']}) x{pl['amount']} without {pl['without']}: {pl['status']}, "
                       f"{pl['steps']} steps, {pl['missing']} missing: {fmt(pl['ms'], 2)} ms")
@@ -1589,6 +1620,8 @@ def main():
     p.add_argument("--burst", type=int, default=1000, metavar="N", help="ME blocks built and removed in one tick after the probes (default 1000, 0: none)")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
+    p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "
+                   "sample must be the same (issue #50)")
     p.add_argument("--planner-targets", type=int, default=5, help="items the planner is timed on, the deepest first (default 5)")
     p.add_argument("--with-gregtorio", metavar="DIR", help="load this Gregtorio Continued checkout as well (the planner on its recipes)")
     p.add_argument("--check", metavar="REF", help="run the working copy and this git ref in turns and fail when a number is "

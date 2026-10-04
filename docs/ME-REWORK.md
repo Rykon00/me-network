@@ -1359,8 +1359,11 @@ after the load, the fluid is the same) and Gregtorio's `migrate --from-ref v0.4.
 * `on_configuration_changed` still rebuilds the graph from the map: 0.8 s at 5000 endpoints (once per mod update).
 * Removing a cable whose network splits still searches the network (a breadth first search) and recomputes both
   parts; removing an endpoint does not.
-* The planner copies the stock for each alternative pattern of a key (`snapshot`); a deep tree with many
-  alternatives is not covered by the benchmark.
+* The planner copied the stock for each alternative pattern of a key (`snapshot`). Since issue #50 (lever 11) it reads
+  the stock of a key when it first asks for it, tries the alternatives on the same tables and undoes them from a journal,
+  and keeps its last plans: a kept plan is given back while the network's patterns are the same table and every key the
+  plan read holds the same amount, or held and holds at least all that was asked of it. See "The planner" in
+  `docs/PERFORMANCE.md` (pull request 11).
 
 ### Tests
 

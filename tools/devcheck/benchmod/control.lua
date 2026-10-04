@@ -43,6 +43,7 @@ local LATENCY_RECIPES = 5             -- maintainers of the latency probe (own r
 local LATENCY_STOCK = 100
 local LATENCY_TIMEOUT = 3600
 local PLANNER_SPARE_DRIVES = 16       -- the planner scene's drives for what the network cannot make (issue #50)
+local PLAN_SAMPLE = 150               -- the planner scene's plans compared between two versions (issue #50)
 local FLUIDS = { "water", "crude-oil", "petroleum-gas", "light-oil", "heavy-oil", "lubricant", "sulfuric-acid" }
 --- raw materials: the network holds millions of them (exports, recipes of the patterns)
 local RAW = { "iron-plate", "copper-plate", "steel-plate", "stone", "stone-brick", "wood", "coal", "plastic-bar",
@@ -1413,6 +1414,7 @@ local function build_planner()
 	power_row(y + 2, X0 - 4, X0 + width + 2)
 	for yy = Y0, math.max(y, Y0 + 6) do place("me-cable", p1(X0 - 1, yy)) end   -- the spine (down to the CPU rows)
 	b.anchor = member(place("me-network-controller", X0 - 2, Y0 + 1))
+	b.terminal = member(place("me-terminal", p1(X0 - 1, Y0 - 1)))   -- (the crafting tab's preview, issue #50)
 	b.anchors = { b.anchor }
 	b.cpus, b.slots = {}, {}
 	for k = 0, 1 do
@@ -1561,6 +1563,11 @@ local function planner_stock(b)
 	table.sort(deep, function(a, c) if a.depth ~= c.depth then return a.depth > c.depth end return a.key < c.key end)
 	b.targets = {}
 	for i = 1, math.min(C.planner_targets or 5, #deep) do b.targets[i] = deep[i] end
+	--- the keys whose plans are compared between versions (bench --compare-plans): every item of the chain, at most PLAN_SAMPLE
+	--- of them spread over the depths
+	b.plan_sample = {}
+	local step = math.max(1, math.floor(#deep / PLAN_SAMPLE))
+	for i = 1, #deep, step do b.plan_sample[#b.plan_sample + 1] = deep[i].key end
 	b.plan_recipes, b.plan_stocked = nil, seen
 	for key in pairs(raw) do b.plan_stocked[key] = true end
 	log_json("PLANSTOCK", { extra_items = #extra_items, extra_fluids = #extra_fluids,
@@ -1569,23 +1576,35 @@ end
 
 --- the planner on every target: five plans of 1 and of 100 timed (the providers scanned first, as the terminal
 --- does), then one job of 10 started; the patterns the network cannot use, by reason
+--- Issue #50: a plan as the crafting tab's preview makes it (the terminal's craft_preview: no provider rescan). The first call
+--- for a key and amount (nothing kept: a fresh plan) and the mean of five more (a refresh while nothing changed). Logged as
+--- DEVCHECK-BENCH-<tag> (the fresh one, with the plan) and DEVCHECK-BENCH-<tag>-KEPT.
+local function time_preview(b, tag, t, amount, extra)
+	local p = game.create_profiler()
+	local pre = remote.call(TERM, "craft_preview", b.terminal, t.key, amount)
+	p.stop()
+	local q = game.create_profiler()
+	for _ = 1, 5 do remote.call(TERM, "craft_preview", b.terminal, t.key, amount) end
+	q.stop()
+	q.divide(5)
+	local status = pre.reason == "missing" and "missing" or (pre.reason == "no-pattern" and "no-pattern" or "ok")
+	local missing, names = 0, {}
+	for k in pairs(pre.missing or {}) do
+		missing = missing + 1
+		if #names < 4 then names[#names + 1] = k end
+	end
+	log({ "", "DEVCHECK-BENCH-" .. tag .. " ", t.key, " depth ", t.depth, " amount ", amount, " steps ", pre.steps or -1,
+		" runs ", pre.runs or -1, " missing ", missing, " ", status, " ", p, " ", extra or table.concat(names, ",") })
+	log({ "", "DEVCHECK-BENCH-" .. tag .. "-KEPT ", t.key, " amount ", amount, " ", q })
+end
+
 local function planner_probe(b)
 	local started = {}
 	for _, t in ipairs(b.targets) do
 		for _, amount in ipairs({ 1, 100 }) do
-			local p = game.create_profiler()
-			local plan
-			for _ = 1, 5 do plan = remote.call(AC, "plan", b.anchor, t.key, amount) end
-			p.stop()
-			p.divide(5)
-			local status = plan and (plan.ok and "ok" or (plan.no_pattern and "no-pattern" or "missing")) or "nil"
-			local missing, names = 0, {}
-			for k in pairs(plan and plan.missing or {}) do
-				missing = missing + 1
-				if #names < 4 then names[#names + 1] = k end
-			end
-			log({ "", "DEVCHECK-BENCH-PLAN ", t.key, " depth ", t.depth, " amount ", amount, " steps ", plan and plan.steps or -1,
-				" runs ", plan and plan.runs or -1, " missing ", missing, " ", status, " ", p, " ", table.concat(names, ",") })
+			time_preview(b, "PLAN", t, amount)
+			local p = remote.call(AC, "plan", b.anchor, t.key, amount, true)
+			log("DEVCHECK-BENCH-PLAN-NODES " .. t.key .. " " .. amount .. " " .. tostring(p and p.nodes) .. " " .. tostring(p and p.too_complex))
 		end
 		--- issue #50: the same target failing: the first item the plan of 1 takes from storage that the network cannot make
 		--- (raw or stocked) is withdrawn for the plans
@@ -1599,23 +1618,12 @@ local function planner_probe(b)
 		for i = 1, math.min(#keys, 12) do               -- (the first whose absence makes the plan fail: some are byproducts too)
 			local k = keys[i]
 			local n = remote.call(NET, "extract", b.anchor, k, remote.call(NET, "count", b.anchor, k))
-			local test = remote.call(AC, "plan", b.anchor, t.key, 1)
+			local test = remote.call(AC, "plan", b.anchor, t.key, 1, true)
 			if test and not test.ok then gone, got = k, n break end
 			if n > 0 then remote.call(NET, "insert", b.anchor, k, n) end
 		end
 		if gone then
-			for _, amount in ipairs({ 1, 100 }) do
-				local p = game.create_profiler()
-				local plan
-				for _ = 1, 5 do plan = remote.call(AC, "plan", b.anchor, t.key, amount) end
-				p.stop()
-				p.divide(5)
-				local status = plan and (plan.ok and "ok" or (plan.no_pattern and "no-pattern" or "missing")) or "nil"
-				local missing = 0
-				for _ in pairs(plan and plan.missing or {}) do missing = missing + 1 end
-				log({ "", "DEVCHECK-BENCH-PLAN-FAIL ", t.key, " depth ", t.depth, " amount ", amount, " steps ", plan and plan.steps or -1,
-					" runs ", plan and plan.runs or -1, " missing ", missing, " ", status, " ", p, " without ", gone })
-			end
+			for _, amount in ipairs({ 1, 100 }) do time_preview(b, "PLAN-FAIL", t, amount, "without " .. gone) end
 			if got > 0 then remote.call(NET, "insert", b.anchor, gone, got) end
 		end
 		local p = game.create_profiler()
@@ -1627,6 +1635,15 @@ local function planner_probe(b)
 	end
 	b.jobs = started
 	log_json("JOBS", { started = #started, failed = {} })
+	--- the plans of the sample, for bench --compare-plans: what the network would do (fresh plans, never a kept one)
+	for _, key in ipairs(b.plan_sample or {}) do
+		for _, amount in ipairs({ 1, 37 }) do
+			local p = remote.call(AC, "plan", b.anchor, key, amount, true)
+			local d = p and { ok = p.ok, missing = p.missing, reserve = p.reserve, pids = p.pids, runs = p.runs, steps = p.steps,
+				loops = p.loops, bytes = p.bytes, no_pattern = p.no_pattern } or "nil"
+			log("DEVCHECK-BENCH-PLANDIGEST " .. key .. " " .. amount .. " " .. serpent.line(d, { comment = false, sortkeys = true, numformat = "%.10g" }))
+		end
+	end
 	log_json("PLANNER", { ignored = remote.call(AC, "ignored", b.anchor) })
 end
 
