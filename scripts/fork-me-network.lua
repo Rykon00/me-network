@@ -739,6 +739,10 @@ function M.has_card(cell, kind)
 	return false
 end
 
+--- Bumped whenever the cards or the list of a cell change (M.apply_cell_cards): the cursors of the holder lists
+--- (first_holder) start again, since a cell may take a key it refused (or the reverse).
+local room_gen = 0
+
 --- AE2's share of one key in a cell with an Equal Distribution Card (BasicCellInventory: the bytes left after the
 --- type costs, divided by the types: the whitelist's size without a fuzzy card, else the cell's type limit)
 local function equal_share(cell, spec)
@@ -752,6 +756,7 @@ end
 --- whitelist) or, with an Inverter Card, `deny`; `fnames` (Fuzzy Card), `void` (Overflow Destruction Card), `eq` (Equal
 --- Distribution Card: the share of one key). A cell without cards keeps exactly the fields of 0.3.0.
 function M.apply_cell_cards(cell)
+	room_gen = room_gen + 1
 	local spec = cell_spec(cell.name)
 	if not spec then return end
 	local keys = cell.partition or cell.deny
@@ -859,6 +864,8 @@ end
 --------------------------------------------------------------------------------
 --- issue #5: the index of a key, with what depends on it
 --------------------------------------------------------------------------------
+
+local HOLDER_CURSORS = { "hfs", "hfr" }
 
 --- Derived lookups per network (the insertion order by priority group and kind, the sorted holders of a key, the
 --- extraction order of a key). They are a pure function of the network's state, so they are kept outside `storage`
@@ -1475,7 +1482,7 @@ local function lookups(s, net)
 	local order = ordered(s, net)
 	local c = cache[net]
 	if c and c.order == order then return c end
-	c = { order = order, groups = {}, at = {}, hs = {}, hr = {}, xs = {} }
+	c = { order = order, groups = {}, at = {}, hs = {}, hr = {}, xs = {}, hfs = {}, hfr = {} }
 	cache[net] = c
 	local g
 	for rank, o in ipairs(order) do
@@ -1542,10 +1549,48 @@ local function holders(net, c, key, by_rank)
 	return l
 end
 
---- an extraction freed bytes or a type of a cell: it may take new keys again
+--- The first holder of `key` in the list `l` (`field`: the cursors of the sorted list "hfs" or of the ranked list "hfr")
+--- that may still take some of it. An insert used to walk every cell that holds the key, the full ones first (28 of them
+--- per insert in the 20 000 scene, 55 % of the interface and bus time); the full internal cells at the front are
+--- skipped for good here, until an extraction frees room in one of them (reopen). An external cell (a storage bus,
+--- whose room is the chest's) and a cell that destroys overflow are never skipped; a partitioned cell is skipped by
+--- the ranked walk anyway. The cursor belongs to the list it was made for and to the generation of the cards.
+local function first_holder(net, c, key, l, field)
+	local fh = c[field]
+	local e = fh[key]
+	if not e or e.list ~= l or e.gen ~= room_gen then
+		local at = {}
+		for i = 1, #l do at[l[i]] = i end
+		e = { list = l, at = at, i = 1, gen = room_gen }
+		fh[key] = e
+	end
+	local i, n = e.i, #l
+	local cells = net.cells
+	while i <= n do
+		local cell = cells[l[i]]
+		if cell.ext or cell.void then break end
+		if not cell.partition and cell_room(cell, cell_spec(cell.name), key) > 0 then break end
+		i = i + 1
+	end
+	e.i = i
+	return i
+end
+
+--- an extraction freed bytes or a type of a cell: it may take new keys again, and the keys it holds again
 local function reopen(net, cid)
 	local c = cache[net]
-	local at = c and c.order == net.order and not net.order_dirty and c.at[cid]
+	if not c then return end
+	local cell = net.cells[cid]
+	if cell then
+		for key in pairs(cell.items) do
+			for _, field in ipairs(HOLDER_CURSORS) do
+				local e = c[field][key]
+				local pos = e and e.at[cid]
+				if pos and pos < e.i then e.i = pos end
+			end
+		end
+	end
+	local at = c.order == net.order and not net.order_dirty and c.at[cid]
 	if at and at.kind and at.pos < at.g.first[at.kind] then at.g.first[at.kind] = at.pos end
 end
 
@@ -1694,13 +1739,14 @@ local function insert_key(net, key, count, data)
 	local c = lookups(s, net)
 	local kind = is_fluid_key(key) and "fluid" or "item"
 	if net.uniform then                                -- one priority, no partition: the cells that hold it first
-		for _, cid in ipairs(holders(net, c, key, false)) do
-			if put(cid) then break end
+		local hl = holders(net, c, key, false)
+		for i = first_holder(net, c, key, hl, "hfs"), #hl do
+			if put(hl[i]) then break end
 		end
 		if ins.left > 0 and c.groups[1] then put_open(net, c.groups[1], kind, key) end
 	else
 		local hr = holders(net, c, key, true)
-		local h = 1
+		local h = first_holder(net, c, key, hr, "hfr")
 		local fname = c.fuzzy and name_of_key(key)
 		for _, g in ipairs(c.groups) do
 			if ins.left <= 0 then break end
@@ -1715,7 +1761,8 @@ local function insert_key(net, key, count, data)
 			while hr[h] and c.at[hr[h]].g == g do                         -- 2: the cells that hold it
 				local cid = hr[h]
 				h = h + 1
-				if ins.left > 0 and not net.cells[cid].partition then put(cid) end
+				if ins.left <= 0 then break end                           -- (nothing left: the rest of the walk does nothing)
+				if not net.cells[cid].partition then put(cid) end
 			end
 			if ins.left > 0 and not put_open(net, g, kind, key) then     -- 3: any cell, then storage buses
 				for _, cid in ipairs(g.ext[kind]) do
