@@ -3006,11 +3006,19 @@ function M.rebuild()
 	s.nodes, s.nets, s.version = {}, {}, s.version + 1
 	s.drives, s.dirty, s.sweep, s.sweep_list, s.nlist = {}, {}, 1, nil, {}
 	local names = M.node_names()
-	local all = {}
+	--- issue #43: each property of an entity is read once (a read is an engine call, and the sort read two per comparison: 1 s
+	--- at 20 000 members); the members are sorted by unit number as before
+	local ents, surface_of, units = {}, {}, {}
 	for _, surface in pairs(game.surfaces) do
-		for _, e in pairs(surface.find_entities_filtered{ name = names }) do all[#all + 1] = e end
+		local index = surface.index
+		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
+			local unit = e.unit_number
+			units[#units + 1] = unit
+			ents[unit] = e
+			surface_of[unit] = index
+		end
 	end
-	table.sort(all, function(a, b) return a.unit_number < b.unit_number end)
+	table.sort(units)
 	--- drives keep their cells (by unit number); cells of drives that are gone are spilled where they stood
 	for unit, d in pairs(old_drives) do
 		if d.entity.valid and kinds()[d.entity.name] == "drive" then
@@ -3043,34 +3051,87 @@ function M.rebuild()
 		end
 	end
 	--- nodes without links first, then the links, then the components
-	for _, e in ipairs(all) do
-		local unit = e.unit_number
-		s.nodes[unit] = { entity = e, kind = kinds()[e.name], adj = {}, box = tile_box(e), surface = e.surface.index,
-			force = e.force.name, position = { x = e.position.x, y = e.position.y }, li = #s.nlist + 1 }
-		s.nlist[#s.nlist + 1] = unit                       -- (`all` is sorted by unit number)
-		if s.nodes[unit].kind == "underground" then s.nodes[unit].dir = e.direction end
-		if kinds()[e.name] == "drive" then drive_record(s, e) s.dirty[unit] = true end
+	local sizes, force_names = {}, {}
+	for _, unit in ipairs(units) do
+		local e = ents[unit]
+		local name, pos, dir, fi = e.name, e.position, e.direction, e.force_index
+		local size = sizes[name]
+		if not size then
+			local p = prototypes.entity[name]
+			size = { p.tile_width or 1, p.tile_height or 1 }
+			sizes[name] = size
+		end
+		local fname = force_names[fi]
+		if not fname then
+			fname = game.forces[fi].name
+			force_names[fi] = fname
+		end
+		local w, h = size[1], size[2]
+		if (dir == defines.direction.east or dir == defines.direction.west) and w ~= h then w, h = h, w end
+		local kind = kinds()[name]
+		local node = { entity = e, kind = kind, adj = {}, surface = surface_of[unit], force = fname,
+			box = { math.floor(pos.x - w / 2 + 0.5), math.floor(pos.y - h / 2 + 0.5),
+				math.floor(pos.x + w / 2 + 0.5), math.floor(pos.y + h / 2 + 0.5) },
+			position = { x = pos.x, y = pos.y }, li = #s.nlist + 1 }
+		s.nodes[unit] = node
+		s.nlist[#s.nlist + 1] = unit                       -- (`units` is sorted)
+		if kind == "underground" then node.dir = dir end
+		if kind == "drive" then drive_record(s, e) s.dirty[unit] = true end
 	end
-	for _, e in ipairs(all) do
-		local node = s.nodes[e.unit_number]
+	--- the neighbours: the members that touch a member's box along an edge, from a grid of the tiles the members cover (one table
+	--- per surface), not from an engine query per member (a query with the names of all members: 1.2 s at 20 000 members). The
+	--- same members the query found: those of the same force whose boxes share an edge of positive length, that connect.
+	local OFF, MUL = 2097152, 4194304
+	local grids = {}
+	for _, unit in ipairs(units) do
+		local node = s.nodes[unit]
+		local g = grids[node.surface]
+		if not g then
+			g = {}
+			grids[node.surface] = g
+		end
 		local b = node.box
-		for _, o in pairs(e.surface.find_entities_filtered{
-			area = { { b[1] - 0.5, b[2] - 0.5 }, { b[3] + 0.5, b[4] + 0.5 } }, name = names, force = e.force }) do
-			local other = o.unit_number ~= e.unit_number and s.nodes[o.unit_number]
-			if other and adjacent(b, other.box) and connects(node, other) then node.adj[o.unit_number] = true end
+		for tx = b[1], b[3] - 1 do
+			for ty = b[2], b[4] - 1 do
+				local key = (tx + OFF) * MUL + (ty + OFF)
+				local cell = g[key]
+				if cell then cell[#cell + 1] = unit else g[key] = { unit } end
+			end
+		end
+	end
+	for _, unit in ipairs(units) do
+		local node = s.nodes[unit]
+		local b, g = node.box, grids[node.surface]
+		local function look(tx, ty)
+			local cell = g[(tx + OFF) * MUL + (ty + OFF)]
+			if cell then
+				for _, ou in ipairs(cell) do
+					if ou ~= unit then
+						local other = s.nodes[ou]
+						if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[ou] = true end
+					end
+				end
+			end
+		end
+		for ty = b[2], b[4] - 1 do                         -- the tiles beside the west and east edges
+			look(b[1] - 1, ty)
+			look(b[3], ty)
+		end
+		for tx = b[1], b[3] - 1 do                         -- and above and below
+			look(tx, b[2] - 1)
+			look(tx, b[4])
 		end
 	end
 	--- underground cables pair as the engine connected them
-	for _, e in ipairs(all) do
-		local node = s.nodes[e.unit_number]
+	for _, unit in ipairs(units) do
+		local node = s.nodes[unit]
 		if node.kind == "underground" and not node.partner then
 			local partner = find_partner(s, node)
 			if partner then link_pair(node, partner) end
 		end
 	end
 	local seen = {}
-	for _, e in ipairs(all) do
-		local unit = e.unit_number
+	for _, unit in ipairs(units) do
 		if not seen[unit] then
 			local node = s.nodes[unit]
 			local net = new_net(s, node.surface, node.force)

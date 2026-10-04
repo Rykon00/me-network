@@ -203,6 +203,13 @@ return function(Hh)
 					if not check(step, removed_id, k) then break end
 				end
 				st.splits = splits
+				--- the graph built again from the entities (on_configuration_changed, issue #43) gives the same networks
+				remote.call(NET, "rebuild")
+				for k in pairs(present) do ids[k] = nil end
+				if check(REMOVALS + 1, nil, "rebuild") then
+					local list_ok, why = remote.call(NET, "sweep_list_ok")
+					if not list_ok then fail("after the rebuild: the sweep list: " .. tostring(why)) end
+				end
 				if splits < 8 then fail("only " .. splits .. " of the removals split a network: the test does not exercise the split") end
 			end
 		end
