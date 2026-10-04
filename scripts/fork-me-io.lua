@@ -1724,7 +1724,9 @@ remote.add_interface("gregtorio-me-io", {
 	--- tests and the benchmark: the mod's Lua heap in kB; `collect`: after a full collection (what is alive, not what is
 	--- waiting to be collected)
 	lua_memory = function(collect)
-		if collect then
+		if collect == "stop" or collect == "restart" then              -- (the benchmark's allocation rate: the collector stopped for a while)
+			pcall(collectgarbage, collect)
+		elseif collect then
 			pcall(collectgarbage, "collect")
 			pcall(collectgarbage, "collect")
 		end
