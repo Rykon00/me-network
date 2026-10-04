@@ -506,6 +506,17 @@ local function add_node(s, entity, kind)
 	return node
 end
 
+--- the cells of a drive or a storage bus leave the index and the totals of `net` (the member was removed or went with a part
+--- that split off); the cells themselves stay with their drive or bus
+local function release_cells(net, unit)
+	net.drives[unit] = nil
+	for slot = 1, drive_slots() do
+		local cid = unit .. ":" .. slot
+		if net.cells[cid] then net_cell(net, cid, net.cells[cid], -1) end
+	end
+	if net.cells[unit .. ":ext"] then net_cell(net, unit .. ":ext", net.cells[unit .. ":ext"], -1) end
+end
+
 --- Unregister a member from the graph (the entity may already be invalid).
 function remove_node_graph(s, unit)
 	local node = s.nodes[unit]
@@ -540,19 +551,16 @@ function remove_node_graph(s, unit)
 			--- issue #5: no recompute; whatever storage the member still had in the network leaves it
 			s.version = s.version + 1
 			net.power_dirty = true
-			net.drives[unit] = nil
-			for slot = 1, drive_slots() do
-				local cid = unit .. ":" .. slot
-				if net.cells[cid] then net_cell(net, cid, net.cells[cid], -1) end
-			end
-			if net.cells[unit .. ":ext"] then net_cell(net, unit .. ":ext", net.cells[unit .. ":ext"], -1) end
+			release_cells(net, unit)
 		end
 		return
 	end
 	--- the rest keeps the network (and its id, the largest part); every other part becomes a new network
 	local moved
-	--- (light: no controller, drive or storage bus left with the parts, and the member removed is none: the storage of the rest is as it was)
-	local light = not (node.kind == "controller" or node.kind == "drive" or (s.ext and s.ext[unit]))
+	--- (light: no controller leaves; the drives and storage buses that leave, the member removed among them, take their cells out
+	--- of the rest's index one by one instead of the rest being computed again)
+	local light = node.kind ~= "controller"
+	local leaving = { unit }
 	for i = 1, #parts do
 		local part = new_net(s, net.surface, net.force)
 		for _, u in ipairs(parts[i]) do
@@ -562,7 +570,8 @@ function remove_node_graph(s, unit)
 			part.n = part.n + 1
 			local pnode = s.nodes[u]
 			pnode.net = part.id
-			if light and (pnode.kind == "controller" or pnode.kind == "drive" or (s.ext and s.ext[u])) then light = false end
+			if pnode.kind == "controller" then light = false end
+			if pnode.kind == "drive" or (s.ext and s.ext[u]) then leaving[#leaving + 1] = u end
 			local kind = net.wunits and net.wunits[u]
 			if kind then                               -- (issue #38: a waiting endpoint that moved registers again on its new network)
 				net.wunits[u] = nil
@@ -573,8 +582,9 @@ function remove_node_graph(s, unit)
 		changed(s, part)
 	end
 	if light then
-		--- issue #5 / #43: nothing of the rest's storage, controllers or drives went with the parts: no recompute of the
-		--- rest (it rebuilt every cell's index: 35 ms at 20 000 members), only what a change of the members means
+		--- issue #5 / #43: no controller went with the parts: no recompute of the rest (it rebuilt every cell's index: 35 to 50 ms
+		--- at 20 000 members), the cells of what left are taken out, and the rest is told what a change of the members means
+		for _, u in ipairs(leaving) do release_cells(net, u) end
 		s.version = s.version + 1
 		net.power_dirty = true
 		net.usable_tick = nil
