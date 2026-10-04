@@ -306,28 +306,103 @@ local recompute
 local net_cell
 local take_waits, fire_all_waits
 
---- every member of the networks `ids` is visited once; split components get new ids (the largest keeps it)
-local function components(s, net, starts)
-	local seen, comps = {}, {}
-	for _, start in ipairs(starts) do
-		if not seen[start] and s.nodes[start] then
-			local comp, queue, i = {}, { start }, 1
-			seen[start] = true
-			while queue[i] do
-				local u = queue[i]
-				i = i + 1
-				comp[#comp + 1] = u
-				for v in pairs(s.nodes[u].adj) do
-					if not seen[v] and s.nodes[v] then
-						seen[v] = true
-						queue[#queue + 1] = v
+--- The parts a removal left (issue #38, lever 5). `starts`: the neighbours of the removed member, in order; `total`: the
+--- members the network has left. A search runs from each of them, one member at a time, in turns; two searches that meet
+--- are one group; a search that runs dry has found a whole part. The search still running when every other one has run
+--- dry is the rest of the network and is not walked to its end (its size is `total` less the parts found), so the cost is
+--- the size of the smaller parts, not of the network (the search of the whole network that every removed cable made
+--- cost 1.8 ms at 20 000 members, 364 times in a burst). The largest part keeps the network and its id (a tie: the one
+--- with the smaller first neighbour), as before: only when a part that ran dry is larger than the rest is the rest
+--- walked to its end, which then costs less than that part did.
+--- Returns the parts that do not keep the network, each a list of units, the larger first (empty: no split).
+local function split_parts(s, starts, total)
+	local nodes = s.nodes
+	local owner = {}                                  -- unit -> the search that found it (root() gives its group)
+	local up = {}                                     -- search -> the search it was merged into
+	local searches = {}
+	local function root(i)
+		while up[i] ~= i do
+			up[i] = up[up[i]]
+			i = up[i]
+		end
+		return i
+	end
+	for i, start in ipairs(starts) do
+		searches[i] = { queue = { start }, head = 1, list = { start }, dry = false, first = i }
+		up[i] = i
+		owner[start] = i
+	end
+	local live = #starts                              -- groups that have not run dry
+	local groups = #starts                            -- groups, dry or not
+	--- one member of group `i` is searched
+	local function step(i)
+		local g = searches[i]
+		local u = g.queue[g.head]
+		g.head = g.head + 1
+		for v in pairs(nodes[u].adj) do
+			if nodes[v] then
+				local o = owner[v]
+				if o == nil then
+					owner[v] = i
+					g.queue[#g.queue + 1] = v
+					g.list[#g.list + 1] = v
+				else
+					local r = root(o)
+					if r ~= i then                    -- the two searches met: one group
+						local other = searches[r]
+						for k = other.head, #other.queue do g.queue[#g.queue + 1] = other.queue[k] end
+						for k = 1, #other.list do g.list[#g.list + 1] = other.list[k] end
+						if other.first < g.first then g.first = other.first end
+						if not other.dry then live = live - 1 end
+						groups = groups - 1
+						up[r] = i
+						searches[r] = nil
 					end
 				end
 			end
-			comps[#comps + 1] = comp
+		end
+		if g.head > #g.queue then
+			g.dry = true
+			live = live - 1
 		end
 	end
-	return comps
+	while live > 1 do
+		for i = 1, #starts do
+			if up[i] == i and not searches[i].dry then
+				step(i)
+				if live <= 1 then break end
+			end
+		end
+	end
+	if groups <= 1 then return {} end
+	--- the groups that are left, the one still searching (if any) with the size that is left of the network
+	local list, found, rest = {}, 0, nil
+	for i = 1, #starts do
+		if up[i] == i then
+			local g = searches[i]
+			if g.dry then
+				list[#list + 1] = { i = i, size = #g.list, first = g.first, dry = true }
+				found = found + #g.list
+			else
+				rest = { i = i, size = 0, first = g.first, dry = false }
+				list[#list + 1] = rest
+			end
+		end
+	end
+	if rest then rest.size = total - found end
+	table.sort(list, function(a, b)
+		if a.size ~= b.size then return a.size > b.size end
+		return a.first < b.first
+	end)
+	local out = {}
+	for k = 2, #list do
+		local e = list[k]
+		if not e.dry then                              -- the rest is not the largest: walk it to its end (it is smaller than the part that keeps the network)
+			while not searches[e.i].dry do step(e.i) end
+		end
+		out[#out + 1] = searches[e.i].list
+	end
+	return out
 end
 
 local function changed(s, net)
@@ -457,8 +532,8 @@ function remove_node_graph(s, unit)
 		return
 	end
 	--- a member with one neighbour (a bus, an interface, a drive at the end of a cable) cannot split the network
-	local comps = #neighbours <= 1 and { neighbours } or components(s, net, neighbours)
-	if #comps <= 1 then
+	local parts = #neighbours <= 1 and {} or split_parts(s, neighbours, net.n)
+	if #parts == 0 then
 		if node.kind == "controller" then
 			changed(s, net)
 		else
@@ -474,20 +549,20 @@ function remove_node_graph(s, unit)
 		end
 		return
 	end
-	table.sort(comps, function(a, b)
-		if #a ~= #b then return #a > #b end
-		return a[1] < b[1]
-	end)
-	--- the largest part keeps the network (and its id); every other part becomes a new network
+	--- the rest keeps the network (and its id, the largest part); every other part becomes a new network
 	local moved
-	for i = 2, #comps do
+	--- (light: no controller, drive or storage bus left with the parts, and the member removed is none: the storage of the rest is as it was)
+	local light = not (node.kind == "controller" or node.kind == "drive" or (s.ext and s.ext[unit]))
+	for i = 1, #parts do
 		local part = new_net(s, net.surface, net.force)
-		for _, u in ipairs(comps[i]) do
+		for _, u in ipairs(parts[i]) do
 			net.nodes[u] = nil
 			net.n = net.n - 1
 			part.nodes[u] = true
 			part.n = part.n + 1
-			s.nodes[u].net = part.id
+			local pnode = s.nodes[u]
+			pnode.net = part.id
+			if light and (pnode.kind == "controller" or pnode.kind == "drive" or (s.ext and s.ext[u])) then light = false end
 			local kind = net.wunits and net.wunits[u]
 			if kind then                               -- (issue #38: a waiting endpoint that moved registers again on its new network)
 				net.wunits[u] = nil
@@ -497,7 +572,17 @@ function remove_node_graph(s, unit)
 		end
 		changed(s, part)
 	end
-	changed(s, net)
+	if light then
+		--- issue #5 / #43: nothing of the rest's storage, controllers or drives went with the parts: no recompute of the
+		--- rest (it rebuilt every cell's index: 35 ms at 20 000 members), only what a change of the members means
+		s.version = s.version + 1
+		net.power_dirty = true
+		net.usable_tick = nil
+		for _, hook in pairs(M.change_hooks) do hook(net) end
+		if net.wait_use then M.usable(net) end
+	else
+		changed(s, net)
+	end
 	if moved then
 		table.sort(moved, function(a, b) return a[1] < b[1] end)
 		for _, m in ipairs(moved) do
