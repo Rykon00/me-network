@@ -1725,6 +1725,48 @@ code at 0.438 ms and 1.68 ms (the load-following job steps, the default of two p
 backlog and a tick visits 24 blocks (16 in 0.3.0, and every tick with 24 dear visits is one of the ticks at the top). Neither is a
 bug of this change; both are what pull request 2 chose.
 
+## Pull request 8 (issue #43): what is not I/O, the job step
+
+Pull request 6 left `bench --check v0.3.0` red on the 99th percentile (5000 and 20 000) and the ticks over 5 ms (20 000). With the
+interfaces and buses switched off 0.3.0 ran at 0.340 ms and a 99th percentile of 1.49 ms at 5000 and the code of pull request 6 at
+0.429 ms and 1.61 ms, 36.4 KB of Lua memory per tick against 24 in the same scene without the I/O: the rest of the script, mostly
+the load-following job steps (two per tick above 20 running jobs, the default of pull request 2).
+
+### What the profile said (5000, `bench --profile 5000`, inclusive per tick, the profiler adds 0.9 µs per call)
+`autocraft.job_step` 146 µs a call, two calls a tick; inside it `step_ingredients` was 7.4 µs a call, ten calls a tick (37 µs of
+each step, a quarter of it): for a crafting pattern it reads `proto.ingredients`, which makes a new table of tables at every
+access (and garbage with it). `find_crafter` 12 µs, `start_lease` and `close_lease` 29 µs, `job_network` 13 µs make most of the
+rest. `circuit.visit_circuit` (1 ms, 0.17 times a tick) and the storage bus visits are as in 0.3.0.
+
+### What was changed
+The ingredients and the products of a step's pattern are made once per pattern definition (`step_ingredients`, `step_products` in
+`scripts/fork-me-autocraft.lua`: a weak table per load, nothing saved; no caller changes what it gets back). Nothing else: what a job
+does, in which order and how often is as it was.
+
+### Numbers (quiet machine, game closed, in turns, medians; 5000: five rounds, 20 000: three)
+The interfaces and buses switched off (5000, three rounds): script average 0.429 against 0.345 ms (0.3.0: 0.340), 99th percentile
+1.61 against 1.51 ms (0.3.0: 1.49), Lua allocated 36.4 against 24.1 KB per tick.
+
+| | v0.3.0 | before (#46) | this pull request |
+|---|---|---|---|
+| 5000: script avg (ms) | 1.189 | 1.125 | **1.047** |
+| 5000: p99 (ms) / ticks over 5 ms | 3.11 / 11 | 3.22 / 9 | **2.96 / 9** |
+| 5000: gc avg (ms) / Lua allocated (KB per tick) | 0.082 / 70.4 | 0.079 / 67.4 | **0.069 / 55.1** |
+| 5000: crafts per second / maintainer reaction (s) | 327 / 0.217 | 344 / 0.083 | 344 / 0.083 |
+| 20 000: script avg (ms) | 2.700 | 2.685 | **2.588** |
+| 20 000: p99 (ms) / ticks over 5 ms | 5.70 / 70 | 6.62 / 107 | 5.92 / 82 |
+| 20 000: Lua allocated (KB per tick), items per second | 97.8, 528 700 | 118.9, 638 400 | 102.5, 638 400 |
+| 20 000: `pair` machines (%) | 95.0 | 99.7 | 99.7 |
+| 20 000 idle: avg (ms) / allocated (KB per tick) | 1.222 / 71.4 | 1.157 / 53.5 | **1.144 / 53.3** |
+
+**`bench --check v0.3.0` at 5000 and 20 000 (three rounds) is green on every number, for the first time in issue #38**: script average
+1.253 to 1.095 ms and 2.752 to 2.701 ms, 99th percentile 3.213 to 3.169 ms and 6.029 to 6.201 ms (noise 0.14), ticks over 5 ms 10 to 6 and
+102 to 106 (noise 3), gc 0.082 to 0.079 and 0.091 to 0.088 ms; `regressions beyond the noise: 0`.
+
+What remains above 0.3.0 is the idle network at 20 000: its 99th percentile (5.56 against 3.81 ms) and its ticks over 5 ms (52
+against 15), the first visits of 7764 blocks after the start (48 of those ticks lie in the first 200 ticks): lever 9 of #43, not
+this pull request.
+
 ## Pull request 7 (issue #43): removing members from the graph, lever 5
 
 A removed cable or block runs `remove_node_graph`; when the member had two or more neighbours the old code searched the **whole

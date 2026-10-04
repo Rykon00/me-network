@@ -1211,8 +1211,29 @@ local function pool_add(job, key, count)
 end
 
 --- the ingredients and products of a job step (its pattern; a crafting pattern reads its recipe)
-local function step_ingredients(step) return P.ingredients(step.def) end
-local function step_products(step) return P.products(step.def) end
+--- The ingredients and products of a step's pattern, made once per pattern definition (issue #43): a crafting pattern read them
+--- from the recipe prototype, which makes a new table of tables at every access (7 µs and garbage, ten times per tick at 5000
+--- members); nothing that uses them changes them. Per load and weak: nothing is saved.
+local ing_cache = setmetatable({}, { __mode = "k" })
+local prod_cache = setmetatable({}, { __mode = "k" })
+local function step_ingredients(step)
+	local def = step.def
+	local l = ing_cache[def]
+	if not l then
+		l = P.ingredients(def)
+		ing_cache[def] = l
+	end
+	return l
+end
+local function step_products(step)
+	local def = step.def
+	local l = prod_cache[def]
+	if not l then
+		l = P.products(def)
+		prod_cache[def] = l
+	end
+	return l
+end
 
 --- runs of a processing step whose outputs are all back (received)
 local function processing_done(step)

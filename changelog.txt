@@ -10,6 +10,7 @@ Version: 0.3.1
     - Removing many cables and blocks at once from a big network is several times faster again (1000 blocks from 1.5 s to 0.18 s in a base of 20 000): a removal that cuts the network no longer searches all of it, only the smaller part, and no longer rebuilds the storage index of the rest.
     - Interfaces and buses make less garbage and do less per visit in a big base: an interface with nothing at its sides does not look at them, the chest is walked only when something unexpected lies in it, and a bus learns how long its machine's buffer really lasts, so a steady buffer is visited less often.
     - Storing items and fluids in a big network is much faster: an insert no longer asks every full storage cell that holds the item first (at 20 000 buses and interfaces the script time per tick falls by a quarter, to that of 0.3.0, while the network moves a fifth more).
+    - Crafting jobs cost less per step: the ingredients and products of a job's pattern are no longer made anew at every step (a quarter of the job's step time in a big base).
   Changes:
     - Map settings: the visits per tick of interfaces and buses, storage buses, level maintainers and crafting jobs are floors now ("at least"), and each has a ceiling ("at most": 32 interface and bus visits, 24 storage bus reads, 12 maintainer checks, 2 job steps per tick by default) that bounds the script time of a big base.
 ---------------------------------------------------------------------------------------------------
