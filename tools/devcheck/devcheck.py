@@ -496,7 +496,7 @@ RUNTIME_TESTS = (
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
-    ("STATS", "ME stats command test"),
+    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"),
     ("HOLDERS", "ME holder cursor test"),
     ("GRAPH", "ME graph removal test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
@@ -1002,8 +1002,25 @@ def plan_report(log):
     return {"plans": plans, "starts": starts, "ignored": ignored[0].get("ignored") if ignored else None}
 
 
+# the scene at the maintainer's size (issue #50, #51): `--sizes base` is one network of 2158 members (1767 cables and two
+# underground cables, 189 interfaces and buses, 184 storage buses, 8 drives, 7 terminals), the mix of the ME scene
+# scaled to its 189 interfaces and buses, no providers, maintainers, circuit interfaces or CPUs
+BASE_SIZE = 189
+
+
+def parse_sizes(text):
+    return [x if x == "base" else int(x) for x in (text or "").split(",") if x]
+
+
+def size_variant(size):
+    """(the size of the ME scene, its variant) of a `--sizes` entry"""
+    return (BASE_SIZE, {"base": True}) if size == "base" else (size, {})
+
+
 def variant_name(v):
     parts = []
+    if v.get("base"):
+        parts.append("base")
     if v.get("idle"):
         parts.append("idle")
     if v.get("networks", 1) > 1:
@@ -1020,8 +1037,8 @@ def bench_config(a, scene, size, variant, profile):
     cfg = {"scene": scene, "size": size, "warmup": BENCH_WARMUP, "window": window,
            "latency": scene == "me" and not profile and not variant.get("noent") and not variant.get("long"),
            "profile": profile, "alloc": bool(profile and getattr(a, "alloc", False)), "idle": bool(variant.get("idle")), "networks": variant.get("networks", 1),
-           "noent": bool(variant.get("noent")),
-           "burst": 0 if (variant.get("long") or variant.get("noent") or scene != "me") else a.burst,
+           "noent": bool(variant.get("noent")), "base": bool(variant.get("base")),
+           "burst": 0 if (variant.get("long") or variant.get("noent") or variant.get("base") or scene != "me") else a.burst,
            "slice": (SLICE_TICKS if window >= 2 * SLICE_TICKS else max(300, window // 2 // 300 * 300)) if variant.get("long") else None,
            "planner_targets": a.planner_targets}
     return cfg
@@ -1038,7 +1055,7 @@ def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
         return None, err or "no DEVCHECK-BENCH-SETUP line"
     machine = re.search(r"System info: \[(.*?)\]", log)
     strip = re.search(r"DEVCHECK-BENCH-STRIP (\d+)", log)
-    out = {"scene": cfg["scene"], "size": cfg["size"], "variant": {k: cfg[k] for k in ("idle", "networks", "noent")},
+    out = {"scene": cfg["scene"], "size": cfg["size"], "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base")},
            "setup": setup[0], "build": build.group(1) if build else None, "save_bytes": Path(mapfile).stat().st_size,
            "runs": [], "machine": machine.group(1) if machine else None, "window": cfg["window"],
            "stripped": int(strip.group(1)) if strip else None}
@@ -1193,7 +1210,7 @@ def scene_problems(scene, size, res, wanted=None):
 def bench(a):
     if a.check:
         return bench_check(a)
-    sizes = [int(x) for x in a.sizes.split(",") if x]
+    sizes = parse_sizes(a.sizes)
     results = {"factorio": (factorio("--version").splitlines() or ["?"])[0], "scenes": [], "profiles": [],
                "window": a.ticks, "ref": a.from_ref or "working copy", "gregtorio": a.with_gregtorio}
     a.old_dir = old_tree(a.from_ref) if a.from_ref else None
@@ -1203,17 +1220,20 @@ def bench(a):
     plan = []                                              # (scene, size, variant)
     if not a.planner_only:
         for scene in ["me"] + (["inserters", "robots"] if a.reference else []):
-            for size in sizes:
-                plan.append((scene, size, {}))
+            for entry in sizes:
+                size, base = size_variant(entry)
+                if base and scene != "me":
+                    continue
+                plan.append((scene, size, dict(base)))
                 if scene == "me":
                     if a.idle:
-                        plan.append((scene, size, {"idle": True}))
+                        plan.append((scene, size, {**base, "idle": True}))
                     for k in [int(x) for x in (a.networks or "").split(",") if x]:
-                        plan.append((scene, size, {"networks": k}))
+                        plan.append((scene, size, {**base, "networks": k}))
                     if a.engine_share:
-                        plan.append((scene, size, {"noent": True}))
+                        plan.append((scene, size, {**base, "noent": True}))
         if a.long:
-            plan.append(("me", max(sizes), {"long": True}))
+            plan.append(("me", max(x for x in sizes if x != "base"), {"long": True}))
     if a.planner or a.planner_only:
         plan.append(("planner", 0, {}))
     for scene, size, variant in plan:
@@ -1231,8 +1251,9 @@ def bench(a):
         results["machine"] = res["machine"]
         results["scenes"].append(s)
         problems += scene_problems(scene, size, res, 1 if variant.get("long") else a.runs)
-    for size in [int(x) for x in (a.profile or "").split(",") if x]:
-        res = bench_scene(a, "me", size, profile=True)
+    for entry in parse_sizes(a.profile):
+        size, base = size_variant(entry)
+        res = bench_scene(a, "me", size, profile=True, variant=base)
         if res and res["runs"]:
             results["profiles"].append({"size": size, **res["runs"][0]})
         else:
@@ -1289,6 +1310,15 @@ def print_service(s):
             print(f"    {'  io, moved all it could':18} {'':>11} {'':>9} {'':>11} {'':>11} {ticks_s(full.get('median')):>23} "
                   f"{ticks_s(full.get('p99')):>7} {ticks_s(full.get('max')):>7} {fmt(full.get('n'), 0):>7} | "
                   f"{'(moved some)':>23} {ticks_s(part.get('median')):>7} {ticks_s(part.get('p99')):>7} {fmt(part.get('n'), 0):>7}")
+    io = sched.get("io") or {}
+    if "starved" in io:
+        steady = sv.get("io_steady") or {}
+        out = io.get("out") or {}
+        print(f"    io starved arrivals (a visit found its target empty or its source full): {fmt(io.get('starved'), 0)} in the window"
+              + (f", {fmt(steady.get('starved'), 0)} in its last {fmt((steady.get('ticks') or 0) / 60, 0)} s" if steady else "")
+              + (f"; the other side out for (by the rate of the visit before) median {fmt(out.get('median'), 0)}, longest "
+                 f"{fmt(out.get('max'), 0)} ticks, {fmt(out.get('n'), 0)} arrivals; {fmt(io.get('sooner'), 0)} ran out sooner than that rate"
+                 if "sooner" in io else ""))
     blocks = sv.get("blocks") or {}
     if blocks.get("io_units"):
         kinds = blocks.get("io_kinds") or {}
@@ -1423,6 +1453,7 @@ CHECK_METRICS = [
     ("maintainer latency max s", lambda r: ((r.get("latency") or {}).get("maintainer") or {}).get("max_s"), True, 0.02),
     ("io busy interval p99 ticks", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("full", {}).get("p99"), True, 0.02, False),
     ("io starved arrivals", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("starved"), True, 0.10),
+    ("io starved, steady part", lambda r: ((r.get("service") or {}).get("io_steady") or {}).get("starved"), True, 0.10),
     ("lua alloc KB per tick", lambda r: (r.get("alloc") or {}).get("kb_per_tick"), True, 0.05),
     ("mod heap alive kB", lambda r: (r.get("service") or {}).get("live_kb"), True, 0.05, False),
     ("io backlog max", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("backlog_max"), True, 0.02),
@@ -1439,15 +1470,17 @@ def bench_check(a):
     that is worse than the reference by more than the measured noise (the larger spread of the two versions' runs,
     at least the metric's floor share of the reference) fails the check. Throughput that differs at all is reported: the
     scheduling changed."""
-    sizes = [int(x) for x in a.sizes.split(",") if x]
+    sizes = parse_sizes(a.sizes)
     runs = max(3, a.runs)
     ref_dir = old_tree(a.check)
     print(f"check: working copy against {a.check}, {runs} rounds in turns, sizes {sizes}")
     print((factorio("--version").splitlines() or ["?"])[0])
     failed, rows_out, problems = [], [], []
     results = {"check": a.check, "sizes": sizes, "rounds": runs, "per_size": []}
-    for size in sizes:
-        cfg = bench_config(a, "me", size, {}, False)
+    for entry in sizes:
+        size, base = size_variant(entry)
+        cfg = bench_config(a, "me", size, base, False)
+        size = entry                                         # (the label: a number or `base`)
         maps = {}
         for tag, mod_dir in (("ref", ref_dir), ("wc", None)):
             mapfile = WORK / f"bench-check-{tag}-{size}.zip"

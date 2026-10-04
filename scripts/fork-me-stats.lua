@@ -107,6 +107,22 @@ function M.window() return Sched.window(game.tick) end
 
 local function secs(ticks) return string.format("%.1f", ticks / 60) end
 
+--- a time of the scheduler: in ticks under a second (where seconds would round to zero), else in seconds (issue #51)
+local function span(ticks)
+	ticks = ticks or 0
+	if ticks < 60 then return { "me-stats.ticks", math.floor(ticks + 0.5) } end
+	return { "me-stats.seconds", secs(ticks) }
+end
+
+--- the starved arrivals: how many, and (issue #51) how long the other side had been out by the rate the visit before saw,
+--- and how many ran out sooner than that rate said
+local function starved_text(c)
+	local out = c.out or { n = 0 }
+	if c.starved <= 0 or ((out.n or 0) == 0 and (c.sooner or 0) == 0) then return tostring(c.starved) end
+	if (out.n or 0) == 0 then return { "me-stats.starved-sooner", c.starved, c.sooner or 0 } end
+	return { "me-stats.starved", c.starved, span(out.median), span(out.max), c.sooner or 0 }
+end
+
 --- "no-key 3, net-full 2" (sorted by the number, then by name) or "-"
 local function detail(by)
 	if not by then return "-" end
@@ -179,13 +195,13 @@ local function scheduler_lines(w)
 			local p = q.probe and w.q[q.probe]
 			local probes = p and p.ticks > 0 and string.format("%.2f", p.visits / p.ticks) or "-"
 			local work = c.work and c.work.n > 0
-				and { "me-stats.service", secs(c.work.median or 0), secs(c.work.p99 or 0), secs(c.work.max or 0), c.work.n }
+				and { "me-stats.service", span(c.work.median), span(c.work.p99), span(c.work.max), c.work.n }
 				or { "me-stats.service-none" }
 			if c.ticks == 0 then              -- (the crafting jobs: stepped one at a time, no list of their own)
 				lines[#lines + 1] = { "me-stats.queue-samples", { "me-stats.queue-" .. q.name }, work }
 			else
 				lines[#lines + 1] = { "me-stats.queue", { "me-stats.queue-" .. q.name }, string.format("%.2f", c.visits / c.ticks),
-					budget_text(q), probes, string.format("%.0f", c.backlog_avg), c.starved, c.missed, c.missed_total, c.wakes, work }
+					budget_text(q), probes, string.format("%.0f", c.backlog_avg), starved_text(c), c.missed, c.missed_total, c.wakes, work }
 			end
 		end
 	end
@@ -260,6 +276,9 @@ remote.add_interface("gregtorio-me-stats", {
 	window = function(tick) return Sched.window(tick or game.tick) end,
 	mark = function(tick) Sched.mark(tick) end,                           -- (tests: a copy of the counters at a chosen tick)
 	run = function(entity, parameter) return M.run(nil, parameter, entity) end,
+	--- (tests, issue #51: the text of the starved arrivals and of a time for given counters)
+	starved_text = function(c) return starved_text(c) end,
+	span = function(ticks) return span(ticks) end,
 })
 
 return M

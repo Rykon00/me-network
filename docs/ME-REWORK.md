@@ -1221,7 +1221,15 @@ most blocks are limited by their other side, not by their visits. The rework kee
   every peer), up to 20 % sooner, and up to 20 % later when its interval is half of the headroom time (never later for
   a block that moved all its speed allowed, sits at the catch-up limit or is probed). Everything comes from what the
   visit reads anyway; the one extra read is `get_item_count` per filter of an export bus into a chest (a machine had
-  it before).
+  it before). **The margin of a short busy list** (issue #51): the headroom rule saves visits, which pays where the
+  budget is the limit and only costs machine time where it is not. So no busy block waits longer than
+  `n / (floor × Sched.MARGIN)` ticks (at least MIN_INTERVAL; `n` the units of the busy list, `Sched.margin_cap`), with
+  `MARGIN` 1/16: at the default floor of 16 that is `n` ticks, the busy blocks spend at most one visit per tick on
+  margin against a buffer that empties faster than the visit before measured (inserter swings, a machine's crafts). In
+  the scene at the maintainer's size (83 busy blocks) the cap is 83 ticks; at 5000 interfaces and buses (about 2100
+  busy) it lies beyond MAX_CATCH_UP and changes nothing. A starved export fluid bus is one whose insert the target's
+  room ended and that took about the most it ever took that way (`rec.froom`); before, an insert the bus's speed ended
+  counted as a dry target at every visit.
 * **Probes.** A block blocked on its target's side (source empty, target full, no target, an interface with nothing
   to do) is not visited but probed: one cheap engine call (`probe_work`: the item count of the source or interface,
   `can_insert` or the input count of a full target, the search for a missing target) at an interval that doubles up

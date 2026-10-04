@@ -803,9 +803,12 @@ nothing while you do not use it.
   * **The scheduler of the whole map** over the last minute (a window of one to two minutes, or since the load): per kind of
     block the visits per tick against the budget of the map settings (the first number is "at least", the second "at most"),
     the probes per tick, the average backlog (blocks that were due and waited), the *starved* arrivals (a visit that found
-    its machine's chest empty or its tank full: the machine ran dry), the *missed wakes* (a parked block whose slow look
-    found work: a bug; "0" is right) and the wakes, and the time between two visits of a block that had work (median, 99th
-    percentile, longest). The counters are your own: they start at zero when you load the game and are not saved.
+    its machine's chest empty or its tank full: the machine ran dry) with how long the other side had been out (an estimate:
+    from the tick the visit before expected it to run out at the rate it saw; "ran out sooner" counts the arrivals where it
+    emptied faster than that rate said, so no estimate is given), the *missed wakes* (a parked block whose slow look found
+    work: a bug; "0" is right) and the wakes, and the time between two visits of a block that had work (median, 99th
+    percentile, longest; under a second in ticks). The counters are your own: they start at zero when you load the game and
+    are not saved.
 * `/me-stats all`: one line per network of the map (up to 25), then the scheduler.
 
 The command reads counters the scheduler keeps anyway; once every 3600 ticks it copies them for the window. Its
