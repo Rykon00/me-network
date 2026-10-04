@@ -280,6 +280,34 @@ return function(H)
 		wait_chest(13.5, 1.5, COPPER, 100, "the export bus moves the copper"),
 	})
 
+	--- a change of the graph wakes what it can affect, not every block that waits: a cable joins two small networks
+	--- while a bus waits for a key on the same network and another one waits for a network elsewhere; neither is woken
+	case("a change of the graph wakes nothing unrelated", 21, function(s, fails, bx, by)
+		local what = "an unrelated change"
+		local e = me_place(s, fails, what, "me-export-bus", bx + 2.5, by + 0.5, NORTH)
+		chest(s, fails, what, bx + 2.5, by - 0.5)
+		local ctrl, drive, all = net(s, fails, what, bx, by, {}, nil, { e })
+		cable_row(s, fails, bx + 7, bx + 10, by - 1)
+		me_connect(fails, what, all)
+		if e then remote.call(IO, "set_bus_filters", e, { COPPER }) end
+		cable_row(s, fails, bx + 12, bx + 13, by - 1)                               -- a small network of its own
+		me_place(s, fails, what, "me-import-bus", bx + 20.5, by - 0.5, NORTH)       -- a bus with no network at all
+		chest(s, fails, what, bx + 20.5, by - 1.5, COPPER, 10)
+	end, {
+		wait("the export bus waits for copper", 200, function(c, x) return parked(find_e(x)) == "no-key" end),
+		wait("the lone import bus waits for a network", 200, function(c, x) return parked(x.find("me-import-bus", 20.5, -0.5)) == "no-network" end),
+		act("the due ticks are noted and a cable joins the small network to the big one", function(c, x)
+			c.due_e, c.due_i = sch(find_e(x)).due, sch(x.find("me-import-bus", 20.5, -0.5)).due
+			me_place(x.s, {}, "cable", "me-cable", c.bx + 11.5, c.by - 0.5)
+		end),
+		wait("some ticks pass", 100, function(c, x) return game.tick - c.t0 >= 40 end),
+		act("neither bus was woken", function(c, x)
+			local re, ri = sch(find_e(x)), sch(x.find("me-import-bus", 20.5, -0.5))
+			if re.parked ~= "no-key" or re.due ~= c.due_e then c.problem = "the export bus was woken by an unrelated change: " .. line(re) end
+			if ri.parked ~= "no-network" or ri.due ~= c.due_i then c.problem = "the lone bus was woken by an unrelated change: " .. line(ri) end
+		end),
+	})
+
 	--------------------------------------------------------------------------------------------------------------------
 	--- settings, the target
 	--------------------------------------------------------------------------------------------------------------------

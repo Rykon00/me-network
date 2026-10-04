@@ -725,11 +725,12 @@ PROFILE_WRAP = {
                                     "M.slow_step", "M.stats", "insert_key", "extract_key", "room_for", "ordered",
                                     "recompute", "draw_leds", "add_node", "remove_node_graph", "update_power",
                                     "lookups", "holders", "extract_order", "moved_key", "M.on_built", "M.on_removed",
-                                    "M.active_of", "M.network_of", "M.usable", "M.count_key"],
+                                    "M.active_of", "M.network_of", "M.usable", "M.count_key", "components", "changed",
+                                    "fire_all_waits", "take_waits", "remove_node", "net_cell", "M.wait_for"],
     "scripts/fork-me-io.lua": ["M.interface_step", "M.bus_step", "M.fluid_bus_step", "import_items", "export_items",
                                "interface_sides", "tank_to_network", "export_side", "target_of", "ensure_tanks",
-                               "M.on_tick", "visit", "probe", "probe_work", "probe_mark", "stack_of", "spread",
-                               "M.on_built", "M.on_removed", "config_of", "by_count"],
+                               "M.on_tick", "visit", "probe", "probe_work", "probe_mark", "stack_of", "when",
+                               "M.on_built", "M.on_removed", "config_of", "by_count", "drop", "wake", "destroy_tanks"],
     "scripts/fork-me-storagebus.lua": ["M.visit", "M.on_step", "M.on_tick", "resolve", "ITEM.room", "ITEM.insert",
                                        "ITEM.count", "ITEM.extract", "M.on_built", "M.on_removed", "inventory_of"],
     "scripts/fork-me-fluid-storagebus.lua": ["M.visit", "M.on_step", "M.on_tick", "claim", "contents_of", "M.handlers.room",
@@ -745,7 +746,7 @@ PROFILE_WRAP = {
                                       "M.on_built", "M.on_removed"],
     "scripts/fork-me-circuit.lua": ["on_step", "on_tick", "maintainer_step", "circuit_step", "network_signals",
                                     "signals_of", "visit_maintainer", "visit_circuit"],
-    "scripts/fork-me-schedule.lua": ["M.run", "M.at", "M.wake", "M.park", "M.headroom"],
+    "scripts/fork-me-schedule.lua": ["M.run", "M.at", "M.wake", "M.park", "M.headroom", "M.forget", "M.slot"],
     "scripts/fork-me-gui.lua": ["M.refresh_all"],
     "scripts/fork-me-terminal.lua": ["M.entries"],
 }
@@ -1003,7 +1004,7 @@ def bench_config(a, scene, size, variant, profile):
     window = a.long * 3600 if variant.get("long") else a.ticks
     cfg = {"scene": scene, "size": size, "warmup": BENCH_WARMUP, "window": window,
            "latency": scene == "me" and not profile and not variant.get("noent") and not variant.get("long"),
-           "profile": profile, "idle": bool(variant.get("idle")), "networks": variant.get("networks", 1),
+           "profile": profile, "alloc": bool(profile and getattr(a, "alloc", False)), "idle": bool(variant.get("idle")), "networks": variant.get("networks", 1),
            "noent": bool(variant.get("noent")),
            "burst": 0 if (variant.get("long") or variant.get("noent") or scene != "me") else a.burst,
            "slice": (SLICE_TICKS if window >= 2 * SLICE_TICKS else max(300, window // 2 // 300 * 300)) if variant.get("long") else None,
@@ -1063,6 +1064,8 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
     if profile:
         run["profile"] = [(m.group(1), int(m.group(2)), float(m.group(3)))
                           for m in re.finditer(r"DEVCHECK-BENCH-PROF (\S+) (\d+) Duration: ([\d.]+)ms", log)]
+        run["alloc"] = [(m.group(1), int(m.group(2)), float(m.group(3)))
+                        for m in re.finditer(r"DEVCHECK-BENCH-ALLOC (\S+) (\d+) ([\d.]+)", log)]
         ov = re.search(r"DEVCHECK-BENCH-PROF-OVERHEAD wrapped Duration: ([\d.]+)ms plain Duration: ([\d.]+)ms", log)
         run["overhead_us"] = (float(ov.group(1)) - float(ov.group(2))) * 1000 if ov else None
         run["engine"] = [(m.group(1), int(m.group(2)), float(m.group(3)))
@@ -1248,7 +1251,7 @@ def print_service(s):
         return
     sched = sv.get("sched") or {}
     secs = s.get("window", 3600) / 60 if isinstance(s.get("window"), (int, float)) else None
-    print(f"  {scene_label(s)} {s['size']}: mod heap {fmt(sv.get('memory_kb'), 0)} kB")
+    print(f"  {scene_label(s)} {s['size']}: mod heap {fmt(sv.get('memory_kb'), 0)} kB, alive after a collection {fmt(sv.get('live_kb'), 0)} kB")
     print(f"    {'queue':18} {'visits/tick':>11} {'due/tick':>9} {'backlog avg':>11} {'backlog max':>11} "
           f"{'busy interval s: median':>23} {'p99':>7} {'max':>7} {'n':>7} | {'idle interval s: median':>23} {'p99':>7} {'max':>7} {'n':>7}")
     for q in ("io", "io_probe", "storage_bus", "storage_bus_probe", "fluid_storage_bus", "fluid_storage_bus_probe",
@@ -1372,6 +1375,10 @@ def print_bench(results):
         n_ticks = results["window"]
         for name, calls, ms in sorted(p.get("profile", []), key=lambda x: -x[2]):
             print(f"  {name:42} {ms / n_ticks:8.4f} ms/tick {calls / n_ticks:9.2f} calls/tick {ms * 1000 / max(1, calls):9.2f} us/call")
+        if p.get("alloc"):
+            print(f"  memory allocated (KB per tick of the window, KB per call; the collector was stopped):")
+            for name, calls, kb in sorted(p["alloc"], key=lambda x: -x[2])[:40]:
+                print(f"  {name:42} {kb / n_ticks:10.2f} KB/tick {kb / max(1, calls):10.3f} KB/call {calls / n_ticks:9.2f} calls/tick")
         print("  engine calls (us per call):")
         for name, n, ms in p.get("engine", []):
             print(f"    {name:52} {ms * 1000:10.2f}")
@@ -1400,6 +1407,7 @@ CHECK_METRICS = [
     ("maintainer latency max s", lambda r: ((r.get("latency") or {}).get("maintainer") or {}).get("max_s"), True, 0.02),
     ("io busy interval p99 ticks", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("full", {}).get("p99"), True, 0.02, False),
     ("io starved arrivals", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("starved"), True, 0.10),
+    ("mod heap alive kB", lambda r: (r.get("service") or {}).get("live_kb"), True, 0.05, False),
     ("io backlog max", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("backlog_max"), True, 0.02),
     ("pair machines utilisation", lambda r: (((r.get("service") or {}).get("machines") or {}).get("pair") or {}).get("utilisation"), False, 0.02),
     ("burst build ms", lambda r: ((r.get("burst") or {}).get("build") or {}).get("ms"), True, 0.10),
@@ -1504,6 +1512,7 @@ def main():
     p.add_argument("--ticks", type=int, default=3600, help="the measured window in ticks, a multiple of 600 (default 3600)")
     p.add_argument("--reference", action="store_true", help="also the native scenes: inserters and logistic robots")
     p.add_argument("--profile", metavar="SIZES", help="also profile these sizes with an instrumented copy (e.g. 1000,5000)")
+    p.add_argument("--alloc", action="store_true", help="with --profile: also the memory each function allocates (the collector is stopped in the window: use a short --ticks, e.g. 600)")
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p.add_argument("--from-ref", help="benchmark this git tag or commit instead of the working copy (the scenes and the "
                    "harness stay the working copy's)")

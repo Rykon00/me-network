@@ -121,7 +121,7 @@ end
 function M.snapshot()
 	local out = {}
 	for name, st in pairs(stats) do
-		out[name] = { visits = st.visits, ticks = st.ticks, due = st.due, backlog_max = st.back_max, starved = st.starved or 0, missed = st.missed or 0,
+		out[name] = { visits = st.visits, ticks = st.ticks, due = st.due, backlog_max = st.back_max, starved = st.starved or 0, missed = st.missed or 0, wakes = st.wakes or 0,
 			backlog_avg = st.ticks > 0 and st.back_sum / st.ticks or 0,
 			idle = percentiles(st.hist[1]), partial = percentiles(st.hist[2]), full = percentiles(st.hist[3]) }
 	end
@@ -218,6 +218,8 @@ end
 --- callers of 0.3.0 and ignored: a wake is always the next tick.)
 function M.wake(q, rec, unit, tick)
 	if not rec.sq and rec.inq == q.tag and (rec.due == FRONT or rec.due == BACKLOG) then return end
+	local st = stats[q.tag] or stat(q.tag)
+	st.wakes = (st.wakes or 0) + 1                       -- (counted: a wake that did something)
 	enter(q, rec, q)
 	rec.due = FRONT
 	q.front[#q.front + 1] = unit
@@ -230,6 +232,28 @@ function M.forget(q, rec)
 	local l = list_of(q, rec)
 	l.n = l.n - 1
 	rec.inq, rec.sq, rec.due = nil, nil, nil
+end
+
+--- An array of units with O(1) removal: the last unit takes the removed one's place. `pos` (unit -> index) is kept
+--- next to the array; if it is missing or does not match (a save without it) it is built again, once.
+function M.list_remove(list, pos, unit)
+	local i = pos and pos[unit]
+	if not (i and list[i] == unit) then
+		if not pos then
+			for k = #list, 1, -1 do if list[k] == unit then table.remove(list, k) end end
+			return
+		end
+		for k in pairs(pos) do pos[k] = nil end
+		for k, u in ipairs(list) do pos[u] = k end
+		i = pos[unit]
+		if not i then return end
+	end
+	local last = #list
+	local moved = list[last]
+	list[i] = moved
+	pos[moved] = i
+	list[last] = nil
+	pos[unit] = nil
 end
 
 --- `rec` is parked for `reason`: not visited, not probed; woken by the network (or by its module) when what it waits
