@@ -42,6 +42,7 @@ local PROBE_ITEM = "wooden-chest"     -- the storage bus latency probe: no other
 local LATENCY_RECIPES = 5             -- maintainers of the latency probe (own recipes, own stock)
 local LATENCY_STOCK = 100
 local LATENCY_TIMEOUT = 3600
+local PLANNER_SPARE_DRIVES = 16       -- the planner scene's drives for what the network cannot make (issue #50)
 local FLUIDS = { "water", "crude-oil", "petroleum-gas", "light-oil", "heavy-oil", "lubricant", "sulfuric-acid" }
 --- raw materials: the network holds millions of them (exports, recipes of the patterns)
 local RAW = { "iron-plate", "copper-plate", "steel-plate", "stone", "stone-brick", "wood", "coal", "plastic-bar",
@@ -1392,9 +1393,12 @@ local function build_planner()
 	local icells = stock_cells(raw_items, 1000000, false)
 	local fcells = stock_cells(raw_fluids, 1000000, true)
 	local idrives, fdrives = math.max(1, math.ceil(#icells / 10)), math.max(1, math.ceil(#fcells / 10))
+	--- issue #50: spare drives for what the patterns name and the network cannot make (the products of patterns it cannot
+	--- use as placed, of recipes with a chance): stocked after the patterns are in, so the deep plans complete
+	local spare = PLANNER_SPARE_DRIVES
 	local width = 0
 	for _, row in ipairs(plan) do width = math.max(width, math.ceil(#row.recipes / 9) * row.slot) end
-	width = width + 4 + 2 * (idrives + fdrives)
+	width = width + 4 + 2 * (idrives + fdrives + spare)
 	local height = 0
 	for _, row in ipairs(plan) do height = height + row.pitch end
 	new_surface(width + 16, math.max(height, 12) + 40)
@@ -1423,9 +1427,9 @@ local function build_planner()
 	for ri, row in ipairs(plan) do
 		for x = X0, X0 + width - 1 do place("me-cable", p1(x, y)) end
 		if ri == 1 then
-			for i = 1, idrives + fdrives do b.drives[#b.drives + 1] = member(place("me-drive", p1(X0 + 2 * i - 2, y + 1))) end
+			for i = 1, idrives + fdrives + spare do b.drives[#b.drives + 1] = member(place("me-drive", p1(X0 + 2 * i - 2, y + 1))) end
 		end
-		local x = X0 + 2 * (idrives + fdrives) + 4
+		local x = X0 + 2 * (idrives + fdrives + spare) + 4
 		row.providers = {}
 		for i = 1, #row.recipes, 9 do
 			local prov = member(place("me-pattern-provider", p1(x, y - 1)))
@@ -1479,14 +1483,88 @@ local function build_planner()
 		end
 	end
 	inv.destroy()
-	local depths = {}
-	for _, d in pairs(items) do depths[d] = (depths[d] or 0) + 1 end
+	--- (what the network cannot make is stocked at the first probe, when the network has power: planner_stock)
+	b.plan_recipes, b.plan_raw, b.plan_drive0 = recipes, raw, idrives + fdrives
 	table.sort(no_machine)
 	log_json("SETUP", { scene = "planner", size = C.size, recipes = #recipes, usable_recipes = usable, encoded = encoded,
 		processing = processing, crafting = crafting, no_machine = #no_machine, no_machine_first = { no_machine[1], no_machine[2], no_machine[3], no_machine[4], no_machine[5] },
 		machines = machines, rejected = bad, items = table_size(items), raw_items = #raw_items, raw_fluids = #raw_fluids,
 		max_depth = max_depth, depths = depths, providers = #b.providers, targets = b.targets,
 		entities = #surface().find_entities_filtered{}, fails = fails })
+end
+
+--- issue #50: at the first probe (the network has power, the providers are scanned): every key a pattern needs that the
+--- network can neither make nor holds goes into the spare drives, and the targets become the items with the longest
+--- chain of patterns the network can use over its stock
+local function planner_stock(b)
+	local recipes, raw, idrives, fdrives = b.plan_recipes, b.plan_raw, b.plan_drive0, 0
+	--- what the patterns need and the network cannot make: into the spare drives (items first, then fluids)
+	local can = {}
+	if recipes[1] then remote.call(AC, "plan", b.anchor, recipes[1].main, 1) end   -- (a fresh plan scans every provider)
+	for _, key in ipairs(remote.call(AC, "craftable", b.anchor) or {}) do can[key] = true end
+	--- a key is made when a pattern the network can use has it as its main product (a byproduct of another pattern does
+	--- not count: the planner would walk that pattern's inputs, often in a loop)
+	local makers = {}
+	for _, r in ipairs(recipes) do
+		if can[r.main] then
+			makers[r.main] = makers[r.main] or {}
+			table.insert(makers[r.main], r)
+		end
+	end
+	local extra_items, extra_fluids, seen = {}, {}, {}
+	for _, r in ipairs(recipes) do
+		for _, i in ipairs(r.inputs) do
+			local key = i.key
+			if not raw[key] and not makers[key] and not seen[key] then
+				seen[key] = true
+				if key:find("^fluid/") then extra_fluids[#extra_fluids + 1] = key else extra_items[#extra_items + 1] = key end
+			end
+		end
+	end
+	table.sort(extra_items)
+	table.sort(extra_fluids)
+	local xi, xf = stock_cells(extra_items, 100000, false), stock_cells(extra_fluids, 100000, true)
+	local slot = 0
+	local function put_cell(name, cell)
+		local d = b.drives[idrives + fdrives + math.floor(slot / 10) + 1]
+		if d then insert_cell(d, name, cell, slot % 10 + 1) else fail("planner: no spare drive for a cell") end
+		slot = slot + 1
+	end
+	for _, cell in ipairs(xi) do put_cell("me-256k-storage-cell", cell) end
+	for _, cell in ipairs(xf) do put_cell("me-256k-fluid-storage-cell", cell) end
+	--- the targets: the items with the longest chain of patterns the network can use over its stock (a stocked key is 0, a
+	--- made key one more than the deepest input of its cheapest usable recipe), so their plans walk deep and complete
+	local stocked = {}
+	for key in pairs(raw) do stocked[key] = true end
+	for key in pairs(seen) do stocked[key] = true end
+	local chain, busy = {}, {}
+	local function depth_of(key)
+		if stocked[key] then return 0 end
+		if chain[key] then return chain[key] end
+		if busy[key] or not makers[key] then return math.huge end
+		busy[key] = true
+		local best = math.huge
+		for _, r in ipairs(makers[key]) do
+			local d = 0
+			for _, i in ipairs(r.inputs) do d = math.max(d, depth_of(i.key)) end
+			if d + 1 < best then best = d + 1 end
+		end
+		busy[key] = nil
+		chain[key] = best
+		return best
+	end
+	local deep = {}
+	for key in pairs(makers) do
+		local d = depth_of(key)
+		if d < math.huge and not key:find("^fluid/") and prototypes.item[key] then deep[#deep + 1] = { key = key, depth = d } end
+	end
+	table.sort(deep, function(a, c) if a.depth ~= c.depth then return a.depth > c.depth end return a.key < c.key end)
+	b.targets = {}
+	for i = 1, math.min(C.planner_targets or 5, #deep) do b.targets[i] = deep[i] end
+	b.plan_recipes, b.plan_stocked = nil, seen
+	for key in pairs(raw) do b.plan_stocked[key] = true end
+	log_json("PLANSTOCK", { extra_items = #extra_items, extra_fluids = #extra_fluids,
+		extra_first = { extra_items[1], extra_items[2], extra_fluids[1], extra_fluids[2] }, targets = b.targets, cells = #xi + #xf })
 end
 
 --- the planner on every target: five plans of 1 and of 100 timed (the providers scanned first, as the terminal
@@ -1509,11 +1587,43 @@ local function planner_probe(b)
 			log({ "", "DEVCHECK-BENCH-PLAN ", t.key, " depth ", t.depth, " amount ", amount, " steps ", plan and plan.steps or -1,
 				" runs ", plan and plan.runs or -1, " missing ", missing, " ", status, " ", p, " ", table.concat(names, ",") })
 		end
+		--- issue #50: the same target failing: the first item the plan of 1 takes from storage that the network cannot make
+		--- (raw or stocked) is withdrawn for the plans
+		local ok_plan = remote.call(AC, "plan", b.anchor, t.key, 1)
+		local keys = {}
+		for k in pairs(ok_plan and ok_plan.reserve or {}) do
+			if not k:find("^fluid/") and (b.plan_stocked or {})[k] then keys[#keys + 1] = k end
+		end
+		table.sort(keys)
+		local gone, got
+		for i = 1, math.min(#keys, 12) do               -- (the first whose absence makes the plan fail: some are byproducts too)
+			local k = keys[i]
+			local n = remote.call(NET, "extract", b.anchor, k, remote.call(NET, "count", b.anchor, k))
+			local test = remote.call(AC, "plan", b.anchor, t.key, 1)
+			if test and not test.ok then gone, got = k, n break end
+			if n > 0 then remote.call(NET, "insert", b.anchor, k, n) end
+		end
+		if gone then
+			for _, amount in ipairs({ 1, 100 }) do
+				local p = game.create_profiler()
+				local plan
+				for _ = 1, 5 do plan = remote.call(AC, "plan", b.anchor, t.key, amount) end
+				p.stop()
+				p.divide(5)
+				local status = plan and (plan.ok and "ok" or (plan.no_pattern and "no-pattern" or "missing")) or "nil"
+				local missing = 0
+				for _ in pairs(plan and plan.missing or {}) do missing = missing + 1 end
+				log({ "", "DEVCHECK-BENCH-PLAN-FAIL ", t.key, " depth ", t.depth, " amount ", amount, " steps ", plan and plan.steps or -1,
+					" runs ", plan and plan.runs or -1, " missing ", missing, " ", status, " ", p, " without ", gone })
+			end
+			if got > 0 then remote.call(NET, "insert", b.anchor, gone, got) end
+		end
 		local p = game.create_profiler()
 		local id, why = remote.call(AC, "start", b.anchor, t.key, 10)
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-PLAN-START ", t.key, " ", id and "ok" or tostring(why), " ", p })
-		if id then started[#started + 1] = id end
+		--- (cancelled at once: the scene times the start; a running GregTech job holds fluid in machines the count misses)
+		if id then remote.call(AC, "cancel", id) end
 	end
 	b.jobs = started
 	log_json("JOBS", { started = #started, failed = {} })
@@ -1989,6 +2099,7 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		start_jobs(b)
 	elseif tick == C.warmup then
 		if C.scene == "me" then refill(b) end
+		if C.scene == "planner" then planner_stock(b) end           -- (before the count: the stock is part of the world)
 		b.p0 = probe(b)
 		if C.scene == "planner" then planner_probe(b) end
 		sched_stats(true)                                     -- the counters start with the window

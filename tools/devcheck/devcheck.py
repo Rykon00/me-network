@@ -996,10 +996,16 @@ def plan_report(log):
               "missing_keys": m.group(9).strip()}
              for m in re.finditer(r"DEVCHECK-BENCH-PLAN (\S+) depth (\d+) amount (\d+) steps (-?\d+) runs (-?\d+) "
                                   r"missing (\d+) (\S+) Duration: ([\d.]+)ms(.*)", log)]
+    fails = [{"key": m.group(1), "depth": int(m.group(2)), "amount": int(m.group(3)), "steps": int(m.group(4)),
+              "runs": int(m.group(5)), "missing": int(m.group(6)), "status": m.group(7), "ms": float(m.group(8)),
+              "without": m.group(9).strip()}
+             for m in re.finditer(r"DEVCHECK-BENCH-PLAN-FAIL (\S+) depth (\d+) amount (\d+) steps (-?\d+) runs (-?\d+) "
+                                  r"missing (\d+) (\S+) Duration: ([\d.]+)ms without (.*)", log)]
     starts = [{"key": m.group(1), "status": m.group(2), "ms": float(m.group(3))}
               for m in re.finditer(r"DEVCHECK-BENCH-PLAN-START (\S+) (\S+) Duration: ([\d.]+)ms", log)]
     ignored = bench_json(log, "PLANNER")
-    return {"plans": plans, "starts": starts, "ignored": ignored[0].get("ignored") if ignored else None}
+    stock = bench_json(log, "PLANSTOCK")
+    return {"plans": plans, "fails": fails, "starts": starts, "stock": stock[0] if stock else None, "ignored": ignored[0].get("ignored") if ignored else None}
 
 
 # the scene at the maintainer's size (issue #50, #51): `--sizes base` is one network of 2158 members (1767 cables and two
@@ -1176,6 +1182,8 @@ def summarize(res):
         s["plan"] = plans[0]
         for i, pl in enumerate(s["plan"]["plans"]):
             pl["ms"] = median([q["plan"]["plans"][i]["ms"] for q in runs if q.get("plan") and i < len(q["plan"]["plans"])])
+        for i, pl in enumerate(s["plan"].get("fails") or []):
+            pl["ms"] = median([q["plan"]["fails"][i]["ms"] for q in runs if q.get("plan") and i < len(q["plan"].get("fails") or [])])
     sl = [r.get("slices") for r in runs if r.get("slices")]
     if sl:
         s["slices"] = sl[0]
@@ -1399,10 +1407,16 @@ def print_bench(results):
                   f"{st.get('no_machine')} with fluids but no machine (e.g. {st.get('no_machine_first')}); {st.get('encoded')} encoded, "
                   f"{st.get('rejected')} rejected, on {st.get('providers')} providers; {st.get('items')} items, {st.get('raw_items')} raw "
                   f"items and {st.get('raw_fluids')} raw fluids in stock, deepest tree {st.get('max_depth')}, items per depth {st.get('depths')}; "
-                  f"patterns the network cannot use: {s['plan'].get('ignored')}")
+                  f"patterns the network cannot use: {s['plan'].get('ignored')}; stocked because the network cannot make them: "
+                  f"{(s['plan'].get('stock') or {}).get('extra_items')} items and {(s['plan'].get('stock') or {}).get('extra_fluids')} fluids "
+                  f"(e.g. {(s['plan'].get('stock') or {}).get('extra_first')}); targets by the chain of usable patterns: "
+                  f"{[(t.get('key'), t.get('depth')) for t in ((s['plan'].get('stock') or {}).get('targets') or [])]}")
             for pl in s["plan"]["plans"]:
                 print(f"  plan {pl['key']} (depth {pl['depth']}) x{pl['amount']}: {pl['status']}, {pl['steps']} steps, "
                       f"{pl['runs']} runs, {pl['missing']} missing {pl.get('missing_keys') or ''}: {fmt(pl['ms'], 2)} ms")
+            for pl in s["plan"].get("fails") or []:
+                print(f"  failing plan {pl['key']} (depth {pl['depth']}) x{pl['amount']} without {pl['without']}: {pl['status']}, "
+                      f"{pl['steps']} steps, {pl['missing']} missing: {fmt(pl['ms'], 2)} ms")
             for st_ in s["plan"]["starts"]:
                 print(f"  start {st_['key']} x10: {st_['status']}: {fmt(st_['ms'], 2)} ms")
     for s in results["scenes"]:
