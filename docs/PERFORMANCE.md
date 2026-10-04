@@ -1766,3 +1766,45 @@ The interfaces and buses switched off (5000, three rounds): script average 0.429
 What remains above 0.3.0 is the idle network at 20 000: its 99th percentile (5.56 against 3.81 ms) and its ticks over 5 ms (52
 against 15), the first visits of 7764 blocks after the start (48 of those ticks lie in the first 200 ticks): lever 9 of #43, not
 this pull request.
+
+## Pull request 7 (issue #43): removing members from the graph, lever 5
+
+A removed cable or block runs `remove_node_graph`; when the member had two or more neighbours the old code searched the **whole
+network** (`components()`, a breadth-first search of every member) to see whether it had split, once per removed member: 1.8 ms
+at 20 000 members, 364 times in the removal of 1000 blocks. The profile of the burst at 20 000 (`bench --profile 20000`, the burst
+profiled alone): `components` 76 % of the removal, `recompute` of the big network after a split 19 % (35 to 50 ms each: it builds every
+cell's index again).
+
+### What was changed
+
+* **`split_parts`** replaces `components()`: a search from each neighbour of the removed member, one member at a time in turns;
+  two that meet are one group; a search that runs dry has found a whole part; the search still running when every other has run
+  dry is the rest of the network and is not walked to its end (its size is the members left less the parts found). The cost is the
+  size of the smaller parts. The largest part still keeps the network and its id (a tie: the part with the smaller first
+  neighbour, as before); only when a part that ran dry is larger than the rest is the rest walked to its end, which costs less than
+  that part did.
+* **No recompute of the rest after a split when no controller left with the parts**: a drive or a storage bus that went with a part
+  (or was the member removed) takes its cells out of the rest's index and totals one by one (`release_cells`, the way a removed
+  drive always did); the split-off parts are computed (they are small). With a controller among the parts the rest is computed
+  again as before.
+* Test `ME graph removal test` (`runtimemod/graph.lua`): a grid of 15 x 15 tiles (74 % cables, four drives holding iron) and 70
+  removals in a fixed pseudo-random order, 22 of which split a network; after each removal the engine's networks must be the
+  connected components of an independent search: one id each and none shared, the same members, the drives, cells and bytes of each,
+  and the largest part keeping the id of the network that was split. Checked to fail with the release switched off and with the
+  recompute of the rest left out.
+
+### Numbers (quiet machine, game closed, in turns, medians of three rounds)
+
+| Burst of 1000 blocks removed in one tick | v0.3.0 | before (#46) | this pull request |
+|---|---|---|---|
+| 5000 members (ms) | 743 | 421 | **88** |
+| 20 000 members (ms) | 1534 | 780 | **177** |
+
+The build of the same blocks is 67 ms (5000) and 76 ms (20 000), unchanged; the removal was ten times the build and is 2.3 times
+now. Script time, p99 and ticks over 5 ms of the steady scene are unchanged (20 000: 2.76 against 2.77 ms, 6.40 against 6.46 ms, 115
+against 120 ticks over 5 ms; 5000: 1.12 and 1.12 ms). What is left of the removal: the part networks computed once each, the new
+index order the first storage call after a removal builds, and the unregistration of every block with the schedulers.
+
+Not part of this pull request: the build (the `find_entities_filtered` per neighbour), the graph rebuild of
+`on_configuration_changed` (0.92 s at 5000) and the first visits after a load (lever 9), and the recompute of a network that two
+others merge into (a merge of big networks is rare and was not in the burst).
