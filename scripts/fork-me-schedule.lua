@@ -448,11 +448,27 @@ end
 --- The next visit from the headroom on the other side (issue #38): `time` is the ticks until the buffer there runs
 --- full or empty at the rate this visit saw (math.huge when nothing moves), `full` whether the block moved all its
 --- speed allowed (then the catch-up covers the wait and the headroom time itself is the interval, else about half
---- of it, so the visit comes before the buffer runs out). Between `min` and `max` ticks.
+--- of it, so the visit comes before the buffer runs out; `share`: the block's own share, learned by M.learn). Between
+--- `min` and `max` ticks.
+--- The share a block waits, learned from what its visits find (issue #38, lever 3): it starts at half of the headroom
+--- time, grows by SHARE_STEP after every visit that found its other side served (up to SHARE_MAX) and falls back to
+--- half at once after a visit that arrived at an empty target or a full source. Fewer visits for a steady buffer, the
+--- margin back as soon as the buffer was too tight. State of the record (`rec.sh`), the same on every peer.
+function M.learn(rec, starved)
+	local sh = rec.sh or M.SHARE_MIN
+	if starved then
+		rec.sh = M.SHARE_MIN
+	elseif sh < M.SHARE_MAX then
+		rec.sh = math.min(M.SHARE_MAX, sh + M.SHARE_STEP)
+	end
+end
+
+--- (the headroom rule itself)
 local HEADROOM_SHARE = 0.5
-function M.headroom(time, full, min, max)
+M.SHARE_MIN, M.SHARE_MAX, M.SHARE_STEP = HEADROOM_SHARE, 0.85, 0.05
+function M.headroom(time, full, min, max, share)
 	if not time or time ~= time or time >= max then return max end
-	local t = full and time or time * HEADROOM_SHARE
+	local t = full and time or time * (share or HEADROOM_SHARE)
 	if t > max then return max end
 	if t < min then return min end
 	return math.floor(t)

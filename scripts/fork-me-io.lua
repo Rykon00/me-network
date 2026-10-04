@@ -516,7 +516,7 @@ local function interface_sides(rec, net, config, short, dt)
 	if rec.sidle then return 0, math.huge end           -- nothing connected, nothing exported, nothing in the tanks (see the end)
 	local tanks = ensure_tanks(rec)
 	if not tanks then return 0, math.huge end
-	local anyheld = false
+	local anyheld, sstarved = false, false
 	local moved, time = 0, math.huge
 	dt = dt or STEP_TICKS
 	local sides = rec.sides or {}
@@ -533,6 +533,7 @@ local function interface_sides(rec, net, config, short, dt)
 			fstatus[d] = "off"
 		elseif type(setting) == "number" and is_fluid_row(config[setting]) then
 			local key = FLUID_PREFIX .. config[setting].name
+			if not held then sstarved = true end                      -- the side's tank had run out
 			local why, n, lack = export_side(t, held, config[setting], net, short and (rec.priority or 0))
 			fstatus[d] = why
 			moved = moved + n
@@ -556,6 +557,7 @@ local function interface_sides(rec, net, config, short, dt)
 			if id and exports[id] then
 				fstatus[d] = "loop"
 			else
+				if held.amount >= volume() - EPS then sstarved = true end   -- the side's tank was full
 				local n, why = tank_to_network(t, held, net)
 				fstatus[d] = why
 				moved = moved + n
@@ -574,7 +576,7 @@ local function interface_sides(rec, net, config, short, dt)
 	--- no pipe or pump at a side (rec.fconn, kept by M.wake_near and ensure_tanks), no row that exports, nothing in the
 	--- tanks: the next passes would find the same; a wake, a connection or a changed row looks again (rec.sidle = nil)
 	if not (anyheld or rec.fconn or rec.exporting) then rec.sidle = true end
-	return moved, time
+	return moved, time, sstarved
 end
 
 --- One visit: every configured item is kept at its amount (filled from the network, the surplus taken back),
@@ -698,14 +700,14 @@ function M.interface_step(rec, dt)
 		local tt = math.max(free, 1) * (isize or 50) * ticks / imported      -- (the stack size of what came in)
 		if tt < time then time = tt end
 	end
-	local fmoved, ftime = interface_sides(rec, net, config, short, ticks)
+	local fmoved, ftime, sstarved = interface_sides(rec, net, config, short, ticks)
 	moved = moved + fmoved
 	if ftime < time then time = ftime end
 	if short then sync_short(rec, net, next(short) and short or nil) end
 	rec.status = "ok"
 	local full = ops >= max_ops
 	if moved <= 0 then return 0, false, nil, "idle", false, net end
-	return moved, full, Sched.headroom(time, full, MIN_INTERVAL, MAX_CATCH_UP), nil, starved, net
+	return moved, full, Sched.headroom(time, full, MIN_INTERVAL, MAX_CATCH_UP, rec.sh), nil, starved or sstarved, net
 end
 
 --- the interface's priority (issue #17; -1000 ... 1000, default 0)
@@ -1227,7 +1229,7 @@ function M.bus_step(rec, dt)
 			if tt < info.time then info.time = tt end
 		end
 	end
-	return moved, full, Sched.headroom(info.time, full, MIN_INTERVAL, MAX_CATCH_UP), nil, info.starved or false, net
+	return moved, full, Sched.headroom(info.time, full, MIN_INTERVAL, MAX_CATCH_UP, rec.sh), nil, info.starved or false, net
 end
 
 --- Set the filters: a list of keys (item name, "fluid/<name>"; a plain name that is no item but a fluid is that
@@ -1411,6 +1413,7 @@ local function visit(rec, unit, fallback)
 	end
 	rec.starve = starved or nil
 	if starved then Sched.starved("io") end
+	if not block then Sched.learn(rec, starved) end
 	if fallback and moved > 0 then Sched.missed("io") end            -- (a parked block that finds work: its wake was missed)
 	if block then
 		local was = rec.block
