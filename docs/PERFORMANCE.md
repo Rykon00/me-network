@@ -1980,3 +1980,96 @@ about 0.18 ms), the price of one visit per tick; in return no visit of the scene
 with the mod's collector stopped, so at this size the engine's own collection steps go on and the number says nothing about
 the allocation (at 5000 it is the same in every round, as before). That metric needs another method for small scenes: issue
 named at the end of round four.
+
+### Pull request 11 (issue #50, lever 11): the planner
+
+#### The premise checked, and the scene fixed first
+
+* **What the 437 ms were.** The planner scene timed plans through the remote `plan`, which rescans every pattern provider of
+  the map before it plans (340 providers with Gregtorio). The crafting tab's preview does not rescan. And on Gregtorio its
+  plans ended after 2 to 5 steps at keys the network cannot make: the products of the 41 patterns it cannot use as the scene
+  places them (an ingredient larger than a machine slot, a fluid box too small: correctly refused), and byproducts. So the
+  number was a provider rescan plus a plan that fails early.
+* **The scene now** (`tools/devcheck/benchmod`, `planner_stock`): at the first probe every key a pattern needs that no usable
+  pattern makes as its main product is stocked (100 000 each in spare drives: 80 items and 41 fluids with Gregtorio, 1 item
+  and 4 fluids with vanilla); the targets are the items with the longest chain of usable patterns (Gregtorio: `eternity-wire`
+  31, `eternity-ingot` 30, `hot-eternity-ingot`, `uxv-bending-machine`, `uxv-centrifuge` 29; vanilla: 9); each is planned
+  through a terminal's crafting preview (the first call is a fresh plan, five more a refresh while nothing changed), once more
+  without one stocked key the plan needs (a plan that fails), and at the start of a job of 10, which is cancelled at once.
+  The deep Gregtorio plans now complete: 159 to 172 steps, 872 to 1310 nodes; at an amount of 100 two of them run out of a
+  fluid and stop at the node limit (3059 nodes).
+* **The callers.** The crafting tab's preview at every refresh of an open terminal with a picked item (once a second) and at
+  every change of the pick or the amount; every job start (the Craft button, a level maintainer, the remote) plans once, scans
+  the providers of the plan's patterns and plans again if one changed; a level maintainer whose start failed tries again
+  every 300 ticks, each time with a full plan. In the maintainer's base (no providers, no maintainers) the planner does not run
+  at all; with the crafting tab open it runs once a second.
+
+#### What was changed (`scripts/fork-me-autocraft.lua`)
+
+* **The stock is read lazily.** A plan read every plain item and fluid of the network into a table first (thousands of keys in
+  a GregTech base); it now reads a key's count when it first asks for it (`base_count`, the same rule: plain items without data
+  or quality, and fluids, of a usable network).
+* **Alternatives are undone, not copied.** For a key with several patterns the plan copied its whole state (stock, surplus,
+  reserve, missing, loops, steps, order) twice per alternative. The alternatives now run on the same tables; while one is
+  tried every write is journaled as (table, key, value before) and undone in reverse to where it started. The state after an
+  undo is the state the copy held.
+* **What a node reads of a pattern is made once per pattern** (weak, per load): its ingredients as keys and amounts, the yield
+  of a key; the job steps' cache of #48 is shared. The hot path of a node (surplus, stock, reserve and their journal) is
+  written out.
+* **Kept plans.** A plan is a pure function of the network's patterns (`ensure_patterns` makes a new table at every change, so
+  its identity says whether they changed) and of the stock it read. The planner keeps its last plans per network, key and
+  amount with what each key read from storage held (`base`) and how much was asked of it in all, every alternative counted
+  (`demand`). A kept plan is given back when the patterns are the same table and every key it read holds the same amount, or
+  held and holds at least all that was asked of it (then every take was whole, before and now, and the plan is the one a fresh
+  plan would be). A stock below that, a pattern added or removed, a provider or its machine built or removed, the network split,
+  joined or without power make a new plan. The CPUs are not part of a plan (the preview reads them every time). A network that
+  works keeps changing its counts (`net.cver` changes nearly every tick), so a key per network version would almost never be
+  kept; the check per key it read keeps it while there is enough of everything.
+* **Where kept plans live.** Outside `storage`, in the module (at most 16 per network). They are derived from the state only: a
+  peer that has none (it joined, it loaded) makes the same plan fresh, so every peer acts alike; nothing decides by them that a
+  fresh plan would not decide the same way. A caller gets a copy of the plan's tables (a maintainer keeps `missing`, the start
+  sets `biggest`).
+* The node limit (3000) and the depth limit (40) stay: with the plans now 5 to 12 ms on Gregtorio there is no reason to change
+  what a plan finds.
+
+#### The plans are the same
+
+`bench --planner-only --compare-plans origin/main` plans the targets and every n-th item of the chain of usable patterns at
+amounts 1 and 37 with both versions (fresh plans) and compares ok, missing, what is taken from storage, the patterns and their
+order, runs, loops and bytes: **578 plans of vanilla and 318 of Gregtorio, none differs**. The runtime test `ME kept plans test`
+(`runtimemod/plans.lua`) compares every plan through the kept plans with a fresh plan of the same state over 16 cases: the same
+state, a key the plan never read, stock above what was asked (kept); stock below it and back, a pattern added and removed, a
+provider built and removed, the chest of the patterns removed and built, the network split and joined (dropped); a CPU busy
+and free (kept, the preview's `no-free-cpu` follows). With the validity check switched off it fails on 11 of them.
+
+#### Numbers (quiet machine, game closed, `origin/main` and the working copy in turns, three rounds, medians, ms)
+
+| Gregtorio (2650 patterns) | origin/main | this pull request |
+|---|---|---|
+| fresh plan, deep items that complete (159 to 172 steps) | 52.9 to 144.2 | **3.8 to 6.2** |
+| fresh plan stopping at the node limit (x100 of the uxv machines) | 321.8 / 325.0 | **11.1 / 11.8** |
+| failing plan (one stocked key withdrawn) | 154.9 to 238.6 | **8.8 to 9.2** |
+| a refresh of the preview while nothing changed | 63.1 to 313.6 | **0.10 to 0.14** |
+| job start of 10 (plan, provider rescan of its patterns) | 94.9 to 344.8 | 37.9 to 50.2 |
+| script time of the window (ms per tick) | 0.256 | 0.245 |
+
+| vanilla (321 patterns) | origin/main | this pull request |
+|---|---|---|
+| fresh plan (25 to 36 steps) | 0.82 to 3.58 | 0.31 to 1.32 |
+| failing plan | 0.84 to 5.45 | 0.26 to 0.78 |
+| a refresh of the preview while nothing changed | 0.75 to 3.55 | 0.06 to 0.16 |
+| job start of 10 | 6.6 to 17.7 | 6.1 to 9.0 |
+
+`bench --check origin/main --sizes base,5000` (three rounds in turns): green, regressions 0; base 0.1515 against 0.1511 ms,
+5000 1.115 against 1.108 ms, p99 3.19 against 3.12 ms, crafts 344.3 per second and the maintainer reaction 0.083 s in both.
+The noise of the rounds: up to 0.023 ms at 5000 (2 %); the planner timings of one call spread by up to 30 % between rounds on
+the old code (the collector's steps land in them), by up to 10 % on the new.
+
+#### The targets
+
+| Target (prompt for round four) | Result |
+|---|---|
+| a preview refresh while nothing relevant changed costs nothing measurable | **met**: 0.10 to 0.14 ms with Gregtorio (the preview's CPU list included), 0.06 ms with vanilla |
+| a fresh plan of the deepest GregTech item at most 50 ms | **met**: 3.8 to 6.2 ms complete, 11.8 ms at the node limit |
+| no tick over 16 ms because of a plan | **met for the plan** (at most 11.8 ms, at the node limit); spreading a plan over ticks is not needed. **Not met for a job start**: 38 to 50 ms with Gregtorio, of which the plan is 4 to 12 ms and the rest the rescan of the providers of the plan's patterns before the start (`rescan_plan`, 160 steps' providers). That rescan is lever 6 (provider rescans) and stays for its own pull request |
+| node limit 3000, depth limit 40 | kept |
