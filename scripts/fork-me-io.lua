@@ -74,9 +74,10 @@ for i, d in ipairs(SIDES) do SIDE_OF[d] = i end
 local function state()
 	local s = storage.fork_me_io
 	if not s then
-		s = { recs = {}, list = {}, cursor = 1, q = Sched.new("io") }
+		s = { recs = {}, list = {}, lpos = {}, cursor = 1, q = Sched.new("io") }
 		storage.fork_me_io = s
 	end
+	if not s.lpos then s.lpos = {} end                 -- (positions of s.list, for O(1) removals; built at the first removal)
 	return s
 end
 
@@ -122,7 +123,6 @@ local function wake(unit)
 		rec.last, rec.left = math.max(rec.last or 0, game.tick - idle_limit(s)), nil   -- (as a sleeper of 0.3.0)
 	end
 	rec.iv, rec.block, rec.seen = nil, nil, nil
-	if s.nonet then s.nonet[unit] = nil end
 	Sched.wake(queue(s), rec, unit)
 end
 M.wake = wake
@@ -159,6 +159,7 @@ local function register(s, entity)
 		rec = { entity = entity, kind = kind(entity), filters = {}, status = "ok" }
 		s.recs[unit] = rec
 		s.list[#s.list + 1] = unit
+		if s.lpos then s.lpos[unit] = #s.list end
 		Sched.at(queue(s), rec, unit, game.tick + 1)
 	end
 	return rec
@@ -249,12 +250,9 @@ local function drop(s, unit)
 	local rec = s.recs[unit]
 	if rec and rec.short then sync_short(rec, nil) end
 	if rec then Sched.forget(queue(s), rec) end
-	if s.nonet then s.nonet[unit] = nil end
 	if s.prio then s.prio[unit] = nil end
 	s.recs[unit] = nil
-	for i = #s.list, 1, -1 do
-		if s.list[i] == unit then table.remove(s.list, i) end
-	end
+	Sched.list_remove(s.list, s.lpos, unit)
 end
 
 --- an item or fluid key from a filter: "fluid/<name>", or a plain name (an item if there is one, else a fluid)
@@ -1360,12 +1358,10 @@ local function visit(rec, unit, fallback)
 		local was = rec.block
 		rec.block = block
 		if NET_SIDE[block] then
-			if block == "no-power" and net then N.wait_usable(net, "io", unit) end
+			--- parked for its own network: no power or no network wake with the network (N.wait_usable: a change of the
+			--- graph or the slow step's look at the power), a full network wakes when room appears
+			if (block == "no-power" or block == "no-network") and net then N.wait_usable(net, "io", unit) end
 			if block == "net-full" and net then N.wait_room(net, "io", unit) end
-			if block == "no-network" then
-				s.nonet = s.nonet or {}
-				s.nonet[unit] = true
-			end
 			Sched.park(s.q, rec, unit, block)
 			return 0
 		end
@@ -1417,18 +1413,14 @@ function M.on_tick(tick)
 	local s = storage.fork_me_io
 	if not s then return end
 	tick_limit = idle_limit(s)
+	if s.nonet then                                      -- (a save of the version that kept a list of blocks without a network)
+		local units = {}
+		for unit in pairs(s.nonet) do units[#units + 1] = unit end
+		table.sort(units)
+		s.nonet = nil
+		for _, unit in ipairs(units) do wake(unit) end
+	end
 	Sched.run(queue(s), tick, Sched.setting("io"), Sched.setting("io_max"), rec_of, visit, probe, "io")
-end
-
---- a change of the graph: the blocks parked for want of a network try again (they park again if nothing changed)
-N.change_hooks[#N.change_hooks + 1] = function()
-	local s = storage.fork_me_io
-	if not (s and s.nonet and next(s.nonet)) then return end
-	local units = {}
-	for unit in pairs(s.nonet) do units[#units + 1] = unit end
-	table.sort(units)
-	s.nonet = {}
-	for _, unit in ipairs(units) do wake(unit) end
 end
 
 --- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
@@ -1566,7 +1558,7 @@ end
 function M.on_configuration_changed()
 	local s = state()
 	local old = s.recs
-	s.recs, s.list, s.cursor, s.q, s.prio = {}, {}, 1, Sched.new("io"), {}
+	s.recs, s.list, s.lpos, s.cursor, s.q, s.prio = {}, {}, {}, 1, Sched.new("io"), {}
 	--- issue #17: the shortfalls are registered again at the visits (the networks may be new ones)
 	for _, net in pairs(N.state().nets) do net.short, net.short_p = nil, nil end
 	VOLUME, block_names, by_count_cache = nil, nil, {}
@@ -1667,7 +1659,15 @@ remote.add_interface("gregtorio-me-io", {
 		return out
 	end,
 	--- the Lua heap of this mod in kilobytes (the benchmark's long run watches it grow)
-	lua_memory = function() return collectgarbage("count") end,
+	--- tests and the benchmark: the mod's Lua heap in kB; `collect`: after a full collection (what is alive, not what is
+	--- waiting to be collected)
+	lua_memory = function(collect)
+		if collect then
+			pcall(collectgarbage, "collect")
+			pcall(collectgarbage, "collect")
+		end
+		return collectgarbage("count")
+	end,
 	set_interface_config = function(entity, config, sides) return M.set_interface_config(entity, config, sides) end,
 	get_interface_config = function(entity) return M.get_interface_config(entity) end,
 	set_interface_slot = function(entity, i, name, quality, amount) return M.set_interface_slot(entity, i, name, quality, amount) end,

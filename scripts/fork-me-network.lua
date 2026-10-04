@@ -334,6 +334,7 @@ local function changed(s, net)
 	s.version = s.version + 1
 	recompute(s, net)
 	for _, hook in pairs(M.change_hooks) do hook(net) end
+	if net.wait_use then M.usable(net) end          -- (issue #38: blocks parked for want of a working network wake now, if it works)
 end
 
 local remove_node_graph
@@ -436,6 +437,7 @@ function remove_node_graph(s, unit)
 	if not node then return end
 	s.nodes[unit] = nil
 	local net = s.nets[node.net]
+	if net and net.wunits then net.wunits[unit] = nil end
 	local neighbours = {}
 	for u in pairs(node.adj) do
 		local o = s.nodes[u]
@@ -477,6 +479,7 @@ function remove_node_graph(s, unit)
 		return a[1] < b[1]
 	end)
 	--- the largest part keeps the network (and its id); every other part becomes a new network
+	local moved
 	for i = 2, #comps do
 		local part = new_net(s, net.surface, net.force)
 		for _, u in ipairs(comps[i]) do
@@ -485,11 +488,23 @@ function remove_node_graph(s, unit)
 			part.nodes[u] = true
 			part.n = part.n + 1
 			s.nodes[u].net = part.id
+			local kind = net.wunits and net.wunits[u]
+			if kind then                               -- (issue #38: a waiting endpoint that moved registers again on its new network)
+				net.wunits[u] = nil
+				moved = moved or {}
+				moved[#moved + 1] = { u, kind }
+			end
 		end
 		changed(s, part)
 	end
-	fire_all_waits(net)                            -- (issue #38: the endpoints of the parts register again)
 	changed(s, net)
+	if moved then
+		table.sort(moved, function(a, b) return a[1] < b[1] end)
+		for _, m in ipairs(moved) do
+			local f = M.wakers[m[2]]
+			if f then f(m[1]) end
+		end
+	end
 end
 
 --- Unregister a member (the entity may already be invalid). The drive's cells are handled by the caller. The
@@ -867,6 +882,12 @@ end
 --- an endpoint is visited. M.wakers[kind](unit) is set by the module of that kind at load time.
 M.wakers = {}
 
+--- does `unit` still belong to `net`? (a unit that moved to another network registers there at its next visit)
+local function stays(nodes, net, unit)
+	local node = nodes[unit]
+	return not node or node.net == net.id
+end
+
 local function fire(net, waits, key)
 	local w = waits[key]
 	if not w then return end
@@ -874,9 +895,10 @@ local function fire(net, waits, key)
 	local units = {}
 	for unit in pairs(w) do units[#units + 1] = unit end
 	table.sort(units)
+	local nodes = state().nodes
 	for _, unit in ipairs(units) do
 		local f = M.wakers[w[unit]]
-		if f then f(unit) end
+		if f and stays(nodes, net, unit) then f(unit) end
 	end
 end
 
@@ -891,11 +913,12 @@ local function fire_below(net, key)
 	end
 	if #units == 0 then return end
 	table.sort(units)
+	local nodes = state().nodes
 	for _, unit in ipairs(units) do
 		local kind = w[unit][1]
 		w[unit] = nil
 		local f = M.wakers[kind]
-		if f then f(unit) end
+		if f and stays(nodes, net, unit) then f(unit) end
 	end
 	if next(w) == nil then net.wait_below[key] = nil end
 end
@@ -919,13 +942,25 @@ local function fire_units(net, field)
 	local units = {}
 	for unit in pairs(w) do units[#units + 1] = unit end
 	table.sort(units)
+	local nodes = state().nodes
 	for _, unit in ipairs(units) do
 		local f = M.wakers[w[unit]]
-		if f then f(unit) end
+		if f and stays(nodes, net, unit) then f(unit) end
 	end
 end
 
+--- the waiting units of a network and their kinds (a split wakes the ones that moved to a part, a fire skips the ones that left)
+local function note_waiter(net, kind, unit)
+	local wu = net.wunits
+	if not wu then
+		wu = {}
+		net.wunits = wu
+	end
+	wu[unit] = kind
+end
+
 function M.wait_usable(net, kind, unit)
+	note_waiter(net, kind, unit)
 	local w = net.wait_use
 	if not w then
 		w = {}
@@ -935,6 +970,7 @@ function M.wait_usable(net, kind, unit)
 end
 
 function M.wait_room(net, kind, unit)
+	note_waiter(net, kind, unit)
 	local w = net.wait_room
 	if not w then
 		w = {}
@@ -946,6 +982,14 @@ end
 --- the waiters of `other` (merged into `net`) continue on `net`
 function take_waits(net, other)
 	if not (other.wait_in or other.wait_out or other.wait_below or other.wait_use or other.wait_room) then return end   -- (the usual)
+	if other.wunits then
+		local wu = net.wunits
+		if not wu then
+			wu = {}
+			net.wunits = wu
+		end
+		for unit, kind in pairs(other.wunits) do wu[unit] = kind end
+	end
 	for _, field in ipairs({ "wait_in", "wait_out" }) do
 		local src = other[field]
 		if src then
@@ -1029,6 +1073,7 @@ end
 
 --- `unit` (an endpoint of `kind`) wakes when the network gets more of `key` (`up`) or loses some
 function M.wait_for(net, key, kind, unit, up)
+	note_waiter(net, kind, unit)
 	local field = up and "wait_in" or "wait_out"
 	local waits = net[field]
 	if not waits then
@@ -1045,6 +1090,7 @@ end
 
 --- `unit` (an endpoint of `kind`) wakes when the network's amount of `key` falls below `amount`
 function M.wait_below(net, key, kind, unit, amount)
+	note_waiter(net, kind, unit)
 	local waits = net.wait_below
 	if not waits then
 		waits = {}

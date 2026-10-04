@@ -120,9 +120,9 @@ local function backlogs()
 	return nil
 end
 
-local function mod_memory_kb()
+local function mod_memory_kb(collect)
 	local io = remote.interfaces[IO]
-	if io and io.lua_memory then return remote.call(IO, "lua_memory") end
+	if io and io.lua_memory then return remote.call(IO, "lua_memory", collect) end
 	return nil
 end
 
@@ -995,7 +995,7 @@ end
 --- SAMPLE_TICKS, the blocks' states now (busy, probing, parked and why: issue #38), the machines, the mod's Lua heap
 local function service_report(b, p0, p1)
 	return { sched = sched_stats(true), backlog_samples = b.samples or {}, blocks = backlogs(), machines = machine_report(b, p0, p1),
-		memory_kb = mod_memory_kb(), own_memory_kb = collectgarbage("count") }
+		memory_kb = mod_memory_kb(), own_memory_kb = collectgarbage("count"), live_kb = mod_memory_kb(true) }
 end
 
 --- a slice of the long run: the heap, the counters (not reset) and the backlogs now
@@ -1758,6 +1758,12 @@ local function burst_build(b, n)
 	return out
 end
 
+--- the wakes the scheduler has counted so far (the io queue): what a burst of builds or removals wakes
+local function io_wakes()
+	local st = sched_stats(false)
+	return st and st.io and st.io.wakes or 0
+end
+
 local function burst_remove(list)
 	local n = 0
 	for _, e in ipairs(list) do
@@ -1787,15 +1793,25 @@ local function on_burst_tick()
 			end
 		end
 	elseif t == 10 then
+		local w0 = io_wakes()
 		local p = game.create_profiler()
 		b.burst_made = burst_build(b, n)
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-BURST build ", #b.burst_made, " ", game.tick, " ", p })
+		log("DEVCHECK-BENCH-BURST-WAKES build " .. (io_wakes() - w0))
 	elseif t == 70 then
+		local w0 = io_wakes()
+		local prof = C.profile and remote.interfaces["zz-me-bench-profile"]
+		if prof then remote.call("zz-me-bench-profile", "enable") end    -- (profile run: the functions of the removal alone)
 		local p = game.create_profiler()
 		local k = burst_remove(b.burst_made)
 		p.stop()
+		if prof then
+			log("DEVCHECK-BENCH-PROF-BURST remove")
+			remote.call("zz-me-bench-profile", "report")
+		end
 		log({ "", "DEVCHECK-BENCH-BURST remove ", k, " ", game.tick, " ", p })
+		log("DEVCHECK-BENCH-BURST-WAKES remove " .. (io_wakes() - w0))
 		b.burst_made = nil
 	elseif t == 130 then
 		local p = game.create_profiler()
@@ -1898,7 +1914,7 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		if C.scene == "planner" then planner_probe(b) end
 		sched_stats(true)                                     -- the counters start with the window
 		b.samples = {}
-		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "enable") end
+		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "enable", C.alloc) end
 		log("DEVCHECK-BENCH-PROBE0 " .. game.tick)
 	elseif tick == C.warmup + C.window then
 		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "report") end
