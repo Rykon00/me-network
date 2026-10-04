@@ -1622,12 +1622,13 @@ the pull request.
   per second 425k / 529k / 578k, `pair` 86.9 / 93.8 / 96.9 %. The work of a tick was bounded (maximum 5860 units at the cap of 4500, against
   17 950 without it) and the 99th percentile did not move: the ticks over 5 ms are not the ticks with the most items.
 * **Where the ticks over 5 ms come from.** Removing one module at a time (20 000, busy): without the interfaces and buses
-  v0.3.0 is at 0.78 ms avg, p99 2.66 ms, 2 ticks over 5 ms, this branch at 0.92 ms, 3.69 ms, 23 (the load-following job steps, the
-  storage bus probes and the rest cost more than in 0.3.0); with only the interfaces and buses v0.3.0 is at 1.92 ms, p99 4.19 ms, 14
+  v0.3.0 is at 0.78 ms avg, p99 2.66 ms, 2 ticks over 5 ms, this branch at 0.92 ms, 3.69 ms, 23 (what is not I/O costs more here too: job steps, storage bus probes and the
+  rest; not split further); with only the interfaces and buses v0.3.0 is at 1.92 ms, p99 4.19 ms, 14
   ticks, this branch at 2.25 ms, 7.27 ms, 115. A log of every visit between ticks 1000 and 1400 shows the cause: the correlation of
   the tick's time with the items moved is -0.08 and with the number of visits 0.14, and the dearest ticks (8.4 to 10.6 ms against a
   median of 4.4 ms) are runs of 24 interface visits that move no item, in the same stretch of ticks (1299 to 1388): **fluid
-  interfaces**, which cost about 0.19 ms more per visit than item interfaces (`insert_key` and the tank calls), come due together
+  interfaces**, which cost about 0.19 ms more per visit than item interfaces (a regression of the tick time on the kinds of its
+  visits; the fluid side's tank and storage calls are the likely part, not profiled per visit), come due together
   (the same buffer and interval) and are served in a streak.
 * **Strided picks from the backlog** (every other visit of a tick from a deterministic position of the first 8192 entries, so
   kinds mix): p99 8.54 to 8.0 ms, ticks over 5 ms 425 to 382, avg 3.49 to 3.60 ms. Less than the streaks suggest, and the average
@@ -1637,5 +1638,5 @@ the pull request.
 
 What is left is the price of the design: at 20 000 the busy list is a standing backlog, the visits that matter are dear (fluid
 interfaces), and the machines are served to their speed. Bringing the 99th percentile to 0.3.0's needs a cheaper fluid
-interface visit (the storage engine's `insert_key` and the tank handling), or fewer fluid interface visits for the same fluid
+interface visit (to be profiled per visit first), or fewer fluid interface visits for the same fluid
 (a larger buffer per visit), not a different order. That is a follow-up (a new issue), not a part of this pull request.
