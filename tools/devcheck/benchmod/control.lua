@@ -1939,6 +1939,7 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 	elseif b.alloc0 and tick == C.warmup + C.window + ALLOC_FROM + ALLOC_TICKS then
 		local kb = mod_memory_kb("restart")
 		if kb then log_json("ALLOC", { kb_per_tick = (kb - b.alloc0) / ALLOC_TICKS, ticks = ALLOC_TICKS }) end
+		mod_memory_kb(true)                                   -- the garbage of the 300 ticks is collected now, not in the ticks that follow
 		b.alloc0 = nil
 	elseif tick > C.warmup and tick < C.warmup + C.window then
 		if tick % SAMPLE_TICKS == 0 and b.samples then
