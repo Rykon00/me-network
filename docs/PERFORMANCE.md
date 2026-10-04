@@ -1640,3 +1640,20 @@ What is left is the price of the design: at 20 000 the busy list is a standing b
 interfaces), and the machines are served to their speed. Bringing the 99th percentile to 0.3.0's needs a cheaper fluid
 interface visit (to be profiled per visit first), or fewer fluid interface visits for the same fluid
 (a larger buffer per visit), not a different order. That is a follow-up (a new issue), not a part of this pull request.
+
+## Pull request 5 (issue #38, part 3): the in-game diagnostic `/me-stats`
+
+The command (`scripts/fork-me-stats.lua`, player guide in `docs/AE2.md`, "What the network costs: /me-stats") reads the scheduler's
+counters, so a player sees what #5, #38 and #43 measure: members by kind, interfaces and buses busy, probing and parked (and why),
+crafting CPUs and jobs, and for the whole map the visits per tick against the budget, the probes, the backlog, the starved arrivals,
+the missed wakes, the wakes and the time between two visits of a block with work (median, 99th percentile, longest) over the last
+minute. The window is the difference of two copies of the counters, taken every 3600 ticks (`Sched.mark`, once per tick from
+`control.lua`; `Sched.window`), so it covers one to two minutes, or everything since the load; the counters are per peer and never
+saved. Cost, measured against pull request 4 (quiet machine, three rounds in turns, medians): script average 1.234 against 1.222 ms at
+5000 and 3.706 against 3.733 ms at 20 000, 99th percentile 3.44 against 3.50 and 9.60 against 9.53 ms, ticks over 5 ms 10 against 10
+and 553 against 558, garbage 0.087 against 0.072 and 0.132 against 0.095 ms: no difference beyond the noise, as the copy is a few
+dozen numbers and the interval histograms once a minute. The runtime test `ME stats command test` builds a small network (an export
+bus waiting for an absent key, an import bus on an empty chest, an interface), checks the report (members by kind, blocks by
+state: one parked for `no-key`, two probing), that the window since the load is the scheduler's own counters and that a window
+between two copies is their difference, and logs every line rendered by the engine: `devcheck.py runtime` fails on a missing
+locale key or an unfilled parameter.

@@ -30,6 +30,7 @@ The repository root is the mod itself.
 | `control.lua` | the event registrations of every module, the one `on_tick` handler (the scheduler), `on_init` (with the hand-over from Gregtorio) and `on_configuration_changed` (graph rebuild, migrations, modules) |
 | `scripts/fork-me-network.lua` | the core: cable graph, networks and their controller, storage cells and the storage API, the drive, partitions and priorities, external cells (storage buses), the cable router; remote interface `gregtorio-me-network` |
 | `scripts/fork-me-schedule.lua` | the scheduler: queues of due units, budgets per tick, intervals, idle limits, the settings (issue #5) |
+| `scripts/fork-me-stats.lua` | the command `/me-stats`: members, block states, the scheduler's counters of the last minute (issue #38, part 3) |
 | `scripts/fork-me-io.lua` | ME Interface (items, and fluids through its four sides) and import/export buses (items and fluids), their scheduled visits; `gregtorio-me-io` |
 | `scripts/fork-me-targets.lua` | what a bus works with: the entity types and inventories of the import, export and storage bus, the tile in front, fluid boxes |
 | `scripts/fork-me-storagebus.lua`, `scripts/fork-me-fluid-storagebus.lua` | the storage bus: its item side (a chest, logistic chest or cargo wagon) and its fluid side (a tank's fluid segment) as network storage; `gregtorio-me-storagebus`, `gregtorio-me-fluid-storagebus` (the old remote, on the storage bus) |

@@ -496,6 +496,7 @@ RUNTIME_TESTS = (
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
+    ("STATS", "ME stats command test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
     ("CARDS", "ME upgrade card test"), ("PRIORITIES", "ME priority test"), ("WORKBENCH", "ME Cell Workbench test"),
     ("CARDSLOTS", "ME storage bus card slots test"), ("WBSLOTS", "ME Cell Workbench slots test"),
@@ -620,6 +621,15 @@ def runtime(a):
     err = re.search(r"(Error.*|non-recoverable.*)", log)
     fails += re.findall(r"DEVCHECK-RUNTIME-FAIL (.*)", log)
     print(f"benchmark: {ran.group(0) if ran else 'did not run'}")
+    # issue #38 part 3: the lines of /me-stats rendered by the engine (log of a LocalisedString): no missing key, no unfilled parameter
+    stats_lines = re.findall(r"DEVCHECK-STATS-LINE (.*)", log)
+    for text in stats_lines:
+        if "Unknown key" in text or re.search(r"__\d+__", text):
+            fails.append(f"/me-stats prints an unrendered line: {text}")
+    if stats_lines:
+        print("/me-stats, rendered:")
+        for text in stats_lines[:12]:
+            print("  " + text)
     for key, label in RUNTIME_TESTS:
         m = re.search(rf"DEVCHECK-RUNTIME-{key} (.*)", log)
         print(f"{label}: {m.group(1) if m else 'did not run'}")

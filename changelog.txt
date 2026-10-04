@@ -1,5 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.1
+  Features:
+    - The command /me-stats shows what the ME network near you does: its members, how many interfaces and buses are busy, probing or parked (and why), the crafting CPUs and jobs, and the scheduler's work of the whole map over the last minute (visits against the budget, backlog, starved arrivals, missed wakes, the time between two visits of a block with work). /me-stats all lists every network.
   Optimizations:
     - Large networks (issue #38): when a bus or interface with work is visited again follows the machine or chest on its other side: the visit sees what it used or gathered since the last one and comes back before that runs out, instead of taking its turn in one line (5 seconds between two visits of a busy bus with 5000 blocks, 20 seconds with 20 000). A block whose machine had run out is served first the next time. The same rule for the storage bus reads, the level maintainer checks and the crafting job steps: the work per tick is what is due, between a floor and a ceiling.
     - A block with nothing to do on its machine's side (an empty source, a full target) only looks there now and then with one cheap check; a block waiting for the network (its item missing, the network full, no power) costs nothing until the network wakes it, and so does a stocked level maintainer until its item is taken.
