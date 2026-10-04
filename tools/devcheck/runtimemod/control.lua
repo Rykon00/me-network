@@ -711,6 +711,8 @@ cards17 = require("cards")({ me_place = me_place, cable_row = cable_row, power =
 	me_drive = function(...) return me_drive(...) end })
 --- part 3: the ME Cell Workbench and the cards on cells (workbench.lua)
 bench17 = require("workbench")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #38: the parked blocks and their wakes (parking.lua)
+parking38 = require("parking")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
 cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
@@ -747,6 +749,7 @@ local function tests_running()
 	cards17.running(check)
 	bench17.running(check)
 	cpus6.running(check)
+	parking38.running(check)
 	return running
 end
 
@@ -1556,7 +1559,41 @@ function pattern_line_test()
 	end
 end
 
+--- issue #38: the schedule of every scheduled block of the map and the queues' counts, as one line; the harness
+--- compares it between the unbroken run and a run that was saved at tick 500 and loaded again (ticks 1000, 1400)
+local SB_REMOTE, CIRC_REMOTE = "gregtorio-me-storagebus", "gregtorio-me-circuit"
+local function schedule_digest()
+	local s = game.surfaces[1]
+	local parts = {}
+	local function put(prefix, e, sch)
+		if sch then
+			parts[#parts + 1] = string.format("%s%d:%s:%s:%s:%s:%s:%s:%s", prefix, e.unit_number, tostring(sch.due), tostring(sch.interval),
+				tostring(sch.last), tostring(sch.probing), tostring(sch.parked), tostring(sch.front), tostring(sch.backlog))
+		end
+	end
+	for _, e in pairs(s.find_entities_filtered{ name = { "me-network-interface", "me-import-bus", "me-export-bus" } }) do
+		put("io", e, remote.call(IO, "schedule", e))
+	end
+	for _, e in pairs(s.find_entities_filtered{ name = "me-storage-bus" }) do
+		put("sb", e, remote.call(SB_REMOTE, "schedule", e))
+	end
+	for _, e in pairs(s.find_entities_filtered{ name = { "me-level-maintainer", "me-circuit-interface" } }) do
+		put("m", e, remote.call(CIRC_REMOTE, "schedule", e))
+	end
+	table.sort(parts)
+	local bl = remote.call(IO, "backlogs")
+	local keys = {}
+	for k in pairs(bl) do keys[#keys + 1] = k end
+	table.sort(keys)
+	for _, k in ipairs(keys) do
+		local v = bl[k]
+		parts[#parts + 1] = k .. "=" .. (type(v) == "table" and serpent.line(v, { sortkeys = true, comment = false }) or tostring(v))
+	end
+	return table.concat(parts, " ")
+end
+
 script.on_nth_tick(10, function()
+	if game.tick == 1000 or game.tick == 1400 then log("DEVCHECK-RUNTIME-SCHEDULE " .. game.tick .. " " .. schedule_digest()) end
 	if not (storage.me_graph and storage.me_graph.done) then me_graph_test() end
 	if not (storage.me_cells and storage.me_cells.done) then me_cells_test() end
 	me_terminal_test()
@@ -1581,6 +1618,7 @@ script.on_nth_tick(10, function()
 	cards17.tick()
 	bench17.tick()
 	cpus6.tick()
+	parking38.tick()
 	done_test()
 end)
 
@@ -3097,7 +3135,8 @@ function fluid_storage_bus_test()
 				"pump picked up after " .. st.pump_done .. " ticks, cycle " .. cycle)
 		elseif game.tick > st.started + 900 then
 			expect(st.export_done, "the export bus took nothing from T1's segment")
-			expect(st.maint_done, "maintainer: " .. serpent.line(remote.call("gregtorio-me-circuit", "get_maintainer", maint)))
+			expect(st.maint_done, "maintainer: " .. serpent.line(remote.call("gregtorio-me-circuit", "get_maintainer", maint))
+				.. " schedule " .. serpent.line(remote.call("gregtorio-me-circuit", "schedule", maint)))
 			expect(st.pump_done, "the pump's water never showed up (seen at " .. tostring(st.seen) .. ", B5 " .. serpent.line(info(b5)) .. ")")
 			st.done = true
 			return me_report("MEFLUIDSTORAGEBUS", "ME fluid storage bus", problems)
@@ -3882,19 +3921,25 @@ function scheduler_test()
 		local io_st = stats and stats.io
 		expect(io_st and io_st.visits > 0 and io_st.ticks > 0 and io_st.idle and io_st.full, "sched_stats has no io counters")
 		local bl = remote.call(IO, "backlogs")
-		expect(bl and bl.io == 0, "backlogs: the io queue should be empty in a small network")
-		--- the export bus found no copper: it waits for it
+		expect(bl and bl.io == 0, "backlogs: the io queue should be empty in a small network: " .. serpent.line(bl))
+		--- issue #38: the counts of the busy and the probe list are in storage and add up with the parked blocks
+		expect(bl and bl.io_busy + bl.io_probing + bl.io_parked == bl.io_units and bl.io_units > 0,
+			"the io counts do not add up: " .. serpent.line(bl))
+		expect(bl and bl.storage_bus_busy + bl.storage_bus_probing == bl.storage_bus_units,
+			"the storage bus counts do not add up: " .. serpent.line(bl))
+		--- the export bus found no copper: it is parked (no visit, no probe) until the network gets some
 		expect(c1.get_item_count("copper-plate") == 0, "copper in C1 before there was any")
 		local sch = remote.call(IO, "schedule", e1)
-		if not (sch and sch.due) then
+		if not sch then
 			problems[#problems + 1] = "the export bus is not scheduled"
-		elseif sch.due <= game.tick + 1 then
+		elseif sch.front or sch.backlog or (sch.due and sch.due <= game.tick + 1) then
 			return                                                  -- due anyway: try again at the next round
 		end
+		expect(sch and sch.parked == "no-key", "the export bus without its item is not parked for it: " .. serpent.line(sch))
 		remote.call(NET, "insert", ctrl, "copper-plate", 50)
 		sch = remote.call(IO, "schedule", e1)
-		expect(sch and sch.due == game.tick + 1, "the export bus was not woken by its copper (due " .. tostring(sch and sch.due)
-			.. " at tick " .. game.tick .. ")")
+		expect(sch and sch.front and not sch.parked, "the export bus was not woken to the front by its copper ("
+			.. serpent.line(sch) .. " at tick " .. game.tick .. ")")
 		st.t, st.phase = game.tick, 2
 	elseif st.phase == 2 then
 		if c1.get_item_count("copper-plate") > 0 then
@@ -3904,8 +3949,12 @@ function scheduler_test()
 			local c2 = s.create_entity{ name = "iron-chest", position = { SCX + 3.5, SCY - 0.5 }, force = "player", raise_built = true }
 			if c2 then c2.insert{ name = "wood", count = 100 } end
 			local sch = remote.call(IO, "schedule", i2)
-			expect(sch and sch.due == game.tick + 1, "the import bus was not woken by the chest built in front of it (due "
-				.. tostring(sch and sch.due) .. " at tick " .. game.tick .. ")")
+			expect(sch and sch.front, "the import bus was not woken to the front by the chest built in front of it ("
+				.. serpent.line(sch) .. " at tick " .. game.tick .. ")")
+			--- the export bus moved its copper: it is busy now, due at a tick (the chest uses none: the longest interval)
+			local se = remote.call(IO, "schedule", e1)
+			expect(se and not se.parked and not se.probing and se.due and se.due <= game.tick + 600,
+				"the export bus that moved copper is not busy: " .. serpent.line(se))
 			st.t, st.phase = game.tick, 3
 		elseif game.tick - st.t > 30 then
 			problems[#problems + 1] = "the export bus never woke for its copper"
@@ -3982,7 +4031,62 @@ function scheduler_test()
 		for k, n in pairs(contents) do
 			if not k:find("^fluid/") and (cells[k] or 0) ~= n then problems[#problems + 1] = k .. ": totals " .. n .. ", storage " .. tostring(cells[k]) end
 		end
-		finish("woken after " .. tostring(st.woken) .. " ticks, built chest taken after " .. tostring(st.built) .. " ticks")
+		st.note = "woken after " .. tostring(st.woken) .. " ticks, built chest taken after " .. tostring(st.built) .. " ticks"
+		--- issue #38: a block blocked on the network's side is parked (no visit, no probe) and woken by the network:
+		--- the power goes, copper comes in (the export bus wakes, finds no power and parks), the power comes back
+		local eei = find("electric-energy-interface", 12.5, 6.5)
+		if not eei then
+			problems[#problems + 1] = "the test's power source is missing"
+			finish(st.note)
+			return
+		end
+		eei.power_production, eei.energy, ctrl.energy = 0, 0, 0
+		st.t, st.phase = game.tick, 6
+	elseif st.phase == 6 then
+		--- the controller's buffer drains over some ticks: wake the export bus only once the network reports no power
+		local n = remote.call(NET, "network", ctrl)
+		if n and n.status == "no-power" then
+			--- copper for later, and a wake through the settings (the bus is busy, not waiting for its key)
+			remote.call(NET, "insert", ctrl, "copper-plate", 10)
+			st.copper = c1.get_item_count("copper-plate")
+			remote.call(IO, "set_bus_filters", e1, { "copper-plate" })
+			st.dark = game.tick - st.t
+			st.t, st.phase = game.tick, 7
+		elseif game.tick - st.t > 300 then
+			problems[#problems + 1] = "the network kept its power 300 ticks after the source was cut: " .. serpent.line(n)
+			local eei = find("electric-energy-interface", 12.5, 6.5)
+			if eei then eei.power_production = 1e6 end
+			finish(st.note)
+		end
+	elseif st.phase == 7 then
+		local sch = remote.call(IO, "schedule", e1)
+		local eei = find("electric-energy-interface", 12.5, 6.5)
+		if sch and sch.parked == "no-power" then
+			st.dark = game.tick - st.t
+			local bl = remote.call(IO, "backlogs")
+			expect(bl and bl.io_parked >= 1 and bl.io_busy + bl.io_probing + bl.io_parked == bl.io_units,
+				"the parked block is not counted: " .. serpent.line(bl))
+			expect(c1.get_item_count("copper-plate") == st.copper, "copper moved without power")
+			if eei then eei.power_production = 1e6 end
+			st.t, st.phase = game.tick, 8
+		elseif game.tick - st.t > 60 then
+			problems[#problems + 1] = "the export bus woken without power was not parked within 60 ticks: " .. serpent.line(sch)
+			if eei then eei.power_production = 1e6 end
+			finish(st.note)
+		end
+	elseif st.phase == 8 then
+		if c1.get_item_count("copper-plate") > st.copper then
+			st.lit = game.tick - st.t
+			--- the slow step asks a network with parked blocks for its power every 60 ticks; the wake is visited next tick
+			expect(st.lit <= 90, "the export bus parked for power moved its copper only " .. st.lit .. " ticks after the power came back")
+			local sch = remote.call(IO, "schedule", e1)
+			expect(sch and sch.parked ~= "no-power", "the export bus is still parked for power: " .. serpent.line(sch))
+			finish(st.note .. ", the network dark " .. st.dark .. " ticks after the cut, the parked bus served " .. st.lit
+				.. " ticks after the power came back")
+		elseif game.tick - st.t > 300 then
+			problems[#problems + 1] = "the export bus parked for power never woke (" .. serpent.line(remote.call(IO, "schedule", e1)) .. ")"
+			finish(st.note)
+		end
 	end
 end
 
@@ -4380,6 +4484,7 @@ script.on_init(function()
 	for _, f in pairs(cards17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bench17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpus6.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(parking38.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

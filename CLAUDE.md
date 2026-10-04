@@ -43,7 +43,9 @@
   more (Gregtorio no longer has ME code), so the list is fixed.
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
-  notice, `all --with-gregtorio <Gregtorio checkout>`. Both must end with `RESULT: OK`; `check --base-only` checks
+  notice, `all --with-gregtorio <Gregtorio checkout>`. `runtime` also saves the test map at tick 500 through a headless
+  server (RCON on 127.0.0.1:27815) and checks that the schedule after the load is the unbroken run's: anything that
+  decides when a block is visited must live in `storage`. Both must end with `RESULT: OK`; `check --base-only` checks
   without Space Age; `migrate --from-ref v0.1.0` (the old fluid blocks) or `--from-ref v0.2.0` (every kind of
   unified block, loaded without `on_configuration_changed` while the version number is the same) loads a save of an
   older version with the working copy (for changes to saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
@@ -53,7 +55,8 @@
   from the scheduler's counters at 100 to 50 000 endpoints, `--idle`, `--networks`, `--long`, the build burst, the planner
   scene, `--reference` for inserters and robots, `--profile 1000,5000` for where the time goes) and puts its numbers
   before and after into `docs/PERFORMANCE.md`, measured in turns (`bench --check <ref>` fails a number that is worse
-  than the measured noise). A chain of long runs goes into a second work folder (`ME_DEVCHECK_WORK`), never into the
+  than the measured noise; the busy interval is only reported, since issue #38 a block is visited when the buffer on
+  its other side needs it). A chain of long runs goes into a second work folder (`ME_DEVCHECK_WORK`), never into the
   one a quick test uses.
 - Every referenced `__me-network__/...` file must exist (headless Factorio does not load graphics, the real game
   crashes on missing files); `devcheck check` lists missing ones and names missing in `locale/en`.

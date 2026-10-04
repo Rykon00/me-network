@@ -239,11 +239,21 @@ machine with a fluid recipe, a chemical plant) one bus does both; on a chest onl
 
 A bus moves up to 256 items and 4000 units of fluid per second (map settings "Bus speed"), however many buses the
 map has: a bus that is visited less often moves more per visit. An interface handles 8 slots per quarter second since
-its last visit, and its four sides. A busy block is visited about every quarter second (in a very big network as
-often as the setting "Interface and bus visits per tick" allows); one that found nothing to do waits longer and
-longer, at most 5 seconds (setting "Longest wait of an idle interface or bus") and never longer than in a small
-network, and it wakes at once when its item comes into the network, its settings change, it is rotated or something
-is built in front of it. The unified blocks move fluids as soon as they are built; the network stores fluid in fluid
+its last visit, and its four sides. When a block with work is visited again follows the buffer on its other side:
+the visit sees what the machine or chest used or gathered since the last one and how much it still holds or has
+room for, and comes back before that runs out (about halfway, at the earliest after a quarter second, at the
+latest after 10 seconds), so a machine never waits for its bus while its buffer lasts; a block whose machine had
+run out is served first the next time. A block with nothing to do on its machine's side (an empty source, a full
+target, no target) is only probed, with one cheap look at a growing interval (up to 5 seconds, setting "Longest
+wait of an idle interface or bus"), and visited at once when the look sees a change; one with nothing to do on the
+network's side (its item is not in the network, the network is full, no power, no network) costs nothing until the
+network wakes it: when its item comes in or room appears, the power is back or the network changes, and also when
+its settings change, it is rotated or something is built in front of it. The visits per tick are what is due,
+between the map settings "Interface and bus visits per tick, at least" and "at most" (above the ceiling the
+earliest due come first: a big base pays at most the ceiling). Storage bus reads, level maintainer checks and
+crafting job steps follow the same rule with their own floor and ceiling settings; a stocked level maintainer waits
+without any cost until its item is taken. The unified blocks move fluids as soon as they are built; the network stores fluid in fluid
+storage cells (tech ME Fluid Storage) or in a tank behind a storage bus.
 storage cells (tech ME Fluid Storage) or in a tank behind a storage bus.
 
 ## ME Storage Bus

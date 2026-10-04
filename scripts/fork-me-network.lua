@@ -304,6 +304,7 @@ end
 
 local recompute
 local net_cell
+local take_waits, fire_all_waits
 
 --- every member of the networks `ids` is visited once; split components get new ids (the largest keeps it)
 local function components(s, net, starts)
@@ -398,6 +399,7 @@ local function add_node(s, entity, kind)
 				net.n = net.n + 1
 				s.nodes[u].net = net.id
 			end
+			take_waits(net, other)                 -- (issue #38: its parked endpoints keep their wake)
 			s.nets[other.id] = nil
 		end
 	end
@@ -486,6 +488,7 @@ function remove_node_graph(s, unit)
 		end
 		changed(s, part)
 	end
+	fire_all_waits(net)                            -- (issue #38: the endpoints of the parts register again)
 	changed(s, net)
 end
 
@@ -905,6 +908,125 @@ local function moved_key(net, key, up)
 	if not up and net.wait_below and net.wait_below[key] then fire_below(net, key) end
 end
 
+--- Issue #38: endpoints parked on the network's side wake without polling. `net.wait_use[unit] = kind` wakes when
+--- the network is usable again (power back, a controller), `net.wait_room[unit] = kind` when room for a new key
+--- may have appeared (a cell joined the network, a cell lost a key). In storage, like the key waits; one wake per
+--- registration.
+local function fire_units(net, field)
+	local w = net[field]
+	if not w then return end
+	net[field] = nil
+	local units = {}
+	for unit in pairs(w) do units[#units + 1] = unit end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local f = M.wakers[w[unit]]
+		if f then f(unit) end
+	end
+end
+
+function M.wait_usable(net, kind, unit)
+	local w = net.wait_use
+	if not w then
+		w = {}
+		net.wait_use = w
+	end
+	w[unit] = kind
+end
+
+function M.wait_room(net, kind, unit)
+	local w = net.wait_room
+	if not w then
+		w = {}
+		net.wait_room = w
+	end
+	w[unit] = kind
+end
+
+--- the waiters of `other` (merged into `net`) continue on `net`
+function take_waits(net, other)
+	if not (other.wait_in or other.wait_out or other.wait_below or other.wait_use or other.wait_room) then return end   -- (the usual)
+	for _, field in ipairs({ "wait_in", "wait_out" }) do
+		local src = other[field]
+		if src then
+			local dst = net[field]
+			if not dst then
+				dst = {}
+				net[field] = dst
+			end
+			for key, w in pairs(src) do
+				local d = dst[key]
+				if not d then
+					d = {}
+					dst[key] = d
+				end
+				for unit, kind in pairs(w) do d[unit] = kind end
+			end
+		end
+	end
+	if other.wait_below then
+		local dst = net.wait_below
+		if not dst then
+			dst = {}
+			net.wait_below = dst
+		end
+		for key, w in pairs(other.wait_below) do
+			local d = dst[key]
+			if not d then
+				d = {}
+				dst[key] = d
+			end
+			for unit, v in pairs(w) do d[unit] = v end
+		end
+	end
+	for _, field in ipairs({ "wait_use", "wait_room" }) do
+		local src = other[field]
+		if src then
+			local dst = net[field]
+			if not dst then
+				dst = {}
+				net[field] = dst
+			end
+			for unit, kind in pairs(src) do dst[unit] = kind end
+		end
+	end
+end
+
+--- every waiter of `net` wakes once (the network is split or rebuilt: the endpoints register again where they are)
+function fire_all_waits(net)
+	if not (net.wait_in or net.wait_out or net.wait_below or net.wait_use or net.wait_room) then return end
+	local kinds = {}
+	for _, field in ipairs({ "wait_in", "wait_out" }) do
+		local waits = net[field]
+		if waits then
+			for _, w in pairs(waits) do
+				for unit, kind in pairs(w) do kinds[unit] = kind end
+			end
+			net[field] = nil
+		end
+	end
+	if net.wait_below then
+		for _, w in pairs(net.wait_below) do
+			for unit, v in pairs(w) do kinds[unit] = v[1] end
+		end
+		net.wait_below = nil
+	end
+	for _, field in ipairs({ "wait_use", "wait_room" }) do
+		local w = net[field]
+		if w then
+			for unit, kind in pairs(w) do kinds[unit] = kind end
+			net[field] = nil
+		end
+	end
+	local units = {}
+	for unit in pairs(kinds) do units[#units + 1] = unit end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local f = M.wakers[kinds[unit]]
+		if f then f(unit) end
+	end
+end
+
 --- `unit` (an endpoint of `kind`) wakes when the network gets more of `key` (`up`) or loses some
 function M.wait_for(net, key, kind, unit, up)
 	local field = up and "wait_in" or "wait_out"
@@ -983,6 +1105,7 @@ function net_cell(net, cid, cell, sign)
 		net[p .. "types"] = net[p .. "types"] + sign * cell.types
 		net[p .. "types_total"] = net[p .. "types_total"] + sign * spec.types
 	end
+	if sign > 0 and net.wait_room then fire_units(net, "wait_room") end
 	local waits = sign > 0 and net.wait_in or net.wait_out
 	local woken
 	for key, count in pairs(cell.items) do
@@ -1085,6 +1208,7 @@ function M.usable(net)
 		end
 	end
 	net.usable, net.why, net.usable_tick = ok, why, game.tick
+	if ok and net.wait_use then fire_units(net, "wait_use") end
 	return ok, why
 end
 
@@ -1615,6 +1739,7 @@ local function extract_key(net, key, count)
 				if left < ZERO then left = 0 end
 				if not cell.items[key] then idx_del(net, key, cid) end
 				if (db < 0 or dt < 0) and not cell.partition then reopen(net, cid) end
+				if dt < 0 and net.wait_room then fire_units(net, "wait_room") end
 				mark_drive(s, cid_unit(cid))
 			end
 		end
@@ -1622,7 +1747,10 @@ local function extract_key(net, key, count)
 	local now = (net.items[key] or 0) - (count - left)
 	net.items[key] = now > ZERO and now or nil
 	if net.index[key] and next(net.index[key]) == nil then net.index[key] = nil end
-	if left < count then moved_key(net, key, false) end
+	if left < count then
+		if net.wait_room then net.room_pending = true end           -- (room may have appeared: the slow step wakes them)
+		moved_key(net, key, false)
+	end
 	return count - left
 end
 
@@ -2478,6 +2606,31 @@ function M.slow_step()
 	for _, f in ipairs(M.slow_hooks) do f() end
 	local s = storage.fork_me_net
 	if not s then return end
+	--- issue #38: endpoints parked for their network's power are woken by M.usable when it sees the power back;
+	--- a network nobody asks is asked here, once a second (one controller status read per such network)
+	local ids, rooms
+	for id, net in pairs(s.nets) do
+		if net.wait_use and next(net.wait_use) then
+			ids = ids or {}
+			ids[#ids + 1] = id
+		end
+		if net.room_pending then
+			rooms = rooms or {}
+			rooms[#rooms + 1] = id
+		end
+	end
+	if ids then
+		table.sort(ids)
+		for _, id in ipairs(ids) do M.usable(s.nets[id]) end
+	end
+	if rooms then                                                  -- something was extracted since the last step
+		table.sort(rooms)
+		for _, id in ipairs(rooms) do
+			local net = s.nets[id]
+			net.room_pending = nil
+			if net.wait_room then fire_units(net, "wait_room") end
+		end
+	end
 	local n = 0
 	for unit in pairs(s.dirty) do
 		if n >= LEDS_PER_STEP_N then break end
@@ -2580,6 +2733,10 @@ function M.rebuild()
 	local s = state()
 	local old_drives = s.drives
 	for _, node in pairs(s.nodes) do clear_link(node) end
+	local ids = {}
+	for id in pairs(s.nets) do ids[#ids + 1] = id end
+	table.sort(ids)
+	for _, id in ipairs(ids) do fire_all_waits(s.nets[id]) end   -- (issue #38: no parked endpoint loses its wake)
 	s.nodes, s.nets, s.version = {}, {}, s.version + 1
 	s.drives, s.dirty, s.sweep, s.sweep_list = {}, {}, 1, nil
 	local names = M.node_names()
@@ -2935,6 +3092,13 @@ remote.add_interface("gregtorio-me-network", {
 	rotated = function(entity) M.on_rotated(entity) end,
 	--- what on_configuration_changed does with the graph (the whole map)
 	rebuild = function() M.rebuild() end,
+	--- tests (issue #38): forget every wait of the entity's network, as if all its wakes had been missed
+	drop_waits = function(entity)
+		local net = M.network_of(entity)
+		if not net then return false end
+		net.wait_in, net.wait_out, net.wait_below, net.wait_use, net.wait_room = nil, nil, nil, nil, nil
+		return true
+	end,
 	--- the unit number of an underground cable's partner, or nil
 	underground_partner = function(entity)
 		local s = storage.fork_me_net
