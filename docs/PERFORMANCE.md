@@ -1808,3 +1808,54 @@ index order the first storage call after a removal builds, and the unregistratio
 Not part of this pull request: the build (the `find_entities_filtered` per neighbour), the graph rebuild of
 `on_configuration_changed` (0.92 s at 5000) and the first visits after a load (lever 9), and the recompute of a network that two
 others merge into (a merge of big networks is rare and was not in the burst).
+
+## Pull request 9 (issue #43): the first tick after a load, the sweep, the graph rebuild (lever 9)
+
+### The first tick and a hitch every 100 seconds
+The "load first tick" of the benchmark was 33 ms at 5000 and 147 ms at 20 000 members. A profile of the first ticks
+(`bench --profile`, enabled at tick 0) put all of it in the first `slow_step`, and inside it in the sweep over the members (the check
+for members removed without an event): it took a list of **all** members, sorted it, and walked 200 of them a second, and took and
+sorted a new list when the round was done: 141 ms at 20 000 members, at the first slow step and **every 100 seconds** after. The
+sort is the cost (about 7 µs an element in this Lua).
+
+`storage.fork_me_net.nlist` now holds the members in the order they joined; a member that leaves is replaced in it by the last
+one (each node keeps its place in `li`); the sweep walks it and, when it finds a member whose entity is gone (`vanish`), looks at the
+member that took its place. A save from before has no list: it is made once, sorted, at its first sweep (the cost it had every round).
+The rebuild of the graph makes the list from the sorted units. Test: the graph test removes a cable without an event and runs the
+slow step (the sweep finds it), and the graph removal test checks after every removal and after the rebuild that the list holds every
+member once, at its place (`sweep_list_ok`).
+
+| | before | this pull request |
+|---|---|---|
+| first tick after the load, 5000 members (ms) | 33.0 | **3.4** |
+| first tick after the load, 20 000 members (ms) | 146.6 | **3.7** |
+| a round of the sweep at 20 000 members (every 100 s) | 141 ms | none |
+
+### The graph rebuild of `on_configuration_changed`
+Phases at 20 000 members (3.9 s in the profile): finding the entities and sorting them 959 ms (the comparator read `unit_number`
+twice per comparison), the nodes 1016 ms (nine property reads per member), the neighbours 1191 ms (one `find_entities_filtered` with
+the names of all members per member), the components and `recompute` 539 ms, the cable pictures 127 ms. Changed: the unit numbers
+are read once and sorted as numbers, a node reads each property once (the prototype's size per name, the force's name per index), the
+neighbours come from a grid of the tiles the members cover (the members of the same force whose boxes share an edge, that connect:
+what the query found). The graph removal test builds a grid, removes members, and then rebuilds the graph and checks that the
+networks are the components of an independent search.
+
+| graph rebuild | before | this pull request |
+|---|---|---|
+| 5000 members | 827 ms | **541 ms** |
+| 20 000 members | 3.41 s | 3.14 s |
+
+At 5000 the rebuild is a third faster; at 20 000 it is hardly faster: the rebuild allocates the nodes of 20 000 members while the
+mod's heap is 200 MB alive, and the collector's work for that follows the size of the heap (the phases move, the sum does not). It runs
+once, when the mod's version changes, while the save loads; the target of 0.3 s of the plan is not reached and is not pursued.
+
+### A note on the 99th percentile at 20 000
+`bench --check v0.3.0` flagged the 99th percentile (6.94 against 5.63 ms) and the ticks over 5 ms (120 against 74) at 20 000 with this
+change, and it did not with the previous one. The change touches nothing that runs in a steady tick (a variant with the sweep switched
+off has the same numbers), and the slow ticks are the same in number but not in place: the ticks over 5 ms of the 3600 of the window
+fall into 300-tick buckets of 3, 13, 40, 26, 45, 9, 4, 7, 2, 5, 5, 0 before (159 in all) and 46, 19, 13, 7, 9, 16, 7, 4, 27, 9, 9, 3 after
+(169 in all): the refill of the scene at tick 600 sets the system into a transient of about 2000 ticks, and where in it a few heavy
+ticks fall depends on the heap the run started with (a variant that adds the old 141 ms of sorting at tick 0 to the new code moves
+the numbers back towards the old ones). The sum is the same; the check, which looks at the 99th percentile of one window, reads the
+shift as a regression. It is stated here and not hidden: a window that starts after the transient (the warm-up is 600 ticks, the
+transient 2000) would measure the steady tick, which is the same before and after.
