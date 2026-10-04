@@ -739,6 +739,10 @@ function M.has_card(cell, kind)
 	return false
 end
 
+--- Bumped whenever the cards or the list of a cell change (M.apply_cell_cards): the cursors of the holder lists
+--- (first_holder) start again, since a cell may take a key it refused (or the reverse).
+local room_gen = 0
+
 --- AE2's share of one key in a cell with an Equal Distribution Card (BasicCellInventory: the bytes left after the
 --- type costs, divided by the types: the whitelist's size without a fuzzy card, else the cell's type limit)
 local function equal_share(cell, spec)
@@ -752,6 +756,7 @@ end
 --- whitelist) or, with an Inverter Card, `deny`; `fnames` (Fuzzy Card), `void` (Overflow Destruction Card), `eq` (Equal
 --- Distribution Card: the share of one key). A cell without cards keeps exactly the fields of 0.3.0.
 function M.apply_cell_cards(cell)
+	room_gen = room_gen + 1
 	local spec = cell_spec(cell.name)
 	if not spec then return end
 	local keys = cell.partition or cell.deny
@@ -859,6 +864,8 @@ end
 --------------------------------------------------------------------------------
 --- issue #5: the index of a key, with what depends on it
 --------------------------------------------------------------------------------
+
+local HOLDER_CURSORS = { "hfs", "hfr", "hrr" }
 
 --- Derived lookups per network (the insertion order by priority group and kind, the sorted holders of a key, the
 --- extraction order of a key). They are a pure function of the network's state, so they are kept outside `storage`
@@ -1475,7 +1482,7 @@ local function lookups(s, net)
 	local order = ordered(s, net)
 	local c = cache[net]
 	if c and c.order == order then return c end
-	c = { order = order, groups = {}, at = {}, hs = {}, hr = {}, xs = {} }
+	c = { order = order, groups = {}, at = {}, hs = {}, hr = {}, xs = {}, hfs = {}, hfr = {}, hrr = {} }
 	cache[net] = c
 	local g
 	for rank, o in ipairs(order) do
@@ -1526,15 +1533,36 @@ local function lookups(s, net)
 end
 
 --- the holders of `key`, sorted by cell id (by_rank false) or by their rank in the insertion order
-local function holders(net, c, key, by_rank)
-	local field = by_rank and "hr" or "hs"
+--- the comparators of the sorted lists are module-level (a closure per rebuild made garbage): the ranks of the
+--- network being sorted, and for the extraction order the priority, kind and partition of each cell, are in these
+--- tables while a sort runs
+local sort_at
+local XO_P, XO_E, XO_X = {}, {}, {}
+local function by_rank(a, b) return sort_at[a].rank < sort_at[b].rank end
+local function by_extraction(a, b)
+	local pa, pb = XO_P[a], XO_P[b]
+	if pa ~= pb then return pa < pb end
+	local ea, eb = XO_E[a], XO_E[b]
+	if ea ~= eb then return ea < eb end
+	local xa, xb = XO_X[a], XO_X[b]
+	if xa ~= xb then return xa < xb end
+	return a < b
+end
+
+local function holders(net, c, key, rank)
+	local field = rank and "hr" or "hs"
 	local l = c[field][key]
 	if l then return l end
 	l = {}
-	for cid in pairs(net.index[key] or EMPTY) do l[#l + 1] = cid end
-	if by_rank then
-		local at = c.at
-		table.sort(l, function(a, b) return at[a].rank < at[b].rank end)
+	local n = 0
+	for cid in pairs(net.index[key] or EMPTY) do
+		n = n + 1
+		l[n] = cid
+	end
+	if rank then
+		sort_at = c.at
+		table.sort(l, by_rank)
+		sort_at = nil
 	else
 		table.sort(l)
 	end
@@ -1542,10 +1570,77 @@ local function holders(net, c, key, by_rank)
 	return l
 end
 
---- an extraction freed bytes or a type of a cell: it may take new keys again
+--- The first holder of `key` in the list `l` (`field`: the cursors of the sorted list "hfs" or of the ranked list "hfr")
+--- that may still take some of it. An insert used to walk every cell that holds the key, the full ones first (28 of them
+--- per insert in the 20 000 scene, 55 % of the interface and bus time); the full internal cells at the front are
+--- skipped for good here, until an extraction frees room in one of them (reopen). An external cell (a storage bus,
+--- whose room is the chest's) and a cell that destroys overflow are never skipped. `skips_partition`: the walk that
+--- uses the cursor ignores partitioned cells (the insert's ranked walk), so they are skipped whatever their room (the
+--- room count of room_for needs them). The cursor belongs to the list it was made for and to the generation of the
+--- cards; it is reused for the next list of the key, so it makes no garbage.
+local function first_holder(net, c, key, l, field, skips_partition)
+	local fh = c[field]
+	local e = fh[key]
+	if not e then
+		e = { list = l, i = 1, gen = room_gen }
+		fh[key] = e
+	elseif e.list ~= l or e.gen ~= room_gen then
+		e.list, e.i, e.gen = l, 1, room_gen
+	end
+	local i, n = e.i, #l
+	local cells = net.cells
+	while i <= n do
+		local cell = cells[l[i]]
+		if cell.ext or cell.void then break end
+		if not (skips_partition and cell.partition) and cell_room(cell, cell_spec(cell.name), key) > 0 then break end
+		i = i + 1
+	end
+	e.i = i
+	return i
+end
+
+--- the position of the cell `cid` in the holder list `l` of a cursor field (the list is sorted by cell id for "hfs", by
+--- rank for the others), 0 when it is not in it
+local function holder_pos(c, field, l, cid)
+	local lo, hi = 1, #l
+	if field == "hfs" then
+		while lo <= hi do
+			local mid = math.floor((lo + hi) / 2)
+			local v = l[mid]
+			if v == cid then return mid end
+			if v < cid then lo = mid + 1 else hi = mid - 1 end
+		end
+		return 0
+	end
+	local at = c.at[cid]
+	if not at then return 0 end
+	local rank = at.rank
+	while lo <= hi do
+		local mid = math.floor((lo + hi) / 2)
+		local v = l[mid]
+		if v == cid then return mid end
+		if c.at[v].rank < rank then lo = mid + 1 else hi = mid - 1 end
+	end
+	return 0
+end
+
+--- an extraction freed bytes or a type of a cell: it may take new keys again, and the keys it holds again
 local function reopen(net, cid)
 	local c = cache[net]
-	local at = c and c.order == net.order and not net.order_dirty and c.at[cid]
+	if not c then return end
+	local cell = net.cells[cid]
+	if cell then
+		for key in pairs(cell.items) do
+			for _, field in ipairs(HOLDER_CURSORS) do
+				local e = c[field][key]
+				if e and e.i > 1 then
+					local pos = holder_pos(c, field, e.list, cid)
+					if pos > 0 and pos < e.i then e.i = pos end
+				end
+			end
+		end
+	end
+	local at = c.order == net.order and not net.order_dirty and c.at[cid]
 	if at and at.kind and at.pos < at.g.first[at.kind] then at.g.first[at.kind] = at.pos end
 end
 
@@ -1554,8 +1649,9 @@ end
 local function room_for(net, key, want)
 	local n = 0
 	local c = lookups(state(), net)
-	for _, cid in ipairs(holders(net, c, key, true)) do         -- in insertion order: cells before storage buses
-		local cell = net.cells[cid]
+	local hl = holders(net, c, key, true)                       -- in insertion order: cells before storage buses
+	for i = first_holder(net, c, key, hl, "hrr", false), #hl do
+		local cell = net.cells[hl[i]]
 		if cell.void and voids(cell, key) then return want or math.huge end
 		n = n + room_in(cell, key)
 		if want and n >= want then return n end
@@ -1694,13 +1790,14 @@ local function insert_key(net, key, count, data)
 	local c = lookups(s, net)
 	local kind = is_fluid_key(key) and "fluid" or "item"
 	if net.uniform then                                -- one priority, no partition: the cells that hold it first
-		for _, cid in ipairs(holders(net, c, key, false)) do
-			if put(cid) then break end
+		local hl = holders(net, c, key, false)
+		for i = first_holder(net, c, key, hl, "hfs", true), #hl do
+			if put(hl[i]) then break end
 		end
 		if ins.left > 0 and c.groups[1] then put_open(net, c.groups[1], kind, key) end
 	else
 		local hr = holders(net, c, key, true)
-		local h = 1
+		local h = first_holder(net, c, key, hr, "hfr", true)
 		local fname = c.fuzzy and name_of_key(key)
 		for _, g in ipairs(c.groups) do
 			if ins.left <= 0 then break end
@@ -1715,7 +1812,8 @@ local function insert_key(net, key, count, data)
 			while hr[h] and c.at[hr[h]].g == g do                         -- 2: the cells that hold it
 				local cid = hr[h]
 				h = h + 1
-				if ins.left > 0 and not net.cells[cid].partition then put(cid) end
+				if ins.left <= 0 then break end                           -- (nothing left: the rest of the walk does nothing)
+				if not net.cells[cid].partition then put(cid) end
 			end
 			if ins.left > 0 and not put_open(net, g, kind, key) then     -- 3: any cell, then storage buses
 				for _, cid in ipairs(g.ext[kind]) do
@@ -1735,19 +1833,19 @@ end
 local function extract_order(s, net, c, key)
 	local l = c.xs[key]
 	if l then return l end
-	local held = {}
+	l = {}
+	local n = 0
 	for cid in pairs(net.index[key] or EMPTY) do
 		local cell = net.cells[cid]
-		held[#held + 1] = { cid = cid, p = cell_priority(s, net, cid), part = cell.partition and 1 or 0, ext = cell.ext and 0 or 1 }
+		n = n + 1
+		l[n] = cid
+		XO_P[cid], XO_E[cid], XO_X[cid] = cell_priority(s, net, cid), cell.ext and 0 or 1, cell.partition and 1 or 0
 	end
-	table.sort(held, function(a, b)
-		if a.p ~= b.p then return a.p < b.p end
-		if a.ext ~= b.ext then return a.ext < b.ext end
-		if a.part ~= b.part then return a.part < b.part end
-		return a.cid < b.cid
-	end)
-	l = {}
-	for i, h in ipairs(held) do l[i] = h.cid end
+	table.sort(l, by_extraction)
+	for i = 1, n do
+		local cid = l[i]
+		XO_P[cid], XO_E[cid], XO_X[cid] = nil, nil, nil
+	end
 	c.xs[key] = l
 	return l
 end

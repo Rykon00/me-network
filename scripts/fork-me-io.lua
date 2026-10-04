@@ -599,6 +599,7 @@ function M.interface_step(rec, dt)
 	local max_ops = math.max(IFACE_SLOTS_PER_VISIT, math.floor(IFACE_SLOTS_PER_VISIT * ticks / STEP_TICKS))
 	local inv = e.get_inventory(defines.inventory.chest)
 	local ops, moved = 0, 0
+	local held_total = 0                                      -- what the kept rows hold at the end of the row loop
 	local kept = KEPT
 	if next(kept) then
 		for k in pairs(kept) do kept[k] = nil end
@@ -622,9 +623,11 @@ function M.interface_step(rec, dt)
 				key = N.key_of(c.name, c.quality)
 				c.key = key
 			end
+			local counted = kept[key]                             -- (two rows of one key hold its items once)
 			kept[key] = true
 			Q_COUNT.name, Q_COUNT.quality = c.name, c.quality
 			local have = inv.get_item_count(Q_COUNT)
+			local final = have
 			if have < c.amount then
 				local want = c.amount - have
 				if short then want = math.min(want, math.max(0, N.count_key(net, key) - reserved(net, key, p))) end
@@ -634,6 +637,7 @@ function M.interface_step(rec, dt)
 				elseif N.count_key(net, key) <= 0 or short then N.wait_for(net, key, "io", unit, true) end
 				if short and have + got < c.amount then short[key] = c.amount - have - got end
 				local after = have + got                              -- the row is taken at (amount - have) per dt
+				final = after
 				if rows[i] == nil then
 					if got > 0 then time = MIN_INTERVAL end           -- (the first fill: the rate is unknown, look again soon)
 				elseif after > 0 then
@@ -651,6 +655,7 @@ function M.interface_step(rec, dt)
 				if taken > 0 then
 					local stored = N.insert(net, c.name, c.quality, taken)
 					if stored < taken then inv.insert{ name = c.name, quality = c.quality, count = taken - stored } end
+					final = have - stored
 					moved = moved + stored
 					ops = ops + 1
 					local tt = stack_of(c.name) * ticks / (have - c.amount)   -- the surplus comes in at that rate
@@ -659,6 +664,7 @@ function M.interface_step(rec, dt)
 					N.wait_for(net, key, "io", unit, false)               -- (room appears when some is taken)
 				end
 			end
+			if not counted then held_total = held_total + final end
 		end
 	end
 	local size = #inv
@@ -667,13 +673,7 @@ function M.interface_step(rec, dt)
 	--- hold what they hold, or that holds nothing, has nothing to import)
 	local walk = false
 	if not inv.is_empty() then
-		for _, c in pairs(inv.get_contents()) do
-			local q = c.quality
-			if not kept[(q == nil or q == "normal") and c.name or N.key_of(c.name, q)] then
-				walk = true
-				break
-			end
-		end
+		walk = inv.get_item_count() ~= held_total          -- (more in it than the kept rows hold: something to import; no table)
 	end
 	local start = rec.slot or 1
 	for k = 0, walk and size - 1 or -1 do
@@ -1724,7 +1724,9 @@ remote.add_interface("gregtorio-me-io", {
 	--- tests and the benchmark: the mod's Lua heap in kB; `collect`: after a full collection (what is alive, not what is
 	--- waiting to be collected)
 	lua_memory = function(collect)
-		if collect then
+		if collect == "stop" or collect == "restart" then              -- (the benchmark's allocation rate: the collector stopped for a while)
+			pcall(collectgarbage, collect)
+		elseif collect then
 			pcall(collectgarbage, "collect")
 			pcall(collectgarbage, "collect")
 		end

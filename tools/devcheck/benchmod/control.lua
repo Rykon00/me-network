@@ -52,6 +52,7 @@ local PAIR_RECIPES = { "iron-gear-wheel", "copper-cable", "iron-stick", "pipe" }
 local BLOCKERS = { "stone", "coal" }  -- idle scene: a sink chest is filled with one of these, so nothing fits in
 local PART_GAP = 12                   -- tiles between two networks of the `networks` variant
 local SAMPLE_TICKS = 300              -- the backlogs are sampled this often inside the window (one remote call)
+local ALLOC_FROM, ALLOC_TICKS = 300, 300 -- after the window: the Lua memory the mod allocates in 300 ticks, the collector stopped (issue #43)
 local BURST_Y = -40                   -- the build burst's cable row (above the scene and the profile's fixtures)
 local STATUS = defines.entity_status
 
@@ -1933,6 +1934,13 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		else
 			finish(b)
 		end
+	elseif C.scene == "me" and C.latency and not C.profile and tick == C.warmup + C.window + ALLOC_FROM then
+		b.alloc0 = mod_memory_kb("stop")                      -- the collector stops: the heap grows by what the ticks allocate
+	elseif b.alloc0 and tick == C.warmup + C.window + ALLOC_FROM + ALLOC_TICKS then
+		local kb = mod_memory_kb("restart")
+		if kb then log_json("ALLOC", { kb_per_tick = (kb - b.alloc0) / ALLOC_TICKS, ticks = ALLOC_TICKS }) end
+		mod_memory_kb(true)                                   -- the garbage of the 300 ticks is collected now, not in the ticks that follow
+		b.alloc0 = nil
 	elseif tick > C.warmup and tick < C.warmup + C.window then
 		if tick % SAMPLE_TICKS == 0 and b.samples then
 			local bl = backlogs()
