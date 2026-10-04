@@ -3094,32 +3094,44 @@ function M.rebuild()
 		for tx = b[1], b[3] - 1 do
 			for ty = b[2], b[4] - 1 do
 				local key = (tx + OFF) * MUL + (ty + OFF)
-				local cell = g[key]
-				if cell then cell[#cell + 1] = unit else g[key] = { unit } end
+				local c = g[key]
+				if c == nil then g[key] = unit                 -- (a tile of one member holds its unit number, of several a list)
+				elseif type(c) == "number" then g[key] = { c, unit }
+				else c[#c + 1] = unit end
+			end
+		end
+	end
+	local function link(c, unit, node, b)
+		if type(c) == "number" then
+			if c ~= unit then
+				local other = s.nodes[c]
+				if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[c] = true end
+			end
+		else
+			for i = 1, #c do
+				local ou = c[i]
+				if ou ~= unit then
+					local other = s.nodes[ou]
+					if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[ou] = true end
+				end
 			end
 		end
 	end
 	for _, unit in ipairs(units) do
 		local node = s.nodes[unit]
 		local b, g = node.box, grids[node.surface]
-		local function look(tx, ty)
-			local cell = g[(tx + OFF) * MUL + (ty + OFF)]
-			if cell then
-				for _, ou in ipairs(cell) do
-					if ou ~= unit then
-						local other = s.nodes[ou]
-						if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[ou] = true end
-					end
-				end
-			end
+		local x1, y1, x2, y2 = b[1], b[2], b[3], b[4]
+		for ty = y1, y2 - 1 do                              -- the tiles beside the west and east edges
+			local c = g[(x1 - 1 + OFF) * MUL + (ty + OFF)]
+			if c then link(c, unit, node, b) end
+			c = g[(x2 + OFF) * MUL + (ty + OFF)]
+			if c then link(c, unit, node, b) end
 		end
-		for ty = b[2], b[4] - 1 do                         -- the tiles beside the west and east edges
-			look(b[1] - 1, ty)
-			look(b[3], ty)
-		end
-		for tx = b[1], b[3] - 1 do                         -- and above and below
-			look(tx, b[2] - 1)
-			look(tx, b[4])
+		for tx = x1, x2 - 1 do                              -- and above and below
+			local c = g[(tx + OFF) * MUL + (y1 - 1 + OFF)]
+			if c then link(c, unit, node, b) end
+			c = g[(tx + OFF) * MUL + (y2 + OFF)]
+			if c then link(c, unit, node, b) end
 		end
 	end
 	--- underground cables pair as the engine connected them
