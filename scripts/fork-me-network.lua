@@ -149,6 +149,8 @@ local function state()
 			drives = {},      -- unit -> { entity, slots = { [i] = cell }, surface, force, position, leds, dirty }
 			dirty = {},       -- drive unit -> true: lights to redraw
 			sweep = 1,
+			nlist = {},       -- the units of the members, in the order they joined (a member that leaves is replaced by the last): the sweep
+			                  -- walks it (issue #43); each node keeps its place in `li`. Saves before it get it at their first sweep.
 			ext = {},         -- unit -> external cell of a member (storage bus, scripts/fork-me-storagebus.lua)
 		}
 		storage.fork_me_net = s
@@ -434,6 +436,11 @@ local function add_node(s, entity, kind)
 		force = entity.force.name, position = { x = entity.position.x, y = entity.position.y } }
 	if kind == "underground" then node.dir = entity.direction end
 	s.nodes[unit] = node
+	local nl = s.nlist
+	if nl then
+		nl[#nl + 1] = unit
+		node.li = #nl
+	end
 	local b = node.box
 	local found = entity.surface.find_entities_filtered{
 		area = { { b[1] - 0.5, b[2] - 0.5 }, { b[3] + 0.5, b[4] + 0.5 } }, name = M.node_names(), force = entity.force }
@@ -522,6 +529,15 @@ function remove_node_graph(s, unit)
 	local node = s.nodes[unit]
 	if not node then return end
 	s.nodes[unit] = nil
+	local nl, li = s.nlist, node.li
+	if nl and li and nl[li] == unit then                -- the last member takes its place in the sweep list
+		local last = #nl
+		local moved = nl[last]
+		nl[li] = moved
+		nl[last] = nil
+		local mn = s.nodes[moved]
+		if mn then mn.li = li end
+	end
 	local net = s.nets[node.net]
 	if net and net.wunits then net.wunits[unit] = nil end
 	local neighbours = {}
@@ -2896,20 +2912,30 @@ function M.slow_step()
 			end
 		end
 	end
-	--- sweep: members removed without an event. Issue #5: a list of the members is taken once per round and checked
-	--- SWEEP_PER_STEP at a time (walking the whole map's members to find the next 200 cost 3 ms at 20 000 members)
-	if not s.sweep_list or (s.sweep or 1) > #s.sweep_list then
-		local list = {}
+	--- sweep: members removed without an event, SWEEP_PER_STEP at a time over the list of the members (issue #5; issue #43:
+	--- the list is kept as members join and leave, it was taken and sorted anew every round: 141 ms at 20 000 members). A save
+	--- from before has none: it is made once, sorted, at the first sweep.
+	local list = s.nlist
+	if not list then
+		list = {}
 		for unit in pairs(s.nodes) do list[#list + 1] = unit end
 		table.sort(list)
-		s.sweep_list, s.sweep = list, 1
+		for k, unit in ipairs(list) do s.nodes[unit].li = k end
+		s.nlist, s.sweep_list = list, nil
 	end
-	local list, i = s.sweep_list, s.sweep
-	for k = i, math.min(#list, i + SWEEP_PER_STEP - 1) do
-		local node = s.nodes[list[k]]
-		if node and not node.entity.valid then vanish(s, list[k]) end
+	local k = s.sweep or 1
+	if k > #list then k = 1 end
+	for _ = 1, SWEEP_PER_STEP do
+		local unit = list[k]
+		if not unit then break end
+		local node = s.nodes[unit]
+		if node and not node.entity.valid then
+			vanish(s, unit)                              -- (the last member now stands at k: look at it next)
+		else
+			k = k + 1
+		end
 	end
-	s.sweep = i + SWEEP_PER_STEP
+	s.sweep = k
 end
 
 --- the open key on a drive with a cell in the cursor: the cell goes into the first free slot (true when it did
@@ -2978,13 +3004,21 @@ function M.rebuild()
 	table.sort(ids)
 	for _, id in ipairs(ids) do fire_all_waits(s.nets[id]) end   -- (issue #38: no parked endpoint loses its wake)
 	s.nodes, s.nets, s.version = {}, {}, s.version + 1
-	s.drives, s.dirty, s.sweep, s.sweep_list = {}, {}, 1, nil
+	s.drives, s.dirty, s.sweep, s.sweep_list, s.nlist = {}, {}, 1, nil, {}
 	local names = M.node_names()
-	local all = {}
+	--- issue #43: each property of an entity is read once (a read is an engine call, and the sort read two per comparison: 1 s
+	--- at 20 000 members); the members are sorted by unit number as before
+	local ents, surface_of, units = {}, {}, {}
 	for _, surface in pairs(game.surfaces) do
-		for _, e in pairs(surface.find_entities_filtered{ name = names }) do all[#all + 1] = e end
+		local index = surface.index
+		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
+			local unit = e.unit_number
+			units[#units + 1] = unit
+			ents[unit] = e
+			surface_of[unit] = index
+		end
 	end
-	table.sort(all, function(a, b) return a.unit_number < b.unit_number end)
+	table.sort(units)
 	--- drives keep their cells (by unit number); cells of drives that are gone are spilled where they stood
 	for unit, d in pairs(old_drives) do
 		if d.entity.valid and kinds()[d.entity.name] == "drive" then
@@ -3017,33 +3051,99 @@ function M.rebuild()
 		end
 	end
 	--- nodes without links first, then the links, then the components
-	for _, e in ipairs(all) do
-		local unit = e.unit_number
-		s.nodes[unit] = { entity = e, kind = kinds()[e.name], adj = {}, box = tile_box(e), surface = e.surface.index,
-			force = e.force.name, position = { x = e.position.x, y = e.position.y } }
-		if s.nodes[unit].kind == "underground" then s.nodes[unit].dir = e.direction end
-		if kinds()[e.name] == "drive" then drive_record(s, e) s.dirty[unit] = true end
+	local sizes, force_names = {}, {}
+	for _, unit in ipairs(units) do
+		local e = ents[unit]
+		local name, pos, dir, fi = e.name, e.position, e.direction, e.force_index
+		local size = sizes[name]
+		if not size then
+			local p = prototypes.entity[name]
+			size = { p.tile_width or 1, p.tile_height or 1 }
+			sizes[name] = size
+		end
+		local fname = force_names[fi]
+		if not fname then
+			fname = game.forces[fi].name
+			force_names[fi] = fname
+		end
+		local w, h = size[1], size[2]
+		if (dir == defines.direction.east or dir == defines.direction.west) and w ~= h then w, h = h, w end
+		local kind = kinds()[name]
+		local node = { entity = e, kind = kind, adj = {}, surface = surface_of[unit], force = fname,
+			box = { math.floor(pos.x - w / 2 + 0.5), math.floor(pos.y - h / 2 + 0.5),
+				math.floor(pos.x + w / 2 + 0.5), math.floor(pos.y + h / 2 + 0.5) },
+			position = { x = pos.x, y = pos.y }, li = #s.nlist + 1 }
+		s.nodes[unit] = node
+		s.nlist[#s.nlist + 1] = unit                       -- (`units` is sorted)
+		if kind == "underground" then node.dir = dir end
+		if kind == "drive" then drive_record(s, e) s.dirty[unit] = true end
 	end
-	for _, e in ipairs(all) do
-		local node = s.nodes[e.unit_number]
+	--- the neighbours: the members that touch a member's box along an edge, from a grid of the tiles the members cover (one table
+	--- per surface), not from an engine query per member (a query with the names of all members: 1.2 s at 20 000 members). The
+	--- same members the query found: those of the same force whose boxes share an edge of positive length, that connect.
+	local OFF, MUL = 2097152, 4194304
+	local grids = {}
+	for _, unit in ipairs(units) do
+		local node = s.nodes[unit]
+		local g = grids[node.surface]
+		if not g then
+			g = {}
+			grids[node.surface] = g
+		end
 		local b = node.box
-		for _, o in pairs(e.surface.find_entities_filtered{
-			area = { { b[1] - 0.5, b[2] - 0.5 }, { b[3] + 0.5, b[4] + 0.5 } }, name = names, force = e.force }) do
-			local other = o.unit_number ~= e.unit_number and s.nodes[o.unit_number]
-			if other and adjacent(b, other.box) and connects(node, other) then node.adj[o.unit_number] = true end
+		for tx = b[1], b[3] - 1 do
+			for ty = b[2], b[4] - 1 do
+				local key = (tx + OFF) * MUL + (ty + OFF)
+				local c = g[key]
+				if c == nil then g[key] = unit                 -- (a tile of one member holds its unit number, of several a list)
+				elseif type(c) == "number" then g[key] = { c, unit }
+				else c[#c + 1] = unit end
+			end
+		end
+	end
+	local function link(c, unit, node, b)
+		if type(c) == "number" then
+			if c ~= unit then
+				local other = s.nodes[c]
+				if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[c] = true end
+			end
+		else
+			for i = 1, #c do
+				local ou = c[i]
+				if ou ~= unit then
+					local other = s.nodes[ou]
+					if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[ou] = true end
+				end
+			end
+		end
+	end
+	for _, unit in ipairs(units) do
+		local node = s.nodes[unit]
+		local b, g = node.box, grids[node.surface]
+		local x1, y1, x2, y2 = b[1], b[2], b[3], b[4]
+		for ty = y1, y2 - 1 do                              -- the tiles beside the west and east edges
+			local c = g[(x1 - 1 + OFF) * MUL + (ty + OFF)]
+			if c then link(c, unit, node, b) end
+			c = g[(x2 + OFF) * MUL + (ty + OFF)]
+			if c then link(c, unit, node, b) end
+		end
+		for tx = x1, x2 - 1 do                              -- and above and below
+			local c = g[(tx + OFF) * MUL + (y1 - 1 + OFF)]
+			if c then link(c, unit, node, b) end
+			c = g[(tx + OFF) * MUL + (y2 + OFF)]
+			if c then link(c, unit, node, b) end
 		end
 	end
 	--- underground cables pair as the engine connected them
-	for _, e in ipairs(all) do
-		local node = s.nodes[e.unit_number]
+	for _, unit in ipairs(units) do
+		local node = s.nodes[unit]
 		if node.kind == "underground" and not node.partner then
 			local partner = find_partner(s, node)
 			if partner then link_pair(node, partner) end
 		end
 	end
 	local seen = {}
-	for _, e in ipairs(all) do
-		local unit = e.unit_number
+	for _, unit in ipairs(units) do
 		if not seen[unit] then
 			local node = s.nodes[unit]
 			local net = new_net(s, node.surface, node.force)
@@ -3235,6 +3335,19 @@ local function info(net)
 end
 
 remote.add_interface("gregtorio-me-network", {
+	--- tests: is the sweep list the members, each once, each node at its place? (true, or false and what is wrong)
+	sweep_list_ok = function()
+		local s = storage.fork_me_net
+		local list = s and s.nlist
+		if not list then return true end
+		local n = 0
+		for unit, node in pairs(s.nodes) do
+			n = n + 1
+			if list[node.li or 0] ~= unit then return false, "member " .. unit .. " is not at its place " .. tostring(node.li) end
+		end
+		if n ~= #list then return false, #list .. " in the list, " .. n .. " members" end
+		return true
+	end,
 	--- { ok, status, id, members, controllers, drives, cells, bytes, bytes_total, types, types_total, power } or nil
 	network = function(entity) return info(M.network_of(entity)) end,
 	same_network = function(a, b)
@@ -3326,6 +3439,7 @@ remote.add_interface("gregtorio-me-network", {
 		for _, unit in ipairs(units) do vanish(s, unit) end
 		return #units
 	end,
+	slow_step = function() M.slow_step() end,                  -- (tests: the sweep of the members runs from it)
 	version = function() return M.version() end,
 	cable_variation = function(cable) return cable.graphics_variation end,
 	--- what the rotation event does (entity.rotate raises none)

@@ -246,6 +246,13 @@ function me_graph_test()
 		expect(remote.call(NET, "sweep") == 1, "the sweep did not find the vanished cable")
 		expect(not same(a, d), "the drive is still connected through a vanished cable")
 		s.create_entity{ name = "me-cable", position = { GX + 10.5, GY - 0.5 }, force = "player", raise_built = true }
+		expect(remote.call(NET, "sweep_list_ok"), "the sweep list after the vanished cable and the new one")
+		--- the same through the slow step's sweep (issue #43: it walks a list that is kept as members come and go)
+		cable(10).destroy()
+		for _ = 1, 60 do remote.call(NET, "slow_step") end
+		expect(not same(a, d), "the slow step's sweep did not find the vanished cable")
+		expect(remote.call(NET, "sweep_list_ok"), "the sweep list after the slow step's sweep")
+		s.create_entity{ name = "me-cable", position = { GX + 10.5, GY - 0.5 }, force = "player", raise_built = true }
 		--- the router connects a drive 5 tiles below
 		local e = s.create_entity{ name = "me-drive", position = { GX + 12.5, GY + 4.5 }, force = "player", raise_built = true }
 		local placed, unreached = remote.call(NET, "connect", { a, e }, 8)
