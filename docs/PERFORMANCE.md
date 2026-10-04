@@ -1607,3 +1607,35 @@ of its 74 ticks over 5 ms lie in the first 200 ticks after the warm-up (the firs
 that it is one tick in 200 (0.3.0: 24 ticks in 7000, in no pattern).
 
 The next pull request therefore budgets a tick by the work of its visits and not by their count (below).
+
+### What was tried against the 99th percentile at 20 000, and did not help
+
+Each of these was built, tested with `devcheck.py runtime` and measured at 20 000 (quiet machine, three rounds in turns, medians,
+v0.3.0 as the reference: avg 2.70 to 2.78 ms, p99 5.6 to 5.75 ms, 65 to 87 ticks over 5 ms, 528 700 items/s, `pair` 95.0 %). None is in
+the pull request.
+
+* **A budget by work instead of the count of visits** (deterministic: each visit reports 80 units plus half a unit per item
+  it moved, counted; the busy visits above the floor stop once the work of the tick reaches a cap). Cap at 1500, 2200, 3000 and
+  5000 with the floor of 16 visits always done: avg 2.98 / 3.09 / 3.13 / 3.20 ms, p99 7.7 / 8.7 / 8.6 / 8.2 ms, ticks over 5 ms
+  283 / 273 / 285 / 390, items per second 515k / 545k / 557k / 600k, `pair` 92.6 / 95.2 / 97.3 / 98.6 %. With only one visit
+  guaranteed and the cap at 4500, 6000 and 8000: avg 2.70 / 2.88 / 3.26 ms, p99 8.2 / 8.5 / 8.5 ms, over 5 ms 374 / 408 / 460, items
+  per second 425k / 529k / 578k, `pair` 86.9 / 93.8 / 96.9 %. The work of a tick was bounded (maximum 5860 units at the cap of 4500, against
+  17 950 without it) and the 99th percentile did not move: the ticks over 5 ms are not the ticks with the most items.
+* **Where the ticks over 5 ms come from.** Removing one module at a time (20 000, busy): without the interfaces and buses
+  v0.3.0 is at 0.78 ms avg, p99 2.66 ms, 2 ticks over 5 ms, this branch at 0.92 ms, 3.69 ms, 23 (the load-following job steps, the
+  storage bus probes and the rest cost more than in 0.3.0); with only the interfaces and buses v0.3.0 is at 1.92 ms, p99 4.19 ms, 14
+  ticks, this branch at 2.25 ms, 7.27 ms, 115. A log of every visit between ticks 1000 and 1400 shows the cause: the correlation of
+  the tick's time with the items moved is -0.08 and with the number of visits 0.14, and the dearest ticks (8.4 to 10.6 ms against a
+  median of 4.4 ms) are runs of 24 interface visits that move no item, in the same stretch of ticks (1299 to 1388): **fluid
+  interfaces**, which cost about 0.19 ms more per visit than item interfaces (`insert_key` and the tank calls), come due together
+  (the same buffer and interval) and are served in a streak.
+* **Strided picks from the backlog** (every other visit of a tick from a deterministic position of the first 8192 entries, so
+  kinds mix): p99 8.54 to 8.0 ms, ticks over 5 ms 425 to 382, avg 3.49 to 3.60 ms. Less than the streaks suggest, and the average
+  rises: not worth the mechanism.
+* **Interface sides do not report starved arrivals** (the report was added with the learned share): p99 8.0 to 8.2 ms, no
+  difference.
+
+What is left is the price of the design: at 20 000 the busy list is a standing backlog, the visits that matter are dear (fluid
+interfaces), and the machines are served to their speed. Bringing the 99th percentile to 0.3.0's needs a cheaper fluid
+interface visit (the storage engine's `insert_key` and the tank handling), or fewer fluid interface visits for the same fluid
+(a larger buffer per visit), not a different order. That is a follow-up (a new issue), not a part of this pull request.
