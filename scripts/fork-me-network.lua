@@ -1533,15 +1533,36 @@ local function lookups(s, net)
 end
 
 --- the holders of `key`, sorted by cell id (by_rank false) or by their rank in the insertion order
-local function holders(net, c, key, by_rank)
-	local field = by_rank and "hr" or "hs"
+--- the comparators of the sorted lists are module-level (a closure per rebuild made garbage): the ranks of the
+--- network being sorted, and for the extraction order the priority, kind and partition of each cell, are in these
+--- tables while a sort runs
+local sort_at
+local XO_P, XO_E, XO_X = {}, {}, {}
+local function by_rank(a, b) return sort_at[a].rank < sort_at[b].rank end
+local function by_extraction(a, b)
+	local pa, pb = XO_P[a], XO_P[b]
+	if pa ~= pb then return pa < pb end
+	local ea, eb = XO_E[a], XO_E[b]
+	if ea ~= eb then return ea < eb end
+	local xa, xb = XO_X[a], XO_X[b]
+	if xa ~= xb then return xa < xb end
+	return a < b
+end
+
+local function holders(net, c, key, rank)
+	local field = rank and "hr" or "hs"
 	local l = c[field][key]
 	if l then return l end
 	l = {}
-	for cid in pairs(net.index[key] or EMPTY) do l[#l + 1] = cid end
-	if by_rank then
-		local at = c.at
-		table.sort(l, function(a, b) return at[a].rank < at[b].rank end)
+	local n = 0
+	for cid in pairs(net.index[key] or EMPTY) do
+		n = n + 1
+		l[n] = cid
+	end
+	if rank then
+		sort_at = c.at
+		table.sort(l, by_rank)
+		sort_at = nil
 	else
 		table.sort(l)
 	end
@@ -1812,19 +1833,19 @@ end
 local function extract_order(s, net, c, key)
 	local l = c.xs[key]
 	if l then return l end
-	local held = {}
+	l = {}
+	local n = 0
 	for cid in pairs(net.index[key] or EMPTY) do
 		local cell = net.cells[cid]
-		held[#held + 1] = { cid = cid, p = cell_priority(s, net, cid), part = cell.partition and 1 or 0, ext = cell.ext and 0 or 1 }
+		n = n + 1
+		l[n] = cid
+		XO_P[cid], XO_E[cid], XO_X[cid] = cell_priority(s, net, cid), cell.ext and 0 or 1, cell.partition and 1 or 0
 	end
-	table.sort(held, function(a, b)
-		if a.p ~= b.p then return a.p < b.p end
-		if a.ext ~= b.ext then return a.ext < b.ext end
-		if a.part ~= b.part then return a.part < b.part end
-		return a.cid < b.cid
-	end)
-	l = {}
-	for i, h in ipairs(held) do l[i] = h.cid end
+	table.sort(l, by_extraction)
+	for i = 1, n do
+		local cid = l[i]
+		XO_P[cid], XO_E[cid], XO_X[cid] = nil, nil, nil
+	end
 	c.xs[key] = l
 	return l
 end
