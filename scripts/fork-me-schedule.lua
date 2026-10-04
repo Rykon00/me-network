@@ -327,12 +327,13 @@ local function compact(l, field, headfield, head)
 end
 
 --- up to `budget` visits from the list `field` of `l` (`state`: the record state its entries carry); returns them
-local function drain(q, l, field, headfield, state, tick, budget, rec_of, visit, st, extra)
+local function drain(q, l, field, headfield, state, tick, budget, rec_of, visit, st, front0)
 	local back = l[field]
 	local head, n = l[headfield], #back
 	local done = 0
-	--- `extra`: units this drain put on another list (a probe that wakes its unit): they count against the budget too
-	while head <= n and done + (extra and extra() or 0) < budget do
+	--- `front0`: the length of the front list before this drain; what it grows by are units this drain woke (a probe that
+	--- finds work): they count against the budget too
+	while head <= n and done + (front0 and (#q.front - q.fhead + 1 - front0) or 0) < budget do
 		local unit = back[head]
 		back[head] = false
 		head = head + 1
@@ -380,9 +381,7 @@ function M.run(q, tick, floor, ceiling, rec_of, visit, probe, name)
 	local need = math.min(ceiling, waiting(q))
 	local pcap = math.max(math.ceil(floor / 2), floor - need)
 	if pcap > floor then pcap = floor end
-	local front0 = #q.front - q.fhead + 1
-	local function woken() return (#q.front - q.fhead + 1) - front0 end
-	local probed = drain(q, sl, "back", "head", BACKLOG, tick, pcap, rec_of, probe or visit, ss, woken)
+	local probed = drain(q, sl, "back", "head", BACKLOG, tick, pcap, rec_of, probe or visit, ss, #q.front - q.fhead + 1)
 	ss.visits = ss.visits + probed
 	local pleft = waiting(sl)
 	ss.back_sum = ss.back_sum + pleft
