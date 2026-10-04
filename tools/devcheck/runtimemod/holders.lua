@@ -67,13 +67,18 @@ return function(H)
 				local before = holders(ctrl, IRON)
 				expect(before[cid1] ~= nil and next(before, next(before)) ~= nil, "plain: iron is not in several cells " .. serpent.line(before))
 				expect(remote.call(NET, "insert", ctrl, IRON, 100) == 0, "plain: a full network took iron")
+				expect(remote.call(NET, "can_insert", ctrl, IRON, 100) == 0, "plain: a full network has room for iron")
 				--- 500 iron out of the first cell: the next insert goes there
 				expect(remote.call(NET, "extract", ctrl, IRON, 500) == 500, "plain: extract 500")
 				local mid = holders(ctrl, IRON)
+				local room = remote.call(NET, "can_insert", ctrl, IRON, 100000)
+				expect(room >= 500 and room < 600, "plain: room after the 500 left is " .. room)
 				expect(mid[cid1] == before[cid1] - 500, "plain: the first cell lost the 500: " .. serpent.line(mid))
 				expect(remote.call(NET, "insert", ctrl, IRON, 300) == 300, "plain: insert 300")
 				local after = holders(ctrl, IRON)
 				expect(after[cid1] == mid[cid1] + 300, "plain: the 300 did not go to the first cell: " .. serpent.line(after))
+				local room2 = remote.call(NET, "can_insert", ctrl, IRON, 100000)
+				expect(room2 >= room - 300 and room2 < room - 200, "plain: room after the 300 came back is " .. room2 .. ", was " .. room)
 				--- freed room again and again
 				for i = 1, 5 do
 					expect(remote.call(NET, "extract", ctrl, IRON, 40) == 40, "plain: extract 40, round " .. i)
@@ -106,6 +111,7 @@ return function(H)
 				for cid, n in pairs(full) do if cid:match("^" .. d1.unit_number .. ":") then low_total = low_total + n end end
 				expect(remote.call(NET, "extract", ctrl, IRON, low_total + 700) == low_total + 700, "ranked: extract")
 				local mid = holders(ctrl, IRON)
+				expect(remote.call(NET, "can_insert", ctrl, IRON, 1e7) >= low_total + 700, "ranked: room after the extraction")
 				--- the high priority drive is filled first: 600 go to its first cell with room, the rest to the low one
 				expect(remote.call(NET, "insert", ctrl, IRON, 600) == 600, "ranked: insert 600")
 				local after = holders(ctrl, IRON)
