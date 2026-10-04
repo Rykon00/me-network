@@ -545,7 +545,8 @@ end
 local FLUID_PREFIX = "fluid/"       -- keys of fluids: "fluid/<name>" (the resource keys of autocrafting)
 local ZERO = 1e-6                   -- fluid amounts are fixed point: below this an amount counts as nothing
 
-local function is_fluid_key(key) return key:sub(1, #FLUID_PREFIX) == FLUID_PREFIX end
+local FLUID_FIRST = FLUID_PREFIX:byte(1)
+local function is_fluid_key(key) return key:byte(1) == FLUID_FIRST and key:sub(1, #FLUID_PREFIX) == FLUID_PREFIX end   -- (no substring for the usual item)
 local function fluid_cell(spec) return spec.kind == "fluid" end
 M.is_fluid_key = is_fluid_key
 

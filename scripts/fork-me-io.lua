@@ -117,6 +117,7 @@ local function wake(unit)
 	local s = storage.fork_me_io
 	local rec = s and s.recs[unit]
 	if not rec then return end
+	rec.sidle = nil
 	if rec.park then
 		rec.last, rec.left = nil, nil                         -- (parked: how long it could have moved is unknown)
 	elseif rec.sq then
@@ -148,6 +149,24 @@ local function stack_of(name)
 		local proto = prototypes.item[name]
 		v = proto and proto.stack_size or 50
 		stack_cache[name] = v
+	end
+	return v
+end
+
+--- Scratch tables (issue #38, lever 4): the API copies the arguments of a call, so one table serves every call of its
+--- kind; the visits make no garbage for them. Never kept across a call that could use them again.
+local KEPT = {}                                      -- interface_step: the keys of the rows
+local INFO = {}                                      -- bus_step: what the parts of a visit report
+local Q_COUNT = { name = "", quality = "normal" }    -- inv.get_item_count
+local Q_REMOVE = { name = "", quality = "normal", count = 0 }   -- inv.remove
+
+--- does the item exist? (cached per load: prototypes.item is an engine call)
+local item_cache = {}
+local function item_known(name)
+	local v = item_cache[name]
+	if v == nil then
+		v = prototypes.item[name] ~= nil
+		item_cache[name] = v
 	end
 	return v
 end
@@ -358,6 +377,7 @@ end
 
 --- does any side keep a fluid? (cached in rec.exporting: idle interfaces skip their sides)
 local function refresh_exporting(rec)
+	rec.sidle = nil
 	local any = false
 	for d = 1, #SIDES do
 		if type((rec.sides or {})[d]) == "number" then any = true end
@@ -385,6 +405,7 @@ end
 
 --- rec.fconn: is anything connected to a side? (an idle interface without connections looks at its sides rarely)
 local function refresh_connections(rec)
+	rec.sidle = nil
 	local any = false
 	for _, t in pairs(rec.tanks or {}) do
 		if t.valid and #t.fluidbox.get_connections(1) > 0 then any = true break end
@@ -492,8 +513,10 @@ end
 --- whose fluid the network lacks waits for it: N.wait_for). `short`: the shortfalls of this visit (issue #17), nil
 --- while priorities are not in use.
 local function interface_sides(rec, net, config, short, dt)
+	if rec.sidle then return 0, math.huge end           -- nothing connected, nothing exported, nothing in the tanks (see the end)
 	local tanks = ensure_tanks(rec)
 	if not tanks then return 0, math.huge end
+	local anyheld, sstarved = false, false
 	local moved, time = 0, math.huge
 	dt = dt or STEP_TICKS
 	local sides = rec.sides or {}
@@ -505,10 +528,12 @@ local function interface_sides(rec, net, config, short, dt)
 		local setting = sides[d]
 		local held = t.fluidbox[1]
 		if held and held.amount <= EPS then held = nil end
+		if held then anyheld = true end
 		if setting == "off" then
 			fstatus[d] = "off"
 		elseif type(setting) == "number" and is_fluid_row(config[setting]) then
 			local key = FLUID_PREFIX .. config[setting].name
+			if not held then sstarved = true end                      -- the side's tank had run out
 			local why, n, lack = export_side(t, held, config[setting], net, short and (rec.priority or 0))
 			fstatus[d] = why
 			moved = moved + n
@@ -532,6 +557,7 @@ local function interface_sides(rec, net, config, short, dt)
 			if id and exports[id] then
 				fstatus[d] = "loop"
 			else
+				if held.amount >= volume() - EPS then sstarved = true end   -- the side's tank was full
 				local n, why = tank_to_network(t, held, net)
 				fstatus[d] = why
 				moved = moved + n
@@ -547,7 +573,10 @@ local function interface_sides(rec, net, config, short, dt)
 			fstatus[d] = "import"
 		end
 	end
-	return moved, time
+	--- no pipe or pump at a side (rec.fconn, kept by M.wake_near and ensure_tanks), no row that exports, nothing in the
+	--- tanks: the next passes would find the same; a wake, a connection or a changed row looks again (rec.sidle = nil)
+	if not (anyheld or rec.fconn or rec.exporting) then rec.sidle = true end
+	return moved, time, sstarved
 end
 
 --- One visit: every configured item is kept at its amount (filled from the network, the surplus taken back),
@@ -570,7 +599,10 @@ function M.interface_step(rec, dt)
 	local max_ops = math.max(IFACE_SLOTS_PER_VISIT, math.floor(IFACE_SLOTS_PER_VISIT * ticks / STEP_TICKS))
 	local inv = e.get_inventory(defines.inventory.chest)
 	local ops, moved = 0, 0
-	local kept = {}
+	local kept = KEPT
+	if next(kept) then
+		for k in pairs(kept) do kept[k] = nil end
+	end
 	--- issue #17: priorities in use somewhere on the map (else nothing is reserved or registered: 0.3.0's visit)
 	local s = storage.fork_me_io
 	local short = ((s.prio and next(s.prio)) or rec.short) and {} or nil
@@ -584,10 +616,15 @@ function M.interface_step(rec, dt)
 	end
 	for i = 1, CONFIG_SLOTS do
 		local c = config[i]
-		if c and not is_fluid_row(c) then
-			local key = N.key_of(c.name, c.quality)
+		if c and c.type ~= "fluid" then
+			local key = c.key
+			if not key then
+				key = N.key_of(c.name, c.quality)
+				c.key = key
+			end
 			kept[key] = true
-			local have = inv.get_item_count{ name = c.name, quality = c.quality }
+			Q_COUNT.name, Q_COUNT.quality = c.name, c.quality
+			local have = inv.get_item_count(Q_COUNT)
 			if have < c.amount then
 				local want = c.amount - have
 				if short then want = math.min(want, math.max(0, N.count_key(net, key) - reserved(net, key, p))) end
@@ -606,7 +643,11 @@ function M.interface_step(rec, dt)
 				rows[i] = after
 			elseif have > c.amount then
 				local can = N.can_insert(net, c.name, c.quality, have - c.amount)
-				local taken = can > 0 and inv.remove{ name = c.name, quality = c.quality, count = can } or 0
+				local taken = 0
+				if can > 0 then
+					Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, c.quality, can
+					taken = inv.remove(Q_REMOVE)
+				end
 				if taken > 0 then
 					local stored = N.insert(net, c.name, c.quality, taken)
 					if stored < taken then inv.insert{ name = c.name, quality = c.quality, count = taken - stored } end
@@ -620,10 +661,22 @@ function M.interface_step(rec, dt)
 			end
 		end
 	end
-	local start = rec.slot or 1
 	local size = #inv
 	local imported, free, isize = 0, 0, nil
-	for k = 0, size - 1 do
+	--- the walk over the slots only when something lies in the inventory that no row keeps (an interface whose rows
+	--- hold what they hold, or that holds nothing, has nothing to import)
+	local walk = false
+	if not inv.is_empty() then
+		for _, c in pairs(inv.get_contents()) do
+			local q = c.quality
+			if not kept[(q == nil or q == "normal") and c.name or N.key_of(c.name, q)] then
+				walk = true
+				break
+			end
+		end
+	end
+	local start = rec.slot or 1
+	for k = 0, walk and size - 1 or -1 do
 		if ops >= max_ops then rec.slot = (start - 1 + k) % size + 1 break end
 		local i = (start - 1 + k) % size + 1
 		local stack = inv[i]
@@ -647,14 +700,14 @@ function M.interface_step(rec, dt)
 		local tt = math.max(free, 1) * (isize or 50) * ticks / imported      -- (the stack size of what came in)
 		if tt < time then time = tt end
 	end
-	local fmoved, ftime = interface_sides(rec, net, config, short, ticks)
+	local fmoved, ftime, sstarved = interface_sides(rec, net, config, short, ticks)
 	moved = moved + fmoved
 	if ftime < time then time = ftime end
 	if short then sync_short(rec, net, next(short) and short or nil) end
 	rec.status = "ok"
 	local full = ops >= max_ops
 	if moved <= 0 then return 0, false, nil, "idle", false, net end
-	return moved, full, Sched.headroom(time, full, MIN_INTERVAL, MAX_CATCH_UP), nil, starved, net
+	return moved, full, Sched.headroom(time, full, MIN_INTERVAL, MAX_CATCH_UP, rec.sh), nil, starved or sstarved, net
 end
 
 --- the interface's priority (issue #17; -1000 ... 1000, default 0)
@@ -902,14 +955,18 @@ end
 local by_count_cache = {}
 --- Items the import bus moves by count (issue #5): plain items that cannot be damaged, spoil or carry data, so
 --- every stack of them is the same and the network takes them by name (one check per item type, not per stack).
---- Decided per prototype and quality, cached per load.
+--- Decided per prototype and quality, cached per load (by quality, then name: no string is built per call).
 local function by_count(name, quality)
-	local k = name .. "@" .. quality
-	local v = by_count_cache[k]
+	local byq = by_count_cache[quality]
+	if not byq then
+		byq = {}
+		by_count_cache[quality] = byq
+	end
+	local v = byq[name]
 	if v == nil then
 		local p = prototypes.item[name]
 		v = p ~= nil and p.type == "item" and not p.place_result and p.get_spoil_ticks(quality) <= 0
-		by_count_cache[k] = v
+		byq[name] = v
 	end
 	return v
 end
@@ -931,7 +988,8 @@ local function import_items(rec, net, t, cap, info)
 			if moved < cap then
 				local q = c.quality or "normal"
 				if by_count(c.name, q) then
-					local removed = inv.remove{ name = c.name, quality = q, count = math.min(c.count, cap - moved) }
+					Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, q, math.min(c.count, cap - moved)
+					local removed = inv.remove(Q_REMOVE)
 					if removed > 0 then
 						local stored = N.insert(net, c.name, q, removed)
 						if stored < removed then                  -- the network is full: the rest goes back
@@ -985,7 +1043,7 @@ local function export_items(rec, net, t, cap, info)
 	end
 	local dt = info.dt or STEP_TICKS
 	for _, name in ipairs(rec.filters) do
-		if prototypes.item[name] then
+		if item_known(name) then
 			local have = inv.get_item_count(name)
 			local prev = tgt[name]
 			if prev and prev > 0 and have == 0 then info.starved = true end
@@ -994,7 +1052,7 @@ local function export_items(rec, net, t, cap, info)
 			if machine then want = math.min(want, stack_of(name) - have) end
 			local got = 0
 			if want > 0 then
-				local key = N.key_of(name, "normal")
+				local key = name                                  -- (the key of a plain item of normal quality)
 				got = N.extract_to(net, inv, key, want)
 				if got <= 0 then
 					if N.count_key(net, key) <= 0 then
@@ -1127,7 +1185,9 @@ function M.bus_step(rec, dt)
 	local fcap = Sched.setting("bus_fluid") * ticks / 60
 	local import = IMPORTS[rec.kind]
 	local items, fluid = 0, 0
-	local info = { time = math.huge, dt = ticks }
+	local info = INFO
+	info.time, info.dt = math.huge, ticks
+	info.held, info.main, info.slots, info.netfull, info.nokey, info.blocked, info.starved = nil, nil, nil, nil, nil, nil, nil
 	local has_items = rec.t_inv and (rec.all or #rec.filters > 0)
 	local has_fluid = rec.t_fluid and (rec.all or #rec.ffilters > 0)
 	if has_items then
@@ -1169,7 +1229,7 @@ function M.bus_step(rec, dt)
 			if tt < info.time then info.time = tt end
 		end
 	end
-	return moved, full, Sched.headroom(info.time, full, MIN_INTERVAL, MAX_CATCH_UP), nil, info.starved or false, net
+	return moved, full, Sched.headroom(info.time, full, MIN_INTERVAL, MAX_CATCH_UP, rec.sh), nil, info.starved or false, net
 end
 
 --- Set the filters: a list of keys (item name, "fluid/<name>"; a plain name that is no item but a fluid is that
@@ -1253,7 +1313,7 @@ local function probe_mark(rec)
 	local e = rec.entity
 	if rec.kind == "interface" then
 		local n = e.get_inventory(defines.inventory.chest).get_item_count()
-		local tanks = rec.tanks
+		local tanks = not rec.sidle and rec.tanks
 		if tanks then
 			local sides = rec.sides or {}
 			for d = 1, #SIDES do
@@ -1353,6 +1413,7 @@ local function visit(rec, unit, fallback)
 	end
 	rec.starve = starved or nil
 	if starved then Sched.starved("io") end
+	if not block then Sched.learn(rec, starved) end
 	if fallback and moved > 0 then Sched.missed("io") end            -- (a parked block that finds work: its wake was missed)
 	if block then
 		local was = rec.block
@@ -1394,6 +1455,7 @@ local function probe(rec, unit)
 		return visit(rec, unit, true)
 	end
 	if probe_work(rec) then
+		rec.sidle = nil
 		rec.last, rec.left = math.max(rec.last or 0, game.tick - idle_limit(s)), nil   -- (as a sleeper of 0.3.0)
 		Sched.wake(s.q, rec, unit)
 		return 1

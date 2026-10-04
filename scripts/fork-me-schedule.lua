@@ -327,12 +327,13 @@ local function compact(l, field, headfield, head)
 end
 
 --- up to `budget` visits from the list `field` of `l` (`state`: the record state its entries carry); returns them
-local function drain(q, l, field, headfield, state, tick, budget, rec_of, visit, st, extra)
+local function drain(q, l, field, headfield, state, tick, budget, rec_of, visit, st, front0)
 	local back = l[field]
 	local head, n = l[headfield], #back
 	local done = 0
-	--- `extra`: units this drain put on another list (a probe that wakes its unit): they count against the budget too
-	while head <= n and done + (extra and extra() or 0) < budget do
+	--- `front0`: the length of the front list before this drain; what it grows by are units this drain woke (a probe that
+	--- finds work): they count against the budget too
+	while head <= n and done + (front0 and (#q.front - q.fhead + 1 - front0) or 0) < budget do
 		local unit = back[head]
 		back[head] = false
 		head = head + 1
@@ -380,9 +381,7 @@ function M.run(q, tick, floor, ceiling, rec_of, visit, probe, name)
 	local need = math.min(ceiling, waiting(q))
 	local pcap = math.max(math.ceil(floor / 2), floor - need)
 	if pcap > floor then pcap = floor end
-	local front0 = #q.front - q.fhead + 1
-	local function woken() return (#q.front - q.fhead + 1) - front0 end
-	local probed = drain(q, sl, "back", "head", BACKLOG, tick, pcap, rec_of, probe or visit, ss, woken)
+	local probed = drain(q, sl, "back", "head", BACKLOG, tick, pcap, rec_of, probe or visit, ss, #q.front - q.fhead + 1)
 	ss.visits = ss.visits + probed
 	local pleft = waiting(sl)
 	ss.back_sum = ss.back_sum + pleft
@@ -449,11 +448,27 @@ end
 --- The next visit from the headroom on the other side (issue #38): `time` is the ticks until the buffer there runs
 --- full or empty at the rate this visit saw (math.huge when nothing moves), `full` whether the block moved all its
 --- speed allowed (then the catch-up covers the wait and the headroom time itself is the interval, else about half
---- of it, so the visit comes before the buffer runs out). Between `min` and `max` ticks.
+--- of it, so the visit comes before the buffer runs out; `share`: the block's own share, learned by M.learn). Between
+--- `min` and `max` ticks.
+--- The share a block waits, learned from what its visits find (issue #38, lever 3): it starts at half of the headroom
+--- time, grows by SHARE_STEP after every visit that found its other side served (up to SHARE_MAX) and falls back to
+--- half at once after a visit that arrived at an empty target or a full source. Fewer visits for a steady buffer, the
+--- margin back as soon as the buffer was too tight. State of the record (`rec.sh`), the same on every peer.
+function M.learn(rec, starved)
+	local sh = rec.sh or M.SHARE_MIN
+	if starved then
+		rec.sh = M.SHARE_MIN
+	elseif sh < M.SHARE_MAX then
+		rec.sh = math.min(M.SHARE_MAX, sh + M.SHARE_STEP)
+	end
+end
+
+--- (the headroom rule itself)
 local HEADROOM_SHARE = 0.5
-function M.headroom(time, full, min, max)
+M.SHARE_MIN, M.SHARE_MAX, M.SHARE_STEP = HEADROOM_SHARE, 0.85, 0.05
+function M.headroom(time, full, min, max, share)
 	if not time or time ~= time or time >= max then return max end
-	local t = full and time or time * HEADROOM_SHARE
+	local t = full and time or time * (share or HEADROOM_SHARE)
 	if t > max then return max end
 	if t < min then return min end
 	return math.floor(t)

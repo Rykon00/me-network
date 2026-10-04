@@ -1536,3 +1536,107 @@ the scheduler's counters are equal to the digit, the script time differs by the 
 `bench --profile ... --alloc` also prints the memory every wrapped function allocates (KB per tick, per call; the collector is
 stopped in the window: use `--ticks 600`), the wake counter is in the scheduler's snapshot, and the service report shows the
 heap alive after a collection (`mod heap alive kB`, report only, not a pass/fail metric).
+
+## Pull request 4 (issue #38): the visit itself and the garbage, lever 3 with 4, first part
+
+What a visit does that it need not, and the tables it builds for nothing. No change of what is moved, to whom, in which
+order: the conservation, priority, filter and card tests and the 21 parking cases are unchanged and pass.
+
+### What was changed
+
+* **An interface with nothing at its sides** (no pipe or pump connected, no row that exports a fluid, nothing in its tanks) does
+  not look at the sides again until a wake, a new connection or a changed row (`rec.sidle`); its probe skips the tanks too.
+* **The walk over the slots** of the chest runs only when something lies in the inventory that no row keeps (one
+  `get_contents` call decides): an interface whose rows hold what they hold, or that is empty, has nothing to import.
+* **Scratch tables** for what a visit built per call: the keys of the rows, the info of a bus visit, the arguments of
+  `get_item_count` and `remove` (the API copies the arguments); `by_count` cached by quality, then name (no string built per
+  call), `prototypes.item` checked once per name, the key of a row cached on the row, the drain budget without a closure per
+  run, `is_fluid_key` without a substring for the usual item.
+* **The share of the headroom a block waits is learned per block** (separate commit, can be dropped): it starts at half of the
+  time the other side's buffer lasts, grows by 0.05 after every visit that found its other side served (up to 0.85) and is back
+  at half at once after a visit that arrived at an empty target or a full source; an interface counts the tanks of its sides
+  too (a side that had run out, a side's tank that was full). It is the record's state (`rec.sh`), the same on every peer.
+  Only blocks with a long headroom (below 600 ticks it is clamped) can use it.
+* The profile wrap list covers the storage engine (`insert_key`, `put`, `cell_room`, ...).
+
+### `bench --check v0.3.0` (quiet machine, game closed, in turns, medians; 5000: five rounds, 20 000: three)
+
+| N = 5000 | v0.3.0 | pull request 2 | this pull request | without the learned share |
+|---|---|---|---|---|
+| script avg (ms) | 1.261 / 1.247 | 1.352 | **1.245 / 1.223** | 1.277 |
+| script p99 (ms) | 3.271 / 3.153 | 3.655 | 3.577 / 3.435 | 3.496 |
+| ticks over 5 ms | 9 | 14 | 11 / 12 | 12 |
+| gc avg (ms) | 0.085 / 0.079 | 0.091 | 0.081 / 0.073 | 0.078 |
+| items per second | 166 700 | 165 800 | 165 800 | 165 700 |
+| `pair` machines (%) | 100 | 100 | 100 | 100 |
+| io visits per tick | | 9.61 | 8.86 | 9.67 |
+
+(two numbers in a cell: the two series of the day, the second with the learned share against the variant without it.)
+
+| N = 20 000 | v0.3.0 | pull request 2 | this pull request |
+|---|---|---|---|
+| script avg (ms) | 2.839 | 3.838 | 3.678 |
+| script p99 (ms) | 5.787 | 8.384 | 8.824 |
+| ticks over 5 ms | 103 | 573 | 524 |
+| gc avg (ms) | 0.066 | 0.103 | 0.095 |
+| items per second | 528 700 | 641 500 | 638 400 |
+| `pair` machines (%) | 95.0 | 99.99 | 99.7 |
+| idle network, script avg (ms) | 1.207 | 1.252 | **1.166** |
+| idle network, p99 (ms) / ticks over 5 ms | 3.73 / 13 | 6.51 / 77 | 6.21 / 76 |
+
+The learned share is worth 4 % at 5000 (1.277 to 1.223 ms) and nothing measurable at 20 000, where every block is already
+late. It costs starved arrivals: 4277 against 3428 (the interfaces' sides now report them).
+
+### Where the acceptance of lever 3 is not met, and why
+
+The acceptance (`bench --check v0.3.0` green on average, 99th percentile and ticks over 5 ms at 5000 and 20 000, the average at
+5000 clearly below 0.3.0, the idle network at 20 000 not above it, garbage at 20 000 at the level of 0.3.0, burst removal not
+above 0.3.0) is **met for the idle network (1.166 against 1.207 ms) and the burst (pull request 3, 778 against 1554 ms)**. It is
+**not met** for the rest:
+
+* at 5000 the average is 1 to 2 % below 0.3.0, not clearly below; the 99th percentile is 9 % above (3.4 against 3.15 to 3.27).
+* at 20 000 the average is 30 % above (3.68 against 2.84 ms), the 99th percentile 52 % above, the ticks over 5 ms five times, the
+  garbage 44 %; the network moves 21 % more items and the machines run at their speed (95 to 99.7 %).
+
+What the visit costs is mostly the work: at 5000 the profile (`io.visit` 175 µs per call in the profiled run) is dominated by the
+storage engine (`insert_key` 83 µs per call, 8 calls per tick), which moves items, not by the Lua around it. The visit count
+per tick at 20 000 is 24.5 (16 in 0.3.0), because the busy list is a standing backlog (6500 blocks late on average) and every
+tick runs at the ceiling of 32 less the probes. The 99th percentile and the ticks over 5 ms follow from that: 32 visits of
+about 190 µs are over 5 ms before the rest of the script. The per-tick spikes of the idle network at 20 000 are the start: 48
+of its 74 ticks over 5 ms lie in the first 200 ticks after the warm-up (the first visit of 7764 blocks at the ceiling); after
+that it is one tick in 200 (0.3.0: 24 ticks in 7000, in no pattern).
+
+The next pull request therefore budgets a tick by the work of its visits and not by their count (below).
+
+### What was tried against the 99th percentile at 20 000, and did not help
+
+Each of these was built, tested with `devcheck.py runtime` and measured at 20 000 (quiet machine, three rounds in turns, medians,
+v0.3.0 as the reference: avg 2.70 to 2.78 ms, p99 5.6 to 5.75 ms, 65 to 87 ticks over 5 ms, 528 700 items/s, `pair` 95.0 %). None is in
+the pull request.
+
+* **A budget by work instead of the count of visits** (deterministic: each visit reports 80 units plus half a unit per item
+  it moved, counted; the busy visits above the floor stop once the work of the tick reaches a cap). Cap at 1500, 2200, 3000 and
+  5000 with the floor of 16 visits always done: avg 2.98 / 3.09 / 3.13 / 3.20 ms, p99 7.7 / 8.7 / 8.6 / 8.2 ms, ticks over 5 ms
+  283 / 273 / 285 / 390, items per second 515k / 545k / 557k / 600k, `pair` 92.6 / 95.2 / 97.3 / 98.6 %. With only one visit
+  guaranteed and the cap at 4500, 6000 and 8000: avg 2.70 / 2.88 / 3.26 ms, p99 8.2 / 8.5 / 8.5 ms, over 5 ms 374 / 408 / 460, items
+  per second 425k / 529k / 578k, `pair` 86.9 / 93.8 / 96.9 %. The work of a tick was bounded (maximum 5860 units at the cap of 4500, against
+  17 950 without it) and the 99th percentile did not move: the ticks over 5 ms are not the ticks with the most items.
+* **Where the ticks over 5 ms come from.** Removing one module at a time (20 000, busy): without the interfaces and buses
+  v0.3.0 is at 0.78 ms avg, p99 2.66 ms, 2 ticks over 5 ms, this branch at 0.92 ms, 3.69 ms, 23 (what is not I/O costs more here too: job steps, storage bus probes and the
+  rest; not split further); with only the interfaces and buses v0.3.0 is at 1.92 ms, p99 4.19 ms, 14
+  ticks, this branch at 2.25 ms, 7.27 ms, 115. A log of every visit between ticks 1000 and 1400 shows the cause: the correlation of
+  the tick's time with the items moved is -0.08 and with the number of visits 0.14, and the dearest ticks (8.4 to 10.6 ms against a
+  median of 4.4 ms) are runs of 24 interface visits that move no item, in the same stretch of ticks (1299 to 1388): **fluid
+  interfaces**, which cost about 0.19 ms more per visit than item interfaces (a regression of the tick time on the kinds of its
+  visits; the fluid side's tank and storage calls are the likely part, not profiled per visit), come due together
+  (the same buffer and interval) and are served in a streak.
+* **Strided picks from the backlog** (every other visit of a tick from a deterministic position of the first 8192 entries, so
+  kinds mix): p99 8.54 to 8.0 ms, ticks over 5 ms 425 to 382, avg 3.49 to 3.60 ms. Less than the streaks suggest, and the average
+  rises: not worth the mechanism.
+* **Interface sides do not report starved arrivals** (the report was added with the learned share): p99 8.0 to 8.2 ms, no
+  difference.
+
+What is left is the price of the design: at 20 000 the busy list is a standing backlog, the visits that matter are dear (fluid
+interfaces), and the machines are served to their speed. Bringing the 99th percentile to 0.3.0's needs a cheaper fluid
+interface visit (to be profiled per visit first), or fewer fluid interface visits for the same fluid
+(a larger buffer per visit), not a different order. That is a follow-up (a new issue), not a part of this pull request.
