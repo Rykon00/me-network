@@ -65,6 +65,19 @@
 - **Changelog:** every change to the game adds its player-facing lines to the topmost section of `changelog.txt` (the
   next version, no `Date:` line yet). Do not change `version` in `info.json` and do not add a `Date:`; that is the
   release pull request into `upstream/release`.
+- **Applied Energistics 2 as a reference:** a checkout of AE2 (https://github.com/AppliedEnergistics/Applied-Energistics-2)
+  may lie next to this one (`..\Applied-Energistics-2` on the maintainer's machine). It is read-only: never a worktree,
+  never the target of a junction, nothing of it is committed here; if it is missing, say so in your report and go on.
+  Its code is LGPL-3.0 (its API MIT), which GPLv3 can take in. Read it when a design question is open (the storage
+  lists, the crafting calculation, the tick management); when a function here is a port of AE2's, say so in a comment
+  at the function (`ported from Applied Energistics 2, <its path>, LGPL-3.0, (c) AlgorithmX2 et al.`) and name the file
+  in the "License" section of `README.md`. Its textures, models and sounds are CC BY-NC-SA 3.0: never copied, traced or
+  given to `tools/gen_ae2_sprites.py`. AE2 is Java on Minecraft, so a port is written anew for Lua and the Factorio
+  API, tested and measured like any other change; "AE2 does it this way" is no reason by itself, the number is.
+  Next to it on that machine, read-only in the same way: `..\Applied-Energistics-2-Unofficial` (GTNewHorizons' fork of
+  AE2, the one GT New Horizons plays; where it differs from AE2 and Gregtorio is concerned, it is the one to follow;
+  read its own license notes before porting from it), `..\GT5-Unofficial` (what `--gt` takes) and
+  `..\GT-New-Horizons-Modpack` (the pack's configs and scripts).
 - Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`, `--r2`,
   `--patterns` and the other switches for parts, see its docstring).
 - **Issues and the board:** every open issue of this repository and of its sister repository is on the project board

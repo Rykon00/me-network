@@ -85,3 +85,7 @@ shapes drawn with Pillow; the ME cable, the drive's cell bays, the bus plates an
 drawn by the script or derived from those sprites, and `thumbnail.png` is put together from them (a drive and a
 terminal). Some item icons come from the original Gregtorio by Damien Reave (GPLv3). No
 textures of Applied Energistics 2 are used (its assets are not under a license compatible with GPLv3).
+
+The network follows the design of [Applied Energistics 2](https://github.com/AppliedEnergistics/Applied-Energistics-2)
+(code LGPL-3.0, © 2013 - 2020 AlgorithmX2 et al.). Its rules and ideas are written anew here for Factorio; where a
+function is a port of AE2's code, a comment at the function names the source. Files with ported code: none so far.
