@@ -1169,7 +1169,8 @@ blocks; after: this change.
 
 ### Windows
 
-One window per unified block, with `signal` choosers (items and fluids): the interface (rows with item or fluid and
+One window per unified block, with key buttons that open the picker of issue #70 (items and fluids; they were `signal`
+choosers before it): the interface (rows with item or fluid and
 amount, a drop-down per side, the container's content, the sides' fluid), the bus (9 mixed filters, target, status) and
 the storage bus (mode, priority, 18 mixed filters, what it shows: items or the segment's fluid and temperature). The
 fluid windows are removed; the old entities are replaced on load, so none of them can be opened.
@@ -1625,11 +1626,25 @@ the close that comes after it is ignored. Neither order needs anything in `stora
 tags. Whether the game fires both in the same tick and in which order is only known in the game: that is the first thing
 the `[Task-Ingame]` issue checks.
 
-The buses' filter buttons, the ME Interface's rows and the terminal's pattern editor keep the signal chooser (the pull
-request of #69 is the workbench only). To give them the same treatment each button would need the same kind switch next to it (a bus has up to 5 filters,
-an interface rows with an amount each) and `key_of_signal_q` would no longer be needed there; the interface empties a row
-today by choosing a virtual signal, which a filtered chooser could not do, so a row would need its own clear button (or
-the right click of the chooser, which empties an item or fluid chooser as well). Issue #70 tracks the decision.
+**The picker everywhere a window chooses an item or a fluid (issue #70).** The signal chooser (`elem_type = "signal"`) was
+the filter button of the buses and the storage bus, the row button of the ME Interface, the target of the level
+maintainer, the filter button of the circuit interface and the row button of the pattern editor. None of them can use a
+virtual signal, and the chooser cannot be filtered (above), so each is a key button now (`G.key_button`: the item with
+its quality badge, the game's tooltip and a hint, or a fluid's name) that opens the picker. A left click opens it with the
+slot's key chosen (`Picker.preset_of`), a right click empties the slot; this replaces "a virtual signal clears the row" of
+the interface. The choice comes back as `{ kind, name, quality }` through `Picker.on_confirm(act, fn)` (the acts
+`if_item`, `bus_filter`, `sbus_filter`, `maint_target`, `circ_filter`, `pat_row`; the data is the block's unit number
+and the slot's index, or the editor row's `which` and `index`) and `Picker.key_of(choice, with_quality)` makes the key: an
+item with quality (`name@quality`) where the place takes one (the interface rows and the storage bus filters), else the
+plain name (the bus filters, the maintainer's target, the circuit interface's filters and the pattern rows: their setters
+take plain names only, as the chooser gave them before), a fluid as `fluid/<name>`. A choice that is nothing of that
+(an unknown name or quality) is refused with a message and nothing changes (`M.set_interface_choice` for the interface).
+The picker has the option `quality = false` for those places: no quality row, the choice has none. The helpers of the
+signal chooser (`signal_of_key`, `key_of_signal_q`, `signal_chooser`, the terminal's copy) and the remote
+`set_interface_signal` and `key_of_signal` are gone; the remote interface has `set_interface_choice` and `key_of_choice`.
+Still a signal chooser: the circuit condition's signal of the level maintainer, which is a real circuit signal. Still a
+plain `choose-elem-button` without a quality row: the partition buttons of a cell's own window (drive window, the
+terminal's Cells tab), which are item-with-quality or fluid pickers and take no virtual signal.
 
 The cards are a list in the tags (no gaps: tags keep none; a card taken out closes up the list). The cell window
 (drive window, terminal's Cells tab) keeps its partition buttons, so nothing a player uses goes away; it

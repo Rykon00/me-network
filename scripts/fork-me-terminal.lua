@@ -34,6 +34,7 @@ local N = require("scripts.fork-me-network")
 local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
 local P = require("scripts.fork-me-patterns")
+local picker = require("scripts.fork-me-picker")
 
 local M = {}
 
@@ -825,30 +826,12 @@ local function refresh_cells(st, frame, net)
 	end
 end
 
---- a signal chooser for an item or fluid key (processing rows)
-local function signal_chooser(parent, key, tags)
-	local signal
-	if key then
-		if N.is_fluid_key(key) then signal = { type = "fluid", name = key:sub(7) } else signal = { type = "item", name = key } end
-	end
-	return parent.add{ type = "choose-elem-button", elem_type = "signal", signal = signal, style = "slot_button", tags = tags }
-end
-
---- the key of a chosen signal: items and fluids (no virtual signals, no items with tags)
-local function key_of_signal(signal)
-	if not signal then return nil end
-	local key = signal.type == "fluid" and ("fluid/" .. signal.name) or ((signal.type == nil or signal.type == "item") and signal.name or nil)
-	if key and P.valid_key(key) then return key end
-	return nil
-end
-M.key_of_signal = key_of_signal
-
 local function editor_rows(parent, ed, which, max)
 	local t = parent.add{ type = "table", column_count = 6 }
 	t.style.horizontal_spacing = 4
 	for i = 1, max do
 		local row = ed[which][i]
-		signal_chooser(t, row and row.key, G.act("pat_row", { which = which, index = i }))
+		G.key_button(t, row and row.key, G.act("pat_row", { which = which, index = i }), { "fork-me-gui.key-slot-tooltip" })
 		local f = G.number_field(t, row and row.amount or 0, G.act("pat_amount", { which = which, index = i }), 60)
 		f.allow_decimal = true
 		f.enabled = row ~= nil
@@ -1093,14 +1076,31 @@ G.on("pat_recipe", function(event, player, el)
 	M.refresh(player)
 end)
 
+--- issue #70: a click on a row's button opens the picker (items and fluids, no quality: a pattern names plain items), right
+--- click empties the row
 G.on("pat_row", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
+	if event.name ~= defines.events.on_gui_click then return end
 	local st = st_of(player)
 	if not st then return end
 	st.pat = st.pat or new_editor()
-	local key = key_of_signal(el.elem_value)
-	if el.elem_value and not key then report(player, "not-a-pattern-row") end
-	M.set_editor_row(st.pat, el.tags.which, el.tags.index, key or false)
+	local which, index = el.tags.which, el.tags.index
+	local row = st.pat[which][index]
+	if event.button == defines.mouse_button_type.right then
+		if row then M.set_editor_row(st.pat, which, index, false) M.refresh(player) end
+		return
+	end
+	picker.open(player, { callback = "pat_row", data = { which = which, index = index }, kinds = { item = true, fluid = true },
+		preset = picker.preset_of(row and row.key), quality = false })
+end)
+
+--- (a key a pattern cannot name, an item with tags, empties the row, with the message, as before)
+picker.on_confirm("pat_row", function(player, data, choice)
+	local st = st_of(player)
+	if not (st and st.pat) then return end
+	local key = picker.key_of(choice, false)
+	if key and not P.valid_key(key) then key = nil end
+	if not key then report(player, "not-a-pattern-row") end
+	M.set_editor_row(st.pat, data.which, data.index, key or false)
 	M.refresh(player)
 end)
 

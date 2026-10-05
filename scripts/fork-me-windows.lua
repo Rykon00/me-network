@@ -135,7 +135,6 @@ local function key_of_elem(elem_type, value)
 	if elem_type == "item-with-quality" then
 		return prototypes.item[value.name] and N.key_of(value.name, value.quality or "normal") or nil
 	end
-	if elem_type == "signal" then return circuit.key_of_signal(value) end
 	return prototypes.item[value] and value or nil
 end
 M.key_of_elem = key_of_elem
@@ -145,7 +144,6 @@ local function chooser(parent, elem_type, key, tags)
 	local def = { type = "choose-elem-button", elem_type = elem_type, tags = tags, style = "slot_button" }
 	if key then
 		if elem_type == "fluid" then def.fluid = N.is_fluid_key(key) and key:sub(7) or nil
-		elseif elem_type == "signal" then def.signal = circuit.signal_of(key)
 		elseif elem_type == "item-with-quality" then
 			local name, q = N.parse_key(key)
 			def["item-with-quality"] = { name = name, quality = q }
@@ -154,31 +152,20 @@ local function chooser(parent, elem_type, key, tags)
 	return parent.add(def)
 end
 
---- One button for items and fluids (the interface's rows, the buses' filters, the workbench's partition without a
---- cell): a SignalID of an item key with quality, or of a fluid key
-local function signal_of_key(key)
-	if not key then return nil end
-	if N.is_fluid_key(key) then return { type = "fluid", name = key:sub(7) } end
-	local name, q = N.parse_key(key)
-	return { type = "item", name = name, quality = q }
+--- Issue #70: the picker (scripts/fork-me-picker.lua) for a key slot button: `act` names the callback of the choice,
+--- `data` (plain data: the block's unit number, the slot's index) comes back with it, `key` is what the slot holds (the
+--- picker opens on it), `with_quality` false for a place that takes no quality (buses, the maintainer's target, the
+--- circuit interface's filters, the pattern editor's rows)
+local function key_picker(player, act, data, key, with_quality)
+	picker.open(player, { callback = act, data = data, kinds = { item = true, fluid = true }, preset = picker.preset_of(key),
+		quality = with_quality and true or false })
 end
 
---- the key of a SignalID (items with their quality, fluids); virtual signals give nil
-local function key_of_signal_q(sig)
-	if type(sig) ~= "table" or not sig.name then return nil end
-	if sig.type == "fluid" then return prototypes.fluid[sig.name] and ("fluid/" .. sig.name) or nil end
-	if (sig.type == nil or sig.type == "item") and prototypes.item[sig.name] then
-		local q = sig.quality
-		if type(q) == "table" then q = q.name end
-		return N.key_of(sig.name, q or "normal")
-	end
-	return nil
-end
-M.key_of_signal_q = key_of_signal_q
+local function right_click(event) return event.button == defines.mouse_button_type.right end
 
-local function signal_chooser(parent, key, tags)
-	return parent.add{ type = "choose-elem-button", elem_type = "signal", signal = signal_of_key(key), tags = tags,
-		style = "slot_button" }
+--- a choice the picker made that the slot cannot take (another kind, an unknown name): the picker is closed already
+local function refused_choice(player)
+	player.create_local_flying_text{ text = { "fork-me-gui.choice-refused" }, create_at_cursor = true }
 end
 
 --------------------------------------------------------------------------------
@@ -504,25 +491,6 @@ function M.workbench_clear_slot(entity, index)
 	return bench.set_partition_slot(entity, index, nil)
 end
 
---- a slot button showing a key (an item with its quality, or a fluid; nil: empty)
-local function partition_button(parent, key, tags)
-	local b = parent.add{ type = "sprite-button", style = "slot_button", tags = tags }
-	if not key then return b end
-	if N.is_fluid_key(key) then
-		local name = key:sub(7)
-		b.sprite = prototypes.fluid[name] and ("fluid/" .. name) or "utility/questionmark"
-		if prototypes.fluid[name] then b.elem_tooltip = { type = "fluid", name = name } end
-	else
-		local name, q = N.parse_key(key)
-		b.sprite = prototypes.item[name] and ("item/" .. name) or "utility/questionmark"
-		if prototypes.item[name] then
-			if q ~= "normal" and script.feature_flags.quality then b.quality = q end
-			b.elem_tooltip = { type = "item-with-quality", name = name, quality = prototypes.quality[q] and q or "normal" }
-		end
-	end
-	return b
-end
-
 function M.refresh_workbench(player, frame)
 	local entity = G.entity_of(player, frame)
 	local d = entity and M.workbench_data(entity)
@@ -539,11 +507,9 @@ function M.refresh_workbench(player, frame)
 			if slot.free then
 				local kinds = M.workbench_kinds(d, slot.index)
 				local room = kinds.item or kinds.fluid
-				local b = partition_button(t, nil, tags)
-				b.enabled = room
-				b.tooltip = { room and "fork-me-gui.workbench-slot-free" or "fork-me-gui.workbench-slot-full" }
+				G.key_button(t, nil, tags, { room and "fork-me-gui.workbench-slot-free" or "fork-me-gui.workbench-slot-full" }).enabled = room
 			else
-				partition_button(t, slot.key, tags).tooltip = { "fork-me-gui.workbench-slot-tooltip" }
+				G.key_button(t, slot.key, tags, { "fork-me-gui.workbench-slot-tooltip" })
 			end
 		end
 		--- issue #37: no cell: the workbench's own partition, for the next cell without one
@@ -591,13 +557,7 @@ G.on("wb_slot", function(event, player, el)
 	end
 	local kinds = M.workbench_kinds(d, index)
 	if not (kinds.item or kinds.fluid) then return end
-	local preset
-	if key and N.is_fluid_key(key) then
-		preset = { kind = "fluid", name = key:sub(7) }
-	elseif key then
-		local name, q = N.parse_key(key)
-		preset = { kind = "item", name = name, quality = q }
-	end
+	local preset = picker.preset_of(key)
 	picker.open(player, { callback = "wb_slot", data = { unit = entity.unit_number, index = index }, kinds = kinds,
 		preset = preset, title = { "fork-me-picker.title-" .. (kinds.item and kinds.fluid and "both" or kinds.item and "item" or "fluid") } })
 end)
@@ -928,9 +888,8 @@ function M.maintainer_data(entity)
 	return d
 end
 
---- the target button: a SignalID (item or fluid), nil clears it
-function M.set_maintainer_target(entity, signal)
-	local key = signal and circuit.key_of_signal(signal)
+--- the target button: a key (an item or a fluid), nil clears it
+function M.set_maintainer_target(entity, key)
 	return circuit.set_maintainer(entity, key or false)
 end
 
@@ -940,7 +899,7 @@ local function open_maintainer(player, entity)
 	G.label(content, { "fork-me-circuit.maintainer-help" }, WIDTH)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-circuit.maintainer-keep" } }
-	chooser(row, "signal", d.key, G.act("maint_target"))
+	row.add{ type = "flow", name = "fork_me_maint_target" }
 	G.number_field(row, d.amount, G.act("maint_amount"), 100)
 	content.add{ type = "checkbox", state = d.circuit or false, caption = { "fork-me-circuit.maintainer-circuit" },
 		tooltip = { "fork-me-circuit.maintainer-circuit-tooltip" }, tags = G.act("maint_circuit") }
@@ -966,6 +925,9 @@ function M.refresh_maintainer(player, frame)
 	local entity = G.entity_of(player, frame)
 	if not entity then return false end
 	local d = M.maintainer_data(entity)
+	rebuild(frame, "fork_me_maint_target", d.key or "-", function(box)
+		G.key_button(box, d.key, G.act("maint_target"), { "fork-me-circuit.maintainer-target-tooltip" }).style.size = 40
+	end)
 	local stock = G.find(frame, "fork_me_maint_stock")
 	local desc = d.key and autocraft.describe(d.key)
 	stock.caption = desc and { "fork-me-circuit.maintainer-stock", G.fmt(d.stock or 0), G.fmt(d.target or d.amount or 0), desc.localised_name } or ""
@@ -976,14 +938,23 @@ end
 G.window("maintainer", storing({ open = open_maintainer, refresh = M.refresh_maintainer, entities = { "maintainer" } }))
 
 G.on("maint_target", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
+	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if not entity then return end
-	if el.elem_value and not circuit.key_of_signal(el.elem_value) then
-		el.elem_value = nil                         -- virtual signals cannot be crafted
-		flying(player, "not-craftable")
+	if right_click(event) then
+		M.set_maintainer_target(entity, nil)
+		G.refresh_one(player)
+		return
 	end
-	M.set_maintainer_target(entity, el.elem_value)
+	key_picker(player, "maint_target", { unit = entity.unit_number }, M.maintainer_data(entity).key, false)
+end)
+
+--- issue #70: the target is an item or a fluid, without a quality
+picker.on_confirm("maint_target", function(player, data, choice)
+	local entity = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	local key = picker.key_of(choice, false)
+	if key then M.set_maintainer_target(entity, key) else refused_choice(player) end
 	G.refresh_one(player)
 end)
 
@@ -1068,7 +1039,7 @@ function M.refresh_circuit(player, frame)
 	rebuild(frame, "fork_me_circ_filters", table.concat(d.filters, ","), function(box)
 		local t = box.add{ type = "table", column_count = 10, style = "filter_slot_table" }
 		for i = 1, math.min(CIRCUIT_FILTERS, #d.filters + 1) do
-			chooser(t, "signal", d.filters[i], G.act("circ_filter", { index = i }))
+			G.key_button(t, d.filters[i], G.act("circ_filter", { index = i }), { "fork-me-gui.key-slot-tooltip" })
 		end
 	end)
 	local status = G.find(frame, "fork_me_circ_status")
@@ -1081,10 +1052,23 @@ end
 G.window("circuit", storing({ open = open_circuit, refresh = M.refresh_circuit, entities = { "circuit" } }))
 
 G.on("circ_filter", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
+	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if not entity then return end
-	M.set_circuit_filter(entity, el.tags.index, el.elem_value and circuit.key_of_signal(el.elem_value) or nil)
+	local index = el.tags.index
+	local key = M.circuit_data(entity).filters[index]
+	if right_click(event) then
+		if key then M.set_circuit_filter(entity, index, nil) G.refresh_one(player) end
+		return
+	end
+	key_picker(player, "circ_filter", { unit = entity.unit_number, index = index }, key, false)
+end)
+
+picker.on_confirm("circ_filter", function(player, data, choice)
+	local entity = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	local key = picker.key_of(choice, false)
+	if key then M.set_circuit_filter(entity, data.index, key) else refused_choice(player) end
 	G.refresh_one(player)
 end)
 
@@ -1108,9 +1092,12 @@ function M.set_interface_item(entity, i, elem, amount)
 	return io.set_interface_slot(entity, i, nil)
 end
 
---- a config row from the window's chooser: a SignalID (an item with quality or a fluid; nil clears the row)
-function M.set_interface_signal(entity, i, signal, amount)
-	return io.set_interface_key(entity, i, key_of_signal_q(signal), amount)
+--- a config row from the picker's choice (issue #70: { kind = "item" or "fluid", name, quality }; anything else is
+--- refused, nothing changes). Returns what io.set_interface_key returns, or false.
+function M.set_interface_choice(entity, i, choice, amount)
+	local key = picker.key_of(choice, true)
+	if not key then return false end
+	return io.set_interface_key(entity, i, key, amount)
 end
 
 local function open_interface(player, entity)
@@ -1165,7 +1152,7 @@ function M.refresh_interface(player, frame)
 		local t = box.add{ type = "table", column_count = 6 }
 		for i = 1, d.slots do
 			local c = d.config[i]
-			signal_chooser(t, c and io.row_key(c) or nil, G.act("if_item", { index = i }))
+			G.key_button(t, c and io.row_key(c) or nil, G.act("if_item", { index = i }), { "fork-me-gui.key-slot-tooltip" })
 			local f = G.number_field(t, c and c.amount or 0, G.act("if_amount", { index = i }), 70)
 			f.enabled = c ~= nil
 			f.tooltip = c and c.type == "fluid" and { "fork-me-gui.interface-fluid-amount", G.fmt(d.volume) } or nil
@@ -1206,9 +1193,24 @@ end
 G.window("interface", storing({ open = open_interface, refresh = M.refresh_interface, entities = { "interface" } }))
 
 G.on("if_item", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
+	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
-	if entity then M.set_interface_signal(entity, el.tags.index, el.elem_value) G.refresh_one(player) end
+	if not entity then return end
+	local index = el.tags.index
+	local c = io.get_interface_config(entity)[index]
+	local key = c and io.row_key(c)
+	if right_click(event) then
+		if key then io.set_interface_key(entity, index, nil) G.refresh_one(player) end
+		return
+	end
+	key_picker(player, "if_item", { unit = entity.unit_number, index = index }, key, true)
+end)
+
+picker.on_confirm("if_item", function(player, data, choice)
+	local entity = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	if not M.set_interface_choice(entity, data.index, choice) then refused_choice(player) end
+	G.refresh_one(player)
 end)
 
 G.on("if_amount", function(event, player, el)
@@ -1260,7 +1262,7 @@ function M.refresh_bus(player, frame)
 	local d = M.bus_data(entity)
 	rebuild(frame, "fork_me_bus_filters", table.concat(d.filters, ","), function(box)
 		local t = box.add{ type = "table", column_count = d.max, style = "filter_slot_table" }
-		for i = 1, d.max do signal_chooser(t, d.filters[i], G.act("bus_filter", { index = i })) end
+		for i = 1, d.max do G.key_button(t, d.filters[i], G.act("bus_filter", { index = i }), { "fork-me-gui.key-slot-tooltip" }) end
 	end)
 	local target = d.target and prototypes.entity[d.target]
 	local what = d.items and d.fluids and "both" or d.fluids and "fluids" or "items"
@@ -1273,9 +1275,25 @@ end
 G.window("bus", storing({ open = open_bus, refresh = M.refresh_bus, entities = { "import-bus", "export-bus" } }))
 
 G.on("bus_filter", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
+	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
-	if entity then io.set_bus_filter(entity, el.tags.index, circuit.key_of_signal(el.elem_value)) G.refresh_one(player) end
+	if not entity then return end
+	local index = el.tags.index
+	local key = M.bus_data(entity).filters[index]
+	if right_click(event) then
+		if key then io.set_bus_filter(entity, index, nil) G.refresh_one(player) end
+		return
+	end
+	key_picker(player, "bus_filter", { unit = entity.unit_number, index = index }, key, false)
+end)
+
+--- issue #70: a bus filter is an item or a fluid, without a quality
+picker.on_confirm("bus_filter", function(player, data, choice)
+	local entity = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	local key = picker.key_of(choice, false)
+	if key then io.set_bus_filter(entity, data.index, key) else refused_choice(player) end
+	G.refresh_one(player)
 end)
 
 --------------------------------------------------------------------------------
@@ -1332,7 +1350,7 @@ function M.refresh_storage_bus(player, frame)
 	if not d then return false end
 	rebuild(frame, "fork_me_sbus_filters", d.max .. ":" .. table.concat(d.filters, ","), function(box)
 		local t = box.add{ type = "table", column_count = 9, style = "filter_slot_table" }
-		for i = 1, d.max do signal_chooser(t, d.filters[i], G.act("sbus_filter", { index = i })) end
+		for i = 1, d.max do G.key_button(t, d.filters[i], G.act("sbus_filter", { index = i }), { "fork-me-gui.key-slot-tooltip" }) end
 	end)
 	block_slots(frame, "fork_me_sbus_cards", sbus.inventory(entity), 1, d.slots, function(_, st)
 		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
@@ -1378,12 +1396,24 @@ G.on("sbus_priority", function(event, player, el)
 end)
 
 G.on("sbus_filter", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
+	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
-	if entity then
-		sbus.set_filter(entity, el.tags.index, key_of_signal_q(el.elem_value))
-		G.refresh_one(player)
+	if not entity then return end
+	local index = el.tags.index
+	local key = M.storage_bus_data(entity).filters[index]
+	if right_click(event) then
+		if key then sbus.set_filter(entity, index, nil) G.refresh_one(player) end
+		return
 	end
+	key_picker(player, "sbus_filter", { unit = entity.unit_number, index = index }, key, true)
+end)
+
+picker.on_confirm("sbus_filter", function(player, data, choice)
+	local entity = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	local key = picker.key_of(choice, true)
+	if key then sbus.set_filter(entity, data.index, key) else refused_choice(player) end
+	G.refresh_one(player)
 end)
 
 G.on("sbus_extract", function(event, player, el)
@@ -1431,7 +1461,6 @@ remote.add_interface("gregtorio-me-gui", {
 	set_circuit_filter = function(entity, index, key) return M.set_circuit_filter(entity, index, key) end,
 	interface_data = function(entity) return M.interface_data(entity) end,
 	set_interface_item = function(entity, i, elem, amount) return M.set_interface_item(entity, i, elem, amount) end,
-	set_interface_signal = function(entity, i, signal, amount) return M.set_interface_signal(entity, i, signal, amount) end,
 	bus_data = function(entity) return M.bus_data(entity) end,
 	storage_bus_data = function(entity) return M.storage_bus_data(entity) end,
 	workbench_data = function(entity) return M.workbench_data(entity) end,
@@ -1445,7 +1474,9 @@ remote.add_interface("gregtorio-me-gui", {
 	picker_entries = function(kinds, filter, group) return picker.entries(kinds, filter, group) end,
 	workbench_qualities = function() return picker.qualities() end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
-	key_of_signal = function(signal) return key_of_signal_q(signal) end,
+	--- issue #70: the key of the picker's choice (`with_quality`: an item keeps its quality), a row from a choice
+	key_of_choice = function(choice, with_quality) return picker.key_of(choice, with_quality) end,
+	set_interface_choice = function(entity, i, choice, amount) return M.set_interface_choice(entity, i, choice, amount) end,
 	--- issue #28: a click on slot `slot` of the inventory pane of `entity`'s window (`mode` "left", "right", "shift"), for
 	--- a cursor stack and an inventory standing for the player's; returns the reason of a refusal and "picked"
 	inventory_click = function(cursor, inventory, slot, mode, entity, window)
