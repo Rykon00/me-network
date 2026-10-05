@@ -47,7 +47,7 @@ The repository root is the mod itself.
 | `locale/en/me-network.cfg` | English names and texts |
 | `tools/devcheck/` | headless test harness: static checks and the runtime tests, on vanilla and with Gregtorio, and the benchmark (`bench`, `docs/PERFORMANCE.md`) (`tools/devcheck/README.md`) |
 | `tools/build.py` | builds `dist/me-network_<version>.zip` (`--portal` for the mod portal, `--install` into the mods folder) |
-| `.discord/server.yml` | this mod's category on the Discord server (channels, forum tags), applied by `.github/workflows/discord.yml` with the tool of https://github.com/Rykon00/gregtorio-me-network_discord-bot |
+| `.discord/server.yml` | this mod's category on the Discord server (channels, forum tags), applied by `.github/workflows/discord.yml` with the tool of https://github.com/Rykon00/gregtorio-me-network_discord-bot; a pull request that only changes `.discord/` is merged and applied automatically |
 | `tools/dev_link.py` | links the repository into the Factorio mods folder |
 | `tools/check_syntax.py` | Lua syntax check (`--loaded`: only the files the mod loads) |
 | `tools/gen_ae2_sprites.py` | the sprites and icons (GT5-Unofficial casings, screens, circuit boards and GUI signs + Pillow) |
