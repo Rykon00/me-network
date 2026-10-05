@@ -393,8 +393,11 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
 * **Without a cell** the partition slots are there too: they show and set the workbench's own partition, the one the
   next cell without a partition gets. It can hold items and fluids (the items first, then the fluids, then one free
-  slot; every slot chooses among items and fluids, as a bus's filter does): an item cell takes the items, a fluid cell
-  the fluids. **Clear** empties it; **From contents** needs
+  slot): an item cell takes the items, a fluid cell the fluids. Only items (with quality) and fluids can be chosen
+  here, no virtual signal and no other signal (issue #69): a filled slot is a chooser of its own kind, the free slot
+  one of the kind the small switch **Items | Fluids** above the slots says (it starts on Items each time the window
+  opens and is only a setting of your window). When the partition holds the most items (or fluids) a cell takes, the
+  free slot of that kind is greyed out; right click a slot to empty it. **Clear** empties it; **From contents** needs
   a cell. A partition set this way goes onto the next cell also when the copy mode is off; with the copy mode off the
   workbench forgets its partition when a cell is taken out (and when the copy mode is switched off without a cell).
 * The cards are part of the cell (its tags): they travel with it into drives, chests and the network, like its items
