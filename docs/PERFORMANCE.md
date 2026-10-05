@@ -2338,3 +2338,31 @@ green, regressions 0; throughput per kind of endpoint identical at every size.
 
 An earlier series without the rule for unread lists (copies at every change): 20 000 avg 2.462 → 2.407 ms, p99 5.27 → 4.75 ms, ticks
 over 5 ms 141 → 89, the burst build 85.6 → 94.7 ms (flagged).
+
+
+## The pane's slot signature (issue #75)
+
+The inventory pane compares a signature per slot at every refresh (on each inventory change, and once a second with the
+quality), and since issue #75 a cell or an encoded pattern adds its `item_number` to it, so a slot that shows a stack's
+description notices when the stack was written anew. Measured as the signature work alone, headless (the loop of
+`G.update_pane` over the 80 stacks of an inventory: 60 stacks of iron plates, 10 cells and 10 encoded patterns, 2000 runs =
+160 000 slot visits, two runs each, `LuaProfiler`; the code is the same expression as the pane's, in a throwaway test):
+
+| | before | after |
+|---|---|---|
+| 160 000 slot visits (ms) | 317 / 326 | 384 / 394 |
+| per slot (µs) | 2.0 | 2.4 |
+| per refresh of 80 slots (ms) | 0.16 | 0.19 |
+
+An inventory without items with tags pays one table lookup per slot (`tagged_names`). The description of a stack
+(`custom_description`) is read only when a slot is written (a changed signature), about 1 µs a read. The GUI itself needs
+a player and is not measured headless.
+
+## The description of a stored item with tags (issue #79)
+
+The terminal's grid shows a stored cell's or pattern's description, read from the json in its key once per key and load
+(`G.key_description`, cached). The refresh of unchanged entries (issue #50, lever 8) is untouched and calls nothing new.
+Measured headless (`LuaProfiler`, a throwaway test): a plain key costs one `find` for `#` when its button is made, 0.40 µs
+(100 000 calls: 40 ms); a key with tags one `helpers.json_to_table` of the json, 26 µs for a cell's 283 characters (10 000
+calls: 260 ms), once per key; 200 distinct stored cells and patterns on a full rebuild of the grid cost 5 ms once, building
+the 200 buttons costs far more. The GUI itself is not measured headless.

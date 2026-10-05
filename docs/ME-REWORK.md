@@ -1895,6 +1895,32 @@ script inventory are gone.
   with the item's sprite, count (`number`), quality (`quality`, the bottom left mark) and the game's item tooltip
   (`elem_tooltip` item-with-quality). The empty slot the cursor's stack came from (`player.hand_location`) shows the
   game's hand (`utility/hand`). The inventory's filters (set by the player in the game's window) are not shown.
+  **The tooltip of a slot (issue #75).** `elem_tooltip` is the tooltip of the item's *prototype*, so it knew nothing of
+  the stack: a cell or an encoded pattern showed the prototype text in the pane and in the block slots (the workbench's
+  cell and card slots, a storage bus's card slots), where the game's inventory shows the stack's `custom_description`.
+  The API says an `elem_tooltip` "will be displayed above `tooltip`" (the `add` parameter of `LuaGuiElement`), and the
+  terminal's entries already use both. So `G.render_slot` also sets `tooltip = G.stack_tooltip(stack, hint)`: the stack's
+  description, a line break and the slot's own hint (nil: none); the item's name, stack size and prototype lines stay
+  where they were, above. The description is read only for an item of type `item-with-tags` (the only type with a
+  `custom_description`; looked up once per name in `tagged_names`, prototype data, never saved), and only when the slot is
+  written. The slot's signature gets the stack's `item_number` for those items (`G.stack_ident`; in the pane inline): every
+  write of a cell or pattern is a `set_stack`, which gives the stack a new number (the workbench relies on it for the cell it
+  keeps track of), so a cell whose partition changed in the workbench's slot is noticed without reading its description,
+  and an unchanged slot is not written again. A stack without a description gets what it got before. What is **not**
+  covered: the label of a blueprint or other item with a label, durability and ammo, health, a spoil timer, "Item has
+  tags": the prototype tooltip has none of them and nothing here reads them. Cost, per refresh of 80 slots (60 plain
+  stacks, 10 cells, 10 patterns; the signature work alone, headless, 160 000 slot visits per run): 2.0 µs a slot before,
+  2.4 µs after (0.16 ms against 0.19 ms a refresh); an inventory without such items pays one table lookup a slot. Reading a
+  description costs about 1 µs, once per changed slot. 2.1's GUI element `inventory` would show the game's own tooltips.
+  **The grids of stored items (issue #79).** An item with tags kept in the network has the key `name@quality#<json>`, the
+  json being `{ tags, description }` as `N.storable` made it; `G.slot` builds its buttons from a key, so it had only the
+  prototype's tooltip and stored cells and patterns looked alike in the terminal's storage tab (and the cell window's
+  contents). `G.key_description(key)` reads the description from the key's json (`helpers.json_to_table`, cached per key
+  for this load, never saved, emptied at 2000 entries) and `G.slot` puts it below the item's own tooltip, above the extra
+  tooltip a caller gives. The description is a function of the key (a stack written anew is another key), so a button never
+  shows an old one: the terminal's grid already makes a button again when its key changes, and its refresh of unchanged
+  entries calls nothing new. Cost: a plain key one `find` at the button's creation (0.4 µs), a key with tags one parse
+  (26 µs for a cell's 283 characters) once per key per load.
 * `G.window(name, { open, refresh, entities, shift, click })`: `shift(entity, stack, inventory)` says where a
   shift-clicked stack of the player's inventory goes (it moves what the block takes and returns the reason when it takes
   nothing); `click(entity, slot, cursor, inventory, shift)` is a click on a slot of the block: with an item in the cursor

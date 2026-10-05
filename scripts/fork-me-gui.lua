@@ -139,9 +139,44 @@ local function pane_table(frame)
 	return scroll and scroll.fork_me_inv
 end
 
---- Show a stack on a slot button: sprite, count, quality and the game's item tooltip; `hand`: the empty slot the
---- cursor's stack came from (the game's hand mark). `s` may be nil or empty.
-function M.render_slot(btn, s, hand)
+--- Issue #75: an item with tags (a storage cell, an encoded pattern) has a description of its own (the stack's
+--- `custom_description`) that the game's inventory shows and the item's prototype tooltip (`elem_tooltip`) does not
+--- know. Which items can have one is prototype data, so it is looked up once per name (never saved) and the engine is
+--- asked about a stack only when its item is one.
+local tagged_names = {}
+
+local function is_tagged(name)
+	local t = tagged_names[name]
+	if t == nil then
+		local proto = prototypes.item[name]
+		t = proto ~= nil and proto.type == "item-with-tags"
+		tagged_names[name] = t
+	end
+	return t
+end
+
+--- What a slot shows of its stack beyond the item's name and count, as a piece of its signature ("" for every item
+--- but an item with tags): the stack's item_number. Every write of a cell or pattern (set_stack) gives the stack a
+--- new one, so a slot whose description changed is noticed without reading the description.
+function M.stack_ident(s)
+	if is_tagged(s.name) then return "#" .. tostring(s.item_number) end
+	return ""
+end
+
+--- The tooltip a slot with the stack `s` has next to the item's own (`elem_tooltip`, which the game shows above it):
+--- the stack's description when it has one, then `base` (the slot's own hint, or nil). A stack without a description
+--- gets `base` alone, as before.
+function M.stack_tooltip(s, base)
+	local desc = s and s.valid_for_read and is_tagged(s.name) and s.custom_description or nil
+	if desc == nil or desc == "" then return base end
+	if base == nil then return desc end
+	return { "", desc, "\n", base }
+end
+
+--- Show a stack on a slot button: sprite, count, quality, the game's item tooltip and the stack's own description
+--- (stack_tooltip); `hand`: the empty slot the cursor's stack came from (the game's hand mark); `base`: the
+--- slot's own tooltip. `s` may be nil or empty.
+function M.render_slot(btn, s, hand, base)
 	if s and s.valid_for_read then
 		local name = s.name
 		local q = script.feature_flags.quality and s.quality.name or "normal"
@@ -149,18 +184,20 @@ function M.render_slot(btn, s, hand)
 		btn.number = (s.count > 1 or s.prototype.stack_size > 1) and s.count or nil
 		btn.quality = q ~= "normal" and q or nil
 		btn.elem_tooltip = { type = "item-with-quality", name = name, quality = q }
+		btn.tooltip = M.stack_tooltip(s, base)
 	else
 		btn.sprite = hand and "utility/hand" or ""
 		btn.number = nil
 		btn.quality = nil
 		btn.elem_tooltip = nil
+		btn.tooltip = base
 	end
 end
 
---- a slot button for the stack `s` (a block's slot), acting with `tags`
+--- a slot button for the stack `s` (a block's slot), acting with `tags`; `tooltip`: its own hint
 function M.stack_button(parent, s, tags, tooltip)
-	local btn = parent.add{ type = "sprite-button", style = "slot_button", tags = tags, tooltip = tooltip }
-	M.render_slot(btn, s)
+	local btn = parent.add{ type = "sprite-button", style = "slot_button", tags = tags }
+	M.render_slot(btn, s, nil, tooltip)
 	return btn
 end
 
@@ -175,8 +212,8 @@ local function build_pane(parent, hint)
 	scroll.add{ type = "table", name = "fork_me_inv", column_count = PANE_COLUMNS, style = "filter_slot_table" }
 end
 
---- The pane follows the main inventory: every slot's signature (name and count, or the hand mark) is compared with
---- the one shown, and only the buttons whose signature changed are set again (the quality is read for those only:
+--- The pane follows the main inventory: every slot's signature (name and count, an item with tags' item_number, or the
+--- hand mark) is compared with the one shown, and only the buttons whose signature changed are set again (the quality is read for those only:
 --- reading it costs twice as much as name and count, measured). `quality`: the quality of every filled slot is read
 --- and compared too (the refresh, with the quality mod: a change of quality alone). A new window or a changed
 --- inventory size builds the table and sets every button. Returns the number of buttons set.
@@ -210,7 +247,11 @@ function M.update_pane(player, quality)
 		local s = cache[i]
 		local sig, filled
 		if s.valid_for_read then
-			sig = s.name .. "#" .. s.count
+			local name = s.name
+			sig = name .. "#" .. s.count
+			local tagged = tagged_names[name]               -- (stack_ident, inline: this runs for every slot)
+			if tagged == nil then tagged = is_tagged(name) end
+			if tagged then sig = sig .. "#" .. tostring(s.item_number) end
 			filled = true
 		elseif i == hand_slot then sig = "hand"
 		else sig = "" end
@@ -370,9 +411,32 @@ function M.row(parent, name)
 	return r
 end
 
---- A slot button for an item or fluid (`key`: item name, "name@quality" or "fluid/<name>"), with the amount
---- formatted in the tooltip and the button's number. `style` defaults to slot_button. `index`: the place among the
---- parent's children (default: last).
+--- Issue #79: the key of an item with tags (a storage cell, an encoded pattern) kept in the network is
+--- "name@quality#<json>", the json being { tags, description } as `N.storable` made it from the stack. The description is
+--- therefore a function of the key (a stack written anew is another key), and the grid's buttons, which are made again
+--- when their key changes, never show an old one. Read from the json once per key, cached for this load only (never
+--- saved; emptied when it grows large). Returns the description (a localised string) or nil.
+local description_cache, description_count = {}, 0
+
+function M.key_description(key)
+	local at = key:find("#", 1, true)
+	if not at then return nil end
+	local d = description_cache[key]
+	if d == nil then
+		local data = helpers.json_to_table(key:sub(at + 1))
+		d = type(data) == "table" and data.description or false
+		if d == "" or (type(d) ~= "table" and type(d) ~= "string") then d = false end
+		if description_count >= 2000 then description_cache, description_count = {}, 0 end
+		description_cache[key] = d
+		description_count = description_count + 1
+	end
+	return d or nil
+end
+
+--- A slot button for an item or fluid (`key`: item name, "name@quality" or "fluid/<name>"; for an item with tags
+--- the key's description is the first lines of the tooltip, below the item's own), with the amount formatted in the
+--- tooltip and the button's number. `style` defaults to slot_button. `index`: the place among the parent's children
+--- (default: last).
 function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 	local def = { type = "sprite-button", style = style or "slot_button", tags = tags, index = index }
 	if key then
@@ -387,7 +451,9 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 			if prototypes.item[name] and prototypes.quality[q] then
 				def.sprite = "item/" .. name
 				def.elem_tooltip = { type = "item-with-quality", name = name, quality = q }
-				if extra_tooltip then def.tooltip = extra_tooltip end
+				local desc = M.key_description(key)
+				if desc and extra_tooltip then def.tooltip = { "", desc, "\n", extra_tooltip }
+				else def.tooltip = desc or extra_tooltip end
 			else
 				def.tooltip = key                     -- the prototype is gone (a mod was removed)
 			end

@@ -908,6 +908,10 @@ slot, updated through `on_player_main_inventory_changed` and `on_player_cursor_s
 only (`G.update_pane`, signatures in `storage.fork_me_gui_pane[player]`). Its clicks (`G.inventory_click`) pick up, put
 down, merge, swap and halve stacks like the game's, and shift + click hands the stack to the window's `shift`; the
 block's slots are buttons whose click goes to the window's `click`, which refuses a wrong item before anything moves.
+A slot's tooltip is the item's own (`elem_tooltip`) and, below it, the stack's description when it has one (issue #75: a
+cell's contents, partition and cards, a pattern's recipe; `G.stack_tooltip`), then the slot's own hint. The terminal's
+storage tab and every other grid of items kept in the network show the same for a stored cell or pattern (issue #79):
+the description is part of its key (`G.key_description`).
 The storage bus keeps its cards in its inventory (`rec.inv`, `rec.cards` follows it); the Cell Workbench keeps the cell
 in slot 1 and, while it is there, the cell's cards as items in slots 2 to 5 (they go into its tags when it is taken
 out).
@@ -1487,6 +1491,14 @@ wrong item, of a cell, a second cell and a card without a cell into the workbenc
 block's slots with a wrong item, a card, on a full bus, with an empty hand and with shift; the workbench's cell into the
 hand with its cards and back, a swap of two cells; half a stack, one item put down, merge, pick up, put down and swap
 in the pane; no card made or lost (`ME window pane test (storage bus): ok`, `ME window pane test (workbench): ok`).
+The stored item description test of issue #79 (`ME stored item descriptions test: ok`) stores a cell made in the workbench
+and an encoded pattern in a network and reads the description back from the key the network gave them (it equals the stack's),
+checks that a plain key, a quality key, a fluid, a broken json and one without a description give none, and that a cell with
+another partition is another key.
+The slot tooltip test of issue #75 (`ME window slot tooltips test: ok`, `runtimemod/workbench.lua`) calls the functions behind
+a slot (the window itself needs a player): a plain item, an empty slot and a fresh cell get the slot's hint alone, a cell made
+in the workbench and an encoded pattern their description (with a hint: the description, a line break, the hint), and the
+signature piece of a cell that stays in the workbench's slot changes when its partition does.
 
 `python tools/devcheck/devcheck.py migrate --from-ref v0.1.0` makes a save with ME Network 0.1.0 (three fluid
 interfaces, the fluid buses and the fluid storage bus with settings and fluid, an item interface next to a pipe with

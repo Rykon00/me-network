@@ -507,7 +507,7 @@ RUNTIME_TESTS = (
     ("CARDS", "ME upgrade card test"), ("PRIORITIES", "ME priority test"), ("WORKBENCH", "ME Cell Workbench test"),
     ("CARDSLOTS", "ME storage bus card slots test"), ("WBSLOTS", "ME Cell Workbench slots test"),
     ("PANE", "ME window pane test (storage bus)"), ("WBPANE", "ME window pane test (workbench)"),
-    ("WBPICK69", "ME Cell Workbench partition buttons test"), ("WBTIP64", "ME cell tooltip test"),
+    ("WBPICK69", "ME Cell Workbench partition buttons test"), ("WBTIP64", "ME cell tooltip test"), ("WBSLOTTIP75", "ME window slot tooltips test"), ("WBKEY79", "ME stored item descriptions test"),
     ("STORABLE", "ME storable items test"),
     ("DONE", "all tests reported"),
 )

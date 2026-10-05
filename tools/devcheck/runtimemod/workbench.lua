@@ -820,12 +820,147 @@ return function(H)
 			.. "every card, a cell with contents, an empty cell with a card, a cell out of a drive")
 	end
 
+	--- Issue #75: what a slot of an ME window gives a stack. The window's buttons need a player, so the functions behind
+	--- them are called: G.stack_tooltip (the tooltip next to the item's own, `elem_tooltip`) and G.stack_ident (the piece
+	--- of the slot's signature that makes the slot notice a stack written anew). A cell and a pattern give their own
+	--- description (then the slot's own hint), a plain item and a cell without a description give the hint alone.
+	local function slot_tip_test()
+		local st = storage.wbslot75
+		if (st and st.done) or game.tick < 130 then return end
+		st = { problems = {}, done = true }
+		storage.wbslot75 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local w = game.surfaces[1].create_entity{ name = "me-cell-workbench", position = { WX + 30.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not w then return me_report("WBSLOTTIP75", "ME window slot tooltips", { "no workbench" }) end
+		local inv = game.create_inventory(3)
+		local hand = inv[1]
+		local function tip(stack, base) return remote.call(GUI, "stack_tooltip", stack, base) end
+		local function ident(stack) return remote.call(GUI, "stack_ident", stack) end
+		local hint = { "fork-me-gui.workbench-cell-tooltip" }
+
+		--- a plain item: the hint alone (nothing without one), no signature piece
+		hand.set_stack{ name = "iron-plate", count = 5 }
+		expect(line(tip(hand, hint)) == line(hint) and tip(hand, nil) == nil and ident(hand) == "", "a plain item: " .. line(tip(hand, hint)) .. " / " .. line(ident(hand)))
+		--- an empty slot: the hint alone
+		expect(line(tip(inv[2], hint)) == line(hint) and tip(inv[2], nil) == nil, "an empty slot")
+
+		--- a fresh cell (an item with tags, no description): the hint alone, but a signature piece
+		hand.set_stack{ name = "me-1k-storage-cell", count = 1 }
+		expect(line(tip(hand, hint)) == line(hint) and tip(hand, nil) == nil, "a fresh cell: " .. line(tip(hand, nil)))
+		expect(ident(hand):find("^#%d+$") ~= nil, "a fresh cell's signature piece " .. line(ident(hand)))
+
+		--- a cell made in the workbench: its description (the tooltip the game's inventory shows), then the hint
+		expect(remote.call(WB, "cell_click", w, hand, inv, false) == nil, "the cell into the workbench")
+		remote.call(WB, "set_partition_slot", w, 1, "iron-plate")
+		local bench_inv = remote.call(WB, "inventory", w)
+		local slot = bench_inv[1]
+		local before = ident(slot)
+		local desc = slot.custom_description
+		expect(type(desc) == "table", "the cell in the workbench has no description " .. line(desc))
+		expect(line(tip(slot, nil)) == line(desc), "a cell: its description alone " .. line(tip(slot, nil)))
+		local both = tip(slot, hint)
+		expect(type(both) == "table" and both[1] == "" and line(both[2]) == line(desc) and both[3] == "\n" and line(both[4]) == line(hint),
+			"a cell with a hint: the description, a line break, the hint " .. line(both))
+		--- the cell stays in the slot and its partition changes: the description is written anew and the signature piece changes
+		remote.call(WB, "set_partition_slot", w, 2, "copper-plate")
+		local after = ident(bench_inv[1])
+		expect(before ~= after and after:find("^#%d+$") ~= nil, "the signature piece after a change: " .. line(before) .. " -> " .. line(after))
+		expect(line(tip(bench_inv[1], nil)) ~= line(desc), "the tooltip after a change " .. line(tip(bench_inv[1], nil)))
+		--- a card: a plain item
+		hand.set_stack{ name = "me-fuzzy-card", count = 1 }
+		expect(line(tip(hand, hint)) == line(hint) and ident(hand) == "", "a card is a plain item")
+
+		--- an encoded pattern: its description (what it makes) shows in the slot
+		local pdesc = { "fork-me-pattern.description", "x" }
+		hand.set_stack{ name = "me-encoded-pattern", count = 1, tags = { fork_me_pattern = { kind = "crafting" } }, custom_description = pdesc }
+		expect(line(tip(hand, nil)) == line(pdesc) and ident(hand):find("^#%d+$") ~= nil, "an encoded pattern: " .. line(tip(hand, nil)))
+		remote.call(WB, "clear", w)
+		inv.destroy()
+		w.destroy()
+		me_report("WBSLOTTIP75", "ME window slot tooltips", problems, "a plain item, an empty slot, a fresh cell, a cell with its description and a hint, "
+			.. "the signature piece after a change in the workbench, an encoded pattern")
+	end
+
+	--- Issue #79: the terminal's storage tab (and every grid made by G.slot) shows a stored cell's or pattern's
+	--- description. The key of an item with tags kept in the network carries it in its json; G.key_description reads it
+	--- (the buttons need a player: the function behind them is called). A cell and a pattern are stored through
+	--- the network's insert_stack and the key the network made for them is looked up in its contents.
+	local function key_tip_test()
+		local st = storage.wbkey79
+		if (st and st.done) or game.tick < 140 then return end
+		st = { problems = {}, done = true }
+		storage.wbkey79 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local s = game.surfaces[1]
+		local t = s.find_entity("me-terminal", { WX + 10.5, WY - 0.5 })
+		local w = s.create_entity{ name = "me-cell-workbench", position = { WX + 32.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not (t and w) then return me_report("WBKEY79", "ME stored item descriptions", { "terminal or workbench missing" }) end
+		local inv = game.create_inventory(2)
+		local hand = inv[1]
+		local function desc_of(key) return remote.call(GUI, "key_description", key) end
+		--- the key the network made for the stack in the hand (the one new key with `#` of that item), the stack stored
+		local function store(name)
+			local before = remote.call(NET, "contents", t)
+			local n, why = remote.call(NET, "insert_stack", t, hand)
+			if not n then return nil, "not stored: " .. tostring(why) end
+			for key in pairs(remote.call(NET, "contents", t)) do
+				if not before[key] and key:find(name .. "@normal#", 1, true) == 1 then return key end
+			end
+			return nil, "no new key"
+		end
+
+		--- a cell made in the workbench, stored: its key gives the description the stack had
+		hand.set_stack{ name = "me-1k-storage-cell", count = 1 }
+		remote.call(WB, "cell_click", w, hand, inv, false)
+		remote.call(WB, "set_partition_slot", w, 1, "iron-plate")
+		remote.call(WB, "set_partition_slot", w, 2, "copper-plate")
+		hand.clear()
+		remote.call(WB, "cell_click", w, hand, inv, false)
+		local want = hand.valid_for_read and hand.custom_description
+		expect(type(want) == "table", "the cell made in the workbench has no description " .. line(want))
+		local key, why = store("me-1k-storage-cell")
+		expect(key ~= nil, "a stored cell: " .. tostring(why))
+		expect(key and line(desc_of(key)) == line(want), "a stored cell's description: " .. line(key and desc_of(key)) .. " (wanted " .. line(want) .. ")")
+		expect(key and line(desc_of(key)):find("cell-tip-partition", 1, true) ~= nil, "a stored cell says its partition")
+
+		--- an encoded pattern
+		local pdesc = { "fork-me-pattern.description", "x" }
+		hand.set_stack{ name = "me-encoded-pattern", count = 1, tags = { fork_me_pattern = { kind = "crafting" } }, custom_description = pdesc }
+		local pkey, pwhy = store("me-encoded-pattern")
+		expect(pkey ~= nil, "a stored pattern: " .. tostring(pwhy))
+		expect(pkey and line(desc_of(pkey)) == line(pdesc), "a stored pattern's description: " .. line(pkey and desc_of(pkey)))
+
+		--- no description: a plain key, one with quality, a fluid, a fresh cell (stored as a plain item: no tags), a key with a
+		--- broken json, and one whose json has no description
+		expect(desc_of("iron-plate") == nil and desc_of("iron-plate@uncommon") == nil and desc_of("fluid/water") == nil, "plain keys have no description")
+		expect(desc_of("me-1k-storage-cell@normal#{broken") == nil, "a broken json")
+		expect(desc_of("me-1k-storage-cell@normal#" .. helpers.table_to_json({ tags = { a = 1 } })) == nil, "a json without a description")
+		--- a cell written anew is another key (a changed description can never be shown for the old key)
+		hand.set_stack{ name = "me-1k-storage-cell", count = 1 }
+		remote.call(WB, "cell_click", w, hand, inv, false)
+		remote.call(WB, "set_partition_slot", w, 1, "stone")
+		hand.clear()
+		remote.call(WB, "cell_click", w, hand, inv, false)
+		local key2 = store("me-1k-storage-cell")
+		expect(key2 ~= nil and key2 ~= key and line(desc_of(key2)) ~= line(desc_of(key)), "a cell with another partition is another key")
+
+		inv.destroy()
+		remote.call(WB, "clear", w)
+		w.destroy()
+		me_report("WBKEY79", "ME stored item descriptions", problems, "a stored cell and a stored pattern give the description of their stack, "
+			.. "plain keys, a broken json and one without a description give none, another partition is another key")
+	end
+
 	function T.tick()
 		workbench_test()
 		slots_test()
 		pane_test()
 		pick_test()
 		tip_test()
+		slot_tip_test()
+		key_tip_test()
 	end
 	function T.running(check)
 		check(storage.wb17 and storage.wb17.done, "ME Cell Workbench")
@@ -833,6 +968,8 @@ return function(H)
 		check(storage.wbpane28 and storage.wbpane28.done, "ME window pane (workbench)")
 		check(storage.wb69 and storage.wb69.done, "ME Cell Workbench partition buttons")
 		check(storage.wbtip64 and storage.wbtip64.done, "ME cell tooltip")
+		check(storage.wbslot75 and storage.wbslot75.done, "ME window slot tooltips")
+		check(storage.wbkey79 and storage.wbkey79.done, "ME stored item descriptions")
 	end
 	return T
 end
