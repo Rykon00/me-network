@@ -514,10 +514,11 @@ return function(H)
 			.. "a second cell, a card; block slot clicks with a wrong item, the cell into the cursor and back, a swap, shift")
 	end
 
-	--- issue #69: what the partition buttons of a workbench without a cell offer and take: the free slot is a chooser of
-	--- the kind the switch says (item with quality, fluid), the filled ones of their own kind; only an item with quality
-	--- or a fluid is taken (a virtual signal, an item or fluid given as a signal, an entity, a recipe: refused, nothing
-	--- changes); a slot is changed, emptied, a key chosen twice stays once; a full kind leaves its free slot disabled
+	--- issues #69, #82, #94: what the partition buttons of the workbench offer and take. A click on a slot opens the mod's
+	--- picker (the window is not testable here): workbench_kinds says what it lists, workbench_set is what its green check
+	--- does. Only an item with its quality or a fluid can be set (never a signal, an entity, a recipe), a slot is changed,
+	--- emptied, a key chosen twice stays once, a full kind is not offered, a cell takes its own kind; the picker's lists
+	--- (groups, entries by a search text) hold items and fluids and nothing else.
 	local function pick_test()
 		local st = storage.wb69
 		if (st and st.done) or game.tick < 110 then return end
@@ -528,146 +529,152 @@ return function(H)
 		local w = game.surfaces[1].create_entity{ name = "me-cell-workbench", position = { WX + 24.5, WY + 4.5 }, force = "player", raise_built = true }
 		if not w then return me_report("WBPICK69", "ME Cell Workbench partition buttons", { "no workbench" }) end
 		local function info() return remote.call(WB, "info", w) or {} end
-		local function slots(kind) return remote.call(GUI, "workbench_slots", w, kind) or {} end
-		local function choose(index, elem_type, value) return remote.call(GUI, "workbench_choose", w, index, elem_type, value) end
-		local function item(name, q) return { name = name, quality = q or "normal" } end
+		local function slots() return remote.call(GUI, "workbench_slots", w) or {} end
+		local function kinds(index) return remote.call(GUI, "workbench_kinds", w, index) or {} end
+		local function set(index, kind, name, quality) return remote.call(GUI, "workbench_set", w, index, kind, name, quality) end
 		local function last(t) return t[#t] end
+		local q = prototypes.quality["uncommon"] and "uncommon"
 
-		--- empty: one free slot, a chooser of the kind asked for; never a signal chooser
-		for kind, elem_type in pairs({ item = "item", fluid = "fluid" }) do
-			local sl = slots(kind)
-			expect(#sl == 1 and sl[1].free and sl[1].index == 1 and sl[1].elem_type == elem_type and sl[1].enabled and not sl[1].key,
-				"the free slot of an empty workbench (" .. kind .. ") " .. line(sl))
+		--- the picker's lists: items and fluids only, no virtual signal, nothing hidden, the kinds asked for, a search text
+		local both, items_only, fluids_only = { item = true, fluid = true }, { item = true }, { fluid = true }
+		local function names(list)
+			local out = {}
+			for _, e in ipairs(list) do out[e.kind .. "/" .. e.name] = true end
+			return out
 		end
+		local all = remote.call(GUI, "picker_entries", both)
+		local have = names(all)
+		expect(have["item/iron-plate"] and have["fluid/water"] and not have["item/signal-A"] and not have["fluid/signal-A"],
+			"the picker lists iron plate and water, no signal")
+		local bad = 0
+		for _, e in ipairs(all) do
+			local proto = (e.kind == "fluid" and prototypes.fluid or prototypes.item)[e.name]
+			if not proto or proto.hidden or proto.parameter then bad = bad + 1 end
+		end
+		expect(bad == 0 and #all > 100, "the picker's entries are known and not hidden: " .. bad .. " bad of " .. #all)
+		local io, fo = names(remote.call(GUI, "picker_entries", items_only)), names(remote.call(GUI, "picker_entries", fluids_only))
+		local item_of_fluid_list = false
+		for k in pairs(fo) do if k:find("^item/") then item_of_fluid_list = true end end
+		for k in pairs(io) do if k:find("^fluid/") then item_of_fluid_list = true end end
+		expect(io["item/iron-plate"] and not io["fluid/water"] and fo["fluid/water"] and not fo["item/iron-plate"] and not item_of_fluid_list,
+			"the picker lists the kinds asked for")
+		local found = names(remote.call(GUI, "picker_entries", both, "Iron Plate"))
+		expect(found["item/iron-plate"] and not found["item/copper-plate"], "a search text matches the name (spaces as dashes, any case)")
+		expect(#remote.call(GUI, "picker_entries", both, "no-such-name-at-all") == 0, "a search text that matches nothing")
+		local groups = remote.call(GUI, "picker_groups", both)
+		local gset = {}
+		for _, g in ipairs(groups) do gset[g] = true end
+		expect(#groups >= 2 and not gset["signals"], "the picker's groups " .. line(groups))
+		local g1 = remote.call(GUI, "picker_entries", both, nil, groups[1])
+		expect(#g1 > 0 and #g1 < #all, "the entries of one group")
+		local qs = remote.call(GUI, "workbench_qualities")
+		expect(type(qs) == "table" and (q == nil and #qs == 0 or qs[1] == "normal" and #qs >= 2), "the picker's qualities " .. line(qs))
+
+		--- an empty workbench: one free slot, both kinds offered
+		local sl = slots()
+		expect(#sl == 1 and sl[1].free and sl[1].index == 1 and not sl[1].key, "the free slot of an empty workbench " .. line(sl))
+		expect(kinds(1).item and kinds(1).fluid, "an empty workbench offers both kinds " .. line(kinds(1)))
 		--- refused, and nothing changes
 		local refused = {
-			{ "signal", { type = "virtual", name = "signal-A" } }, { "signal", { type = "virtual", name = "signal-everything" } },
-			{ "signal", { type = "item", name = "iron-plate", quality = "normal" } }, { "signal", { type = "fluid", name = "water" } },
-			{ "signal", { type = "entity", name = "iron-chest" } }, { "entity", "iron-chest" }, { "recipe", "iron-gear-wheel" },
-			{ "item", "iron-plate" }, { "item-with-quality", item("no-such-item") }, { "fluid", "no-such-fluid" },
-			{ "item-with-quality", { type = "virtual", name = "signal-A" } },
+			{ "virtual", "signal-A" }, { "signal", "iron-plate" }, { "entity", "iron-chest" }, { "recipe", "iron-gear-wheel" },
+			{ "item-with-quality", "iron-plate" }, { "item", "no-such-item" }, { "fluid", "no-such-fluid" }, { "item", "water" },
+			{ "fluid", "iron-plate" }, { "item", nil }, { nil, "iron-plate" }, { "item", { name = "coal" } },
 		}
-		for _, r in ipairs(refused) do
-			expect(choose(1, r[1], r[2]) == false, "refused: " .. r[1] .. " " .. line(r[2]))
-		end
+		for _, r in ipairs(refused) do expect(set(1, r[1], r[2]) == false, "refused: " .. tostring(r[1]) .. " " .. line(r[2])) end
+		expect(set(1, "item", "iron-plate", "no-such-quality") == false, "an unknown quality")
+		expect(set(0, "item", "iron-plate") == false and set(2, "item", "iron-plate") == false and set(-1, "item", "iron-plate") == false,
+			"a slot beyond the free one")
 		expect(#info().config == 0, "a refused choice changed the partition " .. line(info().config))
-		--- an item with its quality, a fluid, an item of another quality
-		expect(choose(1, "item-with-quality", item("iron-plate")) == true and choose(2, "fluid", "water") == true
-			and choose(3, "item-with-quality", item("copper-plate")) == true, "items and a fluid chosen")
-		local q = prototypes.quality["uncommon"] and "uncommon"
-		if q then expect(choose(4, "item-with-quality", item("iron-plate", q)) == true, "an item with quality chosen") end
+		--- items with their quality and fluids, at the free slot each time (the list sorts itself: items, then fluids)
+		expect(set(1, "item", "iron-plate") == true and set(2, "fluid", "water") == true and set(3, "item", "copper-plate") == true,
+			"items and a fluid set")
+		if q then expect(set(4, "item", "iron-plate", q) == true, "an item set with a quality") end
 		local want = q and { "copper-plate", "iron-plate", "iron-plate@" .. q, "fluid/water" } or { "copper-plate", "iron-plate", "fluid/water" }
 		local k = info()
 		expect(line(k.config) == line(want) and k.config_items == #want - 1, "the kept partition: items, then fluids " .. line(k.config))
-		--- the buttons: a filled one of its own kind, then the free one at the end, of the kind asked for
-		for _, kind in ipairs({ "item", "fluid" }) do
-			local sl = slots(kind)
-			local ok = #sl == #want + 1
-			for i, key in ipairs(want) do
-				ok = ok and sl[i] and sl[i].key == key and not sl[i].free and sl[i].enabled
-					and sl[i].elem_type == (key:find("^fluid/") and "fluid" or "item-with-quality")
-			end
-			local f = last(sl)
-			ok = ok and f.free and f.index == #want + 1 and not f.key and f.enabled
-				and f.elem_type == kind
-			expect(ok, "the buttons with the free " .. kind .. " slot " .. line(sl))
+		sl = slots()
+		local ok = #sl == #want + 1
+		for i, key in ipairs(want) do
+			ok = ok and sl[i] and sl[i].key == key and not sl[i].free and sl[i].kind == (key:find("^fluid/") and "fluid" or "item")
 		end
-		--- a slot changed, a key chosen twice (once), a slot emptied
-		expect(choose(1, "item-with-quality", item("stone")) == true, "a slot changed")
+		ok = ok and last(sl).free and last(sl).index == #want + 1 and not last(sl).key
+		expect(ok, "the buttons: the filled ones, then the free one " .. line(sl))
+		--- a slot changed (item to item, its quality, item to fluid), a key chosen twice (once), a slot emptied
+		expect(set(1, "item", "stone") == true, "a slot changed")
 		expect(line(info().config):find("copper-plate", 1, true) == nil and line(info().config):find("stone", 1, true) ~= nil,
 			"the slot after the change " .. line(info().config))
 		local n = #info().config
-		choose(#info().config + 1, "item-with-quality", item("iron-plate"))      -- (iron-plate is in the list already)
+		set(#info().config + 1, "item", "iron-plate")                     -- (iron-plate is in the list already)
 		expect(#info().config == n, "a key chosen twice " .. line(info().config))
+		if q then
+			local pos
+			for i, key in ipairs(info().config) do if key == "iron-plate" then pos = i end end
+			expect(pos and set(pos, "item", "iron-plate", q) == true and line(info().config):find("iron-plate@" .. q, 1, true) ~= nil,
+				"the quality of a slot changed " .. line(info().config))
+		end
+		local before = #info().config
 		local gone = info().config[1]
-		choose(1, "item-with-quality", nil)
-		expect(#info().config == n - 1 and info().config[1] ~= gone and not remote.call(WB, "info", w).config[n], "a slot emptied " .. line(info().config))
-		expect(#slots("item") == #info().config + 1, "no stale button after the choices " .. line(slots("item")))
-		--- a full kind: its free slot is not enabled, the other kind's is
+		expect(remote.call(GUI, "workbench_clear_slot", w, 1) == true and #info().config == before - 1 and info().config[1] ~= gone,
+			"a slot emptied " .. line(info().config))
+		expect(remote.call(GUI, "workbench_clear_slot", w, #info().config + 1) == false and remote.call(GUI, "workbench_clear_slot", w, 0) == false,
+			"the free slot cannot be emptied")
+		expect(#slots() == #info().config + 1, "no stale button after the choices " .. line(slots()))
+		--- a full kind is not offered (the other one is), the kind of a filled slot always is
 		remote.call(WB, "clear", w)
 		local lim = info().limits
 		for name in pairs(prototypes.item) do
 			if info().config_items >= lim.items then break end
-			choose(#info().config + 1, "item-with-quality", item(name))
+			set(#info().config + 1, "item", name)
 		end
 		k = info()
 		expect(k.config_items == lim.items, "items filled up to the limit: " .. k.config_items .. "/" .. lim.items)
-		expect(not last(slots("item")).enabled and last(slots("fluid")).enabled, "the free slot of a full kind " .. line(last(slots("item"))))
-		choose(1, "item-with-quality", nil)
-		expect(last(slots("item")).enabled, "a slot of a full kind emptied: the free one is enabled again")
-		choose(#info().config + 1, "item-with-quality", item("iron-plate", q or "normal"))
+		local free = #k.config + 1
+		expect(not kinds(free).item and kinds(free).fluid, "the free slot of full items " .. line(kinds(free)))
+		expect(set(free, "item", "iron-plate") == false and #info().config == #k.config, "an item set into the free slot of a full kind")
+		expect(kinds(1).item and kinds(1).fluid, "a filled item slot offers its kind and, with room, fluids " .. line(kinds(1)))
+		expect(set(1, "item", "coal") == true, "a slot of a full kind changed")
+		free = #info().config + 1
+		expect(set(free, "fluid", "water") == true, "a fluid set when the items are full")
 		for name in pairs(prototypes.fluid) do
 			if #info().config - info().config_items >= lim.fluids then break end
-			choose(#info().config + 1, "fluid", name)
+			set(#info().config + 1, "fluid", name)
 		end
 		k = info()
-		expect(#k.config - k.config_items == lim.fluids and not last(slots("fluid")).enabled, "the free slot of full fluids")
-		--- issue #82: the add row (the picker of a mod's button has no quality row and takes a choice at once, so the window
-		--- has its own quality drop-down and a green check): the check's call takes the item with its quality or the fluid
-		remote.call(WB, "clear", w)
-		local qs = remote.call(GUI, "workbench_qualities")
-		expect(type(qs) == "table" and (q == nil and #qs == 0 or qs[1] == "normal" and #qs >= 2), "the qualities of the drop-down " .. line(qs))
-		local function add(elem_type, value, quality) return remote.call(GUI, "workbench_add", w, elem_type, value, quality) end
-		expect(add("item", "iron-plate") == true and add("fluid", "water") == true, "an item and a fluid added")
-		if q then
-			expect(add("item", "iron-plate", q) == true and add("item", "iron-plate", "no-such-quality") == false, "an item added with a quality")
-		end
-		local want82 = q and { "iron-plate", "iron-plate@" .. q, "fluid/water" } or { "iron-plate", "fluid/water" }
-		expect(line(info().config) == line(want82), "the partition after the adds " .. line(info().config))
-		local refused82 = {
-			{ "signal", { type = "virtual", name = "signal-A" } }, { "signal", "iron-plate" }, { "item-with-quality", item("coal") },
-			{ "entity", "iron-chest" }, { "recipe", "iron-gear-wheel" }, { "item", "no-such-item" }, { "fluid", "no-such-fluid" },
-			{ "item", { name = "coal" } }, { "item", nil },
-		}
-		for _, r in ipairs(refused82) do expect(add(r[1], r[2]) == false, "add refused: " .. r[1] .. " " .. line(r[2])) end
-		expect(#info().config == #want82, "a refused add changed the partition " .. line(info().config))
-		--- a filled slot's item changed in the picker (which gives the normal quality): the slot keeps its quality
-		if q then
-			remote.call(GUI, "workbench_change", w, 2, "item-with-quality", item("coal"))
-			expect(line(info().config) == line({ "coal@" .. q, "iron-plate", "fluid/water" }), "a changed slot keeps its quality " .. line(info().config))
-			remote.call(GUI, "workbench_change", w, 1, "item-with-quality", item("stone", "normal"))
-			expect(line(info().config):find("stone@" .. q, 1, true) ~= nil, "again " .. line(info().config))
-		end
-		remote.call(GUI, "workbench_change", w, #info().config, "fluid", "steam")
-		expect(info().config[#info().config] == "fluid/steam", "a fluid slot changed " .. line(info().config))
-		--- a full kind refuses the add; the other kind still takes it
-		remote.call(WB, "clear", w)
-		for name in pairs(prototypes.item) do
-			if info().config_items >= lim.items then break end
-			add("item", name)
-		end
-		expect(info().config_items == lim.items, "items filled up to the limit through the add")
-		expect(add("item", "iron-plate") == false and add("item", "coal", q) == false, "an item added to a full kind")
-		expect(add("fluid", "water") == true, "a fluid added when the items are full")
-		--- with a cell in the workbench the row adds to the cell's partition, of the cell's kind only
+		free = #k.config + 1
+		expect(#k.config - k.config_items == lim.fluids and not kinds(free).item and not kinds(free).fluid, "nothing offered at the free slot when both are full " .. line(kinds(free)))
+		local fi
+		for i, key in ipairs(k.config) do if key:find("^fluid/") then fi = i break end end
+		expect(kinds(fi).fluid and not kinds(fi).item, "a fluid slot of full kinds offers fluids " .. line(kinds(fi)))
+		--- with a cell in the workbench the slots are the cell's, of the cell's kind only
 		remote.call(WB, "clear", w)
 		local hold = game.create_inventory(2)
 		hold[1].set_stack{ name = "me-1k-storage-cell", count = 1 }
 		remote.call(WB, "cell_click", w, hold[1], hold, false)
-		expect(info().cell ~= nil and add("fluid", "water") == false and #info().cell.partition == 0, "a fluid added to an item cell")
-		local cs = slots("fluid")
-		expect(#cs == 1 and cs[1].free and cs[1].elem_type == "item" and cs[1].enabled, "the row's slot with an item cell " .. line(cs))
-		expect(add("item", "iron-plate") == true and (not q or add("item", "iron-plate", q) == true), "an item added to an item cell")
+		expect(info().cell ~= nil and #info().cell.partition == 0, "an item cell in")
+		expect(kinds(1).item and not kinds(1).fluid, "an item cell offers items only " .. line(kinds(1)))
+		expect(set(1, "fluid", "water") == false and #info().cell.partition == 0, "a fluid set on an item cell")
+		expect(set(1, "item", "iron-plate") == true and (not q or set(2, "item", "iron-plate", q) == true), "items set on an item cell")
 		local cp = info().cell.partition
-		expect(line(cp) == line(q and { "iron-plate", "iron-plate@" .. q } or { "iron-plate" }), "the cell's partition after the adds " .. line(cp))
-		expect(#slots("item") == #cp + 1 and not slots("item")[1].free, "the buttons with a cell: the filled ones, then the row's")
+		expect(line(cp) == line(q and { "iron-plate", "iron-plate@" .. q } or { "iron-plate" }), "the cell's partition " .. line(cp))
+		sl = slots()
+		expect(#sl == #cp + 1 and last(sl).free and not sl[1].free and sl[1].key == cp[1], "the buttons with a cell " .. line(sl))
+		expect(remote.call(GUI, "workbench_clear_slot", w, 1) == true and #info().cell.partition == #cp - 1, "a slot of the cell emptied")
 		hold[1].clear()
 		remote.call(WB, "cell_click", w, hold[1], hold, false)
 		hold[1].clear()
 		hold[1].set_stack{ name = "me-1k-fluid-storage-cell", count = 1 }
 		remote.call(WB, "clear", w)
 		remote.call(WB, "cell_click", w, hold[1], hold, false)
-		expect(info().cell ~= nil and add("item", "coal") == false and add("fluid", "water") == true
-			and line(info().cell.partition) == line({ "fluid/water" }), "an add to a fluid cell " .. line(info().cell and info().cell.partition))
+		expect(info().cell ~= nil and kinds(1).fluid and not kinds(1).item and set(1, "item", "coal") == false and set(1, "fluid", "water") == true
+			and line(info().cell.partition) == line({ "fluid/water" }), "a fluid cell " .. line(info().cell and info().cell.partition))
 		hold[1].clear()
 		remote.call(WB, "cell_click", w, hold[1], hold, false)
 		hold.destroy()
 		remote.call(WB, "clear", w)
 		w.destroy()
-		me_report("WBPICK69", "ME Cell Workbench partition buttons", problems, "the free slot per kind, refused signals, entities, "
-			.. "recipes and unknown values, items with quality and fluids, a slot changed and emptied, a key twice, full kinds; "
-			.. "issue #82: the qualities of the drop-down, the green check's add (quality, refusals, a full kind, a cell in), "
-			.. "a changed slot keeping its quality")
+		me_report("WBPICK69", "ME Cell Workbench partition buttons", problems, "the picker's lists (items and fluids, no signal, the kinds, "
+			.. "a search text, the groups, the qualities), what a slot takes and refuses, items with quality and fluids, a slot changed "
+			.. "and emptied, a key twice, full kinds, an item cell and a fluid cell")
 	end
 
 	--- Issue #64: the tooltip of a cell (its custom_description, written with the stack by N.cell_stack). The cells are made
