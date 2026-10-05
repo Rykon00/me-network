@@ -58,7 +58,7 @@ end
 --- An item (the fields are the same as Gregtorio's create_item gave them, so saves and other mods see the same
 --- item) and, unless def.recipe is false, its recipe (def.recipe = the fields of add_recipe without the name)
 function M.add_item(def)
-	data:extend({ {
+	local item = {
 		type = def.type or "item",
 		name = def.name,
 		icon = def.icon or (M.icons .. def.name .. ".png"),
@@ -69,7 +69,9 @@ function M.add_item(def)
 		place_result = def.place_result,
 		hidden = def.hidden,
 		localised_description = def.localised_description,
-	} })
+	}
+	for k, v in pairs(def.fields or {}) do item[k] = v end      -- (the fields of another item type: a module's category, tier, effect)
+	data:extend({ item })
 	if def.recipe ~= false then
 		local r = def.recipe or {}
 		r.name = r.name or def.name
@@ -152,6 +154,11 @@ function M.set_technology(name, def)
 	end
 end
 
+--- The module category of the Acceleration Card (issue #110): the card is a module, and the ME Molecular Assembler is the
+--- one machine whose module slots take it (data-final-fixes.lua keeps it out of every other machine and beacon)
+M.ACCELERATION = "me-acceleration"
+M.ACCELERATION_SLOTS = 5          -- AE2: a Molecular Assembler takes up to 5 acceleration cards (TileMolecularAssembler)
+
 --- the ME Molecular Assembler: a copy of `base` for item recipes only (no fluid boxes) with its own graphics
 function M.make_molecular_assembler(def)
 	local assembler = table.deepcopy(data.raw["assembling-machine"][def.base])
@@ -167,6 +174,12 @@ function M.make_molecular_assembler(def)
 	assembler.energy_usage = def.energy_usage
 	assembler.fluid_boxes = nil
 	assembler.fluid_boxes_off_when_no_fluid_recipe = nil
+	--- issue #110: five slots for Acceleration Cards and nothing else (no module of the game, no beacon: AE2's assembler has
+	--- its upgrade slots and no more); the card's speed and consumption effects are the only ones it takes
+	assembler.module_slots = M.ACCELERATION_SLOTS
+	assembler.allowed_module_categories = { M.ACCELERATION }
+	assembler.allowed_effects = { "speed", "consumption" }
+	assembler.effect_receiver = { uses_module_effects = true, uses_beacon_effects = false, uses_surface_effects = true }
 	assembler.graphics_set = {
 		idle_animation = { layers = { {
 			filename = M.entity_path .. "me-molecular-assembler-idle.png",

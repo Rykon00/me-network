@@ -39,6 +39,35 @@ for _, machine_type in pairs({ "assembling-machine", "furnace", "rocket-silo" })
 	end
 end
 
+--- Issue #110: the Acceleration Card is a module (the ME Molecular Assembler's module slots show it), and a machine without
+--- `allowed_module_categories` takes every category: so every machine and beacon that has module slots and no list gets one
+--- with every module category of the game but this mod's. A list another mod made already (Gregtorio Continued gives its
+--- machines "every category but mold" in its data stage, which names this mod's category too) loses this mod's category. The
+--- ME Molecular Assembler is the one machine that keeps it (its list is only the card). A category another mod adds in its own
+--- data-final-fixes, after this one, is not in the lists made here: such a mod lists its machines itself.
+do
+	local categories = {}
+	for name in pairs(data.raw["module-category"] or {}) do
+		if name ~= ME.ACCELERATION then categories[#categories + 1] = name end
+	end
+	table.sort(categories)
+	for _, prototypes_of_type in pairs(data.raw) do
+		for name, entity in pairs(prototypes_of_type) do
+			if type(entity) == "table" and type(entity.module_slots) == "number" and entity.module_slots > 0 and name ~= "me-molecular-assembler" then
+				if entity.allowed_module_categories == nil then
+					entity.allowed_module_categories = table.deepcopy(categories)
+				else
+					local kept = {}
+					for _, category in ipairs(entity.allowed_module_categories) do
+						if category ~= ME.ACCELERATION then kept[#kept + 1] = category end
+					end
+					entity.allowed_module_categories = kept
+				end
+			end
+		end
+	end
+end
+
 --- Issue #17: the upgrade cards technology costs what ME 64k Storage costs (its prerequisite), unless a mod set it
 --- itself (ME_NETWORK.set_technology). A mod that puts the network on its own tiers (Gregtorio Continued) thereby gets a
 --- researchable cards technology on the 64k tier before it knows about the cards.
@@ -69,5 +98,17 @@ for _, name in ipairs(blocks) do
 		tech.effects = tech.effects or {}
 		tech.effects[#tech.effects + 1] = { type = "unlock-recipe", recipe = name }
 		data.raw.recipe[name].enabled = false
+	end
+end
+
+--- Issue #110: the Acceleration Card is unlocked by the cards technology in the same way: a mod that replaced that technology's
+--- recipe list (Gregtorio Continued does) has not heard of a card this mod added later, so the card's recipe, its own
+--- (Gregtorio's compat file gives it the GregTech ingredients) or ours, is unlocked there as well.
+do
+	local tech, recipe = data.raw.technology["me-upgrade-cards"], data.raw.recipe["me-acceleration-card"]
+	if tech and recipe and not unlocked["me-acceleration-card"] then
+		tech.effects = tech.effects or {}
+		tech.effects[#tech.effects + 1] = { type = "unlock-recipe", recipe = "me-acceleration-card" }
+		recipe.enabled = false
 	end
 end

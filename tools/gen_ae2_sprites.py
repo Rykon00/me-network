@@ -792,7 +792,7 @@ def patterns():
 # colour of their own, so that they are told apart at 32 px:
 #   capacity              plus_large (green)        fuzzy                 analog: a wave, "about" (magenta)
 #   inverter              disable: a slashed ring   equal distribution    cyclic: round robin arrows (cyan)
-#                         (orange)
+#                         (orange)                  acceleration          x2: "twice as fast" (lime)
 # The Overflow Destruction Card is a warning: a yellow triangle with a black "!" (drawn) and black and yellow hazard
 # stripes along the card's bottom edge.
 CARD_OUTLINE = (30, 30, 38)
@@ -813,6 +813,7 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-fuzzy-card": ("advanced", "gui/overlay_button/analog", (235, 95, 215)),
     "me-inverter-card": ("advanced", "gui/overlay_button/disable", (245, 120, 30)),
     "me-equal-distribution-card": ("advanced", "gui/overlay_button/cyclic", (60, 225, 210)),
+    "me-acceleration-card": ("advanced", "gui/overlay_button/x2", (185, 240, 70)),   # issue #110: the "x2" sign (lime)
 }
 CARD_SIGN_MAX = 20            # px; larger GT signs (the 24 px ring of "disable") are scaled down to it
 
