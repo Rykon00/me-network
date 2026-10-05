@@ -1537,6 +1537,15 @@ the next cell whose partition is empty). Every change is written into the cell's
 table, 2 white wool, calculation processor, 4 iron ingots and chest become an assembling machine 1, 2 plastic bars, an
 advanced circuit, 4 iron plates and an iron chest.
 
+**The partition without a cell (issue #37).** The copy mode's kept partition (`rec.config`) was a line of text
+("Kept partition: N kinds") and the slots were gone without a cell. Now the slots are always there: without a cell
+they show and set `rec.config` itself. It is one list for both kinds of cell (the item keys, then the fluid keys:
+`kept_list`), because the workbench cannot know which cell comes next; a cell that arrives without a partition takes
+the keys of its kind (`N.clean_partition` drops the others), a cell in the workbench shows and changes its kind's keys
+and leaves the other kind's alone (`remember`). A partition set by hand goes onto the next cell also without the copy
+mode: setting it is the request. Without the copy mode the workbench forgets all of it when a cell leaves, as before.
+The slots without a cell: at most what a cell of the kind takes (63 items, 18 fluids).
+
 The cards are a list in the tags (no gaps: tags keep none; a card taken out closes up the list). The cell window
 (drive window, terminal's Cells tab) keeps its partition buttons, so nothing a player uses goes away; it
 shows the cell's cards but cannot change them. AE2's stricter way (partitions only in the workbench) would make every

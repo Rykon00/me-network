@@ -14,11 +14,15 @@
 ---     the removal): what may not be there goes back, a cell that left is looked for by its item_number.
 ---   * The cell stays an item, and every change is written into its tags at once (N.cell_stack), with its contents
 ---     untouched.
+---   * Issue #37: the workbench's partition (rec.config) is shown and set without a cell too. It holds item keys and
+---     fluid keys (kept_list: the items, then the fluids); a cell that arrives without a partition takes the keys of its
+---     kind, also without the copy mode (set by hand for it), and a cell in the workbench shows and changes the keys of
+---     its kind only (remember), the other kind's stay. Without the copy mode all of it is forgotten when a cell leaves.
 ---   * Mined: the cards into the cell's tags, the cell into the buffer; destroyed or removed by a script: spilled; a
 ---     workbench removed without an event: the sweep (from the network's slow step) spills it at the position kept in
 ---     the record.
---- State: storage.fork_me_workbench = { recs = { [unit] = { entity, inv, keep, config, where, cell (item_number of the
---- cell in slot 1) } }, list, cursor }.
+--- State: storage.fork_me_workbench = { recs = { [unit] = { entity, inv, keep, config (a list of keys), where, cell
+--- (item_number of the cell in slot 1) } }, list, cursor }.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -48,6 +52,57 @@ local function rules_of(spec)
 end
 
 local function is_cell(stack) return stack and stack.valid_for_read and N.cell_spec(stack.name) ~= nil end
+
+--- issue #37: the most kinds an item cell and a fluid cell take (the slots of the workbench's partition without a
+--- cell), as the two stand-in specs N.clean_partition checks a list against
+local limits
+local function kept_limits()
+	if not limits then
+		local items, fluids = 0, 0
+		for _, spec in pairs(N.cell_specs()) do
+			if spec.kind == "fluid" then fluids = math.max(fluids, spec.types or 0) else items = math.max(items, spec.types or 0) end
+		end
+		limits = { item = { types = items }, fluid = { kind = "fluid", types = fluids } }
+	end
+	return limits
+end
+
+--- the workbench's partition in the order its window shows it: the item keys, then the fluid keys, each sorted.
+--- Returns the list and the number of item keys.
+local function kept_list(config)
+	local items, fluids = {}, {}
+	for _, key in ipairs(config or {}) do
+		if N.is_fluid_key(key) then fluids[#fluids + 1] = key else items[#items + 1] = key end
+	end
+	table.sort(items)
+	table.sort(fluids)
+	local n = #items
+	for i = 1, #fluids do items[n + i] = fluids[i] end
+	return items, n
+end
+
+--- a list of keys as the workbench keeps it: known items and fluids, each once, at most what a cell of the kind
+--- takes; nil when nothing is left
+local function clean_kept(list)
+	local lim = kept_limits()
+	local out = {}
+	for _, spec in ipairs({ lim.item, lim.fluid }) do
+		for key in pairs(N.clean_partition(spec, list) or {}) do out[#out + 1] = key end
+	end
+	out = kept_list(out)
+	return #out > 0 and out or nil
+end
+
+--- the workbench's partition after the partition of the cell in it changed: the cell's keys, and the kept keys of
+--- the other kind (an item cell does not touch the fluids kept for a fluid cell)
+local function remember(rec, cell)
+	local fluid = N.cell_spec(cell.name).kind == "fluid"
+	local out = N.cell_keys(cell)
+	for _, key in ipairs(rec.config or {}) do
+		if N.is_fluid_key(key) ~= fluid then out[#out + 1] = key end
+	end
+	rec.config = clean_kept(out)
+end
 
 --- the cell's record written back into its stack (tags, description); the stack gets a new item_number
 local function write(rec, stack, cell)
@@ -164,14 +219,14 @@ local function taken(rec)
 	if not rec.keep then rec.config = nil end
 end
 
---- a cell arrived in slot 1 (AE2: a cell with a partition shows it; one without gets the kept one); its tag cards
---- become the card slots' items
+--- a cell arrived in slot 1 (AE2: a cell with a partition shows it; one without gets the workbench's: the keys of its
+--- kind, kept by the copy mode or set by hand without a cell, issue #37); its tag cards become the card slots' items
 local function arrived(rec, inv, back)
 	local stack = inv[1]
 	local cell = N.cell_from_stack(stack)
 	if #N.cell_keys(cell) > 0 then
-		rec.config = N.cell_keys(cell)
-	elseif rec.keep and rec.config and #rec.config > 0 then
+		remember(rec, cell)
+	elseif rec.config and N.clean_partition(N.cell_spec(cell.name), rec.config) then
 		N.set_cell_keys(cell, rec.config)
 		write(rec, stack, cell)
 	end
@@ -338,12 +393,26 @@ function M.cell_click(entity, cursor, inventory, shift)
 	return nil
 end
 
---- the partition button `index`: `key` (nil: remove) replaces the key at that place of the list
+--- the partition button `index`: `key` (nil: remove) replaces the key at that place of the list. Without a cell
+--- (issue #37) the list is the workbench's own (kept_list: items, then fluids), for the next cell without a partition.
 function M.set_partition_slot(entity, index, key)
 	local rec = rec_of(entity)
-	local stack, cell
-	if rec then stack, cell = cell_of(rec) end
-	if not stack then return false end
+	if not rec or type(index) ~= "number" or index < 1 then return false end
+	local stack, cell = cell_of(rec)
+	if not stack then
+		local list = kept_list(rec.config)
+		local out, seen = {}, {}
+		for i = 1, math.max(#list, index) do
+			local k
+			if i == index then k = key else k = list[i] end
+			if type(k) == "string" and not seen[k] then
+				seen[k] = true
+				out[#out + 1] = k
+			end
+		end
+		rec.config = clean_kept(out)
+		return true
+	end
 	local list = N.cell_keys(cell)
 	local out, seen = {}, {}
 	for i = 1, math.max(#list, index) do
@@ -356,11 +425,11 @@ function M.set_partition_slot(entity, index, key)
 	end
 	N.set_cell_keys(cell, out)
 	write(rec, stack, cell)
-	rec.config = N.cell_keys(cell)
+	remember(rec, cell)
 	return true
 end
 
---- AE2's "partition storage": the partition becomes what the cell holds
+--- AE2's "partition storage": the partition becomes what the cell holds (nothing without a cell)
 function M.from_contents(entity)
 	local rec = rec_of(entity)
 	local stack, cell
@@ -370,18 +439,23 @@ function M.from_contents(entity)
 	for key in pairs(cell.items) do if not key:find("#", 1, true) then keys[#keys + 1] = key end end
 	N.set_cell_keys(cell, keys)
 	write(rec, stack, cell)
-	rec.config = N.cell_keys(cell)
+	remember(rec, cell)
 	return true
 end
 
+--- the partition of the cell is emptied (the kept keys of the other kind stay); without a cell (issue #37) the
+--- workbench's own partition, all of it
 function M.clear(entity)
 	local rec = rec_of(entity)
-	local stack, cell
-	if rec then stack, cell = cell_of(rec) end
-	if not stack then return false end
+	if not rec then return false end
+	local stack, cell = cell_of(rec)
+	if not stack then
+		rec.config = nil
+		return true
+	end
 	N.set_cell_keys(cell, {})
 	write(rec, stack, cell)
-	rec.config = nil
+	remember(rec, cell)
 	return true
 end
 
@@ -449,11 +523,15 @@ function M.shift_in(entity, stack, inventory)
 end
 
 --- the window's data: { cell = { name, fluid, items, bytes, bytes_total, types, types_total, partition = keys, cards =
---- { names: the card slots' cards }, slots, inverted, fuzzy, equal, void } or nil, keep, config }
+--- { names: the card slots' cards }, slots, inverted, fuzzy, equal, void } or nil, keep, config (the workbench's
+--- partition: its item keys, then its fluid keys), config_items (how many of them are items), limits = { items,
+--- fluids } (the most kinds of each) }
 function M.info(entity)
 	local rec = rec_of(entity)
 	if not rec then return nil end
-	local out = { keep = rec.keep, config = rec.config and { table.unpack(rec.config) } or {} }
+	local config, n = kept_list(rec.config)
+	local lim = kept_limits()
+	local out = { keep = rec.keep, config = config, config_items = n, limits = { items = lim.item.types, fluids = lim.fluid.types } }
 	local stack, cell = cell_of(rec)
 	if stack then
 		local spec = N.cell_spec(cell.name)

@@ -139,6 +139,61 @@ return function(H)
 		take_cell(wb)
 		hand.clear()
 		remote.call(WB, "set_keep", wb, false)
+		--- issue #37: the workbench's partition without a cell: set by hand (items and fluids), shown as the items and
+		--- then the fluids, onto the next cell without a partition (the keys of its kind), not onto one that has one
+		local k = info(wb)
+		expect(#k.config == 0 and k.config_items == 0 and k.limits and k.limits.items >= 63 and k.limits.fluids >= 1,
+			"an empty workbench's partition " .. line(k))
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		remote.call(WB, "set_partition_slot", wb, 2, "fluid/steam")
+		remote.call(WB, "set_partition_slot", wb, 3, "wood")
+		remote.call(WB, "set_partition_slot", wb, 4, "coal")                 -- (a key it has: once)
+		remote.call(WB, "set_partition_slot", wb, 4, "no-such-item")         -- (an unknown key: dropped)
+		k = info(wb)
+		expect(line(k.config) == line({ "coal", "wood", "fluid/steam" }) and k.config_items == 2,
+			"a partition set without a cell " .. line(k.config) .. " " .. tostring(k.config_items))
+		expect(remote.call(WB, "from_contents", wb) == false and #info(wb).config == 3, "from contents without a cell")
+		remote.call(WB, "set_partition_slot", wb, 2, nil)                    -- (wood out)
+		remote.call(WB, "set_partition_slot", wb, 1, "stone")                -- (coal becomes stone)
+		expect(line(info(wb).config) == line({ "stone", "fluid/steam" }), "a slot removed and one replaced " .. line(info(wb).config))
+		--- a cell with a partition of its own keeps it; the fluid set by hand stays next to it; without the copy mode
+		--- all of it is forgotten when the cell leaves
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		hand.clear()
+		hand.transfer_stack(gear_cell[1])
+		remote.call(WB, "cell_click", wb, hand, inv, false)
+		expect(line(info(wb).cell.partition) == line({ "stone" }) and line(info(wb).config) == line({ "stone", "fluid/steam" }),
+			"a cell with a partition in a workbench with one " .. line(info(wb).cell.partition) .. " " .. line(info(wb).config))
+		take_cell(wb)
+		gear_cell[1].transfer_stack(hand)
+		expect(#info(wb).config == 0, "the partition after that cell left (no copy mode) " .. line(info(wb).config))
+		--- a cell without a partition takes the keys of its kind, also without the copy mode
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		remote.call(WB, "set_partition_slot", wb, 2, "fluid/steam")
+		put_cell(wb, "me-4k-storage-cell")
+		expect(line(info(wb).cell.partition) == line({ "coal" }) and line(info(wb).config) == line({ "coal", "fluid/steam" }),
+			"an item cell takes the items set without a cell " .. line(info(wb).cell.partition) .. " " .. line(info(wb).config))
+		--- the cell's partition changed and cleared: the fluid kept for a fluid cell is not touched
+		remote.call(WB, "set_partition_slot", wb, 2, "wood")
+		expect(line(info(wb).config) == line({ "coal", "wood", "fluid/steam" }), "the cell's change in the workbench's partition " .. line(info(wb).config))
+		remote.call(WB, "clear", wb)
+		expect(#info(wb).cell.partition == 0 and line(info(wb).config) == line({ "fluid/steam" }), "clear with a cell " .. line(info(wb).config))
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		local t37 = take_cell(wb)
+		expect(t37 and t37.fork_me_cell and t37.fork_me_cell.partition and t37.fork_me_cell.partition["coal"] and #info(wb).config == 0,
+			"the cell left with the partition, the workbench forgot it " .. line(t37) .. " " .. line(info(wb).config))
+		hand.clear()
+		--- with the copy mode a fluid cell takes the fluids and the items stay for an item cell; Clear without a cell
+		remote.call(WB, "set_keep", wb, true)
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		remote.call(WB, "set_partition_slot", wb, 2, "fluid/steam")
+		put_cell(wb, "me-1k-fluid-storage-cell")
+		expect(line(info(wb).cell.partition) == line({ "fluid/steam" }), "a fluid cell takes the fluids " .. line(info(wb).cell.partition))
+		take_cell(wb)
+		hand.clear()
+		expect(line(info(wb).config) == line({ "coal", "fluid/steam" }), "the copy mode keeps both kinds " .. line(info(wb).config))
+		expect(remote.call(WB, "clear", wb) == true and #info(wb).config == 0, "clear without a cell " .. line(info(wb).config))
+		remote.call(WB, "set_keep", wb, false)
 		--- a fluid cell: 3 slots, no fuzzy card, fluid keys
 		put_cell(wb, "me-1k-fluid-storage-cell")
 		expect(info(wb).cell.slots == 3 and info(wb).cell.fluid, "fluid cell " .. line(info(wb).cell))
@@ -250,7 +305,7 @@ return function(H)
 		store.destroy()
 		gear_cell.destroy()
 		me_report("WORKBENCH", "ME Cell Workbench", problems, "slots, partition, cards and limits, tags, from contents, clear, "
-			.. "copy mode, inverter/fuzzy/equal/void cells in a drive, mined/destroyed/vanished")
+			.. "copy mode, the partition without a cell, inverter/fuzzy/equal/void cells in a drive, mined/destroyed/vanished")
 	end
 
 	--- issue #28: the workbench's script inventory (slot 1 the cell, slots 2 to 5 its cards) changed the way a player
