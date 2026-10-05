@@ -982,7 +982,8 @@ end
 --- the item part of an import visit: up to `cap` from the output inventory. Plain items by count (one
 --- get_contents, one remove per item type), the others stack by stack (their data, damage or spoilage decides).
 --- `info` (issue #38): what the source held of the bus's items (`held`), its slots and its biggest item (the room),
---- and whether the network took nothing (`netfull`).
+--- and whether the network took nothing (`netfull`). A stack the network refuses itself (N.refuses_stack) is neither: it
+--- stays where it is and is left out of `held` (issue #85).
 local function import_items(rec, net, t, cap, info)
 	local inv = t.get_inventory(rec.t_inv)
 	if not inv then return 0 end
@@ -1021,8 +1022,13 @@ local function import_items(rec, net, t, cap, info)
 			if moved >= cap then break end
 			local stack = inv[i]
 			if stack.valid_for_read and (all or set[stack.name]) and not by_count(stack.name, stack.quality.name) then
-				local n = N.insert_partial(net, stack, cap - moved)
+				local n, why = N.insert_partial(net, stack, cap - moved)
 				if n then moved = moved + n
+				elseif N.refuses_stack(why) then
+					--- issue #85: the network refuses this stack itself (a used pack, a damaged item, a blueprint): room does
+					--- not change that, so it is no "network full" and waits for nothing; it stays in the source, which the
+					--- bus does not count as something left to take
+					held = held - stack.count
 				else
 					info.netfull = true
 					N.wait_for(net, N.key_of(stack.name, stack.quality.name), "io", unit, false)

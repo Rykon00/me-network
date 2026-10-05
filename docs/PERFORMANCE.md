@@ -2394,3 +2394,19 @@ chests are never refilled, so the bound lets every bus re-read at most once ther
 instead of 30 to 120 ticks) is in the runtime test `ME storage bus refill test`, not in the benchmark.
 
 The terminal's follow-up refresh costs one `next()` per tick while no player has taken anything.
+
+
+## An import bus with only refused stacks (issue #85)
+
+`import_items` leaves a stack the network refuses itself (`N.refuses_stack`) out of `netfull` and of `held`: one more
+call and a subtraction for a refused stack, nothing for any other. `bench --check origin/main --sizes base,5000`, three rounds
+in turns (the scenes' sources hold plain items, so the path is not taken there): **green, regressions 0**, throughput
+identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1681 / 0.510 | 0.1676 / 0.512 |
+| 5000: script avg / p99 (ms) | 1.139 / 3.21 | 1.111 / 3.04 |
+| 5000: ticks over 5 ms | 8 | 8 |
+| 5000: storage bus latency max (s) | 1.733 | 1.733 |
+| 5000: burst build / remove (ms) | 75.5 / 98.8 | 72.2 / 95.8 |
