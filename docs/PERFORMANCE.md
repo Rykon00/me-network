@@ -2284,3 +2284,57 @@ built", lever 7).
 regressions 0. Script avg 2.381 → 2.495 ms (+4.8 %), p99 5.33 → 5.44 ms (+2 %), ticks over 5 ms 147 → 162 (+10 %, noise ±28),
 the collector 0.097 → 0.124 ms (noise ±0.022), while main moves 21.6 % more items and 39.6 % more fluid per second, makes 7.6 %
 more crafts and keeps the `pair` machines at 99.97 % (0.3.0: 98.3 %).
+
+## Round five (issue #59): the storage engine
+
+Profiles of main 6cf2ad0 at 20 000 and at the maintainer's size (`bench --profile`), the levers and their rule in #59.
+
+### Lever 1, storing: measured, under the rule
+
+At 20 000 an insert called `put` 10.4 times (79 817 inserts, 828 066 puts in 3600 ticks). Counted by call site and outcome: 741 849
+of them were storage buses partitioned for the key and marked full for it (`cell.full[key]`, until the bus's next read), which `put`
+refuses at once; 80 407 stored into a cell that held the key. The refused calls cost about 0.1 ms per tick at 20 000 (without the
+profiler's 0.92 µs per call); skipping them without the call would save about 0.07 ms, 3 % of the script time; at the maintainer's
+size a few µs. Not built.
+
+### Lever 2, the holder lists (`scripts/fork-me-network.lua`)
+
+The three sorted lists of a key's holders (by cell id for the uniform insert, by rank for the ranked insert and the room count, the
+extraction order) were dropped whenever a cell started or stopped holding the key and sorted anew at the next use. At 20 000 the
+extraction order alone was sorted 907 times in 3600 ticks over 220 cells on average (98 % of the calls found it kept; a sort cost
+about 0.58 ms), the holder lists as often: about 0.24 ms per tick together, 10 % of the script time. At the maintainer's size the lists
+hold about ten cells.
+
+* **The lists follow the change in a copy.** A cell that starts holding the key is put in at its place, one that stops is taken
+  out, in a copy of the list (no sort): an insert or extraction that walks the old list while a cell starts or stops holding the key
+  (both happen inside those walks) walks it to its end unchanged, as when the list was dropped. The order of a list is a strict
+  total order of values that change only with the network's order (a cell, a priority, a partition: `net.order_dirty`, new lookups;
+  every change of a partition goes through `touch_order` or `ext_touch`), so the copy is the list a sort would make. While the
+  lookups are about to be made anew, or for a cell they do not know, a list is dropped as before.
+* **The holder cursors (#46) move to the copy**: an entry put in before a cursor sets it back to the entry (it may take the key), an
+  entry taken out before it moves it one back.
+* **Only a list read since its last change is copied**; one that changes again before anybody reads it is dropped and sorted at
+  its next use (a burst of 1000 builds changes lists many times in one tick: with a copy per change the burst build at 20 000 cost
+  85.6 → 94.7 ms).
+
+**Tests.** The runtime test `ME holder lists test` (`runtimemod/holderlists.lua`) checks every 10 ticks of the whole run (both
+halves of the save and load) every kept list of every network against the list sorted anew from the index and every cursor on a kept
+list against its rule (the entries before it are internal cells that cannot take the key, or partitioned ones for the walks that
+skip them), through the test remote `check_holder_lists`: 138 rounds, about 4 700 lists. Its own network (one drive of four 1k cells)
+puts the cursor behind two full cells and then makes a cell before it a holder: the next plate must go into that cell, not into the
+fourth. A copy that puts the cell one place early fails at tick 150; cursors that do not move back fail the case (the next plate goes
+into the fourth cell) and the check.
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput per kind of endpoint identical at every size.
+
+| | origin/main | this pull request |
+|---|---|---|
+| 20 000: script avg / p99 (ms) | 2.565 / 5.54 | **2.441 / 4.86** |
+| 20 000: ticks over 5 ms | 165 | **95** |
+| 20 000: burst build / remove (ms) | 85.2 / 183.2 | 88.3 / 180.1 |
+| 5000: script avg / p99 (ms) | 1.084 / 2.97 | 1.086 / 2.94 |
+| base: script avg / p99 (ms) | 0.1499 / 0.419 | 0.1502 / 0.424 |
+
+An earlier series without the rule for unread lists (copies at every change): 20 000 avg 2.462 → 2.407 ms, p99 5.27 → 4.75 ms, ticks
+over 5 ms 141 → 89, the burst build 85.6 → 94.7 ms (flagged).
