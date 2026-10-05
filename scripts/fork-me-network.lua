@@ -2569,14 +2569,16 @@ end
 
 --- the drives of a network for the terminal's cell view: { { entity, unit, priority, cells = drive_info } },
 --- higher priority first
-function M.drives_of(net)
+--- the drives of a network (priority descending, then unit number) with their cells (drive_info; `light`: without each
+--- cell's items and cards, issue #50, lever 8: the terminal's cells tab shows only fill, types and partition)
+function M.drives_of(net, light)
 	local s = state()
 	local out = {}
 	if not net then return out end
 	for unit in pairs(net.drives) do
 		local d = s.drives[unit]
 		if d and d.entity.valid then
-			out[#out + 1] = { entity = d.entity, unit = unit, priority = d.priority or 0, cells = M.drive_info(d.entity) }
+			out[#out + 1] = { entity = d.entity, unit = unit, priority = d.priority or 0, cells = M.drive_info(d.entity, light) }
 		end
 	end
 	table.sort(out, function(a, b)
@@ -2587,7 +2589,8 @@ function M.drives_of(net)
 end
 
 --- plain data of a drive's slots for GUIs and tests: { [slot] = { name, items, bytes, bytes_total, types, state } }
-function M.drive_info(drive)
+--- (`light`: no `items` and `cards`, the copies that cost)
+function M.drive_info(drive, light)
 	local s = storage.fork_me_net
 	local d = s and drive and drive.valid and s.drives[drive.unit_number]
 	local out = {}
@@ -2596,13 +2599,16 @@ function M.drive_info(drive)
 		local cell = d.slots[slot]
 		if cell then
 			local spec = cell_spec(cell.name) or { bytes = 0, types = 0 }
-			local items = {}
-			for k, v in pairs(cell.items) do items[k] = v end
+			local items
+			if not light then
+				items = {}
+				for k, v in pairs(cell.items) do items[k] = v end
+			end
 			out[slot] = { name = cell.name, items = items, bytes = cell.bytes, bytes_total = spec.bytes,
 				types = cell.types, types_total = spec.types, state = cell_state(cell), fluid = fluid_cell(spec),
 				partition = M.cell_keys(cell),
 				--- issue #17: the cell's cards (from the Cell Workbench)
-				cards = { table.unpack(cell.cards or {}) }, inverted = cell.deny ~= nil or M.has_card(cell, "inverter"),
+				cards = not light and { table.unpack(cell.cards or {}) } or nil, inverted = cell.deny ~= nil or M.has_card(cell, "inverter"),
 				fuzzy = cell.fnames ~= nil or M.has_card(cell, "fuzzy"), equal = cell.eq, void = cell.void == true,
 				voided = cell.voided or 0 }
 		end

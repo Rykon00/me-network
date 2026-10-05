@@ -732,6 +732,8 @@ margin51 = require("margin")({ me_place = me_place, me_report = me_report })
 plans50 = require("plans")({ me_place = me_place, me_report = me_report })
 --- me-network issue #50, lever 6: the scan of the pattern providers (scan.lua)
 scan50 = require("scan")({ me_place = me_place, me_report = me_report })
+--- me-network issue #50, lever 8: the terminal's kept entries (entries.lua)
+entries50 = require("entries")({ me_place = me_place, me_report = me_report })
 --- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
 cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
@@ -773,6 +775,7 @@ local function tests_running()
 	margin51.running(check)
 	plans50.running(check)
 	scan50.running(check)
+	entries50.running(check)
 	holders43.running(check)
 	graph43.running(check)
 	return running
@@ -1648,6 +1651,7 @@ script.on_nth_tick(10, function()
 	margin51.tick()
 	plans50.tick()
 	scan50.tick()
+	entries50.tick()
 	holders43.tick()
 	graph43.tick()
 	done_test()
@@ -4520,6 +4524,7 @@ script.on_init(function()
 	for _, f in pairs(margin51.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")

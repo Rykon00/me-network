@@ -2146,3 +2146,64 @@ What is left of the scan is real work: the neighbour search (about 20 µs per pr
 machine (about 6.6 µs per slot). Scanning fewer providers before a start (only those not scanned for a while) or keeping the
 neighbours between scans would no longer see every change at once (a machine's recipe set by hand, a pipe, a machine built by
 another mod without an event), so it was not done.
+
+### Pull request 13 (issue #50, lever 8): the terminal's entries and tabs
+
+#### What an open terminal paid
+
+An open terminal refreshes its tab once a second. The storage tab called `entries`: every key of the network parsed
+(`N.contents`, two pattern matches and a table per key), its prototype looked up, the list sorted with `table.sort`, then a
+signature string of up to 400 entries (`key=count` each) compared with the last one, and when it differed, which in a working
+network is every second, the grid cleared and all 400 buttons made again (and an open tooltip closed). The cells tab copied every
+cell's whole contents (`drive_info`) to show its fill, types and partition.
+
+#### What was changed
+
+* **`entries` keeps its lists** (`scripts/fork-me-terminal.lua`): per network (weak), search, sort and kind, with the network's
+  contents version `net.cver` (every change of an amount counts it up; the circuit interfaces' shared signal list already relies
+  on it) and whether the network was usable. Unchanged: the same list is given back. Changed: the entries are made again from
+  `net.items` with what each key reads alone kept per key (name, quality, data, whether the prototype exists; per load), put in the
+  order of the last list and sorted by an insertion sort, which moves only what changed (more than 4n + 64 moves: `table.sort`).
+  The order is a strict total order (ties by key), so the result is the one `table.sort` gives. At most 16 lists per network,
+  outside `storage` (derived only).
+* **The storage tab sets only what changed.** What the grid shows is kept in `storage` as before (every peer must set the same
+  buttons), now as the keys and amounts per button instead of a signature string: a button whose amount changed gets the new
+  number (and a fluid its tooltip), a button whose key changed is made again in its place (`G.slot` with an index); a new sort,
+  kind or number of buttons builds the grid anew as before. A window of an older version (a signature string) is built anew once.
+* **The cells tab reads light** (`N.drives_of(net, true)`, `drive_info(drive, true)`): without the copies of each cell's items and
+  cards, which the tab does not show.
+
+#### The entries are the same
+
+The runtime test `ME terminal entries test` (`runtimemod/entries.lua`) compares, every 20 ticks of the whole run (both halves of
+the save and load), the entries through the kept lists with entries made from nothing (`fresh`) for every terminal of the map and
+every sort, kind and search (12 combinations): 17 952 lists, 32 400 given back unchanged, 1121 sorted again from the last one,
+none differs. Its own network changes an amount before every round (ties included). With the check of the contents version
+removed it fails at its first round.
+
+The GUI side cannot run headless (no player): the in-place update of the buttons is the maintainer's test in the game.
+
+#### Numbers (quiet machine, game closed, `origin/main` and the working copy in turns, three rounds, medians, µs; ME scene at 5000, 855 item types)
+
+| window probe (a remote call: each line holds the copy of the returned list, about 1.5 ms for the 855 entries) | origin/main | this pull request |
+|---|---|---|
+| entries (all, by count), first refresh | 4991 | 3912 |
+| entries (all, by count), nothing changed | 4813 | **1524** (the copy alone) |
+| entries (all, by count), one amount changed | 4885 | 2753 |
+| entries (items, by name), first refresh | 4909 | 3788 |
+| entries (search 'iron') | 1803 | **220** |
+| cells (the light data) | 11 818 | 7386 |
+
+Without the copy, which a window does not make: a refresh of the storage tab while nothing changed from about 3.3 ms to a few µs,
+after one amount changed to about 1.25 ms, a first refresh to about 2.4 ms. The GUI work on top shrinks from 400 new buttons per
+second to one number per changed amount.
+
+`bench --check origin/main --sizes base,5000` (three rounds in turns): green, regressions 0 (no terminal is open in the scenes).
+
+#### The targets
+
+| Target | Result |
+|---|---|
+| a refresh of an open terminal under 0.5 ms when nothing changed | **met**: a few µs (the kept list) |
+| at most 2 ms when everything changed | **met after a change** (about 1.25 ms: the list is sorted again from the last one); **not met for a list made from nothing** (the first refresh of a window, a new search: about 2.4 ms with 855 types, of which `table.sort` is most) |
+| the GUI side | the maintainer's test in the game: an open terminal on a busy network, `show-time-usage` of mod-me-network, and an open tooltip of a slot that must stay open while amounts change |
