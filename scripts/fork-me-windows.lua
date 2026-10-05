@@ -69,7 +69,7 @@ local function block_slots(frame, name, inv, first, last, tip)
 	local sig = { tostring(first), tostring(last) }
 	for i = first, last do
 		local st = inv[i]
-		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name) or "-"
+		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name .. G.stack_ident(st)) or "-"
 	end
 	rebuild(frame, name, table.concat(sig, ","), function(box)
 		for i = first, last do G.stack_button(box, inv[i], G.act("block_slot", { slot = i }), tip and tip(i, inv[i]) or nil) end
@@ -1341,6 +1341,9 @@ remote.add_interface("gregtorio-me-gui", {
 	has_window = function(entity) return G.has_window(entity) end,
 	drive_data = function(drive) return M.drive_data(drive) end,
 	cell_data = function(drive, slot) return M.cell_data(drive, slot) end,
+	--- issue #75: what a slot of a window gives a stack (the tooltip next to the item's own, the signature piece)
+	stack_tooltip = function(stack, base) return G.stack_tooltip(stack, base) end,
+	stack_ident = function(stack) return G.stack_ident(stack) end,
 	cell_mode_caption = function(c) return M.cell_mode_caption(c) end,
 	set_partition_slot = function(drive, slot, index, key) return M.set_partition_slot(drive, slot, index, key) end,
 	controller_data = function(entity) return M.controller_data(entity) end,

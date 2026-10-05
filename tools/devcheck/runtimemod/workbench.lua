@@ -820,12 +820,75 @@ return function(H)
 			.. "every card, a cell with contents, an empty cell with a card, a cell out of a drive")
 	end
 
+	--- Issue #75: what a slot of an ME window gives a stack. The window's buttons need a player, so the functions behind
+	--- them are called: G.stack_tooltip (the tooltip next to the item's own, `elem_tooltip`) and G.stack_ident (the piece
+	--- of the slot's signature that makes the slot notice a stack written anew). A cell and a pattern give their own
+	--- description (then the slot's own hint), a plain item and a cell without a description give the hint alone.
+	local function slot_tip_test()
+		local st = storage.wbslot75
+		if (st and st.done) or game.tick < 130 then return end
+		st = { problems = {}, done = true }
+		storage.wbslot75 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local w = game.surfaces[1].create_entity{ name = "me-cell-workbench", position = { WX + 30.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not w then return me_report("WBSLOTTIP75", "ME window slot tooltips", { "no workbench" }) end
+		local inv = game.create_inventory(3)
+		local hand = inv[1]
+		local function tip(stack, base) return remote.call(GUI, "stack_tooltip", stack, base) end
+		local function ident(stack) return remote.call(GUI, "stack_ident", stack) end
+		local hint = { "fork-me-gui.workbench-cell-tooltip" }
+
+		--- a plain item: the hint alone (nothing without one), no signature piece
+		hand.set_stack{ name = "iron-plate", count = 5 }
+		expect(line(tip(hand, hint)) == line(hint) and tip(hand, nil) == nil and ident(hand) == "", "a plain item: " .. line(tip(hand, hint)) .. " / " .. line(ident(hand)))
+		--- an empty slot: the hint alone
+		expect(line(tip(inv[2], hint)) == line(hint) and tip(inv[2], nil) == nil, "an empty slot")
+
+		--- a fresh cell (an item with tags, no description): the hint alone, but a signature piece
+		hand.set_stack{ name = "me-1k-storage-cell", count = 1 }
+		expect(line(tip(hand, hint)) == line(hint) and tip(hand, nil) == nil, "a fresh cell: " .. line(tip(hand, nil)))
+		expect(ident(hand):find("^#%d+$") ~= nil, "a fresh cell's signature piece " .. line(ident(hand)))
+
+		--- a cell made in the workbench: its description (the tooltip the game's inventory shows), then the hint
+		expect(remote.call(WB, "cell_click", w, hand, inv, false) == nil, "the cell into the workbench")
+		remote.call(WB, "set_partition_slot", w, 1, "iron-plate")
+		local bench_inv = remote.call(WB, "inventory", w)
+		local slot = bench_inv[1]
+		local before = ident(slot)
+		local desc = slot.custom_description
+		expect(type(desc) == "table", "the cell in the workbench has no description " .. line(desc))
+		expect(line(tip(slot, nil)) == line(desc), "a cell: its description alone " .. line(tip(slot, nil)))
+		local both = tip(slot, hint)
+		expect(type(both) == "table" and both[1] == "" and line(both[2]) == line(desc) and both[3] == "\n" and line(both[4]) == line(hint),
+			"a cell with a hint: the description, a line break, the hint " .. line(both))
+		--- the cell stays in the slot and its partition changes: the description is written anew and the signature piece changes
+		remote.call(WB, "set_partition_slot", w, 2, "copper-plate")
+		local after = ident(bench_inv[1])
+		expect(before ~= after and after:find("^#%d+$") ~= nil, "the signature piece after a change: " .. line(before) .. " -> " .. line(after))
+		expect(line(tip(bench_inv[1], nil)) ~= line(desc), "the tooltip after a change " .. line(tip(bench_inv[1], nil)))
+		--- a card: a plain item
+		hand.set_stack{ name = "me-fuzzy-card", count = 1 }
+		expect(line(tip(hand, hint)) == line(hint) and ident(hand) == "", "a card is a plain item")
+
+		--- an encoded pattern: its description (what it makes) shows in the slot
+		local pdesc = { "fork-me-pattern.description", "x" }
+		hand.set_stack{ name = "me-encoded-pattern", count = 1, tags = { fork_me_pattern = { kind = "crafting" } }, custom_description = pdesc }
+		expect(line(tip(hand, nil)) == line(pdesc) and ident(hand):find("^#%d+$") ~= nil, "an encoded pattern: " .. line(tip(hand, nil)))
+		remote.call(WB, "clear", w)
+		inv.destroy()
+		w.destroy()
+		me_report("WBSLOTTIP75", "ME window slot tooltips", problems, "a plain item, an empty slot, a fresh cell, a cell with its description and a hint, "
+			.. "the signature piece after a change in the workbench, an encoded pattern")
+	end
+
 	function T.tick()
 		workbench_test()
 		slots_test()
 		pane_test()
 		pick_test()
 		tip_test()
+		slot_tip_test()
 	end
 	function T.running(check)
 		check(storage.wb17 and storage.wb17.done, "ME Cell Workbench")
@@ -833,6 +896,7 @@ return function(H)
 		check(storage.wbpane28 and storage.wbpane28.done, "ME window pane (workbench)")
 		check(storage.wb69 and storage.wb69.done, "ME Cell Workbench partition buttons")
 		check(storage.wbtip64 and storage.wbtip64.done, "ME cell tooltip")
+		check(storage.wbslot75 and storage.wbslot75.done, "ME window slot tooltips")
 	end
 	return T
 end

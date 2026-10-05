@@ -25,6 +25,7 @@ Version: 0.3.1
     - /me-stats: the starved arrivals show how long the machine's side had been empty or full (an estimate from the rate of the visit before), and times under a second are shown in ticks.
     - Crafting plans are much faster with big recipe sets (issue #50): a plan of a deep GregTech item took 200 to 500 ms, now 5 to 12 ms, and the crafting tab's preview, a level maintainer retrying a job and the plan at a job start reuse the last plan while nothing it depends on changed (a refresh of the preview costs about 0.3 ms). The plans themselves are the same.
   Bugfixes:
+    - The slots of the ME windows (your inventory on the left of every window, the workbench's cell and card slots, a storage bus's card slots) show the description of the stack in them (issue #75): a storage cell its contents, partition and cards, an encoded pattern what it makes. They showed the item's own text, so cells and patterns could not be told apart where they are handled. The text comes below the item's usual tooltip. Other things a stack has of its own (a blueprint's name, durability, a spoil timer) are still not shown there.
     - An export bus with a fluid filter that fills a large tank or fluid box counted as starved at every visit (in /me-stats) and was visited more often than it needed: only an insert that the target's room ended counts now.
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.0
