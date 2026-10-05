@@ -391,6 +391,11 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   workbench its cards are the items in its card slots; taking the cell out puts them into it.
 * **Keep the partition when the cell is taken out** (AE2's copy mode): the partition stays in the workbench and goes
   onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
+* **Without a cell** the partition slots are there too: they show and set the workbench's own partition, the one the
+  next cell without a partition gets. It can hold items and fluids (the items first, then the fluids, and a free slot
+  of each kind): an item cell takes the items, a fluid cell the fluids. **Clear** empties it; **From contents** needs
+  a cell. A partition set this way goes onto the next cell also when the copy mode is off; with the copy mode off the
+  workbench forgets its partition when a cell is taken out (and when the copy mode is switched off without a cell).
 * The cards are part of the cell (its tags): they travel with it into drives, chests and the network, like its items
   and partition. Only the workbench puts cards in or takes them out; the cell window (drive window, the terminal's
   Cells tab) shows them and keeps its partition buttons, so nothing a player used goes away.

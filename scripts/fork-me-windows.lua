@@ -396,8 +396,8 @@ local function open_workbench(player, entity)
 	content.add{ type = "flow", name = "fork_me_wb_part", direction = "vertical" }
 	local buttons = G.row(content)
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("wb_clear") }
-	buttons.add{ type = "button", caption = { "fork-me-gui.partition-contents" }, tooltip = { "fork-me-gui.partition-contents-tooltip" },
-		tags = G.act("wb_contents") }
+	buttons.add{ type = "button", name = "fork_me_wb_contents", caption = { "fork-me-gui.partition-contents" },
+		tooltip = { "fork-me-gui.partition-contents-tooltip" }, tags = G.act("wb_contents") }
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.workbench-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_wb_cards", direction = "horizontal" }
@@ -416,14 +416,28 @@ function M.refresh_workbench(player, frame)
 	G.find(frame, "fork_me_wb_mode").caption = c and M.cell_mode_caption(c) or ""
 	local part = c and c.partition or d.config
 	rebuild(frame, "fork_me_wb_part", (c and c.name or "-") .. ":" .. table.concat(part, ","), function(box)
+		local t = box.add{ type = "table", column_count = 10, style = "filter_slot_table" }
 		if not c then
-			if #part > 0 then box.add{ type = "label", caption = { "fork-me-gui.workbench-kept", #part } } end
+			--- issue #37: no cell: the workbench's own partition, for the next cell without one. Its items, then its
+			--- fluids, and a free slot of each kind (an item cell takes the items, a fluid cell the fluids)
+			local n = d.config_items
+			for i, key in ipairs(part) do
+				chooser(t, i > n and "fluid" or "item-with-quality", key, G.act("wb_part", { index = i }))
+			end
+			if n < d.limits.items then
+				chooser(t, "item-with-quality", nil, G.act("wb_part", { index = #part + 1 })).tooltip = { "fork-me-gui.workbench-free-item" }
+			end
+			if #part - n < d.limits.fluids then
+				chooser(t, "fluid", nil, G.act("wb_part", { index = #part + 1 })).tooltip = { "fork-me-gui.workbench-free-fluid" }
+			end
+			G.label(box, { "fork-me-gui.workbench-kept" }, WIDTH)
 			return
 		end
-		local t = box.add{ type = "table", column_count = 10, style = "filter_slot_table" }
 		local elem_type = c.fluid and "fluid" or "item-with-quality"
 		for i = 1, math.min(c.types_total, #part + 1) do chooser(t, elem_type, part[i], G.act("wb_part", { index = i })) end
 	end)
+	local contents = G.find(frame, "fork_me_wb_contents")
+	if contents then contents.enabled = c ~= nil end
 	local inv = bench.inventory(entity)
 	block_slots(frame, "fork_me_wb_cell", inv, 1, 1, function(_, st)
 		return { st.valid_for_read and "fork-me-gui.workbench-cell-tooltip" or "fork-me-gui.workbench-cell-empty" }
@@ -445,8 +459,13 @@ G.window("workbench", { open = open_workbench, refresh = M.refresh_workbench, en
 
 G.on("wb_part", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
-	local entity = window_entity(player)
-	if entity then bench.set_partition_slot(entity, el.tags.index, key_of_elem(el.elem_type, el.elem_value)) G.refresh_one(player) end
+	local entity, frame = window_entity(player)
+	if not entity then return end
+	bench.set_partition_slot(entity, el.tags.index, key_of_elem(el.elem_type, el.elem_value))
+	--- (drawn anew also when the list did not change: a key chosen twice or a key no cell takes must not stay in its slot)
+	local box = frame and G.find(frame, "fork_me_wb_part")
+	if box then box.tags = {} end
+	G.refresh_one(player)
 end)
 
 G.on("wb_clear", function(event, player)

@@ -126,6 +126,8 @@ function M.kind_of(name) return kinds()[name] end
 
 local function cell_spec(name) return mod_data().cells[name] end
 M.cell_spec = cell_spec
+--- every storage cell's spec by item name (issue #37: the most kinds a cell of each kind takes)
+function M.cell_specs() return mod_data().cells end
 
 --- issue #17: the card slots and limits of the blocks (prototypes/cards.lua, AE2's numbers) and what a card item does
 --- ("capacity", "void", "fuzzy", "inverter", "equal"; nil: no card)
