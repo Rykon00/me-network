@@ -514,15 +514,111 @@ return function(H)
 			.. "a second cell, a card; block slot clicks with a wrong item, the cell into the cursor and back, a swap, shift")
 	end
 
+	--- issue #69: what the partition buttons of a workbench without a cell offer and take: the free slot is a chooser of
+	--- the kind the switch says (item with quality, fluid), the filled ones of their own kind; only an item with quality
+	--- or a fluid is taken (a virtual signal, an item or fluid given as a signal, an entity, a recipe: refused, nothing
+	--- changes); a slot is changed, emptied, a key chosen twice stays once; a full kind leaves its free slot disabled
+	local function pick_test()
+		local st = storage.wb69
+		if (st and st.done) or game.tick < 110 then return end
+		st = { problems = {}, done = true }
+		storage.wb69 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local w = game.surfaces[1].create_entity{ name = "me-cell-workbench", position = { WX + 24.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not w then return me_report("WBPICK69", "ME Cell Workbench partition buttons", { "no workbench" }) end
+		local function info() return remote.call(WB, "info", w) or {} end
+		local function slots(kind) return remote.call(GUI, "workbench_slots", w, kind) or {} end
+		local function choose(index, elem_type, value) return remote.call(GUI, "workbench_choose", w, index, elem_type, value) end
+		local function item(name, q) return { name = name, quality = q or "normal" } end
+		local function last(t) return t[#t] end
+
+		--- empty: one free slot, a chooser of the kind asked for; never a signal chooser
+		for kind, elem_type in pairs({ item = "item-with-quality", fluid = "fluid" }) do
+			local sl = slots(kind)
+			expect(#sl == 1 and sl[1].free and sl[1].index == 1 and sl[1].elem_type == elem_type and sl[1].enabled and not sl[1].key,
+				"the free slot of an empty workbench (" .. kind .. ") " .. line(sl))
+		end
+		--- refused, and nothing changes
+		local refused = {
+			{ "signal", { type = "virtual", name = "signal-A" } }, { "signal", { type = "virtual", name = "signal-everything" } },
+			{ "signal", { type = "item", name = "iron-plate", quality = "normal" } }, { "signal", { type = "fluid", name = "water" } },
+			{ "signal", { type = "entity", name = "iron-chest" } }, { "entity", "iron-chest" }, { "recipe", "iron-gear-wheel" },
+			{ "item", "iron-plate" }, { "item-with-quality", item("no-such-item") }, { "fluid", "no-such-fluid" },
+			{ "item-with-quality", { type = "virtual", name = "signal-A" } },
+		}
+		for _, r in ipairs(refused) do
+			expect(choose(1, r[1], r[2]) == false, "refused: " .. r[1] .. " " .. line(r[2]))
+		end
+		expect(#info().config == 0, "a refused choice changed the partition " .. line(info().config))
+		--- an item with its quality, a fluid, an item of another quality
+		expect(choose(1, "item-with-quality", item("iron-plate")) == true and choose(2, "fluid", "water") == true
+			and choose(3, "item-with-quality", item("copper-plate")) == true, "items and a fluid chosen")
+		local q = prototypes.quality["uncommon"] and "uncommon"
+		if q then expect(choose(4, "item-with-quality", item("iron-plate", q)) == true, "an item with quality chosen") end
+		local want = q and { "copper-plate", "iron-plate", "iron-plate@" .. q, "fluid/water" } or { "copper-plate", "iron-plate", "fluid/water" }
+		local k = info()
+		expect(line(k.config) == line(want) and k.config_items == #want - 1, "the kept partition: items, then fluids " .. line(k.config))
+		--- the buttons: a filled one of its own kind, then the free one at the end, of the kind asked for
+		for _, kind in ipairs({ "item", "fluid" }) do
+			local sl = slots(kind)
+			local ok = #sl == #want + 1
+			for i, key in ipairs(want) do
+				ok = ok and sl[i] and sl[i].key == key and not sl[i].free and sl[i].enabled
+					and sl[i].elem_type == (key:find("^fluid/") and "fluid" or "item-with-quality")
+			end
+			local f = last(sl)
+			ok = ok and f.free and f.index == #want + 1 and not f.key and f.enabled
+				and f.elem_type == (kind == "fluid" and "fluid" or "item-with-quality")
+			expect(ok, "the buttons with the free " .. kind .. " slot " .. line(sl))
+		end
+		--- a slot changed, a key chosen twice (once), a slot emptied
+		expect(choose(1, "item-with-quality", item("stone")) == true, "a slot changed")
+		expect(line(info().config):find("copper-plate", 1, true) == nil and line(info().config):find("stone", 1, true) ~= nil,
+			"the slot after the change " .. line(info().config))
+		local n = #info().config
+		choose(#info().config + 1, "item-with-quality", item("iron-plate"))      -- (iron-plate is in the list already)
+		expect(#info().config == n, "a key chosen twice " .. line(info().config))
+		local gone = info().config[1]
+		choose(1, "item-with-quality", nil)
+		expect(#info().config == n - 1 and info().config[1] ~= gone and not remote.call(WB, "info", w).config[n], "a slot emptied " .. line(info().config))
+		expect(#slots("item") == #info().config + 1, "no stale button after the choices " .. line(slots("item")))
+		--- a full kind: its free slot is not enabled, the other kind's is
+		remote.call(WB, "clear", w)
+		local lim = info().limits
+		for name in pairs(prototypes.item) do
+			if info().config_items >= lim.items then break end
+			choose(#info().config + 1, "item-with-quality", item(name))
+		end
+		k = info()
+		expect(k.config_items == lim.items, "items filled up to the limit: " .. k.config_items .. "/" .. lim.items)
+		expect(not last(slots("item")).enabled and last(slots("fluid")).enabled, "the free slot of a full kind " .. line(last(slots("item"))))
+		choose(1, "item-with-quality", nil)
+		expect(last(slots("item")).enabled, "a slot of a full kind emptied: the free one is enabled again")
+		choose(#info().config + 1, "item-with-quality", item("iron-plate", q or "normal"))
+		for name in pairs(prototypes.fluid) do
+			if #info().config - info().config_items >= lim.fluids then break end
+			choose(#info().config + 1, "fluid", name)
+		end
+		k = info()
+		expect(#k.config - k.config_items == lim.fluids and not last(slots("fluid")).enabled, "the free slot of full fluids")
+		remote.call(WB, "clear", w)
+		w.destroy()
+		me_report("WBPICK69", "ME Cell Workbench partition buttons", problems, "the free slot per kind, refused signals, entities, "
+			.. "recipes and unknown values, items with quality and fluids, a slot changed and emptied, a key twice, full kinds")
+	end
+
 	function T.tick()
 		workbench_test()
 		slots_test()
 		pane_test()
+		pick_test()
 	end
 	function T.running(check)
 		check(storage.wb17 and storage.wb17.done, "ME Cell Workbench")
 		check(storage.wb28 and storage.wb28.done, "ME Cell Workbench slots")
 		check(storage.wbpane28 and storage.wbpane28.done, "ME window pane (workbench)")
+		check(storage.wb69 and storage.wb69.done, "ME Cell Workbench partition buttons")
 	end
 	return T
 end

@@ -1546,6 +1546,31 @@ and leaves the other kind's alone (`remember`). A partition set by hand goes ont
 mode: setting it is the request. Without the copy mode the workbench forgets all of it when a cell leaves, as before.
 The slots without a cell: at most what a cell of the kind takes (63 items, 18 fluids).
 
+**No virtual signals in the partition (issue #69).** Issue #65 gave the slots without a cell one button, the signal
+chooser the buses use, and a virtual signal (or an entity, a recipe, a quality) chosen in it was dropped, the slot empty
+again. Factorio cannot offer less: `elem_filters` of a `choose-elem-button` exist for items, fluids, entities, recipes
+and so on, but "`signal` and `item-group` do not support filters" (the `PrototypeFilter` page of the runtime API, 2.0.77
+in the install and the 2.1.20 page; 2.1.20 adds a `VirtualSignalPrototypeFilter` to that union, but the sentence is
+unchanged and `LuaGuiElement::elem_filters` still takes no filter for `"signal"`). So the workbench has no signal chooser
+any more: a filled slot is an `item-with-quality` or a `fluid` chooser by its key, and the free slot is one of the kind a
+small switch (`fork_me_wb_kind`, "Items | Fluids", left = items) says. Still one free slot, as #65 wanted. The switch is a
+GUI element of the player's own window: its state is the element's `switch_state`, read when the slots are drawn
+(`refresh_workbench`); nothing is in `storage`, nothing is on a tick, so two players at one workbench can have it on
+different sides and a multiplayer game has nothing to agree on. A change of the switch (`wb_kind`) only draws the slots
+anew. A window opens on Items. The free slot of a kind that is full (63 items, 18 fluids) is disabled with a tooltip, a
+filled one can still be changed or emptied (right click). `M.workbench_slots(data, kind)` gives the buttons (filled
+slots in the list's order, then the free one) and `M.workbench_choose(entity, index, elem_type, value)` is what a
+button's `on_gui_elem_changed` calls: only `item-with-quality` and `fluid` are taken, anything else (a signal, an entity,
+a recipe, an unknown name) is refused and changes nothing; the window is drawn anew afterwards, so a key that is in the
+list already or that no cell takes leaves no stale button. Both are in the remote interface `gregtorio-me-gui` for the
+test (`workbench_slots`, `workbench_choose`). No change to saved state: `rec.config` is still a list of keys.
+
+The buses' filter buttons, the ME Interface's rows and the terminal's pattern editor keep the signal chooser (the pull
+request of #69 is the workbench only). To give them the same treatment each button would need the same kind switch next to it (a bus has up to 5 filters,
+an interface rows with an amount each) and `key_of_signal_q` would no longer be needed there; the interface empties a row
+today by choosing a virtual signal, which a filtered chooser could not do, so a row would need its own clear button (or
+the right click of the chooser, which empties an item or fluid chooser as well). Issue #70 tracks the decision.
+
 The cards are a list in the tags (no gaps: tags keep none; a card taken out closes up the list). The cell window
 (drive window, terminal's Cells tab) keeps its partition buttons, so nothing a player uses goes away; it
 shows the cell's cards but cannot change them. AE2's stricter way (partitions only in the workbench) would make every
