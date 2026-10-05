@@ -2373,6 +2373,14 @@ local ITEM_CLASS = {
 --- the class of an item prototype type (see ITEM_CLASS)
 function M.item_class(proto_type) return ITEM_CLASS[proto_type] or "cannot-store" end
 
+--- Can a stack of this item be damaged (issue #84)? The stack of an item that places an entity (a mined wall, belt or
+--- chest: rails too) carries the entity's health, below 1 when it was damaged. A damaged stack does not merge with whole
+--- ones, but a count and a removal by count do not tell them apart, so the paths that move such items by count walk the
+--- stacks (remove_whole) when they take items out. Decided per prototype (static), never saved.
+function M.can_be_damaged(proto)
+	return proto.place_result ~= nil or proto.type == "rail-planner"
+end
+
 --- is the top item of this stack used up in part (a tool, a repair tool or ammo) or damaged? `proto`: its prototype.
 --- The test of a stack with its wear: a full item has the durability or the magazine its prototype says (a quality scales
 --- the durability, not the magazine).
@@ -2424,15 +2432,15 @@ function M.remove_whole(inv, name, quality, count)
 	return count - left
 end
 
---- { key -> count } of the items of a worn type in the whole stacks of an inventory (one pass; a stack whose top item is
---- used counts as none)
+--- { key -> count } of the items of a worn type, and of the items that can be damaged (issue #84), in the whole stacks of an
+--- inventory (one pass; a stack whose top item is used or damaged counts as none)
 function M.whole_counts(inv)
 	local out = {}
 	for i = 1, #inv do
 		local stack = inv[i]
 		if stack.valid_for_read then
 			local proto = stack.prototype
-			if ITEM_CLASS[proto.type] == "worn" and not is_used(stack, proto) then
+			if (ITEM_CLASS[proto.type] == "worn" or M.can_be_damaged(proto)) and not is_used(stack, proto) then
 				local key = key_of(stack.name, stack.quality.name)
 				out[key] = (out[key] or 0) + stack.count
 			end

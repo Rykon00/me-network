@@ -154,6 +154,19 @@ local function worn(name)
 	return v
 end
 
+local placeable_cache = {}
+--- can a stack of it be damaged (an item that places an entity)? Issue #84: such an item is taken out of the chest by whole
+--- stacks only, so a damaged stack never comes out as a whole one
+local function placeable(name)
+	local v = placeable_cache[name]
+	if v == nil then
+		local p = prototypes.item[name]
+		v = p ~= nil and N.can_be_damaged(p)
+		placeable_cache[name] = v
+	end
+	return v
+end
+
 local accepts = N.accepts
 --- may the network put `key` into the bus? (its filters: a whitelist, or a blacklist with an Inverter Card)
 local function allowed(rec, key)
@@ -213,7 +226,7 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
-		if worn(name) then return N.count_whole(inv, name, q) end
+		if worn(name) or (rec.dmg and rec.dmg[key]) then return N.count_whole(inv, name, q) end
 		return inv.get_item_count{ name = name, quality = q }
 	end,
 	--- take up to `count` out of the inventory; returns the count removed
@@ -223,6 +236,18 @@ local ITEM = {
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
 		if worn(name) then return N.remove_whole(inv, name, q, count) end
+		if placeable(name) then
+			--- issue #84: the whole stacks only; a damaged one stays. The bus then shows only the whole ones (`rec.dmg`, until
+			--- a visit finds no damaged stack of the key any more): the count of the engine cannot tell them apart and would
+			--- show items that cannot be handed out. A walk of the stacks is paid for by an extraction and by a bus that has
+			--- found damage, never by a visit of a bus without
+			local got = N.remove_whole(inv, name, q, count)
+			if got < count and inv.get_item_count{ name = name, quality = q } > 0 then
+				rec.dmg = rec.dmg or {}
+				rec.dmg[key] = true
+			end
+			return got
+		end
 		return inv.remove{ name = name, quality = q, count = count }
 	end,
 	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? (the bus takes the key and
@@ -345,6 +370,7 @@ function M.visit(rec, cascade)
 	if inv and rec.mode ~= "write" then
 		local all = rec.inonly or not (rec.partition or rec.deny)    -- (no filter to check: the common case)
 		local whole                                                  -- the whole stacks' counts, read when a tool or ammo is there
+		local dmg = rec.dmg                                          -- issue #84: keys with a damaged stack the bus found
 		for _, it in pairs(inv.get_contents()) do
 			local q = it.quality or "normal"
 			if plain(it.name, q) then
@@ -354,6 +380,13 @@ function M.visit(rec, cascade)
 					if worn(it.name) then
 						whole = whole or N.whole_counts(inv)
 						n = whole[key] or 0
+					elseif dmg and dmg[key] then
+						whole = whole or N.whole_counts(inv)
+						n = whole[key] or 0
+						if n == it.count then                        -- (no damaged stack of it left)
+							dmg[key] = nil
+							if next(dmg) == nil then rec.dmg = nil end
+						end
 					end
 					if n > 0 then contents[key] = (contents[key] or 0) + n end
 				end

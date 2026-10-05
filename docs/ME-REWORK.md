@@ -2129,3 +2129,39 @@ the network had of the other, the network keeps the rest; lab C (a bus with a pl
 and nothing of the plate; 150 packs taken out of lab A are topped up again; no pack made or lost; an import bus facing a lab has
 the status "no-target". On main it fails (every lab stays empty). No bench: the change is one table lookup in place of two
 type comparisons per visit.
+
+## Damaged items on the by-count paths (issue #84)
+
+An item that places an entity (a mined wall, belt or chest) carries that entity's health in its stack, below 1 when it was
+damaged. `N.storable` refuses such a stack (`is_used`: `health < 1`), but two paths move items by count and never look at the
+stack: the storage bus (`get_contents` / `get_item_count` count a damaged stack like a whole one, `inv.remove` hands it out as a
+new one) and the surplus of an interface row (`inv.remove` by count, then `N.insert` by key). On 2.0.77 a damaged stack does
+not merge with whole ones, but a count and a removal by count do not tell them apart (the runtime test confirms it on main:
+8 wooden chests came out of a chest with 5 damaged and 3 whole ones, all whole, and the damaged stack was gone; an interface
+took 3 iron chests as surplus out of a damaged stack of 5). #76 fixed this for tools, ammo and repair packs (`worn`).
+
+**Design.** The cost decides: a stack walk per storage bus visit would read every slot of every chest that holds a belt or a
+wall (a warehouse of 800 slots), so the walk is paid by the rare operations only.
+
+* `N.can_be_damaged(proto)`: the item has a `place_result` (or is a rail planner). Decided per prototype, cached
+  (`placeable` in the storage bus), never saved.
+* **Taking out** (`extract` of the storage bus handler): such an item goes through `N.remove_whole`, the whole stacks only
+  (the walk stops when the count is served, so a take costs the slots before the stacks it uses). When that serves less
+  than asked while the key is still in the chest, a damaged stack is there: the bus remembers it (`rec.dmg[key]`, the
+  record's state, saved). `N.extract_to` already takes back from the target what the storage did not give, so nothing is
+  duplicated.
+* **Showing**: a bus with `rec.dmg` counts a flagged key by `N.count_whole`, and its visit reads the whole counts
+  (`N.whole_counts`, now also for placeable items) for the flagged keys only; the flag is dropped when the whole count
+  equals the total (the damaged stack is gone). So the terminal may show a damaged stack until the first take finds it,
+  then shows only what can be handed out; a bus without a flagged key pays nothing at its visits.
+* **Interface row surplus**: `N.remove_whole` for such an item (as for `worn`): the damaged stack stays in the interface.
+  A damaged stack still counts toward its row's amount (`get_item_count`), so a row whose only stack is damaged does not ask
+  the network for whole ones: the maintainer swaps the stack.
+* Not touched: the import bus (`by_count` excludes every item with a `place_result`, so a damaged stack is refused stack by
+  stack, #85); the other ways in (`insert_stack`, the terminal's store) ask `storable`.
+
+**Test** (`runtimemod/damaged.lua`, `damaged items on the by-count paths test`): a chest behind a storage bus with a damaged stack
+of 5 wooden chests and a whole stack of 3: taking the 8 the terminal shows hands out the 3 whole ones, the damaged stack stays,
+the bus then shows 0; the damaged stack replaced by 4 whole ones, the bus shows 4 and hands them out; an interface row of 2 with
+a damaged stack of 5 and a whole stack of 3 iron chests: the 3 whole ones are the surplus, the damaged stack stays. On main every
+one of these fails.

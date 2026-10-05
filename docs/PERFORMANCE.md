@@ -2394,3 +2394,20 @@ chests are never refilled, so the bound lets every bus re-read at most once ther
 instead of 30 to 120 ticks) is in the runtime test `ME storage bus refill test`, not in the benchmark.
 
 The terminal's follow-up refresh costs one `next()` per tick while no player has taken anything.
+
+
+## Damaged items on the by-count paths (issue #84)
+
+A stack walk per storage bus visit would read every slot of every chest that holds a belt or a wall, so the walk is paid by the
+rare operations: a take of an item that can be damaged (`N.remove_whole`: the walk stops when the count is served), a bus that
+found a damaged stack (`rec.dmg`: its visits read the whole counts), an interface row's surplus of such an item. A visit of a
+bus without a flagged key adds one field read per item type. `bench --check origin/main --sizes base,5000`, three rounds in
+turns: **green, regressions 0**, throughput identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1684 / 0.495 | 0.1687 / 0.485 |
+| 5000: script avg / p99 (ms) | 1.134 / 3.17 | 1.133 / 3.09 |
+| 5000: ticks over 5 ms | 7 | 7 |
+| 5000: storage bus latency max (s) | 1.733 | 1.733 |
+| 5000: burst build / remove (ms) | 75.6 / 96.0 | 74.1 / 96.4 |
