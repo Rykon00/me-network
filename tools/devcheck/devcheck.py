@@ -500,6 +500,7 @@ RUNTIME_TESTS = (
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"),
+    ("HOLDERLISTS", "ME holder lists test"),
     ("HOLDERS", "ME holder cursor test"),
     ("GRAPH", "ME graph removal test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),

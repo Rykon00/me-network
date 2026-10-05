@@ -1223,10 +1223,9 @@ function M.wait_below(net, key, kind, unit, amount)
 	w[unit] = { kind, amount }
 end
 
-local function drop_holders(net, key)
-	local c = cache[net]
-	if c then c.hs[key], c.hr[key], c.xs[key] = nil, nil, nil end
-end
+--- a cell started (`added`) or stopped holding `key`: the sorted lists of its holders follow (issue #59; defined with the
+--- lookups below)
+local holders_changed
 
 local function idx_add(net, key, cid)
 	local idx = net.index[key]
@@ -1236,7 +1235,7 @@ local function idx_add(net, key, cid)
 	end
 	if not idx[cid] then
 		idx[cid] = true
-		drop_holders(net, key)
+		holders_changed(net, key, cid, true)
 	end
 end
 
@@ -1245,7 +1244,7 @@ local function idx_del(net, key, cid)
 	if idx and idx[cid] then
 		idx[cid] = nil
 		if next(idx) == nil then net.index[key] = nil end
-		drop_holders(net, key)
+		holders_changed(net, key, cid, false)
 	end
 end
 
@@ -1593,7 +1592,8 @@ local function lookups(s, net)
 	local order = ordered(s, net)
 	local c = cache[net]
 	if c and c.order == order then return c end
-	c = { order = order, groups = {}, at = {}, hs = {}, hr = {}, xs = {}, hfs = {}, hfr = {}, hrr = {} }
+	c = { order = order, groups = {}, at = {}, hs = {}, hr = {}, xs = {}, hfs = {}, hfr = {}, hrr = {},
+		read = { hs = {}, hr = {}, xs = {} } }       -- (issue #59: a list read since its last change)
 	cache[net] = c
 	local g
 	for rank, o in ipairs(order) do
@@ -1662,6 +1662,7 @@ end
 
 local function holders(net, c, key, rank)
 	local field = rank and "hr" or "hs"
+	c.read[field][key] = true
 	local l = c[field][key]
 	if l then return l end
 	l = {}
@@ -1679,6 +1680,137 @@ local function holders(net, c, key, rank)
 	end
 	c[field][key] = l
 	return l
+end
+
+--- Issue #59: a cell that starts or stops holding a key used to drop the key's three sorted lists (by cell id `hs`, by rank
+--- `hr`, the extraction order `xs`), which the next insert or extraction sorted anew: at 20 000 a list of about 220 cells
+--- sorted 900 times a minute for the extractions alone. Now a list that was made gets the cell put in at its place (or
+--- taken out) in a copy: an insert or extraction that walks the old list while a cell starts or stops holding the key
+--- walks it to its end unchanged, as when the list was dropped. A list is sorted by a strict total order whose values
+--- only change with the network's order (a cell, a priority or a partition: net.order_dirty, new lookups), so the copy is
+--- the list a sort would make. The holder cursors of the list move to the copy (an entry put in before a cursor is looked
+--- at again). While the lookups are about to be made anew, or for a cell they do not know, the lists are dropped as before;
+--- so is a list that nobody read since its last change (a burst of builds changes a list many times before it is used:
+--- one sort at the next use costs less than a copy per change).
+local function by_cid(_, a, b) return a < b end
+local function by_rank_of(c, a, b) return c.at[a].rank < c.at[b].rank end
+local cmp_net                                     -- the network of the list being changed (by_extraction_of)
+local function by_extraction_of(_, a, b)
+	local net, s = cmp_net, state()
+	local pa, pb = cell_priority(s, net, a), cell_priority(s, net, b)
+	if pa ~= pb then return pa < pb end
+	local ca, cb = net.cells[a], net.cells[b]
+	local ea, eb = ca.ext and 0 or 1, cb.ext and 0 or 1
+	if ea ~= eb then return ea < eb end
+	local xa, xb = ca.partition and 1 or 0, cb.partition and 1 or 0
+	if xa ~= xb then return xa < xb end
+	return a < b
+end
+local HOLDER_LISTS = {
+	{ "hs", by_cid, { "hfs" } },
+	{ "hr", by_rank_of, { "hfr", "hrr" } },
+	{ "xs", by_extraction_of, {} },
+}
+
+--- the first position in the sorted list `l` whose entry does not come before `cid`
+local function lower_bound(c, l, cid, less)
+	local lo, hi = 1, #l
+	while lo <= hi do
+		local mid = math.floor((lo + hi) / 2)
+		if less(c, l[mid], cid) then lo = mid + 1 else hi = mid - 1 end
+	end
+	return lo
+end
+
+holders_changed = function(net, key, cid, added)
+	local c = cache[net]
+	if not c then return end
+	if net.order_dirty or c.order ~= net.order or not c.at[cid] or not net.cells[cid] then
+		c.hs[key], c.hr[key], c.xs[key] = nil, nil, nil
+		return
+	end
+	cmp_net = net
+	for _, spec in ipairs(HOLDER_LISTS) do
+		local field, less, cursors = spec[1], spec[2], spec[3]
+		local l = c[field][key]
+		if l and not c.read[field][key] then
+			c[field][key] = nil                             -- (not read since its last change: sorted at the next use)
+		elseif l then
+			c.read[field][key] = nil
+			local pos = lower_bound(c, l, cid, less)
+			local copy, n = {}, #l
+			if added then
+				for i = 1, pos - 1 do copy[i] = l[i] end
+				copy[pos] = cid
+				for i = pos, n do copy[i + 1] = l[i] end
+			elseif l[pos] == cid then
+				for i = 1, pos - 1 do copy[i] = l[i] end
+				for i = pos + 1, n do copy[i - 1] = l[i] end
+			else
+				copy = nil                                  -- (not in the list: made from the index again)
+			end
+			c[field][key] = copy
+			for _, cf in ipairs(cursors) do
+				local e = c[cf][key]
+				if e and e.list == l then
+					if not copy then e.list, e.i = nil, 1
+					else
+						e.list = copy
+						if added and pos < e.i then e.i = pos
+						elseif not added and pos < e.i then e.i = e.i - 1 end
+					end
+				end
+			end
+		end
+	end
+	cmp_net = nil
+end
+
+--- Issue #59 (tests): every kept holder list of every network against the list sorted anew from the index, and every holder
+--- cursor on a kept list against its rule (the entries before it are internal cells that cannot take the key, or partitioned
+--- ones for the walks that skip them). Returns the number of lists, the number that differ and the first problem.
+function M.check_holder_lists()
+	local s = storage.fork_me_net
+	local lists, bad, first = 0, 0, nil
+	local SKIPS = { hfs = true, hfr = true, hrr = false }
+	for _, net in pairs(s and s.nets or {}) do
+		local c = cache[net]
+		if c and c.order == net.order and not net.order_dirty then
+			cmp_net = net
+			for _, spec in ipairs(HOLDER_LISTS) do
+				local field, less, cursors = spec[1], spec[2], spec[3]
+				for key, l in pairs(c[field]) do
+					lists = lists + 1
+					local fresh = {}
+					for cid in pairs(net.index[key] or EMPTY) do fresh[#fresh + 1] = cid end
+					table.sort(fresh, function(a, b) return less(c, a, b) end)
+					local same = #fresh == #l
+					for i = 1, #l do if l[i] ~= fresh[i] then same = false end end
+					if not same then
+						bad = bad + 1
+						first = first or (field .. " " .. key .. ": " .. table.concat(l, ",") .. " against " .. table.concat(fresh, ","))
+					end
+					for _, cf in ipairs(cursors) do
+						local e = c[cf][key]
+						if e and e.list == l and e.gen == room_gen then
+							for i = 1, math.min(e.i - 1, #l) do
+								local cell = net.cells[l[i]]
+								local skip = cell and not cell.ext and not cell.void
+									and ((SKIPS[cf] and cell.partition) or cell_room(cell, cell_spec(cell.name), key) <= 0)
+								if not skip then
+									bad = bad + 1
+									first = first or (cf .. " " .. key .. ": entry " .. i .. " (" .. tostring(l[i]) .. ") before the cursor " .. e.i)
+									break
+								end
+							end
+						end
+					end
+				end
+			end
+			cmp_net = nil
+		end
+	end
+	return lists, bad, first
 end
 
 --- The first holder of `key` in the list `l` (`field`: the cursors of the sorted list "hfs" or of the ranked list "hfr")
@@ -1942,6 +2074,7 @@ end
 --- the extraction order of `key`: lower priority first, storage buses before cells of the same priority,
 --- unpartitioned before partitioned, then by cell id
 local function extract_order(s, net, c, key)
+	c.read.xs[key] = true
 	local l = c.xs[key]
 	if l then return l end
 	l = {}
@@ -3341,6 +3474,8 @@ local function info(net)
 end
 
 remote.add_interface("gregtorio-me-network", {
+	--- issue #59 (tests): the kept holder lists and cursors against lists sorted anew: lists, differing, the first problem
+	check_holder_lists = function() return M.check_holder_lists() end,
 	--- tests: is the sweep list the members, each once, each node at its place? (true, or false and what is wrong)
 	sweep_list_ok = function()
 		local s = storage.fork_me_net
