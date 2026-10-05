@@ -2073,3 +2073,76 @@ the old code (the collector's steps land in them), by up to 10 % on the new.
 | a fresh plan of the deepest GregTech item at most 50 ms | **met**: 3.8 to 6.2 ms complete, 11.8 ms at the node limit |
 | no tick over 16 ms because of a plan | **met for the plan** (at most 11.8 ms, at the node limit); spreading a plan over ticks is not needed. **Not met for a job start**: 38 to 50 ms with Gregtorio, of which the plan is 4 to 12 ms and the rest the rescan of the providers of the plan's patterns before the start (`rescan_plan`, 160 steps' providers). That rescan is lever 6 (provider rescans) and stays for its own pull request |
 | node limit 3000, depth limit 40 | kept |
+
+### Pull request 12 (issue #50, lever 6): the scan of the pattern providers
+
+#### Where the job start's time went
+
+A job start plans, scans the providers of the plan's patterns (`rescan_plan`, so a machine changed since the round robin's last
+scan is seen) and plans again if a scan found a change. Timed with profilers in the start of `eternity-wire` (Gregtorio, 160 steps):
+the plan 4.7 ms, the scan of its 97 providers (835 pattern slots, 843 machine checks) 48.8 ms, of it `P.normalize` 14.0 ms (a new
+clean copy of every slot's pattern at every scan), `target_for` 21.3 ms (the pattern's ingredients and products made anew per
+machine, `entity.prototype.crafting_categories` and the recipe prototype read per check, the machine's recipe, input slots and fluid
+boxes read once per slot), `P.id_of` 3.1 ms, the four `find_entities_filtered` of the neighbours 2.9 ms and the signature string
+of the scan (the slots' ids, machines and reasons concatenated) most of the rest. The round robin rescan (one provider every two
+ticks) pays the same per provider.
+
+#### What was changed (`scripts/fork-me-autocraft.lua`)
+
+* **What the scan reads of a pattern alone is kept.** The clean pattern and its id per slot content (weak, per load: a slot's pattern
+  is replaced, never changed in place, and `normalize` reads only the prototypes and the item aliases, which do not change while the
+  game runs); per pattern its ingredients and products (the cache of #48, now shared with the scan), whether an item ingredient is
+  larger than a stack, the number of item ingredients, a fluid ingredient, the recipe's category; per machine prototype its crafting
+  categories, fixed recipe and fluid box prototypes; per fluid its default temperature. The scan hands out the same pattern table
+  every time, so the planner's and the job steps' caches per pattern keep it as well.
+* **A machine is read once per scan.** The scan asks the same machine about every slot of the provider (nine) and nothing changes
+  during a scan: a view of the machine reads its type and unit number, and when first asked the set recipe, the input slots, the
+  force's recipes and its fluid boxes (each box's prototype, filter, capacity and connections once). `fluid_map`, which the job
+  steps use on the entity itself, takes the view unchanged.
+* **The scan compares, it does not build a signature.** Whether the scan found something else than the last one (the network, the
+  priority, a slot's pattern, its first reason, its machines in order: what the signature string held) is compared with the last
+  scan's records; the first reason of a machine that cannot do a pattern is kept with the slot (`why`, also when another machine
+  can), the priority as `scanned_priority`. `p.sig` is dropped at the first scan. A save of an older version makes the network's
+  patterns once more at its first scan of each provider (the records have no `why` yet), which changes nothing they hold.
+
+#### The scan is the same
+
+* `bench --planner-only --compare-plans origin/main` now also compares what the scan finds at every provider of the planner scene
+  (each slot's pattern id, ok, reason and machines) and the network's ignored patterns by reason: **vanilla 578 plans and 38 providers,
+  Gregtorio 318 plans and 340 providers, none differs.**
+* The runtime test `ME provider scan test` (`runtimemod/scan.lua`, 8 states) puts a provider next to each kind of machine (a
+  macerator with its recipe, a chemical reactor with fluid ingredients, a furnace, a chest, a molecular assembler, two chests of one
+  product) with patterns for every reason (ok, `category`, `not-researched`, `no-recipe`, `furnace`, `stack`, `fluid-box`,
+  `fluid-pipes`, `no-machine`), then changes what only a scan sees, without an event: the macerator's recipe cleared and set, a pipe
+  at the reactor's fluid input built and removed, a recipe's research taken and given back, the assembler removed and built again, a
+  second chest beside a provider; and a provider's priority. After each change the remote `plan` rescans, and the network's ignored
+  patterns and the machines of each pattern (`pattern_targets`, a test remote) must be what `provider_info` (a scan of each provider)
+  says; with nothing changed a plan stays kept (no new patterns). The test passes on `origin/main` too (without `pattern_targets`);
+  with a comparison that sees only the pattern ids it fails in 5 of the 8 states.
+
+#### Numbers (quiet machine, game closed, `origin/main` and the working copy in turns, three rounds, medians, ms)
+
+| job start of 10 (plan, scan of the plan's providers) | origin/main | this pull request |
+|---|---|---|
+| Gregtorio, deep items that complete (`eternity-wire`, `eternity-ingot`, `hot-eternity-ingot`) | 36.7 to 37.3 | **12.0 to 13.2** |
+| Gregtorio, x10 of the uxv machines (the plan stops at the node limit: about 10 ms of it is the plan) | 47.5 / 48.3 | **20.1 / 20.2** |
+| vanilla with Space Age (321 patterns) | 5.7 to 8.5 | **1.6 to 2.0** |
+
+The scan of the 97 providers of the `eternity-wire` start alone: 48.8 ms before, 8.2 ms after (the neighbours' four searches 2.0 ms
+of it, the slots 5.5 ms). The fresh plans, the failing plans and the preview's refresh are the same as before within the noise (the planner was not changed).
+
+`bench --check origin/main --sizes base,5000` (three rounds in turns): green, regressions 0. Base 0.1421 against 0.1420 ms (no
+providers); 5000 (200 providers, rescanned in the round robin) script avg 1.051 → 1.018 ms, p99 3.05 → 3.03 ms, ticks over 5 ms
+7 → 6, garbage collection 0.075 → 0.064 ms, allocation 55.0 → 51.6 KB per tick; crafts, latencies and throughput the same.
+
+#### The targets
+
+| Target | Result |
+|---|---|
+| no tick over 16 ms because of a job start | **met for every start whose plan completes** (12 to 13 ms with Gregtorio); a start of 10 uxv machines, whose plan stops at the node limit, costs 20 ms, of which about 10 ms is the plan (lever 11, node limit kept) and 9 ms the scan of its 105 providers |
+| the scan finds the same | the same plans, provider scans and ignored patterns as `origin/main`; the runtime test |
+
+What is left of the scan is real work: the neighbour search (about 20 µs per provider) and each slot's checks against the live
+machine (about 6.6 µs per slot). Scanning fewer providers before a start (only those not scanned for a while) or keeping the
+neighbours between scans would no longer see every change at once (a machine's recipe set by hand, a pipe, a machine built by
+another mod without an event), so it was not done.
