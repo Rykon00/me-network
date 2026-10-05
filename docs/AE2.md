@@ -386,7 +386,7 @@ card is made from a component card and one item:
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
-| Acceleration Card | advanced card + processing unit | ME Molecular Assembler, up to 5 | +80 % crafting speed and +80 % power use each |
+| Acceleration Card | advanced card + processing unit | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
 
 On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
 like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards
@@ -399,8 +399,15 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
   assembler 5 times as fast at 5 times the power, which is what AE2's assembler does with its five cards (its progress
   rises 10, 13, 17, 20, 25, 50 with power 1.0, 1.3, 1.7, 2.0, 2.5, 5.0 times; a module's effect is the same for every
   card, so the first cards are stronger here than in AE2 and the fifth weaker). The ME Molecular Assembler ignores
-  beacons. It is one of the ME Network's cards: the same item and recipe for the ME Import Bus and ME Export Bus
-  follow in another part of the issue.
+  beacons.
+* **The Acceleration Card in an ME Import Bus or Export Bus** (issue #110, AE2's speed cards): the bus window has 4 card
+  slots (your inventory is on the left, as in the storage bus's window); only this card goes in. The items per second a
+  bus moves, the map setting "Bus speed" (256 by default), are multiplied by 1, 8, 32, 64 and 96 with 0 to 4 cards (AE2's
+  1, 8, 32, 64, 96 items per operation); the window says the factor and the rate. Only items are sped up, not fluids (as in
+  AE2). A bus still moves what its machine, chest or the network can take: an export bus fills a machine to a stack of each
+  item, a chest as far as it has room, so a faster bus mostly matters for a chest or a drive with a lot to move. Putting
+  cards in, taking them out, mining (the cards go into your inventory), destruction (they drop) and blueprints, copy/paste,
+  settings paste and clones work as for the storage bus (see below).
 * **Putting a card in:** open the storage bus (your inventory is on the left of its window) and shift + click the card
   in your inventory: a stack goes into the empty card slots, one card each. Or click a card slot with the card in hand
   (one card of the stack goes in). A card the bus cannot take (an Equal Distribution Card), one more of a kind than it
@@ -777,7 +784,7 @@ largest amounts first).
 |---|---|---|---|
 | ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network) | yes (priority) | yes (patterns pending a blank pattern); clone: priority |
 | ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority | yes | yes (old blueprints with slot filters, and of the old fluid interface, are converted) |
-| ME Import Bus, ME Export Bus | filters (items and fluids) | yes | yes |
+| ME Import Bus, ME Export Bus | filters (items and fluids); which Acceleration Cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |

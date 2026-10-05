@@ -103,7 +103,7 @@ for _, t in pairs({ "simple-entity-with-force", "storage-tank", "lamp", "electri
 end
 local function on_mined(event)
 	fork_fluids.on_mined_event(event)
-	fork_io.on_removed(event.entity, true)
+	fork_io.on_removed(event.entity, event.buffer or true)      -- (issue #110: a bus's cards go into the buffer)
 	fork_sbus.on_removed(event.entity, event.buffer)
 	fork_ae2.on_removed(event.entity, event.buffer)
 	fork_bench.on_removed(event.entity, event.buffer)
