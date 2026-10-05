@@ -1866,9 +1866,18 @@ local function engine_profile(b)
 	local term = s.create_entity{ name = "me-terminal", position = { X0 - 1.5, Y0 + 2.5 }, force = "player", raise_built = true }
 	if term and term.valid then
 		local job_key = b.job_keys and b.job_keys[1] and b.job_keys[1].key or "iron-gear-wheel"
-		time_it("window: terminal entries (all, by count)", 20, function() return remote.call(TERM, "entries", term, "", "count", "all") end, out)
-		time_it("window: terminal entries (items, by name)", 20, function() return remote.call(TERM, "entries", term, "", "name", "items") end, out)
-		time_it("window: terminal entries (search 'iron')", 20, function() return remote.call(TERM, "entries", term, "iron", "count", "all") end, out)
+		--- issue #50, lever 8: the first refresh (no last list), a refresh while nothing changed, and one after one amount
+		--- changed (an iron plate in or out before each call; the insert's own 10 us are in it). Every line holds the remote's copy of
+		--- the list it returns (a window calls the function without one): about what "nothing changed" costs with the kept lists.
+		time_it("window: terminal entries (all, by count)", 20, function() return remote.call(TERM, "entries", term, "", "count", "all", true) end, out)
+		time_it("window: terminal entries (items, by name)", 20, function() return remote.call(TERM, "entries", term, "", "name", "items", true) end, out)
+		time_it("window: terminal entries (search 'iron')", 20, function() return remote.call(TERM, "entries", term, "iron", "count", "all", true) end, out)
+		remote.call(TERM, "entries", term, "", "count", "all")
+		time_it("window: terminal entries (all, by count), nothing changed", 20, function() return remote.call(TERM, "entries", term, "", "count", "all") end, out)
+		time_it("window: terminal entries (all, by count), one amount changed", 20, function(i)
+			if i % 2 == 1 then remote.call(NET, "insert", b.anchor, "iron-plate", 1) else remote.call(NET, "extract", b.anchor, "iron-plate", 1) end
+			return remote.call(TERM, "entries", term, "", "count", "all")
+		end, out)
 		time_it("window: terminal craft preview (100)", 20, function() return remote.call(TERM, "craft_preview", term, job_key, 100) end, out)
 		time_it("window: terminal jobs", 20, function() return remote.call(TERM, "jobs", term) end, out)
 		time_it("window: terminal cells", 20, function() return remote.call(TERM, "cells", term) end, out)

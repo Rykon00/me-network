@@ -499,6 +499,7 @@ RUNTIME_TESTS = (
     ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"),
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
+    ("ENTRIES", "ME terminal entries test"),
     ("HOLDERS", "ME holder cursor test"),
     ("GRAPH", "ME graph removal test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),

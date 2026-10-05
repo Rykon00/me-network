@@ -371,9 +371,10 @@ function M.row(parent, name)
 end
 
 --- A slot button for an item or fluid (`key`: item name, "name@quality" or "fluid/<name>"), with the amount
---- formatted in the tooltip and the button's number. `style` defaults to slot_button.
-function M.slot(parent, key, amount, tags, style, extra_tooltip)
-	local def = { type = "sprite-button", style = style or "slot_button", tags = tags }
+--- formatted in the tooltip and the button's number. `style` defaults to slot_button. `index`: the place among the
+--- parent's children (default: last).
+function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
+	local def = { type = "sprite-button", style = style or "slot_button", tags = tags, index = index }
 	if key then
 		if key:sub(1, 6) == "fluid/" then
 			local name = key:sub(7)
@@ -394,6 +395,17 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip)
 	end
 	if amount then def.number = math.floor(amount) end
 	return parent.add(def)
+end
+
+--- Issue #50, lever 8: a new amount on a button M.slot made for the same key (the number, and a fluid's tooltip, which
+--- holds the amount): the button is then what M.slot would make for the new amount.
+function M.slot_amount(button, key, amount, extra_tooltip)
+	button.number = amount and math.floor(amount) or nil
+	if key and key:sub(1, 6) == "fluid/" then
+		local name = key:sub(7)
+		local proto = prototypes.fluid[name]
+		button.tooltip = { "", proto and proto.localised_name or name, amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
+	end
 end
 
 --- a numeric text field (integers, optionally negative) that acts on change and on confirm
