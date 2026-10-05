@@ -411,9 +411,32 @@ function M.row(parent, name)
 	return r
 end
 
---- A slot button for an item or fluid (`key`: item name, "name@quality" or "fluid/<name>"), with the amount
---- formatted in the tooltip and the button's number. `style` defaults to slot_button. `index`: the place among the
---- parent's children (default: last).
+--- Issue #79: the key of an item with tags (a storage cell, an encoded pattern) kept in the network is
+--- "name@quality#<json>", the json being { tags, description } as `N.storable` made it from the stack. The description is
+--- therefore a function of the key (a stack written anew is another key), and the grid's buttons, which are made again
+--- when their key changes, never show an old one. Read from the json once per key, cached for this load only (never
+--- saved; emptied when it grows large). Returns the description (a localised string) or nil.
+local description_cache, description_count = {}, 0
+
+function M.key_description(key)
+	local at = key:find("#", 1, true)
+	if not at then return nil end
+	local d = description_cache[key]
+	if d == nil then
+		local data = helpers.json_to_table(key:sub(at + 1))
+		d = type(data) == "table" and data.description or false
+		if d == "" or (type(d) ~= "table" and type(d) ~= "string") then d = false end
+		if description_count >= 2000 then description_cache, description_count = {}, 0 end
+		description_cache[key] = d
+		description_count = description_count + 1
+	end
+	return d or nil
+end
+
+--- A slot button for an item or fluid (`key`: item name, "name@quality" or "fluid/<name>"; for an item with tags
+--- the key's description is the first lines of the tooltip, below the item's own), with the amount formatted in the
+--- tooltip and the button's number. `style` defaults to slot_button. `index`: the place among the parent's children
+--- (default: last).
 function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 	local def = { type = "sprite-button", style = style or "slot_button", tags = tags, index = index }
 	if key then
@@ -428,7 +451,9 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 			if prototypes.item[name] and prototypes.quality[q] then
 				def.sprite = "item/" .. name
 				def.elem_tooltip = { type = "item-with-quality", name = name, quality = q }
-				if extra_tooltip then def.tooltip = extra_tooltip end
+				local desc = M.key_description(key)
+				if desc and extra_tooltip then def.tooltip = { "", desc, "\n", extra_tooltip }
+				else def.tooltip = desc or extra_tooltip end
 			else
 				def.tooltip = key                     -- the prototype is gone (a mod was removed)
 			end
