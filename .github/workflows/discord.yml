@@ -1,0 +1,26 @@
+# Applies .discord/server.yml to the "Gregtorio & ME Network" Discord server.
+# Pull requests get the plan (a dry run) as a comment; merging to main applies it.
+# The tool and its reference: https://github.com/Rykon00/gregtorio-me-network_discord-bot
+# Needs the repository secret DISCORD_BOT_TOKEN.
+name: Discord
+
+on:
+  pull_request:
+    paths: [".discord/**", ".github/workflows/discord.yml"]
+  push:
+    branches: [main]
+    paths: [".discord/**", ".github/workflows/discord.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sync:
+    uses: Rykon00/gregtorio-me-network_discord-bot/.github/workflows/sync.yml@main
+    with:
+      config: .discord/server.yml
+      mode: ${{ github.event_name == 'push' && 'apply' || 'plan' }}
+    secrets:
+      DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
