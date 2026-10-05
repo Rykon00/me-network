@@ -386,12 +386,21 @@ card is made from a component card and one item:
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
+| Acceleration Card | advanced card + processing unit | ME Molecular Assembler, up to 5 | +80 % crafting speed and +80 % power use each |
 
 On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
 like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards
 and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell has 4 card slots, a fluid cell 3,
 `BasicStorageCell`).
 
+* **The Acceleration Card** (issue #110) is a **module**: it goes into the module slots of an **ME Molecular Assembler**
+  (five of them, which the game draws in the assembler's window), nothing else of the game's modules does, and no other
+  machine or beacon takes the card. Each card adds 80 % crafting speed and 80 % power use: five cards make the
+  assembler 5 times as fast at 5 times the power, which is what AE2's assembler does with its five cards (its progress
+  rises 10, 13, 17, 20, 25, 50 with power 1.0, 1.3, 1.7, 2.0, 2.5, 5.0 times; a module's effect is the same for every
+  card, so the first cards are stronger here than in AE2 and the fifth weaker). The ME Molecular Assembler ignores
+  beacons. It is one of the ME Network's cards: the same item and recipe for the ME Import Bus and ME Export Bus
+  follow in another part of the issue.
 * **Putting a card in:** open the storage bus (your inventory is on the left of its window) and shift + click the card
   in your inventory: a stack goes into the empty card slots, one card each. Or click a card slot with the card in hand
   (one card of the stack goes in). A card the bus cannot take (an Equal Distribution Card), one more of a kind than it

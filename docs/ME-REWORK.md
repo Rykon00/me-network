@@ -2224,3 +2224,47 @@ damaged stack of 2 (health 0.25) stores 5, 4 and 2: two keys with data (5 and 2)
 behind the storage bus is unchanged, each damaged key comes out at its health, the terminal's description reads "50"; the
 import bus takes a damaged stack of 7 stone walls (health 0.4) as a key of 7 and the whole 3 as 3. The #76 test lost its cases
 of damaged chests (a refusal no more).
+
+## The Acceleration Card, part 1: the module and the ME Molecular Assembler (issue #110)
+
+The Acceleration Card becomes a card of this mod (Gregtorio Continued had its own `acceleration-card` item, made from its
+Advanced Card, that nothing used; Gregtorio's maintainer decided in its issue #121 that it gets a function as in AE2
+instead of being removed). AE2 (GTNH's fork, `Upgrades.SPEED`): an import or export bus moves 1, 8, 32, 64, 96 items per
+operation with 0 to 4 cards (`PartImportBus`, `PartExportBus`), a Molecular Assembler makes 10, 13, 17, 20, 25, 50 progress
+per tick with 0 to 5 cards at 1.0, 1.3, 1.7, 2.0, 2.5, 5.0 times the power (`TileMolecularAssembler`). The maintainer's
+decisions: the buses and the Molecular Assembler take it; the buses by AE2's factors on the bus speed setting (part 2); the
+assembler through module slots.
+
+**The item** (`prototypes/cards.lua`): `me-acceleration-card`, a prototype of type `module` (category `me-acceleration`, tier 1,
+effects speed +0.8 and consumption +0.8), stack size 64, recipe `me-advanced-card` + `processing-unit` (standalone; Gregtorio's
+compat file keeps its own: Advanced Card, logic processor, engineering processor and fluix crystal), in the technology ME
+Upgrade Cards with the other cards. Its kind in the card table is `speed` (no storage bus or cell takes it: `card_fits` finds
+no limit and answers "not-here"). `ME_NETWORK.add_item` takes the fields of another item type in `def.fields`. The icon is
+made by `tools/gen_ae2_sprites.py --cards` (an advanced card with GT5-Unofficial's "x2" sign in lime; the script imports
+`gen_sprites` and `gen_tech_icons`, which Gregtorio's `tools/` has: run it with `PYTHONPATH` pointing there).
+
+**Why a module.** The assembler's module slots are drawn by the game, so no window of its own is needed (the ME Molecular
+Assembler keeps the game's assembling machine window), and speed and power are effects the game applies. Costs of a module:
+the effect is linear in the number of cards (AE2's table is not), so five cards match AE2's endpoint (5 times the speed at 5
+times the power) and the first ones are stronger than AE2's.
+
+**The ME Molecular Assembler** (`ME_NETWORK.make_molecular_assembler`, so also the one Gregtorio builds from its HV
+assembler): `module_slots = 5` (`ME_NETWORK.ACCELERATION_SLOTS`), `allowed_module_categories = { "me-acceleration" }`,
+`allowed_effects = { "speed", "consumption" }`, `effect_receiver.uses_beacon_effects = false`.
+
+**Keeping the card out of every other machine** (`data-final-fixes.lua`): a machine without `allowed_module_categories` takes
+every category, so the card would go into any assembler, furnace, drill or beacon (+80 % speed per slot). Every prototype of
+the game with `module_slots` above 0 and no list gets one with every module category of the game except this mod's; a list
+another mod made loses this mod's category (Gregtorio Continued gives its machines "every category but mold" in its data
+stage, which names this mod's category too: found by the test with Gregtorio, the card went into its assembling machine 2
+and its beacons). The ME Molecular Assembler keeps it. A category that another mod adds in its own data-final-fixes after this
+one is not in the lists made here, so such a mod lists its machines itself.
+
+**The recipe is unlocked where the cards are.** A mod that replaced the recipe list of the technology ME Upgrade Cards
+(Gregtorio Continued does) has not heard of the card, so `data-final-fixes.lua` adds the unlock of `me-acceleration-card` to
+that technology when nothing unlocks it (as for the crafting blocks, #6). Gregtorio's compat file can give the card its own
+ingredients under the same name; until it does the standalone recipe stands (Advanced Card and a processing unit).
+
+**Test** (`runtimemod/accel.lua`, `Acceleration Card test`): the ME Molecular Assembler has 5 module slots, takes five cards and
+no sixth, takes neither a speed nor a productivity module; an assembling machine 2 and a beacon take no card, and the machine
+2 still takes a speed module; with five cards the crafting speed is 5 times the base and the consumption bonus 4.0 higher.
