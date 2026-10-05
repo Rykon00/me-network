@@ -38,6 +38,7 @@ local circuit = require("scripts.fork-me-circuit")
 local io = require("scripts.fork-me-io")
 local sbus = require("scripts.fork-me-storagebus")
 local bench = require("scripts.fork-me-workbench")
+local picker = require("scripts.fork-me-picker")
 local terminal = require("scripts.fork-me-terminal")
 
 local M = {}
@@ -428,20 +429,6 @@ local function open_workbench(player, entity)
 	G.label(col, "", 300, nil, "fork_me_wb_fill")
 	G.label(col, "", 300, nil, "fork_me_wb_mode")
 	G.heading(content, { "fork-me-gui.partition" })
-	--- issues #69, #82: one row adds to the partition: the kind (a switch, hidden with a cell), the item or fluid, its quality
-	--- and the green check that takes it in. The state (the kind, the chosen element, the quality) lives in these GUI
-	--- elements of this player's window: no storage, nothing another player or a save has to agree on
-	local add = G.row(content, "fork_me_wb_add")
-	add.add{ type = "switch", name = "fork_me_wb_kind", switch_state = "left", tags = G.act("wb_kind"),
-		left_label_caption = { "fork-me-gui.workbench-kind-item" }, left_label_tooltip = { "fork-me-gui.workbench-kind-item-tooltip" },
-		right_label_caption = { "fork-me-gui.workbench-kind-fluid" }, right_label_tooltip = { "fork-me-gui.workbench-kind-fluid-tooltip" } }
-	add.add{ type = "choose-elem-button", name = "fork_me_wb_pick", elem_type = "item", style = "slot_button", tags = G.act("wb_pick") }
-	local qs = {}
-	for i, name in ipairs(M.workbench_qualities()) do qs[i] = prototypes.quality[name].localised_name end
-	add.add{ type = "drop-down", name = "fork_me_wb_q", items = qs, selected_index = #qs > 0 and 1 or nil,
-		tooltip = { "fork-me-gui.workbench-quality-tooltip" } }
-	add.add{ type = "sprite-button", name = "fork_me_wb_ok", sprite = "utility/check_mark", style = "item_and_count_select_confirm",
-		tooltip = { "fork-me-gui.workbench-add-tooltip" }, tags = G.act("wb_ok") }
 	content.add{ type = "flow", name = "fork_me_wb_part", direction = "vertical" }
 	local buttons = G.row(content)
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("wb_clear") }
@@ -455,91 +442,85 @@ local function open_workbench(player, entity)
 	M.refresh_workbench(player, G.window_of(player))
 end
 
---- issues #69, #82: the quality names an item can be added with, lowest first (empty without the quality mod: an item
---- then has its normal quality only). Factorio's picker for a mod's buttons has no quality row, so the window has a
---- drop-down of these.
-function M.workbench_qualities()
+--- issues #69, #82, #94: the buttons of the workbench's partition, from `workbench_data`: its filled slots (without a
+--- cell the items, then the fluids; with a cell its partition) and the free one at the end. A button opens the mod's picker
+--- (scripts/fork-me-picker.lua), which chooses an item with its quality or a fluid and nothing else.
+--- Returns { { index, key (nil: free), kind ("item" or "fluid"; nil: free), free } }
+function M.workbench_slots(d)
+	local list = d.cell and d.cell.partition or d.config
 	local out = {}
-	if not script.feature_flags.quality then return out end
-	for _, q in pairs(prototypes.quality) do
-		if not q.hidden and not q.parameter then out[#out + 1] = q end
-	end
-	table.sort(out, function(a, b) return a.level < b.level end)
-	for i, q in ipairs(out) do out[i] = q.name end
+	for i, key in ipairs(list) do out[i] = { index = i, key = key, kind = N.is_fluid_key(key) and "fluid" or "item" } end
+	out[#out + 1] = { index = #list + 1, free = true }
 	return out
 end
 
---- issues #69, #82: the buttons of the workbench's partition, from `workbench_data`: the filled slots (without a cell the
---- items, then the fluids, each a chooser of its own kind; with a cell its partition, of the cell's kind) and the free
---- one at the end: what the add row chooses, of `kind` ("item" or "fluid"; with a cell always the cell's kind), its
---- `elem_type` that of the row's button, not enabled when the list holds the most kinds a cell takes. There is no
---- button that can choose anything but an item with quality or a fluid.
---- Returns { { index, elem_type, key (nil: free), free, enabled } }
-function M.workbench_slots(d, kind)
+--- what the picker of slot `index` (a position in the list; the list's length + 1 is the free slot) offers: { item =
+--- bool, fluid = bool }. The kind a slot has can always be chosen again; a kind that is new to the slot needs room (63
+--- items, 18 fluids without a cell; with a cell its own kind and its types).
+function M.workbench_kinds(d, index)
 	local c = d.cell
 	local list = c and c.partition or d.config
-	local out = {}
-	for i, key in ipairs(list) do
-		out[i] = { index = i, key = key, elem_type = N.is_fluid_key(key) and "fluid" or "item-with-quality", enabled = true }
-	end
-	local room
+	local key = list[index]
 	if c then
-		kind = c.fluid and "fluid" or "item"
-		room = #list < c.types_total
-	elseif kind == "fluid" then
-		room = #d.config - d.config_items < d.limits.fluids
-	else
-		room = d.config_items < d.limits.items
+		local out = { item = false, fluid = false }
+		out[c.fluid and "fluid" or "item"] = key ~= nil or #list < c.types_total
+		return out
 	end
-	out[#out + 1] = { index = #list + 1, free = true, elem_type = kind == "fluid" and "fluid" or "item", enabled = room }
-	return out
+	local fluid_key = key ~= nil and N.is_fluid_key(key)
+	return {
+		item = (key ~= nil and not fluid_key) or d.config_items < d.limits.items,
+		fluid = fluid_key or #d.config - d.config_items < d.limits.fluids,
+	}
 end
 
---- issue #69: what a partition button of the workbench takes: only an item with quality or a fluid (`elem_type`
---- "item-with-quality" or "fluid", its value), nil for the key to empty the slot. Anything else (a signal chooser's
---- virtual signal, an entity, a recipe) is refused and changes nothing. Returns true when the list was set.
-function M.workbench_choose(entity, index, elem_type, value)
-	if elem_type ~= "item-with-quality" and elem_type ~= "fluid" then return false end
-	local key = key_of_elem(elem_type, value)
-	if value ~= nil and not key then return false end
+--- the picker's choice goes into slot `index`: `kind` "item" (name, quality: normal when nil) or "fluid" (name). Refused
+--- (false, nothing changes) for another kind, an unknown name or quality, a quality without the quality mod, a kind the
+--- slot may not take (workbench_kinds), a slot beyond the free one. Returns true when the list was set.
+function M.workbench_set(entity, index, kind, name, quality)
+	local d = M.workbench_data(entity)
+	if not d or type(index) ~= "number" or index < 1 or type(name) ~= "string" then return false end
+	local list = d.cell and d.cell.partition or d.config
+	if index > #list + 1 then return false end
+	local kinds = M.workbench_kinds(d, index)
+	if kind ~= "item" and kind ~= "fluid" or not kinds[kind] then return false end
+	local key
+	if kind == "fluid" then
+		if not prototypes.fluid[name] then return false end
+		key = "fluid/" .. name
+	else
+		if not prototypes.item[name] then return false end
+		quality = quality or "normal"
+		if not prototypes.quality[quality] or (quality ~= "normal" and not script.feature_flags.quality) then return false end
+		key = N.key_of(name, quality)
+	end
 	return bench.set_partition_slot(entity, index, key)
 end
 
---- issue #82: a filled slot's chooser picked another element. The picker has no quality row: the new item keeps the
---- quality of the one it replaces (a normal quality asked for with a slot of another quality). Otherwise as
---- workbench_choose.
-function M.workbench_change(entity, index, elem_type, value)
-	if elem_type == "item-with-quality" and type(value) == "table" and (value.quality or "normal") == "normal" then
-		local d = M.workbench_data(entity)
-		local old = d and (d.cell and d.cell.partition or d.config)[index]
-		if old and not N.is_fluid_key(old) then
-			local _, q = N.parse_key(old)
-			if q ~= "normal" and prototypes.quality[q] then value = { name = value.name, quality = q } end
-		end
-	end
-	return M.workbench_choose(entity, index, elem_type, value)
+--- slot `index` is emptied (right click). Returns true when it was filled.
+function M.workbench_clear_slot(entity, index)
+	local d = M.workbench_data(entity)
+	local list = d and (d.cell and d.cell.partition or d.config)
+	if not (list and type(index) == "number" and list[index]) then return false end
+	return bench.set_partition_slot(entity, index, nil)
 end
 
---- issue #82: the add row's green check: the item (`elem_type` "item", with `quality`, normal when nil) or fluid
---- ("fluid") of its button goes at the end of the workbench's partition (with a cell: of the cell's, which takes its own
---- kind only). Not into a kind that is full, not an unknown quality or one without the quality mod.
---- Returns true when the list was set.
-function M.workbench_add(entity, elem_type, value, quality)
-	local d = M.workbench_data(entity)
-	if not d or type(value) ~= "string" then return false end
-	if d.cell and elem_type ~= (d.cell.fluid and "fluid" or "item") then return false end
-	local v = value
-	if elem_type == "item" then
-		quality = quality or "normal"
-		if not prototypes.quality[quality] or (quality ~= "normal" and not script.feature_flags.quality) then return false end
-		v = { name = value, quality = quality }
-	elseif elem_type ~= "fluid" then
-		return false
+--- a slot button showing a key (an item with its quality, or a fluid; nil: empty)
+local function partition_button(parent, key, tags)
+	local b = parent.add{ type = "sprite-button", style = "slot_button", tags = tags }
+	if not key then return b end
+	if N.is_fluid_key(key) then
+		local name = key:sub(7)
+		b.sprite = prototypes.fluid[name] and ("fluid/" .. name) or "utility/questionmark"
+		if prototypes.fluid[name] then b.elem_tooltip = { type = "fluid", name = name } end
+	else
+		local name, q = N.parse_key(key)
+		b.sprite = prototypes.item[name] and ("item/" .. name) or "utility/questionmark"
+		if prototypes.item[name] then
+			if q ~= "normal" and script.feature_flags.quality then b.quality = q end
+			b.elem_tooltip = { type = "item-with-quality", name = name, quality = prototypes.quality[q] and q or "normal" }
+		end
 	end
-	local slots = M.workbench_slots(d, elem_type)
-	local free = slots[#slots]
-	if not free.enabled then return false end
-	return M.workbench_choose(entity, free.index, elem_type == "fluid" and "fluid" or "item-with-quality", v)
+	return b
 end
 
 function M.refresh_workbench(player, frame)
@@ -551,41 +532,22 @@ function M.refresh_workbench(player, frame)
 		c.types_total } or { "fork-me-gui.workbench-no-cell" }
 	G.find(frame, "fork_me_wb_mode").caption = c and M.cell_mode_caption(c) or ""
 	local part = c and c.partition or d.config
-	--- the add row's kind: a cell's own, without one the player's switch (a window without one, an old save's, chooses items)
-	local sw = G.find(frame, "fork_me_wb_kind")
-	local kind = c and (c.fluid and "fluid" or "item") or (sw and sw.valid and sw.switch_state == "right" and "fluid" or "item")
-	if sw and sw.valid then sw.visible = c == nil end
-	local pick = G.find(frame, "fork_me_wb_pick")
-	if pick and pick.valid then
-		if pick.elem_type ~= kind then                     -- (the switch moved, or a cell of the other kind came in)
-			local row = pick.parent
-			pick.destroy()
-			pick = row.add{ type = "choose-elem-button", name = "fork_me_wb_pick", elem_type = kind, style = "slot_button",
-				tags = G.act("wb_pick"), index = 2 }
-		end
-		local slots = M.workbench_slots(d, kind)
-		local free = slots[#slots]
-		pick.enabled = free.enabled
-		pick.tooltip = { free.enabled and ("fork-me-gui.workbench-free-" .. kind) or ("fork-me-gui.workbench-full-" .. kind) }
-		local dd, ok = G.find(frame, "fork_me_wb_q"), G.find(frame, "fork_me_wb_ok")
-		if dd and dd.valid then dd.visible = kind == "item" and #dd.items > 1 end
-		if ok and ok.valid then ok.enabled = free.enabled and pick.elem_value ~= nil end
-	end
 	rebuild(frame, "fork_me_wb_part", (c and c.name or "-") .. ":" .. table.concat(part, ","), function(box)
 		local t = box.add{ type = "table", column_count = 10, style = "filter_slot_table" }
-		if not c then
-			--- issue #37: no cell: the workbench's own partition, for the next cell without one. Its items, then its
-			--- fluids. Issue #69: no button here chooses a virtual signal: a filled slot is a chooser of its own kind (an
-			--- item with quality, a fluid); what is added is chosen in the add row above (issue #82)
-			for _, slot in ipairs(M.workbench_slots(d, kind)) do
-				if not slot.free then chooser(t, slot.elem_type, slot.key, G.act("wb_part", { index = slot.index })) end
+		for _, slot in ipairs(M.workbench_slots(d)) do
+			local tags = G.act("wb_slot", { index = slot.index })
+			if slot.free then
+				local kinds = M.workbench_kinds(d, slot.index)
+				local room = kinds.item or kinds.fluid
+				local b = partition_button(t, nil, tags)
+				b.enabled = room
+				b.tooltip = { room and "fork-me-gui.workbench-slot-free" or "fork-me-gui.workbench-slot-full" }
+			else
+				partition_button(t, slot.key, tags).tooltip = { "fork-me-gui.workbench-slot-tooltip" }
 			end
-			G.label(box, { "fork-me-gui.workbench-kept" }, WIDTH)
-			return
 		end
-		--- (a cell's partition: its filled slots, of its kind; what is added is chosen in the add row)
-		local elem_type = c.fluid and "fluid" or "item-with-quality"
-		for i = 1, #part do chooser(t, elem_type, part[i], G.act("wb_part", { index = i })) end
+		--- issue #37: no cell: the workbench's own partition, for the next cell without one
+		if not c then G.label(box, { "fork-me-gui.workbench-kept" }, WIDTH) end
 	end)
 	local contents = G.find(frame, "fork_me_wb_contents")
 	if contents then contents.enabled = c ~= nil end
@@ -608,41 +570,48 @@ G.window("workbench", { open = open_workbench, refresh = M.refresh_workbench, en
 		return bench.card_click(entity, slot - 1, cursor, inv, shift)
 	end })
 
-G.on("wb_part", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
-	local entity, frame = window_entity(player)
-	if not entity then return end
-	--- (only an item with quality or a fluid is a partition: anything else changes nothing, the list is drawn anew)
-	M.workbench_change(entity, el.tags.index, el.elem_type, el.elem_value)
-	--- (drawn anew also when the list did not change: a key chosen twice or a key no cell takes must not stay in its slot)
-	local box = frame and G.find(frame, "fork_me_wb_part")
-	if box then box.tags = {} end
-	G.refresh_one(player)
-end)
-
---- issue #69: the add row's kind changed (items | fluids): the refresh makes the button again for the kind (an element's
---- type cannot change) and the slots are drawn anew
-G.on("wb_kind", function(event, player)
-	if event.name ~= defines.events.on_gui_switch_state_changed then return end
-	G.refresh_one(player)
-end)
-
---- issue #82: the add row's button chose something: it is only chosen, the green check takes it in
-G.on("wb_pick", function(event, player)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
-	G.refresh_one(player)
-end)
-
---- issue #82: the green check: the chosen item with the drop-down's quality, or the fluid, into the partition
-G.on("wb_ok", function(event, player)
+--- issue #94: a click on a partition slot opens the picker (a filled slot's element and quality are chosen in it), a right
+--- click empties a filled slot
+G.on("wb_slot", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity, frame = window_entity(player)
-	local pick = entity and G.find(frame, "fork_me_wb_pick")
-	if not (pick and pick.valid and pick.elem_value) then return end
-	local dd = G.find(frame, "fork_me_wb_q")
-	local quality = dd and dd.valid and dd.visible and M.workbench_qualities()[dd.selected_index] or nil
-	if M.workbench_add(entity, pick.elem_type, pick.elem_value, quality) then pick.elem_value = nil end
-	local box = G.find(frame, "fork_me_wb_part")
+	if not entity then return end
+	local d = M.workbench_data(entity)
+	if not d then return end
+	local index = el.tags.index
+	local list = d.cell and d.cell.partition or d.config
+	local key = list[index]
+	if event.button == defines.mouse_button_type.right then
+		if key and M.workbench_clear_slot(entity, index) then
+			local box = G.find(frame, "fork_me_wb_part")
+			if box then box.tags = {} end
+			G.refresh_one(player)
+		end
+		return
+	end
+	local kinds = M.workbench_kinds(d, index)
+	if not (kinds.item or kinds.fluid) then return end
+	local preset
+	if key and N.is_fluid_key(key) then
+		preset = { kind = "fluid", name = key:sub(7) }
+	elseif key then
+		local name, q = N.parse_key(key)
+		preset = { kind = "item", name = name, quality = q }
+	end
+	picker.open(player, { callback = "wb_slot", data = { unit = entity.unit_number, index = index }, kinds = kinds,
+		preset = preset, title = { "fork-me-picker.title-" .. (kinds.item and kinds.fluid and "both" or kinds.item and "item" or "fluid") } })
+end)
+
+--- issue #94: the picker's green check: the choice goes into the slot it was opened for (the window and its workbench
+--- are checked again: a cell may have come or gone meanwhile). The list is drawn anew whatever happened, so a key that
+--- is in the list already or that no cell takes leaves no stale button.
+picker.on_confirm("wb_slot", function(player, data, choice)
+	local entity, frame = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	if not M.workbench_set(entity, data.index, choice.kind, choice.name, choice.quality) then
+		player.create_local_flying_text{ text = { "fork-me-gui.workbench-set-refused" }, create_at_cursor = true }
+	end
+	local box = frame and G.find(frame, "fork_me_wb_part")
 	if box then box.tags = {} end
 	G.refresh_one(player)
 end)
@@ -1466,15 +1435,15 @@ remote.add_interface("gregtorio-me-gui", {
 	bus_data = function(entity) return M.bus_data(entity) end,
 	storage_bus_data = function(entity) return M.storage_bus_data(entity) end,
 	workbench_data = function(entity) return M.workbench_data(entity) end,
-	--- issue #69: the workbench's partition buttons without a cell (`kind` of the free slot: "item" or "fluid"), and what a
-	--- button takes: workbench_choose(entity, index, elem_type, value) returns true when the list was set
-	workbench_slots = function(entity, kind) local d = M.workbench_data(entity) return d and M.workbench_slots(d, kind) end,
-	workbench_choose = function(entity, index, elem_type, value) return M.workbench_choose(entity, index, elem_type, value) end,
-	--- issue #82: a filled slot's button picked another element (keeps the slot's quality), the add row's green check
-	--- (elem_type "item" or "fluid", the name, the quality), and the qualities the drop-down offers
-	workbench_change = function(entity, index, elem_type, value) return M.workbench_change(entity, index, elem_type, value) end,
-	workbench_add = function(entity, elem_type, value, quality) return M.workbench_add(entity, elem_type, value, quality) end,
-	workbench_qualities = function() return M.workbench_qualities() end,
+	--- issues #69, #82, #94: the workbench's partition buttons, what the picker of a slot offers, what a choice does, the
+	--- right click, and the picker's lists (the groups, the entries of the allowed kinds by a search text, the qualities)
+	workbench_slots = function(entity) local d = M.workbench_data(entity) return d and M.workbench_slots(d) end,
+	workbench_kinds = function(entity, index) local d = M.workbench_data(entity) return d and M.workbench_kinds(d, index) end,
+	workbench_set = function(entity, index, kind, name, quality) return M.workbench_set(entity, index, kind, name, quality) end,
+	workbench_clear_slot = function(entity, index) return M.workbench_clear_slot(entity, index) end,
+	picker_groups = function(kinds) return picker.group_names(kinds) end,
+	picker_entries = function(kinds, filter, group) return picker.entries(kinds, filter, group) end,
+	workbench_qualities = function() return picker.qualities() end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
 	key_of_signal = function(signal) return key_of_signal_q(signal) end,
 	--- issue #28: a click on slot `slot` of the inventory pane of `entity`'s window (`mode` "left", "right", "shift"), for

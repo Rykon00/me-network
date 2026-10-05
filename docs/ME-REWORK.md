@@ -1581,43 +1581,49 @@ and leaves the other kind's alone (`remember`). A partition set by hand goes ont
 mode: setting it is the request. Without the copy mode the workbench forgets all of it when a cell leaves, as before.
 The slots without a cell: at most what a cell of the kind takes (63 items, 18 fluids).
 
-**No virtual signals in the partition (issue #69).** Issue #65 gave the slots without a cell one button, the signal
-chooser the buses use, and a virtual signal (or an entity, a recipe, a quality) chosen in it was dropped, the slot empty
-again. Factorio cannot offer less: `elem_filters` of a `choose-elem-button` exist for items, fluids, entities, recipes
-and so on, but "`signal` and `item-group` do not support filters" (the `PrototypeFilter` page of the runtime API, 2.0.77
-in the install and the 2.1.20 page; 2.1.20 adds a `VirtualSignalPrototypeFilter` to that union, but the sentence is
-unchanged and `LuaGuiElement::elem_filters` still takes no filter for `"signal"`). So the workbench has no signal chooser
-any more: a filled slot is an `item-with-quality` or a `fluid` chooser by its key, and what is added comes from the add
-row (issue #82, below). The state of the row is in the GUI elements of the player's own window: the switch
-(`fork_me_wb_kind`, "Items | Fluids", left = items) is read when the slots are drawn (`refresh_workbench`); nothing is in
-`storage`, nothing is on a tick, so two players at one workbench can have it on different sides and a multiplayer game
-has nothing to agree on. A window opens on Items. The row's button of a kind that is full (63 items, 18 fluids) is
-disabled with a tooltip, a filled slot can still be changed or emptied (right click). `M.workbench_slots(data, kind)`
-gives the buttons (filled slots in the list's order, then the free one: the row's) and
-`M.workbench_choose(entity, index, elem_type, value)` is what a filled slot's `on_gui_elem_changed` goes through: only
-`item-with-quality` and `fluid` are taken, anything else (a signal, an entity, a recipe, an unknown name) is refused and
-changes nothing; the window is drawn anew afterwards, so a key that is in the list already or that no cell takes leaves
-no stale button. All are in the remote interface `gregtorio-me-gui` for the test (`workbench_slots`, `workbench_choose`).
-No change to saved state: `rec.config` is still a list of keys.
+**No virtual signals in the partition (issue #69), the quality and the check (issues #82, #94).** Issue #65 gave the
+slots without a cell one button, the signal chooser the buses use, and a virtual signal (or an entity, a recipe, a
+quality) chosen in it was dropped, the slot empty again. Factorio cannot offer less: `elem_filters` of a
+`choose-elem-button` exist for items, fluids, entities, recipes and so on, but "`signal` and `item-group` do not support
+filters" (the `PrototypeFilter` page of the runtime API, 2.0.77 in the install and the 2.1.20 page; 2.1.20 adds a
+`VirtualSignalPrototypeFilter` to that union, but the sentence is unchanged and `LuaGuiElement::elem_filters` still takes
+no filter for `"signal"`). The picker of an `item-with-quality` button, the way out of #69, has no quality row and takes a
+choice at once (#82), and a switch plus a quality drop-down plus a green check beside it (the pull request of #82) was
+not what was wanted: the check belongs in the picker (#94). So the picker is the mod's own: `scripts/fork-me-picker.lua`.
 
-**The add row: quality and the green check (issue #82).** The picker Factorio opens for a mod's `choose-elem-button` of
-type `item-with-quality` has no quality row, and it takes a choice at once; the signal picker the buses use has the
-quality row and the green check, but cannot be filtered (above). The API has no setting for either. So the choice is
-split from taking it in: the row above the slots is [switch] [`choose-elem-button` of type `item` or `fluid`, named
-`fork_me_wb_pick`] [drop-down of the qualities, items only, shown only with the quality mod] [green check, the style
-`item_and_count_select_confirm`]. The button only chooses (`wb_pick`: it enables the check); the check (`wb_ok`) calls
-`M.workbench_add(entity, elem_type, value, quality)`, which builds the key (`name@quality`, a fluid `fluid/name`),
-refuses a signal, an unknown name or quality, a quality without the quality mod, a kind that is full and any call with a
-cell in the workbench, and puts the key at the end of the list (the list sorts itself: items, then fluids). The button
-is made again when the switch moves (an element's type cannot change); the chosen element is cleared after an add, the
-quality stays for the next one. `M.workbench_qualities()` gives the drop-down's names (not hidden, not a parameter
-quality, by level). A filled slot's button still has the plain picker: `M.workbench_change` keeps the quality of the slot
-it replaces when the picker gives the normal quality (there is no way to ask for another one there); to change an item's
-quality the slot is emptied and the item added again. With a cell in the workbench the same row adds to the cell's
-partition (the switch is hidden, the button is of the cell's kind, `workbench_add` refuses the other kind, the free
-position is the cell's `types_total`); before issue #82 a cell's partition slots were pickers without a quality row, so a
-quality whitelist could not be set in the workbench at all. The cell window of a drive and of the terminal's Cells tab is
-unchanged.
+`Picker.open(player, spec)` builds a frame in `player.gui.screen` (`fork_me_picker`): a search field, the groups as tabs
+(`filter_group_button_tab_slightly_larger`, `item-group/<name>` sprites; only groups that list an allowed element), a
+scroll pane with the group's subgroups as tables of 10 `slot_button`s (the game's order: group, subgroup, `order`, name),
+and a bottom row of quality buttons (`quality/<name>`, items only, only with the quality mod) and the green check
+(`item_and_count_select_confirm`). The catalog (`catalog_of`) is made from the item and fluid prototypes (not hidden, not
+parameters) on first use and kept outside `storage` (derived from prototypes only, made again after a load). A search
+text is matched against the prototype name like the terminal's search (lower case, spaces as dashes); the display is
+capped (1500 buttons) with a line that says so. `spec` = `{ callback, data, kinds = { item, fluid }, preset = { kind,
+name, quality }, title }`: the choice (`{ kind, name, quality }`) comes back through `Picker.on_confirm(callback, fn)`;
+what the picker knows lives in the frame's tags, so nothing is in `storage` and a multiplayer game has nothing to agree
+on (the picker is one player's GUI, like any window).
+
+The workbench's slots are `sprite-button`s (`wb_slot`): a click opens the picker for that slot with `kinds` from
+`M.workbench_kinds(data, index)` (the kind a slot has can always be chosen again; a new kind needs room: 63 items, 18
+fluids without a cell, the cell's types with one; with a cell only its kind) and the slot's element and quality as the
+preset; right click empties (`workbench_clear_slot`). The green check calls `M.workbench_set(entity, index, kind, name,
+quality)`, which refuses anything but an item with a known quality (a quality other than normal needs the quality mod)
+or a fluid, a kind the slot may not take and a slot beyond the free one, and sets the key (`name@quality` or
+`fluid/name`; the list sorts itself: items, then fluids). The window is drawn anew afterwards, so a key that is in the
+list already or that no cell takes leaves no stale button. The remote interface `gregtorio-me-gui` has `workbench_slots`,
+`workbench_kinds`, `workbench_set`, `workbench_clear_slot`, `workbench_qualities`, `picker_groups` and `picker_entries`
+for the test (the window itself cannot run headless). No change to saved state: `rec.config` is still a list of keys.
+
+*Closing and the confirm key.* The picker is not the player's opened GUI (the window below it is), so Escape and "E"
+close that window. `G.on_window_closed` (a hook in `scripts/fork-me-gui.lua`'s `on_closed`) turns that into the game's
+rule that the popup goes first: the window stays (`player.opened = window`), the picker is hidden and marked with the
+tick (`cancel_tick` in its tags). Escape ends there (a hidden picker of an earlier tick goes with the next close, the next
+open or the 60 tick refresh). The custom input `fork-me-picker-confirm` (`prototypes/network.lua`, linked to the game's
+`confirm-gui`, "E" by default, `consuming = "none"`) fires in the same tick as the close, before or after it: it confirms
+the shown picker, or the one hidden in this tick (`cancel_tick == game.tick`), and marks the window (`keep_tick`) so that
+the close that comes after it is ignored. Neither order needs anything in `storage`; the marks are in the GUI elements'
+tags. Whether the game fires both in the same tick and in which order is only known in the game: that is the first thing
+the `[Task-Ingame]` issue checks.
 
 The buses' filter buttons, the ME Interface's rows and the terminal's pattern editor keep the signal chooser (the pull
 request of #69 is the workbench only). To give them the same treatment each button would need the same kind switch next to it (a bus has up to 5 filters,

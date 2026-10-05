@@ -126,6 +126,8 @@ end
 function M.close_window(player)
 	local frame = player.gui.screen.fork_me_window
 	if frame and frame.valid then frame.destroy() end
+	local picker = player.gui.screen.fork_me_picker       -- the picker (scripts/fork-me-picker.lua) belongs to the window
+	if picker and picker.valid then picker.destroy() end
 	local s = storage.fork_me_gui_pane
 	if s then s[player.index] = nil end
 	slot_cache[player.index] = nil
@@ -646,6 +648,11 @@ function M.dispatch(event)
 	return true
 end
 
+--- Hooks that see an ME window being closed before it is treated as closed: fn(player, window) returns true when the
+--- window is to stay (the picker of issue #94 takes the close keys of the popup above it)
+local closed_hooks = {}
+function M.on_window_closed(fn) closed_hooks[#closed_hooks + 1] = fn end
+
 --- on_gui_closed: our window was closed (E, Escape, another GUI opened)
 function M.on_closed(event)
 	if event.gui_type == defines.gui_type.script_inventory then
@@ -664,6 +671,11 @@ function M.on_closed(event)
 			player.opened = el
 			return true
 		end
+		if player then
+			for _, hook in ipairs(closed_hooks) do
+				if hook(player, el) then return true end
+			end
+		end
 		if player then M.close_window(player) else el.destroy() end
 		return true
 	end
@@ -675,6 +687,8 @@ end
 function M.refresh_all()
 	local n = 0
 	for _, player in pairs(game.connected_players) do
+		local picker = player.gui.screen.fork_me_picker      -- one that an Escape hid (scripts/fork-me-picker.lua)
+		if picker and picker.valid and not picker.visible and picker.tags.cancel_tick ~= game.tick then picker.destroy() end
 		local frame, name = M.window_of(player)
 		if frame and n < REFRESH_MAX then
 			n = n + 1

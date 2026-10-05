@@ -428,10 +428,14 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   a cell in hand (another cell there is swapped into the hand, with its cards); click the cell to take it, shift +
   click into your inventory. Anything else is refused with a message. The cell keeps its items all the time; every
   change of the partition is written into it at once.
-* **Partition:** the cell's filled slots (items with quality, or fluids for a fluid cell), a row to add an entry (the
-  game's picker for an item, or a fluid for a fluid cell, for items a **quality** drop-down and a **green check** that
-  takes the choice in: the picker itself has no quality row), **From contents** and **Clear**. A filled slot: click it
-  and pick another element (an item keeps the slot's quality), right click to empty it.
+* **Partition:** the cell's filled slots (items with quality, or fluids for a fluid cell) and one free slot at the end,
+  **From contents** and **Clear**. A click on a slot (the free one adds, a filled one changes) opens the **picker**
+  (issue #94), made like the game's own: the item groups as tabs (fluids in theirs), a search by name (as the
+  terminal's), the items and fluids of the group, a row with the **qualities** at the bottom (items only) and the **green
+  check** at its right end. Click an element, click a quality, click the check; the confirm key (the game's "Confirm
+  GUI", "E" by default) is the check, Enter in the search field too, Escape or the X closes the picker only. A filled
+  slot opens it with its element and quality chosen, so both can be changed; right click empties a slot. Only items
+  (with quality) and fluids are listed, no virtual signal and no other signal.
 * **Card slots:** an item cell takes 4 cards, a fluid cell 3 (AE2): one each of **Inverter Card** (the partition is a
   blacklist: the cell takes everything except it), **Fuzzy Card** (item cells: the partition matches every quality),
   **Equal Distribution Card** (no kind takes more than an equal share of the cell: with a partition of n kinds the
@@ -445,17 +449,11 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
 * **Without a cell** the partition slots are there too: they show and set the workbench's own partition, the one the
   next cell without a partition gets. It can hold items and fluids (the items first, then the fluids, then one free
-  slot): an item cell takes the items, a fluid cell the fluids. Only items (with quality) and fluids can be chosen
-  here, no virtual signal and no other signal (issue #69). New entries come from one row above the slots (issue #82):
-  the switch **Items | Fluids**, the button that opens the game's item or fluid picker, for items a drop-down with
-  the **quality**, and the **green check** that puts what is chosen into the partition (the picker itself takes a
-  choice at once and has no quality row, so the check is next to it). The switch, the choice and the quality are
-  settings of your window only: it opens on Items, normal quality. A filled slot is a button of its own kind: click it
-  and pick another element (an item keeps the quality of the slot, to change the quality empty the slot and add the
-  item again) or right click it to empty it. When the partition holds the most items (or fluids) a cell takes, the
-  row's button of that kind is greyed out. **Clear** empties it; **From contents** needs
-  a cell. A partition set this way goes onto the next cell also when the copy mode is off; with the copy mode off the
-  workbench forgets its partition when a cell is taken out (and when the copy mode is switched off without a cell).
+  slot; the picker lists both): an item cell takes the items, a fluid cell the fluids. When the partition holds the most
+  items (or fluids) a cell takes, the picker offers no more of that kind; the free slot is greyed out when neither is
+  left. **Clear** empties it; **From contents** needs a cell. A partition set this way goes onto the next cell also when the copy mode is off; with the
+  copy mode off the workbench forgets its partition when a cell is taken out (and when the copy mode is switched off
+  without a cell).
 * The cards are part of the cell (its tags): they travel with it into drives, chests and the network, like its items
   and partition. Only the workbench puts cards in or takes them out; the cell window (drive window, the terminal's
   Cells tab) shows them and keeps its partition buttons, so nothing a player used goes away.
