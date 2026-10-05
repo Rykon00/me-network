@@ -649,8 +649,13 @@ function M.interface_step(rec, dt)
 				local can = N.can_insert(net, c.name, c.quality, have - c.amount)
 				local taken = 0
 				if can > 0 then
-					Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, c.quality, can
-					taken = inv.remove(Q_REMOVE)
+					local proto = prototypes.item[c.name]
+					if proto and N.item_class(proto.type) == "worn" then
+						taken = N.remove_whole(inv, c.name, c.quality, can)          -- (a removal by count takes the used item first, issue #76)
+					else
+						Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, c.quality, can
+						taken = inv.remove(Q_REMOVE)
+					end
 				end
 				if taken > 0 then
 					local stored = N.insert(net, c.name, c.quality, taken)
@@ -955,6 +960,9 @@ end
 local by_count_cache = {}
 --- Items the import bus moves by count (issue #5): plain items that cannot be damaged, spoil or carry data, so
 --- every stack of them is the same and the network takes them by name (one check per item type, not per stack).
+--- Tools (science packs), ammo and repair tools are not among them (issue #76): a stack of them is a whole item or a used
+--- one, and a removal by count takes the used item first and hands it on as a whole one, so they go stack by stack
+--- through N.insert_partial, which refuses a used stack.
 --- Decided per prototype and quality, cached per load (by quality, then name: no string is built per call).
 local function by_count(name, quality)
 	local byq = by_count_cache[quality]

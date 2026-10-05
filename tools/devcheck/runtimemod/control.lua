@@ -575,7 +575,7 @@ function me_terminal_test()
 	expect(n == nil and why == "cannot-store-spoil" and main[1].valid_for_read, "a spoiling item: " .. tostring(n) .. " " .. tostring(why))
 	main[2].set_stack{ name = "blueprint", count = 1 }
 	n, why = remote.call(TERM, "store_stack", t, main[2])
-	expect(n == nil and why == "cannot-store", "a blueprint: " .. tostring(n) .. " " .. tostring(why))
+	expect(n == nil and why == "cannot-store-blueprint", "a blueprint: " .. tostring(n) .. " " .. tostring(why))
 	cursor.destroy()
 	main.destroy()
 	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, store cursor and inventory, search, sort, unstorable")
@@ -736,6 +736,9 @@ scan50 = require("scan")({ me_place = me_place, me_report = me_report })
 entries50 = require("entries")({ me_place = me_place, me_report = me_report })
 --- me-network issue #59: the storage engine's kept holder lists (holderlists.lua)
 holderlists59 = require("holderlists")({ me_place = me_place, me_report = me_report })
+--- me-network issue #76: what can be stored (storable.lua)
+storable76 = require("storable")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
 cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
@@ -780,6 +783,7 @@ local function tests_running()
 	entries50.running(check)
 	holderlists59.running(check)
 	holders43.running(check)
+	storable76.running(check)
 	graph43.running(check)
 	return running
 end
@@ -1657,6 +1661,7 @@ script.on_nth_tick(10, function()
 	entries50.tick()
 	holderlists59.tick()
 	holders43.tick()
+	storable76.tick()
 	graph43.tick()
 	done_test()
 end)
@@ -2471,7 +2476,7 @@ function me_r3_test()
 		.. ", network " .. count("stone"))
 	pinv[4].set_stack{ name = "blueprint", count = 1 }
 	why = click(t, 4, "shift")
-	expect(why == "cannot-store" and pinv[4].valid_for_read, "a blueprint shift-clicked at the terminal: " .. tostring(why))
+	expect(why == "cannot-store-blueprint" and pinv[4].valid_for_read, "a blueprint shift-clicked at the terminal: " .. tostring(why))
 	--- the blocks without slots store into their network (new ones in a row right of the terminal: on its network)
 	local row = {}
 	for i, name in ipairs({ "me-network-interface", "me-import-bus", "me-export-bus", "me-level-maintainer", "me-circuit-interface" }) do
@@ -2486,7 +2491,7 @@ function me_r3_test()
 		expect(why == nil and count("stone-brick") == b0 + 3 and not pinv[5].valid_for_read, "shift + click stores at " .. e.name .. ": "
 			.. tostring(why))
 	end
-	expect(click(ctrl, 4, "shift") == "cannot-store" and pinv[4].valid_for_read, "a blueprint shift-clicked at the controller")
+	expect(click(ctrl, 4, "shift") == "cannot-store-blueprint" and pinv[4].valid_for_read, "a blueprint shift-clicked at the controller")
 	pinv[6].set_stack{ name = "stone-brick", count = 2 }
 	pinv[7].set_stack{ name = "stone-brick", count = 4 }
 	local b0 = count("stone-brick")
@@ -4531,6 +4536,7 @@ script.on_init(function()
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end

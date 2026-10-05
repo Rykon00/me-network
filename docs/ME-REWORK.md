@@ -126,9 +126,42 @@ allows that too) because tagged items are stored with their tags.
 
 **What can be stored:** plain items of any quality, and items with tags (cells, loaded fluid drive items):
 an item with tags is stored with its tags and description under its own key, one type per distinct tag set.
-Not storable (the interface leaves them in its slots, the terminal says so): items with an inventory or
-grid, blueprints and planners, items that spoil (the network would stop their decay), damaged items and
-partly used tools or ammunition (the network would repair them).
+Not storable (the interface leaves them in its slots, the terminal says so, each with a message that names
+the refusal): items with an inventory, armor (it can carry a grid), blueprints and books, planners and selection
+tools, the spidertron remote, vehicles and other items with entity data, items with a label, items that spoil
+(the network would stop their decay), damaged items and partly used tools, ammunition and repair packs (the
+network would repair them). See "What the network stores (issue #76)" below.
+
+**What the network stores (issue #76):** `N.storable` decides by the prototype type (`N.item_class`), never by
+`stack.item`. `stack.item` (a `LuaItem`) is set for every stack with a state of its own, measured on 2.0.77: tools
+(science packs), ammo, repair tools, armor, planners, an item that spoils, an item with health below 1. Before the fix of issue #76
+the first line of `storable` took it for "carries data of its own", so no science pack, magazine or repair pack
+could enter the network by any path that asks `storable`, and the lines meant for them (a whole one may be stored, a
+used one not) were never reached.
+
+| Class | Types | The network |
+|---|---|---|
+| plain | `item`, `gun`, `capsule`, `module`, `rail-planner`, `space-platform-starter-pack` | stored by key `name@quality` (a damaged one is refused: `health` below 1) |
+| worn | `tool`, `ammo`, `repair-tool` | stored when the top item of the stack is whole: `durability` equals `get_durability(quality)` (a quality scales it: a legendary science pack has 6, a legendary repair pack 1800), `ammo` equals `magazine_size`; a used one is refused as damaged |
+| tags | `item-with-tags` | stored with tags and description under its own key; refused with a label (a label cannot be put back with `set_stack`) |
+| label | `item-with-label` | stored plain when it has no label |
+| refused | `blueprint`, `blueprint-book`; `deconstruction-item`, `upgrade-item`, `selection-tool`, `copy-paste-tool`; `spidertron-remote`; `item-with-entity-data`; `armor`; `item-with-inventory` | `cannot-store-blueprint`, `-planner`, `-remote`, `-entity`, `-armor`, `-inventory` |
+| unknown type | anything else | `cannot-store`: a type of a later game version is refused rather than stored without what it carries |
+
+A stack of tools holds one wear: its top item's. Measured: `remove` takes the used item first (a stack of 5 with a
+used top gives 4 whole ones after one removal), a whole item inserted merges into a used stack (8 with the used top),
+and setting `count` on a used stack makes the top whole. So a count says nothing about wear, and a stack with a used
+top item is refused as a whole (the player can take it apart by hand). Taking out never makes a whole item used:
+`extract_to` builds new stacks.
+
+Paths and what they do with a used stack: the terminal's store, the pane's shift + click and control + click,
+and the stack path of import buses and interfaces call `storable` and refuse it; a control + click goes on with the
+next stack (a used stack in front of whole ones no longer stops it). The import bus keeps tools and ammo off its
+by-count path (a removal by count would take the used item first and hand it on as a whole one). An interface row's
+surplus is taken from whole stacks only (`N.remove_whole`). A storage bus shows, counts, takes and fills only whole
+stacks of a worn type (`N.whole_counts`, `count_whole`, `remove_whole`, `has_used`), and puts nothing into a chest
+that holds a used stack of that item (it would merge). Before, a storage bus showed a used pack as a whole one and
+a removal by count gave it out as a whole one.
 
 **Network API** (`scripts/fork-me-network.lua`, all O(1) or O(cells holding the item)):
 
@@ -328,6 +361,7 @@ and the first fluid drive placed anywhere took it; the runtime test caught that.
 | ME graph | join (members, power draw, cable pictures), split (the larger part keeps the id), join again, a second controller (conflict, nothing stored, status on the controller), a cable removed without an event (sweep), the cable router, a network without power, with power, after the power is cut |
 | ME cells | cells into slots, only cells, AE2 bytes, the contents in the tags of a cell taken out and back in another drive, capacity of the network exactly, full cells, quality as its own type, a loaded cell stored in the network and taken out with its tags, the drive window's clicks (take, put, swap, shift), a destroyed drive spills its cells with their items, an old drive item gives its four cells and the card, robots mine a drive with loaded cells into a storage chest |
 | ME terminal | take a stack, one more, a click with something in the cursor stores it, take one, store the cursor, a stack into the inventory, the inventory row, search, sort by amount and name, a spoiling item and a blueprint refused |
+| ME storable items (issue #76, `storable.lua`) | science packs, magazines, repair packs (also legendary) and a gun in and out by the terminal's store, shift + click at the terminal and another block, control + click; an import bus on a chest (every tool of the game once), an interface (the stacks it imports, the surplus of a row with a used stack first), an export bus, a storage bus (whole stacks counted, the used one stays in the chest), the round trip export bus to import bus; a used pack, magazine and repair pack and a damaged chest refused as damaged and left as they were; a blueprint, book, planners, remote, vehicles, armor with equipment, an item with an inventory and items with a label refused each with its own reason; an item with tags back with its tags. Every result is logged (`DEVCHECK-RUNTIME-STORABLE-CENSUS`) |
 | ME import/export | interface export slot filled and topped up, import slot emptied, a spoiling item stays, filters pasted; import bus 64 per visit, with a filter; export bus without filter idle, into a chest, into a machine; a rotated bus; bus filters pasted; blueprint tags of interface and bus |
 | autocrafting, furnace patterns, fluids, fluid recovery, level maintainer, CPU tiers, circuit interface, settings copy | the tests that existed, on cable networks laid by the router |
 
@@ -567,8 +601,9 @@ and shows it, never puts anything in); write only (`hidden`: the snapshot stays 
 shows nor takes from it, but stores into it: AE2's "insert only").
 
 **What the bus shows and moves:** plain items that do not spoil (`get_spoil_ticks` 0 for their quality), of any
-quality, and no item types with own data (items with inventory, tags or entity data, armor, blueprints and other
-planners): the same rule as the cells (`M.storable`), decided per prototype so a visit needs no per-slot reads.
+quality, whole tools, ammo and repair tools, and no item types with own data (items with inventory, tags or entity
+data, armor, blueprints and other planners): the same classes as the cells (`N.item_class`, `M.storable`), decided per
+prototype so a visit needs no per-slot reads (a chest with a tool or ammo in it is read stack by stack once per visit).
 With filters only the filtered items (exact name and quality). Fluids are not read: they have their own bus, see
 "Fluid storage bus".
 
@@ -638,9 +673,9 @@ Inserters, players, robots and trains change an inventory without an event, so t
 * Fluids: the item storage bus reads no fluid. A tank's fluid is shared with its pipe segment (`get_fluid_count`
   reports only the tank's part), so two tanks of one segment would show the same fluid twice; the fluid storage bus
   therefore stores by segment (see "Fluid storage bus").
-* Items are moved by count (`LuaInventory.insert` / `remove`): the health of damaged items and the durability or
-  ammunition left in partly used tools and magazines in a bus's chest are not kept when the network takes them out
-  (cells refuse such items, a chest cannot). Spoiling items are not shown at all.
+* Items are moved by count (`LuaInventory.insert` / `remove`): the health of damaged items in a bus's chest is not
+  kept when the network takes them out (cells refuse such items, a chest cannot). Tools, ammo and repair tools are
+  the exception since issue #76: whole stacks only (see "What the network stores"). Spoiling items are not shown at all.
 * An import bus or ME Interface that empties a chest a storage bus shows moves the items in a circle (into the
   network, which may store them back into that chest); AE2 has the same. Give the storage bus a filter or a lower
   priority.
@@ -1304,8 +1339,8 @@ most blocks are limited by their other side, not by their visits. The rework kee
 ### The other modules
 
 * **Import bus**: plain items (type `item`, no place result, no spoilage) are moved by count from one
-  `get_contents` (one `remove` per item type); other items stack by stack as before (their damage, spoilage or data
-  decides). A big chest that is empty at the front is no longer scanned slot by slot.
+  `get_contents` (one `remove` per item type); other items stack by stack as before (their damage, wear, spoilage or
+  data decides; tools, ammo and repair tools are never by count, issue #76). A big chest that is empty at the front is no longer scanned slot by slot.
 * **Autocrafting**: a job is stepped at most every 20 ticks as before, now one job per tick in turns (the setting),
   with its CPU's operations for each 20 ticks since its last step (up to 3 steps' worth): the cap of 96 operations
   and 8 jobs per step is gone, so more than 8 jobs no longer slow each other down. One provider rescan every 2 ticks
