@@ -74,6 +74,10 @@
   in the "License" section of `README.md`. Its textures, models and sounds are CC BY-NC-SA 3.0: never copied, traced or
   given to `tools/gen_ae2_sprites.py`. AE2 is Java on Minecraft, so a port is written anew for Lua and the Factorio
   API, tested and measured like any other change; "AE2 does it this way" is no reason by itself, the number is.
+  Next to it on that machine, read-only in the same way: `..\Applied-Energistics-2-Unofficial` (GTNewHorizons' fork of
+  AE2, the one GT New Horizons plays; where it differs from AE2 and Gregtorio is concerned, it is the one to follow;
+  read its own license notes before porting from it), `..\GT5-Unofficial` (what `--gt` takes) and
+  `..\GT-New-Horizons-Modpack` (the pack's configs and scripts).
 - Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`, `--r2`,
   `--patterns` and the other switches for parts, see its docstring).
 - **Issues and the board:** every open issue of this repository and of its sister repository is on the project board
