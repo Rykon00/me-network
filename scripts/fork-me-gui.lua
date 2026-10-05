@@ -126,6 +126,8 @@ end
 function M.close_window(player)
 	local frame = player.gui.screen.fork_me_window
 	if frame and frame.valid then frame.destroy() end
+	local picker = player.gui.screen.fork_me_picker       -- the picker (scripts/fork-me-picker.lua) belongs to the window
+	if picker and picker.valid then picker.destroy() end
 	local s = storage.fork_me_gui_pane
 	if s then s[player.index] = nil end
 	slot_cache[player.index] = nil
@@ -139,9 +141,44 @@ local function pane_table(frame)
 	return scroll and scroll.fork_me_inv
 end
 
---- Show a stack on a slot button: sprite, count, quality and the game's item tooltip; `hand`: the empty slot the
---- cursor's stack came from (the game's hand mark). `s` may be nil or empty.
-function M.render_slot(btn, s, hand)
+--- Issue #75: an item with tags (a storage cell, an encoded pattern) has a description of its own (the stack's
+--- `custom_description`) that the game's inventory shows and the item's prototype tooltip (`elem_tooltip`) does not
+--- know. Which items can have one is prototype data, so it is looked up once per name (never saved) and the engine is
+--- asked about a stack only when its item is one.
+local tagged_names = {}
+
+local function is_tagged(name)
+	local t = tagged_names[name]
+	if t == nil then
+		local proto = prototypes.item[name]
+		t = proto ~= nil and proto.type == "item-with-tags"
+		tagged_names[name] = t
+	end
+	return t
+end
+
+--- What a slot shows of its stack beyond the item's name and count, as a piece of its signature ("" for every item
+--- but an item with tags): the stack's item_number. Every write of a cell or pattern (set_stack) gives the stack a
+--- new one, so a slot whose description changed is noticed without reading the description.
+function M.stack_ident(s)
+	if is_tagged(s.name) then return "#" .. tostring(s.item_number) end
+	return ""
+end
+
+--- The tooltip a slot with the stack `s` has next to the item's own (`elem_tooltip`, which the game shows above it):
+--- the stack's description when it has one, then `base` (the slot's own hint, or nil). A stack without a description
+--- gets `base` alone, as before.
+function M.stack_tooltip(s, base)
+	local desc = s and s.valid_for_read and is_tagged(s.name) and s.custom_description or nil
+	if desc == nil or desc == "" then return base end
+	if base == nil then return desc end
+	return { "", desc, "\n", base }
+end
+
+--- Show a stack on a slot button: sprite, count, quality, the game's item tooltip and the stack's own description
+--- (stack_tooltip); `hand`: the empty slot the cursor's stack came from (the game's hand mark); `base`: the
+--- slot's own tooltip. `s` may be nil or empty.
+function M.render_slot(btn, s, hand, base)
 	if s and s.valid_for_read then
 		local name = s.name
 		local q = script.feature_flags.quality and s.quality.name or "normal"
@@ -149,18 +186,20 @@ function M.render_slot(btn, s, hand)
 		btn.number = (s.count > 1 or s.prototype.stack_size > 1) and s.count or nil
 		btn.quality = q ~= "normal" and q or nil
 		btn.elem_tooltip = { type = "item-with-quality", name = name, quality = q }
+		btn.tooltip = M.stack_tooltip(s, base)
 	else
 		btn.sprite = hand and "utility/hand" or ""
 		btn.number = nil
 		btn.quality = nil
 		btn.elem_tooltip = nil
+		btn.tooltip = base
 	end
 end
 
---- a slot button for the stack `s` (a block's slot), acting with `tags`
+--- a slot button for the stack `s` (a block's slot), acting with `tags`; `tooltip`: its own hint
 function M.stack_button(parent, s, tags, tooltip)
-	local btn = parent.add{ type = "sprite-button", style = "slot_button", tags = tags, tooltip = tooltip }
-	M.render_slot(btn, s)
+	local btn = parent.add{ type = "sprite-button", style = "slot_button", tags = tags }
+	M.render_slot(btn, s, nil, tooltip)
 	return btn
 end
 
@@ -175,8 +214,8 @@ local function build_pane(parent, hint)
 	scroll.add{ type = "table", name = "fork_me_inv", column_count = PANE_COLUMNS, style = "filter_slot_table" }
 end
 
---- The pane follows the main inventory: every slot's signature (name and count, or the hand mark) is compared with
---- the one shown, and only the buttons whose signature changed are set again (the quality is read for those only:
+--- The pane follows the main inventory: every slot's signature (name and count, an item with tags' item_number, or the
+--- hand mark) is compared with the one shown, and only the buttons whose signature changed are set again (the quality is read for those only:
 --- reading it costs twice as much as name and count, measured). `quality`: the quality of every filled slot is read
 --- and compared too (the refresh, with the quality mod: a change of quality alone). A new window or a changed
 --- inventory size builds the table and sets every button. Returns the number of buttons set.
@@ -210,7 +249,11 @@ function M.update_pane(player, quality)
 		local s = cache[i]
 		local sig, filled
 		if s.valid_for_read then
-			sig = s.name .. "#" .. s.count
+			local name = s.name
+			sig = name .. "#" .. s.count
+			local tagged = tagged_names[name]               -- (stack_ident, inline: this runs for every slot)
+			if tagged == nil then tagged = is_tagged(name) end
+			if tagged then sig = sig .. "#" .. tostring(s.item_number) end
 			filled = true
 		elseif i == hand_slot then sig = "hand"
 		else sig = "" end
@@ -370,10 +413,34 @@ function M.row(parent, name)
 	return r
 end
 
---- A slot button for an item or fluid (`key`: item name, "name@quality" or "fluid/<name>"), with the amount
---- formatted in the tooltip and the button's number. `style` defaults to slot_button.
-function M.slot(parent, key, amount, tags, style, extra_tooltip)
-	local def = { type = "sprite-button", style = style or "slot_button", tags = tags }
+--- Issue #79: the key of an item with tags (a storage cell, an encoded pattern) kept in the network is
+--- "name@quality#<json>", the json being { tags, description } as `N.storable` made it from the stack. The description is
+--- therefore a function of the key (a stack written anew is another key), and the grid's buttons, which are made again
+--- when their key changes, never show an old one. Read from the json once per key, cached for this load only (never
+--- saved; emptied when it grows large). Returns the description (a localised string) or nil.
+local description_cache, description_count = {}, 0
+
+function M.key_description(key)
+	local at = key:find("#", 1, true)
+	if not at then return nil end
+	local d = description_cache[key]
+	if d == nil then
+		local data = helpers.json_to_table(key:sub(at + 1))
+		d = type(data) == "table" and data.description or false
+		if d == "" or (type(d) ~= "table" and type(d) ~= "string") then d = false end
+		if description_count >= 2000 then description_cache, description_count = {}, 0 end
+		description_cache[key] = d
+		description_count = description_count + 1
+	end
+	return d or nil
+end
+
+--- A slot button for an item or fluid (`key`: item name, "name@quality" or "fluid/<name>"; for an item with tags
+--- the key's description is the first lines of the tooltip, below the item's own), with the amount formatted in the
+--- tooltip and the button's number. `style` defaults to slot_button. `index`: the place among the parent's children
+--- (default: last).
+function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
+	local def = { type = "sprite-button", style = style or "slot_button", tags = tags, index = index }
 	if key then
 		if key:sub(1, 6) == "fluid/" then
 			local name = key:sub(7)
@@ -386,7 +453,9 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip)
 			if prototypes.item[name] and prototypes.quality[q] then
 				def.sprite = "item/" .. name
 				def.elem_tooltip = { type = "item-with-quality", name = name, quality = q }
-				if extra_tooltip then def.tooltip = extra_tooltip end
+				local desc = M.key_description(key)
+				if desc and extra_tooltip then def.tooltip = { "", desc, "\n", extra_tooltip }
+				else def.tooltip = desc or extra_tooltip end
 			else
 				def.tooltip = key                     -- the prototype is gone (a mod was removed)
 			end
@@ -394,6 +463,37 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip)
 	end
 	if amount then def.number = math.floor(amount) end
 	return parent.add(def)
+end
+
+--- Issue #70: a slot button for a key that a window sets (an interface row, a filter, the maintainer's target, a
+--- partition slot), or an empty one (`key` nil), acting with `tags`: the item with its quality badge, the game's tooltip
+--- and `tooltip` (the hint) below it; a fluid's name and the hint. Clicking it opens the picker (scripts/fork-me-picker.lua),
+--- right click empties it: the windows' handlers do that.
+function M.key_button(parent, key, tags, tooltip)
+	local b = M.slot(parent, key, nil, tags)
+	if key and key:sub(1, 6) ~= "fluid/" then
+		local name, q = key:match("^([^@#]+)@?([^#]*)")
+		if q and q ~= "" and q ~= "normal" and prototypes.quality[q] and script.feature_flags.quality then b.quality = q end
+		if prototypes.item[name] then b.tooltip = tooltip else b.tooltip = { "", key, "\n", tooltip or "" } end
+	elseif key then
+		local name = key:sub(7)
+		local proto = prototypes.fluid[name]
+		b.tooltip = { "", proto and proto.localised_name or name, "\n", tooltip or "" }
+	else
+		b.tooltip = tooltip
+	end
+	return b
+end
+
+--- Issue #50, lever 8: a new amount on a button M.slot made for the same key (the number, and a fluid's tooltip, which
+--- holds the amount): the button is then what M.slot would make for the new amount.
+function M.slot_amount(button, key, amount, extra_tooltip)
+	button.number = amount and math.floor(amount) or nil
+	if key and key:sub(1, 6) == "fluid/" then
+		local name = key:sub(7)
+		local proto = prototypes.fluid[name]
+		button.tooltip = { "", proto and proto.localised_name or name, amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
+	end
 end
 
 --- a numeric text field (integers, optionally negative) that acts on change and on confirm
@@ -568,6 +668,11 @@ function M.dispatch(event)
 	return true
 end
 
+--- Hooks that see an ME window being closed before it is treated as closed: fn(player, window) returns true when the
+--- window is to stay (the picker of issue #94 takes the close keys of the popup above it)
+local closed_hooks = {}
+function M.on_window_closed(fn) closed_hooks[#closed_hooks + 1] = fn end
+
 --- on_gui_closed: our window was closed (E, Escape, another GUI opened)
 function M.on_closed(event)
 	if event.gui_type == defines.gui_type.script_inventory then
@@ -586,6 +691,11 @@ function M.on_closed(event)
 			player.opened = el
 			return true
 		end
+		if player then
+			for _, hook in ipairs(closed_hooks) do
+				if hook(player, el) then return true end
+			end
+		end
 		if player then M.close_window(player) else el.destroy() end
 		return true
 	end
@@ -597,6 +707,8 @@ end
 function M.refresh_all()
 	local n = 0
 	for _, player in pairs(game.connected_players) do
+		local picker = player.gui.screen.fork_me_picker      -- one that an Escape hid (scripts/fork-me-picker.lua)
+		if picker and picker.valid and not picker.visible and picker.tags.cancel_tick ~= game.tick then picker.destroy() end
 		local frame, name = M.window_of(player)
 		if frame and n < REFRESH_MAX then
 			n = n + 1

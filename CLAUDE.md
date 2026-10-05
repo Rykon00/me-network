@@ -29,7 +29,9 @@
   (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side,
   maintainers 4), circuit interface updates per second (10), crafting jobs per tick (1), bus speed (256 items, 4000
   fluid per second, times the ticks since the last visit), idle limits (300 and 120 ticks). Never base anything on
-  measured time; a new periodic task gets a queue and a budget, not a step of its own. Blocks waiting for a key wake
+  measured time; a new periodic task gets a queue and a budget, not a step of its own. The command `/me-stats` (`scripts/fork-me-stats.lua`,
+  issue #38 part 3) prints the scheduler's counters of the last minute and a network's blocks by state: a new queue is added to its `QUEUES` table and
+  to the locale (`[me-stats]`). Blocks waiting for a key wake
   through `N.wait_for` / `N.wait_below` (in `storage`, per network); what is derived from the state only (the lookups
   of the storage engine) is kept outside `storage`. Processing patterns catch their
   outputs through the network's insert functions (`N.on_arrival`, no tick). A storage bus is an external cell of the
@@ -43,20 +45,39 @@
   more (Gregtorio no longer has ME code), so the list is fixed.
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
-  notice, `all --with-gregtorio <Gregtorio checkout>`. Both must end with `RESULT: OK`; `check --base-only` checks
+  notice, `all --with-gregtorio <Gregtorio checkout>`. `runtime` also saves the test map at tick 500 through a headless
+  server (RCON on 127.0.0.1:27815) and checks that the schedule after the load is the unbroken run's: anything that
+  decides when a block is visited must live in `storage`. Both must end with `RESULT: OK`; `check --base-only` checks
   without Space Age; `migrate --from-ref v0.1.0` (the old fluid blocks) or `--from-ref v0.2.0` (every kind of
   unified block, loaded without `on_configuration_changed` while the version number is the same) loads a save of an
   older version with the working copy (for changes to saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
   recipes; without Gregtorio its `data.lua` adds stand-ins with the same names and numbers. See
   `tools/devcheck/README.md`. A change to the runtime's cost (the storage engine, the I/O, autocrafting, the step
-  budgets) runs `devcheck.py bench` (script time per tick, throughput and latencies at 100, 1000 and 5000 endpoints,
-  `--reference` for inserters and robots, `--profile 1000,5000` for where the time goes) and puts its numbers before
-  and after into `docs/PERFORMANCE.md`.
+  budgets) runs `devcheck.py bench` (script time per tick, throughput, latencies and the service quality of every kind of block
+  from the scheduler's counters at 100 to 50 000 endpoints and at the maintainer's size (`--sizes base`, issue #51), `--idle`, `--networks`, `--long`, the build burst, the planner
+  scene, `--reference` for inserters and robots, `--profile 1000,5000` for where the time goes) and puts its numbers
+  before and after into `docs/PERFORMANCE.md`, measured in turns (`bench --check <ref>` fails a number that is worse
+  than the measured noise; the busy interval is only reported, since issue #38 a block is visited when the buffer on
+  its other side needs it). A chain of long runs goes into a second work folder (`ME_DEVCHECK_WORK`), never into the
+  one a quick test uses.
 - Every referenced `__me-network__/...` file must exist (headless Factorio does not load graphics, the real game
   crashes on missing files); `devcheck check` lists missing ones and names missing in `locale/en`.
 - **Changelog:** every change to the game adds its player-facing lines to the topmost section of `changelog.txt` (the
   next version, no `Date:` line yet). Do not change `version` in `info.json` and do not add a `Date:`; that is the
   release pull request into `upstream/release`.
+- **Applied Energistics 2 as a reference:** a checkout of AE2 (https://github.com/AppliedEnergistics/Applied-Energistics-2)
+  may lie next to this one (`..\Applied-Energistics-2` on the maintainer's machine). It is read-only: never a worktree,
+  never the target of a junction, nothing of it is committed here; if it is missing, say so in your report and go on.
+  Its code is LGPL-3.0 (its API MIT), which GPLv3 can take in. Read it when a design question is open (the storage
+  lists, the crafting calculation, the tick management); when a function here is a port of AE2's, say so in a comment
+  at the function (`ported from Applied Energistics 2, <its path>, LGPL-3.0, (c) AlgorithmX2 et al.`) and name the file
+  in the "License" section of `README.md`. Its textures, models and sounds are CC BY-NC-SA 3.0: never copied, traced or
+  given to `tools/gen_ae2_sprites.py`. AE2 is Java on Minecraft, so a port is written anew for Lua and the Factorio
+  API, tested and measured like any other change; "AE2 does it this way" is no reason by itself, the number is.
+  Next to it on that machine, read-only in the same way: `..\Applied-Energistics-2-Unofficial` (GTNewHorizons' fork of
+  AE2, the one GT New Horizons plays; where it differs from AE2 and Gregtorio is concerned, it is the one to follow;
+  read its own license notes before porting from it), `..\GT5-Unofficial` (what `--gt` takes) and
+  `..\GT-New-Horizons-Modpack` (the pack's configs and scripts).
 - Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`, `--r2`,
   `--patterns` and the other switches for parts, see its docstring).
 - **Issues and the board:** every open issue of this repository and of its sister repository is on the project board
@@ -68,6 +89,19 @@
   "In Progress" if `gh project` works for you (`gh project item-list 1 --owner Rykon00`, then `gh project item-edit`; the
   token needs the scope `project`); if it does not, say so in your report and go on. An issue the maintainer has to do or
   test in the game himself is titled `[Task-Ingame]`, not `[Task]`.
+- **Close what is handled:** an issue is closed as soon as it is handled, never left for later, because an open issue
+  is a card in Todo that says work is waiting. Whoever handles it closes it, with a comment that names the pull request
+  or the reason:
+  - work done by a pull request into `main`: `Closes #N` in its description (the rule above);
+  - a **release**: the release pull request goes into `upstream/release`, where a closing keyword in the description
+    closes nothing. Put `Closes #N` for the release issue into the **message of the release commit** (it reaches `main`
+    through the workflow's fast-forward), and after the release check that the issue is closed; close it by hand if
+    not;
+  - a `[Task-Ingame]` issue: when the maintainer says he tested it (in the chat or in the issue), close it; what he
+    found goes into new issues first;
+  - an issue that was superseded, became pointless or turned out wrong: close it as "not planned" with the reason and
+    the issue that replaces it.
+  Before you report, list the open issues (`gh issue list`) and close or name every one your work touched.
 - **Local sessions on the maintainer's Windows machine:** `C:\00_Repositories\me-network` is linked into the Factorio mods
   folder, so never switch branches or edit files there. Work in **one** worktree next to it
   (`git worktree add ..\me-network-<topic> -b <branch> origin/main`). Do not add more worktrees to compare versions: use

@@ -534,6 +534,16 @@ data:extend({ {
 	consuming = "none",
 } })
 
+--- The confirm key (linked to the game's "confirm-gui", "E" by default): takes the choice of the mod's item picker in
+--- (scripts/fork-me-picker.lua, issue #94), as it does for the game's own green buttons
+data:extend({ {
+	type = "custom-input",
+	name = "fork-me-picker-confirm",
+	key_sequence = "",
+	linked_game_control = "confirm-gui",
+	consuming = "none",
+} })
+
 
 
 --------------------------------------------------------------------------------

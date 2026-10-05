@@ -139,6 +139,69 @@ return function(H)
 		take_cell(wb)
 		hand.clear()
 		remote.call(WB, "set_keep", wb, false)
+		--- issue #37: the workbench's partition without a cell: set by hand (items and fluids), shown as the items and
+		--- then the fluids, onto the next cell without a partition (the keys of its kind), not onto one that has one
+		local k = info(wb)
+		expect(#k.config == 0 and k.config_items == 0 and k.limits and k.limits.items >= 63 and k.limits.fluids >= 1,
+			"an empty workbench's partition " .. line(k))
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		remote.call(WB, "set_partition_slot", wb, 2, "fluid/steam")
+		remote.call(WB, "set_partition_slot", wb, 3, "wood")
+		remote.call(WB, "set_partition_slot", wb, 4, "coal")                 -- (a key it has: once)
+		remote.call(WB, "set_partition_slot", wb, 4, "no-such-item")         -- (an unknown key: dropped)
+		k = info(wb)
+		expect(line(k.config) == line({ "coal", "wood", "fluid/steam" }) and k.config_items == 2,
+			"a partition set without a cell " .. line(k.config) .. " " .. tostring(k.config_items))
+		expect(remote.call(WB, "from_contents", wb) == false and #info(wb).config == 3, "from contents without a cell")
+		remote.call(WB, "set_partition_slot", wb, 2, nil)                    -- (wood out)
+		remote.call(WB, "set_partition_slot", wb, 1, "stone")                -- (coal becomes stone)
+		expect(line(info(wb).config) == line({ "stone", "fluid/steam" }), "a slot removed and one replaced " .. line(info(wb).config))
+		--- a cell with a partition of its own keeps it; the fluid set by hand stays next to it; without the copy mode
+		--- all of it is forgotten when the cell leaves
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		hand.clear()
+		hand.transfer_stack(gear_cell[1])
+		remote.call(WB, "cell_click", wb, hand, inv, false)
+		expect(line(info(wb).cell.partition) == line({ "stone" }) and line(info(wb).config) == line({ "stone", "fluid/steam" }),
+			"a cell with a partition in a workbench with one " .. line(info(wb).cell.partition) .. " " .. line(info(wb).config))
+		take_cell(wb)
+		gear_cell[1].transfer_stack(hand)
+		expect(#info(wb).config == 0, "the partition after that cell left (no copy mode) " .. line(info(wb).config))
+		--- a cell without a partition takes the keys of its kind, also without the copy mode
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		remote.call(WB, "set_partition_slot", wb, 2, "fluid/steam")
+		put_cell(wb, "me-4k-storage-cell")
+		expect(line(info(wb).cell.partition) == line({ "coal" }) and line(info(wb).config) == line({ "coal", "fluid/steam" }),
+			"an item cell takes the items set without a cell " .. line(info(wb).cell.partition) .. " " .. line(info(wb).config))
+		--- an item cell takes no fluid into its partition (and its tags hold none)
+		remote.call(WB, "set_partition_slot", wb, 2, "fluid/water")
+		expect(line(info(wb).cell.partition) == line({ "coal" }), "a fluid set on an item cell " .. line(info(wb).cell.partition))
+		--- the cell's partition changed and cleared: the fluid kept for a fluid cell is not touched
+		remote.call(WB, "set_partition_slot", wb, 2, "wood")
+		expect(line(info(wb).config) == line({ "coal", "wood", "fluid/steam" }), "the cell's change in the workbench's partition " .. line(info(wb).config))
+		remote.call(WB, "clear", wb)
+		expect(#info(wb).cell.partition == 0 and line(info(wb).config) == line({ "fluid/steam" }), "clear with a cell " .. line(info(wb).config))
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		local t37 = take_cell(wb)
+		expect(t37 and t37.fork_me_cell and t37.fork_me_cell.partition and t37.fork_me_cell.partition["coal"] and #info(wb).config == 0,
+			"the cell left with the partition, the workbench forgot it " .. line(t37) .. " " .. line(info(wb).config))
+		hand.clear()
+		--- with the copy mode a fluid cell takes the fluids and the items stay for an item cell; Clear without a cell
+		remote.call(WB, "set_keep", wb, true)
+		remote.call(WB, "set_partition_slot", wb, 1, "coal")
+		remote.call(WB, "set_partition_slot", wb, 2, "fluid/steam")
+		put_cell(wb, "me-1k-fluid-storage-cell")
+		expect(line(info(wb).cell.partition) == line({ "fluid/steam" }), "a fluid cell takes the fluids " .. line(info(wb).cell.partition))
+		--- a fluid cell takes no item into its partition
+		remote.call(WB, "set_partition_slot", wb, 2, "iron-plate")
+		expect(line(info(wb).cell.partition) == line({ "fluid/steam" }), "an item set on a fluid cell " .. line(info(wb).cell.partition))
+		local tf = take_cell(wb)
+		local pf = tf and tf.fork_me_cell and tf.fork_me_cell.partition or {}
+		expect(pf["fluid/steam"] and not pf["coal"] and table_size(pf) == 1, "the fluid cell's tags " .. line(pf))
+		hand.clear()
+		expect(line(info(wb).config) == line({ "coal", "fluid/steam" }), "the copy mode keeps both kinds " .. line(info(wb).config))
+		expect(remote.call(WB, "clear", wb) == true and #info(wb).config == 0, "clear without a cell " .. line(info(wb).config))
+		remote.call(WB, "set_keep", wb, false)
 		--- a fluid cell: 3 slots, no fuzzy card, fluid keys
 		put_cell(wb, "me-1k-fluid-storage-cell")
 		expect(info(wb).cell.slots == 3 and info(wb).cell.fluid, "fluid cell " .. line(info(wb).cell))
@@ -250,7 +313,7 @@ return function(H)
 		store.destroy()
 		gear_cell.destroy()
 		me_report("WORKBENCH", "ME Cell Workbench", problems, "slots, partition, cards and limits, tags, from contents, clear, "
-			.. "copy mode, inverter/fuzzy/equal/void cells in a drive, mined/destroyed/vanished")
+			.. "copy mode, the partition without a cell, inverter/fuzzy/equal/void cells in a drive, mined/destroyed/vanished")
 	end
 
 	--- issue #28: the workbench's script inventory (slot 1 the cell, slots 2 to 5 its cards) changed the way a player
@@ -451,15 +514,531 @@ return function(H)
 			.. "a second cell, a card; block slot clicks with a wrong item, the cell into the cursor and back, a swap, shift")
 	end
 
+	--- issues #69, #82, #94: what the partition buttons of the workbench offer and take. A click on a slot opens the mod's
+	--- picker (the window is not testable here): workbench_kinds says what it lists, workbench_set is what its green check
+	--- does. Only an item with its quality or a fluid can be set (never a signal, an entity, a recipe), a slot is changed,
+	--- emptied, a key chosen twice stays once, a full kind is not offered, a cell takes its own kind; the picker's lists
+	--- (groups, entries by a search text) hold items and fluids and nothing else.
+	local function pick_test()
+		local st = storage.wb69
+		if (st and st.done) or game.tick < 110 then return end
+		st = { problems = {}, done = true }
+		storage.wb69 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local w = game.surfaces[1].create_entity{ name = "me-cell-workbench", position = { WX + 24.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not w then return me_report("WBPICK69", "ME Cell Workbench partition buttons", { "no workbench" }) end
+		local function info() return remote.call(WB, "info", w) or {} end
+		local function slots() return remote.call(GUI, "workbench_slots", w) or {} end
+		local function kinds(index) return remote.call(GUI, "workbench_kinds", w, index) or {} end
+		local function set(index, kind, name, quality) return remote.call(GUI, "workbench_set", w, index, kind, name, quality) end
+		local function last(t) return t[#t] end
+		local q = prototypes.quality["uncommon"] and "uncommon"
+
+		--- the picker's lists: items and fluids only, no virtual signal, nothing hidden, the kinds asked for, a search text
+		local both, items_only, fluids_only = { item = true, fluid = true }, { item = true }, { fluid = true }
+		local function names(list)
+			local out = {}
+			for _, e in ipairs(list) do out[e.kind .. "/" .. e.name] = true end
+			return out
+		end
+		local all = remote.call(GUI, "picker_entries", both)
+		local have = names(all)
+		expect(have["item/iron-plate"] and have["fluid/water"] and not have["item/signal-A"] and not have["fluid/signal-A"],
+			"the picker lists iron plate and water, no signal")
+		local bad = 0
+		for _, e in ipairs(all) do
+			local proto = (e.kind == "fluid" and prototypes.fluid or prototypes.item)[e.name]
+			if not proto or proto.hidden or proto.parameter then bad = bad + 1 end
+		end
+		expect(bad == 0 and #all > 100, "the picker's entries are known and not hidden: " .. bad .. " bad of " .. #all)
+		local io, fo = names(remote.call(GUI, "picker_entries", items_only)), names(remote.call(GUI, "picker_entries", fluids_only))
+		local item_of_fluid_list = false
+		for k in pairs(fo) do if k:find("^item/") then item_of_fluid_list = true end end
+		for k in pairs(io) do if k:find("^fluid/") then item_of_fluid_list = true end end
+		expect(io["item/iron-plate"] and not io["fluid/water"] and fo["fluid/water"] and not fo["item/iron-plate"] and not item_of_fluid_list,
+			"the picker lists the kinds asked for")
+		local found = names(remote.call(GUI, "picker_entries", both, "Iron Plate"))
+		expect(found["item/iron-plate"] and not found["item/copper-plate"], "a search text matches the name (spaces as dashes, any case)")
+		expect(#remote.call(GUI, "picker_entries", both, "no-such-name-at-all") == 0, "a search text that matches nothing")
+		local groups = remote.call(GUI, "picker_groups", both)
+		local gset = {}
+		for _, g in ipairs(groups) do gset[g] = true end
+		expect(#groups >= 2 and not gset["signals"], "the picker's groups " .. line(groups))
+		local g1 = remote.call(GUI, "picker_entries", both, nil, groups[1])
+		expect(#g1 > 0 and #g1 < #all, "the entries of one group")
+		local qs = remote.call(GUI, "workbench_qualities")
+		expect(type(qs) == "table" and (q == nil and #qs == 0 or qs[1] == "normal" and #qs >= 2), "the picker's qualities " .. line(qs))
+
+		--- an empty workbench: one free slot, both kinds offered
+		local sl = slots()
+		expect(#sl == 1 and sl[1].free and sl[1].index == 1 and not sl[1].key, "the free slot of an empty workbench " .. line(sl))
+		expect(kinds(1).item and kinds(1).fluid, "an empty workbench offers both kinds " .. line(kinds(1)))
+		--- refused, and nothing changes
+		local refused = {
+			{ "virtual", "signal-A" }, { "signal", "iron-plate" }, { "entity", "iron-chest" }, { "recipe", "iron-gear-wheel" },
+			{ "item-with-quality", "iron-plate" }, { "item", "no-such-item" }, { "fluid", "no-such-fluid" }, { "item", "water" },
+			{ "fluid", "iron-plate" }, { "item", nil }, { nil, "iron-plate" }, { "item", { name = "coal" } },
+		}
+		for _, r in ipairs(refused) do expect(set(1, r[1], r[2]) == false, "refused: " .. tostring(r[1]) .. " " .. line(r[2])) end
+		expect(set(1, "item", "iron-plate", "no-such-quality") == false, "an unknown quality")
+		expect(set(0, "item", "iron-plate") == false and set(2, "item", "iron-plate") == false and set(-1, "item", "iron-plate") == false,
+			"a slot beyond the free one")
+		expect(#info().config == 0, "a refused choice changed the partition " .. line(info().config))
+		--- items with their quality and fluids, at the free slot each time (the list sorts itself: items, then fluids)
+		expect(set(1, "item", "iron-plate") == true and set(2, "fluid", "water") == true and set(3, "item", "copper-plate") == true,
+			"items and a fluid set")
+		if q then expect(set(4, "item", "iron-plate", q) == true, "an item set with a quality") end
+		local want = q and { "copper-plate", "iron-plate", "iron-plate@" .. q, "fluid/water" } or { "copper-plate", "iron-plate", "fluid/water" }
+		local k = info()
+		expect(line(k.config) == line(want) and k.config_items == #want - 1, "the kept partition: items, then fluids " .. line(k.config))
+		sl = slots()
+		local ok = #sl == #want + 1
+		for i, key in ipairs(want) do
+			ok = ok and sl[i] and sl[i].key == key and not sl[i].free and sl[i].kind == (key:find("^fluid/") and "fluid" or "item")
+		end
+		ok = ok and last(sl).free and last(sl).index == #want + 1 and not last(sl).key
+		expect(ok, "the buttons: the filled ones, then the free one " .. line(sl))
+		--- a slot changed (item to item, its quality, item to fluid), a key chosen twice (once), a slot emptied
+		expect(set(1, "item", "stone") == true, "a slot changed")
+		expect(line(info().config):find("copper-plate", 1, true) == nil and line(info().config):find("stone", 1, true) ~= nil,
+			"the slot after the change " .. line(info().config))
+		local n = #info().config
+		set(#info().config + 1, "item", "iron-plate")                     -- (iron-plate is in the list already)
+		expect(#info().config == n, "a key chosen twice " .. line(info().config))
+		if q then
+			local pos
+			for i, key in ipairs(info().config) do if key == "iron-plate" then pos = i end end
+			expect(pos and set(pos, "item", "iron-plate", q) == true and line(info().config):find("iron-plate@" .. q, 1, true) ~= nil,
+				"the quality of a slot changed " .. line(info().config))
+		end
+		local before = #info().config
+		local gone = info().config[1]
+		expect(remote.call(GUI, "workbench_clear_slot", w, 1) == true and #info().config == before - 1 and info().config[1] ~= gone,
+			"a slot emptied " .. line(info().config))
+		expect(remote.call(GUI, "workbench_clear_slot", w, #info().config + 1) == false and remote.call(GUI, "workbench_clear_slot", w, 0) == false,
+			"the free slot cannot be emptied")
+		expect(#slots() == #info().config + 1, "no stale button after the choices " .. line(slots()))
+		--- a full kind is not offered (the other one is), the kind of a filled slot always is
+		remote.call(WB, "clear", w)
+		local lim = info().limits
+		for name in pairs(prototypes.item) do
+			if info().config_items >= lim.items then break end
+			set(#info().config + 1, "item", name)
+		end
+		k = info()
+		expect(k.config_items == lim.items, "items filled up to the limit: " .. k.config_items .. "/" .. lim.items)
+		local free = #k.config + 1
+		expect(not kinds(free).item and kinds(free).fluid, "the free slot of full items " .. line(kinds(free)))
+		expect(set(free, "item", "iron-plate") == false and #info().config == #k.config, "an item set into the free slot of a full kind")
+		expect(kinds(1).item and kinds(1).fluid, "a filled item slot offers its kind and, with room, fluids " .. line(kinds(1)))
+		expect(set(1, "item", "coal") == true, "a slot of a full kind changed")
+		free = #info().config + 1
+		expect(set(free, "fluid", "water") == true, "a fluid set when the items are full")
+		for name in pairs(prototypes.fluid) do
+			if #info().config - info().config_items >= lim.fluids then break end
+			set(#info().config + 1, "fluid", name)
+		end
+		k = info()
+		free = #k.config + 1
+		expect(#k.config - k.config_items == lim.fluids and not kinds(free).item and not kinds(free).fluid, "nothing offered at the free slot when both are full " .. line(kinds(free)))
+		local fi
+		for i, key in ipairs(k.config) do if key:find("^fluid/") then fi = i break end end
+		expect(kinds(fi).fluid and not kinds(fi).item, "a fluid slot of full kinds offers fluids " .. line(kinds(fi)))
+		--- with a cell in the workbench the slots are the cell's, of the cell's kind only
+		remote.call(WB, "clear", w)
+		local hold = game.create_inventory(2)
+		hold[1].set_stack{ name = "me-1k-storage-cell", count = 1 }
+		remote.call(WB, "cell_click", w, hold[1], hold, false)
+		expect(info().cell ~= nil and #info().cell.partition == 0, "an item cell in")
+		expect(kinds(1).item and not kinds(1).fluid, "an item cell offers items only " .. line(kinds(1)))
+		expect(set(1, "fluid", "water") == false and #info().cell.partition == 0, "a fluid set on an item cell")
+		expect(set(1, "item", "iron-plate") == true and (not q or set(2, "item", "iron-plate", q) == true), "items set on an item cell")
+		local cp = info().cell.partition
+		expect(line(cp) == line(q and { "iron-plate", "iron-plate@" .. q } or { "iron-plate" }), "the cell's partition " .. line(cp))
+		sl = slots()
+		expect(#sl == #cp + 1 and last(sl).free and not sl[1].free and sl[1].key == cp[1], "the buttons with a cell " .. line(sl))
+		expect(remote.call(GUI, "workbench_clear_slot", w, 1) == true and #info().cell.partition == #cp - 1, "a slot of the cell emptied")
+		hold[1].clear()
+		remote.call(WB, "cell_click", w, hold[1], hold, false)
+		hold[1].clear()
+		hold[1].set_stack{ name = "me-1k-fluid-storage-cell", count = 1 }
+		remote.call(WB, "clear", w)
+		remote.call(WB, "cell_click", w, hold[1], hold, false)
+		expect(info().cell ~= nil and kinds(1).fluid and not kinds(1).item and set(1, "item", "coal") == false and set(1, "fluid", "water") == true
+			and line(info().cell.partition) == line({ "fluid/water" }), "a fluid cell " .. line(info().cell and info().cell.partition))
+		hold[1].clear()
+		remote.call(WB, "cell_click", w, hold[1], hold, false)
+		hold.destroy()
+		remote.call(WB, "clear", w)
+		w.destroy()
+		me_report("WBPICK69", "ME Cell Workbench partition buttons", problems, "the picker's lists (items and fluids, no signal, the kinds, "
+			.. "a search text, the groups, the qualities), what a slot takes and refuses, items with quality and fluids, a slot changed "
+			.. "and emptied, a key twice, full kinds, an item cell and a fluid cell")
+	end
+
+	--- Issue #64: the tooltip of a cell (its custom_description, written with the stack by N.cell_stack). The cells are made
+	--- through the workbench's remote interface, as a player makes them; the test compares structure and keys, never a
+	--- rendered text: one concatenation ("" first) of the lines, split at the "\n" strings, each a { locale key, params }
+	--- (the windows' keys for the modes) with the icon lists as plain strings
+	local function tip_test()
+		local st = storage.wbtip64
+		if (st and st.done) or game.tick < 120 then return end
+		st = { problems = {}, done = true }
+		storage.wbtip64 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local w = game.surfaces[1].create_entity{ name = "me-cell-workbench", position = { WX + 26.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not w then return me_report("WBTIP64", "ME cell tooltip", { "no workbench" }) end
+		local inv = game.create_inventory(2)
+		local hand = inv[1]
+		local function put_cell(def)
+			def = type(def) == "string" and { name = def, count = 1 } or def
+			hand.set_stack(def)
+			return remote.call(WB, "cell_click", w, hand, inv, false)
+		end
+		local function card(name)
+			hand.set_stack{ name = name, count = 1 }
+			local why = remote.call(WB, "card_click", w, 1, hand, inv, false)
+			if hand.valid_for_read then hand.clear() end
+			return why
+		end
+		local function key(index, k) remote.call(WB, "set_partition_slot", w, index, k) end
+		--- the cell leaves the workbench into the hand: its lines (the description split at "\n"), nil without a description
+		local function lines()
+			hand.clear()
+			remote.call(WB, "cell_click", w, hand, inv, false)
+			if not hand.valid_for_read then return nil, "no cell came out" end
+			local d = hand.custom_description
+			if d == nil or d == "" then return nil end
+			if type(d) ~= "table" or d[1] ~= "" then return nil, "not a concatenation " .. line(d) end
+			local out = {}
+			for i = 2, #d do
+				if d[i] ~= "\n" then out[#out + 1] = d[i] end
+			end
+			return out, #d
+		end
+		--- (the game gives a number parameter of a localised string back as a string: the wanted lines are compared as text)
+		local function texts(t)
+			if type(t) ~= "table" then return type(t) == "number" and tostring(t) or t end
+			local out = {}
+			for i, v in ipairs(t) do out[i] = texts(v) end
+			return out
+		end
+		local function is(l, want, what)
+			local got = l and line(l) or "nil"
+			expect(got == line(texts(want)), what .. ": " .. got .. " (wanted " .. line(texts(want)) .. ")")
+		end
+		local ICON = { void = "[item=" .. CARD.void .. "]", fuzzy = "[item=" .. CARD.fuzzy .. "]", inverter = "[item=" .. CARD.inverter .. "]",
+			equal = "[item=" .. CARD.equal .. "]" }
+		local cells = prototypes.mod_data["fork-me-network"].data.cells
+		local size_1k, size_fluid = cells["me-1k-storage-cell"], cells["me-1k-fluid-storage-cell"]
+
+		--- a fresh cell has no description (the prototype's), also one that lost its partition and cards again
+		expect(put_cell("me-1k-storage-cell") == nil, "an item cell in the workbench")
+		local l, why = lines()
+		expect(l == nil and why == nil, "a fresh cell has no description " .. line(why))
+		put_cell("me-1k-storage-cell")
+		key(1, "iron-plate")
+		card(CARD.fuzzy)
+		remote.call(WB, "clear", w)
+		hand.clear()
+		remote.call(WB, "card_click", w, 1, hand, inv, false)             -- the card back out
+		hand.clear()
+		l, why = lines()
+		expect(l == nil and why == nil, "a cell cleared of partition and cards is fresh again " .. line(l))
+
+		--- a whitelist of two items (the empty cell says its size first)
+		put_cell("me-1k-storage-cell")
+		key(1, "iron-plate")
+		key(2, "copper-plate")
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types }, { "fork-me-net.cell-tip-partition", "[item=copper-plate] [item=iron-plate]" },
+			{ "fork-me-gui.cell-mode-whitelist" } }, "a whitelist of two items")
+
+		--- the same with an Inverter Card: a blacklist, then the card
+		put_cell("me-1k-storage-cell")
+		key(1, "iron-plate")
+		key(2, "copper-plate")
+		expect(card(CARD.inverter) == nil, "an Inverter Card")
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types }, { "fork-me-net.cell-tip-partition", "[item=copper-plate] [item=iron-plate]" },
+			{ "fork-me-gui.cell-mode-blacklist" }, { "fork-me-net.cell-tip-cards", ICON.inverter } }, "a blacklist")
+
+		--- a key with quality (not for normal), next to one without
+		local q = prototypes.quality["uncommon"] and "uncommon"
+		if q then
+			put_cell("me-1k-storage-cell")
+			key(1, "iron-plate@" .. q)
+			key(2, "copper-plate")
+			l = lines()
+			is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types },
+				{ "fork-me-net.cell-tip-partition", "[item=copper-plate] [item=iron-plate,quality=" .. q .. "]" }, { "fork-me-gui.cell-mode-whitelist" } },
+				"a quality key")
+		end
+
+		--- a fluid cell: fluids, the fluid size line
+		put_cell("me-1k-fluid-storage-cell")
+		key(1, "fluid/water")
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty-fluid", size_fluid.bytes, size_fluid.types }, { "fork-me-net.cell-tip-partition", "[fluid=water]" },
+			{ "fork-me-gui.cell-mode-whitelist" } }, "a fluid cell")
+
+		--- more keys than fit: twelve icons, then "+N more" (the keys are sorted: the first twelve show)
+		local names = {}
+		for name in pairs(prototypes.item) do
+			if not name:find("[^%l%-]") and not name:find("storage%-cell") then names[#names + 1] = name end
+		end
+		table.sort(names)
+		local want = {}
+		for i = 1, 14 do want[i] = names[i] end
+		put_cell("me-1k-storage-cell")
+		for i, name in ipairs(want) do key(i, name) end
+		local icons = {}
+		for i = 1, 12 do icons[i] = "[item=" .. want[i] .. "]" end
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types }, { "fork-me-net.cell-tip-partition-more", table.concat(icons, " "), 2 },
+			{ "fork-me-gui.cell-mode-whitelist" } }, "more keys than fit")
+		--- exactly twelve: no "more"
+		put_cell("me-1k-storage-cell")
+		for i = 1, 12 do key(i, want[i]) end
+		l = lines()
+		is(l and l[2], { "fork-me-net.cell-tip-partition", table.concat(icons, " ") }, "twelve keys fit")
+
+		--- every card on an item cell: the card icons in the order they went in, then what each does
+		put_cell("me-1k-storage-cell")
+		key(1, "iron-plate")
+		for _, name in ipairs({ CARD.inverter, CARD.fuzzy, CARD.equal, CARD.void }) do expect(card(name) == nil, "card " .. name) end
+		local d
+		l, d = lines()
+		expect(l and #l == 7 and type(d) == "number" and d <= 21, "every card: a concatenation of at most 20 parts " .. line(l) .. " " .. line(d))
+		if l and #l == 7 then
+			is(l[2], { "fork-me-net.cell-tip-partition", "[item=iron-plate]" }, "every card: partition")
+			is(l[3], { "fork-me-gui.cell-mode-blacklist" }, "every card: blacklist")
+			is(l[4], { "fork-me-net.cell-tip-cards", table.concat({ ICON.inverter, ICON.fuzzy, ICON.equal, ICON.void }, " ") }, "every card: cards")
+			is(l[5], { "fork-me-gui.cell-mode-fuzzy" }, "every card: fuzzy")
+			expect(l[6][1] == "fork-me-gui.cell-mode-equal" and type(l[6][2]) == "string", "every card: equal distribution " .. line(l[6]))
+			is(l[7], { "fork-me-gui.cell-mode-void" }, "every card: overflow destruction (the red line)")
+		end
+		--- the windows' mode line says the same sentences (one source)
+		local caption = remote.call(GUI, "cell_mode_caption", { inverted = true, fuzzy = true, equal = 1234, void = true })
+		expect(caption and line(caption):find("cell-mode-blacklist", 1, true) and line(caption):find("cell-mode-fuzzy", 1, true)
+			and line(caption):find("cell-mode-equal", 1, true) and line(caption):find("cell-mode-void", 1, true), "the window's mode line " .. line(caption))
+
+		--- a fluid cell with the cards it takes (no Fuzzy Card)
+		put_cell("me-1k-fluid-storage-cell")
+		key(1, "fluid/water")
+		expect(card(CARD.fuzzy) == "not-here", "a Fuzzy Card on a fluid cell")
+		expect(card(CARD.void) == nil and card(CARD.equal) == nil, "a fluid cell's cards")
+		l = lines()
+		expect(l and #l == 6 and line(l):find("cell-mode-whitelist", 1, true) and not line(l):find("cell-mode-fuzzy", 1, true), "a fluid cell with cards " .. line(l))
+
+		--- an empty cell that is not partitioned, with a card: its size, the card, what it does
+		put_cell("me-1k-storage-cell")
+		expect(card(CARD.fuzzy) == nil, "a Fuzzy Card")
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types }, { "fork-me-net.cell-tip-cards", ICON.fuzzy }, { "fork-me-gui.cell-mode-fuzzy" } },
+			"an empty cell with a card")
+
+		--- a cell that holds items and is partitioned (a cell with contents in its tags into the workbench; a change
+		--- writes the description): what it holds as before, the partition, the mode; with a card too
+		local function held()
+			return { name = "me-1k-storage-cell", count = 1, tags = { fork_me_cell = { items = { ["iron-plate"] = 100, ["copper-plate"] = 30 }, data = {} } } }
+		end
+		put_cell(held())
+		key(1, "iron-plate")
+		l = lines()
+		expect(l and #l == 3 and l[1][1] == "fork-me-net.cell-holds" and l[1][2] == "130" and l[1][3] == "2" and l[1][4] == "100 [item=iron-plate], 30 [item=copper-plate]",
+			"a partitioned cell that holds items: contents " .. line(l and l[1]))
+		if l and #l == 3 then
+			is(l[2], { "fork-me-net.cell-tip-partition", "[item=iron-plate]" }, "holds: partition")
+			is(l[3], { "fork-me-gui.cell-mode-whitelist" }, "holds: whitelist")
+		end
+		put_cell(held())
+		key(1, "iron-plate")
+		card(CARD.inverter)
+		l = lines()
+		expect(l and #l == 4 and l[1][1] == "fork-me-net.cell-holds", "a cell that holds items, blacklisted " .. line(l))
+		--- a cell that holds items and has no partition or card has the contents line alone
+		put_cell(held())
+		key(1, "iron-plate")
+		remote.call(WB, "clear", w)
+		l = lines()
+		expect(l and #l == 1 and l[1][1] == "fork-me-net.cell-holds", "a cell with contents only " .. line(l))
+
+		--- a cell that leaves a drive (the other writer of the stack) says the same
+		local spare = game.create_inventory(1)
+		local drive = game.surfaces[1].create_entity{ name = "me-drive", position = { WX + 28.5, WY + 4.5 }, force = "player", raise_built = true }
+		local out
+		if drive then
+			hand.set_stack{ name = "me-1k-storage-cell", count = 1, tags = { fork_me_cell = { items = { ["iron-plate"] = 8 }, data = {},
+				partition = { ["iron-plate"] = true }, cards = { CARD.fuzzy } } } }
+			expect(remote.call(NET, "insert_cell", drive, hand, 1) == 1, "a cell into a drive")
+			remote.call(NET, "take_cell", drive, 1, spare)
+			out = spare[1].valid_for_read and spare[1].custom_description
+			drive.destroy()
+		end
+		local text = line(out)
+		expect(type(out) == "table" and text:find("fork-me-net.cell-holds", 1, true) and text:find("cell-tip-partition", 1, true)
+			and text:find("cell-mode-whitelist", 1, true) and text:find("cell-tip-cards", 1, true) and text:find("cell-mode-fuzzy", 1, true),
+			"a cell taken out of a drive " .. text)
+		spare.destroy()
+		inv.destroy()
+		w.destroy()
+		me_report("WBTIP64", "ME cell tooltip", problems, "a fresh cell, a whitelist, a blacklist, a quality key, a fluid cell, more keys than fit, "
+			.. "every card, a cell with contents, an empty cell with a card, a cell out of a drive")
+	end
+
+	--- Issue #75: what a slot of an ME window gives a stack. The window's buttons need a player, so the functions behind
+	--- them are called: G.stack_tooltip (the tooltip next to the item's own, `elem_tooltip`) and G.stack_ident (the piece
+	--- of the slot's signature that makes the slot notice a stack written anew). A cell and a pattern give their own
+	--- description (then the slot's own hint), a plain item and a cell without a description give the hint alone.
+	local function slot_tip_test()
+		local st = storage.wbslot75
+		if (st and st.done) or game.tick < 130 then return end
+		st = { problems = {}, done = true }
+		storage.wbslot75 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local w = game.surfaces[1].create_entity{ name = "me-cell-workbench", position = { WX + 30.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not w then return me_report("WBSLOTTIP75", "ME window slot tooltips", { "no workbench" }) end
+		local inv = game.create_inventory(3)
+		local hand = inv[1]
+		local function tip(stack, base) return remote.call(GUI, "stack_tooltip", stack, base) end
+		local function ident(stack) return remote.call(GUI, "stack_ident", stack) end
+		local hint = { "fork-me-gui.workbench-cell-tooltip" }
+
+		--- a plain item: the hint alone (nothing without one), no signature piece
+		hand.set_stack{ name = "iron-plate", count = 5 }
+		expect(line(tip(hand, hint)) == line(hint) and tip(hand, nil) == nil and ident(hand) == "", "a plain item: " .. line(tip(hand, hint)) .. " / " .. line(ident(hand)))
+		--- an empty slot: the hint alone
+		expect(line(tip(inv[2], hint)) == line(hint) and tip(inv[2], nil) == nil, "an empty slot")
+
+		--- a fresh cell (an item with tags, no description): the hint alone, but a signature piece
+		hand.set_stack{ name = "me-1k-storage-cell", count = 1 }
+		expect(line(tip(hand, hint)) == line(hint) and tip(hand, nil) == nil, "a fresh cell: " .. line(tip(hand, nil)))
+		expect(ident(hand):find("^#%d+$") ~= nil, "a fresh cell's signature piece " .. line(ident(hand)))
+
+		--- a cell made in the workbench: its description (the tooltip the game's inventory shows), then the hint
+		expect(remote.call(WB, "cell_click", w, hand, inv, false) == nil, "the cell into the workbench")
+		remote.call(WB, "set_partition_slot", w, 1, "iron-plate")
+		local bench_inv = remote.call(WB, "inventory", w)
+		local slot = bench_inv[1]
+		local before = ident(slot)
+		local desc = slot.custom_description
+		expect(type(desc) == "table", "the cell in the workbench has no description " .. line(desc))
+		expect(line(tip(slot, nil)) == line(desc), "a cell: its description alone " .. line(tip(slot, nil)))
+		local both = tip(slot, hint)
+		expect(type(both) == "table" and both[1] == "" and line(both[2]) == line(desc) and both[3] == "\n" and line(both[4]) == line(hint),
+			"a cell with a hint: the description, a line break, the hint " .. line(both))
+		--- the cell stays in the slot and its partition changes: the description is written anew and the signature piece changes
+		remote.call(WB, "set_partition_slot", w, 2, "copper-plate")
+		local after = ident(bench_inv[1])
+		expect(before ~= after and after:find("^#%d+$") ~= nil, "the signature piece after a change: " .. line(before) .. " -> " .. line(after))
+		expect(line(tip(bench_inv[1], nil)) ~= line(desc), "the tooltip after a change " .. line(tip(bench_inv[1], nil)))
+		--- a card: a plain item
+		hand.set_stack{ name = "me-fuzzy-card", count = 1 }
+		expect(line(tip(hand, hint)) == line(hint) and ident(hand) == "", "a card is a plain item")
+
+		--- an encoded pattern: its description (what it makes) shows in the slot
+		local pdesc = { "fork-me-pattern.description", "x" }
+		hand.set_stack{ name = "me-encoded-pattern", count = 1, tags = { fork_me_pattern = { kind = "crafting" } }, custom_description = pdesc }
+		expect(line(tip(hand, nil)) == line(pdesc) and ident(hand):find("^#%d+$") ~= nil, "an encoded pattern: " .. line(tip(hand, nil)))
+		remote.call(WB, "clear", w)
+		inv.destroy()
+		w.destroy()
+		me_report("WBSLOTTIP75", "ME window slot tooltips", problems, "a plain item, an empty slot, a fresh cell, a cell with its description and a hint, "
+			.. "the signature piece after a change in the workbench, an encoded pattern")
+	end
+
+	--- Issue #79: the terminal's storage tab (and every grid made by G.slot) shows a stored cell's or pattern's
+	--- description. The key of an item with tags kept in the network carries it in its json; G.key_description reads it
+	--- (the buttons need a player: the function behind them is called). A cell and a pattern are stored through
+	--- the network's insert_stack and the key the network made for them is looked up in its contents.
+	local function key_tip_test()
+		local st = storage.wbkey79
+		if (st and st.done) or game.tick < 140 then return end
+		st = { problems = {}, done = true }
+		storage.wbkey79 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local s = game.surfaces[1]
+		local t = s.find_entity("me-terminal", { WX + 10.5, WY - 0.5 })
+		local w = s.create_entity{ name = "me-cell-workbench", position = { WX + 32.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not (t and w) then return me_report("WBKEY79", "ME stored item descriptions", { "terminal or workbench missing" }) end
+		local inv = game.create_inventory(2)
+		local hand = inv[1]
+		local function desc_of(key) return remote.call(GUI, "key_description", key) end
+		--- the key the network made for the stack in the hand (the one new key with `#` of that item), the stack stored
+		local function store(name)
+			local before = remote.call(NET, "contents", t)
+			local n, why = remote.call(NET, "insert_stack", t, hand)
+			if not n then return nil, "not stored: " .. tostring(why) end
+			for key in pairs(remote.call(NET, "contents", t)) do
+				if not before[key] and key:find(name .. "@normal#", 1, true) == 1 then return key end
+			end
+			return nil, "no new key"
+		end
+
+		--- a cell made in the workbench, stored: its key gives the description the stack had
+		hand.set_stack{ name = "me-1k-storage-cell", count = 1 }
+		remote.call(WB, "cell_click", w, hand, inv, false)
+		remote.call(WB, "set_partition_slot", w, 1, "iron-plate")
+		remote.call(WB, "set_partition_slot", w, 2, "copper-plate")
+		hand.clear()
+		remote.call(WB, "cell_click", w, hand, inv, false)
+		local want = hand.valid_for_read and hand.custom_description
+		expect(type(want) == "table", "the cell made in the workbench has no description " .. line(want))
+		local key, why = store("me-1k-storage-cell")
+		expect(key ~= nil, "a stored cell: " .. tostring(why))
+		expect(key and line(desc_of(key)) == line(want), "a stored cell's description: " .. line(key and desc_of(key)) .. " (wanted " .. line(want) .. ")")
+		expect(key and line(desc_of(key)):find("cell-tip-partition", 1, true) ~= nil, "a stored cell says its partition")
+
+		--- an encoded pattern
+		local pdesc = { "fork-me-pattern.description", "x" }
+		hand.set_stack{ name = "me-encoded-pattern", count = 1, tags = { fork_me_pattern = { kind = "crafting" } }, custom_description = pdesc }
+		local pkey, pwhy = store("me-encoded-pattern")
+		expect(pkey ~= nil, "a stored pattern: " .. tostring(pwhy))
+		expect(pkey and line(desc_of(pkey)) == line(pdesc), "a stored pattern's description: " .. line(pkey and desc_of(pkey)))
+
+		--- no description: a plain key, one with quality, a fluid, a fresh cell (stored as a plain item: no tags), a key with a
+		--- broken json, and one whose json has no description
+		expect(desc_of("iron-plate") == nil and desc_of("iron-plate@uncommon") == nil and desc_of("fluid/water") == nil, "plain keys have no description")
+		expect(desc_of("me-1k-storage-cell@normal#{broken") == nil, "a broken json")
+		expect(desc_of("me-1k-storage-cell@normal#" .. helpers.table_to_json({ tags = { a = 1 } })) == nil, "a json without a description")
+		--- a cell written anew is another key (a changed description can never be shown for the old key)
+		hand.set_stack{ name = "me-1k-storage-cell", count = 1 }
+		remote.call(WB, "cell_click", w, hand, inv, false)
+		remote.call(WB, "set_partition_slot", w, 1, "stone")
+		hand.clear()
+		remote.call(WB, "cell_click", w, hand, inv, false)
+		local key2 = store("me-1k-storage-cell")
+		expect(key2 ~= nil and key2 ~= key and line(desc_of(key2)) ~= line(desc_of(key)), "a cell with another partition is another key")
+
+		inv.destroy()
+		remote.call(WB, "clear", w)
+		w.destroy()
+		me_report("WBKEY79", "ME stored item descriptions", problems, "a stored cell and a stored pattern give the description of their stack, "
+			.. "plain keys, a broken json and one without a description give none, another partition is another key")
+	end
+
 	function T.tick()
 		workbench_test()
 		slots_test()
 		pane_test()
+		pick_test()
+		tip_test()
+		slot_tip_test()
+		key_tip_test()
 	end
 	function T.running(check)
 		check(storage.wb17 and storage.wb17.done, "ME Cell Workbench")
 		check(storage.wb28 and storage.wb28.done, "ME Cell Workbench slots")
 		check(storage.wbpane28 and storage.wbpane28.done, "ME window pane (workbench)")
+		check(storage.wb69 and storage.wb69.done, "ME Cell Workbench partition buttons")
+		check(storage.wbtip64 and storage.wbtip64.done, "ME cell tooltip")
+		check(storage.wbslot75 and storage.wbslot75.done, "ME window slot tooltips")
+		check(storage.wbkey79 and storage.wbkey79.done, "ME stored item descriptions")
 	end
 	return T
 end

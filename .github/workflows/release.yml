@@ -13,6 +13,10 @@ name: Build & Release
 # The portal upload needs the repository secret FACTORIO_MOD_API_KEY (an API key from
 # https://factorio.com/profile with the "ModPortal: Upload Mods" permission). Without it, or when
 # the portal already has that version, the upload step is skipped.
+# After a release the job "announce" posts a digest of the version's changelog.txt section to the
+# Discord channel #me-network-releases (secret DISCORD_BOT_TOKEN; without it the job only warns). It is a job
+# of its own, so a problem with Discord never touches the release, and it can be re-run alone:
+# announcing a version twice does nothing. The tool is https://github.com/Rykon00/gregtorio-me-network_discord-bot.
 
 on:
   push:
@@ -26,6 +30,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.rel.outputs.release }}
+      name: ${{ steps.rel.outputs.name }}
+      version: ${{ steps.rel.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -127,3 +135,46 @@ jobs:
         if: github.event_name == 'push' && github.ref_name == 'upstream/release'
         run: |
           git push origin "HEAD:refs/heads/main" || echo "::warning::main has commits that upstream/release lacks: merge upstream/release into main by hand."
+
+  announce:
+    name: Announce on Discord
+    needs: build
+    if: needs.build.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mod
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Rykon00/gregtorio-me-network_discord-bot
+          path: tool
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Post the release to #me-network-releases
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          MOD: ${{ needs.build.outputs.name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if [ -z "$DISCORD_BOT_TOKEN" ]; then
+            echo "::warning::Secret DISCORD_BOT_TOKEN is not set: skipping the Discord announcement."
+            exit 0
+          fi
+          python -m pip install --quiet -r tool/requirements.txt
+          status=0
+          python tool/discord_announce.py \
+            --guild-config tool/server.yml \
+            --channel me-network-releases --title "ME Network" --version "$VERSION" \
+            --changelog mod/changelog.txt \
+            --link "Full changelog=https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
+            --link "Mod portal=https://mods.factorio.com/mod/$MOD" \
+            --summary-file "$RUNNER_TEMP/announce.md" || status=$?
+          [ -f "$RUNNER_TEMP/announce.md" ] && cat "$RUNNER_TEMP/announce.md" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

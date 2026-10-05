@@ -32,6 +32,8 @@ local fork_bench = require("scripts.fork-me-workbench")
 local handover = require("scripts.fork-me-handover")
 --- the scheduler's settings (issue #5)
 local sched = require("scripts.fork-me-schedule")
+--- the command /me-stats (issue #38, part 3)
+require("scripts.fork-me-stats")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -125,9 +127,11 @@ script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILT
 --- The terminal's 60 tick step stays (windows, drive lights, the sweep).
 script.on_event(defines.events.on_tick, function(event)
 	local tick = event.tick
+	sched.mark(tick)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ae2.on_tick(tick)
+	fork_me.on_tick(tick)
 end)
 
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)

@@ -29,3 +29,15 @@ local function recipe(name, n_items, n_fluids)
 end
 recipe("zz-devcheck-paste-many", 20, 5)        -- more than the rows and filters of every block
 recipe("zz-devcheck-paste-fluids", 2, 5)       -- more fluids than the interface's four sides
+
+--- The provider scan test (me-network issue #50, lever 6, scan.lua): a recipe of the macerator's category whose research the
+--- test takes and gives back (no other test uses it)
+do
+	local macerator = data.raw["assembling-machine"]["ev-macerator"]
+	data:extend({ {
+		type = "recipe", name = "zz-devcheck-scan", category = macerator and macerator.crafting_categories[1] or "crafting",
+		energy_required = 1, enabled = false,
+		ingredients = { { type = "item", name = "raw-iron", amount = 1 } }, results = { { type = "item", name = "crushed-iron", amount = 1 } },
+		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
+	} })
+end

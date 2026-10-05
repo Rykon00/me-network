@@ -246,6 +246,13 @@ function me_graph_test()
 		expect(remote.call(NET, "sweep") == 1, "the sweep did not find the vanished cable")
 		expect(not same(a, d), "the drive is still connected through a vanished cable")
 		s.create_entity{ name = "me-cable", position = { GX + 10.5, GY - 0.5 }, force = "player", raise_built = true }
+		expect(remote.call(NET, "sweep_list_ok"), "the sweep list after the vanished cable and the new one")
+		--- the same through the slow step's sweep (issue #43: it walks a list that is kept as members come and go)
+		cable(10).destroy()
+		for _ = 1, 60 do remote.call(NET, "slow_step") end
+		expect(not same(a, d), "the slow step's sweep did not find the vanished cable")
+		expect(remote.call(NET, "sweep_list_ok"), "the sweep list after the slow step's sweep")
+		s.create_entity{ name = "me-cable", position = { GX + 10.5, GY - 0.5 }, force = "player", raise_built = true }
 		--- the router connects a drive 5 tiles below
 		local e = s.create_entity{ name = "me-drive", position = { GX + 12.5, GY + 4.5 }, force = "player", raise_built = true }
 		local placed, unreached = remote.call(NET, "connect", { a, e }, 8)
@@ -568,7 +575,7 @@ function me_terminal_test()
 	expect(n == nil and why == "cannot-store-spoil" and main[1].valid_for_read, "a spoiling item: " .. tostring(n) .. " " .. tostring(why))
 	main[2].set_stack{ name = "blueprint", count = 1 }
 	n, why = remote.call(TERM, "store_stack", t, main[2])
-	expect(n == nil and why == "cannot-store", "a blueprint: " .. tostring(n) .. " " .. tostring(why))
+	expect(n == nil and why == "cannot-store-blueprint", "a blueprint: " .. tostring(n) .. " " .. tostring(why))
 	cursor.destroy()
 	main.destroy()
 	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, store cursor and inventory, search, sort, unstorable")
@@ -711,6 +718,35 @@ cards17 = require("cards")({ me_place = me_place, cable_row = cable_row, power =
 	me_drive = function(...) return me_drive(...) end })
 --- part 3: the ME Cell Workbench and the cards on cells (workbench.lua)
 bench17 = require("workbench")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #38: the parked blocks and their wakes (parking.lua)
+parking38 = require("parking")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #43: the removal from the cable graph (graph.lua)
+graph43 = require("graph")({ me_place = me_place, me_report = me_report })
+--- me-network issue #43: the holder cursors of the storage engine (holders.lua)
+holders43 = require("holders")({ me_place = me_place, me_report = me_report })
+--- me-network issue #38, part 3: the command /me-stats (stats.lua)
+stats38 = require("stats")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #51: starved arrivals and the margin of a short busy list (margin.lua)
+margin51 = require("margin")({ me_place = me_place, me_report = me_report })
+--- me-network issue #67: a refilled chest behind a storage bus (refill.lua)
+refill67 = require("refill")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #86: an ME Export Bus into a lab (lab.lua)
+lab86 = require("lab")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #84: damaged items on the by-count paths (damaged.lua)
+damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
+--- me-network issue #85: an import bus with only refused stacks (refused.lua)
+refused85 = require("refused")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #50: kept plans (plans.lua)
+plans50 = require("plans")({ me_place = me_place, me_report = me_report })
+--- me-network issue #50, lever 6: the scan of the pattern providers (scan.lua)
+scan50 = require("scan")({ me_place = me_place, me_report = me_report })
+--- me-network issue #50, lever 8: the terminal's kept entries (entries.lua)
+entries50 = require("entries")({ me_place = me_place, me_report = me_report })
+--- me-network issue #59: the storage engine's kept holder lists (holderlists.lua)
+holderlists59 = require("holderlists")({ me_place = me_place, me_report = me_report })
+--- me-network issue #76: what can be stored (storable.lua)
+storable76 = require("storable")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
 cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
@@ -747,6 +783,20 @@ local function tests_running()
 	cards17.running(check)
 	bench17.running(check)
 	cpus6.running(check)
+	parking38.running(check)
+	damaged84.running(check)
+	refused85.running(check)
+	lab86.running(check)
+	refill67.running(check)
+	stats38.running(check)
+	margin51.running(check)
+	plans50.running(check)
+	scan50.running(check)
+	entries50.running(check)
+	holderlists59.running(check)
+	holders43.running(check)
+	storable76.running(check)
+	graph43.running(check)
 	return running
 end
 
@@ -1556,7 +1606,41 @@ function pattern_line_test()
 	end
 end
 
+--- issue #38: the schedule of every scheduled block of the map and the queues' counts, as one line; the harness
+--- compares it between the unbroken run and a run that was saved at tick 500 and loaded again (ticks 1000, 1400)
+local SB_REMOTE, CIRC_REMOTE = "gregtorio-me-storagebus", "gregtorio-me-circuit"
+local function schedule_digest()
+	local s = game.surfaces[1]
+	local parts = {}
+	local function put(prefix, e, sch)
+		if sch then
+			parts[#parts + 1] = string.format("%s%d:%s:%s:%s:%s:%s:%s:%s", prefix, e.unit_number, tostring(sch.due), tostring(sch.interval),
+				tostring(sch.last), tostring(sch.probing), tostring(sch.parked), tostring(sch.front), tostring(sch.backlog))
+		end
+	end
+	for _, e in pairs(s.find_entities_filtered{ name = { "me-network-interface", "me-import-bus", "me-export-bus" } }) do
+		put("io", e, remote.call(IO, "schedule", e))
+	end
+	for _, e in pairs(s.find_entities_filtered{ name = "me-storage-bus" }) do
+		put("sb", e, remote.call(SB_REMOTE, "schedule", e))
+	end
+	for _, e in pairs(s.find_entities_filtered{ name = { "me-level-maintainer", "me-circuit-interface" } }) do
+		put("m", e, remote.call(CIRC_REMOTE, "schedule", e))
+	end
+	table.sort(parts)
+	local bl = remote.call(IO, "backlogs")
+	local keys = {}
+	for k in pairs(bl) do keys[#keys + 1] = k end
+	table.sort(keys)
+	for _, k in ipairs(keys) do
+		local v = bl[k]
+		parts[#parts + 1] = k .. "=" .. (type(v) == "table" and serpent.line(v, { sortkeys = true, comment = false }) or tostring(v))
+	end
+	return table.concat(parts, " ")
+end
+
 script.on_nth_tick(10, function()
+	if game.tick == 1000 or game.tick == 1400 then log("DEVCHECK-RUNTIME-SCHEDULE " .. game.tick .. " " .. schedule_digest()) end
 	if not (storage.me_graph and storage.me_graph.done) then me_graph_test() end
 	if not (storage.me_cells and storage.me_cells.done) then me_cells_test() end
 	me_terminal_test()
@@ -1581,6 +1665,20 @@ script.on_nth_tick(10, function()
 	cards17.tick()
 	bench17.tick()
 	cpus6.tick()
+	parking38.tick()
+	stats38.tick()
+	margin51.tick()
+	damaged84.tick()
+	refused85.tick()
+	lab86.tick()
+	refill67.tick()
+	plans50.tick()
+	scan50.tick()
+	entries50.tick()
+	holderlists59.tick()
+	holders43.tick()
+	storable76.tick()
+	graph43.tick()
 	done_test()
 end)
 
@@ -2294,11 +2392,11 @@ function me_r3_test()
 	local cpu = remote.call(GUI, "cpu_data", blocks["me-crafting-cpu"])
 	expect(cpu and cpu.slots == 1 and #cpu.jobs == 0, "cpu_data " .. serpent.line(cpu))
 	local maint = blocks["me-level-maintainer"]
-	expect(remote.call(GUI, "set_maintainer_target", maint, { type = "item", name = "iron-plate" }), "set_maintainer_target")
+	expect(remote.call(GUI, "set_maintainer_target", maint, "iron-plate"), "set_maintainer_target")
 	local md = remote.call(GUI, "maintainer_data", maint)
 	expect(md and md.key == "iron-plate" and md.condition, "maintainer_data " .. serpent.line(md))
-	remote.call(GUI, "set_maintainer_target", maint, { type = "virtual", name = "signal-A" })
-	expect(remote.call(GUI, "maintainer_data", maint).key == nil, "a virtual signal as maintainer target")
+	remote.call(GUI, "set_maintainer_target", maint, nil)
+	expect(remote.call(GUI, "maintainer_data", maint).key == nil, "the maintainer's target cleared")
 	expect(remote.call("gregtorio-me-circuit", "set_condition", maint, true, { type = "item", name = "iron-plate" }, "<", 5), "set_condition")
 	local cond = remote.call("gregtorio-me-circuit", "get_condition", maint)
 	expect(cond.enabled and cond.signal and cond.signal.name == "iron-plate" and cond.comparator == "<" and cond.constant == 5, "condition " .. serpent.line(cond))
@@ -2324,16 +2422,21 @@ function me_r3_test()
 	expect(idata.config[5] and idata.config[5].amount == 7 and not idata.config[3], "an item moved to another config slot " .. serpent.line(idata.config))
 	remote.call(GUI, "set_interface_item", iface, 5, nil)
 	expect(next(remote.call(GUI, "interface_data", iface).config) == nil, "config slot cleared")
-	--- issue #3: a fluid row from the window's chooser (a SignalID) takes the first free side, a side drop-down
-	remote.call(GUI, "set_interface_signal", iface, 2, { type = "fluid", name = "water" })
+	--- issue #3: a fluid row from the window's picker (issue #70: its choice) takes the first free side, a side drop-down
+	expect(remote.call(GUI, "set_interface_choice", iface, 2, { kind = "fluid", name = "water" }), "set_interface_choice")
 	idata = remote.call(GUI, "interface_data", iface)
 	expect(idata.config[2] and idata.config[2].type == "fluid" and idata.config[2].amount == idata.volume and idata.sides[1] == 2,
 		"a fluid row " .. serpent.line(idata.config) .. " " .. serpent.line(idata.sides))
-	remote.call(GUI, "set_interface_signal", iface, 2, { type = "item", name = "iron-plate", quality = "normal" })
+	remote.call(GUI, "set_interface_choice", iface, 2, { kind = "item", name = "iron-plate", quality = "normal" })
 	idata = remote.call(GUI, "interface_data", iface)
 	expect(idata.config[2] and idata.config[2].type == nil and idata.sides[1] == nil, "the fluid row became an item row " .. serpent.line(idata))
-	remote.call(GUI, "set_interface_signal", iface, 2, { type = "virtual", name = "signal-A" })
-	expect(next(remote.call(GUI, "interface_data", iface).config) == nil, "a virtual signal clears the row")
+	--- issue #70: a choice that is no item or fluid (a virtual signal) is refused and the row stays (right click empties it)
+	expect(remote.call(GUI, "set_interface_choice", iface, 2, { kind = "virtual", name = "signal-A" }) == false
+		and remote.call(GUI, "set_interface_choice", iface, 2, { kind = "item", name = "no-such-item" }) == false
+		and remote.call(GUI, "set_interface_choice", iface, 2, { kind = "item", name = "iron-plate", quality = "no-such-quality" }) == false
+		and idata.config[2] ~= nil and remote.call(GUI, "interface_data", iface).config[2] ~= nil, "a refused choice leaves the row")
+	remote.call(GUI, "set_interface_item", iface, 2, nil)
+	expect(next(remote.call(GUI, "interface_data", iface).config) == nil, "the row emptied")
 	local bus = blocks["me-export-bus"]
 	remote.call(IO, "set_bus_filter", bus, 1, "iron-plate")
 	remote.call(IO, "set_bus_filter", bus, 3, "copper-plate")
@@ -2348,11 +2451,21 @@ function me_r3_test()
 	local sbd = remote.call(GUI, "storage_bus_data", blocks["me-storage-bus"])
 	expect(sbd and sbd.max == 18 and sbd.side == "item", "storage_bus_data " .. serpent.line(sbd))
 	expect(remote.call(GUI, "key_of_elem", "item-with-quality", { name = "iron-plate", quality = "normal" }) == "iron-plate"
-		and remote.call(GUI, "key_of_elem", "fluid", "water") == "fluid/water"
-		and remote.call(GUI, "key_of_elem", "signal", { type = "virtual", name = "signal-A" }) == nil, "key_of_elem")
-	expect(remote.call(GUI, "key_of_signal", { type = "item", name = "iron-plate", quality = "normal" }) == "iron-plate"
-		and remote.call(GUI, "key_of_signal", { type = "fluid", name = "water" }) == "fluid/water"
-		and remote.call(GUI, "key_of_signal", { type = "virtual", name = "signal-A" }) == nil, "key_of_signal")
+		and remote.call(GUI, "key_of_elem", "fluid", "water") == "fluid/water", "key_of_elem")
+	--- issue #70: the key of the picker's choice: items with their quality where a place takes one, else the plain name
+	local uq = prototypes.quality["uncommon"] and "uncommon"
+	expect(remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate", quality = "normal" }, true) == "iron-plate"
+		and remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate" }, true) == "iron-plate"
+		and (not uq or remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate", quality = uq }, true) == "iron-plate@" .. uq)
+		and (not uq or remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate", quality = uq }, false) == "iron-plate")
+		and remote.call(GUI, "key_of_choice", { kind = "fluid", name = "water" }, true) == "fluid/water"
+		and remote.call(GUI, "key_of_choice", { kind = "fluid", name = "water" }, false) == "fluid/water"
+		and remote.call(GUI, "key_of_choice", { kind = "virtual", name = "signal-A" }, true) == nil
+		and remote.call(GUI, "key_of_choice", { kind = "item", name = "signal-A" }, true) == nil
+		and remote.call(GUI, "key_of_choice", { kind = "item", name = "no-such-item" }, true) == nil
+		and remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate", quality = "no-such-quality" }, true) == nil
+		and remote.call(GUI, "key_of_choice", { kind = "fluid", name = "iron-plate" }, true) == nil
+		and remote.call(GUI, "key_of_choice", nil, true) == nil, "key_of_choice")
 
 	--- the terminal's tabs
 	local items = remote.call(TERM, "entries", t, "", "count", "items")
@@ -2394,7 +2507,7 @@ function me_r3_test()
 		.. ", network " .. count("stone"))
 	pinv[4].set_stack{ name = "blueprint", count = 1 }
 	why = click(t, 4, "shift")
-	expect(why == "cannot-store" and pinv[4].valid_for_read, "a blueprint shift-clicked at the terminal: " .. tostring(why))
+	expect(why == "cannot-store-blueprint" and pinv[4].valid_for_read, "a blueprint shift-clicked at the terminal: " .. tostring(why))
 	--- the blocks without slots store into their network (new ones in a row right of the terminal: on its network)
 	local row = {}
 	for i, name in ipairs({ "me-network-interface", "me-import-bus", "me-export-bus", "me-level-maintainer", "me-circuit-interface" }) do
@@ -2409,7 +2522,7 @@ function me_r3_test()
 		expect(why == nil and count("stone-brick") == b0 + 3 and not pinv[5].valid_for_read, "shift + click stores at " .. e.name .. ": "
 			.. tostring(why))
 	end
-	expect(click(ctrl, 4, "shift") == "cannot-store" and pinv[4].valid_for_read, "a blueprint shift-clicked at the controller")
+	expect(click(ctrl, 4, "shift") == "cannot-store-blueprint" and pinv[4].valid_for_read, "a blueprint shift-clicked at the controller")
 	pinv[6].set_stack{ name = "stone-brick", count = 2 }
 	pinv[7].set_stack{ name = "stone-brick", count = 4 }
 	local b0 = count("stone-brick")
@@ -3097,7 +3210,8 @@ function fluid_storage_bus_test()
 				"pump picked up after " .. st.pump_done .. " ticks, cycle " .. cycle)
 		elseif game.tick > st.started + 900 then
 			expect(st.export_done, "the export bus took nothing from T1's segment")
-			expect(st.maint_done, "maintainer: " .. serpent.line(remote.call("gregtorio-me-circuit", "get_maintainer", maint)))
+			expect(st.maint_done, "maintainer: " .. serpent.line(remote.call("gregtorio-me-circuit", "get_maintainer", maint))
+				.. " schedule " .. serpent.line(remote.call("gregtorio-me-circuit", "schedule", maint)))
 			expect(st.pump_done, "the pump's water never showed up (seen at " .. tostring(st.seen) .. ", B5 " .. serpent.line(info(b5)) .. ")")
 			st.done = true
 			return me_report("MEFLUIDSTORAGEBUS", "ME fluid storage bus", problems)
@@ -3877,18 +3991,30 @@ function scheduler_test()
 	end
 	local function count(name) return remote.call(NET, "count", ctrl, name) end
 	if st.phase == 1 then
-		--- the export bus found no copper: it waits for it
+		--- issue #38: the scheduler's counters (visits, backlog, intervals) are readable and count the visits so far
+		local stats = remote.call(IO, "sched_stats", false)
+		local io_st = stats and stats.io
+		expect(io_st and io_st.visits > 0 and io_st.ticks > 0 and io_st.idle and io_st.full, "sched_stats has no io counters")
+		local bl = remote.call(IO, "backlogs")
+		expect(bl and bl.io == 0, "backlogs: the io queue should be empty in a small network: " .. serpent.line(bl))
+		--- issue #38: the counts of the busy and the probe list are in storage and add up with the parked blocks
+		expect(bl and bl.io_busy + bl.io_probing + bl.io_parked == bl.io_units and bl.io_units > 0,
+			"the io counts do not add up: " .. serpent.line(bl))
+		expect(bl and bl.storage_bus_busy + bl.storage_bus_probing == bl.storage_bus_units,
+			"the storage bus counts do not add up: " .. serpent.line(bl))
+		--- the export bus found no copper: it is parked (no visit, no probe) until the network gets some
 		expect(c1.get_item_count("copper-plate") == 0, "copper in C1 before there was any")
 		local sch = remote.call(IO, "schedule", e1)
-		if not (sch and sch.due) then
+		if not sch then
 			problems[#problems + 1] = "the export bus is not scheduled"
-		elseif sch.due <= game.tick + 1 then
+		elseif sch.front or sch.backlog or (sch.due and sch.due <= game.tick + 1) then
 			return                                                  -- due anyway: try again at the next round
 		end
+		expect(sch and sch.parked == "no-key", "the export bus without its item is not parked for it: " .. serpent.line(sch))
 		remote.call(NET, "insert", ctrl, "copper-plate", 50)
 		sch = remote.call(IO, "schedule", e1)
-		expect(sch and sch.due == game.tick + 1, "the export bus was not woken by its copper (due " .. tostring(sch and sch.due)
-			.. " at tick " .. game.tick .. ")")
+		expect(sch and sch.front and not sch.parked, "the export bus was not woken to the front by its copper ("
+			.. serpent.line(sch) .. " at tick " .. game.tick .. ")")
 		st.t, st.phase = game.tick, 2
 	elseif st.phase == 2 then
 		if c1.get_item_count("copper-plate") > 0 then
@@ -3898,8 +4024,12 @@ function scheduler_test()
 			local c2 = s.create_entity{ name = "iron-chest", position = { SCX + 3.5, SCY - 0.5 }, force = "player", raise_built = true }
 			if c2 then c2.insert{ name = "wood", count = 100 } end
 			local sch = remote.call(IO, "schedule", i2)
-			expect(sch and sch.due == game.tick + 1, "the import bus was not woken by the chest built in front of it (due "
-				.. tostring(sch and sch.due) .. " at tick " .. game.tick .. ")")
+			expect(sch and sch.front, "the import bus was not woken to the front by the chest built in front of it ("
+				.. serpent.line(sch) .. " at tick " .. game.tick .. ")")
+			--- the export bus moved its copper: it is busy now, due at a tick (the chest uses none: the longest interval)
+			local se = remote.call(IO, "schedule", e1)
+			expect(se and not se.parked and not se.probing and se.due and se.due <= game.tick + 600,
+				"the export bus that moved copper is not busy: " .. serpent.line(se))
 			st.t, st.phase = game.tick, 3
 		elseif game.tick - st.t > 30 then
 			problems[#problems + 1] = "the export bus never woke for its copper"
@@ -3976,7 +4106,62 @@ function scheduler_test()
 		for k, n in pairs(contents) do
 			if not k:find("^fluid/") and (cells[k] or 0) ~= n then problems[#problems + 1] = k .. ": totals " .. n .. ", storage " .. tostring(cells[k]) end
 		end
-		finish("woken after " .. tostring(st.woken) .. " ticks, built chest taken after " .. tostring(st.built) .. " ticks")
+		st.note = "woken after " .. tostring(st.woken) .. " ticks, built chest taken after " .. tostring(st.built) .. " ticks"
+		--- issue #38: a block blocked on the network's side is parked (no visit, no probe) and woken by the network:
+		--- the power goes, copper comes in (the export bus wakes, finds no power and parks), the power comes back
+		local eei = find("electric-energy-interface", 12.5, 6.5)
+		if not eei then
+			problems[#problems + 1] = "the test's power source is missing"
+			finish(st.note)
+			return
+		end
+		eei.power_production, eei.energy, ctrl.energy = 0, 0, 0
+		st.t, st.phase = game.tick, 6
+	elseif st.phase == 6 then
+		--- the controller's buffer drains over some ticks: wake the export bus only once the network reports no power
+		local n = remote.call(NET, "network", ctrl)
+		if n and n.status == "no-power" then
+			--- copper for later, and a wake through the settings (the bus is busy, not waiting for its key)
+			remote.call(NET, "insert", ctrl, "copper-plate", 10)
+			st.copper = c1.get_item_count("copper-plate")
+			remote.call(IO, "set_bus_filters", e1, { "copper-plate" })
+			st.dark = game.tick - st.t
+			st.t, st.phase = game.tick, 7
+		elseif game.tick - st.t > 300 then
+			problems[#problems + 1] = "the network kept its power 300 ticks after the source was cut: " .. serpent.line(n)
+			local eei = find("electric-energy-interface", 12.5, 6.5)
+			if eei then eei.power_production = 1e6 end
+			finish(st.note)
+		end
+	elseif st.phase == 7 then
+		local sch = remote.call(IO, "schedule", e1)
+		local eei = find("electric-energy-interface", 12.5, 6.5)
+		if sch and sch.parked == "no-power" then
+			st.dark = game.tick - st.t
+			local bl = remote.call(IO, "backlogs")
+			expect(bl and bl.io_parked >= 1 and bl.io_busy + bl.io_probing + bl.io_parked == bl.io_units,
+				"the parked block is not counted: " .. serpent.line(bl))
+			expect(c1.get_item_count("copper-plate") == st.copper, "copper moved without power")
+			if eei then eei.power_production = 1e6 end
+			st.t, st.phase = game.tick, 8
+		elseif game.tick - st.t > 60 then
+			problems[#problems + 1] = "the export bus woken without power was not parked within 60 ticks: " .. serpent.line(sch)
+			if eei then eei.power_production = 1e6 end
+			finish(st.note)
+		end
+	elseif st.phase == 8 then
+		if c1.get_item_count("copper-plate") > st.copper then
+			st.lit = game.tick - st.t
+			--- the slow step asks a network with parked blocks for its power every 60 ticks; the wake is visited next tick
+			expect(st.lit <= 90, "the export bus parked for power moved its copper only " .. st.lit .. " ticks after the power came back")
+			local sch = remote.call(IO, "schedule", e1)
+			expect(sch and sch.parked ~= "no-power", "the export bus is still parked for power: " .. serpent.line(sch))
+			finish(st.note .. ", the network dark " .. st.dark .. " ticks after the cut, the parked bus served " .. st.lit
+				.. " ticks after the power came back")
+		elseif game.tick - st.t > 300 then
+			problems[#problems + 1] = "the export bus parked for power never woke (" .. serpent.line(remote.call(IO, "schedule", e1)) .. ")"
+			finish(st.note)
+		end
 	end
 end
 
@@ -4374,6 +4559,20 @@ script.on_init(function()
 	for _, f in pairs(cards17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bench17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpus6.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(parking38.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(stats38.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(margin51.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(damaged84.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(refused85.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(refill67.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

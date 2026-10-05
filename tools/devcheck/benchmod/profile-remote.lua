@@ -3,17 +3,22 @@
 --- timers on at the first probe and has them reported at the second
 local BENCH_N = require("scripts.fork-me-network")
 remote.add_interface("zz-me-bench-profile", {
-	enable = function()
+	enable = function(alloc)
 		for _, sec in pairs(__BENCH.sections) do
-			sec.total, sec.tmp, sec.n, sec.depth = game.create_profiler(true), game.create_profiler(true), 0, 0
+			sec.total, sec.tmp, sec.n, sec.depth, sec.kb = game.create_profiler(true), game.create_profiler(true), 0, 0, 0
 		end
+		__BENCH.alloc = alloc and true or false
+		if alloc then collectgarbage("stop") end
 		__BENCH.on = true
 	end,
 	report = function()
 		__BENCH.on = false
+		if __BENCH.alloc then collectgarbage("restart") end
 		for _, sec in pairs(__BENCH.sections) do
 			if sec.n > 0 then log({ "", "DEVCHECK-BENCH-PROF ", sec.name, " ", sec.n, " ", sec.total }) end
+			if __BENCH.alloc and sec.n > 0 then log("DEVCHECK-BENCH-ALLOC " .. sec.name .. " " .. sec.n .. " " .. string.format("%.1f", sec.kb)) end
 		end
+		__BENCH.alloc = false
 		--- what one wrapper adds to the time of its caller (an empty function, wrapped and not)
 		local plain = function() end
 		local wrapped = __BENCH_WRAP("calibration", plain)

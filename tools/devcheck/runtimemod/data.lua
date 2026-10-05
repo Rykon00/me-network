@@ -10,6 +10,15 @@ data:extend({ { type = "selection-tool", name = "zz-devcheck-selection-tool", ic
 	select = { border_color = { 1, 0, 0 }, cursor_box_type = "entity", mode = { "any-entity" } },
 	alt_select = { border_color = { 0, 1, 0 }, cursor_box_type = "entity", mode = { "any-entity" } } } })
 
+--- items that carry data of their own, as other mods add them (issue #76, storable.lua: the network refuses an item with
+--- an inventory and an item with a label by their prototype type, each with a message of its own; the base game has
+--- no prototype of either type); with Gregtorio too
+data:extend({
+	{ type = "item-with-inventory", name = "zz-devcheck-inventory-item", icon = "__base__/graphics/icons/blueprint.png",
+		stack_size = 1, inventory_size = 4 },
+	{ type = "item-with-label", name = "zz-devcheck-label-item", icon = "__base__/graphics/icons/blueprint.png", stack_size = 1 },
+})
+
 --- the recipe paste test (issue #12): a 3x3 machine with six fluid inputs for a recipe with more ingredients than any
 --- ME block holds (data-final-fixes.lua); with Gregtorio too. Made here, so me-network's data-final-fixes.lua adds
 --- the ME blocks to its pastable entities like it does for every other crafting machine.

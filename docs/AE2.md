@@ -92,8 +92,15 @@ item is another type. A network fills cells that already hold an item first, the
   (with their items) on the ground. Blueprints and copies of a drive come without cells, but with the drive's
   priority and the partition of each slot (the next cell put into that slot gets it).
 * Cells can be stored in the network like any item; one that holds items is stored with them.
-* **Not storable:** items with an inventory or equipment grid, blueprints and planners, items that spoil
-  (the network would stop their decay), damaged items and partly used tools or ammunition.
+* **Storable:** plain items, items with tags (cells, patterns), whole tools, ammunition and repair packs
+  (science packs, magazines and unused repair packs go in and come out with the count they went in with), and **damaged
+  items** (a mined wall, belt or chest): a damaged stack is kept apart from the whole ones with its health, shown in the
+  terminal as "Damaged: 50% health", and comes out damaged. Two damaged stacks of different health that you put into one
+  inventory merge into one of averaged health, as in the game.
+* **Not storable:** items with an inventory or equipment grid (armor), blueprints and blueprint books, planners and
+  selection tools, the spidertron remote, vehicles and other items with entity data, items with a label, items that
+  spoil (the network would stop their decay), and partly used tools, ammunition and repair packs (a used science pack,
+  repair pack or magazine; a stack whose top item is used is refused as a whole). Each refusal says what was refused.
 * **Old drive items** (ME Drive 1k ... 256k from before the rework) cannot be crafted any more; placing one
   builds an ME Drive with its four (empty) cells, the 256k one also gives its acceleration card back.
 
@@ -106,7 +113,7 @@ Two AE2 storage features decide **which cell** an item or fluid goes into (and c
   many as the cell has types. A partitioned cell **only** takes those; what it held before stays in it until it is
   taken out. **From contents** restricts the cell to what it holds now, **Clear** removes the partition.
   Partitioned cells have a yellow frame in the drive window and the Cells tab. The partition travels with the cell
-  (also an empty one: "Empty, partitioned for 2 kinds"). The **ME Cell Workbench** sets the partition too, and puts
+  (also an empty one). The cell's tooltip names it (see "The tooltip of a cell"). The **ME Cell Workbench** sets the partition too, and puts
   **upgrade cards** into a cell (see "ME Cell Workbench"): with an Inverter Card the partition is a blacklist, with
   a Fuzzy Card it matches every quality; the cell window shows the cards and what they do.
 * **Drive priority** (-1000 to 1000, default 0, in the drive window): the priority of every cell in that drive.
@@ -148,8 +155,9 @@ tabs:
   more of the same item). **Shift click**: a stack into your inventory. Items with tags (loaded cells) have a
   yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).
   **Storing:** your inventory is on the left of the window (issue #28): **shift + click** a stack there to store it
-  in the network, **control + click** to store every stack of that item; what the network cannot take (a blueprint,
-  an item that spoils, a damaged one, no room) stays with a short message. What you take out appears there at once.
+  in the network, **control + click** to store every stack of that item (a stack the network refuses stays, the others
+  go in); what the network cannot take (a blueprint, an item that spoils, a partly used one, no room) stays
+  with a short message that says why. What you take out appears there at once.
   "Store item in hand" stores the cursor. Amounts are shown as 999, 1.2k, 12k, 1.5M, 2.5G everywhere.
 * **Crafting:** every item and fluid a pattern can make, in the same grid (the picked one in yellow). Pick one,
   enter the amount: the plan preview lists the crafts and steps, and as slot buttons what is **missing** (red) and
@@ -200,7 +208,9 @@ same lamp condition, so blueprints and settings paste of the game keep it).
 ## Import and export
 
 **ME Interface** (18 slots, like a chest for inserters and belts, and a tank on each of its four sides for pipes).
-Its window has **9 config rows** (AE2's config slots): each an item (with quality) or a fluid, and an amount.
+Its window has **9 config rows** (AE2's config slots): each an item (with quality) or a fluid, and an amount. A row's
+button opens the **picker** (issue #70, see "ME Cell Workbench": item groups, search, qualities, the green check or the
+confirm key), right click empties the row; no virtual signal can be chosen.
 
 * **Items:** the network keeps exactly that amount of each configured item in the interface: it fills up what
   inserters took and takes back a surplus. Everything else put in is imported into the network (items the network
@@ -232,18 +242,39 @@ side). Open one to set up to 9 filters, items and fluids mixed (the window also 
 whether the bus uses its items, its fluids or both). On a machine with an inventory and fluid boxes (an assembling
 machine with a fluid recipe, a chemical plant) one bus does both; on a chest only items, on a tank only fluids.
 
+The filter buttons of the buses open the same picker (items and fluids, no quality row: a bus filter is a plain item or a
+fluid), right click empties a filter. The ME Storage Bus's filters (items with quality, or fluids), the ME Level
+Maintainer's target, the ME Circuit Interface's filters and the pattern editor's rows of the ME Terminal work the same
+way (the maintainer's, the circuit interface's and the pattern editor's without a quality).
+
+An **ME Export Bus facing a lab** feeds it science packs (issue #86): the filters are the packs, and the bus tops each up
+to a stack (200 packs) in the lab's slot for it, again as the lab uses them. The lab takes only the packs it uses: a filter
+it refuses (an iron plate) moves nothing and stays in the network. A lab has no output, so an ME Import Bus facing one
+shows "Faces nothing it can work with". Science packs can be stored in the network (issue #76), so a pack line can run
+from the drives through export buses into labs; labs that sit next to each other are fed by inserters between them as usual.
+
 | Bus | Takes from / puts into | Filters |
 |---|---|---|
 | Import | the output of an assembler or furnace, or any slot of a chest, and the fluid in the output boxes of a machine (a tank: all of it), into the network | only those items and fluids; none: everything |
-| Export | from the network into the input of an assembler or furnace (up to a stack of each filtered item) or a chest, and its filtered fluids into the machine's input boxes or the tank, at the fluid's default temperature | the items and fluids to export (none: nothing) |
+| Export | from the network into the input of an assembler, furnace or **lab** (up to a stack of each filtered item) or a chest, and its filtered fluids into the machine's input boxes or the tank, at the fluid's default temperature | the items and fluids to export (none: nothing) |
 
 A bus moves up to 256 items and 4000 units of fluid per second (map settings "Bus speed"), however many buses the
 map has: a bus that is visited less often moves more per visit. An interface handles 8 slots per quarter second since
-its last visit, and its four sides. A busy block is visited about every quarter second (in a very big network as
-often as the setting "Interface and bus visits per tick" allows); one that found nothing to do waits longer and
-longer, at most 5 seconds (setting "Longest wait of an idle interface or bus") and never longer than in a small
-network, and it wakes at once when its item comes into the network, its settings change, it is rotated or something
-is built in front of it. The unified blocks move fluids as soon as they are built; the network stores fluid in fluid
+its last visit, and its four sides. When a block with work is visited again follows the buffer on its other side:
+the visit sees what the machine or chest used or gathered since the last one and how much it still holds or has
+room for, and comes back before that runs out (about halfway, at the earliest after a quarter second, at the
+latest after 10 seconds), so a machine never waits for its bus while its buffer lasts; a block whose machine had
+run out is served first the next time. A block with nothing to do on its machine's side (an empty source, a full
+target, no target) is only probed, with one cheap look at a growing interval (up to 5 seconds, setting "Longest
+wait of an idle interface or bus"), and visited at once when the look sees a change; one with nothing to do on the
+network's side (its item is not in the network, the network is full, no power, no network) costs nothing until the
+network wakes it: when its item comes in or room appears, the power is back or the network changes, and also when
+its settings change, it is rotated or something is built in front of it. The visits per tick are what is due,
+between the map settings "Interface and bus visits per tick, at least" and "at most" (above the ceiling the
+earliest due come first: a big base pays at most the ceiling). Storage bus reads, level maintainer checks and
+crafting job steps follow the same rule with their own floor and ceiling settings; a stocked level maintainer waits
+without any cost until its item is taken. The unified blocks move fluids as soon as they are built; the network stores fluid in fluid
+storage cells (tech ME Fluid Storage) or in a tank behind a storage bus.
 storage cells (tech ME Fluid Storage) or in a tank behind a storage bus.
 
 ## ME Storage Bus
@@ -279,6 +310,15 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
   chest about every quarter second (with more than 8 storage buses each less often: 50 buses, every 1.75 s). Until
   then the terminal may show a few items that are gone, or not yet show new ones; taking out always checks the chest
   first, so nothing is ever duplicated or promised from an empty chest.
+* **A chest that refills** (an infinity chest, an inserter feeding it): when the network takes the last of an item type
+  out of the chest, the bus looks at it again 5 ticks later, so the next stack is in the network (and the terminal) a
+  fraction of a second after you took the first. Only for a bus that is not due within those 5 ticks, and bounded: a
+  bus whose second look found nothing new does not look again after the next type runs out, until one of its regular
+  looks finds something new, so a chest that stays empty costs one extra look, not one per item type. The terminal
+  refreshes your window once more 10 ticks after you took something (it refreshes every second otherwise). A partial
+  take (32 of 64) leaves the rest in the snapshot, which is right, and a refill of that is seen at the next regular look;
+  the fluid side (a tank a pump refills) is not covered: its read is a whole fluid segment, and a tank does not run out
+  of a fluid the way a chest runs out of a stack.
 * **One bus per chest**: a second storage bus on the same chest shows "Another ME Storage Bus already uses this
   inventory" and does nothing until the first one is removed. A storage bus facing an ME block (an interface, a
   drive, a cable, ...) does nothing either ("Faces an ME block"): no loops.
@@ -287,7 +327,14 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
 * Not shown or moved: spoiling items, items with an inventory or own data (armor, blueprints, ...). AE2 can show
   items a bus cannot take as present; here they are not shown at all, because every plan, level maintainer and
   circuit signal counts on what the network shows. Items are taken out by count: a damaged item or a partly used tool
-  or magazine in the chest comes out as a new one would.
+  or magazine in the chest comes out as a new one would. Tools (science packs), ammunition and repair packs are the
+  exception: of those the bus shows and moves only the whole stacks, a stack whose top item is used is not shown and
+  stays in the chest, and a whole item put in is never put into a chest that holds a used stack of that item. A damaged
+  item (a mined wall, belt or chest with less than full health) is not handed out as a whole one either (issue #84): the
+  bus takes the whole stacks of such an item out of the chest and leaves a damaged stack in it. Until the first take
+  finds it, the terminal may show the damaged ones in the count; after that the bus shows only the whole ones, and all of
+  them again when the damaged stack is gone from the chest. A damaged stack in an ME Interface is no surplus the
+  network takes (its whole stacks are).
 * Settings (mode, priority, filters, filter on extract) are kept in blueprints, copied by settings paste and by
   cloning; so is which cards it has, but the cards themselves are items (see **Upgrade cards**).
 
@@ -359,6 +406,34 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
   as if it had none.
 * A **Recipe paste** (a crafting machine onto the bus) changes only the filters; cards and settings stay.
 
+### The tooltip of a cell
+
+The item tooltip of a storage cell that is not a fresh one (a fresh cell, with no contents, partition or cards, keeps
+the text of the item) says, always in this order and leaving out the lines that do not apply, so two cells can be
+compared at a glance:
+
+1. what it holds ("130 items of 2 types: 100 [iron plate], 30 [copper plate] (33 of 1024 bytes)"); an empty cell says
+   its size instead ("Empty: 1024 bytes, up to 63 item types.", for a fluid cell "... up to 18 fluid types.");
+2. the partition as icons, with the quality where it is not normal, a fluid cell's as fluid icons: "Partition: [iron
+   plate] [copper plate]". Up to 12 show, then "+N more" ("Partition: ... +3 more");
+3. whether it is a whitelist ("Whitelist: the cell takes only its partition.") or, with an Inverter Card, a blacklist
+   ("Blacklist (Inverter Card): the cell takes everything except its partition."). A cell with no partition and no
+   Inverter Card has neither line;
+4. the cards as icons ("Cards: [Inverter Card] [Fuzzy Card]"), and one line for each card that changes what the
+   partition means, in the words of the cell window and the workbench: Fuzzy ("the partition matches every quality"),
+   Equal Distribution ("at most N of each kind") and Overflow Destruction in red ("what does not fit into the cell is
+   DESTROYED").
+
+The text is written with the stack whenever the cell is written: in the workbench, when a drive gives the cell back,
+when a drive is mined or destroyed. A cell that lies in a chest or in an inventory of a save from before this change
+keeps its old tooltip (what it holds, or "Empty, partitioned for N kinds") until it passes through a drive or the
+workbench; the mod does not walk the inventories of the map for it. The cell's tags and the saved state are not
+changed: only the description.
+
+The partition is not marked on the item itself (no label, no colour): the label of a stack is a plain text, not a
+localised one (an item would show by its internal name), and only a stack object can carry it, not the item definition
+every drive, mining and spilling path writes. The drive window and the Cells tab frame a partitioned cell in yellow.
+
 ## ME Cell Workbench
 
 AE2's Cell Workbench (technology ME Upgrade Cards; an iron chest, 4 iron plates, an advanced circuit and 2 electronic
@@ -368,8 +443,14 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   a cell in hand (another cell there is swapped into the hand, with its cards); click the cell to take it, shift +
   click into your inventory. Anything else is refused with a message. The cell keeps its items all the time; every
   change of the partition is written into it at once.
-* **Partition:** the same buttons as the cell window (items with quality, or fluids for a fluid cell), **From
-  contents** and **Clear**.
+* **Partition:** the cell's filled slots (items with quality, or fluids for a fluid cell) and one free slot at the end,
+  **From contents** and **Clear**. A click on a slot (the free one adds, a filled one changes) opens the **picker**
+  (issue #94), made like the game's own: the item groups as tabs (fluids in theirs), a search by name (as the
+  terminal's), the items and fluids of the group, a row with the **qualities** at the bottom (items only) and the **green
+  check** at its right end. Click an element, click a quality, click the check; the confirm key (the game's "Confirm
+  GUI", "E" by default) is the check, Enter in the search field too, Escape or the X closes the picker only. A filled
+  slot opens it with its element and quality chosen, so both can be changed; right click empties a slot. Only items
+  (with quality) and fluids are listed, no virtual signal and no other signal.
 * **Card slots:** an item cell takes 4 cards, a fluid cell 3 (AE2): one each of **Inverter Card** (the partition is a
   blacklist: the cell takes everything except it), **Fuzzy Card** (item cells: the partition matches every quality),
   **Equal Distribution Card** (no kind takes more than an equal share of the cell: with a partition of n kinds the
@@ -381,6 +462,13 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   workbench its cards are the items in its card slots; taking the cell out puts them into it.
 * **Keep the partition when the cell is taken out** (AE2's copy mode): the partition stays in the workbench and goes
   onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
+* **Without a cell** the partition slots are there too: they show and set the workbench's own partition, the one the
+  next cell without a partition gets. It can hold items and fluids (the items first, then the fluids, then one free
+  slot; the picker lists both): an item cell takes the items, a fluid cell the fluids. When the partition holds the most
+  items (or fluids) a cell takes, the picker offers no more of that kind; the free slot is greyed out when neither is
+  left. **Clear** empties it; **From contents** needs a cell. A partition set this way goes onto the next cell also when the copy mode is off; with the
+  copy mode off the workbench forgets its partition when a cell is taken out (and when the copy mode is switched off
+  without a cell).
 * The cards are part of the cell (its tags): they travel with it into drives, chests and the network, like its items
   and partition. Only the workbench puts cards in or takes them out; the cell window (drive window, the terminal's
   Cells tab) shows them and keeps its partition buttons, so nothing a player used goes away.
@@ -776,6 +864,35 @@ as fluid cells next to it. Placing an old fluid drive item builds an ME Drive wi
 fluid, if it carried any). The old recovery (recovered fluid, "Take over", pull-in) is gone: a fluid cell keeps its
 fluid wherever it is, and a destroyed drive drops its cells.
 
+## What the network costs: /me-stats
+
+`/me-stats` prints, in the chat, what the ME network near you does. It works for every player (no admin rights) and costs
+nothing while you do not use it.
+
+* `/me-stats`: the network of the ME block you have open, otherwise of the nearest ME block within 10 tiles.
+  * **Members** by kind (controller, cables, drives, interfaces, buses, level maintainers, crafting blocks, ...).
+  * **Interfaces and buses** by state: *busy* (they have work and are visited when their machine's buffer needs it),
+    *probing* (they wait for something on the machine's side: `empty` source, `full` target, `no-target`, `idle`; one cheap
+    look now and then) and *parked* (they wait for the network: `no-key`, the item is not in the network, `net-full`,
+    `no-network`, `no-power`; they cost nothing until the network wakes them, with one slow look a minute as a safety net).
+    A network with many parked blocks and few busy ones is quiet; a network with all blocks busy and a high backlog is
+    where a base starts to cost script time.
+  * **Level maintainers** and **crafting**: the CPUs (and how many have a job) and the jobs running or queued.
+  * **The scheduler of the whole map** over the last minute (a window of one to two minutes, or since the load): per kind of
+    block the visits per tick against the budget of the map settings (the first number is "at least", the second "at most"),
+    the probes per tick, the average backlog (blocks that were due and waited), the *starved* arrivals (a visit that found
+    its machine's chest empty or its tank full: the machine ran dry) with how long the other side had been out (an estimate:
+    from the tick the visit before expected it to run out at the rate it saw; "ran out sooner" counts the arrivals where it
+    emptied faster than that rate said, so no estimate is given), the *missed wakes* (a parked block whose slow look found
+    work: a bug; "0" is right) and the wakes, and the time between two visits of a block that had work (median, 99th
+    percentile, longest; under a second in ticks). The counters are your own: they start at zero when you load the game and
+    are not saved.
+* `/me-stats all`: one line per network of the map (up to 25), then the scheduler.
+
+The command reads counters the scheduler keeps anyway; once every 3600 ticks it copies them for the window. Its
+numbers and its cost are in `docs/PERFORMANCE.md`. Tests: `ME stats command test` in `devcheck.py runtime`, which also
+renders the lines through the engine and fails on a missing locale key.
+
 ## Design
 
 ### Network, cells and storage (issue #68)
@@ -825,6 +942,10 @@ slot, updated through `on_player_main_inventory_changed` and `on_player_cursor_s
 only (`G.update_pane`, signatures in `storage.fork_me_gui_pane[player]`). Its clicks (`G.inventory_click`) pick up, put
 down, merge, swap and halve stacks like the game's, and shift + click hands the stack to the window's `shift`; the
 block's slots are buttons whose click goes to the window's `click`, which refuses a wrong item before anything moves.
+A slot's tooltip is the item's own (`elem_tooltip`) and, below it, the stack's description when it has one (issue #75: a
+cell's contents, partition and cards, a pattern's recipe; `G.stack_tooltip`), then the slot's own hint. The terminal's
+storage tab and every other grid of items kept in the network show the same for a stored cell or pattern (issue #79):
+the description is part of its key (`G.key_description`).
 The storage bus keeps its cards in its inventory (`rec.inv`, `rec.cards` follows it); the Cell Workbench keeps the cell
 in slot 1 and, while it is there, the cell's cards as items in slots 2 to 5 (they go into its tags when it is taken
 out).
@@ -1294,7 +1415,7 @@ partition keeps only fluids. Drive settings: the blueprint tag written through t
 a drive revived from it (priority, and the slot's partition on the cell put in later), settings paste (a slot
 without partition in the source is cleared) and a clone. The windows: `fmt`, every ME block has a window, and the
 data and set functions of the drive, cell (partition buttons), controller, provider, CPU, level maintainer
-(target, a virtual signal refused, circuit condition), circuit interface (filter buttons, output switch), fluid
+(target, circuit condition), circuit interface (filter buttons, output switch), fluid
 interface, ME Interface (config rows, an item moved to another row keeps its amount) and buses (filter buttons,
 fluid bus); the terminal's kind filter, Cells tab (priority order), craft preview (no pattern, amount 0) and Jobs
 tab. It reports `ME partitions and windows test (issue #68 R3): ok`.
@@ -1380,6 +1501,14 @@ with a partition of two), overflow destruction on a partitioned cell (full, 500 
 kept, `can_insert`), and workbenches with a cell mined (the cell in the buffer), destroyed and vanished (spilled). It
 reports `ME Cell Workbench test: ok`.
 
+The cell tooltip test (issue #64, `runtimemod/workbench.lua`) makes cells through the workbench's remote interface and
+reads the `custom_description` of the cell that comes out (structure and keys, not a rendered text; the game gives a
+number parameter back as a string): a fresh cell and a cell cleared again have none, a whitelist of two items, the same
+with an Inverter Card, an item with quality, a fluid cell, 14 keys (12 icons and "+2 more") and exactly 12, every card on
+an item cell (7 lines, at most 20 parts) and on a fluid cell (no Fuzzy line), a partitioned cell that holds items
+(also blacklisted, and with nothing else), an empty unpartitioned cell with a card, a cell that comes out of a drive,
+and the window's mode line made of the same sentences. It reports `ME cell tooltip test: ok`.
+
 The slot tests of issue #28 change the script inventories the way a player does, with an inventory standing for the
 player's: the storage bus card slots (a card taken, a wrong item back, the inverter limit, a stack of capacity cards
 spread over the empty slots, a full bus, an Equal Distribution Card refused, a card taken out, the cards that were there
@@ -1396,6 +1525,14 @@ wrong item, of a cell, a second cell and a card without a cell into the workbenc
 block's slots with a wrong item, a card, on a full bus, with an empty hand and with shift; the workbench's cell into the
 hand with its cards and back, a swap of two cells; half a stack, one item put down, merge, pick up, put down and swap
 in the pane; no card made or lost (`ME window pane test (storage bus): ok`, `ME window pane test (workbench): ok`).
+The stored item description test of issue #79 (`ME stored item descriptions test: ok`) stores a cell made in the workbench
+and an encoded pattern in a network and reads the description back from the key the network gave them (it equals the stack's),
+checks that a plain key, a quality key, a fluid, a broken json and one without a description give none, and that a cell with
+another partition is another key.
+The slot tooltip test of issue #75 (`ME window slot tooltips test: ok`, `runtimemod/workbench.lua`) calls the functions behind
+a slot (the window itself needs a player): a plain item, an empty slot and a fresh cell get the slot's hint alone, a cell made
+in the workbench and an encoded pattern their description (with a hint: the description, a line break, the hint), and the
+signature piece of a cell that stays in the workbench's slot changes when its partition does.
 
 `python tools/devcheck/devcheck.py migrate --from-ref v0.1.0` makes a save with ME Network 0.1.0 (three fluid
 interfaces, the fluid buses and the fluid storage bus with settings and fluid, an item interface next to a pipe with

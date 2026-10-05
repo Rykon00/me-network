@@ -30,12 +30,14 @@ The repository root is the mod itself.
 | `control.lua` | the event registrations of every module, the one `on_tick` handler (the scheduler), `on_init` (with the hand-over from Gregtorio) and `on_configuration_changed` (graph rebuild, migrations, modules) |
 | `scripts/fork-me-network.lua` | the core: cable graph, networks and their controller, storage cells and the storage API, the drive, partitions and priorities, external cells (storage buses), the cable router; remote interface `gregtorio-me-network` |
 | `scripts/fork-me-schedule.lua` | the scheduler: queues of due units, budgets per tick, intervals, idle limits, the settings (issue #5) |
+| `scripts/fork-me-stats.lua` | the command `/me-stats`: members, block states, the scheduler's counters of the last minute (issue #38, part 3) |
 | `scripts/fork-me-io.lua` | ME Interface (items, and fluids through its four sides) and import/export buses (items and fluids), their scheduled visits; `gregtorio-me-io` |
 | `scripts/fork-me-targets.lua` | what a bus works with: the entity types and inventories of the import, export and storage bus, the tile in front, fluid boxes |
 | `scripts/fork-me-storagebus.lua`, `scripts/fork-me-fluid-storagebus.lua` | the storage bus: its item side (a chest, logistic chest or cargo wagon) and its fluid side (a tank's fluid segment) as network storage; `gregtorio-me-storagebus`, `gregtorio-me-fluid-storagebus` (the old remote, on the storage bus) |
 | `scripts/fork-me-recipe-paste.lua` | a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12); `gregtorio-me-recipe-paste` |
 | `scripts/fork-me-unify.lua` | turns the old fluid blocks of a save (and their ghosts, items, blueprints) into the unified blocks (issue #3) |
 | `scripts/fork-me-terminal.lua`, `fork-me-gui.lua`, `fork-me-windows.lua` | the terminal (hub window), the shared GUI and the windows of every block; `gregtorio-me-terminal`, `gregtorio-me-gui` |
+| `scripts/fork-me-picker.lua` | the mod's own item and fluid picker (groups, search, qualities, green check; issue #94), used by the ME Cell Workbench |
 | `scripts/fork-me-autocraft.lua`, `fork-me-patterns.lua` | providers with encoded patterns, planner (with the bytes of a job), jobs, the multiblock CPUs (groups of crafting blocks kept up to date on build and removal) and the legacy CPUs, the pattern items; `gregtorio-me-autocraft` |
 | `scripts/fork-me-circuit.lua` | level maintainer and circuit interface; `gregtorio-me-circuit` |
 | `scripts/fork-me-fluids.lua` | the fluid calls of the other modules; `gregtorio-me-fluids` |
@@ -45,6 +47,7 @@ The repository root is the mod itself.
 | `locale/en/me-network.cfg` | English names and texts |
 | `tools/devcheck/` | headless test harness: static checks and the runtime tests, on vanilla and with Gregtorio, and the benchmark (`bench`, `docs/PERFORMANCE.md`) (`tools/devcheck/README.md`) |
 | `tools/build.py` | builds `dist/me-network_<version>.zip` (`--portal` for the mod portal, `--install` into the mods folder) |
+| `.discord/server.yml` | this mod's category on the Discord server (channels, forum tags), applied by `.github/workflows/discord.yml` with the tool of https://github.com/Rykon00/gregtorio-me-network_discord-bot; a pull request that only changes `.discord/` is merged and applied automatically |
 | `tools/dev_link.py` | links the repository into the Factorio mods folder |
 | `tools/check_syntax.py` | Lua syntax check (`--loaded`: only the files the mod loads) |
 | `tools/gen_ae2_sprites.py` | the sprites and icons (GT5-Unofficial casings, screens, circuit boards and GUI signs + Pillow) |
@@ -84,3 +87,7 @@ shapes drawn with Pillow; the ME cable, the drive's cell bays, the bus plates an
 drawn by the script or derived from those sprites, and `thumbnail.png` is put together from them (a drive and a
 terminal). Some item icons come from the original Gregtorio by Damien Reave (GPLv3). No
 textures of Applied Energistics 2 are used (its assets are not under a license compatible with GPLv3).
+
+The network follows the design of [Applied Energistics 2](https://github.com/AppliedEnergistics/Applied-Energistics-2)
+(code LGPL-3.0, © 2013 - 2020 AlgorithmX2 et al.). Its rules and ideas are written anew here for Factorio; where a
+function is a port of AE2's code, a comment at the function names the source. Files with ported code: none so far.

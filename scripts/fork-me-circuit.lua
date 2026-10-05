@@ -62,16 +62,27 @@ local function state()
 		s.clist = {}
 		s.ccursor = 1
 	end
-	--- the queues (issue #5); a save from before gets them with every block due within a second
+	--- the queues (issue #5); a save from before gets them with every block due within a second; a maintainer
+	--- queue of 0.3.0 gets its probe list and counts (issue #38)
 	if not s.mq then
-		s.mq = Sched.new()
+		s.mq = Sched.new("maint")
 		for i, unit in ipairs(s.mlist) do
 			local rec = s.maintainers[unit]
-			if rec then Sched.at(s.mq, rec, unit, game.tick + 1 + (i - 1) % 60) end
+			if rec then
+				rec.due, rec.inq, rec.sq = nil, nil, nil
+				Sched.at(s.mq, rec, unit, game.tick + 1 + (i - 1) % 60)
+			end
 		end
+	elseif not s.mq.sl then
+		local recs = {}
+		for _, unit in ipairs(s.mlist) do
+			local rec = s.maintainers[unit]
+			if rec then recs[#recs + 1] = rec end
+		end
+		Sched.upgrade(s.mq, recs, "maint")
 	end
 	if not s.cq then
-		s.cq = Sched.new()
+		s.cq = Sched.new("circuit")
 		for i, unit in ipairs(s.clist) do
 			local rec = s.circuits[unit]
 			if rec then Sched.at(s.cq, rec, unit, game.tick + 1 + (i - 1) % 60) end
@@ -80,11 +91,12 @@ local function state()
 	return s
 end
 
---- a maintainer checks at the next tick (its key was taken from the network, its job ended, its settings changed)
+--- a maintainer checks before everything else (its key was taken from the network, its job ended, its settings
+--- changed)
 local function wake_maintainer(unit)
 	local s = storage.fork_ae2
 	local rec = s and s.maintainers and s.maintainers[unit]
-	if rec and s.mq then Sched.wake(s.mq, rec, unit, game.tick + 1) end
+	if rec and s.mq then Sched.wake(s.mq, rec, unit) end
 end
 N.wakers.maint = wake_maintainer
 
@@ -157,6 +169,8 @@ local function maintainer_record(s, entity)
 end
 
 local function drop_maintainer(s, unit)
+	local rec = s.maintainers[unit]
+	if rec and s.mq then Sched.forget(s.mq, rec) end
 	s.maintainers[unit] = nil
 	remove_value(s.mlist, unit)
 end
@@ -251,6 +265,8 @@ local function circuit_record(s, entity)
 end
 
 local function drop_circuit(s, unit)
+	local rec = s.circuits[unit]
+	if rec and s.cq then Sched.forget(s.cq, rec) end
 	s.circuits[unit] = nil
 	remove_value(s.clist, unit)
 end
@@ -375,6 +391,7 @@ local function circuit_step(rec, force)
 	rec.signals = #filters
 	rec.net = net and net.id or nil
 	rec.version = version
+	return true
 end
 
 --- Set the filter of an interface: a list of keys (items, "fluid/<name>"), empty for everything
@@ -474,27 +491,43 @@ local budget = { starts = 0 }
 local function maintainer_of(unit) return storage.fork_ae2.maintainers[unit] end
 local function circuit_of(unit) return storage.fork_ae2.circuits[unit] end
 
---- one check, then the next one: soon while something is under way, at the latest after MAINTAINER_IDLE ticks;
---- a stocked maintainer also wakes when its key is taken from the network
+--- one check, then the next one: soon while something is under way (busy). A stocked maintainer with a fixed
+--- target is parked (issue #38): checked again only when its key is taken below the target (N.wait_below), its job
+--- ends or its settings change; one without a key waits for its settings. The others (a circuit-bound target, no
+--- power, no network, disabled) are checked again after MAINTAINER_IDLE ticks (the probe list: the check is cheap).
 local function visit_maintainer(rec, unit)
 	local s = storage.fork_ae2
 	if not rec.entity.valid then drop_maintainer(s, unit) return end
+	local fallback = rec.park ~= nil                         -- (the slow fallback visit of a parked maintainer)
 	maintainer_step(rec, budget)
 	local now = game.tick
 	local st = rec.status
-	local next_tick = now + MAINTAINER_IDLE
+	if fallback and st ~= "stocked" and st ~= "no-target" then Sched.missed("maintainer") end   -- (its wake was missed)
 	if st == "waiting" then
-		next_tick = now + 1                                      -- no start left in this tick
+		Sched.at(s.mq, rec, unit, now + 1)                       -- no start left in this tick
+		return 1
 	elseif st == "running" or st == "other-job" or st == "no-cpu" then
-		next_tick = now + MAINTAINER_BUSY
+		Sched.at(s.mq, rec, unit, now + MAINTAINER_BUSY)
+		return 1
 	elseif rec.retry and rec.retry > now then
-		next_tick = math.min(rec.retry, now + MAINTAINER_IDLE)
+		Sched.at(s.mq, rec, unit, math.min(rec.retry, now + MAINTAINER_IDLE))
+		return 1
+	elseif st == "no-target" then
+		Sched.park(s.mq, rec, unit, "no-target")
+		return 0
 	end
 	if st == "stocked" and rec.target then
 		local net = network_of(rec.entity)
-		if net then N.wait_below(net, rec.key, "maint", unit, rec.target) end
+		if net then
+			N.wait_below(net, rec.key, "maint", unit, rec.target)
+			if not rec.circuit then
+				Sched.park(s.mq, rec, unit, "stocked")
+				return 0
+			end
+		end
 	end
-	Sched.at(s.mq, rec, unit, next_tick)
+	Sched.at(s.mq, rec, unit, now + MAINTAINER_IDLE, true)
+	return 0
 end
 
 local function visit_circuit(rec, unit)
@@ -506,8 +539,9 @@ local function visit_circuit(rec, unit)
 		Sched.at(s.cq, rec, unit, game.tick + 1)
 		return
 	end
-	circuit_step(rec)
+	local written = circuit_step(rec)
 	Sched.at(s.cq, rec, unit, game.tick + CIRCUIT_INTERVAL)
+	return written and 1 or 0
 end
 
 --- every tick (a hook of the autocrafting module): the maintainers and circuit interfaces that are due
@@ -516,11 +550,13 @@ local function on_tick(s, tick)
 	s = state()
 	if #s.mlist > 0 then
 		budget.starts = STARTS_PER_TICK
-		Sched.run(s.mq, tick, Sched.setting("maintainer"), maintainer_of, visit_maintainer)
+		Sched.run(s.mq, tick, Sched.setting("maintainer"), Sched.setting("maintainer_max"), maintainer_of, visit_maintainer,
+			visit_maintainer, "maintainer")
 	end
 	if #s.clist > 0 then
 		--- (every tick, also with a budget of 0: the units due now join the backlog)
-		Sched.run(s.cq, tick, Sched.per_second(Sched.setting("circuit"), tick), circuit_of, visit_circuit)
+		local rate = Sched.per_second(Sched.setting("circuit"), tick)
+		Sched.run(s.cq, tick, rate, rate, circuit_of, visit_circuit, visit_circuit, "circuit")
 	end
 end
 autocraft.step_hooks[#autocraft.step_hooks + 1] = on_tick
@@ -594,8 +630,8 @@ autocraft.blueprint_hooks[#autocraft.blueprint_hooks + 1] = tag_blueprint
 function M.on_configuration_changed()
 	local s = state()
 	local old_m, old_c = s.maintainers, s.circuits
-	s.maintainers, s.mlist, s.mcursor, s.mq = {}, {}, 1, Sched.new()
-	s.circuits, s.clist, s.ccursor, s.cq = {}, {}, 1, Sched.new()
+	s.maintainers, s.mlist, s.mcursor, s.mq = {}, {}, 1, Sched.new("maint")
+	s.circuits, s.clist, s.ccursor, s.cq = {}, {}, 1, Sched.new("circuit")
 	for _, surface in pairs(game.surfaces) do
 		for _, e in pairs(surface.find_entities_filtered{ name = { MAINTAINER, CIRCUIT } }) do
 			local unit = e.unit_number
@@ -626,6 +662,16 @@ end
 --- Other mods and the devcheck runtime test use the same code paths. Keys are item names or
 --- "fluid/<name>".
 remote.add_interface("gregtorio-me-circuit", {
+	--- issue #38 (tests): when a level maintainer or circuit interface is visited next
+	schedule = function(entity)
+		local s = storage.fork_ae2
+		local unit = entity and entity.valid and entity.unit_number
+		local rec = unit and s and ((s.maintainers and s.maintainers[unit]) or (s.circuits and s.circuits[unit]))
+		if not rec then return nil end
+		local due = rec.due
+		return { due = (due and due > 0) and due or nil, probing = rec.sq == true and not rec.park, parked = rec.park, front = due == Sched.FRONT,
+			backlog = due == Sched.BACKLOG, status = rec.status }
+	end,
 	--- key (false clears it), amount, circuit (take the amount from the circuit signal); nil keeps a value
 	set_maintainer = function(entity, key, amount, circuit) return M.set_maintainer(entity, key, amount, circuit) end,
 	--- { key, amount, circuit, status, job, stock, target, missing } (stock and target of the last check)

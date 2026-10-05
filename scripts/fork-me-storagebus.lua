@@ -33,7 +33,9 @@
 ---     limit (a setting, 2 seconds by default): the longest time until the network sees a change. Between two visits the snapshot may be stale; every insert and extract through the bus works
 ---     on the real inventory (the engine asks `count` before it takes and corrects the snapshot), so the network
 ---     never hands out items that are gone; it may show items that are gone (until the next visit or extract) or
----     not yet show items that came in (until the next visit).
+---     not yet show items that came in (until the next visit). Issue #67: when an extraction takes the last of a key out
+---     of the inventory, the bus reads it again REREAD ticks later (something behind it may refill it: an infinity chest,
+---     an inserter): see `reread`, bounded so that a chest that stays empty costs one extra read, not one per item type.
 ---   * Rules: one bus per inventory (a second bus on the same inventory is refused with a status and takes
 ---     over when the first one goes); a bus facing an ME block is refused (no loops); removing the bus or
 ---     the inventory drops the inventory from the network.
@@ -51,6 +53,7 @@ local M = {}
 
 local KIND = "storage-bus"
 local MIN_INTERVAL = 30             -- ticks until a bus whose inventory changed reads it again
+local REREAD = 5                    -- ticks until a bus whose inventory was emptied of a key by the network reads it again (#67)
 local MAX_FILTERS = 18              -- the filters without a Capacity Card (AE2's 18)
 local FILTER_LIMIT = 63             -- with five Capacity Cards (AE2: 18 + 5 x 9): what a bus keeps
 local MAX_PRIORITY = 1000
@@ -58,13 +61,6 @@ local TAG = "fork_me_storage_bus"   -- blueprint tag: { mode, priority, filters 
 local OLD_TAG = "fork_me_fluid_storage_bus"   -- the old ME Fluid Storage Bus's tag: { mode, priority, filters = { fluid names } }
 local MODES = { readwrite = true, read = true, write = true }
 local INVENTORY = T.STORAGE
---- item types the network cannot hold as plain items (the same rule as the cells, M.storable of the network)
-local NOT_PLAIN = {
-	["item-with-inventory"] = true, ["item-with-tags"] = true, ["item-with-entity-data"] = true, ["blueprint"] = true,
-	["blueprint-book"] = true, ["deconstruction-item"] = true, ["upgrade-item"] = true, ["copy-paste-tool"] = true,
-	["selection-tool"] = true, ["spidertron-remote"] = true, ["armor"] = true,
-}
-
 local function state()
 	local s = storage.fork_me_sbus
 	if not s then
@@ -74,15 +70,34 @@ local function state()
 	return s
 end
 
---- the queue of the item side's visits; a save from before issue #5 gets one with every bus due within a second
+--- the queue of the item side's visits; a save from before issue #5 gets one with every bus due within a second,
+--- a queue of 0.3.0 its probe list and counts (issue #38)
 local function queue(s)
-	if s.q then return s.q end
-	s.q = Sched.new()
-	for i, unit in ipairs(s.list) do
-		local rec = N.ext_get(unit)
-		if rec then Sched.at(s.q, rec, unit, game.tick + 1 + (i - 1) % 60) end
+	local q = s.q
+	if q and q.sl then return q end
+	if not q then
+		q = Sched.new("sbus")
+		s.q = q
+		for i, unit in ipairs(s.list) do
+			local rec = N.ext_get(unit)
+			if rec then
+				rec.due, rec.inq, rec.sq = nil, nil, nil
+				Sched.at(q, rec, unit, game.tick + 1 + (i - 1) % 60)
+			end
+		end
+		return q
 	end
-	return s.q
+	local recs = {}
+	for _, unit in ipairs(s.list) do
+		local rec = N.ext_get(unit)
+		if rec then recs[#recs + 1] = rec end
+	end
+	return Sched.upgrade(q, recs, "sbus")
+end
+
+--- the idle limit of the item side (0.2.0 read 8 buses per 15 ticks: an idle bus never waits longer than that cycle)
+local function idle_limit(s)
+	return Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)
 end
 
 local function is_bus(entity) return entity and entity.valid and N.kind_of(entity.name) == KIND end
@@ -111,14 +126,43 @@ end
 --------------------------------------------------------------------------------
 
 local plain_cache = {}
---- can the network show and move this item through a storage bus? (plain items that do not spoil)
+--- can the network show and move this item through a storage bus? Plain items that do not spoil, and whole tools, ammo and
+--- repair tools (the same classes as N.storable: N.item_class; issue #76). What carries data of its own is not shown.
 local function plain(name, quality)
 	local k = name .. "@" .. quality
 	local v = plain_cache[k]
 	if v == nil then
 		local p = prototypes.item[name]
-		v = p ~= nil and not NOT_PLAIN[p.type] and p.get_spoil_ticks(quality) <= 0
+		local class = p and N.item_class(p.type)
+		v = (class == "plain" or class == "worn") and p.get_spoil_ticks(quality) <= 0
 		plain_cache[k] = v
+	end
+	return v
+end
+
+local worn_cache = {}
+--- is it a tool, ammo or a repair tool? Of those the bus shows and moves the whole stacks only: a stack whose top item is
+--- used is no part of the network's items (a count and a removal by count cannot tell it from a whole one, and a used
+--- item taken out would come out as a whole one)
+local function worn(name)
+	local v = worn_cache[name]
+	if v == nil then
+		local p = prototypes.item[name]
+		v = p ~= nil and N.item_class(p.type) == "worn"
+		worn_cache[name] = v
+	end
+	return v
+end
+
+local placeable_cache = {}
+--- can a stack of it be damaged (an item that places an entity)? Issue #84: such an item is taken out of the chest by whole
+--- stacks only, so a damaged stack never comes out as a whole one
+local function placeable(name)
+	local v = placeable_cache[name]
+	if v == nil then
+		local p = prototypes.item[name]
+		v = p ~= nil and N.can_be_damaged(p)
+		placeable_cache[name] = v
 	end
 	return v
 end
@@ -163,6 +207,7 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
+		if worn(name) and N.has_used(inv, name, q) then return 0 end    -- (a whole item put in would merge into the used stack)
 		return inv.get_insertable_count{ name = name, quality = q }
 	end,
 	--- put up to `count` into the inventory; returns the count inserted
@@ -171,14 +216,17 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
+		if worn(name) and N.has_used(inv, name, q) then return 0 end
 		return inv.insert{ name = name, quality = q, count = count }
 	end,
-	--- the real count of `key` in the inventory (0 when the bus cannot take from it)
+	--- the real count of `key` in the inventory (0 when the bus cannot take from it); of a tool, ammo or repair tool the
+	--- items of the whole stacks
 	count = function(rec, key)
 		if rec.mode == "write" or not shown(rec, key) then return 0 end
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
+		if worn(name) or (rec.dmg and rec.dmg[key]) then return N.count_whole(inv, name, q) end
 		return inv.get_item_count{ name = name, quality = q }
 	end,
 	--- take up to `count` out of the inventory; returns the count removed
@@ -187,6 +235,19 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
+		if worn(name) then return N.remove_whole(inv, name, q, count) end
+		if placeable(name) then
+			--- issue #84: the whole stacks only; a damaged one stays. The bus then shows only the whole ones (`rec.dmg`, until
+			--- a visit finds no damaged stack of the key any more): the count of the engine cannot tell them apart and would
+			--- show items that cannot be handed out. A walk of the stacks is paid for by an extraction and by a bus that has
+			--- found damage, never by a visit of a bus without
+			local got = N.remove_whole(inv, name, q, count)
+			if got < count and inv.get_item_count{ name = name, quality = q } > 0 then
+				rec.dmg = rec.dmg or {}
+				rec.dmg[key] = true
+			end
+			return got
+		end
 		return inv.remove{ name = name, quality = q, count = count }
 	end,
 	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? (the bus takes the key and
@@ -197,6 +258,8 @@ local ITEM = {
 	end,
 	--- the bus's record leaves the storage engine: a card still in it is spilled (a bus that vanished without an event)
 	detached = function(rec) M.detach(rec) end,
+	--- the network took the last of `key` out of the inventory (issue #67): read it again soon
+	emptied = function(rec) M.reread(rec) end,
 }
 
 N.ext_handlers[KIND] = ITEM             -- the fluid side: N.ext_handlers[F.HANDLER] through rec.handler
@@ -227,6 +290,7 @@ local function list_side(s, rec)
 		if listed(s, rec.unit) then
 			unlist(s.list, rec.unit)
 			s.member[rec.unit] = nil
+			Sched.forget(queue(s), rec)
 		end
 		F.list(rec)
 	else
@@ -305,11 +369,27 @@ function M.visit(rec, cascade)
 	local inv = t and inventory_of(rec)
 	if inv and rec.mode ~= "write" then
 		local all = rec.inonly or not (rec.partition or rec.deny)    -- (no filter to check: the common case)
+		local whole                                                  -- the whole stacks' counts, read when a tool or ammo is there
+		local dmg = rec.dmg                                          -- issue #84: keys with a damaged stack the bus found
 		for _, it in pairs(inv.get_contents()) do
 			local q = it.quality or "normal"
 			if plain(it.name, q) then
 				local key = N.key_of(it.name, q)
-				if all or shown(rec, key) then contents[key] = (contents[key] or 0) + it.count end
+				if all or shown(rec, key) then
+					local n = it.count
+					if worn(it.name) then
+						whole = whole or N.whole_counts(inv)
+						n = whole[key] or 0
+					elseif dmg and dmg[key] then
+						whole = whole or N.whole_counts(inv)
+						n = whole[key] or 0
+						if n == it.count then                        -- (no damaged stack of it left)
+							dmg[key] = nil
+							if next(dmg) == nil then rec.dmg = nil end
+						end
+					end
+					if n > 0 then contents[key] = (contents[key] or 0) + n end
+				end
 			end
 		end
 	end
@@ -333,26 +413,70 @@ local function item_rec(unit)
 	return nil
 end
 
+--- Issue #67: the network took the last of a key out of the inventory behind `rec`; a refill (an infinity chest, an
+--- inserter) shows only at the bus's next read, up to the idle limit away, while the player looks at the terminal. So the
+--- bus is read again REREAD ticks later (a visit like any other, on the busy list). Bounded, since a read for every key that
+--- ran out is not free (bench: the storage bus latency at 5000 rose by 13 %): a bus whose re-read found nothing new
+--- (`rec.rr == false`) gets none until one of its regular reads finds something new; one whose re-read found the refill
+--- is read again after every key that runs out. A bus that is due within REREAD ticks anyway, or is waiting on the busy
+--- list, is not touched. State of the record (saved): `rereading`, `rr`, and what the re-read replaced (`rr_back`, `rr_probe`,
+--- `rr_vis`: the visit it took the place of, put back when it found nothing).
+function M.reread(rec)
+	if rec.rr == false or rec.rereading or rec.side == "fluid" then return end
+	local s = storage.fork_me_sbus
+	if not (s and listed(s, rec.unit)) then return end
+	local now = game.tick
+	local due = rec.due
+	if due and (due < 0 or due <= now + REREAD) then return end    -- (waiting on the busy list, or due soon anyway)
+	rec.rereading, rec.rr_back, rec.rr_probe, rec.rr_vis = true, due, rec.sq, rec.vis
+	Sched.at(queue(s), rec, rec.unit, now + REREAD)
+end
+
 local function visit_due(rec, unit)
 	local s = storage.fork_me_sbus
 	if not rec.entity.valid then
 		unlist(s.list, unit)
 		if s.member then s.member[unit] = nil end
+		Sched.forget(queue(s), rec)
 		N.ext_detach(unit)
 		return
 	end
 	local changed = M.visit(rec)
 	if rec.side == "fluid" then return end           -- on the fluid side now: its queue has it
-	--- (0.2.0 read 8 buses per 15 ticks: an idle bus never waits longer than that cycle)
-	local idle = Sched.idle_limit(Sched.setting("storage_bus_idle"), #s.list, 8 / 15, MIN_INTERVAL)
-	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle)
-	Sched.at(queue(s), rec, unit, game.tick + rec.siv)
+	local again                                      -- (a re-read that found nothing: the regular visit it replaced comes back)
+	if rec.rereading then
+		rec.rereading = nil
+		rec.vis = rec.rr_vis                         -- (not a visit of the regular rhythm: the counters keep the last regular one)
+		local back, probe = rec.rr_back, rec.rr_probe
+		rec.rr_back, rec.rr_probe, rec.rr_vis = nil, nil, nil
+		if changed then
+			rec.rr = nil
+		else
+			rec.rr = false
+			if back and back > game.tick then
+				Sched.at(queue(s), rec, unit, back, probe)
+				return nil
+			end
+		end
+		again = true
+	elseif changed then
+		rec.rr = nil                                 -- (a regular read found something new: re-reads are worth it again)
+	end
+	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle_limit(s))
+	Sched.at(queue(s), rec, unit, game.tick + rec.siv, not changed)   -- (unchanged: asleep until then)
+	if again and not changed then return nil end
+	return changed and 1 or 0
 end
 
---- every tick (control.lua): the item side buses that are due, then the fluid side's
+--- every tick (control.lua): the item side buses that are due (the reads per tick are what is due, between the
+--- settings "at least" and "at most"; an unchanged bus is read at its growing interval, the probe list), then the
+--- fluid side's
 function M.on_tick(tick)
 	local s = storage.fork_me_sbus
-	if s and #s.list > 0 then Sched.run(queue(s), tick, Sched.setting("storage_bus"), item_rec, visit_due) end
+	if s and #s.list > 0 then
+		Sched.run(queue(s), tick, Sched.setting("storage_bus"), Sched.setting("storage_bus_max"), item_rec, visit_due, visit_due,
+			"storage_bus")
+	end
 	F.on_tick(tick)
 end
 
@@ -367,7 +491,8 @@ function M.wake(unit)
 		local s = storage.fork_me_sbus
 		if s and listed(s, unit) then
 			rec.siv = nil
-			Sched.wake(queue(s), rec, unit, game.tick + 1)
+			rec.rereading, rec.rr_back, rec.rr_probe, rec.rr_vis = nil, nil, nil, nil
+			Sched.wake(queue(s), rec, unit)
 		end
 	end
 end
@@ -938,6 +1063,7 @@ function M.on_removed(entity, buffer)
 		if s then
 			release(s, rec)
 			unlist(s.list, unit)
+			Sched.forget(queue(s), rec)
 			if s.member then s.member[unit] = nil end
 		end
 		F.drop(rec)
@@ -988,7 +1114,7 @@ end
 --- again (the fluid side claims its segments in unit order)
 function M.on_configuration_changed()
 	local s = state()
-	s.list, s.cursor, s.claims, s.member, s.q = {}, 1, {}, {}, Sched.new()
+	s.list, s.cursor, s.claims, s.member, s.q = {}, 1, {}, {}, Sched.new("sbus")
 	F.reset()
 	plain_cache, bus_names = {}, nil
 	local names = {}
@@ -1012,6 +1138,16 @@ function M.on_configuration_changed()
 end
 
 remote.add_interface("gregtorio-me-storagebus", {
+	--- issue #38 (tests): when the bus reads next: { due, interval, probing, front, backlog, side }
+	schedule = function(entity)
+		local rec = rec_of(entity)
+		if not rec then return nil end
+		local due = rec.due
+		return { due = (due and due > 0) and due or nil, interval = rec.siv, probing = rec.sq == true,
+			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, side = rec.side or "item",
+			--- issue #67: the re-read after an extraction emptied a key: pending, and whether one found nothing last (`rr` false)
+			rereading = rec.rereading == true, rr = rec.rr }
+	end,
 	--- one visit now (what the I/O step does)
 	visit = function(entity)
 		local rec = rec_of(entity)

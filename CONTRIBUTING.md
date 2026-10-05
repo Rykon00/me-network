@@ -34,7 +34,9 @@ messages, pull requests, issues, README and other docs.
    `main` is not moved: merge `upstream/release` into `main` by hand (`git fetch origin`, `git switch main`,
    `git merge origin/upstream/release`, `git push origin main`).
    Without the secret only the GitHub release is created; the zip can then be uploaded by hand
-   (`python tools/build.py --portal`).
+   (`python tools/build.py --portal`). After a release the job `announce`
+   posts a digest of the version's changelog section to the Discord channel `#me-network-releases` (repository secret
+   `DISCORD_BOT_TOKEN`; without it the job only warns); if it fails, re-run that job alone.
    The very first version (0.1.0) is uploaded by hand: the portal API only uploads new versions of an existing mod.
 7. Gregtorio Continued depends on this mod: a version that Gregtorio needs is released here first, then Gregtorio
    raises its dependency `me-network >= X.Y.Z`.

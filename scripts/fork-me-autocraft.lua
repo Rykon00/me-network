@@ -249,6 +249,17 @@ end
 
 local EMPTY_MAP = { inputs = {}, outputs = {} }
 
+--- a fluid's default temperature (per load: prototypes do not change while the game runs; issue #50, lever 6)
+local temperature_cache = {}
+local function default_temperature(name)
+	local t = temperature_cache[name]
+	if not t then
+		t = prototypes.fluid[name].default_temperature
+		temperature_cache[name] = t
+	end
+	return t
+end
+
 --- The fluid boxes a machine uses for `ingredients` and `products`: which box takes which fluid ingredient and
 --- which boxes hold the fluid products. Returns the map, or nil and the reason why the machine cannot be used:
 --- "fluid-box" (no usable box, box too small, furnace, two-way box), "fluid-temperature" (a box wants a
@@ -295,7 +306,7 @@ local function fluid_map(machine, ingredients, products, outputs_optional)
 			if not index then return nil, "fluid-box" end
 			used[index] = true
 			local f = fb.get_filter(index)
-			local t = prototypes.fluid[ing.name].default_temperature
+			local t = default_temperature(ing.name)
 			if f and ((f.minimum_temperature and t < f.minimum_temperature) or (f.maximum_temperature and t > f.maximum_temperature)) then
 				return nil, "fluid-temperature"
 			end
@@ -328,13 +339,14 @@ end
 --- What a crafting pattern needs from a machine whose recipe is not set yet: enough unconnected fluid boxes
 --- of the right kind and size (the exact map is made after set_recipe). The boxes are read from the machine's
 --- prototype: a machine without a fluid recipe may have its boxes switched off (fluid_boxes_off_when_no_fluid_recipe),
---- then the entity has none and pipes are checked only after the switch. nil when it fits, else the reason.
-local function fluid_boxes_fit(machine, proto)
-	if not has_fluid(proto.ingredients, proto.products) then return nil end
+--- then the entity has none and pipes are checked only after the switch. nil when it fits, else the reason. `machine` is a
+--- scan's view of the machine (machine_view).
+local function fluid_boxes_fit(machine, ingredients, products)
+	if not has_fluid(ingredients, products) then return nil end
 	if machine.type ~= "assembling-machine" then return "fluid-box" end
 	local fb = machine.fluidbox
-	local boxes = machine.prototype.fluidbox_prototypes
-	local live = #fb == #boxes                      -- the entity's boxes are the prototype's, by index
+	local boxes = machine.facts.boxes
+	local live = #fb == #boxes                     -- the entity's boxes are the prototype's, by index
 	local ins, outs = {}, {}
 	for i, p in ipairs(boxes) do
 		local kind = p.production_type
@@ -355,17 +367,17 @@ local function fluid_boxes_fit(machine, proto)
 		return pipes and "fluid-pipes" or "fluid-box"
 	end
 	local need_in, need_out = 0, 0
-	for _, e in pairs(proto.ingredients) do if e.type == "fluid" then need_in = math.max(need_in, fixed_up(e.amount)) end end
-	for _, e in pairs(proto.products) do if e.type == "fluid" then need_out = math.max(need_out, e.amount or e.amount_max or 0) end end
-	for _, e in pairs(proto.ingredients) do
+	for _, e in pairs(ingredients) do if e.type == "fluid" then need_in = math.max(need_in, fixed_up(e.amount)) end end
+	for _, e in pairs(products) do if e.type == "fluid" then need_out = math.max(need_out, e.amount or e.amount_max or 0) end end
+	for _, e in pairs(ingredients) do
 		if e.type == "fluid" then
-			local t = prototypes.fluid[e.name].default_temperature
+			local t = default_temperature(e.name)
 			if (e.minimum_temperature and t < e.minimum_temperature) or (e.maximum_temperature and t > e.maximum_temperature) then
 				return "fluid-temperature"
 			end
 		end
 	end
-	return fit(ins, proto.ingredients, need_in) or fit(outs, proto.products, need_out)
+	return fit(ins, ingredients, need_in) or fit(outs, products, need_out)
 end
 
 --- "stack" when an item ingredient does not fit into one machine slot
@@ -379,48 +391,151 @@ local function stack_problem(ingredients)
 	return nil
 end
 
---- Can `entity` (next to a provider) do pattern `def`? Returns a target entry { entity, unit, mode } or nil and
---- the reason: crafting patterns need an assembling machine that can make the recipe ("category",
+--- The ingredients and products of a pattern, made once per pattern definition (issue #43): a crafting pattern reads them
+--- from the recipe prototype, which makes a new table of tables at every access (7 µs and garbage); nothing that uses them
+--- changes them. Per load and weak: nothing is saved. The scan (issue #50, lever 6), the job steps and the planner use them.
+local ing_cache = setmetatable({}, { __mode = "k" })
+local prod_cache = setmetatable({}, { __mode = "k" })
+local function def_ingredients(def)
+	local l = ing_cache[def]
+	if not l then
+		l = P.ingredients(def)
+		ing_cache[def] = l
+	end
+	return l
+end
+local function def_products(def)
+	local l = prod_cache[def]
+	if not l then
+		l = P.products(def)
+		prod_cache[def] = l
+	end
+	return l
+end
+
+--- Issue #50, lever 6: what target_for reads of a pattern alone, once per pattern definition (weak, per load; prototypes
+--- do not change while the game runs): its recipe's category (crafting), stack_problem, the number of item ingredients and
+--- whether an ingredient is a fluid.
+local facts_cache = setmetatable({}, { __mode = "k" })
+local function def_facts(def)
+	local f = facts_cache[def]
+	if not f then
+		local ingredients = def_ingredients(def)
+		local items, fluid_in = 0, false
+		for _, i in pairs(ingredients) do
+			if i.type == "item" then items = items + 1 elseif i.type == "fluid" then fluid_in = true end
+		end
+		f = { stack = stack_problem(ingredients), items = items, fluid_in = fluid_in,
+			category = def.kind == "crafting" and prototypes.recipe[def.recipe].category or nil }
+		facts_cache[def] = f
+	end
+	return f
+end
+
+--- per machine prototype name (per load): its crafting categories and fixed recipe (entity.prototype makes a new object
+--- and crafting_categories a new table at every access)
+local machine_cache = {}
+local function machine_facts(entity)
+	local name = entity.name
+	local m = machine_cache[name]
+	if not m then
+		local proto = entity.prototype
+		m = { categories = proto.crafting_categories or {}, fixed = proto.fixed_recipe, boxes = proto.fluidbox_prototypes }
+		machine_cache[name] = m
+	end
+	return m
+end
+
+--- Issue #50, lever 6: a scan's view of a machine next to a provider. The scan asks the same machine about each pattern slot
+--- of the provider and nothing changes during a scan, so the view reads each value once and is dropped with the scan: the
+--- type and unit number, and when first asked (__index) the set recipe's name (false: none), the input slots (false: no
+--- input inventory), the force's recipes, the prototype's facts, and `fluidbox`, which stands in for the entity's in
+--- fluid_map and fluid_boxes_fit (the same calls, each read once per index).
+local function fluidbox_view(fb)
+	local n = #fb
+	local NONE = {}                                    -- (a read that gave nil)
+	local function memo(read)
+		local got = {}
+		return function(i)
+			local x = got[i]
+			if x == nil then
+				x = read(i)
+				if x == nil then x = NONE end
+				got[i] = x
+			end
+			if x == NONE then return nil end
+			return x
+		end
+	end
+	return setmetatable({
+		get_prototype = memo(function(i) return fb.get_prototype(i) end),
+		get_filter = memo(function(i) return fb.get_filter(i) end),
+		get_capacity = memo(function(i) return fb.get_capacity(i) end),
+		get_connections = memo(function(i) return fb.get_connections(i) end),
+	}, { __len = function() return n end })
+end
+
+local VIEW = {
+	__index = function(v, k)
+		local e = rawget(v, "entity")
+		local x
+		if k == "recipe" then
+			local r = e.get_recipe()
+			x = r and r.name or false
+		elseif k == "input_slots" then
+			local inp = input_inventory(e)
+			x = inp and #inp or false
+		elseif k == "recipes" then x = e.force.recipes
+		elseif k == "facts" then x = machine_facts(e)
+		elseif k == "fluidbox" then x = fluidbox_view(e.fluidbox)
+		else return nil end
+		rawset(v, k, x)
+		return x
+	end,
+}
+local function machine_view(entity)
+	return setmetatable({ entity = entity, type = entity.type, unit = entity.unit_number }, VIEW)
+end
+
+--- Can the machine of view `v` (next to a provider) do pattern `def`? Returns a target entry { entity, unit, mode } or nil
+--- and the reason: crafting patterns need an assembling machine that can make the recipe ("category",
 --- "not-researched", "fixed-recipe", "stack", the fluid reasons; a furnace: "furnace"), processing patterns a
 --- machine ("no-recipe": an assembling machine without a recipe; "stack", fluid reasons) or a chest (items only).
 --- Chests are no target of crafting patterns (nil, nil: not counted).
-local function target_for(entity, def)
+local function target_for(v, def)
+	local etype = v.type
+	local facts = def_facts(def)
 	if def.kind == "crafting" then
-		if entity.type == "furnace" then return nil, "furnace" end
-		if entity.type ~= "assembling-machine" then return nil, nil end
-		local proto = prototypes.recipe[def.recipe]
-		if not entity.prototype.crafting_categories[proto.category] then return nil, "category" end
-		local fixed = entity.prototype.fixed_recipe
+		if etype == "furnace" then return nil, "furnace" end
+		if etype ~= "assembling-machine" then return nil, nil end
+		local machine = v.facts
+		if not machine.categories[facts.category] then return nil, "category" end
+		local fixed = machine.fixed
 		if fixed and fixed ~= "" and fixed ~= def.recipe then return nil, "fixed-recipe" end
-		local r = entity.force.recipes[def.recipe]
+		local r = v.recipes[def.recipe]
 		if not (r and r.enabled) then return nil, "not-researched" end
-		local why = stack_problem(proto.ingredients)
-		if why then return nil, why end
-		local current = entity.get_recipe()
-		if current and current.name == def.recipe then
-			local _, reason = fluid_map(entity, proto.ingredients, proto.products)
+		if facts.stack then return nil, facts.stack end
+		local ingredients, products = def_ingredients(def), def_products(def)
+		if v.recipe == def.recipe then
+			local _, reason = fluid_map(v, ingredients, products)
 			if reason then return nil, reason end
 		else
-			why = fluid_boxes_fit(entity, proto)
+			local why = fluid_boxes_fit(v, ingredients, products)
 			if why then return nil, why end
 		end
-		return { entity = entity, unit = entity.unit_number, mode = "craft" }
+		return { entity = v.entity, unit = v.unit, mode = "craft" }
 	end
-	local ingredients, products = P.ingredients(def), P.products(def)
-	if entity.type == "container" or entity.type == "logistic-container" then
-		for _, i in pairs(ingredients) do if i.type == "fluid" then return nil, "fluid-box" end end
-		return { entity = entity, unit = entity.unit_number, mode = "chest" }
+	if etype == "container" or etype == "logistic-container" then
+		if facts.fluid_in then return nil, "fluid-box" end
+		return { entity = v.entity, unit = v.unit, mode = "chest" }
 	end
-	if entity.type == "assembling-machine" and not entity.get_recipe() then return nil, "no-recipe" end
-	local why = stack_problem(ingredients)
-	if why then return nil, why end
-	local items = 0
-	for _, i in pairs(ingredients) do if i.type == "item" then items = items + 1 end end
-	local inp = input_inventory(entity)
-	if inp and items > #inp then return nil, "stack" end         -- more input items than input slots (a furnace)
-	local _, reason = fluid_map(entity, ingredients, products, true)
+	if etype == "assembling-machine" and not v.recipe then return nil, "no-recipe" end
+	if facts.stack then return nil, facts.stack end
+	local slots = v.input_slots
+	if slots and facts.items > slots then return nil, "stack" end  -- more input items than input slots (a furnace)
+	local _, reason = fluid_map(v, def_ingredients(def), def_products(def), true)
 	if reason then return nil, reason end
-	return { entity = entity, unit = entity.unit_number, mode = "push" }
+	return { entity = v.entity, unit = v.unit, mode = "push" }
 end
 
 --------------------------------------------------------------------------------
@@ -449,9 +564,10 @@ local function new_provider(entity)
 		slots = {},          -- [slot] = pattern as stored in the item (raw: kept exactly, validated by the scan)
 		pending = nil,       -- [slot] = pattern from a blueprint, encoded from a blank pattern of the network
 		priority = 0,
-		patterns = {},       -- [slot] = { id, def, targets = { {entity, unit, mode} } } (scan)
+		patterns = {},       -- [slot] = { id, def, targets = { {entity, unit, mode} }, why = first reason of a machine that cannot } (scan)
 		status = {},         -- [slot] = { ok, reason, machines } (scan)
-		net = nil, sig = nil }
+		net = nil,           -- network id of the last scan
+		scanned_priority = nil }   -- priority of the last scan (before issue #50: `sig`, a signature string of the scan)
 end
 
 --- blueprint patterns waiting for a blank pattern: encoded from the network's blanks (never out of nothing)
@@ -471,44 +587,84 @@ local function fill_pending(p, net)
 	return changed
 end
 
+--- Issue #50, lever 6: the clean pattern of a slot (P.normalize) or the reason it has none, and the pattern's id, once per
+--- slot content (weak, per load). A slot's pattern is replaced, never changed in place, and normalize reads only the
+--- prototypes and the aliases of the replaced items, which do not change while the game runs. The scan hands out the same
+--- definition every time, so the caches per definition (target_for, the planner, the job steps) keep it as well.
+local norm_cache = setmetatable({}, { __mode = "k" })
+local function normalized(raw)
+	if type(raw) ~= "table" then return P.normalize(raw) end
+	local c = norm_cache[raw]
+	if not c then
+		local def, why = P.normalize(raw)
+		c = { def = def, why = why, id = def and P.id_of(def) }
+		norm_cache[raw] = c
+	end
+	return c.def, c.why, c.id
+end
+
+--- whether a scanned slot is what the last scan found: the same pattern id, the same first reason of a machine that cannot
+--- (`why`, kept even when another machine can) and the same machines in the same order
+local function same_scan(old, id, why, targets)
+	if not (old and old.id == id and old.why == why) then return false end
+	local was = old.targets
+	if not was or #was ~= #targets then return false end
+	for i, t in ipairs(targets) do
+		if was[i].unit ~= t.unit then return false end
+	end
+	return true
+end
+
+--- Scan a provider: the pattern in each slot, the machines next to it that can do it. The network's patterns are made
+--- again (dirty) when the scan found something else than the last one: the network, the priority, a slot's pattern, its
+--- reason or its machines. Issue #50, lever 6: compared with the last scan's records instead of a signature string
+--- (p.sig, dropped); what the comparison sees is what the signature held.
 local function scan_provider(p)
 	local e = p.entity
 	local net = N.network_of(e)                  -- patterns are kept while the network is off, jobs wait
 	if p.pending then fill_pending(p, N.active_of(e)) end
-	local patterns, status, sig = {}, {}, { net and net.id or "-", p.priority or 0 }
-	local around = net and neighbors_of(e) or {}
+	local net_id, priority = net and net.id or nil, p.priority or 0
+	local old_patterns, old_status = p.patterns or {}, p.status or {}
+	local same = p.net == net_id and p.scanned_priority == priority
+	local patterns, status = {}, {}
+	local around = {}
+	if net then
+		for i, m in ipairs(neighbors_of(e)) do around[i] = machine_view(m) end
+	end
 	for slot = 1, SLOTS do
 		local raw = p.slots[slot]
 		if raw then
-			local def, why = P.normalize(raw)
+			local def, why, id = normalized(raw)
 			if not def then
 				status[slot] = { ok = false, reason = why }
-				sig[#sig + 1] = slot .. ":" .. why
+				if same then
+					local was = old_status[slot]
+					same = old_patterns[slot] == nil and was ~= nil and was.reason == why
+				end
 			elseif not net then
 				status[slot] = { ok = false, reason = "no-network" }
-				sig[#sig + 1] = slot .. ":-"
+				if same then
+					local was = old_status[slot]
+					same = old_patterns[slot] == nil and was ~= nil and was.reason == "no-network"
+				end
 			else
-				local id = P.id_of(def)
 				local targets, reason = {}, nil
-				for _, m in pairs(around) do
-					local t, r = target_for(m, def)
+				for _, v in ipairs(around) do
+					local t, r = target_for(v, def)
 					if t then targets[#targets + 1] = t else reason = reason or r end
 				end
-				patterns[slot] = { id = id, def = def, targets = targets }
+				patterns[slot] = { id = id, def = def, targets = targets, why = reason }
 				local ok = #targets > 0
 				status[slot] = { ok = ok, reason = not ok and (reason or "no-machine") or nil, machines = #targets }
-				local units = {}
-				for _, t in ipairs(targets) do units[#units + 1] = t.unit end
-				sig[#sig + 1] = slot .. ":" .. id .. ":" .. table.concat(units, "/") .. ":" .. tostring(reason)
+				same = same and same_scan(old_patterns[slot], id, reason, targets)
 			end
+		elseif same then
+			same = old_status[slot] == nil
 		end
 	end
-	sig = table.concat(sig, "|")
-	p.patterns, p.status, p.net = patterns, status, net and net.id or nil
-	if p.sig ~= sig then
-		p.sig = sig
-		state().dirty = true
-	end
+	p.patterns, p.status, p.net = patterns, status, net_id
+	p.scanned_priority, p.sig = priority, nil
+	if not same then state().dirty = true end
 end
 
 --- a provider whose entity is gone without an event: its patterns are dropped on the ground where it stood
@@ -661,15 +817,16 @@ local function plain_item(name)
 	return proto ~= nil and proto.type ~= "item-with-tags"
 end
 
-local function stock_of(net)
-	local stock = {}
-	for name, count in pairs(N.plain_counts(net)) do
-		if plain_item(name) then stock[name] = count end
+--- What the plan finds of `key` in storage (issue #50: read when the plan first asks, not the whole stock per plan): the
+--- plain items (not with data, no quality) and the fluids of a usable network, as stock_of of 0.3.0 had them.
+local storable = {}                               -- key -> true when the plan may take it from storage (per load)
+local function base_count(net, key)
+	local ok = storable[key]
+	if ok == nil then
+		ok = is_fluid(key) or (not key:find("[@#]") and plain_item(key))
+		storable[key] = ok
 	end
-	for name, amount in pairs(fluids.totals(net)) do
-		stock[FLUID_PREFIX .. name] = amount
-	end
-	return stock
+	return ok and net.items[key] or 0
 end
 
 --- expected units of `key` per run of a pattern (its products), and whether that amount is certain
@@ -686,29 +843,65 @@ local function product_yield(products, key)
 	return total, exact
 end
 
+--- Issue #50: what a plan node reads of a pattern, made once per pattern definition (weak, per load): the yield of a key
+--- (product_yield) and the ingredients as { key, amount } in the order of def_ingredients
+local yield_cache = setmetatable({}, { __mode = "k" })
+local inputs_cache = setmetatable({}, { __mode = "k" })
+local function def_yield(def, key)
+	local per = yield_cache[def]
+	if not per then
+		per = {}
+		yield_cache[def] = per
+	end
+	local y = per[key]
+	if not y then
+		local total, exact = product_yield(def_products(def), key)
+		y = { total, exact }
+		per[key] = y
+	end
+	return y[1], y[2]
+end
+local function def_inputs(def)
+	local l = inputs_cache[def]
+	if not l then
+		l = {}
+		for _, ing in pairs(def_ingredients(def)) do l[#l + 1] = { key_of(ing), ing.amount } end
+		inputs_cache[def] = l
+	end
+	return l
+end
+
 local function copy_map(t)
 	local c = {}
 	for k, v in pairs(t) do c[k] = v end
 	return c
 end
 
-local function snapshot(ctx)
-	local steps = {}
-	for k, v in pairs(ctx.steps) do steps[k] = { pid = v.pid, runs = v.runs } end
-	return {
-		stock = copy_map(ctx.stock), surplus = copy_map(ctx.surplus), reserve = copy_map(ctx.reserve),
-		missing = copy_map(ctx.missing), loops = copy_map(ctx.loops), steps = steps,
-		order = { table.unpack(ctx.order) }, missing_n = ctx.missing_n,
-	}
+--- Issue #50: the alternatives of a key are tried on the same tables, undone to where they started, instead of on a copy of
+--- the whole state each (the stock of a GregTech network is thousands of keys, copied twice per alternative). While an
+--- alternative is tried (`ctx.alt` > 0) every write is journaled as (table, key, value before); `undo` writes them back in
+--- the reverse order. The state after an undo is the state the copy of 0.3.0 held.
+local function jset(ctx, t, k, v)
+	if ctx.alt > 0 then
+		local log, n = ctx.log, ctx.logn
+		log[n + 1], log[n + 2], log[n + 3] = t, k, t[k]
+		ctx.logn = n + 3
+	end
+	t[k] = v
 end
 
-local function restore(ctx, snap)
-	for k, v in pairs(snap) do ctx[k] = v end
+local function undo(ctx, mark)
+	local log = ctx.log
+	for i = ctx.logn - 2, mark + 1, -3 do
+		log[i][log[i + 1]] = log[i + 2]
+		log[i], log[i + 1], log[i + 2] = nil, nil, nil
+	end
+	ctx.logn = mark
 end
 
 local function add_missing(ctx, key, count)
-	ctx.missing[key] = (ctx.missing[key] or 0) + count
-	ctx.missing_n = ctx.missing_n + count
+	jset(ctx, ctx.missing, key, (ctx.missing[key] or 0) + count)
+	jset(ctx, ctx, "missing_n", ctx.missing_n + count)
 end
 
 local need
@@ -716,23 +909,25 @@ local need
 --- make `count` of `key` with one pattern: its ingredients are needed `runs` times
 local function apply_pattern(ctx, pid, key, count, path, depth)
 	local def = ctx.patterns.defs[pid]
-	local yield, exact = product_yield(P.products(def), key)
+	local yield, exact = def_yield(def, key)
 	if yield <= 0 then add_missing(ctx, key, count) return end
 	local runs = math.ceil(count / yield - 1e-9)
-	for _, ing in pairs(P.ingredients(def)) do
-		need(ctx, key_of(ing), ing.amount * runs, path, depth + 1, false)
+	local inputs = def_inputs(def)
+	for i = 1, #inputs do
+		local ing = inputs[i]
+		need(ctx, ing[1], ing[2] * runs, path, depth + 1, false)
 	end
 	local step = ctx.steps[pid]
 	if not step then
 		step = { pid = pid, runs = 0 }
-		ctx.steps[pid] = step
-		ctx.order[#ctx.order + 1] = pid              -- ingredients were planned first: dependencies come first
+		jset(ctx, ctx.steps, pid, step)
+		jset(ctx, ctx.order, #ctx.order + 1, pid)    -- ingredients were planned first: dependencies come first
 	end
-	step.runs = step.runs + runs
+	jset(ctx, step, "runs", step.runs + runs)
 	if exact then                                    -- surplus of a certain yield can be used by later demand
 		local over = runs * yield - count
 		if not is_fluid(key) then over = math.floor(over + 1e-9) end
-		if over > 1e-9 then ctx.surplus[key] = (ctx.surplus[key] or 0) + over end
+		if over > 1e-9 then jset(ctx, ctx.surplus, key, (ctx.surplus[key] or 0) + over) end
 	end
 end
 
@@ -745,19 +940,54 @@ function need(ctx, key, count, path, depth, top)
 		return
 	end
 	if not top then
-		local t = math.min(ctx.surplus[key] or 0, count)
-		ctx.surplus[key] = (ctx.surplus[key] or 0) - t
-		count = count - t
-		t = math.min(ctx.stock[key] or 0, count)
-		ctx.stock[key] = (ctx.stock[key] or 0) - t
-		ctx.reserve[key] = (ctx.reserve[key] or 0) + t
-		count = count - t
+		--- the surplus of earlier steps first, then the stock (jset written out, the hot path of a plan; the
+		--- first read of a key takes its stock from the network and keeps what was read in `ctx.base`)
+		local logging = ctx.alt > 0
+		local log, n = ctx.log, ctx.logn
+		local surplus = ctx.surplus
+		local sur = surplus[key]
+		if sur and sur > 0 then
+			local t = sur < count and sur or count
+			if logging then
+				log[n + 1], log[n + 2], log[n + 3] = surplus, key, sur
+				n = n + 3
+			end
+			surplus[key] = sur - t
+			count = count - t
+		end
+		if count <= 1e-9 then
+			ctx.logn = n
+			return
+		end
+		local stock = ctx.stock
+		local have = stock[key]
+		if have == nil then
+			have = ctx.usable and base_count(ctx.net, key) or 0
+			stock[key] = have
+			ctx.base[key] = have
+		end
+		local demand = ctx.demand
+		demand[key] = (demand[key] or 0) + count             -- (all asked of the stock, every alternative: kept plans)
+		if have > 0 then
+			local t = have < count and have or count
+			local reserve = ctx.reserve
+			local r = reserve[key]
+			if logging then
+				log[n + 1], log[n + 2], log[n + 3] = stock, key, have
+				log[n + 4], log[n + 5], log[n + 6] = reserve, key, r
+				n = n + 6
+			end
+			stock[key] = have - t
+			reserve[key] = (r or 0) + t
+			count = count - t
+		end
+		ctx.logn = n
 		if count <= 1e-9 then return end
 	end
 	local pids = ctx.patterns.items[key]
 	if not pids then add_missing(ctx, key, count) return end
 	if path[key] then
-		ctx.loops[key] = true
+		jset(ctx, ctx.loops, key, true)
 		add_missing(ctx, key, count)
 		return
 	end
@@ -766,18 +996,20 @@ function need(ctx, key, count, path, depth, top)
 		apply_pattern(ctx, pids[1], key, count, path, depth)
 	else
 		--- several patterns (in pattern order: provider priority, provider, slot): the first one that needs
-		--- nothing that is missing
-		local start = snapshot(ctx)
+		--- nothing that is missing; each tried from the state before the first (undone)
+		local mark, missing0 = ctx.logn, ctx.missing_n
+		ctx.alt = ctx.alt + 1
 		local chosen
 		for i, pid in ipairs(pids) do
-			restore(ctx, snapshot(start))
+			undo(ctx, mark)
 			apply_pattern(ctx, pid, key, count, path, depth)
-			if ctx.missing_n == start.missing_n then chosen = i break end
+			if ctx.missing_n == missing0 then chosen = i break end
 		end
 		if not chosen then
-			restore(ctx, snapshot(start))
+			undo(ctx, mark)
 			apply_pattern(ctx, pids[1], key, count, path, depth)
 		end
+		ctx.alt = ctx.alt - 1
 	end
 	path[key] = nil
 end
@@ -800,25 +1032,68 @@ local function plan_bytes(key, amount, steps, reserved)
 	local bytes = key_bytes(key, amount) + 8 * (#steps + (reserved or 0))
 	for _, st in ipairs(steps) do
 		bytes = bytes + st.runs
-		for _, ing in pairs(P.ingredients(st.def)) do
+		for _, ing in pairs(def_ingredients(st.def)) do
 			bytes = bytes + key_bytes(key_of(ing), ing.amount * st.runs)
 		end
 	end
 	return bytes
 end
 
+--- Issue #50: kept plans. A plan is a pure function of the network's patterns (the table `ensure_patterns` builds anew at
+--- every change: its identity says whether they changed) and of the stock it read. A kept plan holds what each key read from
+--- storage was (`base`) and how much was asked of it in all (`demand`, every alternative tried counted): it is the plan the
+--- network would make now when the patterns are the same table and every key it read holds the same amount, or held and
+--- holds at least all that was asked of it (then every take was whole, before and now). Anything else (a stock below what
+--- was asked, a pattern added or removed, a provider or machine built or removed, the network joined, split or without
+--- power) makes a new plan. Kept per network id, key and amount, outside `storage`: a peer that has none makes the same
+--- plan fresh, so every peer acts alike. The crafting CPUs are not part of a plan (the preview reads them every time).
+local KEEP_PER_NETWORK = 16
+local kept_plans = {}                              -- network id -> { [key .. "|" .. amount] = { patterns, base, demand, plan } }
+local kept_stats = { hits = 0, misses = 0 }
+
+local function kept_valid(entry, net, patterns)
+	if entry.patterns ~= patterns then return false end
+	local usable = N.usable(net) and true or false
+	local demand = entry.demand
+	for key, was in pairs(entry.base) do
+		local now = usable and base_count(net, key) or 0
+		if now ~= was then
+			local d = demand[key] or 0
+			if was < d or now < d then return false end
+		end
+	end
+	return true
+end
+
+--- a copy of a plan's tables a caller may change (M.start sets `biggest`, a maintainer keeps `missing`)
+local function plan_copy(p)
+	local c = copy_map(p)
+	c.missing, c.loops, c.reserve = copy_map(p.missing), copy_map(p.loops), copy_map(p.reserve)
+	c.steps = { table.unpack(p.steps) }
+	return c
+end
+
 --- Plan `amount` of `key` for the network `net`.
 --- Returns { ok, missing = {key -> count}, loops = {key -> true}, steps = { {pid, def, runs} },
---- reserve = {key -> count taken from storage}, runs, too_complex }
-local function make_plan(s, net, key, amount)
+--- reserve = {key -> count taken from storage}, runs, too_complex }. `fresh_only`: never a kept plan (tests).
+local function make_plan(s, net, key, amount, fresh_only)
 	local patterns = ensure_patterns(s)[net.id] or NO_PATTERNS
-	local ctx = {
-		patterns = patterns, stock = stock_of(net), surplus = {}, reserve = {}, missing = {}, loops = {},
-		steps = {}, order = {}, missing_n = 0, nodes = 0,
-	}
 	if not patterns.items[key] then
 		return { ok = false, missing = { [key] = amount }, loops = {}, steps = {}, reserve = {}, runs = 0, no_pattern = true }
 	end
+	local per = kept_plans[net.id]
+	local id = key .. "|" .. amount
+	local entry = per and per[id]
+	if entry and not fresh_only and kept_valid(entry, net, patterns) then
+		kept_stats.hits = kept_stats.hits + 1
+		return plan_copy(entry.plan)
+	end
+	kept_stats.misses = kept_stats.misses + 1
+	local ctx = {
+		patterns = patterns, net = net, usable = N.usable(net) and true or false, stock = {}, base = {}, demand = {},
+		surplus = {}, reserve = {}, missing = {}, loops = {}, steps = {}, order = {}, missing_n = 0, nodes = 0,
+		alt = 0, log = {}, logn = 0,
+	}
 	need(ctx, key, amount, {}, 0, true)
 	local steps, runs = {}, 0
 	for _, pid in ipairs(ctx.order) do
@@ -828,8 +1103,18 @@ local function make_plan(s, net, key, amount)
 	end
 	local reserve, reserved = {}, 0
 	for k, v in pairs(ctx.reserve) do if v > 0 then reserve[k] = v reserved = reserved + 1 end end
-	return { ok = ctx.missing_n == 0, missing = ctx.missing, loops = ctx.loops, steps = steps,
-		reserve = reserve, runs = runs, too_complex = ctx.too_complex, bytes = plan_bytes(key, amount, steps, reserved) }
+	local plan = { ok = ctx.missing_n == 0, missing = ctx.missing, loops = ctx.loops, steps = steps,
+		reserve = reserve, runs = runs, too_complex = ctx.too_complex, bytes = plan_bytes(key, amount, steps, reserved),
+		nodes = ctx.nodes }
+	if not fresh_only then
+		if not per or table_size(per) >= KEEP_PER_NETWORK then
+			per = {}
+			kept_plans[net.id] = per
+		end
+		per[id] = { patterns = patterns, base = ctx.base, demand = ctx.demand, plan = plan }
+		return plan_copy(plan)
+	end
+	return plan
 end
 
 --------------------------------------------------------------------------------
@@ -1210,9 +1495,9 @@ local function pool_add(job, key, count)
 	job.pool[key] = now
 end
 
---- the ingredients and products of a job step (its pattern; a crafting pattern reads its recipe)
-local function step_ingredients(step) return P.ingredients(step.def) end
-local function step_products(step) return P.products(step.def) end
+--- the ingredients and products of a job step (its pattern; a crafting pattern reads its recipe): def_ingredients above
+local function step_ingredients(step) return def_ingredients(step.def) end
+local function step_products(step) return def_products(step.def) end
 
 --- runs of a processing step whose outputs are all back (received)
 local function processing_done(step)
@@ -1899,6 +2184,7 @@ local function step_jobs(s, tick, budget)
 		if job and (job.status == "queued" or job.status == "running") then
 			local since = tick - (job.stepped or (tick - STEP_TICKS))
 			if since >= STEP_TICKS then
+				if job.stepped then Sched.sample("jobs", since, 1) end
 				job.stepped = tick
 				done = done + 1
 				local scale = math.min(math.floor(since / STEP_TICKS), MAX_CATCH_UP)
@@ -1917,7 +2203,8 @@ function M.on_tick(tick)
 		if #s.active > 0 then assign_cpus(s) end
 		prune_finished(s)
 	end
-	if #s.active > 0 then step_jobs(s, tick, Sched.setting("jobs")) end
+	--- issue #38: the steps per tick follow the running jobs (each stepped every STEP_TICKS), between the settings
+	if #s.active > 0 then step_jobs(s, tick, Sched.load_budget(#s.active, STEP_TICKS, Sched.setting("jobs"), Sched.setting("jobs_max"))) end
 	if tick % PROVIDER_SCAN_TICKS == 0 then maintenance(s, 1) end
 	for _, hook in pairs(M.step_hooks) do hook(s, tick) end
 end
@@ -2074,12 +2361,15 @@ end
 
 --- `fresh` rescans all pattern providers first (user actions); the GUI preview uses the cache
 --- that the round robin rescan keeps current.
-function M.plan(net, key, amount, fresh)
+function M.plan(net, key, amount, fresh, fresh_only)
 	local s = state()
 	if not (proto_of(key) and amount and amount >= 1) then return nil end
 	if fresh then refresh_providers(s) end
-	return make_plan(s, net, key, math.floor(amount))
+	return make_plan(s, net, key, math.floor(amount), fresh_only)
 end
+
+--- issue #50: { hits, misses } of the kept plans since the load (tests, the benchmark)
+function M.kept_plan_stats() return { hits = kept_stats.hits, misses = kept_stats.misses } end
 
 --- Issue #5: before a job starts, the providers of its plan's patterns are scanned (not every provider of the map:
 --- 200 of them cost 18 ms); true when a pattern changed (then the plan is made again).
@@ -2220,6 +2510,17 @@ function M.jobs(net)
 	for _, id in pairs(s.finished) do add(id) end
 	table.sort(out, function(a, b) return a.id > b.id end)
 	return out
+end
+
+--- The crafting CPUs of a network and how many of them have a job (the in-game diagnostic, issue #38)
+function M.cpu_report(net)
+	local s = state()
+	local cpus, busy = 0, 0
+	for _, g in ipairs(groups_in(s, net)) do
+		cpus = cpus + 1
+		if g.job then busy = busy + 1 end
+	end
+	return { cpus = cpus, busy = busy }
 end
 
 function M.job(id)
@@ -2885,15 +3186,31 @@ end
 --- or "fluid/<fluid name>".
 remote.add_interface("gregtorio-me-autocraft", {
 	--- { ok, missing = {key -> count}, runs, steps, loops, reserve, pids, bytes } or nil
-	plan = function(entity, key, amount)
+	plan = function(entity, key, amount, fresh_only)
 		local net = network_of(entity)
-		local p = net and M.plan(net, key, amount, true)
+		local p = net and M.plan(net, key, amount, true, fresh_only)
 		if not p then return nil end
-		local pids = {}
-		for i, st in ipairs(p.steps) do pids[i] = st.pid end
+		local pids, runs_of = {}, {}
+		for i, st in ipairs(p.steps) do pids[i], runs_of[i] = st.pid, st.runs end
 		return { ok = p.ok, missing = p.missing, runs = p.runs, steps = #p.steps, loops = p.loops,
-			reserve = p.reserve, no_pattern = p.no_pattern, pids = pids, bytes = p.bytes }
+			reserve = p.reserve, no_pattern = p.no_pattern, pids = pids, step_runs = runs_of, bytes = p.bytes,
+			too_complex = p.too_complex, nodes = p.nodes }
 	end,
+	--- issue #50, lever 6 (tests): the machines of each pattern of the network of `entity` as its patterns are now (made
+	--- anew only when a scan found a change): { [pattern id] = { unit numbers } }
+	pattern_targets = function(entity)
+		local net = network_of(entity)
+		local p = net and ensure_patterns(state())[net.id]
+		local out = {}
+		for id, list in pairs(p and p.targets or {}) do
+			local units = {}
+			for _, t in ipairs(list) do units[#units + 1] = t.unit end
+			out[id] = units
+		end
+		return out
+	end,
+	--- issue #50: the kept plans' { hits, misses } since the load
+	kept_plan_stats = function() return M.kept_plan_stats() end,
 	start = function(entity, key, amount)
 		local id, why, p = M.start(entity, key, amount)
 		return id, why, p and p.missing, p and p.bytes, p and p.biggest

@@ -126,9 +126,43 @@ allows that too) because tagged items are stored with their tags.
 
 **What can be stored:** plain items of any quality, and items with tags (cells, loaded fluid drive items):
 an item with tags is stored with its tags and description under its own key, one type per distinct tag set.
-Not storable (the interface leaves them in its slots, the terminal says so): items with an inventory or
-grid, blueprints and planners, items that spoil (the network would stop their decay), damaged items and
-partly used tools or ammunition (the network would repair them).
+Not storable (the interface leaves them in its slots, the terminal says so, each with a message that names
+the refusal): items with an inventory, armor (it can carry a grid), blueprints and books, planners and selection
+tools, the spidertron remote, vehicles and other items with entity data, items with a label, items that spoil
+(the network would stop their decay), and partly used tools, ammunition and repair packs (the network would
+repair them). A damaged item is stored with its health since issue #104. See "What the network stores (issue #76)"
+below.
+
+**What the network stores (issue #76):** `N.storable` decides by the prototype type (`N.item_class`), never by
+`stack.item`. `stack.item` (a `LuaItem`) is set for every stack with a state of its own, measured on 2.0.77: tools
+(science packs), ammo, repair tools, armor, planners, an item that spoils, an item with health below 1. Before the fix of issue #76
+the first line of `storable` took it for "carries data of its own", so no science pack, magazine or repair pack
+could enter the network by any path that asks `storable`, and the lines meant for them (a whole one may be stored, a
+used one not) were never reached.
+
+| Class | Types | The network |
+|---|---|---|
+| plain | `item`, `gun`, `capsule`, `module`, `rail-planner`, `space-platform-starter-pack` | stored by key `name@quality`; a damaged one (`health` below 1) of an item that places an entity is stored with its health under a key of its own (issue #104), any other damaged item is refused |
+| worn | `tool`, `ammo`, `repair-tool` | stored when the top item of the stack is whole: `durability` equals `get_durability(quality)` (a quality scales it: a legendary science pack has 6, a legendary repair pack 1800), `ammo` equals `magazine_size`; a used one is refused as damaged |
+| tags | `item-with-tags` | stored with tags and description under its own key; refused with a label (a label cannot be put back with `set_stack`) |
+| label | `item-with-label` | stored plain when it has no label |
+| refused | `blueprint`, `blueprint-book`; `deconstruction-item`, `upgrade-item`, `selection-tool`, `copy-paste-tool`; `spidertron-remote`; `item-with-entity-data`; `armor`; `item-with-inventory` | `cannot-store-blueprint`, `-planner`, `-remote`, `-entity`, `-armor`, `-inventory` |
+| unknown type | anything else | `cannot-store`: a type of a later game version is refused rather than stored without what it carries |
+
+A stack of tools holds one wear: its top item's. Measured: `remove` takes the used item first (a stack of 5 with a
+used top gives 4 whole ones after one removal), a whole item inserted merges into a used stack (8 with the used top),
+and setting `count` on a used stack makes the top whole. So a count says nothing about wear, and a stack with a used
+top item is refused as a whole (the player can take it apart by hand). Taking out never makes a whole item used:
+`extract_to` builds new stacks.
+
+Paths and what they do with a used stack: the terminal's store, the pane's shift + click and control + click,
+and the stack path of import buses and interfaces call `storable` and refuse it; a control + click goes on with the
+next stack (a used stack in front of whole ones no longer stops it). The import bus keeps tools and ammo off its
+by-count path (a removal by count would take the used item first and hand it on as a whole one). An interface row's
+surplus is taken from whole stacks only (`N.remove_whole`). A storage bus shows, counts, takes and fills only whole
+stacks of a worn type (`N.whole_counts`, `count_whole`, `remove_whole`, `has_used`), and puts nothing into a chest
+that holds a used stack of that item (it would merge). Before, a storage bus showed a used pack as a whole one and
+a removal by count gave it out as a whole one.
 
 **Network API** (`scripts/fork-me-network.lua`, all O(1) or O(cells holding the item)):
 
@@ -328,6 +362,7 @@ and the first fluid drive placed anywhere took it; the runtime test caught that.
 | ME graph | join (members, power draw, cable pictures), split (the larger part keeps the id), join again, a second controller (conflict, nothing stored, status on the controller), a cable removed without an event (sweep), the cable router, a network without power, with power, after the power is cut |
 | ME cells | cells into slots, only cells, AE2 bytes, the contents in the tags of a cell taken out and back in another drive, capacity of the network exactly, full cells, quality as its own type, a loaded cell stored in the network and taken out with its tags, the drive window's clicks (take, put, swap, shift), a destroyed drive spills its cells with their items, an old drive item gives its four cells and the card, robots mine a drive with loaded cells into a storage chest |
 | ME terminal | take a stack, one more, a click with something in the cursor stores it, take one, store the cursor, a stack into the inventory, the inventory row, search, sort by amount and name, a spoiling item and a blueprint refused |
+| ME storable items (issue #76, `storable.lua`) | science packs, magazines, repair packs (also legendary) and a gun in and out by the terminal's store, shift + click at the terminal and another block, control + click; an import bus on a chest (every tool of the game once), an interface (the stacks it imports, the surplus of a row with a used stack first), an export bus, a storage bus (whole stacks counted, the used one stays in the chest), the round trip export bus to import bus; a used pack, magazine and repair pack and a damaged chest refused as damaged and left as they were; a blueprint, book, planners, remote, vehicles, armor with equipment, an item with an inventory and items with a label refused each with its own reason; an item with tags back with its tags. Every result is logged (`DEVCHECK-RUNTIME-STORABLE-CENSUS`) |
 | ME import/export | interface export slot filled and topped up, import slot emptied, a spoiling item stays, filters pasted; import bus 64 per visit, with a filter; export bus without filter idle, into a chest, into a machine; a rotated bus; bus filters pasted; blueprint tags of interface and bus |
 | autocrafting, furnace patterns, fluids, fluid recovery, level maintainer, CPU tiers, circuit interface, settings copy | the tests that existed, on cable networks laid by the router |
 
@@ -567,8 +602,9 @@ and shows it, never puts anything in); write only (`hidden`: the snapshot stays 
 shows nor takes from it, but stores into it: AE2's "insert only").
 
 **What the bus shows and moves:** plain items that do not spoil (`get_spoil_ticks` 0 for their quality), of any
-quality, and no item types with own data (items with inventory, tags or entity data, armor, blueprints and other
-planners): the same rule as the cells (`M.storable`), decided per prototype so a visit needs no per-slot reads.
+quality, whole tools, ammo and repair tools, and no item types with own data (items with inventory, tags or entity
+data, armor, blueprints and other planners): the same classes as the cells (`N.item_class`, `M.storable`), decided per
+prototype so a visit needs no per-slot reads (a chest with a tool or ammo in it is read stack by stack once per visit).
 With filters only the filtered items (exact name and quality). Fluids are not read: they have their own bus, see
 "Fluid storage bus".
 
@@ -638,9 +674,9 @@ Inserters, players, robots and trains change an inventory without an event, so t
 * Fluids: the item storage bus reads no fluid. A tank's fluid is shared with its pipe segment (`get_fluid_count`
   reports only the tank's part), so two tanks of one segment would show the same fluid twice; the fluid storage bus
   therefore stores by segment (see "Fluid storage bus").
-* Items are moved by count (`LuaInventory.insert` / `remove`): the health of damaged items and the durability or
-  ammunition left in partly used tools and magazines in a bus's chest are not kept when the network takes them out
-  (cells refuse such items, a chest cannot). Spoiling items are not shown at all.
+* Items are moved by count (`LuaInventory.insert` / `remove`): the health of damaged items in a bus's chest is not
+  kept when the network takes them out (cells refuse such items, a chest cannot). Tools, ammo and repair tools are
+  the exception since issue #76: whole stacks only (see "What the network stores"). Spoiling items are not shown at all.
 * An import bus or ME Interface that empties a chest a storage bus shows moves the items in a circle (into the
   network, which may store them back into that chest); AE2 has the same. Give the storage bus a filter or a lower
   priority.
@@ -1134,7 +1170,8 @@ blocks; after: this change.
 
 ### Windows
 
-One window per unified block, with `signal` choosers (items and fluids): the interface (rows with item or fluid and
+One window per unified block, with key buttons that open the picker of issue #70 (items and fluids; they were `signal`
+choosers before it): the interface (rows with item or fluid and
 amount, a drop-down per side, the container's content, the sides' fluid), the bus (9 mixed filters, target, status) and
 the storage bus (mode, priority, 18 mixed filters, what it shows: items or the segment's fluid and temperature). The
 fluid windows are removed; the old entities are replaced on load, so none of them can be opened.
@@ -1190,6 +1227,94 @@ tick. The rework follows the profile.
   The defaults come from the benchmark: 16 visits per tick already give every bus of the 5000 scene its full speed
   (the catch-up), more only shorten the reaction of busy blocks and cost more.
 
+### Levers 1 and 2 of issue #38: the headroom rule, probes and parked blocks
+
+Measured first (`docs/PERFORMANCE.md`, "Round two"): with one list per queue and a constant budget, the idle blocks
+spent the budget (a third of the visits at 5000 found nothing), every block waited its turn in one line (a busy bus
+was visited every 4.75 s at 5000, every 21 s at 20 000), and a wake did nothing for a block already waiting. A first
+rework (a sleep list and a budget of ceil(busy / 120) visits: "every busy block within 2 s") was measured and
+dropped: a uniform period for every busy block cost 70 % more script time at 5000 and moved nothing more, because
+most blocks are limited by their other side, not by their visits. The rework keeps the queues in `storage` and adds:
+
+* **The headroom rule.** When a block with work is due comes from the buffer on its other side, not from a period.
+  An export bus into a machine or chest keeps what the target held of each filtered item after the visit
+  (`rec.tgt`) and sees at the next visit what the target used since; an import bus what the source gathered since
+  it was emptied and how much room is left (`rec.left`; the slots times the stack size); the fluid sides the same
+  with the boxes' capacities (`rec.fleft`, `rec.fcap`); an interface per row (its amount and what was taken), for
+  its imports (the free slots) and per side (the side tank's volume). From rate and headroom the step knows when
+  the buffer would run empty or full, and the block comes back at about half of that time (`Sched.headroom`), the
+  whole time while it moved all its speed allowed (then the catch-up covers the wait), between MIN_INTERVAL (15
+  ticks) and MAX_CATCH_UP (600). A block whose other side had run out on arrival (a machine with an empty input or
+  a full output, a row that ran empty) is served sooner (half the interval) and before the backlog next time
+  (`rec.starve`, the front). A visit that cannot know the rate yet (the first fill of a row or a target, the first
+  fluid into a box, the first look at a source after a wake) comes back after MIN_INTERVAL to learn it, and a rest
+  that an import visit left in the source (it moved all its speed allowed) brings it back when the bus's speed
+  covers that rest. A block woken out of the probe list keeps the catch-up of a sleeper of 0.3.0 (the ticks since its
+  last visit, at most the idle limit); one woken out of a park, whose wait has no bound, starts with one minimum
+  visit's worth and the headroom rule takes over. Blocks that got the same interval from the same tick would come due
+  in lockstep for ever and the ceiling would serve them in bursts (at 5000 the backlog reached 481 and the 99th
+  percentile 5 ms): a block comes back at the least loaded of four ticks around its interval (`Sched.slot`: a hash of
+  its unit number picks the four, the load is the number of units already due there, so it is state and the same on
+  every peer), up to 20 % sooner, and up to 20 % later when its interval is half of the headroom time (never later for
+  a block that moved all its speed allowed, sits at the catch-up limit or is probed). Everything comes from what the
+  visit reads anyway; the one extra read is `get_item_count` per filter of an export bus into a chest (a machine had
+  it before). **The margin of a short busy list** (issue #51): the headroom rule saves visits, which pays where the
+  budget is the limit and only costs machine time where it is not. So no busy block waits longer than
+  `n / (floor × Sched.MARGIN)` ticks (at least MIN_INTERVAL; `n` the units of the busy list, `Sched.margin_cap`), with
+  `MARGIN` 1/16: at the default floor of 16 that is `n` ticks, the busy blocks spend at most one visit per tick on
+  margin against a buffer that empties faster than the visit before measured (inserter swings, a machine's crafts). In
+  the scene at the maintainer's size (83 busy blocks) the cap is 83 ticks; at 5000 interfaces and buses (about 2100
+  busy) it lies beyond MAX_CATCH_UP and changes nothing. A starved export fluid bus is one whose insert the target's
+  room ended and that took about the most it ever took that way (`rec.froom`); before, an insert the bus's speed ended
+  counted as a dry target at every visit.
+* **Probes.** A block blocked on its target's side (source empty, target full, no target, an interface with nothing
+  to do) is not visited but probed: one cheap engine call (`probe_work`: the item count of the source or interface,
+  `can_insert` or the input count of a full target, the search for a missing target) at an interval that doubles up
+  to the idle limit (the probe list `q.sl`); a change wakes the block into the front, visited in the same tick. The
+  probes of a tick are at most the floor (16 interface and bus visits by default), whatever the ceiling is, and the
+  sum of visits and probes of a tick stays within the floor while the busy list does not need more (a probe that wakes
+  its block counts for two; when the busy list needs more, the probes keep half of the floor, they wait longer but are
+  never starved), so a network of sleepers never costs more per tick than the budget of 0.3.0; the probes of a bigger
+  network wait longer than the idle limit. The storage buses' "probe" is the full read of an unchanged bus and follows
+  the same rule.
+* **Parked blocks.** A block blocked on the network's side (its key absent, the network full, no network or
+  controller, no power, no filters) is parked: not visited, woken by the network (and found by the slow fallback below if a wake is missed):
+  `N.wait_for` (the key comes in, or some is taken), `N.wait_room` (a cell joins, a key type leaves),
+  `N.wait_usable` (the power is back: the controller of a network with such waiters is read once a second,
+  `slow_step`), the change hooks (the graph changed), its settings or a target built in front of it. The waits live
+  in the network tables; a network merged into another hands them over, a split or a rebuild fires them all once,
+  so no parked block loses its wake. A level maintainer that is stocked with a fixed target is parked the same way
+  (`N.wait_below`, its job's end, its settings), one without a key too.
+* **The fallback.** In 0.3.0 the visit every 5 s hid every missed wake; a parked block with a missed wake would stand
+  still for ever, silently. So a parked block is also in the probe list, with one slow fallback visit about once in
+  `Sched.PARK_FALLBACK` (3600) ticks, spread by `Sched.slot` over a sixth of that either side, from the probe budget:
+  the probe function sees `rec.park` and visits the block fully. A fallback visit that finds work (a bus that moved
+  something, a maintainer that left "stocked") is a missed wake: `Sched.missed` counts it per queue (`missed` in
+  `sched_stats`, module-local like the other counters). It is 0 in the runtime tests and in every bench scene
+  (`bench` reports a scene with a missed wake as a problem). `devcheck.py runtime` has a test for every park reason and
+  every way it can end (`runtimemod/parking.lua`), and two cases that lose their wakes on purpose
+  (`gregtorio-me-network.drop_waits`, `gregtorio-me-io.set_park_fallback`) to show that the fallback finds them.
+* **The front.** A wake puts the unit into the busy list's front list (`q.front`), visited before the backlog; a
+  unit that is already waiting there or in the busy backlog is as early as it can be.
+* **The budget is what is due.** Per tick a queue visits what is due (the front, the backlog, the units due now),
+  at least the floor and at most the ceiling (the settings "at least" and "at most"; defaults 16 and 32 for
+  interfaces and buses, job steps 1 and 2); the probes take at most the floor of it and the busy list the rest, at
+  least the floor again; when the ceiling binds, the earliest due come first and the starved blocks before them. No time, no count of a kind: the ceiling bounds the
+  script time of a big base, the floor only matters while more is due than it says. The counts (`q.n`, `q.sl.n`)
+  are kept by the visits, wakes and removals themselves (`Sched.at`, `Sched.wake`, `Sched.park`, `Sched.forget`),
+  so every peer schedules alike; the module-local counters of the benchmark decide nothing. The crafting jobs' steps
+  per tick follow the running jobs (`Sched.load_budget`); the maintainers and both storage bus sides use the same
+  lists (a storage bus that did not change is read at its growing interval from the probe list).
+* **Saves.** New fields in the queues (`front`, `fhead`, `sl`, `n`, `tag`), the records (`sq`, `inq`, `vis`,
+  `park`, `block`, `seen`, `starve`, `tgt`, `left`, `fleft`, `fcap`) and the networks (`wait_use`, `wait_room`);
+  a queue of 0.3.0 gets them at its first use (`Sched.upgrade`: every scheduled record counts as busy until its
+  next visit), so a 0.3.0 save loaded without `on_configuration_changed` works on (tested by `migrate --from-ref
+  v0.3.0`). The schedule after a save and a load is the one of an unbroken run: `devcheck.py runtime` saves the test
+  map at tick 500 through a headless server and RCON, loads the save and compares a digest of every block's schedule
+  and the queues' counts at ticks 1000 and 1400 with the unbroken run; the scheduler test parks an export bus for
+  its key and for its power and checks both wakes.
+  and the queues' counts at ticks 1000 and 1400 with the unbroken run.
+
 ### The storage engine
 
 * **Lookups per network** (`lookups`, kept outside `storage`: a pure function of the network's state, built again
@@ -1216,8 +1341,8 @@ tick. The rework follows the profile.
 ### The other modules
 
 * **Import bus**: plain items (type `item`, no place result, no spoilage) are moved by count from one
-  `get_contents` (one `remove` per item type); other items stack by stack as before (their damage, spoilage or data
-  decides). A big chest that is empty at the front is no longer scanned slot by slot.
+  `get_contents` (one `remove` per item type); other items stack by stack as before (their damage, wear, spoilage or
+  data decides; tools, ammo and repair tools are never by count, issue #76). A big chest that is empty at the front is no longer scanned slot by slot.
 * **Autocrafting**: a job is stepped at most every 20 ticks as before, now one job per tick in turns (the setting),
   with its CPU's operations for each 20 ticks since its last step (up to 3 steps' worth): the cap of 96 operations
   and 8 jobs per step is gone, so more than 8 jobs no longer slow each other down. One provider rescan every 2 ticks
@@ -1271,8 +1396,11 @@ after the load, the fluid is the same) and Gregtorio's `migrate --from-ref v0.4.
 * `on_configuration_changed` still rebuilds the graph from the map: 0.8 s at 5000 endpoints (once per mod update).
 * Removing a cable whose network splits still searches the network (a breadth first search) and recomputes both
   parts; removing an endpoint does not.
-* The planner copies the stock for each alternative pattern of a key (`snapshot`); a deep tree with many
-  alternatives is not covered by the benchmark.
+* The planner copied the stock for each alternative pattern of a key (`snapshot`). Since issue #50 (lever 11) it reads
+  the stock of a key when it first asks for it, tries the alternatives on the same tables and undoes them from a journal,
+  and keeps its last plans: a kept plan is given back while the network's patterns are the same table and every key the
+  plan read holds the same amount, or held and holds at least all that was asked of it. See "The planner" in
+  `docs/PERFORMANCE.md` (pull request 11).
 
 ### Tests
 
@@ -1446,6 +1574,79 @@ the next cell whose partition is empty). Every change is written into the cell's
 table, 2 white wool, calculation processor, 4 iron ingots and chest become an assembling machine 1, 2 plastic bars, an
 advanced circuit, 4 iron plates and an iron chest.
 
+**The partition without a cell (issue #37).** The copy mode's kept partition (`rec.config`) was a line of text
+("Kept partition: N kinds") and the slots were gone without a cell. Now the slots are always there: without a cell
+they show and set `rec.config` itself. It is one list for both kinds of cell (the item keys, then the fluid keys:
+`kept_list`), because the workbench cannot know which cell comes next; a cell that arrives without a partition takes
+the keys of its kind (`N.clean_partition` drops the others), a cell in the workbench shows and changes its kind's keys
+and leaves the other kind's alone (`remember`). A partition set by hand goes onto the next cell also without the copy
+mode: setting it is the request. Without the copy mode the workbench forgets all of it when a cell leaves, as before.
+The slots without a cell: at most what a cell of the kind takes (63 items, 18 fluids).
+
+**No virtual signals in the partition (issue #69), the quality and the check (issues #82, #94).** Issue #65 gave the
+slots without a cell one button, the signal chooser the buses use, and a virtual signal (or an entity, a recipe, a
+quality) chosen in it was dropped, the slot empty again. Factorio cannot offer less: `elem_filters` of a
+`choose-elem-button` exist for items, fluids, entities, recipes and so on, but "`signal` and `item-group` do not support
+filters" (the `PrototypeFilter` page of the runtime API, 2.0.77 in the install and the 2.1.20 page; 2.1.20 adds a
+`VirtualSignalPrototypeFilter` to that union, but the sentence is unchanged and `LuaGuiElement::elem_filters` still takes
+no filter for `"signal"`). The picker of an `item-with-quality` button, the way out of #69, has no quality row and takes a
+choice at once (#82), and a switch plus a quality drop-down plus a green check beside it (the pull request of #82) was
+not what was wanted: the check belongs in the picker (#94). So the picker is the mod's own: `scripts/fork-me-picker.lua`.
+
+`Picker.open(player, spec)` builds a frame in `player.gui.screen` (`fork_me_picker`): a search field, the groups as tabs
+(`filter_group_button_tab_slightly_larger`, `item-group/<name>` sprites; only groups that list an allowed element), a
+scroll pane with the group's subgroups as tables of 10 `slot_button`s (the game's order: group, subgroup, `order`, name),
+and a bottom row of quality buttons (`quality/<name>`, items only, only with the quality mod) and the green check
+(`item_and_count_select_confirm`). The catalog (`catalog_of`) is made from the item and fluid prototypes (not hidden, not
+parameters) on first use and kept outside `storage` (derived from prototypes only, made again after a load). A search
+text is matched against the prototype name like the terminal's search (lower case, spaces as dashes); the display is
+capped (1500 buttons) with a line that says so. `spec` = `{ callback, data, kinds = { item, fluid }, preset = { kind,
+name, quality }, title }`: the choice (`{ kind, name, quality }`) comes back through `Picker.on_confirm(callback, fn)`;
+what the picker knows lives in the frame's tags, so nothing is in `storage` and a multiplayer game has nothing to agree
+on (the picker is one player's GUI, like any window).
+
+The workbench's slots are `sprite-button`s (`wb_slot`): a click opens the picker for that slot with `kinds` from
+`M.workbench_kinds(data, index)` (the kind a slot has can always be chosen again; a new kind needs room: 63 items, 18
+fluids without a cell, the cell's types with one; with a cell only its kind) and the slot's element and quality as the
+preset; right click empties (`workbench_clear_slot`). The green check calls `M.workbench_set(entity, index, kind, name,
+quality)`, which refuses anything but an item with a known quality (a quality other than normal needs the quality mod)
+or a fluid, a kind the slot may not take and a slot beyond the free one, and sets the key (`name@quality` or
+`fluid/name`; the list sorts itself: items, then fluids). The window is drawn anew afterwards, so a key that is in the
+list already or that no cell takes leaves no stale button. The remote interface `gregtorio-me-gui` has `workbench_slots`,
+`workbench_kinds`, `workbench_set`, `workbench_clear_slot`, `workbench_qualities`, `picker_groups` and `picker_entries`
+for the test (the window itself cannot run headless). No change to saved state: `rec.config` is still a list of keys.
+
+*Closing and the confirm key.* The picker is not the player's opened GUI (the window below it is), so Escape and "E"
+close that window. `G.on_window_closed` (a hook in `scripts/fork-me-gui.lua`'s `on_closed`) turns that into the game's
+rule that the popup goes first: the window stays (`player.opened = window`), the picker is hidden and marked with the
+tick (`cancel_tick` in its tags). Escape ends there (a hidden picker of an earlier tick goes with the next close, the next
+open or the 60 tick refresh). The custom input `fork-me-picker-confirm` (`prototypes/network.lua`, linked to the game's
+`confirm-gui`, "E" by default, `consuming = "none"`) fires in the same tick as the close, before or after it: it confirms
+the shown picker, or the one hidden in this tick (`cancel_tick == game.tick`), and marks the window (`keep_tick`) so that
+the close that comes after it is ignored. Neither order needs anything in `storage`; the marks are in the GUI elements'
+tags. Whether the game fires both in the same tick and in which order is only known in the game: that is the first thing
+the `[Task-Ingame]` issue checks.
+
+**The picker everywhere a window chooses an item or a fluid (issue #70).** The signal chooser (`elem_type = "signal"`) was
+the filter button of the buses and the storage bus, the row button of the ME Interface, the target of the level
+maintainer, the filter button of the circuit interface and the row button of the pattern editor. None of them can use a
+virtual signal, and the chooser cannot be filtered (above), so each is a key button now (`G.key_button`: the item with
+its quality badge, the game's tooltip and a hint, or a fluid's name) that opens the picker. A left click opens it with the
+slot's key chosen (`Picker.preset_of`), a right click empties the slot; this replaces "a virtual signal clears the row" of
+the interface. The choice comes back as `{ kind, name, quality }` through `Picker.on_confirm(act, fn)` (the acts
+`if_item`, `bus_filter`, `sbus_filter`, `maint_target`, `circ_filter`, `pat_row`; the data is the block's unit number
+and the slot's index, or the editor row's `which` and `index`) and `Picker.key_of(choice, with_quality)` makes the key: an
+item with quality (`name@quality`) where the place takes one (the interface rows and the storage bus filters), else the
+plain name (the bus filters, the maintainer's target, the circuit interface's filters and the pattern rows: their setters
+take plain names only, as the chooser gave them before), a fluid as `fluid/<name>`. A choice that is nothing of that
+(an unknown name or quality) is refused with a message and nothing changes (`M.set_interface_choice` for the interface).
+The picker has the option `quality = false` for those places: no quality row, the choice has none. The helpers of the
+signal chooser (`signal_of_key`, `key_of_signal_q`, `signal_chooser`, the terminal's copy) and the remote
+`set_interface_signal` and `key_of_signal` are gone; the remote interface has `set_interface_choice` and `key_of_choice`.
+Still a signal chooser: the circuit condition's signal of the level maintainer, which is a real circuit signal. Still a
+plain `choose-elem-button` without a quality row: the partition buttons of a cell's own window (drive window, the
+terminal's Cells tab), which are item-with-quality or fluid pickers and take no virtual signal.
+
 The cards are a list in the tags (no gaps: tags keep none; a card taken out closes up the list). The cell window
 (drive window, terminal's Cells tab) keeps its partition buttons, so nothing a player uses goes away; it
 shows the cell's cards but cannot change them. AE2's stricter way (partitions only in the workbench) would make every
@@ -1455,6 +1656,43 @@ items that have to go somewhere.
 A cell with an Inverter Card takes everything except its partition; with a Fuzzy Card its partition matches every
 quality; with an Equal Distribution Card no key takes more than AE2's share; with an Overflow Destruction Card it voids
 by AE2's rule. All of it through the fields above.
+
+### The tooltip of a cell (issue #64)
+
+`cell_stack` (`scripts/fork-me-network.lua`) is the one place that writes a cell into a stack definition: the workbench
+(`write`, `pack_cards`), `take_cell` (the drive window, the terminal's Cells tab), `unload_drive` (a mined or destroyed
+drive), `spill` (a drive that vanished), `fluid_cells` (fluid in new cells) and the alias rewrite of `apply_aliases` (its
+tags only) go through it (a blueprint holds no cell: a drive's blueprint tags are priority and partitions), and nothing else writes a cell's `custom_description`
+(`storable` and `stack_def` carry the description of a cell kept in the network as part of its key, unchanged). It
+used to describe a cell by what it holds, and an empty one by its partition's size or its card count, so a cell that
+held anything hid its partition and its cards, and a blacklist read like a whitelist. Now `cell_description` builds one
+concatenation, in the same order for every cell that is not fresh: the contents line (the old `cell-holds` and
+`fluid-cell-holds` keys with the same six parameters, or for an empty cell the new `cell-tip-empty` /
+`cell-tip-empty-fluid` with its bytes and types), the partition (`cell-tip-partition`, `cell-tip-partition-more`), the
+mode (`cell-mode-whitelist`, or `cell-mode-blacklist`), the cards (`cell-tip-cards`) and the sentences of Fuzzy, Equal
+Distribution and Overflow Destruction. The mode sentences are the windows': `N.cell_mode_text(kind, flags)` is the one
+source, `cell_mode_caption` of the windows joins them with a space (the keys lost their leading space for it), and the
+tooltip puts them on lines of their own.
+
+What the Factorio API allows (checked in the runtime test's probes on 2.0.77): a localised string takes at most 20
+parameters, 21 raises "Too many parameters for localised string: 21 > 20 (limit)"; the longest tooltip is 13 parts. A
+plain string parameter longer than 200 characters is accepted at runtime (the 200 characters of the API page are for the
+settings and prototype stages; a 12 icon line with quality is about 400). The icons are rich text in plain string
+parameters, as the contents list was already. Number parameters come back as strings when the description is read.
+How the lines break, how big the icons are and how the red line looks cannot be seen headless: the `[Task-Ingame]`
+issue of the pull request has the maintainer look.
+
+The old keys `cell-partitioned` and `cell-with-cards` stay in the locale: cells written before still carry them, and a
+description is translated when it is shown. The tags are untouched, so nothing is migrated; a cell in a chest keeps its
+old tooltip until a drive or the workbench writes it again.
+
+**Marking a partitioned cell without hovering (evaluated, nothing added).** `LuaItemStack.label` and `label_color` exist
+for an item with tags (the runtime probe set both), but `label` is a plain string (no locale: an item would show by its
+internal name; rich text icons would replace the cell's name in the tooltip), `label_color` only colours a label, and
+both can only be set on a stack object: the `ItemStackDefinition` that `cell_stack` returns and every drive path
+inserts has no such field, and the key a cell gets in the network (`storable`) does not see it. So only the workbench
+could mark a cell, and a cell would lose its mark on its first trip through a drive. The windows already frame a
+partitioned cell in yellow; the tooltip is the place for the rest.
 
 ### Saves
 
@@ -1698,6 +1936,32 @@ script inventory are gone.
   with the item's sprite, count (`number`), quality (`quality`, the bottom left mark) and the game's item tooltip
   (`elem_tooltip` item-with-quality). The empty slot the cursor's stack came from (`player.hand_location`) shows the
   game's hand (`utility/hand`). The inventory's filters (set by the player in the game's window) are not shown.
+  **The tooltip of a slot (issue #75).** `elem_tooltip` is the tooltip of the item's *prototype*, so it knew nothing of
+  the stack: a cell or an encoded pattern showed the prototype text in the pane and in the block slots (the workbench's
+  cell and card slots, a storage bus's card slots), where the game's inventory shows the stack's `custom_description`.
+  The API says an `elem_tooltip` "will be displayed above `tooltip`" (the `add` parameter of `LuaGuiElement`), and the
+  terminal's entries already use both. So `G.render_slot` also sets `tooltip = G.stack_tooltip(stack, hint)`: the stack's
+  description, a line break and the slot's own hint (nil: none); the item's name, stack size and prototype lines stay
+  where they were, above. The description is read only for an item of type `item-with-tags` (the only type with a
+  `custom_description`; looked up once per name in `tagged_names`, prototype data, never saved), and only when the slot is
+  written. The slot's signature gets the stack's `item_number` for those items (`G.stack_ident`; in the pane inline): every
+  write of a cell or pattern is a `set_stack`, which gives the stack a new number (the workbench relies on it for the cell it
+  keeps track of), so a cell whose partition changed in the workbench's slot is noticed without reading its description,
+  and an unchanged slot is not written again. A stack without a description gets what it got before. What is **not**
+  covered: the label of a blueprint or other item with a label, durability and ammo, health, a spoil timer, "Item has
+  tags": the prototype tooltip has none of them and nothing here reads them. Cost, per refresh of 80 slots (60 plain
+  stacks, 10 cells, 10 patterns; the signature work alone, headless, 160 000 slot visits per run): 2.0 µs a slot before,
+  2.4 µs after (0.16 ms against 0.19 ms a refresh); an inventory without such items pays one table lookup a slot. Reading a
+  description costs about 1 µs, once per changed slot. 2.1's GUI element `inventory` would show the game's own tooltips.
+  **The grids of stored items (issue #79).** An item with tags kept in the network has the key `name@quality#<json>`, the
+  json being `{ tags, description }` as `N.storable` made it; `G.slot` builds its buttons from a key, so it had only the
+  prototype's tooltip and stored cells and patterns looked alike in the terminal's storage tab (and the cell window's
+  contents). `G.key_description(key)` reads the description from the key's json (`helpers.json_to_table`, cached per key
+  for this load, never saved, emptied at 2000 entries) and `G.slot` puts it below the item's own tooltip, above the extra
+  tooltip a caller gives. The description is a function of the key (a stack written anew is another key), so a button never
+  shows an old one: the terminal's grid already makes a button again when its key changes, and its refresh of unchanged
+  entries calls nothing new. Cost: a plain key one `find` at the button's creation (0.4 µs), a key with tags one parse
+  (26 µs for a cell's 283 characters) once per key per load.
 * `G.window(name, { open, refresh, entities, shift, click })`: `shift(entity, stack, inventory)` says where a
   shift-clicked stack of the player's inventory goes (it moves what the block takes and returns the reason when it takes
   nothing); `click(entity, slot, cursor, inventory, shift)` is a click on a slot of the block: with an item in the cursor
@@ -1800,3 +2064,163 @@ events) was run against a mock of the GUI elements outside the game; how it look
 * Terminal search by localised name (a script cannot read localised names).
 * The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
+
+## A refilled chest behind a storage bus (issue #67)
+
+An extraction through a storage bus works on the real inventory and corrects the snapshot (`extract_key`), and told the
+bus nothing, so a refill of the chest showed at the bus's next regular read: at the idle limit (120 ticks with 64 buses or
+more, 30 ticks of a busy bus, with the probes' share on top) plus the window's 60 tick step, about 1.5 s on average for an
+infinity chest, 3 s at worst.
+
+**The bus.** `extract_key` calls the handler's `emptied(cell, key)` (new, optional) when an extraction took the last of a
+key out of an external cell; the item side of the storage bus answers with `M.reread(rec)`: its visit moves to REREAD = 5
+ticks later (`Sched.at` on the busy list, the same visit as any other). Not when the bus is due within those ticks anyway
+or waits on the busy list (`due < 0`), not on the fluid side, not while one is pending. The state is the record's (saved):
+`rereading`, `rr`, and what the re-read replaced (`rr_back` its due tick, `rr_probe` whether it was in the probe list,
+`rr_vis` its last visit), so a re-read that finds nothing puts the regular visit back and the counters keep the regular
+rhythm; a re-read is counted in the service quality only when it found something.
+
+**The bound.** A first attempt re-read after every key that ran out and failed `bench --check origin/main --sizes
+base,5000`: the storage bus latency went from 1.27 to 1.70 s at the maintainer's size and from 1.72 to 1.95 s at 5000,
+because the benchmark's chests are drained for a minute and never refilled, so every item type that ran out cost reads that
+the other buses' probes then waited for. So `rec.rr`: a re-read that found nothing sets it to false, and no re-read is
+scheduled while it is false; a regular read that finds something new (or a re-read that does) clears it. A chest that stays
+empty costs one extra read, a chest that refills is read again 5 ticks after every time it runs out.
+
+**The window.** The terminal's step is 60 ticks, so a take schedules one more refresh of the taker's window 10 ticks
+later (`follow_up` in `fork-me-terminal.lua`, `storage.fork_me_follow[player_index] = tick`, handled in the on_tick of
+`control.lua` with one `next()` while nothing is pending): at most one per player in that time, the same tick on every peer.
+
+**Not done, and why.** A partial take leaves the correct rest in the snapshot (`real - got`), so the terminal never shows
+items that are gone; only an increase from outside waits for the regular read, as for every change an inserter makes. The
+fluid side: a segment is read as a whole and a fluid does not run out in the way a stack does; the pump that refills a tank
+is seen at its regular read (the fluid bus's idle limit), and the same bound would apply if it is wanted later.
+
+**Test** (`runtimemod/refill.lua`, `ME storage bus refill test`): 70 more storage buses on chests make the item side's idle limit
+the real 120 ticks; bus A faces an infinity chest holding one stack of iron plates; after 450 ticks (the bus idle at its limit)
+the network takes the stack three times, and the next stack must be in the network at the next check (the test runs every 10
+ticks) each time: on main 120, 30 and 30 ticks, with the change 10, 10, 10 (a re-read after 5). Bus B faces a chest with
+three item types and nothing refills it: after the first type is taken and the re-read found nothing, taking the second
+schedules no re-read (a mutation without the bound fails it); a plate put into the chest and seen by a regular read arms
+it again (the next take schedules one 5 ticks later; main schedules none).
+
+## An ME Export Bus into a lab (issue #86)
+
+`T.INPUT["lab"] = defines.inventory.lab_input` (`scripts/fork-me-targets.lua`): the export bus's target resolution
+(`target_of`) takes any entity whose type has an input inventory in that table, so a lab is a target; `T.OUTPUT` has no lab
+(a lab has no output inventory), so an import bus facing one has no target. `T.SLOTTED` (assembling machine, furnace, lab)
+names the types whose input has a slot of its own for what it uses: `export_items` tops each filtered item up to one
+stack of it (`stack_of`), and the probe of a bus that found its target full (`probe_work`) wakes the bus when a slot has
+room again. A lab's slot per pack is the stack of that pack (200), which is what a machine's slot is too.
+
+What the lab's input does (runtime test): `insert` of a pack the lab uses fills its slot up to the stack, `insert` or
+`can_insert` of anything else (an iron plate) is refused, which `N.extract_to` handles without churn (it inserts into the
+target first and takes from the network only what went in). So a filter the lab cannot take moves nothing and costs the
+network nothing; for the probe a lab uses `can_insert` as well, since a refused filter would otherwise look like work for ever
+(its slot count is always below a stack). The vanilla lab (Space Age) uses all twelve science packs (`lab_inputs`), so there
+is no pack it refuses; the test's case for one is skipped unless a mod adds a tool the lab does not use.
+
+The packs come out of the network as whole items (since #76 a stack of full packs is stored and taken by stack, not by
+count); a pack the lab has partly used lives in its slot and is never taken back (there is no import side). Nothing about
+the bus's cap (256 items per second) changes: a lab uses a pack every research unit, the bus is visited again when its slot
+runs low (the headroom rule of #38).
+
+**Test** (`runtimemod/lab.lua`, `ME export bus into a lab test`): lab A with two pack filters holds a stack of the one and what
+the network had of the other, the network keeps the rest; lab C (a bus with a plate and a pack as filters) takes the pack
+and nothing of the plate; 150 packs taken out of lab A are topped up again; no pack made or lost; an import bus facing a lab has
+the status "no-target". On main it fails (every lab stays empty). No bench: the change is one table lookup in place of two
+type comparisons per visit.
+
+## Damaged items on the by-count paths (issue #84)
+
+An item that places an entity (a mined wall, belt or chest) carries that entity's health in its stack, below 1 when it was
+damaged. `N.storable` refuses such a stack (`is_used`: `health < 1`), but two paths move items by count and never look at the
+stack: the storage bus (`get_contents` / `get_item_count` count a damaged stack like a whole one, `inv.remove` hands it out as a
+new one) and the surplus of an interface row (`inv.remove` by count, then `N.insert` by key). On 2.0.77 a damaged stack does
+not merge with whole ones, but a count and a removal by count do not tell them apart (the runtime test confirms it on main:
+8 wooden chests came out of a chest with 5 damaged and 3 whole ones, all whole, and the damaged stack was gone; an interface
+took 3 iron chests as surplus out of a damaged stack of 5). #76 fixed this for tools, ammo and repair packs (`worn`).
+
+**Design.** The cost decides: a stack walk per storage bus visit would read every slot of every chest that holds a belt or a
+wall (a warehouse of 800 slots), so the walk is paid by the rare operations only.
+
+* `N.can_be_damaged(proto)`: the item has a `place_result` (or is a rail planner). Decided per prototype, cached
+  (`placeable` in the storage bus), never saved.
+* **Taking out** (`extract` of the storage bus handler): such an item goes through `N.remove_whole`, the whole stacks only
+  (the walk stops when the count is served, so a take costs the slots before the stacks it uses). When that serves less
+  than asked while the key is still in the chest, a damaged stack is there: the bus remembers it (`rec.dmg[key]`, the
+  record's state, saved). `N.extract_to` already takes back from the target what the storage did not give, so nothing is
+  duplicated.
+* **Showing**: a bus with `rec.dmg` counts a flagged key by `N.count_whole`, and its visit reads the whole counts
+  (`N.whole_counts`, now also for placeable items) for the flagged keys only; the flag is dropped when the whole count
+  equals the total (the damaged stack is gone). So the terminal may show a damaged stack until the first take finds it,
+  then shows only what can be handed out; a bus without a flagged key pays nothing at its visits.
+* **Interface row surplus**: `N.remove_whole` for such an item (as for `worn`): the damaged stack stays in the interface.
+  A damaged stack still counts toward its row's amount (`get_item_count`), so a row whose only stack is damaged does not ask
+  the network for whole ones: the maintainer swaps the stack.
+* Not touched: the import bus (`by_count` excludes every item with a `place_result`, so a damaged stack is refused stack by
+  stack, #85); the other ways in (`insert_stack`, the terminal's store) ask `storable`.
+
+**Test** (`runtimemod/damaged.lua`, `damaged items on the by-count paths test`): a chest behind a storage bus with a damaged stack
+of 5 wooden chests and a whole stack of 3: taking the 8 the terminal shows hands out the 3 whole ones, the damaged stack stays,
+the bus then shows 0; the damaged stack replaced by 4 whole ones, the bus shows 4 and hands them out; an interface row of 2 with
+a damaged stack of 5 and a whole stack of 3 iron chests: the 3 whole ones are the surplus, the damaged stack stays. On main every
+one of these fails.
+
+## An import bus with only refused stacks (issue #85)
+
+`import_items` took the answer "nothing stored" of `N.insert_partial` for a full network: a bus that found only stacks
+the network refuses itself (a used science pack, a damaged item, a blueprint) set `info.netfull` and registered
+`N.wait_for` for the item's key, so it was **parked** ("net-full") for room that does not change a refusal, and woke only at
+the slow fallback visit of a parked block (`Sched.PARK_FALLBACK`, 3600 ticks): whole items that came into its chest meanwhile
+waited up to a minute. `N.insert_partial` now returns its reason to `import_items`, and `N.refuses_stack(why)` (the
+`cannot-store*` reasons: this one stack) leaves it out: no `netfull`, no wait, and the stack's count is taken out of `held`
+(it stays in the source and is no rest to come back for, which would have made the bus come back at the speed of its cap
+for a stack it can never take). A bus that finds only refused stacks moves nothing and gets the status "empty": it is
+probed at its growing interval up to the idle limit and woken by the probe when the source's contents change, like any
+empty import bus, so whole items that arrive are taken within the idle limit (300 ticks by default). A real full network
+(`no-storage`) and a network without power or controller (`no-power`, `no-network`) are still `netfull`.
+
+**Test** (`runtimemod/refused.lua`, `ME import bus with refused stacks test`): the chest of bus A holds a used science pack and
+a blueprint only; after the bus has looked (status "empty", not parked, no wait for the key) iron plates are put into the
+chest and are in the network within the idle limit; the chest of bus B holds plates and the same refused stacks: the plates
+go in at once, the refused stacks stay, and the bus is not visited again for them. On main both buses are parked ("net-full", the test fails
+on that); the plates reach the network only when something wakes the parked bus (here the slow step did after 120 ticks, at the
+latest the fallback visit after 3600).
+
+## Damaged items are stored (issue #104)
+
+#76 refused every stack with a `health` below 1: the network keeps counts per key, and a count says nothing about health,
+so a damaged item would have come out whole. The maintainer's in-game test of #84 found it in the way ("Damaged or partly
+used items cannot be stored"). A damaged stack is now stored like an item with tags: under a key of its own,
+`name@quality#<json>`, the json holding `{ health, description }` (`N.storable` builds it). All items of a stack share one
+health (measured: a stack has one `health`, merging two damaged stacks in an inventory averages it, weighted by the
+counts, which is the game's own rule and not the network's), so a count of such a key is exact and nothing has to be
+decomposed.
+
+* **In:** `N.storable` returns the key and the data for a stack of an item that can be damaged (`N.can_be_damaged`:
+  `place_result`, rail planners) with `health < 1`; every path that calls it (the terminal's store, the pane's shift + click
+  and control + click, `insert_stack`, the import bus's and the interface's stack path through `insert_partial`) stores it.
+  The health is read once per plain stack, as before. Any other damaged item (the stack of an item that is no building) and
+  every partly used tool, ammunition or repair pack stays refused (`cannot-store-damaged`, now worded "Partly used items
+  (tools, ammunition, repair packs) cannot be stored").
+* **Out:** `stack_def` sets `health` from the key's data (and a description only for an item with tags, the one type that
+  has one); `extract_to` builds the stack, so a damaged key comes out at the health it went in with, in the cursor, an
+  inventory or a chest the export path fills. One inventory merges two damaged stacks it receives (averaging the health):
+  that is the game's rule.
+* **The terminal:** the key is an entry of its own with a description, "Damaged: 50% health" (`G.key_description` reads it
+  from the key's json, #79).
+* **Cells:** the key and its data go into the cell like a tags key (`cell.data`, the cell's tags); it is one type of the cell.
+* **Not reached:** the storage bus ignores keys with data (`item_of`), so a damaged item is never put into a chest, where it
+  would come out whole; export buses and interfaces work by plain name, so they never hand one out; autocrafting counts plain
+  keys only. A damaged stack in a chest behind a storage bus is not shown (#84); the import bus takes it into the network.
+* **Partly used tools, ammo and repair packs stay refused:** their wear is that of the top item of the stack only, so two
+  stacks of the same wear stored under one key would come out as one used item and the rest whole (a magazine with 3 rounds
+  twice would give 13 rounds back for 6). Storing each used item under a key of its own would be exact, at a type of a
+  cell per item; not done without a reason.
+
+**Test** (`runtimemod/damaged.lua`): `insert_stack` of a damaged stack of 5 wooden chests (health 0.5), a whole stack of 4 and a
+damaged stack of 2 (health 0.25) stores 5, 4 and 2: two keys with data (5 and 2), the plain count rises by 4 only, the chest
+behind the storage bus is unchanged, each damaged key comes out at its health, the terminal's description reads "50"; the
+import bus takes a damaged stack of 7 stone walls (health 0.4) as a key of 7 and the whole 3 as 3. The #76 test lost its cases
+of damaged chests (a refusal no more).

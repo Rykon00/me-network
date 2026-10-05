@@ -7,10 +7,11 @@
 --- in the outer one.
 __BENCH = { sections = {}, on = false }
 
-local function finish(sec, p, ...)
+local function finish(sec, p, m0, ...)
 	p.stop()
 	sec.total.add(p)
 	sec.depth = 0
+	if m0 then sec.kb = sec.kb + (collectgarbage("count") - m0) end     -- (alloc mode: the collector is stopped)
 	return ...
 end
 
@@ -25,7 +26,8 @@ function __BENCH_WRAP(name, f)
 		sec.depth = 1
 		local p = sec.tmp
 		p.reset()
-		return finish(sec, p, f(...))
+		local m0 = __BENCH.alloc and collectgarbage("count") or nil
+		return finish(sec, p, m0, f(...))
 	end
 end
 

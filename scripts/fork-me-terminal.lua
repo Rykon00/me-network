@@ -34,6 +34,7 @@ local N = require("scripts.fork-me-network")
 local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
 local P = require("scripts.fork-me-patterns")
+local picker = require("scripts.fork-me-picker")
 
 local M = {}
 
@@ -80,20 +81,121 @@ end
 --- data of the tabs (also the remote interface: the runtime test calls the same code)
 --------------------------------------------------------------------------------
 
---- The entries of the storage grid: the items, then the fluids (key "fluid/<name>", fluid = true), each filtered
---- by the search and sorted by amount or name. `kind`: "all" (default), "items" or "fluids".
-function M.entries(net, filter, sort, kind)
-	filter = (filter or ""):lower():gsub("%s+", "-")
-	local items, liquids = {}, {}
-	if kind ~= "fluids" then
-		for _, c in pairs(N.contents(net)) do
-			if prototypes.item[c.name] and (filter == "" or c.name:find(filter, 1, true)) then items[#items + 1] = c end
+--- Issue #50, lever 8: what an entry reads of its key alone, once per key (per load: prototypes do not change while the
+--- game runs): a fluid's name, an item's name, quality and whether it has data (N.parse_key), and whether the prototype
+--- exists (an entry of a removed prototype is not shown)
+local key_info, key_info_n = {}, 0
+local function info_of(key)
+	local i = key_info[key]
+	if not i then
+		if key_info_n >= 50000 then key_info, key_info_n = {}, 0 end   -- (keys with data can be many)
+		if N.is_fluid_key(key) then
+			local name = key:sub(7)
+			i = { fluid = true, name = name, ok = prototypes.fluid[name] ~= nil }
+		else
+			local name, quality, json = N.parse_key(key)
+			i = { name = name, quality = quality, special = json ~= nil, ok = prototypes.item[name] ~= nil }
+		end
+		key_info[key] = i
+		key_info_n = key_info_n + 1
+	end
+	return i
+end
+
+--- issue #50, lever 8: { kept, resorted, sorted } lists since the load (tests, the benchmark)
+local list_stats = { kept = 0, resorted = 0, sorted = 0 }
+
+--- `list` sorted by `order` (a strict total order: the result is the one table.sort gives). The list mostly comes in the
+--- order of the last refresh, where an insertion sort moves only what changed; when that takes too long, table.sort.
+local function sort_list(list, order)
+	local n = #list
+	local moves, limit = 0, 4 * n + 64
+	for i = 2, n do
+		local e = list[i]
+		local j = i - 1
+		while j >= 1 and order(e, list[j]) do
+			list[j + 1] = list[j]
+			j = j - 1
+			moves = moves + 1
+		end
+		list[j + 1] = e
+		if moves > limit then
+			table.sort(list, order)
+			list_stats.sorted = list_stats.sorted + 1
+			return
 		end
 	end
-	if kind ~= "items" then
-		for name, amount in pairs(N.fluid_contents(net)) do
-			if prototypes.fluid[name] and (filter == "" or name:find(filter, 1, true)) then
-				liquids[#liquids + 1] = { key = "fluid/" .. name, name = name, count = amount, fluid = true }
+end
+
+--- the entries of `current` (key -> entry) in the order of `prev` (the last sorted entries) where they were there, the
+--- others after them, then sorted (without `prev`: table.sort)
+local function resorted(prev, current, order)
+	local list, n = {}, 0
+	if not prev then                                  -- (a first list: no order to start from)
+		for _, e in pairs(current) do
+			n = n + 1
+			list[n] = e
+		end
+		table.sort(list, order)
+		return list
+	end
+	for _, e in ipairs(prev) do
+		local now = current[e.key]
+		if now then
+			n = n + 1
+			list[n] = now
+			current[e.key] = false
+		end
+	end
+	for _, e in pairs(current) do
+		if e then
+			n = n + 1
+			list[n] = e
+		end
+	end
+	sort_list(list, order)
+	return list
+end
+
+--- Issue #50, lever 8: the last entries per network (weak: a network that is gone takes them along), search, sort and
+--- kind, with the network's contents version (net.cver: every change of an amount counts it up) and whether it was
+--- usable. Derived from the state only, outside storage: a peer without them makes the same list.
+local lists = setmetatable({}, { __mode = "k" })
+local KEEP_LISTS = 16
+
+--- The entries of the storage grid: the items, then the fluids (key "fluid/<name>", fluid = true), each filtered
+--- by the search and sorted by amount or name. `kind`: "all" (default), "items" or "fluids". Issue #50, lever 8: the
+--- same table as the last call while the network's contents did not change (do not change it). `fresh` (tests, the
+--- benchmark): made from nothing, as at a first refresh, and not kept.
+function M.entries(net, filter, sort, kind, fresh)
+	filter = (filter or ""):lower():gsub("%s+", "-")
+	local usable = N.usable(net) and true or false
+	local per = lists[net]
+	if not per then
+		per = { n = 0, of = {} }
+		lists[net] = per
+	end
+	local id = tostring(sort) .. "|" .. tostring(kind) .. "|" .. filter
+	local last = not fresh and per.of[id] or nil
+	if last and last.cver == net.cver and last.usable == usable then
+		list_stats.kept = list_stats.kept + 1
+		return last.list
+	end
+	if last then list_stats.resorted = list_stats.resorted + 1 end
+	if not last and not fresh then
+		if per.n >= KEEP_LISTS then per.n, per.of = 0, {} end
+		per.n = per.n + 1
+	end
+	local items, liquids = {}, {}
+	if usable then
+		for key, count in pairs(net.items) do
+			local i = info_of(key)
+			if i.ok and (filter == "" or i.name:find(filter, 1, true)) then
+				if i.fluid then
+					if kind ~= "items" then liquids[key] = { key = key, name = i.name, count = count, fluid = true } end
+				elseif kind ~= "fluids" then
+					items[key] = { key = key, name = i.name, quality = i.quality, count = count, special = i.special }
+				end
 			end
 		end
 	end
@@ -105,10 +207,13 @@ function M.entries(net, filter, sort, kind)
 		end
 		return a.key < b.key
 	end
-	table.sort(items, order)
-	table.sort(liquids, order)
-	for _, f in ipairs(liquids) do items[#items + 1] = f end
-	return items
+	items = resorted(last and last.items, items, order)
+	liquids = resorted(last and last.liquids, liquids, order)
+	local list = {}
+	for i, e in ipairs(items) do list[i] = e end
+	for _, f in ipairs(liquids) do list[#list + 1] = f end
+	if not fresh then per.of[id] = { cver = net.cver, usable = usable, items = items, liquids = liquids, list = list } end
+	return list
 end
 
 --- The crafting tab's preview for `amount` of `key`: { ok, reason, runs, steps, reserve = { key -> n },
@@ -156,10 +261,11 @@ function M.jobs(terminal)
 	return net and autocraft.jobs(net) or {}
 end
 
---- the cells tab: the drives of the network with their cells (N.drives_of)
+--- the cells tab: the drives of the network with their cells (N.drives_of; issue #50, lever 8: light, without each cell's
+--- items and cards, which the tab does not show)
 function M.cells(terminal)
 	local net = network(terminal)
-	return net and N.drives_of(net) or {}
+	return net and N.drives_of(net, true) or {}
 end
 
 --------------------------------------------------------------------------------
@@ -322,7 +428,9 @@ function M.store_cursor(player, terminal)
 end
 
 --- Store items `name` of `quality` from the inventory `inv`: all of them, or one stack (`all` false).
---- Stacks with own data (tags) are stored stack by stack. Returns the count stored, or nil and a reason.
+--- Stacks with own data (tags) are stored stack by stack. A stack the network refuses (a used one: issue #76) stays and
+--- the others go on; the reason of the first refusal is the answer when nothing was stored. Returns the count stored, or
+--- nil and a reason.
 function M.store_inventory_item(inv, terminal, name, quality, all)
 	local net, why = network(terminal)
 	if not net then return nil, why end
@@ -332,8 +440,12 @@ function M.store_inventory_item(inv, terminal, name, quality, all)
 		local stack = inv[i]
 		if stack.valid_for_read and stack.name == name and stack.quality.name == (quality or "normal") then
 			local n, w = N.insert_stack(net, stack)
-			if n then total = total + n else reason = w end
-			if not all or reason then break end
+			if n then total = total + n
+			else
+				reason = reason or w
+				if not N.refuses_stack(w) then break end                  -- (no room, no power: the next stack fares no better)
+			end
+			if not all then break end
 		end
 	end
 	if total == 0 and reason then return nil, reason end
@@ -456,12 +568,43 @@ M.open = open
 local function refresh_storage(player, st, frame, net)
 	local status, grid = G.find(frame, "fork_me_status"), G.find(frame, "fork_me_grid")
 	local items = M.entries(net, st.filter, st.sort, st.kind)
-	--- unchanged since the last refresh: keep the buttons (and their open tooltips)
-	local sig = { st.sort or "count", st.kind or "all" }
-	for i = 1, math.min(#items, MAX_BUTTONS) do sig[#sig + 1] = items[i].key .. "=" .. items[i].count end
-	sig = table.concat(sig, ",")
-	if st.shown == sig then return end
-	st.shown = sig
+	local n = math.min(#items, MAX_BUTTONS)
+	local sort, kind = st.sort or "count", st.kind or "all"
+	--- What the grid shows is kept in storage (every peer sets the same buttons) and compared entry by entry. Issue #50,
+	--- lever 8: unchanged since the last refresh: nothing is set (open tooltips stay); a button whose entry has another
+	--- amount gets the new number, one whose entry is another key is made again in its place. A new sort, kind or number
+	--- of buttons (or a window of an older version, which kept a signature string) builds the grid anew.
+	local shown = st.shown
+	if type(shown) == "table" and shown.sort == sort and shown.kind == kind and shown.n == n
+		and (shown.total > MAX_BUTTONS) == (#items > MAX_BUTTONS) then
+		local keys, counts = shown.keys, shown.counts
+		local first
+		for i = 1, n do
+			if keys[i] ~= items[i].key or counts[i] ~= items[i].count then first = i break end
+		end
+		local children = first and grid.children
+		if not first or #children == n then              -- (else the grid is not what was kept: built anew below)
+			for i = first or n + 1, n do
+				local c = items[i]
+				if keys[i] ~= c.key then
+					children[i].destroy()
+					G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil, nil, i)
+					keys[i], counts[i] = c.key, c.count
+				elseif counts[i] ~= c.count then
+					G.slot_amount(children[i], c.key, c.count)
+					counts[i] = c.count
+				end
+			end
+			if #items > MAX_BUTTONS and shown.total ~= #items then
+				status.caption = { "fork-me-terminal.too-many", MAX_BUTTONS, #items }
+			end
+			shown.total = #items
+			return
+		end
+	end
+	local keys, counts = {}, {}
+	for i = 1, n do keys[i], counts[i] = items[i].key, items[i].count end
+	st.shown = { sort = sort, kind = kind, n = n, keys = keys, counts = counts, total = #items }
 	grid.clear()
 	status.visible = false
 	if #items == 0 then
@@ -644,7 +787,7 @@ function M.cell_tooltip(c)
 end
 
 local function refresh_cells(st, frame, net)
-	local drives = N.drives_of(net)
+	local drives = N.drives_of(net, true)
 	local sig = {}
 	for _, d in ipairs(drives) do
 		sig[#sig + 1] = d.unit .. "p" .. d.priority
@@ -683,30 +826,12 @@ local function refresh_cells(st, frame, net)
 	end
 end
 
---- a signal chooser for an item or fluid key (processing rows)
-local function signal_chooser(parent, key, tags)
-	local signal
-	if key then
-		if N.is_fluid_key(key) then signal = { type = "fluid", name = key:sub(7) } else signal = { type = "item", name = key } end
-	end
-	return parent.add{ type = "choose-elem-button", elem_type = "signal", signal = signal, style = "slot_button", tags = tags }
-end
-
---- the key of a chosen signal: items and fluids (no virtual signals, no items with tags)
-local function key_of_signal(signal)
-	if not signal then return nil end
-	local key = signal.type == "fluid" and ("fluid/" .. signal.name) or ((signal.type == nil or signal.type == "item") and signal.name or nil)
-	if key and P.valid_key(key) then return key end
-	return nil
-end
-M.key_of_signal = key_of_signal
-
 local function editor_rows(parent, ed, which, max)
 	local t = parent.add{ type = "table", column_count = 6 }
 	t.style.horizontal_spacing = 4
 	for i = 1, max do
 		local row = ed[which][i]
-		signal_chooser(t, row and row.key, G.act("pat_row", { which = which, index = i }))
+		G.key_button(t, row and row.key, G.act("pat_row", { which = which, index = i }), { "fork-me-gui.key-slot-tooltip" })
 		local f = G.number_field(t, row and row.amount or 0, G.act("pat_amount", { which = which, index = i }), 60)
 		f.allow_decimal = true
 		f.enabled = row ~= nil
@@ -849,6 +974,34 @@ G.on("term_store", function(event, player)
 	M.refresh(player)
 end)
 
+--- Issue #67: what the network takes out of a chest behind a storage bus may come back within a few ticks (the bus reads
+--- the chest again REREAD ticks after the take, scripts/fork-me-storagebus.lua), but the window is refreshed every 60 ticks.
+--- So a take schedules one more refresh of the taker's window FOLLOW_TICKS later; a second take in the meantime changes
+--- nothing (at most one per player in that time). The table is state (saved): every peer refreshes the same tick.
+local FOLLOW_TICKS = 10
+
+local function follow_up(player)
+	local f = storage.fork_me_follow
+	if not f then
+		f = {}
+		storage.fork_me_follow = f
+	end
+	if not f[player.index] then f[player.index] = game.tick + FOLLOW_TICKS end
+end
+
+--- every tick (control.lua): the refreshes that are due; one comparison while none is pending
+function M.on_tick(tick)
+	local f = storage.fork_me_follow
+	if not f or next(f) == nil then return end
+	for index, due in pairs(f) do
+		if due <= tick then
+			f[index] = nil
+			local player = game.get_player(index)
+			if player and player.connected then G.refresh_one(player) end
+		end
+	end
+end
+
 G.on("term_take", function(event, player, el)
 	local st = st_of(player)
 	if not (st and event.name == defines.events.on_gui_click) then return end
@@ -856,6 +1009,7 @@ G.on("term_take", function(event, player, el)
 	local _, why = M.take(player, st.entity, el.tags.key, mode)
 	report(player, why)
 	M.refresh(player)
+	follow_up(player)
 end)
 
 G.on("term_pick", function(event, player, el)
@@ -922,14 +1076,31 @@ G.on("pat_recipe", function(event, player, el)
 	M.refresh(player)
 end)
 
+--- issue #70: a click on a row's button opens the picker (items and fluids, no quality: a pattern names plain items), right
+--- click empties the row
 G.on("pat_row", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
+	if event.name ~= defines.events.on_gui_click then return end
 	local st = st_of(player)
 	if not st then return end
 	st.pat = st.pat or new_editor()
-	local key = key_of_signal(el.elem_value)
-	if el.elem_value and not key then report(player, "not-a-pattern-row") end
-	M.set_editor_row(st.pat, el.tags.which, el.tags.index, key or false)
+	local which, index = el.tags.which, el.tags.index
+	local row = st.pat[which][index]
+	if event.button == defines.mouse_button_type.right then
+		if row then M.set_editor_row(st.pat, which, index, false) M.refresh(player) end
+		return
+	end
+	picker.open(player, { callback = "pat_row", data = { which = which, index = index }, kinds = { item = true, fluid = true },
+		preset = picker.preset_of(row and row.key), quality = false })
+end)
+
+--- (a key a pattern cannot name, an item with tags, empties the row, with the message, as before)
+picker.on_confirm("pat_row", function(player, data, choice)
+	local st = st_of(player)
+	if not (st and st.pat) then return end
+	local key = picker.key_of(choice, false)
+	if key and not P.valid_key(key) then key = nil end
+	if not key then report(player, "not-a-pattern-row") end
+	M.set_editor_row(st.pat, data.which, data.index, key or false)
 	M.refresh(player)
 end)
 
@@ -994,10 +1165,14 @@ remote.add_interface("gregtorio-me-terminal", {
 		return M.store_inventory_item(inventory, terminal, name, quality, all)
 	end,
 	--- the grid's entries for a search text, a sort ("count" or "name") and a kind ("all", "items", "fluids")
-	entries = function(terminal, filter, sort, kind)
+	--- `fresh` (tests, the benchmark): made from nothing, as at a first refresh, and not kept
+	entries = function(terminal, filter, sort, kind, fresh)
 		local net = network(terminal)
-		return net and M.entries(net, filter, sort, kind) or {}
+		return net and M.entries(net, filter, sort, kind, fresh) or {}
 	end,
+	--- issue #50, lever 8: { kept, resorted, sorted } since the load: lists given back unchanged, made from the last one, sorted
+	--- with table.sort after too many moves
+	entries_stats = function() return { kept = list_stats.kept, resorted = list_stats.resorted, sorted = list_stats.sorted } end,
 	--- nil when the terminal works, else the reason
 	problem = function(terminal) return problem(terminal) end,
 	--- the crafting tab: preview and the Craft button; the jobs tab; the cells tab
