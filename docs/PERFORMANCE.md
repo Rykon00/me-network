@@ -2248,3 +2248,39 @@ items per second 275 500 → 334 900 (+21.6 %), fluid 1.83 → 2.55 million per 
 (script ms per 1000 items per second 0.0084 → 0.0074). The Linux machine of issue #50 saw the same direction but +43 % on the 99th
 percentile and +35 % on the collector; on this machine the long window is steady (±0.09 ms on p99 between rounds), and what is open
 at 20 000 is the ticks over 5 ms (the fluid interface streaks, "What was tried against the 99th percentile at 20 000").
+
+### Issue #56: the window at 20 000 and where the ticks over 5 ms come from
+
+#### Two changes of the benchmark (`tools/devcheck/devcheck.py`)
+
+* **`--check` at 20 000 and more measures 10 800 ticks** unless `--ticks` is given (the maintainer's decision): the refill
+  transient of about 2000 ticks after tick 600 is then a small part of the window. 5000 and `base` keep the 3600 ticks, and their
+  baselines.
+* **The benchmark mod's own sample ticks are left out of the timing**, as the ticks next to the two probes already were: every
+  300 ticks inside the window it calls the remote `backlogs` (a walk over every block record with the counts by park and probe
+  reason, at 20 000 several ms), and once the scheduler's counters (tick 600 + 1200). Versions without the remote (0.3.0) paid
+  nothing there, so `--check v0.3.0` counted about 35 of main's ticks over 5 ms per 10 800 ticks that were the benchmark's.
+
+#### Where the ticks over 5 ms are
+
+One run at 20 000 (10 800 ticks, main 5244fb1), the script time per tick by its phase in 60 ticks (median of the other phases
+2.38 ms): ticks with `tick % 6 == 0` are 0.7 ms dearer and hold 137 of the 227 ticks over 5 ms; `tick % 60 == 0` is 2.8 ms
+dearer (49 of them); `tick % 300 == 0` held 35 (the benchmark's sample, above). Profilers per part of the tick, by phase (ms per
+tick): the circuit interfaces (the hooks of the job step) 0.92 at `% 6`, 0.70 at `% 60`, 0.03 elsewhere: at the default 10
+updates per second `Sched.per_second` gives the budget to every 6th tick, and a write is a section of about 900 signals (0.73 ms,
+the engine's); the network's slow step (`on_nth_tick` 60) 0.65; the interfaces and buses 1.69 to 1.81 in every phase. The fluid
+interface streaks of round three are gone since #46: at 20 000 a fluid side costs 17.6 µs per interface visit on average
+(`interface_sides`), `export_side` 40 µs, against 139 µs for a whole interface visit.
+
+**Tried, not kept:** the circuit budget 3 ticks later (`per_second(rate, tick + 3)`), so a write never falls on the slow step's
+tick or the CPU assignment's at the default rate. `bench --check origin/main --sizes base,5000,20000` (three rounds in turns):
+20 000 avg 2.560 / 2.579 ms, p99 5.39 / 5.40 ms, ticks over 5 ms 175 / 178; no difference. The ticks over 5 ms are the I/O
+ticks that a 0.7 ms write lands on, wherever it lands; the write itself cannot be made cheaper exactly ("Measured and not
+built", lever 7).
+
+#### Against 0.3.0 now
+
+`bench --check v0.3.0 --sizes 20000 --burst 0 --runs 3` with both changes (main 5244fb1, game closed, in turns): **green**,
+regressions 0. Script avg 2.381 → 2.495 ms (+4.8 %), p99 5.33 → 5.44 ms (+2 %), ticks over 5 ms 147 → 162 (+10 %, noise ±28),
+the collector 0.097 → 0.124 ms (noise ±0.022), while main moves 21.6 % more items and 39.6 % more fluid per second, makes 7.6 %
+more crafts and keeps the `pair` machines at 99.97 % (0.3.0: 98.3 %).

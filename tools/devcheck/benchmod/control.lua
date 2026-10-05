@@ -86,7 +86,8 @@ do                                    -- (the RAW items that exist, at every loa
 end
 local BLOCKERS = { "stone", "coal" }  -- idle scene: a sink chest is filled with one of these, so nothing fits in
 local PART_GAP = 12                   -- tiles between two networks of the `networks` variant
-local SAMPLE_TICKS = 300              -- the backlogs are sampled this often inside the window (one remote call)
+local SAMPLE_TICKS = 300              -- the backlogs are sampled this often inside the window (one remote call; issue #56:
+                                       -- devcheck leaves these ticks out of the timing, keep its BENCH_SAMPLE_TICKS equal)
 local STEADY_TICKS = 1200             -- issue #51: the starved arrivals are also counted from this tick of the window on, after
                                       -- the first visits at the sources filled and the sinks emptied at its start
 local ALLOC_FROM, ALLOC_TICKS = 300, 300 -- after the window: the Lua memory the mod allocates in 300 ticks, the collector stopped (issue #43)
