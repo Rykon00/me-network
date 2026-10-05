@@ -184,7 +184,7 @@ return function(H)
 			--- used items are refused with the existing message and stay as they were
 			local USED = {
 				{ PACK, def(PACK, 5, { durability = 0.5 }), "used science packs" }, { MAG, def(MAG, 5, { ammo = 3 }), "used magazines" },
-				{ REPAIR, def(REPAIR, 5, { durability = 100 }), "used repair packs" }, { "wooden-chest", def("wooden-chest", 3, { health = 0.5 }), "damaged chests" },
+				{ REPAIR, def(REPAIR, 5, { durability = 100 }), "used repair packs" },
 			}
 			for _, case in ipairs(USED) do
 				for _, path in ipairs({ "terminal store", "pane shift + click at the terminal", "pane shift + click at the controller" }) do
@@ -255,7 +255,7 @@ return function(H)
 			local ic = sc.ichest.get_inventory(defines.inventory.chest)
 			local slots = {
 				def(PACK, 20), def(PACK, 5, { durability = 0.5 }), def(MAG, 30), def(MAG, 5, { ammo = 3 }), def(REPAIR, 10),
-				def(REPAIR, 5, { durability = 100 }), def("wooden-chest", 3, { health = 0.5 }), { name = "blueprint", count = 1 },
+				def(REPAIR, 5, { durability = 100 }), { name = "blueprint", count = 1 },
 				{ name = "blueprint-book", count = 1 }, def("iron-plate", 50), { name = "car", count = 1 }, { name = "light-armor", count = 1 },
 			}
 			if prototypes.quality["legendary"] then slots[#slots + 1] = def(PACK, 7, { quality = "legendary" }) end
@@ -320,9 +320,9 @@ return function(H)
 			expect(delta("iron-plate") == 50 and scan(ic, "iron-plate") == 0, "import bus: iron plates by count: " .. delta("iron-plate"))
 			local kept = {}
 			for i = 1, #ic do if ic[i].valid_for_read then kept[ic[i].name] = (kept[ic[i].name] or 0) + ic[i].count end end
-			note("import bus on a chest", "wooden-chest x3 damaged, blueprint, blueprint-book, car, light-armor", "left in the chest: " .. serpent.line(kept, { comment = false }))
-			expect(kept["wooden-chest"] == 3 and kept["blueprint"] == 1 and kept["blueprint-book"] == 1 and kept["car"] == 1 and kept["light-armor"] == 1,
-				"import bus: what carries data or is damaged stays in the chest: " .. serpent.line(kept, { comment = false }))
+			note("import bus on a chest", "blueprint, blueprint-book, car, light-armor", "left in the chest: " .. serpent.line(kept, { comment = false }))
+			expect(kept["blueprint"] == 1 and kept["blueprint-book"] == 1 and kept["car"] == 1 and kept["light-armor"] == 1,
+				"import bus: what carries data stays in the chest: " .. serpent.line(kept, { comment = false }))
 			local all_in = true
 			for _, name in ipairs(st.tools) do
 				local in_net, left = count(name) - base["tool:" .. name], scan(ic, name)

@@ -92,12 +92,15 @@ item is another type. A network fills cells that already hold an item first, the
   (with their items) on the ground. Blueprints and copies of a drive come without cells, but with the drive's
   priority and the partition of each slot (the next cell put into that slot gets it).
 * Cells can be stored in the network like any item; one that holds items is stored with them.
-* **Storable:** plain items, items with tags (cells, patterns), and whole tools, ammunition and repair packs:
-  science packs, magazines and unused repair packs go in and come out with the count they went in with.
+* **Storable:** plain items, items with tags (cells, patterns), whole tools, ammunition and repair packs
+  (science packs, magazines and unused repair packs go in and come out with the count they went in with), and **damaged
+  items** (a mined wall, belt or chest): a damaged stack is kept apart from the whole ones with its health, shown in the
+  terminal as "Damaged: 50% health", and comes out damaged. Two damaged stacks of different health that you put into one
+  inventory merge into one of averaged health, as in the game.
 * **Not storable:** items with an inventory or equipment grid (armor), blueprints and blueprint books, planners and
   selection tools, the spidertron remote, vehicles and other items with entity data, items with a label, items that
-  spoil (the network would stop their decay), and damaged or partly used items (a used science pack, repair pack or
-  magazine; a stack whose top item is used is refused as a whole). Each refusal says what was refused.
+  spoil (the network would stop their decay), and partly used tools, ammunition and repair packs (a used science pack,
+  repair pack or magazine; a stack whose top item is used is refused as a whole). Each refusal says what was refused.
 * **Old drive items** (ME Drive 1k ... 256k from before the rework) cannot be crafted any more; placing one
   builds an ME Drive with its four (empty) cells, the 256k one also gives its acceleration card back.
 
@@ -153,7 +156,7 @@ tabs:
   yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).
   **Storing:** your inventory is on the left of the window (issue #28): **shift + click** a stack there to store it
   in the network, **control + click** to store every stack of that item (a stack the network refuses stays, the others
-  go in); what the network cannot take (a blueprint, an item that spoils, a damaged or partly used one, no room) stays
+  go in); what the network cannot take (a blueprint, an item that spoils, a partly used one, no room) stays
   with a short message that says why. What you take out appears there at once.
   "Store item in hand" stores the cursor. Amounts are shown as 999, 1.2k, 12k, 1.5M, 2.5G everywhere.
 * **Crafting:** every item and fluid a pattern can make, in the same grid (the picked one in yellow). Pick one,

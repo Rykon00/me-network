@@ -2461,7 +2461,20 @@ function M.storable(stack)
 	if proto.get_spoil_ticks(stack.quality) > 0 then return "cannot-store-spoil" end
 	local class = ITEM_CLASS[proto.type] or "cannot-store"
 	if class ~= "plain" and class ~= "worn" and class ~= "tags" and class ~= "label" then return class end
-	if is_used(stack, proto) then return "cannot-store-damaged" end
+	if class == "plain" then
+		local health = stack.health                                       -- (the one read a plain item needs)
+		if health < 1 then
+			if not M.can_be_damaged(proto) then return "cannot-store-damaged" end
+			--- issue #102: a damaged item (a mined wall, belt, chest) is stored with its health, as a key of its own like an item
+			--- with tags: its health is part of the key, the stack comes out with it. All items of a stack share one health, so
+			--- a count of such a key is exact. (A partly used tool, ammo or repair tool stays refused: its wear is that of the
+			--- top item only, and two stacks of the same wear would come out as one used item and the rest whole.)
+			local data = { health = health, description = { "fork-me-net.damaged-item", math.floor(health * 100 + 0.5) } }
+			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
+		end
+	elseif is_used(stack, proto) then
+		return "cannot-store-damaged"
+	end
 	if class == "tags" then
 		if stack.label then return "cannot-store-label" end            -- (a label cannot be put back with the stack)
 		local tags = stack.tags
@@ -2507,10 +2520,12 @@ end
 local function stack_def(net, key, count)
 	local name, q = parse_key(key)
 	local def = { name = name, quality = q, count = count }
-	local data = key:find("#", 1, true) and data_of(net, key)        -- only items with tags have data
+	local data = key:find("#", 1, true) and data_of(net, key)        -- only items with tags and damaged items have data
 	if data then
 		def.tags = data.tags
-		if data.description then def.custom_description = data.description end
+		if data.health then def.health = data.health end                -- issue #102: a damaged item comes out as damaged
+		--- (only an item with tags has a description of its own; the terminal shows the one in the key for the others)
+		if data.description and prototypes.item[name].type == "item-with-tags" then def.custom_description = data.description end
 	end
 	return def
 end
