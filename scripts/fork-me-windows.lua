@@ -369,13 +369,17 @@ function M.refresh_cell(player, frame)
 	return true
 end
 
---- what the cards make of a cell's partition (a blacklist, every quality, equal shares, destroys): one line
+--- what the cards make of a cell's partition (a blacklist, every quality, equal shares, destroys): one line. The
+--- sentences are N.cell_mode_text's, which the item tooltip of the cell (issue #64) puts on lines of their own.
 function M.cell_mode_caption(c)
 	local parts = { "" }
-	if c.inverted then parts[#parts + 1] = { "fork-me-gui.cell-mode-blacklist" } end
-	if c.fuzzy then parts[#parts + 1] = { "fork-me-gui.cell-mode-fuzzy" } end
-	if c.equal then parts[#parts + 1] = { "fork-me-gui.cell-mode-equal", G.fmt(c.equal) } end
-	if c.void then parts[#parts + 1] = { "fork-me-gui.cell-mode-void" } end
+	for _, kind in ipairs({ "inverted", "fuzzy", "equal", "void" }) do
+		local text = N.cell_mode_text(kind, c)
+		if text then
+			if #parts > 1 then parts[#parts + 1] = " " end
+			parts[#parts + 1] = text
+		end
+	end
 	return #parts > 1 and parts or ""
 end
 
@@ -1337,6 +1341,7 @@ remote.add_interface("gregtorio-me-gui", {
 	has_window = function(entity) return G.has_window(entity) end,
 	drive_data = function(drive) return M.drive_data(drive) end,
 	cell_data = function(drive, slot) return M.cell_data(drive, slot) end,
+	cell_mode_caption = function(c) return M.cell_mode_caption(c) end,
 	set_partition_slot = function(drive, slot, index, key) return M.set_partition_slot(drive, slot, index, key) end,
 	controller_data = function(entity) return M.controller_data(entity) end,
 	provider_data = function(entity) return M.provider_data(entity) end,

@@ -1581,6 +1581,43 @@ A cell with an Inverter Card takes everything except its partition; with a Fuzzy
 quality; with an Equal Distribution Card no key takes more than AE2's share; with an Overflow Destruction Card it voids
 by AE2's rule. All of it through the fields above.
 
+### The tooltip of a cell (issue #64)
+
+`cell_stack` (`scripts/fork-me-network.lua`) is the one place that writes a cell into a stack definition: the workbench
+(`write`, `pack_cards`), `take_cell` (the drive window, the terminal's Cells tab), `unload_drive` (a mined or destroyed
+drive), `spill` (a drive that vanished), `fluid_cells` (fluid in new cells) and the alias rewrite of `apply_aliases` (its
+tags only) go through it (a blueprint holds no cell: a drive's blueprint tags are priority and partitions), and nothing else writes a cell's `custom_description`
+(`storable` and `stack_def` carry the description of a cell kept in the network as part of its key, unchanged). It
+used to describe a cell by what it holds, and an empty one by its partition's size or its card count, so a cell that
+held anything hid its partition and its cards, and a blacklist read like a whitelist. Now `cell_description` builds one
+concatenation, in the same order for every cell that is not fresh: the contents line (the old `cell-holds` and
+`fluid-cell-holds` keys with the same six parameters, or for an empty cell the new `cell-tip-empty` /
+`cell-tip-empty-fluid` with its bytes and types), the partition (`cell-tip-partition`, `cell-tip-partition-more`), the
+mode (`cell-mode-whitelist`, or `cell-mode-blacklist`), the cards (`cell-tip-cards`) and the sentences of Fuzzy, Equal
+Distribution and Overflow Destruction. The mode sentences are the windows': `N.cell_mode_text(kind, flags)` is the one
+source, `cell_mode_caption` of the windows joins them with a space (the keys lost their leading space for it), and the
+tooltip puts them on lines of their own.
+
+What the Factorio API allows (checked in the runtime test's probes on 2.0.77): a localised string takes at most 20
+parameters, 21 raises "Too many parameters for localised string: 21 > 20 (limit)"; the longest tooltip is 13 parts. A
+plain string parameter longer than 200 characters is accepted at runtime (the 200 characters of the API page are for the
+settings and prototype stages; a 12 icon line with quality is about 400). The icons are rich text in plain string
+parameters, as the contents list was already. Number parameters come back as strings when the description is read.
+How the lines break, how big the icons are and how the red line looks cannot be seen headless: the `[Task-Ingame]`
+issue of the pull request has the maintainer look.
+
+The old keys `cell-partitioned` and `cell-with-cards` stay in the locale: cells written before still carry them, and a
+description is translated when it is shown. The tags are untouched, so nothing is migrated; a cell in a chest keeps its
+old tooltip until a drive or the workbench writes it again.
+
+**Marking a partitioned cell without hovering (evaluated, nothing added).** `LuaItemStack.label` and `label_color` exist
+for an item with tags (the runtime probe set both), but `label` is a plain string (no locale: an item would show by its
+internal name; rich text icons would replace the cell's name in the tooltip), `label_color` only colours a label, and
+both can only be set on a stack object: the `ItemStackDefinition` that `cell_stack` returns and every drive path
+inserts has no such field, and the key a cell gets in the network (`storable`) does not see it. So only the workbench
+could mark a cell, and a cell would lose its mark on its first trip through a drive. The windows already frame a
+partitioned cell in yellow; the tooltip is the place for the rest.
+
 ### Saves
 
 No prototype, storage key or remote interface is renamed. New: the card items, `me-cell-workbench`, the technology, the

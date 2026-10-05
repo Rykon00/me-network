@@ -608,17 +608,231 @@ return function(H)
 			.. "recipes and unknown values, items with quality and fluids, a slot changed and emptied, a key twice, full kinds")
 	end
 
+	--- Issue #64: the tooltip of a cell (its custom_description, written with the stack by N.cell_stack). The cells are made
+	--- through the workbench's remote interface, as a player makes them; the test compares structure and keys, never a
+	--- rendered text: one concatenation ("" first) of the lines, split at the "\n" strings, each a { locale key, params }
+	--- (the windows' keys for the modes) with the icon lists as plain strings
+	local function tip_test()
+		local st = storage.wbtip64
+		if (st and st.done) or game.tick < 120 then return end
+		st = { problems = {}, done = true }
+		storage.wbtip64 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local w = game.surfaces[1].create_entity{ name = "me-cell-workbench", position = { WX + 26.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not w then return me_report("WBTIP64", "ME cell tooltip", { "no workbench" }) end
+		local inv = game.create_inventory(2)
+		local hand = inv[1]
+		local function put_cell(def)
+			def = type(def) == "string" and { name = def, count = 1 } or def
+			hand.set_stack(def)
+			return remote.call(WB, "cell_click", w, hand, inv, false)
+		end
+		local function card(name)
+			hand.set_stack{ name = name, count = 1 }
+			local why = remote.call(WB, "card_click", w, 1, hand, inv, false)
+			if hand.valid_for_read then hand.clear() end
+			return why
+		end
+		local function key(index, k) remote.call(WB, "set_partition_slot", w, index, k) end
+		--- the cell leaves the workbench into the hand: its lines (the description split at "\n"), nil without a description
+		local function lines()
+			hand.clear()
+			remote.call(WB, "cell_click", w, hand, inv, false)
+			if not hand.valid_for_read then return nil, "no cell came out" end
+			local d = hand.custom_description
+			if d == nil or d == "" then return nil end
+			if type(d) ~= "table" or d[1] ~= "" then return nil, "not a concatenation " .. line(d) end
+			local out = {}
+			for i = 2, #d do
+				if d[i] ~= "\n" then out[#out + 1] = d[i] end
+			end
+			return out, #d
+		end
+		--- (the game gives a number parameter of a localised string back as a string: the wanted lines are compared as text)
+		local function texts(t)
+			if type(t) ~= "table" then return type(t) == "number" and tostring(t) or t end
+			local out = {}
+			for i, v in ipairs(t) do out[i] = texts(v) end
+			return out
+		end
+		local function is(l, want, what)
+			local got = l and line(l) or "nil"
+			expect(got == line(texts(want)), what .. ": " .. got .. " (wanted " .. line(texts(want)) .. ")")
+		end
+		local ICON = { void = "[item=" .. CARD.void .. "]", fuzzy = "[item=" .. CARD.fuzzy .. "]", inverter = "[item=" .. CARD.inverter .. "]",
+			equal = "[item=" .. CARD.equal .. "]" }
+		local cells = prototypes.mod_data["fork-me-network"].data.cells
+		local size_1k, size_fluid = cells["me-1k-storage-cell"], cells["me-1k-fluid-storage-cell"]
+
+		--- a fresh cell has no description (the prototype's), also one that lost its partition and cards again
+		expect(put_cell("me-1k-storage-cell") == nil, "an item cell in the workbench")
+		local l, why = lines()
+		expect(l == nil and why == nil, "a fresh cell has no description " .. line(why))
+		put_cell("me-1k-storage-cell")
+		key(1, "iron-plate")
+		card(CARD.fuzzy)
+		remote.call(WB, "clear", w)
+		hand.clear()
+		remote.call(WB, "card_click", w, 1, hand, inv, false)             -- the card back out
+		hand.clear()
+		l, why = lines()
+		expect(l == nil and why == nil, "a cell cleared of partition and cards is fresh again " .. line(l))
+
+		--- a whitelist of two items (the empty cell says its size first)
+		put_cell("me-1k-storage-cell")
+		key(1, "iron-plate")
+		key(2, "copper-plate")
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types }, { "fork-me-net.cell-tip-partition", "[item=copper-plate] [item=iron-plate]" },
+			{ "fork-me-gui.cell-mode-whitelist" } }, "a whitelist of two items")
+
+		--- the same with an Inverter Card: a blacklist, then the card
+		put_cell("me-1k-storage-cell")
+		key(1, "iron-plate")
+		key(2, "copper-plate")
+		expect(card(CARD.inverter) == nil, "an Inverter Card")
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types }, { "fork-me-net.cell-tip-partition", "[item=copper-plate] [item=iron-plate]" },
+			{ "fork-me-gui.cell-mode-blacklist" }, { "fork-me-net.cell-tip-cards", ICON.inverter } }, "a blacklist")
+
+		--- a key with quality (not for normal), next to one without
+		local q = prototypes.quality["uncommon"] and "uncommon"
+		if q then
+			put_cell("me-1k-storage-cell")
+			key(1, "iron-plate@" .. q)
+			key(2, "copper-plate")
+			l = lines()
+			is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types },
+				{ "fork-me-net.cell-tip-partition", "[item=copper-plate] [item=iron-plate,quality=" .. q .. "]" }, { "fork-me-gui.cell-mode-whitelist" } },
+				"a quality key")
+		end
+
+		--- a fluid cell: fluids, the fluid size line
+		put_cell("me-1k-fluid-storage-cell")
+		key(1, "fluid/water")
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty-fluid", size_fluid.bytes, size_fluid.types }, { "fork-me-net.cell-tip-partition", "[fluid=water]" },
+			{ "fork-me-gui.cell-mode-whitelist" } }, "a fluid cell")
+
+		--- more keys than fit: twelve icons, then "+N more" (the keys are sorted: the first twelve show)
+		local names = {}
+		for name in pairs(prototypes.item) do
+			if not name:find("[^%l%-]") and not name:find("storage%-cell") then names[#names + 1] = name end
+		end
+		table.sort(names)
+		local want = {}
+		for i = 1, 14 do want[i] = names[i] end
+		put_cell("me-1k-storage-cell")
+		for i, name in ipairs(want) do key(i, name) end
+		local icons = {}
+		for i = 1, 12 do icons[i] = "[item=" .. want[i] .. "]" end
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types }, { "fork-me-net.cell-tip-partition-more", table.concat(icons, " "), 2 },
+			{ "fork-me-gui.cell-mode-whitelist" } }, "more keys than fit")
+		--- exactly twelve: no "more"
+		put_cell("me-1k-storage-cell")
+		for i = 1, 12 do key(i, want[i]) end
+		l = lines()
+		is(l and l[2], { "fork-me-net.cell-tip-partition", table.concat(icons, " ") }, "twelve keys fit")
+
+		--- every card on an item cell: the card icons in the order they went in, then what each does
+		put_cell("me-1k-storage-cell")
+		key(1, "iron-plate")
+		for _, name in ipairs({ CARD.inverter, CARD.fuzzy, CARD.equal, CARD.void }) do expect(card(name) == nil, "card " .. name) end
+		local d
+		l, d = lines()
+		expect(l and #l == 7 and type(d) == "number" and d <= 21, "every card: a concatenation of at most 20 parts " .. line(l) .. " " .. line(d))
+		if l and #l == 7 then
+			is(l[2], { "fork-me-net.cell-tip-partition", "[item=iron-plate]" }, "every card: partition")
+			is(l[3], { "fork-me-gui.cell-mode-blacklist" }, "every card: blacklist")
+			is(l[4], { "fork-me-net.cell-tip-cards", table.concat({ ICON.inverter, ICON.fuzzy, ICON.equal, ICON.void }, " ") }, "every card: cards")
+			is(l[5], { "fork-me-gui.cell-mode-fuzzy" }, "every card: fuzzy")
+			expect(l[6][1] == "fork-me-gui.cell-mode-equal" and type(l[6][2]) == "string", "every card: equal distribution " .. line(l[6]))
+			is(l[7], { "fork-me-gui.cell-mode-void" }, "every card: overflow destruction (the red line)")
+		end
+		--- the windows' mode line says the same sentences (one source)
+		local caption = remote.call(GUI, "cell_mode_caption", { inverted = true, fuzzy = true, equal = 1234, void = true })
+		expect(caption and line(caption):find("cell-mode-blacklist", 1, true) and line(caption):find("cell-mode-fuzzy", 1, true)
+			and line(caption):find("cell-mode-equal", 1, true) and line(caption):find("cell-mode-void", 1, true), "the window's mode line " .. line(caption))
+
+		--- a fluid cell with the cards it takes (no Fuzzy Card)
+		put_cell("me-1k-fluid-storage-cell")
+		key(1, "fluid/water")
+		expect(card(CARD.fuzzy) == "not-here", "a Fuzzy Card on a fluid cell")
+		expect(card(CARD.void) == nil and card(CARD.equal) == nil, "a fluid cell's cards")
+		l = lines()
+		expect(l and #l == 6 and line(l):find("cell-mode-whitelist", 1, true) and not line(l):find("cell-mode-fuzzy", 1, true), "a fluid cell with cards " .. line(l))
+
+		--- an empty cell that is not partitioned, with a card: its size, the card, what it does
+		put_cell("me-1k-storage-cell")
+		expect(card(CARD.fuzzy) == nil, "a Fuzzy Card")
+		l = lines()
+		is(l, { { "fork-me-net.cell-tip-empty", size_1k.bytes, size_1k.types }, { "fork-me-net.cell-tip-cards", ICON.fuzzy }, { "fork-me-gui.cell-mode-fuzzy" } },
+			"an empty cell with a card")
+
+		--- a cell that holds items and is partitioned (a cell with contents in its tags into the workbench; a change
+		--- writes the description): what it holds as before, the partition, the mode; with a card too
+		local function held()
+			return { name = "me-1k-storage-cell", count = 1, tags = { fork_me_cell = { items = { ["iron-plate"] = 100, ["copper-plate"] = 30 }, data = {} } } }
+		end
+		put_cell(held())
+		key(1, "iron-plate")
+		l = lines()
+		expect(l and #l == 3 and l[1][1] == "fork-me-net.cell-holds" and l[1][2] == "130" and l[1][3] == "2" and l[1][4] == "100 [item=iron-plate], 30 [item=copper-plate]",
+			"a partitioned cell that holds items: contents " .. line(l and l[1]))
+		if l and #l == 3 then
+			is(l[2], { "fork-me-net.cell-tip-partition", "[item=iron-plate]" }, "holds: partition")
+			is(l[3], { "fork-me-gui.cell-mode-whitelist" }, "holds: whitelist")
+		end
+		put_cell(held())
+		key(1, "iron-plate")
+		card(CARD.inverter)
+		l = lines()
+		expect(l and #l == 4 and l[1][1] == "fork-me-net.cell-holds", "a cell that holds items, blacklisted " .. line(l))
+		--- a cell that holds items and has no partition or card has the contents line alone
+		put_cell(held())
+		key(1, "iron-plate")
+		remote.call(WB, "clear", w)
+		l = lines()
+		expect(l and #l == 1 and l[1][1] == "fork-me-net.cell-holds", "a cell with contents only " .. line(l))
+
+		--- a cell that leaves a drive (the other writer of the stack) says the same
+		local spare = game.create_inventory(1)
+		local drive = game.surfaces[1].create_entity{ name = "me-drive", position = { WX + 28.5, WY + 4.5 }, force = "player", raise_built = true }
+		local out
+		if drive then
+			hand.set_stack{ name = "me-1k-storage-cell", count = 1, tags = { fork_me_cell = { items = { ["iron-plate"] = 8 }, data = {},
+				partition = { ["iron-plate"] = true }, cards = { CARD.fuzzy } } } }
+			expect(remote.call(NET, "insert_cell", drive, hand, 1) == 1, "a cell into a drive")
+			remote.call(NET, "take_cell", drive, 1, spare)
+			out = spare[1].valid_for_read and spare[1].custom_description
+			drive.destroy()
+		end
+		local text = line(out)
+		expect(type(out) == "table" and text:find("fork-me-net.cell-holds", 1, true) and text:find("cell-tip-partition", 1, true)
+			and text:find("cell-mode-whitelist", 1, true) and text:find("cell-tip-cards", 1, true) and text:find("cell-mode-fuzzy", 1, true),
+			"a cell taken out of a drive " .. text)
+		spare.destroy()
+		inv.destroy()
+		w.destroy()
+		me_report("WBTIP64", "ME cell tooltip", problems, "a fresh cell, a whitelist, a blacklist, a quality key, a fluid cell, more keys than fit, "
+			.. "every card, a cell with contents, an empty cell with a card, a cell out of a drive")
+	end
+
 	function T.tick()
 		workbench_test()
 		slots_test()
 		pane_test()
 		pick_test()
+		tip_test()
 	end
 	function T.running(check)
 		check(storage.wb17 and storage.wb17.done, "ME Cell Workbench")
 		check(storage.wb28 and storage.wb28.done, "ME Cell Workbench slots")
 		check(storage.wbpane28 and storage.wbpane28.done, "ME window pane (workbench)")
 		check(storage.wb69 and storage.wb69.done, "ME Cell Workbench partition buttons")
+		check(storage.wbtip64 and storage.wbtip64.done, "ME cell tooltip")
 	end
 	return T
 end

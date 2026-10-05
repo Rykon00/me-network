@@ -21,6 +21,8 @@
 --- State: storage.fork_me_net (nodes, nets, drives).
 --------------------------------------------------------------------------------
 
+local G = require("scripts.fork-me-gui")        -- (a leaf: only its number format is used, for the cards' tooltip lines)
+
 local M = {}
 
 --- functions(net) called when a network's members changed (autocrafting drops its pattern cache)
@@ -924,6 +926,79 @@ local function cell_total(cell)
 	return n
 end
 
+--- the icons of the partition shown in a cell's tooltip: as many as fit in a line or two (issue #64)
+local TIP_KEYS = 12
+
+--- the rich text icon of a key: [item=name], [item=name,quality=q] (not for normal) or [fluid=name]
+local function key_icon(key)
+	if is_fluid_key(key) then return "[fluid=" .. key:sub(#FLUID_PREFIX + 1) .. "]" end
+	local name, q = parse_key(key)
+	if q ~= "normal" then return "[item=" .. name .. ",quality=" .. q .. "]" end
+	return "[item=" .. name .. "]"
+end
+
+--- What a cell's cards make of its partition, as the modes the windows and the item tooltip name (`kind`: "inverted",
+--- "fuzzy", "equal", "void"; `c`: the fields of drive_info or cell_flags): one localised sentence, or nil. The
+--- window joins them into one line (cell_mode_caption), the tooltip puts them on lines of their own.
+function M.cell_mode_text(kind, c)
+	if kind == "inverted" then return c.inverted and { "fork-me-gui.cell-mode-blacklist" } or nil end
+	if kind == "fuzzy" then return c.fuzzy and { "fork-me-gui.cell-mode-fuzzy" } or nil end
+	if kind == "equal" then return c.equal and { "fork-me-gui.cell-mode-equal", G.fmt(c.equal) } or nil end
+	if kind == "void" then return c.void and { "fork-me-gui.cell-mode-void" } or nil end
+end
+
+--- the same fields as drive_info's for a cell record (drive_info keeps its own copy: it is the hot one)
+local function cell_flags(cell)
+	return { inverted = cell.deny ~= nil or M.has_card(cell, "inverter"), fuzzy = cell.fnames ~= nil or M.has_card(cell, "fuzzy"),
+		equal = cell.eq, void = cell.void == true }
+end
+
+--- Issue #64: the tooltip of a cell that is not a fresh one, the same lines in the same order for every cell, so two
+--- cells compare at a glance (a line that does not apply is left out):
+---   1. what it holds, as before; an empty cell says its size instead
+---   2. the partition as icons (at most TIP_KEYS, then "+N more")
+---   3. whitelist or blacklist, in the words of the windows
+---   4. the cards as icons, then what they do (fuzzy, equal distribution, overflow destruction), in the words of the windows
+--- One concatenation of at most 13 parts (a localised string takes 20), the icon lists plain strings. Cells written
+--- by an earlier version keep their old description until they pass through a drive or the workbench; its keys stay.
+local function cell_description(cell, spec, plist, cards, keys, list)
+	local fluid = spec and fluid_cell(spec)
+	local desc = { "" }
+	local function line(text)
+		if #desc > 1 then desc[#desc + 1] = "\n" end
+		desc[#desc + 1] = text
+	end
+	if #keys == 0 then
+		line({ fluid and "fork-me-net.cell-tip-empty-fluid" or "fork-me-net.cell-tip-empty", spec and spec.bytes or 0, spec and spec.types or 0 })
+	else
+		line({ fluid and "fork-me-net.fluid-cell-holds" or "fork-me-net.cell-holds",
+			amount_text(cell_total(cell)), cell.types, table.concat(list, ", "),
+			cell.bytes, spec and spec.bytes or 0, #keys > 5 and ", ..." or "" })
+	end
+	local flags = cell_flags(cell)
+	if plist then
+		local sorted, icons = M.cell_keys(cell), {}
+		for i = 1, math.min(TIP_KEYS, #sorted) do icons[i] = key_icon(sorted[i]) end
+		if #sorted > TIP_KEYS then
+			line({ "fork-me-net.cell-tip-partition-more", table.concat(icons, " "), #sorted - TIP_KEYS })
+		else
+			line({ "fork-me-net.cell-tip-partition", table.concat(icons, " ") })
+		end
+	end
+	if flags.inverted then line(M.cell_mode_text("inverted", flags))
+	elseif plist then line({ "fork-me-gui.cell-mode-whitelist" }) end
+	if cards then
+		local icons = {}
+		for i, name in ipairs(cards) do icons[i] = "[item=" .. name .. "]" end
+		line({ "fork-me-net.cell-tip-cards", table.concat(icons, " ") })
+		for _, kind in ipairs({ "fuzzy", "equal", "void" }) do
+			local text = M.cell_mode_text(kind, flags)
+			if text then line(text) end
+		end
+	end
+	return desc
+end
+
 --- the item stack definition of a cell (tags and a description when it holds something, is partitioned or has cards)
 local function cell_stack(cell)
 	local plist = cell.partition or cell.deny                 -- issue #17: a blacklist is kept as the partition
@@ -949,18 +1024,10 @@ local function cell_stack(cell)
 			list[#list + 1] = items[key] .. " [item=" .. parse_key(key) .. "]"
 		end
 	end
-	local spec = cell_spec(cell.name)
-	if next(cell.items) == nil then                           -- an empty cell keeps its partition and cards
-		return { name = cell.name, count = 1, tags = { [CELL_TAG] = { items = {}, data = {}, partition = plist, cards = cards } },
-			custom_description = plist and { "fork-me-net.cell-partitioned", table_size(plist) }
-				or { "fork-me-net.cell-with-cards", #cards } }
-	end
 	return {
 		name = cell.name, count = 1,
 		tags = { [CELL_TAG] = { items = items, data = data, partition = plist, cards = cards } },
-		custom_description = { spec and fluid_cell(spec) and "fork-me-net.fluid-cell-holds" or "fork-me-net.cell-holds",
-			amount_text(cell_total(cell)), cell.types, table.concat(list, ", "),
-			cell.bytes, spec and spec.bytes or 0, #keys > 5 and ", ..." or "" },
+		custom_description = cell_description(cell, cell_spec(cell.name), plist, cards, keys, list),
 	}
 end
 M.cell_stack = cell_stack
