@@ -422,8 +422,10 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   a cell in hand (another cell there is swapped into the hand, with its cards); click the cell to take it, shift +
   click into your inventory. Anything else is refused with a message. The cell keeps its items all the time; every
   change of the partition is written into it at once.
-* **Partition:** the same buttons as the cell window (items with quality, or fluids for a fluid cell), **From
-  contents** and **Clear**.
+* **Partition:** the cell's filled slots (items with quality, or fluids for a fluid cell), a row to add an entry (the
+  game's picker for an item, or a fluid for a fluid cell, for items a **quality** drop-down and a **green check** that
+  takes the choice in: the picker itself has no quality row), **From contents** and **Clear**. A filled slot: click it
+  and pick another element (an item keeps the slot's quality), right click to empty it.
 * **Card slots:** an item cell takes 4 cards, a fluid cell 3 (AE2): one each of **Inverter Card** (the partition is a
   blacklist: the cell takes everything except it), **Fuzzy Card** (item cells: the partition matches every quality),
   **Equal Distribution Card** (no kind takes more than an equal share of the cell: with a partition of n kinds the
@@ -438,10 +440,14 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
 * **Without a cell** the partition slots are there too: they show and set the workbench's own partition, the one the
   next cell without a partition gets. It can hold items and fluids (the items first, then the fluids, then one free
   slot): an item cell takes the items, a fluid cell the fluids. Only items (with quality) and fluids can be chosen
-  here, no virtual signal and no other signal (issue #69): a filled slot is a chooser of its own kind, the free slot
-  one of the kind the small switch **Items | Fluids** above the slots says (it starts on Items each time the window
-  opens and is only a setting of your window). When the partition holds the most items (or fluids) a cell takes, the
-  free slot of that kind is greyed out; right click a slot to empty it. **Clear** empties it; **From contents** needs
+  here, no virtual signal and no other signal (issue #69). New entries come from one row above the slots (issue #82):
+  the switch **Items | Fluids**, the button that opens the game's item or fluid picker, for items a drop-down with
+  the **quality**, and the **green check** that puts what is chosen into the partition (the picker itself takes a
+  choice at once and has no quality row, so the check is next to it). The switch, the choice and the quality are
+  settings of your window only: it opens on Items, normal quality. A filled slot is a button of its own kind: click it
+  and pick another element (an item keeps the quality of the slot, to change the quality empty the slot and add the
+  item again) or right click it to empty it. When the partition holds the most items (or fluids) a cell takes, the
+  row's button of that kind is greyed out. **Clear** empties it; **From contents** needs
   a cell. A partition set this way goes onto the next cell also when the copy mode is off; with the copy mode off the
   workbench forgets its partition when a cell is taken out (and when the copy mode is switched off without a cell).
 * The cards are part of the cell (its tags): they travel with it into drives, chests and the network, like its items

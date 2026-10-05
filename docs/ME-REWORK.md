@@ -1587,18 +1587,37 @@ again. Factorio cannot offer less: `elem_filters` of a `choose-elem-button` exis
 and so on, but "`signal` and `item-group` do not support filters" (the `PrototypeFilter` page of the runtime API, 2.0.77
 in the install and the 2.1.20 page; 2.1.20 adds a `VirtualSignalPrototypeFilter` to that union, but the sentence is
 unchanged and `LuaGuiElement::elem_filters` still takes no filter for `"signal"`). So the workbench has no signal chooser
-any more: a filled slot is an `item-with-quality` or a `fluid` chooser by its key, and the free slot is one of the kind a
-small switch (`fork_me_wb_kind`, "Items | Fluids", left = items) says. Still one free slot, as #65 wanted. The switch is a
-GUI element of the player's own window: its state is the element's `switch_state`, read when the slots are drawn
-(`refresh_workbench`); nothing is in `storage`, nothing is on a tick, so two players at one workbench can have it on
-different sides and a multiplayer game has nothing to agree on. A change of the switch (`wb_kind`) only draws the slots
-anew. A window opens on Items. The free slot of a kind that is full (63 items, 18 fluids) is disabled with a tooltip, a
-filled one can still be changed or emptied (right click). `M.workbench_slots(data, kind)` gives the buttons (filled
-slots in the list's order, then the free one) and `M.workbench_choose(entity, index, elem_type, value)` is what a
-button's `on_gui_elem_changed` calls: only `item-with-quality` and `fluid` are taken, anything else (a signal, an entity,
-a recipe, an unknown name) is refused and changes nothing; the window is drawn anew afterwards, so a key that is in the
-list already or that no cell takes leaves no stale button. Both are in the remote interface `gregtorio-me-gui` for the
-test (`workbench_slots`, `workbench_choose`). No change to saved state: `rec.config` is still a list of keys.
+any more: a filled slot is an `item-with-quality` or a `fluid` chooser by its key, and what is added comes from the add
+row (issue #82, below). The state of the row is in the GUI elements of the player's own window: the switch
+(`fork_me_wb_kind`, "Items | Fluids", left = items) is read when the slots are drawn (`refresh_workbench`); nothing is in
+`storage`, nothing is on a tick, so two players at one workbench can have it on different sides and a multiplayer game
+has nothing to agree on. A window opens on Items. The row's button of a kind that is full (63 items, 18 fluids) is
+disabled with a tooltip, a filled slot can still be changed or emptied (right click). `M.workbench_slots(data, kind)`
+gives the buttons (filled slots in the list's order, then the free one: the row's) and
+`M.workbench_choose(entity, index, elem_type, value)` is what a filled slot's `on_gui_elem_changed` goes through: only
+`item-with-quality` and `fluid` are taken, anything else (a signal, an entity, a recipe, an unknown name) is refused and
+changes nothing; the window is drawn anew afterwards, so a key that is in the list already or that no cell takes leaves
+no stale button. All are in the remote interface `gregtorio-me-gui` for the test (`workbench_slots`, `workbench_choose`).
+No change to saved state: `rec.config` is still a list of keys.
+
+**The add row: quality and the green check (issue #82).** The picker Factorio opens for a mod's `choose-elem-button` of
+type `item-with-quality` has no quality row, and it takes a choice at once; the signal picker the buses use has the
+quality row and the green check, but cannot be filtered (above). The API has no setting for either. So the choice is
+split from taking it in: the row above the slots is [switch] [`choose-elem-button` of type `item` or `fluid`, named
+`fork_me_wb_pick`] [drop-down of the qualities, items only, shown only with the quality mod] [green check, the style
+`item_and_count_select_confirm`]. The button only chooses (`wb_pick`: it enables the check); the check (`wb_ok`) calls
+`M.workbench_add(entity, elem_type, value, quality)`, which builds the key (`name@quality`, a fluid `fluid/name`),
+refuses a signal, an unknown name or quality, a quality without the quality mod, a kind that is full and any call with a
+cell in the workbench, and puts the key at the end of the list (the list sorts itself: items, then fluids). The button
+is made again when the switch moves (an element's type cannot change); the chosen element is cleared after an add, the
+quality stays for the next one. `M.workbench_qualities()` gives the drop-down's names (not hidden, not a parameter
+quality, by level). A filled slot's button still has the plain picker: `M.workbench_change` keeps the quality of the slot
+it replaces when the picker gives the normal quality (there is no way to ask for another one there); to change an item's
+quality the slot is emptied and the item added again. With a cell in the workbench the same row adds to the cell's
+partition (the switch is hidden, the button is of the cell's kind, `workbench_add` refuses the other kind, the free
+position is the cell's `types_total`); before issue #82 a cell's partition slots were pickers without a quality row, so a
+quality whitelist could not be set in the workbench at all. The cell window of a drive and of the terminal's Cells tab is
+unchanged.
 
 The buses' filter buttons, the ME Interface's rows and the terminal's pattern editor keep the signal chooser (the pull
 request of #69 is the workbench only). To give them the same treatment each button would need the same kind switch next to it (a bus has up to 5 filters,
