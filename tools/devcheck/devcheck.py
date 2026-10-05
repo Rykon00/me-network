@@ -498,6 +498,7 @@ RUNTIME_TESTS = (
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
     ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"),
     ("PLANS", "ME kept plans test"),
+    ("SCAN", "ME provider scan test"),
     ("HOLDERS", "ME holder cursor test"),
     ("GRAPH", "ME graph removal test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
@@ -1224,7 +1225,9 @@ def scene_problems(scene, size, res, wanted=None):
 def compare_plans(a):
     """`--compare-plans REF` (issue #50): the planner scene with that version and with the working copy, one run each; every
     plan of its sample (the deepest items and every n-th item of the chain of usable patterns, amounts 1 and 37: fresh plans,
-    never a kept one) must be the same: ok, missing, taken from storage, the patterns and their order, runs, loops, bytes."""
+    never a kept one) must be the same: ok, missing, taken from storage, the patterns and their order, runs, loops, bytes.
+    Issue #50, lever 6: also what the scan finds at every provider (`provider-N 0`: pattern id, ok, reason and machines per
+    slot) and the network's ignored patterns by reason."""
     ref_dir = old_tree(a.compare_plans)
     digests = {}
     for tag, mod_dir in (("ref", ref_dir), ("wc", None)):
@@ -1232,10 +1235,14 @@ def compare_plans(a):
         if not res or not res["runs"] or not res["runs"][0].get("plan"):
             print(f"  {tag}: the planner scene did not run")
             return 1
-        digests[tag] = res["runs"][0]["plan"].get("digests") or {}
+        plan = res["runs"][0]["plan"]
+        digests[tag] = dict(plan.get("digests") or {})
+        digests[tag]["ignored"] = json.dumps(plan.get("ignored"), sort_keys=True)
     ref, wc = digests["ref"], digests["wc"]
     diff = [k for k in sorted(set(ref) | set(wc)) if ref.get(k) != wc.get(k)]
-    print(f"\nplans compared with {a.compare_plans}: {len(ref)} of the reference, {len(wc)} of the working copy, {len(diff)} differ")
+    scans = sum(1 for k in ref if k.startswith("provider-"))
+    print(f"\nplans compared with {a.compare_plans}: {len(ref)} of the reference ({scans} provider scans and the ignored patterns among "
+          f"them), {len(wc)} of the working copy, {len(diff)} differ")
     for k in diff[:10]:
         print(f"  {k}:\n    ref {ref.get(k)}\n    wc  {wc.get(k)}")
     ok = not diff and len(ref) > 0 and len(ref) == len(wc)

@@ -1644,6 +1644,13 @@ local function planner_probe(b)
 			log("DEVCHECK-BENCH-PLANDIGEST " .. key .. " " .. amount .. " " .. serpent.line(d, { comment = false, sortkeys = true, numformat = "%.10g" }))
 		end
 	end
+	--- issue #50, lever 6: what the scan finds at each provider (pattern id, ok, reason, machines per slot), for --compare-plans
+	for i, prov in ipairs(b.providers or {}) do
+		local info = prov.valid and remote.call(AC, "provider_info", prov)
+		local d = {}
+		for slot, sl in pairs(info and info.slots or {}) do d[slot] = { id = sl.id, ok = sl.ok, reason = sl.reason, machines = sl.machines } end
+		log("DEVCHECK-BENCH-PLANDIGEST provider-" .. i .. " 0 " .. serpent.line(d, { comment = false, sortkeys = true }))
+	end
 	log_json("PLANNER", { ignored = remote.call(AC, "ignored", b.anchor) })
 end
 
