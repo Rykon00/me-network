@@ -1344,6 +1344,8 @@ remote.add_interface("gregtorio-me-gui", {
 	--- issue #75: what a slot of a window gives a stack (the tooltip next to the item's own, the signature piece)
 	stack_tooltip = function(stack, base) return G.stack_tooltip(stack, base) end,
 	stack_ident = function(stack) return G.stack_ident(stack) end,
+	--- issue #79: the description in the key of an item with tags kept in the network
+	key_description = function(key) return G.key_description(key) end,
 	cell_mode_caption = function(c) return M.cell_mode_caption(c) end,
 	set_partition_slot = function(drive, slot, index, key) return M.set_partition_slot(drive, slot, index, key) end,
 	controller_data = function(entity) return M.controller_data(entity) end,

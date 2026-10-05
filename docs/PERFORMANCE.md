@@ -2357,3 +2357,12 @@ description notices when the stack was written anew. Measured as the signature w
 An inventory without items with tags pays one table lookup per slot (`tagged_names`). The description of a stack
 (`custom_description`) is read only when a slot is written (a changed signature), about 1 µs a read. The GUI itself needs
 a player and is not measured headless.
+
+## The description of a stored item with tags (issue #79)
+
+The terminal's grid shows a stored cell's or pattern's description, read from the json in its key once per key and load
+(`G.key_description`, cached). The refresh of unchanged entries (issue #50, lever 8) is untouched and calls nothing new.
+Measured headless (`LuaProfiler`, a throwaway test): a plain key costs one `find` for `#` when its button is made, 0.40 µs
+(100 000 calls: 40 ms); a key with tags one `helpers.json_to_table` of the json, 26 µs for a cell's 283 characters (10 000
+calls: 260 ms), once per key; 200 distinct stored cells and patterns on a full rebuild of the grid cost 5 ms once, building
+the 200 buttons costs far more. The GUI itself is not measured headless.
