@@ -734,6 +734,8 @@ refill67 = require("refill")({ me_place = me_place, power = power, me_report = m
 lab86 = require("lab")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #84: damaged items on the by-count paths (damaged.lua)
 damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
+--- me-network issue #85: an import bus with only refused stacks (refused.lua)
+refused85 = require("refused")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #50: kept plans (plans.lua)
 plans50 = require("plans")({ me_place = me_place, me_report = me_report })
 --- me-network issue #50, lever 6: the scan of the pattern providers (scan.lua)
@@ -783,6 +785,7 @@ local function tests_running()
 	cpus6.running(check)
 	parking38.running(check)
 	damaged84.running(check)
+	refused85.running(check)
 	lab86.running(check)
 	refill67.running(check)
 	stats38.running(check)
@@ -1666,6 +1669,7 @@ script.on_nth_tick(10, function()
 	stats38.tick()
 	margin51.tick()
 	damaged84.tick()
+	refused85.tick()
 	lab86.tick()
 	refill67.tick()
 	plans50.tick()
@@ -4559,6 +4563,7 @@ script.on_init(function()
 	for _, f in pairs(stats38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(margin51.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(damaged84.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(refused85.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refill67.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end

@@ -2165,3 +2165,24 @@ of 5 wooden chests and a whole stack of 3: taking the 8 the terminal shows hands
 the bus then shows 0; the damaged stack replaced by 4 whole ones, the bus shows 4 and hands them out; an interface row of 2 with
 a damaged stack of 5 and a whole stack of 3 iron chests: the 3 whole ones are the surplus, the damaged stack stays. On main every
 one of these fails.
+
+## An import bus with only refused stacks (issue #85)
+
+`import_items` took the answer "nothing stored" of `N.insert_partial` for a full network: a bus that found only stacks
+the network refuses itself (a used science pack, a damaged item, a blueprint) set `info.netfull` and registered
+`N.wait_for` for the item's key, so it was **parked** ("net-full") for room that does not change a refusal, and woke only at
+the slow fallback visit of a parked block (`Sched.PARK_FALLBACK`, 3600 ticks): whole items that came into its chest meanwhile
+waited up to a minute. `N.insert_partial` now returns its reason to `import_items`, and `N.refuses_stack(why)` (the
+`cannot-store*` reasons: this one stack) leaves it out: no `netfull`, no wait, and the stack's count is taken out of `held`
+(it stays in the source and is no rest to come back for, which would have made the bus come back at the speed of its cap
+for a stack it can never take). A bus that finds only refused stacks moves nothing and gets the status "empty": it is
+probed at its growing interval up to the idle limit and woken by the probe when the source's contents change, like any
+empty import bus, so whole items that arrive are taken within the idle limit (300 ticks by default). A real full network
+(`no-storage`) and a network without power or controller (`no-power`, `no-network`) are still `netfull`.
+
+**Test** (`runtimemod/refused.lua`, `ME import bus with refused stacks test`): the chest of bus A holds a used science pack and
+a blueprint only; after the bus has looked (status "empty", not parked, no wait for the key) iron plates are put into the
+chest and are in the network within the idle limit; the chest of bus B holds plates and the same refused stacks: the plates
+go in at once, the refused stacks stay, and the bus is not visited again for them. On main both buses are parked ("net-full", the test fails
+on that); the plates reach the network only when something wakes the parked bus (here the slow step did after 120 ticks, at the
+latest the fallback visit after 3600).
