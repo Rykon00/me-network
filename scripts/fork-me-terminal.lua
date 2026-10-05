@@ -985,6 +985,34 @@ G.on("term_store", function(event, player)
 	M.refresh(player)
 end)
 
+--- Issue #67: what the network takes out of a chest behind a storage bus may come back within a few ticks (the bus reads
+--- the chest again REREAD ticks after the take, scripts/fork-me-storagebus.lua), but the window is refreshed every 60 ticks.
+--- So a take schedules one more refresh of the taker's window FOLLOW_TICKS later; a second take in the meantime changes
+--- nothing (at most one per player in that time). The table is state (saved): every peer refreshes the same tick.
+local FOLLOW_TICKS = 10
+
+local function follow_up(player)
+	local f = storage.fork_me_follow
+	if not f then
+		f = {}
+		storage.fork_me_follow = f
+	end
+	if not f[player.index] then f[player.index] = game.tick + FOLLOW_TICKS end
+end
+
+--- every tick (control.lua): the refreshes that are due; one comparison while none is pending
+function M.on_tick(tick)
+	local f = storage.fork_me_follow
+	if not f or next(f) == nil then return end
+	for index, due in pairs(f) do
+		if due <= tick then
+			f[index] = nil
+			local player = game.get_player(index)
+			if player and player.connected then G.refresh_one(player) end
+		end
+	end
+end
+
 G.on("term_take", function(event, player, el)
 	local st = st_of(player)
 	if not (st and event.name == defines.events.on_gui_click) then return end
@@ -992,6 +1020,7 @@ G.on("term_take", function(event, player, el)
 	local _, why = M.take(player, st.entity, el.tags.key, mode)
 	report(player, why)
 	M.refresh(player)
+	follow_up(player)
 end)
 
 G.on("term_pick", function(event, player, el)

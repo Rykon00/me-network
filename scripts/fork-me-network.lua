@@ -1501,7 +1501,9 @@ local function mark_drive(s, unit) s.dirty[unit] = true end
 --- inserts pass it by until its next read (ext_sync) or until something is taken from it; a full chest is not
 --- asked again by every insert. The handler (M.ext_handlers[name], registered at load time) works on the real
 --- storage: room(cell, key), insert(cell, key, count), count(cell, key) and extract(cell, key, count). The
---- engine asks `count` before it takes, so the network never hands out what is no longer there.
+--- engine asks `count` before it takes, so the network never hands out what is no longer there. Issue #67: a handler may
+--- have `emptied(cell, key)`, called when an extraction took the last of `key` out of the storage (the storage bus looks
+--- again soon: something may refill it).
 --------------------------------------------------------------------------------
 
 M.ext_handlers = {}
@@ -2185,6 +2187,7 @@ local function extract_key(net, key, count)
 				if not cell.items[key] then idx_del(net, key, cid) end
 				left = left - got
 				if left < ZERO then left = 0 end
+				if not cell.items[key] and handler.emptied then handler.emptied(cell, key) end
 			end
 		else
 			local n = math.min(left, cell.items[key] or 0)

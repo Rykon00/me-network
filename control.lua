@@ -131,6 +131,7 @@ script.on_event(defines.events.on_tick, function(event)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ae2.on_tick(tick)
+	fork_me.on_tick(tick)
 end)
 
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)

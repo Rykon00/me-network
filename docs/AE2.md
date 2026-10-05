@@ -289,6 +289,15 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
   chest about every quarter second (with more than 8 storage buses each less often: 50 buses, every 1.75 s). Until
   then the terminal may show a few items that are gone, or not yet show new ones; taking out always checks the chest
   first, so nothing is ever duplicated or promised from an empty chest.
+* **A chest that refills** (an infinity chest, an inserter feeding it): when the network takes the last of an item type
+  out of the chest, the bus looks at it again 5 ticks later, so the next stack is in the network (and the terminal) a
+  fraction of a second after you took the first. Only for a bus that is not due within those 5 ticks, and bounded: a
+  bus whose second look found nothing new does not look again after the next type runs out, until one of its regular
+  looks finds something new, so a chest that stays empty costs one extra look, not one per item type. The terminal
+  refreshes your window once more 10 ticks after you took something (it refreshes every second otherwise). A partial
+  take (32 of 64) leaves the rest in the snapshot, which is right, and a refill of that is seen at the next regular look;
+  the fluid side (a tank a pump refills) is not covered: its read is a whole fluid segment, and a tank does not run out
+  of a fluid the way a chest runs out of a stack.
 * **One bus per chest**: a second storage bus on the same chest shows "Another ME Storage Bus already uses this
   inventory" and does nothing until the first one is removed. A storage bus facing an ME block (an interface, a
   drive, a cable, ...) does nothing either ("Faces an ME block"): no loops.

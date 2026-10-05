@@ -728,6 +728,8 @@ holders43 = require("holders")({ me_place = me_place, me_report = me_report })
 stats38 = require("stats")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #51: starved arrivals and the margin of a short busy list (margin.lua)
 margin51 = require("margin")({ me_place = me_place, me_report = me_report })
+--- me-network issue #67: a refilled chest behind a storage bus (refill.lua)
+refill67 = require("refill")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #50: kept plans (plans.lua)
 plans50 = require("plans")({ me_place = me_place, me_report = me_report })
 --- me-network issue #50, lever 6: the scan of the pattern providers (scan.lua)
@@ -773,6 +775,7 @@ local function tests_running()
 	bench17.running(check)
 	cpus6.running(check)
 	parking38.running(check)
+	refill67.running(check)
 	stats38.running(check)
 	margin51.running(check)
 	plans50.running(check)
@@ -1652,6 +1655,7 @@ script.on_nth_tick(10, function()
 	parking38.tick()
 	stats38.tick()
 	margin51.tick()
+	refill67.tick()
 	plans50.tick()
 	scan50.tick()
 	entries50.tick()
@@ -4526,6 +4530,7 @@ script.on_init(function()
 	for _, f in pairs(parking38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(stats38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(margin51.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(refill67.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
