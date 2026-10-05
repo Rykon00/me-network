@@ -237,10 +237,16 @@ side). Open one to set up to 9 filters, items and fluids mixed (the window also 
 whether the bus uses its items, its fluids or both). On a machine with an inventory and fluid boxes (an assembling
 machine with a fluid recipe, a chemical plant) one bus does both; on a chest only items, on a tank only fluids.
 
+An **ME Export Bus facing a lab** feeds it science packs (issue #86): the filters are the packs, and the bus tops each up
+to a stack (200 packs) in the lab's slot for it, again as the lab uses them. The lab takes only the packs it uses: a filter
+it refuses (an iron plate) moves nothing and stays in the network. A lab has no output, so an ME Import Bus facing one
+shows "Faces nothing it can work with". Science packs can be stored in the network (issue #76), so a pack line can run
+from the drives through export buses into labs; labs that sit next to each other are fed by inserters between them as usual.
+
 | Bus | Takes from / puts into | Filters |
 |---|---|---|
 | Import | the output of an assembler or furnace, or any slot of a chest, and the fluid in the output boxes of a machine (a tank: all of it), into the network | only those items and fluids; none: everything |
-| Export | from the network into the input of an assembler or furnace (up to a stack of each filtered item) or a chest, and its filtered fluids into the machine's input boxes or the tank, at the fluid's default temperature | the items and fluids to export (none: nothing) |
+| Export | from the network into the input of an assembler, furnace or **lab** (up to a stack of each filtered item) or a chest, and its filtered fluids into the machine's input boxes or the tank, at the fluid's default temperature | the items and fluids to export (none: nothing) |
 
 A bus moves up to 256 items and 4000 units of fluid per second (map settings "Bus speed"), however many buses the
 map has: a bus that is visited less often moves more per visit. An interface handles 8 slots per quarter second since

@@ -26,7 +26,11 @@ M.INPUT = {
 	["assembling-machine"] = defines.inventory.crafter_input, ["furnace"] = defines.inventory.furnace_source,
 	["container"] = defines.inventory.chest, ["logistic-container"] = defines.inventory.chest,
 	["infinity-container"] = defines.inventory.chest,
+	["lab"] = defines.inventory.lab_input,               -- issue #86: one slot per science pack the lab uses
 }
+--- the entity types whose input has slots of their own for what they use: an export bus tops each filtered item up to
+--- one stack of it (a chest is filled as far as it has room)
+M.SLOTTED = { ["assembling-machine"] = true, ["furnace"] = true, ["lab"] = true }
 --- the inventory a storage bus makes network storage, by entity type
 M.STORAGE = {
 	["container"] = defines.inventory.chest, ["logistic-container"] = defines.inventory.chest,

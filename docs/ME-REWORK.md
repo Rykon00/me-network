@@ -2081,3 +2081,30 @@ ticks) each time: on main 120, 30 and 30 ticks, with the change 10, 10, 10 (a re
 three item types and nothing refills it: after the first type is taken and the re-read found nothing, taking the second
 schedules no re-read (a mutation without the bound fails it); a plate put into the chest and seen by a regular read arms
 it again (the next take schedules one 5 ticks later; main schedules none).
+
+## An ME Export Bus into a lab (issue #86)
+
+`T.INPUT["lab"] = defines.inventory.lab_input` (`scripts/fork-me-targets.lua`): the export bus's target resolution
+(`target_of`) takes any entity whose type has an input inventory in that table, so a lab is a target; `T.OUTPUT` has no lab
+(a lab has no output inventory), so an import bus facing one has no target. `T.SLOTTED` (assembling machine, furnace, lab)
+names the types whose input has a slot of its own for what it uses: `export_items` tops each filtered item up to one
+stack of it (`stack_of`), and the probe of a bus that found its target full (`probe_work`) wakes the bus when a slot has
+room again. A lab's slot per pack is the stack of that pack (200), which is what a machine's slot is too.
+
+What the lab's input does (runtime test): `insert` of a pack the lab uses fills its slot up to the stack, `insert` or
+`can_insert` of anything else (an iron plate) is refused, which `N.extract_to` handles without churn (it inserts into the
+target first and takes from the network only what went in). So a filter the lab cannot take moves nothing and costs the
+network nothing; for the probe a lab uses `can_insert` as well, since a refused filter would otherwise look like work for ever
+(its slot count is always below a stack). The vanilla lab (Space Age) uses all twelve science packs (`lab_inputs`), so there
+is no pack it refuses; the test's case for one is skipped unless a mod adds a tool the lab does not use.
+
+The packs come out of the network as whole items (since #76 a stack of full packs is stored and taken by stack, not by
+count); a pack the lab has partly used lives in its slot and is never taken back (there is no import side). Nothing about
+the bus's cap (256 items per second) changes: a lab uses a pack every research unit, the bus is visited again when its slot
+runs low (the headroom rule of #38).
+
+**Test** (`runtimemod/lab.lua`, `ME export bus into a lab test`): lab A with two pack filters holds a stack of the one and what
+the network had of the other, the network keeps the rest; lab C (a bus with a plate and a pack as filters) takes the pack
+and nothing of the plate; 150 packs taken out of lab A are topped up again; no pack made or lost; an import bus facing a lab has
+the status "no-target". On main it fails (every lab stays empty). No bench: the change is one table lookup in place of two
+type comparisons per visit.
