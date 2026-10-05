@@ -100,7 +100,11 @@ function M.store_all(entity, stack, inv)
 		local s = inv[i]
 		if s.valid_for_read and s.name == name and s.quality.name == q then
 			local n, w = N.insert_stack(net, s)
-			if n then stored = stored + n else why = w break end
+			if n then stored = stored + n
+			else
+				why = why or w
+				if not N.refuses_stack(w) then break end                -- (a used stack stays, the next one may go in)
+			end
 		end
 	end
 	if stored == 0 then return why or "no-storage" end

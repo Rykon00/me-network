@@ -427,7 +427,9 @@ function M.store_cursor(player, terminal)
 end
 
 --- Store items `name` of `quality` from the inventory `inv`: all of them, or one stack (`all` false).
---- Stacks with own data (tags) are stored stack by stack. Returns the count stored, or nil and a reason.
+--- Stacks with own data (tags) are stored stack by stack. A stack the network refuses (a used one: issue #76) stays and
+--- the others go on; the reason of the first refusal is the answer when nothing was stored. Returns the count stored, or
+--- nil and a reason.
 function M.store_inventory_item(inv, terminal, name, quality, all)
 	local net, why = network(terminal)
 	if not net then return nil, why end
@@ -437,8 +439,12 @@ function M.store_inventory_item(inv, terminal, name, quality, all)
 		local stack = inv[i]
 		if stack.valid_for_read and stack.name == name and stack.quality.name == (quality or "normal") then
 			local n, w = N.insert_stack(net, stack)
-			if n then total = total + n else reason = w end
-			if not all or reason then break end
+			if n then total = total + n
+			else
+				reason = reason or w
+				if not N.refuses_stack(w) then break end                  -- (no room, no power: the next stack fares no better)
+			end
+			if not all then break end
 		end
 	end
 	if total == 0 and reason then return nil, reason end

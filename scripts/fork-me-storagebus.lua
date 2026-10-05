@@ -58,13 +58,6 @@ local TAG = "fork_me_storage_bus"   -- blueprint tag: { mode, priority, filters 
 local OLD_TAG = "fork_me_fluid_storage_bus"   -- the old ME Fluid Storage Bus's tag: { mode, priority, filters = { fluid names } }
 local MODES = { readwrite = true, read = true, write = true }
 local INVENTORY = T.STORAGE
---- item types the network cannot hold as plain items (the same rule as the cells, M.storable of the network)
-local NOT_PLAIN = {
-	["item-with-inventory"] = true, ["item-with-tags"] = true, ["item-with-entity-data"] = true, ["blueprint"] = true,
-	["blueprint-book"] = true, ["deconstruction-item"] = true, ["upgrade-item"] = true, ["copy-paste-tool"] = true,
-	["selection-tool"] = true, ["spidertron-remote"] = true, ["armor"] = true,
-}
-
 local function state()
 	local s = storage.fork_me_sbus
 	if not s then
@@ -130,14 +123,30 @@ end
 --------------------------------------------------------------------------------
 
 local plain_cache = {}
---- can the network show and move this item through a storage bus? (plain items that do not spoil)
+--- can the network show and move this item through a storage bus? Plain items that do not spoil, and whole tools, ammo and
+--- repair tools (the same classes as N.storable: N.item_class; issue #76). What carries data of its own is not shown.
 local function plain(name, quality)
 	local k = name .. "@" .. quality
 	local v = plain_cache[k]
 	if v == nil then
 		local p = prototypes.item[name]
-		v = p ~= nil and not NOT_PLAIN[p.type] and p.get_spoil_ticks(quality) <= 0
+		local class = p and N.item_class(p.type)
+		v = (class == "plain" or class == "worn") and p.get_spoil_ticks(quality) <= 0
 		plain_cache[k] = v
+	end
+	return v
+end
+
+local worn_cache = {}
+--- is it a tool, ammo or a repair tool? Of those the bus shows and moves the whole stacks only: a stack whose top item is
+--- used is no part of the network's items (a count and a removal by count cannot tell it from a whole one, and a used
+--- item taken out would come out as a whole one)
+local function worn(name)
+	local v = worn_cache[name]
+	if v == nil then
+		local p = prototypes.item[name]
+		v = p ~= nil and N.item_class(p.type) == "worn"
+		worn_cache[name] = v
 	end
 	return v
 end
@@ -182,6 +191,7 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
+		if worn(name) and N.has_used(inv, name, q) then return 0 end    -- (a whole item put in would merge into the used stack)
 		return inv.get_insertable_count{ name = name, quality = q }
 	end,
 	--- put up to `count` into the inventory; returns the count inserted
@@ -190,14 +200,17 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
+		if worn(name) and N.has_used(inv, name, q) then return 0 end
 		return inv.insert{ name = name, quality = q, count = count }
 	end,
-	--- the real count of `key` in the inventory (0 when the bus cannot take from it)
+	--- the real count of `key` in the inventory (0 when the bus cannot take from it); of a tool, ammo or repair tool the
+	--- items of the whole stacks
 	count = function(rec, key)
 		if rec.mode == "write" or not shown(rec, key) then return 0 end
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
+		if worn(name) then return N.count_whole(inv, name, q) end
 		return inv.get_item_count{ name = name, quality = q }
 	end,
 	--- take up to `count` out of the inventory; returns the count removed
@@ -206,6 +219,7 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
+		if worn(name) then return N.remove_whole(inv, name, q, count) end
 		return inv.remove{ name = name, quality = q, count = count }
 	end,
 	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? (the bus takes the key and
@@ -325,11 +339,19 @@ function M.visit(rec, cascade)
 	local inv = t and inventory_of(rec)
 	if inv and rec.mode ~= "write" then
 		local all = rec.inonly or not (rec.partition or rec.deny)    -- (no filter to check: the common case)
+		local whole                                                  -- the whole stacks' counts, read when a tool or ammo is there
 		for _, it in pairs(inv.get_contents()) do
 			local q = it.quality or "normal"
 			if plain(it.name, q) then
 				local key = N.key_of(it.name, q)
-				if all or shown(rec, key) then contents[key] = (contents[key] or 0) + it.count end
+				if all or shown(rec, key) then
+					local n = it.count
+					if worn(it.name) then
+						whole = whole or N.whole_counts(inv)
+						n = whole[key] or 0
+					end
+					if n > 0 then contents[key] = (contents[key] or 0) + n end
+				end
 			end
 		end
 	end

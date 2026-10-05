@@ -2345,22 +2345,122 @@ function M.stats(net)
 		fluid_storage_buses = fbuses, members = net.n, id = net.id }
 end
 
+--- What the network does with an item, by its prototype type (issue #76). `stack.item` is no test for "carries data of
+--- its own": every stack with a state has a LuaItem (a tool, ammo, a repair tool, armour, a planner, an item that spoils or
+--- is damaged), and refusing all of them kept science packs, magazines and repair packs out for as long as there was a
+--- network. "plain": nothing of its own (a gun, a capsule, a module, a rail planner, a platform starter pack). "worn": a
+--- tool, ammo or repair tool, stored whole and never used (a stack holds one wear: its top item's, and taking an item out
+--- of a stack takes the used one first, so a count says nothing about it). "tags": an item with tags, kept with its tags and
+--- description. "label": a label type, kept when it has no label. Anything else carries data the network cannot keep and
+--- is refused; the value is the reason, the suffix of the locale key [fork-me-net] error-<reason>, one for each kind of
+--- thing so that the message names it. A type this table does not know (a new one of a later version) is refused as
+--- "cannot-store": storing it plain would drop what it carries without a word.
+local ITEM_CLASS = {
+	["item"] = "plain", ["gun"] = "plain", ["capsule"] = "plain", ["module"] = "plain", ["rail-planner"] = "plain",
+	["space-platform-starter-pack"] = "plain",
+	["tool"] = "worn", ["ammo"] = "worn", ["repair-tool"] = "worn",
+	["item-with-tags"] = "tags", ["item-with-label"] = "label",
+	["blueprint"] = "cannot-store-blueprint", ["blueprint-book"] = "cannot-store-blueprint",
+	["deconstruction-item"] = "cannot-store-planner", ["upgrade-item"] = "cannot-store-planner",
+	["selection-tool"] = "cannot-store-planner", ["copy-paste-tool"] = "cannot-store-planner",
+	["spidertron-remote"] = "cannot-store-remote", ["item-with-entity-data"] = "cannot-store-entity",
+	["armor"] = "cannot-store-armor", ["item-with-inventory"] = "cannot-store-inventory",
+}
+
+--- the class of an item prototype type (see ITEM_CLASS)
+function M.item_class(proto_type) return ITEM_CLASS[proto_type] or "cannot-store" end
+
+--- is the top item of this stack used up in part (a tool, a repair tool or ammo) or damaged? `proto`: its prototype.
+--- The test of a stack with its wear: a full item has the durability or the magazine its prototype says (a quality scales
+--- the durability, not the magazine).
+local function is_used(stack, proto)
+	if stack.health < 1 then return true end
+	local t = proto.type
+	if t == "ammo" then return stack.ammo < proto.magazine_size end
+	if t == "tool" or t == "repair-tool" then
+		local full = proto.get_durability(stack.quality)
+		return full ~= nil and stack.durability < full
+	end
+	return false
+end
+
+--- the items of `name` and `quality` in whole stacks of an inventory (a worn type: the stacks whose top item is not used)
+function M.count_whole(inv, name, quality)
+	local n = 0
+	for i = 1, #inv do
+		local stack = inv[i]
+		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and not is_used(stack, stack.prototype) then
+			n = n + stack.count
+		end
+	end
+	return n
+end
+
+--- is there a stack of `name` and `quality` in the inventory whose top item is used? (new items merge into it)
+function M.has_used(inv, name, quality)
+	for i = 1, #inv do
+		local stack = inv[i]
+		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and is_used(stack, stack.prototype) then return true end
+	end
+	return false
+end
+
+--- Take up to `count` items of `name` and `quality` out of the whole stacks of an inventory, never out of a used one: a
+--- removal by count (LuaInventory.remove) takes the used item first and would hand it on as a full one. Returns the count.
+function M.remove_whole(inv, name, quality, count)
+	local left = count
+	for i = 1, #inv do
+		if left <= 0 then break end
+		local stack = inv[i]
+		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and not is_used(stack, stack.prototype) then
+			local take = math.min(left, stack.count)
+			if take >= stack.count then stack.clear() else stack.count = stack.count - take end
+			left = left - take
+		end
+	end
+	return count - left
+end
+
+--- { key -> count } of the items of a worn type in the whole stacks of an inventory (one pass; a stack whose top item is
+--- used counts as none)
+function M.whole_counts(inv)
+	local out = {}
+	for i = 1, #inv do
+		local stack = inv[i]
+		if stack.valid_for_read then
+			local proto = stack.prototype
+			if ITEM_CLASS[proto.type] == "worn" and not is_used(stack, proto) then
+				local key = key_of(stack.name, stack.quality.name)
+				out[key] = (out[key] or 0) + stack.count
+			end
+		end
+	end
+	return out
+end
+
+--- is `reason` (from storable, insert_stack) a refusal of this one stack, as opposed to a network that takes nothing
+function M.refuses_stack(reason)
+	return reason ~= nil and reason:sub(1, 12) == "cannot-store"
+end
+
 --- Why a stack cannot go into the network (a locale key suffix), or nil and its key and data
 function M.storable(stack)
 	if not (stack and stack.valid_for_read) then return "empty" end
 	local proto = stack.prototype
 	if proto.get_spoil_ticks(stack.quality) > 0 then return "cannot-store-spoil" end
-	if stack.item and not stack.is_item_with_tags then return "cannot-store" end    -- inventories, blueprints, armor
-	if stack.health < 1 then return "cannot-store-damaged" end
-	if proto.type == "tool" and stack.durability < proto.get_durability(stack.quality) then return "cannot-store-damaged" end
-	if proto.type == "ammo" and stack.ammo < proto.magazine_size then return "cannot-store-damaged" end
-	if stack.is_item_with_tags then
+	local class = ITEM_CLASS[proto.type] or "cannot-store"
+	if class ~= "plain" and class ~= "worn" and class ~= "tags" and class ~= "label" then return class end
+	if is_used(stack, proto) then return "cannot-store-damaged" end
+	if class == "tags" then
+		if stack.label then return "cannot-store-label" end            -- (a label cannot be put back with the stack)
 		local tags = stack.tags
 		local desc = stack.custom_description
 		if (tags and next(tags)) or (desc and desc ~= "") then
 			local data = { tags = tags or {}, description = desc }
 			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
 		end
+	elseif class == "label" and stack.label then
+		return "cannot-store-label"
 	end
 	return nil, key_of(stack.name, stack.quality), nil
 end
