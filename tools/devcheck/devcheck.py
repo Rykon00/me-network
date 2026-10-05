@@ -496,7 +496,7 @@ RUNTIME_TESTS = (
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
-    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("REFILL", "ME storage bus refill test"),
+    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("LAB", "ME export bus into a lab test"), ("REFILL", "ME storage bus refill test"),
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"),

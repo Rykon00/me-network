@@ -1042,7 +1042,7 @@ end
 local function export_items(rec, net, t, cap, info)
 	local inv = t.get_inventory(rec.t_inv)
 	if not inv then return 0 end
-	local machine = t.type == "assembling-machine" or t.type == "furnace"
+	local machine = T.SLOTTED[t.type]
 	local moved = 0
 	local tgt = rec.tgt
 	if not tgt then
@@ -1371,11 +1371,13 @@ local function probe_work(rec)
 	if rec.t_inv then
 		local inv = t.get_inventory(rec.t_inv)
 		if inv then
-			local machine = t.type == "assembling-machine" or t.type == "furnace"
+			local machine = T.SLOTTED[t.type]
+			local lab = t.type == "lab"
 			for _, name in ipairs(rec.filters) do
 				if prototypes.item[name] then
 					if machine then
-						if inv.get_item_count(name) < stack_of(name) then return true end
+						--- (a lab takes only the packs it uses: a filter it refuses is no work, however empty its slot)
+						if inv.get_item_count(name) < stack_of(name) and (not lab or inv.can_insert{ name = name }) then return true end
 					elseif inv.can_insert{ name = name } then
 						return true
 					end
