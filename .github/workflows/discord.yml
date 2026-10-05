@@ -1,11 +1,14 @@
 # Applies .discord/server.yml to the "Gregtorio & ME Network" Discord server.
 # Pull requests get the plan (a dry run) as a comment; merging to main applies it.
+# A pull request that changes nothing but .discord/ is merged and applied by this workflow itself
+# once the dry run passed, unless it is a draft or its plan deletes something (automerge).
 # The tool and its reference: https://github.com/Rykon00/gregtorio-me-network_discord-bot
 # Needs the repository secret DISCORD_BOT_TOKEN.
 name: Discord
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: [".discord/**", ".github/workflows/discord.yml"]
   push:
     branches: [main]
@@ -13,7 +16,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # the automatic merge
   pull-requests: write
 
 jobs:
@@ -22,5 +25,6 @@ jobs:
     with:
       config: .discord/server.yml
       mode: ${{ github.event_name == 'push' && 'apply' || 'plan' }}
+      automerge: true
     secrets:
       DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
