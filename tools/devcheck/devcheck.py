@@ -728,6 +728,10 @@ def migrate(a):
 # --------------------------------------------------------------------------------------------
 
 BENCH_WARMUP = 600
+BENCH_SAMPLE_TICKS, BENCH_STEADY_TICKS = 300, 1200      # (benchmod/control.lua SAMPLE_TICKS, STEADY_TICKS)
+# issue #56: `--check` measures sizes from CHECK_LONG_SIZE with this window (without --ticks): the refill transient of about
+# 2000 ticks at 20 000 is a small part of it, so its position no longer moves the 99th percentile
+CHECK_LONG_SIZE, CHECK_LONG_TICKS = 20000, 10800
 LATENCY_TICKS = 3700            # after the window: the latency probes (time out after 3600 ticks)
 BURST_TICKS = 260               # after the latency probes: the build burst (build, remove, plain build, plain remove)
 SLICE_TICKS = 5 * 60 * 60       # the long run reports per 5 minutes
@@ -940,10 +944,19 @@ def tick_rows(log):
     return rows
 
 
-def window_timings(rows, first, last):
-    """the columns of the ticks first..last as lists"""
+def sample_ticks(first, last):
+    """issue #56: the ticks inside a window where the benchmark mod itself works (benchmod SAMPLE_TICKS: the backlogs, a walk
+    over every block record with the versions that have it; STEADY_TICKS: the scheduler's counters); not part of the timing,
+    like the probe ticks at the window's ends"""
+    return {t for t in range(first, last + 1) if t % BENCH_SAMPLE_TICKS == 0} | {BENCH_WARMUP + BENCH_STEADY_TICKS}
+
+
+def window_timings(rows, first, last, skip=None):
+    """the columns of the ticks first..last as lists (without the ticks in `skip`)"""
     out = {c: [] for c in TIMING_COLS}
     for t in range(first, last + 1):
+        if skip and t in skip:
+            continue
         r = rows.get(t)
         if r:
             for c, v in r.items():
@@ -1087,7 +1100,8 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
         (WORK / f"bench-failed-{Path(mapfile).stem}.log").write_text(log, encoding="utf-8")
         return None
     rows = tick_rows(log)
-    tm = window_timings(rows, BENCH_WARMUP + 2, BENCH_WARMUP + window - 3)
+    first, last = BENCH_WARMUP + 2, BENCH_WARMUP + window - 3
+    tm = window_timings(rows, first, last, sample_ticks(first, last))
     run = {"timing": {c: stat(v) for c, v in tm.items()},
            "throughput": (bench_json(log, "THROUGHPUT") or [None])[0],
            "latency": (bench_json(log, "LATENCY") or [None])[0],
@@ -1105,7 +1119,7 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
         run["slices"] = []
         for k, sl in enumerate(slices):
             first = BENCH_WARMUP + k * cfg["slice"] + 2
-            tms = window_timings(rows, first, sl["tick"] - 1)
+            tms = window_timings(rows, first, sl["tick"] - 1, sample_ticks(first, sl["tick"] - 1))
             run["slices"].append({"tick": sl["tick"], "memory_kb": sl.get("memory_kb"), "backlogs": sl.get("backlogs"),
                                   "timing": {c: stat(v) for c, v in tms.items()}})
     if profile:
@@ -1532,12 +1546,16 @@ def bench_check(a):
     results = {"check": a.check, "sizes": sizes, "rounds": runs, "per_size": []}
     for entry in sizes:
         size, base = size_variant(entry)
-        cfg = bench_config(a, "me", size, base, False)
+        ca = a
+        if not getattr(a, "ticks_given", True) and not base and size >= CHECK_LONG_SIZE:
+            ca = argparse.Namespace(**{**vars(a), "ticks": CHECK_LONG_TICKS})
+            print(f"  {entry}: a window of {CHECK_LONG_TICKS} ticks (issue #56; --ticks sets another)")
+        cfg = bench_config(ca, "me", size, base, False)
         size = entry                                         # (the label: a number or `base`)
         maps = {}
         for tag, mod_dir in (("ref", ref_dir), ("wc", None)):
             mapfile = WORK / f"bench-check-{tag}-{size}.zip"
-            out, err = bench_map(a, cfg, mod_dir, mapfile, gregtorio=a.with_gregtorio)
+            out, err = bench_map(ca, cfg, mod_dir, mapfile, gregtorio=a.with_gregtorio)
             if err:
                 print(f"  {tag} {size}: the map was not created\n{err}")
                 return 1
@@ -1545,12 +1563,12 @@ def bench_check(a):
         runs_of = {"ref": [], "wc": []}
         for r in range(runs):
             for tag, mod_dir in (("ref", ref_dir), ("wc", None)):
-                run = bench_run(a, cfg, mod_dir, maps[tag][0], gregtorio=a.with_gregtorio, label=f"{tag} {size} round {r + 1}")
+                run = bench_run(ca, cfg, mod_dir, maps[tag][0], gregtorio=a.with_gregtorio, label=f"{tag} {size} round {r + 1}")
                 if not run:
                     return 1
                 runs_of[tag].append(run)
                 problems += scene_problems(f"{tag}", size, {"runs": [run], "setup": maps[tag][1]["setup"]})
-        per = {"size": size, "metrics": []}
+        per = {"size": size, "window": ca.ticks, "metrics": []}
         print(f"\n  size {size}: {'metric':28} {'reference':>22} {'working copy':>22}  verdict")
         for name, get, lower, floor, *rest in CHECK_METRICS:
             fails = rest[0] if rest else True
@@ -1612,7 +1630,7 @@ def main():
     p = sub.add_parser("bench")
     p.add_argument("--sizes", default="100,1000,5000", help="buses and interfaces of the ME scenes (default 100,1000,5000)")
     p.add_argument("--runs", type=int, default=3, help="benchmark runs per scene, the median is reported (default 3)")
-    p.add_argument("--ticks", type=int, default=3600, help="the measured window in ticks, a multiple of 600 (default 3600)")
+    p.add_argument("--ticks", type=int, help="the measured window in ticks, a multiple of 600 (default 3600; --check at 20 000 and more: %d, issue #56)" % CHECK_LONG_TICKS)
     p.add_argument("--reference", action="store_true", help="also the native scenes: inserters and logistic robots")
     p.add_argument("--profile", metavar="SIZES", help="also profile these sizes with an instrumented copy (e.g. 1000,5000)")
     p.add_argument("--alloc", action="store_true", help="with --profile: also the memory each function allocates (the collector is stopped in the window: use a short --ticks, e.g. 600)")
@@ -1636,6 +1654,9 @@ def main():
                    "worse by more than the measured noise (--runs rounds, at least 3)")
     a = ap.parse_args()
     if a.cmd == "bench":
+        a.ticks_given = a.ticks is not None
+        if a.ticks is None:
+            a.ticks = 3600
         if a.ticks % BENCH_WARMUP:
             sys.exit(f"--ticks must be a multiple of {BENCH_WARMUP}")
         return bench(a)
