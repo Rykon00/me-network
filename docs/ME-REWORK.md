@@ -2023,3 +2023,42 @@ events) was run against a mock of the GUI elements outside the game; how it look
 * Terminal search by localised name (a script cannot read localised names).
 * The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
+
+## A refilled chest behind a storage bus (issue #67)
+
+An extraction through a storage bus works on the real inventory and corrects the snapshot (`extract_key`), and told the
+bus nothing, so a refill of the chest showed at the bus's next regular read: at the idle limit (120 ticks with 64 buses or
+more, 30 ticks of a busy bus, with the probes' share on top) plus the window's 60 tick step, about 1.5 s on average for an
+infinity chest, 3 s at worst.
+
+**The bus.** `extract_key` calls the handler's `emptied(cell, key)` (new, optional) when an extraction took the last of a
+key out of an external cell; the item side of the storage bus answers with `M.reread(rec)`: its visit moves to REREAD = 5
+ticks later (`Sched.at` on the busy list, the same visit as any other). Not when the bus is due within those ticks anyway
+or waits on the busy list (`due < 0`), not on the fluid side, not while one is pending. The state is the record's (saved):
+`rereading`, `rr`, and what the re-read replaced (`rr_back` its due tick, `rr_probe` whether it was in the probe list,
+`rr_vis` its last visit), so a re-read that finds nothing puts the regular visit back and the counters keep the regular
+rhythm; a re-read is counted in the service quality only when it found something.
+
+**The bound.** A first attempt re-read after every key that ran out and failed `bench --check origin/main --sizes
+base,5000`: the storage bus latency went from 1.27 to 1.70 s at the maintainer's size and from 1.72 to 1.95 s at 5000,
+because the benchmark's chests are drained for a minute and never refilled, so every item type that ran out cost reads that
+the other buses' probes then waited for. So `rec.rr`: a re-read that found nothing sets it to false, and no re-read is
+scheduled while it is false; a regular read that finds something new (or a re-read that does) clears it. A chest that stays
+empty costs one extra read, a chest that refills is read again 5 ticks after every time it runs out.
+
+**The window.** The terminal's step is 60 ticks, so a take schedules one more refresh of the taker's window 10 ticks
+later (`follow_up` in `fork-me-terminal.lua`, `storage.fork_me_follow[player_index] = tick`, handled in the on_tick of
+`control.lua` with one `next()` while nothing is pending): at most one per player in that time, the same tick on every peer.
+
+**Not done, and why.** A partial take leaves the correct rest in the snapshot (`real - got`), so the terminal never shows
+items that are gone; only an increase from outside waits for the regular read, as for every change an inserter makes. The
+fluid side: a segment is read as a whole and a fluid does not run out in the way a stack does; the pump that refills a tank
+is seen at its regular read (the fluid bus's idle limit), and the same bound would apply if it is wanted later.
+
+**Test** (`runtimemod/refill.lua`, `ME storage bus refill test`): 70 more storage buses on chests make the item side's idle limit
+the real 120 ticks; bus A faces an infinity chest holding one stack of iron plates; after 450 ticks (the bus idle at its limit)
+the network takes the stack three times, and the next stack must be in the network at the next check (the test runs every 10
+ticks) each time: on main 120, 30 and 30 ticks, with the change 10, 10, 10 (a re-read after 5). Bus B faces a chest with
+three item types and nothing refills it: after the first type is taken and the re-read found nothing, taking the second
+schedules no re-read (a mutation without the bound fails it); a plate put into the chest and seen by a regular read arms
+it again (the next take schedules one 5 ticks later; main schedules none).

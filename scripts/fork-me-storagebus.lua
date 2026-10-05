@@ -33,7 +33,9 @@
 ---     limit (a setting, 2 seconds by default): the longest time until the network sees a change. Between two visits the snapshot may be stale; every insert and extract through the bus works
 ---     on the real inventory (the engine asks `count` before it takes and corrects the snapshot), so the network
 ---     never hands out items that are gone; it may show items that are gone (until the next visit or extract) or
----     not yet show items that came in (until the next visit).
+---     not yet show items that came in (until the next visit). Issue #67: when an extraction takes the last of a key out
+---     of the inventory, the bus reads it again REREAD ticks later (something behind it may refill it: an infinity chest,
+---     an inserter): see `reread`, bounded so that a chest that stays empty costs one extra read, not one per item type.
 ---   * Rules: one bus per inventory (a second bus on the same inventory is refused with a status and takes
 ---     over when the first one goes); a bus facing an ME block is refused (no loops); removing the bus or
 ---     the inventory drops the inventory from the network.
@@ -51,6 +53,7 @@ local M = {}
 
 local KIND = "storage-bus"
 local MIN_INTERVAL = 30             -- ticks until a bus whose inventory changed reads it again
+local REREAD = 5                    -- ticks until a bus whose inventory was emptied of a key by the network reads it again (#67)
 local MAX_FILTERS = 18              -- the filters without a Capacity Card (AE2's 18)
 local FILTER_LIMIT = 63             -- with five Capacity Cards (AE2: 18 + 5 x 9): what a bus keeps
 local MAX_PRIORITY = 1000
@@ -230,6 +233,8 @@ local ITEM = {
 	end,
 	--- the bus's record leaves the storage engine: a card still in it is spilled (a bus that vanished without an event)
 	detached = function(rec) M.detach(rec) end,
+	--- the network took the last of `key` out of the inventory (issue #67): read it again soon
+	emptied = function(rec) M.reread(rec) end,
 }
 
 N.ext_handlers[KIND] = ITEM             -- the fluid side: N.ext_handlers[F.HANDLER] through rec.handler
@@ -375,6 +380,25 @@ local function item_rec(unit)
 	return nil
 end
 
+--- Issue #67: the network took the last of a key out of the inventory behind `rec`; a refill (an infinity chest, an
+--- inserter) shows only at the bus's next read, up to the idle limit away, while the player looks at the terminal. So the
+--- bus is read again REREAD ticks later (a visit like any other, on the busy list). Bounded, since a read for every key that
+--- ran out is not free (bench: the storage bus latency at 5000 rose by 13 %): a bus whose re-read found nothing new
+--- (`rec.rr == false`) gets none until one of its regular reads finds something new; one whose re-read found the refill
+--- is read again after every key that runs out. A bus that is due within REREAD ticks anyway, or is waiting on the busy
+--- list, is not touched. State of the record (saved): `rereading`, `rr`, and what the re-read replaced (`rr_back`, `rr_probe`,
+--- `rr_vis`: the visit it took the place of, put back when it found nothing).
+function M.reread(rec)
+	if rec.rr == false or rec.rereading or rec.side == "fluid" then return end
+	local s = storage.fork_me_sbus
+	if not (s and listed(s, rec.unit)) then return end
+	local now = game.tick
+	local due = rec.due
+	if due and (due < 0 or due <= now + REREAD) then return end    -- (waiting on the busy list, or due soon anyway)
+	rec.rereading, rec.rr_back, rec.rr_probe, rec.rr_vis = true, due, rec.sq, rec.vis
+	Sched.at(queue(s), rec, rec.unit, now + REREAD)
+end
+
 local function visit_due(rec, unit)
 	local s = storage.fork_me_sbus
 	if not rec.entity.valid then
@@ -386,8 +410,28 @@ local function visit_due(rec, unit)
 	end
 	local changed = M.visit(rec)
 	if rec.side == "fluid" then return end           -- on the fluid side now: its queue has it
+	local again                                      -- (a re-read that found nothing: the regular visit it replaced comes back)
+	if rec.rereading then
+		rec.rereading = nil
+		rec.vis = rec.rr_vis                         -- (not a visit of the regular rhythm: the counters keep the last regular one)
+		local back, probe = rec.rr_back, rec.rr_probe
+		rec.rr_back, rec.rr_probe, rec.rr_vis = nil, nil, nil
+		if changed then
+			rec.rr = nil
+		else
+			rec.rr = false
+			if back and back > game.tick then
+				Sched.at(queue(s), rec, unit, back, probe)
+				return nil
+			end
+		end
+		again = true
+	elseif changed then
+		rec.rr = nil                                 -- (a regular read found something new: re-reads are worth it again)
+	end
 	rec.siv = Sched.interval(rec.siv, changed and 1 or 0, true, MIN_INTERVAL, MIN_INTERVAL, idle_limit(s))
 	Sched.at(queue(s), rec, unit, game.tick + rec.siv, not changed)   -- (unchanged: asleep until then)
+	if again and not changed then return nil end
 	return changed and 1 or 0
 end
 
@@ -414,6 +458,7 @@ function M.wake(unit)
 		local s = storage.fork_me_sbus
 		if s and listed(s, unit) then
 			rec.siv = nil
+			rec.rereading, rec.rr_back, rec.rr_probe, rec.rr_vis = nil, nil, nil, nil
 			Sched.wake(queue(s), rec, unit)
 		end
 	end
@@ -1066,7 +1111,9 @@ remote.add_interface("gregtorio-me-storagebus", {
 		if not rec then return nil end
 		local due = rec.due
 		return { due = (due and due > 0) and due or nil, interval = rec.siv, probing = rec.sq == true,
-			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, side = rec.side or "item" }
+			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, side = rec.side or "item",
+			--- issue #67: the re-read after an extraction emptied a key: pending, and whether one found nothing last (`rr` false)
+			rereading = rec.rereading == true, rr = rec.rr }
 	end,
 	--- one visit now (what the I/O step does)
 	visit = function(entity)

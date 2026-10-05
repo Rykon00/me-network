@@ -2366,3 +2366,31 @@ Measured headless (`LuaProfiler`, a throwaway test): a plain key costs one `find
 (100 000 calls: 40 ms); a key with tags one `helpers.json_to_table` of the json, 26 µs for a cell's 283 characters (10 000
 calls: 260 ms), once per key; 200 distinct stored cells and patterns on a full rebuild of the grid cost 5 ms once, building
 the 200 buttons costs far more. The GUI itself is not measured headless.
+
+
+## The storage bus looks again when the network emptied a key (issue #67)
+
+An extraction that takes the last of a key out of a chest behind a storage bus schedules a read of that chest 5 ticks later
+(`M.reread`), bounded by `rec.rr` (a re-read that found nothing sets it; no further re-read until a regular read finds
+something new). A first version without the bound failed `bench --check origin/main --sizes base,5000` on the storage bus
+latency (1.27 to 1.70 s at the maintainer's size, 1.72 to 1.95 s at 5000: the benchmark's chests are drained and never
+refilled, so every item type that ran out cost a read the other buses' probes waited for). With the bound:
+
+`bench --check origin/main --sizes base,5000`, three rounds in turns (origin/main at 8534138; the game client, Chrome and
+Spotify running, as in the method above), **green, regressions 0**; throughput per kind of endpoint identical:
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.2003 / 0.664 | 0.2004 / 0.675 |
+| base: storage bus latency max (s) | 1.267 | 1.267 |
+| 5000: script avg / p99 (ms) | 1.224 / 3.70 | 1.209 / 3.35 |
+| 5000: ticks over 5 ms | 12 | 8 |
+| 5000: storage bus latency max (s) | 1.717 | 1.733 |
+| 5000: burst build / remove (ms) | 83.1 / 102.3 | 83.1 / 101.1 |
+
+(One round of each side had a worst tick or p99 far off the others, 91.7 ms for origin/main at base round 3 and 185.7 ms
+for the working copy at 5000 round 3: the machine, not the code; the medians and the noise bands ignore them.) The scene's
+chests are never refilled, so the bound lets every bus re-read at most once there; the benefit (the next stack after 10
+instead of 30 to 120 ticks) is in the runtime test `ME storage bus refill test`, not in the benchmark.
+
+The terminal's follow-up refresh costs one `next()` per tick while no player has taken anything.
