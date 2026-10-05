@@ -534,7 +534,7 @@ return function(H)
 		local function last(t) return t[#t] end
 
 		--- empty: one free slot, a chooser of the kind asked for; never a signal chooser
-		for kind, elem_type in pairs({ item = "item-with-quality", fluid = "fluid" }) do
+		for kind, elem_type in pairs({ item = "item", fluid = "fluid" }) do
 			local sl = slots(kind)
 			expect(#sl == 1 and sl[1].free and sl[1].index == 1 and sl[1].elem_type == elem_type and sl[1].enabled and not sl[1].key,
 				"the free slot of an empty workbench (" .. kind .. ") " .. line(sl))
@@ -569,7 +569,7 @@ return function(H)
 			end
 			local f = last(sl)
 			ok = ok and f.free and f.index == #want + 1 and not f.key and f.enabled
-				and f.elem_type == (kind == "fluid" and "fluid" or "item-with-quality")
+				and f.elem_type == kind
 			expect(ok, "the buttons with the free " .. kind .. " slot " .. line(sl))
 		end
 		--- a slot changed, a key chosen twice (once), a slot emptied
@@ -602,10 +602,72 @@ return function(H)
 		end
 		k = info()
 		expect(#k.config - k.config_items == lim.fluids and not last(slots("fluid")).enabled, "the free slot of full fluids")
+		--- issue #82: the add row (the picker of a mod's button has no quality row and takes a choice at once, so the window
+		--- has its own quality drop-down and a green check): the check's call takes the item with its quality or the fluid
+		remote.call(WB, "clear", w)
+		local qs = remote.call(GUI, "workbench_qualities")
+		expect(type(qs) == "table" and (q == nil and #qs == 0 or qs[1] == "normal" and #qs >= 2), "the qualities of the drop-down " .. line(qs))
+		local function add(elem_type, value, quality) return remote.call(GUI, "workbench_add", w, elem_type, value, quality) end
+		expect(add("item", "iron-plate") == true and add("fluid", "water") == true, "an item and a fluid added")
+		if q then
+			expect(add("item", "iron-plate", q) == true and add("item", "iron-plate", "no-such-quality") == false, "an item added with a quality")
+		end
+		local want82 = q and { "iron-plate", "iron-plate@" .. q, "fluid/water" } or { "iron-plate", "fluid/water" }
+		expect(line(info().config) == line(want82), "the partition after the adds " .. line(info().config))
+		local refused82 = {
+			{ "signal", { type = "virtual", name = "signal-A" } }, { "signal", "iron-plate" }, { "item-with-quality", item("coal") },
+			{ "entity", "iron-chest" }, { "recipe", "iron-gear-wheel" }, { "item", "no-such-item" }, { "fluid", "no-such-fluid" },
+			{ "item", { name = "coal" } }, { "item", nil },
+		}
+		for _, r in ipairs(refused82) do expect(add(r[1], r[2]) == false, "add refused: " .. r[1] .. " " .. line(r[2])) end
+		expect(#info().config == #want82, "a refused add changed the partition " .. line(info().config))
+		--- a filled slot's item changed in the picker (which gives the normal quality): the slot keeps its quality
+		if q then
+			remote.call(GUI, "workbench_change", w, 2, "item-with-quality", item("coal"))
+			expect(line(info().config) == line({ "coal@" .. q, "iron-plate", "fluid/water" }), "a changed slot keeps its quality " .. line(info().config))
+			remote.call(GUI, "workbench_change", w, 1, "item-with-quality", item("stone", "normal"))
+			expect(line(info().config):find("stone@" .. q, 1, true) ~= nil, "again " .. line(info().config))
+		end
+		remote.call(GUI, "workbench_change", w, #info().config, "fluid", "steam")
+		expect(info().config[#info().config] == "fluid/steam", "a fluid slot changed " .. line(info().config))
+		--- a full kind refuses the add; the other kind still takes it
+		remote.call(WB, "clear", w)
+		for name in pairs(prototypes.item) do
+			if info().config_items >= lim.items then break end
+			add("item", name)
+		end
+		expect(info().config_items == lim.items, "items filled up to the limit through the add")
+		expect(add("item", "iron-plate") == false and add("item", "coal", q) == false, "an item added to a full kind")
+		expect(add("fluid", "water") == true, "a fluid added when the items are full")
+		--- with a cell in the workbench the row adds to the cell's partition, of the cell's kind only
+		remote.call(WB, "clear", w)
+		local hold = game.create_inventory(2)
+		hold[1].set_stack{ name = "me-1k-storage-cell", count = 1 }
+		remote.call(WB, "cell_click", w, hold[1], hold, false)
+		expect(info().cell ~= nil and add("fluid", "water") == false and #info().cell.partition == 0, "a fluid added to an item cell")
+		local cs = slots("fluid")
+		expect(#cs == 1 and cs[1].free and cs[1].elem_type == "item" and cs[1].enabled, "the row's slot with an item cell " .. line(cs))
+		expect(add("item", "iron-plate") == true and (not q or add("item", "iron-plate", q) == true), "an item added to an item cell")
+		local cp = info().cell.partition
+		expect(line(cp) == line(q and { "iron-plate", "iron-plate@" .. q } or { "iron-plate" }), "the cell's partition after the adds " .. line(cp))
+		expect(#slots("item") == #cp + 1 and not slots("item")[1].free, "the buttons with a cell: the filled ones, then the row's")
+		hold[1].clear()
+		remote.call(WB, "cell_click", w, hold[1], hold, false)
+		hold[1].clear()
+		hold[1].set_stack{ name = "me-1k-fluid-storage-cell", count = 1 }
+		remote.call(WB, "clear", w)
+		remote.call(WB, "cell_click", w, hold[1], hold, false)
+		expect(info().cell ~= nil and add("item", "coal") == false and add("fluid", "water") == true
+			and line(info().cell.partition) == line({ "fluid/water" }), "an add to a fluid cell " .. line(info().cell and info().cell.partition))
+		hold[1].clear()
+		remote.call(WB, "cell_click", w, hold[1], hold, false)
+		hold.destroy()
 		remote.call(WB, "clear", w)
 		w.destroy()
 		me_report("WBPICK69", "ME Cell Workbench partition buttons", problems, "the free slot per kind, refused signals, entities, "
-			.. "recipes and unknown values, items with quality and fluids, a slot changed and emptied, a key twice, full kinds")
+			.. "recipes and unknown values, items with quality and fluids, a slot changed and emptied, a key twice, full kinds; "
+			.. "issue #82: the qualities of the drop-down, the green check's add (quality, refusals, a full kind, a cell in), "
+			.. "a changed slot keeping its quality")
 	end
 
 	--- Issue #64: the tooltip of a cell (its custom_description, written with the stack by N.cell_stack). The cells are made
