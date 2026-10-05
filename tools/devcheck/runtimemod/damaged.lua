@@ -7,6 +7,8 @@
 ---   the 5 it cannot hand out).
 --- * The interface row surplus: an interface whose row wants 2 iron chests holds a damaged stack of 5: nothing of it goes into
 ---   the network, the stack stays.
+--- * Issue #102: a damaged stack is stored (insert_stack: the terminal, the pane's clicks; the import bus) with its health in the key
+---   of an item with data, apart from the whole ones, comes out damaged, and is never put into a storage bus's chest.
 --- Loaded by control.lua: require("damaged")(H) returns { setup, tick, running } like margin.lua.
 
 local NET, IO = "gregtorio-me-network", "gregtorio-me-io"
@@ -33,8 +35,10 @@ return function(H)
 		local sbus = me_place(s, fails, what, "me-storage-bus", BX + 7.5, BY + 0.5, SOUTH)
 		local schest = me_place(s, fails, what, "steel-chest", BX + 7.5, BY + 1.5)
 		local iface = me_place(s, fails, what, "me-network-interface", BX + 4.5, BY - 2.5)
-		me_connect(fails, what, { ctrl, drive, sbus, iface })
-		storage.damaged84_scene = { ctrl = ctrl, sbus = sbus, schest = schest, iface = iface }
+		local ibus = me_place(s, fails, what, "me-import-bus", BX + 3.5, BY + 0.5, SOUTH)         -- issue #102
+		local ichest = me_place(s, fails, what, "iron-chest", BX + 3.5, BY + 1.5)
+		me_connect(fails, what, { ctrl, drive, sbus, iface, ibus })
+		storage.damaged84_scene = { ctrl = ctrl, sbus = sbus, schest = schest, iface = iface, ibus = ibus, ichest = ichest }
 		return fails
 	end
 
@@ -73,6 +77,9 @@ return function(H)
 			ichest[1].set_stack{ name = IRON, count = 5, health = 0.5 }
 			ichest[2].set_stack{ name = IRON, count = 3 }
 			remote.call(IO, "set_interface_slot", sc.iface, 1, IRON, "normal", 2)
+			local bus_chest = sc.ichest.get_inventory(defines.inventory.chest)
+			bus_chest[1].set_stack{ name = "stone-wall", count = 7, health = 0.4 }
+			bus_chest[2].set_stack{ name = "stone-wall", count = 3 }
 		end
 		if st.done or tick < CHECK1 then return end
 		local problems = st.problems
@@ -110,6 +117,14 @@ return function(H)
 			st.looked = true
 			expect(count(WOOD) == 0, "the storage bus shows " .. count(WOOD) .. " wooden chests, the 5 damaged ones it cannot hand out")
 			expect(count(IRON) == 3, "the network has " .. count(IRON) .. " iron chests after the interface's later visits, not 3")
+			--- the import bus (stack by stack for an item that places an entity): the whole stack as whole items, the damaged one
+			--- as a key of its own, with its health
+			local walls, damaged_walls = count("stone-wall"), 0
+			for key, n in pairs(remote.call(NET, "contents", sc.ctrl)) do
+				if key:find("stone-wall@normal#", 1, true) == 1 then damaged_walls = damaged_walls + n end
+			end
+			expect(walls == 3 and damaged_walls == 7, "the import bus stored " .. walls .. " whole and " .. damaged_walls .. " damaged stone walls, not 3 and 7")
+			expect(sc.ichest.get_inventory(defines.inventory.chest).is_empty(), "the import bus left a damaged or whole stack in its chest")
 			--- the damaged stack is taken out of the chest and whole ones put in: the bus shows them again, and hands them out
 			chest.clear()
 			chest[1].set_stack{ name = WOOD, count = 4 }
@@ -121,9 +136,43 @@ return function(H)
 		local moved = remote.call(NET, "extract_to", sc.ctrl, out, WOOD, 4)
 		expect(moved == 4 and whole_count(out, WOOD) == 4, "the 4 whole wooden chests came out as " .. moved .. " (" .. whole_count(out, WOOD) .. " whole)")
 		out.destroy()
+		--- issue #102: a damaged stack is stored with its health (a key of its own) and comes out damaged, never into a storage bus
+		local plain_before = count(WOOD)
+		local bus_before = chest.get_item_count(WOOD)
+		local src = game.create_inventory(3)
+		src[1].set_stack{ name = WOOD, count = 5, health = 0.5 }
+		src[2].set_stack{ name = WOOD, count = 4 }
+		src[3].set_stack{ name = WOOD, count = 2, health = 0.25 }
+		local n1, n2, n3 = remote.call(NET, "insert_stack", sc.ctrl, src[1]), remote.call(NET, "insert_stack", sc.ctrl, src[2]),
+			remote.call(NET, "insert_stack", sc.ctrl, src[3])
+		expect(n1 == 5 and n2 == 4 and n3 == 2, "stored " .. tostring(n1) .. ", " .. tostring(n2) .. ", " .. tostring(n3) .. " of the damaged (5), whole (4) and damaged (2) stacks")
+		expect(not src[1].valid_for_read and not src[3].valid_for_read, "a damaged stack was stored but is still there")
+		local keys = {}
+		for key, n in pairs(remote.call(NET, "contents", sc.ctrl)) do
+			if key:find(WOOD .. "@normal#", 1, true) == 1 then keys[#keys + 1] = { key = key, n = n } end
+		end
+		table.sort(keys, function(a, b) return a.n > b.n end)
+		expect(#keys == 2 and keys[1].n == 5 and keys[2].n == 2, "the damaged stacks are not two keys of 5 and 2: " .. serpent.line(keys))
+		local desc = keys[1] and remote.call("gregtorio-me-gui", "key_description", keys[1].key)
+		expect(type(desc) == "table" and desc[1] == "fork-me-net.damaged-item" and desc[2] == 50, "the terminal's description of the damaged key: " .. serpent.line(desc))
+		expect(count(WOOD) == plain_before + 4, "the plain wooden chests of the network are " .. count(WOOD) .. ", not " .. (plain_before + 4) .. ": a damaged stack counted as whole ones")
+		expect(chest.get_item_count(WOOD) == bus_before and damaged_count(chest, WOOD) == 0, "a damaged stack was put into the chest behind the storage bus")
+		for i, want in ipairs({ { 5, 0.5 }, { 2, 0.25 } }) do
+			if keys[i] then
+				local back = game.create_inventory(2)          -- (one inventory each: the game merges damaged stacks, averaging their health)
+				local got = remote.call(NET, "extract_to", sc.ctrl, back, keys[i].key, want[1])
+				local b = back[1]
+				expect(got == want[1] and b.valid_for_read and b.count == want[1] and math.abs(b.health - want[2]) < 1e-4,
+					"the damaged key of " .. want[1] .. " came out as " .. tostring(got) .. ", " .. (b.valid_for_read and (b.count .. " at health " .. b.health) or "nothing")
+					.. ", not at its health " .. want[2])
+				back.destroy()
+			end
+		end
+		src.destroy()
 		st.done = true
 		me_report("DAMAGED", "damaged items on the by-count paths", problems, "a damaged stack stays in the chest behind a storage bus and is not shown once found, "
-			.. "a damaged stack in an interface is no surplus (its whole ones are), the bus shows whole stacks again once the damaged one is gone")
+			.. "a damaged stack in an interface is no surplus (its whole ones are), the bus shows whole stacks again once the damaged one is gone; "
+			.. "damaged stacks are stored with their health, apart from the whole ones, and come out damaged")
 	end
 
 	function T.running(check) check(storage.damaged84 and storage.damaged84.done, "damaged items on the by-count paths") end

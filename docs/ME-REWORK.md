@@ -129,8 +129,9 @@ an item with tags is stored with its tags and description under its own key, one
 Not storable (the interface leaves them in its slots, the terminal says so, each with a message that names
 the refusal): items with an inventory, armor (it can carry a grid), blueprints and books, planners and selection
 tools, the spidertron remote, vehicles and other items with entity data, items with a label, items that spoil
-(the network would stop their decay), damaged items and partly used tools, ammunition and repair packs (the
-network would repair them). See "What the network stores (issue #76)" below.
+(the network would stop their decay), and partly used tools, ammunition and repair packs (the network would
+repair them). A damaged item is stored with its health since issue #104. See "What the network stores (issue #76)"
+below.
 
 **What the network stores (issue #76):** `N.storable` decides by the prototype type (`N.item_class`), never by
 `stack.item`. `stack.item` (a `LuaItem`) is set for every stack with a state of its own, measured on 2.0.77: tools
@@ -141,7 +142,7 @@ used one not) were never reached.
 
 | Class | Types | The network |
 |---|---|---|
-| plain | `item`, `gun`, `capsule`, `module`, `rail-planner`, `space-platform-starter-pack` | stored by key `name@quality` (a damaged one is refused: `health` below 1) |
+| plain | `item`, `gun`, `capsule`, `module`, `rail-planner`, `space-platform-starter-pack` | stored by key `name@quality`; a damaged one (`health` below 1) of an item that places an entity is stored with its health under a key of its own (issue #104), any other damaged item is refused |
 | worn | `tool`, `ammo`, `repair-tool` | stored when the top item of the stack is whole: `durability` equals `get_durability(quality)` (a quality scales it: a legendary science pack has 6, a legendary repair pack 1800), `ammo` equals `magazine_size`; a used one is refused as damaged |
 | tags | `item-with-tags` | stored with tags and description under its own key; refused with a label (a label cannot be put back with `set_stack`) |
 | label | `item-with-label` | stored plain when it has no label |
@@ -2186,3 +2187,40 @@ chest and are in the network within the idle limit; the chest of bus B holds pla
 go in at once, the refused stacks stay, and the bus is not visited again for them. On main both buses are parked ("net-full", the test fails
 on that); the plates reach the network only when something wakes the parked bus (here the slow step did after 120 ticks, at the
 latest the fallback visit after 3600).
+
+## Damaged items are stored (issue #104)
+
+#76 refused every stack with a `health` below 1: the network keeps counts per key, and a count says nothing about health,
+so a damaged item would have come out whole. The maintainer's in-game test of #84 found it in the way ("Damaged or partly
+used items cannot be stored"). A damaged stack is now stored like an item with tags: under a key of its own,
+`name@quality#<json>`, the json holding `{ health, description }` (`N.storable` builds it). All items of a stack share one
+health (measured: a stack has one `health`, merging two damaged stacks in an inventory averages it, weighted by the
+counts, which is the game's own rule and not the network's), so a count of such a key is exact and nothing has to be
+decomposed.
+
+* **In:** `N.storable` returns the key and the data for a stack of an item that can be damaged (`N.can_be_damaged`:
+  `place_result`, rail planners) with `health < 1`; every path that calls it (the terminal's store, the pane's shift + click
+  and control + click, `insert_stack`, the import bus's and the interface's stack path through `insert_partial`) stores it.
+  The health is read once per plain stack, as before. Any other damaged item (the stack of an item that is no building) and
+  every partly used tool, ammunition or repair pack stays refused (`cannot-store-damaged`, now worded "Partly used items
+  (tools, ammunition, repair packs) cannot be stored").
+* **Out:** `stack_def` sets `health` from the key's data (and a description only for an item with tags, the one type that
+  has one); `extract_to` builds the stack, so a damaged key comes out at the health it went in with, in the cursor, an
+  inventory or a chest the export path fills. One inventory merges two damaged stacks it receives (averaging the health):
+  that is the game's rule.
+* **The terminal:** the key is an entry of its own with a description, "Damaged: 50% health" (`G.key_description` reads it
+  from the key's json, #79).
+* **Cells:** the key and its data go into the cell like a tags key (`cell.data`, the cell's tags); it is one type of the cell.
+* **Not reached:** the storage bus ignores keys with data (`item_of`), so a damaged item is never put into a chest, where it
+  would come out whole; export buses and interfaces work by plain name, so they never hand one out; autocrafting counts plain
+  keys only. A damaged stack in a chest behind a storage bus is not shown (#84); the import bus takes it into the network.
+* **Partly used tools, ammo and repair packs stay refused:** their wear is that of the top item of the stack only, so two
+  stacks of the same wear stored under one key would come out as one used item and the rest whole (a magazine with 3 rounds
+  twice would give 13 rounds back for 6). Storing each used item under a key of its own would be exact, at a type of a
+  cell per item; not done without a reason.
+
+**Test** (`runtimemod/damaged.lua`): `insert_stack` of a damaged stack of 5 wooden chests (health 0.5), a whole stack of 4 and a
+damaged stack of 2 (health 0.25) stores 5, 4 and 2: two keys with data (5 and 2), the plain count rises by 4 only, the chest
+behind the storage bus is unchanged, each damaged key comes out at its health, the terminal's description reads "50"; the
+import bus takes a damaged stack of 7 stone walls (health 0.4) as a key of 7 and the whole 3 as 3. The #76 test lost its cases
+of damaged chests (a refusal no more).
