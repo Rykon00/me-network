@@ -66,6 +66,11 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	storage_bus = { slots = 5, limits = { capacity = 5, fuzzy = 1, inverter = 1, void = 1 }, filters = 18, per_capacity = 9 },
 	item_cell = { slots = 4, limits = { fuzzy = 1, inverter = 1, equal = 1, void = 1 } },
 	fluid_cell = { slots = 3, limits = { inverter = 1, equal = 1, void = 1 } },
+	--- issue #110: the ME Import Bus and Export Bus take up to 4 Acceleration Cards (AE2's upgrade slots of the buses: its speed
+	--- cards, PartImportBus / PartExportBus); `speed`: by the number of cards, the factor on the items per second of the map
+	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation)
+	bus = { slots = 4, limits = { speed = 4 } },
+	speed = { 1, 8, 32, 64, 96 },
 }
 
 --- The ME Cell Workbench (part 3 of issue #17): one cell, its partition and its card slots. AE2's workbench needs

@@ -33,6 +33,7 @@ The repository root is the mod itself.
 | `scripts/fork-me-stats.lua` | the command `/me-stats`: members, block states, the scheduler's counters of the last minute (issue #38, part 3) |
 | `scripts/fork-me-io.lua` | ME Interface (items, and fluids through its four sides) and import/export buses (items and fluids), their scheduled visits; `gregtorio-me-io` |
 | `scripts/fork-me-targets.lua` | what a bus works with: the entity types and inventories of the import, export and storage bus, the tile in front, fluid boxes |
+| `scripts/fork-me-cardslots.lua` | the card slots of a block (a script inventory the window shows, the clicks, blueprints, mining): the storage bus's and, since issue #110, the import and export bus's |
 | `scripts/fork-me-storagebus.lua`, `scripts/fork-me-fluid-storagebus.lua` | the storage bus: its item side (a chest, logistic chest or cargo wagon) and its fluid side (a tank's fluid segment) as network storage; `gregtorio-me-storagebus`, `gregtorio-me-fluid-storagebus` (the old remote, on the storage bus) |
 | `scripts/fork-me-recipe-paste.lua` | a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12); `gregtorio-me-recipe-paste` |
 | `scripts/fork-me-unify.lua` | turns the old fluid blocks of a save (and their ghosts, items, blueprints) into the unified blocks (issue #3) |

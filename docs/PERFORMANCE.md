@@ -2426,3 +2426,19 @@ identical.
 | 5000: ticks over 5 ms | 8 | 8 |
 | 5000: storage bus latency max (s) | 1.733 | 1.733 |
 | 5000: burst build / remove (ms) | 75.5 / 98.8 | 72.2 / 95.8 |
+
+
+## The Acceleration Card in the buses (issue #110, part 2)
+
+`bus_step` multiplies the items of a visit by `rec.accel` (nil without cards: one `or`) and fills the cards a record wants (one
+field read); the storage bus's card code moved into `scripts/fork-me-cardslots.lua` without a change of its hot paths.
+`bench --check origin/claude/acceleration-card --sizes base,5000` (part 1 as the reference: the change of this part alone), three
+rounds in turns, game client and browser running (a noisy run: the 5000 scene's script average varied from 1.05 to 1.39 ms in both
+versions between rounds): **green, regressions 0**; throughput identical.
+
+| | part 1 | part 2 |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1567 / 0.427 | 0.1529 / 0.423 |
+| 5000: script avg / p99 (ms) | 1.320 / 4.54 | 1.385 / 4.88 |
+| 5000: ticks over 5 ms | 24 | 34 |
+| 5000: storage bus latency max (s) | 1.733 | 1.733 |

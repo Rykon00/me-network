@@ -2268,3 +2268,43 @@ ingredients under the same name; until it does the standalone recipe stands (Adv
 **Test** (`runtimemod/accel.lua`, `Acceleration Card test`): the ME Molecular Assembler has 5 module slots, takes five cards and
 no sixth, takes neither a speed nor a productivity module; an assembling machine 2 and a beacon take no card, and the machine
 2 still takes a speed module; with five cards the crafting speed is 5 times the base and the consumption bonus 4.0 higher.
+
+## The Acceleration Card, part 2: the ME Import Bus and Export Bus (issue #110)
+
+**Card slots for the buses.** The storage bus's card machinery (a script inventory per block whose slots the window shows, the
+cards by slot in `rec.cards`, the clicks that refuse a wrong card before anything moves, the cards a blueprint or a paste
+wants taken from the player's inventory and then the network, given back on mining, spilled on destruction) moved out of
+`scripts/fork-me-storagebus.lua` into `scripts/fork-me-cardslots.lua`: `CS.new{ rules, title, rec_of, on_cards }` makes the
+functions of one kind of block, and the storage bus and the import and export bus use it. The storage bus kept its behaviour
+and names (`M.card_click`, `M.sync`, `M.want_cards`, ...: the cards tests and the pane tests of #17 and #28 pass unchanged);
+`on_cards(rec, light)` is its `apply` and a visit (`light`: the visit that fills the wanted cards, which must not call itself).
+
+**The buses** (`scripts/fork-me-io.lua`): `N.card_rules().bus = { slots = 4, limits = { speed = 4 } }` (the mod-data
+`fork-me-network`, `prototypes/cards.lua`), `N.card_rules().speed = { 1, 8, 32, 64, 96 }`: by the number of cards the factor on
+the map setting "bus speed". `rec.accel` is the factor (nil: 1), made from the cards when they change; `bus_step` multiplies the
+items per visit by it (`icap`) and the time a rest of the source takes (`left * 60 / rate`), and fills the cards a record
+wants. Fluids are not sped up. `bus_info` gives `slots`, `cards`, `accel`, `rate`, `want` to the window. Nothing else about the
+schedule changes: a bus is visited when its other side needs it, and moves more in that visit.
+
+**The decision of the maintainer:** AE2's ratios on the setting (x1, x8, x32, x64, x96) and not a gentler progression. Four cards
+make a bus move 24 576 items per second at the default setting; an export bus into a machine still stops at a stack of each
+item (the machine's own limit), so the factor shows at chests and drives.
+
+**Lifecycle.** The records are made anew by `on_configuration_changed` (`s.recs = {}`): `inv`, `cards`, `want`, `where` and
+`accel` are carried over (the runtime test calls it). A mined bus gives its cards to the buffer (`control.lua` passes
+`event.buffer` to `fork_io.on_removed`), a destroyed or vanished one spills them where it stood (`rec.where`). Blueprint tag
+`fork_me_bus` gets `cards = { names }`; a build with the tag, a clone and a settings paste make the bus want them; a bus that waits
+for cards (`rec.want`) is listed in its window.
+
+**The window** (`open_bus`, `refresh_bus` in `fork-me-windows.lua`): a row "Cards:" with the slots (`block_slots`), the cards it
+waits for, and "Acceleration Cards: xN. The bus moves up to R items per second." The pane's shift + click puts a card into the
+slots and stores anything else in the network as before; control + click likewise; a click on a slot moves a card; the
+refusals of the slots ("This does not fit here", "No more cards of this kind fit here", "Every slot is taken") are shown.
+
+**Test** (`runtimemod/busaccel.lua`, `ME bus acceleration cards test`): a bus has 4 slots and takes only the card (a Capacity Card,
+a Fuzzy Card and an iron plate are refused as "not-here", a fifth card as "limit"); the factors by 0 to 4 cards are 1, 8, 32, 64, 96
+and the rate 256 times that; an export bus into an empty chest moves 64, 512, 2048, 4096 items in one visit with 0 to 3 cards
+and 4800 (the chest's limit) with 4, an import bus out of a full chest 64, 512, 2048, 4096; a mined bus gave its 2 cards to the
+buffer, a destroyed one dropped its card; a paste, a clone and a blueprint tag make a bus take its 2, 2 and 3 cards from the
+network at its next visit (a second paste leaves the bus with the source's number); everything stays over
+`on_configuration_changed`. The test scene lies on land: a spill at a block in a lake lands where there is some.

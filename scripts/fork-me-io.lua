@@ -52,6 +52,7 @@
 local N = require("scripts.fork-me-network")
 local T = require("scripts.fork-me-targets")
 local Sched = require("scripts.fork-me-schedule")
+local CS = require("scripts.fork-me-cardslots")
 
 local M = {}
 
@@ -938,6 +939,27 @@ M.SIDES = #SIDES
 local BUSES = { ["import-bus"] = true, ["export-bus"] = true, ["fluid-import-bus"] = true, ["fluid-export-bus"] = true }
 local IMPORTS = { ["import-bus"] = true, ["fluid-import-bus"] = true }   -- (the old fluid kinds until they are replaced)
 
+--- Issue #110: the card slots of an import and an export bus (scripts/fork-me-cardslots.lua; the cards of a block are the
+--- items of a script inventory its window shows). Only the Acceleration Card fits: AE2's speed card, 4 of them, which
+--- multiply the items a bus moves per second (the map setting "bus speed") by 1, 8, 32, 64 and 96 (0 to 4 cards:
+--- `N.card_rules().speed`; AE2: PartImportBus and PartExportBus, 1, 8, 32, 64, 96 items per operation). Fluids are not
+--- sped up (AE2's cards act on items). `rec.accel` is that factor (nil: 1), made from the cards when they change.
+local function bus_rec(entity)
+	local s = storage.fork_me_io
+	return s and entity and entity.valid and entity.unit_number and BUSES[kind(entity)] and s.recs[entity.unit_number] or nil
+end
+local cards
+cards = CS.new{
+	rules = function() return N.card_rules().bus end,
+	title = function(rec) return rec.entity and rec.entity.valid and rec.entity.localised_name or { "entity-name.me-import-bus" } end,
+	rec_of = bus_rec,
+	on_cards = function(rec, light)
+		local n = cards.counts(rec).speed or 0
+		rec.accel = n > 0 and N.card_rules().speed[n + 1] or nil
+		if not light and rec.entity and rec.entity.valid then wake(rec.entity.unit_number) end
+	end,
+}
+
 --- The entity in front of a bus that has an inventory of the bus's kind or fluid boxes; what it has is kept with it
 --- (rec.t_inv: the inventory index, rec.t_fluid: fluid boxes), cached until it is gone or the bus is rotated.
 local function target_of(rec)
@@ -1205,7 +1227,8 @@ function M.bus_step(rec, dt)
 	end
 	if not rec.iset then M.set_bus_filters(e, rec.filters) end          -- a record of a save before issue #3
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
-	local icap = math.max(1, math.floor(Sched.setting("bus_items") * ticks / 60))
+	if rec.want then cards.fill_cards(rec) end                         -- issue #110: the cards a blueprint or a paste asked for
+	local icap = math.max(1, math.floor(Sched.setting("bus_items") * (rec.accel or 1) * ticks / 60))
 	local fcap = Sched.setting("bus_fluid") * ticks / 60
 	local import = IMPORTS[rec.kind]
 	local items, fluid = 0, 0
@@ -1240,7 +1263,7 @@ function M.bus_step(rec, dt)
 		local left = held - items
 		rec.left = left > 0 and left or 0
 		if left > 0 then                                         -- a rest: back when the bus's speed covers it
-			local tt = math.max(MIN_INTERVAL, left * 60 / Sched.setting("bus_items"))
+			local tt = math.max(MIN_INTERVAL, left * 60 / (Sched.setting("bus_items") * (rec.accel or 1)))
 			if tt < info.time then info.time = tt end
 		end
 		if not known then
@@ -1308,7 +1331,19 @@ function M.set_bus_filter(entity, index, key)
 	return M.set_bus_filters(entity, list)
 end
 
---- the bus's state for its window: { kind, filters, status, target, import, max, items, fluids }
+--- issue #110: the card slots of a bus for its window (the inventory whose slots it shows, the clicks on them)
+function M.bus_inventory(entity)
+	local rec = bus_rec(entity)
+	return rec and cards.inv_of(rec) or nil
+end
+function M.bus_card_click(entity, slot, cursor, inventory, shift) return cards.card_click(entity, slot, cursor, inventory, shift) end
+function M.bus_shift_in(entity, stack) return cards.shift_in(entity, stack) end
+function M.bus_sync(entity, back)
+	local rec = bus_rec(entity)
+	return rec ~= nil and cards.sync(rec, back)
+end
+
+--- the bus's state for its window: { kind, filters, status, target, import, max, items, fluids; issue #110: slots, cards, accel, want }
 function M.bus_info(entity)
 	local k = kind(entity)
 	if not BUSES[k] then return nil end
@@ -1316,6 +1351,12 @@ function M.bus_info(entity)
 	local b = M.get_bus(entity)
 	b.kind, b.import, b.max = k, IMPORTS[k] == true, MAX_FILTERS
 	b.items, b.fluids = rec.t_inv ~= nil, rec.t_fluid == true
+	--- issue #110: the card slots (the window shows them), the factor of the cards, the cards it waits for
+	b.slots, b.accel = N.card_rules().bus.slots, rec.accel or 1
+	b.rate = Sched.setting("bus_items") * b.accel          -- items per second at most
+	b.cards = {}
+	for slot, name in pairs(rec.cards or {}) do b.cards[slot] = name end
+	b.want = rec.want and cards.missing_cards(rec, rec.want) or nil
 	return b
 end
 
@@ -1425,6 +1466,7 @@ local function visit(rec, unit, fallback)
 	local e = rec.entity
 	if not e.valid then
 		destroy_tanks(rec)                    -- an interface removed without an event
+		if BUSES[rec.kind] then cards.detach(rec) end        -- issue #110: a bus's cards are spilled where it stood
 		drop(s, unit)                         -- (its shortfalls go too)
 		return
 	end
@@ -1551,10 +1593,15 @@ function M.on_built(entity, tags, source)
 		clear_filters(entity.get_inventory(defines.inventory.chest))      -- a blueprint before R3 may carry slot filters
 	else
 		local t = type(tags) == "table" and tags[BUS_TAG] or nil
-		if type(t) == "table" then M.set_bus_filters(entity, t.filters)
+		if type(t) == "table" then
+			M.set_bus_filters(entity, t.filters)
+			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, nil) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)
 			M.set_bus_filters(entity, from and from.filters or {})
+			local from_rec = bus_rec(source)
+			local list = from_rec and cards.card_list(from_rec)
+			if list then cards.want_cards(entity, list, nil) end
 		else
 			M.set_bus_filters(entity, {})
 		end
@@ -1592,7 +1639,8 @@ function M.wake_near(entity)
 	end
 end
 
---- `mined`: by a player, a robot or a platform (an interface's fluid goes into the network first)
+--- `mined`: by a player, a robot or a platform (an interface's fluid goes into the network first; a LuaInventory: the mined
+--- buffer, which takes a bus's cards)
 function M.on_removed(entity, mined)
 	local s = storage.fork_me_io
 	local rec = s and entity and entity.valid and entity.unit_number and s.recs[entity.unit_number]
@@ -1604,6 +1652,10 @@ function M.on_removed(entity, mined)
 			if held and held.amount > EPS then tank_to_network(t, held, net) end
 		end
 		destroy_tanks(rec)
+	elseif BUSES[rec.kind] then
+		--- issue #110: the cards of a mined bus go into the buffer, those of a destroyed one onto the ground
+		if type(mined) == "userdata" or type(mined) == "table" then cards.give_cards(rec, mined) else cards.spill_cards(rec) end
+		cards.detach(rec)
 	end
 	drop(s, entity.unit_number)
 end
@@ -1627,6 +1679,12 @@ function M.on_entity_settings_pasted(event)
 	elseif BUSES[k] then
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
+		--- issue #110: the source's cards are what the destination is to have (from the player's inventory, then the network)
+		local from_rec, dst_rec = bus_rec(src), bus_rec(dst)
+		if from_rec and dst_rec then
+			local player = event.player_index and game.get_player(event.player_index) or nil
+			cards.want_cards(dst, from_rec.want and { table.unpack(from_rec.want) } or cards.card_list(from_rec) or {}, player)
+		end
 	end
 end
 
@@ -1642,7 +1700,9 @@ function M.tag_blueprint(bp, mapping)
 			end
 		elseif BUSES[k] then
 			local b = M.get_bus(entity)
-			if b and #b.filters > 0 then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters }) end
+			local rec = bus_rec(entity)
+			local list = rec and (rec.want and { table.unpack(rec.want) } or cards.card_list(rec))
+			if b and (#b.filters > 0 or list) then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list }) end
 		end
 	end
 end
@@ -1665,7 +1725,10 @@ function M.on_configuration_changed()
 		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
 			local rec = register(s, e)
 			local o = old[e.unit_number]
-			if BUSES[rec.kind] then M.set_bus_filters(e, o and (o.keys or o.filters) or {}) end
+			if BUSES[rec.kind] then
+				M.set_bus_filters(e, o and (o.keys or o.filters) or {})
+				if o then rec.inv, rec.cards, rec.want, rec.where, rec.accel = o.inv, o.cards, o.want, o.where, o.accel end   -- issue #110
+			end
 			if rec.kind == "interface" then
 				if o and o.config then rec.config = clean_config(o.config) end
 				if o and o.priority then
@@ -1783,6 +1846,16 @@ remote.add_interface("gregtorio-me-io", {
 	--- the four side tanks (north, east, south, west)
 	interface_tanks = function(entity) return M.tanks_of(entity) end,
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,
+	--- issue #110: the card slots of a bus (what the window's clicks do; `want`: a list of names)
+	bus_inventory = function(entity) local rec = bus_rec(entity) return rec and cards.inv_of(rec) or nil end,
+	bus_card_click = function(entity, slot, cursor, inventory, shift) return cards.card_click(entity, slot, cursor, inventory, shift) end,
+	bus_shift_in = function(entity, stack) return cards.shift_in(entity, stack) end,
+	bus_want_cards = function(entity, want, player_index)
+		return cards.want_cards(entity, want, player_index and game.get_player(player_index) or nil)
+	end,
+	--- tests (issue #110): what a mod update does to the records (their cards stay)
+	configuration_changed = function() M.on_configuration_changed() end,
+	bus_sync = function(entity, back) local rec = bus_rec(entity) return rec ~= nil and cards.sync(rec, back) end,
 	set_bus_filter = function(entity, index, key) return M.set_bus_filter(entity, index, key) end,
 	get_bus = function(entity) return M.get_bus(entity) end,
 	bus_info = function(entity) return M.bus_info(entity) end,

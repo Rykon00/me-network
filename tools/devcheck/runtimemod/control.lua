@@ -738,6 +738,8 @@ damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
 refused85 = require("refused")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #110: the Acceleration Card in the ME Molecular Assembler's module slots (accel.lua)
 accel110 = require("accel")({ me_place = me_place, me_report = me_report })
+--- me-network issue #110, part 2: the Acceleration Cards of the import and export bus (busaccel.lua)
+busaccel110 = require("busaccel")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #50: kept plans (plans.lua)
 plans50 = require("plans")({ me_place = me_place, me_report = me_report })
 --- me-network issue #50, lever 6: the scan of the pattern providers (scan.lua)
@@ -786,6 +788,7 @@ local function tests_running()
 	bench17.running(check)
 	cpus6.running(check)
 	parking38.running(check)
+	busaccel110.running(check)
 	accel110.running(check)
 	damaged84.running(check)
 	refused85.running(check)
@@ -1671,6 +1674,7 @@ script.on_nth_tick(10, function()
 	parking38.tick()
 	stats38.tick()
 	margin51.tick()
+	busaccel110.tick()
 	accel110.tick()
 	damaged84.tick()
 	refused85.tick()
@@ -4566,6 +4570,7 @@ script.on_init(function()
 	for _, f in pairs(parking38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(stats38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(margin51.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(busaccel110.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(accel110.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(damaged84.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refused85.setup(s)) do fails[#fails + 1] = f end
