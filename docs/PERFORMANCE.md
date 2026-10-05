@@ -2207,3 +2207,44 @@ second to one number per changed amount.
 | a refresh of an open terminal under 0.5 ms when nothing changed | **met**: a few µs (the kept list) |
 | at most 2 ms when everything changed | **met after a change** (about 1.25 ms: the list is sorted again from the last one); **not met for a list made from nothing** (the first refresh of a window, a new search: about 2.4 ms with 855 types, of which `table.sort` is most) |
 | the GUI side | the maintainer's test in the game: an open terminal on a busy network, `show-time-usage` of mod-me-network, and an open tooltip of a slot that must stay open while amounts change |
+
+### Measured and not built (issue #50): lever 7, lever 10, the long window at 20 000
+
+#### Lever 7, the circuit interfaces
+
+The profile at 5000 (100 circuit interfaces, 855 item types, the default of 10 updates per second): `circuit.visit_circuit` 0.152 ms
+per tick, 913 µs per call. Of it `circuit_step` 823 µs per call, which is the write of the section (`section.filters` with about 900
+signals; the engine probe: 908 µs for 1000), and `network_signals` (the shared sorted list the issue named) 1559 µs per build but
+0.02 builds per tick: **0.026 ms per tick, 2.5 % of the script time**, under the 5 % of the rule. The write is the engine's work
+(about 0.7 µs per signal). A probe of lighter filter forms (353 item and fluid signals, 50 writes each): with `quality` and
+`comparator` 0.250 ms, without `comparator` 0.237 ms (the same section read back), without `quality` 0.221 ms but a different
+section (no quality on the signal). So nothing exact makes the write cheaper; its total is bounded by the setting "circuit
+interface updates per second" by design. Not built.
+
+#### Lever 10, the interfaces' side tanks
+
+Every ME Interface has four hidden side tanks, so a pipe can connect at any side (a side imports by default). Measured in turns at
+5000 (three rounds, medians), with a temporary change that keeps a side tank only where something is connected, the side exports or
+the tank holds fluid (the scene's fluid I/O unchanged: 1 200 401 fluid per second in both, 22 269 idle):
+
+| 5000 | four tanks per interface | only the connected sides | |
+|---|---|---|---|
+| busy: script / engine / whole update (ms) | 1.026 / 0.662 / 1.688 | 0.997 / 0.601 / 1.598 | whole −5.3 % |
+| idle: script / engine / whole update (ms) | 0.520 / 0.330 / 0.851 | 0.495 / 0.264 / 0.759 | whole −11 % |
+| save size | 2.6 MB | 2.5 MB | |
+
+(Without any side tank, the scene's fluid I/O included: idle engine 0.324 → 0.234 ms, script 0.52 → 0.33 ms; an upper bound.)
+
+About 5000 unconnected tanks cost the engine 0.06 to 0.07 ms per tick: some 13 ns per tank and tick. The maintainer's base (189
+interfaces and buses) would save under 0.01 ms. Tanks only where needed would need a tank at the moment a pipe, pump or tank is
+built at a side (the build events), and a migration that removes the empty unconnected tanks of saves; a pipe that another mod
+builds by script without an event would no longer connect. Not built (the maintainer's decision, 2026-10-05).
+
+#### The long window at 20 000 on this machine
+
+`bench --check v0.3.0 --sizes 20000 --ticks 10800 --burst 0 --runs 3` on main 5244fb1 (game closed, in turns): script avg 2.317 →
+2.489 ms (+7.4 %), p99 5.20 → 5.75 ms (+10.5 %), ticks over 5 ms 130 → 174, the collector 0.084 → 0.101 ms (within the noise),
+items per second 275 500 → 334 900 (+21.6 %), fluid 1.83 → 2.55 million per second (+39.6 %). Per unit moved main is cheaper
+(script ms per 1000 items per second 0.0084 → 0.0074). The Linux machine of issue #50 saw the same direction but +43 % on the 99th
+percentile and +35 % on the collector; on this machine the long window is steady (±0.09 ms on p99 between rounds), and what is open
+at 20 000 is the ticks over 5 ms (the fluid interface streaks, "What was tried against the 99th percentile at 20 000").
