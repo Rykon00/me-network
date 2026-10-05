@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.1
+Date: 2026-10-06
   Features:
     - An ME Export Bus can feed a lab (issue #86): its filters are the science packs, and it keeps one stack of each in the lab's slots, topping them up as the lab uses them. With science packs storable in the network (issue #76) a pack line can run from the drives into labs. A pack the lab does not use, or any other item, stays in the network; an ME Import Bus facing a lab has nothing to take.
     - The command /me-stats shows what the ME network near you does: its members, how many interfaces and buses are busy, probing or parked (and why), the crafting CPUs and jobs, and the scheduler's work of the whole map over the last minute (visits against the budget, backlog, starved arrivals, missed wakes, the time between two visits of a block with work). /me-stats all lists every network.
