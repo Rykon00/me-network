@@ -2384,11 +2384,11 @@ function me_r3_test()
 	local cpu = remote.call(GUI, "cpu_data", blocks["me-crafting-cpu"])
 	expect(cpu and cpu.slots == 1 and #cpu.jobs == 0, "cpu_data " .. serpent.line(cpu))
 	local maint = blocks["me-level-maintainer"]
-	expect(remote.call(GUI, "set_maintainer_target", maint, { type = "item", name = "iron-plate" }), "set_maintainer_target")
+	expect(remote.call(GUI, "set_maintainer_target", maint, "iron-plate"), "set_maintainer_target")
 	local md = remote.call(GUI, "maintainer_data", maint)
 	expect(md and md.key == "iron-plate" and md.condition, "maintainer_data " .. serpent.line(md))
-	remote.call(GUI, "set_maintainer_target", maint, { type = "virtual", name = "signal-A" })
-	expect(remote.call(GUI, "maintainer_data", maint).key == nil, "a virtual signal as maintainer target")
+	remote.call(GUI, "set_maintainer_target", maint, nil)
+	expect(remote.call(GUI, "maintainer_data", maint).key == nil, "the maintainer's target cleared")
 	expect(remote.call("gregtorio-me-circuit", "set_condition", maint, true, { type = "item", name = "iron-plate" }, "<", 5), "set_condition")
 	local cond = remote.call("gregtorio-me-circuit", "get_condition", maint)
 	expect(cond.enabled and cond.signal and cond.signal.name == "iron-plate" and cond.comparator == "<" and cond.constant == 5, "condition " .. serpent.line(cond))
@@ -2414,16 +2414,21 @@ function me_r3_test()
 	expect(idata.config[5] and idata.config[5].amount == 7 and not idata.config[3], "an item moved to another config slot " .. serpent.line(idata.config))
 	remote.call(GUI, "set_interface_item", iface, 5, nil)
 	expect(next(remote.call(GUI, "interface_data", iface).config) == nil, "config slot cleared")
-	--- issue #3: a fluid row from the window's chooser (a SignalID) takes the first free side, a side drop-down
-	remote.call(GUI, "set_interface_signal", iface, 2, { type = "fluid", name = "water" })
+	--- issue #3: a fluid row from the window's picker (issue #70: its choice) takes the first free side, a side drop-down
+	expect(remote.call(GUI, "set_interface_choice", iface, 2, { kind = "fluid", name = "water" }), "set_interface_choice")
 	idata = remote.call(GUI, "interface_data", iface)
 	expect(idata.config[2] and idata.config[2].type == "fluid" and idata.config[2].amount == idata.volume and idata.sides[1] == 2,
 		"a fluid row " .. serpent.line(idata.config) .. " " .. serpent.line(idata.sides))
-	remote.call(GUI, "set_interface_signal", iface, 2, { type = "item", name = "iron-plate", quality = "normal" })
+	remote.call(GUI, "set_interface_choice", iface, 2, { kind = "item", name = "iron-plate", quality = "normal" })
 	idata = remote.call(GUI, "interface_data", iface)
 	expect(idata.config[2] and idata.config[2].type == nil and idata.sides[1] == nil, "the fluid row became an item row " .. serpent.line(idata))
-	remote.call(GUI, "set_interface_signal", iface, 2, { type = "virtual", name = "signal-A" })
-	expect(next(remote.call(GUI, "interface_data", iface).config) == nil, "a virtual signal clears the row")
+	--- issue #70: a choice that is no item or fluid (a virtual signal) is refused and the row stays (right click empties it)
+	expect(remote.call(GUI, "set_interface_choice", iface, 2, { kind = "virtual", name = "signal-A" }) == false
+		and remote.call(GUI, "set_interface_choice", iface, 2, { kind = "item", name = "no-such-item" }) == false
+		and remote.call(GUI, "set_interface_choice", iface, 2, { kind = "item", name = "iron-plate", quality = "no-such-quality" }) == false
+		and idata.config[2] ~= nil and remote.call(GUI, "interface_data", iface).config[2] ~= nil, "a refused choice leaves the row")
+	remote.call(GUI, "set_interface_item", iface, 2, nil)
+	expect(next(remote.call(GUI, "interface_data", iface).config) == nil, "the row emptied")
 	local bus = blocks["me-export-bus"]
 	remote.call(IO, "set_bus_filter", bus, 1, "iron-plate")
 	remote.call(IO, "set_bus_filter", bus, 3, "copper-plate")
@@ -2438,11 +2443,21 @@ function me_r3_test()
 	local sbd = remote.call(GUI, "storage_bus_data", blocks["me-storage-bus"])
 	expect(sbd and sbd.max == 18 and sbd.side == "item", "storage_bus_data " .. serpent.line(sbd))
 	expect(remote.call(GUI, "key_of_elem", "item-with-quality", { name = "iron-plate", quality = "normal" }) == "iron-plate"
-		and remote.call(GUI, "key_of_elem", "fluid", "water") == "fluid/water"
-		and remote.call(GUI, "key_of_elem", "signal", { type = "virtual", name = "signal-A" }) == nil, "key_of_elem")
-	expect(remote.call(GUI, "key_of_signal", { type = "item", name = "iron-plate", quality = "normal" }) == "iron-plate"
-		and remote.call(GUI, "key_of_signal", { type = "fluid", name = "water" }) == "fluid/water"
-		and remote.call(GUI, "key_of_signal", { type = "virtual", name = "signal-A" }) == nil, "key_of_signal")
+		and remote.call(GUI, "key_of_elem", "fluid", "water") == "fluid/water", "key_of_elem")
+	--- issue #70: the key of the picker's choice: items with their quality where a place takes one, else the plain name
+	local uq = prototypes.quality["uncommon"] and "uncommon"
+	expect(remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate", quality = "normal" }, true) == "iron-plate"
+		and remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate" }, true) == "iron-plate"
+		and (not uq or remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate", quality = uq }, true) == "iron-plate@" .. uq)
+		and (not uq or remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate", quality = uq }, false) == "iron-plate")
+		and remote.call(GUI, "key_of_choice", { kind = "fluid", name = "water" }, true) == "fluid/water"
+		and remote.call(GUI, "key_of_choice", { kind = "fluid", name = "water" }, false) == "fluid/water"
+		and remote.call(GUI, "key_of_choice", { kind = "virtual", name = "signal-A" }, true) == nil
+		and remote.call(GUI, "key_of_choice", { kind = "item", name = "signal-A" }, true) == nil
+		and remote.call(GUI, "key_of_choice", { kind = "item", name = "no-such-item" }, true) == nil
+		and remote.call(GUI, "key_of_choice", { kind = "item", name = "iron-plate", quality = "no-such-quality" }, true) == nil
+		and remote.call(GUI, "key_of_choice", { kind = "fluid", name = "iron-plate" }, true) == nil
+		and remote.call(GUI, "key_of_choice", nil, true) == nil, "key_of_choice")
 
 	--- the terminal's tabs
 	local items = remote.call(TERM, "entries", t, "", "count", "items")

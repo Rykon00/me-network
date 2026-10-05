@@ -465,6 +465,26 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 	return parent.add(def)
 end
 
+--- Issue #70: a slot button for a key that a window sets (an interface row, a filter, the maintainer's target, a
+--- partition slot), or an empty one (`key` nil), acting with `tags`: the item with its quality badge, the game's tooltip
+--- and `tooltip` (the hint) below it; a fluid's name and the hint. Clicking it opens the picker (scripts/fork-me-picker.lua),
+--- right click empties it: the windows' handlers do that.
+function M.key_button(parent, key, tags, tooltip)
+	local b = M.slot(parent, key, nil, tags)
+	if key and key:sub(1, 6) ~= "fluid/" then
+		local name, q = key:match("^([^@#]+)@?([^#]*)")
+		if q and q ~= "" and q ~= "normal" and prototypes.quality[q] and script.feature_flags.quality then b.quality = q end
+		if prototypes.item[name] then b.tooltip = tooltip else b.tooltip = { "", key, "\n", tooltip or "" } end
+	elseif key then
+		local name = key:sub(7)
+		local proto = prototypes.fluid[name]
+		b.tooltip = { "", proto and proto.localised_name or name, "\n", tooltip or "" }
+	else
+		b.tooltip = tooltip
+	end
+	return b
+end
+
 --- Issue #50, lever 8: a new amount on a button M.slot made for the same key (the number, and a fluid's tooltip, which
 --- holds the amount): the button is then what M.slot would make for the new amount.
 function M.slot_amount(button, key, amount, extra_tooltip)

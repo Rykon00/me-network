@@ -205,7 +205,9 @@ same lamp condition, so blueprints and settings paste of the game keep it).
 ## Import and export
 
 **ME Interface** (18 slots, like a chest for inserters and belts, and a tank on each of its four sides for pipes).
-Its window has **9 config rows** (AE2's config slots): each an item (with quality) or a fluid, and an amount.
+Its window has **9 config rows** (AE2's config slots): each an item (with quality) or a fluid, and an amount. A row's
+button opens the **picker** (issue #70, see "ME Cell Workbench": item groups, search, qualities, the green check or the
+confirm key), right click empties the row; no virtual signal can be chosen.
 
 * **Items:** the network keeps exactly that amount of each configured item in the interface: it fills up what
   inserters took and takes back a surplus. Everything else put in is imported into the network (items the network
@@ -236,6 +238,11 @@ Its window has **9 config rows** (AE2's config slots): each an item (with qualit
 side). Open one to set up to 9 filters, items and fluids mixed (the window also shows the entity it faces and
 whether the bus uses its items, its fluids or both). On a machine with an inventory and fluid boxes (an assembling
 machine with a fluid recipe, a chemical plant) one bus does both; on a chest only items, on a tank only fluids.
+
+The filter buttons of the buses open the same picker (items and fluids, no quality row: a bus filter is a plain item or a
+fluid), right click empties a filter. The ME Storage Bus's filters (items with quality, or fluids), the ME Level
+Maintainer's target, the ME Circuit Interface's filters and the pattern editor's rows of the ME Terminal work the same
+way (the maintainer's, the circuit interface's and the pattern editor's without a quality).
 
 An **ME Export Bus facing a lab** feeds it science packs (issue #86): the filters are the packs, and the bus tops each up
 to a stack (200 packs) in the lab's slot for it, again as the lab uses them. The lab takes only the packs it uses: a filter
@@ -1400,7 +1407,7 @@ partition keeps only fluids. Drive settings: the blueprint tag written through t
 a drive revived from it (priority, and the slot's partition on the cell put in later), settings paste (a slot
 without partition in the source is cleared) and a clone. The windows: `fmt`, every ME block has a window, and the
 data and set functions of the drive, cell (partition buttons), controller, provider, CPU, level maintainer
-(target, a virtual signal refused, circuit condition), circuit interface (filter buttons, output switch), fluid
+(target, circuit condition), circuit interface (filter buttons, output switch), fluid
 interface, ME Interface (config rows, an item moved to another row keeps its amount) and buses (filter buttons,
 fluid bus); the terminal's kind filter, Cells tab (priority order), craft preview (no pattern, amount 0) and Jobs
 tab. It reports `ME partitions and windows test (issue #68 R3): ok`.

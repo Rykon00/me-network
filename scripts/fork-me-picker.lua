@@ -27,6 +27,27 @@ local confirms = {}
 --- `fn(player, data, choice)` is called when a picker opened with `spec.callback == name` is confirmed
 function M.on_confirm(name, fn) confirms[name] = fn end
 
+--- The key of a choice (issue #70): an item (`with_quality`: "name@quality", normal quality as the plain name; else the
+--- plain name, for the places that take no quality) or a fluid ("fluid/<name>"); nil for anything else (another kind, an
+--- unknown name or quality), so a window can set what it gets or refuse it.
+function M.key_of(choice, with_quality)
+	if type(choice) ~= "table" or type(choice.name) ~= "string" then return nil end
+	if choice.kind == "fluid" then return prototypes.fluid[choice.name] and ("fluid/" .. choice.name) or nil end
+	if choice.kind ~= "item" or not prototypes.item[choice.name] then return nil end
+	if not with_quality then return choice.name end
+	local q = choice.quality or "normal"
+	if not prototypes.quality[q] or (q ~= "normal" and not script.feature_flags.quality) then return nil end
+	return q == "normal" and choice.name or (choice.name .. "@" .. q)
+end
+
+--- The preset of a key for `Picker.open` (an item with its quality, or a fluid; nil for no key)
+function M.preset_of(key)
+	if not key then return nil end
+	if key:sub(1, 6) == "fluid/" then return { kind = "fluid", name = key:sub(7) } end
+	local name, q = key:match("^([^@#]+)@?([^#]*)")
+	return { kind = "item", name = name, quality = (q and q ~= "") and q or "normal" }
+end
+
 --- the quality names an item can be chosen with, lowest first (empty without the quality mod: an item then has its
 --- normal quality only)
 function M.qualities()
@@ -213,12 +234,14 @@ end
 
 --- Open the picker for `player`. `spec`: { callback = a name given to on_confirm, data = what the callback gets back (plain
 --- data), kinds = { item = bool, fluid = bool } (what can be chosen), preset = { kind, name, quality } (what is chosen
---- at first, optional), title = a LocalisedString }. Returns false when no kind is allowed.
+--- at first, optional), quality = false (the place takes no quality: no quality row, the choice has none), title = a
+--- LocalisedString }. Returns false when no kind is allowed.
 function M.open(player, spec)
 	M.close(player)
 	local kinds = { item = spec.kinds.item and true or false, fluid = spec.kinds.fluid and true or false }
 	if not (kinds.item or kinds.fluid) then return false end
-	local t = { callback = spec.callback, data = spec.data or {}, kinds = kinds, filter = "", quality = "normal" }
+	local t = { callback = spec.callback, data = spec.data or {}, kinds = kinds, filter = "", quality = "normal",
+		plain = spec.quality == false }
 	local preset = spec.preset
 	if preset and kinds[preset.kind] and (preset.kind == "fluid" and prototypes.fluid or prototypes.item)[preset.name] then
 		t.kind, t.name, t.group = preset.kind, preset.name, group_of(preset.kind, preset.name)
@@ -263,7 +286,7 @@ function M.open(player, spec)
 
 	local bottom = G.row(content)
 	local qualities = M.qualities()
-	if #qualities > 1 then
+	if #qualities > 1 and not t.plain then
 		bottom.add{ type = "label", caption = { "fork-me-picker.quality" } }
 		local q = bottom.add{ type = "flow", name = "fork_me_pk_q", direction = "horizontal" }
 		q.style.horizontal_spacing = 2
@@ -294,7 +317,7 @@ function M.confirm(player)
 	if not frame then return false end
 	local t = frame.tags
 	local cb, choice = confirms[t.callback], nil
-	if t.name then choice = { kind = t.kind, name = t.name, quality = t.kind == "item" and t.quality or nil } end
+	if t.name then choice = { kind = t.kind, name = t.name, quality = t.kind == "item" and not t.plain and t.quality or nil } end
 	local data = t.data
 	frame.destroy()
 	if cb and choice then cb(player, data, choice) end
