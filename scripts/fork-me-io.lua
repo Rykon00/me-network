@@ -650,8 +650,9 @@ function M.interface_step(rec, dt)
 				local taken = 0
 				if can > 0 then
 					local proto = prototypes.item[c.name]
-					if proto and N.item_class(proto.type) == "worn" then
-						taken = N.remove_whole(inv, c.name, c.quality, can)          -- (a removal by count takes the used item first, issue #76)
+					if proto and (N.item_class(proto.type) == "worn" or N.can_be_damaged(proto)) then
+						--- (a removal by count takes the used item first, issue #76; a damaged stack is no surplus either, issue #84)
+						taken = N.remove_whole(inv, c.name, c.quality, can)
 					else
 						Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, c.quality, can
 						taken = inv.remove(Q_REMOVE)

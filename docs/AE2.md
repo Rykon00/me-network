@@ -326,7 +326,12 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
   circuit signal counts on what the network shows. Items are taken out by count: a damaged item or a partly used tool
   or magazine in the chest comes out as a new one would. Tools (science packs), ammunition and repair packs are the
   exception: of those the bus shows and moves only the whole stacks, a stack whose top item is used is not shown and
-  stays in the chest, and a whole item put in is never put into a chest that holds a used stack of that item.
+  stays in the chest, and a whole item put in is never put into a chest that holds a used stack of that item. A damaged
+  item (a mined wall, belt or chest with less than full health) is not handed out as a whole one either (issue #84): the
+  bus takes the whole stacks of such an item out of the chest and leaves a damaged stack in it. Until the first take
+  finds it, the terminal may show the damaged ones in the count; after that the bus shows only the whole ones, and all of
+  them again when the damaged stack is gone from the chest. A damaged stack in an ME Interface is no surplus the
+  network takes (its whole stacks are).
 * Settings (mode, priority, filters, filter on extract) are kept in blueprints, copied by settings paste and by
   cloning; so is which cards it has, but the cards themselves are items (see **Upgrade cards**).
 
