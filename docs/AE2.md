@@ -106,7 +106,7 @@ Two AE2 storage features decide **which cell** an item or fluid goes into (and c
   many as the cell has types. A partitioned cell **only** takes those; what it held before stays in it until it is
   taken out. **From contents** restricts the cell to what it holds now, **Clear** removes the partition.
   Partitioned cells have a yellow frame in the drive window and the Cells tab. The partition travels with the cell
-  (also an empty one: "Empty, partitioned for 2 kinds"). The **ME Cell Workbench** sets the partition too, and puts
+  (also an empty one). The cell's tooltip names it (see "The tooltip of a cell"). The **ME Cell Workbench** sets the partition too, and puts
   **upgrade cards** into a cell (see "ME Cell Workbench"): with an Inverter Card the partition is a blacklist, with
   a Fuzzy Card it matches every quality; the cell window shows the cards and what they do.
 * **Drive priority** (-1000 to 1000, default 0, in the drive window): the priority of every cell in that drive.
@@ -368,6 +368,34 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
   bus had beyond them into your inventory. Taking a card out by hand ends the waiting. A bus without its cards works
   as if it had none.
 * A **Recipe paste** (a crafting machine onto the bus) changes only the filters; cards and settings stay.
+
+### The tooltip of a cell
+
+The item tooltip of a storage cell that is not a fresh one (a fresh cell, with no contents, partition or cards, keeps
+the text of the item) says, always in this order and leaving out the lines that do not apply, so two cells can be
+compared at a glance:
+
+1. what it holds ("130 items of 2 types: 100 [iron plate], 30 [copper plate] (33 of 1024 bytes)"); an empty cell says
+   its size instead ("Empty: 1024 bytes, up to 63 item types.", for a fluid cell "... up to 18 fluid types.");
+2. the partition as icons, with the quality where it is not normal, a fluid cell's as fluid icons: "Partition: [iron
+   plate] [copper plate]". Up to 12 show, then "+N more" ("Partition: ... +3 more");
+3. whether it is a whitelist ("Whitelist: the cell takes only its partition.") or, with an Inverter Card, a blacklist
+   ("Blacklist (Inverter Card): the cell takes everything except its partition."). A cell with no partition and no
+   Inverter Card has neither line;
+4. the cards as icons ("Cards: [Inverter Card] [Fuzzy Card]"), and one line for each card that changes what the
+   partition means, in the words of the cell window and the workbench: Fuzzy ("the partition matches every quality"),
+   Equal Distribution ("at most N of each kind") and Overflow Destruction in red ("what does not fit into the cell is
+   DESTROYED").
+
+The text is written with the stack whenever the cell is written: in the workbench, when a drive gives the cell back,
+when a drive is mined or destroyed. A cell that lies in a chest or in an inventory of a save from before this change
+keeps its old tooltip (what it holds, or "Empty, partitioned for N kinds") until it passes through a drive or the
+workbench; the mod does not walk the inventories of the map for it. The cell's tags and the saved state are not
+changed: only the description.
+
+The partition is not marked on the item itself (no label, no colour): the label of a stack is a plain text, not a
+localised one (an item would show by its internal name), and only a stack object can carry it, not the item definition
+every drive, mining and spilling path writes. The drive window and the Cells tab frame a partitioned cell in yellow.
 
 ## ME Cell Workbench
 
@@ -1427,6 +1455,14 @@ cards), a fuzzy whitelist (copper in two qualities, no stone), equal distributio
 with a partition of two), overflow destruction on a partitioned cell (full, 500 destroyed and counted, another key
 kept, `can_insert`), and workbenches with a cell mined (the cell in the buffer), destroyed and vanished (spilled). It
 reports `ME Cell Workbench test: ok`.
+
+The cell tooltip test (issue #64, `runtimemod/workbench.lua`) makes cells through the workbench's remote interface and
+reads the `custom_description` of the cell that comes out (structure and keys, not a rendered text; the game gives a
+number parameter back as a string): a fresh cell and a cell cleared again have none, a whitelist of two items, the same
+with an Inverter Card, an item with quality, a fluid cell, 14 keys (12 icons and "+2 more") and exactly 12, every card on
+an item cell (7 lines, at most 20 parts) and on a fluid cell (no Fuzzy line), a partitioned cell that holds items
+(also blacklisted, and with nothing else), an empty unpartitioned cell with a card, a cell that comes out of a drive,
+and the window's mode line made of the same sentences. It reports `ME cell tooltip test: ok`.
 
 The slot tests of issue #28 change the script inventories the way a player does, with an inventory standing for the
 player's: the storage bus card slots (a card taken, a wrong item back, the inverter limit, a stack of capacity cards
