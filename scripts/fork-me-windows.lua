@@ -149,6 +149,33 @@ local function chooser(parent, elem_type, key, tags)
 	return parent.add(def)
 end
 
+--- One button for items and fluids (the interface's rows, the buses' filters, the workbench's partition without a
+--- cell): a SignalID of an item key with quality, or of a fluid key
+local function signal_of_key(key)
+	if not key then return nil end
+	if N.is_fluid_key(key) then return { type = "fluid", name = key:sub(7) } end
+	local name, q = N.parse_key(key)
+	return { type = "item", name = name, quality = q }
+end
+
+--- the key of a SignalID (items with their quality, fluids); virtual signals give nil
+local function key_of_signal_q(sig)
+	if type(sig) ~= "table" or not sig.name then return nil end
+	if sig.type == "fluid" then return prototypes.fluid[sig.name] and ("fluid/" .. sig.name) or nil end
+	if (sig.type == nil or sig.type == "item") and prototypes.item[sig.name] then
+		local q = sig.quality
+		if type(q) == "table" then q = q.name end
+		return N.key_of(sig.name, q or "normal")
+	end
+	return nil
+end
+M.key_of_signal_q = key_of_signal_q
+
+local function signal_chooser(parent, key, tags)
+	return parent.add{ type = "choose-elem-button", elem_type = "signal", signal = signal_of_key(key), tags = tags,
+		style = "slot_button" }
+end
+
 --------------------------------------------------------------------------------
 --- ME Drive
 --------------------------------------------------------------------------------
@@ -419,16 +446,12 @@ function M.refresh_workbench(player, frame)
 		local t = box.add{ type = "table", column_count = 10, style = "filter_slot_table" }
 		if not c then
 			--- issue #37: no cell: the workbench's own partition, for the next cell without one. Its items, then its
-			--- fluids, and a free slot of each kind (an item cell takes the items, a fluid cell the fluids)
+			--- fluids, and one free slot: every button chooses among items and fluids (as a bus's filter does), an item
+			--- cell takes the items, a fluid cell the fluids
+			for i, key in ipairs(part) do signal_chooser(t, key, G.act("wb_part", { index = i })) end
 			local n = d.config_items
-			for i, key in ipairs(part) do
-				chooser(t, i > n and "fluid" or "item-with-quality", key, G.act("wb_part", { index = i }))
-			end
-			if n < d.limits.items then
-				chooser(t, "item-with-quality", nil, G.act("wb_part", { index = #part + 1 })).tooltip = { "fork-me-gui.workbench-free-item" }
-			end
-			if #part - n < d.limits.fluids then
-				chooser(t, "fluid", nil, G.act("wb_part", { index = #part + 1 })).tooltip = { "fork-me-gui.workbench-free-fluid" }
+			if n < d.limits.items or #part - n < d.limits.fluids then
+				signal_chooser(t, nil, G.act("wb_part", { index = #part + 1 })).tooltip = { "fork-me-gui.workbench-free" }
 			end
 			G.label(box, { "fork-me-gui.workbench-kept" }, WIDTH)
 			return
@@ -461,7 +484,10 @@ G.on("wb_part", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
 	local entity, frame = window_entity(player)
 	if not entity then return end
-	bench.set_partition_slot(entity, el.tags.index, key_of_elem(el.elem_type, el.elem_value))
+	--- (without a cell the buttons choose among items and fluids; a virtual signal is no key: it empties the slot)
+	local key
+	if el.elem_type == "signal" then key = key_of_signal_q(el.elem_value) else key = key_of_elem(el.elem_type, el.elem_value) end
+	bench.set_partition_slot(entity, el.tags.index, key)
 	--- (drawn anew also when the list did not change: a key chosen twice or a key no cell takes must not stay in its slot)
 	local box = frame and G.find(frame, "fork_me_wb_part")
 	if box then box.tags = {} end
@@ -951,32 +977,6 @@ end)
 --------------------------------------------------------------------------------
 
 local SIDE_NAMES = { "north", "east", "south", "west" }
-
---- a SignalID of an item key with quality, or of a fluid key
-local function signal_of_key(key)
-	if not key then return nil end
-	if N.is_fluid_key(key) then return { type = "fluid", name = key:sub(7) } end
-	local name, q = N.parse_key(key)
-	return { type = "item", name = name, quality = q }
-end
-
---- the key of a SignalID (items with their quality, fluids); virtual signals give nil
-local function key_of_signal_q(sig)
-	if type(sig) ~= "table" or not sig.name then return nil end
-	if sig.type == "fluid" then return prototypes.fluid[sig.name] and ("fluid/" .. sig.name) or nil end
-	if (sig.type == nil or sig.type == "item") and prototypes.item[sig.name] then
-		local q = sig.quality
-		if type(q) == "table" then q = q.name end
-		return N.key_of(sig.name, q or "normal")
-	end
-	return nil
-end
-M.key_of_signal_q = key_of_signal_q
-
-local function signal_chooser(parent, key, tags)
-	return parent.add{ type = "choose-elem-button", elem_type = "signal", signal = signal_of_key(key), tags = tags,
-		style = "slot_button" }
-end
 
 function M.interface_data(entity) return io.get_interface(entity) end
 

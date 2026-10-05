@@ -173,6 +173,9 @@ return function(H)
 		put_cell(wb, "me-4k-storage-cell")
 		expect(line(info(wb).cell.partition) == line({ "coal" }) and line(info(wb).config) == line({ "coal", "fluid/steam" }),
 			"an item cell takes the items set without a cell " .. line(info(wb).cell.partition) .. " " .. line(info(wb).config))
+		--- an item cell takes no fluid into its partition (and its tags hold none)
+		remote.call(WB, "set_partition_slot", wb, 2, "fluid/water")
+		expect(line(info(wb).cell.partition) == line({ "coal" }), "a fluid set on an item cell " .. line(info(wb).cell.partition))
 		--- the cell's partition changed and cleared: the fluid kept for a fluid cell is not touched
 		remote.call(WB, "set_partition_slot", wb, 2, "wood")
 		expect(line(info(wb).config) == line({ "coal", "wood", "fluid/steam" }), "the cell's change in the workbench's partition " .. line(info(wb).config))
@@ -189,7 +192,12 @@ return function(H)
 		remote.call(WB, "set_partition_slot", wb, 2, "fluid/steam")
 		put_cell(wb, "me-1k-fluid-storage-cell")
 		expect(line(info(wb).cell.partition) == line({ "fluid/steam" }), "a fluid cell takes the fluids " .. line(info(wb).cell.partition))
-		take_cell(wb)
+		--- a fluid cell takes no item into its partition
+		remote.call(WB, "set_partition_slot", wb, 2, "iron-plate")
+		expect(line(info(wb).cell.partition) == line({ "fluid/steam" }), "an item set on a fluid cell " .. line(info(wb).cell.partition))
+		local tf = take_cell(wb)
+		local pf = tf and tf.fork_me_cell and tf.fork_me_cell.partition or {}
+		expect(pf["fluid/steam"] and not pf["coal"] and table_size(pf) == 1, "the fluid cell's tags " .. line(pf))
 		hand.clear()
 		expect(line(info(wb).config) == line({ "coal", "fluid/steam" }), "the copy mode keeps both kinds " .. line(info(wb).config))
 		expect(remote.call(WB, "clear", wb) == true and #info(wb).config == 0, "clear without a cell " .. line(info(wb).config))
