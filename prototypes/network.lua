@@ -48,8 +48,9 @@ local IMPORT_BUS, EXPORT_BUS = "me-import-bus", "me-export-bus"
 local STORAGE_BUS = "me-storage-bus"
 local UNDERGROUND = "me-underground-cable"
 local UNDERGROUND_REACH = 10        -- max_underground_distance of the underground cable (the underground pipe's)
---- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask
-local WALKABLE = { layers = { item = true, meltable = true, object = true, water_tile = true, is_lower_object = true } }
+--- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask. Since issue #129 so can the
+--- buses and the ME Terminal (prototypes/api.lua)
+local WALKABLE = ME.WALKABLE
 
 
 
@@ -415,7 +416,8 @@ for _, bus in pairs({
 	block{
 		name = bus.name, icon = ICON_FORK .. bus.name .. ".png",
 		description = { "entity-description." .. bus.name },
-		extra = { picture = four_way(bus.name) },
+		--- walkable like the cable (issue #129): drawn under the character
+		extra = { picture = four_way(bus.name), render_layer = "lower-object", collision_mask = WALKABLE },
 	}
 end
 
@@ -487,14 +489,23 @@ ME.add_item{
 block{
 	name = STORAGE_BUS, icon = ICON_FORK .. STORAGE_BUS .. ".png",
 	description = { "entity-description." .. STORAGE_BUS },
-	extra = { picture = four_way(STORAGE_BUS), additional_pastable_entities = { STORAGE_BUS } },
+	extra = { picture = four_way(STORAGE_BUS), additional_pastable_entities = { STORAGE_BUS },
+		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 
 
 
 --------------------------------------------------------------------------------
---- ME TERMINAL (always-on lamp: needs power, its GUI is replaced by the terminal GUI)
+--- ME TERMINAL (a lamp, as it always was: saves hold it by type and name; its GUI is replaced by the terminal GUI)
+---
+--- Issue #128: it needs no pole, the ME Controller draws its power (`member_power` of the mod-data below, W). A lamp
+--- with a void energy source is always "on" and has no power connection. So it can show whether its network works,
+--- the lamp's own picture is empty and the screen is drawn by the script (scripts/fork-me-network.lua, "screens"):
+--- a render object that follows the entity, lit while the network works and dark when it does not, and a light that
+--- goes with it. The lamp's `picture_off` is the dark screen: that is what a ghost and the build preview show.
 --------------------------------------------------------------------------------
+
+local TERMINAL_POWER = 8000             -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
 
 local terminal = table.deepcopy(data.raw.lamp["small-lamp"])
 terminal.name = "me-terminal"
@@ -506,23 +517,31 @@ terminal.corpse = "small-remnants"
 terminal.dying_explosion = nil
 terminal.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
 terminal.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
-terminal.energy_usage_per_tick = "8kW"
+terminal.energy_source = { type = "void" }
+terminal.energy_usage_per_tick = (TERMINAL_POWER / 1000) .. "kW"
 terminal.always_on = true
-terminal.light = { intensity = 0.4, size = 6, color = { 0.7, 0.55, 1 } }
+terminal.collision_mask = WALKABLE         -- issue #129: walkable like the cable (its screen is drawn under the character)
+terminal.light = nil
 terminal.light_when_colored = nil
+terminal.glow_size = 0
 terminal.picture_off = { layers = { {
 	filename = ENTITY_PATH .. "me-terminal-off.png",
 	priority = "high", width = 32, height = 32,
 } } }
-terminal.picture_on = {
-	filename = ENTITY_PATH .. "me-terminal-on.png",
-	priority = "high", width = 32, height = 32,
-}
+terminal.picture_on = util.empty_sprite()
 terminal.fast_replaceable_group = nil
 terminal.next_upgrade = nil
-terminal.localised_description = { "entity-description.me-terminal" }
+terminal.localised_description = { "entity-description.me-terminal", tostring(TERMINAL_POWER / 1000) }
 data:extend({ terminal })
 data.raw.item["me-terminal"].place_result = "me-terminal"
+
+--- the screen the script draws (render objects need sprite prototypes); the light is the game's
+data:extend({
+	{ type = "sprite", name = "me-terminal-screen-on", filename = ENTITY_PATH .. "me-terminal-on.png",
+	  priority = "high", width = 32, height = 32 },
+	{ type = "sprite", name = "me-terminal-screen-off", filename = ENTITY_PATH .. "me-terminal-off.png",
+	  priority = "high", width = 32, height = 32 },
+})
 
 --- The "open GUI" key: opens the ME window of a block (scripts/fork-me-gui.lua; works whether or not the
 --- engine opens a window for the entity), or puts the cell in the cursor into a drive
@@ -560,8 +579,11 @@ data:extend({ {
 		names = {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
-			underground = UNDERGROUND, storage_bus = STORAGE_BUS,
+			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
 		},
+		--- issue #128: the power (W) the ME Controller draws for a block that has no power connection of its own, by kind;
+		--- a kind that is not here draws the default (4 kW), a crafting block its own number (mod-data "fork-me-autocraft")
+		member_power = { terminal = TERMINAL_POWER },
 		underground_reach = UNDERGROUND_REACH,
 		legacy = { controller = "me-controller", interface = "me-interface" },
 	},

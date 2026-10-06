@@ -78,6 +78,7 @@ local function kinds()
 		k[n.import_bus] = "import-bus"
 		k[n.export_bus] = "export-bus"
 		k[n.terminal] = "terminal"
+		if n.pattern_terminal then k[n.pattern_terminal] = "pattern-terminal" end      -- issue #130
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 	end
@@ -99,12 +100,22 @@ local function kinds()
 	return k
 end
 
-local POWERED_SELF = { cable = true, underground = true, controller = true, terminal = true, cpu = true, maintainer = true }
+--- kinds with a power connection of their own (or none at all: the cable): the controller draws nothing for them. Issue #128:
+--- the terminal and the level maintainer are not among them any more; the legacy CPUs are (single blocks without a recipe)
+local POWERED_SELF = { cable = true, underground = true, controller = true, cpu = true }
+
+--- Issue #128: the power (W) a kind draws through the controller where it is not the default (mod-data "fork-me-network",
+--- member_power: terminal, level maintainer, pattern terminal), read once per load like the rest of the mod-data
+local kind_power_cache
+local function kind_power(kind)
+	if not kind_power_cache then kind_power_cache = mod_data().member_power or {} end
+	return kind_power_cache[kind] or MEMBER_POWER
+end
 
 --- issue #6: the power (W) of a crafting block drawn through the controller (mod-data "fork-me-autocraft", blocks)
 local block_power_cache
 local function member_power(node)
-	if node.kind ~= "crafting" then return MEMBER_POWER end
+	if node.kind ~= "crafting" then return kind_power(node.kind) end
 	if not block_power_cache then
 		local ac = prototypes.mod_data["fork-me-autocraft"]
 		block_power_cache = {}
@@ -311,6 +322,7 @@ end
 local recompute
 local net_cell
 local take_waits, fire_all_waits
+local screen_made, screen_gone
 
 --- The parts a removal left (issue #38, lever 5). `starts`: the neighbours of the removed member, in order; `total`: the
 --- members the network has left. A search runs from each of them, one member at a time, in turns; two searches that meet
@@ -493,6 +505,7 @@ local function add_node(s, entity, kind)
 	net.nodes[unit] = true
 	net.n = net.n + 1
 	node.net = net.id
+	if kind == "terminal" or kind == "pattern-terminal" then screen_made(s, unit, entity, kind) end
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
 	if #order == 1 and kind ~= "controller" then
@@ -533,6 +546,7 @@ function remove_node_graph(s, unit)
 	local node = s.nodes[unit]
 	if not node then return end
 	s.nodes[unit] = nil
+	if node.kind == "terminal" or node.kind == "pattern-terminal" then screen_gone(s, unit) end
 	local nl, li = s.nlist, node.li
 	if nl and li and nl[li] == unit then                -- the last member takes its place in the sweep list
 		local last = #nl
@@ -1428,9 +1442,9 @@ end
 function M.usable(net)
 	if not net then return false, "no-network" end
 	if net.status ~= "ok" then return false, net.status end
+	if net.power_dirty then update_power(state(), net) end    -- (before the cache: a member that joined this tick counts at once)
 	if net.usable_tick == game.tick then return net.usable, net.why end
 	local s = state()
-	if net.power_dirty then update_power(s, net) end
 	local ok, why = false, "no-controller"
 	for unit in pairs(net.controllers) do
 		local node = s.nodes[unit]
@@ -1443,6 +1457,102 @@ function M.usable(net)
 	net.usable, net.why, net.usable_tick = ok, why, game.tick
 	if ok and net.wait_use then fire_units(net, "wait_use") end
 	return ok, why
+end
+
+--------------------------------------------------------------------------------
+--- screens of the ME Terminals (issue #128): the terminal's lamp has no picture of its own (prototypes/network.lua); its
+--- screen is a sprite render object that follows the entity (it goes with it when the entity is removed or destroyed), lit
+--- while the terminal's network works and dark when it does not, with a light that goes with it. `s.screens[unit] = { spr,
+--- light (render object ids), on }` is in `storage` (render objects are saved with the map). Nothing runs for it on its own:
+--- the slow step (once a second, with the look at the network's power it makes anyway) sets every screen to its network's
+--- state, and a terminal that joins a network is set at once. Setting a screen that is right already costs one comparison.
+--- The ME Pattern Terminal (issue #130) is an entity with two pictures (graphics variation 1 dark, 2 lit, like the crafting
+--- blocks): its record is `{ variation = true, on }` and it is set the same way.
+--------------------------------------------------------------------------------
+
+local SCREEN_ON, SCREEN_OFF = "me-terminal-screen-on", "me-terminal-screen-off"
+local SCREEN_LIGHT = { intensity = 0.4, scale = 0.7, color = { 0.7, 0.55, 1 } }
+
+--- sets the screen of terminal `unit` to `on`, drawing it first if it is missing (a save from before, a clone)
+local function set_screen(s, unit, entity, on, kind)
+	local list = s.screens
+	local sc = list[unit]
+	if kind == "pattern-terminal" or (sc and sc.variation) then
+		if not (sc and sc.on == on and entity.graphics_variation == (on and 2 or 1)) then
+			entity.graphics_variation = on and 2 or 1
+			list[unit] = { variation = true, on = on }
+		end
+		return
+	end
+	local spr = sc and sc.spr and rendering.get_object_by_id(sc.spr)
+	local light = sc and sc.light and rendering.get_object_by_id(sc.light)
+	if not (spr and spr.valid and light and light.valid) then
+		if spr and spr.valid then spr.destroy() end
+		if light and light.valid then light.destroy() end
+		local surface = entity.surface
+		spr = rendering.draw_sprite{ sprite = on and SCREEN_ON or SCREEN_OFF, target = entity, surface = surface,
+			render_layer = "lower-object" }
+		light = rendering.draw_light{ sprite = "utility/light_medium", target = entity, surface = surface,
+			scale = SCREEN_LIGHT.scale, intensity = SCREEN_LIGHT.intensity, color = SCREEN_LIGHT.color, visible = on }
+		list[unit] = { spr = spr.id, light = light.id, on = on }
+		return
+	end
+	if sc.on == on then return end
+	sc.on = on
+	spr.sprite = on and SCREEN_ON or SCREEN_OFF
+	light.visible = on
+end
+
+--- the state a terminal's screen shows now: its network works
+local function screen_state(s, node)
+	local net = s.nets[node.net]
+	return net ~= nil and M.usable(net) and true or false
+end
+
+function screen_made(s, unit, entity, kind)
+	if not s.screens then return end                       -- (the first slow step makes them all)
+	local node = s.nodes[unit]
+	set_screen(s, unit, entity, node and node.net and screen_state(s, node) or false, kind or (node and node.kind))
+end
+
+function screen_gone(s, unit)
+	if s.screens then s.screens[unit] = nil end
+end
+
+--- every screen to its network's state; also the first time on a save from before (one pass over the members)
+local function refresh_screens(s)
+	if not s.screens then
+		s.screens = {}
+		for unit, node in pairs(s.nodes) do
+			if (node.kind == "terminal" or node.kind == "pattern-terminal") and node.entity.valid then
+				set_screen(s, unit, node.entity, false, node.kind)
+			end
+		end
+	end
+	local units = {}
+	for unit in pairs(s.screens) do units[#units + 1] = unit end
+	if #units == 0 then return end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local node = s.nodes[unit]
+		if node and node.entity.valid then
+			set_screen(s, unit, node.entity, screen_state(s, node), node.kind)
+		else
+			s.screens[unit] = nil
+		end
+	end
+end
+
+--- (tests) the state a terminal's screen shows: nil without a screen, else { on, sprite, light, layer, ids } (a lamp terminal) or
+--- { on, variation } (a pattern terminal)
+function M.screen_of(entity)
+	local s = storage.fork_me_net
+	local sc = s and s.screens and entity and entity.valid and s.screens[entity.unit_number]
+	if sc and sc.variation then return { on = sc.on, variation = entity.graphics_variation } end
+	local spr = sc and rendering.get_object_by_id(sc.spr)
+	local light = sc and rendering.get_object_by_id(sc.light)
+	if not (spr and spr.valid and light and light.valid) then return nil end
+	return { on = sc.on, sprite = spr.sprite, light = light.visible, layer = spr.render_layer, ids = { sc.spr, sc.light } }
 end
 
 --- the network an entity is a member of (working or not), nil if it is no member
@@ -3313,6 +3423,7 @@ function M.slow_step()
 			if net.wait_room then fire_units(net, "wait_room") end
 		end
 	end
+	refresh_screens(s)
 	local n = 0
 	for unit in pairs(s.dirty) do
 		if n >= LEDS_PER_STEP_N then break end
@@ -3589,6 +3700,16 @@ function M.rebuild()
 		end
 	end
 	for _, node in pairs(s.nodes) do update_cable(s, node) end
+	--- issue #128: a terminal without a screen gets one (the others keep theirs: render objects are not made twice)
+	if s.screens then
+		for _, unit in ipairs(units) do
+			local node = s.nodes[unit]
+			if node.kind == "terminal" or node.kind == "pattern-terminal" then
+				if s.screens[unit] and not node.entity.valid then s.screens[unit] = nil end
+				if not s.screens[unit] then screen_made(s, unit, node.entity, node.kind) end
+			end
+		end
+	end
 	for _, hook in pairs(M.change_hooks) do hook(nil) end
 end
 
@@ -3870,6 +3991,8 @@ remote.add_interface("gregtorio-me-network", {
 	slow_step = function() M.slow_step() end,                  -- (tests: the sweep of the members runs from it)
 	version = function() return M.version() end,
 	cable_variation = function(cable) return cable.graphics_variation end,
+	kind = function(name) return M.kind_of(name) end,                 -- (issue #130 tests) the kind of an entity name
+	screen = function(entity) return M.screen_of(entity) end,         -- (issue #128 tests) what a terminal's screen shows
 	--- what the rotation event does (entity.rotate raises none)
 	rotated = function(entity) M.on_rotated(entity) end,
 	--- what on_configuration_changed does with the graph (the whole map)

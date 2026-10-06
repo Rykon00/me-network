@@ -502,7 +502,7 @@ end
 local function give_pattern(provider, recipe)
 	local inv = game.create_inventory(2)
 	inv.insert{ name = "me-blank-pattern", count = 1 }
-	local where, why = remote.call(TERM, "encode_def", false, inv, false, { kind = "crafting", recipe = recipe })
+	local where, why = remote.call("gregtorio-me-pattern-terminal", "encode_def", inv, nil, { kind = "crafting", recipe = recipe })
 	local stack = inv.find_item_stack("me-encoded-pattern")
 	if not (where and stack and remote.call(AC, "insert_pattern", provider, stack)) then
 		fail("pattern " .. recipe .. ": " .. tostring(why))
@@ -1475,7 +1475,7 @@ local function build_planner()
 					def = { kind = "crafting", recipe = r.name }
 					crafting = crafting + 1
 				end
-				local where, why = remote.call(TERM, "encode_def", false, inv, false, def)
+				local where, why = remote.call("gregtorio-me-pattern-terminal", "encode_def", inv, nil, def)
 				local stack = inv.find_item_stack("me-encoded-pattern")
 				if where and stack and remote.call(AC, "insert_pattern", prov, stack) then encoded = encoded + 1
 				else

@@ -24,7 +24,7 @@ local PER_LINE = 7                   -- kinds per line of the member list
 
 --- the kinds of members in the order they are listed (a kind not named here comes last, by name)
 local KIND_ORDER = { "controller", "cable", "underground", "drive", "terminal", "interface", "import-bus", "export-bus",
-	"storage-bus", "fluid-interface", "fluid-import-bus", "fluid-export-bus", "fluid-storage-bus", "provider", "maintainer",
+	"storage-bus", "fluid-interface", "fluid-import-bus", "fluid-export-bus", "fluid-storage-bus", "provider", "pattern-terminal", "maintainer",
 	"circuit", "cpu", "crafting" }
 local KNOWN = {}
 for i, k in ipairs(KIND_ORDER) do KNOWN[k] = i end

@@ -20,7 +20,7 @@ The rework comes in three steps:
 | **R3** | one GUI style and a window for every ME block (replacing the panels next to the game's windows), the terminal as hub (storage, crafting, jobs, cells), the ME Interface's config rows, cell partitions and drive priorities | done (this document, "GUIs, partitions and priorities (R3)") |
 | Storage bus | the ME Storage Bus that R1 left out: a chest or cargo wagon as network storage, with filters, priority and read/write mode | done (this document, "Storage bus (after R3)") |
 | Fluid storage bus | the ME Fluid Storage Bus: the fluid segment of a tank as network storage, one bus per segment | done (this document, "Fluid storage bus (after the storage bus)") |
-| Encoded patterns | issue #80: blank and encoded pattern items, the terminal's Patterns tab, the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
+| Encoded patterns | issue #80: blank and encoded pattern items, the Patterns tab of the terminal (the ME Pattern Terminal since issue #130), the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
 | Unified I/O | me-network issue #3: one ME Interface, Import Bus, Export Bus and Storage Bus for items and fluids; the four fluid blocks removed and migrated | done (this document, "Items and fluids in one block (me-network issue #3)") |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
@@ -57,7 +57,16 @@ power of its own (drives, interfaces, buses, providers, circuit interfaces, flui
 cables are free), set by the script when the network changes. It counts as powered while its status is not
 "no power" and its buffer is not empty (an energy interface without any pole reports no "no power" status;
 an underpowered controller keeps the network running at low power, like other machines).
-Terminals, CPUs and level maintainers keep their own power connection (lamps), as before.
+Since issue #128 the terminal and the level maintainer draw their power through the controller too (8 kW and 30 kW, the numbers
+in the mod-data `fork-me-network`, `member_power`); only the three legacy single-block CPUs keep a power connection of their own.
+Both are still lamps (a prototype whose type changes is removed from a saved game), with `energy_source = { type = "void" }`:
+such a lamp has no electric network and its status is always "working", so a pole next to it does nothing and a wire to it
+still works. A lamp with a void source is always on, so the terminal's picture is drawn by the script: the lamp's `picture_on`
+is empty, its `picture_off` (the dark screen: ghosts and the build preview) is the real one, and a sprite render object that
+follows the entity shows the screen lit or dark with a light object that goes with it (`s.screens` in `storage`, ids of the
+render objects; they go with the entity). The slow step (once a second) sets every screen to its network's state, a terminal
+that joins is set at once. Found on 2.0.77: a lamp's `active` does nothing, a circuit condition is ignored without a wire,
+`always_on = false` lights a lamp only by the surface's darkness; none of them can switch a lamp's picture from the script.
 
 **Incremental graph:** nothing scans the map at runtime.
 
@@ -214,7 +223,7 @@ old disassembly recipes are removed (their result is what placing the item gives
 
 ## ME Terminal
 
-The ME Terminal stays the same entity (a lamp that needs power, now also a network member). Its GUI is the
+The ME Terminal stays the same entity (a lamp, now also a network member; since issue #128 it draws its power through the controller, since issue #129 it can be walked over like the cable). Its GUI is the
 central window of the network:
 
 * **Status line:** network state (working, no controller, controller conflict, no power), bytes used of
@@ -231,6 +240,38 @@ central window of the network:
 
 Every button calls a function that the runtime test calls directly (`take`, `store_cursor`,
 `store_inventory_item`, ...), so the logic behind the GUI is tested headless.
+
+## ME Pattern Terminal (issue #130)
+
+The Patterns tab of the ME Terminal (issue #80) became a block of its own, as in GTNH's AE2 (`PartPatternTerminal`; its plain
+terminal has no pattern function) and the ME Terminal has four tabs. `me-pattern-terminal` is a 1x1 `simple-entity-with-force`
+(a member of the network, kind `pattern-terminal`, listed in the mod-data `names` and `member_power`: 8 kW through the
+controller like the terminal's, issue #128; walkable and drawn under the character, issue #129). It has two pictures, dark
+and lit (graphics variation 1 and 2 of one sheet, as the crafting blocks), set from the slow step that sets the terminal's
+screen (`screens` in `scripts/fork-me-network.lua`): no render objects, no tick of its own.
+
+*Code:* `scripts/fork-me-patternterm.lua` holds the editor (moved out of `scripts/fork-me-terminal.lua`, which has none of it
+any more), the window and the two slots; `scripts/fork-me-patterns.lua` the pattern data and `encode_slots`. The window is
+registered like every block window (`G.window("pattern-terminal", ...)`: the inventory pane, `shift` and `click` for the
+block's slots). The actions keep their names (`pat_mode`, `pat_recipe`, `pat_row`, `pat_amount`, `pat_encode`, `pat_load`,
+`pat_clear`); the editor of a player is `storage.fork_me_pterm_ui[player_index].pat` and outlives the window.
+
+*Slots* (decision of the maintainer: GTNH's, read from `appeng/helpers/PatternEncodingHelper.java` and
+`appeng/container/implementations/ContainerPatternTerm.java`): the **blank pattern slot** and the **output slot** are a script
+inventory of two slots per block (`storage.fork_me_pterm[unit] = { entity, inv, where }`, the way the card slots of the buses are
+kept, scripts/fork-me-cardslots.lua). Encode: an encoded pattern lying in the output slot is written again in place; else one
+blank from the blank slot, else one from the network, else nothing ("no-blank"); the result lands in the output slot, or with
+shift + click straight into the player's inventory. Clicking the empty blank slot with an empty hand fetches a stack from the
+network. The hand and the inventory are not searched. Load and Clear work on the encoded pattern in the hand, else the one in
+the output slot (a cleared one becomes a blank in the blank slot). Mined: the slots come into the mined buffer; destroyed or
+vanished (the network's sweep, `N.vanish_hooks`): spilled where the block stood; blueprints, clones and settings paste carry
+nothing of them. The block needs a working network for Encode and for fetching (the window says why); the slots can always be
+emptied.
+
+*Tests:* `runtimemod/patternterm.lua`; the furnace, the processing line and the cards tests encode through the block, every
+other test through `encode_def` (the same function on a two-slot inventory that stands in for a block). The window itself
+needs a player: it was run once with a mock of the GUI elements (the module's own code: opening, refreshing, the actions);
+the real look is the in-game check.
 
 ## Import and export
 
@@ -829,7 +870,7 @@ Until 0.4.1 a pattern provider read the recipe of the machines next to it (a fur
 provider): one machine was one pattern and the provider held nothing. Issue #80 brings AE2's model: a pattern is an
 item, encoded in a terminal, and a provider holds several. Code: `scripts/fork-me-patterns.lua` (the pattern data and
 item, encode, clear), `scripts/fork-me-autocraft.lua` (provider slots, scan, planner, jobs, arrivals, migration),
-`scripts/fork-me-terminal.lua` (Patterns tab), `scripts/fork-me-windows.lua` (provider window); prototypes in
+`scripts/fork-me-terminal.lua` (the Patterns tab, now `scripts/fork-me-patternterm.lua`, issue #130), `scripts/fork-me-windows.lua` (provider window); prototypes in
 `prototypes/autocrafting.lua`. The player's guide: `docs/AE2.md`, "Autocrafting".
 
 ### The pattern and its item
@@ -853,7 +894,9 @@ item, encode, clear), `scripts/fork-me-autocraft.lua` (provider slots, scan, pla
   a mod cannot catch a click on an inventory slot (custom inputs know the selected entity, not the slot), so it is the
   terminal's "Clear pattern in hand" button.
 
-### Where patterns are encoded: a tab of the ME Terminal
+### Where patterns are encoded: a tab of the ME Terminal (superseded: the ME Pattern Terminal, issue #130)
+
+This is the decision of issue #80, kept as the record; since issue #130 the tab is the ME Pattern Terminal block (section "ME Pattern Terminal (issue #130)" above) and the functions named below are those of `scripts/fork-me-patternterm.lua`.
 
 R3 made the terminal the hub of the network (storage, crafting, jobs, cells). AE2 has a separate Pattern Encoding
 Terminal; here a **Patterns** tab fits R3's window design better: no new block, prototype, recipe or graphics, the
