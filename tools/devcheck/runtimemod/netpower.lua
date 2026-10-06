@@ -1,0 +1,192 @@
+--- Runtime test of me-network issue #128 (docs/AE2.md "Building a network"): the ME Terminal and the ME Level Maintainer take their
+--- power from the network, not from a pole.
+--- One network at a power source with a substation; the terminal and the level maintainer sit 24 tiles away at the end of a cable
+--- row, far outside every pole's supply area (their lamps have a void energy source: no electric network of their own).
+--- * they join: the controller's draw rises by exactly 8 kW (terminal) and 30 kW (level maintainer), and by nothing for a legacy
+---   Crafting CPU (which keeps its own power connection: no pole, it reports no power)
+--- * they work with no pole: the terminal has no problem, its screen is lit (a sprite render object of the mod's, under the
+---   character: layer lower-object, and its light), the maintainer is stocked
+--- * the controller's power is cut (at tick 300, so that the dark network is still dark after the save and load of the
+---   save-and-load run at tick 500): the terminal says "no-power", its screen goes dark and its light off, the maintainer says
+---   "no-power" and is parked for it
+--- * the power comes back (tick 600): the screen is lit again, the maintainer is woken and checks again within the slow step's second
+--- * a terminal that is mined or destroyed takes its screen along (no render object left), a cloned one gets its own
+--- Loaded by control.lua: require("netpower")(H) returns { setup, tick, running } like lab.lua.
+
+local NET, TERM, CIRC, IO = "gregtorio-me-network", "gregtorio-me-terminal", "gregtorio-me-circuit", "gregtorio-me-io"
+local BX, BY = -300, -200
+local START, CUT, DARK_CHECK, BACK, END = 90, 300, 580, 600, 1100
+local TERMINAL_X, MAINTAINER_X = 26, 27            -- tiles right of BX, on the cable row's row (BY - 1)
+
+return function(H)
+	local me_place, me_report, power, cable_row = H.me_place, H.me_report, H.power, H.cable_row
+	local T = {}
+
+	function T.setup(s)
+		local fails = {}
+		local what = "network power"
+		local eei = power(s, fails, what, BX, BY)
+		local ctrl = me_place(s, fails, what, "me-network-controller", BX + 6, BY)
+		local drive = me_drive(s, fails, what, BX + 8.5, BY - 0.5, { ["iron-plate"] = 100 })
+		cable_row(s, fails, BX + 7, BX + 7, BY - 1)             -- (the drive's tile is BX + 8)
+		cable_row(s, fails, BX + 9, BX + 25, BY - 1)
+		if not (eei and ctrl and drive) then fails[#fails + 1] = what .. ": the network was not built" end
+		return fails
+	end
+
+	function T.tick()
+		local tick = game.tick
+		local st = storage.netpower128
+		if not st then
+			if tick < START then return end
+			st = { problems = {}, done = false, phase = "join" }
+			storage.netpower128 = st
+		end
+		if st.done then return end
+		local s = game.surfaces[1]
+		local problems = st.problems
+		local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+		local function finish(note)
+			st.done = true
+			me_report("NETPOWER", "ME terminal and level maintainer power", problems, note)
+		end
+		local ctrl = s.find_entity("me-network-controller", { BX + 6, BY })
+		local eei = s.find_entity("electric-energy-interface", { BX, BY })
+		if not (ctrl and ctrl.valid and eei and eei.valid) then
+			problems[#problems + 1] = "the test network is missing"
+			return finish()
+		end
+		local function info() return remote.call(NET, "network", ctrl) end
+		local terminal = st.terminal and st.terminal.valid and st.terminal
+		local maintainer = st.maintainer and st.maintainer.valid and st.maintainer
+		local function maint() return maintainer and remote.call(CIRC, "get_maintainer", maintainer) end
+
+		if st.phase == "join" then
+			local n0 = info()
+			expect(n0 and n0.ok and n0.power == 124000, "the network before: " .. serpent.line(n0))
+			local function place(name, x, extra)
+				local def = { name = name, position = { BX + x + 0.5, BY - 0.5 }, force = "player", raise_built = true }
+				for k, v in pairs(extra or {}) do def[k] = v end
+				return s.create_entity(def)
+			end
+			st.terminal = place("me-terminal", TERMINAL_X)
+			local n1 = info()
+			expect(n1 and n1.power == n0.power + 8000, "the controller draws " .. tostring(n1 and n1.power) .. " W with a terminal, "
+				.. (n0.power + 8000) .. " expected (terminal 8 kW)")
+			st.maintainer = place("me-level-maintainer", MAINTAINER_X)
+			local n2 = info()
+			expect(n2 and n2.power == n0.power + 38000, "the controller draws " .. tostring(n2 and n2.power) .. " W with a level maintainer too, "
+				.. (n0.power + 38000) .. " expected (maintainer 30 kW)")
+			--- the legacy CPU (a single block with a power connection of its own): no draw through the controller, no pole: no power
+			st.cpu = s.create_entity{ name = "me-crafting-cpu", position = { BX + 22, BY + 1 }, force = "player", raise_built = true }
+			local n3 = info()
+			expect(n3 and n3.power == n2.power, "the controller's draw changed to " .. tostring(n3 and n3.power) .. " W for a legacy CPU")
+			expect(st.cpu and st.cpu.valid and st.cpu.status == defines.entity_status.no_power,
+				"the legacy CPU without a pole does not report no power: " .. tostring(st.cpu and st.cpu.status))
+			--- no pole reaches them
+			for _, e in pairs({ st.terminal, st.maintainer }) do
+				local poles = s.find_entities_filtered{ type = "electric-pole", position = e.position, radius = 14 }
+				expect(#poles == 0, e.name .. " has an electric pole within 14 tiles")
+			end
+			remote.call(CIRC, "set_maintainer", st.maintainer, "iron-plate", 10, false)
+			st.phase = "work"
+			return
+		end
+		if not (terminal and maintainer) then
+			problems[#problems + 1] = "the terminal or the level maintainer is gone in phase " .. st.phase
+			return finish()
+		end
+		local function screen() return remote.call(NET, "screen", terminal) end
+		local function problem() return remote.call(TERM, "problem", terminal) end
+
+		if st.phase == "work" then
+			if tick < START + 40 then return end
+			local sc = screen()
+			expect(problem() == nil, "the terminal without a pole has the problem " .. tostring(problem()))
+			expect(sc and sc.on and sc.light and sc.sprite == "me-terminal-screen-on" and sc.layer == "lower-object",
+				"the screen of a terminal in a working network: " .. serpent.line(sc))
+			local m = maint()
+			expect(m and m.status == "stocked", "the level maintainer without a pole: " .. serpent.line(m))
+			local sch = remote.call(CIRC, "schedule", maintainer)
+			expect(sch and sch.parked == "stocked", "the level maintainer is not parked as stocked: " .. serpent.line(sch))
+			--- a second terminal, cloned: it gets a screen of its own; mined, a screen goes with it
+			local two = s.create_entity{ name = "me-terminal", position = { BX + 20.5, BY + 3.5 }, force = "player", raise_built = true }
+			local three = two and two.clone{ position = { BX + 23.5, BY + 3.5 } }
+			local s3 = three and remote.call(NET, "screen", three)
+			local s2 = two and remote.call(NET, "screen", two)
+			expect(s3 ~= nil and s2 ~= nil and s3.ids[1] ~= s2.ids[1], "a cloned terminal has no screen of its own: " .. serpent.line(s3))
+			if two then two.destroy{ raise_destroy = true } end
+			if three then three.destroy{ raise_destroy = true } end
+			for _, sc3 in pairs({ s2 or { ids = {} }, s3 or { ids = {} } }) do
+				for _, id in pairs(sc3.ids) do
+					local o = rendering.get_object_by_id(id)
+					expect(not (o and o.valid), "a destroyed terminal left the render object " .. id)
+				end
+			end
+			st.phase = "cut"
+		elseif st.phase == "cut" then
+			if tick < CUT then return end
+			eei.power_production, eei.energy, ctrl.energy = 0, 0, 0
+			st.cut_at, st.phase = tick, "dark"
+		elseif st.phase == "dark" then
+			local n = info()
+			if n and n.status == "no-power" then
+				remote.call(NET, "slow_step")
+				local sc = screen()
+				expect(problem() == "no-power", "the terminal of a network without power: " .. tostring(problem()))
+				expect(sc and not sc.on and not sc.light and sc.sprite == "me-terminal-screen-off",
+					"the screen of a network without power: " .. serpent.line(sc))
+				expect(maint() and maint().status == "no-power", "the maintainer's status without power: " .. serpent.line(maint()))
+				--- (a woken maintainer finds it and parks for the power)
+				remote.call(CIRC, "set_maintainer", maintainer, nil, 20, nil)
+				st.dark_at, st.phase = tick, "parked"
+			elseif tick - st.cut_at > 300 then
+				problems[#problems + 1] = "the network kept its power 300 ticks after the source was cut: " .. serpent.line(n)
+				eei.power_production = 1e6
+				return finish()
+			end
+		elseif st.phase == "parked" then
+			local sch = remote.call(CIRC, "schedule", maintainer)
+			if sch and sch.parked == "no-power" then
+				st.phase = "dark2"
+			elseif tick - st.dark_at > 90 then
+				problems[#problems + 1] = "the level maintainer was not parked for the power within 90 ticks: " .. serpent.line(sch)
+				eei.power_production = 1e6
+				return finish()
+			end
+		elseif st.phase == "dark2" then
+			--- (after the save and load of the save-and-load run: the screen, still dark, is the same render object)
+			if tick < DARK_CHECK then return end
+			local sc = screen()
+			expect(sc and not sc.on and not sc.light and sc.sprite == "me-terminal-screen-off", "the screen after a while without power: " .. serpent.line(sc))
+			expect(problem() == "no-power", "the terminal after a while without power: " .. tostring(problem()))
+			local sch = remote.call(CIRC, "schedule", maintainer)
+			expect(sch and sch.parked == "no-power", "the maintainer after a while without power: " .. serpent.line(sch))
+			st.phase = "back"
+		elseif st.phase == "back" then
+			if tick < BACK then return end
+			eei.power_production = 1e6
+			st.back_at, st.phase = tick, "lit"
+		elseif st.phase == "lit" then
+			local sch = remote.call(CIRC, "schedule", maintainer)
+			local sc = screen()
+			if sc and sc.on and sch and sch.parked ~= "no-power" then
+				expect(sc.light and sc.sprite == "me-terminal-screen-on", "the screen is lit again but: " .. serpent.line(sc))
+				expect(problem() == nil, "the terminal with the power back: " .. tostring(problem()))
+				expect(maint() and maint().status == "stocked", "the maintainer with the power back: " .. serpent.line(maint()))
+				expect(tick - st.back_at <= 150, "the power came back, the screen was lit " .. (tick - st.back_at) .. " ticks later")
+				local n = info()
+				expect(n and n.power == 162000, "the controller's draw at the end: " .. serpent.line(n))
+				st.lit_after = tick - st.back_at
+				return finish("a terminal and a level maintainer 24 tiles from a pole: +8 kW and +30 kW, no draw for a legacy CPU, dark and parked "
+					.. "without power, lit and woken " .. st.lit_after .. " ticks after it came back, screens made, cloned and removed")
+			elseif tick - st.back_at > 300 then
+				problems[#problems + 1] = "the power came back but the screen stayed dark or the maintainer parked: " .. serpent.line(sc) .. " " .. serpent.line(sch)
+				return finish()
+			end
+		end
+	end
+
+	function T.running(check) check(storage.netpower128 and storage.netpower128.done, "ME terminal and level maintainer power") end
+	return T
+end
