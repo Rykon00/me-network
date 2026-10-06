@@ -111,7 +111,7 @@ local seg_keys, seg_n = {}, 0                       -- segment id -> "s<id>" (is
 local function live_key(rec)
 	local t = rec.target
 	if not (t and t.valid and rec.box) then return nil end
-	local id = T.fluidbox(t).get_fluid_segment_id(rec.box)
+	local id = N.bound(T.fluidbox(t)).get_fluid_segment_id(rec.box)
 	if id then
 		local key = seg_keys[id]
 		if not key then
@@ -139,9 +139,9 @@ local function contents_of(rec, seg)
 	local fb = T.fluidbox(t)
 	local held = fb[rec.box]
 	local temp = held and held.temperature or nil
-	if seg == nil then seg = fb.get_fluid_segment_id(rec.box) ~= nil end
+	if seg == nil then seg = N.bound(fb).get_fluid_segment_id(rec.box) ~= nil end
 	if seg then
-		return fb.get_fluid_segment_contents(rec.box) or {}, temp, true
+		return N.bound(fb).get_fluid_segment_contents(rec.box) or {}, temp, true
 	end
 	if held and held.amount > EPS then return { [held.name] = held.amount }, temp, false end
 	return {}, temp, false

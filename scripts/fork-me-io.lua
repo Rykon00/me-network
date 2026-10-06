@@ -468,11 +468,11 @@ end
 --- amount moved and a status.
 local function tank_to_network(t, held, net)
 	local fb = T.fluidbox(t)
-	local segment = fb.get_fluid_segment_contents(1)
+	local segment = N.bound(fb).get_fluid_segment_contents(1)
 	local available = math.max(held.amount, (segment and segment[held.name] or 0) + 1)   -- segment counts are rounded
 	local room = N.can_insert_fluid(net, held.name, available)
 	if room <= EPS then return 0, "full" end
-	local removed = t.remove_fluid{ name = held.name, amount = room }
+	local removed = N.bound(t).remove_fluid{ name = held.name, amount = room }
 	if removed <= 0 then return 0, "ok" end
 	local stored = N.insert_fluid(net, held.name, removed)
 	if stored < removed - EPS then          -- cannot happen (room was checked), but never lose fluid
@@ -499,7 +499,7 @@ local function export_side(t, held, row, net, p)
 	if avail <= EPS then return "empty-network", moved, want end
 	if p then avail = avail - reserved(net, FLUID_PREFIX .. row.name, p) end
 	if avail <= EPS then return "reserved", moved, want end
-	local inserted = t.insert_fluid{ name = row.name, amount = math.min(want, avail) }
+	local inserted = N.bound(t).insert_fluid{ name = row.name, amount = math.min(want, avail) }
 	local got = 0
 	if inserted > 0 then
 		got = N.extract_fluid(net, row.name, inserted)
@@ -549,12 +549,12 @@ local function interface_sides(rec, net, config, short, dt)
 				exports = {}
 				for e = 1, #SIDES do
 					if type(sides[e]) == "number" then
-						local id = T.fluidbox(tanks[e]).get_fluid_segment_id(1)
+						local id = N.bound(T.fluidbox(tanks[e])).get_fluid_segment_id(1)
 						if id then exports[id] = true end
 					end
 				end
 			end
-			local id = exports and T.fluidbox(t).get_fluid_segment_id(1)
+			local id = exports and N.bound(T.fluidbox(t)).get_fluid_segment_id(1)
 			if id and exports[id] then
 				fstatus[d] = "loop"
 			else
@@ -599,6 +599,7 @@ function M.interface_step(rec, dt, u)
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
 	local max_ops = math.max(IFACE_SLOTS_PER_VISIT, math.floor(IFACE_SLOTS_PER_VISIT * ticks / STEP_TICKS))
 	local inv = T.inventory(e, defines.inventory.chest)
+	local B = N.bound(inv)                                    -- (its methods: issue #115)
 	local ops, moved = 0, 0
 	local held_total = 0                                      -- what the kept rows hold at the end of the row loop
 	local kept = KEPT
@@ -627,7 +628,7 @@ function M.interface_step(rec, dt, u)
 			local counted = kept[key]                             -- (two rows of one key hold its items once)
 			kept[key] = true
 			Q_COUNT.name, Q_COUNT.quality = c.name, c.quality
-			local have = inv.get_item_count(Q_COUNT)
+			local have = B.get_item_count(Q_COUNT)
 			local final = have
 			if have < c.amount then
 				local want = c.amount - have
@@ -656,7 +657,7 @@ function M.interface_step(rec, dt, u)
 						taken = N.remove_whole(inv, c.name, c.quality, can)
 					else
 						Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, c.quality, can
-						taken = inv.remove(Q_REMOVE)
+						taken = B.remove(Q_REMOVE)
 					end
 				end
 				if taken > 0 then
@@ -679,13 +680,13 @@ function M.interface_step(rec, dt, u)
 	--- the walk over the slots only when something lies in the inventory that no row keeps (an interface whose rows
 	--- hold what they hold, or that holds nothing, has nothing to import)
 	local walk = false
-	if not inv.is_empty() then
-		walk = inv.get_item_count() ~= held_total          -- (more in it than the kept rows hold: something to import; no table)
+	if not B.is_empty() then
+		walk = B.get_item_count() ~= held_total          -- (more in it than the kept rows hold: something to import; no table)
 	end
 	local start = rec.slot or 1
 	--- issue #115: the stacks the walk has still to find (an inventory with a few stacks and many empty slots: the empty rest
 	--- counts as free without reading each slot; the operations limit is checked first, as at every slot)
-	local stacks = walk and size - inv.count_empty_stacks(true, true) or 0
+	local stacks = walk and size - B.count_empty_stacks(true, true) or 0
 	for k = 0, walk and size - 1 or -1 do
 		if ops >= max_ops then rec.slot = (start - 1 + k) % size + 1 break end
 		if stacks <= 0 then free = free + size - k break end
@@ -1018,7 +1019,8 @@ local function import_items(rec, net, t, cap, info)
 	local all, set = rec.all, rec.iset
 	local unit = rec.entity.unit_number
 	local moved, stacks, held, main, mainc = 0, false, 0, nil, 0
-	for _, c in pairs(inv.get_contents()) do
+	local B = N.bound(inv)                                    -- (its methods: issue #115)
+	for _, c in pairs(B.get_contents()) do
 		if all or set[c.name] then
 			held = held + c.count
 			if c.count > mainc then main, mainc = c.name, c.count end
@@ -1026,7 +1028,7 @@ local function import_items(rec, net, t, cap, info)
 				local q = c.quality or "normal"
 				if by_count(c.name, q) then
 					Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, q, math.min(c.count, cap - moved)
-					local removed = inv.remove(Q_REMOVE)
+					local removed = B.remove(Q_REMOVE)
 					if removed > 0 then
 						local stored = N.insert(net, c.name, q, removed)
 						if stored < removed then                  -- the network is full: the rest goes back
@@ -1086,7 +1088,7 @@ local function export_items(rec, net, t, cap, info)
 	local dt = info.dt or STEP_TICKS
 	for _, name in ipairs(rec.filters) do
 		if item_known(name) then
-			local have = inv.get_item_count(name)
+			local have = N.bound(inv).get_item_count(name)
 			local prev = tgt[name]
 			if prev and prev > 0 and have == 0 then info.starved = true end
 			local used = prev and prev - have or 0
@@ -1138,10 +1140,10 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 		for i = 1, #fb do
 			local f = fb[i]
 			if f and f.amount > EPS and (all or set[f.name]) then
-				local p = fb.get_prototype(i)
+				local p = N.bound(fb).get_prototype(i)
 				if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
 				if not (p and p.production_type == "input") then
-					local capf = fb.get_capacity(i)
+					local capf = N.bound(fb).get_capacity(i)
 					local arrived = f.amount - (fleft[i] or 0)
 					if f.amount >= capf - EPS then info.starved = true end           -- a full box: the machine waited
 					local left = f.amount
@@ -1183,7 +1185,7 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 				info.nokey = true
 			elseif cap - moved > EPS then
 				local want = math.min(total, cap - moved)
-				local inserted = t.insert_fluid{ name = name, amount = want }
+				local inserted = N.bound(t).insert_fluid{ name = name, amount = want }
 				if inserted > 0 then
 					local got = N.extract_fluid(net, name, inserted)
 					--- a storage bus's segment had less than its snapshot: never duplicate
@@ -1382,7 +1384,7 @@ local NET_SIDE = { ["no-key"] = true, ["net-full"] = true, ["no-network"] = true
 local function probe_mark(rec)
 	local e = rec.entity
 	if rec.kind == "interface" then
-		local n = T.inventory(e, defines.inventory.chest).get_item_count()
+		local n = N.bound(T.inventory(e, defines.inventory.chest)).get_item_count()
 		local tanks = not rec.sidle and rec.tanks
 		if tanks then
 			local sides = rec.sides or {}
@@ -1401,7 +1403,7 @@ local function probe_mark(rec)
 	local n = 0
 	if rec.t_inv then
 		local inv = T.inventory(t, rec.t_inv)
-		if inv then n = inv.get_item_count() end
+		if inv then n = N.bound(inv).get_item_count() end
 	end
 	if rec.t_fluid then
 		local fb = T.fluidbox(t)

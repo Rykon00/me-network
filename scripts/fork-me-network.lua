@@ -1460,6 +1460,28 @@ function M.active_of(entity)
 	return nil
 end
 
+--- Issue #115: an engine object's methods, made once per object and load. `obj.method` makes a new bound method object at
+--- every read (88 bytes of garbage, most of the time of a cheap call: 0.28 µs against 0.04 µs for a kept one), so the hot
+--- paths call the methods of the objects they keep (a record's entity, T.inventory, T.fluidbox) through this. Methods only:
+--- a property read here would be kept as it was. Weak keys: an object no longer kept leaves (the table it keys refers to it,
+--- an ephemeron). Nothing is saved.
+local bound_cache = setmetatable({}, { __mode = "k" })
+local BOUND_MT = {
+	__index = function(b, name)
+		local f = rawget(b, 1)[name]
+		rawset(b, name, f)
+		return f
+	end,
+}
+function M.bound(obj)
+	local b = bound_cache[obj]
+	if not b then
+		b = setmetatable({ obj }, BOUND_MT)
+		bound_cache[obj] = b
+	end
+	return b
+end
+
 --- Issue #115: the same by the member's unit number, for a caller that knows the entity is valid (a visit): no engine
 --- reads (`valid` and `unit_number` of the entity, 43 calls per tick at 20 000)
 function M.network_of_unit(unit)
@@ -2612,6 +2634,8 @@ function M.extract_to(net, target, key, count)
 		def.count = math.min(def.count, size)
 		if not target.set_stack(def) then return 0 end
 		moved = target.count
+	elseif target.object_name == "LuaInventory" then
+		moved = M.bound(target).insert(def)               -- (an inventory the caller keeps: issue #115)
 	else
 		moved = target.insert(def)
 	end
