@@ -5,6 +5,7 @@ Version: 0.3.2
     - Storage buses and interfaces make less garbage (issue #59): the inventory and fluid box objects of the chests and tanks they read are kept instead of being asked for anew at every visit, and a storage bus read reuses its tables (at the size of a typical base the script time falls by 4 %, its worst ticks by 10 %; a base of 20 000 buses and interfaces keeps about 10 MB more in memory for it).
     - The scheduler and the network's storage functions make less garbage and read fewer prototypes (issue #115): 3 to 5 % less script time from the size of a typical base up to 20 000 buses and interfaces.
     - An ME Interface that imports looks only at the slots it has to: it stops once it has seen every stack instead of reading the empty slots too, and an insert no longer asks storage buses that are known to be full for the item (5 % less script time at 20 000 buses and interfaces).
+    - Taking items out of a storage cell that still has room no longer walks every item the cell holds (5 % less script time from 5000 buses and interfaces up).
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.1
 Date: 2026-10-06
