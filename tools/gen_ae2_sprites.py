@@ -138,6 +138,15 @@ def terminal_sprites(gt):
     return up(off), up(lit)
 
 
+def terminal_lit():
+    """The whole lit picture of the ME Terminal (casing, screen and the lit screen on top), made from the two PNGs terminal_sprites
+    writes: the render object that shows a lit terminal (scripts/fork-me-network.lua, issue #139) draws the whole picture, not an
+    overlay like the lamp's picture_on."""
+    img = load(OUT_ENTITY / "me-terminal-off.png")
+    img.alpha_composite(load(OUT_ENTITY / "me-terminal-on.png"))
+    img.save(OUT_ENTITY / "me-terminal-lit.png")
+
+
 def controller_sprite(gt):
     """2x2 tiles: MV casing ring around a fluix-tinted GT computer core."""
     tile = up(hull(gt, "MV"))
@@ -1268,6 +1277,8 @@ def main():
     ap.add_argument("--crafting-cpu", type=Path, metavar="GT",
                     help="only the crafting blocks of the multiblock crafting CPUs (me-network issue #6), from the "
                          "casings and screens of the GT5-Unofficial checkout GT")
+    ap.add_argument("--terminal-lit", action="store_true",
+                    help="only me-terminal-lit.png (the whole lit picture of the ME Terminal, issue #139), from the terminal PNGs")
     ap.add_argument("--unified", action="store_true",
                     help="only the ME Interface with its pipe sides (me-network issue #3), from the R1 PNGs")
     ap.add_argument("--pattern-terminal", type=Path, metavar="GT",
@@ -1282,9 +1293,9 @@ def main():
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
-            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal):
+            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --pattern-terminal, --thumbnail, --sheet,"
+                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
@@ -1298,6 +1309,7 @@ def main():
         off, lit = terminal_sprites(a.gt)
         off.save(OUT_ENTITY / "me-terminal-off.png")
         lit.save(OUT_ENTITY / "me-terminal-on.png")
+        terminal_lit()
         controller_sprite(a.gt).save(OUT_ENTITY / "me-controller.png")
 
         for tech, icon in (("me-network", "me-drive-16k"), ("me-storage-64k", "me-drive-64k"),
@@ -1341,6 +1353,9 @@ def main():
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
         print("thumbnail.png")
+    if a.terminal_lit:
+        terminal_lit()
+        print("me-terminal-lit.png")
     if a.pattern_terminal:
         pattern_terminal(a.pattern_terminal)
         print("ME Pattern Terminal sprites")
