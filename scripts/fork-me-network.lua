@@ -78,6 +78,7 @@ local function kinds()
 		k[n.import_bus] = "import-bus"
 		k[n.export_bus] = "export-bus"
 		k[n.terminal] = "terminal"
+		if n.pattern_terminal then k[n.pattern_terminal] = "pattern-terminal" end      -- issue #130
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 	end
@@ -99,12 +100,22 @@ local function kinds()
 	return k
 end
 
-local POWERED_SELF = { cable = true, underground = true, controller = true, terminal = true, cpu = true, maintainer = true }
+--- kinds with a power connection of their own (or none at all: the cable): the controller draws nothing for them. Issue #128:
+--- the terminal and the level maintainer are not among them any more; the legacy CPUs are (single blocks without a recipe)
+local POWERED_SELF = { cable = true, underground = true, controller = true, cpu = true }
+
+--- Issue #128: the power (W) a kind draws through the controller where it is not the default (mod-data "fork-me-network",
+--- member_power: terminal, level maintainer, pattern terminal), read once per load like the rest of the mod-data
+local kind_power_cache
+local function kind_power(kind)
+	if not kind_power_cache then kind_power_cache = mod_data().member_power or {} end
+	return kind_power_cache[kind] or MEMBER_POWER
+end
 
 --- issue #6: the power (W) of a crafting block drawn through the controller (mod-data "fork-me-autocraft", blocks)
 local block_power_cache
 local function member_power(node)
-	if node.kind ~= "crafting" then return MEMBER_POWER end
+	if node.kind ~= "crafting" then return kind_power(node.kind) end
 	if not block_power_cache then
 		local ac = prototypes.mod_data["fork-me-autocraft"]
 		block_power_cache = {}
@@ -311,6 +322,7 @@ end
 local recompute
 local net_cell
 local take_waits, fire_all_waits
+local screen_made, screen_gone
 
 --- The parts a removal left (issue #38, lever 5). `starts`: the neighbours of the removed member, in order; `total`: the
 --- members the network has left. A search runs from each of them, one member at a time, in turns; two searches that meet
@@ -493,6 +505,7 @@ local function add_node(s, entity, kind)
 	net.nodes[unit] = true
 	net.n = net.n + 1
 	node.net = net.id
+	if kind == "terminal" or kind == "pattern-terminal" then screen_made(s, unit, entity, kind) end
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
 	if #order == 1 and kind ~= "controller" then
@@ -533,6 +546,7 @@ function remove_node_graph(s, unit)
 	local node = s.nodes[unit]
 	if not node then return end
 	s.nodes[unit] = nil
+	if node.kind == "terminal" or node.kind == "pattern-terminal" then screen_gone(s, unit) end
 	local nl, li = s.nlist, node.li
 	if nl and li and nl[li] == unit then                -- the last member takes its place in the sweep list
 		local last = #nl
@@ -1428,9 +1442,9 @@ end
 function M.usable(net)
 	if not net then return false, "no-network" end
 	if net.status ~= "ok" then return false, net.status end
+	if net.power_dirty then update_power(state(), net) end    -- (before the cache: a member that joined this tick counts at once)
 	if net.usable_tick == game.tick then return net.usable, net.why end
 	local s = state()
-	if net.power_dirty then update_power(s, net) end
 	local ok, why = false, "no-controller"
 	for unit in pairs(net.controllers) do
 		local node = s.nodes[unit]
@@ -1445,6 +1459,102 @@ function M.usable(net)
 	return ok, why
 end
 
+--------------------------------------------------------------------------------
+--- screens of the ME Terminals (issue #128): the terminal's lamp has no picture of its own (prototypes/network.lua); its
+--- screen is a sprite render object that follows the entity (it goes with it when the entity is removed or destroyed), lit
+--- while the terminal's network works and dark when it does not, with a light that goes with it. `s.screens[unit] = { spr,
+--- light (render object ids), on }` is in `storage` (render objects are saved with the map). Nothing runs for it on its own:
+--- the slow step (once a second, with the look at the network's power it makes anyway) sets every screen to its network's
+--- state, and a terminal that joins a network is set at once. Setting a screen that is right already costs one comparison.
+--- The ME Pattern Terminal (issue #130) is an entity with two pictures (graphics variation 1 dark, 2 lit, like the crafting
+--- blocks): its record is `{ variation = true, on }` and it is set the same way.
+--------------------------------------------------------------------------------
+
+local SCREEN_ON, SCREEN_OFF = "me-terminal-screen-on", "me-terminal-screen-off"
+local SCREEN_LIGHT = { intensity = 0.4, scale = 0.7, color = { 0.7, 0.55, 1 } }
+
+--- sets the screen of terminal `unit` to `on`, drawing it first if it is missing (a save from before, a clone)
+local function set_screen(s, unit, entity, on, kind)
+	local list = s.screens
+	local sc = list[unit]
+	if kind == "pattern-terminal" or (sc and sc.variation) then
+		if not (sc and sc.on == on and entity.graphics_variation == (on and 2 or 1)) then
+			entity.graphics_variation = on and 2 or 1
+			list[unit] = { variation = true, on = on }
+		end
+		return
+	end
+	local spr = sc and sc.spr and rendering.get_object_by_id(sc.spr)
+	local light = sc and sc.light and rendering.get_object_by_id(sc.light)
+	if not (spr and spr.valid and light and light.valid) then
+		if spr and spr.valid then spr.destroy() end
+		if light and light.valid then light.destroy() end
+		local surface = entity.surface
+		spr = rendering.draw_sprite{ sprite = on and SCREEN_ON or SCREEN_OFF, target = entity, surface = surface,
+			render_layer = "lower-object" }
+		light = rendering.draw_light{ sprite = "utility/light_medium", target = entity, surface = surface,
+			scale = SCREEN_LIGHT.scale, intensity = SCREEN_LIGHT.intensity, color = SCREEN_LIGHT.color, visible = on }
+		list[unit] = { spr = spr.id, light = light.id, on = on }
+		return
+	end
+	if sc.on == on then return end
+	sc.on = on
+	spr.sprite = on and SCREEN_ON or SCREEN_OFF
+	light.visible = on
+end
+
+--- the state a terminal's screen shows now: its network works
+local function screen_state(s, node)
+	local net = s.nets[node.net]
+	return net ~= nil and M.usable(net) and true or false
+end
+
+function screen_made(s, unit, entity, kind)
+	if not s.screens then return end                       -- (the first slow step makes them all)
+	local node = s.nodes[unit]
+	set_screen(s, unit, entity, node and node.net and screen_state(s, node) or false, kind or (node and node.kind))
+end
+
+function screen_gone(s, unit)
+	if s.screens then s.screens[unit] = nil end
+end
+
+--- every screen to its network's state; also the first time on a save from before (one pass over the members)
+local function refresh_screens(s)
+	if not s.screens then
+		s.screens = {}
+		for unit, node in pairs(s.nodes) do
+			if (node.kind == "terminal" or node.kind == "pattern-terminal") and node.entity.valid then
+				set_screen(s, unit, node.entity, false, node.kind)
+			end
+		end
+	end
+	local units = {}
+	for unit in pairs(s.screens) do units[#units + 1] = unit end
+	if #units == 0 then return end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local node = s.nodes[unit]
+		if node and node.entity.valid then
+			set_screen(s, unit, node.entity, screen_state(s, node), node.kind)
+		else
+			s.screens[unit] = nil
+		end
+	end
+end
+
+--- (tests) the state a terminal's screen shows: nil without a screen, else { on, sprite, light, layer, ids } (a lamp terminal) or
+--- { on, variation } (a pattern terminal)
+function M.screen_of(entity)
+	local s = storage.fork_me_net
+	local sc = s and s.screens and entity and entity.valid and s.screens[entity.unit_number]
+	if sc and sc.variation then return { on = sc.on, variation = entity.graphics_variation } end
+	local spr = sc and rendering.get_object_by_id(sc.spr)
+	local light = sc and rendering.get_object_by_id(sc.light)
+	if not (spr and spr.valid and light and light.valid) then return nil end
+	return { on = sc.on, sprite = spr.sprite, light = light.visible, layer = spr.render_layer, ids = { sc.spr, sc.light } }
+end
+
 --- the network an entity is a member of (working or not), nil if it is no member
 function M.network_of(entity)
 	if not (entity and entity.valid and entity.unit_number) then return nil end
@@ -1456,6 +1566,41 @@ end
 --- the network of the entity if it works
 function M.active_of(entity)
 	local net = M.network_of(entity)
+	if net and M.usable(net) then return net end
+	return nil
+end
+
+--- Issue #115: an engine object's methods, made once per object and load. `obj.method` makes a new bound method object at
+--- every read (88 bytes of garbage, most of the time of a cheap call: 0.28 µs against 0.04 µs for a kept one), so the hot
+--- paths call the methods of the objects they keep (a record's entity, T.inventory, T.fluidbox) through this. Methods only:
+--- a property read here would be kept as it was. Weak keys: an object no longer kept leaves (the table it keys refers to it,
+--- an ephemeron). Nothing is saved.
+local bound_cache = setmetatable({}, { __mode = "k" })
+local BOUND_MT = {
+	__index = function(b, name)
+		local f = rawget(b, 1)[name]
+		rawset(b, name, f)
+		return f
+	end,
+}
+function M.bound(obj)
+	local b = bound_cache[obj]
+	if not b then
+		b = setmetatable({ obj }, BOUND_MT)
+		bound_cache[obj] = b
+	end
+	return b
+end
+
+--- Issue #115: the same by the member's unit number, for a caller that knows the entity is valid (a visit): no engine
+--- reads (`valid` and `unit_number` of the entity, 43 calls per tick at 20 000)
+function M.network_of_unit(unit)
+	local s = storage.fork_me_net
+	local node = s and s.nodes[unit]
+	return node and s.nets[node.net] or nil
+end
+function M.active_of_unit(unit)
+	local net = M.network_of_unit(unit)
 	if net and M.usable(net) then return net end
 	return nil
 end
@@ -1508,7 +1653,15 @@ local function mark_drive(s, unit) s.dirty[unit] = true end
 
 M.ext_handlers = {}
 
-local function ext_cid(unit) return unit .. ":ext" end
+local ext_cids = {}                                  -- unit -> its cell id (per load; issue #59: a number's string costs 1 µs)
+local function ext_cid(unit)
+	local cid = ext_cids[unit]
+	if not cid then
+		cid = unit .. ":ext"
+		ext_cids[unit] = cid
+	end
+	return cid
+end
 
 --- items of `key` a cell can take now
 local function room_in(cell, key)
@@ -1938,12 +2091,15 @@ local function holder_pos(c, field, l, cid)
 	return 0
 end
 
---- an extraction freed bytes or a type of a cell: it may take new keys again, and the keys it holds again
-local function reopen(net, cid)
+--- an extraction freed bytes or a type of a cell: it may take new keys again, and the keys it holds again. `had_room`
+--- (issue #115): the cell had free bytes before and no Equal Distribution Card, so it could take more of every key it holds
+--- (a held key's room is at least a byte's items then): no cursor of those keys stands behind it, and the walk over its keys
+--- (up to 63, three cursors each) is not needed
+local function reopen(net, cid, had_room)
 	local c = cache[net]
 	if not c then return end
 	local cell = net.cells[cid]
-	if cell then
+	if cell and not had_room then
 		for key in pairs(cell.items) do
 			for _, field in ipairs(HOLDER_CURSORS) do
 				local e = c[field][key]
@@ -2115,12 +2271,17 @@ local function insert_key(net, key, count, data)
 		local fname = c.fuzzy and name_of_key(key)
 		for _, g in ipairs(c.groups) do
 			if ins.left <= 0 then break end
-			for _, cid in ipairs(g.parts[key] or EMPTY) do               -- 1: partitioned for the key
-				if put(cid) then break end
+			--- 1: partitioned for the key. Issue #115: a storage bus marked full for the key (until its next read) refuses it at
+			--- once in put; at 20 000 ten of eleven calls per insert were such, so the test is made here without the call
+			local cells = net.cells
+			for _, cid in ipairs(g.parts[key] or EMPTY) do
+				local full = cells[cid].full
+				if not (full and full[key]) and put(cid) then break end
 			end
 			if fname and ins.left > 0 then                                -- 1: a fuzzy whitelist (issue #17)
 				for _, cid in ipairs(g.fparts[fname] or EMPTY) do
-					if put(cid) then break end
+					local full = cells[cid].full
+					if not (full and full[key]) and put(cid) then break end
 				end
 			end
 			while hr[h] and c.at[hr[h]].g == g do                         -- 2: the cells that hold it
@@ -2193,13 +2354,14 @@ local function extract_key(net, key, count)
 			local n = math.min(left, cell.items[key] or 0)
 			if n > 0 then
 				local spec = cell_spec(cell.name)
+				local had_room = not cell.eq and spec.bytes - cell.bytes > 0
 				local db, dt = cell_add(cell, spec, key, -n)
 				local p = fluid_cell(spec) and "f" or ""
 				net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
 				left = left - n
 				if left < ZERO then left = 0 end
 				if not cell.items[key] then idx_del(net, key, cid) end
-				if (db < 0 or dt < 0) and not cell.partition then reopen(net, cid) end
+				if (db < 0 or dt < 0) and not cell.partition then reopen(net, cid, had_room) end
 				if dt < 0 and net.wait_room then fire_units(net, "wait_room") end
 				mark_drive(s, cid_unit(cid))
 			end
@@ -2236,9 +2398,30 @@ local function awaited(net, key)
 	return M.awaiting(net, key) or 0
 end
 
+--- Issue #115: is there an item of this name (of this key's name)? Per load: `prototypes.item[name]` makes a new object at
+--- every call. The key cache is bounded (keys of items with tags are many).
+local item_known, key_known, key_known_n = {}, {}, 0
+local function item_exists(name)
+	local v = item_known[name]
+	if v == nil then
+		v = prototypes.item[name] ~= nil
+		item_known[name] = v
+	end
+	return v
+end
+local function key_item_exists(key)
+	local v = key_known[key]
+	if v == nil then
+		if key_known_n >= 4096 then key_known, key_known_n = {}, 0 end
+		v = item_exists((parse_key(key)))
+		key_known[key], key_known_n = v, key_known_n + 1
+	end
+	return v
+end
+
 --- the public API: plain items by name and quality; nothing happens when the network does not work
 function M.insert(net, name, quality, count)
-	if not (M.usable(net) and prototypes.item[name]) then return 0 end
+	if not (M.usable(net) and item_exists(name)) then return 0 end
 	local key = key_of(name, quality)
 	count = math.floor(count)
 	local claimed = arrive(net, key, count)
@@ -2454,17 +2637,34 @@ function M.refuses_stack(reason)
 	return reason ~= nil and reason:sub(1, 12) == "cannot-store"
 end
 
+--- Issue #115: what M.storable reads of an item's prototype, once per item name and load (a stack's `prototype` and the
+--- spoil ticks are engine calls that make new objects): the prototype, its class, whether it spoils (a quality scales the
+--- spoil time, so an item that does not spoil at normal quality spoils at none), whether a stack of it can be damaged
+local item_facts_cache = {}
+local function item_facts(stack)
+	local name = stack.name
+	local f = item_facts_cache[name]
+	if not f then
+		local proto = stack.prototype
+		f = { proto = proto, class = ITEM_CLASS[proto.type] or "cannot-store", spoils = proto.get_spoil_ticks("normal") > 0,
+			damageable = M.can_be_damaged(proto) }
+		item_facts_cache[name] = f
+	end
+	return f
+end
+
 --- Why a stack cannot go into the network (a locale key suffix), or nil and its key and data
 function M.storable(stack)
 	if not (stack and stack.valid_for_read) then return "empty" end
-	local proto = stack.prototype
-	if proto.get_spoil_ticks(stack.quality) > 0 then return "cannot-store-spoil" end
-	local class = ITEM_CLASS[proto.type] or "cannot-store"
+	local facts = item_facts(stack)
+	local proto = facts.proto
+	if facts.spoils then return "cannot-store-spoil" end
+	local class = facts.class
 	if class ~= "plain" and class ~= "worn" and class ~= "tags" and class ~= "label" then return class end
 	if class == "plain" then
 		local health = stack.health                                       -- (the one read a plain item needs)
 		if health < 1 then
-			if not M.can_be_damaged(proto) then return "cannot-store-damaged" end
+			if not facts.damageable then return "cannot-store-damaged" end
 			--- issue #102: a damaged item (a mined wall, belt, chest) is stored with its health, as a key of its own like an item
 			--- with tags: its health is part of the key, the stack comes out with it. All items of a stack share one health, so
 			--- a count of such a key is exact. (A partly used tool, ammo or repair tool stays refused: its wear is that of the
@@ -2535,7 +2735,7 @@ end
 function M.extract_to(net, target, key, count)
 	if not M.usable(net) then return 0 end
 	count = math.min(math.floor(count), net.items[key] or 0)
-	if count <= 0 or not prototypes.item[(parse_key(key))] then return 0 end
+	if count <= 0 or not key_item_exists(key) then return 0 end
 	local def = stack_def(net, key, count)
 	local moved
 	if target.object_name == "LuaItemStack" then
@@ -2544,6 +2744,8 @@ function M.extract_to(net, target, key, count)
 		def.count = math.min(def.count, size)
 		if not target.set_stack(def) then return 0 end
 		moved = target.count
+	elseif target.object_name == "LuaInventory" then
+		moved = M.bound(target).insert(def)               -- (an inventory the caller keeps: issue #115)
 	else
 		moved = target.insert(def)
 	end
@@ -3221,6 +3423,7 @@ function M.slow_step()
 			if net.wait_room then fire_units(net, "wait_room") end
 		end
 	end
+	refresh_screens(s)
 	local n = 0
 	for unit in pairs(s.dirty) do
 		if n >= LEDS_PER_STEP_N then break end
@@ -3497,6 +3700,16 @@ function M.rebuild()
 		end
 	end
 	for _, node in pairs(s.nodes) do update_cable(s, node) end
+	--- issue #128: a terminal without a screen gets one (the others keep theirs: render objects are not made twice)
+	if s.screens then
+		for _, unit in ipairs(units) do
+			local node = s.nodes[unit]
+			if node.kind == "terminal" or node.kind == "pattern-terminal" then
+				if s.screens[unit] and not node.entity.valid then s.screens[unit] = nil end
+				if not s.screens[unit] then screen_made(s, unit, node.entity, node.kind) end
+			end
+		end
+	end
 	for _, hook in pairs(M.change_hooks) do hook(nil) end
 end
 
@@ -3778,6 +3991,8 @@ remote.add_interface("gregtorio-me-network", {
 	slow_step = function() M.slow_step() end,                  -- (tests: the sweep of the members runs from it)
 	version = function() return M.version() end,
 	cable_variation = function(cable) return cable.graphics_variation end,
+	kind = function(name) return M.kind_of(name) end,                 -- (issue #130 tests) the kind of an entity name
+	screen = function(entity) return M.screen_of(entity) end,         -- (issue #128 tests) what a terminal's screen shows
 	--- what the rotation event does (entity.rotate raises none)
 	rotated = function(entity) M.on_rotated(entity) end,
 	--- what on_configuration_changed does with the graph (the whole map)

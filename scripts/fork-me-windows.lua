@@ -1251,6 +1251,11 @@ local function open_bus(player, entity)
 	local _, content = G.open_window(player, "bus", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-net." .. d.kind .. "-help" }, WIDTH)
 	content.add{ type = "flow", name = "fork_me_bus_filters", direction = "vertical" }
+	local row = G.row(content)                       -- issue #110: the Acceleration Card slots
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.bus-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_bus_cards", direction = "horizontal" }
+	G.label(content, "", WIDTH, nil, "fork_me_bus_want")
+	G.label(content, "", WIDTH, nil, "fork_me_bus_speed")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_target")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_status")
 	M.refresh_bus(player, G.window_of(player))
@@ -1264,6 +1269,13 @@ function M.refresh_bus(player, frame)
 		local t = box.add{ type = "table", column_count = d.max, style = "filter_slot_table" }
 		for i = 1, d.max do G.key_button(t, d.filters[i], G.act("bus_filter", { index = i }), { "fork-me-gui.key-slot-tooltip" }) end
 	end)
+	block_slots(frame, "fork_me_bus_cards", io.bus_inventory(entity), 1, d.slots, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end)
+	local want = {}
+	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
+	G.find(frame, "fork_me_bus_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
+	G.find(frame, "fork_me_bus_speed").caption = d.items and { "fork-me-gui.bus-speed", d.accel, G.fmt(d.rate) } or ""
 	local target = d.target and prototypes.entity[d.target]
 	local what = d.items and d.fluids and "both" or d.fluids and "fluids" or "items"
 	G.find(frame, "fork_me_bus_target").caption = target
@@ -1272,7 +1284,28 @@ function M.refresh_bus(player, frame)
 	return true
 end
 
-G.window("bus", storing({ open = open_bus, refresh = M.refresh_bus, entities = { "import-bus", "export-bus" } }))
+local bus_window = storing({ open = open_bus, refresh = M.refresh_bus, entities = { "import-bus", "export-bus" } })
+--- issue #110: a bus's window also has its card slots: shift + click of a card in the pane puts it in (anything else is stored in
+--- the network as before), a click on a slot moves a card, a reason of the card slots is shown as such
+local store_shift, store_all = bus_window.shift, bus_window.control
+bus_window.shift = function(entity, stack, inv)
+	if N.card_kind(stack.name) then return io.bus_shift_in(entity, stack) end
+	return store_shift(entity, stack, inv)
+end
+bus_window.control = function(entity, stack, inv)
+	if N.card_kind(stack.name) then return io.bus_shift_in(entity, stack) end
+	return store_all(entity, stack, inv)
+end
+bus_window.click = function(entity, slot, cursor, inv, shift) return io.bus_card_click(entity, slot, cursor, inv, shift) end
+bus_window.hint = { "fork-me-gui.bus-pane-hint" }
+local net_message = bus_window.message
+bus_window.message = function(why)
+	if why == "not-here" or why == "limit" or why == "full" or why == "no-bus" or why == "inventory-full" then
+		return { "fork-me-gui.refused-" .. why }
+	end
+	return net_message(why)
+end
+G.window("bus", bus_window)
 
 G.on("bus_filter", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end

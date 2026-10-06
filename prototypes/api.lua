@@ -26,6 +26,10 @@ M.root = "__me-network__/"
 M.icons = M.root .. "graphics/icons/"
 M.entity_path = M.root .. "graphics/entity/fork/ae2/"
 M.technology_path = M.root .. "graphics/technology/fork/"
+--- what can be walked over (the ME cable, since issue #129 the buses and the ME Terminal): a building's collision mask without the
+--- "player" layer, so a character passes through; nothing can be built on it (the "object" layer stays) and no item lies on it
+--- (the "item" layer). Cars and tanks pass too (their mask has the "player" layer as well).
+M.WALKABLE = { layers = { item = true, meltable = true, object = true, water_tile = true, is_lower_object = true } }
 M.recipes = M.recipes or {}
 M.technologies = M.technologies or {}
 M.removed = M.removed or {}
@@ -58,7 +62,7 @@ end
 --- An item (the fields are the same as Gregtorio's create_item gave them, so saves and other mods see the same
 --- item) and, unless def.recipe is false, its recipe (def.recipe = the fields of add_recipe without the name)
 function M.add_item(def)
-	data:extend({ {
+	local item = {
 		type = def.type or "item",
 		name = def.name,
 		icon = def.icon or (M.icons .. def.name .. ".png"),
@@ -69,7 +73,9 @@ function M.add_item(def)
 		place_result = def.place_result,
 		hidden = def.hidden,
 		localised_description = def.localised_description,
-	} })
+	}
+	for k, v in pairs(def.fields or {}) do item[k] = v end      -- (the fields of another item type: a module's category, tier, effect)
+	data:extend({ item })
 	if def.recipe ~= false then
 		local r = def.recipe or {}
 		r.name = r.name or def.name
@@ -152,7 +158,14 @@ function M.set_technology(name, def)
 	end
 end
 
---- the ME Molecular Assembler: a copy of `base` for item recipes only (no fluid boxes) with its own graphics
+--- The module category of the Acceleration Card (issue #110): the card is a module, and the ME Molecular Assembler is the
+--- one machine whose module slots take it (data-final-fixes.lua keeps it out of every other machine and beacon)
+M.ACCELERATION = "me-acceleration"
+M.ACCELERATION_SLOTS = 5          -- AE2: a Molecular Assembler takes up to 5 acceleration cards (TileMolecularAssembler)
+
+--- the ME Molecular Assembler: a copy of `base` for item recipes only (no fluid boxes) with its own graphics. Since issue
+--- #131 it is one tile (AE2's is one block), whatever size `base` has: the boxes, the picture and everything the copy would
+--- inherit that is laid out for a bigger machine are set here, so every caller gets the same block.
 function M.make_molecular_assembler(def)
 	local assembler = table.deepcopy(data.raw["assembling-machine"][def.base])
 	assembler.name = "me-molecular-assembler"
@@ -167,16 +180,45 @@ function M.make_molecular_assembler(def)
 	assembler.energy_usage = def.energy_usage
 	assembler.fluid_boxes = nil
 	assembler.fluid_boxes_off_when_no_fluid_recipe = nil
+	--- issue #110: five slots for Acceleration Cards and nothing else (no module of the game, no beacon: AE2's assembler has
+	--- its upgrade slots and no more); the card's speed and consumption effects are the only ones it takes
+	assembler.module_slots = M.ACCELERATION_SLOTS
+	assembler.allowed_module_categories = { M.ACCELERATION }
+	assembler.allowed_effects = { "speed", "consumption" }
+	assembler.effect_receiver = { uses_module_effects = true, uses_beacon_effects = false, uses_surface_effects = true }
+	--- issue #131: one tile, like the other 1x1 ME blocks (a base machine's 3x3 boxes are not kept)
+	assembler.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
+	assembler.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
+	assembler.drawing_box_vertical_extension = nil
+	--- the pictures: 32 px, the one tile (a working strip of four frames below each other). A frozen patch of the base machine
+	--- (Space Age) is not kept: it is a picture of the base's 3x3 body.
 	assembler.graphics_set = {
 		idle_animation = { layers = { {
 			filename = M.entity_path .. "me-molecular-assembler-idle.png",
-			width = 96, height = 96, frame_count = 1, repeat_count = 4, shift = { 0, 0 },
+			width = 32, height = 32, frame_count = 1, repeat_count = 4, shift = { 0, 0 },
 		} } },
 		animation = { layers = { {
 			filename = M.entity_path .. "me-molecular-assembler-working.png",
-			width = 96, height = 96, frame_count = 4, line_length = 1, animation_speed = 0.3, shift = { 0, 0 },
+			width = 32, height = 32, frame_count = 4, line_length = 1, animation_speed = 0.3, shift = { 0, 0 },
 		} } },
 	}
+	--- what else a 3x3 machine lays out for its size: the recipe icon of the alt mode and the icons of the five Acceleration Cards
+	--- (small and in a row under it: the default places three icons per row at the lower edge of a 3x3 box), the alert icon,
+	--- the circuit connector (a 1x1 one when the base has one: its points lie outside one tile; Gregtorio's machines have none) and the corpse
+	--- and the dying explosion (the base's are big, like its body)
+	assembler.icon_draw_specification = { scale = 0.5, shift = { 0, -0.1 } }
+	assembler.icons_positioning = { {
+		inventory_index = defines.inventory.crafter_modules, shift = { 0, 0.36 }, scale = 0.17, max_icons_per_row = 5, max_icon_rows = 1,
+	} }
+	assembler.alert_icon_shift = { 0, -0.15 }
+	assembler.alert_icon_scale = 0.5
+	if assembler.circuit_connector then            -- (a base machine with a wire connection keeps one, a 1x1 one: a list, one per direction)
+		local one = circuit_connector_definitions and circuit_connector_definitions["chest"]
+		assembler.circuit_connector = one and { one, one, one, one } or nil
+	end
+	assembler.corpse = "small-remnants"
+	assembler.dying_explosion = "medium-explosion"
+	assembler.water_reflection = nil
 	assembler.localised_description = { "entity-description.me-molecular-assembler" }
 	data.raw["assembling-machine"]["me-molecular-assembler"] = nil
 	data:extend({ assembler })

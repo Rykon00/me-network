@@ -20,7 +20,7 @@ The rework comes in three steps:
 | **R3** | one GUI style and a window for every ME block (replacing the panels next to the game's windows), the terminal as hub (storage, crafting, jobs, cells), the ME Interface's config rows, cell partitions and drive priorities | done (this document, "GUIs, partitions and priorities (R3)") |
 | Storage bus | the ME Storage Bus that R1 left out: a chest or cargo wagon as network storage, with filters, priority and read/write mode | done (this document, "Storage bus (after R3)") |
 | Fluid storage bus | the ME Fluid Storage Bus: the fluid segment of a tank as network storage, one bus per segment | done (this document, "Fluid storage bus (after the storage bus)") |
-| Encoded patterns | issue #80: blank and encoded pattern items, the terminal's Patterns tab, the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
+| Encoded patterns | issue #80: blank and encoded pattern items, the Patterns tab of the terminal (the ME Pattern Terminal since issue #130), the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
 | Unified I/O | me-network issue #3: one ME Interface, Import Bus, Export Bus and Storage Bus for items and fluids; the four fluid blocks removed and migrated | done (this document, "Items and fluids in one block (me-network issue #3)") |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
@@ -57,7 +57,16 @@ power of its own (drives, interfaces, buses, providers, circuit interfaces, flui
 cables are free), set by the script when the network changes. It counts as powered while its status is not
 "no power" and its buffer is not empty (an energy interface without any pole reports no "no power" status;
 an underpowered controller keeps the network running at low power, like other machines).
-Terminals, CPUs and level maintainers keep their own power connection (lamps), as before.
+Since issue #128 the terminal and the level maintainer draw their power through the controller too (8 kW and 30 kW, the numbers
+in the mod-data `fork-me-network`, `member_power`); only the three legacy single-block CPUs keep a power connection of their own.
+Both are still lamps (a prototype whose type changes is removed from a saved game), with `energy_source = { type = "void" }`:
+such a lamp has no electric network and its status is always "working", so a pole next to it does nothing and a wire to it
+still works. A lamp with a void source is always on, so the terminal's picture is drawn by the script: the lamp's `picture_on`
+and its `picture_off` are empty (a lamp always draws its `picture_off` and its `picture_on` on top of it when lit, so a real `picture_off` hides the script's picture: issue #139; a ghost of the terminal has no picture) and a sprite render object that
+follows the entity shows the screen lit or dark with a light object that goes with it (`s.screens` in `storage`, ids of the
+render objects; they go with the entity). The slow step (once a second) sets every screen to its network's state, a terminal
+that joins is set at once. Found on 2.0.77: a lamp's `active` does nothing, a circuit condition is ignored without a wire,
+`always_on = false` lights a lamp only by the surface's darkness; none of them can switch a lamp's picture from the script.
 
 **Incremental graph:** nothing scans the map at runtime.
 
@@ -214,7 +223,7 @@ old disassembly recipes are removed (their result is what placing the item gives
 
 ## ME Terminal
 
-The ME Terminal stays the same entity (a lamp that needs power, now also a network member). Its GUI is the
+The ME Terminal stays the same entity (a lamp, now also a network member; since issue #128 it draws its power through the controller, since issue #129 it can be walked over like the cable). Its GUI is the
 central window of the network:
 
 * **Status line:** network state (working, no controller, controller conflict, no power), bytes used of
@@ -231,6 +240,38 @@ central window of the network:
 
 Every button calls a function that the runtime test calls directly (`take`, `store_cursor`,
 `store_inventory_item`, ...), so the logic behind the GUI is tested headless.
+
+## ME Pattern Terminal (issue #130)
+
+The Patterns tab of the ME Terminal (issue #80) became a block of its own, as in GTNH's AE2 (`PartPatternTerminal`; its plain
+terminal has no pattern function) and the ME Terminal has four tabs. `me-pattern-terminal` is a 1x1 `simple-entity-with-force`
+(a member of the network, kind `pattern-terminal`, listed in the mod-data `names` and `member_power`: 8 kW through the
+controller like the terminal's, issue #128; walkable and drawn under the character, issue #129). It has two pictures, dark
+and lit (graphics variation 1 and 2 of one sheet, as the crafting blocks), set from the slow step that sets the terminal's
+screen (`screens` in `scripts/fork-me-network.lua`): no render objects, no tick of its own.
+
+*Code:* `scripts/fork-me-patternterm.lua` holds the editor (moved out of `scripts/fork-me-terminal.lua`, which has none of it
+any more), the window and the two slots; `scripts/fork-me-patterns.lua` the pattern data and `encode_slots`. The window is
+registered like every block window (`G.window("pattern-terminal", ...)`: the inventory pane, `shift` and `click` for the
+block's slots). The actions keep their names (`pat_mode`, `pat_recipe`, `pat_row`, `pat_amount`, `pat_encode`, `pat_load`,
+`pat_clear`); the editor of a player is `storage.fork_me_pterm_ui[player_index].pat` and outlives the window.
+
+*Slots* (decision of the maintainer: GTNH's, read from `appeng/helpers/PatternEncodingHelper.java` and
+`appeng/container/implementations/ContainerPatternTerm.java`): the **blank pattern slot** and the **output slot** are a script
+inventory of two slots per block (`storage.fork_me_pterm[unit] = { entity, inv, where }`, the way the card slots of the buses are
+kept, scripts/fork-me-cardslots.lua). Encode: an encoded pattern lying in the output slot is written again in place; else one
+blank from the blank slot, else one from the network, else nothing ("no-blank"); the result lands in the output slot, or with
+shift + click straight into the player's inventory. Clicking the empty blank slot with an empty hand fetches a stack from the
+network. The hand and the inventory are not searched. Load and Clear work on the encoded pattern in the hand, else the one in
+the output slot (a cleared one becomes a blank in the blank slot). Mined: the slots come into the mined buffer; destroyed or
+vanished (the network's sweep, `N.vanish_hooks`): spilled where the block stood; blueprints, clones and settings paste carry
+nothing of them. The block needs a working network for Encode and for fetching (the window says why); the slots can always be
+emptied.
+
+*Tests:* `runtimemod/patternterm.lua`; the furnace, the processing line and the cards tests encode through the block, every
+other test through `encode_def` (the same function on a two-slot inventory that stands in for a block). The window itself
+needs a player: it was run once with a mock of the GUI elements (the module's own code: opening, refreshing, the actions);
+the real look is the in-game check.
 
 ## Import and export
 
@@ -829,7 +870,7 @@ Until 0.4.1 a pattern provider read the recipe of the machines next to it (a fur
 provider): one machine was one pattern and the provider held nothing. Issue #80 brings AE2's model: a pattern is an
 item, encoded in a terminal, and a provider holds several. Code: `scripts/fork-me-patterns.lua` (the pattern data and
 item, encode, clear), `scripts/fork-me-autocraft.lua` (provider slots, scan, planner, jobs, arrivals, migration),
-`scripts/fork-me-terminal.lua` (Patterns tab), `scripts/fork-me-windows.lua` (provider window); prototypes in
+`scripts/fork-me-terminal.lua` (the Patterns tab, now `scripts/fork-me-patternterm.lua`, issue #130), `scripts/fork-me-windows.lua` (provider window); prototypes in
 `prototypes/autocrafting.lua`. The player's guide: `docs/AE2.md`, "Autocrafting".
 
 ### The pattern and its item
@@ -853,7 +894,9 @@ item, encode, clear), `scripts/fork-me-autocraft.lua` (provider slots, scan, pla
   a mod cannot catch a click on an inventory slot (custom inputs know the selected entity, not the slot), so it is the
   terminal's "Clear pattern in hand" button.
 
-### Where patterns are encoded: a tab of the ME Terminal
+### Where patterns are encoded: a tab of the ME Terminal (superseded: the ME Pattern Terminal, issue #130)
+
+This is the decision of issue #80, kept as the record; since issue #130 the tab is the ME Pattern Terminal block (section "ME Pattern Terminal (issue #130)" above) and the functions named below are those of `scripts/fork-me-patternterm.lua`.
 
 R3 made the terminal the hub of the network (storage, crafting, jobs, cells). AE2 has a separate Pattern Encoding
 Terminal; here a **Patterns** tab fits R3's window design better: no new block, prototype, recipe or graphics, the
@@ -2224,3 +2267,87 @@ damaged stack of 2 (health 0.25) stores 5, 4 and 2: two keys with data (5 and 2)
 behind the storage bus is unchanged, each damaged key comes out at its health, the terminal's description reads "50"; the
 import bus takes a damaged stack of 7 stone walls (health 0.4) as a key of 7 and the whole 3 as 3. The #76 test lost its cases
 of damaged chests (a refusal no more).
+
+## The Acceleration Card, part 1: the module and the ME Molecular Assembler (issue #110)
+
+The Acceleration Card becomes a card of this mod (Gregtorio Continued had its own `acceleration-card` item, made from its
+Advanced Card, that nothing used; Gregtorio's maintainer decided in its issue #121 that it gets a function as in AE2
+instead of being removed). AE2 (GTNH's fork, `Upgrades.SPEED`): an import or export bus moves 1, 8, 32, 64, 96 items per
+operation with 0 to 4 cards (`PartImportBus`, `PartExportBus`), a Molecular Assembler makes 10, 13, 17, 20, 25, 50 progress
+per tick with 0 to 5 cards at 1.0, 1.3, 1.7, 2.0, 2.5, 5.0 times the power (`TileMolecularAssembler`). The maintainer's
+decisions: the buses and the Molecular Assembler take it; the buses by AE2's factors on the bus speed setting (part 2); the
+assembler through module slots.
+
+**The item** (`prototypes/cards.lua`): `me-acceleration-card`, a prototype of type `module` (category `me-acceleration`, tier 1,
+effects speed +0.8 and consumption +0.8), stack size 64, recipe `me-advanced-card` + `processing-unit` (standalone; Gregtorio's
+compat file keeps its own: Advanced Card, logic processor, engineering processor and fluix crystal), in the technology ME
+Upgrade Cards with the other cards. Its kind in the card table is `speed` (no storage bus or cell takes it: `card_fits` finds
+no limit and answers "not-here"). `ME_NETWORK.add_item` takes the fields of another item type in `def.fields`. The icon is
+made by `tools/gen_ae2_sprites.py --cards` (an advanced card with GT5-Unofficial's "x2" sign in lime; the script imports
+`gen_sprites` and `gen_tech_icons`, which Gregtorio's `tools/` has: run it with `PYTHONPATH` pointing there).
+
+**Why a module.** The assembler's module slots are drawn by the game, so no window of its own is needed (the ME Molecular
+Assembler keeps the game's assembling machine window), and speed and power are effects the game applies. Costs of a module:
+the effect is linear in the number of cards (AE2's table is not), so five cards match AE2's endpoint (5 times the speed at 5
+times the power) and the first ones are stronger than AE2's.
+
+**The ME Molecular Assembler** (`ME_NETWORK.make_molecular_assembler`, so also the one Gregtorio builds from its HV
+assembler): `module_slots = 5` (`ME_NETWORK.ACCELERATION_SLOTS`), `allowed_module_categories = { "me-acceleration" }`,
+`allowed_effects = { "speed", "consumption" }`, `effect_receiver.uses_beacon_effects = false`.
+
+**Keeping the card out of every other machine** (`data-final-fixes.lua`): a machine without `allowed_module_categories` takes
+every category, so the card would go into any assembler, furnace, drill or beacon (+80 % speed per slot). Every prototype of
+the game with `module_slots` above 0 and no list gets one with every module category of the game except this mod's; a list
+another mod made loses this mod's category (Gregtorio Continued gives its machines "every category but mold" in its data
+stage, which names this mod's category too: found by the test with Gregtorio, the card went into its assembling machine 2
+and its beacons). The ME Molecular Assembler keeps it. A category that another mod adds in its own data-final-fixes after this
+one is not in the lists made here, so such a mod lists its machines itself.
+
+**The recipe is unlocked where the cards are.** A mod that replaced the recipe list of the technology ME Upgrade Cards
+(Gregtorio Continued does) has not heard of the card, so `data-final-fixes.lua` adds the unlock of `me-acceleration-card` to
+that technology when nothing unlocks it (as for the crafting blocks, #6). Gregtorio's compat file can give the card its own
+ingredients under the same name; until it does the standalone recipe stands (Advanced Card and a processing unit).
+
+**Test** (`runtimemod/accel.lua`, `Acceleration Card test`): the ME Molecular Assembler has 5 module slots, takes five cards and
+no sixth, takes neither a speed nor a productivity module; an assembling machine 2 and a beacon take no card, and the machine
+2 still takes a speed module; with five cards the crafting speed is 5 times the base and the consumption bonus 4.0 higher.
+
+## The Acceleration Card, part 2: the ME Import Bus and Export Bus (issue #110)
+
+**Card slots for the buses.** The storage bus's card machinery (a script inventory per block whose slots the window shows, the
+cards by slot in `rec.cards`, the clicks that refuse a wrong card before anything moves, the cards a blueprint or a paste
+wants taken from the player's inventory and then the network, given back on mining, spilled on destruction) moved out of
+`scripts/fork-me-storagebus.lua` into `scripts/fork-me-cardslots.lua`: `CS.new{ rules, title, rec_of, on_cards }` makes the
+functions of one kind of block, and the storage bus and the import and export bus use it. The storage bus kept its behaviour
+and names (`M.card_click`, `M.sync`, `M.want_cards`, ...: the cards tests and the pane tests of #17 and #28 pass unchanged);
+`on_cards(rec, light)` is its `apply` and a visit (`light`: the visit that fills the wanted cards, which must not call itself).
+
+**The buses** (`scripts/fork-me-io.lua`): `N.card_rules().bus = { slots = 4, limits = { speed = 4 } }` (the mod-data
+`fork-me-network`, `prototypes/cards.lua`), `N.card_rules().speed = { 1, 8, 32, 64, 96 }`: by the number of cards the factor on
+the map setting "bus speed". `rec.accel` is the factor (nil: 1), made from the cards when they change; `bus_step` multiplies the
+items per visit by it (`icap`) and the time a rest of the source takes (`left * 60 / rate`), and fills the cards a record
+wants. Fluids are not sped up. `bus_info` gives `slots`, `cards`, `accel`, `rate`, `want` to the window. Nothing else about the
+schedule changes: a bus is visited when its other side needs it, and moves more in that visit.
+
+**The decision of the maintainer:** AE2's ratios on the setting (x1, x8, x32, x64, x96) and not a gentler progression. Four cards
+make a bus move 24 576 items per second at the default setting; an export bus into a machine still stops at a stack of each
+item (the machine's own limit), so the factor shows at chests and drives.
+
+**Lifecycle.** The records are made anew by `on_configuration_changed` (`s.recs = {}`): `inv`, `cards`, `want`, `where` and
+`accel` are carried over (the runtime test calls it). A mined bus gives its cards to the buffer (`control.lua` passes
+`event.buffer` to `fork_io.on_removed`), a destroyed or vanished one spills them where it stood (`rec.where`). Blueprint tag
+`fork_me_bus` gets `cards = { names }`; a build with the tag, a clone and a settings paste make the bus want them; a bus that waits
+for cards (`rec.want`) is listed in its window.
+
+**The window** (`open_bus`, `refresh_bus` in `fork-me-windows.lua`): a row "Cards:" with the slots (`block_slots`), the cards it
+waits for, and "Acceleration Cards: xN. The bus moves up to R items per second." The pane's shift + click puts a card into the
+slots and stores anything else in the network as before; control + click likewise; a click on a slot moves a card; the
+refusals of the slots ("This does not fit here", "No more cards of this kind fit here", "Every slot is taken") are shown.
+
+**Test** (`runtimemod/busaccel.lua`, `ME bus acceleration cards test`): a bus has 4 slots and takes only the card (a Capacity Card,
+a Fuzzy Card and an iron plate are refused as "not-here", a fifth card as "limit"); the factors by 0 to 4 cards are 1, 8, 32, 64, 96
+and the rate 256 times that; an export bus into an empty chest moves 64, 512, 2048, 4096 items in one visit with 0 to 3 cards
+and 4800 (the chest's limit) with 4, an import bus out of a full chest 64, 512, 2048, 4096; a mined bus gave its 2 cards to the
+buffer, a destroyed one dropped its card; a paste, a clone and a blueprint tag make a bus take its 2, 2 and 3 cards from the
+network at its next visit (a second paste leaves the bus with the source's number); everything stays over
+`on_configuration_changed`. The test scene lies on land: a spill at a block in a lake lands where there is some.

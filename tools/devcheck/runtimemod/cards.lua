@@ -493,14 +493,10 @@ return function(H)
 
 		--- pattern fall-back (AE2): the higher priority provider's pattern lacks an ingredient, the next one is used
 		local function processing(input, n, output)
-			local ed = remote.call(TERM, "new_editor")
-			ed.mode = "processing"
-			local _
-			_, ed = remote.call(TERM, "set_editor_row", ed, "inputs", 1, input, n)
-			_, ed = remote.call(TERM, "set_editor_row", ed, "outputs", 1, output, 1)
 			inv.clear()
 			inv.insert{ name = "me-blank-pattern", count = 1 }
-			remote.call(TERM, "encode", false, inv, t, t.force, ed)
+			remote.call("gregtorio-me-pattern-terminal", "encode_def", inv, nil,
+				{ kind = "processing", inputs = { { key = input, amount = n } }, outputs = { { key = output, amount = 1 } } })
 			return inv.find_item_stack("me-encoded-pattern")
 		end
 		local p1 = processing("stone-brick", 1, "pipe")

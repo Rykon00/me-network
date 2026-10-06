@@ -27,6 +27,14 @@ Sources:
     python tools/gen_ae2_sprites.py --crafting-cpu C:/00_Repositories/GT5-Unofficial   # only the crafting blocks of
                                                   # the multiblock crafting CPUs (me-network issue #6): GT casings and
                                                   # screens, faces drawn here (not AE2's textures: CC BY-NC-SA)
+    python tools/gen_ae2_sprites.py --pattern-terminal C:/00_Repositories/GT5-Unofficial   # only the ME Pattern Terminal
+                                                  # (me-network issue #130): the dark and the lit picture, the icon
+    python tools/gen_ae2_sprites.py --sheet-pattern-terminal docs/graphics-review/issue-130.png   # contact sheet of it
+                                                  # at game size (and 4x) next to the ME Terminal
+    python tools/gen_ae2_sprites.py --assembler C:/00_Repositories/GT5-Unofficial   # only the ME Molecular Assembler
+                                                  # (1x1, me-network issue #131): idle, working strip, icons
+    python tools/gen_ae2_sprites.py --sheet-assembler docs/graphics-review/issue-131.png   # contact sheet of the
+                                                  # assembler at game size (and 4x), next to origin/main's 3x3 one
     python tools/gen_ae2_sprites.py --sheet docs/graphics-review/issue-20.png   # contact sheet of the issue #20
                                                   # graphics next to origin/main (can follow any other switch)
 
@@ -130,6 +138,15 @@ def terminal_sprites(gt):
     return up(off), up(lit)
 
 
+def terminal_lit():
+    """The whole lit picture of the ME Terminal (casing, screen and the lit screen on top), made from the two PNGs terminal_sprites
+    writes: the render object that shows a lit terminal (scripts/fork-me-network.lua, issue #139) draws the whole picture, not an
+    overlay like the lamp's picture_on."""
+    img = load(OUT_ENTITY / "me-terminal-off.png")
+    img.alpha_composite(load(OUT_ENTITY / "me-terminal-on.png"))
+    img.save(OUT_ENTITY / "me-terminal-lit.png")
+
+
 def controller_sprite(gt):
     """2x2 tiles: MV casing ring around a fluix-tinted GT computer core."""
     tile = up(hull(gt, "MV"))
@@ -190,29 +207,60 @@ def provider_sprite(gt):
 
 
 def assembler_sprite(gt, phase=0):
-    """3x3: HV casing tiles, inner dark bay with four robot arms around a fluix core.
-    phase 0..3 pulses the core and moves the arm tips (working animation)."""
-    tile = up(hull(gt, "HV"))
-    size = 3 * TILE
-    img = Image.new("RGBA", (size, size))
-    for x in range(3):
-        for y in range(3):
-            img.paste(tile, (x * TILE, y * TILE))
+    """1x1 (me-network issue #131; it was 3x3 before): HV casing, inner dark bay with four robot arms around a fluix
+    core. phase 0..3 pulses the core and moves the arm tips (working animation)."""
+    img = up(hull(gt, "HV"))
     d = ImageDraw.Draw(img)
-    d.rectangle((6, 6, size - 7, size - 7), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
-    c = size // 2
+    d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+    c = TILE // 2
     glow = [(150, 95, 225), (175, 120, 240), (205, 150, 255), (175, 120, 240)][phase]
-    d.rectangle((c - 9, c - 9, c + 8, c + 8), fill=glow + (255,), outline=FLUIX_LIGHT + (255,))
-    d.rectangle((c - 4, c - 4, c + 3, c + 3), fill=(235, 225, 255, 255))
-    reach = 4 + (phase % 2) * 3
+    d.rectangle((c - 5, c - 5, c + 4, c + 4), fill=glow + (255,), outline=FLUIX_LIGHT + (255,))
+    d.rectangle((c - 2, c - 2, c + 1, c + 1), fill=(235, 225, 255, 255))
+    reach = 1 + (phase % 2) * 2
     for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):        # arms towards the four sides
-        x0, y0 = c + dx * 10, c + dy * 10
-        x1, y1 = c + dx * (10 + reach + 8), c + dy * (10 + reach + 8)
-        d.line((x0, y0, x1, y1), fill=(170, 170, 185, 255), width=3)
-        d.rectangle((x1 - 2, y1 - 2, x1 + 2, y1 + 2), fill=FLUIX_LIGHT + (255,))
-    for cx, cy in ((10, 10), (size - 12, 10), (10, size - 12), (size - 12, size - 12)):
-        d.rectangle((cx, cy, cx + 1, cy + 1), fill=FLUIX + (255,))
+        x0, y0 = c + dx * 7, c + dy * 7
+        x1, y1 = c + dx * (7 + reach), c + dy * (7 + reach)
+        d.line((x0, y0, x1, y1), fill=(170, 170, 185, 255), width=2)
+        d.rectangle((x1 - 1, y1 - 1, x1, y1), fill=FLUIX_LIGHT + (255,))
+    for cx, cy in ((6, 6), (TILE - 8, 6), (6, TILE - 8), (TILE - 8, TILE - 8)):
+        d.point((cx, cy), fill=FLUIX + (255,))
     return img
+
+
+PT_LIT = (110, 235, 210)
+
+
+def pattern_terminal_sprites(gt):
+    """The ME Pattern Terminal (me-network issue #130), 1x1: the ME Terminal's MV casing around a dark screen that shows a crafting
+    grid, an arrow and a result slot (a pattern): teal when lit (its network works), dim when dark. Returns (dark, lit), 32 px."""
+    base = up(hull(gt, "MV"))
+
+    def face(lit):
+        img = base.copy()
+        d = ImageDraw.Draw(img)
+        d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+        col = PT_LIT if lit else (45, 72, 72)
+        res = FLUIX_LIGHT if lit else (50, 56, 84)
+        for gx in range(3):
+            for gy in range(3):
+                x, y = 7 + gx * 4, 9 + gy * 4
+                d.rectangle((x, y, x + 2, y + 2), fill=col + (255,))
+        d.line((19, 14, 22, 14), fill=col + (255,))
+        d.line((21, 13, 21, 15), fill=col + (255,))
+        d.rectangle((24, 12, 26, 16), fill=res + (255,))
+        return img
+
+    return face(False), face(True)
+
+
+def pattern_terminal(gt):
+    """Entity sheet (dark at x = 0, lit at x = 32: the two variations of the entity) and the item icon (the lit picture)."""
+    dark, lit = pattern_terminal_sprites(gt)
+    sheet = Image.new("RGBA", (2 * TILE, TILE))
+    sheet.paste(dark, (0, 0))
+    sheet.paste(lit, (TILE, 0))
+    sheet.save(OUT_ENTITY / "me-pattern-terminal.png")
+    lit.save(OUT_ICON / "me-pattern-terminal.png")
 
 
 def cpu_sprites(gt):
@@ -238,23 +286,30 @@ def flat_icon(img, size=TILE):
     return img.resize((size, size), Image.NEAREST if img.width % size == 0 else Image.LANCZOS)
 
 
+def assembler(gt):
+    """The ME Molecular Assembler (1x1, me-network issue #131): the idle picture, the working strip of four frames below
+    each other, the item icon and the technology icon."""
+    frames = [assembler_sprite(gt, p) for p in range(4)]
+    frames[0].save(OUT_ENTITY / "me-molecular-assembler-idle.png")
+    strip = Image.new("RGBA", (TILE, TILE * 4))
+    for i, f in enumerate(frames):
+        strip.paste(f, (0, i * TILE))
+    strip.save(OUT_ENTITY / "me-molecular-assembler-working.png")
+    frames[0].save(OUT_ICON / "me-molecular-assembler.png")
+    upscale(load(OUT_ICON / "me-molecular-assembler.png")).save(OUT_TECH / "me-autocrafting.png")
+
+
 def autocrafting(gt):
     provider_sprite(gt).save(OUT_ENTITY / "me-pattern-provider.png")
     provider_sprite(gt).save(OUT_ICON / "me-pattern-provider.png")
-    frames = [assembler_sprite(gt, p) for p in range(4)]
-    frames[0].save(OUT_ENTITY / "me-molecular-assembler-idle.png")
-    strip = Image.new("RGBA", (3 * TILE, 3 * TILE * 4))
-    for i, f in enumerate(frames):
-        strip.paste(f, (0, i * 3 * TILE))
-    strip.save(OUT_ENTITY / "me-molecular-assembler-working.png")
-    flat_icon(frames[0]).save(OUT_ICON / "me-molecular-assembler.png")
+    pattern_terminal(gt)
+    assembler(gt)
     off, lit = cpu_sprites(gt)
     off.save(OUT_ENTITY / "me-crafting-cpu-off.png")
     lit.save(OUT_ENTITY / "me-crafting-cpu-on.png")
     icon = off.copy()
     icon.alpha_composite(lit)
     flat_icon(icon).save(OUT_ICON / "me-crafting-cpu.png")
-    upscale(load(OUT_ICON / "me-molecular-assembler.png")).save(OUT_TECH / "me-autocrafting.png")
 
 
 # --- crafting CPU multiblocks (me-network issue #6, prototypes/autocrafting.lua) ----------------------------
@@ -792,7 +847,7 @@ def patterns():
 # colour of their own, so that they are told apart at 32 px:
 #   capacity              plus_large (green)        fuzzy                 analog: a wave, "about" (magenta)
 #   inverter              disable: a slashed ring   equal distribution    cyclic: round robin arrows (cyan)
-#                         (orange)
+#                         (orange)                  acceleration          x2: "twice as fast" (lime)
 # The Overflow Destruction Card is a warning: a yellow triangle with a black "!" (drawn) and black and yellow hazard
 # stripes along the card's bottom edge.
 CARD_OUTLINE = (30, 30, 38)
@@ -813,6 +868,7 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-fuzzy-card": ("advanced", "gui/overlay_button/analog", (235, 95, 215)),
     "me-inverter-card": ("advanced", "gui/overlay_button/disable", (245, 120, 30)),
     "me-equal-distribution-card": ("advanced", "gui/overlay_button/cyclic", (60, 225, 210)),
+    "me-acceleration-card": ("advanced", "gui/overlay_button/x2", (185, 240, 70)),   # issue #110: the "x2" sign (lime)
 }
 CARD_SIGN_MAX = 20            # px; larger GT signs (the 24 px ring of "disable") are scaled down to it
 
@@ -1111,6 +1167,84 @@ def contact_sheet(out):
     return [out]
 
 
+def pattern_terminal_sheet(out):
+    """Contact sheet of the ME Pattern Terminal (me-network issue #130): dark and lit at game size (1x, on the ground) next to the
+    ME Terminal (dark and lit) and the pattern provider, at 4x, and the item icon in a slot, so that it can be told apart at a glance."""
+    from PIL import ImageFont
+    font = ImageFont.load_default(size=14)
+    small = ImageFont.load_default(size=12)
+    img = Image.new("RGBA", (800, 470), SHEET_BG + (255,))
+    d = ImageDraw.Draw(img)
+    d.text((16, 12), "me-network issue #130: the ME Pattern Terminal (tools/gen_ae2_sprites.py --pattern-terminal <GT5-Unofficial>)",
+           font=font, fill=SHEET_TEXT)
+    d.text((16, 32), "GT5 MV casing like the ME Terminal's, with a drawn crafting grid, arrow and result slot; no AE2 textures.",
+           font=small, fill=SHEET_DIM)
+    sheet = load(OUT_ENTITY / "me-pattern-terminal.png")
+    dark, lit = sheet.crop((0, 0, TILE, TILE)), sheet.crop((TILE, 0, 2 * TILE, TILE))
+    t_off, t_on = load(OUT_ENTITY / "me-terminal-off.png"), load(OUT_ENTITY / "me-terminal-on.png")
+    t_lit = t_off.copy()
+    t_lit.alpha_composite(t_on)
+    prov = load(OUT_ENTITY / "me-pattern-provider.png")
+    d.text((16, 60), "Game size (1x), on the ground: pattern terminal dark and lit, ME Terminal dark and lit, pattern provider",
+           font=font, fill=SHEET_TEXT)
+    ground = Image.new("RGBA", (TILE * 12, TILE * 2), GROUND + (255,))
+    for i, f in enumerate((dark, lit, t_off, t_lit, prov)):
+        ground.alpha_composite(f, (TILE * (2 * i + 1), TILE // 2))
+    img.alpha_composite(ground, (16, 84))
+    d.text((16, 160), "Dark and lit (4x), next to the ME Terminal's", font=font, fill=SHEET_TEXT)
+    for i, (f, name) in enumerate(((dark, "pattern terminal, dark"), (lit, "pattern terminal, lit"), (t_off, "ME Terminal, dark"),
+                                   (t_lit, "ME Terminal, lit"))):
+        x = 16 + i * 168
+        d.rectangle((x, 184, x + 160, 184 + 160), fill=SHEET_PANEL)
+        img.alpha_composite(up(f, 4), (x + 16, 192))
+        d.text((x + 6, 326), name, font=small, fill=SHEET_TEXT)
+    d.text((16, 360), "Item icon in a slot (1x, 2x)", font=font, fill=SHEET_TEXT)
+    icon = load(OUT_ICON / "me-pattern-terminal.png")
+    img.alpha_composite(slot(icon), (16, 384))
+    img.alpha_composite(up(slot(icon)), (66, 384))
+
+def assembler_sheet(out):
+    """Contact sheet of the 1x1 ME Molecular Assembler (me-network issue #131): idle and the four working frames at game size
+    (1x, 32 px per tile, on grass) and at 4x, the item icon in a slot, and the 3x3 picture of origin/main for comparison."""
+    from PIL import ImageFont
+    font = ImageFont.load_default(size=14)
+    small = ImageFont.load_default(size=12)
+    img = Image.new("RGBA", (760, 500), SHEET_BG + (255,))
+    d = ImageDraw.Draw(img)
+    d.text((16, 12), "me-network issue #131: the ME Molecular Assembler, 1x1 (tools/gen_ae2_sprites.py --assembler <GT5-Unofficial>)",
+           font=font, fill=SHEET_TEXT)
+    d.text((16, 32), "GT5 HV casing + drawn core and arms; no AE2 textures. Module icons and the alt-mode recipe icon are the game's.",
+           font=small, fill=SHEET_DIM)
+    idle = load(OUT_ENTITY / "me-molecular-assembler-idle.png")
+    work = load(OUT_ENTITY / "me-molecular-assembler-working.png")
+    frames = [idle] + [work.crop((0, i * TILE, TILE, (i + 1) * TILE)) for i in range(4)]
+    names = ["idle", "working 1", "working 2", "working 3", "working 4"]
+    d.text((16, 60), "Game size (1x), on the ground, with a pattern provider (1x1) below", font=font, fill=SHEET_TEXT)
+    ground = Image.new("RGBA", (TILE * 12, TILE * 2), GROUND + (255,))
+    for i, f in enumerate(frames):
+        ground.alpha_composite(f, (TILE * (2 * i + 1), 0))
+    prov = load(OUT_ENTITY / "me-pattern-provider.png")
+    ground.alpha_composite(prov, (TILE * 3, TILE))
+    img.alpha_composite(ground, (16, 84))
+    d.text((16, 150), "Idle and the four working frames (4x)", font=font, fill=SHEET_TEXT)
+    for i, f in enumerate(frames):
+        x = 16 + i * 148
+        d.rectangle((x, 174, x + 140, 174 + 140), fill=SHEET_PANEL)
+        img.alpha_composite(up(f, 4), (x + 6, 180))
+        d.text((x + 6, 322), names[i], font=small, fill=SHEET_TEXT)
+    d.text((16, 350), "Item icon in a slot (1x, 2x)", font=font, fill=SHEET_TEXT)
+    icon = load(OUT_ICON / "me-molecular-assembler.png")
+    img.alpha_composite(slot(icon), (16, 374))
+    img.alpha_composite(up(slot(icon)), (66, 374))
+    old = before(OUT_ENTITY / "me-molecular-assembler-idle.png")
+    d.text((250, 350), "origin/main: 3x3, 96 px", font=font, fill=SHEET_TEXT)
+    if old:
+        img.alpha_composite(old.resize((old.width * 3 // 4, old.height * 3 // 4), Image.NEAREST), (250, 366))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out)
+    return [out]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", type=Path, help="path to the GT5-Unofficial checkout: generates everything")
@@ -1143,13 +1277,26 @@ def main():
     ap.add_argument("--crafting-cpu", type=Path, metavar="GT",
                     help="only the crafting blocks of the multiblock crafting CPUs (me-network issue #6), from the "
                          "casings and screens of the GT5-Unofficial checkout GT")
+    ap.add_argument("--terminal-lit", action="store_true",
+                    help="only me-terminal-lit.png (the whole lit picture of the ME Terminal, issue #139), from the terminal PNGs")
     ap.add_argument("--unified", action="store_true",
                     help="only the ME Interface with its pipe sides (me-network issue #3), from the R1 PNGs")
+    ap.add_argument("--pattern-terminal", type=Path, metavar="GT",
+                    help="only the ME Pattern Terminal (me-network issue #130), from the casings of the GT5-Unofficial checkout GT")
+    ap.add_argument("--sheet-pattern-terminal", type=Path, metavar="PNG",
+                    help="writes a contact sheet of the ME Pattern Terminal (issue #130) to PNG")
+    ap.add_argument("--assembler", type=Path, metavar="GT",
+                    help="only the ME Molecular Assembler (1x1, me-network issue #131), from the casings of the "
+                         "GT5-Unofficial checkout GT")
+    ap.add_argument("--sheet-assembler", type=Path, metavar="PNG",
+                    help="writes a contact sheet of the 1x1 ME Molecular Assembler (issue #131) to PNG")
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
-            or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu):
+            or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
+            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns, --unified, --cards, --crafting-cpu, --thumbnail or --sheet is required")
+                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --thumbnail, --sheet,"
+                 " --sheet-assembler or --sheet-pattern-terminal is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -1162,6 +1309,7 @@ def main():
         off, lit = terminal_sprites(a.gt)
         off.save(OUT_ENTITY / "me-terminal-off.png")
         lit.save(OUT_ENTITY / "me-terminal-on.png")
+        terminal_lit()
         controller_sprite(a.gt).save(OUT_ENTITY / "me-controller.png")
 
         for tech, icon in (("me-network", "me-drive-16k"), ("me-storage-64k", "me-drive-64k"),
@@ -1205,9 +1353,24 @@ def main():
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
         print("thumbnail.png")
+    if a.terminal_lit:
+        terminal_lit()
+        print("me-terminal-lit.png")
+    if a.pattern_terminal:
+        pattern_terminal(a.pattern_terminal)
+        print("ME Pattern Terminal sprites")
+    if a.sheet_pattern_terminal:
+        pattern_terminal_sheet(a.sheet_pattern_terminal)
+        print("contact sheet:", a.sheet_pattern_terminal)
+    if a.assembler:
+        assembler(a.assembler)
+        print("ME Molecular Assembler sprites")
     if a.sheet:
         contact_sheet(a.sheet)
         print("contact sheet:", a.sheet)
+    if a.sheet_assembler:
+        assembler_sheet(a.sheet_assembler)
+        print("contact sheet:", a.sheet_assembler)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,9 @@ chests and tanks,
 autocrafting with encoded patterns and crafting CPUs, level maintainers, and fluids. On the mod portal:
 [ME Network](https://mods.factorio.com/mod/me-network) (`me-network`).
 
+**Discord:** questions, help and release news in the [Gregtorio & ME Network server](https://discord.gg/bfkwAanSD8), shared with
+[Gregtorio Continued](https://github.com/Rykon00/Gregtorio).
+
 It was made in [Gregtorio Continued](https://github.com/Rykon00/Gregtorio) (issues #68, #38, #80) and became a mod of
 its own in Gregtorio issue #83. On its own it uses vanilla recipes and technologies; Gregtorio Continued depends on it
 and puts it on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lua`, through the API below). Issue
@@ -23,7 +26,7 @@ The repository root is the mod itself.
 | `data.lua` | refuses to load next to Gregtorio Continued before 0.5.0 (which contains this network itself), then loads the prototypes |
 | `prototypes/api.lua` | the data-stage API `ME_NETWORK` (`docs/API.md`): items, recipes and technologies of this mod, replacing and removing recipes, setting technologies, the molecular assembler |
 | `prototypes/network.lua` | cable and underground cable, controller, drive, storage components and cells (items with tags), housing, ME chest, interface, import, export and storage bus, terminal, the hidden prototypes of old Gregtorio saves, mod-data `fork-me-network`, technologies `me-network`, `me-storage-64k`, `me-storage-256k` |
-| `prototypes/autocrafting.lua` | pattern provider, blank and encoded pattern, molecular assembler, the crafting blocks of the multiblock crafting CPUs (issue #6) and the three legacy CPUs, level maintainer, circuit interface, mod-data `fork-me-autocraft`, technologies `me-autocrafting`, `me-automation`, `me-co-processing`, `me-quantum-crafting` |
+| `prototypes/autocrafting.lua` | pattern provider, pattern terminal, blank and encoded pattern, molecular assembler, the crafting blocks of the multiblock crafting CPUs (issue #6) and the three legacy CPUs, level maintainer, circuit interface, mod-data `fork-me-autocraft`, technologies `me-autocrafting`, `me-automation`, `me-co-processing`, `me-quantum-crafting` |
 | `prototypes/fluids.lua` | fluid cells, the ME Interface's fluid sides, the hidden old fluid drives and old fluid blocks (fluid interface, fluid import, export and storage bus: replaced by the unified blocks), mod-data `fork-me-fluids`, technologies `me-fluid-storage`, `me-fluid-storage-256k` |
 | `data-final-fixes.lua` | removes the recipes (also another mod's) that make an item this mod no longer makes (`ME_NETWORK.removed`); unlocks a crafting block recipe that no technology unlocks any more (issue #6); lets every crafting machine paste its settings onto the ME Interface, the import, export and storage bus (`additional_pastable_entities`) |
 | `settings.lua` | the map settings: the scheduler's budgets, the bus speed and the idle limits (issue #5, `docs/PERFORMANCE.md`) |
@@ -33,10 +36,12 @@ The repository root is the mod itself.
 | `scripts/fork-me-stats.lua` | the command `/me-stats`: members, block states, the scheduler's counters of the last minute (issue #38, part 3) |
 | `scripts/fork-me-io.lua` | ME Interface (items, and fluids through its four sides) and import/export buses (items and fluids), their scheduled visits; `gregtorio-me-io` |
 | `scripts/fork-me-targets.lua` | what a bus works with: the entity types and inventories of the import, export and storage bus, the tile in front, fluid boxes |
+| `scripts/fork-me-cardslots.lua` | the card slots of a block (a script inventory the window shows, the clicks, blueprints, mining): the storage bus's and, since issue #110, the import and export bus's |
 | `scripts/fork-me-storagebus.lua`, `scripts/fork-me-fluid-storagebus.lua` | the storage bus: its item side (a chest, logistic chest or cargo wagon) and its fluid side (a tank's fluid segment) as network storage; `gregtorio-me-storagebus`, `gregtorio-me-fluid-storagebus` (the old remote, on the storage bus) |
 | `scripts/fork-me-recipe-paste.lua` | a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12); `gregtorio-me-recipe-paste` |
 | `scripts/fork-me-unify.lua` | turns the old fluid blocks of a save (and their ghosts, items, blueprints) into the unified blocks (issue #3) |
 | `scripts/fork-me-terminal.lua`, `fork-me-gui.lua`, `fork-me-windows.lua` | the terminal (hub window), the shared GUI and the windows of every block; `gregtorio-me-terminal`, `gregtorio-me-gui` |
+| `scripts/fork-me-patternterm.lua` | the ME Pattern Terminal (issue #130): the pattern editor window and the block's blank and output slots; `gregtorio-me-pattern-terminal` |
 | `scripts/fork-me-picker.lua` | the mod's own item and fluid picker (groups, search, qualities, green check; issue #94), used by the ME Cell Workbench |
 | `scripts/fork-me-autocraft.lua`, `fork-me-patterns.lua` | providers with encoded patterns, planner (with the bytes of a job), jobs, the multiblock CPUs (groups of crafting blocks kept up to date on build and removal) and the legacy CPUs, the pattern items; `gregtorio-me-autocraft` |
 | `scripts/fork-me-circuit.lua` | level maintainer and circuit interface; `gregtorio-me-circuit` |

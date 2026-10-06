@@ -13,11 +13,6 @@
 ---     grid's style. A click picks it: amount field, the plan preview (what is taken from storage, what is
 ---     missing, as slot buttons) and the Craft button.
 ---   * Jobs tab: the crafting jobs of the network with progress and a cancel button.
----   * Patterns tab (issue #80, AE2's pattern terminal): encodes a blank pattern (scripts/fork-me-patterns.lua).
----     Crafting: a researched recipe (recipe chooser). Processing: up to 9 inputs and 6 outputs (items and
----     fluids with amounts; "From recipe" fills them). Encode takes a blank pattern from the hand, the inventory
----     or the network and gives the encoded one into the hand or the inventory; "Clear pattern in hand" turns an
----     encoded pattern back into a blank one, "Load pattern in hand" copies it into the editor.
 ---   * Cells tab: the drives of the network (higher priority first) with their cells; a click on a drive opens
 ---     the drive window, a click on a cell its cell window (scripts/fork-me-windows.lua; "Back" returns here).
 ---   * Every window is refreshed once per second while it is open (scripts/fork-me-gui.lua, refresh_all); the
@@ -25,16 +20,15 @@
 ---   * Every GUI event of the mod is registered here and routed by scripts/fork-me-gui.lua (dispatch): the
 ---     elements carry their action in their tags. The open key and on_gui_opened open the ME windows.
 --- Every button calls a function of this module that the runtime test calls directly (take, store_cursor,
---- store_inventory_item, withdraw, store_stack, entries, craft_preview, start_craft, cancel_job, cells,
---- pattern_of, encode, clear_pattern, load_pattern).
---- State: storage.fork_me_terminal[player_index] = { entity, filter, sort, kind, pick, amount, pat, shown... }
+--- store_inventory_item, withdraw, store_stack, entries, craft_preview, start_craft, cancel_job, cells). The Patterns tab is
+--- gone (issue #130): encoding patterns is the ME Pattern Terminal's job (scripts/fork-me-patternterm.lua).
+--- State: storage.fork_me_terminal[player_index] = { entity, filter, sort, kind, pick, amount, shown... }
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
 local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
-local P = require("scripts.fork-me-patterns")
-local picker = require("scripts.fork-me-picker")
+local Sched = require("scripts.fork-me-schedule")
 
 local M = {}
 
@@ -53,7 +47,7 @@ end
 --- nil when the terminal can be used, otherwise the reason as a locale key of [fork-me-net] (status-...)
 local function problem(entity)
 	if not (entity and entity.valid) then return "no-network" end
-	if entity.status == defines.entity_status.no_power then return "no-power-terminal" end
+	--- (issue #128: the terminal has no power of its own; it works when its network does)
 	local net = N.network_of(entity)
 	if not net then return "no-network" end
 	local ok, why = N.usable(net)
@@ -269,91 +263,6 @@ function M.cells(terminal)
 end
 
 --------------------------------------------------------------------------------
---- the patterns tab's functions (issue #80)
---------------------------------------------------------------------------------
-
---- a new pattern editor: mode "crafting" or "processing", the recipe, the input and output rows ({ key, amount })
-local function new_editor()
-	return { mode = "crafting", recipe = nil, inputs = {}, outputs = {} }
-end
-M.new_editor = new_editor
-
---- The pattern the editor describes, or nil and the reason ("no-recipe", "not-researched", "invalid", ...)
-function M.pattern_of(force, ed)
-	if ed.mode == "crafting" then return P.crafting(force, ed.recipe) end
-	local inputs, outputs = {}, {}
-	for i = 1, P.MAX_INPUTS do local r = ed.inputs[i] if r and r.key then inputs[#inputs + 1] = r end end
-	for i = 1, P.MAX_OUTPUTS do local r = ed.outputs[i] if r and r.key then outputs[#outputs + 1] = r end end
-	local recipe = ed.recipe and force.recipes[ed.recipe] and force.recipes[ed.recipe].enabled and ed.recipe or nil
-	return P.processing(inputs, outputs, recipe)
-end
-
---- The recipe chooser: in crafting mode the pattern's recipe, in processing mode it fills the rows from the
---- recipe. Returns true, or nil and the reason ("not-researched", "too-many-rows").
-function M.set_editor_recipe(force, ed, recipe)
-	if recipe == nil then ed.recipe = nil return true end
-	local r = force.recipes[recipe]
-	if not (r and r.enabled and prototypes.recipe[recipe]) then return nil, "not-researched" end
-	ed.recipe = recipe
-	if ed.mode == "processing" then
-		local inputs, outputs = P.recipe_rows(recipe)
-		if #inputs > P.MAX_INPUTS or #outputs > P.MAX_OUTPUTS then return nil, "too-many-rows" end
-		ed.inputs, ed.outputs = inputs, outputs
-	end
-	return true
-end
-
---- a row of the processing editor: `which` "inputs" or "outputs", `key` (nil clears the row), `amount` (nil keeps it)
-function M.set_editor_row(ed, which, index, key, amount)
-	local rows = ed[which]
-	local max = which == "inputs" and P.MAX_INPUTS or P.MAX_OUTPUTS
-	if not rows or index < 1 or index > max then return false end
-	if key == false then rows[index] = nil return true end
-	local row = rows[index] or { amount = 1 }
-	if key ~= nil then
-		if not P.valid_key(key) then return false end
-		row.key = key
-	end
-	if amount ~= nil then row.amount = math.max(0, tonumber(amount) or 0) end
-	rows[index] = row.key and row or nil
-	return true
-end
-
---- The Encode button: the editor's pattern onto a blank pattern (from the hand, the inventory or the network at
---- `terminal`), into the hand or the inventory. Returns "cursor" or "inventory", or nil and the reason.
-function M.encode(cursor, inv, terminal, force, ed)
-	local def, why = M.pattern_of(force, ed)
-	if not def then return nil, why end
-	return P.encode(cursor, inv, network(terminal), def)
-end
-
---- "Clear pattern in hand": an encoded pattern in the cursor becomes a blank one. Returns true, or nil and a reason.
-function M.clear_pattern(cursor)
-	if P.clear(cursor) then return true end
-	return nil, "no-pattern-in-hand"
-end
-
---- "Load pattern in hand": the encoded pattern in the cursor into the editor. Returns true, or nil and a reason.
-function M.load_pattern(cursor, ed)
-	local raw = P.read(cursor)
-	local def = raw and P.normalize(raw)
-	if not def then return nil, "no-pattern-in-hand" end
-	ed.mode, ed.recipe = def.kind, def.recipe
-	ed.inputs, ed.outputs = {}, {}
-	for i, r in ipairs(def.inputs) do if i <= P.MAX_INPUTS then ed.inputs[i] = { key = r.key, amount = r.amount } end end
-	for i, r in ipairs(def.outputs) do if i <= P.MAX_OUTPUTS then ed.outputs[i] = { key = r.key, amount = r.amount } end end
-	return true
-end
-
---- blank patterns for encoding: in the hand, the inventory, the network
-function M.blanks(cursor, inv, terminal)
-	local hand = (cursor and cursor.valid_for_read and cursor.name == P.BLANK) and cursor.count or 0
-	local own = inv and inv.get_item_count{ name = P.BLANK, quality = "normal" } or 0
-	local net = network(terminal)
-	return hand, own, net and N.count(net, P.BLANK, "normal") or 0
-end
-
---------------------------------------------------------------------------------
 --- the storage tab's functions
 --------------------------------------------------------------------------------
 
@@ -462,7 +371,7 @@ end
 --- the window
 --------------------------------------------------------------------------------
 
-local TABS = { "storage", "crafting", "jobs", "cells", "patterns" }
+local TABS = { "storage", "crafting", "jobs", "cells" }
 
 local function scroll_table(parent, name, columns, height)
 	local scroll = parent.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
@@ -517,19 +426,6 @@ local function build_cells(tab)
 	scroll.add{ type = "table", name = "fork_me_cells", column_count = 2 }
 end
 
-local function build_patterns(tab)
-	G.label(tab, { "fork-me-gui.patterns-help" }, WIDTH)
-	tab.add{ type = "flow", name = "fork_me_pat_box", direction = "vertical" }
-	local buttons = G.row(tab)
-	buttons.add{ type = "button", name = "fork_me_pat_encode", caption = { "fork-me-gui.patterns-encode" }, style = "confirm_button",
-		tooltip = { "fork-me-gui.patterns-encode-tooltip" }, tags = G.act("pat_encode") }
-	buttons.add{ type = "button", caption = { "fork-me-gui.patterns-load" }, tooltip = { "fork-me-gui.patterns-load-tooltip" },
-		tags = G.act("pat_load") }
-	buttons.add{ type = "button", caption = { "fork-me-gui.patterns-clear" }, tooltip = { "fork-me-gui.patterns-clear-tooltip" },
-		tags = G.act("pat_clear") }
-	G.label(tab, "", WIDTH, nil, "fork_me_pat_status")
-end
-
 local function open(player, entity)
 	if not (entity and entity.valid and entity.name == "me-terminal") then return end
 	local _, content = G.open_window(player, "terminal", { "fork-me-terminal.title" }, { unit = entity.unit_number })
@@ -538,8 +434,7 @@ local function open(player, entity)
 		st = { entity = entity, filter = "", sort = "count", kind = "all", amount = 1, tab = 1 }
 		state()[player.index] = st
 	end
-	st.shown, st.craft_shown, st.jobs_shown, st.cells_shown, st.plan_shown, st.pat_shown = nil, nil, nil, nil, nil, nil
-	st.pat = st.pat or new_editor()
+	st.shown, st.craft_shown, st.jobs_shown, st.cells_shown, st.plan_shown = nil, nil, nil, nil, nil
 	G.label(content, "", WIDTH, nil, "fork_me_net_line")
 	local top = G.row(content)
 	top.add{ type = "label", caption = { "fork-me-terminal.search" } }
@@ -556,7 +451,6 @@ local function open(player, entity)
 	build_crafting(tabs.fork_me_tab_crafting)
 	build_jobs(tabs.fork_me_tab_jobs)
 	build_cells(tabs.fork_me_tab_cells)
-	build_patterns(tabs.fork_me_tab_patterns)
 	tabs.selected_tab_index = st.tab or 1
 	G.find(content, "fork_me_sort").caption = { "fork-me-net.sort-" .. (st.sort or "count") }
 	G.find(content, "fork_me_kind").caption = { "fork-me-gui.kind-" .. (st.kind or "all") }
@@ -826,68 +720,6 @@ local function refresh_cells(st, frame, net)
 	end
 end
 
-local function editor_rows(parent, ed, which, max)
-	local t = parent.add{ type = "table", column_count = 6 }
-	t.style.horizontal_spacing = 4
-	for i = 1, max do
-		local row = ed[which][i]
-		G.key_button(t, row and row.key, G.act("pat_row", { which = which, index = i }), { "fork-me-gui.key-slot-tooltip" })
-		local f = G.number_field(t, row and row.amount or 0, G.act("pat_amount", { which = which, index = i }), 60)
-		f.allow_decimal = true
-		f.enabled = row ~= nil
-	end
-end
-
-local function build_pattern_box(box, player, ed)
-	local mode = G.row(box)
-	mode.add{ type = "switch", switch_state = ed.mode == "processing" and "right" or "left",
-		left_label_caption = { "fork-me-pattern.kind-crafting" }, left_label_tooltip = { "fork-me-gui.patterns-crafting-tooltip" },
-		right_label_caption = { "fork-me-pattern.kind-processing" }, right_label_tooltip = { "fork-me-gui.patterns-processing-tooltip" },
-		tags = G.act("pat_mode") }
-	local row = G.row(box)
-	row.add{ type = "label", caption = { ed.mode == "crafting" and "fork-me-gui.patterns-recipe" or "fork-me-gui.patterns-from-recipe" } }
-	row.add{ type = "choose-elem-button", elem_type = "recipe", recipe = ed.recipe, style = "slot_button",
-		elem_filters = { { filter = "hidden", invert = true } }, tags = G.act("pat_recipe") }
-	if ed.mode == "crafting" then
-		local def = ed.recipe and P.crafting(player.force, ed.recipe)
-		if not def then
-			G.label(box, { "fork-me-gui.patterns-choose-recipe" }, WIDTH)
-			return
-		end
-		local t = box.add{ type = "table", column_count = COLUMNS, style = "filter_slot_table" }
-		for _, r in ipairs(def.inputs) do G.slot(t, r.key, r.amount) end
-		t.add{ type = "label", caption = "  =>  " }
-		for _, r in ipairs(def.outputs) do G.slot(t, r.key, r.amount) end
-		return
-	end
-	G.heading(box, { "fork-me-gui.patterns-inputs" })
-	editor_rows(box, ed, "inputs", P.MAX_INPUTS)
-	G.heading(box, { "fork-me-gui.patterns-outputs" })
-	editor_rows(box, ed, "outputs", P.MAX_OUTPUTS)
-end
-
-local function refresh_patterns(player, st, frame)
-	local ed = st.pat or new_editor()
-	st.pat = ed
-	--- the box is rebuilt when the mode, the recipe or a row's item changes (not the amounts: their fields keep the focus)
-	local sig = { ed.mode, tostring(ed.recipe) }
-	for i = 1, P.MAX_INPUTS do sig[#sig + 1] = ed.inputs[i] and ed.inputs[i].key or "-" end
-	for i = 1, P.MAX_OUTPUTS do sig[#sig + 1] = ed.outputs[i] and ed.outputs[i].key or "-" end
-	sig = table.concat(sig, ",")
-	if st.pat_shown ~= sig then
-		st.pat_shown = sig
-		local box = G.find(frame, "fork_me_pat_box")
-		box.clear()
-		build_pattern_box(box, player, ed)
-	end
-	local hand, own, net = M.blanks(player.cursor_stack, player.get_main_inventory(), st.entity)
-	local encoded = P.is_encoded(player.cursor_stack)
-	G.find(frame, "fork_me_pat_status").caption = { "", { "fork-me-gui.patterns-blanks", hand, own, net },
-		encoded and { "fork-me-gui.patterns-in-hand" } or "" }
-	local def = M.pattern_of(player.force, ed)
-	G.find(frame, "fork_me_pat_encode").enabled = def ~= nil and hand + own + net > 0
-end
-
 function M.refresh(player, frame)
 	frame = frame or G.window_of(player)
 	local st = state()[player.index]
@@ -909,7 +741,6 @@ function M.refresh(player, frame)
 	if tab == "storage" then refresh_storage(player, st, frame, net)
 	elseif tab == "crafting" then refresh_crafting(st, frame, net)
 	elseif tab == "jobs" then refresh_jobs(st, frame, net)
-	elseif tab == "patterns" then refresh_patterns(player, st, frame)
 	else refresh_cells(st, frame, net) end
 	return true
 end
@@ -1053,92 +884,6 @@ G.on("job_cancel", function(event, player, el)
 	G.refresh_one(player)
 end)
 
-G.on("pat_mode", function(event, player, el)
-	if event.name ~= defines.events.on_gui_switch_state_changed then return end
-	local st = st_of(player)
-	if not st then return end
-	st.pat = st.pat or new_editor()
-	st.pat.mode = el.switch_state == "right" and "processing" or "crafting"
-	M.refresh(player)
-end)
-
-G.on("pat_recipe", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
-	local st = st_of(player)
-	if not st then return end
-	st.pat = st.pat or new_editor()
-	local ok, why = M.set_editor_recipe(player.force, st.pat, el.elem_value)
-	if not ok then
-		el.elem_value = st.pat.recipe
-		report(player, why)
-	end
-	st.pat_shown = nil
-	M.refresh(player)
-end)
-
---- issue #70: a click on a row's button opens the picker (items and fluids, no quality: a pattern names plain items), right
---- click empties the row
-G.on("pat_row", function(event, player, el)
-	if event.name ~= defines.events.on_gui_click then return end
-	local st = st_of(player)
-	if not st then return end
-	st.pat = st.pat or new_editor()
-	local which, index = el.tags.which, el.tags.index
-	local row = st.pat[which][index]
-	if event.button == defines.mouse_button_type.right then
-		if row then M.set_editor_row(st.pat, which, index, false) M.refresh(player) end
-		return
-	end
-	picker.open(player, { callback = "pat_row", data = { which = which, index = index }, kinds = { item = true, fluid = true },
-		preset = picker.preset_of(row and row.key), quality = false })
-end)
-
---- (a key a pattern cannot name, an item with tags, empties the row, with the message, as before)
-picker.on_confirm("pat_row", function(player, data, choice)
-	local st = st_of(player)
-	if not (st and st.pat) then return end
-	local key = picker.key_of(choice, false)
-	if key and not P.valid_key(key) then key = nil end
-	if not key then report(player, "not-a-pattern-row") end
-	M.set_editor_row(st.pat, data.which, data.index, key or false)
-	M.refresh(player)
-end)
-
-G.on("pat_amount", function(event, player, el)
-	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
-	local st = st_of(player)
-	if not (st and st.pat) then return end
-	M.set_editor_row(st.pat, el.tags.which, el.tags.index, nil, tonumber(el.text) or 0)
-end)
-
-G.on("pat_encode", function(event, player)
-	local st = st_of(player)
-	if not (st and st.pat) then return end
-	local where, why = M.encode(player.cursor_stack, player.get_main_inventory(), st.entity, player.force, st.pat)
-	if where then
-		player.create_local_flying_text{ text = { "fork-me-gui.patterns-encoded-" .. where }, create_at_cursor = true }
-	else
-		report(player, why)
-	end
-	M.refresh(player)
-end)
-
-G.on("pat_clear", function(event, player)
-	local _, why = M.clear_pattern(player.cursor_stack)
-	report(player, why)
-	M.refresh(player)
-end)
-
-G.on("pat_load", function(event, player)
-	local st = st_of(player)
-	if not st then return end
-	st.pat = st.pat or new_editor()
-	local _, why = M.load_pattern(player.cursor_stack, st.pat)
-	report(player, why)
-	st.pat_shown = nil
-	M.refresh(player)
-end)
-
 G.on("term_drive", function(event, player, el)
 	local st = st_of(player)
 	local drive = G.entity_by_unit(el.tags.drive)
@@ -1190,33 +935,16 @@ remote.add_interface("gregtorio-me-terminal", {
 	click_opens = function(stack, flags) return G.click_opens(stack, flags) end,
 	--- open the terminal window for a player (the GUI is built and refreshed: catches errors in the window code)
 	open = function(player, terminal) open(player, terminal) return G.window_of(player) ~= nil end,
-	--- select a tab of the open terminal and refresh it
+	--- the tabs of the terminal window, in order (issue #130: four, the Patterns tab is the ME Pattern Terminal now)
+	tabs = function() return { table.unpack(TABS) } end,
+	--- select a tab of the open terminal and refresh it; false when it has no such tab
 	show_tab = function(player, index)
 		local frame = G.window_of(player)
 		local tabs = frame and G.find(frame, "fork_me_tabs")
-		if not tabs then return false end
+		if not tabs or index < 1 or index > #TABS then return false end
 		tabs.selected_tab_index = index
 		return M.refresh(player)
 	end,
-	--- the patterns tab (issue #80): an editor is a plain table { mode, recipe, inputs, outputs }
-	new_editor = function() return new_editor() end,
-	pattern_of = function(force, ed) return M.pattern_of(force, ed) end,
-	set_editor_recipe = function(force, ed, recipe)
-		local ok, why = M.set_editor_recipe(force, ed, recipe)
-		return ok, why, ed
-	end,
-	set_editor_row = function(ed, which, index, key, amount) local ok = M.set_editor_row(ed, which, index, key, amount) return ok, ed end,
-	encode = function(cursor, inventory, terminal, force, ed) return M.encode(cursor, inventory, terminal, force, ed) end,
-	clear_pattern = function(cursor) return M.clear_pattern(cursor) end,
-	load_pattern = function(cursor, ed)
-		local ok, why = M.load_pattern(cursor, ed)
-		return ok, why, ed
-	end,
-	blanks = function(cursor, inventory, terminal) return M.blanks(cursor, inventory, terminal) end,
-	--- the pattern in an encoded pattern stack (tags, tooltip data): { kind, recipe, inputs, outputs, valid, id, description }
-	pattern_info = function(stack) return P.info(stack) end,
-	--- encode a pattern given as data (crafting: { kind, recipe }; processing: { kind, inputs, outputs })
-	encode_def = function(cursor, inventory, terminal, def) return P.encode(cursor, inventory, network(terminal), def) end,
 	--- pick a craftable resource and an amount as the crafting tab does
 	pick = function(player, key, amount)
 		local st = st_of(player)
@@ -1300,14 +1028,16 @@ script.on_event({ defines.events.on_gui_click, defines.events.on_gui_text_change
 	G.dispatch(event)
 end)
 
-script.on_nth_tick(REFRESH_TICKS, function()
+local function refresh()
 	N.slow_step()
 	G.refresh_all()
-end)
+end
+script.on_nth_tick(REFRESH_TICKS, function() Sched.metered(refresh) end)
 
 script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
 	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[event.player_index] = nil end
+	if storage.fork_me_pterm_ui then storage.fork_me_pterm_ui[event.player_index] = nil end      -- (the ME Pattern Terminal's editor)
 end)
 
 return M

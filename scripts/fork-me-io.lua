@@ -52,6 +52,7 @@
 local N = require("scripts.fork-me-network")
 local T = require("scripts.fork-me-targets")
 local Sched = require("scripts.fork-me-schedule")
+local CS = require("scripts.fork-me-cardslots")
 
 local M = {}
 
@@ -466,12 +467,12 @@ end
 --- Move what a side tank holds into the network (the tank's whole fluid segment, as far as it fits); returns the
 --- amount moved and a status.
 local function tank_to_network(t, held, net)
-	local fb = t.fluidbox
-	local segment = fb.get_fluid_segment_contents(1)
+	local fb = T.fluidbox(t)
+	local segment = N.bound(fb).get_fluid_segment_contents(1)
 	local available = math.max(held.amount, (segment and segment[held.name] or 0) + 1)   -- segment counts are rounded
 	local room = N.can_insert_fluid(net, held.name, available)
 	if room <= EPS then return 0, "full" end
-	local removed = t.remove_fluid{ name = held.name, amount = room }
+	local removed = N.bound(t).remove_fluid{ name = held.name, amount = room }
 	if removed <= 0 then return 0, "ok" end
 	local stored = N.insert_fluid(net, held.name, removed)
 	if stored < removed - EPS then          -- cannot happen (room was checked), but never lose fluid
@@ -488,7 +489,7 @@ local function export_side(t, held, row, net, p)
 	local moved = 0
 	if held and held.name ~= row.name then              -- another fluid: into the network first
 		moved = tank_to_network(t, held, net)
-		held = t.fluidbox[1]
+		held = T.fluidbox(t)[1]
 		if held and held.amount <= EPS then held = nil end
 		if held and held.name ~= row.name then return "blocked", moved, 0 end
 	end
@@ -498,7 +499,7 @@ local function export_side(t, held, row, net, p)
 	if avail <= EPS then return "empty-network", moved, want end
 	if p then avail = avail - reserved(net, FLUID_PREFIX .. row.name, p) end
 	if avail <= EPS then return "reserved", moved, want end
-	local inserted = t.insert_fluid{ name = row.name, amount = math.min(want, avail) }
+	local inserted = N.bound(t).insert_fluid{ name = row.name, amount = math.min(want, avail) }
 	local got = 0
 	if inserted > 0 then
 		got = N.extract_fluid(net, row.name, inserted)
@@ -526,7 +527,7 @@ local function interface_sides(rec, net, config, short, dt)
 	for d = 1, #SIDES do
 		local t = tanks[d]
 		local setting = sides[d]
-		local held = t.fluidbox[1]
+		local held = T.fluidbox(t)[1]
 		if held and held.amount <= EPS then held = nil end
 		if held then anyheld = true end
 		if setting == "off" then
@@ -548,12 +549,12 @@ local function interface_sides(rec, net, config, short, dt)
 				exports = {}
 				for e = 1, #SIDES do
 					if type(sides[e]) == "number" then
-						local id = tanks[e].fluidbox.get_fluid_segment_id(1)
+						local id = N.bound(T.fluidbox(tanks[e])).get_fluid_segment_id(1)
 						if id then exports[id] = true end
 					end
 				end
 			end
-			local id = exports and t.fluidbox.get_fluid_segment_id(1)
+			local id = exports and N.bound(T.fluidbox(t)).get_fluid_segment_id(1)
 			if id and exports[id] then
 				fstatus[d] = "loop"
 			else
@@ -585,19 +586,20 @@ end
 --- the next visit (the headroom rule over the rows, the imports and the sides), why it is blocked when nothing
 --- moved ("idle": probed; an interface is never parked for a missing key, an inserter may feed it any time),
 --- whether a row had run empty, its network, and the ticks until its buffer runs out at the rate this visit saw.
-function M.interface_step(rec, dt)
+function M.interface_step(rec, dt, u)
 	local e = rec.entity
 	local config = config_of(rec)
-	local net = N.active_of(e)
+	local net = u and N.active_of_unit(u) or not u and N.active_of(e) or nil   -- (`u`: the unit of a visit, issue #115)
 	if not net then
-		local n0 = N.network_of(e)
+		local n0 = u and N.network_of_unit(u) or not u and N.network_of(e) or nil
 		local _, why = N.usable(n0)
 		rec.status = why or "no-network"
 		return 0, false, nil, (n0 and why == "no-power") and "no-power" or "no-network", false, n0
 	end
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
 	local max_ops = math.max(IFACE_SLOTS_PER_VISIT, math.floor(IFACE_SLOTS_PER_VISIT * ticks / STEP_TICKS))
-	local inv = e.get_inventory(defines.inventory.chest)
+	local inv = T.inventory(e, defines.inventory.chest)
+	local B = N.bound(inv)                                    -- (its methods: issue #115)
 	local ops, moved = 0, 0
 	local held_total = 0                                      -- what the kept rows hold at the end of the row loop
 	local kept = KEPT
@@ -626,7 +628,7 @@ function M.interface_step(rec, dt)
 			local counted = kept[key]                             -- (two rows of one key hold its items once)
 			kept[key] = true
 			Q_COUNT.name, Q_COUNT.quality = c.name, c.quality
-			local have = inv.get_item_count(Q_COUNT)
+			local have = B.get_item_count(Q_COUNT)
 			local final = have
 			if have < c.amount then
 				local want = c.amount - have
@@ -655,7 +657,7 @@ function M.interface_step(rec, dt)
 						taken = N.remove_whole(inv, c.name, c.quality, can)
 					else
 						Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, c.quality, can
-						taken = inv.remove(Q_REMOVE)
+						taken = B.remove(Q_REMOVE)
 					end
 				end
 				if taken > 0 then
@@ -678,15 +680,20 @@ function M.interface_step(rec, dt)
 	--- the walk over the slots only when something lies in the inventory that no row keeps (an interface whose rows
 	--- hold what they hold, or that holds nothing, has nothing to import)
 	local walk = false
-	if not inv.is_empty() then
-		walk = inv.get_item_count() ~= held_total          -- (more in it than the kept rows hold: something to import; no table)
+	if not B.is_empty() then
+		walk = B.get_item_count() ~= held_total          -- (more in it than the kept rows hold: something to import; no table)
 	end
 	local start = rec.slot or 1
+	--- issue #115: the stacks the walk has still to find (an inventory with a few stacks and many empty slots: the empty rest
+	--- counts as free without reading each slot; the operations limit is checked first, as at every slot)
+	local stacks = walk and size - B.count_empty_stacks(true, true) or 0
 	for k = 0, walk and size - 1 or -1 do
 		if ops >= max_ops then rec.slot = (start - 1 + k) % size + 1 break end
+		if stacks <= 0 then free = free + size - k break end
 		local i = (start - 1 + k) % size + 1
 		local stack = inv[i]
 		if stack.valid_for_read then
+			stacks = stacks - 1
 			local key = N.key_of(stack.name, stack.quality.name)
 			if not kept[key] then
 				local sname = stack.name
@@ -938,6 +945,27 @@ M.SIDES = #SIDES
 local BUSES = { ["import-bus"] = true, ["export-bus"] = true, ["fluid-import-bus"] = true, ["fluid-export-bus"] = true }
 local IMPORTS = { ["import-bus"] = true, ["fluid-import-bus"] = true }   -- (the old fluid kinds until they are replaced)
 
+--- Issue #110: the card slots of an import and an export bus (scripts/fork-me-cardslots.lua; the cards of a block are the
+--- items of a script inventory its window shows). Only the Acceleration Card fits: AE2's speed card, 4 of them, which
+--- multiply the items a bus moves per second (the map setting "bus speed") by 1, 8, 32, 64 and 96 (0 to 4 cards:
+--- `N.card_rules().speed`; AE2: PartImportBus and PartExportBus, 1, 8, 32, 64, 96 items per operation). Fluids are not
+--- sped up (AE2's cards act on items). `rec.accel` is that factor (nil: 1), made from the cards when they change.
+local function bus_rec(entity)
+	local s = storage.fork_me_io
+	return s and entity and entity.valid and entity.unit_number and BUSES[kind(entity)] and s.recs[entity.unit_number] or nil
+end
+local cards
+cards = CS.new{
+	rules = function() return N.card_rules().bus end,
+	title = function(rec) return rec.entity and rec.entity.valid and rec.entity.localised_name or { "entity-name.me-import-bus" } end,
+	rec_of = bus_rec,
+	on_cards = function(rec, light)
+		local n = cards.counts(rec).speed or 0
+		rec.accel = n > 0 and N.card_rules().speed[n + 1] or nil
+		if not light and rec.entity and rec.entity.valid then wake(rec.entity.unit_number) end
+	end,
+}
+
 --- The entity in front of a bus that has an inventory of the bus's kind or fluid boxes; what it has is kept with it
 --- (rec.t_inv: the inventory index, rec.t_fluid: fluid boxes), cached until it is gone or the bus is rotated.
 local function target_of(rec)
@@ -986,12 +1014,13 @@ end
 --- and whether the network took nothing (`netfull`). A stack the network refuses itself (N.refuses_stack) is neither: it
 --- stays where it is and is left out of `held` (issue #85).
 local function import_items(rec, net, t, cap, info)
-	local inv = t.get_inventory(rec.t_inv)
+	local inv = T.inventory(t, rec.t_inv)
 	if not inv then return 0 end
 	local all, set = rec.all, rec.iset
 	local unit = rec.entity.unit_number
 	local moved, stacks, held, main, mainc = 0, false, 0, nil, 0
-	for _, c in pairs(inv.get_contents()) do
+	local B = N.bound(inv)                                    -- (its methods: issue #115)
+	for _, c in pairs(B.get_contents()) do
 		if all or set[c.name] then
 			held = held + c.count
 			if c.count > mainc then main, mainc = c.name, c.count end
@@ -999,7 +1028,7 @@ local function import_items(rec, net, t, cap, info)
 				local q = c.quality or "normal"
 				if by_count(c.name, q) then
 					Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, q, math.min(c.count, cap - moved)
-					local removed = inv.remove(Q_REMOVE)
+					local removed = B.remove(Q_REMOVE)
 					if removed > 0 then
 						local stored = N.insert(net, c.name, q, removed)
 						if stored < removed then                  -- the network is full: the rest goes back
@@ -1047,7 +1076,7 @@ end
 --- after each visit), whether it had run out on arrival (`starved`), whether it takes nothing (`blocked`) or the
 --- network lacks a key (`nokey`).
 local function export_items(rec, net, t, cap, info)
-	local inv = t.get_inventory(rec.t_inv)
+	local inv = T.inventory(t, rec.t_inv)
 	if not inv then return 0 end
 	local machine = T.SLOTTED[t.type]
 	local moved = 0
@@ -1059,7 +1088,7 @@ local function export_items(rec, net, t, cap, info)
 	local dt = info.dt or STEP_TICKS
 	for _, name in ipairs(rec.filters) do
 		if item_known(name) then
-			local have = inv.get_item_count(name)
+			local have = N.bound(inv).get_item_count(name)
 			local prev = tgt[name]
 			if prev and prev > 0 and have == 0 then info.starved = true end
 			local used = prev and prev - have or 0
@@ -1102,7 +1131,7 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 	cap = cap or Sched.setting("bus_fluid") * STEP_TICKS / 60
 	info = info or { time = math.huge }
 	local dt = info.dt or STEP_TICKS
-	local fb = t.fluidbox
+	local fb = T.fluidbox(t)
 	local moved = 0
 	local unit = rec.entity.unit_number
 	if IMPORTS[rec.kind] then
@@ -1111,10 +1140,10 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 		for i = 1, #fb do
 			local f = fb[i]
 			if f and f.amount > EPS and (all or set[f.name]) then
-				local p = fb.get_prototype(i)
+				local p = N.bound(fb).get_prototype(i)
 				if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
 				if not (p and p.production_type == "input") then
-					local capf = fb.get_capacity(i)
+					local capf = N.bound(fb).get_capacity(i)
 					local arrived = f.amount - (fleft[i] or 0)
 					if f.amount >= capf - EPS then info.starved = true end           -- a full box: the machine waited
 					local left = f.amount
@@ -1156,7 +1185,7 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 				info.nokey = true
 			elseif cap - moved > EPS then
 				local want = math.min(total, cap - moved)
-				local inserted = t.insert_fluid{ name = name, amount = want }
+				local inserted = N.bound(t).insert_fluid{ name = name, amount = want }
 				if inserted > 0 then
 					local got = N.extract_fluid(net, name, inserted)
 					--- a storage bus's segment had less than its snapshot: never duplicate
@@ -1189,11 +1218,11 @@ end
 --- allowed to move, the ticks until its next visit (the headroom rule), why it is blocked when it moved nothing
 --- (nil otherwise), whether its other side had run out, its network, and the ticks until the buffer on its other side
 --- runs out at the rate this visit saw (math.huge: unknown).
-function M.bus_step(rec, dt)
+function M.bus_step(rec, dt, u)
 	local e = rec.entity
-	local net = N.active_of(e)
+	local net = u and N.active_of_unit(u) or not u and N.active_of(e) or nil   -- (`u`: the unit of a visit, issue #115)
 	if not net then
-		local n0 = N.network_of(e)
+		local n0 = u and N.network_of_unit(u) or not u and N.network_of(e) or nil
 		local _, why = N.usable(n0)
 		rec.status = why or "no-network"
 		return 0, false, nil, (n0 and why == "no-power") and "no-power" or "no-network", false, n0
@@ -1205,7 +1234,8 @@ function M.bus_step(rec, dt)
 	end
 	if not rec.iset then M.set_bus_filters(e, rec.filters) end          -- a record of a save before issue #3
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
-	local icap = math.max(1, math.floor(Sched.setting("bus_items") * ticks / 60))
+	if rec.want then cards.fill_cards(rec) end                         -- issue #110: the cards a blueprint or a paste asked for
+	local icap = math.max(1, math.floor(Sched.setting("bus_items") * (rec.accel or 1) * ticks / 60))
 	local fcap = Sched.setting("bus_fluid") * ticks / 60
 	local import = IMPORTS[rec.kind]
 	local items, fluid = 0, 0
@@ -1240,7 +1270,7 @@ function M.bus_step(rec, dt)
 		local left = held - items
 		rec.left = left > 0 and left or 0
 		if left > 0 then                                         -- a rest: back when the bus's speed covers it
-			local tt = math.max(MIN_INTERVAL, left * 60 / Sched.setting("bus_items"))
+			local tt = math.max(MIN_INTERVAL, left * 60 / (Sched.setting("bus_items") * (rec.accel or 1)))
 			if tt < info.time then info.time = tt end
 		end
 		if not known then
@@ -1308,7 +1338,19 @@ function M.set_bus_filter(entity, index, key)
 	return M.set_bus_filters(entity, list)
 end
 
---- the bus's state for its window: { kind, filters, status, target, import, max, items, fluids }
+--- issue #110: the card slots of a bus for its window (the inventory whose slots it shows, the clicks on them)
+function M.bus_inventory(entity)
+	local rec = bus_rec(entity)
+	return rec and cards.inv_of(rec) or nil
+end
+function M.bus_card_click(entity, slot, cursor, inventory, shift) return cards.card_click(entity, slot, cursor, inventory, shift) end
+function M.bus_shift_in(entity, stack) return cards.shift_in(entity, stack) end
+function M.bus_sync(entity, back)
+	local rec = bus_rec(entity)
+	return rec ~= nil and cards.sync(rec, back)
+end
+
+--- the bus's state for its window: { kind, filters, status, target, import, max, items, fluids; issue #110: slots, cards, accel, want }
 function M.bus_info(entity)
 	local k = kind(entity)
 	if not BUSES[k] then return nil end
@@ -1316,6 +1358,12 @@ function M.bus_info(entity)
 	local b = M.get_bus(entity)
 	b.kind, b.import, b.max = k, IMPORTS[k] == true, MAX_FILTERS
 	b.items, b.fluids = rec.t_inv ~= nil, rec.t_fluid == true
+	--- issue #110: the card slots (the window shows them), the factor of the cards, the cards it waits for
+	b.slots, b.accel = N.card_rules().bus.slots, rec.accel or 1
+	b.rate = Sched.setting("bus_items") * b.accel          -- items per second at most
+	b.cards = {}
+	for slot, name in pairs(rec.cards or {}) do b.cards[slot] = name end
+	b.want = rec.want and cards.missing_cards(rec, rec.want) or nil
 	return b
 end
 
@@ -1336,14 +1384,14 @@ local NET_SIDE = { ["no-key"] = true, ["net-full"] = true, ["no-network"] = true
 local function probe_mark(rec)
 	local e = rec.entity
 	if rec.kind == "interface" then
-		local n = e.get_inventory(defines.inventory.chest).get_item_count()
+		local n = N.bound(T.inventory(e, defines.inventory.chest)).get_item_count()
 		local tanks = not rec.sidle and rec.tanks
 		if tanks then
 			local sides = rec.sides or {}
 			for d = 1, #SIDES do
 				local t = tanks[d]
 				if sides[d] ~= "off" and t and t.valid then
-					local f = t.fluidbox[1]
+					local f = T.fluidbox(t)[1]
 					if f then n = n + math.floor(f.amount) end
 				end
 			end
@@ -1354,11 +1402,11 @@ local function probe_mark(rec)
 	if not (t and t.valid) then return 0 end
 	local n = 0
 	if rec.t_inv then
-		local inv = t.get_inventory(rec.t_inv)
-		if inv then n = inv.get_item_count() end
+		local inv = T.inventory(t, rec.t_inv)
+		if inv then n = N.bound(inv).get_item_count() end
 	end
 	if rec.t_fluid then
-		local fb = t.fluidbox
+		local fb = T.fluidbox(t)
 		for i = 1, #fb do
 			local f = fb[i]
 			if f then n = n + math.floor(f.amount) end
@@ -1376,7 +1424,7 @@ local function probe_work(rec)
 	local t = rec.target
 	if not (t and t.valid) then return true end
 	if rec.t_inv then
-		local inv = t.get_inventory(rec.t_inv)
+		local inv = T.inventory(t, rec.t_inv)
 		if inv then
 			local machine = T.SLOTTED[t.type]
 			local lab = t.type == "lab"
@@ -1393,7 +1441,7 @@ local function probe_work(rec)
 		end
 	end
 	if rec.t_fluid and #rec.ffilters > 0 then
-		local fb = t.fluidbox
+		local fb = T.fluidbox(t)
 		for i = 1, #fb do
 			local f = fb[i]
 			if not f or f.amount < fb.get_capacity(i) - EPS then return true end
@@ -1425,6 +1473,7 @@ local function visit(rec, unit, fallback)
 	local e = rec.entity
 	if not e.valid then
 		destroy_tanks(rec)                    -- an interface removed without an event
+		if BUSES[rec.kind] then cards.detach(rec) end        -- issue #110: a bus's cards are spilled where it stood
 		drop(s, unit)                         -- (its shortfalls go too)
 		return
 	end
@@ -1433,9 +1482,9 @@ local function visit(rec, unit, fallback)
 	rec.last = now
 	local moved, full, nextiv, block, starved, net, time
 	if rec.kind == "interface" then
-		moved, full, nextiv, block, starved, net, time = M.interface_step(rec, dt)
+		moved, full, nextiv, block, starved, net, time = M.interface_step(rec, dt, unit)
 	else
-		moved, full, nextiv, block, starved, net, time = M.bus_step(rec, dt)
+		moved, full, nextiv, block, starved, net, time = M.bus_step(rec, dt, unit)
 	end
 	rec.starve = starved or nil
 	--- issue #51: how long the other side had been out, from the tick the visit before expected it to run out (`rec.outt`)
@@ -1551,10 +1600,15 @@ function M.on_built(entity, tags, source)
 		clear_filters(entity.get_inventory(defines.inventory.chest))      -- a blueprint before R3 may carry slot filters
 	else
 		local t = type(tags) == "table" and tags[BUS_TAG] or nil
-		if type(t) == "table" then M.set_bus_filters(entity, t.filters)
+		if type(t) == "table" then
+			M.set_bus_filters(entity, t.filters)
+			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, nil) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)
 			M.set_bus_filters(entity, from and from.filters or {})
+			local from_rec = bus_rec(source)
+			local list = from_rec and cards.card_list(from_rec)
+			if list then cards.want_cards(entity, list, nil) end
 		else
 			M.set_bus_filters(entity, {})
 		end
@@ -1592,7 +1646,8 @@ function M.wake_near(entity)
 	end
 end
 
---- `mined`: by a player, a robot or a platform (an interface's fluid goes into the network first)
+--- `mined`: by a player, a robot or a platform (an interface's fluid goes into the network first; a LuaInventory: the mined
+--- buffer, which takes a bus's cards)
 function M.on_removed(entity, mined)
 	local s = storage.fork_me_io
 	local rec = s and entity and entity.valid and entity.unit_number and s.recs[entity.unit_number]
@@ -1604,6 +1659,10 @@ function M.on_removed(entity, mined)
 			if held and held.amount > EPS then tank_to_network(t, held, net) end
 		end
 		destroy_tanks(rec)
+	elseif BUSES[rec.kind] then
+		--- issue #110: the cards of a mined bus go into the buffer, those of a destroyed one onto the ground
+		if type(mined) == "userdata" or type(mined) == "table" then cards.give_cards(rec, mined) else cards.spill_cards(rec) end
+		cards.detach(rec)
 	end
 	drop(s, entity.unit_number)
 end
@@ -1627,6 +1686,12 @@ function M.on_entity_settings_pasted(event)
 	elseif BUSES[k] then
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
+		--- issue #110: the source's cards are what the destination is to have (from the player's inventory, then the network)
+		local from_rec, dst_rec = bus_rec(src), bus_rec(dst)
+		if from_rec and dst_rec then
+			local player = event.player_index and game.get_player(event.player_index) or nil
+			cards.want_cards(dst, from_rec.want and { table.unpack(from_rec.want) } or cards.card_list(from_rec) or {}, player)
+		end
 	end
 end
 
@@ -1642,7 +1707,9 @@ function M.tag_blueprint(bp, mapping)
 			end
 		elseif BUSES[k] then
 			local b = M.get_bus(entity)
-			if b and #b.filters > 0 then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters }) end
+			local rec = bus_rec(entity)
+			local list = rec and (rec.want and { table.unpack(rec.want) } or cards.card_list(rec))
+			if b and (#b.filters > 0 or list) then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list }) end
 		end
 	end
 end
@@ -1665,7 +1732,10 @@ function M.on_configuration_changed()
 		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
 			local rec = register(s, e)
 			local o = old[e.unit_number]
-			if BUSES[rec.kind] then M.set_bus_filters(e, o and (o.keys or o.filters) or {}) end
+			if BUSES[rec.kind] then
+				M.set_bus_filters(e, o and (o.keys or o.filters) or {})
+				if o then rec.inv, rec.cards, rec.want, rec.where, rec.accel = o.inv, o.cards, o.want, o.where, o.accel end   -- issue #110
+			end
 			if rec.kind == "interface" then
 				if o and o.config then rec.config = clean_config(o.config) end
 				if o and o.priority then
@@ -1770,6 +1840,11 @@ remote.add_interface("gregtorio-me-io", {
 		end
 		return collectgarbage("count")
 	end,
+	--- issue #115: the benchmark's allocation meter (Sched.metered): on (true) or off (false: returns the KB allocated)
+	alloc_meter = function(on)
+		if on then Sched.meter_on() return 0 end
+		return Sched.meter_off()
+	end,
 	set_interface_config = function(entity, config, sides) return M.set_interface_config(entity, config, sides) end,
 	get_interface_config = function(entity) return M.get_interface_config(entity) end,
 	set_interface_slot = function(entity, i, name, quality, amount) return M.set_interface_slot(entity, i, name, quality, amount) end,
@@ -1783,6 +1858,16 @@ remote.add_interface("gregtorio-me-io", {
 	--- the four side tanks (north, east, south, west)
 	interface_tanks = function(entity) return M.tanks_of(entity) end,
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,
+	--- issue #110: the card slots of a bus (what the window's clicks do; `want`: a list of names)
+	bus_inventory = function(entity) local rec = bus_rec(entity) return rec and cards.inv_of(rec) or nil end,
+	bus_card_click = function(entity, slot, cursor, inventory, shift) return cards.card_click(entity, slot, cursor, inventory, shift) end,
+	bus_shift_in = function(entity, stack) return cards.shift_in(entity, stack) end,
+	bus_want_cards = function(entity, want, player_index)
+		return cards.want_cards(entity, want, player_index and game.get_player(player_index) or nil)
+	end,
+	--- tests (issue #110): what a mod update does to the records (their cards stay)
+	configuration_changed = function() M.on_configuration_changed() end,
+	bus_sync = function(entity, back) local rec = bus_rec(entity) return rec ~= nil and cards.sync(rec, back) end,
 	set_bus_filter = function(entity, index, key) return M.set_bus_filter(entity, index, key) end,
 	get_bus = function(entity) return M.get_bus(entity) end,
 	bus_info = function(entity) return M.bus_info(entity) end,

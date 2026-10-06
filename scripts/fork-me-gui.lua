@@ -779,8 +779,7 @@ function M.close_all()
 end
 
 --- the text of a reason of the network module ([fork-me-net]: the network's state is a status-*, the rest error-*)
-local NET_STATUS = { ["no-network"] = true, ["no-controller"] = true, ["conflict"] = true, ["no-power"] = true,
-	["no-power-terminal"] = true }
+local NET_STATUS = { ["no-network"] = true, ["no-controller"] = true, ["conflict"] = true, ["no-power"] = true }
 function M.net_message(why) return { "fork-me-net." .. (NET_STATUS[why] and "status-" or "error-") .. why } end
 
 --- the definition of the window `name` (the tests' clicks in a window that no entity opens, the cell window)

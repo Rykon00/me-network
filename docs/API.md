@@ -19,7 +19,8 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   `me-molecular-assembler`, `me-crafting-cpu`, `me-co-processing-cpu`, `me-quantum-crafting-cpu`,
   `me-level-maintainer`, `me-circuit-interface`; since 0.3.0 (issue #17) the upgrade cards `me-basic-card`,
   `me-advanced-card`, `me-capacity-card`, `me-overflow-destruction-card`, `me-fuzzy-card`, `me-inverter-card`,
-  `me-equal-distribution-card` (each with a recipe of the same name) and `me-cell-workbench`; since 0.3.0 (issue #6)
+  `me-equal-distribution-card` (each with a recipe of the same name), since issue #110 the module
+  `me-acceleration-card` (category `me-acceleration`; `ME_NETWORK.ACCELERATION`) and `me-cell-workbench`; since 0.3.0 (issue #6)
   the crafting blocks of the multiblock crafting CPUs `me-crafting-unit`, `me-1k`...`me-256k-crafting-storage`,
   `me-crafting-co-processing-unit`, `me-crafting-monitor` (each with a recipe of the same name; subgroup
   `fork-me-crafting-cpu`), while `me-crafting-cpu`, `me-co-processing-cpu` and `me-quantum-crafting-cpu` are legacy
@@ -80,7 +81,11 @@ ME_NETWORK.set_technology("me-network", {
 
 Rebuilds the ME Molecular Assembler as a copy of another assembling machine: `def.base` (the machine's name),
 `def.crafting_categories`, `def.crafting_speed`, `def.energy_usage`. The copy gets the assembler's name, icon,
-graphics and mining result and no fluid boxes (the assembler runs item recipes; autocrafting checks the machine's
+graphics and mining result and no fluid boxes. **Its size is not the base's** (issue #131): the block is one tile
+(collision box -0.35 .. 0.35, selection box -0.5 .. 0.5, pictures of 32 px) whatever size `def.base` has, and what the
+copy would inherit that is laid out for a bigger machine is set for one tile (the recipe icon of the alt mode, the icons of
+the five module slots, the alert icon, the circuit connector if the base has one, the corpse and the dying explosion); a
+frozen patch of the base's graphics is not kept (the assembler runs item recipes; autocrafting checks the machine's
 fluid boxes before it sets a recipe). Standalone it is a copy of `assembling-machine-2` with its item categories,
 speed 2.5, 375 kW.
 

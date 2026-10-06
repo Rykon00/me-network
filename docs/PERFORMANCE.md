@@ -2339,6 +2339,453 @@ green, regressions 0; throughput per kind of endpoint identical at every size.
 An earlier series without the rule for unread lists (copies at every change): 20 000 avg 2.462 → 2.407 ms, p99 5.27 → 4.75 ms, ticks
 over 5 ms 141 → 89, the burst build 85.6 → 94.7 ms (flagged).
 
+### Lever 3, the job steps (`scripts/fork-me-autocraft.lua`)
+
+At 20 000 the profile of main d27cdae gave `job_step` 244 µs per call, 2 calls per tick; about a third of that was the profiler's
+own wrappers (1.83 µs per wrapped call, some 45 per step). With timers around the parts of a step instead (a `LuaProfiler` per part,
+3600 ticks, 7200 steps, the same scene), a step cost 141 µs, 0.28 ms per tick (11 % of the script time):
+
+| part of a step | main | this pull request |
+|---|---|---|
+| finding a machine (`find_crafter`, 15 986 calls) | 407 ms, 25.5 µs per call | **169 ms, 10.6 µs** |
+| the leases (30 071, of which about 9 400 were closed) | 237 ms | 239 ms |
+| handing over (collecting what the machine holds, `start_lease`) | 167 ms | 151 ms |
+| the batch (what the pool holds, one stack, 23 186 times) | 125 ms, 5.4 µs | **70 ms, 3.0 µs** |
+| the head (network, CPU, position) | 67 ms | 64 ms |
+| closing and the end | 13 ms | 13 ms |
+| **per tick** | **0.282 ms** | **0.196 ms** |
+
+The scene's 200 jobs share about 60 patterns with 13 machines each; most steps wait for a machine (7114 of 15 986 searches found
+none). The counts of every part (steps, searches, hand-overs, leases) are the same in both versions: the jobs do the same.
+
+* **`find_crafter` reads the step's lists**: it read the recipe prototype's `ingredients` and `products` (a new table of tables at
+  every read, 3 and 2 µs) for every free machine it looked at, twice; it uses the job step's cached lists now (`step_ingredients`,
+  issue #43), as the processing steps already did.
+* **The busy test first**: `s.busy` (a table read) before `e.valid` (an engine call), so a busy machine costs no engine call.
+* **The second pass looks at the first pass's finds only**: the first pass walks the targets for a free machine that has the recipe
+  and collects the free ones with another recipe on the way; the second pass (switch one of them) walks only those, in the same
+  order. A search that found nothing walked every target twice before (13 per pattern in the scene). Nothing the first pass does
+  changes a machine the second one looks at (it reads, and it rejects machines that have the recipe), so the machine taken is the same.
+* **Stack sizes per item name** (per load, outside `storage`): the batch read `prototypes.item[name].stack_size` for every item
+  ingredient and product of every hand-over (about 1 µs each).
+* **The job's position** is a new table only when it changed (it was made anew at every step).
+
+What is left is mostly the engine's work: a lease looks at its machine every step (its recipe, its progress, its input; about 5 µs), a
+closed lease collects the products and takes the unused ingredients back (about 15 µs), a hand-over inserts the ingredients.
+
+**Below the rule, built on the maintainer's call**: the step time falls by 30 %, the script time at 20 000 by 0.09 ms by the
+parts' timers (3.3 %) and 0.10 ms in the benchmark below (4.3 %), under the 5 % of #59;
+there are no job steps at the maintainer's size (no crafting CPU in the `base` scene).
+
+**Test.** The runtime test `ME crafter choice test` (`runtimemod/crafter.lua`): one provider with a crafting pattern and three ME
+Molecular Assemblers around it, in the order the provider finds its neighbours. A free machine with the recipe is taken before the
+first one with another recipe is switched; with none, the first one in that order is switched; one switched off by script is
+skipped. A second pass that walks its finds backwards fails case 2.
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput per kind of endpoint identical at every size (the provider crafts too).
+
+| | origin/main | this pull request |
+|---|---|---|
+| 20 000: script avg / p99 (ms) | 2.352 / 4.74 | **2.251 / 4.38** |
+| 20 000: ticks over 5 ms | 87 | **53** |
+| 20 000: gc avg (ms) / lua alloc per tick (KB) | 0.104 / 102.9 | 0.084 / 95.4 |
+| 20 000: burst build / remove (ms) | 87.0 / 174.6 | 84.7 / 179.0 |
+| 5000: script avg / p99 (ms) | 1.009 / 2.83 | 0.978 / 2.78 |
+| 5000: lua alloc per tick (KB) | 51.6 | 48.4 |
+| base: script avg / p99 (ms) | 0.1447 / 0.392 | 0.1419 / 0.389 |
+
+The whole script time at 20 000 falls by 0.10 ms (4.3 %), a little more than the parts' timers say (7.5 KB
+less garbage per tick as well).
+
+
+### Levers 4 and 5, the storage bus visits and the garbage (`scripts/fork-me-targets.lua`, the storage buses, `fork-me-io.lua`)
+
+Timers around the parts of a storage bus visit (main 2dcb8a8, 3600 ticks, a `LuaProfiler` per part, which adds about 1 µs to each):
+
+| | base | 20 000 |
+|---|---|---|
+| item side: visits per tick, µs per visit | 1.1, about 15 to 20 | 8, about 20 |
+| fluid side | 13 µs per tick | 5 visits per tick, 19 µs each |
+| share of the script time | about 27 % | about 11 % |
+
+No part stands out: finding the target, the inventory, `get_contents` (1.7 µs at 20 000), the comparison with the snapshot
+(`N.ext_sync`, 4 µs), the scheduler around the visit. Fewer visits would change when the network sees a chest change: not built.
+
+The garbage (`--profile --alloc` with few wrapped functions; every wrapped call adds 0.17 KB of its own): at 20 000 the mod makes
+about 95 KB per tick (interface visits about 2 KB each, job steps, the circuit interfaces' signal lists, storage bus visits about
+1 KB each), at the maintainer's size about 8 KB, where the collector costs 0.024 ms per tick, 16 % of the script time (its share of
+the benchmark mod is not known). What a visit makes is mostly the engine's objects, measured in a probe mod (bytes per call):
+
+| | bytes |
+|---|---|
+| `entity.fluidbox` | 56 |
+| `fluidbox[i]` (a table of the fluid) | 312 |
+| `fluidbox.get_fluid_segment_id` (the method object) | 88 |
+| `fluidbox.get_fluid_segment_contents` | 232 |
+| `entity.get_inventory` | 144 |
+| `inventory.get_contents()`, two kinds of items | 888 |
+| `{}` / with two keys | 88 / 200 |
+| `unit .. ":ext"` (a number's string) | 0 (but 1 µs) |
+
+Built, the cheap part of both levers (the same behaviour):
+
+* **An entity's LuaFluidBox and inventory once per load** (`T.fluidbox`, `T.inventory`: weak tables keyed by the entity object the
+  record keeps; an object that turned invalid is made anew; nothing saved): the storage bus's inventory, the interface's side tanks,
+  the buses' targets and probes.
+* **The snapshot table of a storage bus read is reused** (item and fluid side; `N.ext_sync` only reads it).
+* **The fluid side asks for the segment id once per visit** (the claim passes it to the read), and the segment's key `"s<id>"`
+  comes from a cache (a number's string costs 1 µs; bounded at 4096 ids), as does an external cell's id `"<unit>:ext"`.
+
+Allocation profile (600 ticks, the collector stopped): at base the scheduled work makes 10.9 → 9.6 KB per tick (−12 %), a storage
+bus visit 1.66 → 1.28 KB, a fluid storage bus visit 0.74 → 0.44 KB; the storage buses' time per tick 64 → 55 µs at base and 397 →
+347 µs at 20 000 (both with the profiler's wrappers).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput per kind of endpoint identical at every size.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1432 / 0.394 | **0.1380 / 0.355** |
+| base: gc avg (ms) | 0.0246 | 0.0226 |
+| 5000: script avg / p99 (ms) | 0.984 / 2.77 | 0.969 / 2.75 |
+| 5000: gc avg (ms) / lua alloc per tick (KB) | 0.062 / 48.4 | 0.049 / 44.7 |
+| 20 000: script avg / p99 (ms) | 2.263 / 4.43 | **2.203 / 4.38** |
+| 20 000: gc avg (ms) / lua alloc per tick (KB) | 0.100 / 95.4 | 0.084 / 86.6 |
+| 20 000: mod heap alive (MB) | 249.8 | 260.1 |
+
+The script time falls by 3.6 % at the maintainer's size and 2.7 % at 20 000: under the 5 % of #59, built on the maintainer's call.
+The price is memory: the cached objects keep about 10 MB alive at 20 000 (2.6 MB at 5000, 0.15 MB at base), which the collector
+walks as well; its time still falls.
+
+## Round six (issue #115): the cost of each visit, the scheduler
+
+### An exclusive profile
+
+`bench --profile` times inclusive: a wrapped call's time contains its callees', and every wrapped call adds about 0.8 µs, which
+dominates functions of a few µs. For this round the wrapper was replaced (in the instrumented copy only, a scratchpad script) by
+one that keeps a stack: a wrapped callee stops its caller's timer, so each function gets its own time. The top of the list (µs of
+own time per call, wrapper overhead of the callees included):
+
+| | base | 20 000 |
+|---|---|---|
+| `Sched.run` (the queue's own work, 3 or 5 calls per tick) | 6.5 | 7.3 |
+| `Sched.at` / `Sched.slot` | 2.2 / 2.2 | 1.8 / 2.6 |
+| `interface_step` | 20.5 | 21.1 |
+| `insert_key` / `extract_key` | 10.7 / 7.5 | 11.8 / 15.0 |
+| `N.storable` (17 calls per tick at 20 000) | 5.2 | 4.6 |
+
+The scheduler's internals (`arrive`, `drain`, `compact`, `visit_one`, `list_of`) are each about 1 µs per call, many calls per
+tick. Two of their costs were garbage: `compact` made a new empty table at every drain of a list (9 drains per tick at base, 15 at
+20 000, most of the lists empty already) and every tick's list of due units was dropped after it came due.
+
+### Built (the same behaviour)
+
+* **The scheduler empties its lists in place** (`compact`) and keeps up to 64 emptied per-tick lists for the next ticks that need
+  one (`M.at`); outside `storage`, a list holds what it held before.
+* **`N.storable` reads an item's prototype once per name and load**: the prototype, its class, whether it spoils (a quality scales
+  the spoil time, so an item that does not spoil at normal quality spoils at none) and whether a stack of it can be damaged.
+  Before, every stack read `stack.prototype` and `get_spoil_ticks` (new objects at every call).
+* **`N.insert` and `N.extract_to` ask once per name (per key) whether the item exists** (`prototypes.item[name]` makes a new
+  object at every call; the key cache is bounded at 4096 keys).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput per kind of endpoint identical at every size.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1375 / 0.366 | **0.1335 / 0.353** |
+| 5000: script avg / p99 (ms) | 0.992 / 2.77 | **0.942 / 2.68** |
+| 5000: lua alloc per tick (KB) | 44.7 | 41.1 |
+| 20 000: script avg / p99 (ms) | 2.236 / 4.36 | **2.148 / 4.33** |
+| 20 000: ticks over 5 ms | 59 | 49 |
+| 20 000: lua alloc per tick (KB) / mod heap alive (MB) | 86.6 / 260.1 | 79.2 / 262.8 |
+
+−2.9 % at base, −5.0 % at 5000, −3.9 % at 20 000; built on the maintainer's call. The emptied lists keep their array part
+(about 2.7 MB more heap at 20 000, where the backlogs are long).
+
+
+### Part 2: the interface's slot walk, full storage buses, the allocation meter
+
+**The interface visit**, timers around its parts (3600 ticks):
+
+| part | base, µs per visit | 20 000, µs per visit |
+|---|---|---|
+| head (config, network, inventory) | 8.8 | 5.8 |
+| the rows (kept items, `N.extract_to`) | 16.8 | 17.2 |
+| the walk over the slots | 31.2 | 30.0 |
+| the sides | 7.4 | 8.1 |
+
+The walk runs in 77 % of the visits at 20 000 (something no row keeps lies in the interface). It reads every slot: 18 slots,
+of which 12 % hold a stack. Its time is the stacks it imports (`N.insert_stack`, 21.7 µs each at 20 000, 30 µs at base) and the empty slots
+(about 1 µs each: `inv[i]` and `valid_for_read`), 0.19 ms per tick at 20 000.
+
+* **The walk stops when it has seen every stack** (`count_empty_stacks` once per walk: the rest counts as free without
+  reading each slot). The operations limit is checked first at every slot, as before, so `rec.slot` and the free slots
+  are the same.
+* Reading a stack's quality only for names a row keeps saved nothing measurable: not built.
+
+**Full storage buses in the insert**: at 20 000 an insert called `put` 10.6 times for storage buses partitioned for the key;
+10.5 of them were marked full for it (lever 1 of #59). The test is made in the loop now, without the call (only storage buses
+are ever marked full, and `put` refused them at once): about 1.3 % at 20 000 on its own.
+
+**The allocation meter.** The benchmark's `lua alloc KB per tick` was the growth of the mod's heap over 300 ticks with the
+collector stopped. A probe mod shows that Factorio collects between ticks even then (`collectgarbage("isrunning")` false, the
+count falling every 10 ticks), so at a small heap the number was meaningless (−2.9 to 3.7 KB at base, and `bench --check`
+failed on it). The mod has a meter now (`Sched.metered`, remote `alloc_meter` of the I/O module, off in a game: one field read per
+handler): each of its tick handlers adds what its call allocated, the collector stopped inside the call. Two runs each: base
+3.416 / 3.416 KB per tick, 20 000 67.510 / 67.510. A version without the meter reports `heap_kb_per_tick`, which `bench --check`
+does not compare (against such a reference the metric is left out).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput per kind of endpoint and the scheduler's counters identical at every size.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1330 / 0.348 | 0.1314 / 0.345 |
+| base: gc avg (ms) | 0.0212 | 0.0196 |
+| 5000: script avg / p99 (ms) | 0.924 / 2.66 | 0.910 / 2.67 |
+| 20 000: script avg / p99 (ms) | 2.161 / 4.32 | **2.048 / 4.28** |
+
+−1.2 % at base, −1.6 % at 5000, −5.2 % at 20 000. A series of the same code before the meter: base 0.1352 → 0.1305 (−3.5 %), 5000
+−3.2 %, 20 000 −6.0 %; the gain at base is within what two series differ by. The allocation metric is not compared here (the
+reference has no meter); with the meter: base 3.4 KB per tick, 20 000 67.5.
+### Part 3: `reopen` after an extraction
+
+With the exclusive profile of the insert and extract path at 20 000, `reopen` cost 7 µs per call at 15 calls per tick (0.11 ms,
+about 5 % of the script time). An extraction that frees bytes of a cell walked every key the cell holds (up to 63) and moved
+back the three holder cursors of each that stood behind the cell (#46).
+
+* **The walk only when the cell had no free bytes before** (and no Equal Distribution Card): a cell with a free byte can take
+  more of every key it holds (a held key's room is at least a byte's items), so by the cursors' rule (the entries before a cursor
+  cannot take its key) no cursor of those keys stands behind it. The new-key position of its group (`first`) is set as before.
+  The runtime tests `ME holder lists test` (every kept list and cursor checked against a brute-force rebuild every 10 ticks, 5610
+  lists) and `ME holder cursor test` cover it. `reopen` at 20 000: 0.106 → 0.018 ms per tick.
+
+The circuit interface update (0.86 ms per update at 20 000) has no cheap exact lever: the list is built once per network and
+shared, the unfiltered section once per list; the cost is the engine's `section.filters` write (about 0.7 µs per signal), and
+writing single slots costs more (issue #5).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput, the scheduler's counters and the allocation (now measured by the meter on both sides) identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1312 / 0.344 | 0.1307 / 0.358 |
+| 5000: script avg / p99 (ms) | 0.916 / 2.65 | **0.875 / 2.63** |
+| 20 000: script avg / p99 (ms) | 2.048 / 4.27 | **1.948 / 4.10** |
+
+−0.4 % at base (cells there rarely run full), −4.5 % at 5000, −4.9 % at 20 000.
+
+### Part 4: the network of a visit by its unit
+
+A fresh exclusive profile after parts 1 to 3 has no single big item left at 20 000: many of 1 to 4 % each (the network look-up of
+every visit, the scheduler's internals, the cells' bookkeeping), the job step and the circuit update. `N.network_of(entity)` was
+called 43 times per tick at 20 000; each reads the entity's `valid` and `unit_number` from the engine, though the visit knows the
+unit and has checked the entity.
+
+* **`N.network_of_unit` / `N.active_of_unit`**: the visits of interfaces and buses (`interface_step`, `bus_step` get the unit
+  from the queue) and of the storage buses' item and fluid side look the network up by the unit. Other callers keep the
+  entity form.
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput, the scheduler's counters and the allocation identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1300 / 0.348 | **0.1268 / 0.332** |
+| 5000: script avg / p99 (ms) | 0.874 / 2.60 | 0.863 / 2.61 |
+| 20 000: script avg / p99 (ms) | 1.957 / 4.20 | 1.920 / 4.15 |
+
+−2.5 % at base, −1.2 % at 5000, −1.9 % at 20 000.
+
+### Part 5: bound engine methods
+
+A probe mod: every read of an engine object's method (`inv.get_item_count`, `fb.get_fluid_segment_id`, `entity.get_recipe`)
+makes a new bound method object, 88 bytes of garbage, and is most of a cheap call's time:
+
+| | µs | bytes |
+|---|---|---|
+| `inv.get_item_count()` | 0.28 | 88 |
+| the same method object kept, called | 0.04 | 0 |
+| kept in a table per object, looked up and called | 0.07 | 0 |
+| `entity.get_inventory(i)` | 0.68 | 144 |
+
+* **`N.bound(obj)`**: the methods of an engine object the caller keeps (a record's entity or target, `T.inventory`, `T.fluidbox`),
+  made once per object and load (weak keys, an ephemeron; methods only, a property read through it would be kept as it was).
+  Used in the hot paths: the storage bus read and its handlers (with one reused item spec), the interface's rows, walk and sides,
+  the buses' imports, exports, fluids and probes, the fluid storage bus's segment reads, `N.extract_to` into an inventory, and the job
+  steps (`get_recipe` of a lease's machine and of the targets, the machine's item counts and contents).
+* **A machine's input and output inventory once per load** in the job steps (the same rule as `T.inventory`).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput, provider crafts and the scheduler's counters identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1277 / 0.333 | **0.1251 / 0.327** |
+| base: lua alloc per tick (KB) / gc avg (ms) | 3.416 / 0.0199 | **2.094** / 0.0191 |
+| 5000: script avg (ms) / lua alloc per tick (KB) | 0.863 / 38.5 | 0.860 / 33.7 |
+| 20 000: script avg / p99 (ms) | 1.939 / 4.11 | **1.903 / 4.00** |
+| 20 000: ticks over 5 ms | 45 | 38 |
+| 20 000: lua alloc per tick (KB) | 70.1 | 55.8 |
+| mod heap alive: base / 5000 / 20 000 (MB) | 16.4 / 69.3 / 262.8 | 16.7 / 72.9 / 277.0 |
+
+−2.0 % at base (39 % less garbage), −0.4 % at 5000, −1.9 % at 20 000 (20 % less garbage). The price is memory: the tables of
+bound methods keep 0.2 MB alive at base, 3.5 MB at 5000 and 14 MB at 20 000 (reported by the check, not a failure); the collector's
+time did not rise.
+
+### Summary of round six
+
+| pull request | what | script avg base | script avg 20 000 |
+|---|---|---|---|
+| #117 | scheduler lists emptied in place, prototype reads once per name | −2.9 % | −3.9 % |
+| #118 | the interface walk stops after the last stack, full storage buses skipped inline, the allocation meter | −1.2 % | −5.2 % |
+| #119 | `reopen` walks a cell's keys only when it was full | −0.4 % | −4.9 % |
+| #120 | the network of a visit by its unit | −2.5 % | −1.9 % |
+| #121 | bound engine methods | −2.0 % (39 % less garbage) | −1.9 % (20 % less garbage) |
+
+Each row is its own `bench --check` series against the main of its day. From the first series to the last: base about 0.1375 →
+0.125 ms, 20 000 about 2.24 → 1.90 ms.
+
+Measured and not built:
+* Reading a stack's quality only for the names a row keeps (the interface walk): nothing measurable.
+* The circuit interface update: the engine's write.
+* Skipping a job's lease checks until the earliest finish: not exact; for the maintainer to decide.
+
+Left for issue #122:
+* job leases and circuit updates (both need a decision);
+* the memory alive;
+* the scheduler's internals;
+* `insert_key` / `extract_key` own time;
+* the remaining engine method calls;
+* the fluid side;
+* the big edits;
+* an exclusive-time option for `bench --profile`.
+
+
+## Round seven (issue #122): the two levers that change behaviour, the memory, the profiler
+
+The maintainer allowed two levers that are not exact. Both were built and measured; neither is kept.
+
+### Job leases looked at from their earliest finish: no gain
+
+A step looks at each lease's machine (its recipe, progress and input, about 5 µs). The experiment gave a lease the earliest tick
+its machine could be done (runs × the recipe's time ÷ the machine's crafting speed now, nine tenths of it). The step left the
+lease alone before that tick.
+
+`bench --check origin/main --sizes base,5000,20000`: green, but no gain:
+
+| | origin/main | experiment |
+|---|---|---|
+| base: script avg (ms) | 0.1269 | 0.1275 |
+| 5000: script avg (ms) | 0.858 | 0.848 |
+| 20 000: script avg (ms) | 1.908 | 1.927 |
+
+The provider crafts were identical. A job is stepped about every 100 ticks in the 20 000 scene (200 jobs, two steps per tick),
+and by then its machines are mostly done: the look is needed when it happens.
+
+The runtime test `ME crafter choice test` kept a case from the experiment (case 4): a player changes the recipe of a machine a
+job crafts on, and the job fails with the reason "recipe changed". No test covered that path before.
+
+### Circuit interface updates in sections of 100, a few per tick: slower
+
+An update of an interface with 1000 signals is one write of `section.filters`, about 0.86 ms at 20 000. The experiment changed it:
+- it wrote 100 signals per section, two sections per tick, the rest in the next ticks;
+- it did not hand a section the engine already held to the engine again;
+- the order of the writes depended on storage only, so a loaded game wrote at the same ticks.
+
+`bench --check`, 3 rounds (game closed). Throughput was identical; 4 regressions:
+
+| | origin/main | experiment |
+|---|---|---|
+| base: script avg (ms) | 0.1272 | 0.1257 |
+| 5000: script avg (ms) | 0.868 | **1.174** |
+| 20 000: script avg (ms) | 1.900 | **2.178** |
+| 20 000: ticks over 5 ms | 36 | 39 |
+
+The likely cause: each section's write makes the engine sum the interface's output again, all sections of it, so ten small writes
+cost about ten whole ones. One write of the whole list stays the cheapest. Signals that change less often (an interval that grows
+with the number of signals), or fewer signals per interface, would cost less, but the update would be staler: not tried.
+
+### Memory alive at 20 000: measured, no lever
+
+The mod's Lua heap after a full collection in the 20 000 scene: **216 MB** at the first tick after the load (the saved state,
+the modules' tables, the entity references) and **277 MB** at the end of the window. The 61 MB in between are the per-load
+caches and lookups that fill while the network runs; about 30 MB of them are the engine object caches of rounds five and six.
+
+A walk over `storage` (an experiment, not kept) counted tables, array and hash slots, entity references and string bytes. The
+estimate is about 130 MB of raw slots, more with Lua's power-of-two table sizes:
+
+| part of storage | estimate (MB) | what |
+|---|---|---|
+| `fork_me_net.nodes` | 73 | 80 000 ME nodes (cables mostly), 4 tables each: the node, its neighbours, its tile box, its position |
+| `fork_me_io.recs` | 32 | 20 000 interface and bus records |
+| `fork_me_net.nets` | 10 | the networks |
+| `fork_ae2` | 7 | providers, CPU blocks, maintainers, jobs |
+| strings | 9 | |
+
+At the maintainer's size the heap is 16.7 MB (3 MB of storage).
+
+The collector costs 0.06 ms per tick at 20 000 (3 %). Folding a node's box and position into its own fields would save perhaps
+20 to 30 MB (a migration of every saved node). The collector's time would fall by a few µs. Not built.
+
+## Round eight (issue #126): measured, nothing built
+
+The small items left after round seven were looked at with the exclusive profile (`bench --profile --exclusive`, #125) of the
+state after round seven (8a5acfc). Own time per call and per tick:
+
+| | base | 20 000 |
+|---|---|---|
+| script time per tick | 0.125 ms | 1.9 ms |
+| `interface_step` | 15 µs, 0.0095 ms | 16 µs × 13 = 0.207 ms |
+| `job_step` | – | 86 µs × 2 = 0.172 ms |
+| `insert_key` | 7.9 µs, 0.0059 ms | 6.9 µs × 22 = 0.153 ms |
+| circuit interface update | – | 830 µs × 0.17 = 0.138 ms |
+| `extract_key` | 5.1 µs, 0.0048 ms | 7.8 µs × 16 = 0.122 ms |
+| `io.visit` | 4.2 µs, 0.0054 ms | 4.3 µs × 24 = 0.104 ms |
+| scheduler (`arrive`, `drain`, `slot`, `at`, `run`) | 0.039 ms | 0.33 ms |
+| storage bus visit | 10 µs, 0.0112 ms | 8 µs × 8 = 0.066 ms |
+
+The profile is flat: no function above about a tenth of the script time, and the scheduler's own work, the biggest group, is
+spread over five functions of about 1 to 9 µs per call. (Each wrapped call adds about 0.5 µs of the wrapper's own cost, so the
+small functions read high: the numbers rank, they do not add up to the script time.)
+
+One entry that looked like a lever was not: `config_of` showed 5 µs and 0.43 KB per call in a 600-tick allocation profile at
+20 000. A counter showed that its slow path (reading the interface's filters, 18 engine calls) runs once per interface, 2000
+times in all, in the first window; the profile's window starts at tick 600 and holds the blocks' first visits. After that
+`config_of` returns `rec.config` (52 528 calls in the third window, none of them slow). A short allocation window therefore
+also measures the start: `--alloc --ticks 600` is good for the shape of the garbage, not for its rate (the allocation meter
+of #118 measures that, 300 ticks after the window).
+
+### Tried, not kept
+
+Three exact changes of the profile's hot spots were built and checked in turns (`bench --check origin/main
+--sizes base,5000,20000`, three rounds, game closed; green, throughput identical):
+* the storage bus's `plain()` memo keyed by quality then name (no string built per item per visit, 1 µs each), its `item_of(key)`
+  result memoised per key (it ran `parse_key`'s pattern matches at every handler call), and the key of a normal quality item
+  without a call;
+* `list_of` inlined in the scheduler's `arrive` and `drain` (134 calls per tick at 20 000).
+
+| | origin/main | experiment |
+|---|---|---|
+| base: script avg (ms) | 0.1257 ±0.0006 | 0.1231 ±0.0017 |
+| 5000: script avg (ms) | 0.8594 ±0.0015 | 0.8603 ±0.0048 |
+| 20 000: script avg (ms) | 1.915 ±0.007 | 1.902 ±0.015 |
+
+The differences are −2.1 %, +0.1 % and −0.7 %, inside the noise at 5000 and 20 000 and at its edge at base. A gain the
+measurement cannot tell from the noise is no reason for a cache that has to be kept right: not built.
+
+### Not built, and why
+
+* **ME nodes folded** (box and position into the node's fields): 20 to 30 MB at 20 000, a few µs of collector time, a migration
+  of every saved node.
+* **The fluid side** (`fluidbox[i]`, 312 bytes per read; a fluid bus step 5 µs, a fluid storage bus visit 7 µs): the fluid
+  work of both scenes is small (8 and 5 visits per tick at 20 000, 0.5 at base).
+* **The remaining engine method calls** (`start_lease` inserts, `probe_work`, `switch_recipe`, an export bus into a lab):
+  each under 1 µs per tick at 20 000.
+* **The big edits** (graph rebuild 3.1 s, burst remove of 1000 blocks 174 ms at 20 000): single events, not a cost per tick.
+
 
 ## The pane's slot signature (issue #75)
 
@@ -2426,3 +2873,41 @@ identical.
 | 5000: ticks over 5 ms | 8 | 8 |
 | 5000: storage bus latency max (s) | 1.733 | 1.733 |
 | 5000: burst build / remove (ms) | 75.5 / 98.8 | 72.2 / 95.8 |
+
+
+## The Acceleration Card in the buses (issue #110, part 2)
+
+`bus_step` multiplies the items of a visit by `rec.accel` (nil without cards: one `or`) and fills the cards a record wants (one
+field read); the storage bus's card code moved into `scripts/fork-me-cardslots.lua` without a change of its hot paths.
+`bench --check origin/claude/acceleration-card --sizes base,5000` (part 1 as the reference: the change of this part alone), three
+rounds in turns, game client and browser running (a noisy run: the 5000 scene's script average varied from 1.05 to 1.39 ms in both
+versions between rounds): **green, regressions 0**; throughput identical.
+
+| | part 1 | part 2 |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1567 / 0.427 | 0.1529 / 0.423 |
+| 5000: script avg / p99 (ms) | 1.320 / 4.54 | 1.385 / 4.88 |
+| 5000: ticks over 5 ms | 24 | 34 |
+| 5000: storage bus latency max (s) | 1.733 | 1.733 |
+
+
+## The terminal and the level maintainer take their power from the network (issue #128)
+
+The visit of a level maintainer reads the network (`N.network_of` and `N.usable`, as `active_of` did) and no longer its own entity's
+`status`; a maintainer whose network does not work is parked with `N.wait_usable`; `N.usable` brings the controller's power
+draw up to date before its per-tick cache (one field read); the slow step sets the screen of every terminal (one comparison each
+once a second, `screens` in `scripts/fork-me-network.lua`; the scene has 7 terminals). `bench --check 34254b2 --sizes base`, three
+rounds in turns (the maintainer's size; game client running): **green, regressions 0**, throughput identical. The same check on
+the four pull requests together (`claude/me-tasks-all`) is green as well (script average 0.1565 / 0.1599 ms, inside the noise).
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1558 / 0.465 | 0.1520 / 0.434 |
+| base: ticks over 5 ms | 0 | 0 |
+| base: storage bus latency max (s) | 1.267 | 1.267 |
+| base: Lua allocation (KB per tick) | 2.094 | 2.131 |
+| base: first tick after the load (ms) | 1.02 | 1.77 |
+
+The 0.04 KB per tick more are the screens' sorted list once a second. The first tick after a load was 1.02 and 1.77 ms: the check
+calls both inside the noise of that column (the runs' spread was 0.5 ms); the screens are not made in the load but at the first slow
+step.

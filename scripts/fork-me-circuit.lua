@@ -186,15 +186,20 @@ local function maintainer_step(rec, budget)
 	local e = rec.entity
 	rec.stock, rec.target = nil, nil
 	if not rec.key then rec.status = "no-target" return end
-	if e.status == defines.entity_status.no_power then rec.status = "no-power" return end
 	--- only while a condition is switched on: a freshly wired lamp reads disabled until its next circuit update
 	local cb = e.get_control_behavior()
 	if cb and (cb.circuit_enable_disable or cb.connect_to_logistic_network) and cb.disabled then
 		rec.status = "disabled"
 		return
 	end
-	local net = network_of(e)
+	--- issue #128: the maintainer has no power of its own; it works when its network does (the ME Controller draws its power)
+	local net = N.network_of(e)
 	if not net then rec.status = "no-network" return end
+	local ok, why = N.usable(net)
+	if not ok then
+		rec.status = why == "no-power" and "no-power" or "no-network"
+		return
+	end
 	local target = target_of(rec)
 	local stock = stock_of(net, rec.key)
 	rec.stock, rec.target = stock, target
@@ -244,7 +249,16 @@ function M.get_maintainer(entity)
 	local s = storage.fork_ae2
 	local rec = entity and entity.valid and s and s.maintainers and s.maintainers[entity.unit_number]
 	if not rec then return nil end
-	return { key = rec.key, amount = rec.amount, circuit = rec.circuit, status = rec.status, job = rec.job,
+	--- issue #128: a parked maintainer is not visited when its network loses its power, so the status says it from the network
+	local status = rec.status
+	local net = N.network_of(entity)
+	if not net then
+		status = "no-network"
+	else
+		local ok, why = N.usable(net)
+		if not ok then status = why == "no-power" and "no-power" or "no-network" end
+	end
+	return { key = rec.key, amount = rec.amount, circuit = rec.circuit, status = status, job = rec.job,
 		stock = rec.stock, target = rec.target, missing = rec.missing }
 end
 
@@ -493,8 +507,9 @@ local function circuit_of(unit) return storage.fork_ae2.circuits[unit] end
 
 --- one check, then the next one: soon while something is under way (busy). A stocked maintainer with a fixed
 --- target is parked (issue #38): checked again only when its key is taken below the target (N.wait_below), its job
---- ends or its settings change; one without a key waits for its settings. The others (a circuit-bound target, no
---- power, no network, disabled) are checked again after MAINTAINER_IDLE ticks (the probe list: the check is cheap).
+--- ends or its settings change; one without a key waits for its settings; one whose network does not work (issue #128: no
+--- controller, a conflict, no power) for the network (N.wait_usable). The others (a circuit-bound target, disabled) are checked
+--- again after MAINTAINER_IDLE ticks (the probe list: the check is cheap).
 local function visit_maintainer(rec, unit)
 	local s = storage.fork_ae2
 	if not rec.entity.valid then drop_maintainer(s, unit) return end
@@ -502,7 +517,9 @@ local function visit_maintainer(rec, unit)
 	maintainer_step(rec, budget)
 	local now = game.tick
 	local st = rec.status
-	if fallback and st ~= "stocked" and st ~= "no-target" then Sched.missed("maintainer") end   -- (its wake was missed)
+	if fallback and st ~= "stocked" and st ~= "no-target" and st ~= "no-power" and st ~= "no-network" then
+		Sched.missed("maintainer")                               -- (its wake was missed)
+	end
 	if st == "waiting" then
 		Sched.at(s.mq, rec, unit, now + 1)                       -- no start left in this tick
 		return 1
@@ -515,6 +532,15 @@ local function visit_maintainer(rec, unit)
 	elseif st == "no-target" then
 		Sched.park(s.mq, rec, unit, "no-target")
 		return 0
+	elseif st == "no-power" or st == "no-network" then
+		--- issue #128: its network does not work (no controller, a conflict, no power): parked until the network wakes it
+		--- (N.wait_usable: a change of the graph, or the slow step's look at the controller's power)
+		local net = N.network_of(rec.entity)
+		if net then
+			N.wait_usable(net, "maint", unit)
+			Sched.park(s.mq, rec, unit, st)
+			return 0
+		end
 	end
 	if st == "stocked" and rec.target then
 		local net = network_of(rec.entity)

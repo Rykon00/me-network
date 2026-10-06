@@ -131,8 +131,8 @@ return function(H)
 		me_drive(s, fails, what, bx + 8.5, by - 0.5, { ["iron-plate"] = 400, ["iron-stick"] = 800 })
 		me_place(s, fails, what, "me-terminal", bx + 9.5, by - 0.5)
 		cable_row(s, fails, bx + 10, bx + 22, by - 1)
-		local provider = me_place(s, fails, what, "me-pattern-provider", bx + 12.5, by - 1.5)
-		local m = me_place(s, fails, what, "me-molecular-assembler", bx + 12.5, by - 3.5)
+		local provider = me_place(s, fails, what, "me-pattern-provider", bx + 11.5, by - 1.5)        -- (inside the substation's supply: the assembler is one tile now)
+		local m = me_place(s, fails, what, "me-molecular-assembler", bx + 11.5, by - 2.5)
 		if m then
 			m.force.recipes[GEAR_RECIPE].enabled = true
 			m.set_recipe(GEAR_RECIPE)
@@ -373,7 +373,7 @@ return function(H)
 	case("target: changes its recipe", 15, function(s, fails, bx, by)
 		local what = "the target changes its recipe"
 		local e = me_place(s, fails, what, "me-export-bus", bx + 2.5, by + 0.5, NORTH)
-		local m = me_place(s, fails, what, "me-molecular-assembler", bx + 2.5, by - 1.5)
+		local m = me_place(s, fails, what, "me-molecular-assembler", bx + 2.5, by - 0.5)
 		local with, without
 		if m then with, without = two_recipes(m) end
 		storage.parking_recipes = { with = with, without = without }
@@ -387,8 +387,8 @@ return function(H)
 		if e then remote.call(IO, "set_bus_filters", e, { COPPER }) end
 	end, {
 		wait("the export bus is blocked: the machine takes no copper", 250, function(c, x) local r = sch(find_e(x)) return r and r.block == "full" end),
-		act("the machine gets a recipe that uses copper", function(c, x) x.find("me-molecular-assembler", 2.5, -1.5).set_recipe(storage.parking_recipes.with) end),
-		wait("the export bus puts copper into the machine", 450, function(c, x) return x.find("me-molecular-assembler", 2.5, -1.5).get_item_count(COPPER) > 0 end),
+		act("the machine gets a recipe that uses copper", function(c, x) x.find("me-molecular-assembler", 2.5, -0.5).set_recipe(storage.parking_recipes.with) end),
+		wait("the export bus puts copper into the machine", 450, function(c, x) return x.find("me-molecular-assembler", 2.5, -0.5).get_item_count(COPPER) > 0 end),
 	})
 
 	--------------------------------------------------------------------------------------------------------------------
@@ -535,6 +535,7 @@ return function(H)
 					local e = x.find("me-export-bus", 2.5, 0.5)
 					st.problems[#st.problems + 1] = k.name .. ": " .. step.what .. " (step " .. c.i .. ") did not happen within " .. step.timeout
 						.. " ticks " .. line(sch(e) or msch(x.find("me-level-maintainer", 11.5, 1.5)) or {})
+						.. (c.job and (" job " .. line(remote.call(AC, "job", c.job))) or "")
 					c.done = true
 				end
 			end

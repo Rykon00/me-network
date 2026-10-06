@@ -15,6 +15,7 @@ local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = 
 
 data:extend({ { type = "item-subgroup", name = "fork-me-cards", group = data.raw["item-subgroup"]["fork-me-network"].group,
 	order = "b-me-d" } })
+data:extend({ { type = "module-category", name = ME.ACCELERATION } })      -- issue #110
 
 --- name, order, recipe; `kind`: what the card does at runtime (nil: a component)
 local CARDS = {
@@ -30,12 +31,21 @@ local CARDS = {
 	  ingredients = I{ "me-advanced-card", 1, "decider-combinator", 1 } },
 	{ name = "me-equal-distribution-card", order = "g", kind = "equal",
 	  ingredients = I{ "me-advanced-card", 1, "advanced-circuit", 1 } },
+	--- issue #110: AE2's Acceleration Card (Upgrades.SPEED), a module so that the ME Molecular Assembler's module slots show
+	--- it (the game draws them): +80 % crafting speed and +80 % power per card, five cards 5 times as fast at 5 times the
+	--- power, which is AE2's assembler at its five cards (progress 50 of 10, power 5.0 times). The first cards are stronger
+	--- in the game than AE2's table (1.3, 1.7, 2.0, 2.5, 5.0 times); a module's effect is the same for every card.
+	{ name = "me-acceleration-card", order = "h", kind = "speed", fields = {
+		category = ME.ACCELERATION, tier = 1, effect = { speed = 0.8, consumption = 0.8 } },
+	  ingredients = I{ "me-advanced-card", 1, "processing-unit", 1 } },
 }
 
 local kinds = {}
 local recipes = {}
 for _, c in ipairs(CARDS) do
 	ME.add_item{
+		type = c.fields and "module" or nil,
+		fields = c.fields,
 		name = c.name,
 		icon = ICON_FORK .. c.name .. ".png",
 		subgroup = "fork-me-cards",
@@ -56,6 +66,11 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	storage_bus = { slots = 5, limits = { capacity = 5, fuzzy = 1, inverter = 1, void = 1 }, filters = 18, per_capacity = 9 },
 	item_cell = { slots = 4, limits = { fuzzy = 1, inverter = 1, equal = 1, void = 1 } },
 	fluid_cell = { slots = 3, limits = { inverter = 1, equal = 1, void = 1 } },
+	--- issue #110: the ME Import Bus and Export Bus take up to 4 Acceleration Cards (AE2's upgrade slots of the buses: its speed
+	--- cards, PartImportBus / PartExportBus); `speed`: by the number of cards, the factor on the items per second of the map
+	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation)
+	bus = { slots = 4, limits = { speed = 4 } },
+	speed = { 1, 8, 32, 64, 96 },
 }
 
 --- The ME Cell Workbench (part 3 of issue #17): one cell, its partition and its card slots. AE2's workbench needs

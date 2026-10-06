@@ -496,11 +496,12 @@ RUNTIME_TESTS = (
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
-    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("REFUSED", "ME import bus with refused stacks test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("REFILL", "ME storage bus refill test"),
+    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("REFILL", "ME storage bus refill test"),
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"),
     ("HOLDERLISTS", "ME holder lists test"),
+    ("CRAFTER", "ME crafter choice test"),
     ("HOLDERS", "ME holder cursor test"),
     ("GRAPH", "ME graph removal test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),
@@ -695,6 +696,23 @@ def old_tree(ref):
     return dest
 
 
+def bumped_tree():
+    """the working copy as a plain folder whose version is one patch up, .devcheck/new-bumped: loading a save of the old version
+    with it is an update as the game does it (Factorio runs on_configuration_changed; with the version of the working copy
+    unchanged it does not)"""
+    dest = WORK / "new-bumped"
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(ROOT, dest, ignore=shutil.ignore_patterns(".devcheck", ".git", "dist", "__pycache__"))
+    f = dest / "info.json"
+    info = json.loads(f.read_text(encoding="utf-8"))
+    v = info["version"].split(".")
+    v[-1] = str(int(v[-1]) + 1)
+    info["version"] = ".".join(v)
+    f.write_text(json.dumps(info, indent=2), encoding="utf-8")
+    return dest
+
+
 def migrate(a):
     old = old_tree(a.from_ref)
     prepare_mods(mod_dir=old, with_migrate=True)
@@ -705,15 +723,18 @@ def migrate(a):
         return 1
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
     print(f"old save (0.1.0: every old fluid block; 0.2.0 and later: every kind of block): {setup.group(1) if setup else 'no result'}")
-    prepare_mods(with_migrate=True)
+    prepare_mods(mod_dir=bumped_tree() if a.bump else None, with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
-    print(f"old save loaded with the working copy: {'ok, ' + ran.group(0) if ran else 'FAILED'}")
+    print(f"old save loaded with the working copy{' (version one patch up: an update, on_configuration_changed runs)' if a.bump else ''}: {'ok, ' + ran.group(0) if ran else 'FAILED'}")
     for line in re.findall(r"FORK-ME-MIGRATE: (.*)", log):
         print("  migration: " + line)
     unified = re.search(r"DEVCHECK-MIGRATE-UNIFIED (.*)", log)
     fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
+    recover = re.search(r"DEVCHECK-MIGRATE-RECOVER (.*)", log)
     print(f"the blocks after the update: {unified.group(1) if unified else 'no result'}")
+    if recover:
+        print(f"the job of the old save, assembler moved (issue #131): {recover.group(1)}")
     print(f"the fluid after the I/O steps: {fluids.group(1) if fluids else 'no result'}")
     fails = re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log)
     for f in fails:
@@ -721,7 +742,7 @@ def migrate(a):
     if not ran:
         print(load_errors(log) or "")
     ok = ran and setup and setup.group(1).startswith("ok") and unified and unified.group(1).startswith("ok") \
-        and fluids and fluids.group(1).startswith("ok") and not fails
+        and fluids and fluids.group(1).startswith("ok") and (not recover or recover.group(1).startswith("ok")) and not fails
     print("\nRESULT: " + ("OK" if ok else "PROBLEMS FOUND"))
     return 0 if ok else 1
 
@@ -1067,6 +1088,7 @@ def bench_config(a, scene, size, variant, profile):
     cfg = {"scene": scene, "size": size, "warmup": BENCH_WARMUP, "window": window,
            "latency": scene == "me" and not profile and not variant.get("noent") and not variant.get("long"),
            "profile": profile, "alloc": bool(profile and getattr(a, "alloc", False)), "idle": bool(variant.get("idle")), "networks": variant.get("networks", 1),
+           "exclusive": bool(profile and getattr(a, "exclusive", False)),
            "noent": bool(variant.get("noent")), "base": bool(variant.get("base")),
            "burst": 0 if (variant.get("long") or variant.get("noent") or variant.get("base") or scene != "me") else a.burst,
            "slice": (SLICE_TICKS if window >= 2 * SLICE_TICKS else max(300, window // 2 // 300 * 300)) if variant.get("long") else None,
@@ -1275,7 +1297,8 @@ def bench(a):
         return compare_plans(a)
     sizes = parse_sizes(a.sizes)
     results = {"factorio": (factorio("--version").splitlines() or ["?"])[0], "scenes": [], "profiles": [],
-               "window": a.ticks, "ref": a.from_ref or "working copy", "gregtorio": a.with_gregtorio}
+               "window": a.ticks, "ref": a.from_ref or "working copy", "gregtorio": a.with_gregtorio,
+               "exclusive": bool(getattr(a, "exclusive", False))}
     a.old_dir = old_tree(a.from_ref) if a.from_ref else None
     print("mod:", results["ref"])
     print(results["factorio"])
@@ -1486,7 +1509,8 @@ def print_bench(results):
                       f"gc {fmt(g.get('avg'))}, heap {fmt(sl.get('memory_kb'), 0)} kB, backlogs io {bl.get('io')} sb {bl.get('storage_bus')} "
                       f"fsb {bl.get('fluid_storage_bus')} maint {bl.get('maintainer')} circ {bl.get('circuit')}")
     for p in results["profiles"]:
-        print(f"\nprofile, size {p['size']} (inclusive ms per tick of the window, calls per tick, us per call; "
+        kind = "exclusive (own time; a callee's wrapper falls on its caller)" if results.get("exclusive") else "inclusive"
+        print(f"\nprofile, size {p['size']} ({kind} ms per tick of the window, calls per tick, us per call; "
               f"wrapper overhead {fmt(p.get('overhead_us'), 2)} us per call):")
         n_ticks = results["window"]
         for name, calls, ms in sorted(p.get("profile", []), key=lambda x: -x[2]):
@@ -1524,6 +1548,8 @@ CHECK_METRICS = [
     ("io busy interval p99 ticks", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("full", {}).get("p99"), True, 0.02, False),
     ("io starved arrivals", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("starved"), True, 0.10),
     ("io starved, steady part", lambda r: ((r.get("service") or {}).get("io_steady") or {}).get("starved"), True, 0.10),
+    # issue #115: the mod's meter; a version without it reports the heap's growth (heap_kb_per_tick), which Factorio's
+    # collection between ticks makes meaningless at small sizes: not compared
     ("lua alloc KB per tick", lambda r: (r.get("alloc") or {}).get("kb_per_tick"), True, 0.05),
     ("mod heap alive kB", lambda r: (r.get("service") or {}).get("live_kb"), True, 0.05, False),
     ("io backlog max", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("backlog_max"), True, 0.02),
@@ -1628,6 +1654,10 @@ def main():
             p.add_argument("--no-saveload", action="store_true", help="skip the save-and-load half (the server run)")
     p = sub.add_parser("migrate")
     p.add_argument("--from-ref", default="v0.1.0", help="the git tag or commit of the old version (default v0.1.0)")
+    p.add_argument("--bump", action="store_true",
+                   help="load the save with the working copy as a version one patch up (a copy in .devcheck/new-bumped): Factorio runs "
+                        "on_configuration_changed, as it does when a player updates the mod (without it the version number is the "
+                        "same and the migrations of the mod do not run: issue #131 checks the old save both ways)")
     p.add_argument("--ticks", type=int, default=300)
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p = sub.add_parser("bench")
@@ -1636,7 +1666,8 @@ def main():
     p.add_argument("--ticks", type=int, help="the measured window in ticks, a multiple of 600 (default 3600; --check at 20 000 and more: %d, issue #56)" % CHECK_LONG_TICKS)
     p.add_argument("--reference", action="store_true", help="also the native scenes: inserters and logistic robots")
     p.add_argument("--profile", metavar="SIZES", help="also profile these sizes with an instrumented copy (e.g. 1000,5000)")
-    p.add_argument("--alloc", action="store_true", help="with --profile: also the memory each function allocates (the collector is stopped in the window: use a short --ticks, e.g. 600)")
+    p.add_argument("--alloc", action="store_true", help="with --profile: also the memory each function allocates, measured inside each call (the collector is stopped in the window: use a short --ticks, e.g. 600)")
+    p.add_argument("--exclusive", action="store_true", help="with --profile: each function's own time (and allocation), its wrapped callees' left out (issue #122): small functions are no longer hidden in their callers' totals")
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p.add_argument("--from-ref", help="benchmark this git tag or commit instead of the working copy (the scenes and the "
                    "harness stay the working copy's)")

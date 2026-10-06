@@ -36,7 +36,7 @@ return function(H)
 		cable_row(s, fails, X + 10, X + 60, Y - 1)
 		for _, mx in pairs({ 30, 36 }) do
 			me_place(s, fails, what, "me-pattern-provider", X + mx + 0.5, Y - 1.5)
-			local m = me_place(s, fails, what, "me-molecular-assembler", X + mx + 0.5, Y - 3.5)
+			local m = me_place(s, fails, what, "me-molecular-assembler", X + mx + 0.5, Y - 2.5)
 			if m then
 				m.force.recipes[GEAR_RECIPE].enabled = true
 				m.set_recipe(GEAR_RECIPE)
@@ -160,6 +160,13 @@ return function(H)
 		if st.phase == "two" then
 			local xa, xb = job(st.ja), job(st.jb)
 			if xa.leases and xb.leases and xa.leases > 0 and xb.leases > 0 then st.overlap = true end
+			--- issue #140: the monitor shows what job B still has to make (20 gears, one per craft): the amount less the finished
+			--- crafts, whenever it is looked at (a job whose machines make everything in one batch jumps from 20 to nothing)
+			local mon = remote.call(AC, "monitor", find("me-crafting-monitor", 18, 1))
+			if mon and tonumber(mon.text) then
+				expect(tonumber(mon.text) == 20 - xb.done, "the monitor shows " .. mon.text .. " with " .. xb.done .. " of 20 crafts done")
+				if xb.done > 0 and xb.done < 20 then st.mon_counted = (st.mon_counted or 0) + 1 end
+			end
 			local function over(j) return j.status == "done" or j.status == "failed" or j.status == "cancelled" end
 			if not (over(xa) and over(xb)) then
 				if game.tick > st.tick + 900 then problems[#problems + 1] = "the two jobs did not end: " .. line({ xa.status, xb.status }) return finish() end
@@ -168,6 +175,8 @@ return function(H)
 			expect(xa.status == "done" and xb.status == "done", "the two jobs ended as " .. xa.status .. ", " .. xb.status)
 			expect(st.overlap, "the two jobs never had a machine crafting at the same time")
 			expect(remote.call(AC, "monitor", find("me-crafting-monitor", 18, 1)) == nil, "the monitor still shows the ended job")
+			--- (vanilla: the job is part done for a while; with Gregtorio its fast machines make all 20 in one batch)
+			expect(script.active_mods["gregtorio-continued"] or (st.mon_counted or 0) >= 1, "the monitor was never looked at while the job was part done")
 			expect(count(GEAR) == 30, "gears after the two jobs: " .. count(GEAR))
 			conserved("after the two jobs")
 			--- a job that only B can take (300 gears: 1524 bytes)

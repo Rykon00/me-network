@@ -22,6 +22,8 @@ local fork_ae2 = require("scripts.fork-me-autocraft")
 local fork_fluids = require("scripts.fork-me-fluids")
 --- level maintainer and circuit interface
 local fork_circuit = require("scripts.fork-me-circuit")
+--- the ME Pattern Terminal: the encoding window and its two slots (issue #130)
+local fork_pt = require("scripts.fork-me-patternterm")
 --- the windows of the ME blocks (after the modules whose functions they call)
 require("scripts.fork-me-windows")
 --- a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12)
@@ -49,6 +51,7 @@ local function on_built(entity, tags, event)
 	fork_ae2.on_built(entity, tags)
 	fork_circuit.on_built(entity, tags)
 	fork_bench.on_built(entity)
+	fork_pt.on_built(entity)
 end
 
 --- built by players and robots, by other scripts and on space platforms
@@ -69,6 +72,7 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 	fork_ae2.on_built(event.destination, nil, event.source)
 	fork_circuit.on_built(event.destination, nil, event.source)
 	fork_bench.on_built(event.destination)                     -- (a cloned workbench is empty: its cell is an item)
+	fork_pt.on_built(event.destination)                        -- (a cloned pattern terminal has empty slots)
 end)
 
 --- the priority of an ME Pattern Provider (its patterns travel in blueprints, see fork-me-autocraft.lua) and the
@@ -103,10 +107,11 @@ for _, t in pairs({ "simple-entity-with-force", "storage-tank", "lamp", "electri
 end
 local function on_mined(event)
 	fork_fluids.on_mined_event(event)
-	fork_io.on_removed(event.entity, true)
+	fork_io.on_removed(event.entity, event.buffer or true)      -- (issue #110: a bus's cards go into the buffer)
 	fork_sbus.on_removed(event.entity, event.buffer)
 	fork_ae2.on_removed(event.entity, event.buffer)
 	fork_bench.on_removed(event.entity, event.buffer)
+	fork_pt.on_removed(event.entity, event.buffer)          -- (issue #130: its two slots come along)
 	fork_net.on_removed(event.entity, event.buffer)
 end
 for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
@@ -117,6 +122,7 @@ local function on_destroyed(event)
 	fork_sbus.on_removed(event.entity)
 	fork_ae2.on_removed(event.entity, nil)
 	fork_bench.on_removed(event.entity, nil)
+	fork_pt.on_removed(event.entity, nil)                   -- (spilled where it stood)
 	fork_net.on_removed(event.entity, nil)
 end
 script.on_event(defines.events.on_entity_died, on_destroyed, REMOVED_FILTER)
@@ -125,14 +131,14 @@ script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILT
 --- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
 --- interfaces and buses, storage buses, crafting jobs, provider rescans, level maintainers and circuit interfaces.
 --- The terminal's 60 tick step stays (windows, drive lights, the sweep).
-script.on_event(defines.events.on_tick, function(event)
-	local tick = event.tick
+local function on_tick(tick)
 	sched.mark(tick)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ae2.on_tick(tick)
 	fork_me.on_tick(tick)
-end)
+end
+script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
 
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
 	if event.setting_type == "runtime-global" then sched.on_setting_changed() end

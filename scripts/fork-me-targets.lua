@@ -64,4 +64,30 @@ function M.has_fluid_boxes(entity)
 	return v
 end
 
+--- Issue #59, levers 4 and 5: an entity's LuaFluidBox and storage inventory, made once per load (an entity's `fluidbox`
+--- and `get_inventory` make a new object at every call: 56 and 144 bytes of garbage). Keyed by the entity object the
+--- caller keeps in its record (weak: an entity no longer kept leaves); an object that turned invalid is made anew.
+--- Nothing is saved.
+local fluidboxes = setmetatable({}, { __mode = "k" })
+function M.fluidbox(entity)
+	local fb = fluidboxes[entity]
+	if not (fb and fb.valid) then
+		fb = entity.fluidbox
+		fluidboxes[entity] = fb
+	end
+	return fb
+end
+
+local inventories = setmetatable({}, { __mode = "k" })
+local inventory_index = setmetatable({}, { __mode = "k" })
+--- the inventory `index` of the entity (nil when it has none)
+function M.inventory(entity, index)
+	local inv = inventories[entity]
+	if not (inv and inventory_index[entity] == index and inv.valid) then
+		inv = entity.get_inventory(index)
+		inventories[entity], inventory_index[entity] = inv, index
+	end
+	return inv
+end
+
 return M

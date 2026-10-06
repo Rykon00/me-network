@@ -73,6 +73,7 @@ end
 --------------------------------------------------------------------------------
 
 local NET, TERM, IO = "gregtorio-me-network", "gregtorio-me-terminal", "gregtorio-me-io"
+local PT = "gregtorio-me-pattern-terminal"          -- issue #130: the ME Pattern Terminal (it was the terminal's Patterns tab)
 local GX, GY = 200, 100                                 -- graph test
 local PX, PY = 235, 100                                 -- power test (no pole of the graph test reaches it)
 local CX, CY = 200, 125                                 -- cells, terminal and import/export test
@@ -126,7 +127,7 @@ function setup_me_network(s)
 	me_place(s, fails, "cells", "me-export-bus", CX + 11.5, CY + 0.5, { direction = defines.direction.south })
 	me_place(s, fails, "cells", "iron-chest", CX + 8.5, CY + 1.5)
 	me_place(s, fails, "cells", "iron-chest", CX + 9.5, CY + 1.5)
-	local m = me_place(s, fails, "cells", "me-molecular-assembler", CX + 11.5, CY + 2.5)
+	local m = me_place(s, fails, "cells", "me-molecular-assembler", CX + 11.5, CY + 1.5)
 	if m then
 		m.force.recipes["iron-gear-crafting-table"].enabled = true
 		m.set_recipe("iron-gear-crafting-table")
@@ -144,7 +145,7 @@ local function me_report(key, name, problems, note)
 end
 
 --- issue #80: a provider gets encoded patterns the way a player gives them: a blank pattern (made by script) is
---- encoded with the terminal's function and put into the provider's next free slot. `defs`: patterns as data
+--- encoded onto the two slots of a stand-in for a pattern terminal (PT encode_def) and put into the provider's next free slot. `defs`: patterns as data
 --- ({ kind = "crafting", recipe } or { kind = "processing", inputs, outputs }). Returns the number put in.
 local AC = "gregtorio-me-autocraft"
 function give_patterns(provider, defs, fails)
@@ -152,7 +153,7 @@ function give_patterns(provider, defs, fails)
 	local n = 0
 	for _, def in ipairs(defs) do
 		inv.insert{ name = "me-blank-pattern", count = 1 }
-		local where, why = remote.call(TERM, "encode_def", false, inv, false, def)
+		local where, why = remote.call(PT, "encode_def", inv, nil, def)
 		local stack = inv.find_item_stack("me-encoded-pattern")
 		if where and stack and remote.call(AC, "insert_pattern", provider, stack) then
 			n = n + 1
@@ -365,7 +366,7 @@ function me_cells_test()
 	local t, iface = find("me-terminal", 10.5, -0.5), find("me-network-interface", 11.5, -0.5)
 	local ib, eb, eb2 = find("me-import-bus", 8.5, 0.5), find("me-export-bus", 9.5, 0.5), find("me-export-bus", 11.5, 0.5)
 	local ichest, echest = find("iron-chest", 8.5, 1.5), find("iron-chest", 9.5, 1.5)
-	local mol = find("me-molecular-assembler", 11.5, 2.5)
+	local mol = find("me-molecular-assembler", 11.5, 1.5)
 	local function count(name, q) return remote.call(NET, "count", t, name, q) end
 	local function near(a, b) return a == b end
 	if not st then
@@ -625,7 +626,7 @@ function me_io_test()
 	local t, iface = find("me-terminal", 10.5, -0.5), find("me-network-interface", 11.5, -0.5)
 	local ib, eb, eb2 = find("me-import-bus", 8.5, 0.5), find("me-export-bus", 9.5, 0.5), find("me-export-bus", 11.5, 0.5)
 	local ichest, echest = find("iron-chest", 8.5, 1.5), find("iron-chest", 9.5, 1.5)
-	local mol = find("me-molecular-assembler", 11.5, 2.5)
+	local mol = find("me-molecular-assembler", 11.5, 1.5)
 	local function count(name) return remote.call(NET, "count", t, name) end
 	local size = prototypes.item["iron-plate"].stack_size
 	--- interface (R3 config): one stack of iron plates kept in it, copper put in is imported, a spoiling item stays
@@ -736,6 +737,10 @@ lab86 = require("lab")({ me_place = me_place, power = power, me_report = me_repo
 damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
 --- me-network issue #85: an import bus with only refused stacks (refused.lua)
 refused85 = require("refused")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #110: the Acceleration Card in the ME Molecular Assembler's module slots (accel.lua)
+accel110 = require("accel")({ me_place = me_place, me_report = me_report })
+--- me-network issue #110, part 2: the Acceleration Cards of the import and export bus (busaccel.lua)
+busaccel110 = require("busaccel")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #50: kept plans (plans.lua)
 plans50 = require("plans")({ me_place = me_place, me_report = me_report })
 --- me-network issue #50, lever 6: the scan of the pattern providers (scan.lua)
@@ -744,9 +749,19 @@ scan50 = require("scan")({ me_place = me_place, me_report = me_report })
 entries50 = require("entries")({ me_place = me_place, me_report = me_report })
 --- me-network issue #59: the storage engine's kept holder lists (holderlists.lua)
 holderlists59 = require("holderlists")({ me_place = me_place, me_report = me_report })
+--- me-network issue #59, lever 3: the machine a crafting job step takes (crafter.lua)
+crafter59 = require("crafter")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #76: what can be stored (storable.lua)
 storable76 = require("storable")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
+netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
+walkable129 = require("walkable")({ me_place = me_place, me_report = me_report })
+--- me-network issue #130: the ME Pattern Terminal (patternterm.lua)
+patternterm130 = require("patternterm")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #131: the ME Molecular Assembler is one tile, four of them around one provider (assembler.lua)
+assembler131 = require("assembler")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
 cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
@@ -783,7 +798,13 @@ local function tests_running()
 	cards17.running(check)
 	bench17.running(check)
 	cpus6.running(check)
+	patternterm130.running(check)
+	netpower128.running(check)
+	walkable129.running(check)
+	assembler131.running(check)
 	parking38.running(check)
+	busaccel110.running(check)
+	accel110.running(check)
 	damaged84.running(check)
 	refused85.running(check)
 	lab86.running(check)
@@ -794,6 +815,7 @@ local function tests_running()
 	scan50.running(check)
 	entries50.running(check)
 	holderlists59.running(check)
+	crafter59.running(check)
 	holders43.running(check)
 	storable76.running(check)
 	graph43.running(check)
@@ -840,12 +862,12 @@ function setup_autocraft_test(s)
 	local cpu = place("me-crafting-cpu", 10, AC_Y)
 	local drive = me_drive(s, fails, "autocraft", 8.5, AC_Y + 6.5,
 		{ ["raw-iron"] = 20, ["iron-plate"] = AC_PLATES, ["iron-stick"] = AC_STICKS })
-	place("me-molecular-assembler", 14.5, AC_Y + 0.5, "iron-gear-crafting-table")
-	place("me-molecular-assembler", 20.5, AC_Y + 0.5, AC_ITEM)
+	place("me-molecular-assembler", 15.5, AC_Y + 0.5, "iron-gear-crafting-table")
+	place("me-molecular-assembler", 19.5, AC_Y + 0.5, AC_ITEM)
 	local p1 = place("me-pattern-provider", 16.5, AC_Y + 0.5)
 	local p2 = place("me-pattern-provider", 18.5, AC_Y + 0.5)
 	--- not connected to the network: its recipe must not become a pattern
-	place("me-molecular-assembler", 32.5, AC_Y + 0.5, "splitter")
+	place("me-molecular-assembler", 33.5, AC_Y + 0.5, "splitter")
 	place("me-pattern-provider", 34.5, AC_Y + 0.5)
 	--- a GT machine as pattern machine: crushing raw iron (may have several or probabilistic products)
 	place("ev-macerator", 16.5, AC_Y + 4.5, AC_CRUSH)
@@ -1007,7 +1029,7 @@ local function autocraft_test()
 			--- scenario 3: a pattern machine is removed, the job waits; cancelling gives everything back
 			st.job = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, AC_AMOUNT)
 			expect(st.job, "job 5 did not start")
-			local b = s.find_entity("me-molecular-assembler", { 20.5, AC_Y + 0.5 })
+			local b = s.find_entity("me-molecular-assembler", { 19.5, AC_Y + 0.5 })
 			expect(b, "belt assembler not found")
 			if b then b.destroy() end
 			if not st.job then return finish_test() end
@@ -1093,6 +1115,7 @@ function setup_furnace_test(s)
 	place("substation", FU_X + 13, FU_Y + 2)
 	local ctrl = place("me-network-controller", FU_X + 6, FU_Y)
 	local term = place("me-terminal", FU_X + 8.5, FU_Y + 4.5)
+	local pterm = place("me-pattern-terminal", FU_X + 5.5, FU_Y + 4.5)          -- issue #130: the patterns are encoded here
 	local cpu = place("me-crafting-cpu", FU_X + 10, FU_Y)
 	local drive = me_drive(s, fails, "furnace test", FU_X + 8.5, FU_Y + 6.5, { [FU_INPUT] = 10, [BLANK] = FU_BLANKS })
 	for _, pos in pairs({ { FU_X + 15, FU_Y + 11 }, { FU_X + 6, FU_Y + 11 } }) do
@@ -1101,7 +1124,7 @@ function setup_furnace_test(s)
 	end
 	local pa = place("me-pattern-provider", FU_PROVIDER_A[1], FU_PROVIDER_A[2])
 	local pb = place("me-pattern-provider", FU_PROVIDER_B[1], FU_PROVIDER_B[2])
-	me_connect(fails, "furnace test", { ctrl, term, cpu, drive, pa, pb })
+	me_connect(fails, "furnace test", { ctrl, term, pterm, cpu, drive, pa, pb })
 	return fails
 end
 
@@ -1109,6 +1132,7 @@ function furnace_test()
 	local s = game.surfaces[1]
 	local A = "gregtorio-me-autocraft"
 	local terminal = s.find_entity("me-terminal", { FU_X + 8.5, FU_Y + 4.5 })
+	local pterm = s.find_entity("me-pattern-terminal", { FU_X + 5.5, FU_Y + 4.5 })
 	local net = terminal and remote.call(NET, "network", terminal)
 	local pa = s.find_entity("me-pattern-provider", FU_PROVIDER_A)
 	local pb = s.find_entity("me-pattern-provider", FU_PROVIDER_B)
@@ -1132,53 +1156,64 @@ function furnace_test()
 		if game.tick < 60 then return end
 		storage.furnace = { started = game.tick, inv = game.create_inventory(4), hand = game.create_inventory(1) }
 		st = storage.furnace
-		if not (terminal and net and pa and pb and furnace_a) then expect(false, "entities missing") return finish_test() end
+		if not (terminal and pterm and net and pa and pb and furnace_a) then expect(false, "entities missing") return finish_test() end
 		local force, inv, hand = terminal.force, st.inv, st.hand
 		expect(count(BLANK) == FU_BLANKS, "blank patterns in the network: " .. count(BLANK))
 		--- encoding a crafting pattern: only a researched recipe
 		force.recipes[FU_RECIPE].enabled = false
-		local ed = remote.call(TERM, "new_editor")
-		local ok, why = remote.call(TERM, "set_editor_recipe", force, ed, FU_RECIPE)
+		local ed = remote.call(PT, "new_editor")
+		local ok, why = remote.call(PT, "set_editor_recipe", force, ed, FU_RECIPE)
 		expect(not ok and why == "not-researched", "a recipe that is not researched was accepted: " .. tostring(why))
 		force.recipes[FU_RECIPE].enabled = true
-		ok, why, ed = remote.call(TERM, "set_editor_recipe", force, ed, FU_RECIPE)
+		ok, why, ed = remote.call(PT, "set_editor_recipe", force, ed, FU_RECIPE)
 		expect(ok and ed.recipe == FU_RECIPE and ed.mode == "crafting", "set_editor_recipe: " .. tostring(why))
-		--- no blank in hand or inventory: from the network, into the inventory (no hand)
-		local where = remote.call(TERM, "encode", false, inv, terminal, force, ed)
-		expect(where == "inventory" and count(BLANK) == FU_BLANKS - 1, "encoding from the network: " .. tostring(where) .. ", blanks " .. count(BLANK))
-		local cstack = inv.find_item_stack(ENCODED)
-		local info = cstack and remote.call(TERM, "pattern_info", cstack)
+		--- an empty blank slot: the blank comes from the network and the pattern lands in the output slot (the hand and the
+		--- inventory are not searched: a blank in the inventory stays there)
+		local slots = remote.call(PT, "inventory", pterm)
+		inv[4].set_stack{ name = BLANK, count = 1 }
+		local where = remote.call(PT, "encode", pterm, force, ed)
+		expect(where == "output" and count(BLANK) == FU_BLANKS - 1 and inv[4].valid_for_read, "encoding from the network: " .. tostring(where)
+			.. ", blanks " .. count(BLANK))
+		inv[4].clear()
+		local cstack = slots[2]
+		local info = cstack.valid_for_read and remote.call(PT, "pattern_info", cstack)
 		local per_run, yield = 0, 0
 		for _, i in pairs(prototypes.recipe[FU_RECIPE].ingredients) do if i.name == FU_INPUT then per_run = i.amount end end
 		for _, p in pairs(prototypes.recipe[FU_RECIPE].products) do if p.name == FU_ITEM then yield = p.amount end end
 		expect(info and info.valid and info.kind == "crafting" and info.recipe == FU_RECIPE and info.inputs[1].key == FU_INPUT
 			and info.inputs[1].amount == per_run and info.outputs[1].key == FU_ITEM and info.outputs[1].amount == yield
 			and type(info.description) == "table", "crafting pattern data " .. serpent.line(info))
-		local tags = cstack and cstack.tags or {}
+		local tags = cstack.valid_for_read and cstack.tags or {}
 		expect(tags.fork_me_pattern and tags.fork_me_pattern.recipe == FU_RECIPE, "crafting pattern tags " .. serpent.line(tags))
-		expect(cstack and type(cstack.custom_description) == "table", "the encoded pattern has no tooltip")
-		expect(cstack and cstack.prototype.stack_size == 1 and cstack.is_item_with_tags, "the encoded pattern is no item with tags of stack size 1")
+		expect(cstack.valid_for_read and type(cstack.custom_description) == "table", "the encoded pattern has no tooltip")
+		expect(cstack.valid_for_read and cstack.prototype.stack_size == 1 and cstack.is_item_with_tags, "the encoded pattern is no item with tags of stack size 1")
 		--- a crafting pattern next to a furnace is no pattern
-		expect(cstack and remote.call(A, "insert_pattern", pa, cstack) == 1, "the crafting pattern did not go into provider A")
+		expect(remote.call(A, "insert_pattern", pa, cstack) == 1 and not slots[2].valid_for_read, "the crafting pattern did not go into provider A")
 		local pinfo = remote.call(A, "provider_info", pa)
 		expect(pinfo.slots[1] and pinfo.slots[1].reason == "furnace" and not pinfo.slots[1].ok, "crafting pattern at a furnace " .. serpent.line(pinfo.slots[1]))
 		local ignored = remote.call(A, "ignored", terminal)
 		expect(ignored.furnace == 1 and ignored.total == 1, "ignored " .. serpent.line(ignored))
 		expect(not craftable()[FU_ITEM], "a crafting pattern next to a furnace became a pattern")
-		--- a processing pattern from the recipe, encoded from a blank in the hand (it replaces the blank there)
+		--- a processing pattern from the recipe, encoded from a blank in the blank slot (the network keeps its blanks)
 		ed.mode = "processing"
-		ok, why, ed = remote.call(TERM, "set_editor_recipe", force, ed, FU_RECIPE)
+		ok, why, ed = remote.call(PT, "set_editor_recipe", force, ed, FU_RECIPE)
 		expect(ok and ed.inputs[1] and ed.inputs[1].key == FU_INPUT and ed.outputs[1] and ed.outputs[1].key == FU_ITEM, "processing rows " .. serpent.line(ed))
 		hand[1].set_stack{ name = BLANK, count = 1 }
-		where = remote.call(TERM, "encode", hand[1], inv, terminal, force, ed)
-		info = remote.call(TERM, "pattern_info", hand[1])
-		expect(where == "cursor" and info and info.kind == "processing" and info.inputs[1].amount == per_run and info.outputs[1].amount == yield
+		expect(remote.call(PT, "click", pterm, 1, hand[1], inv, false) == nil and not hand[1].valid_for_read and slots[1].count == 1,
+			"a blank pattern from the hand into the blank slot")
+		where = remote.call(PT, "encode", pterm, force, ed)
+		info = remote.call(PT, "pattern_info", slots[2])
+		expect(where == "output" and info and info.kind == "processing" and info.inputs[1].amount == per_run and info.outputs[1].amount == yield
 			and info.id and info.id:sub(1, 2) == "p/", "processing pattern " .. tostring(where) .. " " .. serpent.line(info))
-		expect(count(BLANK) == FU_BLANKS - 1, "the hand's blank was not used: network blanks " .. count(BLANK))
-		--- load it into a new editor
-		local ed2 = remote.call(TERM, "new_editor")
-		ok, why, ed2 = remote.call(TERM, "load_pattern", hand[1], ed2)
-		expect(ok and ed2.mode == "processing" and ed2.inputs[1].key == FU_INPUT and ed2.outputs[1].key == FU_ITEM, "load_pattern " .. serpent.line(ed2))
+		expect(count(BLANK) == FU_BLANKS - 1 and not slots[1].valid_for_read, "the slot's blank was not used: network blanks " .. count(BLANK))
+		--- load it into a new editor: from the output slot (the hand is empty)
+		local ed2 = remote.call(PT, "new_editor")
+		ok, why, ed2 = remote.call(PT, "load_pattern", pterm, hand[1], ed2)
+		expect(ok == true and why == "output" and ed2.mode == "processing" and ed2.inputs[1].key == FU_INPUT and ed2.outputs[1].key == FU_ITEM,
+			"load_pattern " .. serpent.line(ed2) .. " " .. tostring(why))
+		--- the pattern into the hand by a click on the output slot
+		expect(remote.call(PT, "click", pterm, 2, hand[1], inv, false) == nil and hand[1].valid_for_read and hand[1].name == ENCODED
+			and not slots[2].valid_for_read, "taking the pattern out of the output slot")
 		--- into provider A by the window's click (the hand is the cursor)
 		expect(remote.call(A, "provider_click", hand[1], inv, pa, 2, false) == nil and not hand[1].valid_for_read, "click with the pattern on slot 2")
 		pinfo = remote.call(A, "provider_info", pa)
@@ -1209,9 +1244,10 @@ function furnace_test()
 		--- clearing: the crafting pattern of slot 1 into the hand, cleared to a blank
 		expect(remote.call(A, "provider_click", hand[1], inv, pa, 1, false) == nil and hand[1].valid_for_read and hand[1].name == ENCODED,
 			"taking the crafting pattern into the hand")
-		expect(remote.call(TERM, "clear_pattern", hand[1]) and hand[1].valid_for_read and hand[1].name == BLANK and hand[1].count == 1,
+		local pslots = remote.call(PT, "inventory", pterm)
+		expect(remote.call(PT, "clear", pterm, hand[1], inv) == true and hand[1].valid_for_read and hand[1].name == BLANK and hand[1].count == 1,
 			"clearing the pattern in hand")
-		local ok, why = remote.call(TERM, "clear_pattern", hand[1])
+		local ok, why = remote.call(PT, "clear", pterm, hand[1], inv)
 		expect(not ok and why == "no-pattern-in-hand", "clearing a blank pattern: " .. tostring(why))
 		expect(inv.get_item_count(ENCODED) == 0 and not remote.call(A, "provider_info", pa).slots[1], "slot 1 not empty after taking the pattern")
 		--- settings paste: the priority, no patterns
@@ -1260,7 +1296,7 @@ function furnace_test()
 		local buffer = game.create_inventory(4)
 		remote.call(A, "on_removed", revived, buffer)
 		local mined = buffer.find_item_stack(ENCODED)
-		local mi = mined and remote.call(TERM, "pattern_info", mined)
+		local mi = mined and remote.call(PT, "pattern_info", mined)
 		expect(buffer.get_item_count(ENCODED) == 1 and mi and mi.kind == "processing" and mi.recipe == FU_RECIPE, "mined provider: " .. serpent.line(mi))
 		if revived and revived.valid then revived.destroy{ raise_destroy = true } end
 		remote.call(A, "on_removed", old, buffer)
@@ -1272,9 +1308,11 @@ function furnace_test()
 		expect(patterns_on_ground(s, FU_PROVIDER_A) == 1, "patterns on the ground after A was destroyed: " .. patterns_on_ground(s, FU_PROVIDER_A))
 		--- gone without an event: provider B gets a pattern (the cleared blank, encoded again), then vanishes; its
 		--- pattern is dropped where it stood when the providers are scanned
-		ed = remote.call(TERM, "new_editor")
-		ok, why, ed = remote.call(TERM, "set_editor_recipe", force, ed, FU_RECIPE)
-		expect(remote.call(TERM, "encode", hand[1], inv, terminal, force, ed) == "cursor", "encoding the cleared blank again")
+		ed = remote.call(PT, "new_editor")
+		ok, why, ed = remote.call(PT, "set_editor_recipe", force, ed, FU_RECIPE)
+		expect(remote.call(PT, "click", pterm, 1, hand[1], inv, false) == nil and pslots[1].valid_for_read, "the cleared blank into the blank slot")
+		expect(remote.call(PT, "encode", pterm, force, ed) == "output", "encoding the cleared blank again")
+		expect(remote.call(PT, "click", pterm, 2, hand[1], inv, false) == nil and hand[1].valid_for_read, "the pattern into the hand")
 		expect(remote.call(A, "insert_pattern", pb, hand[1]) == 1, "pattern into provider B")
 		pb.destroy()
 		remote.call(A, "plan", terminal, FU_ITEM, 1)                      -- a fresh plan rescans every provider
@@ -1328,10 +1366,10 @@ function setup_pattern_tests(s)
 		items[i.name] = (items[i.name] or 0) + 10 * i.amount
 	end
 	local m = pattern_network(s, fails, PS_X, PS_Y, items, 2)
-	me_place(s, fails, "issue #80", "me-molecular-assembler", PS_X + 14.5, PS_Y + 0.5)
+	me_place(s, fails, "issue #80", "me-molecular-assembler", PS_X + 15.5, PS_Y + 0.5)
 	m[#m + 1] = me_place(s, fails, "issue #80", "me-pattern-provider", PS_X + 16.5, PS_Y + 0.5)
 	m[#m + 1] = me_place(s, fails, "issue #80", "me-pattern-provider", PS_X + 18.5, PS_Y + 0.5)
-	local m2 = me_place(s, fails, "issue #80", "me-molecular-assembler", PS_X + 20.5, PS_Y + 0.5)
+	local m2 = me_place(s, fails, "issue #80", "me-molecular-assembler", PS_X + 19.5, PS_Y + 0.5)
 	if m2 then
 		m2.force.recipes[GEAR_RECIPE_80].enabled = true
 		m2.set_recipe(GEAR_RECIPE_80)
@@ -1340,6 +1378,7 @@ function setup_pattern_tests(s)
 	me_connect(fails, "pattern switch", m)
 	--- processing line: provider PL facing a chest (the line's input), an import bus facing the output chest
 	m = pattern_network(s, fails, PL_X, PL_Y, { [PL_IN] = 100, ["me-blank-pattern"] = 2 }, 1)
+	m[#m + 1] = me_place(s, fails, "issue #130", "me-pattern-terminal", PL_X + 5.5, PL_Y + 4.5)       -- the patterns are encoded here
 	m[#m + 1] = me_place(s, fails, "issue #80", "me-pattern-provider", PL_X + 16.5, PL_Y + 0.5)
 	me_place(s, fails, "issue #80", "iron-chest", PL_X + 17.5, PL_Y + 0.5)
 	m[#m + 1] = me_place(s, fails, "issue #80", "me-import-bus", PL_X + 17.5, PL_Y + 2.5, { direction = defines.direction.south })
@@ -1351,8 +1390,8 @@ end
 function pattern_switch_test()
 	local s = game.surfaces[1]
 	local terminal = s.find_entity("me-terminal", { PS_X + 8.5, PS_Y + 4.5 })
-	local m1 = s.find_entity("me-molecular-assembler", { PS_X + 14.5, PS_Y + 0.5 })
-	local m2 = s.find_entity("me-molecular-assembler", { PS_X + 20.5, PS_Y + 0.5 })
+	local m1 = s.find_entity("me-molecular-assembler", { PS_X + 15.5, PS_Y + 0.5 })
+	local m2 = s.find_entity("me-molecular-assembler", { PS_X + 19.5, PS_Y + 0.5 })
 	local pa = s.find_entity("me-pattern-provider", { PS_X + 16.5, PS_Y + 0.5 })
 	local pb = s.find_entity("me-pattern-provider", { PS_X + 18.5, PS_Y + 0.5 })
 	local maint = s.find_entity("me-level-maintainer", { PS_X + 4.5, PS_Y + 8.5 })
@@ -1383,10 +1422,10 @@ function pattern_switch_test()
 		local fails = {}
 		give_patterns(pa, { { kind = "crafting", recipe = GEAR_RECIPE_80 }, { kind = "crafting", recipe = PS_BELT },
 			{ kind = "crafting", recipe = "me-blank-pattern" } }, fails)
-		local ed = remote.call(TERM, "new_editor")
+		local ed = remote.call(PT, "new_editor")
 		ed.mode = "processing"
-		local _, _, filled = remote.call(TERM, "set_editor_recipe", force, ed, GEAR_RECIPE_80)
-		local def = remote.call(TERM, "pattern_of", force, filled)
+		local _, _, filled = remote.call(PT, "set_editor_recipe", force, ed, GEAR_RECIPE_80)
+		local def = remote.call(PT, "pattern_of", force, filled)
 		expect(def and def.kind == "processing", "processing gear pattern " .. serpent.line(def))
 		if def then give_patterns(pb, { def }, fails) end
 		expect(#fails == 0, table.concat(fails, ", "))
@@ -1531,6 +1570,7 @@ end
 function pattern_line_test()
 	local s = game.surfaces[1]
 	local terminal = s.find_entity("me-terminal", { PL_X + 8.5, PL_Y + 4.5 })
+	local pterm = s.find_entity("me-pattern-terminal", { PL_X + 5.5, PL_Y + 4.5 })
 	local p = s.find_entity("me-pattern-provider", { PL_X + 16.5, PL_Y + 0.5 })
 	local cin = s.find_entity("iron-chest", { PL_X + 17.5, PL_Y + 0.5 })
 	local cout = s.find_entity("iron-chest", { PL_X + 17.5, PL_Y + 3.5 })
@@ -1547,26 +1587,28 @@ function pattern_line_test()
 		if game.tick < 60 then return end
 		storage.patline = { started = game.tick }
 		st = storage.patline
-		if not (terminal and p and cin and cout) then expect(false, "entities missing") return finish() end
+		if not (terminal and pterm and p and cin and cout) then expect(false, "entities missing") return finish() end
 		--- a processing pattern with free rows, encoded from a blank of the network
-		local ed = remote.call(TERM, "new_editor")
+		local ed = remote.call(PT, "new_editor")
 		ed.mode = "processing"
 		local ok1, ok2
-		ok1, ed = remote.call(TERM, "set_editor_row", ed, "inputs", 1, PL_IN, PL_IN_N)
-		ok2, ed = remote.call(TERM, "set_editor_row", ed, "outputs", 1, PL_OUT, PL_OUT_N)
+		ok1, ed = remote.call(PT, "set_editor_row", ed, "inputs", 1, PL_IN, PL_IN_N)
+		ok2, ed = remote.call(PT, "set_editor_row", ed, "outputs", 1, PL_OUT, PL_OUT_N)
 		expect(ok1 and ok2, "set_editor_row")
-		local ok3 = remote.call(TERM, "set_editor_row", ed, "inputs", 2, "me-encoded-pattern", 1)
+		local ok3 = remote.call(PT, "set_editor_row", ed, "inputs", 2, "me-encoded-pattern", 1)
 		expect(not ok3, "an item with tags was accepted as a pattern input")
 		local inv = game.create_inventory(2)
-		local hand, own, in_net = remote.call(TERM, "blanks", false, inv, terminal)
-		expect(hand == 0 and own == 0 and in_net == 2, "blanks " .. hand .. "/" .. own .. "/" .. in_net)
-		local where = remote.call(TERM, "encode", false, inv, terminal, terminal.force, ed)
-		local stack = inv.find_item_stack("me-encoded-pattern")
-		local info = stack and remote.call(TERM, "pattern_info", stack)
-		expect(where == "inventory" and info and info.kind == "processing" and info.inputs[1].key == PL_IN and info.inputs[1].amount == PL_IN_N
+		local own, in_net = remote.call(PT, "blanks", pterm)
+		expect(own == 0 and in_net == 2, "blanks " .. own .. "/" .. in_net)
+		--- no blank in the slot: encoded from a blank of the network, into the output slot
+		local where = remote.call(PT, "encode", pterm, terminal.force, ed)
+		local slots = remote.call(PT, "inventory", pterm)
+		local stack = slots[2]
+		local info = stack.valid_for_read and remote.call(PT, "pattern_info", stack)
+		expect(where == "output" and info and info.kind == "processing" and info.inputs[1].key == PL_IN and info.inputs[1].amount == PL_IN_N
 			and info.outputs[1].key == PL_OUT and info.outputs[1].amount == PL_OUT_N, "line pattern " .. tostring(where) .. " " .. serpent.line(info))
 		expect(count("me-blank-pattern") == 1, "blank patterns in the network after encoding: " .. count("me-blank-pattern"))
-		expect(stack and remote.call(AC, "insert_pattern", p, stack) == 1, "the line pattern did not go into the provider")
+		expect(remote.call(AC, "insert_pattern", p, stack) == 1, "the line pattern did not go into the provider")
 		inv.destroy()
 		local pi = remote.call(AC, "provider_info", p)
 		expect(pi.slots[1] and pi.slots[1].ok and pi.slots[1].machines == 1, "line provider " .. serpent.line(pi.slots[1]))
@@ -1665,9 +1707,15 @@ script.on_nth_tick(10, function()
 	cards17.tick()
 	bench17.tick()
 	cpus6.tick()
+	patternterm130.tick()
+	netpower128.tick()
+	walkable129.tick()
+	assembler131.tick()
 	parking38.tick()
 	stats38.tick()
 	margin51.tick()
+	busaccel110.tick()
+	accel110.tick()
 	damaged84.tick()
 	refused85.tick()
 	lab86.tick()
@@ -1676,6 +1724,7 @@ script.on_nth_tick(10, function()
 	scan50.tick()
 	entries50.tick()
 	holderlists59.tick()
+	crafter59.tick()
 	holders43.tick()
 	storable76.tick()
 	graph43.tick()
@@ -2560,8 +2609,11 @@ function me_r3_test()
 	pinv[8].clear()
 	--- the pattern provider: an encoded pattern into a free slot, an iron plate refused
 	local prov = blocks["me-pattern-provider"]
-	pinv[10].set_stack{ name = "me-blank-pattern", count = 1 }
-	remote.call(TERM, "encode_def", false, pinv, false, { kind = "crafting", recipe = "me-blank-pattern" })
+	local slots = game.create_inventory(2)
+	slots.insert{ name = "me-blank-pattern", count = 1 }
+	remote.call(PT, "encode_def", slots, nil, { kind = "crafting", recipe = "me-blank-pattern" })
+	pinv[10].transfer_stack(slots.find_item_stack("me-encoded-pattern"))
+	slots.destroy()
 	local _, pi = pinv.find_item_stack("me-encoded-pattern")
 	why = pi and click(prov, pi, "shift")
 	local pd2 = remote.call(GUI, "provider_data", prov)
@@ -3490,7 +3542,7 @@ function setup_issue38_tests(s)
 	--- from starting a second job), one gear machine, a constant combinator for the circuit input
 	local m = network38(s, fails, LM_Y, "me-crafting-cpu")
 	m[#m + 1] = place38(s, fails, "me-crafting-cpu", X38 + 10, LM_Y - 3)
-	place38(s, fails, "me-molecular-assembler", X38 + 14.5, LM_Y + 0.5, GEAR_RECIPE)
+	place38(s, fails, "me-molecular-assembler", X38 + 15.5, LM_Y + 0.5, GEAR_RECIPE)
 	m[#m + 1] = place38(s, fails, "me-pattern-provider", X38 + 16.5, LM_Y + 0.5)
 	m[#m + 1] = place38(s, fails, "me-level-maintainer", X38 + 4.5, LM_Y + 8.5)
 	place38(s, fails, "constant-combinator", X38 + 3.5, LM_Y + 10.5)
@@ -3498,9 +3550,9 @@ function setup_issue38_tests(s)
 	give_patterns(s.find_entity("me-pattern-provider", { X38 + 16.5, LM_Y + 0.5 }), { { kind = "crafting", recipe = GEAR_RECIPE } }, fails)
 	--- CPU tiers: a co-processing CPU and two gear machines
 	m = network38(s, fails, CT_Y, "me-co-processing-cpu")
-	place38(s, fails, "me-molecular-assembler", X38 + 14.5, CT_Y + 0.5, GEAR_RECIPE)
+	place38(s, fails, "me-molecular-assembler", X38 + 15.5, CT_Y + 0.5, GEAR_RECIPE)
 	m[#m + 1] = place38(s, fails, "me-pattern-provider", X38 + 16.5, CT_Y + 0.5)
-	place38(s, fails, "me-molecular-assembler", X38 + 20.5, CT_Y + 0.5, GEAR_RECIPE)
+	place38(s, fails, "me-molecular-assembler", X38 + 19.5, CT_Y + 0.5, GEAR_RECIPE)
 	m[#m + 1] = place38(s, fails, "me-pattern-provider", X38 + 18.5, CT_Y + 0.5)
 	me_connect(fails, "CPU tiers", m)
 	for _, x in pairs({ 16.5, 18.5 }) do
@@ -4559,9 +4611,15 @@ script.on_init(function()
 	for _, f in pairs(cards17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bench17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpus6.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(patternterm130.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(netpower128.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(walkable129.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(assembler131.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(parking38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(stats38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(margin51.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(busaccel110.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(accel110.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(damaged84.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refused85.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
@@ -4570,6 +4628,7 @@ script.on_init(function()
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end

@@ -502,7 +502,7 @@ end
 local function give_pattern(provider, recipe)
 	local inv = game.create_inventory(2)
 	inv.insert{ name = "me-blank-pattern", count = 1 }
-	local where, why = remote.call(TERM, "encode_def", false, inv, false, { kind = "crafting", recipe = recipe })
+	local where, why = remote.call("gregtorio-me-pattern-terminal", "encode_def", inv, nil, { kind = "crafting", recipe = recipe })
 	local stack = inv.find_item_stack("me-encoded-pattern")
 	if not (where and stack and remote.call(AC, "insert_pattern", provider, stack)) then
 		fail("pattern " .. recipe .. ": " .. tostring(why))
@@ -698,7 +698,7 @@ local function place_part(b, geo, Y, index, first, members)
 						recipe = reg_recipes[(prov_i - 1) % #reg_recipes + 1]
 					end
 					rec.provider = member(place("me-pattern-provider", x + 1.5, by + 0.5))
-					rec.machine = place("me-molecular-assembler", x + 1.5, cy + 0.5)
+					rec.machine = place("me-molecular-assembler", x + 1.5, y0 + 2 * s + 0.5)        -- (one tile since issue #131: next to the provider)
 					if rec.machine and recipe then rec.machine.set_recipe(recipe) end
 					rec.recipe = recipe
 				elseif kind == "maint" or kind == "lat_maint" then
@@ -1475,7 +1475,7 @@ local function build_planner()
 					def = { kind = "crafting", recipe = r.name }
 					crafting = crafting + 1
 				end
-				local where, why = remote.call(TERM, "encode_def", false, inv, false, def)
+				local where, why = remote.call("gregtorio-me-pattern-terminal", "encode_def", inv, nil, def)
 				local stack = inv.find_item_stack("me-encoded-pattern")
 				if where and stack and remote.call(AC, "insert_pattern", prov, stack) then encoded = encoded + 1
 				else
@@ -2023,7 +2023,7 @@ local function on_burst_tick()
 	elseif t == 70 then
 		local w0 = io_wakes()
 		local prof = C.profile and remote.interfaces["zz-me-bench-profile"]
-		if prof then remote.call("zz-me-bench-profile", "enable") end    -- (profile run: the functions of the removal alone)
+		if prof then remote.call("zz-me-bench-profile", "enable", false, C.exclusive) end    -- (profile run: the functions of the removal alone)
 		local p = game.create_profiler()
 		local k = burst_remove(b.burst_made)
 		p.stop()
@@ -2138,7 +2138,7 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		if C.scene == "planner" then planner_probe(b) end
 		sched_stats(true)                                     -- the counters start with the window
 		b.samples = {}
-		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "enable", C.alloc) end
+		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "enable", C.alloc, C.exclusive) end
 		log("DEVCHECK-BENCH-PROBE0 " .. game.tick)
 	elseif tick == C.warmup + C.window then
 		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "report") end
@@ -2158,12 +2158,25 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 			finish(b)
 		end
 	elseif C.scene == "me" and C.latency and not C.profile and tick == C.warmup + C.window + ALLOC_FROM then
-		b.alloc0 = mod_memory_kb("stop")                      -- the collector stops: the heap grows by what the ticks allocate
+		--- issue #115: the mod's own meter (what each of its tick handlers allocates) where it has one; Factorio collects between
+		--- ticks even with the collector stopped, so the heap's growth (versions before it) is no measure at a small size
+		local io = remote.interfaces[IO]
+		if io and io.alloc_meter then
+			remote.call(IO, "alloc_meter", true)
+			b.alloc0, b.meter = 0, true
+		else
+			b.alloc0 = mod_memory_kb("stop")                  -- the collector stops: the heap grows by what the ticks allocate
+		end
 	elseif b.alloc0 and tick == C.warmup + C.window + ALLOC_FROM + ALLOC_TICKS then
-		local kb = mod_memory_kb("restart")
-		if kb then log_json("ALLOC", { kb_per_tick = (kb - b.alloc0) / ALLOC_TICKS, ticks = ALLOC_TICKS }) end
+		if b.meter then
+			local kb = remote.call(IO, "alloc_meter", false)
+			if kb then log_json("ALLOC", { kb_per_tick = kb / ALLOC_TICKS, ticks = ALLOC_TICKS, method = "meter" }) end
+		else
+			local kb = mod_memory_kb("restart")
+			if kb then log_json("ALLOC", { heap_kb_per_tick = (kb - b.alloc0) / ALLOC_TICKS, ticks = ALLOC_TICKS, method = "heap" }) end
+		end
 		mod_memory_kb(true)                                   -- the garbage of the 300 ticks is collected now, not in the ticks that follow
-		b.alloc0 = nil
+		b.alloc0, b.meter = nil, nil
 	elseif tick > C.warmup and tick < C.warmup + C.window then
 		if tick == C.warmup + STEADY_TICKS and C.window > 2 * STEADY_TICKS then
 			local st = sched_stats(false)

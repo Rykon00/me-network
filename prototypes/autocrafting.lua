@@ -13,7 +13,7 @@
 ---   * Crafting CPU        = powered entity of the ME network, runs one crafting job at a time.
 ---                           Two bigger tiers (issue #38) run more jobs at once and move more
 ---                           items per step: Co-Processing and Quantum Crafting CPU.
----   * Level Maintainer    = powered 1x1 block that keeps N of an item or fluid in stock: it starts
+---   * Level Maintainer    = 1x1 block (power through the controller) that keeps N of an item or fluid in stock: it starts
 ---                           a crafting job for the difference (issue #38). Its lamp circuit
 ---                           condition switches it on and off.
 ---   * Circuit Interface   = constant combinator that puts the items and fluids of its ME network
@@ -44,6 +44,19 @@ ME.add_item{
 	recipe = { energy_required = 5, ingredients = I{ "me-interface", 1, "processing-unit", 2, "fluix-cable", 4 } },
 }
 
+--- issue #130: the ME Pattern Terminal encodes patterns (it was the Patterns tab of the ME Terminal). AE2's (and GTNH's) recipe is
+--- a terminal, a blank pattern and an engineering processor; standalone: an ME Terminal, a blank pattern, a processing unit and
+--- fluix cable.
+ME.add_item{
+	name = "me-pattern-terminal",
+	icon = ICON_FORK .. "me-pattern-terminal.png",
+	subgroup = "fork-me-network",
+	order = "e0",
+	stack_size = 50,
+	place_result = "me-pattern-terminal",
+	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "me-blank-pattern", 1, "processing-unit", 1, "fluix-cable", 2 } },
+}
+
 --- issue #80: a cheap blank pattern (AE2: quartz glass, certus quartz, iron)
 ME.add_item{
 	name = "me-blank-pattern",
@@ -54,7 +67,7 @@ ME.add_item{
 	recipe = { energy_required = 1, ingredients = I{ "iron-plate", 2, "electronic-circuit", 1, "fluix-cable", 1 } },
 }
 
---- the encoded pattern: no recipe, made from a blank pattern in the ME Terminal (its tag fork_me_pattern holds it)
+--- the encoded pattern: no recipe, made from a blank pattern in the ME Pattern Terminal (its tag fork_me_pattern holds it)
 data:extend({ {
 	type = "item-with-tags",
 	name = "me-encoded-pattern",
@@ -114,6 +127,39 @@ data:extend({ {
 } })
 
 
+
+--------------------------------------------------------------------------------
+--- PATTERN TERMINAL (issue #130): a 1x1 block, a member of the network like the ME Terminal. It has no power connection of its
+--- own (the ME Controller draws `member_power`, issue #128), can be walked over (issue #129) and shows whether its network works
+--- by its picture: variation 1 is the dark screen, 2 the lit one (the same sheet side by side, set by scripts/fork-me-network.lua,
+--- screens). Its two slots and its window: scripts/fork-me-patternterm.lua.
+--------------------------------------------------------------------------------
+
+local PATTERN_TERMINAL_POWER = 8000             -- W drawn through the ME Controller, like the ME Terminal's
+
+data:extend({ {
+	type = "simple-entity-with-force",
+	name = "me-pattern-terminal",
+	icon = ICON_FORK .. "me-pattern-terminal.png",
+	icon_size = 32,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = "me-pattern-terminal" },
+	placeable_by = { item = "me-pattern-terminal", count = 1 },
+	max_health = 200,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	selection_priority = 60,
+	collision_mask = ME.WALKABLE,
+	render_layer = "lower-object",
+	random_variation_on_create = false,
+	pictures = {
+		{ filename = ENTITY_PATH .. "me-pattern-terminal.png", priority = "high", width = 32, height = 32, x = 0 },
+		{ filename = ENTITY_PATH .. "me-pattern-terminal.png", priority = "high", width = 32, height = 32, x = 32 },
+	},
+	localised_description = { "entity-description.me-pattern-terminal", tostring(PATTERN_TERMINAL_POWER / 1000) },
+} })
 
 --------------------------------------------------------------------------------
 --- MOLECULAR ASSEMBLER (item recipes only, so no fluid boxes; prototypes/api.lua builds it)
@@ -300,8 +346,9 @@ end
 
 --------------------------------------------------------------------------------
 --- LEVEL MAINTAINER (issue #38): keeps N of an item or fluid in stock. A 1x1 lamp like the ME
---- Terminal: needs power, and the lamp's circuit condition (kept on the entity, so the game copies and
---- blueprints it) switches it on and off. Target, amount and the condition are set in its ME window
+--- Terminal; since issue #128 it needs no pole: the ME Controller draws its power (a lamp with a void energy source,
+--- `member_power` of the mod-data "fork-me-network"). The lamp's circuit condition (kept on the entity, so the game
+--- copies and blueprints it) switches it on and off. Target, amount and the condition are set in its ME window
 --- (scripts/fork-me-windows.lua), which replaces the lamp's window.
 --------------------------------------------------------------------------------
 
@@ -325,7 +372,9 @@ maintainer.corpse = "small-remnants"
 maintainer.dying_explosion = nil
 maintainer.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
 maintainer.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
-maintainer.energy_usage_per_tick = "30kW"
+local MAINTAINER_POWER = 30000          -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
+maintainer.energy_source = { type = "void" }
+maintainer.energy_usage_per_tick = (MAINTAINER_POWER / 1000) .. "kW"
 maintainer.always_on = true
 maintainer.light = nil
 maintainer.light_when_colored = nil
@@ -339,8 +388,10 @@ maintainer.picture_on = {
 }
 maintainer.fast_replaceable_group = nil
 maintainer.next_upgrade = nil
-maintainer.localised_description = { "entity-description.me-level-maintainer" }
+maintainer.localised_description = { "entity-description.me-level-maintainer", tostring(MAINTAINER_POWER / 1000) }
 data:extend({ maintainer })
+data.raw["mod-data"]["fork-me-network"].data.member_power.maintainer = MAINTAINER_POWER
+data.raw["mod-data"]["fork-me-network"].data.member_power["pattern-terminal"] = PATTERN_TERMINAL_POWER
 
 
 
@@ -405,7 +456,7 @@ local function with_blocks(tech, recipes)
 end
 
 ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2" }, unit = ME.unit(3, 500),
-	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-blank-pattern", "me-molecular-assembler" }) }
+	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-blank-pattern", "me-molecular-assembler" }) }
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs
 ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "circuit-network" }, unit = ME.unit(3, 500),
@@ -421,3 +472,7 @@ ME.crafting_block_tech = {}
 for tech, names in pairs(block_tech) do
 	for _, name in ipairs(names) do ME.crafting_block_tech[name] = tech end
 end
+
+--- issue #130: the ME Pattern Terminal is unlocked the same way (a mod that replaced the recipe list of `me-autocrafting` has not
+--- heard of it: data-final-fixes.lua puts its recipe back on the technology, unless a technology of that mod unlocks it)
+ME.crafting_block_tech["me-pattern-terminal"] = "me-autocrafting"
