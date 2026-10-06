@@ -140,6 +140,12 @@ local function setup_unified(s)
 	local ci = place(s, fails, "me-circuit-interface", 38.5, 2.5)
 	local maint = place(s, fails, "me-level-maintainer", 40.5, 2.5)
 	if maint then remote.call("gregtorio-me-circuit", "set_maintainer", maint, "iron-gear-wheel", 500) end
+	--- me-network issue #128: a terminal and a level maintainer far from every pole (the substation at 42 reaches to 51): an
+	--- old version leaves them without power, this one lets the network power them
+	for x = 46, 59 do place(s, fails, "me-cable", x + 0.5, 1.5) end
+	place(s, fails, "me-terminal", 60.5, 1.5)
+	local far = place(s, fails, "me-level-maintainer", 61.5, 1.5)
+	if far then remote.call("gregtorio-me-circuit", "set_maintainer", far, "iron-gear-wheel", 5) end
 	--- me-network issue #6: the three legacy CPUs, each running a job (copper cables on three Molecular Assemblers)
 	local jobs = {}
 	local term = s.find_entity("me-terminal", { 12.5, 0.5 })
@@ -240,6 +246,17 @@ local function check_unified(st)
 	local maint = at("me-level-maintainer", 40.5, 2.5)
 	local m = maint and remote.call("gregtorio-me-circuit", "get_maintainer", maint)
 	expect(m and m.status and m.status ~= "no-target" and m.stock ~= nil, "level maintainer not checked: " .. serpent.line(m))
+	--- me-network issue #128: the terminal and the level maintainer without a pole work in the network that has the power
+	local far_t, far_m = at("me-terminal", 60.5, 1.5), at("me-level-maintainer", 61.5, 1.5)
+	if remote.interfaces["gregtorio-me-terminal"].problem and far_t then
+		expect(remote.call("gregtorio-me-terminal", "problem", far_t) == nil, "the terminal far from every pole: "
+			.. tostring(remote.call("gregtorio-me-terminal", "problem", far_t)))
+		local sc = remote.interfaces[NET].screen and remote.call(NET, "screen", far_t)
+		expect(sc and sc.on and sc.light, "the terminal of the old save has no lit screen: " .. serpent.line(sc))
+		local fm = far_m and remote.call("gregtorio-me-circuit", "get_maintainer", far_m)
+		expect(fm and fm.status ~= "no-power" and fm.status ~= "no-network" and fm.stock ~= nil, "the level maintainer far from every pole: "
+			.. serpent.line(fm))
+	end
 	--- me-network issue #17: a storage bus and an interface of the old version have no cards and the defaults
 	local sbus = remote.interfaces["gregtorio-me-storagebus"]
 	if sbus and sbus.card_click then
