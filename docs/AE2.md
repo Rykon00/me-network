@@ -21,10 +21,10 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Controller | 2x2, needs power; exactly one per network runs it (two are a conflict) |
 | ME Drive | 1x1, holds up to 10 storage cells; has a priority |
 | Storage cell (1k ... 256k) | holds the items (AE2 bytes and types); keeps them when taken out of the drive; can be partitioned |
-| ME Terminal | powered screen, the hub: storage, **crafting**, jobs, the drives and cells of the network |
+| ME Terminal | powered screen (can be walked over), the hub: storage, **crafting**, jobs, the drives and cells of the network |
 | ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount): keeps those in stock in it, imports everything else (this page, **Import and export**) |
-| ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face |
-| ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
+| ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face; can be walked over |
+| ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns; the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
@@ -49,6 +49,10 @@ underground cable), `me-storage-64k` (EV),
 3. Place **ME Drives** and put **storage cells** into them (see below), and an **ME Terminal** (powered).
 4. Import and export with **ME Interfaces** (inserters, belts, pipes) or **buses** (directly on a machine, chest or
    tank); an **ME Storage Bus** makes a chest or a tank part of the network's storage.
+
+**Walking and driving:** the cable, the underground cable, the three buses and the terminal can be walked over (and driven
+over by cars and tanks: they collide through the same layer as the player); nothing can be built on them. The interface,
+drive, controller, provider, level maintainer, circuit interface, crafting blocks and the Cell Workbench stay solid.
 
 The terminal's status line (and the ME Controller's status) tells what is wrong:
 

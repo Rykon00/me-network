@@ -271,6 +271,8 @@ for _, bus in pairs({
 		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
 		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 		selection_priority = 60,
+		render_layer = "lower-object",                -- walkable like the unified buses (issue #129): a save that still has one behaves the same
+		collision_mask = ME.WALKABLE,
 		picture = four_way(bus.name),
 		localised_name = { "entity-name.fork-me-legacy", { "item-name." .. bus.name } },
 		localised_description = { "entity-description." .. bus.name },
