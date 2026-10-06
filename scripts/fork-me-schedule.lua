@@ -68,6 +68,31 @@ end
 
 function M.on_setting_changed() values = nil end
 
+--- Issue #115, the benchmark's allocation rate: Factorio collects between ticks even while the collector is stopped, so the
+--- heap's growth over many ticks is no measure (it fell at the maintainer's size). While the meter is on (remote
+--- `alloc_meter` of the I/O module), each tick handler of the mod adds what its call allocated, the collector stopped
+--- inside it. Off (nil) in a game: one field read per handler. Never saved.
+M.meter = nil
+function M.meter_on()
+	pcall(collectgarbage, "stop")
+	M.meter = { kb = 0 }
+end
+function M.meter_off()
+	local m = M.meter
+	M.meter = nil
+	pcall(collectgarbage, "restart")
+	return m and m.kb
+end
+--- f(a), its allocation added to the meter when it is on
+function M.metered(f, a)
+	local m = M.meter
+	if not m then return f(a) end
+	local m0 = collectgarbage("count")
+	f(a)
+	local d = collectgarbage("count") - m0
+	if d > 0 then m.kb = m.kb + d end
+end
+
 --------------------------------------------------------------------------------
 --- counters (issue #38): per list name { visits, ticks, due, back_sum, back_max, hist = { [class + 1] = { [dt] = n } } }
 --- with class 0: the visit found nothing to do, 1: it moved something, 2: it moved all it was allowed to

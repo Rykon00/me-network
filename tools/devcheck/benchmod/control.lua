@@ -2158,12 +2158,25 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 			finish(b)
 		end
 	elseif C.scene == "me" and C.latency and not C.profile and tick == C.warmup + C.window + ALLOC_FROM then
-		b.alloc0 = mod_memory_kb("stop")                      -- the collector stops: the heap grows by what the ticks allocate
+		--- issue #115: the mod's own meter (what each of its tick handlers allocates) where it has one; Factorio collects between
+		--- ticks even with the collector stopped, so the heap's growth (versions before it) is no measure at a small size
+		local io = remote.interfaces[IO]
+		if io and io.alloc_meter then
+			remote.call(IO, "alloc_meter", true)
+			b.alloc0, b.meter = 0, true
+		else
+			b.alloc0 = mod_memory_kb("stop")                  -- the collector stops: the heap grows by what the ticks allocate
+		end
 	elseif b.alloc0 and tick == C.warmup + C.window + ALLOC_FROM + ALLOC_TICKS then
-		local kb = mod_memory_kb("restart")
-		if kb then log_json("ALLOC", { kb_per_tick = (kb - b.alloc0) / ALLOC_TICKS, ticks = ALLOC_TICKS }) end
+		if b.meter then
+			local kb = remote.call(IO, "alloc_meter", false)
+			if kb then log_json("ALLOC", { kb_per_tick = kb / ALLOC_TICKS, ticks = ALLOC_TICKS, method = "meter" }) end
+		else
+			local kb = mod_memory_kb("restart")
+			if kb then log_json("ALLOC", { heap_kb_per_tick = (kb - b.alloc0) / ALLOC_TICKS, ticks = ALLOC_TICKS, method = "heap" }) end
+		end
 		mod_memory_kb(true)                                   -- the garbage of the 300 ticks is collected now, not in the ticks that follow
-		b.alloc0 = nil
+		b.alloc0, b.meter = nil, nil
 	elseif tick > C.warmup and tick < C.warmup + C.window then
 		if tick == C.warmup + STEADY_TICKS and C.window > 2 * STEADY_TICKS then
 			local st = sched_stats(false)

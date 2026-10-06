@@ -1525,6 +1525,8 @@ CHECK_METRICS = [
     ("io busy interval p99 ticks", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("full", {}).get("p99"), True, 0.02, False),
     ("io starved arrivals", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("starved"), True, 0.10),
     ("io starved, steady part", lambda r: ((r.get("service") or {}).get("io_steady") or {}).get("starved"), True, 0.10),
+    # issue #115: the mod's meter; a version without it reports the heap's growth (heap_kb_per_tick), which Factorio's
+    # collection between ticks makes meaningless at small sizes: not compared
     ("lua alloc KB per tick", lambda r: (r.get("alloc") or {}).get("kb_per_tick"), True, 0.05),
     ("mod heap alive kB", lambda r: (r.get("service") or {}).get("live_kb"), True, 0.05, False),
     ("io backlog max", lambda r: (((r.get("service") or {}).get("sched") or {}).get("io") or {}).get("backlog_max"), True, 0.02),

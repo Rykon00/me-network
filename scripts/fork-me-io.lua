@@ -683,11 +683,16 @@ function M.interface_step(rec, dt)
 		walk = inv.get_item_count() ~= held_total          -- (more in it than the kept rows hold: something to import; no table)
 	end
 	local start = rec.slot or 1
+	--- issue #115: the stacks the walk has still to find (an inventory with a few stacks and many empty slots: the empty rest
+	--- counts as free without reading each slot; the operations limit is checked first, as at every slot)
+	local stacks = walk and size - inv.count_empty_stacks(true, true) or 0
 	for k = 0, walk and size - 1 or -1 do
 		if ops >= max_ops then rec.slot = (start - 1 + k) % size + 1 break end
+		if stacks <= 0 then free = free + size - k break end
 		local i = (start - 1 + k) % size + 1
 		local stack = inv[i]
 		if stack.valid_for_read then
+			stacks = stacks - 1
 			local key = N.key_of(stack.name, stack.quality.name)
 			if not kept[key] then
 				local sname = stack.name
@@ -1832,6 +1837,11 @@ remote.add_interface("gregtorio-me-io", {
 			pcall(collectgarbage, "collect")
 		end
 		return collectgarbage("count")
+	end,
+	--- issue #115: the benchmark's allocation meter (Sched.metered): on (true) or off (false: returns the KB allocated)
+	alloc_meter = function(on)
+		if on then Sched.meter_on() return 0 end
+		return Sched.meter_off()
 	end,
 	set_interface_config = function(entity, config, sides) return M.set_interface_config(entity, config, sides) end,
 	get_interface_config = function(entity) return M.get_interface_config(entity) end,

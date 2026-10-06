@@ -125,14 +125,14 @@ script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILT
 --- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
 --- interfaces and buses, storage buses, crafting jobs, provider rescans, level maintainers and circuit interfaces.
 --- The terminal's 60 tick step stays (windows, drive lights, the sweep).
-script.on_event(defines.events.on_tick, function(event)
-	local tick = event.tick
+local function on_tick(tick)
 	sched.mark(tick)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ae2.on_tick(tick)
 	fork_me.on_tick(tick)
-end)
+end
+script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
 
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
 	if event.setting_type == "runtime-global" then sched.on_setting_changed() end

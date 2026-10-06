@@ -2505,6 +2505,52 @@ green, regressions 0; throughput per kind of endpoint identical at every size.
 (about 2.7 MB more heap at 20 000, where the backlogs are long).
 
 
+### Part 2: the interface's slot walk, full storage buses, the allocation meter
+
+**The interface visit**, timers around its parts (3600 ticks):
+
+| part | base, µs per visit | 20 000, µs per visit |
+|---|---|---|
+| head (config, network, inventory) | 8.8 | 5.8 |
+| the rows (kept items, `N.extract_to`) | 16.8 | 17.2 |
+| the walk over the slots | 31.2 | 30.0 |
+| the sides | 7.4 | 8.1 |
+
+The walk runs in 77 % of the visits at 20 000 (something no row keeps lies in the interface). It reads every slot: 18 slots,
+of which 12 % hold a stack. Its time is the stacks it imports (`N.insert_stack`, 21.7 µs each at 20 000, 30 µs at base) and the empty slots
+(about 1 µs each: `inv[i]` and `valid_for_read`), 0.19 ms per tick at 20 000.
+
+* **The walk stops when it has seen every stack** (`count_empty_stacks` once per walk: the rest counts as free without
+  reading each slot). The operations limit is checked first at every slot, as before, so `rec.slot` and the free slots
+  are the same.
+* Reading a stack's quality only for names a row keeps saved nothing measurable: not built.
+
+**Full storage buses in the insert**: at 20 000 an insert called `put` 10.6 times for storage buses partitioned for the key;
+10.5 of them were marked full for it (lever 1 of #59). The test is made in the loop now, without the call (only storage buses
+are ever marked full, and `put` refused them at once): about 1.3 % at 20 000 on its own.
+
+**The allocation meter.** The benchmark's `lua alloc KB per tick` was the growth of the mod's heap over 300 ticks with the
+collector stopped. A probe mod shows that Factorio collects between ticks even then (`collectgarbage("isrunning")` false, the
+count falling every 10 ticks), so at a small heap the number was meaningless (−2.9 to 3.7 KB at base, and `bench --check`
+failed on it). The mod has a meter now (`Sched.metered`, remote `alloc_meter` of the I/O module, off in a game: one field read per
+handler): each of its tick handlers adds what its call allocated, the collector stopped inside the call. Two runs each: base
+3.416 / 3.416 KB per tick, 20 000 67.510 / 67.510. A version without the meter reports `heap_kb_per_tick`, which `bench --check`
+does not compare (against such a reference the metric is left out).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput per kind of endpoint and the scheduler's counters identical at every size.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1330 / 0.348 | 0.1314 / 0.345 |
+| base: gc avg (ms) | 0.0212 | 0.0196 |
+| 5000: script avg / p99 (ms) | 0.924 / 2.66 | 0.910 / 2.67 |
+| 20 000: script avg / p99 (ms) | 2.161 / 4.32 | **2.048 / 4.28** |
+
+−1.2 % at base, −1.6 % at 5000, −5.2 % at 20 000. A series of the same code before the meter: base 0.1352 → 0.1305 (−3.5 %), 5000
+−3.2 %, 20 000 −6.0 %; the gain at base is within what two series differ by. The allocation metric is not compared here (the
+reference has no meter); with the meter: base 3.4 KB per tick, 20 000 67.5.
+
 ## The pane's slot signature (issue #75)
 
 The inventory pane compares a signature per slot at every refresh (on each inventory change, and once a second with the
