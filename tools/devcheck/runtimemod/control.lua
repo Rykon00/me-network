@@ -755,6 +755,8 @@ storable76 = require("storable")({ me_place = me_place, cable_row = cable_row, p
 	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
+walkable129 = require("walkable")({ me_place = me_place, me_report = me_report })
 --- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
 cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
@@ -792,6 +794,7 @@ local function tests_running()
 	bench17.running(check)
 	cpus6.running(check)
 	netpower128.running(check)
+	walkable129.running(check)
 	parking38.running(check)
 	busaccel110.running(check)
 	accel110.running(check)
@@ -1678,6 +1681,7 @@ script.on_nth_tick(10, function()
 	bench17.tick()
 	cpus6.tick()
 	netpower128.tick()
+	walkable129.tick()
 	parking38.tick()
 	stats38.tick()
 	margin51.tick()
@@ -4576,6 +4580,7 @@ script.on_init(function()
 	for _, f in pairs(bench17.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpus6.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(netpower128.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(walkable129.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(parking38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(stats38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(margin51.setup(s)) do fails[#fails + 1] = f end

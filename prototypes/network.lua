@@ -48,8 +48,9 @@ local IMPORT_BUS, EXPORT_BUS = "me-import-bus", "me-export-bus"
 local STORAGE_BUS = "me-storage-bus"
 local UNDERGROUND = "me-underground-cable"
 local UNDERGROUND_REACH = 10        -- max_underground_distance of the underground cable (the underground pipe's)
---- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask
-local WALKABLE = { layers = { item = true, meltable = true, object = true, water_tile = true, is_lower_object = true } }
+--- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask. Since issue #129 so can the
+--- buses and the ME Terminal (prototypes/api.lua)
+local WALKABLE = ME.WALKABLE
 
 
 
@@ -415,7 +416,8 @@ for _, bus in pairs({
 	block{
 		name = bus.name, icon = ICON_FORK .. bus.name .. ".png",
 		description = { "entity-description." .. bus.name },
-		extra = { picture = four_way(bus.name) },
+		--- walkable like the cable (issue #129): drawn under the character
+		extra = { picture = four_way(bus.name), render_layer = "lower-object", collision_mask = WALKABLE },
 	}
 end
 
@@ -487,7 +489,8 @@ ME.add_item{
 block{
 	name = STORAGE_BUS, icon = ICON_FORK .. STORAGE_BUS .. ".png",
 	description = { "entity-description." .. STORAGE_BUS },
-	extra = { picture = four_way(STORAGE_BUS), additional_pastable_entities = { STORAGE_BUS } },
+	extra = { picture = four_way(STORAGE_BUS), additional_pastable_entities = { STORAGE_BUS },
+		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 
 
@@ -517,6 +520,7 @@ terminal.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
 terminal.energy_source = { type = "void" }
 terminal.energy_usage_per_tick = (TERMINAL_POWER / 1000) .. "kW"
 terminal.always_on = true
+terminal.collision_mask = WALKABLE         -- issue #129: walkable like the cable (its screen is drawn under the character)
 terminal.light = nil
 terminal.light_when_colored = nil
 terminal.glow_size = 0

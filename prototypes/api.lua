@@ -26,6 +26,10 @@ M.root = "__me-network__/"
 M.icons = M.root .. "graphics/icons/"
 M.entity_path = M.root .. "graphics/entity/fork/ae2/"
 M.technology_path = M.root .. "graphics/technology/fork/"
+--- what can be walked over (the ME cable, since issue #129 the buses and the ME Terminal): a building's collision mask without the
+--- "player" layer, so a character passes through; nothing can be built on it (the "object" layer stays) and no item lies on it
+--- (the "item" layer). Cars and tanks pass too (their mask has the "player" layer as well).
+M.WALKABLE = { layers = { item = true, meltable = true, object = true, water_tile = true, is_lower_object = true } }
 M.recipes = M.recipes or {}
 M.technologies = M.technologies or {}
 M.removed = M.removed or {}
