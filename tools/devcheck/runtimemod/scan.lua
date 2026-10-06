@@ -46,12 +46,14 @@ local CASES = {
 	{ machine = "steel-chest", patterns = { pat({ ["copper-plate"] = 1 }, { ["iron-stick"] = 2 }) }, want = { "ok" } },
 }
 
---- where a provider and its machine stand (3x3 machines centred above the provider, the 2x2 furnace beside it)
+--- where a provider and its machine stand (3x3 machines centred above the provider, the 1x1 assembler right above it, the 2x2
+--- furnace beside it)
 local function provider_pos(i) return { BX + 4 * i + 1.5, BY + 0.5 } end
 local function machine_pos(i, name)
 	local x = BX + 4 * i + 1.5
 	if name == "steel-chest" then return { x, BY - 0.5 } end
 	if name == "iron-furnace" then return { x + 0.5, BY - 1 } end
+	if name == "me-molecular-assembler" then return { x, BY - 0.5 } end        -- (issue #131: one tile)
 	return { x, BY - 1.5 }
 end
 

@@ -170,6 +170,15 @@ local function setup_unified(s)
 	--- (an old version with the multiblock CPUs of issue #6 starts no new job on a legacy CPU: no jobs then)
 	local legacy_jobs = not prototypes.entity["me-crafting-unit"]
 	if not legacy_jobs then jobs = nil end
+	--- me-network issue #131: such a version runs the job on a multiblock CPU (one crafting storage next to the terminal); the
+	--- assemblers of the three providers above are 3x3 there and one tile in the working copy, so the provider that touched the
+	--- edge of the big block has no machine after the load, and the job that waited for it must not hang
+	local multi_job
+	if not legacy_jobs and term then
+		place(s, fails, "me-1k-crafting-storage", 13.5, 0.5)
+		local id, why = remote.call(AC, "start", term, "copper-cable", 8)
+		if id then multi_job = id else fails[#fails + 1] = "the job on the crafting storage: " .. tostring(why) end
+	end
 	for i, cpu in ipairs(legacy_jobs and { { "me-crafting-cpu", 19 }, { "me-co-processing-cpu", 22 }, { "me-quantum-crafting-cpu", 25 } } or {}) do
 		local c = place(s, fails, cpu[1], cpu[2], 0)
 		local id, why
@@ -212,7 +221,7 @@ local function setup_unified(s)
 		end
 		inv.destroy()
 	end
-	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, jobs = jobs, cards = cards }
+	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, jobs = jobs, cards = cards, multi_job = multi_job }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
 		.. (jobs and "; jobs on the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "") .. ")"
@@ -280,6 +289,40 @@ local function check_unified(st)
 			.. serpent.line(info and { info.status, info.done, info.total, info.wait, j.after }))
 	end
 	if st.jobs then expect(count("copper-cable") == 24, "copper cables of the three jobs: " .. count("copper-cable")) end
+	--- me-network issue #131: the old save's assemblers are one tile now; each stays where its centre was, with its recipe, and the
+	--- provider that touched the edge of the 3x3 block is one tile away: its patterns have no machine (a provider window and the
+	--- pattern status say so), and the job that ran on it was not left hanging
+	if prototypes.entity["me-molecular-assembler"].tile_width == 1 then
+		for i, x in ipairs({ 28.5, 32.5, 36.5 }) do
+			local prov, asm = at("me-pattern-provider", x, 0.5), at("me-molecular-assembler", x, -1.5)
+			local info = prov and remote.call(AC, "provider_info", prov)
+			local slot = info and info.slots and info.slots[1]
+			expect(asm and asm.valid, "the assembler of provider " .. i .. " is gone")
+			expect(slot and slot.reason == "no-machine" and slot.machines == 0 and not slot.ok,
+				"provider " .. i .. " still points at an assembler that is one tile too far: " .. serpent.line(slot))
+		end
+	end
+	if st.multi_job then
+		--- the job that was waiting for the provider's machine is not lost and not stuck: it waits for a machine ("machine"), holding its
+		--- plates, and a new job for the same pattern is refused at once (no pattern with a machine); the player moves the first
+		--- assembler next to its provider (the other two stay): the job goes on and ends done
+		local info = remote.call(AC, "job", st.multi_job)
+		expect(info and info.status == "running" and info.wait == "machine" and info.done == 0,
+			"the job of the old save after the load: " .. serpent.line(info and { status = info.status, wait = info.wait, done = info.done }))
+		local again, why = remote.call(AC, "start", t, "copper-cable", 8)
+		expect(again == nil and why == "no-pattern", "a new job for a pattern without a machine: " .. tostring(again) .. " " .. tostring(why))
+		local asm, recipe = at("me-molecular-assembler", 28.5, -1.5), nil
+		if asm then
+			recipe = asm.get_recipe()
+			asm.destroy{ raise_destroy = true }
+			local moved = place(s, {}, "me-molecular-assembler", 28.5, -0.5)
+			if moved and recipe then moved.set_recipe(recipe) end
+			expect(moved ~= nil, "the assembler could not be moved")
+		end
+		st.recover = { id = st.multi_job, tick = game.tick, cables = count("copper-cable") }
+		L("INFO", "the job of the old save after the load: " .. serpent.line(info and { status = info.status, wait = info.wait, done = info.done,
+			total = info.total, pool = info.pool }) .. "; a new job: " .. tostring(why))
+	end
 	--- me-network issue #28: the cards of the old save are items in the script inventories now, none lost or doubled
 	if st.cards and remote.interfaces[SB].inventory then
 		local bus = at("me-storage-bus", 43.5, 2.5)
@@ -561,6 +604,18 @@ script.on_nth_tick(10, function()
 			end
 		end
 		st.start = st.start or game.tick
+		--- issue #131: 100 ticks after the player moved the assembler, the job of the old save has gone on and ended
+		if st.recover and not st.recovered and game.tick >= st.recover.tick + 100 then
+			st.recovered = true
+			local info = remote.call(AC, "job", st.recover.id)
+			local t = game.surfaces[1].find_entity("me-terminal", { 12.5, 0.5 })
+			local made = (t and remote.call(NET, "count", t, "copper-cable") or 0) - st.recover.cables
+			if not (info and info.status == "done" and made == 8) then
+				L("FAIL", "the job of the old save after the assembler was moved: " .. serpent.line(info and { info.status, info.wait, info.done }) .. ", cables made " .. made)
+			end
+			L("RECOVER", ((info and info.status == "done" and made == 8) and "ok" or "failed") .. " (the job that waited for a machine went on when the assembler was moved next to its provider: "
+				.. tostring(info and info.status) .. ", " .. made .. " copper cables)")
+		end
 		if st.ticked or game.tick < st.start + 150 then return end
 		st.ticked = true
 		check_unified(st)

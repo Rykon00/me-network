@@ -31,6 +31,10 @@ Sources:
                                                   # (me-network issue #130): the dark and the lit picture, the icon
     python tools/gen_ae2_sprites.py --sheet-pattern-terminal docs/graphics-review/issue-130.png   # contact sheet of it
                                                   # at game size (and 4x) next to the ME Terminal
+    python tools/gen_ae2_sprites.py --assembler C:/00_Repositories/GT5-Unofficial   # only the ME Molecular Assembler
+                                                  # (1x1, me-network issue #131): idle, working strip, icons
+    python tools/gen_ae2_sprites.py --sheet-assembler docs/graphics-review/issue-131.png   # contact sheet of the
+                                                  # assembler at game size (and 4x), next to origin/main's 3x3 one
     python tools/gen_ae2_sprites.py --sheet docs/graphics-review/issue-20.png   # contact sheet of the issue #20
                                                   # graphics next to origin/main (can follow any other switch)
 
@@ -194,28 +198,23 @@ def provider_sprite(gt):
 
 
 def assembler_sprite(gt, phase=0):
-    """3x3: HV casing tiles, inner dark bay with four robot arms around a fluix core.
-    phase 0..3 pulses the core and moves the arm tips (working animation)."""
-    tile = up(hull(gt, "HV"))
-    size = 3 * TILE
-    img = Image.new("RGBA", (size, size))
-    for x in range(3):
-        for y in range(3):
-            img.paste(tile, (x * TILE, y * TILE))
+    """1x1 (me-network issue #131; it was 3x3 before): HV casing, inner dark bay with four robot arms around a fluix
+    core. phase 0..3 pulses the core and moves the arm tips (working animation)."""
+    img = up(hull(gt, "HV"))
     d = ImageDraw.Draw(img)
-    d.rectangle((6, 6, size - 7, size - 7), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
-    c = size // 2
+    d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+    c = TILE // 2
     glow = [(150, 95, 225), (175, 120, 240), (205, 150, 255), (175, 120, 240)][phase]
-    d.rectangle((c - 9, c - 9, c + 8, c + 8), fill=glow + (255,), outline=FLUIX_LIGHT + (255,))
-    d.rectangle((c - 4, c - 4, c + 3, c + 3), fill=(235, 225, 255, 255))
-    reach = 4 + (phase % 2) * 3
+    d.rectangle((c - 5, c - 5, c + 4, c + 4), fill=glow + (255,), outline=FLUIX_LIGHT + (255,))
+    d.rectangle((c - 2, c - 2, c + 1, c + 1), fill=(235, 225, 255, 255))
+    reach = 1 + (phase % 2) * 2
     for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):        # arms towards the four sides
-        x0, y0 = c + dx * 10, c + dy * 10
-        x1, y1 = c + dx * (10 + reach + 8), c + dy * (10 + reach + 8)
-        d.line((x0, y0, x1, y1), fill=(170, 170, 185, 255), width=3)
-        d.rectangle((x1 - 2, y1 - 2, x1 + 2, y1 + 2), fill=FLUIX_LIGHT + (255,))
-    for cx, cy in ((10, 10), (size - 12, 10), (10, size - 12), (size - 12, size - 12)):
-        d.rectangle((cx, cy, cx + 1, cy + 1), fill=FLUIX + (255,))
+        x0, y0 = c + dx * 7, c + dy * 7
+        x1, y1 = c + dx * (7 + reach), c + dy * (7 + reach)
+        d.line((x0, y0, x1, y1), fill=(170, 170, 185, 255), width=2)
+        d.rectangle((x1 - 1, y1 - 1, x1, y1), fill=FLUIX_LIGHT + (255,))
+    for cx, cy in ((6, 6), (TILE - 8, 6), (6, TILE - 8), (TILE - 8, TILE - 8)):
+        d.point((cx, cy), fill=FLUIX + (255,))
     return img
 
 
@@ -278,24 +277,30 @@ def flat_icon(img, size=TILE):
     return img.resize((size, size), Image.NEAREST if img.width % size == 0 else Image.LANCZOS)
 
 
+def assembler(gt):
+    """The ME Molecular Assembler (1x1, me-network issue #131): the idle picture, the working strip of four frames below
+    each other, the item icon and the technology icon."""
+    frames = [assembler_sprite(gt, p) for p in range(4)]
+    frames[0].save(OUT_ENTITY / "me-molecular-assembler-idle.png")
+    strip = Image.new("RGBA", (TILE, TILE * 4))
+    for i, f in enumerate(frames):
+        strip.paste(f, (0, i * TILE))
+    strip.save(OUT_ENTITY / "me-molecular-assembler-working.png")
+    frames[0].save(OUT_ICON / "me-molecular-assembler.png")
+    upscale(load(OUT_ICON / "me-molecular-assembler.png")).save(OUT_TECH / "me-autocrafting.png")
+
+
 def autocrafting(gt):
     provider_sprite(gt).save(OUT_ENTITY / "me-pattern-provider.png")
     provider_sprite(gt).save(OUT_ICON / "me-pattern-provider.png")
     pattern_terminal(gt)
-    frames = [assembler_sprite(gt, p) for p in range(4)]
-    frames[0].save(OUT_ENTITY / "me-molecular-assembler-idle.png")
-    strip = Image.new("RGBA", (3 * TILE, 3 * TILE * 4))
-    for i, f in enumerate(frames):
-        strip.paste(f, (0, i * 3 * TILE))
-    strip.save(OUT_ENTITY / "me-molecular-assembler-working.png")
-    flat_icon(frames[0]).save(OUT_ICON / "me-molecular-assembler.png")
+    assembler(gt)
     off, lit = cpu_sprites(gt)
     off.save(OUT_ENTITY / "me-crafting-cpu-off.png")
     lit.save(OUT_ENTITY / "me-crafting-cpu-on.png")
     icon = off.copy()
     icon.alpha_composite(lit)
     flat_icon(icon).save(OUT_ICON / "me-crafting-cpu.png")
-    upscale(load(OUT_ICON / "me-molecular-assembler.png")).save(OUT_TECH / "me-autocrafting.png")
 
 
 # --- crafting CPU multiblocks (me-network issue #6, prototypes/autocrafting.lua) ----------------------------
@@ -1188,6 +1193,44 @@ def pattern_terminal_sheet(out):
     icon = load(OUT_ICON / "me-pattern-terminal.png")
     img.alpha_composite(slot(icon), (16, 384))
     img.alpha_composite(up(slot(icon)), (66, 384))
+
+def assembler_sheet(out):
+    """Contact sheet of the 1x1 ME Molecular Assembler (me-network issue #131): idle and the four working frames at game size
+    (1x, 32 px per tile, on grass) and at 4x, the item icon in a slot, and the 3x3 picture of origin/main for comparison."""
+    from PIL import ImageFont
+    font = ImageFont.load_default(size=14)
+    small = ImageFont.load_default(size=12)
+    img = Image.new("RGBA", (760, 500), SHEET_BG + (255,))
+    d = ImageDraw.Draw(img)
+    d.text((16, 12), "me-network issue #131: the ME Molecular Assembler, 1x1 (tools/gen_ae2_sprites.py --assembler <GT5-Unofficial>)",
+           font=font, fill=SHEET_TEXT)
+    d.text((16, 32), "GT5 HV casing + drawn core and arms; no AE2 textures. Module icons and the alt-mode recipe icon are the game's.",
+           font=small, fill=SHEET_DIM)
+    idle = load(OUT_ENTITY / "me-molecular-assembler-idle.png")
+    work = load(OUT_ENTITY / "me-molecular-assembler-working.png")
+    frames = [idle] + [work.crop((0, i * TILE, TILE, (i + 1) * TILE)) for i in range(4)]
+    names = ["idle", "working 1", "working 2", "working 3", "working 4"]
+    d.text((16, 60), "Game size (1x), on the ground, with a pattern provider (1x1) below", font=font, fill=SHEET_TEXT)
+    ground = Image.new("RGBA", (TILE * 12, TILE * 2), GROUND + (255,))
+    for i, f in enumerate(frames):
+        ground.alpha_composite(f, (TILE * (2 * i + 1), 0))
+    prov = load(OUT_ENTITY / "me-pattern-provider.png")
+    ground.alpha_composite(prov, (TILE * 3, TILE))
+    img.alpha_composite(ground, (16, 84))
+    d.text((16, 150), "Idle and the four working frames (4x)", font=font, fill=SHEET_TEXT)
+    for i, f in enumerate(frames):
+        x = 16 + i * 148
+        d.rectangle((x, 174, x + 140, 174 + 140), fill=SHEET_PANEL)
+        img.alpha_composite(up(f, 4), (x + 6, 180))
+        d.text((x + 6, 322), names[i], font=small, fill=SHEET_TEXT)
+    d.text((16, 350), "Item icon in a slot (1x, 2x)", font=font, fill=SHEET_TEXT)
+    icon = load(OUT_ICON / "me-molecular-assembler.png")
+    img.alpha_composite(slot(icon), (16, 374))
+    img.alpha_composite(up(slot(icon)), (66, 374))
+    old = before(OUT_ENTITY / "me-molecular-assembler-idle.png")
+    d.text((250, 350), "origin/main: 3x3, 96 px", font=font, fill=SHEET_TEXT)
+    if old:
+        img.alpha_composite(old.resize((old.width * 3 // 4, old.height * 3 // 4), Image.NEAREST), (250, 366))
     out.parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(out)
     return [out]
@@ -1231,11 +1274,18 @@ def main():
                     help="only the ME Pattern Terminal (me-network issue #130), from the casings of the GT5-Unofficial checkout GT")
     ap.add_argument("--sheet-pattern-terminal", type=Path, metavar="PNG",
                     help="writes a contact sheet of the ME Pattern Terminal (issue #130) to PNG")
+    ap.add_argument("--assembler", type=Path, metavar="GT",
+                    help="only the ME Molecular Assembler (1x1, me-network issue #131), from the casings of the "
+                         "GT5-Unofficial checkout GT")
+    ap.add_argument("--sheet-assembler", type=Path, metavar="PNG",
+                    help="writes a contact sheet of the 1x1 ME Molecular Assembler (issue #131) to PNG")
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
-            or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.pattern_terminal or a.sheet_pattern_terminal):
+            or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
+            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns, --unified, --cards, --crafting-cpu, --pattern-terminal, --thumbnail, --sheet or --sheet-pattern-terminal is required")
+                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --pattern-terminal, --thumbnail, --sheet,"
+                 " --sheet-assembler or --sheet-pattern-terminal is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
 
@@ -1297,9 +1347,15 @@ def main():
     if a.sheet_pattern_terminal:
         pattern_terminal_sheet(a.sheet_pattern_terminal)
         print("contact sheet:", a.sheet_pattern_terminal)
+    if a.assembler:
+        assembler(a.assembler)
+        print("ME Molecular Assembler sprites")
     if a.sheet:
         contact_sheet(a.sheet)
         print("contact sheet:", a.sheet)
+    if a.sheet_assembler:
+        assembler_sheet(a.sheet_assembler)
+        print("contact sheet:", a.sheet_assembler)
 
 
 if __name__ == "__main__":

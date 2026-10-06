@@ -34,9 +34,9 @@ return function(H)
 		local drive = me_drive(s, fails, what, BX + 8.5, BY - 0.5, { ["iron-plate"] = 400, ["iron-stick"] = 400 })
 		local cpu = me_place(s, fails, what, "me-crafting-cpu", BX + 11, BY)
 		local prov = me_place(s, fails, what, "me-pattern-provider", BX + 14.5, BY + 5.5)
-		local a = me_place(s, fails, what, "me-molecular-assembler", BX + 14.5, BY + 3.5)
-		local b = me_place(s, fails, what, "me-molecular-assembler", BX + 16.5, BY + 5.5)
-		local c = me_place(s, fails, what, "me-molecular-assembler", BX + 14.5, BY + 7.5)
+		local a = me_place(s, fails, what, "me-molecular-assembler", BX + 14.5, BY + 4.5)
+		local b = me_place(s, fails, what, "me-molecular-assembler", BX + 15.5, BY + 5.5)
+		local c = me_place(s, fails, what, "me-molecular-assembler", BX + 14.5, BY + 6.5)
 		if a and b and c then
 			for _, r in pairs({ GEAR, BELT }) do a.force.recipes[r].enabled = true end
 			a.set_recipe(BELT)

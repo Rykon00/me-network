@@ -127,7 +127,7 @@ function setup_me_network(s)
 	me_place(s, fails, "cells", "me-export-bus", CX + 11.5, CY + 0.5, { direction = defines.direction.south })
 	me_place(s, fails, "cells", "iron-chest", CX + 8.5, CY + 1.5)
 	me_place(s, fails, "cells", "iron-chest", CX + 9.5, CY + 1.5)
-	local m = me_place(s, fails, "cells", "me-molecular-assembler", CX + 11.5, CY + 2.5)
+	local m = me_place(s, fails, "cells", "me-molecular-assembler", CX + 11.5, CY + 1.5)
 	if m then
 		m.force.recipes["iron-gear-crafting-table"].enabled = true
 		m.set_recipe("iron-gear-crafting-table")
@@ -366,7 +366,7 @@ function me_cells_test()
 	local t, iface = find("me-terminal", 10.5, -0.5), find("me-network-interface", 11.5, -0.5)
 	local ib, eb, eb2 = find("me-import-bus", 8.5, 0.5), find("me-export-bus", 9.5, 0.5), find("me-export-bus", 11.5, 0.5)
 	local ichest, echest = find("iron-chest", 8.5, 1.5), find("iron-chest", 9.5, 1.5)
-	local mol = find("me-molecular-assembler", 11.5, 2.5)
+	local mol = find("me-molecular-assembler", 11.5, 1.5)
 	local function count(name, q) return remote.call(NET, "count", t, name, q) end
 	local function near(a, b) return a == b end
 	if not st then
@@ -626,7 +626,7 @@ function me_io_test()
 	local t, iface = find("me-terminal", 10.5, -0.5), find("me-network-interface", 11.5, -0.5)
 	local ib, eb, eb2 = find("me-import-bus", 8.5, 0.5), find("me-export-bus", 9.5, 0.5), find("me-export-bus", 11.5, 0.5)
 	local ichest, echest = find("iron-chest", 8.5, 1.5), find("iron-chest", 9.5, 1.5)
-	local mol = find("me-molecular-assembler", 11.5, 2.5)
+	local mol = find("me-molecular-assembler", 11.5, 1.5)
 	local function count(name) return remote.call(NET, "count", t, name) end
 	local size = prototypes.item["iron-plate"].stack_size
 	--- interface (R3 config): one stack of iron plates kept in it, copper put in is imported, a spoiling item stays
@@ -760,6 +760,8 @@ netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, 
 walkable129 = require("walkable")({ me_place = me_place, me_report = me_report })
 --- me-network issue #130: the ME Pattern Terminal (patternterm.lua)
 patternterm130 = require("patternterm")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
+--- me-network issue #131: the ME Molecular Assembler is one tile, four of them around one provider (assembler.lua)
+assembler131 = require("assembler")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #6: crafting CPUs as multiblocks (cpus.lua)
 cpus6 = require("cpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
@@ -799,6 +801,7 @@ local function tests_running()
 	patternterm130.running(check)
 	netpower128.running(check)
 	walkable129.running(check)
+	assembler131.running(check)
 	parking38.running(check)
 	busaccel110.running(check)
 	accel110.running(check)
@@ -859,12 +862,12 @@ function setup_autocraft_test(s)
 	local cpu = place("me-crafting-cpu", 10, AC_Y)
 	local drive = me_drive(s, fails, "autocraft", 8.5, AC_Y + 6.5,
 		{ ["raw-iron"] = 20, ["iron-plate"] = AC_PLATES, ["iron-stick"] = AC_STICKS })
-	place("me-molecular-assembler", 14.5, AC_Y + 0.5, "iron-gear-crafting-table")
-	place("me-molecular-assembler", 20.5, AC_Y + 0.5, AC_ITEM)
+	place("me-molecular-assembler", 15.5, AC_Y + 0.5, "iron-gear-crafting-table")
+	place("me-molecular-assembler", 19.5, AC_Y + 0.5, AC_ITEM)
 	local p1 = place("me-pattern-provider", 16.5, AC_Y + 0.5)
 	local p2 = place("me-pattern-provider", 18.5, AC_Y + 0.5)
 	--- not connected to the network: its recipe must not become a pattern
-	place("me-molecular-assembler", 32.5, AC_Y + 0.5, "splitter")
+	place("me-molecular-assembler", 33.5, AC_Y + 0.5, "splitter")
 	place("me-pattern-provider", 34.5, AC_Y + 0.5)
 	--- a GT machine as pattern machine: crushing raw iron (may have several or probabilistic products)
 	place("ev-macerator", 16.5, AC_Y + 4.5, AC_CRUSH)
@@ -1026,7 +1029,7 @@ local function autocraft_test()
 			--- scenario 3: a pattern machine is removed, the job waits; cancelling gives everything back
 			st.job = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, AC_AMOUNT)
 			expect(st.job, "job 5 did not start")
-			local b = s.find_entity("me-molecular-assembler", { 20.5, AC_Y + 0.5 })
+			local b = s.find_entity("me-molecular-assembler", { 19.5, AC_Y + 0.5 })
 			expect(b, "belt assembler not found")
 			if b then b.destroy() end
 			if not st.job then return finish_test() end
@@ -1363,10 +1366,10 @@ function setup_pattern_tests(s)
 		items[i.name] = (items[i.name] or 0) + 10 * i.amount
 	end
 	local m = pattern_network(s, fails, PS_X, PS_Y, items, 2)
-	me_place(s, fails, "issue #80", "me-molecular-assembler", PS_X + 14.5, PS_Y + 0.5)
+	me_place(s, fails, "issue #80", "me-molecular-assembler", PS_X + 15.5, PS_Y + 0.5)
 	m[#m + 1] = me_place(s, fails, "issue #80", "me-pattern-provider", PS_X + 16.5, PS_Y + 0.5)
 	m[#m + 1] = me_place(s, fails, "issue #80", "me-pattern-provider", PS_X + 18.5, PS_Y + 0.5)
-	local m2 = me_place(s, fails, "issue #80", "me-molecular-assembler", PS_X + 20.5, PS_Y + 0.5)
+	local m2 = me_place(s, fails, "issue #80", "me-molecular-assembler", PS_X + 19.5, PS_Y + 0.5)
 	if m2 then
 		m2.force.recipes[GEAR_RECIPE_80].enabled = true
 		m2.set_recipe(GEAR_RECIPE_80)
@@ -1387,8 +1390,8 @@ end
 function pattern_switch_test()
 	local s = game.surfaces[1]
 	local terminal = s.find_entity("me-terminal", { PS_X + 8.5, PS_Y + 4.5 })
-	local m1 = s.find_entity("me-molecular-assembler", { PS_X + 14.5, PS_Y + 0.5 })
-	local m2 = s.find_entity("me-molecular-assembler", { PS_X + 20.5, PS_Y + 0.5 })
+	local m1 = s.find_entity("me-molecular-assembler", { PS_X + 15.5, PS_Y + 0.5 })
+	local m2 = s.find_entity("me-molecular-assembler", { PS_X + 19.5, PS_Y + 0.5 })
 	local pa = s.find_entity("me-pattern-provider", { PS_X + 16.5, PS_Y + 0.5 })
 	local pb = s.find_entity("me-pattern-provider", { PS_X + 18.5, PS_Y + 0.5 })
 	local maint = s.find_entity("me-level-maintainer", { PS_X + 4.5, PS_Y + 8.5 })
@@ -1707,6 +1710,7 @@ script.on_nth_tick(10, function()
 	patternterm130.tick()
 	netpower128.tick()
 	walkable129.tick()
+	assembler131.tick()
 	parking38.tick()
 	stats38.tick()
 	margin51.tick()
@@ -3538,7 +3542,7 @@ function setup_issue38_tests(s)
 	--- from starting a second job), one gear machine, a constant combinator for the circuit input
 	local m = network38(s, fails, LM_Y, "me-crafting-cpu")
 	m[#m + 1] = place38(s, fails, "me-crafting-cpu", X38 + 10, LM_Y - 3)
-	place38(s, fails, "me-molecular-assembler", X38 + 14.5, LM_Y + 0.5, GEAR_RECIPE)
+	place38(s, fails, "me-molecular-assembler", X38 + 15.5, LM_Y + 0.5, GEAR_RECIPE)
 	m[#m + 1] = place38(s, fails, "me-pattern-provider", X38 + 16.5, LM_Y + 0.5)
 	m[#m + 1] = place38(s, fails, "me-level-maintainer", X38 + 4.5, LM_Y + 8.5)
 	place38(s, fails, "constant-combinator", X38 + 3.5, LM_Y + 10.5)
@@ -3546,9 +3550,9 @@ function setup_issue38_tests(s)
 	give_patterns(s.find_entity("me-pattern-provider", { X38 + 16.5, LM_Y + 0.5 }), { { kind = "crafting", recipe = GEAR_RECIPE } }, fails)
 	--- CPU tiers: a co-processing CPU and two gear machines
 	m = network38(s, fails, CT_Y, "me-co-processing-cpu")
-	place38(s, fails, "me-molecular-assembler", X38 + 14.5, CT_Y + 0.5, GEAR_RECIPE)
+	place38(s, fails, "me-molecular-assembler", X38 + 15.5, CT_Y + 0.5, GEAR_RECIPE)
 	m[#m + 1] = place38(s, fails, "me-pattern-provider", X38 + 16.5, CT_Y + 0.5)
-	place38(s, fails, "me-molecular-assembler", X38 + 20.5, CT_Y + 0.5, GEAR_RECIPE)
+	place38(s, fails, "me-molecular-assembler", X38 + 19.5, CT_Y + 0.5, GEAR_RECIPE)
 	m[#m + 1] = place38(s, fails, "me-pattern-provider", X38 + 18.5, CT_Y + 0.5)
 	me_connect(fails, "CPU tiers", m)
 	for _, x in pairs({ 16.5, 18.5 }) do
@@ -4610,6 +4614,7 @@ script.on_init(function()
 	for _, f in pairs(patternterm130.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(netpower128.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(walkable129.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(assembler131.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(parking38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(stats38.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(margin51.setup(s)) do fails[#fails + 1] = f end

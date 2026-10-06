@@ -698,7 +698,7 @@ local function place_part(b, geo, Y, index, first, members)
 						recipe = reg_recipes[(prov_i - 1) % #reg_recipes + 1]
 					end
 					rec.provider = member(place("me-pattern-provider", x + 1.5, by + 0.5))
-					rec.machine = place("me-molecular-assembler", x + 1.5, cy + 0.5)
+					rec.machine = place("me-molecular-assembler", x + 1.5, y0 + 2 * s + 0.5)        -- (one tile since issue #131: next to the provider)
 					if rec.machine and recipe then rec.machine.set_recipe(recipe) end
 					rec.recipe = recipe
 				elseif kind == "maint" or kind == "lat_maint" then
