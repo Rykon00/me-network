@@ -263,6 +263,9 @@ local function enter(q, rec, l)
 end
 
 --- `unit` (record `rec`) is due at `tick` (at least the next tick): a visit, or a probe (`probe`)
+--- Issue #115: the per-tick lists that came due are emptied and kept for the next ticks that need one (a list per tick and
+--- queue was garbage); outside storage, what a list holds is the same
+local spare, nspare = {}, 0
 function M.at(q, rec, unit, tick, probe)
 	local now = game.tick
 	if tick <= now then tick = now + 1 end
@@ -271,7 +274,12 @@ function M.at(q, rec, unit, tick, probe)
 	rec.due = tick
 	local list = l.due[tick]
 	if not list then
-		list = {}
+		if nspare > 0 then
+			list = spare[nspare]
+			spare[nspare], nspare = nil, nspare - 1
+		else
+			list = {}
+		end
 		l.due[tick] = list
 	end
 	list[#list + 1] = unit
@@ -379,6 +387,11 @@ local function arrive(q, l, tick, rec_of, st)
 			end
 		end
 	end
+	if nspare < 64 then
+		for i = #list, 1, -1 do list[i] = nil end
+		nspare = nspare + 1
+		spare[nspare] = list
+	end
 end
 
 --- one visit (or probe) of `unit` with its counters
@@ -399,7 +412,9 @@ local function compact(l, field, headfield, head)
 	local back = l[field]
 	local n = #back
 	if head > n then
-		l[field], l[headfield] = {}, 1
+		--- issue #115: emptied in place (a new table at every drain was garbage, mostly of lists that were empty already)
+		for i = n, 1, -1 do back[i] = nil end
+		l[headfield] = 1
 	elseif head > 1024 and head > n / 2 then
 		local rest = {}
 		for i = head, n do rest[#rest + 1] = back[i] end
