@@ -2635,6 +2635,34 @@ green, regressions 0; throughput, provider crafts and the scheduler's counters i
 bound methods keep 0.2 MB alive at base, 3.5 MB at 5000 and 14 MB at 20 000 (reported by the check, not a failure); the collector's
 time did not rise.
 
+### Summary of round six
+
+| pull request | what | script avg base | script avg 20 000 |
+|---|---|---|---|
+| #117 | scheduler lists emptied in place, prototype reads once per name | −2.9 % | −3.9 % |
+| #118 | the interface walk stops after the last stack, full storage buses skipped inline, the allocation meter | −1.2 % | −5.2 % |
+| #119 | `reopen` walks a cell's keys only when it was full | −0.4 % | −4.9 % |
+| #120 | the network of a visit by its unit | −2.5 % | −1.9 % |
+| #121 | bound engine methods | −2.0 % (39 % less garbage) | −1.9 % (20 % less garbage) |
+
+Each row is its own `bench --check` series against the main of its day. From the first series to the last: base about 0.1375 →
+0.125 ms, 20 000 about 2.24 → 1.90 ms.
+
+Measured and not built:
+* Reading a stack's quality only for the names a row keeps (the interface walk): nothing measurable.
+* The circuit interface update: the engine's write.
+* Skipping a job's lease checks until the earliest finish: not exact; for the maintainer to decide.
+
+Left for issue #122:
+* job leases and circuit updates (both need a decision);
+* the memory alive;
+* the scheduler's internals;
+* `insert_key` / `extract_key` own time;
+* the remaining engine method calls;
+* the fluid side;
+* the big edits;
+* an exclusive-time option for `bench --profile`.
+
 
 ## The pane's slot signature (issue #75)
 
