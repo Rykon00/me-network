@@ -2244,9 +2244,30 @@ local function awaited(net, key)
 	return M.awaiting(net, key) or 0
 end
 
+--- Issue #115: is there an item of this name (of this key's name)? Per load: `prototypes.item[name]` makes a new object at
+--- every call. The key cache is bounded (keys of items with tags are many).
+local item_known, key_known, key_known_n = {}, {}, 0
+local function item_exists(name)
+	local v = item_known[name]
+	if v == nil then
+		v = prototypes.item[name] ~= nil
+		item_known[name] = v
+	end
+	return v
+end
+local function key_item_exists(key)
+	local v = key_known[key]
+	if v == nil then
+		if key_known_n >= 4096 then key_known, key_known_n = {}, 0 end
+		v = item_exists((parse_key(key)))
+		key_known[key], key_known_n = v, key_known_n + 1
+	end
+	return v
+end
+
 --- the public API: plain items by name and quality; nothing happens when the network does not work
 function M.insert(net, name, quality, count)
-	if not (M.usable(net) and prototypes.item[name]) then return 0 end
+	if not (M.usable(net) and item_exists(name)) then return 0 end
 	local key = key_of(name, quality)
 	count = math.floor(count)
 	local claimed = arrive(net, key, count)
@@ -2462,17 +2483,34 @@ function M.refuses_stack(reason)
 	return reason ~= nil and reason:sub(1, 12) == "cannot-store"
 end
 
+--- Issue #115: what M.storable reads of an item's prototype, once per item name and load (a stack's `prototype` and the
+--- spoil ticks are engine calls that make new objects): the prototype, its class, whether it spoils (a quality scales the
+--- spoil time, so an item that does not spoil at normal quality spoils at none), whether a stack of it can be damaged
+local item_facts_cache = {}
+local function item_facts(stack)
+	local name = stack.name
+	local f = item_facts_cache[name]
+	if not f then
+		local proto = stack.prototype
+		f = { proto = proto, class = ITEM_CLASS[proto.type] or "cannot-store", spoils = proto.get_spoil_ticks("normal") > 0,
+			damageable = M.can_be_damaged(proto) }
+		item_facts_cache[name] = f
+	end
+	return f
+end
+
 --- Why a stack cannot go into the network (a locale key suffix), or nil and its key and data
 function M.storable(stack)
 	if not (stack and stack.valid_for_read) then return "empty" end
-	local proto = stack.prototype
-	if proto.get_spoil_ticks(stack.quality) > 0 then return "cannot-store-spoil" end
-	local class = ITEM_CLASS[proto.type] or "cannot-store"
+	local facts = item_facts(stack)
+	local proto = facts.proto
+	if facts.spoils then return "cannot-store-spoil" end
+	local class = facts.class
 	if class ~= "plain" and class ~= "worn" and class ~= "tags" and class ~= "label" then return class end
 	if class == "plain" then
 		local health = stack.health                                       -- (the one read a plain item needs)
 		if health < 1 then
-			if not M.can_be_damaged(proto) then return "cannot-store-damaged" end
+			if not facts.damageable then return "cannot-store-damaged" end
 			--- issue #102: a damaged item (a mined wall, belt, chest) is stored with its health, as a key of its own like an item
 			--- with tags: its health is part of the key, the stack comes out with it. All items of a stack share one health, so
 			--- a count of such a key is exact. (A partly used tool, ammo or repair tool stays refused: its wear is that of the
@@ -2543,7 +2581,7 @@ end
 function M.extract_to(net, target, key, count)
 	if not M.usable(net) then return 0 end
 	count = math.min(math.floor(count), net.items[key] or 0)
-	if count <= 0 or not prototypes.item[(parse_key(key))] then return 0 end
+	if count <= 0 or not key_item_exists(key) then return 0 end
 	local def = stack_def(net, key, count)
 	local moved
 	if target.object_name == "LuaItemStack" then

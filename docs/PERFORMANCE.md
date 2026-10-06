@@ -2458,6 +2458,53 @@ The script time falls by 3.6 % at the maintainer's size and 2.7 % at 20 000: und
 The price is memory: the cached objects keep about 10 MB alive at 20 000 (2.6 MB at 5000, 0.15 MB at base), which the collector
 walks as well; its time still falls.
 
+## Round six (issue #115): the cost of each visit, the scheduler
+
+### An exclusive profile
+
+`bench --profile` times inclusive: a wrapped call's time contains its callees', and every wrapped call adds about 0.8 µs, which
+dominates functions of a few µs. For this round the wrapper was replaced (in the instrumented copy only, a scratchpad script) by
+one that keeps a stack: a wrapped callee stops its caller's timer, so each function gets its own time. The top of the list (µs of
+own time per call, wrapper overhead of the callees included):
+
+| | base | 20 000 |
+|---|---|---|
+| `Sched.run` (the queue's own work, 3 or 5 calls per tick) | 6.5 | 7.3 |
+| `Sched.at` / `Sched.slot` | 2.2 / 2.2 | 1.8 / 2.6 |
+| `interface_step` | 20.5 | 21.1 |
+| `insert_key` / `extract_key` | 10.7 / 7.5 | 11.8 / 15.0 |
+| `N.storable` (17 calls per tick at 20 000) | 5.2 | 4.6 |
+
+The scheduler's internals (`arrive`, `drain`, `compact`, `visit_one`, `list_of`) are each about 1 µs per call, many calls per
+tick. Two of their costs were garbage: `compact` made a new empty table at every drain of a list (9 drains per tick at base, 15 at
+20 000, most of the lists empty already) and every tick's list of due units was dropped after it came due.
+
+### Built (the same behaviour)
+
+* **The scheduler empties its lists in place** (`compact`) and keeps up to 64 emptied per-tick lists for the next ticks that need
+  one (`M.at`); outside `storage`, a list holds what it held before.
+* **`N.storable` reads an item's prototype once per name and load**: the prototype, its class, whether it spoils (a quality scales
+  the spoil time, so an item that does not spoil at normal quality spoils at none) and whether a stack of it can be damaged.
+  Before, every stack read `stack.prototype` and `get_spoil_ticks` (new objects at every call).
+* **`N.insert` and `N.extract_to` ask once per name (per key) whether the item exists** (`prototypes.item[name]` makes a new
+  object at every call; the key cache is bounded at 4096 keys).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput per kind of endpoint identical at every size.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1375 / 0.366 | **0.1335 / 0.353** |
+| 5000: script avg / p99 (ms) | 0.992 / 2.77 | **0.942 / 2.68** |
+| 5000: lua alloc per tick (KB) | 44.7 | 41.1 |
+| 20 000: script avg / p99 (ms) | 2.236 / 4.36 | **2.148 / 4.33** |
+| 20 000: ticks over 5 ms | 59 | 49 |
+| 20 000: lua alloc per tick (KB) / mod heap alive (MB) | 86.6 / 260.1 | 79.2 / 262.8 |
+
+−2.9 % at base, −5.0 % at 5000, −3.9 % at 20 000; built on the maintainer's call. The emptied lists keep their array part
+(about 2.7 MB more heap at 20 000, where the backlogs are long).
+
+
 ## The pane's slot signature (issue #75)
 
 The inventory pane compares a signature per slot at every refresh (on each inventory change, and once a second with the
