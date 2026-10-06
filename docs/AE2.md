@@ -651,7 +651,7 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   and takes its products out, and crafting patterns change its recipe. Do not feed them with inserters, belts or
   pipes as well.
 * A provider that is not connected to the network, or that touches no machine, makes no pattern; its patterns stay
-  in it. An ME Molecular Assembler is one tile (it was 3x3 before 0.3.2): it has to stand on a tile next to the provider, one
+  in it. An ME Molecular Assembler is one tile (it was 3x3 before 0.5.0): it has to stand on a tile next to the provider, one
   tile further away is no neighbour. Assemblers of an older save keep their centre and are one tile now, so a provider that
   touched the edge of the old block is one tile away until you move the assembler or the provider: its patterns then say "No
   machine or chest next to the provider", and a job that was waiting for it waits for a machine (it holds its ingredients

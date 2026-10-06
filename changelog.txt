@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
-Version: 0.3.2
+Version: 0.5.0
+Date: 2026-10-06
   Features:
     - The ME Pattern Terminal (issue #130): a block of its own that encodes patterns, crafting patterns and processing patterns, as GTNH's AE2 has it. It takes its power from the network (8 kW through the controller, no pole) and can be walked over. It has two slots: a blank pattern slot and an output slot. Encode takes one blank pattern from the blank slot, else from the network (with none it does nothing and says why), and puts the encoded pattern into the output slot (shift + click on Encode: into your inventory); an encoded pattern lying in the output slot is encoded again in place without a blank. Clicking the empty blank slot with an empty hand fetches blank patterns from the network. Load pattern and Clear pattern work on the pattern in your hand or in the output slot. Made from an ME Terminal, a blank pattern, a processing unit and fluix cable; unlocked with ME Autocrafting.
   Optimizations:
