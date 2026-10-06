@@ -62,7 +62,7 @@ in the mod-data `fork-me-network`, `member_power`); only the three legacy single
 Both are still lamps (a prototype whose type changes is removed from a saved game), with `energy_source = { type = "void" }`:
 such a lamp has no electric network and its status is always "working", so a pole next to it does nothing and a wire to it
 still works. A lamp with a void source is always on, so the terminal's picture is drawn by the script: the lamp's `picture_on`
-is empty, its `picture_off` (the dark screen: ghosts and the build preview) is the real one, and a sprite render object that
+and its `picture_off` are empty (a lamp always draws its `picture_off` and its `picture_on` on top of it when lit, so a real `picture_off` hides the script's picture: issue #139; a ghost of the terminal has no picture) and a sprite render object that
 follows the entity shows the screen lit or dark with a light object that goes with it (`s.screens` in `storage`, ids of the
 render objects; they go with the entity). The slow step (once a second) sets every screen to its network's state, a terminal
 that joins is set at once. Found on 2.0.77: a lamp's `active` does nothing, a circuit condition is ignored without a wire,
