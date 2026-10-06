@@ -501,6 +501,7 @@ RUNTIME_TESTS = (
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"),
     ("HOLDERLISTS", "ME holder lists test"),
+    ("CRAFTER", "ME crafter choice test"),
     ("HOLDERS", "ME holder cursor test"),
     ("GRAPH", "ME graph removal test"),
     ("CURSOR", "open key and cursor test"), ("RECIPEPASTE", "recipe paste test"),

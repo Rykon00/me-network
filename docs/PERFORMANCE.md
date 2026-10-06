@@ -2339,6 +2339,65 @@ green, regressions 0; throughput per kind of endpoint identical at every size.
 An earlier series without the rule for unread lists (copies at every change): 20 000 avg 2.462 → 2.407 ms, p99 5.27 → 4.75 ms, ticks
 over 5 ms 141 → 89, the burst build 85.6 → 94.7 ms (flagged).
 
+### Lever 3, the job steps (`scripts/fork-me-autocraft.lua`)
+
+At 20 000 the profile of main d27cdae gave `job_step` 244 µs per call, 2 calls per tick; about a third of that was the profiler's
+own wrappers (1.83 µs per wrapped call, some 45 per step). With timers around the parts of a step instead (a `LuaProfiler` per part,
+3600 ticks, 7200 steps, the same scene), a step cost 141 µs, 0.28 ms per tick (11 % of the script time):
+
+| part of a step | main | this pull request |
+|---|---|---|
+| finding a machine (`find_crafter`, 15 986 calls) | 407 ms, 25.5 µs per call | **169 ms, 10.6 µs** |
+| the leases (30 071, of which about 9 400 were closed) | 237 ms | 239 ms |
+| handing over (collecting what the machine holds, `start_lease`) | 167 ms | 151 ms |
+| the batch (what the pool holds, one stack, 23 186 times) | 125 ms, 5.4 µs | **70 ms, 3.0 µs** |
+| the head (network, CPU, position) | 67 ms | 64 ms |
+| closing and the end | 13 ms | 13 ms |
+| **per tick** | **0.282 ms** | **0.196 ms** |
+
+The scene's 200 jobs share about 60 patterns with 13 machines each; most steps wait for a machine (7114 of 15 986 searches found
+none). The counts of every part (steps, searches, hand-overs, leases) are the same in both versions: the jobs do the same.
+
+* **`find_crafter` reads the step's lists**: it read the recipe prototype's `ingredients` and `products` (a new table of tables at
+  every read, 3 and 2 µs) for every free machine it looked at, twice; it uses the job step's cached lists now (`step_ingredients`,
+  issue #43), as the processing steps already did.
+* **The busy test first**: `s.busy` (a table read) before `e.valid` (an engine call), so a busy machine costs no engine call.
+* **The second pass looks at the first pass's finds only**: the first pass walks the targets for a free machine that has the recipe
+  and collects the free ones with another recipe on the way; the second pass (switch one of them) walks only those, in the same
+  order. A search that found nothing walked every target twice before (13 per pattern in the scene). Nothing the first pass does
+  changes a machine the second one looks at (it reads, and it rejects machines that have the recipe), so the machine taken is the same.
+* **Stack sizes per item name** (per load, outside `storage`): the batch read `prototypes.item[name].stack_size` for every item
+  ingredient and product of every hand-over (about 1 µs each).
+* **The job's position** is a new table only when it changed (it was made anew at every step).
+
+What is left is mostly the engine's work: a lease looks at its machine every step (its recipe, its progress, its input; about 5 µs), a
+closed lease collects the products and takes the unused ingredients back (about 15 µs), a hand-over inserts the ingredients.
+
+**Below the rule, built on the maintainer's call**: the step time falls by 30 %, the script time at 20 000 by 0.09 ms by the
+parts' timers (3.3 %) and 0.10 ms in the benchmark below (4.3 %), under the 5 % of #59;
+there are no job steps at the maintainer's size (no crafting CPU in the `base` scene).
+
+**Test.** The runtime test `ME crafter choice test` (`runtimemod/crafter.lua`): one provider with a crafting pattern and three ME
+Molecular Assemblers around it, in the order the provider finds its neighbours. A free machine with the recipe is taken before the
+first one with another recipe is switched; with none, the first one in that order is switched; one switched off by script is
+skipped. A second pass that walks its finds backwards fails case 2.
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput per kind of endpoint identical at every size (the provider crafts too).
+
+| | origin/main | this pull request |
+|---|---|---|
+| 20 000: script avg / p99 (ms) | 2.352 / 4.74 | **2.251 / 4.38** |
+| 20 000: ticks over 5 ms | 87 | **53** |
+| 20 000: gc avg (ms) / lua alloc per tick (KB) | 0.104 / 102.9 | 0.084 / 95.4 |
+| 20 000: burst build / remove (ms) | 87.0 / 174.6 | 84.7 / 179.0 |
+| 5000: script avg / p99 (ms) | 1.009 / 2.83 | 0.978 / 2.78 |
+| 5000: lua alloc per tick (KB) | 51.6 | 48.4 |
+| base: script avg / p99 (ms) | 0.1447 / 0.392 | 0.1419 / 0.389 |
+
+The whole script time at 20 000 falls by 0.10 ms (4.3 %), a little more than the parts' timers say (7.5 KB
+less garbage per tick as well).
+
 
 ## The pane's slot signature (issue #75)
 

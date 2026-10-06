@@ -260,6 +260,18 @@ local function default_temperature(name)
 	return t
 end
 
+--- an item's stack size, nil when there is no such item (per load, issue #59 lever 3: a prototype read makes a new object)
+local stack_size_cache = {}
+local function stack_size_of(name)
+	local n = stack_size_cache[name]
+	if n == nil then
+		local proto = prototypes.item[name]
+		n = proto and proto.stack_size or false
+		stack_size_cache[name] = n
+	end
+	return n or nil
+end
+
 --- The fluid boxes a machine uses for `ingredients` and `products`: which box takes which fluid ingredient and
 --- which boxes hold the fluid products. Returns the map, or nil and the reason why the machine cannot be used:
 --- "fluid-box" (no usable box, box too small, furnace, two-way box), "fluid-temperature" (a box wants a
@@ -1872,27 +1884,34 @@ end
 --- A machine for a crafting step: one that has the recipe and is idle, else an idle one that is switched to it.
 --- Returns the machine and its fluid map, or nil.
 local function find_crafter(s, net, job, step, targets)
-	local proto = prototypes.recipe[step.recipe]
-	if not proto then return nil end
-	for pass = 1, 2 do
-		for _, t in pairs(targets) do
-			local e = t.entity
-			if t.mode == "craft" and e.valid and not s.busy[t.unit] and not e.disabled_by_script and not rejected(job, t.unit, step.pid) then
-				local current = e.get_recipe()
-				local has = current ~= nil and current.name == step.recipe
-				if pass == 1 and has then
-					local map, why = fluid_map(e, proto.ingredients, proto.products)
-					if not map then reject(job, t.unit, step.pid) job.problem = why
-					elseif machine_idle(e, proto.ingredients, map) then return e, map end
-				elseif pass == 2 and not has and e.crafting_progress == 0 then
-					if switch_recipe(net, e, step.recipe) then
-						local map, why = fluid_map(e, proto.ingredients, proto.products)
-						if map then return e, map end
-						reject(job, t.unit, step.pid)
-						job.problem = why
-					end
-				end
+	if not prototypes.recipe[step.recipe] then return nil end
+	--- issue #59, lever 3: the step's ingredient and product lists (a read of the recipe prototype makes new tables every
+	--- time), the busy test before the engine's, and the second pass only over the machines the first one found free with
+	--- another recipe (in their order: nothing the first pass does changes them)
+	local ingredients, products = step_ingredients(step), step_products(step)
+	local busy, others = s.busy, nil
+	for _, t in pairs(targets) do
+		local e = t.entity
+		if t.mode == "craft" and not busy[t.unit] and e.valid and not e.disabled_by_script and not rejected(job, t.unit, step.pid) then
+			local current = e.get_recipe()
+			if current ~= nil and current.name == step.recipe then
+				local map, why = fluid_map(e, ingredients, products)
+				if not map then reject(job, t.unit, step.pid) job.problem = why
+				elseif machine_idle(e, ingredients, map) then return e, map end
+			else
+				others = others or {}
+				others[#others + 1] = t
 			end
+		end
+	end
+	if not others then return nil end
+	for _, t in ipairs(others) do
+		local e = t.entity
+		if e.crafting_progress == 0 and switch_recipe(net, e, step.recipe) then
+			local map, why = fluid_map(e, ingredients, products)
+			if map then return e, map end
+			reject(job, t.unit, step.pid)
+			job.problem = why
 		end
 	end
 	return nil
@@ -1981,6 +2000,12 @@ local function close_lease(s, job, net, lease)
 	release_lease(s, job, lease)
 end
 
+--- the job's position (its CPU's), a new table only when it moved (issue #59, lever 3)
+local function set_pos(job, entity)
+	local p, old = entity.position, job.pos
+	if not (old and old.x == p.x and old.y == p.y) then job.pos = { x = p.x, y = p.y } end
+end
+
 --- `work.ops`: machine interactions left for this job in this step (counted down)
 local function job_step(s, job, work)
 	if job.status == "queued" and not job.closing then return end
@@ -1995,7 +2020,7 @@ local function job_step(s, job, work)
 			set_wait(job, nil)
 			return
 		end
-		if group.anchor and group.anchor.valid then job.pos = { x = group.anchor.position.x, y = group.anchor.position.y } end
+		if group.anchor and group.anchor.valid then set_pos(job, group.anchor) end
 	elseif not job.closing then
 		if not (cpu_rec and cpu_rec.entity.valid) then       -- CPU removed: pause until another one is free
 			release_cpu(s, job)
@@ -2003,7 +2028,7 @@ local function job_step(s, job, work)
 			set_wait(job, nil)
 			return
 		end
-		job.pos = { x = cpu_rec.entity.position.x, y = cpu_rec.entity.position.y }
+		set_pos(job, cpu_rec.entity)
 		if not cpu_powered(cpu_rec.entity) then set_wait(job, "no-power") return end
 	end
 
@@ -2066,8 +2091,8 @@ local function job_step(s, job, work)
 				local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
 				batch = math.min(batch, math.floor((job.pool[key_of(ing)] or 0) / per + 1e-9))
 				if ing.type == "item" then
-					local proto = prototypes.item[ing.name]
-					batch = math.min(batch, proto and math.floor(proto.stack_size / per) or 0)
+					local size = stack_size_of(ing.name)
+					batch = math.min(batch, size and math.floor(size / per) or 0)
 				end
 			end
 			if batch <= 0 then waiting = waiting or "ingredients" break end
@@ -2083,8 +2108,8 @@ local function job_step(s, job, work)
 				for _, p in pairs(products) do        -- the products must fit into the output slot
 					if p.type == "item" then
 						local per = p.amount or p.amount_max
-						local proto = prototypes.item[p.name]
-						if proto and per > 0 then batch = math.min(batch, math.max(1, math.floor(proto.stack_size / per))) end
+						local size = stack_size_of(p.name)
+						if size and per > 0 then batch = math.min(batch, math.max(1, math.floor(size / per))) end
 					end
 				end
 				batch = fluid_batch_limit(map, batch)
