@@ -2664,7 +2664,7 @@ Left for issue #122:
 * an exclusive-time option for `bench --profile`.
 
 
-## Round seven (issue #122): the two levers that change behaviour
+## Round seven (issue #122): the two levers that change behaviour, the memory, the profiler
 
 The maintainer allowed two levers that are not exact. Both were built and measured; neither is kept.
 
@@ -2707,6 +2707,28 @@ An update of an interface with 1000 signals is one write of `section.filters`, a
 The likely cause: each section's write makes the engine sum the interface's output again, all sections of it, so ten small writes
 cost about ten whole ones. One write of the whole list stays the cheapest. Signals that change less often (an interval that grows
 with the number of signals), or fewer signals per interface, would cost less, but the update would be staler: not tried.
+
+### Memory alive at 20 000: measured, no lever
+
+The mod's Lua heap after a full collection in the 20 000 scene: **216 MB** at the first tick after the load (the saved state,
+the modules' tables, the entity references) and **277 MB** at the end of the window. The 61 MB in between are the per-load
+caches and lookups that fill while the network runs; about 30 MB of them are the engine object caches of rounds five and six.
+
+A walk over `storage` (an experiment, not kept) counted tables, array and hash slots, entity references and string bytes. The
+estimate is about 130 MB of raw slots, more with Lua's power-of-two table sizes:
+
+| part of storage | estimate (MB) | what |
+|---|---|---|
+| `fork_me_net.nodes` | 73 | 80 000 ME nodes (cables mostly), 4 tables each: the node, its neighbours, its tile box, its position |
+| `fork_me_io.recs` | 32 | 20 000 interface and bus records |
+| `fork_me_net.nets` | 10 | the networks |
+| `fork_ae2` | 7 | providers, CPU blocks, maintainers, jobs |
+| strings | 9 | |
+
+At the maintainer's size the heap is 16.7 MB (3 MB of storage).
+
+The collector costs 0.06 ms per tick at 20 000 (3 %). Folding a node's box and position into its own fields would save perhaps
+20 to 30 MB (a migration of every saved node). The collector's time would fall by a few µs. Not built.
 
 
 ## The pane's slot signature (issue #75)
