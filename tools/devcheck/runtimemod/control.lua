@@ -748,6 +748,8 @@ scan50 = require("scan")({ me_place = me_place, me_report = me_report })
 entries50 = require("entries")({ me_place = me_place, me_report = me_report })
 --- me-network issue #59: the storage engine's kept holder lists (holderlists.lua)
 holderlists59 = require("holderlists")({ me_place = me_place, me_report = me_report })
+--- me-network issue #59, lever 3: the machine a crafting job step takes (crafter.lua)
+crafter59 = require("crafter")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #76: what can be stored (storable.lua)
 storable76 = require("storable")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
@@ -800,6 +802,7 @@ local function tests_running()
 	scan50.running(check)
 	entries50.running(check)
 	holderlists59.running(check)
+	crafter59.running(check)
 	holders43.running(check)
 	storable76.running(check)
 	graph43.running(check)
@@ -1684,6 +1687,7 @@ script.on_nth_tick(10, function()
 	scan50.tick()
 	entries50.tick()
 	holderlists59.tick()
+	crafter59.tick()
 	holders43.tick()
 	storable76.tick()
 	graph43.tick()
@@ -4580,6 +4584,7 @@ script.on_init(function()
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
