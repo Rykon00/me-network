@@ -3,11 +3,15 @@
 --- timers on at the first probe and has them reported at the second
 local BENCH_N = require("scripts.fork-me-network")
 remote.add_interface("zz-me-bench-profile", {
-	enable = function(alloc)
+	enable = function(alloc, exclusive)
 		for _, sec in pairs(__BENCH.sections) do
 			sec.total, sec.tmp, sec.n, sec.depth, sec.kb = game.create_profiler(true), game.create_profiler(true), 0, 0, 0
+			--- (the profilers' methods bound once: reading a method makes a new object, 88 bytes, issue #122)
+			sec.stop, sec.restart, sec.add = sec.total.stop, sec.total.restart, sec.total.add
+			sec.tstop, sec.treset = sec.tmp.stop, sec.tmp.reset
 		end
 		__BENCH.alloc = alloc and true or false
+		__BENCH.exclusive = exclusive and true or false
 		if alloc then collectgarbage("stop") end
 		__BENCH.on = true
 	end,
@@ -24,6 +28,9 @@ remote.add_interface("zz-me-bench-profile", {
 		local wrapped = __BENCH_WRAP("calibration", plain)
 		local sec = __BENCH.sections[#__BENCH.sections]
 		sec.total, sec.tmp = game.create_profiler(true), game.create_profiler(true)
+		sec.stop, sec.restart, sec.add = sec.total.stop, sec.total.restart, sec.total.add
+		sec.tstop, sec.treset = sec.tmp.stop, sec.tmp.reset
+		sec.n, sec.depth, sec.kb = 0, 0, 0
 		__BENCH.on = true
 		local a = game.create_profiler()
 		for _ = 1, 20000 do wrapped() end

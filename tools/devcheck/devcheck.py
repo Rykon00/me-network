@@ -1068,6 +1068,7 @@ def bench_config(a, scene, size, variant, profile):
     cfg = {"scene": scene, "size": size, "warmup": BENCH_WARMUP, "window": window,
            "latency": scene == "me" and not profile and not variant.get("noent") and not variant.get("long"),
            "profile": profile, "alloc": bool(profile and getattr(a, "alloc", False)), "idle": bool(variant.get("idle")), "networks": variant.get("networks", 1),
+           "exclusive": bool(profile and getattr(a, "exclusive", False)),
            "noent": bool(variant.get("noent")), "base": bool(variant.get("base")),
            "burst": 0 if (variant.get("long") or variant.get("noent") or variant.get("base") or scene != "me") else a.burst,
            "slice": (SLICE_TICKS if window >= 2 * SLICE_TICKS else max(300, window // 2 // 300 * 300)) if variant.get("long") else None,
@@ -1276,7 +1277,8 @@ def bench(a):
         return compare_plans(a)
     sizes = parse_sizes(a.sizes)
     results = {"factorio": (factorio("--version").splitlines() or ["?"])[0], "scenes": [], "profiles": [],
-               "window": a.ticks, "ref": a.from_ref or "working copy", "gregtorio": a.with_gregtorio}
+               "window": a.ticks, "ref": a.from_ref or "working copy", "gregtorio": a.with_gregtorio,
+               "exclusive": bool(getattr(a, "exclusive", False))}
     a.old_dir = old_tree(a.from_ref) if a.from_ref else None
     print("mod:", results["ref"])
     print(results["factorio"])
@@ -1487,7 +1489,8 @@ def print_bench(results):
                       f"gc {fmt(g.get('avg'))}, heap {fmt(sl.get('memory_kb'), 0)} kB, backlogs io {bl.get('io')} sb {bl.get('storage_bus')} "
                       f"fsb {bl.get('fluid_storage_bus')} maint {bl.get('maintainer')} circ {bl.get('circuit')}")
     for p in results["profiles"]:
-        print(f"\nprofile, size {p['size']} (inclusive ms per tick of the window, calls per tick, us per call; "
+        kind = "exclusive (own time; a callee's wrapper falls on its caller)" if results.get("exclusive") else "inclusive"
+        print(f"\nprofile, size {p['size']} ({kind} ms per tick of the window, calls per tick, us per call; "
               f"wrapper overhead {fmt(p.get('overhead_us'), 2)} us per call):")
         n_ticks = results["window"]
         for name, calls, ms in sorted(p.get("profile", []), key=lambda x: -x[2]):
@@ -1639,7 +1642,8 @@ def main():
     p.add_argument("--ticks", type=int, help="the measured window in ticks, a multiple of 600 (default 3600; --check at 20 000 and more: %d, issue #56)" % CHECK_LONG_TICKS)
     p.add_argument("--reference", action="store_true", help="also the native scenes: inserters and logistic robots")
     p.add_argument("--profile", metavar="SIZES", help="also profile these sizes with an instrumented copy (e.g. 1000,5000)")
-    p.add_argument("--alloc", action="store_true", help="with --profile: also the memory each function allocates (the collector is stopped in the window: use a short --ticks, e.g. 600)")
+    p.add_argument("--alloc", action="store_true", help="with --profile: also the memory each function allocates, measured inside each call (the collector is stopped in the window: use a short --ticks, e.g. 600)")
+    p.add_argument("--exclusive", action="store_true", help="with --profile: each function's own time (and allocation), its wrapped callees' left out (issue #122): small functions are no longer hidden in their callers' totals")
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p.add_argument("--from-ref", help="benchmark this git tag or commit instead of the working copy (the scenes and the "
                    "harness stay the working copy's)")
