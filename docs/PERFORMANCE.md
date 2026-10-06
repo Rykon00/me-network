@@ -2889,3 +2889,24 @@ versions between rounds): **green, regressions 0**; throughput identical.
 | 5000: script avg / p99 (ms) | 1.320 / 4.54 | 1.385 / 4.88 |
 | 5000: ticks over 5 ms | 24 | 34 |
 | 5000: storage bus latency max (s) | 1.733 | 1.733 |
+
+
+## The terminal and the level maintainer take their power from the network (issue #128)
+
+The visit of a level maintainer reads the network (`N.network_of` and `N.usable`, as `active_of` did) and no longer its own entity's
+`status`; a maintainer whose network does not work is parked with `N.wait_usable`; `N.usable` brings the controller's power
+draw up to date before its per-tick cache (one field read); the slow step sets the screen of every terminal (one comparison each
+once a second, `screens` in `scripts/fork-me-network.lua`; the scene has 7 terminals). `bench --check 34254b2 --sizes base`, three
+rounds in turns (the maintainer's size; game client running): **green, regressions 0**, throughput identical. The same check on
+the four pull requests together (`claude/me-tasks-all`) is green as well (script average 0.1565 / 0.1599 ms, inside the noise).
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1558 / 0.465 | 0.1520 / 0.434 |
+| base: ticks over 5 ms | 0 | 0 |
+| base: storage bus latency max (s) | 1.267 | 1.267 |
+| base: Lua allocation (KB per tick) | 2.094 | 2.131 |
+| base: first tick after the load (ms) | 1.02 | 1.77 |
+
+The 0.04 KB per tick more are the screens' sorted list once a second; the first tick after a load makes the seven screens (render
+objects) in the first slow step, inside the noise of that column (the runs' spread was 0.5 ms).
