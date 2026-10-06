@@ -2664,6 +2664,51 @@ Left for issue #122:
 * an exclusive-time option for `bench --profile`.
 
 
+## Round seven (issue #122): the two levers that change behaviour
+
+The maintainer allowed two levers that are not exact. Both were built and measured; neither is kept.
+
+### Job leases looked at from their earliest finish: no gain
+
+A step looks at each lease's machine (its recipe, progress and input, about 5 µs). The experiment gave a lease the earliest tick
+its machine could be done (runs × the recipe's time ÷ the machine's crafting speed now, nine tenths of it). The step left the
+lease alone before that tick.
+
+`bench --check origin/main --sizes base,5000,20000`: green, but no gain:
+
+| | origin/main | experiment |
+|---|---|---|
+| base: script avg (ms) | 0.1269 | 0.1275 |
+| 5000: script avg (ms) | 0.858 | 0.848 |
+| 20 000: script avg (ms) | 1.908 | 1.927 |
+
+The provider crafts were identical. A job is stepped about every 100 ticks in the 20 000 scene (200 jobs, two steps per tick),
+and by then its machines are mostly done: the look is needed when it happens.
+
+The runtime test `ME crafter choice test` kept a case from the experiment (case 4): a player changes the recipe of a machine a
+job crafts on, and the job fails with the reason "recipe changed". No test covered that path before.
+
+### Circuit interface updates in sections of 100, a few per tick: slower
+
+An update of an interface with 1000 signals is one write of `section.filters`, about 0.86 ms at 20 000. The experiment changed it:
+- it wrote 100 signals per section, two sections per tick, the rest in the next ticks;
+- it did not hand a section the engine already held to the engine again;
+- the order of the writes depended on storage only, so a loaded game wrote at the same ticks.
+
+`bench --check`, 3 rounds (game closed). Throughput was identical; 4 regressions:
+
+| | origin/main | experiment |
+|---|---|---|
+| base: script avg (ms) | 0.1272 | 0.1257 |
+| 5000: script avg (ms) | 0.868 | **1.174** |
+| 20 000: script avg (ms) | 1.900 | **2.178** |
+| 20 000: ticks over 5 ms | 36 | 39 |
+
+The likely cause: each section's write makes the engine sum the interface's output again, all sections of it, so ten small writes
+cost about ten whole ones. One write of the whole list stays the cheapest. Signals that change less often (an interval that grows
+with the number of signals), or fewer signals per interface, would cost less, but the update would be staler: not tried.
+
+
 ## The pane's slot signature (issue #75)
 
 The inventory pane compares a signature per slot at every refresh (on each inventory change, and once a second with the
