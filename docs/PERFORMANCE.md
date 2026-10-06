@@ -2577,6 +2577,28 @@ green, regressions 0; throughput, the scheduler's counters and the allocation (n
 
 −0.4 % at base (cells there rarely run full), −4.5 % at 5000, −4.9 % at 20 000.
 
+### Part 4: the network of a visit by its unit
+
+A fresh exclusive profile after parts 1 to 3 has no single big item left at 20 000: many of 1 to 4 % each (the network look-up of
+every visit, the scheduler's internals, the cells' bookkeeping), the job step and the circuit update. `N.network_of(entity)` was
+called 43 times per tick at 20 000; each reads the entity's `valid` and `unit_number` from the engine, though the visit knows the
+unit and has checked the entity.
+
+* **`N.network_of_unit` / `N.active_of_unit`**: the visits of interfaces and buses (`interface_step`, `bus_step` get the unit
+  from the queue) and of the storage buses' item and fluid side look the network up by the unit. Other callers keep the
+  entity form.
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput, the scheduler's counters and the allocation identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1300 / 0.348 | **0.1268 / 0.332** |
+| 5000: script avg / p99 (ms) | 0.874 / 2.60 | 0.863 / 2.61 |
+| 20 000: script avg / p99 (ms) | 1.957 / 4.20 | 1.920 / 4.15 |
+
+−2.5 % at base, −1.2 % at 5000, −1.9 % at 20 000.
+
 
 ## The pane's slot signature (issue #75)
 

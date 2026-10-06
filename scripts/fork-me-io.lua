@@ -586,12 +586,12 @@ end
 --- the next visit (the headroom rule over the rows, the imports and the sides), why it is blocked when nothing
 --- moved ("idle": probed; an interface is never parked for a missing key, an inserter may feed it any time),
 --- whether a row had run empty, its network, and the ticks until its buffer runs out at the rate this visit saw.
-function M.interface_step(rec, dt)
+function M.interface_step(rec, dt, u)
 	local e = rec.entity
 	local config = config_of(rec)
-	local net = N.active_of(e)
+	local net = u and N.active_of_unit(u) or not u and N.active_of(e) or nil   -- (`u`: the unit of a visit, issue #115)
 	if not net then
-		local n0 = N.network_of(e)
+		local n0 = u and N.network_of_unit(u) or not u and N.network_of(e) or nil
 		local _, why = N.usable(n0)
 		rec.status = why or "no-network"
 		return 0, false, nil, (n0 and why == "no-power") and "no-power" or "no-network", false, n0
@@ -1216,11 +1216,11 @@ end
 --- allowed to move, the ticks until its next visit (the headroom rule), why it is blocked when it moved nothing
 --- (nil otherwise), whether its other side had run out, its network, and the ticks until the buffer on its other side
 --- runs out at the rate this visit saw (math.huge: unknown).
-function M.bus_step(rec, dt)
+function M.bus_step(rec, dt, u)
 	local e = rec.entity
-	local net = N.active_of(e)
+	local net = u and N.active_of_unit(u) or not u and N.active_of(e) or nil   -- (`u`: the unit of a visit, issue #115)
 	if not net then
-		local n0 = N.network_of(e)
+		local n0 = u and N.network_of_unit(u) or not u and N.network_of(e) or nil
 		local _, why = N.usable(n0)
 		rec.status = why or "no-network"
 		return 0, false, nil, (n0 and why == "no-power") and "no-power" or "no-network", false, n0
@@ -1480,9 +1480,9 @@ local function visit(rec, unit, fallback)
 	rec.last = now
 	local moved, full, nextiv, block, starved, net, time
 	if rec.kind == "interface" then
-		moved, full, nextiv, block, starved, net, time = M.interface_step(rec, dt)
+		moved, full, nextiv, block, starved, net, time = M.interface_step(rec, dt, unit)
 	else
-		moved, full, nextiv, block, starved, net, time = M.bus_step(rec, dt)
+		moved, full, nextiv, block, starved, net, time = M.bus_step(rec, dt, unit)
 	end
 	rec.starve = starved or nil
 	--- issue #51: how long the other side had been out, from the tick the visit before expected it to run out (`rec.outt`)
