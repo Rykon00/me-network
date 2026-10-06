@@ -223,7 +223,7 @@ old disassembly recipes are removed (their result is what placing the item gives
 
 ## ME Terminal
 
-The ME Terminal stays the same entity (a lamp, now also a network member; since issue #128 it draws its power through the controller). Its GUI is the
+The ME Terminal stays the same entity (a lamp, now also a network member; since issue #128 it draws its power through the controller, since issue #129 it can be walked over like the cable). Its GUI is the
 central window of the network:
 
 * **Status line:** network state (working, no controller, controller conflict, no power), bytes used of
