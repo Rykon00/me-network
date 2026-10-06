@@ -11,6 +11,8 @@ Version: 0.3.2
   Changes:
     - The ME Terminal and the ME Level Maintainer take their power from the network (issue #128): no electric pole next to them any more. The ME Controller draws it, 8 kW per terminal and 30 kW per level maintainer (what a pole supplied before), so a network costs what it cost, only from the controller; the legacy single-block Crafting CPUs keep their own power connection. They work exactly when their network does: a terminal in a network without power says "The ME Controller has no power", its screen is dark and its light off while the network does not work (no controller, a conflict, no power) and lit when it does, and a level maintainer sleeps until the network works again. A terminal or level maintainer that had no pole in an existing save starts to work.
     - The ME Import Bus, Export Bus, Storage Bus and the ME Terminal can be walked over, like the ME cable (issue #129): the player walks over them instead of around them. Nothing can be built on them and items on the ground keep out. Cars and tanks drive over them as well (they collide through the same layer as the player). The buses are drawn under the character. The ME Interface, drive, controller, pattern provider, level maintainer, circuit interface, crafting blocks and the Cell Workbench stay solid.
+  Info:
+    - The mod description names the Discord server of ME Network and Gregtorio Continued: https://discord.gg/bfkwAanSD8
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.1
 Date: 2026-10-06
