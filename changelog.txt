@@ -8,6 +8,8 @@ Version: 0.3.2
     - Taking items out of a storage cell that still has room no longer walks every item the cell holds (5 % less script time from 5000 buses and interfaces up).
     - Interfaces and buses find their network without asking the game for their own entity again at every visit (2 % less script time at the size of a typical base).
     - Buses, interfaces, storage buses and crafting jobs keep the game's functions of the chests, tanks and machines they read instead of asking for them at every call: 40 % less garbage at the size of a typical base, 20 % less in a base of 20 000 buses and interfaces (which keeps about 14 MB more in memory for it).
+  Info:
+    - The mod description names the Discord server of ME Network and Gregtorio Continued: https://discord.gg/bfkwAanSD8
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.1
 Date: 2026-10-06
