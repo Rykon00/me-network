@@ -13,7 +13,7 @@
 ---   * Crafting CPU        = powered entity of the ME network, runs one crafting job at a time.
 ---                           Two bigger tiers (issue #38) run more jobs at once and move more
 ---                           items per step: Co-Processing and Quantum Crafting CPU.
----   * Level Maintainer    = powered 1x1 block that keeps N of an item or fluid in stock: it starts
+---   * Level Maintainer    = 1x1 block (power through the controller) that keeps N of an item or fluid in stock: it starts
 ---                           a crafting job for the difference (issue #38). Its lamp circuit
 ---                           condition switches it on and off.
 ---   * Circuit Interface   = constant combinator that puts the items and fluids of its ME network
@@ -300,8 +300,9 @@ end
 
 --------------------------------------------------------------------------------
 --- LEVEL MAINTAINER (issue #38): keeps N of an item or fluid in stock. A 1x1 lamp like the ME
---- Terminal: needs power, and the lamp's circuit condition (kept on the entity, so the game copies and
---- blueprints it) switches it on and off. Target, amount and the condition are set in its ME window
+--- Terminal; since issue #128 it needs no pole: the ME Controller draws its power (a lamp with a void energy source,
+--- `member_power` of the mod-data "fork-me-network"). The lamp's circuit condition (kept on the entity, so the game
+--- copies and blueprints it) switches it on and off. Target, amount and the condition are set in its ME window
 --- (scripts/fork-me-windows.lua), which replaces the lamp's window.
 --------------------------------------------------------------------------------
 
@@ -325,7 +326,9 @@ maintainer.corpse = "small-remnants"
 maintainer.dying_explosion = nil
 maintainer.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
 maintainer.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
-maintainer.energy_usage_per_tick = "30kW"
+local MAINTAINER_POWER = 30000          -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
+maintainer.energy_source = { type = "void" }
+maintainer.energy_usage_per_tick = (MAINTAINER_POWER / 1000) .. "kW"
 maintainer.always_on = true
 maintainer.light = nil
 maintainer.light_when_colored = nil
@@ -339,8 +342,9 @@ maintainer.picture_on = {
 }
 maintainer.fast_replaceable_group = nil
 maintainer.next_upgrade = nil
-maintainer.localised_description = { "entity-description.me-level-maintainer" }
+maintainer.localised_description = { "entity-description.me-level-maintainer", tostring(MAINTAINER_POWER / 1000) }
 data:extend({ maintainer })
+data.raw["mod-data"]["fork-me-network"].data.member_power.maintainer = MAINTAINER_POWER
 
 
 

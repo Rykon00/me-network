@@ -21,7 +21,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Controller | 2x2, needs power; exactly one per network runs it (two are a conflict) |
 | ME Drive | 1x1, holds up to 10 storage cells; has a priority |
 | Storage cell (1k ... 256k) | holds the items (AE2 bytes and types); keeps them when taken out of the drive; can be partitioned |
-| ME Terminal | powered screen, the hub: storage, **crafting**, jobs, the drives and cells of the network |
+| ME Terminal | the hub: storage, **crafting**, jobs, the drives and cells of the network; no pole needed (the controller draws its 8 kW), its screen is dark while the network does not work |
 | ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount): keeps those in stock in it, imports everything else (this page, **Import and export**) |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face |
 | ME Storage Bus | 1x1, rotatable: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
@@ -40,13 +40,14 @@ underground cable), `me-storage-64k` (EV),
 
 ## Building a network
 
-1. Place an **ME Controller** and give it power (120 kW, plus 4 kW for every drive, interface, bus, pattern
-   provider and circuit interface of the network; cables, terminals, CPUs and level maintainers
-   have their own power connection).
+1. Place an **ME Controller** and give it power. It draws 120 kW, plus 4 kW for every drive, interface, bus, pattern
+   provider and circuit interface of the network, 8 kW for every terminal, 30 kW for every level maintainer and what
+   its crafting blocks need. Cables, terminals, level maintainers and every other block need no power connection of
+   their own (no pole next to a terminal); only the legacy single-block Crafting CPUs keep one.
 2. Connect everything else with **ME cables**: a cable connects on all four sides, and ME blocks that touch
    each other connect without a cable (a row of drives next to the controller is one network). Corners do not
    connect. Everything connected is one network. The cable picture shows its connections.
-3. Place **ME Drives** and put **storage cells** into them (see below), and an **ME Terminal** (powered).
+3. Place **ME Drives** and put **storage cells** into them (see below), and an **ME Terminal** (it takes its power from the network).
 4. Import and export with **ME Interfaces** (inserters, belts, pipes) or **buses** (directly on a machine, chest or
    tank); an **ME Storage Bus** makes a chest or a tank part of the network's storage.
 
@@ -146,7 +147,7 @@ slot: the source slot's partition, or none) and by cloning.
 
 ## ME Terminal
 
-Needs power and a working network. It is the hub of the network: a status line (bytes and types of the item and
+Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
 fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs, and five
 tabs:
 
@@ -718,9 +719,10 @@ legacy tiers (a job on the replaced CPU pauses and goes on on the new one).
 ## Keeping items in stock: ME Level Maintainer
 
 Tech `me-automation` (EV, needs `me-autocrafting` and Circuit network). The **ME Level Maintainer** is
-a 1x1 block that needs power (30 kW) and is a member of the network.
+a 1x1 block and a member of the network; the controller draws its power (30 kW), it needs no pole and works exactly
+when its network does.
 
-1. Connect it to the network and power it. Autocrafting must work for the resource: a pattern
+1. Connect it to the network. Autocrafting must work for the resource: a pattern
    (an encoded pattern in a provider next to a machine) and a Crafting CPU big enough for the difference.
 2. Click it: its ME window opens. Choose the item or fluid in the signal button and type the amount to
    keep (items, or fluid units).
@@ -744,6 +746,7 @@ What the window says:
 | Cannot craft the difference, missing: ... | the plan lacks raw materials; it tries again every 5 seconds |
 | No pattern for this item or fluid | no usable encoded pattern for it in a provider of the network |
 | Switched off by the circuit condition | see below |
+| The ME Controller has no power / Not connected to an ME network | the network does not work; the maintainer sleeps until it does |
 
 **Circuit network** (connect a red or green wire to the maintainer):
 
@@ -1163,7 +1166,9 @@ due at a tick of its own (issue #5, `scripts/fork-me-schedule.lua`).
 
 * **Maintainer check** (4 per tick at most, setting): a stocked maintainer waits until its item is taken below its
   amount (`N.wait_below`) and is checked at least every 5 seconds (circuit targets and conditions have no event);
-  its job's end wakes it. no resource, no power, `cb.disabled` of the lamp's
+  its job's end wakes it. no resource, the network not working (no controller, a conflict or no power: issue #128, the
+  maintainer has no power of its own, the controller draws its 30 kW; it is parked with `N.wait_usable` and woken when the
+  network works again; the window's status reads the network, not the last visit), `cb.disabled` of the lamp's
   control behavior while its circuit (or logistic) condition is switched on (a freshly wired lamp reads
   `disabled` until its next circuit update, so the flag alone is not trusted), no network: status only. Otherwise the target is the amount,
   or the resource's signal on red plus green (`get_circuit_network(wire).get_signal`). The stock is
