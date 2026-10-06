@@ -2023,7 +2023,7 @@ local function on_burst_tick()
 	elseif t == 70 then
 		local w0 = io_wakes()
 		local prof = C.profile and remote.interfaces["zz-me-bench-profile"]
-		if prof then remote.call("zz-me-bench-profile", "enable") end    -- (profile run: the functions of the removal alone)
+		if prof then remote.call("zz-me-bench-profile", "enable", false, C.exclusive) end    -- (profile run: the functions of the removal alone)
 		local p = game.create_profiler()
 		local k = burst_remove(b.burst_made)
 		p.stop()
@@ -2138,7 +2138,7 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		if C.scene == "planner" then planner_probe(b) end
 		sched_stats(true)                                     -- the counters start with the window
 		b.samples = {}
-		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "enable", C.alloc) end
+		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "enable", C.alloc, C.exclusive) end
 		log("DEVCHECK-BENCH-PROBE0 " .. game.tick)
 	elseif tick == C.warmup + C.window then
 		if C.profile and remote.interfaces["zz-me-bench-profile"] then remote.call("zz-me-bench-profile", "report") end
