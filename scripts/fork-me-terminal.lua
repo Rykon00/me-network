@@ -54,7 +54,7 @@ end
 --- nil when the terminal can be used, otherwise the reason as a locale key of [fork-me-net] (status-...)
 local function problem(entity)
 	if not (entity and entity.valid) then return "no-network" end
-	if entity.status == defines.entity_status.no_power then return "no-power-terminal" end
+	--- (issue #128: the terminal has no power of its own; it works when its network does)
 	local net = N.network_of(entity)
 	if not net then return "no-network" end
 	local ok, why = N.usable(net)

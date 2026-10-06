@@ -57,7 +57,16 @@ power of its own (drives, interfaces, buses, providers, circuit interfaces, flui
 cables are free), set by the script when the network changes. It counts as powered while its status is not
 "no power" and its buffer is not empty (an energy interface without any pole reports no "no power" status;
 an underpowered controller keeps the network running at low power, like other machines).
-Terminals, CPUs and level maintainers keep their own power connection (lamps), as before.
+Since issue #128 the terminal and the level maintainer draw their power through the controller too (8 kW and 30 kW, the numbers
+in the mod-data `fork-me-network`, `member_power`); only the three legacy single-block CPUs keep a power connection of their own.
+Both are still lamps (a prototype whose type changes is removed from a saved game), with `energy_source = { type = "void" }`:
+such a lamp has no electric network and its status is always "working", so a pole next to it does nothing and a wire to it
+still works. A lamp with a void source is always on, so the terminal's picture is drawn by the script: the lamp's `picture_on`
+is empty, its `picture_off` (the dark screen: ghosts and the build preview) is the real one, and a sprite render object that
+follows the entity shows the screen lit or dark with a light object that goes with it (`s.screens` in `storage`, ids of the
+render objects; they go with the entity). The slow step (once a second) sets every screen to its network's state, a terminal
+that joins is set at once. Found on 2.0.77: a lamp's `active` does nothing, a circuit condition is ignored without a wire,
+`always_on = false` lights a lamp only by the surface's darkness; none of them can switch a lamp's picture from the script.
 
 **Incremental graph:** nothing scans the map at runtime.
 
@@ -214,7 +223,7 @@ old disassembly recipes are removed (their result is what placing the item gives
 
 ## ME Terminal
 
-The ME Terminal stays the same entity (a lamp that needs power, now also a network member). Its GUI is the
+The ME Terminal stays the same entity (a lamp, now also a network member; since issue #128 it draws its power through the controller). Its GUI is the
 central window of the network:
 
 * **Status line:** network state (working, no controller, controller conflict, no power), bytes used of
