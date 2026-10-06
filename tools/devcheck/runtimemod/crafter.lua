@@ -5,6 +5,8 @@
 --- * case 1: A and C belts, B gears: B crafts, A and C keep their recipe.
 --- * case 2: B belts too: A (the first) is switched to gears, B and C keep belts.
 --- * case 3: A belts and switched off: B (the next) is switched, A and C keep belts.
+--- * case 4 (issue #122): a job of 8 gears on B, whose recipe a player changes to belts while it crafts: the job fails with the
+---   reason "recipe changed" (no test covered that path before).
 --- Loaded by control.lua: require("crafter")(H) returns { setup, tick, running } like margin.lua.
 
 local AC = "gregtorio-me-autocraft"
@@ -96,6 +98,32 @@ return function(H)
 			return start_case()
 		end
 		local j = remote.call(AC, "job", st.job)
+		if st.change then                                             -- case 4
+			local over = j and (j.status == "done" or j.status == "failed" or j.status == "cancelled")
+			if not st.changed then
+				if j and (j.leases or 0) > 0 then
+					sc.b.set_recipe(BELT)                                 -- (what it held comes back to nobody: not counted here)
+					st.changed = tick
+				elseif over or tick > st.since + TIMEOUT then
+					expect(false, "case 4: the job had no lease: " .. serpent.line(j))
+					return finish()
+				end
+				return
+			end
+			if not over then
+				if tick > st.changed + TIMEOUT then
+					expect(false, "case 4: the changed recipe was not found: " .. serpent.line(j))
+					finish()
+				end
+				return
+			end
+			local reason = type(j.reason) == "table" and j.reason[1] or j.reason
+			expect(j.status == "failed" and reason == "fork-me-craft.reason-recipe-changed",
+				"case 4: the job ended as " .. j.status .. " " .. serpent.line(j.reason))
+			sc.a.disabled_by_script = false
+			return finish(#CASES .. " cases: a machine with the recipe first, else the first free one switched, none switched off; "
+				.. "a changed recipe found after " .. (tick - st.changed) .. " ticks")
+		end
 		if not (j and (j.status == "done" or j.status == "failed" or j.status == "cancelled")) then
 			if tick > st.since + TIMEOUT then
 				expect(false, "case " .. st.case .. ": the job timed out: " .. serpent.line(j))
@@ -114,8 +142,19 @@ return function(H)
 			"case " .. st.case .. ": recipes A, B, C " .. table.concat(got, ", ") .. ", expected " .. table.concat(case.want, ", "))
 		expect(#crafted == 1 and crafted[1] == case.crafted, "case " .. st.case .. ": crafted by " .. serpent.line(crafted) .. ", expected " .. case.crafted)
 		if st.case < #CASES and #problems == 0 then return start_case() end
-		sc.a.disabled_by_script = false
-		finish(#CASES .. " cases: a machine with the recipe first, else the first free one switched, none switched off")
+		if #problems > 0 then
+			sc.a.disabled_by_script = false
+			return finish()
+		end
+		--- case 4: B has the gear recipe (case 3), A is switched off
+		local why
+		st.job, why = remote.call(AC, "start", sc.ctrl, "iron-gear-wheel", 8)
+		st.since, st.change = tick, true
+		expect(st.job ~= nil, "case 4: the job did not start: " .. tostring(why))
+		if not st.job then
+			sc.a.disabled_by_script = false
+			finish()
+		end
 	end
 
 	function T.running(check) check(storage.crafter59 and storage.crafter59.done, "ME crafter choice") end
