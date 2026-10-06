@@ -2599,6 +2599,42 @@ green, regressions 0; throughput, the scheduler's counters and the allocation id
 
 −2.5 % at base, −1.2 % at 5000, −1.9 % at 20 000.
 
+### Part 5: bound engine methods
+
+A probe mod: every read of an engine object's method (`inv.get_item_count`, `fb.get_fluid_segment_id`, `entity.get_recipe`)
+makes a new bound method object, 88 bytes of garbage, and is most of a cheap call's time:
+
+| | µs | bytes |
+|---|---|---|
+| `inv.get_item_count()` | 0.28 | 88 |
+| the same method object kept, called | 0.04 | 0 |
+| kept in a table per object, looked up and called | 0.07 | 0 |
+| `entity.get_inventory(i)` | 0.68 | 144 |
+
+* **`N.bound(obj)`**: the methods of an engine object the caller keeps (a record's entity or target, `T.inventory`, `T.fluidbox`),
+  made once per object and load (weak keys, an ephemeron; methods only, a property read through it would be kept as it was).
+  Used in the hot paths: the storage bus read and its handlers (with one reused item spec), the interface's rows, walk and sides,
+  the buses' imports, exports, fluids and probes, the fluid storage bus's segment reads, `N.extract_to` into an inventory, and the job
+  steps (`get_recipe` of a lease's machine and of the targets, the machine's item counts and contents).
+* **A machine's input and output inventory once per load** in the job steps (the same rule as `T.inventory`).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput, provider crafts and the scheduler's counters identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1277 / 0.333 | **0.1251 / 0.327** |
+| base: lua alloc per tick (KB) / gc avg (ms) | 3.416 / 0.0199 | **2.094** / 0.0191 |
+| 5000: script avg (ms) / lua alloc per tick (KB) | 0.863 / 38.5 | 0.860 / 33.7 |
+| 20 000: script avg / p99 (ms) | 1.939 / 4.11 | **1.903 / 4.00** |
+| 20 000: ticks over 5 ms | 45 | 38 |
+| 20 000: lua alloc per tick (KB) | 70.1 | 55.8 |
+| mod heap alive: base / 5000 / 20 000 (MB) | 16.4 / 69.3 / 262.8 | 16.7 / 72.9 / 277.0 |
+
+−2.0 % at base (39 % less garbage), −0.4 % at 5000, −1.9 % at 20 000 (20 % less garbage). The price is memory: the tables of
+bound methods keep 0.2 MB alive at base, 3.5 MB at 5000 and 14 MB at 20 000 (reported by the check, not a failure); the collector's
+time did not rise.
+
 
 ## The pane's slot signature (issue #75)
 

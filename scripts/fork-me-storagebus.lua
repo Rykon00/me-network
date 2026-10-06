@@ -201,6 +201,7 @@ local function item_of(key)
 	return name, q
 end
 
+local Q = {}                                          -- (the item spec of a handler's engine call, reused: issue #115)
 local ITEM = {
 	--- items of `key` the inventory takes now
 	room = function(rec, key)
@@ -209,7 +210,8 @@ local ITEM = {
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
 		if worn(name) and N.has_used(inv, name, q) then return 0 end    -- (a whole item put in would merge into the used stack)
-		return inv.get_insertable_count{ name = name, quality = q }
+		Q.name, Q.quality, Q.count = name, q, nil
+		return N.bound(inv).get_insertable_count(Q)
 	end,
 	--- put up to `count` into the inventory; returns the count inserted
 	insert = function(rec, key, count)
@@ -218,7 +220,8 @@ local ITEM = {
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
 		if worn(name) and N.has_used(inv, name, q) then return 0 end
-		return inv.insert{ name = name, quality = q, count = count }
+		Q.name, Q.quality, Q.count = name, q, count
+		return N.bound(inv).insert(Q)
 	end,
 	--- the real count of `key` in the inventory (0 when the bus cannot take from it); of a tool, ammo or repair tool the
 	--- items of the whole stacks
@@ -228,7 +231,8 @@ local ITEM = {
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
 		if worn(name) or (rec.dmg and rec.dmg[key]) then return N.count_whole(inv, name, q) end
-		return inv.get_item_count{ name = name, quality = q }
+		Q.name, Q.quality, Q.count = name, q, nil
+		return N.bound(inv).get_item_count(Q)
 	end,
 	--- take up to `count` out of the inventory; returns the count removed
 	extract = function(rec, key, count)
@@ -249,7 +253,8 @@ local ITEM = {
 			end
 			return got
 		end
-		return inv.remove{ name = name, quality = q, count = count }
+		Q.name, Q.quality, Q.count = name, q, count
+		return N.bound(inv).remove(Q)
 	end,
 	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? (the bus takes the key and
 	--- works on an inventory now; a bus facing nothing destroys nothing)
@@ -380,7 +385,7 @@ function M.visit(rec, cascade)
 		local all = rec.inonly or not (rec.partition or rec.deny)    -- (no filter to check: the common case)
 		local whole                                                  -- the whole stacks' counts, read when a tool or ammo is there
 		local dmg = rec.dmg                                          -- issue #84: keys with a damaged stack the bus found
-		for _, it in pairs(inv.get_contents()) do
+		for _, it in pairs(N.bound(inv).get_contents()) do
 			local q = it.quality or "normal"
 			if plain(it.name, q) then
 				local key = N.key_of(it.name, q)

@@ -221,16 +221,38 @@ end
 --- machines
 --------------------------------------------------------------------------------
 
+--- Issue #115: a machine's input and output inventory once per load (`get_inventory` makes a new object at every call; a
+--- job step asks for them at every lease); weak keys, an object that turned invalid is made anew, nothing saved
+local machine_invs = setmetatable({}, { __mode = "k" })
+local function invs_of(machine)
+	local c = machine_invs[machine]
+	if not c then
+		c = {}
+		machine_invs[machine] = c
+	end
+	return c
+end
+
 local function input_inventory(machine)
+	local c = invs_of(machine)
+	local inv = c.inp
+	if inv and inv.valid then return inv end
 	local d = defines.inventory
-	if machine.type == "container" or machine.type == "logistic-container" then return machine.get_inventory(d.chest) end
-	return machine.get_inventory(machine.type == "furnace" and d.furnace_source or d.crafter_input)
+	if machine.type == "container" or machine.type == "logistic-container" then inv = machine.get_inventory(d.chest)
+	else inv = machine.get_inventory(machine.type == "furnace" and d.furnace_source or d.crafter_input) end
+	c.inp = inv
+	return inv
 end
 
 local function output_inventory(machine)
 	local d = defines.inventory
 	if machine.type == "container" or machine.type == "logistic-container" then return nil end
-	return machine.get_inventory(machine.type == "furnace" and d.furnace_result or d.crafter_output)
+	local c = invs_of(machine)
+	local inv = c.out
+	if inv and inv.valid then return inv end
+	inv = machine.get_inventory(machine.type == "furnace" and d.furnace_result or d.crafter_output)
+	c.out = inv
+	return inv
 end
 
 local function is_machine(entity)
@@ -1580,7 +1602,7 @@ local function collect_output(job, net, machine, map, step)
 	end
 	local out = output_inventory(machine)
 	if out then
-		for _, c in pairs(out.get_contents()) do
+		for _, c in pairs(N.bound(out).get_contents()) do
 			local removed = out.remove{ name = c.name, count = c.count, quality = c.quality }
 			if removed > 0 then
 				if (c.quality or QUALITY) == QUALITY then
@@ -1606,6 +1628,8 @@ local function collect_output(job, net, machine, map, step)
 	end
 end
 
+local QI = {}                                         -- (an item spec for the engine, reused: issue #115)
+
 --- unused inputs back into the pool (items and fluid input boxes); returns { key -> amount taken back }
 local function take_back_input(job, machine, ingredients, map)
 	local back = {}
@@ -1613,8 +1637,10 @@ local function take_back_input(job, machine, ingredients, map)
 	if inp then
 		for _, ing in pairs(ingredients) do
 			if ing.type == "item" and not back[ing.name] then
-				local held = inp.get_item_count{ name = ing.name, quality = QUALITY }
-				local removed = held > 0 and inp.remove{ name = ing.name, count = held, quality = QUALITY } or 0
+				QI.name, QI.quality, QI.count = ing.name, QUALITY, nil
+				local held = N.bound(inp).get_item_count(QI)
+				QI.count = held
+				local removed = held > 0 and N.bound(inp).remove(QI) or 0
 				if removed > 0 then pool_add(job, ing.name, removed) back[ing.name] = removed end
 			end
 		end
@@ -1640,7 +1666,7 @@ local function machine_idle(machine, ingredients, map)
 	local inp = input_inventory(machine)
 	if not inp then return false end
 	for _, ing in pairs(ingredients) do
-		if ing.type == "item" and inp.get_item_count(ing.name) > 0 then return false end
+		if ing.type == "item" and N.bound(inp).get_item_count(ing.name) > 0 then return false end
 	end
 	if map and #map.inputs > 0 then
 		local fb = machine.fluidbox
@@ -1893,7 +1919,7 @@ local function find_crafter(s, net, job, step, targets)
 	for _, t in pairs(targets) do
 		local e = t.entity
 		if t.mode == "craft" and not busy[t.unit] and e.valid and not e.disabled_by_script and not rejected(job, t.unit, step.pid) then
-			local current = e.get_recipe()
+			local current = N.bound(e).get_recipe()
 			if current ~= nil and current.name == step.recipe then
 				local map, why = fluid_map(e, ingredients, products)
 				if not map then reject(job, t.unit, step.pid) job.problem = why
@@ -2045,7 +2071,7 @@ local function job_step(s, job, work)
 				end
 			else
 				local step = job.steps[real.step]
-				local current = m.get_recipe()
+				local current = N.bound(m).get_recipe()
 				local recipe_changed = real.kind == "crafting" and not (current and current.name == real.recipe)
 				if recipe_changed and not job.closing then
 					take_back_input(job, m, step_ingredients(step), real.fluid)
