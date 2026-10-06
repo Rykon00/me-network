@@ -1543,6 +1543,8 @@ local function processing_done(step)
 	return math.min(done or 0, step.issued)
 end
 
+local monitor_progress                                  -- (the crafting monitors, below: they follow the job's progress, issue #140)
+
 --- the job's total of finished runs (crafting steps count crafts, processing steps the outputs that came back)
 local function update_done(job)
 	local total = 0
@@ -1551,6 +1553,7 @@ local function update_done(job)
 		total = total + step.done
 	end
 	job.done_runs = total
+	monitor_progress(job)
 end
 
 --- Outputs of processing steps that came back (from the machine or as arrivals): credited to the steps that wait
@@ -2963,8 +2966,10 @@ function M.on_mined(entity)
 end
 fluids.mined_hooks[#fluids.mined_hooks + 1] = M.on_mined
 
---- The crafting monitors (issue #6): each monitor of a CPU that runs a job shows the job's item or fluid and its amount
---- (two render objects, kept in s.monitors[unit]); redrawn only when its CPU's blocks, status or job change.
+--- The crafting monitors (issue #6): each monitor of a CPU that runs a job shows the job's item or fluid and the amount it
+--- still has to make (two render objects, kept in s.monitors[unit]; issue #140: the amount counts down as the job's steps
+--- finish runs, before it showed the amount asked for); redrawn when its CPU's blocks, status or job change, the text set
+--- when the job's finished runs change.
 local function amount_text(n)
 	if n >= 1e6 then return string.format("%.1fM", n / 1e6) end
 	if n >= 1e4 then return string.format("%.0fk", n / 1e3) end
@@ -2978,6 +2983,36 @@ local function clear_monitor(s, unit)
 		if type(obj) ~= "number" and obj.valid then obj.destroy() end
 	end
 	s.monitors[unit] = nil
+end
+
+--- Issue #140: what a job still has to make of its item or fluid, for the crafting monitors: the amount asked for less what its
+--- steps have made so far (every finished run of a step makes what its pattern's outputs say of the item), never below 0
+local function remaining_of(job)
+	local made = 0
+	for _, step in ipairs(job.steps) do
+		if step.done > 0 then made = made + step.done * P.output_of(step.def, job.item) end
+	end
+	local left = job.amount - made
+	if not is_fluid(job.item) then left = math.ceil(left - 1e-9) end
+	return left > 0 and left or 0
+end
+
+--- the monitors of the job's CPU count down as the job makes its item (called whenever the job's finished runs change)
+function monitor_progress(job)
+	local s = storage.fork_ae2
+	local g = job.group and s and s.groups and s.groups[job.group]
+	if not (g and next(g.monitors)) then return end
+	local left
+	for unit in pairs(g.monitors) do
+		local shown = s.monitors and s.monitors[unit]
+		if shown and shown.job == job.id and shown.text.valid then
+			left = left or remaining_of(job)
+			if shown.left ~= left then
+				shown.left = left
+				shown.text.text = amount_text(left)
+			end
+		end
+	end
 end
 
 local function draw_monitors(g)
@@ -2999,9 +3034,9 @@ local function draw_monitors(g)
 			s.monitors[unit] = {
 				icon = rendering.draw_sprite{ sprite = sprite, target = { entity = e, offset = { 0, -0.1 } }, surface = e.surface,
 					x_scale = 0.55, y_scale = 0.55, render_layer = "higher-object-under" },
-				text = rendering.draw_text{ text = amount_text(job.amount), target = { entity = e, offset = { 0, 0.12 } },
+				text = rendering.draw_text{ text = amount_text(remaining_of(job)), target = { entity = e, offset = { 0, 0.12 } },
 					surface = e.surface, color = { 0.6, 0.95, 1 }, scale = 0.6, alignment = "center", render_layer = "higher-object-under" },
-				job = job.id,
+				job = job.id, left = remaining_of(job),
 			}
 		end
 	end

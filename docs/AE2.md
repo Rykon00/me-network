@@ -723,8 +723,8 @@ group).
   co-processors). The Craft button is off when no CPU can take it now.
 * **The CPU window** (click any block of the CPU): status, size, crafting storage used by its job and total,
   co-processors and speed, monitors, and the job with its progress and **Cancel**.
-* **ME Crafting Monitor:** shows the item or fluid the CPU is crafting and the amount on its face (several monitors
-  all show it).
+* **ME Crafting Monitor:** shows the item or fluid the CPU is crafting and the amount still to make on its face: it
+  counts down as the job's machines finish crafts (several monitors all show it).
 * **Changing a running CPU:** remove a block and the job **pauses** with everything it holds (nothing is lost: its
   items and fluids are kept by the job, not by the blocks). It goes on as soon as a free CPU of the network is big
   enough, which may be what is left of its own CPU; until then it shows "Paused: waiting for a free CPU with at least
