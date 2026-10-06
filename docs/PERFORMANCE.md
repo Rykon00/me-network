@@ -2908,5 +2908,6 @@ the four pull requests together (`claude/me-tasks-all`) is green as well (script
 | base: Lua allocation (KB per tick) | 2.094 | 2.131 |
 | base: first tick after the load (ms) | 1.02 | 1.77 |
 
-The 0.04 KB per tick more are the screens' sorted list once a second; the first tick after a load makes the seven screens (render
-objects) in the first slow step, inside the noise of that column (the runs' spread was 0.5 ms).
+The 0.04 KB per tick more are the screens' sorted list once a second. The first tick after a load was 1.02 and 1.77 ms: the check
+calls both inside the noise of that column (the runs' spread was 0.5 ms); the screens are not made in the load but at the first slow
+step.
