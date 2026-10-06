@@ -24,7 +24,7 @@
 --- the "line" (this script) turns the inputs into outputs in another chest and an import bus brings them back.
 --- Fluids (issue #68 step R2, prototypes/fluids.lua, scripts/fork-me-fluids.lua): a network with a
 --- drive of four 1k fluid cells, an import interface with a tank of chlorine connected to it, an export interface,
---- a roboport with construction robots, and pattern machines with fluid recipes (chemical reactors, an extractor).
+--- a roboport with construction robots, and pattern machines with fluid recipes (chemical reactors, a fluid extractor).
 --- Checks the import and export totals, a fluid cell taken out (its fluid in the tags), stored in the network and
 --- put back, the drive mined by robots (cells with their fluid in the storage chest) and rebuilt, full cells, a
 --- reported fluid shortfall, and jobs with a fluid ingredient, a fluid product and both. ME fluid cells
@@ -1759,7 +1759,8 @@ local FL = {
 	chest = { "iron-chest", 14.5, FL_Y + 2.5 },
 	store = { "storage-chest", 20.5, FL_Y + 2.5 },        -- the robots' storage
 	reactor_a = { "hv-chemical-reactor", 12.5, FL_Y + 7.5 },
-	extractor = { "ev-extractor", 16.5, FL_Y + 7.5 },
+	-- Gregtorio issue #152: the melts run in the Fluid Extractor; the Extractor of a Gregtorio before it
+	extractor = { prototypes.entity["ev-fluid-extractor"] and "ev-fluid-extractor" or "ev-extractor", 16.5, FL_Y + 7.5 },
 	reactor_c = { "hv-chemical-reactor", 12.5, FL_Y + 11.5 },
 	reactor_d = { "hv-chemical-reactor", 20.5, FL_Y + 11.5 },
 }
