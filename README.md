@@ -6,6 +6,9 @@ chests and tanks,
 autocrafting with encoded patterns and crafting CPUs, level maintainers, and fluids. On the mod portal:
 [ME Network](https://mods.factorio.com/mod/me-network) (`me-network`).
 
+**Discord:** questions, help and release news in the [Gregtorio & ME Network server](https://discord.gg/bfkwAanSD8), shared with
+[Gregtorio Continued](https://github.com/Rykon00/Gregtorio).
+
 It was made in [Gregtorio Continued](https://github.com/Rykon00/Gregtorio) (issues #68, #38, #80) and became a mod of
 its own in Gregtorio issue #83. On its own it uses vanilla recipes and technologies; Gregtorio Continued depends on it
 and puts it on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lua`, through the API below). Issue
