@@ -2730,6 +2730,62 @@ At the maintainer's size the heap is 16.7 MB (3 MB of storage).
 The collector costs 0.06 ms per tick at 20 000 (3 %). Folding a node's box and position into its own fields would save perhaps
 20 to 30 MB (a migration of every saved node). The collector's time would fall by a few µs. Not built.
 
+## Round eight (issue #126): measured, nothing built
+
+The small items left after round seven were looked at with the exclusive profile (`bench --profile --exclusive`, #125) of the
+state after round seven (8a5acfc). Own time per call and per tick:
+
+| | base | 20 000 |
+|---|---|---|
+| script time per tick | 0.125 ms | 1.9 ms |
+| `interface_step` | 15 µs, 0.0095 ms | 16 µs × 13 = 0.207 ms |
+| `job_step` | – | 86 µs × 2 = 0.172 ms |
+| `insert_key` | 7.9 µs, 0.0059 ms | 6.9 µs × 22 = 0.153 ms |
+| circuit interface update | – | 830 µs × 0.17 = 0.138 ms |
+| `extract_key` | 5.1 µs, 0.0048 ms | 7.8 µs × 16 = 0.122 ms |
+| `io.visit` | 4.2 µs, 0.0054 ms | 4.3 µs × 24 = 0.104 ms |
+| scheduler (`arrive`, `drain`, `slot`, `at`, `run`) | 0.039 ms | 0.33 ms |
+| storage bus visit | 10 µs, 0.0112 ms | 8 µs × 8 = 0.066 ms |
+
+The profile is flat: no function above about a tenth of the script time, and the scheduler's own work, the biggest group, is
+spread over five functions of about 1 to 9 µs per call. (Each wrapped call adds about 0.5 µs of the wrapper's own cost, so the
+small functions read high: the numbers rank, they do not add up to the script time.)
+
+One entry that looked like a lever was not: `config_of` showed 5 µs and 0.43 KB per call in a 600-tick allocation profile at
+20 000. A counter showed that its slow path (reading the interface's filters, 18 engine calls) runs once per interface, 2000
+times in all, in the first window; the profile's window starts at tick 600 and holds the blocks' first visits. After that
+`config_of` returns `rec.config` (52 528 calls in the third window, none of them slow). A short allocation window therefore
+also measures the start: `--alloc --ticks 600` is good for the shape of the garbage, not for its rate (the allocation meter
+of #118 measures that, 300 ticks after the window).
+
+### Tried, not kept
+
+Three exact changes of the profile's hot spots were built and checked in turns (`bench --check origin/main
+--sizes base,5000,20000`, three rounds, game closed; green, throughput identical):
+* the storage bus's `plain()` memo keyed by quality then name (no string built per item per visit, 1 µs each), its `item_of(key)`
+  result memoised per key (it ran `parse_key`'s pattern matches at every handler call), and the key of a normal quality item
+  without a call;
+* `list_of` inlined in the scheduler's `arrive` and `drain` (134 calls per tick at 20 000).
+
+| | origin/main | experiment |
+|---|---|---|
+| base: script avg (ms) | 0.1257 ±0.0006 | 0.1231 ±0.0017 |
+| 5000: script avg (ms) | 0.8594 ±0.0015 | 0.8603 ±0.0048 |
+| 20 000: script avg (ms) | 1.915 ±0.007 | 1.902 ±0.015 |
+
+The differences are −2.1 %, +0.1 % and −0.7 %, inside the noise at 5000 and 20 000 and at its edge at base. A gain the
+measurement cannot tell from the noise is no reason for a cache that has to be kept right: not built.
+
+### Not built, and why
+
+* **ME nodes folded** (box and position into the node's fields): 20 to 30 MB at 20 000, a few µs of collector time, a migration
+  of every saved node.
+* **The fluid side** (`fluidbox[i]`, 312 bytes per read; a fluid bus step 5 µs, a fluid storage bus visit 7 µs): the fluid
+  work of both scenes is small (8 and 5 visits per tick at 20 000, 0.5 at base).
+* **The remaining engine method calls** (`start_lease` inserts, `probe_work`, `switch_recipe`, an export bus into a lab):
+  each under 1 µs per tick at 20 000.
+* **The big edits** (graph rebuild 3.1 s, burst remove of 1000 blocks 174 ms at 20 000): single events, not a cost per tick.
+
 
 ## The pane's slot signature (issue #75)
 
