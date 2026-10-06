@@ -17,6 +17,8 @@ Version: 0.3.2
     - The ME Molecular Assembler is one tile instead of 3x3 (issue #131), like AE2's block, in this mod and in Gregtorio Continued; up to three fit around one pattern provider (its fourth side joins the network). Existing 3x3 setups are not converted: an assembler in an old save stays where its centre is and becomes one tile (its recipe, items and cards are kept), so a pattern provider that touched the edge of the old block is one tile away and its patterns say "No machine or chest next to the provider" until you move the assembler or the provider next to each other; a crafting job that was waiting for it waits for a machine (it holds its ingredients and goes on once the machine is moved, or cancel it). New pictures for the idle and the working block.
   Info:
     - The mod description names the Discord server of ME Network and Gregtorio Continued: https://discord.gg/bfkwAanSD8
+  Bugfixes:
+    - The ME Crafting Monitor counts down (issue #140): it shows the amount the job still has to make and lowers it with every finished craft of the job's steps, where it showed the amount asked for until the job ended.
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.1
 Date: 2026-10-06
