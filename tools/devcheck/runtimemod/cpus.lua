@@ -36,7 +36,7 @@ return function(H)
 		cable_row(s, fails, X + 10, X + 60, Y - 1)
 		for _, mx in pairs({ 30, 36 }) do
 			me_place(s, fails, what, "me-pattern-provider", X + mx + 0.5, Y - 1.5)
-			local m = me_place(s, fails, what, "me-molecular-assembler", X + mx + 0.5, Y - 3.5)
+			local m = me_place(s, fails, what, "me-molecular-assembler", X + mx + 0.5, Y - 2.5)
 			if m then
 				m.force.recipes[GEAR_RECIPE].enabled = true
 				m.set_recipe(GEAR_RECIPE)

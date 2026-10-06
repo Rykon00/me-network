@@ -522,7 +522,7 @@ Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks:
 | **ME Blank Pattern** | cheap item (LV assembler: 2 glass, certus quartz, aluminium plate, fluix cable). Encoded in the ME Terminal's **Patterns** tab |
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
 | **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns**; each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
-| **ME Molecular Assembler** | assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW |
+| **ME Molecular Assembler** | **1x1** (one tile, like AE2's block) assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW, five module slots for Acceleration Cards. Up to three of them fit around one provider (its fourth side joins the network) |
 | **Crafting blocks** | 1x1 members of the network; a solid rectangle of them with at least one **crafting storage** is a Crafting CPU running one job (see [Crafting CPUs](#crafting-cpus)). The first: a single **ME 1k Crafting Storage** |
 
 Step by step:
@@ -536,10 +536,12 @@ Step by step:
    **Patterns** tab (below): a **crafting pattern** for each recipe the network should craft.
 4. Place a machine (Molecular Assembler for crafting recipes, a GT machine for processing recipes: macerator, EBF,
    wiremill, chemical reactor, ...) with power, put an **ME Pattern Provider on a tile touching it** (left, right,
-   above or below) and connect the provider to the network (the machine needs no cable). Open the provider and
+   above or below: the assembler is one tile, so it is the tile right next to it; a bigger machine is touched at any tile
+   of its edge) and connect the provider to the network (the machine needs no cable). Open the provider and
    click a slot with an encoded pattern in hand (or click the provider with a pattern in hand: first free slot).
    The machine needs **no recipe**: the provider sets the pattern's recipe on it for each job. One machine serves
-   all patterns of its provider (one job at a time), one provider up to four machines around it.
+   all patterns of its provider (one job at a time); the provider looks at the tiles on its four sides, so up to three machines
+   fit around it when the fourth side is the cable (or any network block) that joins it to the network.
 5. Open the ME Terminal, tab **Crafting**: every item and fluid a pattern can make is listed
    (also at 0 in stock). Click one, enter an amount (items, or fluid units), and read the plan preview:
    `Ready: 12 crafts in 3 steps` with what is taken from storage, or the **missing** items and fluids as
@@ -624,7 +626,11 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   and takes its products out, and crafting patterns change its recipe. Do not feed them with inserters, belts or
   pipes as well.
 * A provider that is not connected to the network, or that touches no machine, makes no pattern; its patterns stay
-  in it.
+  in it. An ME Molecular Assembler is one tile (it was 3x3 before 0.3.2): it has to stand on a tile next to the provider, one
+  tile further away is no neighbour. Assemblers of an older save keep their centre and are one tile now, so a provider that
+  touched the edge of the old block is one tile away until you move the assembler or the provider: its patterns then say "No
+  machine or chest next to the provider", and a job that was waiting for it waits for a machine (it holds its ingredients
+  and goes on when the machine is moved, or you cancel it).
 * The machine has to work on its own: power (or fuel), a mold in the mold slot if the recipe
   needs one, modules as you like. A machine that cannot run makes the job wait; it fails after
   5 minutes without progress and returns its items.
