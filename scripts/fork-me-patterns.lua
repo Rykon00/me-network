@@ -7,11 +7,11 @@
 ---   * The blank pattern (me-blank-pattern) is a plain item. The encoded pattern (me-encoded-pattern) is an item
 ---     with tags, stack size 1: the pattern is its tag `fork_me_pattern`, the tooltip lists inputs and outputs
 ---     (custom description).
----   * Encoding takes a blank pattern from the cursor, the player's inventory or the ME network and puts the
----     encoded pattern into the cursor or the inventory; clearing turns an encoded pattern back into a blank one.
----     Nothing is created or lost on the way: the blank is taken only when the encoded pattern has a place.
---- The pattern slots of the providers, the planner and the jobs are in scripts/fork-me-autocraft.lua; the Patterns
---- tab of the ME Terminal (the encoding window) in scripts/fork-me-terminal.lua.
+---   * Encoding (the ME Pattern Terminal, issue #130) takes a blank pattern from the block's blank slot, else from the ME
+---     network, and puts the encoded pattern into its output slot (an encoded pattern lying there is encoded again, no
+---     blank); clearing turns an encoded pattern back into a blank one. Nothing is created or lost on the way.
+--- The pattern slots of the providers, the planner and the jobs are in scripts/fork-me-autocraft.lua; the ME Pattern
+--- Terminal (the encoding window and its two slots) in scripts/fork-me-patternterm.lua.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -282,52 +282,39 @@ function M.info(stack)
 end
 
 --------------------------------------------------------------------------------
---- encoding and clearing (the logic of the Patterns tab; the runtime test calls the same functions)
+--- encoding and clearing (the logic of the ME Pattern Terminal, scripts/fork-me-patternterm.lua; the runtime test calls the
+--- same functions)
 --------------------------------------------------------------------------------
 
---- Encode `def` onto a blank pattern. `cursor`: the player's cursor stack (or nil), `inv`: the main inventory (or
---- nil), `net`: the terminal's network (or nil). The blank comes from the cursor, else the inventory, else the
---- network; the encoded pattern goes into the cursor (where the blank was, or an empty cursor), else into the
---- inventory. Returns "cursor" or "inventory", or nil and a reason ("invalid", "no-blank", "inventory-full").
-function M.encode(cursor, inv, net, def)
+--- Encode `def` as GTNH's ME Pattern Terminal does (Applied-Energistics-2-Unofficial, appeng/helpers/PatternEncodingHelper.java
+--- `encode`; written anew here): `blank` and `output` are the two slots of the block (LuaItemStacks), `net` the block's network
+--- (or nil). An encoded pattern lying in the output slot is encoded again in place and no blank is used. Else the blank comes
+--- from the blank slot, and when that is empty, one from the network; with none there nothing is done. The encoded pattern
+--- lands in the output slot. Returns "output", or nil and a reason ("invalid" and the like, "no-blank", "output-full").
+function M.encode_slots(blank, output, net, def)
 	local clean, why = M.normalize(def)
 	if not clean then return nil, why end
 	local item = M.stack_def(clean)
-	local source
-	if cursor and cursor.valid_for_read and cursor.name == M.BLANK and cursor.quality.name == "normal" then
-		source = "cursor"
-	elseif inv and inv.get_item_count{ name = M.BLANK, quality = "normal" } > 0 then
-		source = "inventory"
+	if M.is_encoded(output) then
+		output.set_stack(item)
+		return "output"
+	end
+	if output and output.valid_for_read then return nil, "output-full" end     -- (the slot takes encoded patterns only: defensive)
+	local from
+	if blank and blank.valid_for_read and blank.name == M.BLANK and blank.quality.name == "normal" then
+		from = "slot"
 	elseif net and N.count(net, M.BLANK, "normal") > 0 then
-		source = "network"
+		from = "network"
 	else
 		return nil, "no-blank"
 	end
-	--- the encoded pattern replaces a single blank in the cursor, or goes into an empty cursor
-	if source == "cursor" and cursor.count == 1 then
-		cursor.set_stack(item)
-		return "cursor"
+	if from == "slot" then
+		blank.count = blank.count - 1
+	elseif N.extract(net, M.BLANK, "normal", 1) ~= 1 then
+		return nil, "no-blank"
 	end
-	local function take()
-		if source == "cursor" then cursor.count = cursor.count - 1 return true end
-		if source == "inventory" then return inv.remove{ name = M.BLANK, quality = "normal", count = 1 } == 1 end
-		return N.extract(net, M.BLANK, "normal", 1) == 1
-	end
-	if cursor and not cursor.valid_for_read then
-		if not take() then return nil, "no-blank" end
-		cursor.set_stack(item)
-		return "cursor"
-	end
-	--- else into the inventory (the blank is taken first: its slot may be the free one); no room: the blank goes back
-	if not inv then return nil, "inventory-full" end
-	if not take() then return nil, "no-blank" end
-	if inv.insert(item) < 1 then
-		if source == "cursor" then cursor.count = cursor.count + 1
-		elseif source == "inventory" then inv.insert{ name = M.BLANK, count = 1 }
-		else N.insert(net, M.BLANK, "normal", 1) end
-		return nil, "inventory-full"
-	end
-	return "inventory"
+	output.set_stack(item)
+	return "output"
 end
 
 --- Clear an encoded pattern stack: it becomes one blank pattern. Returns true when it did.

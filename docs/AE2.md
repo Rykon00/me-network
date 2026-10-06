@@ -28,7 +28,8 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns; the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
-| Blank / Encoded Pattern | a blank pattern is encoded in the terminal's Patterns tab into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
+| ME Pattern Terminal | 1x1, no pole needed (the controller draws its 8 kW), can be walked over: encodes patterns (this page, **Patterns: encoding and clearing**); two slots, one for blank patterns and one for the encoded pattern |
+| Blank / Encoded Pattern | a blank pattern is encoded in an ME Pattern Terminal into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
 | ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
 | ME Circuit Interface | puts the network contents onto a circuit wire (this page, **Circuit network**) |
 
@@ -152,8 +153,8 @@ slot: the source slot's partition, or none) and by cloning.
 ## ME Terminal
 
 Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
-fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs, and five
-tabs:
+fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs, and four
+tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
 * **Storage:** sort (by amount or by name) and **Show: all / items / fluids**. **Left click** an item: a stack into
   your hand; with something in hand, the click stores that instead. **Right click**: one item into your hand (one
@@ -171,7 +172,6 @@ tabs:
 * **Cells:** the drives of the network, highest priority first, with their cells (number: fill in percent;
   yellow: partitioned). Click a drive for its window, a cell for its cell window; both have a **Back** button
   to the terminal and need only the terminal in reach.
-* **Patterns** (issue #80, AE2's pattern terminal): encodes blank patterns (see [Patterns](#patterns-encoding-and-clearing)).
 
 ## The ME windows
 
@@ -194,6 +194,7 @@ click uses the tool and opens no window, as on a chest.
 | Block | Window |
 |---|---|
 | ME Terminal | the hub above; shift + click in your inventory stores |
+| ME Pattern Terminal | the pattern editor, the blank pattern slot, **Encode**, the output slot, **Load pattern**, **Clear pattern**; shift + click in your inventory: blank patterns into the blank slot, an encoded pattern into the output slot |
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, power |
@@ -524,7 +525,8 @@ Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks:
 
 | Thing | What it does |
 |---|---|
-| **ME Blank Pattern** | cheap item (LV assembler: 2 glass, certus quartz, aluminium plate, fluix cable). Encoded in the ME Terminal's **Patterns** tab |
+| **ME Pattern Terminal** | 1x1 block that encodes patterns (it was the Patterns tab of the ME Terminal): ME Terminal + blank pattern + processing unit + 2 fluix cable |
+| **ME Blank Pattern** | cheap item (LV assembler: 2 glass, certus quartz, aluminium plate, fluix cable). Encoded in an **ME Pattern Terminal** |
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
 | **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns**; each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
 | **ME Molecular Assembler** | assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW |
@@ -537,8 +539,8 @@ Step by step:
 2. Build a **Crafting CPU** touching the network: the smallest is one **ME 1k Crafting Storage** next to a cable.
    One CPU = one job at a time, of at most its crafting storage in bytes; a second CPU (not touching the first)
    lets two jobs run in parallel.
-3. Put **blank patterns** into your inventory (or into the network) and encode them in the terminal's
-   **Patterns** tab (below): a **crafting pattern** for each recipe the network should craft.
+3. Build an **ME Pattern Terminal** (it joins the network like the ME Terminal), put **blank patterns** into the network
+   (or into its blank slot) and encode them there (below): a **crafting pattern** for each recipe the network should craft.
 4. Place a machine (Molecular Assembler for crafting recipes, a GT machine for processing recipes: macerator, EBF,
    wiremill, chemical reactor, ...) with power, put an **ME Pattern Provider on a tile touching it** (left, right,
    above or below) and connect the provider to the network (the machine needs no cable). Open the provider and
@@ -555,7 +557,10 @@ Step by step:
 
 ### Patterns: encoding and clearing
 
-The terminal's **Patterns** tab:
+The **ME Pattern Terminal** (issue #130; GTNH's AE2 has a block of that name, AE2 calls it "ME Pattern Encoding Terminal"; the
+ME Terminal has no pattern function there either). One block does both kinds. It is a 1x1 member of the network like the ME
+Terminal: it draws its power (8 kW) through the controller, so it needs no pole, and it can be walked over. Its window
+(on the left your inventory, as in every ME window):
 
 * **Crafting / Processing** switch.
 * **Crafting pattern:** choose a recipe with the recipe button (the game's recipe chooser, with its search). Only
@@ -563,12 +568,27 @@ The terminal's **Patterns** tab:
 * **Processing pattern:** up to **9 inputs** and **6 outputs**, each an item or fluid (signal button) with an amount
   per run. The recipe button fills the rows from a recipe ("Fill from a recipe"), which is the quick way to a
   furnace pattern. Items with tags (cells, patterns) cannot be inputs or outputs.
-* **Encode** takes one blank pattern from your **hand**, else your **inventory**, else the **network**, and gives
-  the encoded pattern into your hand (where the blank was, or an empty hand), else into your inventory. The line
-  below shows how many blanks are in each place.
-* **Load pattern in hand** copies the pattern you hold into the editor (to change and encode it again).
-* **Clear pattern in hand** turns the encoded pattern you hold back into one blank pattern (AE2: shift right click;
-  a click on an item in the inventory cannot be caught by a mod, so it is this button).
+* **The two slots** are the block's inventory (what lies in them stays when the window closes, is saved, comes out
+  when the block is mined and is spilled when it is destroyed; blueprints, copies and clones start empty). The
+  **blank pattern slot** takes only blank patterns (a stack): click with blanks in your hand, or shift + click a stack
+  in your inventory; click it with an empty hand to take them out, and click the **empty** slot with an empty hand to
+  **fetch a stack from the network**. The **output slot** holds one encoded pattern: take it into your hand with a click
+  (shift + click: into your inventory); an encoded pattern you put there can be encoded again, loaded or cleared.
+* **Encode** (as GTNH's does) takes one blank pattern from the **blank slot**, else one from the **network**, and with
+  none in either does nothing and says why. The encoded pattern lands in the **output slot**; **shift + click on
+  Encode** puts it straight into your inventory (it stays in the slot when the inventory is full). An encoded pattern
+  already lying in the output slot is **encoded again in place**, without a blank. Your hand and your inventory are not
+  searched for blanks. The line below the buttons shows how many blanks are in the slot and in the network.
+* **Load pattern** copies the encoded pattern in your hand, else the one in the output slot, into the editor (to
+  change it and encode it again).
+* **Clear pattern** turns the encoded pattern in your hand, else the one in the output slot, back into a blank pattern
+  (the blank of the output slot goes into the blank slot) (AE2: shift right click; a click on an item in the
+  inventory cannot be caught by a mod, so it is this button).
+* Without a working network the window says why (no controller, a conflict, no power) and Encode and fetching blanks
+  from the network refuse; the slots can still be emptied. The screen of the block is lit while the network works.
+
+Where the Patterns tab was: a player who looks for it in the ME Terminal now builds an ME Pattern Terminal. Showing
+the network's storage inside it (AE2's does) and a separate processing pattern terminal are not part of it.
 
 Encoded patterns can be stored in the network like any item (they keep their pattern; equal patterns stack in the
 network), but the planner never uses them as ingredients.
