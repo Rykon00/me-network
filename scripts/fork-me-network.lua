@@ -1460,6 +1460,19 @@ function M.active_of(entity)
 	return nil
 end
 
+--- Issue #115: the same by the member's unit number, for a caller that knows the entity is valid (a visit): no engine
+--- reads (`valid` and `unit_number` of the entity, 43 calls per tick at 20 000)
+function M.network_of_unit(unit)
+	local s = storage.fork_me_net
+	local node = s and s.nodes[unit]
+	return node and s.nets[node.net] or nil
+end
+function M.active_of_unit(unit)
+	local net = M.network_of_unit(unit)
+	if net and M.usable(net) then return net end
+	return nil
+end
+
 --- the nearest member within `radius` of a position whose network works (`any`: working or not), and that
 --- network; nil if there is none
 function M.member_near(surface, position, force, radius, any)

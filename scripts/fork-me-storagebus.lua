@@ -405,7 +405,7 @@ function M.visit(rec, cascade)
 	local changed = N.ext_sync(rec.unit, contents) or before ~= rec.target
 	if contents == scratch then scratch_free = true end
 	if rec.status == "ok" then
-		local net = N.network_of(e)
+		local net = N.network_of_unit(rec.unit)                      -- (e is valid: checked above)
 		local ok, why = N.usable(net)
 		if not ok then rec.status = why or "no-network" end
 	end
