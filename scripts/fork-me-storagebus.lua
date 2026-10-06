@@ -187,7 +187,7 @@ local function inventory_of(rec)
 		local here = e.surface.find_entities_filtered{ position = T.front(e), type = "cargo-wagon", limit = 1 }[1]
 		if here ~= t then return nil end
 	end
-	return t.get_inventory(INVENTORY[t.type])
+	return T.inventory(t, INVENTORY[t.type])            -- (made once per load: issue #59)
 end
 
 --------------------------------------------------------------------------------
@@ -353,6 +353,8 @@ local function resolve(s, rec)
 	return rec.target
 end
 
+local scratch, scratch_free = {}, true
+
 --- One visit: find the target, read its inventory (or segment) once and apply the difference to the network.
 --- Returns true when the snapshot or the target changed.
 function M.visit(rec, cascade)
@@ -366,7 +368,13 @@ function M.visit(rec, cascade)
 		if rec.want then M.fill_cards(rec) end
 		return changed
 	end
-	local contents = {}
+	--- issue #59, lever 5: the snapshot table of this read is reused (N.ext_sync only reads it); a visit inside a visit
+	--- (none is known) gets a table of its own
+	local contents = scratch_free and scratch or {}
+	if contents == scratch then
+		scratch_free = false
+		for k in pairs(contents) do contents[k] = nil end
+	end
 	local inv = t and inventory_of(rec)
 	if inv and rec.mode ~= "write" then
 		local all = rec.inonly or not (rec.partition or rec.deny)    -- (no filter to check: the common case)
@@ -395,6 +403,7 @@ function M.visit(rec, cascade)
 		end
 	end
 	local changed = N.ext_sync(rec.unit, contents) or before ~= rec.target
+	if contents == scratch then scratch_free = true end
 	if rec.status == "ok" then
 		local net = N.network_of(e)
 		local ok, why = N.usable(net)

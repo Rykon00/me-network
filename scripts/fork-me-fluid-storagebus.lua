@@ -30,6 +30,7 @@
 
 local N = require("scripts.fork-me-network")
 local Sched = require("scripts.fork-me-schedule")
+local T = require("scripts.fork-me-targets")
 
 local M = {}
 
@@ -106,11 +107,20 @@ local function shown(rec, key) return rec.inonly == true or N.accepts(rec, key) 
 
 --- the storage key of the faced box now ("s<segment id>", or "u<unit>:<box>" for a box without a segment), and
 --- whether it is a segment
+local seg_keys, seg_n = {}, 0                       -- segment id -> "s<id>" (issue #59: a number's string costs 1 µs)
 local function live_key(rec)
 	local t = rec.target
 	if not (t and t.valid and rec.box) then return nil end
-	local id = t.fluidbox.get_fluid_segment_id(rec.box)
-	if id then return "s" .. id, true end
+	local id = T.fluidbox(t).get_fluid_segment_id(rec.box)
+	if id then
+		local key = seg_keys[id]
+		if not key then
+			if seg_n >= 4096 then seg_keys, seg_n = {}, 0 end   -- (segment ids grow while pipes are rebuilt)
+			key = "s" .. id
+			seg_keys[id], seg_n = key, seg_n + 1
+		end
+		return key, true
+	end
 	return "u" .. t.unit_number .. ":" .. rec.box, false
 end
 
@@ -122,13 +132,15 @@ local function owns(rec)
 	return s ~= nil and s.claims[key] == rec.unit
 end
 
---- { fluid name -> amount } of the storage, its temperature (nil when unknown) and whether it is a segment
-local function contents_of(rec)
+--- { fluid name -> amount } of the storage, its temperature (nil when unknown) and whether it is a segment (`seg`: the
+--- caller knows that already from live_key)
+local function contents_of(rec, seg)
 	local t = rec.target
-	local fb = t.fluidbox
+	local fb = T.fluidbox(t)
 	local held = fb[rec.box]
 	local temp = held and held.temperature or nil
-	if fb.get_fluid_segment_id(rec.box) then
+	if seg == nil then seg = fb.get_fluid_segment_id(rec.box) ~= nil end
+	if seg then
 		return fb.get_fluid_segment_contents(rec.box) or {}, temp, true
 	end
 	if held and held.amount > EPS then return { [held.name] = held.amount }, temp, false end
@@ -312,7 +324,7 @@ end
 --- a lower unit wins; a stale claim (the other bus faces another segment now) is taken over and that bus is
 --- visited at once, so a segment is never in two snapshots.
 local function claim(s, rec, cascade)
-	local key = live_key(rec)
+	local key, seg = live_key(rec)
 	if rec.seg ~= key then release(s, rec) end
 	if not key then return nil end
 	local other = s.claims[key]
@@ -337,8 +349,10 @@ local function claim(s, rec, cascade)
 	end
 	s.claims[key] = rec.unit
 	rec.seg = key
-	return key
+	return key, seg
 end
+
+local scratch, scratch_free = {}, true
 
 --- One visit of a bus on fluid: claim its segment, read the segment once and apply the difference to the network.
 --- `cascade` (default true): a stale claim of another bus makes that bus visit too. A bus whose target is gone or
@@ -356,11 +370,17 @@ function M.visit(rec, cascade)
 		return changed
 	end
 	local seg = rec.seg
-	local contents = {}
 	rec.temp, rec.fluid = nil, nil
 	rec.status = "ok"
-	if claim(s, rec, cascade ~= false) then
-		local held, temp = contents_of(rec)
+	local key, is_seg = claim(s, rec, cascade ~= false)
+	--- issue #59, lever 5: the snapshot table is reused (taken after the claim, which may visit another bus first)
+	local contents = scratch_free and scratch or {}
+	if contents == scratch then
+		scratch_free = false
+		for k in pairs(contents) do contents[k] = nil end
+	end
+	if key then
+		local held, temp = contents_of(rec, is_seg)
 		for name, amount in pairs(held) do
 			if amount > EPS then
 				rec.fluid, rec.temp = name, temp
@@ -371,6 +391,7 @@ function M.visit(rec, cascade)
 		end
 	end
 	local changed = N.ext_sync(rec.unit, contents) or seg ~= rec.seg
+	if contents == scratch then scratch_free = true end
 	if rec.status == "ok" or rec.status == "temperature" then
 		local net = N.network_of(e)
 		local ok, why = N.usable(net)

@@ -2399,6 +2399,65 @@ The whole script time at 20 000 falls by 0.10 ms (4.3 %), a little more than the
 less garbage per tick as well).
 
 
+### Levers 4 and 5, the storage bus visits and the garbage (`scripts/fork-me-targets.lua`, the storage buses, `fork-me-io.lua`)
+
+Timers around the parts of a storage bus visit (main 2dcb8a8, 3600 ticks, a `LuaProfiler` per part, which adds about 1 µs to each):
+
+| | base | 20 000 |
+|---|---|---|
+| item side: visits per tick, µs per visit | 1.1, about 15 to 20 | 8, about 20 |
+| fluid side | 13 µs per tick | 5 visits per tick, 19 µs each |
+| share of the script time | about 27 % | about 11 % |
+
+No part stands out: finding the target, the inventory, `get_contents` (1.7 µs at 20 000), the comparison with the snapshot
+(`N.ext_sync`, 4 µs), the scheduler around the visit. Fewer visits would change when the network sees a chest change: not built.
+
+The garbage (`--profile --alloc` with few wrapped functions; every wrapped call adds 0.17 KB of its own): at 20 000 the mod makes
+about 95 KB per tick (interface visits about 2 KB each, job steps, the circuit interfaces' signal lists, storage bus visits about
+1 KB each), at the maintainer's size about 8 KB, where the collector costs 0.024 ms per tick, 16 % of the script time (its share of
+the benchmark mod is not known). What a visit makes is mostly the engine's objects, measured in a probe mod (bytes per call):
+
+| | bytes |
+|---|---|
+| `entity.fluidbox` | 56 |
+| `fluidbox[i]` (a table of the fluid) | 312 |
+| `fluidbox.get_fluid_segment_id` (the method object) | 88 |
+| `fluidbox.get_fluid_segment_contents` | 232 |
+| `entity.get_inventory` | 144 |
+| `inventory.get_contents()`, two kinds of items | 888 |
+| `{}` / with two keys | 88 / 200 |
+| `unit .. ":ext"` (a number's string) | 0 (but 1 µs) |
+
+Built, the cheap part of both levers (the same behaviour):
+
+* **An entity's LuaFluidBox and inventory once per load** (`T.fluidbox`, `T.inventory`: weak tables keyed by the entity object the
+  record keeps; an object that turned invalid is made anew; nothing saved): the storage bus's inventory, the interface's side tanks,
+  the buses' targets and probes.
+* **The snapshot table of a storage bus read is reused** (item and fluid side; `N.ext_sync` only reads it).
+* **The fluid side asks for the segment id once per visit** (the claim passes it to the read), and the segment's key `"s<id>"`
+  comes from a cache (a number's string costs 1 µs; bounded at 4096 ids), as does an external cell's id `"<unit>:ext"`.
+
+Allocation profile (600 ticks, the collector stopped): at base the scheduled work makes 10.9 → 9.6 KB per tick (−12 %), a storage
+bus visit 1.66 → 1.28 KB, a fluid storage bus visit 0.74 → 0.44 KB; the storage buses' time per tick 64 → 55 µs at base and 397 →
+347 µs at 20 000 (both with the profiler's wrappers).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput per kind of endpoint identical at every size.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1432 / 0.394 | **0.1380 / 0.355** |
+| base: gc avg (ms) | 0.0246 | 0.0226 |
+| 5000: script avg / p99 (ms) | 0.984 / 2.77 | 0.969 / 2.75 |
+| 5000: gc avg (ms) / lua alloc per tick (KB) | 0.062 / 48.4 | 0.049 / 44.7 |
+| 20 000: script avg / p99 (ms) | 2.263 / 4.43 | **2.203 / 4.38** |
+| 20 000: gc avg (ms) / lua alloc per tick (KB) | 0.100 / 95.4 | 0.084 / 86.6 |
+| 20 000: mod heap alive (MB) | 249.8 | 260.1 |
+
+The script time falls by 3.6 % at the maintainer's size and 2.7 % at 20 000: under the 5 % of #59, built on the maintainer's call.
+The price is memory: the cached objects keep about 10 MB alive at 20 000 (2.6 MB at 5000, 0.15 MB at base), which the collector
+walks as well; its time still falls.
+
 ## The pane's slot signature (issue #75)
 
 The inventory pane compares a signature per slot at every refresh (on each inventory change, and once a second with the

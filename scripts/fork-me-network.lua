@@ -1508,7 +1508,15 @@ local function mark_drive(s, unit) s.dirty[unit] = true end
 
 M.ext_handlers = {}
 
-local function ext_cid(unit) return unit .. ":ext" end
+local ext_cids = {}                                  -- unit -> its cell id (per load; issue #59: a number's string costs 1 µs)
+local function ext_cid(unit)
+	local cid = ext_cids[unit]
+	if not cid then
+		cid = unit .. ":ext"
+		ext_cids[unit] = cid
+	end
+	return cid
+end
 
 --- items of `key` a cell can take now
 local function room_in(cell, key)
