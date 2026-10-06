@@ -1,5 +1,5 @@
 --- The runtime tests (control.lua) were written in Gregtorio Continued and name a few of its machines, items, fluids
---- and recipes: a gear recipe from plates and sticks, a macerator, chemical reactors and an extractor with fluid
+--- and recipes: a gear recipe from plates and sticks, a macerator, chemical reactors and a fluid extractor with fluid
 --- recipes, an iron furnace with a dust recipe. Without Gregtorio this test mod adds stand-ins with the same names and
 --- the same numbers (inputs, outputs, fluid boxes, sizes), so the same tests run on vanilla. With Gregtorio they run
 --- on Gregtorio's own prototypes. The stand-ins are test fixtures, not part of me-network.
@@ -90,5 +90,5 @@ recipe("hydrochloric-acid", "zz-chemical-reactor", 3, { F("chlorine", 100), F("h
 --- 3x3 machines like Gregtorio's (two fluid inputs and outputs: the chemical plant), a 2x2 burner furnace
 machine("ev-macerator", "assembling-machine", "assembling-machine-2", { "zz-macerator" }, 8)
 machine("hv-chemical-reactor", "assembling-machine", "chemical-plant", { "zz-chemical-reactor" }, 4)
-machine("ev-extractor", "assembling-machine", "chemical-plant", { "zz-extractor" }, 8)
+machine("ev-fluid-extractor", "assembling-machine", "chemical-plant", { "zz-extractor" }, 8)   -- Gregtorio issue #152
 machine("iron-furnace", "furnace", "stone-furnace", { "smelting" }, 2)

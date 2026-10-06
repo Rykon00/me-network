@@ -39,7 +39,7 @@ Exit code 0 means OK, 1 means problems (details in the output, the full Factorio
 ## Vanilla and Gregtorio
 
 The runtime tests name a few machines and recipes of Gregtorio Continued (a gear recipe from a plate and two sticks, a
-macerator, chemical reactors and an extractor with fluid recipes, an iron furnace with a dust recipe). Without
+macerator, chemical reactors and a fluid extractor with fluid recipes, an iron furnace with a dust recipe). Without
 Gregtorio, `runtimemod/data.lua` adds stand-ins with the same names, the same inputs and outputs and the same machine
 sizes and fluid boxes (copies of the assembling machine 2, the chemical plant and the stone furnace), so the same test
 code runs in both. The stand-ins are test fixtures and never part of the mod. The blank pattern job takes the
