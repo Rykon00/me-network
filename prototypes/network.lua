@@ -579,7 +579,7 @@ data:extend({ {
 		names = {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
-			underground = UNDERGROUND, storage_bus = STORAGE_BUS,
+			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
 		},
 		--- issue #128: the power (W) the ME Controller draws for a block that has no power connection of its own, by kind;
 		--- a kind that is not here draws the default (4 kW), a crafting block its own number (mod-data "fork-me-autocraft")
