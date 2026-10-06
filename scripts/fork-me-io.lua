@@ -467,7 +467,7 @@ end
 --- Move what a side tank holds into the network (the tank's whole fluid segment, as far as it fits); returns the
 --- amount moved and a status.
 local function tank_to_network(t, held, net)
-	local fb = t.fluidbox
+	local fb = T.fluidbox(t)
 	local segment = fb.get_fluid_segment_contents(1)
 	local available = math.max(held.amount, (segment and segment[held.name] or 0) + 1)   -- segment counts are rounded
 	local room = N.can_insert_fluid(net, held.name, available)
@@ -489,7 +489,7 @@ local function export_side(t, held, row, net, p)
 	local moved = 0
 	if held and held.name ~= row.name then              -- another fluid: into the network first
 		moved = tank_to_network(t, held, net)
-		held = t.fluidbox[1]
+		held = T.fluidbox(t)[1]
 		if held and held.amount <= EPS then held = nil end
 		if held and held.name ~= row.name then return "blocked", moved, 0 end
 	end
@@ -527,7 +527,7 @@ local function interface_sides(rec, net, config, short, dt)
 	for d = 1, #SIDES do
 		local t = tanks[d]
 		local setting = sides[d]
-		local held = t.fluidbox[1]
+		local held = T.fluidbox(t)[1]
 		if held and held.amount <= EPS then held = nil end
 		if held then anyheld = true end
 		if setting == "off" then
@@ -549,12 +549,12 @@ local function interface_sides(rec, net, config, short, dt)
 				exports = {}
 				for e = 1, #SIDES do
 					if type(sides[e]) == "number" then
-						local id = tanks[e].fluidbox.get_fluid_segment_id(1)
+						local id = T.fluidbox(tanks[e]).get_fluid_segment_id(1)
 						if id then exports[id] = true end
 					end
 				end
 			end
-			local id = exports and t.fluidbox.get_fluid_segment_id(1)
+			local id = exports and T.fluidbox(t).get_fluid_segment_id(1)
 			if id and exports[id] then
 				fstatus[d] = "loop"
 			else
@@ -598,7 +598,7 @@ function M.interface_step(rec, dt)
 	end
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
 	local max_ops = math.max(IFACE_SLOTS_PER_VISIT, math.floor(IFACE_SLOTS_PER_VISIT * ticks / STEP_TICKS))
-	local inv = e.get_inventory(defines.inventory.chest)
+	local inv = T.inventory(e, defines.inventory.chest)
 	local ops, moved = 0, 0
 	local held_total = 0                                      -- what the kept rows hold at the end of the row loop
 	local kept = KEPT
@@ -1008,7 +1008,7 @@ end
 --- and whether the network took nothing (`netfull`). A stack the network refuses itself (N.refuses_stack) is neither: it
 --- stays where it is and is left out of `held` (issue #85).
 local function import_items(rec, net, t, cap, info)
-	local inv = t.get_inventory(rec.t_inv)
+	local inv = T.inventory(t, rec.t_inv)
 	if not inv then return 0 end
 	local all, set = rec.all, rec.iset
 	local unit = rec.entity.unit_number
@@ -1069,7 +1069,7 @@ end
 --- after each visit), whether it had run out on arrival (`starved`), whether it takes nothing (`blocked`) or the
 --- network lacks a key (`nokey`).
 local function export_items(rec, net, t, cap, info)
-	local inv = t.get_inventory(rec.t_inv)
+	local inv = T.inventory(t, rec.t_inv)
 	if not inv then return 0 end
 	local machine = T.SLOTTED[t.type]
 	local moved = 0
@@ -1124,7 +1124,7 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 	cap = cap or Sched.setting("bus_fluid") * STEP_TICKS / 60
 	info = info or { time = math.huge }
 	local dt = info.dt or STEP_TICKS
-	local fb = t.fluidbox
+	local fb = T.fluidbox(t)
 	local moved = 0
 	local unit = rec.entity.unit_number
 	if IMPORTS[rec.kind] then
@@ -1377,14 +1377,14 @@ local NET_SIDE = { ["no-key"] = true, ["net-full"] = true, ["no-network"] = true
 local function probe_mark(rec)
 	local e = rec.entity
 	if rec.kind == "interface" then
-		local n = e.get_inventory(defines.inventory.chest).get_item_count()
+		local n = T.inventory(e, defines.inventory.chest).get_item_count()
 		local tanks = not rec.sidle and rec.tanks
 		if tanks then
 			local sides = rec.sides or {}
 			for d = 1, #SIDES do
 				local t = tanks[d]
 				if sides[d] ~= "off" and t and t.valid then
-					local f = t.fluidbox[1]
+					local f = T.fluidbox(t)[1]
 					if f then n = n + math.floor(f.amount) end
 				end
 			end
@@ -1395,11 +1395,11 @@ local function probe_mark(rec)
 	if not (t and t.valid) then return 0 end
 	local n = 0
 	if rec.t_inv then
-		local inv = t.get_inventory(rec.t_inv)
+		local inv = T.inventory(t, rec.t_inv)
 		if inv then n = inv.get_item_count() end
 	end
 	if rec.t_fluid then
-		local fb = t.fluidbox
+		local fb = T.fluidbox(t)
 		for i = 1, #fb do
 			local f = fb[i]
 			if f then n = n + math.floor(f.amount) end
@@ -1417,7 +1417,7 @@ local function probe_work(rec)
 	local t = rec.target
 	if not (t and t.valid) then return true end
 	if rec.t_inv then
-		local inv = t.get_inventory(rec.t_inv)
+		local inv = T.inventory(t, rec.t_inv)
 		if inv then
 			local machine = T.SLOTTED[t.type]
 			local lab = t.type == "lab"
@@ -1434,7 +1434,7 @@ local function probe_work(rec)
 		end
 	end
 	if rec.t_fluid and #rec.ffilters > 0 then
-		local fb = t.fluidbox
+		local fb = T.fluidbox(t)
 		for i = 1, #fb do
 			local f = fb[i]
 			if not f or f.amount < fb.get_capacity(i) - EPS then return true end

@@ -2,6 +2,7 @@
 Version: 0.3.2
   Optimizations:
     - Crafting jobs cost less per step in a big base (issue #59): a step finds a free machine for its pattern faster and no longer reads the recipe's ingredients and the items' stack sizes from the game each time (the job steps take a third less time at 20 000 buses and interfaces). Which machine a job takes is the same.
+    - Storage buses and interfaces make less garbage (issue #59): the inventory and fluid box objects of the chests and tanks they read are kept instead of being asked for anew at every visit, and a storage bus read reuses its tables (at the size of a typical base the script time falls by 4 %, its worst ticks by 10 %; a base of 20 000 buses and interfaces keeps about 10 MB more in memory for it).
 ---------------------------------------------------------------------------------------------------
 Version: 0.3.1
 Date: 2026-10-06
