@@ -2550,6 +2550,33 @@ green, regressions 0; throughput per kind of endpoint and the scheduler's counte
 −1.2 % at base, −1.6 % at 5000, −5.2 % at 20 000. A series of the same code before the meter: base 0.1352 → 0.1305 (−3.5 %), 5000
 −3.2 %, 20 000 −6.0 %; the gain at base is within what two series differ by. The allocation metric is not compared here (the
 reference has no meter); with the meter: base 3.4 KB per tick, 20 000 67.5.
+### Part 3: `reopen` after an extraction
+
+With the exclusive profile of the insert and extract path at 20 000, `reopen` cost 7 µs per call at 15 calls per tick (0.11 ms,
+about 5 % of the script time). An extraction that frees bytes of a cell walked every key the cell holds (up to 63) and moved
+back the three holder cursors of each that stood behind the cell (#46).
+
+* **The walk only when the cell had no free bytes before** (and no Equal Distribution Card): a cell with a free byte can take
+  more of every key it holds (a held key's room is at least a byte's items), so by the cursors' rule (the entries before a cursor
+  cannot take its key) no cursor of those keys stands behind it. The new-key position of its group (`first`) is set as before.
+  The runtime tests `ME holder lists test` (every kept list and cursor checked against a brute-force rebuild every 10 ticks, 5610
+  lists) and `ME holder cursor test` cover it. `reopen` at 20 000: 0.106 → 0.018 ms per tick.
+
+The circuit interface update (0.86 ms per update at 20 000) has no cheap exact lever: the list is built once per network and
+shared, the unfiltered section once per list; the cost is the engine's `section.filters` write (about 0.7 µs per signal), and
+writing single slots costs more (issue #5).
+
+**Numbers** (`bench --check origin/main --sizes base,5000,20000`, three rounds in turns, game closed, 20 000 with 10 800 ticks):
+green, regressions 0; throughput, the scheduler's counters and the allocation (now measured by the meter on both sides) identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1312 / 0.344 | 0.1307 / 0.358 |
+| 5000: script avg / p99 (ms) | 0.916 / 2.65 | **0.875 / 2.63** |
+| 20 000: script avg / p99 (ms) | 2.048 / 4.27 | **1.948 / 4.10** |
+
+−0.4 % at base (cells there rarely run full), −4.5 % at 5000, −4.9 % at 20 000.
+
 
 ## The pane's slot signature (issue #75)
 

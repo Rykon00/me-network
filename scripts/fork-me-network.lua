@@ -1946,12 +1946,15 @@ local function holder_pos(c, field, l, cid)
 	return 0
 end
 
---- an extraction freed bytes or a type of a cell: it may take new keys again, and the keys it holds again
-local function reopen(net, cid)
+--- an extraction freed bytes or a type of a cell: it may take new keys again, and the keys it holds again. `had_room`
+--- (issue #115): the cell had free bytes before and no Equal Distribution Card, so it could take more of every key it holds
+--- (a held key's room is at least a byte's items then): no cursor of those keys stands behind it, and the walk over its keys
+--- (up to 63, three cursors each) is not needed
+local function reopen(net, cid, had_room)
 	local c = cache[net]
 	if not c then return end
 	local cell = net.cells[cid]
-	if cell then
+	if cell and not had_room then
 		for key in pairs(cell.items) do
 			for _, field in ipairs(HOLDER_CURSORS) do
 				local e = c[field][key]
@@ -2206,13 +2209,14 @@ local function extract_key(net, key, count)
 			local n = math.min(left, cell.items[key] or 0)
 			if n > 0 then
 				local spec = cell_spec(cell.name)
+				local had_room = not cell.eq and spec.bytes - cell.bytes > 0
 				local db, dt = cell_add(cell, spec, key, -n)
 				local p = fluid_cell(spec) and "f" or ""
 				net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
 				left = left - n
 				if left < ZERO then left = 0 end
 				if not cell.items[key] then idx_del(net, key, cid) end
-				if (db < 0 or dt < 0) and not cell.partition then reopen(net, cid) end
+				if (db < 0 or dt < 0) and not cell.partition then reopen(net, cid, had_room) end
 				if dt < 0 and net.wait_room then fire_units(net, "wait_room") end
 				mark_drive(s, cid_unit(cid))
 			end
