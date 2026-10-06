@@ -2123,12 +2123,17 @@ local function insert_key(net, key, count, data)
 		local fname = c.fuzzy and name_of_key(key)
 		for _, g in ipairs(c.groups) do
 			if ins.left <= 0 then break end
-			for _, cid in ipairs(g.parts[key] or EMPTY) do               -- 1: partitioned for the key
-				if put(cid) then break end
+			--- 1: partitioned for the key. Issue #115: a storage bus marked full for the key (until its next read) refuses it at
+			--- once in put; at 20 000 ten of eleven calls per insert were such, so the test is made here without the call
+			local cells = net.cells
+			for _, cid in ipairs(g.parts[key] or EMPTY) do
+				local full = cells[cid].full
+				if not (full and full[key]) and put(cid) then break end
 			end
 			if fname and ins.left > 0 then                                -- 1: a fuzzy whitelist (issue #17)
 				for _, cid in ipairs(g.fparts[fname] or EMPTY) do
-					if put(cid) then break end
+					local full = cells[cid].full
+					if not (full and full[key]) and put(cid) then break end
 				end
 			end
 			while hr[h] and c.at[hr[h]].g == g do                         -- 2: the cells that hold it

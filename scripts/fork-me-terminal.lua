@@ -35,6 +35,7 @@ local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
 local P = require("scripts.fork-me-patterns")
 local picker = require("scripts.fork-me-picker")
+local Sched = require("scripts.fork-me-schedule")
 
 local M = {}
 
@@ -1300,10 +1301,11 @@ script.on_event({ defines.events.on_gui_click, defines.events.on_gui_text_change
 	G.dispatch(event)
 end)
 
-script.on_nth_tick(REFRESH_TICKS, function()
+local function refresh()
 	N.slow_step()
 	G.refresh_all()
-end)
+end
+script.on_nth_tick(REFRESH_TICKS, function() Sched.metered(refresh) end)
 
 script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
