@@ -120,14 +120,48 @@ local function cpu_names()
 end
 
 --------------------------------------------------------------------------------
---- resource keys: item name, or "fluid/<name>" for fluids
+--- resource keys: item name, or the storage key of a fluid ("fluid/<name>", "fluid/<name>@<degrees>": issue #159)
 --------------------------------------------------------------------------------
 
 local FLUID_PREFIX = "fluid/"
 
+--- Issue #159: a fluid ingredient without a temperature takes the fluid at any temperature in its range (none: every
+--- temperature); its key is the default one when the default is in the range, else the range's end next to it. A
+--- fluid ingredient with a temperature, and every fluid product, is the key of that temperature (none: the default).
 local function key_of(ing)
-	if ing.type == "fluid" then return FLUID_PREFIX .. ing.name end
+	if ing.type == "fluid" then
+		local t = ing.temperature
+		if t == nil and (ing.minimum_temperature or ing.maximum_temperature) then
+			local d = N.fluid_range(ing.name) or 15
+			if ing.minimum_temperature and d < ing.minimum_temperature then t = ing.minimum_temperature
+			elseif ing.maximum_temperature and d > ing.maximum_temperature then t = ing.maximum_temperature end
+		end
+		return N.fluid_key(ing.name, t)
+	end
 	return ing.name
+end
+
+--- Issue #159: may a fluid ingredient take other temperatures than its key's? true and the range (nil: open) for a fluid
+--- ingredient without an exact temperature; nil for items, exact temperatures and products
+local function ing_flex(ing)
+	if ing.type ~= "fluid" or ing.temperature ~= nil then return nil end
+	return true, ing.minimum_temperature, ing.maximum_temperature
+end
+
+--- does the storage key `key` of fluid `name` fit a flexible input (lo, hi)?
+local function flex_fits(key, name, lo, hi)
+	if not (N.is_fluid_key(key) and N.fluid_name(key) == name) then return false end
+	local t = N.fluid_temperature(key)
+	return (not lo or t >= lo - 1e-6) and (not hi or t <= hi + 1e-6)
+end
+
+--- can a fluid ingredient be had at all? (its range must meet the fluid's [default, max]: the engine clamps temperatures)
+local function fluid_reachable(ing)
+	local d, m = N.fluid_range(ing.name)
+	if not d then return false end
+	local lo, hi = ing.minimum_temperature, ing.maximum_temperature
+	if ing.temperature then lo, hi = ing.temperature, ing.temperature end
+	return math.max(lo or d, d) <= math.min(hi or m, m) + 1e-6
 end
 
 local function is_fluid(key)
@@ -135,7 +169,7 @@ local function is_fluid(key)
 end
 
 local function fluid_name(key)
-	return key:sub(#FLUID_PREFIX + 1)
+	return N.fluid_name(key)
 end
 
 --- the prototype behind a key (LuaItemPrototype or LuaFluidPrototype), nil if none
@@ -203,9 +237,9 @@ local function store_item(net, name, quality, count)
 	return n
 end
 
-local function store_fluid(net, name, amount)
+local function store_fluid(net, key, amount)
 	N.no_arrival = true
-	local n = fluids.insert(net, name, amount)
+	local n = fluids.insert_key(net, key, amount)
 	N.no_arrival = false
 	return n
 end
@@ -271,17 +305,6 @@ end
 
 local EMPTY_MAP = { inputs = {}, outputs = {} }
 
---- a fluid's default temperature (per load: prototypes do not change while the game runs; issue #50, lever 6)
-local temperature_cache = {}
-local function default_temperature(name)
-	local t = temperature_cache[name]
-	if not t then
-		t = prototypes.fluid[name].default_temperature
-		temperature_cache[name] = t
-	end
-	return t
-end
-
 --- an item's stack size, nil when there is no such item (per load, issue #59 lever 3: a prototype read makes a new object)
 local stack_size_cache = {}
 local function stack_size_of(name)
@@ -297,7 +320,7 @@ end
 --- The fluid boxes a machine uses for `ingredients` and `products`: which box takes which fluid ingredient and
 --- which boxes hold the fluid products. Returns the map, or nil and the reason why the machine cannot be used:
 --- "fluid-box" (no usable box, box too small, furnace, two-way box), "fluid-temperature" (a box wants a
---- temperature the stored fluid does not have), "fluid-pipes" (a used box is connected to a pipe: the network
+--- temperature no fluid can have: issue #159, the network keeps every temperature), "fluid-pipes" (a used box is connected to a pipe: the network
 --- could not keep the fluid apart). The box filters are those of the recipe the machine has set: call it after
 --- set_recipe. `outputs_optional`: a processing pattern does not need output boxes (its outputs may come back
 --- elsewhere).
@@ -339,15 +362,14 @@ local function fluid_map(machine, ingredients, products, outputs_optional)
 			end
 			if not index then return nil, "fluid-box" end
 			used[index] = true
-			local f = fb.get_filter(index)
-			local t = default_temperature(ing.name)
-			if f and ((f.minimum_temperature and t < f.minimum_temperature) or (f.maximum_temperature and t > f.maximum_temperature)) then
-				return nil, "fluid-temperature"
-			end
+			if not fluid_reachable(ing) then return nil, "fluid-temperature" end
 			local capacity = fb.get_capacity(index)
 			if capacity < fixed_up(ing.amount) then return nil, "fluid-box" end
 			if connected(fb, index) then return nil, "fluid-pipes" end
-			inputs[#inputs + 1] = { key = FLUID_PREFIX .. ing.name, name = ing.name, amount = fixed_up(ing.amount), index = index, capacity = capacity }
+			--- issue #159: `flex` (with `lo`, `hi`): any temperature of the fluid in that range may go in
+			local flex, lo, hi = ing_flex(ing)
+			inputs[#inputs + 1] = { key = key_of(ing), name = ing.name, amount = fixed_up(ing.amount), index = index, capacity = capacity,
+				flex = flex, lo = lo, hi = hi }
 		end
 	end
 	local outputs, n_out, max_out = {}, 0, 0
@@ -404,12 +426,7 @@ local function fluid_boxes_fit(machine, ingredients, products)
 	for _, e in pairs(ingredients) do if e.type == "fluid" then need_in = math.max(need_in, fixed_up(e.amount)) end end
 	for _, e in pairs(products) do if e.type == "fluid" then need_out = math.max(need_out, e.amount or e.amount_max or 0) end end
 	for _, e in pairs(ingredients) do
-		if e.type == "fluid" then
-			local t = default_temperature(e.name)
-			if (e.minimum_temperature and t < e.minimum_temperature) or (e.maximum_temperature and t > e.maximum_temperature) then
-				return "fluid-temperature"
-			end
-		end
+		if e.type == "fluid" and not fluid_reachable(e) then return "fluid-temperature" end
 	end
 	return fit(ins, ingredients, need_in) or fit(outs, products, need_out)
 end
@@ -899,7 +916,11 @@ local function def_inputs(def)
 	local l = inputs_cache[def]
 	if not l then
 		l = {}
-		for _, ing in pairs(def_ingredients(def)) do l[#l + 1] = { key_of(ing), ing.amount } end
+		for _, ing in pairs(def_ingredients(def)) do
+			--- issue #159: a fluid ingredient without a temperature also takes the other temperatures in its range
+			local flex, lo, hi = ing_flex(ing)
+			l[#l + 1] = { key_of(ing), ing.amount, flex and { ing.name, lo, hi } or nil }
+		end
 		inputs_cache[def] = l
 	end
 	return l
@@ -949,7 +970,7 @@ local function apply_pattern(ctx, pid, key, count, path, depth)
 	local inputs = def_inputs(def)
 	for i = 1, #inputs do
 		local ing = inputs[i]
-		need(ctx, ing[1], ing[2] * runs, path, depth + 1, false)
+		need(ctx, ing[1], ing[2] * runs, path, depth + 1, false, ing[3])
 	end
 	local step = ctx.steps[pid]
 	if not step then
@@ -965,8 +986,28 @@ local function apply_pattern(ctx, pid, key, count, path, depth)
 	end
 end
 
---- `count` of `key` are needed: take from storage, else craft through a pattern
-function need(ctx, key, count, path, depth, top)
+--- Issue #159: take up to `count` of another storage key `key` from the stock (as need does for its own key); returns
+--- what is still needed
+local function take_stock(ctx, key, count)
+	local stock = ctx.stock
+	local have = stock[key]
+	if have == nil then
+		have = base_count(ctx.net, key)
+		stock[key] = have
+		ctx.base[key] = have
+	end
+	jset(ctx, ctx.demand, key, (ctx.demand[key] or 0) + count)
+	if have <= 0 then return count end
+	local t = have < count and have or count
+	jset(ctx, stock, key, have - t)
+	jset(ctx, ctx.reserve, key, (ctx.reserve[key] or 0) + t)
+	return count - t
+end
+
+--- `count` of `key` are needed: take from storage, else craft through a pattern. `flex` (issue #159): { fluid name, lo,
+--- hi } of a fluid ingredient without a temperature: after its own key the network's other temperatures of the fluid
+--- in that range are taken (the default first, then from the coldest), before anything is crafted.
+function need(ctx, key, count, path, depth, top, flex)
 	ctx.nodes = ctx.nodes + 1
 	if ctx.nodes > MAX_PLAN_NODES or depth > MAX_DEPTH then
 		ctx.too_complex = true
@@ -1017,6 +1058,17 @@ function need(ctx, key, count, path, depth, top)
 		end
 		ctx.logn = n
 		if count <= 1e-9 then return end
+		if flex and ctx.usable then
+			local list = N.fluid_keys(ctx.net, flex[1])
+			--- (a kept plan is made anew when the fluid gets a temperature it did not have: kept_valid)
+			if not ctx.fkeys[flex[1]] then ctx.fkeys[flex[1]] = #list end
+			for _, k in ipairs(list) do
+				if k ~= key and flex_fits(k, flex[1], flex[2], flex[3]) then
+					count = take_stock(ctx, k, count)
+					if count <= 1e-9 then return end
+				end
+			end
+		end
 	end
 	local pids = ctx.patterns.items[key]
 	if not pids then add_missing(ctx, key, count) return end
@@ -1096,6 +1148,11 @@ local function kept_valid(entry, net, patterns)
 			if was < d or now < d then return false end
 		end
 	end
+	--- issue #159: a fluid ingredient of every temperature looked at the network's temperatures of its fluid; one that is
+	--- new since then (the list only grows) was never read
+	for name, n in pairs(entry.fkeys or {}) do
+		if #N.fluid_keys(net, name) ~= n then return false end
+	end
 	return true
 end
 
@@ -1126,7 +1183,7 @@ local function make_plan(s, net, key, amount, fresh_only)
 	local ctx = {
 		patterns = patterns, net = net, usable = N.usable(net) and true or false, stock = {}, base = {}, demand = {},
 		surplus = {}, reserve = {}, missing = {}, loops = {}, steps = {}, order = {}, missing_n = 0, nodes = 0,
-		alt = 0, log = {}, logn = 0,
+		alt = 0, log = {}, logn = 0, fkeys = {},
 	}
 	need(ctx, key, amount, {}, 0, true)
 	local steps, runs = {}, 0
@@ -1145,7 +1202,7 @@ local function make_plan(s, net, key, amount, fresh_only)
 			per = {}
 			kept_plans[net.id] = per
 		end
-		per[id] = { patterns = patterns, base = ctx.base, demand = ctx.demand, plan = plan }
+		per[id] = { patterns = patterns, base = ctx.base, demand = ctx.demand, fkeys = ctx.fkeys, plan = plan }
 		return plan_copy(plan)
 	end
 	return plan
@@ -1580,13 +1637,51 @@ local function credit(job, key, amount, first)
 	return amount - left
 end
 
+--- Issue #159: the pool keys a fluid input may take (its own key first, then the others of its fluid in its range, in
+--- key order) and what they hold together. `name`, `flex`, `lo`, `hi` as in a fluid map input.
+local function pool_keys(job, key, name, flex, lo, hi)
+	local out = { key }
+	local total = job.pool[key] or 0
+	if flex then
+		local others
+		for k, n in pairs(job.pool) do
+			if k ~= key and n > 0 and flex_fits(k, name, lo, hi) then
+				others = others or {}
+				others[#others + 1] = k
+			end
+		end
+		if others then
+			table.sort(others)
+			for _, k in ipairs(others) do
+				out[#out + 1] = k
+				total = total + job.pool[k]
+			end
+		end
+	end
+	return out, total
+end
+
+--- what the pool holds for an ingredient (a fluid without a temperature: every temperature in its range)
+local function ing_pool(job, ing)
+	if ing.type ~= "fluid" then return job.pool[ing.name] or 0 end
+	local key = key_of(ing)
+	local total = job.pool[key] or 0
+	local flex, lo, hi = ing_flex(ing)
+	if flex then
+		for k, n in pairs(job.pool) do
+			if k ~= key and n > 0 and flex_fits(k, ing.name, lo, hi) then total = total + n end
+		end
+	end
+	return total
+end
+
 --- move everything from the pool into the network; what does not fit stays in the pool
 local function flush_pool(job, net)
 	for key, count in pairs(shallow_map(job.pool)) do
 		local inserted = 0
 		if count > 0 then
 			if is_fluid(key) then
-				inserted = store_fluid(net, fluid_name(key), count)
+				inserted = store_fluid(net, key, count)
 			else
 				inserted = store_item(net, key, QUALITY, count)
 			end
@@ -1624,7 +1719,7 @@ local function collect_output(job, net, machine, map, step)
 		for _, o in pairs(map.outputs) do
 			local f = o.index <= #fb and fb[o.index] or nil     -- a changed recipe may have fewer boxes
 			if f and f.amount > 0 then
-				got(FLUID_PREFIX .. f.name, f.amount)
+				got(N.fluid_key(f.name, f.temperature), f.amount)   -- (issue #159: at its temperature)
 				fb[o.index] = nil
 			end
 		end
@@ -1653,9 +1748,8 @@ local function take_back_input(job, machine, ingredients, map)
 		for _, i in pairs(map.inputs) do
 			local f = i.index <= #fb and fb[i.index] or nil
 			if f and f.amount > 0 then
-				local key = FLUID_PREFIX .. f.name
-				pool_add(job, key, f.amount)
-				back[key] = (back[key] or 0) + f.amount
+				pool_add(job, N.fluid_key(f.name, f.temperature), f.amount)   -- (issue #159: at its temperature)
+				back[i.key] = (back[i.key] or 0) + f.amount                   -- (counted for the input's key)
 				fb[i.index] = nil
 			end
 		end
@@ -1772,7 +1866,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	if not inp then return false end
 	for _, ing in pairs(ingredients) do               -- never hand out more than the pool holds
 		local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
-		if (job.pool[key_of(ing)] or 0) + FLUID_EPS < per * batch then return false end
+		if ing_pool(job, ing) + FLUID_EPS < per * batch then return false end
 	end
 	local given = {}
 	local function undo()
@@ -1798,16 +1892,37 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	for _, i in pairs(map.inputs) do
 		local leftover = fb[i.index]                        -- less than one craft: back into the pool first
 		if leftover and leftover.amount > 0 then
-			pool_add(job, FLUID_PREFIX .. leftover.name, leftover.amount)
+			pool_add(job, N.fluid_key(leftover.name, leftover.temperature), leftover.amount)
 			fb[i.index] = nil
 		end
 		local need_amount = i.amount * batch
-		local give = math.min(i.capacity, need_amount + math.max(0, math.min(FLUID_MARGIN, (job.pool[i.key] or 0) - need_amount)))
-		fb[i.index] = { name = i.name, amount = give }
+		--- issue #159: from the input's own key first, then the other temperatures it takes; the box gets their mean
+		--- temperature (all in the recipe's range)
+		local keys, have = pool_keys(job, i.key, i.name, i.flex, i.lo, i.hi)
+		local give = math.min(i.capacity, need_amount + math.max(0, math.min(FLUID_MARGIN, have - need_amount)))
+		local parts, left, heat = {}, give, 0
+		for _, k in ipairs(keys) do
+			local n = math.min(left, job.pool[k] or 0)
+			if n > 0 then
+				parts[#parts + 1] = { k, n }
+				heat = heat + n * N.fluid_temperature(k)
+				left = left - n
+			end
+			if left <= 0 then break end
+		end
+		local amount = give - math.max(0, left)
+		fb[i.index] = amount > 0 and { name = i.name, amount = amount, temperature = heat / amount } or nil
 		local now = fb[i.index]
 		local got = (now and now.name == i.name) and now.amount or 0
-		pool_add(job, i.key, -got)
-		given[#given + 1] = { key = i.key, fluid = true, index = i.index, got = got }
+		local rest = got
+		for _, part in ipairs(parts) do
+			local n = math.min(rest, part[2])
+			if n > 0 then
+				pool_add(job, part[1], -n)
+				given[#given + 1] = { key = part[1], lkey = i.key, fluid = true, index = i.index, got = n }
+				rest = rest - n
+			end
+		end
 		if got + FLUID_EPS < need_amount then undo() return false end
 	end
 	step.issued = step.issued + batch
@@ -1817,7 +1932,10 @@ local function start_lease(s, job, step_index, machine, batch, map)
 		lease.finished0 = machine.products_finished
 	else
 		lease.given = {}
-		for _, g in pairs(given) do lease.given[g.key] = (lease.given[g.key] or 0) + g.got end
+		for _, g in pairs(given) do
+			local k = g.lkey or g.key                          -- (a fluid counts for its input's key: issue #159)
+			lease.given[k] = (lease.given[k] or 0) + g.got
+		end
 		s.await = nil
 	end
 	job.leases[#job.leases + 1] = lease
@@ -2118,7 +2236,7 @@ local function job_step(s, job, work)
 			local batch = math.min(step.runs - step.issued, MAX_BATCH)
 			for _, ing in pairs(ingredients) do   -- only what the pool holds, one stack per item ingredient
 				local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
-				batch = math.min(batch, math.floor((job.pool[key_of(ing)] or 0) / per + 1e-9))
+				batch = math.min(batch, math.floor(ing_pool(job, ing) / per + 1e-9))
 				if ing.type == "item" then
 					local size = stack_size_of(ing.name)
 					batch = math.min(batch, size and math.floor(size / per) or 0)
@@ -2187,10 +2305,22 @@ local function job_step(s, job, work)
 					for _, ing in pairs(step_ingredients(step)) do
 						local key = key_of(ing)
 						if ing.type == "fluid" then
-							local short = fixed_up(ing.amount) - (job.pool[key] or 0)
+							local short = fixed_up(ing.amount) - ing_pool(job, ing)
 							if short > 0 then
-								local got = fluids.remove(net, ing.name, short + FLUID_MARGIN)
+								--- its own key first, then (issue #159) the other temperatures it takes
+								local want = short + FLUID_MARGIN
+								local flex, lo, hi = ing_flex(ing)
+								local got = fluids.remove_key(net, key, want)
 								if got > 0 then pool_add(job, key, got) job.idle = 0 end
+								if flex and got < want then
+									for _, k in ipairs(N.fluid_keys(net, ing.name)) do
+										if k ~= key and flex_fits(k, ing.name, lo, hi) then
+											local n = fluids.remove_key(net, k, want - got)
+											if n > 0 then pool_add(job, k, n) job.idle = 0 got = got + n end
+											if got >= want then break end
+										end
+									end
+								end
 							end
 						else
 							local short = ing.amount - (job.pool[key] or 0)
@@ -2363,7 +2493,9 @@ function M.describe(key)
 	local proto = proto_of(key)
 	if not proto then return nil end
 	if is_fluid(key) then
-		return { key = key, name = fluid_name(key), fluid = true, sprite = "fluid/" .. fluid_name(key), localised_name = proto.localised_name }
+		local _, deg = N.split_fluid_key(key)
+		return { key = key, name = fluid_name(key), fluid = true, sprite = "fluid/" .. fluid_name(key), localised_name = fluids.key_name(key),
+			temperature = deg }
 	end
 	return { key = key, name = key, fluid = false, sprite = "item/" .. key, localised_name = proto.localised_name }
 end
@@ -2482,13 +2614,13 @@ function M.start(entity, key, amount, owner)
 	local pool, taken = {}, {}
 	local function undo()
 		for _, k in pairs(taken) do
-			if is_fluid(k) then store_fluid(net, fluid_name(k), pool[k]) else store_item(net, k, QUALITY, pool[k]) end
+			if is_fluid(k) then store_fluid(net, k, pool[k]) else store_item(net, k, QUALITY, pool[k]) end
 		end
 	end
 	for k, count in pairs(plan.reserve) do
 		local removed
 		if is_fluid(k) then
-			removed = fluids.remove(net, fluid_name(k), count + FLUID_MARGIN)   -- a little extra covers fixed point rounding
+			removed = fluids.remove_key(net, k, count + FLUID_MARGIN)   -- a little extra covers fixed point rounding
 		else
 			removed = N.extract(net, k, QUALITY, count)
 		end
@@ -2604,7 +2736,7 @@ function M.item_list(counts, limit)
 		local proto = proto_of(key)
 		local sep = i > 1 and ", " or ""
 		if is_fluid(key) then                            -- one nested string per entry: at most limit + 1 parameters
-			out[#out + 1] = { "", sep .. fluids.format(counts[key]) .. " ", proto and proto.localised_name or fluid_name(key) }
+			out[#out + 1] = { "", sep .. fluids.format(counts[key]) .. " ", proto and fluids.key_name(key) or fluid_name(key) }
 		else
 			out[#out + 1] = { "", sep .. counts[key] .. "x ", proto and proto.localised_name or key }
 		end

@@ -2911,3 +2911,39 @@ the four pull requests together (`claude/me-tasks-all`) is green as well (script
 The 0.04 KB per tick more are the screens' sorted list once a second. The first tick after a load was 1.02 and 1.77 ms: the check
 calls both inside the noise of that column (the runs' spread was 0.5 ms); the screens are not made in the load but at the first slow
 step.
+
+## Fluids keep their temperature (issue #159)
+
+What costs more: one table lookup per insert and per partition check of every key (`alt_key`, the other filter key of
+a storage key); a fluid export reads the keys of its fluid (`N.fluid_keys`, kept per network and load) and, at an export
+bus, what the target's boxes hold (one `fluidbox[i]` read per box and visit, so nothing is mixed into a box of another
+temperature) and, at a crafting machine only, the boxes' recipe filters (`get_filter`, `get_prototype`); a storage bus
+on a tank keys its segment by the temperature. Nothing changes for item keys. The bench scenes hold every fluid at its
+default temperature, so this measures what the change costs a base without hot fluids; a base with hot steam pays a
+type per temperature, like another fluid.
+
+`bench --check origin/main --sizes base,1000,5000`, three rounds in turns each, the maintainer's game client running
+(its noise: the reference's own rounds at base spread from 0.165 to 0.401 ms in the third check). Both checks: **green,
+regressions 0**; throughput (items and fluid per second), the storage bus and maintainer latencies and the busy interval
+identical. The first check measured the code before two small changes (an export bus reads the box filters only at a
+crafting machine; a storage bus extraction no longer reads its segment a second time, `count` did it; the filter keys are
+cached); the third check is the code of this pull request. A second check in between (same code as the third but
+without the filter key cache) flagged "ticks over 5 ms" at 1000 (15 -> 24, noise 8) in a run where every number of both
+versions was up to twice its usual size; the third check does not flag it (1 -> 5, noise 7.5).
+
+| | origin/main (1st) | issue #159 (1st) | origin/main (3rd) | issue #159 (3rd) |
+|---|---|---|---|---|
+| base: script avg / p99 (ms) | 0.1547 / 0.453 | 0.1625 / 0.457 | 0.2224 / 2.357 | 0.2248 / 2.433 |
+| base: ticks over 5 ms | 0 | 0 | 0 | 1 |
+| base: Lua allocation (KB per tick) | 2.131 | 2.221 | 2.131 | 2.214 |
+| 1000: script avg / p99 (ms) | 0.4002 / 2.331 | 0.4185 / 2.327 | 0.3846 / 2.194 | 0.3846 / 2.211 |
+| 1000: ticks over 5 ms | 2 | 3 | 1 | 5 |
+| 1000: Lua allocation (KB per tick) | 24.51 | 24.69 | 24.50 | 24.68 |
+| 5000: script avg / p99 (ms) | 0.9869 / 2.951 | 1.019 / 3.044 | 1.037 / 3.120 | 1.052 / 3.143 |
+| 5000: ticks over 5 ms | 6 | 6 | 5 | 6 |
+| 5000: Lua allocation (KB per tick) | 33.70 | 33.94 | 33.70 | 33.93 |
+| first tick after the load, 5000 (ms) | 9.05 | 8.74 | 9.46 | 9.20 |
+
+The medians of the working copy were 3 to 5 % above main in the first check and 0 to 1.5 % in the third, inside the
+noise of both. The 0.08 KB per tick more at base (0.2 KB at 1000 and 5000) are the box reads of the export buses (a
+`fluidbox[i]` read makes a table).

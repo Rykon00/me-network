@@ -143,7 +143,7 @@ M.key_of_elem = key_of_elem
 local function chooser(parent, elem_type, key, tags)
 	local def = { type = "choose-elem-button", elem_type = elem_type, tags = tags, style = "slot_button" }
 	if key then
-		if elem_type == "fluid" then def.fluid = N.is_fluid_key(key) and key:sub(7) or nil
+		if elem_type == "fluid" then def.fluid = N.fluid_name(key)
 		elseif elem_type == "item-with-quality" then
 			local name, q = N.parse_key(key)
 			def["item-with-quality"] = { name = name, quality = q }
@@ -460,10 +460,11 @@ function M.workbench_kinds(d, index)
 	}
 end
 
---- the picker's choice goes into slot `index`: `kind` "item" (name, quality: normal when nil) or "fluid" (name). Refused
+--- the picker's choice goes into slot `index`: `kind` "item" (name, quality: normal when nil) or "fluid" (name, and
+--- `temperature`: issue #159, nil for every temperature). Refused
 --- (false, nothing changes) for another kind, an unknown name or quality, a quality without the quality mod, a kind the
 --- slot may not take (workbench_kinds), a slot beyond the free one. Returns true when the list was set.
-function M.workbench_set(entity, index, kind, name, quality)
+function M.workbench_set(entity, index, kind, name, quality, temperature)
 	local d = M.workbench_data(entity)
 	if not d or type(index) ~= "number" or index < 1 or type(name) ~= "string" then return false end
 	local list = d.cell and d.cell.partition or d.config
@@ -473,7 +474,7 @@ function M.workbench_set(entity, index, kind, name, quality)
 	local key
 	if kind == "fluid" then
 		if not prototypes.fluid[name] then return false end
-		key = "fluid/" .. name
+		key = N.fluid_filter_key(name, tonumber(temperature))
 	else
 		if not prototypes.item[name] then return false end
 		quality = quality or "normal"
@@ -568,7 +569,7 @@ end)
 picker.on_confirm("wb_slot", function(player, data, choice)
 	local entity, frame = window_entity(player)
 	if not (entity and entity.unit_number == data.unit) then return end
-	if not M.workbench_set(entity, data.index, choice.kind, choice.name, choice.quality) then
+	if not M.workbench_set(entity, data.index, choice.kind, choice.name, choice.quality, choice.temperature) then
 		player.create_local_flying_text{ text = { "fork-me-gui.workbench-set-refused" }, create_at_cursor = true }
 	end
 	local box = frame and G.find(frame, "fork_me_wb_part")
@@ -645,7 +646,8 @@ local function pattern_sprite(d)
 	local key = type(first) == "table" and first.key
 	if type(key) == "string" then
 		if key:sub(1, 6) == "fluid/" then
-			if prototypes.fluid[key:sub(7)] then return "fluid/" .. key:sub(7) end
+			local name = N.fluid_name(key)
+			if prototypes.fluid[name] then return "fluid/" .. name end
 		elseif prototypes.item[key] then
 			return "item/" .. key
 		end
@@ -1134,8 +1136,7 @@ local function side_choices(d, side)
 		local c = d.config[i]
 		if c and c.type == "fluid" then
 			values[#values + 1] = i
-			local proto = prototypes.fluid[c.name]
-			items[#items + 1] = { "fork-me-gui.interface-side-row", i, "[fluid=" .. c.name .. "]", proto and proto.localised_name or c.name }
+			items[#items + 1] = { "fork-me-gui.interface-side-row", i, "[fluid=" .. c.name .. "]", (G.fluid_label(io.row_key(c))) }
 			if d.sides[side] == i then selected = #values end
 		end
 	end
@@ -1175,7 +1176,8 @@ function M.refresh_interface(player, frame)
 		local label = G.find(frame, "fork_me_if_side_" .. s)
 		if label then
 			local proto = f.name and prototypes.fluid[f.name]
-			local holds = proto and { "fork-me-gui.tank-holds", G.fmt(f.amount), G.fmt(d.volume), proto.localised_name }
+			--- (issue #159: with its temperature when it is not the default one)
+			local holds = proto and { "fork-me-gui.tank-holds", G.fmt(f.amount), G.fmt(d.volume), (G.fluid_label(N.fluid_key(f.name, f.temperature))) }
 				or { "fork-me-gui.tank-empty", G.fmt(d.volume) }
 			label.caption = { "", holds, f.connected and "" or { "fork-me-gui.interface-side-unconnected" } }
 			label.tooltip = f.status and { "fork-me-gui.interface-side-status-" .. f.status } or nil
@@ -1280,7 +1282,11 @@ function M.refresh_bus(player, frame)
 	local what = d.items and d.fluids and "both" or d.fluids and "fluids" or "items"
 	G.find(frame, "fork_me_bus_target").caption = target
 		and { "fork-me-gui.bus-target-" .. what, target.localised_name } or ""
-	G.find(frame, "fork_me_bus_status").caption = { "fork-me-net.bus-" .. (d.status or "ok") }
+	local status = { "fork-me-net.bus-" .. (d.status or "ok") }
+	if d.tstat then                                       -- issue #159: the temperatures the network has and the target takes
+		status = { "fork-me-net.bus-temperature-detail", "[fluid=" .. d.tstat[1] .. "]", d.tstat[2], d.tstat[3] }
+	end
+	G.find(frame, "fork_me_bus_status").caption = status
 	return true
 end
 

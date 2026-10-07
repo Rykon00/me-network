@@ -446,9 +446,14 @@ of fluid cells are kept apart (`fbytes`, `ftypes`, `fbytes_total`, `ftypes_total
 and `plain_counts` list items only. `scripts/fork-me-fluids.lua` keeps `totals`, `count`, `insert`, `remove` and
 `capacity` for its callers (autocrafting, level maintainer, circuit interface, terminal).
 
-**One temperature per fluid** stays: fluids are stored by name; importing drops the temperature, everything that
+~~**One temperature per fluid** stays: fluids are stored by name; importing drops the temperature, everything that
 comes out has the fluid's default temperature. Per-temperature storage would make every steam temperature its own
-type, and an export would have to pick one; the cost (hot steam cannot be stored) is documented in `docs/AE2.md`.
+type, and an export would have to pick one; the cost (hot steam cannot be stored) is documented in `docs/AE2.md`.~~
+**Superseded by issue #159** (see "Fluid temperature (me-network issue #159)" below): the accepted cost became a
+player's bug report (steam from boilers went in at 165 or 250 °C and came out at 15 °C, which no steam engine or
+turbine takes, and nothing told the player). Both reasons of R2 have an answer now: every temperature is its own type
+only where a fluid really has several (the default temperature keeps the key of R2, so nothing else pays for it), and
+an export picks by a fixed rule (the default first, then from the coldest), or by the temperature its filter names.
 
 ### Terminal, interface and buses
 
@@ -788,6 +793,10 @@ What the engine sees is the same external cell as the item bus (`N.ext_handlers[
 
 ### Temperature
 
+**Superseded by issue #159**: the segment's fluid is storage under the key of its temperature, the network puts a key
+in only while the segment is empty or holds that key's temperature (see "Fluid temperature (me-network issue #159)").
+What follows is the rule of R2 and the reasons it had then.
+
 The network keeps one temperature per fluid (R2: stored by name, what comes out has the fluid's default
 temperature). A segment can hold its fluid at any temperature. Decision: **read it, refuse inserts.**
 
@@ -842,8 +851,8 @@ temperature). A segment can hold its fluid at any temperature. Decision: **read 
   reused id never lets two buses own one segment.
 * The fluid import bus emptying a tank of a bus's segment, or a fluid export bus filling one, moves fluid in a
   circle, like the item buses. Give the fluid storage bus a filter or a lower priority.
-* Temperature: inserts into a segment at another temperature are refused; what leaves the network from such a
-  segment has the default temperature (see above).
+* Temperature (issue #159): the segment is storage at its temperature; inserts of another temperature are refused,
+  what leaves the network from it has its temperature.
 * Not tested in the real game: the window, the sprite, a large fluid system under load.
 
 ### Tests
@@ -863,6 +872,99 @@ ticks: the fluid export bus takes from the first segment, the level maintainer c
 fills a tank is in the network within one visit cycle. Two mutations were checked to fail it: no claim (every bus
 counts its segment: the network shows 2000 of 1000) and `count` trusting the snapshot (the stale extract leaves 100
 phantom units). `migrate --from-ref v0.3.2` and every other runtime test pass unchanged.
+
+## Fluid temperature (me-network issue #159)
+
+The report (ME Network 0.5.0, without Gregtorio): steam imported at 250 °C came out at 15 °C and powered nothing.
+R2 had stored fluids by name ("One temperature per fluid stays", above); issue #159 weighed two designs:
+
+* **A. The temperature is part of the key**: `fluid/<name>` stays the key of the default temperature, any other
+  temperature is `fluid/<name>@<degrees>`. Import keeps the temperature, an export takes a key, a fluid cell holds a
+  type per temperature.
+* **B. One temperature per fluid, the mix remembered**: importing mixes the temperature the way a pipe does (amount
+  weighted), exporting uses the mix. No new types, but 1000 units at 15 °C and 1000 at 250 °C come out at 132.5 °C, and
+  nobody can ask for 250 °C.
+
+**Decision: A** (the maintainer's choice; nothing in the work spoke against it). Its costs, measured or counted:
+
+* **Types and saved state:** a temperature is a type like another fluid: per key the cell's `per_type` bytes (8 of a
+  1k cell's 1024) and a slot in its 18 types, one entry in the network's totals and index, in the cell's tags. Only
+  fluids at a temperature other than their default pay it. The fluids that really exist at two temperatures are few:
+  steam (165 °C from boilers, 500 °C from heat exchangers and acid neutralisation, 15 °C from recipes) in the base game,
+  Space Age and Gregtorio Continued; every Gregtorio fluid but steam is made at one temperature (its superheated steam,
+  hot coolant and plasmas are fluids of their own). A **key explosion** needs steam of many temperatures mixed in pipes
+  before the import (each whole degree the mix reaches is a type): bounded by the degrees between the default and the
+  max temperature, and avoided by importing each line apart (`docs/AE2.md`). Rounding to whole degrees keeps a
+  source's own small differences (249.6 / 250.2) in one key.
+* **Script time:** the storage engine is unchanged for items (one table lookup more per insert and per partition
+  check: `alt_key`); an export of a fluid reads its keys (`N.fluid_keys`, kept per load) and, at an export bus, the
+  boxes' filters (`get_filter` per box and visit). Numbers: `docs/PERFORMANCE.md`, "Issue #159".
+
+### Keys and filters
+
+* `N.fluid_key(name, temperature)`: the temperature is clamped to the fluid's `[default_temperature, max_temperature]`
+  (the engine does the same: tested, steam inserted at 5 °C holds 15 °C, water at 500 °C holds 100 °C) and rounded to
+  whole degrees; equal to the default (rounded) it is `fluid/<name>`. Every saved key of before is such a key: old
+  saves, cell tags, partitions, interface rows, bus filters, patterns, level maintainers and circuit filters load
+  unchanged (`migrate --from-ref v0.5.0`).
+* A **filter key** may also be `fluid/<name>@<default>`: the default temperature only. A filter without a temperature
+  takes every temperature. In the engine (`listed`) a storage key has one other filter key that takes it (`alt_key`:
+  `fluid/<name>` for a hot key, `fluid/<name>@<default>` for the default key); the partition lookups (`parts`) are
+  searched under both, `cell_room` checks the list with `listed`. A waiter on `fluid/<name>` (a row or filter of every
+  temperature, parked for its fluid) wakes when any temperature arrives (`moved_key`, `net_cell`).
+* **Resource keys** of autocrafting are storage keys: a product has its recipe's temperature (`key_of`), a level
+  maintainer counts and crafts one key, the terminal lists one entry per key.
+
+### Export: which key
+
+* Without a temperature: the default key first, then the others by temperature, coldest first (`N.fluid_keys`, kept
+  per network and load outside `storage`, made from the index on first use). Never a fallback that cools: with only
+  hot steam stored, hot steam goes out. Coldest first keeps the hottest for the exports that need it.
+* One key per side or box and visit, and only the key within 1 °C of what the side or box already holds (an insert
+  would mix: tested, 100 units at 250 °C plus 100 at 15 °C give 132.5 °C). An interface row with a temperature first
+  returns a side's fluid of another temperature, as it returns another fluid.
+* A machine box's filter carries the recipe's range (`get_filter` has `minimum_temperature` / `maximum_temperature`;
+  an exact temperature is min = max; an output box has the product's temperature): `insert_fluid` refuses a fluid
+  outside it (tested), so the export bus asks first and takes only a key in the range. Nothing fits: the status
+  `temperature` with the temperatures the network has and the range or temperature the target takes. Such a bus is
+  blocked on its target's side (probed, not parked): the target's box running empty changes what fits.
+* A storage bus segment: storage under its temperature's key; the network inserts a key only into an empty segment or
+  one of that key (`insert_fluid` at the key's temperature), takes a key only while the segment is that key.
+
+### Autocrafting
+
+* A fluid ingredient with `temperature` is its key. Without one (or with a range) it takes every temperature in its
+  range: the plan's key is the default one when the default is in the range, else the end of the range next to it; the
+  planner takes that key's stock, then the stock of the network's other keys in the range (`need` with `flex`,
+  `take_stock`: journaled like every other write of a plan), then crafts the key. The job's pool holds the keys it
+  took; a lease gives a box from the input's own key first, then the others in its range, at their mean temperature
+  (in the range: the box gets the fluid by `fluidbox[i] = { name, amount, temperature }`, which no filter checks), and
+  what comes back from a box is booked at its temperature. Without a range the box's temperature does not matter to the
+  recipe; `fluid-temperature` is left for a range no fluid can reach.
+* Processing patterns: an input row without a temperature takes every temperature, an output row is a storage key
+  (no temperature: the default one). "From recipe" writes the product's temperature into the output row.
+
+### What stays open
+
+* A fluid wagon is no storage (no change). A tank fed by a pump with mixed temperatures gets a new key for every whole
+  degree of the mix.
+* The cell window's partition buttons are the game's own chooser (no temperature field): a partition set there takes
+  every temperature; the ME Cell Workbench's picker sets one.
+
+### Tests
+
+`devcheck runtime`, "ME fluid temperature test" (`runtimemod/temperature.lua`): the keys (default, rounding, clamp),
+an ME Interface importing steam at 250 °C from a pipe and exporting it at 250 °C through a row of 250 °C and through
+a row of every temperature while only hot steam is stored, refilled at 250 °C after default steam came in, two
+temperatures of steam apart (keys, cell types, totals, the remote calls of before counting the default), an export bus
+of 250 °C into a tank, a storage bus on a tank at 400 °C (stored under its key, steam at 400 °C in, default steam kept
+out, taken out at 400 °C), an export bus without a temperature into a machine of 200-600 °C (it gets 400 °C) and one of
+water into a machine of 50-100 °C (nothing, status `temperature` with "15" and "50-100"), the circuit interface's
+signal (sum of the temperatures, a filter of one), a crafting pattern of steam 200-600 °C planned and started with the
+hot steam the network holds (the machine's box in the range) and cancelled (every key back as it was), and a recipe
+making steam at 300 °C craftable as `fluid/steam@300`. The fluid storage bus and unified tests were changed to the new
+rule (hot steam stored at 500 °C and 165 °C). The save at tick 500 and the schedule comparison after the load cover
+the new blocks.
 
 ## Encoded patterns (issue #80)
 

@@ -10,7 +10,10 @@
 ---     circuit option are set in its ME window (scripts/fork-me-windows.lua), which also edits the condition.
 ---   * ME Circuit Interface: a constant combinator. The runtime writes its first section: every item
 ---     (with its quality) and fluid of its ME network, or only the filtered resources. Other sections
----     are removed, so the output always equals the network contents.
+---     are removed, so the output always equals the network contents. Issue #159: a signal has no temperature, so a
+---     fluid's signal is the sum of its temperatures (with filters: of those the filters take; a fluid filter without
+---     a temperature takes every one). A level maintainer's fluid is one temperature (its key, "fluid/<name>" for the
+---     default one): it counts and crafts that key.
 ---   * Settings of both are copied by settings paste and cloning and kept in blueprints (entity tags
 ---     "fork_me_maintainer" and "fork_me_circuit").
 --- Work (issue #5, a tick hook of fork-me-autocraft.lua, scripts/fork-me-schedule.lua): every maintainer and circuit
@@ -111,10 +114,16 @@ local function remove_value(list, value)
 	end
 end
 
---- a resource key (item name or "fluid/<name>") that still has a prototype, else nil
-local function valid_key(key)
+--- a resource key (item name or a fluid key) that still has a prototype, else nil. Issue #159: a fluid is a filter
+--- key ("fluid/<name>": every temperature, "fluid/<name>@<degrees>": one); `exact` (a maintainer's target): the
+--- storage key of one temperature (no temperature: the default one)
+local function valid_key(key, exact)
 	if type(key) ~= "string" then return nil end
-	if is_fluid(key) then return prototypes.fluid[fluid_name(key)] and key or nil end
+	if is_fluid(key) then
+		local k = N.clean_fluid_filter(key)
+		if k and exact then k = N.fluid_storage_key(k) end
+		return k
+	end
 	return prototypes.item[key] and (N.alias(key) or key) or nil      -- a replaced item: its replacement (issue #3)
 end
 
@@ -133,7 +142,7 @@ end
 
 --- what the network holds of a key (normal quality items)
 local function stock_of(net, key)
-	if is_fluid(key) then return fluids.count(net, fluid_name(key)) end
+	if is_fluid(key) then return N.count_key(net, key) end      -- (one temperature: issue #159)
 	return N.count(net, key, "normal")
 end
 
@@ -234,7 +243,7 @@ function M.set_maintainer(entity, key, amount, circuit)
 	if not (entity and entity.valid and entity.name == MAINTAINER) then return false end
 	local rec = maintainer_record(state(), entity)
 	if key ~= nil then
-		local new = key and valid_key(key) or nil
+		local new = key and valid_key(key, true) or nil
 		if new ~= rec.key then rec.job, rec.missing = nil, nil end
 		rec.key = new
 	end
@@ -321,10 +330,28 @@ local function network_signals(net, filter)
 						out[#out + 1] = sig
 					end
 				end
-			elseif count >= 1 and (not filter or filter[key]) then
-				out[#out + 1] = { type = "fluid", name = p[2], count = math.floor(count), order = p[4] }
+			elseif not filter or N.listed(filter, key) then
+				--- issue #159: one signal per fluid, its temperatures added up (`keys`: the amount of each, for filters)
+				local sig = by_item[p[4]]
+				if sig then
+					sig.count = sig.count + count
+					sig.keys[key] = count
+				else
+					sig = { type = "fluid", name = p[2], count = count, order = p[4], keys = { [key] = count } }
+					by_item[p[4]] = sig
+					out[#out + 1] = sig
+				end
 			end
 		end
+		local n = 0
+		for _, sig in ipairs(out) do                         -- fluids from 1 unit, rounded down
+			if sig.type == "fluid" then sig.count = math.floor(sig.count) end
+			if sig.count >= 1 then
+				n = n + 1
+				out[n] = sig
+			end
+		end
+		for i = n + 1, #out do out[i] = nil end
 	end
 	--- sorted by the order strings (the string comparison, no Lua comparator)
 	local keys, by_key = {}, {}
@@ -357,7 +384,15 @@ local built = setmetatable({}, { __mode = "k" })
 local function view(list, filter)
 	local out = {}
 	for _, sig in ipairs(list) do
-		if not filter or filter[sig.type == "fluid" and ("fluid/" .. sig.name) or sig.name] then out[#out + 1] = sig end
+		if not filter then
+			out[#out + 1] = sig
+		elseif sig.type == "fluid" and sig.keys then          -- issue #159: the temperatures the filters take
+			local n = 0
+			for key, count in pairs(sig.keys) do if N.listed(filter, key) then n = n + count end end
+			if n >= 1 then out[#out + 1] = { type = "fluid", name = sig.name, count = math.floor(n), order = sig.order } end
+		elseif filter[sig.type == "fluid" and ("fluid/" .. sig.name) or sig.name] then
+			out[#out + 1] = sig
+		end
 	end
 	if #out <= MAX_SIGNALS then return out end
 	local keys, by_key = {}, {}
@@ -408,7 +443,7 @@ local function circuit_step(rec, force)
 	return true
 end
 
---- Set the filter of an interface: a list of keys (items, "fluid/<name>"), empty for everything
+--- Set the filter of an interface: a list of keys (items, "fluid/<name>", "fluid/<name>@<degrees>"), empty for everything
 function M.set_circuit_filters(entity, keys)
 	if not (entity and entity.valid and entity.name == CIRCUIT) then return false end
 	local rec = circuit_record(state(), entity)
@@ -665,7 +700,7 @@ function M.on_configuration_changed()
 				local rec = maintainer_record(s, e)
 				local old = old_m[unit]
 				if old then
-					rec.key = valid_key(old.key)
+					rec.key = valid_key(old.key, true)
 					rec.amount = clamp_amount(rec.key, old.amount)
 					rec.circuit = old.circuit and true or false
 					rec.job = old.job

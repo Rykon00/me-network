@@ -160,9 +160,15 @@ local function setup_unified(s)
 	for _, x in pairs({ 28.5, 32.5, 36.5 }) do
 		local m = place(s, fails, "me-molecular-assembler", x, -1.5)
 		local p = place(s, fails, "me-pattern-provider", x, 0.5)
-		local inv = game.create_inventory(1)
+		local inv = game.create_inventory(2)
 		inv.insert{ name = "me-blank-pattern", count = 1 }
-		remote.call("gregtorio-me-terminal", "encode_def", false, inv, false, { kind = "crafting", recipe = "copper-cable" })
+		--- (an old version encodes through the terminal; 0.5.0 and later through the ME Pattern Terminal, issue #130)
+		local def = { kind = "crafting", recipe = "copper-cable" }
+		if remote.interfaces["gregtorio-me-pattern-terminal"] and remote.interfaces["gregtorio-me-pattern-terminal"].encode_def then
+			remote.call("gregtorio-me-pattern-terminal", "encode_def", inv, nil, def)
+		else
+			remote.call("gregtorio-me-terminal", "encode_def", false, inv, false, def)
+		end
 		local stack = inv.find_item_stack("me-encoded-pattern")
 		if not (m and p and stack and remote.call(AC, "insert_pattern", p, stack)) then fails[#fails + 1] = "pattern at " .. x end
 		inv.destroy()
@@ -173,8 +179,9 @@ local function setup_unified(s)
 	--- me-network issue #131: such a version runs the job on a multiblock CPU (one crafting storage next to the terminal); the
 	--- assemblers of the three providers above are 3x3 there and one tile in the working copy, so the provider that touched the
 	--- edge of the big block has no machine after the load, and the job that waited for it must not hang
+	--- (only for a version whose assembler is 3x3: from 0.5.0 on it is one tile in the old save too, two tiles from its provider)
 	local multi_job
-	if not legacy_jobs and term then
+	if not legacy_jobs and term and prototypes.entity["me-molecular-assembler"].tile_width ~= 1 then
 		place(s, fails, "me-1k-crafting-storage", 13.5, 0.5)
 		local id, why = remote.call(AC, "start", term, "copper-cable", 8)
 		if id then multi_job = id else fails[#fails + 1] = "the job on the crafting storage: " .. tostring(why) end
