@@ -152,6 +152,11 @@ slot: the source slot's partition, or none) and by cloning.
 
 ## ME Terminal
 
+**Experimental** (issue #150, the map setting "Experimental: ME Terminal beside the game's inventory", off by default): the
+terminal opens next to the game's own inventory window instead of drawing your inventory itself. Between the two is a
+buffer of 20 slots: what you put into it (shift + click, a stack put down) goes into the network; what the network cannot
+take stays there and comes back to you when the window closes.
+
 Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
 fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs, and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):

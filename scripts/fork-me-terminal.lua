@@ -428,7 +428,10 @@ end
 
 local function open(player, entity)
 	if not (entity and entity.valid and entity.name == "me-terminal") then return end
-	local _, content = G.open_window(player, "terminal", { "fork-me-terminal.title" }, { unit = entity.unit_number })
+	--- issue #150 (an experiment, a map setting): the game's own inventory window with a hand-over buffer, the terminal
+	--- anchored right of it
+	local relative = settings.global["me-network-terminal-real-inventory"].value == true
+	local _, content = G.open_window(player, "terminal", { "fork-me-terminal.title" }, { unit = entity.unit_number }, nil, relative)
 	local st = state()[player.index]
 	if not (st and st.entity == entity) then
 		st = { entity = entity, filter = "", sort = "count", kind = "all", amount = 1, tab = 1 }

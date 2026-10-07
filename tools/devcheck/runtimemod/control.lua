@@ -763,6 +763,9 @@ providers158 = require("providers")({ me_place = me_place, power = power, me_rep
 --- me-network issue #157: a machine fed by an interface that keeps one craft (pastecraft.lua)
 pastecraft157 = require("pastecraft")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #150: the terminal's hand-over buffer (buffer150.lua)
+buffer150 = require("buffer150")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
@@ -830,6 +833,7 @@ local function tests_running()
 	temperature159.running(check)
 	providers158.running(check)
 	pastecraft157.running(check)
+	buffer150.running(check)
 	graph43.running(check)
 	return running
 end
@@ -1742,6 +1746,7 @@ script.on_nth_tick(10, function()
 	temperature159.tick()
 	providers158.tick()
 	pastecraft157.tick()
+	buffer150.tick()
 	graph43.tick()
 	done_test()
 end)
@@ -4687,6 +4692,7 @@ script.on_init(function()
 	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end

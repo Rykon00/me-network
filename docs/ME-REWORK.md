@@ -2244,6 +2244,30 @@ inventory), the workbench's cell into the cursor with its cards and back, a swap
 test and the generic window test of #30 stay. The drawing of the pane (`open_window`, `update_pane`, the hand, the
 events) was run against a mock of the GUI elements outside the game; how it looks only the game shows (`[Task-Ingame]`).
 
+### Experiment: the ME Terminal beside the game's inventory (me-network issue #150)
+
+Behind the map setting "me-network-terminal-real-inventory" (off by default; only the ME Terminal) the terminal is a frame
+in `player.gui.relative` anchored right of a script inventory of 20 slots (`G.open_window(..., relative)`), which is the
+player's opened GUI: the game draws its own container window with the player's real inventory left of it, so the click
+rules are the game's. This is the layout pull request #30 had (the maintainer turned it down then for its three parts
+side by side and the stub of an empty script inventory); here the middle part is meant: it is the **hand-over buffer**.
+
+* What lands in the buffer goes into the network through the window's `shift` (the terminal stores it). A script
+  inventory raises no event when it changes, but every move into it changes the player's main inventory or cursor:
+  `on_player_main_inventory_changed` and `on_player_cursor_stack_changed` empty the buffer (`G.on_inventory_changed`),
+  the window's refresh once a second does too (`refresh_all`, the existing step of open windows: no new periodic
+  work), and so does the close. What the network refuses (a damaged item, an item with data, no room) stays in the
+  buffer, visible, and goes back to the player when the window closes (`give_back`: the inventory, else the ground):
+  nothing is lost. Cost: `is_empty()` of 20 slots per inventory or cursor event while the window is open.
+* Closing: the buffer closing (E, Escape, another GUI) closes the window (`on_gui_closed` with the script inventory;
+  a close in the tick of the opening, the open key's own action, opens it again). The close button and a mod update
+  (`close_all`) do the same. State: `storage.fork_me_gui_buffer[player_index] = { inv, opened_tick }` (the inventory
+  is saved with the map; the window's elements are rebuilt like every ME window's).
+* Tested headless: the buffer's functions (`runtimemod/buffer150.lua`: plates stored, a used science pack kept and given
+  back) and the window logic in a mock of the GUI (open relative, the buffer is `player.opened`, the same-tick close,
+  emptying on an inventory event, Escape closing and returning). The look, the window order, drag and the keys can only
+  be judged in the game: `[Task-Ingame]` issue.
+
 ## Open points
 
 * Patterns (issue #80, left open on purpose; the data model keeps room for them): upgrade cards on providers

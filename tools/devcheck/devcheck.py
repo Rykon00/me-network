@@ -513,6 +513,7 @@ RUNTIME_TESTS = (
     ("TEMPERATURE", "ME fluid temperature test (issue #159)"),
     ("PROVIDERS", "ME pattern provider machines test (issue #158)"),
     ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
+    ("BUFFER", "ME terminal buffer (issue #150, experiment)"),
     ("DONE", "all tests reported"),
 )
 
