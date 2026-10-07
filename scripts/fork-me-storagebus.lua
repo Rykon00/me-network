@@ -680,7 +680,7 @@ function M.filters_from_contents(entity)
 	local keys = {}
 	if rec.side == "fluid" then
 		local f = F.contents(rec)
-		for name in pairs(f) do keys[#keys + 1] = "fluid/" .. name end
+		for key in pairs(f) do keys[#keys + 1] = key end      -- (issue #161: at the temperature it holds)
 	else
 		local inv = t and inventory_of(rec)
 		for _, it in pairs(inv and inv.get_contents() or {}) do

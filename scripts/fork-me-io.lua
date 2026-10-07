@@ -73,6 +73,7 @@ local MAX_AMOUNT = 1000000
 local EPS = 1e-6
 local FLUID_PREFIX = "fluid/"
 local TEMP_TOLERANCE = 1             -- degrees: a box this close to a key's temperature takes it (issue #159)
+local MIX_HINT = 5                   -- temperatures of one fluid from which an import shows the hint of issue #161
 local IFACE_TAG, BUS_TAG = "fork_me_interface", "fork_me_bus"
 --- the sides of the interface: 1 north, 2 east, 3 south, 4 west (the directions of its side tanks)
 local SIDES = { defines.direction.north, defines.direction.east, defines.direction.south, defines.direction.west }
@@ -528,6 +529,24 @@ local function holds_key(held, fk)
 	return N.fluid_matches(fk, N.fluid_key(held.name, held.temperature))
 end
 
+--- Issue #161: fluid of several temperatures mixed in pipes before an import comes in at every whole degree the mix
+--- reaches (a mixed steam line: up to 76 types in a simulated hour, docs/ME-REWORK.md), each a type of its own. After
+--- an import of `name` the block remembers { fluid, number of its temperatures in the network } while the network holds
+--- at least MIX_HINT of them (rec.fmix: its window shows a hint), and forgets it when it imports that fluid again with
+--- fewer.
+local function mix_check(rec, net, name)
+	local n, items = 0, net.items
+	for _, key in ipairs(N.fluid_keys(net, name)) do
+		if (items[key] or 0) > EPS then n = n + 1 end
+	end
+	if n >= MIX_HINT then
+		local m = rec.fmix
+		if not (m and m[1] == name and m[2] == n) then rec.fmix = { name, n } end
+	elseif rec.fmix and rec.fmix[1] == name then
+		rec.fmix = nil
+	end
+end
+
 --- keep a side's tank at its row's amount of the row's fluid; returns the status, the amount moved and what the
 --- side still lacks, and the storage key it waits for (issue #159). `p`: the interface's priority when priorities are in use (issue #17: what interfaces of a higher
 --- priority lack is left in the network)
@@ -622,6 +641,7 @@ local function interface_sides(rec, net, config, short, dt)
 				local n, why = tank_to_network(t, held, net)
 				fstatus[d] = why
 				moved = moved + n
+				if n > EPS then mix_check(rec, net, held.name) end
 				if n > EPS then                                      -- the side fills at n per dt
 					local tt = volume() * dt / n
 					if tt < time then time = tt end
@@ -993,7 +1013,8 @@ function M.get_interface(entity)
 		if e then short[key] = e[2] end
 	end
 	return { config = M.get_interface_config(entity), sides = sides, status = rec.status, contents = contents,
-		fluids = fl, slots = CONFIG_SLOTS, volume = volume(), priority = rec.priority or 0, short = short }
+		fluids = fl, slots = CONFIG_SLOTS, volume = volume(), priority = rec.priority or 0, short = short,
+		fmix = rec.fmix and { rec.fmix[1], rec.fmix[2] } or nil }
 end
 M.CONFIG_SLOTS = CONFIG_SLOTS
 M.MAX_FILTERS = MAX_FILTERS
@@ -1269,6 +1290,7 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 							left = f.amount - take
 							fb[i] = left > EPS and { name = f.name, amount = left, temperature = f.temperature } or nil
 							local stored = N.insert_fluid(net, f.name, take, f.temperature)
+							if stored > EPS then mix_check(rec, net, f.name) end
 							if stored < take - EPS then                 -- cannot happen (room was checked), but never lose fluid
 								t.insert_fluid{ name = f.name, amount = take - stored, temperature = f.temperature }
 							end
@@ -1503,6 +1525,7 @@ function M.bus_info(entity)
 	b.kind, b.import, b.max = k, IMPORTS[k] == true, MAX_FILTERS
 	b.items, b.fluids = rec.t_inv ~= nil, rec.t_fluid == true
 	b.tstat = rec.status == "temperature" and rec.tstat or nil      -- issue #159: { fluid, the network has, the target takes }
+	b.fmix = rec.fmix and { rec.fmix[1], rec.fmix[2] } or nil       -- issue #161: { fluid, its temperatures in the network }
 	--- issue #110: the card slots (the window shows them), the factor of the cards, the cards it waits for
 	b.slots, b.accel = N.card_rules().bus.slots, rec.accel or 1
 	b.rate = Sched.setting("bus_items") * b.accel          -- items per second at most

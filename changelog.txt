@@ -9,6 +9,9 @@ Version: 0.5.1
     - A storage bus on a tank of hot steam stores the steam at its temperature: the network puts steam of that temperature into the tank, and what is taken from it leaves hot (before, it counted as cold steam and nothing went in).
     - Autocrafting: a recipe that makes a hot fluid stores it hot, and a recipe that needs a fluid temperature or a range of temperatures is a pattern now and takes the fluid the network holds at a temperature that fits (it was refused with "needs a fluid temperature the network does not store").
     - The circuit interface's signal of a fluid is the sum of its temperatures; a filter of one temperature gives only that one.
+    - The partition buttons of the storage cell window use the mod's picker, so a cell can be partitioned for one temperature of a fluid there too (issue #161).
+    - "From contents" of a storage bus on a tank of hot steam makes a filter of that temperature, and a recipe pasted onto an ME Interface or a bus keeps the recipe's exact fluid temperatures (issue #161).
+    - An import bus or interface that brings in a fluid the network holds at five or more temperatures says so in its window: fluid whose temperatures mix in pipes before it comes in is a type of its own per degree (issue #161).
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.0
 Date: 2026-10-06

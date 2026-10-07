@@ -946,10 +946,39 @@ R2 had stored fluids by name ("One temperature per fluid stays", above); issue #
 
 ### What stays open
 
-* A fluid wagon is no storage (no change). A tank fed by a pump with mixed temperatures gets a new key for every whole
-  degree of the mix.
-* The cell window's partition buttons are the game's own chooser (no temperature field): a partition set there takes
-  every temperature; the ME Cell Workbench's picker sets one.
+* A fluid wagon is no storage (no change).
+
+### Follow-up (issue #161)
+
+* **Mixed temperatures before the import, measured.** The engine mixes amount weighted (tested), so a script model is
+  exact enough: a boiler line of 1 unit per tick at 165 °C joined by a turbine's return of 0 to 1 unit per tick at 15 °C,
+  its load changing every 300, 3600 or 18 000 ticks, imported every 60 or 600 ticks (the whole segment per visit).
+  Distinct keys after one and after ten hours:
+
+  | rounding | load every 300 ticks | every 3600 | every 18 000 |
+  |---|---|---|---|
+  | 1 degree (now) | 69-73 / 76 | 17-25 / 68-69 | 5-8 / 27-31 |
+  | 5 degrees | 16 / 16 | 8-14 / 16 | 4-7 / 12-14 |
+  | 10 degrees | 8 / 8 | 5-8 / 8 | 3-6 / 7-8 |
+
+  76 is the whole range of the mix (90 to 165 °C): a type each, five fluid cells of 18 types for steam alone. Decision:
+  **keep whole degrees and tell the player.** A coarser step rounds a source that is not on the step by up to half of
+  it: steam made at 247 °C would be stored at 245 °C (5-degree step) and no longer fit a recipe that needs at least
+  247 °C, so the step would break what issue #159 promised (a fluid comes out at the temperature it went in); the base
+  game's and Gregtorio's sources (15, 165, 180, 500, 1000 °C) are whole degrees. An import bus or an interface that
+  stores a fluid the network then holds at `MIX_HINT` (5) or more temperatures remembers it (`rec.fmix`, cleared when
+  it imports that fluid with fewer), and its window shows "The network holds [steam] at N temperatures ... import each
+  source through a block of its own" under its status. Its cost: one walk over the fluid's keys after an import that
+  stored something.
+* **The cell window** uses the mod's picker (`G.key_button`, callback `cell_part`) like the ME Cell Workbench: a
+  partition of one temperature can be set there now (the game's choose-elem button has no temperature).
+* **From contents** names the temperature it finds: a cell's partition was made of its storage keys already (a hot key
+  is a filter of that temperature, the default key a filter of every temperature); the storage bus's fluid side made
+  `fluid/<name>` of a hot tank and now makes its storage key (`fluid/steam@400`).
+* **Recipe paste** keeps a recipe's exact temperature (an ingredient's `temperature`, a product's): an import bus of a
+  recipe that makes steam at 300 °C filters `fluid/steam@300`, an interface row of an ingredient at 250 °C asks for
+  250 °C. An ingredient with a range keeps a row or filter of every temperature (the export takes what fits the
+  machine's box).
 
 ### Tests
 
@@ -962,7 +991,9 @@ out, taken out at 400 °C), an export bus without a temperature into a machine o
 water into a machine of 50-100 °C (nothing, status `temperature` with "15" and "50-100"), the circuit interface's
 signal (sum of the temperatures, a filter of one), a crafting pattern of steam 200-600 °C planned and started with the
 hot steam the network holds (the machine's box in the range) and cancelled (every key back as it was), and a recipe
-making steam at 300 °C craftable as `fluid/steam@300`. The fluid storage bus and unified tests were changed to the new
+making steam at 300 °C craftable as `fluid/steam@300`. Issue #161 adds "From contents" of the storage bus on the hot
+tank (`fluid/steam@400`), a recipe pasted onto an import bus (`fluid/steam@300`) and the hint of an import bus (none
+below five temperatures of steam, then the fluid and the number). The fluid storage bus and unified tests were changed to the new
 rule (hot steam stored at 500 °C and 165 °C). The save at tick 500 and the schedule comparison after the load cover
 the new blocks.
 

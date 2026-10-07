@@ -913,14 +913,19 @@ Since issue #159 of ME Network the network keeps a fluid's temperature. Steam th
 * **Terminal:** one entry per temperature; the tooltip says "Steam (250 °C)", the default one has no temperature.
 * **Fluid cells:** every temperature is a type of its own (bytes and types as for another fluid). Steam of several
   temperatures that mixes in pipes before the import comes in at every whole degree the mix reaches, and each is a
-  type: import each boiler line or heat exchanger line by its own interface side or bus.
+  type: import each boiler line or heat exchanger line by its own interface side or bus. An import bus or interface that
+  brings in a fluid the network holds at five or more temperatures says so in its window (issue #161: "The network holds
+  [steam] at 12 temperatures ..."); a mixed steam line can make up to 76 of them (see `docs/ME-REWORK.md`).
 * **Choosing a fluid** (an interface row, an import or export bus filter, a storage bus filter, the ME Cell
   Workbench's partition, a level maintainer, a circuit interface filter, a row of the pattern terminal): the picker
   has a field **Temperature (°C)** below the fluids. Empty: a filter, an interface row, an export bus and a pattern
   input take **every temperature** of the fluid; a number: that temperature only (the default one too, e.g. 15). A
   level maintainer and a pattern output name one temperature: empty is the default one. A filter of one temperature
-  shows the degrees as the number of its slot. A cell partition set in the cell window (the game's own picker) takes
-  every temperature.
+  shows the degrees as the number of its slot. The cell window's partition buttons use the same picker (issue #161;
+  before, the game's own chooser without a temperature). **From contents** (a cell, a storage bus) names what it finds:
+  a fluid at another temperature than its default becomes a filter of that temperature, one at its default a filter of
+  every temperature. **Recipe paste** gives a row or filter the recipe's exact temperature (an ingredient's
+  temperature, a product's); an ingredient with a range or none takes every temperature.
 * **Export without a temperature** (an interface row, an export bus): the default temperature first, then the others
   from the coldest to the hottest. There is **no fallback to 15 °C**: a network that holds only steam at 250 °C exports
   steam at 250 °C. One temperature goes into a side or a box per visit, and never into a side, box or tank that already
