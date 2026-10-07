@@ -16,12 +16,16 @@
 ---   * autocrafting: a pattern of steam between 200 and 600 °C plans with the hot steam the network has, a pattern that
 ---     makes steam at 300 °C is craftable as "fluid/steam@300"; the job hands steam to the machine at a temperature in
 ---     the range and gives it back at the same key when it is cancelled;
----   * the circuit interface: one signal per fluid, the sum of its temperatures, a filter of one temperature only that one.
+---   * the circuit interface: one signal per fluid, the sum of its temperatures, a filter of one temperature only that one;
+---   * issue #161: "From contents" of the storage bus on the hot tank names its temperature; a recipe pasted onto an
+---     import bus names the temperature of its fluid product; an import bus bringing steam into a network that holds
+---     five or more temperatures of it shows the hint (bus_info.fmix), one with fewer does not.
 --- The runtime's save at tick 500 and the schedule comparison after the load cover its blocks like every other test's.
 --- Loaded by control.lua: require("temperature")(H) returns { setup, tick, running }.
 
 local NET, IO, FSB, AC, C38 = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-fluid-storagebus", "gregtorio-me-autocraft",
 	"gregtorio-me-circuit"
+local SB, RP = "gregtorio-me-storagebus", "gregtorio-me-recipe-paste"
 local BX, BY = -200, -330
 local START, TIMEOUT = 120, 900
 local SOUTH = { direction = defines.direction.south }
@@ -34,7 +38,7 @@ return function(H)
 		local fails = {}
 		local what = "fluid temperature"
 		local tiles = {}                                         -- (land under the scene: the map may have water there)
-		for x = BX - 4, BX + 44 do
+		for x = BX - 4, BX + 48 do
 			for y = BY - 6, BY + 12 do tiles[#tiles + 1] = { name = "grass-1", position = { x, y } } end
 		end
 		s.set_tiles(tiles)
@@ -56,16 +60,21 @@ return function(H)
 		local wm = me_place(s, fails, what, "zz-devcheck-hot-machine", BX + 38.5, BY + 2.5)
 		local prov = me_place(s, fails, what, "me-pattern-provider", BX + 31.5, BY + 7.5)
 		local hm2 = me_place(s, fails, what, "zz-devcheck-hot-machine", BX + 33.5, BY + 7.5)
+		local hm3 = me_place(s, fails, what, "zz-devcheck-hot-machine", BX + 39.5, BY + 7.5)       -- issue #161: recipe paste
+		local ib = me_place(s, fails, what, "me-import-bus", BX + 37.5, BY + 5.5, SOUTH)
+		local ib2 = me_place(s, fails, what, "me-import-bus", BX + 44.5, BY + 0.5, SOUTH)          -- issue #161: the hint
+		local td = me_place(s, fails, what, "storage-tank", BX + 44.5, BY + 2.5)
 		if hm and wm and hm2 then
 			hm.set_recipe("zz-devcheck-hot-steam")
 			wm.set_recipe("zz-devcheck-warm-water")
 			hm2.set_recipe("zz-devcheck-hot-steam")
 		end
+		if hm3 then hm3.set_recipe("zz-devcheck-heat-steam") end
 		if tc then tc.insert_fluid{ name = "steam", amount = 500, temperature = 400 } end
 		if pipe then pipe.fluidbox[1] = { name = "steam", amount = 100, temperature = 250 } end
-		H.me_connect(fails, what, { ctrl, drive, cpu, term, ci, iface, eb, sb, eb2, eb3, prov })
+		H.me_connect(fails, what, { ctrl, drive, cpu, term, ci, iface, eb, sb, eb2, eb3, prov, ib, ib2 })
 		storage.temperature159_scene = { ctrl = ctrl, drive = drive, term = term, ci = ci, iface = iface, pipe = pipe, eb = eb, tb = tb,
-			sb = sb, tc = tc, eb2 = eb2, hm = hm, eb3 = eb3, wm = wm, prov = prov, hm2 = hm2 }
+			sb = sb, tc = tc, eb2 = eb2, hm = hm, eb3 = eb3, wm = wm, prov = prov, hm2 = hm2, hm3 = hm3, ib = ib, ib2 = ib2, td = td }
 		return fails
 	end
 
@@ -175,6 +184,11 @@ return function(H)
 			expect(near(remote.call(NET, "insert_fluid", t, "steam", 50), 50) and near(held(sc.tc).amount, 600), "default steam kept out: " .. serpent.line(held(sc.tc)))
 			expect(near(remote.call(NET, "extract_fluid", t, "steam", 100, 400), 100) and near(held(sc.tc).amount, 500) and near(held(sc.tc).temperature, 400),
 				"steam at 400 °C taken: " .. serpent.line(held(sc.tc)))
+			--- issue #161: "From contents" names the temperature the tank holds
+			remote.call(SB, "from_contents", sc.sb)
+			local f = (remote.call(SB, "get_settings", sc.sb) or {}).filters or {}
+			expect(#f == 1 and f[1] == "fluid/steam@400", "from contents of the hot tank: " .. serpent.line(f))
+			remote.call(SB, "set_settings", sc.sb, { filters = {} })
 
 			--- an export bus without a temperature into a machine of 200-600 °C; one of water into a machine of 50-100 °C
 			remote.call(IO, "set_bus_filters", sc.eb2, { "fluid/steam" })
@@ -206,6 +220,29 @@ return function(H)
 			expect(signals().steam == 100, "steam at 500 °C on the wire: " .. tostring(signals().steam))
 			remote.call(C38, "set_circuit_filters", sc.ci, { "fluid/steam" })
 			expect(signals().steam == want, "steam of every temperature on the wire: " .. tostring(signals().steam))
+
+			--- issue #161: a recipe pasted onto an import bus names the temperature of its fluid product
+			remote.call(RP, "paste", sc.hm3, sc.ib)
+			local pf = (remote.call(IO, "get_bus", sc.ib) or {}).filters or {}
+			expect(#pf == 1 and pf[1] == "fluid/steam@300", "steam at 300 °C pasted onto the import bus: " .. serpent.line(pf))
+			--- issue #161: the hint of many temperatures: none while the network holds fewer than five of steam, then one
+			local function present()
+				local n = 0
+				for kk, v in pairs(keys()) do if kk:find("^fluid/steam") and v > 0 then n = n + 1 end end
+				return n
+			end
+			sc.td.insert_fluid{ name = "steam", amount = 50, temperature = 450 }
+			step(sc.ib2)
+			local b2 = remote.call(IO, "bus_info", sc.ib2)
+			local before_n = present()
+			expect(near(count("steam", 450), 50) and ((before_n < 5) == (b2.fmix == nil)), "the hint with " .. before_n .. " temperatures: "
+				.. serpent.line(b2.fmix))
+			for _, deg in ipairs({ 100, 120, 140 }) do remote.call(NET, "insert_fluid", t, "steam", 10, deg) end
+			sc.td.insert_fluid{ name = "steam", amount = 50, temperature = 460 }
+			step(sc.ib2)
+			b2 = remote.call(IO, "bus_info", sc.ib2)
+			expect(b2.fmix and b2.fmix[1] == "steam" and b2.fmix[2] == present() and present() >= 5, "the hint with " .. present()
+				.. " temperatures: " .. serpent.line(b2.fmix))
 
 			--- autocrafting
 			local n = give_patterns(sc.prov, { { kind = "crafting", recipe = "zz-devcheck-hot-steam" }, { kind = "crafting", recipe = "zz-devcheck-heat-steam" } }, problems)
@@ -263,7 +300,8 @@ return function(H)
 			for k, v in pairs(now) do if k:find("^fluid/steam") and not st.before[k] then diff[#diff + 1] = k .. " " .. v .. "/0" end end
 			table.sort(diff)
 			expect(#diff == 0, "after the cancelled job: " .. table.concat(diff, ", ") .. " (job " .. serpent.line(job and job.status) .. ")")
-			return finish("keys, interface rows, two temperatures, export bus, storage bus, recipe ranges, circuit signal, plan and job")
+			return finish("keys, interface rows, two temperatures, export bus, storage bus, recipe ranges, circuit signal, plan and job, "
+				.. "from contents, recipe paste, the hint of many temperatures")
 		end
 	end
 

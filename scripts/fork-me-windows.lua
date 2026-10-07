@@ -139,19 +139,6 @@ local function key_of_elem(elem_type, value)
 end
 M.key_of_elem = key_of_elem
 
---- a choose-elem button for an item or fluid key
-local function chooser(parent, elem_type, key, tags)
-	local def = { type = "choose-elem-button", elem_type = elem_type, tags = tags, style = "slot_button" }
-	if key then
-		if elem_type == "fluid" then def.fluid = N.fluid_name(key)
-		elseif elem_type == "item-with-quality" then
-			local name, q = N.parse_key(key)
-			def["item-with-quality"] = { name = name, quality = q }
-		else def.item = key end
-	end
-	return parent.add(def)
-end
-
 --- Issue #70: the picker (scripts/fork-me-picker.lua) for a key slot button: `act` names the callback of the choice,
 --- `data` (plain data: the block's unit number, the slot's index) comes back with it, `key` is what the slot holds (the
 --- picker opens on it), `with_quality` false for a place that takes no quality (buses, the maintainer's target, the
@@ -294,13 +281,14 @@ function M.set_partition_slot(drive, slot, index, key)
 	return N.set_partition(drive, slot, out)
 end
 
+--- issue #161: key buttons with the mod's picker (an item with its quality, or a fluid with an optional temperature), as
+--- in the ME Cell Workbench; before, the game's own chooser, which has no temperature
 local function build_partition(box, drive, slot)
 	local c = M.cell_data(drive, slot)
 	local t = box.add{ type = "table", column_count = 10, style = "filter_slot_table" }
-	local elem_type = c.fluid and "fluid" or "item-with-quality"
 	local count = math.min(c.types_total, #c.partition + 1)
 	for i = 1, count do
-		chooser(t, elem_type, c.partition[i], G.act("cell_part", { index = i }))
+		G.key_button(t, c.partition[i], G.act("cell_part", { index = i }), { "fork-me-gui.key-slot-tooltip" })
 	end
 end
 
@@ -378,10 +366,29 @@ end
 G.window("cell", { open = open_cell, refresh = M.refresh_cell, shift = cell_into_drive, message = G.net_message })
 
 G.on("cell_part", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
+	if event.name ~= defines.events.on_gui_click then return end
 	local drive, frame = window_entity(player)
 	if not drive then return end
-	M.set_partition_slot(drive, frame.tags.slot, el.tags.index, key_of_elem(el.elem_type, el.elem_value))
+	local slot, index = frame.tags.slot, el.tags.index
+	local c = M.cell_data(drive, slot)
+	if not c then return end
+	local key = c.partition[index]
+	if right_click(event) then
+		if key then M.set_partition_slot(drive, slot, index, nil) G.refresh_one(player) end
+		return
+	end
+	picker.open(player, { callback = "cell_part", data = { unit = drive.unit_number, slot = slot, index = index },
+		kinds = { item = not c.fluid, fluid = c.fluid == true }, preset = picker.preset_of(key),
+		title = { "fork-me-picker.title-" .. (c.fluid and "fluid" or "item") } })
+end)
+
+--- the picker's choice goes into the partition button it was opened for (the window and the cell are checked again)
+picker.on_confirm("cell_part", function(player, data, choice)
+	local drive, frame = window_entity(player)
+	if not (drive and drive.unit_number == data.unit and frame.tags.slot == data.slot) then return end
+	local c = M.cell_data(drive, data.slot)
+	local key = c and choice.kind == (c.fluid and "fluid" or "item") and picker.key_of(choice, true)
+	if key then M.set_partition_slot(drive, data.slot, data.index, key) else refused_choice(player) end
 	G.refresh_one(player)
 end)
 
@@ -1102,6 +1109,13 @@ function M.set_interface_choice(entity, i, choice, amount)
 	return io.set_interface_key(entity, i, key, amount)
 end
 
+--- issue #161: a status line with the hint that the block imports a fluid the network holds at many temperatures
+--- (`fmix` = { fluid, number }, nil: the status alone)
+function M.mix_status(status, fmix)
+	if not fmix then return status end
+	return { "", status, "\n", { "fork-me-gui.fluid-mixed", "[fluid=" .. fmix[1] .. "]", tostring(fmix[2]) } }
+end
+
 local function open_interface(player, entity)
 	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-gui.interface-help" }, WIDTH)
@@ -1188,7 +1202,7 @@ function M.refresh_interface(player, frame)
 	rebuild(frame, "fork_me_if_items", table.concat(sig, ","), function(grid)
 		for _, c in ipairs(d.contents) do G.slot(grid, c.key, c.count) end
 	end)
-	G.find(frame, "fork_me_if_status").caption = { "fork-me-net.bus-" .. (d.status or "ok") }
+	G.find(frame, "fork_me_if_status").caption = M.mix_status({ "fork-me-net.bus-" .. (d.status or "ok") }, d.fmix)
 	return true
 end
 
@@ -1286,7 +1300,7 @@ function M.refresh_bus(player, frame)
 	if d.tstat then                                       -- issue #159: the temperatures the network has and the target takes
 		status = { "fork-me-net.bus-temperature-detail", "[fluid=" .. d.tstat[1] .. "]", d.tstat[2], d.tstat[3] }
 	end
-	G.find(frame, "fork_me_bus_status").caption = status
+	G.find(frame, "fork_me_bus_status").caption = M.mix_status(status, d.fmix)
 	return true
 end
 

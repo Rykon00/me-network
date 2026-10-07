@@ -16,6 +16,8 @@
 ---     filters. The buses' item filters have no quality (the export bus moves normal quality).
 ---   * Whatever did not fit, a fluid row without a pipe or side, a machine without a recipe: a flying text for the
 ---     player. When nothing applies to the block (no ingredients, no fluid for a tank, ...) the block is unchanged.
+---   * Issue #161: a fluid with an exact temperature in the recipe (an ingredient's `temperature`, a product's) gets it in
+---     the row or filter ("fluid/<name>@<degrees>"); without one (or with a range) the row or filter takes every temperature.
 --- The set functions of the blocks are used, so the blueprint tags and the windows see the same settings; windows
 --- that show the block are refreshed at once.
 --------------------------------------------------------------------------------
@@ -49,7 +51,9 @@ local function recipe_of(machine)
 	return nil
 end
 
---- the items and fluids of an ingredient or product list, in recipe order, each once: { { type, name } }
+--- the items and fluids of an ingredient or product list, in recipe order, each once: { { type, name, temperature } }.
+--- Issue #161: a fluid keeps an exact temperature of the recipe (an ingredient's `temperature`, a product's); an
+--- ingredient with a range or none gets none (every temperature)
 local function entries(list)
 	local out, seen = {}, {}
 	for _, p in ipairs(list or {}) do
@@ -58,7 +62,7 @@ local function entries(list)
 		local key = t .. "/" .. tostring(p.name)
 		if known and not seen[key] then
 			seen[key] = true
-			out[#out + 1] = { type = t, name = p.name }
+			out[#out + 1] = { type = t, name = p.name, temperature = t == "fluid" and p.temperature or nil }
 		end
 	end
 	return out
@@ -92,7 +96,7 @@ local function paste_interface(dst, recipe, quality, msgs)
 				fluids_full[#fluids_full + 1] = e
 			else
 				fluids = fluids + 1
-				config[#config + 1] = { type = "fluid", name = e.name, amount = io.side_volume() }
+				config[#config + 1] = { type = "fluid", name = e.name, amount = io.side_volume(), temperature = e.temperature }
 				row_of_fluid[e.name] = #config
 			end
 		else
@@ -131,7 +135,8 @@ local function paste_interface(dst, recipe, quality, msgs)
 	if #fluids_full > 0 then msg(msgs, "fluids-full", tostring(MAX_FLUID_ROWS), icons(fluids_full)) end
 end
 
---- the keys of `list` (entries) for filters: items as "name" (`quality`: "name@quality"), fluids as "fluid/name";
+--- the keys of `list` (entries) for filters: items as "name" (`quality`: "name@quality"), fluids as "fluid/name" (with an
+--- exact temperature "fluid/name@degrees", issue #161);
 --- the rest beyond `max` goes into the second list
 local function keys_of(list, quality, max)
 	local keys, left = {}, {}
@@ -139,7 +144,7 @@ local function keys_of(list, quality, max)
 		if #keys >= max then
 			left[#left + 1] = e
 		elseif e.type == "fluid" then
-			keys[#keys + 1] = "fluid/" .. e.name
+			keys[#keys + 1] = N.fluid_filter_key(e.name, e.temperature)
 		else
 			keys[#keys + 1] = quality and N.key_of(e.name, quality) or e.name
 		end

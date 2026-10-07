@@ -147,12 +147,14 @@ local function contents_of(rec, seg)
 	return {}, temp, false
 end
 
---- issue #17: the fluids of the storage a bus owns now ({ name -> amount }; empty without one): "From contents"
+--- issue #17: the fluids of the storage a bus owns now ({ storage key -> amount }; empty without one): "From contents".
+--- Issue #161: by the key of the temperature it holds ("fluid/steam@400"; the default temperature: "fluid/steam")
 function M.contents(rec)
 	if not (rec.target and rec.target.valid and rec.box and owns(rec)) then return {} end
 	local out = {}
-	for name, amount in pairs((contents_of(rec))) do
-		if amount > EPS then out[name] = amount end
+	local contents, temp = contents_of(rec)
+	for name, amount in pairs(contents) do
+		if amount > EPS then out[N.fluid_key(name, temp)] = amount end
 	end
 	return out
 end
