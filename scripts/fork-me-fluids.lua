@@ -4,14 +4,12 @@
 ---     scripts/fork-me-network.lua (keys "fluid/<name>" and "fluid/<name>@<degrees>", issue #159). This module offers the
 ---     fluid calls the other modules use (totals, count, insert, remove, capacity) on top of it.
 ---   * The ME Fluid Interface (a small storage tank) is gone since issue #3 of me-network: the ME Interface has
----     fluid sides (scripts/fork-me-io.lua). The settings of old ones (mode, fluid, level) stay in
----     storage.fork_me_fluids.interfaces until scripts/fork-me-unify.lua has replaced them.
+---     fluid sides (scripts/fork-me-io.lua).
 ---   * Temperature (issue #159): the network keeps a fluid's temperature. Each temperature (whole degrees) is a key of
 ---     its own; the default temperature keeps the key of before ("fluid/<name>"). Nothing mixes in the network:
 ---     what came in at 250 °C goes out at 250 °C. The calls below take an optional temperature (nil: the default).
---- Nothing runs per tick.
---- State: storage.fork_me_fluids (the settings of old fluid interfaces; the old fluid drives, their recovered
---- fluid and the replacement spots of saves from before R2 are converted by scripts/fork-me-migrate.lua and dropped).
+--- Nothing runs per tick. No state of its own (storage.fork_me_fluids held the old fluid interfaces until 0.5.0; issue
+--- #146 drops it).
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -30,14 +28,9 @@ local md_cache                       -- prototype data, read once per load (read
 local function mod_data()
 	if not md_cache then
 		local md = prototypes.mod_data["fork-me-fluids"]
-		md_cache = md and md.data or { interface = {} }
+		md_cache = md and md.data or {}
 	end
 	return md_cache
-end
-
---- the old ME Fluid Interface (issue #3: replaced by scripts/fork-me-unify.lua)
-local function interface_name()
-	return mod_data().interface.name or "me-fluid-interface"
 end
 
 --- the working ME network of an entity (scripts/fork-me-network.lua), nil if none
@@ -115,19 +108,12 @@ end
 function M.on_mined_event(event)
 	local entity = event.entity
 	if not (entity and entity.valid) then return end
-	if entity.name == interface_name() then return end
 	for _, hook in pairs(M.mined_hooks) do hook(entity) end
 end
 
---- After scripts/fork-me-unify.lua: the settings of old fluid interfaces that are gone are dropped.
+--- issue #146: the old fluid interfaces' settings (0.5.0 dropped them when it replaced the interfaces)
 function M.on_configuration_changed()
-	local s = storage.fork_me_fluids
-	if not (s and s.interfaces) then return end
-	for unit, rec in pairs(s.interfaces) do
-		if not (rec.entity and rec.entity.valid and rec.entity.name == interface_name()) then s.interfaces[unit] = nil end
-	end
-	s.ilist, s.icursor = nil, nil
-	if not next(s.interfaces) then storage.fork_me_fluids = nil end
+	storage.fork_me_fluids = nil
 end
 
 --- Other mods and the devcheck runtime test use the same code paths

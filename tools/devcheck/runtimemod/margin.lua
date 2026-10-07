@@ -5,7 +5,11 @@
 ---   a target that took all it could hold, which also halved the bus's interval at every visit).
 --- * An export bus fills iron plates into an empty steel chest at its speed (a block that moved all it was allowed to, whose
 ---   target uses nothing: its headroom says 600 ticks). Its interval must stay within the margin cap of the busy list
----   (remote `margin_cap`), which in the test map lies below 600 ticks.
+---   (remote `margin_cap`), which in the test map lies below 600 ticks. The cap is the number of busy units of the whole
+---   map, so it moves while the other tests run: each interval is held against the cap of the tick its visit set it. The
+---   visit runs in the mod's on_tick and this check after it, so a unit that leaves the busy list later in that tick makes
+---   the cap read here one tick shorter than the one the visit used (issue #146: 16 against 15 once the map had a few
+---   buses less): one tick of slack (MARGIN 1/16 at the floor of 16: a unit is a tick).
 --- Loaded by control.lua: require("margin")(H) returns { setup, tick, running }.
 
 local NET, IO = "gregtorio-me-network", "gregtorio-me-io"
@@ -73,12 +77,16 @@ return function(H)
 				if f.starve then st.starved = st.starved + 1 end
 			end
 		end
-		--- the item bus into the chest: its intervals after the first visits
+		--- the item bus into the chest: its intervals after the first visits, each with the cap of its visit's tick
 		local i = remote.call(IO, "schedule", sc.ibus)
 		if i and i.last and i.last ~= st.ilast then
 			st.ilast = i.last
 			st.ivisits = st.ivisits + 1
-			if st.ivisits > 2 and i.interval then st.ivs[#st.ivs + 1] = i.interval end
+			if st.ivisits > 2 and i.interval then
+				st.ivs[#st.ivs + 1] = i.interval
+				st.caps = st.caps or {}
+				st.caps[#st.ivs] = i.last == tick and remote.call(IO, "margin_cap") or nil
+			end
 		end
 		if tick < CHECK then return end
 		local cap = remote.call(IO, "margin_cap")
@@ -86,11 +94,18 @@ return function(H)
 		expect(st.fvisits >= 3, "the water export bus was visited " .. st.fvisits .. " times while its tank had room")
 		expect(st.starved == 0, st.starved .. " of " .. st.fvisits .. " visits of the water export bus counted as starved, its tank never ran dry")
 		expect(cap and cap < 600, "the margin cap of the test map is " .. tostring(cap) .. " ticks: not below the 600 of the headroom, the case tests nothing")
-		if st.ivisits >= 2 and i and i.interval then st.ivs[#st.ivs + 1] = i.interval end   -- (the interval it is waiting now)
-		local worst = 0
-		for _, iv in ipairs(st.ivs) do if iv > worst then worst = iv end end
+		local caps = st.caps or {}
+		if st.ivisits >= 2 and i and i.interval and i.last ~= tick then   -- (the interval it is waiting now: set at an earlier tick)
+			st.ivs[#st.ivs + 1] = i.interval
+		end
+		local worst, over = 0, nil
+		for k, iv in ipairs(st.ivs) do
+			if iv > worst then worst = iv end
+			local c = caps[k] or cap
+			if c and iv > c + 1 and not over then over = iv .. " ticks against the cap " .. c .. " of its visit" end
+		end
 		expect(#st.ivs >= 1, "the item export bus had " .. st.ivisits .. " visits, too few to see its interval")
-		expect(cap and worst <= cap, "the item export bus waited " .. worst .. " ticks, longer than the margin cap " .. tostring(cap))
+		expect(cap and not over, "the item export bus waited " .. tostring(over or worst) .. ", longer than the margin cap")
 		expect(sc.chest.get_item_count("iron-plate") > 0, "the item export bus moved nothing into its chest")
 		st.done = true
 		me_report("MARGIN", "ME margin of a short busy list", problems, "water export bus: " .. st.fvisits .. " visits, " .. st.starved .. " starved; item export bus: "

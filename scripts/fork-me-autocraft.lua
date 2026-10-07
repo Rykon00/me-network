@@ -71,7 +71,8 @@ local FLUID_MARGIN = 0.01       -- extra fluid reserved per job and fluid (fixed
 local FLUID_EPS = 1e-6
 local FIXED = 16777216          -- fluid amounts are fixed point with 24 fractional bits
 local SLOTS = 9                 -- pattern slots of a provider (AE2)
-local PATTERN_VERSION = 1       -- storage.fork_ae2.pattern_version: providers hold encoded patterns (issue #80)
+local PATTERN_VERSION = 1       -- storage.fork_ae2.pattern_version: providers hold encoded patterns (issue #80; every
+                                -- save of 0.5.0 and later has it, issue #146)
 M.SLOTS = SLOTS
 
 local PROVIDER = "me-pattern-provider"
@@ -3178,136 +3179,13 @@ function M.group_info(entity)
 		bytes = g.bytes, used = job and job.bytes or 0, coprocessors = g.coprocessors, speed = group_speed(g),
 		monitors = monitors, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job }
 end
---------------------------------------------------------------------------------
---- migration (issue #80): providers of 0.4.1 and older read the recipe of the machines next to them (furnaces:
---- a recipe chosen in the provider). Each gets encoded patterns for what it provided, so running setups, level
---- maintainers and saved jobs keep working. Logged as FORK-ME-MIGRATE lines.
---------------------------------------------------------------------------------
-
---- the recipe an old provider stood for with a furnace: the choice when the furnace can make it, else the recipe
---- it runs, else the one it smelted last (0.4.1 rules; research is not asked: a processing pattern does not need
---- it, and the update resets the technology effects before this runs)
-local function old_furnace_recipe(m, choice)
-	local proto = choice and prototypes.recipe[choice]
-	if proto and m.prototype.crafting_categories[proto.category] and not proto.hidden
-		and not has_fluid(proto.ingredients, proto.products) then
-		return choice
-	end
-	local recipe = m.get_recipe()
-	if recipe then return recipe.name end
-	local previous = m.previous_recipe
-	local name = previous and previous.name
-	if name ~= nil and type(name) ~= "string" then name = name.name end
-	return name
-end
-
---- encoded patterns for what an old provider provided: a crafting pattern per assembling machine recipe, a
---- processing pattern per furnace recipe (each once). Returns the list.
-local function old_patterns(entity, choice)
-	local out, seen = {}, {}
-	for _, m in ipairs(neighbors_of(entity)) do
-		local def
-		if m.type == "assembling-machine" then
-			local r = m.get_recipe()
-			if r then def = P.normalize{ kind = "crafting", recipe = r.name } end
-		elseif m.type == "furnace" then
-			local name = old_furnace_recipe(m, choice)
-			if name and prototypes.recipe[name] then
-				local inputs, outputs = P.recipe_rows(name)
-				def = P.processing(inputs, outputs, name)
-			end
-		end
-		if def then
-			local id = P.id_of(def)
-			if not seen[id] then
-				seen[id] = true
-				out[#out + 1] = def
-			end
-		end
-	end
-	return out
-end
-
-local function migrate_providers(s, choices)
-	local n, total = 0, 0
-	for _, unit in ipairs(s.plist) do
-		local p = s.providers[unit]
-		if p and p.entity.valid then
-			local list = old_patterns(p.entity, choices[unit])
-			local names = {}
-			for i, def in ipairs(list) do
-				if i <= SLOTS then
-					p.slots[i] = def
-					names[#names + 1] = def.kind .. " " .. (def.recipe or P.id_of(def))
-				else
-					names[#names + 1] = "dropped " .. P.id_of(def)
-				end
-			end
-			if #list > 0 then
-				n = n + 1
-				total = total + math.min(#list, SLOTS)
-				log("FORK-ME-MIGRATE: patterns: provider " .. unit .. " at " .. p.entity.position.x .. "," .. p.entity.position.y
-					.. " on " .. p.entity.surface.name .. ": " .. table.concat(names, ", "))
-			end
-			scan_provider(p)
-		end
-	end
-	log("FORK-ME-MIGRATE: patterns: " .. total .. " encoded patterns in " .. n .. " of " .. #s.plist .. " pattern providers")
-end
-
---- job steps and leases of older saves name a recipe: they get the pattern that makes it now (the crafting
---- pattern of the recipe, or the processing pattern migrated from a furnace recipe)
-local function migrate_job(s, job)
-	local net = job_network(job)
-	local defs = net and (s.patterns[net.id] or NO_PATTERNS).defs or {}
-	for _, step in ipairs(job.steps) do
-		if not step.pid and step.recipe then
-			local pid, def = "c/" .. step.recipe, nil
-			def = defs[pid]
-			if not def then
-				for id, d in pairs(defs) do
-					if d.kind == "processing" and d.recipe == step.recipe then pid, def = id, d break end
-				end
-			end
-			def = def or P.normalize{ kind = "crafting", recipe = step.recipe }
-			if def then
-				step.pid, step.def, step.kind = P.id_of(def), def, def.kind
-				if step.kind == "processing" then
-					step.received = {}
-					for _, r in ipairs(def.outputs) do step.received[r.key] = step.done * r.amount end
-				end
-			end
-		end
-	end
-	for _, lease in pairs(job.leases) do
-		local step = job.steps[lease.step]
-		if step and step.def and not lease.kind then
-			lease.pid, lease.kind = step.pid, step.kind
-			lease.chosen = nil
-			if lease.kind == "processing" then
-				lease.given = {}
-				for _, ing in pairs(P.ingredients(step.def)) do
-					lease.given[key_of(ing)] = (ing.type == "fluid" and fixed_up(ing.amount) or ing.amount) * lease.runs
-				end
-				lease.finished0 = nil
-			end
-		end
-	end
-end
-
 --- Rebuild the registries from the world, drop stale references, and repair the job books.
 --- Jobs and their pools are kept; provider slots, blueprint patterns and priorities are kept by unit number.
 function M.on_configuration_changed()
 	local s = state()
-	local legacy = s.pattern_version ~= PATTERN_VERSION
-	local kept, choices = {}, {}
-	for unit, p in pairs(s.providers) do
-		if legacy then
-			if p.recipe and prototypes.recipe[p.recipe] then choices[unit] = p.recipe end
-		else
-			kept[unit] = p
-		end
-	end
+	s.pattern_version = PATTERN_VERSION
+	local kept = {}
+	for unit, p in pairs(s.providers) do kept[unit] = p end
 	s.providers, s.plist, s.pcursor, s.patterns, s.dirty, s.await = {}, {}, 1, {}, true, nil
 	s.cpus = nil                                          -- issue #145: the legacy CPUs are gone
 	s.cblocks, s.cgrid, s.groups = {}, {}, {}             -- issue #6: the groups are built again from the blocks
@@ -3334,10 +3212,6 @@ function M.on_configuration_changed()
 	for _, k in pairs(kept) do
 		if k.slots and next(k.slots) then vanish_provider(s, k) end
 	end
-	if legacy then
-		migrate_providers(s, choices)
-		s.pattern_version = PATTERN_VERSION
-	end
 	refresh_providers(s)
 	ensure_patterns(s)
 	s.busy = {}
@@ -3346,7 +3220,6 @@ function M.on_configuration_changed()
 		if not job then
 			remove_value(s.active, id)
 		else
-			if legacy then migrate_job(s, job) end
 			--- every running job is queued and takes the next CPU that fits (multiblock groups are built again, they lose
 			--- their jobs); issue #145: a job of an older save that ran on a legacy CPU (the engine removed the CPU with its
 			--- prototype) is queued so too, with its pool and its machines' work: nothing is lost

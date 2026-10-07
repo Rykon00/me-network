@@ -508,26 +508,25 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
 * Two players at one workbench or storage bus see the same slots; what one of them puts in or takes out the other sees
   at once.
 
-## Old saves (from before the rework)
-## Old saves (from before the rework)
+## Old saves
 
-Old ME networks are converted when the save is loaded (`docs/ME-REWORK.md`, "Migration"): the old controller
-becomes an ME Controller, every old drive an ME Drive with four cells of its tier holding its items, every old
-interface an ME Interface (its items go into the network), and ME cables are laid from the controller to every
-block of the old network. Further old controllers of the same network become items in the network. Items the
-new cells cannot hold go into iron chests next to the controller (the chat names them). A block that no cable
-can reach (walled in, on water) is named in the chat: connect it yourself. Items in vanilla chests of the old
-logistic network stay there. The game removes ghosts of the old blocks when the save is loaded.
+**Since 0.5.1 (issue #146) a save is converted only from ME Network 0.5.0 on.** A save made with an older version (ME
+Network 0.1.0 to 0.3.x, or Gregtorio Continued 0.4.x and older, which still contained this network) is refused when it
+loads: the game stops with a message that names the version, and the save file stays as it was. Load it once with
+**ME Network 0.5.0** (with a Gregtorio Continued version that works with it, for a Gregtorio save), save it, and then
+update: 0.5.0 still converts everything older:
 
-**The old fluid blocks** (ME Network 0.1.0 and Gregtorio Continued before 0.5.0: ME Fluid Interface, ME Fluid
-Import Bus, ME Fluid Export Bus, ME Fluid Storage Bus) become the unified blocks when the save is loaded
-(`docs/ME-REWORK.md`, "Items and fluids in one block"), in place and with their settings: a fluid interface in
-import mode an ME Interface whose sides import, one in export mode an ME Interface with a fluid row of its fluid and
-level kept on all four sides; the fluid buses import and export buses with their fluid filters; a fluid storage bus a
-storage bus with its mode, priority and filters. No fluid is lost (the log line `FORK-ME-MIGRATE: unified` counts
-it). Their ghosts become ghosts of the unified blocks; their items, in inventories, chests, the network's cells, cells
-in chests (when they are put into a drive), blueprints in inventories, patterns and level maintainers, become the
-unified items. An old blueprint from the blueprint library still builds the unified blocks with their settings.
+* the ME network of before the rework (the old controller, the logistic-chest drives and the requester interface) into
+  an ME Controller, ME Drives with four cells of their tier holding their items, ME Interfaces and ME cables;
+* the old fluid blocks (ME Fluid Interface, ME Fluid Import / Export / Storage Bus) into the unified blocks with their
+  settings and their fluid, their ghosts, items, blueprints and patterns too;
+* the old fluid drives into ME Drives with four fluid cells holding their fluid;
+* the pattern providers of before the encoded patterns into providers with encoded patterns (issue #80).
+
+What stays: the **old drive items** (ME Drive 1k ... 256k, ME Fluid Drive 1k ... 256k) that 0.5.0 left in inventories
+and chests: placing one builds an ME Drive with its four cells. A stray item of an old fluid block becomes its unified
+item when the save loads (a JSON migration). An old blueprint from the blueprint library that still holds an old block
+loses that block (the game drops entities it does not know); its other blocks are built as before.
 
 ## Autocrafting: how to build it
 
@@ -833,7 +832,7 @@ largest amounts first).
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
 | ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network) | yes (priority) | yes (patterns pending a blank pattern); clone: priority |
-| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority | yes | yes (old blueprints with slot filters, and of the old fluid interface, are converted) |
+| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority | yes | yes (old blueprints with slot filters are converted) |
 | ME Import Bus, ME Export Bus | filters (items and fluids); which Acceleration Cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
@@ -977,13 +976,9 @@ fluids (25 to 100 °C) are only made at 25 °C. No recipe of either needs a temp
 
 ### Old fluid drives
 
-**Old fluid drives** (before step R2: four fluid cells crafted into an ME Fluid Drive) are converted when the save
-is loaded (`docs/ME-REWORK.md`, "Migration of fluids (R2)"): each becomes an ME Drive with four fluid cells of its
-tier holding its fluid; recovered fluid of destroyed drives goes into the cells of its network (else of the
-nearest drive with room); a loaded fluid drive item in an inventory or a chest keeps its item, and its fluid comes
-as fluid cells next to it. Placing an old fluid drive item builds an ME Drive with its four fluid cells (and its
-fluid, if it carried any). The old recovery (recovered fluid, "Take over", pull-in) is gone: a fluid cell keeps its
-fluid wherever it is, and a destroyed drive drops its cells.
+The old fluid drives (before step R2: four fluid cells crafted into an ME Fluid Drive) were converted up to 0.5.0 (see
+"Old saves"). Placing an old fluid drive item builds an ME Drive with its four fluid cells (and its fluid, if it
+carried any).
 
 ## What the network costs: /me-stats
 
@@ -1028,8 +1023,7 @@ member is removed, and a sweep in the terminal step finds members removed withou
 (`insert`, `extract`, `count`, `can_insert`, `contents`, `insert_stack`, `extract_to`, `stats`) works on a
 network and does nothing when the network does not work. `scripts/fork-me-io.lua` visits the interfaces and buses
 (since issue #5 of ME Network each one at a tick of its own, `scripts/fork-me-schedule.lua`, from the one `on_tick`
-handler of `control.lua`), `scripts/fork-me-migrate.lua` converts old
-networks, `scripts/fork-me-terminal.lua` is the terminal and routes the GUI events of every ME window.
+handler of `control.lua`), `scripts/fork-me-terminal.lua` is the terminal and routes the GUI events of every ME window.
 
 ### Upgrade cards and priorities (me-network issue #17)
 
@@ -1346,33 +1340,18 @@ show the block are refreshed at once. The messages are one flying text at the cu
 
 ### Existing saves and mod updates
 
-`on_configuration_changed` first rebuilds the ME graph from the world (`scripts/fork-me-network.lua`, the only
-map scan; drives keep their cells by unit number), then converts the ME networks of saves from before issue
-#68 (`scripts/fork-me-migrate.lua`, rule in `docs/ME-REWORK.md`; `migrate --from-ref v0.3.2` checks it with an
-old network holding items, fluids, a pattern and a running job), then the other modules rebuild their
-records. It also rebuilds the provider and
-CPU registries from the world (`find_entities_filtered`), repairs leases and job books and
-keeps jobs and their pools; leases from before fluid support get empty fluid maps, providers are
-rescanned.
-CPU records of older saves hold one `job`; they are rebuilt (`jobs = {}`) and the jobs reassigned, and a
-record read before the rebuild is converted on the spot (`migrate --from-ref v0.3.1` starts a job with
-the old version and checks that it finishes after the update). Level maintainers and circuit interfaces
-are new, their state is created lazily and rebuilt from the world (settings kept by unit number).
-Issue #80 (0.5.0): providers of 0.4.1 and older (`storage.fork_ae2.pattern_version` not set) get encoded patterns for
-what they provided, once: a crafting pattern for the recipe of each assembling machine next to them, a processing
-pattern for each furnace next to them (the recipe chosen in the provider when the furnace can make it, else the one it
-runs, else the one it smelted last), each pattern once, in the slots from 1 (`FORK-ME-MIGRATE: patterns` in the log).
-These patterns are created by the migration (the only place where patterns come from nothing). Saved job steps and
-leases that name a recipe get the pattern that makes it now (the crafting pattern, or the processing pattern migrated
-from that furnace recipe; processing steps count their finished runs as received outputs). The old "read the
-machine's recipe" path and the furnace recipe choice are gone.
-Before the item migration, the fluid migration of step R2 (`run_fluids`) converts the old fluid drives, their
-recovered fluid, the contents held for an upgrade and loaded fluid drive items into fluid cells and drops that
-part of `storage.fork_me_fluids` (rule in `docs/ME-REWORK.md`, "Migration of fluids (R2)"); the fluid module then
-rebuilds its interface records from the world (settings kept by unit number). Since R3 every open ME window and
-the panels and windows of older versions are closed on a mod update; the ME Interfaces' slot filters become config
-rows when each interface is first used (lazily, `config_of` in `scripts/fork-me-io.lua`), drive priorities and
-partitions start empty.
+Issue #146 (0.5.1): `on_configuration_changed` first refuses a save of a version before 0.5.0 (`mod_changes` names the
+old version; `on_init` refuses a Gregtorio Continued 0.4.x save whose ME state is still waiting for the hand-over):
+`error()` stops the load before anything is changed, with a message that names 0.5.0. The conversions of older saves
+(`scripts/fork-me-migrate.lua`: the logistic ME of before issue #68 and the old fluid drives of R2;
+`scripts/fork-me-unify.lua`: the old fluid blocks of issue #3; the pattern migration of issue #80) are gone with their
+prototypes; 0.5.0 still has them. Then it rebuilds the ME graph from the world (`scripts/fork-me-network.lua`, the
+only map scan; drives keep their cells by unit number) and the other modules rebuild their records: the provider and
+CPU registries from the world (`find_entities_filtered`), leases and job books repaired, jobs and their pools kept
+(running jobs are queued and take the next CPU that fits); leases from before fluid support get empty fluid maps,
+providers are rescanned. Level maintainers and circuit interfaces rebuild their state from the world (settings kept
+by unit number). Every open ME window is closed on a mod update; the ME Interfaces' slot filters of an old blueprint
+become config rows (`config_of` in `scripts/fork-me-io.lua`).
 
 ## Limits and open points
 
@@ -1497,12 +1476,6 @@ fluids; search; taking a fluid by hand is refused), the fluid import bus emptyin
 fluid export bus filling one (nothing without a filter), and old fluid drive items placed as ME Drives (four cells
 with the fluid of the tags; 40 000 units on a 1k item: more cells in the free slots, nothing lost).
 
-`devcheck.py migrate` (the old fluid recovery is tested as the migration): the old save has two loaded 1k fluid
-drives in a network, a loaded drive outside any network, recovered chlorine with no network at its place and a
-chest with two loaded drive items. After the update the drives must be ME Drives with four 1k fluid cells holding
-their fluid, the recovered chlorine must be in the nearest drive with room, the items must have lost their tags
-and their water must be in fluid cells in the chest, and the migration report must count the same units before
-and after (`--from-ref v0.3.2` and from a commit with R1, whose old save uses the cable network).
 Issue #38 (four more networks right of the machine grid): a level maintainer that keeps 10 gears, in a
 network with two free job slots, must start exactly one job for 10, never have two active gear jobs, start
 nothing while the stock holds (120 ticks), start one job for exactly the difference after 3 gears are taken
@@ -1521,25 +1494,10 @@ of two units (no CPU, dark pictures), the bytes of a gear plan (5 per gear + 24)
 (refused with the bytes, nothing taken; a level maintainer waits), two jobs on the two CPUs at once and a third one
 refused, a block removed during a job (the job pauses, goes on on the 2x2 rest of its CPU, is cancelled: every plate
 and stick back), the CPU rebuilt, a clone and a blueprint of it (each forms a CPU of its own).
-`devcheck.py migrate --from-ref v0.2.0` loads a save with a running job on each of the three legacy CPUs (issue
-#145: gone now): each job must be queued right after the load and end done on a multiblock CPU built where the legacy
-ones stood; with every version that has them (`--from-ref v0.5.0` too) a chest holding the three CPU items must hold
-three 1k crafting storages after the load.
-`devcheck.py migrate --from-ref v0.4.1` (issue #80) builds providers next to a Molecular Assembler with the gear recipe
-and next to a fresh iron furnace with the smelting recipe chosen in the provider, a gear job and a level maintainer
-keeping 8 gears with the old version; after the update the providers must hold a crafting pattern of the gear recipe
-and a processing pattern of the smelting recipe (both usable, both items craftable, `FORK-ME-MIGRATE: patterns`),
-the old job must finish and the maintainer must then finish a job of its own.
-
-`devcheck.py migrate --from-ref v0.3.2` (issue #68) builds an old logistic ME network with the old version: a
-1k drive with items (also of another quality, and a blueprint the new network cannot store), a requester
-interface with items in its inventory and its trash, a terminal, a second controller in the same logistic
-network, the fluid drives, CPU, providers and running job above, a chest with 16 storage cells on one stack, old
-drive items and the ghost of an old drive. After the update no old entity may be left, every block must be
-connected to the new controller, the drives must hold four cells of their tier, the migration report must
-have counted exactly the items of the old chests (and the second controller) and found no difference, those
-items (job items aside) must be in the network and the blueprint in an overflow chest, the 16 cells and the old
-drive items must be kept, and the fluid, pattern and job checks above must pass on the new network.
+`devcheck.py migrate --from-ref v0.5.0`: a chest holding the three legacy CPU items (issue #145) must hold three 1k
+crafting storages after the load. The migrations of older saves (the logistic ME of issue #68, the old fluid drives of
+R2, the providers of issue #80, the running jobs on the legacy CPUs of a v0.2.0 save) were tested up to 0.5.0; since
+issue #146 such a save is refused, which `migrate --from-ref v0.3.1` (or any older ref) checks.
 
 The R3 test (own network right of the fluid cell test: a controller, three drives, a terminal, and every other ME
 block standing apart) checks partitions and priorities: a drive of priority 5 is filled first, also before a cell
@@ -1586,9 +1544,8 @@ sides (no side tank in the blueprint), and the fluid of a mined interface back i
 An export bus on a chemical reactor with a fluid recipe puts boards into its input and phenol into an input box; an
 import bus on another one takes the boards of its output and the fluid of an output box and leaves the input box alone,
 and takes no fluid with only item filters. A storage bus faces a chest (item side), then a tank (fluid side, taken
-from), gets mixed filters and faces a cable. An old fluid import bus built by a script becomes an import bus; ghosts
-of the old export bus, fluid interface and fluid storage bus with old tags are revived as the unified blocks with their
-settings; the old items are hidden, place the unified blocks and have no recipe or unlock. It reports
+from), gets mixed filters and faces a cable. The old fluid blocks and the old entities of before the rework are gone
+(issue #146), the old drive items still place an ME Drive. It reports
 `ME unified I/O test: ok`.
 
 The recipe paste test (issue #12 of ME Network, own network) checks that every crafting machine prototype lists the
@@ -1671,10 +1628,7 @@ a slot (the window itself needs a player): a plain item, an empty slot and a fre
 in the workbench and an encoded pattern their description (with a hint: the description, a line break, the hint), and the
 signature piece of a cell that stays in the workbench's slot changes when its partition does.
 
-`python tools/devcheck/devcheck.py migrate --from-ref v0.1.0` makes a save with ME Network 0.1.0 (three fluid
-interfaces, the fluid buses and the fluid storage bus with settings and fluid, an item interface next to a pipe with
-water, a level maintainer and patterns naming old items, ghosts with old tags, old items in a chest, a blueprint, the
-cells and a cell in the chest) and loads it with the working copy: the unified blocks with the same settings, no old
-entity, ghost or item, the item interface's side next to the pipe off, the same fluid in the area and the cells after
-the update and after 150 ticks of I/O steps.
+`python tools/devcheck/devcheck.py migrate` (default `--from-ref v0.5.0`) makes a save with every kind of block with
+that version and loads it with the working copy; an older ref (`v0.1.0` ... `v0.3.1`) must be refused with the message
+of issue #146.
 See `tools/devcheck/README.md`.

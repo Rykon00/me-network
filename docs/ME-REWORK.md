@@ -330,6 +330,8 @@ performance at size"; the 60 tick step stays). No new `on_tick`, no new interval
 
 ## Migration (from 0.3.2 and older)
 
+**Removed in 0.5.1 (issue #146, see "Save cut-off" at the end): kept here as the record of what 0.5.0 still does.**
+
 Runs in `on_configuration_changed` when the world still has entities of the old prototypes (it is
 idempotent: what it converts disappears). The old prototypes stay in the game, hidden, so saves load
 them: the roboport `me-controller`, the logistic storage chests `me-drive-1k` ... `me-drive-256k` and the
@@ -472,6 +474,8 @@ an export picks by a fixed rule (the default first, then from the coldest), or b
   the bus's speed times the ticks since its last visit).
 
 ### Migration of fluids (R2)
+
+**Removed in 0.5.1 (issue #146, see "Save cut-off" at the end): kept here as the record of what 0.5.0 still does.**
 
 `run_fluids` in `scripts/fork-me-migrate.lua`, from `on_configuration_changed`, after the graph rebuild and before
 the item migration (so the new drives are members when old logistic networks are grouped). It reads the old
@@ -1150,6 +1154,8 @@ give a pending processing pattern of that recipe. Settings paste and clones copy
 
 ### Migration (0.4.1 -> 0.5.0)
 
+**Removed in 0.5.1 (issue #146, see "Save cut-off" at the end): kept here as the record of what 0.5.0 still does.**
+
 `storage.fork_ae2.pattern_version` marks saves with encoded patterns. In a save without it,
 `on_configuration_changed` (after the ME graph is rebuilt) gives every provider encoded patterns for what it provided
 under the 0.4.1 rules: a crafting pattern for the recipe of each assembling machine next to it, and a processing
@@ -1269,6 +1275,8 @@ becomes the unified block when a save is loaded.
   keys; the old tag `fork_me_fluid_storage_bus` (fluid names) is read on old ghosts.
 
 ### Saves: the old blocks become the unified ones
+
+**Removed in 0.5.1 (issue #146, see "Save cut-off" at the end): kept here as the record of what 0.5.0 still does.**
 
 `scripts/fork-me-unify.lua`, from `on_configuration_changed` after the graph rebuild (and so after the hand-over of a
 Gregtorio save and the R1/R2 migrations, which may still create old blocks from older saves), before the modules
@@ -2552,3 +2560,38 @@ and 4800 (the chest's limit) with 4, an import bus out of a full chest 64, 512, 
 buffer, a destroyed one dropped its card; a paste, a clone and a blueprint tag make a bus take its 2, 2 and 3 cards from the
 network at its next visit (a second paste leaves the bus with the source's number); everything stays over
 `on_configuration_changed`. The test scene lies on land: a spill at a block in a lake lands where there is some.
+
+## Save cut-off (issue #146, 0.5.1)
+
+**Decision** (confirmed by the maintainer in the issue): saves are converted only from 0.5.0 on. Everything older (ME
+Network 0.1.0 to 0.3.x, Gregtorio Continued 0.4.x and older with the network inside) is converted by 0.5.0, which a
+player loads once before updating. The conversion code of the older versions and the prototypes it needed go.
+
+**Gone:** the old controller (roboport `me-controller`), the logistic-chest drives (`me-drive-1k` ... `me-drive-256k`
+entities) and the requester interface (`me-interface` as a logistic container) of before issue #68; the old fluid drive
+entities (`me-fluid-drive-*`) of before R2; the old fluid blocks of issue #3 (ME Fluid Interface, ME Fluid Import /
+Export / Storage Bus: entities and items); `scripts/fork-me-migrate.lua` (with the remote `gregtorio-me-migrate`),
+`scripts/fork-me-unify.lua`, the ghost swap and the alias rewrite of the drives in `scripts/fork-me-network.lua`, the
+pattern migration of issue #80 (`migrate_providers`, `migrate_job`) and the old fluid interface records of
+`storage.fork_me_fluids`; `on_configuration_changed` drops the reports `storage.fork_me_migrate`,
+`fork_me_migrate_fluids` and `fork_me_unify`.
+
+**Kept:** the old drive items (`me-drive-<tier>`, `me-fluid-drive-<tier>`, hidden): 0.5.0 never converted them in
+inventories, so a 0.5.0 save may still hold them; placing one gives an ME Drive with its cells (and its fluid). The item
+names of the old fluid blocks stay in the mod-data `fork-me-fluids` (`unified.items`) for the alias of stored keys (a
+cell's tags or a pattern that still names one counts it as the unified item) and in `ME_NETWORK.removed` (a recipe of
+another mod that makes one would stop the game from loading now: `data-final-fixes.lua` drops it). A stray item of an
+old fluid block becomes the unified item by `migrations/me-network-old-fluid-blocks.json`. The storage keys (`fork_me_*`,
+`fork_ae2`), the hand-over (`scripts/fork-me-handover.lua`, its table list and fingerprint equal to Gregtorio's) and
+the old blueprint tag of a provider (`fork_ae2_recipe`, from the blueprint library) stay.
+
+**The refusal:** the engine removes the entities of missing prototypes before any script runs, so a check after the
+fact could only report a loss. `on_configuration_changed` reads `mod_changes["me-network"].old_version`; below 0.5.0 it
+calls `error()` with a message that names the version and says to load the save with 0.5.0 first. The load stops, the
+save file is untouched. A Gregtorio Continued 0.4.x save has no me-network version: its state waits in Gregtorio for
+the hand-over (`gregtorio-me-handover.pending`), so `on_init` (and `on_configuration_changed`) refuse it the same way.
+
+**Test:** `devcheck.py migrate --from-ref v0.5.0` (the default) converts as before; a ref before the cut-off makes a
+save with nothing in it and must be refused with the message (the helper `migratemod` lost the 0.1.0 scenario, the jobs
+on legacy CPUs of 0.2.0 and the 3x3 assemblers of issue #131). Gregtorio's own `devcheck.py migrate` from old Gregtorio
+versions needs the intermediate load with me-network 0.5.0 (a Gregtorio follow-up).
