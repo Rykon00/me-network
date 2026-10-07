@@ -89,15 +89,6 @@ ME.add_item{
 	recipe = { energy_required = 5, ingredients = I{ "assembling-machine-2", 1, "processing-unit", 2, "fluix-cable", 4 } },
 }
 
-ME.add_item{
-	name = "me-crafting-cpu",
-	icon = ICON_FORK .. "me-crafting-cpu.png",
-	subgroup = "fork-me-network",
-	order = "g",
-	stack_size = 10,
-	place_result = "me-crafting-cpu",
-	recipe = { energy_required = 10, ingredients = I{ "me-controller", 1, "me-64k-storage-component", 2, "processing-unit", 4, "fluix-cable", 8 } },
-}
 
 
 
@@ -176,101 +167,15 @@ ME.make_molecular_assembler{ base = "assembling-machine-2", crafting_categories 
 
 
 --------------------------------------------------------------------------------
---- CRAFTING CPU (2x2 lamp like the ME Terminal: needs power, shows "no power" otherwise)
+--- issue #145: the three single-entity Crafting CPUs of issue #38 (ME Crafting CPU, ME Co-Processing Crafting CPU, ME
+--- Quantum Crafting CPU), legacy blocks since issue #6, are gone. A placed one of an older save is removed by the engine
+--- with its prototype (its job is queued with what it holds and takes a multiblock CPU, scripts/fork-me-autocraft.lua);
+--- their items in inventories and chests become a 1k Crafting Storage (migrations/me-network-legacy-cpus.json). They stay
+--- in ME_NETWORK.removed, so a recipe of another mod that still makes one is dropped (data-final-fixes.lua).
 --------------------------------------------------------------------------------
 
-local cpu = table.deepcopy(data.raw.lamp["small-lamp"])
-cpu.name = "me-crafting-cpu"
-cpu.icon = ICON_FORK .. "me-crafting-cpu.png"
-cpu.icon_size = 32
-cpu.minable = { mining_time = 0.3, result = "me-crafting-cpu" }
-cpu.max_health = 300
-cpu.corpse = "small-remnants"
-cpu.dying_explosion = nil
-cpu.collision_box = { { -0.8, -0.8 }, { 0.8, 0.8 } }
-cpu.selection_box = { { -1, -1 }, { 1, 1 } }
-cpu.energy_usage_per_tick = "60kW"
-cpu.always_on = true
-cpu.light = nil
-cpu.light_when_colored = nil
-cpu.picture_off = { layers = { {
-	filename = ENTITY_PATH .. "me-crafting-cpu-off.png",
-	priority = "high", width = 64, height = 64,
-} } }
-cpu.picture_on = {
-	filename = ENTITY_PATH .. "me-crafting-cpu-on.png",
-	priority = "high", width = 64, height = 64,
-}
-cpu.fast_replaceable_group = "me-crafting-cpu"
-cpu.next_upgrade = "me-co-processing-cpu"
-cpu.localised_description = { "entity-description.me-crafting-cpu" }
-data:extend({ cpu })
-
-
-
---------------------------------------------------------------------------------
---- CPU TIERS (issue #38): the same 2x2 block, more jobs at once and more machine hand-overs per
---- step. Upgrade planner and fast replace swap the tiers (a job on a replaced CPU pauses and goes on
---- on the next free one).
---------------------------------------------------------------------------------
-
---- name -> parallel jobs, speed (machine hand-overs per step, times the base CPU's), power, tier of the sprite
-local CPU_TIERS = {
-	{ name = "me-crafting-cpu",         jobs = 1, speed = 1, power = "60kW" },
-	{ name = "me-co-processing-cpu",    jobs = 2, speed = 2, power = "240kW", next = "me-quantum-crafting-cpu" },
-	{ name = "me-quantum-crafting-cpu", jobs = 4, speed = 4, power = "960kW" },
-}
-
-for i, t in ipairs(CPU_TIERS) do
-	if i > 1 then
-		local e = table.deepcopy(cpu)
-		e.name = t.name
-		e.icon = ICON_FORK .. t.name .. ".png"
-		e.minable = { mining_time = 0.3, result = t.name }
-		e.energy_usage_per_tick = t.power
-		e.picture_off = { layers = { {
-			filename = ENTITY_PATH .. t.name .. "-off.png",
-			priority = "high", width = 64, height = 64,
-		} } }
-		e.picture_on = {
-			filename = ENTITY_PATH .. t.name .. "-on.png",
-			priority = "high", width = 64, height = 64,
-		}
-		e.next_upgrade = t.next
-		e.localised_description = { "entity-description.fork-me-crafting-cpu-tier", tostring(t.jobs), tostring(t.speed) }
-		data:extend({ e })
-	end
-end
-
-ME.add_item{
-	name = "me-co-processing-cpu",
-	icon = ICON_FORK .. "me-co-processing-cpu.png",
-	subgroup = "fork-me-network",
-	order = "g2",
-	stack_size = 10,
-	place_result = "me-co-processing-cpu",
-	recipe = { energy_required = 10, ingredients = I{ "me-crafting-cpu", 1, "me-256k-storage-component", 2, "processing-unit", 10, "fluix-cable", 16 } },
-}
-
-ME.add_item{
-	name = "me-quantum-crafting-cpu",
-	icon = ICON_FORK .. "me-quantum-crafting-cpu.png",
-	subgroup = "fork-me-network",
-	order = "g3",
-	stack_size = 10,
-	place_result = "me-quantum-crafting-cpu",
-	recipe = { energy_required = 10, ingredients = I{ "me-co-processing-cpu", 1, "me-256k-storage-component", 4, "processing-unit", 20, "fluix-cable", 32 } },
-}
-
-local cpu_data = {}
-for _, t in ipairs(CPU_TIERS) do cpu_data[t.name] = { jobs = t.jobs, speed = t.speed } end
-
---- issue #6: the three single-entity CPUs are legacy blocks. They keep working (job slots, speed, no byte limit), but
---- no recipe makes them any more (data-final-fixes.lua also deletes the recipes another mod gives them); a player who
---- holds one can still place it. Their technologies unlock the crafting blocks below.
-for _, t in ipairs(CPU_TIERS) do
-	ME.removed[t.name] = "me-1k-crafting-storage"
-	data.raw.item[t.name].localised_description = { "item-description.fork-me-legacy-cpu" }
+for _, name in ipairs({ "me-crafting-cpu", "me-co-processing-cpu", "me-quantum-crafting-cpu" }) do
+	ME.removed[name] = "me-1k-crafting-storage"
 end
 
 
@@ -439,7 +344,7 @@ data:extend({ {
 	name = "fork-me-autocraft",
 	--- issue #6: the crafting blocks; a fluid ingredient costs 1 byte per this many units (items 1 byte each); at most
 	--- this many co-processors of a CPU count
-	data = { cpus = cpu_data, blocks = block_data, fluid_units_per_byte = 10, max_coprocessors = 16 },
+	data = { blocks = block_data, fluid_units_per_byte = 10, max_coprocessors = 16 },
 } })
 
 

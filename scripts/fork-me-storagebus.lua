@@ -600,7 +600,7 @@ M.shift_in = cards.shift_in
 M.fill_cards = cards.fill_cards
 M.want_cards = cards.want_cards
 
---- filters checked against the prototypes: a list of keys ("name", "name@quality", "fluid/<name>"; a plain name
+--- filters checked against the prototypes: a list of keys ("name", "name@quality", "fluid/<name>", "fluid/<name>@<degrees>"; a plain name
 --- that is no item but a fluid is that fluid), at most FILTER_LIMIT (the first filter_count() of them apply)
 local function clean_filters(filters)
 	local out, seen = {}, {}
@@ -609,7 +609,7 @@ local function clean_filters(filters)
 		if type(key) == "string" and #out < FILTER_LIMIT and not key:find("#", 1, true) then
 			local k
 			if N.is_fluid_key(key) then
-				if prototypes.fluid[key:sub(7)] then k = key end
+				k = N.clean_fluid_filter(key)            -- (issue #159: "fluid/<name>@<degrees>" names one temperature)
 			else
 				local name, q = N.parse_key(key)
 				if prototypes.item[name] and prototypes.quality[q] then k = N.key_of(name, q)
@@ -680,7 +680,7 @@ function M.filters_from_contents(entity)
 	local keys = {}
 	if rec.side == "fluid" then
 		local f = F.contents(rec)
-		for name in pairs(f) do keys[#keys + 1] = "fluid/" .. name end
+		for key in pairs(f) do keys[#keys + 1] = key end      -- (issue #161: at the temperature it holds)
 	else
 		local inv = t and inventory_of(rec)
 		for _, it in pairs(inv and inv.get_contents() or {}) do

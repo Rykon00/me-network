@@ -1,5 +1,5 @@
 --- The runtime tests (control.lua) were written in Gregtorio Continued and name a few of its machines, items, fluids
---- and recipes: a gear recipe from plates and sticks, a macerator, chemical reactors and an extractor with fluid
+--- and recipes: a gear recipe from plates and sticks, a macerator, chemical reactors and a fluid extractor with fluid
 --- recipes, an iron furnace with a dust recipe. Without Gregtorio this test mod adds stand-ins with the same names and
 --- the same numbers (inputs, outputs, fluid boxes, sizes), so the same tests run on vanilla. With Gregtorio they run
 --- on Gregtorio's own prototypes. The stand-ins are test fixtures, not part of me-network.
@@ -39,6 +39,49 @@ do
 	data:extend({ { type = "recipe-category", name = "zz-devcheck-paste" }, m })
 end
 
+--- issue #159 (temperature.lua): fluid temperatures in recipes, which neither the base game nor Gregtorio has: a machine
+--- (an assembling machine 2 of its own category, so it works with Gregtorio too) with a recipe that takes steam between
+--- 200 and 600 °C, one that takes water between 50 and 100 °C, and one that makes steam at 300 °C
+do
+	local m = table.deepcopy(data.raw["assembling-machine"]["assembling-machine-2"])
+	m.name = "zz-devcheck-hot-machine"
+	m.crafting_categories = { "zz-devcheck-hot" }
+	m.minable = nil
+	m.next_upgrade = nil
+	m.fast_replaceable_group = nil
+	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local function hot(name, ingredients, results)
+		return { type = "recipe", name = name, category = "zz-devcheck-hot", energy_required = 1, enabled = true, icon = icon,
+			subgroup = "intermediate-product", ingredients = ingredients, results = results }
+	end
+	data:extend({ { type = "recipe-category", name = "zz-devcheck-hot" }, m,
+		{ type = "item", name = "zz-devcheck-hot-token", icon = icon, stack_size = 50, subgroup = "intermediate-product" },
+		hot("zz-devcheck-hot-steam", { { type = "fluid", name = "steam", amount = 10, minimum_temperature = 200, maximum_temperature = 600 } },
+			{ { type = "item", name = "zz-devcheck-hot-token", amount = 1 } }),
+		hot("zz-devcheck-warm-water", { { type = "fluid", name = "water", amount = 10, minimum_temperature = 50, maximum_temperature = 100 } },
+			{ { type = "item", name = "zz-devcheck-hot-token", amount = 1 } }),
+		hot("zz-devcheck-heat-steam", { { type = "fluid", name = "water", amount = 10 } },
+			{ { type = "fluid", name = "steam", amount = 10, temperature = 300 } }) })
+end
+
+--- issue #158 (providers.lua): a machine with a fixed recipe and a second recipe of its category
+do
+	local m = table.deepcopy(data.raw["assembling-machine"]["assembling-machine-2"])
+	m.name = "zz-devcheck-fixed-machine"
+	m.crafting_categories = { "zz-devcheck-fixed" }
+	m.fixed_recipe = "zz-devcheck-fixed"
+	m.minable = nil
+	m.next_upgrade = nil
+	m.fast_replaceable_group = nil
+	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local function r(name)
+		return { type = "recipe", name = name, category = "zz-devcheck-fixed", energy_required = 1, enabled = true, icon = icon,
+			subgroup = "intermediate-product", ingredients = { { type = "item", name = "iron-plate", amount = 1 } },
+			results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } } }
+	end
+	data:extend({ { type = "recipe-category", name = "zz-devcheck-fixed" }, m, r("zz-devcheck-fixed"), r("zz-devcheck-unfixed") })
+end
+
 if mods["gregtorio-continued"] then return end
 
 local ICON = "__base__/graphics/icons/signal/signal-info.png"
@@ -73,14 +116,18 @@ local function machine(name, base_type, base, categories, speed)
 end
 
 for _, n in pairs({ "raw-iron", "crushed-iron", "iron-dust", "iron-ingot", "tin-ingot", "raw-silicon",
-	"resin-circuit-board", "phenolic-circuit-board" }) do item(n) end
+	"resin-circuit-board", "phenolic-circuit-board", "nickel-dust" }) do item(n) end
 for _, n in pairs({ "chlorine", "hydrogen", "phenol", "silicon-tetrachloride", "molten-tin", "hydrochloric-acid" }) do fluid(n) end
 for _, c in pairs({ "zz-macerator", "zz-chemical-reactor", "zz-extractor" }) do category(c) end
 
 --- Gregtorio's gear recipe (crafting table): 1 plate + 2 sticks -> 1 gear, a hand recipe the molecular assembler
 --- also makes
 recipe("iron-gear-crafting-table", "crafting", 1, { I("iron-plate", 1), I("iron-stick", 2) }, { I("iron-gear-wheel", 1) })
-recipe("crushed-iron", "zz-macerator", 20, { I("raw-iron", 1) }, { I("crushed-iron", 2) })
+--- Gregtorio's macerator recipe of raw iron (since its issue #202 as GT New Horizons': nickel dust at 5 %; me-network
+--- issue #171: a byproduct at a chance)
+recipe("crushed-iron", "zz-macerator", 20, { I("raw-iron", 1) },
+	{ I("crushed-iron", 2), { type = "item", name = "nickel-dust", amount = 1, probability = 0.05 } })
+data.raw.recipe["crushed-iron"].main_product = "crushed-iron"
 recipe("iron-dust-smelter", "smelting", 10, { I("iron-dust", 1) }, { I("iron-ingot", 1) })
 recipe("silicon-tetrachloride", "zz-chemical-reactor", 3, { I("raw-silicon", 1), F("chlorine", 400) }, { F("silicon-tetrachloride", 100) })
 recipe("molten-tin", "zz-extractor", 1.2, { I("tin-ingot", 1) }, { F("molten-tin", 14.4) })
@@ -90,5 +137,5 @@ recipe("hydrochloric-acid", "zz-chemical-reactor", 3, { F("chlorine", 100), F("h
 --- 3x3 machines like Gregtorio's (two fluid inputs and outputs: the chemical plant), a 2x2 burner furnace
 machine("ev-macerator", "assembling-machine", "assembling-machine-2", { "zz-macerator" }, 8)
 machine("hv-chemical-reactor", "assembling-machine", "chemical-plant", { "zz-chemical-reactor" }, 4)
-machine("ev-extractor", "assembling-machine", "chemical-plant", { "zz-extractor" }, 8)
+machine("ev-fluid-extractor", "assembling-machine", "chemical-plant", { "zz-extractor" }, 8)   -- Gregtorio issue #152
 machine("iron-furnace", "furnace", "stone-furnace", { "smelting" }, 2)

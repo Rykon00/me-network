@@ -84,7 +84,7 @@ local function info_of(key)
 	if not i then
 		if key_info_n >= 50000 then key_info, key_info_n = {}, 0 end   -- (keys with data can be many)
 		if N.is_fluid_key(key) then
-			local name = key:sub(7)
+			local name = N.fluid_name(key)                  -- (issue #159: one entry per temperature, "fluid/<name>@<degrees>")
 			i = { fluid = true, name = name, ok = prototypes.fluid[name] ~= nil }
 		else
 			local name, quality, json = N.parse_key(key)
@@ -525,8 +525,8 @@ local function refresh_crafting(st, frame, net)
 		if (filter == "" or key:find(filter, 1, true)) and #shown < MAX_CRAFT_BUTTONS then
 			local d = autocraft.describe(key)
 			if d then
-				local count = d.fluid and N.fluid_count(net, d.name) or N.count(net, key, "normal")
-				shown[#shown + 1] = { key = d.fluid and ("fluid/" .. d.name) or key, craft = key, count = count }
+				local count = d.fluid and N.count_key(net, key) or N.count(net, key, "normal")
+				shown[#shown + 1] = { key = key, craft = key, count = count }
 				sig[#sig + 1] = key .. "=" .. count
 			end
 		end
@@ -582,9 +582,7 @@ local function refresh_crafting(st, frame, net)
 		for k in pairs(list) do keys[#keys + 1] = k end
 		table.sort(keys)
 		for _, k in ipairs(keys) do
-			local dk = autocraft.describe(k)
-			local key = dk and dk.fluid and ("fluid/" .. dk.name) or k
-			G.slot(plan_grid, key, list[k], nil, style, tip)
+			G.slot(plan_grid, k, list[k], nil, style, tip)
 		end
 	end
 	add(p.missing, "red_slot_button", { "fork-me-gui.missing-tooltip" })
@@ -592,9 +590,8 @@ local function refresh_crafting(st, frame, net)
 	plan_grid.visible = #plan_grid.children > 0
 end
 
---- the name of a CPU of autocraft.cpu_list: "Crafting CPU 3 (2x3, 5k, 2 co-processors)" or the legacy entity's name
+--- the name of a CPU of autocraft.cpu_list: "Crafting CPU 3 (2x3, 5k, 2 co-processors)"
 function M.cpu_name(c)
-	if c.kind == "legacy" then return { "fork-me-craft.cpu-legacy", { "entity-name." .. c.name } } end
 	return { "fork-me-craft.cpu-name", c.id, c.width, c.height, G.fmt(c.bytes), c.coprocessors }
 end
 
@@ -643,8 +640,7 @@ function M.job_rows(t, jobs)
 	t.clear()
 	for _, j in ipairs(jobs) do
 		local d = autocraft.describe(j.item)
-		local key = d and d.fluid and ("fluid/" .. d.name) or j.item
-		G.slot(t, key, j.amount)
+		G.slot(t, j.item, j.amount)
 		local name = t.add{ type = "label", caption = { "", G.fmt(j.amount), " ", d and d.localised_name or j.item } }
 		name.style.minimal_width = 140
 		local bar = t.add{ type = "progressbar", value = j.total > 0 and j.done / j.total or 0,
@@ -673,13 +669,6 @@ local function refresh_jobs(st, frame, net)
 	M.job_rows(G.find(frame, "fork_me_jobs"), jobs)
 end
 
---- a cell's slot button for a cell list (terminal cells tab, drive window): fill in percent as the number
-function M.cell_tooltip(c)
-	local tip = { "", { "fork-me-gui.cell-fill", G.fmt(c.bytes), G.fmt(c.bytes_total), c.types, c.types_total } }
-	if #c.partition > 0 then tip[#tip + 1] = { "fork-me-gui.cell-partitioned", #c.partition } end
-	return tip
-end
-
 local function refresh_cells(st, frame, net)
 	local drives = N.drives_of(net, true)
 	local sig = {}
@@ -687,7 +676,7 @@ local function refresh_cells(st, frame, net)
 		sig[#sig + 1] = d.unit .. "p" .. d.priority
 		for slot = 1, 10 do
 			local c = d.cells[slot]
-			sig[#sig + 1] = c and (c.name .. c.bytes .. "/" .. c.types .. "/" .. #c.partition) or "-"
+			sig[#sig + 1] = c and N.drive_cell_sig(d.entity, slot) or "-"   -- issue #147: what the tooltip shows
 		end
 	end
 	sig = table.concat(sig, ",")
@@ -711,7 +700,7 @@ local function refresh_cells(st, frame, net)
 			if c then
 				local pct = c.bytes_total > 0 and math.floor(100 * c.bytes / c.bytes_total) or 0
 				row.add{ type = "sprite-button", sprite = "item/" .. c.name, number = pct,
-					style = #c.partition > 0 and "yellow_slot_button" or "slot_button", tooltip = M.cell_tooltip(c),
+					style = #c.partition > 0 and "yellow_slot_button" or "slot_button", tooltip = N.drive_cell_tooltip(d.entity, slot),
 					tags = G.act("term_cell", { drive = d.unit, slot = slot }) }
 			else
 				row.add{ type = "sprite-button", style = "slot_button", enabled = false }
@@ -964,16 +953,6 @@ function M.on_configuration_changed()
 	state()
 	for index in pairs(storage.fork_me_terminal) do
 		if not game.get_player(index) then storage.fork_me_terminal[index] = nil end
-	end
-	for _, player in pairs(game.players) do
-		--- the frames of the windows and panels before R3
-		for _, old in pairs({ "fork_me_terminal", "fork_me_drive", "fork_me_bus", "fork_ae2_provider",
-			"fork_me_maintainer", "fork_me_circuit", "fork_me_fluid_interface" }) do
-			for _, root in pairs({ player.gui.screen, player.gui.relative }) do
-				local frame = root[old]
-				if frame then frame.destroy() end
-			end
-		end
 	end
 	G.close_all()
 	storage.fork_me_gui_bypass = nil

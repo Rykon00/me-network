@@ -6,7 +6,9 @@
 --- cannot leave the virtual signals out (issues #69, #82), so this one is the mod's own.
 ---
 --- A window opens it with `Picker.open(player, spec)` and gets the choice back through the callback named in the spec
---- (`Picker.on_confirm(name, fn)`; `fn(player, data, choice)`, `choice` = { kind = "item" or "fluid", name, quality }).
+--- (`Picker.on_confirm(name, fn)`; `fn(player, data, choice)`, `choice` = { kind = "item" or "fluid", name, quality,
+--- temperature }). Issue #159: a fluid can be chosen with a temperature (a field in the bottom row, whole degrees; empty:
+--- none, which a filter reads as every temperature and a level maintainer or a pattern output as the default one).
 --- Everything it knows lives in the frame's tags and the player's GUI: nothing is in `storage`, so another player or a
 --- loaded save has nothing to agree on.
 ---
@@ -16,6 +18,7 @@
 --------------------------------------------------------------------------------
 
 local G = require("scripts.fork-me-gui")
+local N = require("scripts.fork-me-network")
 
 local M = {}
 
@@ -28,11 +31,14 @@ local confirms = {}
 function M.on_confirm(name, fn) confirms[name] = fn end
 
 --- The key of a choice (issue #70): an item (`with_quality`: "name@quality", normal quality as the plain name; else the
---- plain name, for the places that take no quality) or a fluid ("fluid/<name>"); nil for anything else (another kind, an
---- unknown name or quality), so a window can set what it gets or refuse it.
+--- plain name, for the places that take no quality) or a fluid ("fluid/<name>", with a temperature
+--- "fluid/<name>@<degrees>": issue #159); nil for anything else (another kind, an unknown name or quality), so a window
+--- can set what it gets or refuse it.
 function M.key_of(choice, with_quality)
 	if type(choice) ~= "table" or type(choice.name) ~= "string" then return nil end
-	if choice.kind == "fluid" then return prototypes.fluid[choice.name] and ("fluid/" .. choice.name) or nil end
+	if choice.kind == "fluid" then
+		return prototypes.fluid[choice.name] and N.fluid_filter_key(choice.name, tonumber(choice.temperature)) or nil
+	end
 	if choice.kind ~= "item" or not prototypes.item[choice.name] then return nil end
 	if not with_quality then return choice.name end
 	local q = choice.quality or "normal"
@@ -43,7 +49,10 @@ end
 --- The preset of a key for `Picker.open` (an item with its quality, or a fluid; nil for no key)
 function M.preset_of(key)
 	if not key then return nil end
-	if key:sub(1, 6) == "fluid/" then return { kind = "fluid", name = key:sub(7) } end
+	if key:sub(1, 6) == "fluid/" then
+		local name, deg = N.split_fluid_key(key)
+		return { kind = "fluid", name = name, temperature = deg }
+	end
 	local name, q = key:match("^([^@#]+)@?([^#]*)")
 	return { kind = "item", name = name, quality = (q and q ~= "") and q or "normal" }
 end
@@ -228,6 +237,8 @@ local function sync(frame)
 			b.enabled = t.kind ~= "fluid"
 		end
 	end
+	local temp = G.find(frame, "fork_me_pk_temp_row")
+	if temp then temp.visible = t.kind == "fluid" end
 	local ok = G.find(frame, "fork_me_pk_ok")
 	if ok then ok.enabled = t.name ~= nil end
 end
@@ -246,6 +257,7 @@ function M.open(player, spec)
 	if preset and kinds[preset.kind] and (preset.kind == "fluid" and prototypes.fluid or prototypes.item)[preset.name] then
 		t.kind, t.name, t.group = preset.kind, preset.name, group_of(preset.kind, preset.name)
 		if preset.kind == "item" and preset.quality and prototypes.quality[preset.quality] then t.quality = preset.quality end
+		if preset.kind == "fluid" and tonumber(preset.temperature) then t.temperature = math.floor(tonumber(preset.temperature) + 0.5) end
 	end
 	local groups = groups_for(kinds)
 	if not t.group then t.group = groups[1] and groups[1].name end
@@ -295,6 +307,15 @@ function M.open(player, spec)
 				tooltip = prototypes.quality[name].localised_name, tags = G.act("pk_quality", { quality = name }) }
 		end
 	end
+	if spec.temperature ~= false and kinds.fluid then             -- issue #159: a fluid's temperature (optional)
+		local row = bottom.add{ type = "flow", name = "fork_me_pk_temp_row", direction = "horizontal" }
+		row.style.vertical_align = "center"
+		row.add{ type = "label", caption = { "fork-me-picker.temperature" }, tooltip = { "fork-me-picker.temperature-tooltip" } }
+		local f = row.add{ type = "textfield", name = "fork_me_pk_temp", text = t.temperature and tostring(t.temperature) or "",
+			numeric = true, allow_decimal = false, allow_negative = true, lose_focus_on_confirm = true,
+			tooltip = { "fork-me-picker.temperature-tooltip" }, tags = G.act("pk_temp") }
+		f.style.width = 70
+	end
 	local gap = bottom.add{ type = "empty-widget" }
 	gap.style.horizontally_stretchable = true
 	bottom.add{ type = "sprite-button", name = "fork_me_pk_ok", sprite = "utility/check_mark", style = "item_and_count_select_confirm",
@@ -317,7 +338,10 @@ function M.confirm(player)
 	if not frame then return false end
 	local t = frame.tags
 	local cb, choice = confirms[t.callback], nil
-	if t.name then choice = { kind = t.kind, name = t.name, quality = t.kind == "item" and not t.plain and t.quality or nil } end
+	if t.name then
+		choice = { kind = t.kind, name = t.name, quality = t.kind == "item" and not t.plain and t.quality or nil,
+			temperature = t.kind == "fluid" and t.temperature or nil }
+	end
 	local data = t.data
 	frame.destroy()
 	if cb and choice then cb(player, data, choice) end
@@ -373,6 +397,18 @@ G.on("pk_search", function(event, player, el)
 	sync(frame)
 end)
 
+--- issue #159: the temperature field (empty: none); Enter takes the chosen fluid in
+G.on("pk_temp", function(event, player, el)
+	local frame = picker_of(player)
+	if not frame then return end
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local n = tonumber(el.text)
+	local t = frame.tags
+	t.temperature = n and math.floor(n + 0.5) or nil
+	frame.tags = t
+	if event.name == defines.events.on_gui_confirmed and t.name then M.confirm(player) end
+end)
+
 G.on("pk_ok", function(event, player)
 	if event.name ~= defines.events.on_gui_click then return end
 	M.confirm(player)
@@ -398,7 +434,7 @@ G.on_window_closed(function(player, window)
 	local frame = picker_of(player)
 	if frame then
 		if frame.visible or frame.tags.cancel_tick == game.tick then
-			player.opened = window
+			G.focus(player, window)                      -- (the window, or its hand-over buffer: issue #168)
 			if frame.visible then
 				frame.visible = false
 				set_tags(frame, { cancel_tick = game.tick })
@@ -408,7 +444,7 @@ G.on_window_closed(function(player, window)
 		frame.destroy()                                  -- a picker hidden by an earlier close: this close is the window's
 	end
 	if window.tags.keep_tick == game.tick then          -- the confirm key just took a picker in: the window stays
-		player.opened = window
+		G.focus(player, window)
 		return true
 	end
 	return false
@@ -419,12 +455,12 @@ script.on_event("fork-me-picker-confirm", function(event)
 	local frame = player and picker_of(player)
 	if not frame then return end
 	if not (frame.visible or frame.tags.cancel_tick == game.tick) then return end
-	local window = player.gui.screen.fork_me_window
+	local window = G.window_of(player)
 	if window and window.valid then
 		local wt = window.tags
 		wt.keep_tick = game.tick
 		window.tags = wt
-		if player.opened ~= window then player.opened = window end
+		G.focus(player, window)
 	end
 	M.confirm(player)
 end)

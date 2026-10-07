@@ -7,7 +7,7 @@
     python tools/devcheck/devcheck.py all                   # check + runtime
     python tools/devcheck/devcheck.py all --with-gregtorio ../Gregtorio
                                                             # the same with Gregtorio Continued loaded
-    python tools/devcheck/devcheck.py migrate --from-ref v0.1.0
+    python tools/devcheck/devcheck.py migrate --from-ref v0.5.0
                                                             # a save of an older version loaded with the working copy
     python tools/devcheck/devcheck.py bench                 # script time, throughput and latencies of synthetic
                                                             # bases of 100, 1000 and 5000 endpoints (docs/PERFORMANCE.md)
@@ -46,6 +46,8 @@ MODS = WORK / "mods"
 LOG = WORK / "last-run.log"
 # `runtime` creates its map with this seed, so a run is reproducible; `--seed N` or `--seed random` picks another
 DEFAULT_SEED = 3115102263
+# issue #146: saves of older versions are refused (control.lua); `migrate --from-ref` an older one checks that
+CUT_OFF = (0, 5, 0)
 BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails"}
 NAME = "me-network"
 GREGTORIO = "gregtorio-continued"
@@ -494,7 +496,7 @@ RUNTIME_TESTS = (
     ("FLUIDCELLS", "ME fluid cell test"), ("MER3", "ME partitions and windows test"),
     ("MESTORAGEBUS", "ME storage bus test"), ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test"),
     ("UNIFIED", "ME unified I/O test"),
-    ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
+    ("MAINTAINER", "level maintainer test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
     ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("REFILL", "ME storage bus refill test"),
     ("PLANS", "ME kept plans test"),
@@ -508,8 +510,12 @@ RUNTIME_TESTS = (
     ("CARDS", "ME upgrade card test"), ("PRIORITIES", "ME priority test"), ("WORKBENCH", "ME Cell Workbench test"),
     ("CARDSLOTS", "ME storage bus card slots test"), ("WBSLOTS", "ME Cell Workbench slots test"),
     ("PANE", "ME window pane test (storage bus)"), ("WBPANE", "ME window pane test (workbench)"),
-    ("WBPICK69", "ME Cell Workbench partition buttons test"), ("WBTIP64", "ME cell tooltip test"), ("WBSLOTTIP75", "ME window slot tooltips test"), ("WBKEY79", "ME stored item descriptions test"),
+    ("WBPICK69", "ME Cell Workbench partition buttons test"), ("WBTIP64", "ME cell tooltip test"), ("WBSLOTTIP75", "ME window slot tooltips test"), ("WBKEY79", "ME stored item descriptions test"), ("WBDRIVETIP147", "ME drive cell tooltips test"),
     ("STORABLE", "ME storable items test"),
+    ("TEMPERATURE", "ME fluid temperature test (issue #159)"),
+    ("PROVIDERS", "ME pattern provider machines test (issue #158)"),
+    ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
+    ("BUFFER", "ME terminal buffer (issue #150, experiment)"),
     ("DONE", "all tests reported"),
 )
 
@@ -681,7 +687,7 @@ def runtime(a):
 
 
 # --------------------------------------------------------------------------------------------
-# migrate: a save of an older version, loaded with the working copy (issue #3: the old fluid blocks)
+# migrate: a save of an older version, loaded with the working copy (issue #146: from 0.5.0 on; older ones are refused)
 # --------------------------------------------------------------------------------------------
 
 def old_tree(ref):
@@ -722,19 +728,25 @@ def migrate(a):
         print("could not create the map with the old version:\n" + err)
         return 1
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
-    print(f"old save (0.1.0: every old fluid block; 0.2.0 and later: every kind of block): {setup.group(1) if setup else 'no result'}")
+    print(f"old save (every kind of block): {setup.group(1) if setup else 'no result'}")
     prepare_mods(mod_dir=bumped_tree() if a.bump else None, with_migrate=True)
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
+    # issue #146: a save from before the cut-off must be refused when it loads, with the message that names 0.5.0
+    old_version = json.loads((old / "info.json").read_text(encoding="utf-8"))["version"]
+    if tuple(int(n) for n in old_version.split(".")[:3]) < CUT_OFF:
+        refused = "no longer converts saves from before 0.5.0" in log
+        print(f"old save of {old_version} (before the cut-off {'.'.join(map(str, CUT_OFF))}) loaded with the working copy: "
+              + ("refused with the message" if refused and not ran else "NOT REFUSED" if ran else "failed without the message"))
+        if not refused:
+            print(load_errors(log) or "")
+        ok = setup and setup.group(1).startswith("ok") and refused and not ran
+        print("\nRESULT: " + ("OK" if ok else "PROBLEMS FOUND"))
+        return 0 if ok else 1
     print(f"old save loaded with the working copy{' (version one patch up: an update, on_configuration_changed runs)' if a.bump else ''}: {'ok, ' + ran.group(0) if ran else 'FAILED'}")
-    for line in re.findall(r"FORK-ME-MIGRATE: (.*)", log):
-        print("  migration: " + line)
     unified = re.search(r"DEVCHECK-MIGRATE-UNIFIED (.*)", log)
     fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
-    recover = re.search(r"DEVCHECK-MIGRATE-RECOVER (.*)", log)
     print(f"the blocks after the update: {unified.group(1) if unified else 'no result'}")
-    if recover:
-        print(f"the job of the old save, assembler moved (issue #131): {recover.group(1)}")
     print(f"the fluid after the I/O steps: {fluids.group(1) if fluids else 'no result'}")
     fails = re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log)
     for f in fails:
@@ -742,7 +754,7 @@ def migrate(a):
     if not ran:
         print(load_errors(log) or "")
     ok = ran and setup and setup.group(1).startswith("ok") and unified and unified.group(1).startswith("ok") \
-        and fluids and fluids.group(1).startswith("ok") and (not recover or recover.group(1).startswith("ok")) and not fails
+        and fluids and fluids.group(1).startswith("ok") and not fails
     print("\nRESULT: " + ("OK" if ok else "PROBLEMS FOUND"))
     return 0 if ok else 1
 
@@ -1653,7 +1665,8 @@ def main():
             p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
             p.add_argument("--no-saveload", action="store_true", help="skip the save-and-load half (the server run)")
     p = sub.add_parser("migrate")
-    p.add_argument("--from-ref", default="v0.1.0", help="the git tag or commit of the old version (default v0.1.0)")
+    p.add_argument("--from-ref", default="v0.5.0", help="the git tag or commit of the old version (default v0.5.0; an older "
+                   "one than the cut-off 0.5.0 must be refused: issue #146)")
     p.add_argument("--bump", action="store_true",
                    help="load the save with the working copy as a version one patch up (a copy in .devcheck/new-bumped): Factorio runs "
                         "on_configuration_changed, as it does when a player updates the mod (without it the version number is the "

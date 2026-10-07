@@ -1,8 +1,7 @@
 --- Runtime test of me-network issue #129: the ME buses and the ME Terminal are walkable, like the ME cable.
---- A row of every block of the scope (import, export and storage bus in all four directions, the terminal, the three hidden
---- old fluid buses, and the cable and the underground cable as the reference that was walkable before) and of the blocks that
---- stay solid (ME Interface, drive, controller, pattern provider, level maintainer, circuit interface, a crafting block, the
---- Cell Workbench). On the position of each one a character can be placed, or not; nothing else can be built there: not a
+--- A row of every block of the scope (import, export and storage bus in all four directions, the terminal, and the
+--- cable and the underground cable as the reference that was walkable before) and of the blocks that stay solid (ME
+--- Interface, drive, controller, pattern provider, level maintainer, circuit interface, a crafting block, the Cell Workbench). On the position of each one a character can be placed, or not; nothing else can be built there: not a
 --- chest, not a cable, not a bus (the "object" layer stays); no collision mask has the "player" layer, and the mask of the
 --- walkable ones is the cable's, so the cars (whose mask names "player") pass too. The mask is prototype data: nothing is stored.
 --- (The draw order, the character above a bus, needs the game.) Loaded by control.lua: require("walkable")(H) returns
@@ -19,7 +18,6 @@ local ROW = {
 	{ "me-export-bus", "north", true }, { "me-export-bus", "east", true }, { "me-export-bus", "south", true }, { "me-export-bus", "west", true },
 	{ "me-storage-bus", "north", true }, { "me-storage-bus", "east", true }, { "me-storage-bus", "south", true }, { "me-storage-bus", "west", true },
 	{ "me-terminal", nil, true },
-	{ "me-fluid-import-bus", "south", true }, { "me-fluid-export-bus", "south", true }, { "me-fluid-storage-bus", "south", true },
 	{ "me-cable", nil, true },
 	{ "me-network-interface", nil, false }, { "me-drive", nil, false }, { "me-pattern-provider", nil, false },
 	{ "me-level-maintainer", nil, false }, { "me-circuit-interface", nil, false }, { "me-crafting-unit", nil, false },
@@ -35,10 +33,9 @@ return function(H)
 	function T.setup(s)
 		local fails = {}
 		for i, def in ipairs(ROW) do
-			--- (no build event for the old fluid buses: the unification would replace them; the others are registered like any block)
 			local ok, e = pcall(function()
 				return s.create_entity{ name = def[1], position = pos(i), force = "player", direction = def[2] and DIRS[def[2]] or nil,
-					raise_built = not def[1]:find("^me%-fluid") }
+					raise_built = true }
 			end)
 			if not (ok and e) then fails[#fails + 1] = "walkable: " .. def[1] .. " was not built: " .. tostring(e) end
 		end
@@ -95,8 +92,7 @@ return function(H)
 			return true
 		end
 		local cable_mask = prototypes.entity["me-cable"].collision_mask.layers
-		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-terminal", "me-fluid-import-bus", "me-fluid-export-bus",
-			"me-fluid-storage-bus" }) do
+		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-terminal" }) do
 			expect(same(prototypes.entity[name].collision_mask.layers, cable_mask), name .. ": the mask is not the cable's")
 		end
 		--- the selection box is the same as before: a block is clicked as it was (mining, windows, copy and paste)

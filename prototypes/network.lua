@@ -14,8 +14,8 @@
 ---   * ME Storage Bus  = rotatable 1x1 block: the chest or cargo wagon it faces is storage of the network
 ---                       (scripts/fork-me-storagebus.lua).
 ---   * ME Terminal     = powered screen, the central GUI (scripts/fork-me-terminal.lua).
---- The old prototypes (roboport controller, logistic chest drives, requester interface) stay hidden, so
---- saves load; scripts/fork-me-migrate.lua replaces them. Runtime: scripts/fork-me-network.lua (graph,
+--- The old prototypes (roboport controller, logistic chest drives, requester interface) are gone since issue #146
+--- (0.5.0 converted them; a save from before it is refused, control.lua). Runtime: scripts/fork-me-network.lua (graph,
 --- storage, drives), scripts/fork-me-io.lua (interface, buses). Numbers reach the runtime through the
 --- mod-data "fork-me-network". Sprites and icons: tools/gen_ae2_sprites.py.
 --- Recipes and technologies here are the standalone ones (vanilla items and science); another mod can replace
@@ -28,15 +28,14 @@ local ENTITY_PATH = ME.entity_path
 local ICON_PATH = ME.icons
 local ICON_FORK = ICON_PATH .. "fork/"
 
---- cell tier -> "k", old drive data (slots per cell, extra ingredient of the old drive item: it is given back
---- when such an item is placed, if that item exists)
+--- cell tier -> "k", the extra ingredient of the old drive item (it is given back when such an item is placed, if that
+--- item exists)
 local CELLS = {
-	{ tier = "1k",   k = 1,   old_slots = 16 },
-	{ tier = "4k",   k = 4,   old_slots = 32 },
-	{ tier = "16k",  k = 16,  old_slots = 64 },
-	{ tier = "64k",  k = 64,  old_slots = 128 },
-	{ tier = "256k", k = 256, old_slots = 256,
-	  extra = { name = "acceleration-card", count = 1 } },
+	{ tier = "1k",   k = 1 },
+	{ tier = "4k",   k = 4 },
+	{ tier = "16k",  k = 16 },
+	{ tier = "64k",  k = 64 },
+	{ tier = "256k", k = 256, extra = { name = "acceleration-card", count = 1 } },
 }
 local OLD_CELLS_PER_DRIVE = 4
 local DRIVE_SLOTS = 10              -- AE2's ME Drive
@@ -135,7 +134,7 @@ for i, c in ipairs(CELLS) do
 		tostring(MAX_TYPES), tostring((bytes - per_type) * 8) }
 
 	--- the old drive item (chassis + four cells, before issue #68): no recipe any more, hidden; placing one
-	--- builds an ME Drive with its four (empty) cells
+	--- builds an ME Drive with its four (empty) cells (issue #146: kept, 0.5.0 left them in inventories as they were)
 	local old = "me-drive-" .. c.tier
 	data:extend({ {
 		type = "item",
@@ -151,107 +150,6 @@ for i, c in ipairs(CELLS) do
 	} })
 	legacy_drives[old] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra }
 end
-
-
-
---------------------------------------------------------------------------------
---- OLD PROTOTYPES (hidden, kept so saves load them; scripts/fork-me-migrate.lua replaces them)
---------------------------------------------------------------------------------
-
-local function hide(e)
-	e.hidden = true
-	e.next_upgrade = nil
-	e.fast_replaceable_group = nil
-	return e
-end
-
---- old drives: logistic storage chests holding the items themselves
-local storage_chest = data.raw["logistic-container"]["storage-chest"]
-for i, c in ipairs(CELLS) do
-	local name = "me-drive-" .. c.tier
-	local e = table.deepcopy(storage_chest)
-	e.name = name
-	e.icon = ICON_FORK .. name .. ".png"
-	e.icon_size = 32
-	e.minable = { mining_time = 0.2, result = name }
-	e.inventory_size = c.old_slots * OLD_CELLS_PER_DRIVE
-	e.corpse = "small-remnants"
-	e.dying_explosion = nil
-	e.max_health = 400
-	e.animation = { layers = { {
-		filename = ENTITY_PATH .. name .. ".png",
-		priority = "extra-high",
-		width = 32, height = 32, frame_count = 1,
-	} } }
-	e.opened_duration = 0
-	e.animation_sound = nil
-	e.localised_name = { "entity-name.fork-me-legacy", { "item-name." .. name } }
-	data:extend({ hide(e) })
-end
-
---- old interface: requester chest
-local old_interface = table.deepcopy(data.raw["logistic-container"]["requester-chest"])
-old_interface.name = "me-interface"
-old_interface.icon = ICON_PATH .. "me-interface.png"
-old_interface.icon_size = 32
-old_interface.minable = { mining_time = 0.2, result = "me-interface" }
-old_interface.inventory_size = 32
-old_interface.trash_inventory_size = 16
-old_interface.corpse = "small-remnants"
-old_interface.dying_explosion = nil
-old_interface.max_health = 400
-old_interface.animation = { layers = { {
-	filename = ENTITY_PATH .. "me-interface.png",
-	priority = "extra-high",
-	width = 32, height = 32, frame_count = 1,
-} } }
-old_interface.opened_duration = 0
-old_interface.animation_sound = nil
-old_interface.localised_name = { "entity-name.fork-me-legacy", { "item-name.me-interface" } }
-data:extend({ hide(old_interface) })
-
---- old controller: 2x2 roboport without robots (network area only)
-local old_controller = table.deepcopy(data.raw.roboport.roboport)
-old_controller.name = "me-controller"
-old_controller.icon = ICON_PATH .. "me-controller.png"
-old_controller.icon_size = 32
-old_controller.minable = { mining_time = 0.3, result = "me-controller" }
-old_controller.max_health = 500
-old_controller.corpse = "small-remnants"
-old_controller.dying_explosion = nil
-old_controller.collision_box = { { -0.8, -0.8 }, { 0.8, 0.8 } }
-old_controller.selection_box = { { -1, -1 }, { 1, 1 } }
-old_controller.energy_source = {
-	type = "electric",
-	usage_priority = "secondary-input",
-	input_flow_limit = "1MW",
-	buffer_capacity = "4MJ",
-}
-old_controller.recharge_minimum = "1MJ"
-old_controller.energy_usage = "120kW"
-old_controller.charging_energy = "1kW"
-old_controller.logistics_radius = 16
-old_controller.construction_radius = 0
-old_controller.robot_slots_count = 0
-old_controller.material_slots_count = 0
-old_controller.charging_offsets = {}
-old_controller.charging_station_count = 0
-old_controller.base = { layers = { {
-	filename = ENTITY_PATH .. "me-controller.png",
-	priority = "medium", width = 64, height = 64,
-} } }
-old_controller.base_patch = util.empty_sprite()
-old_controller.base_animation = util.empty_animation(1)
-old_controller.door_animation_up = util.empty_animation(1)
-old_controller.door_animation_down = util.empty_animation(1)
-old_controller.recharging_animation = util.empty_animation(1)
-old_controller.frozen_patch = nil
-old_controller.integration_patch = nil
-old_controller.water_reflection = nil
-old_controller.open_door_trigger_effect = nil
-old_controller.close_door_trigger_effect = nil
-old_controller.localised_name = { "entity-name.fork-me-legacy", { "item-name.me-controller" } }
-data:extend({ hide(old_controller) })
 
 
 
@@ -584,7 +482,6 @@ data:extend({ {
 		--- a kind that is not here draws the default (4 kW), a crafting block its own number (mod-data "fork-me-autocraft")
 		member_power = { terminal = TERMINAL_POWER },
 		underground_reach = UNDERGROUND_REACH,
-		legacy = { controller = "me-controller", interface = "me-interface" },
 	},
 } })
 

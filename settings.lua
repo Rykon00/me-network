@@ -23,4 +23,8 @@ data:extend({
 	int("me-network-bus-fluid-per-second", "g", 4000, 1, 10000000),
 	int("me-network-idle-limit", "h", 300, 15, 3600),
 	int("me-network-storage-bus-idle-limit", "i", 120, 15, 3600),
+	--- issue #150 / #168: the ME windows next to the game's own inventory window (a hand-over buffer); off: the inventory
+	--- drawn by the mod in the window (issue #28)
+	{ type = "bool-setting", name = "me-network-real-inventory", setting_type = "runtime-global", order = "z",
+		default_value = true },
 })

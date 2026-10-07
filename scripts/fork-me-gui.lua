@@ -116,16 +116,104 @@ local function pane_state()
 	return s
 end
 
+--------------------------------------------------------------------------------
+--- Issue #150, rolled out to every ME window in #168 (the map setting "me-network-real-inventory", on by default; off:
+--- the pane of issue #28): a window opened `relative` is a frame in player.gui.relative anchored right of a script inventory of BUFFER_SLOTS
+--- slots, the hand-over buffer, which is the player's opened GUI: the game draws its own container window with the
+--- player's real inventory left of the buffer. What lands in the buffer (shift + click, a stack put down, a drag) goes
+--- into the network through the window's `shift` function. There is no event for a script inventory that changed, so
+--- the buffer is emptied on the events that come with every such move (the player's main inventory or cursor changed:
+--- on_inventory_changed below), at the window's refresh (once a second, refresh_all) and when the window closes; what
+--- the network refuses stays in the buffer and goes back to the player on close (give_back: the inventory, else the
+--- ground), so nothing is lost. storage.fork_me_gui_buffer[player_index] = { inv, opened_tick }.
+--------------------------------------------------------------------------------
+
+local BUFFER_SLOTS = 20
+M.BUFFER_SLOTS = BUFFER_SLOTS
+
+local function buffer_of(player)
+	local s = storage.fork_me_gui_buffer
+	local b = s and s[player.index]
+	if b and not (b.inv and b.inv.valid) then
+		s[player.index] = nil
+		return nil
+	end
+	return b
+end
+M.buffer_of = buffer_of
+
+--- every stack of `inv` into the window's block through `def.shift` (what it refuses stays); the number of stacks taken
+function M.buffer_absorb(inv, def, entity)
+	if not (inv and inv.valid and def and def.shift and entity and entity.valid) or inv.is_empty() then return 0 end
+	local n = 0
+	for i = 1, #inv do
+		local st = inv[i]
+		if st.valid_for_read then
+			local why = def.shift(entity, st, inv)
+			if not why and not st.valid_for_read then n = n + 1 end
+		end
+	end
+	return n
+end
+
+--- what is left in `inv` back to `to` (a player or an inventory; give_back: else the ground at `entity`)
+function M.buffer_return(inv, to, entity)
+	if not (inv and inv.valid) then return end
+	for i = 1, #inv do
+		local st = inv[i]
+		if st.valid_for_read then M.give_back(to, st, entity) end
+	end
+end
+
 --- the player's open ME window (or nil), and its name
 function M.window_of(player)
 	local frame = player.gui.screen.fork_me_window
 	if frame and frame.valid then return frame, frame.tags.fork_me_window end
+	frame = buffer_of(player) and player.gui.relative.fork_me_window
+	if frame and frame.valid then return frame, frame.tags.fork_me_window end
 	return nil
+end
+
+--- empty the player's buffer into the window's block (issue #150)
+local function absorb(player)
+	local b = buffer_of(player)
+	if not b or b.inv.is_empty() then return end
+	local frame, name = M.window_of(player)
+	local entity = frame and M.entity_of(player, frame)
+	if entity then M.buffer_absorb(b.inv, windows[name], entity) end
+end
+
+--- the window's GUI for player.opened: the frame, or the buffer of a relative window
+local function opened_of(player, frame)
+	local b = frame and frame.parent == player.gui.relative and buffer_of(player)
+	return b and b.inv or frame
+end
+
+--- make the player's ME window the opened GUI again (the picker keeps a window open on the close keys)
+function M.focus(player, frame)
+	local o = opened_of(player, frame)
+	if player.opened ~= o then player.opened = o end
+end
+
+--- does a new window open beside the game's inventory? (issue #168: the map setting, on by default)
+local function real_inventory()
+	local s = settings.global["me-network-real-inventory"]
+	return s == nil or s.value == true
 end
 
 function M.close_window(player)
 	local frame = player.gui.screen.fork_me_window
 	if frame and frame.valid then frame.destroy() end
+	local b = buffer_of(player)
+	if b then                                             -- issue #150: the buffer into the block, the rest back
+		absorb(player)
+		local rel = player.gui.relative.fork_me_window
+		local entity = rel and rel.valid and M.entity_by_unit(rel.tags.unit)
+		storage.fork_me_gui_buffer[player.index] = nil
+		M.buffer_return(b.inv, player, entity)
+		if rel and rel.valid then rel.destroy() end
+		b.inv.destroy()
+	end
 	local picker = player.gui.screen.fork_me_picker       -- the picker (scripts/fork-me-picker.lua) belongs to the window
 	if picker and picker.valid then picker.destroy() end
 	local s = storage.fork_me_gui_pane
@@ -271,14 +359,26 @@ end
 --- A window: closes the player's ME window, builds frame, title bar and content frame; the frame is the player's
 --- opened GUI. Returns the frame and the content flow. `tags` go onto the frame (fork_me_window = name is added).
 --- Issue #28: every window has the pane, the player's inventory drawn on the left of the content (`pane` false: none).
-function M.open_window(player, name, caption, tags, pane)
-	pane = pane ~= false
+--- Issue #150: `relative` (an experiment): no pane; the frame is anchored right of the hand-over buffer, which is the
+--- opened GUI (the game's own window with the player's inventory).
+function M.open_window(player, name, caption, tags, pane, relative)
+	if relative == nil then relative = pane ~= false and real_inventory() end   -- (issue #168: every window with a pane)
+	pane = pane ~= false and not relative
 	M.close_window(player)
 	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
-	local frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t }
+	local frame
+	if relative then
+		local inv = game.create_inventory(BUFFER_SLOTS, { "fork-me-gui.buffer-title" })
+		storage.fork_me_gui_buffer = storage.fork_me_gui_buffer or {}
+		storage.fork_me_gui_buffer[player.index] = { inv = inv, opened_tick = game.tick }
+		frame = player.gui.relative.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t,
+			anchor = { gui = defines.relative_gui_type.script_inventory_gui, position = defines.relative_gui_position.right } }
+	else
+		frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t }
+	end
 	local bar = frame.add{ type = "flow", direction = "horizontal" }
-	bar.drag_target = frame
+	if not relative then bar.drag_target = frame end
 	bar.style.horizontal_spacing = 8
 	bar.add{ type = "label", caption = caption, style = "frame_title", ignored_by_interaction = true }
 	local drag = bar.add{ type = "empty-widget", style = "draggable_space_header", ignored_by_interaction = true }
@@ -294,8 +394,12 @@ function M.open_window(player, name, caption, tags, pane)
 	inner.style.vertically_stretchable = true
 	local content = inner.add{ type = "flow", name = "fork_me_content", direction = "vertical" }
 	content.style.vertical_spacing = 6
-	frame.auto_center = true
-	player.opened = frame
+	if relative then
+		player.opened = buffer_of(player).inv
+	else
+		frame.auto_center = true
+		player.opened = frame
+	end
 	if pane then M.update_pane(player, true) end
 	return frame, content
 end
@@ -435,6 +539,22 @@ function M.key_description(key)
 	return d or nil
 end
 
+--- Issue #159: the fluid name and the degrees (nil: none) of a fluid key ("fluid/<name>", "fluid/<name>@<degrees>"),
+--- and its name as a LocalisedString ("Steam (250 °C)"). (This module is a leaf: the network's own parser is not used.)
+local function fluid_parts(key)
+	local body = key:sub(7)
+	local name, deg = body:match("^(.+)@(%-?%d+)$")
+	if name and prototypes.fluid[name] then return name, tonumber(deg) end
+	return body, nil
+end
+function M.fluid_label(key)
+	local name, deg = fluid_parts(key)
+	local proto = prototypes.fluid[name]
+	local ln = proto and proto.localised_name or name
+	if deg then return { "fork-me-gui.fluid-at-temperature", ln, tostring(deg) }, name, deg end
+	return ln, name, nil
+end
+
 --- A slot button for an item or fluid (`key`: item name, "name@quality" or "fluid/<name>"; for an item with tags
 --- the key's description is the first lines of the tooltip, below the item's own), with the amount formatted in the
 --- tooltip and the button's number. `style` defaults to slot_button. `index`: the place among the parent's children
@@ -443,10 +563,9 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 	local def = { type = "sprite-button", style = style or "slot_button", tags = tags, index = index }
 	if key then
 		if key:sub(1, 6) == "fluid/" then
-			local name = key:sub(7)
-			local proto = prototypes.fluid[name]
-			if proto then def.sprite = "fluid/" .. name end
-			def.tooltip = { "", proto and proto.localised_name or name, amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
+			local label, name = M.fluid_label(key)
+			if prototypes.fluid[name] then def.sprite = "fluid/" .. name end
+			def.tooltip = { "", label, amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
 		else
 			local name, q = key:match("^([^@#]+)@?([^#]*)")
 			q = (q and q ~= "") and q or "normal"
@@ -476,9 +595,9 @@ function M.key_button(parent, key, tags, tooltip)
 		if q and q ~= "" and q ~= "normal" and prototypes.quality[q] and script.feature_flags.quality then b.quality = q end
 		if prototypes.item[name] then b.tooltip = tooltip else b.tooltip = { "", key, "\n", tooltip or "" } end
 	elseif key then
-		local name = key:sub(7)
-		local proto = prototypes.fluid[name]
-		b.tooltip = { "", proto and proto.localised_name or name, "\n", tooltip or "" }
+		local label, _, deg = M.fluid_label(key)
+		b.tooltip = { "", label, "\n", tooltip or "" }
+		if deg then b.number = deg end                 -- issue #159: a filter of one temperature shows it
 	else
 		b.tooltip = tooltip
 	end
@@ -490,9 +609,7 @@ end
 function M.slot_amount(button, key, amount, extra_tooltip)
 	button.number = amount and math.floor(amount) or nil
 	if key and key:sub(1, 6) == "fluid/" then
-		local name = key:sub(7)
-		local proto = prototypes.fluid[name]
-		button.tooltip = { "", proto and proto.localised_name or name, amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
+		button.tooltip = { "", (M.fluid_label(key)), amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
 	end
 end
 
@@ -617,7 +734,7 @@ function M.open_entity(player, entity)
 	if not player.can_reach_entity(entity) then return true end
 	local frame, name = M.window_of(player)
 	if frame and frame.tags.unit == entity.unit_number and not frame.tags.via and windows[name] and open == windows[name].open then
-		player.opened = frame                         -- already open (the open key and on_gui_opened both fire)
+		player.opened = opened_of(player, frame)      -- already open (the open key and on_gui_opened both fire)
 		return true
 	end
 	open(player, entity)
@@ -676,9 +793,26 @@ function M.on_window_closed(fn) closed_hooks[#closed_hooks + 1] = fn end
 --- on_gui_closed: our window was closed (E, Escape, another GUI opened)
 function M.on_closed(event)
 	if event.gui_type == defines.gui_type.script_inventory then
-		--- a save made with #30 (same version number, no close_all): its frame anchored to a script inventory goes
 		local player = game.get_player(event.player_index)
-		local old = player and player.gui.relative.fork_me_window
+		--- issue #150: the hand-over buffer of a relative window closed (E, Escape, another GUI): the window closes; the
+		--- open key's own game action may close it in the tick it was opened: open again then
+		local b = player and buffer_of(player)
+		if b and event.inventory == b.inv then
+			if b.opened_tick == game.tick then
+				player.opened = b.inv
+				return true
+			end
+			local rel = player.gui.relative.fork_me_window
+			if rel and rel.valid then                      -- the picker above it takes the close keys first (issue #94)
+				for _, hook in ipairs(closed_hooks) do
+					if hook(player, rel) then return true end
+				end
+			end
+			M.close_window(player)
+			return true
+		end
+		--- a save made with #30 (same version number, no close_all): its frame anchored to a script inventory goes
+		local old = player and not b and player.gui.relative.fork_me_window
 		if old and old.valid then old.destroy() end
 		return false
 	end
@@ -715,9 +849,10 @@ function M.refresh_all()
 			local def = windows[name]
 			if not def then
 				M.close_window(player)
-			elseif player.opened ~= frame then
+			elseif player.opened ~= opened_of(player, frame) then
 				M.close_window(player)                     -- dying or another GUI closed it without an event
 			else
+				absorb(player)                             -- issue #150: the buffer, also without an event
 				local ok = def.refresh and def.refresh(player, frame)
 				if ok == false then
 					M.close_window(player)
@@ -739,6 +874,15 @@ end
 --- on_player_main_inventory_changed, on_player_cursor_stack_changed (issue #28): the inventory pane of the player's
 --- window follows the real inventory and the hand. A player without a pane costs one lookup.
 function M.on_inventory_changed(event)
+	local bs = storage.fork_me_gui_buffer
+	if bs and bs[event.player_index] then                 -- issue #150: what was put into the buffer goes into the block
+		local player = game.get_player(event.player_index)
+		if player then
+			absorb(player)
+			M.refresh_one(player)
+		end
+		return
+	end
 	local s = storage.fork_me_gui_pane
 	if not (s and s[event.player_index]) then return end
 	local player = game.get_player(event.player_index)

@@ -58,7 +58,8 @@ cables are free), set by the script when the network changes. It counts as power
 "no power" and its buffer is not empty (an energy interface without any pole reports no "no power" status;
 an underpowered controller keeps the network running at low power, like other machines).
 Since issue #128 the terminal and the level maintainer draw their power through the controller too (8 kW and 30 kW, the numbers
-in the mod-data `fork-me-network`, `member_power`); only the three legacy single-block CPUs keep a power connection of their own.
+in the mod-data `fork-me-network`, `member_power`); only the three legacy single-block CPUs kept a power connection of their own
+(gone since issue #145).
 Both are still lamps (a prototype whose type changes is removed from a saved game), with `energy_source = { type = "void" }`:
 such a lamp has no electric network and its status is always "working", so a pole next to it does nothing and a wire to it
 still works. A lamp with a void source is always on, so the terminal's picture is drawn by the script: the lamp's `picture_on`
@@ -329,6 +330,8 @@ performance at size"; the 60 tick step stays). No new `on_tick`, no new interval
 
 ## Migration (from 0.3.2 and older)
 
+**Removed in 0.5.1 (issue #146, see "Save cut-off" at the end): kept here as the record of what 0.5.0 still does.**
+
 Runs in `on_configuration_changed` when the world still has entities of the old prototypes (it is
 idempotent: what it converts disappears). The old prototypes stay in the game, hidden, so saves load
 them: the roboport `me-controller`, the logistic storage chests `me-drive-1k` ... `me-drive-256k` and the
@@ -446,9 +449,14 @@ of fluid cells are kept apart (`fbytes`, `ftypes`, `fbytes_total`, `ftypes_total
 and `plain_counts` list items only. `scripts/fork-me-fluids.lua` keeps `totals`, `count`, `insert`, `remove` and
 `capacity` for its callers (autocrafting, level maintainer, circuit interface, terminal).
 
-**One temperature per fluid** stays: fluids are stored by name; importing drops the temperature, everything that
+~~**One temperature per fluid** stays: fluids are stored by name; importing drops the temperature, everything that
 comes out has the fluid's default temperature. Per-temperature storage would make every steam temperature its own
-type, and an export would have to pick one; the cost (hot steam cannot be stored) is documented in `docs/AE2.md`.
+type, and an export would have to pick one; the cost (hot steam cannot be stored) is documented in `docs/AE2.md`.~~
+**Superseded by issue #159** (see "Fluid temperature (me-network issue #159)" below): the accepted cost became a
+player's bug report (steam from boilers went in at 165 or 250 °C and came out at 15 °C, which no steam engine or
+turbine takes, and nothing told the player). Both reasons of R2 have an answer now: every temperature is its own type
+only where a fluid really has several (the default temperature keeps the key of R2, so nothing else pays for it), and
+an export picks by a fixed rule (the default first, then from the coldest), or by the temperature its filter names.
 
 ### Terminal, interface and buses
 
@@ -466,6 +474,8 @@ type, and an export would have to pick one; the cost (hot steam cannot be stored
   the bus's speed times the ticks since its last visit).
 
 ### Migration of fluids (R2)
+
+**Removed in 0.5.1 (issue #146, see "Save cut-off" at the end): kept here as the record of what 0.5.0 still does.**
 
 `run_fluids` in `scripts/fork-me-migrate.lua`, from `on_configuration_changed`, after the graph rebuild and before
 the item migration (so the new drives are members when old logistic networks are grouped). It reads the old
@@ -788,6 +798,10 @@ What the engine sees is the same external cell as the item bus (`N.ext_handlers[
 
 ### Temperature
 
+**Superseded by issue #159**: the segment's fluid is storage under the key of its temperature, the network puts a key
+in only while the segment is empty or holds that key's temperature (see "Fluid temperature (me-network issue #159)").
+What follows is the rule of R2 and the reasons it had then.
+
 The network keeps one temperature per fluid (R2: stored by name, what comes out has the fluid's default
 temperature). A segment can hold its fluid at any temperature. Decision: **read it, refuse inserts.**
 
@@ -842,8 +856,8 @@ temperature). A segment can hold its fluid at any temperature. Decision: **read 
   reused id never lets two buses own one segment.
 * The fluid import bus emptying a tank of a bus's segment, or a fluid export bus filling one, moves fluid in a
   circle, like the item buses. Give the fluid storage bus a filter or a lower priority.
-* Temperature: inserts into a segment at another temperature are refused; what leaves the network from such a
-  segment has the default temperature (see above).
+* Temperature (issue #159): the segment is storage at its temperature; inserts of another temperature are refused,
+  what leaves the network from it has its temperature.
 * Not tested in the real game: the window, the sprite, a large fluid system under load.
 
 ### Tests
@@ -863,6 +877,130 @@ ticks: the fluid export bus takes from the first segment, the level maintainer c
 fills a tank is in the network within one visit cycle. Two mutations were checked to fail it: no claim (every bus
 counts its segment: the network shows 2000 of 1000) and `count` trusting the snapshot (the stale extract leaves 100
 phantom units). `migrate --from-ref v0.3.2` and every other runtime test pass unchanged.
+
+## Fluid temperature (me-network issue #159)
+
+The report (ME Network 0.5.0, without Gregtorio): steam imported at 250 °C came out at 15 °C and powered nothing.
+R2 had stored fluids by name ("One temperature per fluid stays", above); issue #159 weighed two designs:
+
+* **A. The temperature is part of the key**: `fluid/<name>` stays the key of the default temperature, any other
+  temperature is `fluid/<name>@<degrees>`. Import keeps the temperature, an export takes a key, a fluid cell holds a
+  type per temperature.
+* **B. One temperature per fluid, the mix remembered**: importing mixes the temperature the way a pipe does (amount
+  weighted), exporting uses the mix. No new types, but 1000 units at 15 °C and 1000 at 250 °C come out at 132.5 °C, and
+  nobody can ask for 250 °C.
+
+**Decision: A** (the maintainer's choice; nothing in the work spoke against it). Its costs, measured or counted:
+
+* **Types and saved state:** a temperature is a type like another fluid: per key the cell's `per_type` bytes (8 of a
+  1k cell's 1024) and a slot in its 18 types, one entry in the network's totals and index, in the cell's tags. Only
+  fluids at a temperature other than their default pay it. The fluids that really exist at two temperatures are few:
+  steam (165 °C from boilers, 500 °C from heat exchangers and acid neutralisation, 15 °C from recipes) in the base game,
+  Space Age and Gregtorio Continued; every Gregtorio fluid but steam is made at one temperature (its superheated steam,
+  hot coolant and plasmas are fluids of their own). A **key explosion** needs steam of many temperatures mixed in pipes
+  before the import (each whole degree the mix reaches is a type): bounded by the degrees between the default and the
+  max temperature, and avoided by importing each line apart (`docs/AE2.md`). Rounding to whole degrees keeps a
+  source's own small differences (249.6 / 250.2) in one key.
+* **Script time:** the storage engine is unchanged for items (one table lookup more per insert and per partition
+  check: `alt_key`); an export of a fluid reads its keys (`N.fluid_keys`, kept per load) and, at an export bus, the
+  boxes' filters (`get_filter` per box and visit). Numbers: `docs/PERFORMANCE.md`, "Issue #159".
+
+### Keys and filters
+
+* `N.fluid_key(name, temperature)`: the temperature is clamped to the fluid's `[default_temperature, max_temperature]`
+  (the engine does the same: tested, steam inserted at 5 °C holds 15 °C, water at 500 °C holds 100 °C) and rounded to
+  whole degrees; equal to the default (rounded) it is `fluid/<name>`. Every saved key of before is such a key: old
+  saves, cell tags, partitions, interface rows, bus filters, patterns, level maintainers and circuit filters load
+  unchanged (`migrate --from-ref v0.5.0`).
+* A **filter key** may also be `fluid/<name>@<default>`: the default temperature only. A filter without a temperature
+  takes every temperature. In the engine (`listed`) a storage key has one other filter key that takes it (`alt_key`:
+  `fluid/<name>` for a hot key, `fluid/<name>@<default>` for the default key); the partition lookups (`parts`) are
+  searched under both, `cell_room` checks the list with `listed`. A waiter on `fluid/<name>` (a row or filter of every
+  temperature, parked for its fluid) wakes when any temperature arrives (`moved_key`, `net_cell`).
+* **Resource keys** of autocrafting are storage keys: a product has its recipe's temperature (`key_of`), a level
+  maintainer counts and crafts one key, the terminal lists one entry per key.
+
+### Export: which key
+
+* Without a temperature: the default key first, then the others by temperature, coldest first (`N.fluid_keys`, kept
+  per network and load outside `storage`, made from the index on first use). Never a fallback that cools: with only
+  hot steam stored, hot steam goes out. Coldest first keeps the hottest for the exports that need it.
+* One key per side or box and visit, and only the key within 1 °C of what the side or box already holds (an insert
+  would mix: tested, 100 units at 250 °C plus 100 at 15 °C give 132.5 °C). An interface row with a temperature first
+  returns a side's fluid of another temperature, as it returns another fluid.
+* A machine box's filter carries the recipe's range (`get_filter` has `minimum_temperature` / `maximum_temperature`;
+  an exact temperature is min = max; an output box has the product's temperature): `insert_fluid` refuses a fluid
+  outside it (tested), so the export bus asks first and takes only a key in the range. Nothing fits: the status
+  `temperature` with the temperatures the network has and the range or temperature the target takes. Such a bus is
+  blocked on its target's side (probed, not parked): the target's box running empty changes what fits.
+* A storage bus segment: storage under its temperature's key; the network inserts a key only into an empty segment or
+  one of that key (`insert_fluid` at the key's temperature), takes a key only while the segment is that key.
+
+### Autocrafting
+
+* A fluid ingredient with `temperature` is its key. Without one (or with a range) it takes every temperature in its
+  range: the plan's key is the default one when the default is in the range, else the end of the range next to it; the
+  planner takes that key's stock, then the stock of the network's other keys in the range (`need` with `flex`,
+  `take_stock`: journaled like every other write of a plan), then crafts the key. The job's pool holds the keys it
+  took; a lease gives a box from the input's own key first, then the others in its range, at their mean temperature
+  (in the range: the box gets the fluid by `fluidbox[i] = { name, amount, temperature }`, which no filter checks), and
+  what comes back from a box is booked at its temperature. Without a range the box's temperature does not matter to the
+  recipe; `fluid-temperature` is left for a range no fluid can reach.
+* Processing patterns: an input row without a temperature takes every temperature, an output row is a storage key
+  (no temperature: the default one). "From recipe" writes the product's temperature into the output row.
+
+### What stays open
+
+* A fluid wagon is no storage (no change).
+
+### Follow-up (issue #161)
+
+* **Mixed temperatures before the import, measured.** The engine mixes amount weighted (tested), so a script model is
+  exact enough: a boiler line of 1 unit per tick at 165 °C joined by a turbine's return of 0 to 1 unit per tick at 15 °C,
+  its load changing every 300, 3600 or 18 000 ticks, imported every 60 or 600 ticks (the whole segment per visit).
+  Distinct keys after one and after ten hours:
+
+  | rounding | load every 300 ticks | every 3600 | every 18 000 |
+  |---|---|---|---|
+  | 1 degree (now) | 69-73 / 76 | 17-25 / 68-69 | 5-8 / 27-31 |
+  | 5 degrees | 16 / 16 | 8-14 / 16 | 4-7 / 12-14 |
+  | 10 degrees | 8 / 8 | 5-8 / 8 | 3-6 / 7-8 |
+
+  76 is the whole range of the mix (90 to 165 °C): a type each, five fluid cells of 18 types for steam alone. Decision:
+  **keep whole degrees and tell the player.** A coarser step rounds a source that is not on the step by up to half of
+  it: steam made at 247 °C would be stored at 245 °C (5-degree step) and no longer fit a recipe that needs at least
+  247 °C, so the step would break what issue #159 promised (a fluid comes out at the temperature it went in); the base
+  game's and Gregtorio's sources (15, 165, 180, 500, 1000 °C) are whole degrees. An import bus or an interface that
+  stores a fluid the network then holds at `MIX_HINT` (5) or more temperatures remembers it (`rec.fmix`, cleared when
+  it imports that fluid with fewer), and its window shows "The network holds [steam] at N temperatures ... import each
+  source through a block of its own" under its status. Its cost: one walk over the fluid's keys after an import that
+  stored something.
+* **The cell window** uses the mod's picker (`G.key_button`, callback `cell_part`) like the ME Cell Workbench: a
+  partition of one temperature can be set there now (the game's choose-elem button has no temperature).
+* **From contents** names the temperature it finds: a cell's partition was made of its storage keys already (a hot key
+  is a filter of that temperature, the default key a filter of every temperature); the storage bus's fluid side made
+  `fluid/<name>` of a hot tank and now makes its storage key (`fluid/steam@400`).
+* **Recipe paste** keeps a recipe's exact temperature (an ingredient's `temperature`, a product's): an import bus of a
+  recipe that makes steam at 300 °C filters `fluid/steam@300`, an interface row of an ingredient at 250 °C asks for
+  250 °C. An ingredient with a range keeps a row or filter of every temperature (the export takes what fits the
+  machine's box).
+
+### Tests
+
+`devcheck runtime`, "ME fluid temperature test" (`runtimemod/temperature.lua`): the keys (default, rounding, clamp),
+an ME Interface importing steam at 250 °C from a pipe and exporting it at 250 °C through a row of 250 °C and through
+a row of every temperature while only hot steam is stored, refilled at 250 °C after default steam came in, two
+temperatures of steam apart (keys, cell types, totals, the remote calls of before counting the default), an export bus
+of 250 °C into a tank, a storage bus on a tank at 400 °C (stored under its key, steam at 400 °C in, default steam kept
+out, taken out at 400 °C), an export bus without a temperature into a machine of 200-600 °C (it gets 400 °C) and one of
+water into a machine of 50-100 °C (nothing, status `temperature` with "15" and "50-100"), the circuit interface's
+signal (sum of the temperatures, a filter of one), a crafting pattern of steam 200-600 °C planned and started with the
+hot steam the network holds (the machine's box in the range) and cancelled (every key back as it was), and a recipe
+making steam at 300 °C craftable as `fluid/steam@300`. Issue #161 adds "From contents" of the storage bus on the hot
+tank (`fluid/steam@400`), a recipe pasted onto an import bus (`fluid/steam@300`) and the hint of an import bus (none
+below five temperatures of steam, then the fluid and the number). The fluid storage bus and unified tests were changed to the new
+rule (hot steam stored at 500 °C and 165 °C). The save at tick 500 and the schedule comparison after the load cover
+the new blocks.
 
 ## Encoded patterns (issue #80)
 
@@ -948,6 +1086,29 @@ job). Decisions:
 
 A processing pattern's inputs are pushed into a machine next to the provider (a furnace, an assembling machine with a
 recipe of its own, which is never changed) as a lease, or into a chest next to it (no lease: the start of a line).
+**Issue #158 of ME Network:** a processing pattern that names the recipe it was encoded from (`def.recipe`, kept by
+`P.normalize` when the recipe exists) takes an assembling machine like a crafting pattern: `target_for` checks it with
+the crafting pattern's rules (`switch_problem`: category, fixed recipe, researched, stack, the fluid boxes with the
+outputs optional) whatever recipe the machine has, and `find_pusher` uses a machine that has the recipe and is idle,
+else switches an idle one (`switch_recipe`, what is left goes into the network first) after the other targets, as
+`find_crafter` does; a machine busy on another recipe (a craft in progress) is tried at the next step. Before, the
+machine had to have the recipe set by hand, a machine without one was `no-recipe` (the reproduction of the issue:
+the Molecular Assembler and Gregtorio's macerator and chemical reactor with a processing pattern, while crafting
+patterns worked), and a fixed-recipe machine took a processing pattern of another recipe. A furnace still chooses by
+its input; a rocket silo is no target (fixed recipe, not among the provider's neighbour types). No new per-tick work:
+the check is part of the scan of a provider, the switch part of a job step's hand-over.
+**Issue #164 (pipes on a used box):** a machine that switches its fluid boxes off without a fluid recipe
+(`fluid_boxes_off_when_no_fluid_recipe`, every Gregtorio machine) has no boxes to ask before the switch, so the scan
+showed such a machine as usable and the job refused it only after switching (`fluid-pipes`). `fluid_boxes_fit` now asks
+the prototype: for each normal pipe connection of the box (its tile for the machine's direction, `positions`, mirrored
+with the machine, and its direction turned with it) the entity on the tile it points at is asked whether one of its own
+pipe connections points back at that tile, which is what the engine joins once the box is on (`prototype_piped`, once
+per box and scan; tested with a pipe on an input box, the machine turned east, and a pipe beside the machine without a
+connection). **Decision on allowing such a box: no.** If the network's fluid and a pipe's shared an input box, a job
+could not tell its own fluid from the pipe's: the take-back of what a machine did not use would move the pipe's fluid
+into the job's pool (and on into the network), and what a craft used could not be split between the two. Gregtorio
+has 400 machine prototypes with fluid boxes (of 644); a recipe needs no pipe at a machine the provider feeds, the
+provider hands every fluid ingredient over itself, so the refusal costs a player only the pipe they would not need.
 The question of the issue: how does a job know its outputs arrived?
 
 * **Count deltas against expected outputs** (compare the network's count with the count at hand-over) were rejected:
@@ -992,6 +1153,8 @@ patterns (they were never items). Old blueprints of 0.4.1 and older (tag `fork_a
 give a pending processing pattern of that recipe. Settings paste and clones copy the priority only.
 
 ### Migration (0.4.1 -> 0.5.0)
+
+**Removed in 0.5.1 (issue #146, see "Save cut-off" at the end): kept here as the record of what 0.5.0 still does.**
 
 `storage.fork_ae2.pattern_version` marks saves with encoded patterns. In a save without it,
 `on_configuration_changed` (after the ME graph is rebuilt) gives every provider encoded patterns for what it provided
@@ -1112,6 +1275,8 @@ becomes the unified block when a save is loaded.
   keys; the old tag `fork_me_fluid_storage_bus` (fluid names) is read on old ghosts.
 
 ### Saves: the old blocks become the unified ones
+
+**Removed in 0.5.1 (issue #146, see "Save cut-off" at the end): kept here as the record of what 0.5.0 still does.**
 
 `scripts/fork-me-unify.lua`, from `on_configuration_changed` after the graph rebuild (and so after the hand-over of a
 Gregtorio save and the R1/R2 migrations, which may still create old blocks from older saves), before the modules
@@ -1925,6 +2090,21 @@ needs such a CPU **now**: otherwise the start is refused with "needs N bytes; th
 or "every CPU that can take it is busy", and a level maintainer waits and tries again. (Before, a job could be queued
 behind busy legacy CPUs; jobs that are queued in a save keep waiting and start when a slot is free.)
 
+**Issue #145 (0.5.1): the legacy CPUs are removed.** Keeping them meant two kinds of CPU in every job path (slots,
+speed, their own power, their own window). Their prototypes are gone: the engine removes the placed ones when an older
+save loads. `on_configuration_changed` drops `storage.fork_ae2.cpus` and queues every running job (as it does for jobs
+on multiblock CPUs, whose groups are built again): the job keeps its pool and its machines' work, and takes the next
+free multiblock CPU of its network with enough bytes, or waits ("Paused: waiting for a free CPU"); **Cancel** gives
+everything back. `job.cpu` is only cleared. The items migrate to `me-1k-crafting-storage` (JSON migration
+`migrations/me-network-legacy-cpus.json`, the smallest crafting storage: a 1x1 block is all one item can become; the
+player builds the CPU). The names stay in `ME_NETWORK.removed` (now mapped to the 1k storage), so `data-final-fixes.lua`
+still deletes recipes another mod makes for them (Gregtorio's compat file has none). The technologies `me-co-processing`
+and `me-quantum-crafting` keep their names and the new blocks; their icons still come from the old CPU sprites.
+`migrate --from-ref v0.2.0` checks that the three jobs of the old save are queued after the load and end done on
+multiblock CPUs placed where the legacy ones stood; every version with the legacy CPUs checks the item migration.
+(v0.5.0 cannot run jobs on its legacy CPUs in the helper's tick-0 save: a lamp has no energy buffer then, the job
+start finds no powered CPU.)
+
 ### Graphics
 
 `tools/gen_ae2_sprites.py --crafting-cpu <GT5-Unofficial>` draws the eight blocks in AE2's layout (a casing frame
@@ -2087,6 +2267,35 @@ inventory), the workbench's cell into the cursor with its cards and back, a swap
 (half a stack, one item put down, merge, pick up, put down, swap); no card made or lost. The slot tests, the migration
 test and the generic window test of #30 stay. The drawing of the pane (`open_window`, `update_pane`, the hand, the
 events) was run against a mock of the GUI elements outside the game; how it looks only the game shows (`[Task-Ingame]`).
+
+### The windows beside the game's inventory (me-network issues #150 and #168)
+
+Issue #150 built it for the ME Terminal behind a map setting; after the maintainer's test in the game (#168: "much
+better so") every ME window opens so, and the map setting "me-network-real-inventory" is **on by default** (off: the
+pane of issue #28, kept as it was). `G.open_window` decides it for every window with a pane; the buffer does what the
+window's `shift` did for the pane (a cell into the drive, a pattern into the provider, a card into its slot, else into
+the network), and the picker (issue #94) keeps the close keys while it is open (its hook runs for the buffer's close
+too, `G.focus` makes the window or its buffer the opened GUI again). The ME window is a frame
+in `player.gui.relative` anchored right of a script inventory of 20 slots (`G.open_window(..., relative)`), which is the
+player's opened GUI: the game draws its own container window with the player's real inventory left of it, so the click
+rules are the game's. This is the layout pull request #30 had (the maintainer turned it down then for its three parts
+side by side and the stub of an empty script inventory); here the middle part is meant: it is the **hand-over buffer**.
+
+* What lands in the buffer goes into the network through the window's `shift` (the terminal stores it). A script
+  inventory raises no event when it changes, but every move into it changes the player's main inventory or cursor:
+  `on_player_main_inventory_changed` and `on_player_cursor_stack_changed` empty the buffer (`G.on_inventory_changed`),
+  the window's refresh once a second does too (`refresh_all`, the existing step of open windows: no new periodic
+  work), and so does the close. What the network refuses (a damaged item, an item with data, no room) stays in the
+  buffer, visible, and goes back to the player when the window closes (`give_back`: the inventory, else the ground):
+  nothing is lost. Cost: `is_empty()` of 20 slots per inventory or cursor event while the window is open.
+* Closing: the buffer closing (E, Escape, another GUI) closes the window (`on_gui_closed` with the script inventory;
+  a close in the tick of the opening, the open key's own action, opens it again). The close button and a mod update
+  (`close_all`) do the same. State: `storage.fork_me_gui_buffer[player_index] = { inv, opened_tick }` (the inventory
+  is saved with the map; the window's elements are rebuilt like every ME window's).
+* Tested headless: the buffer's functions (`runtimemod/buffer150.lua`: plates stored, a used science pack kept and given
+  back) and the window logic in a mock of the GUI (open relative, the buffer is `player.opened`, the same-tick close,
+  emptying on an inventory event, Escape closing and returning). The look, the window order, drag and the keys can only
+  be judged in the game: `[Task-Ingame]` issue.
 
 ## Open points
 
@@ -2351,3 +2560,38 @@ and 4800 (the chest's limit) with 4, an import bus out of a full chest 64, 512, 
 buffer, a destroyed one dropped its card; a paste, a clone and a blueprint tag make a bus take its 2, 2 and 3 cards from the
 network at its next visit (a second paste leaves the bus with the source's number); everything stays over
 `on_configuration_changed`. The test scene lies on land: a spill at a block in a lake lands where there is some.
+
+## Save cut-off (issue #146, 0.5.1)
+
+**Decision** (confirmed by the maintainer in the issue): saves are converted only from 0.5.0 on. Everything older (ME
+Network 0.1.0 to 0.3.x, Gregtorio Continued 0.4.x and older with the network inside) is converted by 0.5.0, which a
+player loads once before updating. The conversion code of the older versions and the prototypes it needed go.
+
+**Gone:** the old controller (roboport `me-controller`), the logistic-chest drives (`me-drive-1k` ... `me-drive-256k`
+entities) and the requester interface (`me-interface` as a logistic container) of before issue #68; the old fluid drive
+entities (`me-fluid-drive-*`) of before R2; the old fluid blocks of issue #3 (ME Fluid Interface, ME Fluid Import /
+Export / Storage Bus: entities and items); `scripts/fork-me-migrate.lua` (with the remote `gregtorio-me-migrate`),
+`scripts/fork-me-unify.lua`, the ghost swap and the alias rewrite of the drives in `scripts/fork-me-network.lua`, the
+pattern migration of issue #80 (`migrate_providers`, `migrate_job`) and the old fluid interface records of
+`storage.fork_me_fluids`; `on_configuration_changed` drops the reports `storage.fork_me_migrate`,
+`fork_me_migrate_fluids` and `fork_me_unify`.
+
+**Kept:** the old drive items (`me-drive-<tier>`, `me-fluid-drive-<tier>`, hidden): 0.5.0 never converted them in
+inventories, so a 0.5.0 save may still hold them; placing one gives an ME Drive with its cells (and its fluid). The item
+names of the old fluid blocks stay in the mod-data `fork-me-fluids` (`unified.items`) for the alias of stored keys (a
+cell's tags or a pattern that still names one counts it as the unified item) and in `ME_NETWORK.removed` (a recipe of
+another mod that makes one would stop the game from loading now: `data-final-fixes.lua` drops it). A stray item of an
+old fluid block becomes the unified item by `migrations/me-network-old-fluid-blocks.json`. The storage keys (`fork_me_*`,
+`fork_ae2`), the hand-over (`scripts/fork-me-handover.lua`, its table list and fingerprint equal to Gregtorio's) and
+the old blueprint tag of a provider (`fork_ae2_recipe`, from the blueprint library) stay.
+
+**The refusal:** the engine removes the entities of missing prototypes before any script runs, so a check after the
+fact could only report a loss. `on_configuration_changed` reads `mod_changes["me-network"].old_version`; below 0.5.0 it
+calls `error()` with a message that names the version and says to load the save with 0.5.0 first. The load stops, the
+save file is untouched. A Gregtorio Continued 0.4.x save has no me-network version: its state waits in Gregtorio for
+the hand-over (`gregtorio-me-handover.pending`), so `on_init` (and `on_configuration_changed`) refuse it the same way.
+
+**Test:** `devcheck.py migrate --from-ref v0.5.0` (the default) converts as before; a ref before the cut-off makes a
+save with nothing in it and must be refused with the message (the helper `migratemod` lost the 0.1.0 scenario, the jobs
+on legacy CPUs of 0.2.0 and the 3x3 assemblers of issue #131). Gregtorio's own `devcheck.py migrate` from old Gregtorio
+versions needs the intermediate load with me-network 0.5.0 (a Gregtorio follow-up).

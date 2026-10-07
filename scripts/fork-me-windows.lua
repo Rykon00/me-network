@@ -14,7 +14,7 @@
 ---   * ME Pattern Provider (issue #80): the 9 pattern slots (click with an encoded pattern in hand to put it in,
 ---     click a pattern to take it out), the status of each pattern (usable by how many machines, or why not), the
 ---     machines and chests next to it, the priority.
----   * ME Crafting CPU: tier, power, the jobs it runs (progress, cancel) and the jobs waiting for a CPU.
+---   * ME Crafting CPU (issue #6: a multiblock of crafting blocks): its blocks, bytes, co-processors, its job.
 ---   * ME Level Maintainer: item or fluid, amount, amount from the circuit, the on/off circuit condition, status.
 ---   * ME Circuit Interface: 20 filters, output on/off, status.
 ---   * ME Interface: 9 config rows (an item or a fluid and its amount), the four fluid sides (import, off or a fluid
@@ -139,19 +139,6 @@ local function key_of_elem(elem_type, value)
 end
 M.key_of_elem = key_of_elem
 
---- a choose-elem button for an item or fluid key
-local function chooser(parent, elem_type, key, tags)
-	local def = { type = "choose-elem-button", elem_type = elem_type, tags = tags, style = "slot_button" }
-	if key then
-		if elem_type == "fluid" then def.fluid = N.is_fluid_key(key) and key:sub(7) or nil
-		elseif elem_type == "item-with-quality" then
-			local name, q = N.parse_key(key)
-			def["item-with-quality"] = { name = name, quality = q }
-		else def.item = key end
-	end
-	return parent.add(def)
-end
-
 --- Issue #70: the picker (scripts/fork-me-picker.lua) for a key slot button: `act` names the callback of the choice,
 --- `data` (plain data: the block's unit number, the slot's index) comes back with it, `key` is what the slot holds (the
 --- picker opens on it), `with_quality` false for a place that takes no quality (buses, the maintainer's target, the
@@ -182,6 +169,12 @@ local function cell_line(c)
 	return { "fork-me-net.drive-slot-short", G.fmt(c.bytes), G.fmt(c.bytes_total), c.types, c.types_total }
 end
 
+--- issue #147: the tooltip of a cell slot, what the cell's own tooltip says and what it holds, then the click hints
+function M.drive_cell_tooltip(drive, slot)
+	local tip = N.drive_cell_tooltip(drive, slot)
+	return tip and { "", tip, "\n", { "fork-me-gui.drive-slot-tooltip" } } or { "fork-me-net.drive-slot-empty" }
+end
+
 local function build_drive_cells(box, drive)
 	local data = M.drive_data(drive)
 	local t = box.add{ type = "table", column_count = 2 }
@@ -191,7 +184,7 @@ local function build_drive_cells(box, drive)
 		local row = G.row(t)
 		if c then
 			row.add{ type = "sprite-button", sprite = "item/" .. c.name, style = #c.partition > 0 and "yellow_slot_button" or "slot_button",
-				tooltip = { "", terminal.cell_tooltip(c), "\n", { "fork-me-gui.drive-slot-tooltip" } },
+				tooltip = M.drive_cell_tooltip(drive, slot),
 				tags = G.act("drive_slot", { slot = slot }) }
 			local col = row.add{ type = "flow", direction = "vertical" }
 			local bar = col.add{ type = "progressbar", value = c.bytes_total > 0 and c.bytes / c.bytes_total or 1 }
@@ -210,8 +203,7 @@ local function drive_sig(drive)
 	local data = M.drive_data(drive)
 	local sig = { tostring(data.online) }
 	for slot = 1, data.slots do
-		local c = data.cells[slot]
-		sig[#sig + 1] = c and (c.name .. ":" .. c.bytes .. ":" .. c.types .. ":" .. #c.partition) or "-"
+		sig[#sig + 1] = data.cells[slot] and N.drive_cell_sig(drive, slot) or "-"   -- issue #147: what the tooltip shows
 	end
 	return table.concat(sig, ",")
 end
@@ -294,13 +286,14 @@ function M.set_partition_slot(drive, slot, index, key)
 	return N.set_partition(drive, slot, out)
 end
 
+--- issue #161: key buttons with the mod's picker (an item with its quality, or a fluid with an optional temperature), as
+--- in the ME Cell Workbench; before, the game's own chooser, which has no temperature
 local function build_partition(box, drive, slot)
 	local c = M.cell_data(drive, slot)
 	local t = box.add{ type = "table", column_count = 10, style = "filter_slot_table" }
-	local elem_type = c.fluid and "fluid" or "item-with-quality"
 	local count = math.min(c.types_total, #c.partition + 1)
 	for i = 1, count do
-		chooser(t, elem_type, c.partition[i], G.act("cell_part", { index = i }))
+		G.key_button(t, c.partition[i], G.act("cell_part", { index = i }), { "fork-me-gui.key-slot-tooltip" })
 	end
 end
 
@@ -378,10 +371,29 @@ end
 G.window("cell", { open = open_cell, refresh = M.refresh_cell, shift = cell_into_drive, message = G.net_message })
 
 G.on("cell_part", function(event, player, el)
-	if event.name ~= defines.events.on_gui_elem_changed then return end
+	if event.name ~= defines.events.on_gui_click then return end
 	local drive, frame = window_entity(player)
 	if not drive then return end
-	M.set_partition_slot(drive, frame.tags.slot, el.tags.index, key_of_elem(el.elem_type, el.elem_value))
+	local slot, index = frame.tags.slot, el.tags.index
+	local c = M.cell_data(drive, slot)
+	if not c then return end
+	local key = c.partition[index]
+	if right_click(event) then
+		if key then M.set_partition_slot(drive, slot, index, nil) G.refresh_one(player) end
+		return
+	end
+	picker.open(player, { callback = "cell_part", data = { unit = drive.unit_number, slot = slot, index = index },
+		kinds = { item = not c.fluid, fluid = c.fluid == true }, preset = picker.preset_of(key),
+		title = { "fork-me-picker.title-" .. (c.fluid and "fluid" or "item") } })
+end)
+
+--- the picker's choice goes into the partition button it was opened for (the window and the cell are checked again)
+picker.on_confirm("cell_part", function(player, data, choice)
+	local drive, frame = window_entity(player)
+	if not (drive and drive.unit_number == data.unit and frame.tags.slot == data.slot) then return end
+	local c = M.cell_data(drive, data.slot)
+	local key = c and choice.kind == (c.fluid and "fluid" or "item") and picker.key_of(choice, true)
+	if key then M.set_partition_slot(drive, data.slot, data.index, key) else refused_choice(player) end
 	G.refresh_one(player)
 end)
 
@@ -460,10 +472,11 @@ function M.workbench_kinds(d, index)
 	}
 end
 
---- the picker's choice goes into slot `index`: `kind` "item" (name, quality: normal when nil) or "fluid" (name). Refused
+--- the picker's choice goes into slot `index`: `kind` "item" (name, quality: normal when nil) or "fluid" (name, and
+--- `temperature`: issue #159, nil for every temperature). Refused
 --- (false, nothing changes) for another kind, an unknown name or quality, a quality without the quality mod, a kind the
 --- slot may not take (workbench_kinds), a slot beyond the free one. Returns true when the list was set.
-function M.workbench_set(entity, index, kind, name, quality)
+function M.workbench_set(entity, index, kind, name, quality, temperature)
 	local d = M.workbench_data(entity)
 	if not d or type(index) ~= "number" or index < 1 or type(name) ~= "string" then return false end
 	local list = d.cell and d.cell.partition or d.config
@@ -473,7 +486,7 @@ function M.workbench_set(entity, index, kind, name, quality)
 	local key
 	if kind == "fluid" then
 		if not prototypes.fluid[name] then return false end
-		key = "fluid/" .. name
+		key = N.fluid_filter_key(name, tonumber(temperature))
 	else
 		if not prototypes.item[name] then return false end
 		quality = quality or "normal"
@@ -568,7 +581,7 @@ end)
 picker.on_confirm("wb_slot", function(player, data, choice)
 	local entity, frame = window_entity(player)
 	if not (entity and entity.unit_number == data.unit) then return end
-	if not M.workbench_set(entity, data.index, choice.kind, choice.name, choice.quality) then
+	if not M.workbench_set(entity, data.index, choice.kind, choice.name, choice.quality, choice.temperature) then
 		player.create_local_flying_text{ text = { "fork-me-gui.workbench-set-refused" }, create_at_cursor = true }
 	end
 	local box = frame and G.find(frame, "fork_me_wb_part")
@@ -645,7 +658,8 @@ local function pattern_sprite(d)
 	local key = type(first) == "table" and first.key
 	if type(key) == "string" then
 		if key:sub(1, 6) == "fluid/" then
-			if prototypes.fluid[key:sub(7)] then return "fluid/" .. key:sub(7) end
+			local name = N.fluid_name(key)
+			if prototypes.fluid[name] then return "fluid/" .. name end
 		elseif prototypes.item[key] then
 			return "item/" .. key
 		end
@@ -775,48 +789,6 @@ G.on("prov_priority", function(event, player, el)
 	local entity = window_entity(player)
 	if entity then autocraft.set_priority(entity, tonumber(el.text) or 0) end
 end)
-
---------------------------------------------------------------------------------
---- ME Crafting CPU
---------------------------------------------------------------------------------
-
-function M.cpu_data(entity) return autocraft.cpu_info(entity) end
-
-local function open_cpu(player, entity)
-	local _, content = G.open_window(player, "cpu", caption_of(entity), { unit = entity.unit_number })
-	G.label(content, "", WIDTH, nil, "fork_me_cpu_info")
-	G.heading(content, { "fork-me-gui.cpu-jobs" })
-	content.add{ type = "table", name = "fork_me_cpu_jobs", column_count = 5 }
-	G.heading(content, { "fork-me-gui.cpu-waiting" })
-	content.add{ type = "table", name = "fork_me_cpu_waiting", column_count = 5 }
-	M.refresh_cpu(player, G.window_of(player))
-end
-
-function M.refresh_cpu(player, frame)
-	local entity = G.entity_of(player, frame)
-	if not entity then return false end
-	local d = M.cpu_data(entity)
-	if not d then return false end
-	G.find(frame, "fork_me_cpu_info").caption = { "fork-me-gui.cpu-info", d.slots, d.speed, #d.jobs,
-		{ d.powered and "fork-me-gui.powered" or "fork-me-gui.unpowered" },
-		{ d.network and "fork-me-net.drive-online" or "fork-me-net.status-no-network" } }
-	local function sig(list)
-		local out = {}
-		for _, j in ipairs(list) do out[#out + 1] = j.id .. ":" .. tostring(j.status) .. ":" .. tostring(j.wait) .. ":" .. j.done end
-		return table.concat(out, ",")
-	end
-	local jobs = {}
-	for _, j in ipairs(d.jobs) do
-		jobs[#jobs + 1] = { id = j.id, item = j.item, amount = j.amount, status = j.closing and (j.closing == "done" and "delivering" or "cancelling") or j.status,
-			wait = j.wait, done = j.done, total = j.total, active = not j.closing and (j.status == "queued" or j.status == "running") }
-	end
-	local t, w = G.find(frame, "fork_me_cpu_jobs"), G.find(frame, "fork_me_cpu_waiting")
-	if t.tags.sig ~= sig(jobs) then t.tags = { sig = sig(jobs) } terminal.job_rows(t, jobs) end
-	if w.tags.sig ~= sig(d.waiting) then w.tags = { sig = sig(d.waiting) } terminal.job_rows(w, d.waiting) end
-	return true
-end
-
-G.window("cpu", storing({ open = open_cpu, refresh = M.refresh_cpu, entities = { "cpu" } }))
 
 --------------------------------------------------------------------------------
 --- a crafting block (issue #6): the window of its Crafting CPU (any block of it)
@@ -1100,6 +1072,13 @@ function M.set_interface_choice(entity, i, choice, amount)
 	return io.set_interface_key(entity, i, key, amount)
 end
 
+--- issue #161: a status line with the hint that the block imports a fluid the network holds at many temperatures
+--- (`fmix` = { fluid, number }, nil: the status alone)
+function M.mix_status(status, fmix)
+	if not fmix then return status end
+	return { "", status, "\n", { "fork-me-gui.fluid-mixed", "[fluid=" .. fmix[1] .. "]", tostring(fmix[2]) } }
+end
+
 local function open_interface(player, entity)
 	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-gui.interface-help" }, WIDTH)
@@ -1134,8 +1113,7 @@ local function side_choices(d, side)
 		local c = d.config[i]
 		if c and c.type == "fluid" then
 			values[#values + 1] = i
-			local proto = prototypes.fluid[c.name]
-			items[#items + 1] = { "fork-me-gui.interface-side-row", i, "[fluid=" .. c.name .. "]", proto and proto.localised_name or c.name }
+			items[#items + 1] = { "fork-me-gui.interface-side-row", i, "[fluid=" .. c.name .. "]", (G.fluid_label(io.row_key(c))) }
 			if d.sides[side] == i then selected = #values end
 		end
 	end
@@ -1175,7 +1153,8 @@ function M.refresh_interface(player, frame)
 		local label = G.find(frame, "fork_me_if_side_" .. s)
 		if label then
 			local proto = f.name and prototypes.fluid[f.name]
-			local holds = proto and { "fork-me-gui.tank-holds", G.fmt(f.amount), G.fmt(d.volume), proto.localised_name }
+			--- (issue #159: with its temperature when it is not the default one)
+			local holds = proto and { "fork-me-gui.tank-holds", G.fmt(f.amount), G.fmt(d.volume), (G.fluid_label(N.fluid_key(f.name, f.temperature))) }
 				or { "fork-me-gui.tank-empty", G.fmt(d.volume) }
 			label.caption = { "", holds, f.connected and "" or { "fork-me-gui.interface-side-unconnected" } }
 			label.tooltip = f.status and { "fork-me-gui.interface-side-status-" .. f.status } or nil
@@ -1186,7 +1165,7 @@ function M.refresh_interface(player, frame)
 	rebuild(frame, "fork_me_if_items", table.concat(sig, ","), function(grid)
 		for _, c in ipairs(d.contents) do G.slot(grid, c.key, c.count) end
 	end)
-	G.find(frame, "fork_me_if_status").caption = { "fork-me-net.bus-" .. (d.status or "ok") }
+	G.find(frame, "fork_me_if_status").caption = M.mix_status({ "fork-me-net.bus-" .. (d.status or "ok") }, d.fmix)
 	return true
 end
 
@@ -1280,7 +1259,11 @@ function M.refresh_bus(player, frame)
 	local what = d.items and d.fluids and "both" or d.fluids and "fluids" or "items"
 	G.find(frame, "fork_me_bus_target").caption = target
 		and { "fork-me-gui.bus-target-" .. what, target.localised_name } or ""
-	G.find(frame, "fork_me_bus_status").caption = { "fork-me-net.bus-" .. (d.status or "ok") }
+	local status = { "fork-me-net.bus-" .. (d.status or "ok") }
+	if d.tstat then                                       -- issue #159: the temperatures the network has and the target takes
+		status = { "fork-me-net.bus-temperature-detail", "[fluid=" .. d.tstat[1] .. "]", d.tstat[2], d.tstat[3] }
+	end
+	G.find(frame, "fork_me_bus_status").caption = M.mix_status(status, d.fmix)
 	return true
 end
 
@@ -1473,9 +1456,17 @@ end)
 
 remote.add_interface("gregtorio-me-gui", {
 	fmt = function(n) return G.fmt(n) end,
+	--- issue #150 (tests): the hand-over buffer of a relative window: its stacks into the block of window `name` (what it
+	--- refuses stays), and what is left back to `to` (a player or an inventory)
+	buffer_absorb = function(inv, name, entity) return G.buffer_absorb(inv, G.def_named(name), entity) end,
+	buffer_return = function(inv, to, entity) G.buffer_return(inv, to, entity) end,
+	buffer_slots = function() return G.BUFFER_SLOTS end,
 	--- true when the entity opens an ME window (click or open key)
 	has_window = function(entity) return G.has_window(entity) end,
 	drive_data = function(drive) return M.drive_data(drive) end,
+	--- issue #147 (tests): the tooltip of a cell slot of the drive window and the window's rebuild signature
+	drive_cell_tooltip = function(drive, slot) return M.drive_cell_tooltip(drive, slot) end,
+	drive_sig = function(drive) return drive_sig(drive) end,
 	cell_data = function(drive, slot) return M.cell_data(drive, slot) end,
 	--- issue #75: what a slot of a window gives a stack (the tooltip next to the item's own, the signature piece)
 	stack_tooltip = function(stack, base) return G.stack_tooltip(stack, base) end,
@@ -1486,7 +1477,6 @@ remote.add_interface("gregtorio-me-gui", {
 	set_partition_slot = function(drive, slot, index, key) return M.set_partition_slot(drive, slot, index, key) end,
 	controller_data = function(entity) return M.controller_data(entity) end,
 	provider_data = function(entity) return M.provider_data(entity) end,
-	cpu_data = function(entity) return M.cpu_data(entity) end,
 	crafting_cpu_data = function(entity) return M.crafting_cpu_data(entity) end,
 	maintainer_data = function(entity) return M.maintainer_data(entity) end,
 	set_maintainer_target = function(entity, signal) return M.set_maintainer_target(entity, signal) end,

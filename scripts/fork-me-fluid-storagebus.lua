@@ -20,10 +20,12 @@
 ---     2.0.77); a box without a segment is changed through LuaFluidBox. Insert asks how much fits: the segment's
 ---     capacity (LuaFluidBox.get_capacity is the segment's) minus its contents, nothing if it holds another fluid
 ---     or its filter is another fluid.
----   * Temperature (the network keeps one temperature per fluid, R2): the segment's fluid is read at whatever
----     temperature it has, like the import bus (what leaves the network has the fluid's default temperature).
----     Inserts are refused while the segment's temperature differs from the fluid's default by more than
----     TEMP_TOLERANCE (the status "temperature"), so the network never mixes its fluid into hot steam.
+---   * Temperature (issue #159: the network keeps a fluid's temperature, a key per temperature): the segment's fluid
+---     is storage under the key of its temperature ("fluid/steam@250" for hot steam), so the network takes it out at
+---     that temperature. The network puts a key in only while the segment is empty or holds the fluid at that key's
+---     temperature (whole degrees): it never mixes temperatures in a tank. Before issue #159 the segment was read at
+---     any temperature, counted as the default one, and inserts were refused away from the default (status
+---     "temperature", gone).
 --- State: the records are the storage bus's (storage.fork_me_net.ext, external cells, side = "fluid"); this module
 --- keeps the fluid side's visit list and which bus owns which segment (storage.fork_me_fsbus).
 --------------------------------------------------------------------------------
@@ -34,11 +36,9 @@ local T = require("scripts.fork-me-targets")
 
 local M = {}
 
-local OLD_KIND = "fluid-storage-bus"      -- the old ME Fluid Storage Bus (records until scripts/fork-me-unify.lua runs)
+local OLD_KIND = "fluid-storage-bus"      -- the handler name (of the old ME Fluid Storage Bus, kept: saves store it)
 local MIN_INTERVAL = 30                   -- ticks until a bus whose segment changed reads it again
-local PREFIX = "fluid/"
 local EPS = 1e-6
-local TEMP_TOLERANCE = 1            -- degrees: a segment this close to the default temperature takes the network's fluid
 
 --- the storage bus module's visit (set by it): a visit whose target is gone or turned away resolves the target again
 M.resolve_visit = nil
@@ -86,17 +86,17 @@ end
 --- a record of a bus on fluid (the storage bus's fluid side, or an old fluid storage bus)
 local function on_fluid(rec) return rec ~= nil and (rec.side == "fluid" or rec.ext == OLD_KIND) end
 
+--- the fluid name of a storage key (nil for no fluid key)
 local function fluid_of(key)
-	if not N.is_fluid_key(key) then return nil end
-	local name = key:sub(#PREFIX + 1)
-	return prototypes.fluid[name] and name or nil
+	local name = N.fluid_name(key)
+	return name and prototypes.fluid[name] and name or nil
 end
 
---- may the network put `key` in? (the filters: a whitelist, or a blacklist with an Inverter Card; issue #17)
+--- may the network put `key` in? (the filters: a whitelist, or a blacklist with an Inverter Card; issue #17; a fluid
+--- filter without a temperature takes every temperature, issue #159)
 local function allowed(rec, key)
-	local p = rec.partition
-	if p then return p[key] == true end                  -- (fluid keys have no quality: a fuzzy list is exact here)
-	return rec.deny == nil or N.accepts(rec, key)
+	if rec.partition or rec.deny then return N.accepts(rec, key) end
+	return true
 end
 --- may the network see and take `key`? (the same, unless the bus filters only what goes in)
 local function shown(rec, key) return rec.inonly == true or N.accepts(rec, key) end
@@ -147,31 +147,41 @@ local function contents_of(rec, seg)
 	return {}, temp, false
 end
 
---- issue #17: the fluids of the storage a bus owns now ({ name -> amount }; empty without one): "From contents"
+--- issue #17: the fluids of the storage a bus owns now ({ storage key -> amount }; empty without one): "From contents".
+--- Issue #161: by the key of the temperature it holds ("fluid/steam@400"; the default temperature: "fluid/steam")
 function M.contents(rec)
 	if not (rec.target and rec.target.valid and rec.box and owns(rec)) then return {} end
 	local out = {}
-	for name, amount in pairs((contents_of(rec))) do
-		if amount > EPS then out[name] = amount end
+	local contents, temp = contents_of(rec)
+	for name, amount in pairs(contents) do
+		if amount > EPS then out[N.fluid_key(name, temp)] = amount end
 	end
 	return out
 end
 
-local function default_temperature(name)
-	local p = prototypes.fluid[name]
-	return p and p.default_temperature or 15
-end
-
---- may the network put `name` in? (another fluid, a filter of another fluid, another temperature: no)
-local function accepts(rec, name)
+--- may the network put `key` (fluid `name`) in? (another fluid, a filter of another fluid or another temperature range,
+--- the fluid at another temperature: no; issue #159)
+local function accepts(rec, key, name)
 	local contents, temp = contents_of(rec)
 	for other, amount in pairs(contents) do
 		if other ~= name and amount > EPS then return false end
 	end
 	local f = rec.target.fluidbox.get_filter(rec.box)
 	if f and f.name and f.name ~= name then return false end
-	if temp and (contents[name] or 0) > EPS and math.abs(temp - default_temperature(name)) > TEMP_TOLERANCE then return false end
+	local t = N.fluid_temperature(key)
+	if f and ((f.minimum_temperature and t < f.minimum_temperature - EPS) or (f.maximum_temperature and t > f.maximum_temperature + EPS)) then
+		return false
+	end
+	if temp and (contents[name] or 0) > EPS and N.fluid_key(name, temp) ~= key then return false end
 	return true, contents[name] or 0
+end
+
+--- the amount the storage holds of `key` now (its fluid at that key's temperature)
+local function amount_of(rec, key, name)
+	local contents, temp = contents_of(rec)
+	local n = contents[name] or 0
+	if n <= EPS or N.fluid_key(name, temp) ~= key then return 0 end
+	return n
 end
 
 --------------------------------------------------------------------------------
@@ -184,17 +194,17 @@ M.handlers = {
 		if rec.mode == "read" or not allowed(rec, key) then return 0 end
 		local name = fluid_of(key)
 		if not (name and owns(rec)) then return 0 end
-		local ok, have = accepts(rec, name)
+		local ok, have = accepts(rec, key, name)
 		if not ok then return 0 end
 		return math.max(0, rec.target.fluidbox.get_capacity(rec.box) - have)
 	end,
-	--- put up to `amount` in (at the fluid's default temperature); returns the amount inserted
+	--- put up to `amount` in (at the key's temperature); returns the amount inserted
 	insert = function(rec, key, amount)
 		if rec.mode == "read" or not allowed(rec, key) then return 0 end
 		local name = fluid_of(key)
-		if not (name and owns(rec) and accepts(rec, name)) then return 0 end
+		if not (name and owns(rec) and accepts(rec, key, name)) then return 0 end
 		local t = rec.target
-		local temp = default_temperature(name)
+		local temp = N.fluid_temperature(key)
 		if t.fluidbox.get_fluid_segment_id(rec.box) then
 			return t.insert_fluid{ name = name, amount = amount, temperature = temp }
 		end
@@ -212,14 +222,14 @@ M.handlers = {
 		if rec.mode == "write" or not shown(rec, key) then return 0 end
 		local name = fluid_of(key)
 		if not (name and owns(rec)) then return 0 end
-		local contents = contents_of(rec)
-		return contents[name] or 0
+		return amount_of(rec, key, name)
 	end,
 	--- take up to `amount` out; returns the amount removed
 	extract = function(rec, key, amount)
 		if rec.mode == "write" then return 0 end
 		local name = fluid_of(key)
 		if not (name and owns(rec)) then return 0 end
+		--- (the engine asks `count` first, which is 0 while the segment is at another temperature: no second read here)
 		local t = rec.target
 		if t.fluidbox.get_fluid_segment_id(rec.box) then
 			return t.remove_fluid{ name = name, amount = amount }
@@ -238,7 +248,7 @@ M.handlers = {
 	voids = function(rec, key)
 		if rec.mode == "read" or not allowed(rec, key) then return false end
 		local name = fluid_of(key)
-		return name ~= nil and owns(rec) and accepts(rec, name) == true
+		return name ~= nil and owns(rec) and accepts(rec, key, name) == true
 	end,
 }
 --- the handler of the storage bus's fluid side (rec.handler) and of old fluid storage buses until they are replaced
@@ -384,15 +394,14 @@ function M.visit(rec, cascade)
 		for name, amount in pairs(held) do
 			if amount > EPS then
 				rec.fluid, rec.temp = name, temp
-				local key = PREFIX .. name
+				local key = N.fluid_key(name, temp)                -- issue #159: stored at its temperature
 				if rec.mode ~= "write" and shown(rec, key) then contents[key] = amount end
-				if temp and math.abs(temp - default_temperature(name)) > TEMP_TOLERANCE then rec.status = "temperature" end
 			end
 		end
 	end
 	local changed = N.ext_sync(rec.unit, contents) or seg ~= rec.seg
 	if contents == scratch then scratch_free = true end
-	if rec.status == "ok" or rec.status == "temperature" then
+	if rec.status == "ok" then
 		local net = N.network_of_unit(rec.unit)                      -- (e is valid: checked above)
 		local ok, why = N.usable(net)
 		if not ok then rec.status = why or "no-network" end

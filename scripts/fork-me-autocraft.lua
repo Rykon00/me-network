@@ -21,7 +21,7 @@
 ---   is a solid rectangle with at least one crafting storage is a Crafting CPU. It runs one job, which must fit its
 ---   bytes (plan.bytes, AE2's rule); its co-processors make it hand more work to the machines per step (speed). The
 ---   groups are kept up to date on build and removal (add_block / remove_block), never scanned. The single-entity CPUs
----   of issue #38 (mod-data "fork-me-autocraft", cpus) are legacy blocks: several jobs, their speed, no byte limit.
+---   of issue #38 are gone since issue #145 (a job of an older save that ran on one is queued with what it holds).
 ---   A job whose CPU changes or goes pauses ("queued") with everything it holds and takes the next CPU that fits.
 --- Planning: recursive over the patterns, storage first, loops recognised, missing raw
 ---   materials reported before anything is started (M.plan). Items and fluids are both
@@ -34,7 +34,7 @@
 ---   the same way.
 --- Work (issue #5: spread over the ticks, M.on_tick from control.lua): each tick the setting "crafting jobs per
 ---   tick" jobs are stepped, round robin, each at most once per STEP_TICKS ticks; a step makes STEP_OPS machine
----   interactions times the speed of the job's CPU tier per STEP_TICKS since the job's last step (up to
+---   interactions times the speed of the job's CPU (its co-processors) per STEP_TICKS since the job's last step (up to
 ---   MAX_CATCH_UP steps' worth, so a job that waits for its turn catches up). One provider is rescanned every
 ---   PROVIDER_SCAN_TICKS ticks, CPUs are assigned every STEP_TICKS ticks, and the tick hooks run every tick (level
 ---   maintainers and circuit interfaces, scripts/fork-me-circuit.lua, on their own queues).
@@ -71,28 +71,15 @@ local FLUID_MARGIN = 0.01       -- extra fluid reserved per job and fluid (fixed
 local FLUID_EPS = 1e-6
 local FIXED = 16777216          -- fluid amounts are fixed point with 24 fractional bits
 local SLOTS = 9                 -- pattern slots of a provider (AE2)
-local PATTERN_VERSION = 1       -- storage.fork_ae2.pattern_version: providers hold encoded patterns (issue #80)
+local PATTERN_VERSION = 1       -- storage.fork_ae2.pattern_version: providers hold encoded patterns (issue #80; every
+                                -- save of 0.5.0 and later has it, issue #146)
 M.SLOTS = SLOTS
 
-local PROVIDER, CPU = "me-pattern-provider", "me-crafting-cpu"
+local PROVIDER = "me-pattern-provider"
 local NEIGHBORS = { { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
 local TARGET_TYPES = { "assembling-machine", "furnace", "container", "logistic-container" }
 local BP_TAG = "fork_me_provider"            -- blueprint tag: { priority, patterns = { ["slot"] = pattern } }
 local OLD_TAG = "fork_ae2_recipe"            -- blueprint tag of 0.4.1 and older: the furnace recipe choice
-
---- CPU tiers: entity name -> { jobs, speed } (prototypes/autocrafting.lua)
-local cpu_specs_cache                -- prototype data, read once per load (reading mod-data copies the table)
-local function cpu_specs()
-	if not cpu_specs_cache then
-		local md = prototypes.mod_data["fork-me-autocraft"]
-		cpu_specs_cache = md and md.data.cpus or { [CPU] = { jobs = 1, speed = 1 } }
-	end
-	return cpu_specs_cache
-end
-
-local function cpu_spec(name)
-	return cpu_specs()[name]
-end
 
 --- issue #6: the crafting blocks (name -> { bytes, coprocessors, monitor, power }) and the byte rule's numbers
 local blocks_cache, fluid_per_byte, max_coprocessors
@@ -113,21 +100,54 @@ end
 
 local function cpu_names()
 	local names = {}
-	for name in pairs(cpu_specs()) do names[#names + 1] = name end
 	for name in pairs(block_specs()) do names[#names + 1] = name end
 	table.sort(names)
 	return names
 end
 
 --------------------------------------------------------------------------------
---- resource keys: item name, or "fluid/<name>" for fluids
+--- resource keys: item name, or the storage key of a fluid ("fluid/<name>", "fluid/<name>@<degrees>": issue #159)
 --------------------------------------------------------------------------------
 
 local FLUID_PREFIX = "fluid/"
 
+--- Issue #159: a fluid ingredient without a temperature takes the fluid at any temperature in its range (none: every
+--- temperature); its key is the default one when the default is in the range, else the range's end next to it. A
+--- fluid ingredient with a temperature, and every fluid product, is the key of that temperature (none: the default).
 local function key_of(ing)
-	if ing.type == "fluid" then return FLUID_PREFIX .. ing.name end
+	if ing.type == "fluid" then
+		local t = ing.temperature
+		if t == nil and (ing.minimum_temperature or ing.maximum_temperature) then
+			local d = N.fluid_range(ing.name) or 15
+			if ing.minimum_temperature and d < ing.minimum_temperature then t = ing.minimum_temperature
+			elseif ing.maximum_temperature and d > ing.maximum_temperature then t = ing.maximum_temperature end
+		end
+		return N.fluid_key(ing.name, t)
+	end
 	return ing.name
+end
+
+--- Issue #159: may a fluid ingredient take other temperatures than its key's? true and the range (nil: open) for a fluid
+--- ingredient without an exact temperature; nil for items, exact temperatures and products
+local function ing_flex(ing)
+	if ing.type ~= "fluid" or ing.temperature ~= nil then return nil end
+	return true, ing.minimum_temperature, ing.maximum_temperature
+end
+
+--- does the storage key `key` of fluid `name` fit a flexible input (lo, hi)?
+local function flex_fits(key, name, lo, hi)
+	if not (N.is_fluid_key(key) and N.fluid_name(key) == name) then return false end
+	local t = N.fluid_temperature(key)
+	return (not lo or t >= lo - 1e-6) and (not hi or t <= hi + 1e-6)
+end
+
+--- can a fluid ingredient be had at all? (its range must meet the fluid's [default, max]: the engine clamps temperatures)
+local function fluid_reachable(ing)
+	local d, m = N.fluid_range(ing.name)
+	if not d then return false end
+	local lo, hi = ing.minimum_temperature, ing.maximum_temperature
+	if ing.temperature then lo, hi = ing.temperature, ing.temperature end
+	return math.max(lo or d, d) <= math.min(hi or m, m) + 1e-6
 end
 
 local function is_fluid(key)
@@ -135,7 +155,7 @@ local function is_fluid(key)
 end
 
 local function fluid_name(key)
-	return key:sub(#FLUID_PREFIX + 1)
+	return N.fluid_name(key)
 end
 
 --- the prototype behind a key (LuaItemPrototype or LuaFluidPrototype), nil if none
@@ -203,9 +223,9 @@ local function store_item(net, name, quality, count)
 	return n
 end
 
-local function store_fluid(net, name, amount)
+local function store_fluid(net, key, amount)
 	N.no_arrival = true
-	local n = fluids.insert(net, name, amount)
+	local n = fluids.insert_key(net, key, amount)
 	N.no_arrival = false
 	return n
 end
@@ -269,18 +289,73 @@ local function connected(fb, index)
 	return #fb.get_connections(index) > 0
 end
 
-local EMPTY_MAP = { inputs = {}, outputs = {} }
-
---- a fluid's default temperature (per load: prototypes do not change while the game runs; issue #50, lever 6)
-local temperature_cache = {}
-local function default_temperature(name)
-	local t = temperature_cache[name]
-	if not t then
-		t = prototypes.fluid[name].default_temperature
-		temperature_cache[name] = t
+--- Issue #164: the pipe connections of a machine prototype's fluid boxes, per box index: { { direction, positions } }
+--- (the normal ones; `positions`: the connection's tile relative to the machine for each of its four directions, as
+--- the prototype gives them). Per prototype name and load: a prototype read makes new tables.
+local pipe_conn_cache = {}
+local function box_connections(entity)
+	local name = entity.name
+	local c = pipe_conn_cache[name]
+	if not c then
+		c = {}
+		for i, b in ipairs(entity.prototype.fluidbox_prototypes or {}) do
+			local list = {}
+			for _, pc in pairs(b.pipe_connections or {}) do
+				if (pc.connection_type or "normal") == "normal" and pc.positions then
+					list[#list + 1] = { direction = pc.direction or 0, positions = pc.positions }
+				end
+			end
+			c[i] = list
+		end
+		pipe_conn_cache[name] = c
 	end
-	return t
+	return c
 end
+
+local DIR_VECTOR = { [0] = { 0, -1 }, [4] = { 1, 0 }, [8] = { 0, 1 }, [12] = { -1, 0 } }
+
+--- Issue #164: is box `index` of `entity` connected to a pipe while the machine has switched its boxes off (a machine
+--- without a fluid recipe, `fluid_boxes_off_when_no_fluid_recipe`: the entity then has no boxes to ask)? For each pipe
+--- connection of the box's prototype, turned with the machine (and mirrored), the entity on the tile it points at is
+--- asked whether one of its own pipe connections points back at the connection's tile: what the engine would join
+--- once the box is on.
+local function prototype_piped(entity, index)
+	local conns = box_connections(entity)[index]
+	if not (conns and conns[1]) then return false end
+	local edir = entity.direction or 0
+	local mirror = entity.mirroring
+	local px, py = entity.position.x, entity.position.y
+	local surface = entity.surface
+	for _, c in ipairs(conns) do
+		local pos = c.positions[math.floor(edir / 4) + 1] or c.positions[1]
+		local dx, dy = pos.x or pos[1], pos.y or pos[2]
+		local dir = (c.direction + edir) % 16
+		if mirror then
+			dx = -dx
+			if dir == 4 then dir = 12 elseif dir == 12 then dir = 4 end
+		end
+		local v = DIR_VECTOR[dir]
+		if v then
+			local sx, sy = px + dx, py + dy                       -- the tile of the connection, in the machine
+			for _, o in pairs(surface.find_entities_filtered{ position = { sx + v[1], sy + v[2] } }) do
+				if o ~= entity and o.valid then
+					local ok, ofb = pcall(function() return o.fluidbox end)
+					if ok and ofb and #ofb > 0 then
+						for j = 1, #ofb do
+							for _, oc in pairs(ofb.get_pipe_connections(j)) do
+								local t = oc.target_position
+								if t and math.abs(t.x - sx) < 0.5 and math.abs(t.y - sy) < 0.5 then return true end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+local EMPTY_MAP = { inputs = {}, outputs = {} }
 
 --- an item's stack size, nil when there is no such item (per load, issue #59 lever 3: a prototype read makes a new object)
 local stack_size_cache = {}
@@ -297,7 +372,7 @@ end
 --- The fluid boxes a machine uses for `ingredients` and `products`: which box takes which fluid ingredient and
 --- which boxes hold the fluid products. Returns the map, or nil and the reason why the machine cannot be used:
 --- "fluid-box" (no usable box, box too small, furnace, two-way box), "fluid-temperature" (a box wants a
---- temperature the stored fluid does not have), "fluid-pipes" (a used box is connected to a pipe: the network
+--- temperature no fluid can have: issue #159, the network keeps every temperature), "fluid-pipes" (a used box is connected to a pipe: the network
 --- could not keep the fluid apart). The box filters are those of the recipe the machine has set: call it after
 --- set_recipe. `outputs_optional`: a processing pattern does not need output boxes (its outputs may come back
 --- elsewhere).
@@ -339,15 +414,14 @@ local function fluid_map(machine, ingredients, products, outputs_optional)
 			end
 			if not index then return nil, "fluid-box" end
 			used[index] = true
-			local f = fb.get_filter(index)
-			local t = default_temperature(ing.name)
-			if f and ((f.minimum_temperature and t < f.minimum_temperature) or (f.maximum_temperature and t > f.maximum_temperature)) then
-				return nil, "fluid-temperature"
-			end
+			if not fluid_reachable(ing) then return nil, "fluid-temperature" end
 			local capacity = fb.get_capacity(index)
 			if capacity < fixed_up(ing.amount) then return nil, "fluid-box" end
 			if connected(fb, index) then return nil, "fluid-pipes" end
-			inputs[#inputs + 1] = { key = FLUID_PREFIX .. ing.name, name = ing.name, amount = fixed_up(ing.amount), index = index, capacity = capacity }
+			--- issue #159: `flex` (with `lo`, `hi`): any temperature of the fluid in that range may go in
+			local flex, lo, hi = ing_flex(ing)
+			inputs[#inputs + 1] = { key = key_of(ing), name = ing.name, amount = fixed_up(ing.amount), index = index, capacity = capacity,
+				flex = flex, lo = lo, hi = hi }
 		end
 	end
 	local outputs, n_out, max_out = {}, 0, 0
@@ -381,6 +455,17 @@ local function fluid_boxes_fit(machine, ingredients, products)
 	local fb = machine.fluidbox
 	local boxes = machine.facts.boxes
 	local live = #fb == #boxes                     -- the entity's boxes are the prototype's, by index
+	--- issue #164: with the boxes switched off, a pipe is found from the prototype's connections (once per box and scan)
+	local entity = rawget(machine, "entity") or machine
+	local piped_memo = {}
+	local function piped(i)
+		local x = piped_memo[i]
+		if x == nil then
+			x = prototype_piped(entity, i)
+			piped_memo[i] = x
+		end
+		return x
+	end
 	local ins, outs = {}, {}
 	for i, p in ipairs(boxes) do
 		local kind = p.production_type
@@ -395,6 +480,7 @@ local function fluid_boxes_fit(machine, ingredients, products)
 		local free, pipes = 0, false
 		for _, i in pairs(list) do
 			if live and connected(fb, i) then pipes = true
+			elseif not live and piped(i) then pipes = true                  -- (issue #164: the boxes are off)
 			elseif (live and fb.get_capacity(i) or boxes[i].volume) >= need then free = free + 1 end
 		end
 		if free >= n then return nil end
@@ -404,12 +490,7 @@ local function fluid_boxes_fit(machine, ingredients, products)
 	for _, e in pairs(ingredients) do if e.type == "fluid" then need_in = math.max(need_in, fixed_up(e.amount)) end end
 	for _, e in pairs(products) do if e.type == "fluid" then need_out = math.max(need_out, e.amount or e.amount_max or 0) end end
 	for _, e in pairs(ingredients) do
-		if e.type == "fluid" then
-			local t = default_temperature(e.name)
-			if (e.minimum_temperature and t < e.minimum_temperature) or (e.maximum_temperature and t > e.maximum_temperature) then
-				return "fluid-temperature"
-			end
-		end
+		if e.type == "fluid" and not fluid_reachable(e) then return "fluid-temperature" end
 	end
 	return fit(ins, ingredients, need_in) or fit(outs, products, need_out)
 end
@@ -459,8 +540,11 @@ local function def_facts(def)
 		for _, i in pairs(ingredients) do
 			if i.type == "item" then items = items + 1 elseif i.type == "fluid" then fluid_in = true end
 		end
+		--- issue #158: a processing pattern that names the recipe it was encoded from (P.normalize keeps only an existing
+		--- one) switches an assembling machine to it, as a crafting pattern does: its category too
+		local recipe = def.recipe and prototypes.recipe[def.recipe]
 		f = { stack = stack_problem(ingredients), items = items, fluid_in = fluid_in,
-			category = def.kind == "crafting" and prototypes.recipe[def.recipe].category or nil }
+			category = recipe and recipe.category or nil, switch = def.kind == "processing" and recipe ~= nil or nil }
 		facts_cache[def] = f
 	end
 	return f
@@ -531,14 +615,40 @@ local function machine_view(entity)
 	return setmetatable({ entity = entity, type = entity.type, unit = entity.unit_number }, VIEW)
 end
 
+--- Can an assembling machine (view `v`) be switched to the recipe of pattern `def`? nil when it can, else the reason
+--- ("category", "fixed-recipe", "not-researched", "stack", the fluid reasons). `outputs_optional`: a processing pattern
+--- (its outputs may come back elsewhere).
+local function switch_problem(v, def, facts, outputs_optional)
+	local machine = v.facts
+	if not machine.categories[facts.category] then return "category" end
+	local fixed = machine.fixed
+	if fixed and fixed ~= "" and fixed ~= def.recipe then return "fixed-recipe" end
+	local r = v.recipes[def.recipe]
+	if not (r and r.enabled) then return "not-researched" end
+	if facts.stack then return facts.stack end
+	local ingredients, products = def_ingredients(def), def_products(def)
+	if v.recipe == def.recipe then
+		local _, reason = fluid_map(v, ingredients, products, outputs_optional)
+		return reason
+	end
+	return fluid_boxes_fit(v, ingredients, outputs_optional and {} or products)
+end
+
 --- Can the machine of view `v` (next to a provider) do pattern `def`? Returns a target entry { entity, unit, mode } or nil
 --- and the reason: crafting patterns need an assembling machine that can make the recipe ("category",
 --- "not-researched", "fixed-recipe", "stack", the fluid reasons; a furnace: "furnace"), processing patterns a
 --- machine ("no-recipe": an assembling machine without a recipe; "stack", fluid reasons) or a chest (items only).
+--- Issue #158: a processing pattern that names its recipe takes an assembling machine as a crafting pattern does (any
+--- recipe set or none: the job step switches an idle one, `recipe` in the entry); a furnace keeps choosing by its input.
 --- Chests are no target of crafting patterns (nil, nil: not counted).
 local function target_for(v, def)
 	local etype = v.type
 	local facts = def_facts(def)
+	if facts.switch and etype == "assembling-machine" then
+		local why = switch_problem(v, def, facts, true)
+		if why then return nil, why end
+		return { entity = v.entity, unit = v.unit, mode = "push", recipe = def.recipe }
+	end
 	if def.kind == "crafting" then
 		if etype == "furnace" then return nil, "furnace" end
 		if etype ~= "assembling-machine" then return nil, nil end
@@ -899,7 +1009,11 @@ local function def_inputs(def)
 	local l = inputs_cache[def]
 	if not l then
 		l = {}
-		for _, ing in pairs(def_ingredients(def)) do l[#l + 1] = { key_of(ing), ing.amount } end
+		for _, ing in pairs(def_ingredients(def)) do
+			--- issue #159: a fluid ingredient without a temperature also takes the other temperatures in its range
+			local flex, lo, hi = ing_flex(ing)
+			l[#l + 1] = { key_of(ing), ing.amount, flex and { ing.name, lo, hi } or nil }
+		end
 		inputs_cache[def] = l
 	end
 	return l
@@ -949,15 +1063,16 @@ local function apply_pattern(ctx, pid, key, count, path, depth)
 	local inputs = def_inputs(def)
 	for i = 1, #inputs do
 		local ing = inputs[i]
-		need(ctx, ing[1], ing[2] * runs, path, depth + 1, false)
+		need(ctx, ing[1], ing[2] * runs, path, depth + 1, false, ing[3])
 	end
 	local step = ctx.steps[pid]
 	if not step then
-		step = { pid = pid, runs = 0 }
+		step = { pid = pid, runs = 0, keys = {} }
 		jset(ctx, ctx.steps, pid, step)
 		jset(ctx, ctx.order, #ctx.order + 1, pid)    -- ingredients were planned first: dependencies come first
 	end
 	jset(ctx, step, "runs", step.runs + runs)
+	if not step.keys[key] then jset(ctx, step.keys, key, true) end   -- issue #171: what the plan wants of it
 	if exact then                                    -- surplus of a certain yield can be used by later demand
 		local over = runs * yield - count
 		if not is_fluid(key) then over = math.floor(over + 1e-9) end
@@ -965,8 +1080,28 @@ local function apply_pattern(ctx, pid, key, count, path, depth)
 	end
 end
 
---- `count` of `key` are needed: take from storage, else craft through a pattern
-function need(ctx, key, count, path, depth, top)
+--- Issue #159: take up to `count` of another storage key `key` from the stock (as need does for its own key); returns
+--- what is still needed
+local function take_stock(ctx, key, count)
+	local stock = ctx.stock
+	local have = stock[key]
+	if have == nil then
+		have = base_count(ctx.net, key)
+		stock[key] = have
+		ctx.base[key] = have
+	end
+	jset(ctx, ctx.demand, key, (ctx.demand[key] or 0) + count)
+	if have <= 0 then return count end
+	local t = have < count and have or count
+	jset(ctx, stock, key, have - t)
+	jset(ctx, ctx.reserve, key, (ctx.reserve[key] or 0) + t)
+	return count - t
+end
+
+--- `count` of `key` are needed: take from storage, else craft through a pattern. `flex` (issue #159): { fluid name, lo,
+--- hi } of a fluid ingredient without a temperature: after its own key the network's other temperatures of the fluid
+--- in that range are taken (the default first, then from the coldest), before anything is crafted.
+function need(ctx, key, count, path, depth, top, flex)
 	ctx.nodes = ctx.nodes + 1
 	if ctx.nodes > MAX_PLAN_NODES or depth > MAX_DEPTH then
 		ctx.too_complex = true
@@ -1017,6 +1152,17 @@ function need(ctx, key, count, path, depth, top)
 		end
 		ctx.logn = n
 		if count <= 1e-9 then return end
+		if flex and ctx.usable then
+			local list = N.fluid_keys(ctx.net, flex[1])
+			--- (a kept plan is made anew when the fluid gets a temperature it did not have: kept_valid)
+			if not ctx.fkeys[flex[1]] then ctx.fkeys[flex[1]] = #list end
+			for _, k in ipairs(list) do
+				if k ~= key and flex_fits(k, flex[1], flex[2], flex[3]) then
+					count = take_stock(ctx, k, count)
+					if count <= 1e-9 then return end
+				end
+			end
+		end
 	end
 	local pids = ctx.patterns.items[key]
 	if not pids then add_missing(ctx, key, count) return end
@@ -1096,6 +1242,11 @@ local function kept_valid(entry, net, patterns)
 			if was < d or now < d then return false end
 		end
 	end
+	--- issue #159: a fluid ingredient of every temperature looked at the network's temperatures of its fluid; one that is
+	--- new since then (the list only grows) was never read
+	for name, n in pairs(entry.fkeys or {}) do
+		if #N.fluid_keys(net, name) ~= n then return false end
+	end
 	return true
 end
 
@@ -1126,13 +1277,13 @@ local function make_plan(s, net, key, amount, fresh_only)
 	local ctx = {
 		patterns = patterns, net = net, usable = N.usable(net) and true or false, stock = {}, base = {}, demand = {},
 		surplus = {}, reserve = {}, missing = {}, loops = {}, steps = {}, order = {}, missing_n = 0, nodes = 0,
-		alt = 0, log = {}, logn = 0,
+		alt = 0, log = {}, logn = 0, fkeys = {},
 	}
 	need(ctx, key, amount, {}, 0, true)
 	local steps, runs = {}, 0
 	for _, pid in ipairs(ctx.order) do
 		local step = ctx.steps[pid]
-		steps[#steps + 1] = { pid = pid, def = patterns.defs[pid], runs = step.runs }
+		steps[#steps + 1] = { pid = pid, def = patterns.defs[pid], runs = step.runs, keys = copy_map(step.keys) }
 		runs = runs + step.runs
 	end
 	local reserve, reserved = {}, 0
@@ -1145,60 +1296,10 @@ local function make_plan(s, net, key, amount, fresh_only)
 			per = {}
 			kept_plans[net.id] = per
 		end
-		per[id] = { patterns = patterns, base = ctx.base, demand = ctx.demand, plan = plan }
+		per[id] = { patterns = patterns, base = ctx.base, demand = ctx.demand, fkeys = ctx.fkeys, plan = plan }
 		return plan_copy(plan)
 	end
 	return plan
-end
-
---------------------------------------------------------------------------------
---- CPUs
---------------------------------------------------------------------------------
-
-local function cpu_powered(cpu)
-	return cpu.status ~= defines.entity_status.no_power
-end
-
---- the jobs a CPU runs ({ [id] = true }); a record from before the CPU tiers held one `job`
-local function cpu_jobs(rec)
-	if not rec.jobs then
-		rec.jobs = {}
-		if rec.job then rec.jobs[rec.job] = true end
-		rec.job = nil
-	end
-	return rec.jobs
-end
-
-local function cpu_load(rec)
-	local n = 0
-	for _ in pairs(cpu_jobs(rec)) do n = n + 1 end
-	return n
-end
-
---- job slots of a CPU record (1 for an entity that is no longer a known tier)
-local function cpu_slots(rec)
-	local spec = rec.entity.valid and cpu_spec(rec.entity.name)
-	return spec and spec.jobs or 1
-end
-
---- CPUs of a network, fastest first (a queued job takes the fastest free one)
-local function cpus_in(s, net)
-	local list = {}
-	for unit, rec in pairs(s.cpus) do
-		if rec.entity.valid then
-			local n = N.network_of(rec.entity)
-			if n and n.id == net.id then list[#list + 1] = rec end
-		else
-			s.cpus[unit] = nil
-		end
-	end
-	table.sort(list, function(a, b)
-		local sa, sb = cpu_spec(a.entity.name), cpu_spec(b.entity.name)
-		local va, vb = sa and sa.speed or 1, sb and sb.speed or 1
-		if va ~= vb then return va > vb end
-		return a.entity.unit_number < b.entity.unit_number
-	end)
-	return list
 end
 
 --------------------------------------------------------------------------------
@@ -1455,9 +1556,9 @@ local function groups_in(s, net)
 	return list
 end
 
---- The CPU a job of `bytes` gets now in `net`: a free multiblock CPU that is big enough, else a legacy CPU with a free
---- slot. Returns the group or the legacy record (and its kind), or nil and why: "no-cpu" (none at all),
---- "cpu-too-small" (no CPU of the network is big enough; also the biggest one's bytes), "no-free-cpu".
+--- The CPU a job of `bytes` gets now in `net`: a free multiblock CPU that is big enough (issue #145: the legacy CPUs are
+--- gone). Returns the group (and its kind), or nil and why: "no-cpu" (none at all), "cpu-too-small" (no CPU of the
+--- network is big enough; also the biggest one's bytes), "no-free-cpu".
 local function pick_cpu(s, net, bytes)
 	local biggest, any = 0, false
 	for _, g in ipairs(groups_in(s, net)) do
@@ -1465,18 +1566,13 @@ local function pick_cpu(s, net, bytes)
 		if g.bytes > biggest then biggest = g.bytes end
 		if g.bytes >= bytes and not g.job and group_network(g) then return g, "group" end
 	end
-	local legacy = cpus_in(s, net)
-	for _, rec in ipairs(legacy) do
-		if cpu_powered(rec.entity) and cpu_load(rec) < cpu_slots(rec) then return rec, "legacy" end
-	end
-	if not any and #legacy == 0 then return nil, "no-cpu" end
-	if #legacy == 0 and biggest < bytes then return nil, "cpu-too-small", biggest end
+	if not any then return nil, "no-cpu" end
+	if biggest < bytes then return nil, "cpu-too-small", biggest end
 	return nil, "no-free-cpu", biggest
 end
 
---- The CPUs of a network for the plan preview (issue #6), in the order a job takes them: { kind = "group" or "legacy",
---- id (group id or unit number), name (legacy: entity name), bytes (nil: no limit), coprocessors, speed, width,
---- height, free, fits } (`bytes`: the job's; fits = big enough, free = can take a job now)
+--- The CPUs of a network for the plan preview (issue #6), in the order a job takes them: { kind = "group", id, bytes,
+--- coprocessors, speed, width, height, free, fits } (`bytes`: the job's; fits = big enough, free = can take a job now)
 function M.cpu_list(net, bytes)
 	local s = state()
 	local out = {}
@@ -1484,11 +1580,6 @@ function M.cpu_list(net, bytes)
 		out[#out + 1] = { kind = "group", id = g.id, bytes = g.bytes, coprocessors = g.coprocessors, speed = group_speed(g),
 			width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1, free = not g.job and group_network(g) ~= nil,
 			fits = g.bytes >= (bytes or 0) }
-	end
-	for _, rec in ipairs(cpus_in(s, net)) do
-		local spec = cpu_spec(rec.entity.name)
-		out[#out + 1] = { kind = "legacy", id = rec.entity.unit_number, name = rec.entity.name, speed = spec and spec.speed or 1,
-			free = cpu_powered(rec.entity) and cpu_load(rec) < cpu_slots(rec), fits = true }
 	end
 	return out
 end
@@ -1509,8 +1600,6 @@ local function job_network(job)
 	local s = state()
 	local g = job.group and s.groups and s.groups[job.group]
 	if g and group_network_any(g) then return group_network(g) end
-	local rec = job.cpu and s.cpus[job.cpu]
-	if rec and rec.entity.valid and N.network_of(rec.entity) then return N.active_of(rec.entity) end
 	if job.anchor and job.anchor.valid and N.network_of(job.anchor) then return N.active_of(job.anchor) end
 	local surface = game.get_surface(job.surface)
 	if not (surface and job.pos) then return nil end
@@ -1533,12 +1622,22 @@ end
 local function step_ingredients(step) return def_ingredients(step.def) end
 local function step_products(step) return def_products(step.def) end
 
---- runs of a processing step whose outputs are all back (received)
+--- whether a job step waits for its output `key`. Issue #171: only for the outputs the plan wants of the step (its
+--- `keys`); another output of the pattern (a byproduct, which may come at a chance) never holds the job, as GT New
+--- Horizons' AE2 ends a job by its requested output (CraftingCPUCluster: finalOutput). A step of a job started before
+--- (no `keys`) waits for every output.
+local function waits_for(step, key)
+	return step.keys == nil or step.keys[key] == true
+end
+
+--- runs of a processing step whose wanted outputs are all back (received)
 local function processing_done(step)
 	local done
 	for _, r in ipairs(step.def.outputs) do
-		local n = math.floor(((step.received[r.key] or 0) + FLUID_EPS) / r.amount)
-		done = done and math.min(done, n) or n
+		if waits_for(step, r.key) then
+			local n = math.floor(((step.received[r.key] or 0) + FLUID_EPS) / r.amount)
+			done = done and math.min(done, n) or n
+		end
 	end
 	return math.min(done or 0, step.issued)
 end
@@ -1580,13 +1679,51 @@ local function credit(job, key, amount, first)
 	return amount - left
 end
 
+--- Issue #159: the pool keys a fluid input may take (its own key first, then the others of its fluid in its range, in
+--- key order) and what they hold together. `name`, `flex`, `lo`, `hi` as in a fluid map input.
+local function pool_keys(job, key, name, flex, lo, hi)
+	local out = { key }
+	local total = job.pool[key] or 0
+	if flex then
+		local others
+		for k, n in pairs(job.pool) do
+			if k ~= key and n > 0 and flex_fits(k, name, lo, hi) then
+				others = others or {}
+				others[#others + 1] = k
+			end
+		end
+		if others then
+			table.sort(others)
+			for _, k in ipairs(others) do
+				out[#out + 1] = k
+				total = total + job.pool[k]
+			end
+		end
+	end
+	return out, total
+end
+
+--- what the pool holds for an ingredient (a fluid without a temperature: every temperature in its range)
+local function ing_pool(job, ing)
+	if ing.type ~= "fluid" then return job.pool[ing.name] or 0 end
+	local key = key_of(ing)
+	local total = job.pool[key] or 0
+	local flex, lo, hi = ing_flex(ing)
+	if flex then
+		for k, n in pairs(job.pool) do
+			if k ~= key and n > 0 and flex_fits(k, ing.name, lo, hi) then total = total + n end
+		end
+	end
+	return total
+end
+
 --- move everything from the pool into the network; what does not fit stays in the pool
 local function flush_pool(job, net)
 	for key, count in pairs(shallow_map(job.pool)) do
 		local inserted = 0
 		if count > 0 then
 			if is_fluid(key) then
-				inserted = store_fluid(net, fluid_name(key), count)
+				inserted = store_fluid(net, key, count)
 			else
 				inserted = store_item(net, key, QUALITY, count)
 			end
@@ -1624,7 +1761,7 @@ local function collect_output(job, net, machine, map, step)
 		for _, o in pairs(map.outputs) do
 			local f = o.index <= #fb and fb[o.index] or nil     -- a changed recipe may have fewer boxes
 			if f and f.amount > 0 then
-				got(FLUID_PREFIX .. f.name, f.amount)
+				got(N.fluid_key(f.name, f.temperature), f.amount)   -- (issue #159: at its temperature)
 				fb[o.index] = nil
 			end
 		end
@@ -1653,9 +1790,8 @@ local function take_back_input(job, machine, ingredients, map)
 		for _, i in pairs(map.inputs) do
 			local f = i.index <= #fb and fb[i.index] or nil
 			if f and f.amount > 0 then
-				local key = FLUID_PREFIX .. f.name
-				pool_add(job, key, f.amount)
-				back[key] = (back[key] or 0) + f.amount
+				pool_add(job, N.fluid_key(f.name, f.temperature), f.amount)   -- (issue #159: at its temperature)
+				back[i.key] = (back[i.key] or 0) + f.amount                   -- (counted for the input's key)
 				fb[i.index] = nil
 			end
 		end
@@ -1687,9 +1823,7 @@ local function release_lease(s, job, lease)
 end
 
 local function release_cpu(s, job)
-	local rec = job.cpu and s.cpus[job.cpu]
-	if rec then cpu_jobs(rec)[job.id] = nil end
-	job.cpu = nil
+	job.cpu = nil                                          -- (a legacy CPU of an older save, issue #145)
 	local g = job.group and s.groups and s.groups[job.group]
 	job.group = nil
 	if g and g.job == job.id then
@@ -1728,8 +1862,8 @@ local function begin_closing(s, job, final_status, reason)
 	s.await = nil
 end
 
---- Queued jobs (paused: their CPU changed or went; or queued in an older save) take a free CPU of their network: a
---- multiblock CPU with enough bytes (the smallest first), else a legacy CPU with a free slot (the fastest first).
+--- Queued jobs (paused: their CPU changed or went; or queued in an older save; or running on a legacy CPU of a save
+--- from before issue #145) take a free multiblock CPU of their network with enough bytes (the smallest first).
 local function assign_cpus(s)
 	for _, id in pairs(s.active) do
 		local job = s.jobs[id]
@@ -1743,18 +1877,6 @@ local function assign_cpus(s)
 						give_group(g, job)
 						given = true
 						break
-					end
-				end
-				if not given then
-					for _, rec in ipairs(cpus_in(s, net)) do
-						if cpu_load(rec) < cpu_slots(rec) then
-							cpu_jobs(rec)[job.id] = true
-							job.cpu = rec.entity.unit_number
-							job.pos = { x = rec.entity.position.x, y = rec.entity.position.y }
-							job.status = "running"
-							given = true
-							break
-						end
 					end
 				end
 				job.wait = not given and "cpu-bytes" or nil
@@ -1772,7 +1894,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	if not inp then return false end
 	for _, ing in pairs(ingredients) do               -- never hand out more than the pool holds
 		local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
-		if (job.pool[key_of(ing)] or 0) + FLUID_EPS < per * batch then return false end
+		if ing_pool(job, ing) + FLUID_EPS < per * batch then return false end
 	end
 	local given = {}
 	local function undo()
@@ -1798,16 +1920,37 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	for _, i in pairs(map.inputs) do
 		local leftover = fb[i.index]                        -- less than one craft: back into the pool first
 		if leftover and leftover.amount > 0 then
-			pool_add(job, FLUID_PREFIX .. leftover.name, leftover.amount)
+			pool_add(job, N.fluid_key(leftover.name, leftover.temperature), leftover.amount)
 			fb[i.index] = nil
 		end
 		local need_amount = i.amount * batch
-		local give = math.min(i.capacity, need_amount + math.max(0, math.min(FLUID_MARGIN, (job.pool[i.key] or 0) - need_amount)))
-		fb[i.index] = { name = i.name, amount = give }
+		--- issue #159: from the input's own key first, then the other temperatures it takes; the box gets their mean
+		--- temperature (all in the recipe's range)
+		local keys, have = pool_keys(job, i.key, i.name, i.flex, i.lo, i.hi)
+		local give = math.min(i.capacity, need_amount + math.max(0, math.min(FLUID_MARGIN, have - need_amount)))
+		local parts, left, heat = {}, give, 0
+		for _, k in ipairs(keys) do
+			local n = math.min(left, job.pool[k] or 0)
+			if n > 0 then
+				parts[#parts + 1] = { k, n }
+				heat = heat + n * N.fluid_temperature(k)
+				left = left - n
+			end
+			if left <= 0 then break end
+		end
+		local amount = give - math.max(0, left)
+		fb[i.index] = amount > 0 and { name = i.name, amount = amount, temperature = heat / amount } or nil
 		local now = fb[i.index]
 		local got = (now and now.name == i.name) and now.amount or 0
-		pool_add(job, i.key, -got)
-		given[#given + 1] = { key = i.key, fluid = true, index = i.index, got = got }
+		local rest = got
+		for _, part in ipairs(parts) do
+			local n = math.min(rest, part[2])
+			if n > 0 then
+				pool_add(job, part[1], -n)
+				given[#given + 1] = { key = part[1], lkey = i.key, fluid = true, index = i.index, got = n }
+				rest = rest - n
+			end
+		end
 		if got + FLUID_EPS < need_amount then undo() return false end
 	end
 	step.issued = step.issued + batch
@@ -1817,7 +1960,10 @@ local function start_lease(s, job, step_index, machine, batch, map)
 		lease.finished0 = machine.products_finished
 	else
 		lease.given = {}
-		for _, g in pairs(given) do lease.given[g.key] = (lease.given[g.key] or 0) + g.got end
+		for _, g in pairs(given) do
+			local k = g.lkey or g.key                          -- (a fluid counts for its input's key: issue #159)
+			lease.given[k] = (lease.given[k] or 0) + g.got
+		end
 		s.await = nil
 	end
 	job.leases[#job.leases + 1] = lease
@@ -1947,19 +2093,38 @@ local function find_crafter(s, net, job, step, targets)
 end
 
 --- A target for a processing step: an idle machine ("push") or a chest ("chest"). Returns the entity, its mode and
---- the fluid map.
-local function find_pusher(s, job, step, targets)
+--- the fluid map. Issue #158: a target with a `recipe` (a processing pattern that names its recipe, at an assembling
+--- machine) is used when it has that recipe and is idle; else, after the other targets, an idle one is switched to it
+--- (switch_recipe: what is left in it goes into the network first), as find_crafter does for crafting steps.
+local function find_pusher(s, net, job, step, targets)
 	local ingredients, products = step_ingredients(step), step_products(step)
+	local others
 	for _, t in pairs(targets) do
 		local e = t.entity
 		if e.valid and not s.busy[t.unit] and not rejected(job, t.unit, step.pid) then
 			if t.mode == "chest" then
 				return e, "chest", EMPTY_MAP
 			elseif t.mode == "push" and not e.disabled_by_script then
-				local map, why = fluid_map(e, ingredients, products, true)
-				if not map then reject(job, t.unit, step.pid) job.problem = why
-				elseif machine_idle(e, ingredients, map) then return e, "push", map end
+				local current = t.recipe and N.bound(e).get_recipe()
+				if t.recipe and not (current ~= nil and current.name == t.recipe) then
+					others = others or {}
+					others[#others + 1] = t
+				else
+					local map, why = fluid_map(e, ingredients, products, true)
+					if not map then reject(job, t.unit, step.pid) job.problem = why
+					elseif machine_idle(e, ingredients, map) then return e, "push", map end
+				end
 			end
+		end
+	end
+	if not (others and net) then return nil end
+	for _, t in ipairs(others) do
+		local e = t.entity
+		if e.crafting_progress == 0 and switch_recipe(net, e, t.recipe) then
+			local map, why = fluid_map(e, ingredients, products, true)
+			if map then return e, "push", map end
+			reject(job, t.unit, step.pid)
+			job.problem = why
 		end
 	end
 	return nil
@@ -1983,13 +2148,11 @@ local function set_wait(job, wait)
 	job.wait = wait
 end
 
---- machine interactions a job may use in this step: STEP_OPS times the speed of its CPU tier
+--- machine interactions a job may use in this step: STEP_OPS times the speed of its CPU (its co-processors)
 local function job_ops(s, job)
 	local g = job.group and s.groups and s.groups[job.group]
 	if g then return STEP_OPS * group_speed(g) end
-	local rec = job.cpu and s.cpus[job.cpu]
-	local spec = rec and rec.entity.valid and cpu_spec(rec.entity.name)
-	return STEP_OPS * (spec and spec.speed or 1)
+	return STEP_OPS
 end
 
 --- A lease whose machine is idle again: products into the pool, unused inputs back. A crafting lease counts the
@@ -2040,7 +2203,6 @@ local function job_step(s, job, work)
 	if job.status == "queued" and not job.closing then return end
 	local net = job_network(job)
 	if not net then set_wait(job, "no-network") return end
-	local cpu_rec = job.cpu and s.cpus[job.cpu]
 	local group = job.group and s.groups and s.groups[job.group]
 	if group and not job.closing then
 		if not (group.job == job.id and group.status == "ok") then     -- (settle_group pauses it; never seen)
@@ -2050,15 +2212,11 @@ local function job_step(s, job, work)
 			return
 		end
 		if group.anchor and group.anchor.valid then set_pos(job, group.anchor) end
-	elseif not job.closing then
-		if not (cpu_rec and cpu_rec.entity.valid) then       -- CPU removed: pause until another one is free
-			release_cpu(s, job)
-			job.status = "queued"
-			set_wait(job, nil)
-			return
-		end
-		set_pos(job, cpu_rec.entity)
-		if not cpu_powered(cpu_rec.entity) then set_wait(job, "no-power") return end
+	elseif not job.closing then                             -- no CPU (it was removed): pause until another one is free
+		release_cpu(s, job)
+		job.status = "queued"
+		set_wait(job, nil)
+		return
 	end
 
 	local progress = false
@@ -2118,7 +2276,7 @@ local function job_step(s, job, work)
 			local batch = math.min(step.runs - step.issued, MAX_BATCH)
 			for _, ing in pairs(ingredients) do   -- only what the pool holds, one stack per item ingredient
 				local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
-				batch = math.min(batch, math.floor((job.pool[key_of(ing)] or 0) / per + 1e-9))
+				batch = math.min(batch, math.floor(ing_pool(job, ing) / per + 1e-9))
 				if ing.type == "item" then
 					local size = stack_size_of(ing.name)
 					batch = math.min(batch, size and math.floor(size / per) or 0)
@@ -2130,7 +2288,7 @@ local function job_step(s, job, work)
 				machine, map = find_crafter(s, net, job, step, targets)
 				mode = "craft"
 			else
-				machine, mode, map = find_pusher(s, job, step, targets)
+				machine, mode, map = find_pusher(s, net, job, step, targets)
 			end
 			if not machine then waiting = waiting or "machine" break end
 			if mode ~= "chest" then
@@ -2187,10 +2345,22 @@ local function job_step(s, job, work)
 					for _, ing in pairs(step_ingredients(step)) do
 						local key = key_of(ing)
 						if ing.type == "fluid" then
-							local short = fixed_up(ing.amount) - (job.pool[key] or 0)
+							local short = fixed_up(ing.amount) - ing_pool(job, ing)
 							if short > 0 then
-								local got = fluids.remove(net, ing.name, short + FLUID_MARGIN)
+								--- its own key first, then (issue #159) the other temperatures it takes
+								local want = short + FLUID_MARGIN
+								local flex, lo, hi = ing_flex(ing)
+								local got = fluids.remove_key(net, key, want)
 								if got > 0 then pool_add(job, key, got) job.idle = 0 end
+								if flex and got < want then
+									for _, k in ipairs(N.fluid_keys(net, ing.name)) do
+										if k ~= key and flex_fits(k, ing.name, lo, hi) then
+											local n = fluids.remove_key(net, k, want - got)
+											if n > 0 then pool_add(job, k, n) job.idle = 0 got = got + n end
+											if got >= want then break end
+										end
+									end
+								end
 							end
 						else
 							local short = ing.amount - (job.pool[key] or 0)
@@ -2283,9 +2453,11 @@ local function await_index(s)
 						local keys = idx[net.id] or {}
 						idx[net.id] = keys
 						for _, r in ipairs(step.def.outputs) do
-							local ids = keys[r.key] or {}
-							keys[r.key] = ids
-							if ids[#ids] ~= id then ids[#ids + 1] = id end
+							if waits_for(step, r.key) then
+								local ids = keys[r.key] or {}
+								keys[r.key] = ids
+								if ids[#ids] ~= id then ids[#ids + 1] = id end
+							end
 						end
 					end
 				end
@@ -2307,7 +2479,7 @@ local function awaiting(net, key)
 	for _, id in ipairs(ids) do
 		local job = s.jobs[id]
 		for _, step in ipairs(job and job.steps or {}) do
-			if step.kind == "processing" then
+			if step.kind == "processing" and waits_for(step, key) then
 				local per = P.output_of(step.def, key)
 				if per > 0 then n = n + math.max(0, step.issued * per - (step.received[key] or 0)) end
 			end
@@ -2363,13 +2535,15 @@ function M.describe(key)
 	local proto = proto_of(key)
 	if not proto then return nil end
 	if is_fluid(key) then
-		return { key = key, name = fluid_name(key), fluid = true, sprite = "fluid/" .. fluid_name(key), localised_name = proto.localised_name }
+		local _, deg = N.split_fluid_key(key)
+		return { key = key, name = fluid_name(key), fluid = true, sprite = "fluid/" .. fluid_name(key), localised_name = fluids.key_name(key),
+			temperature = deg }
 	end
 	return { key = key, name = key, fluid = false, sprite = "item/" .. key, localised_name = proto.localised_name }
 end
 
---- Crafting CPUs of the network: CPUs, free job slots, powered CPUs, job slots (a multiblock CPU and a base CPU have
---- one; a multiblock CPU is powered when its network works)
+--- Crafting CPUs of the network: CPUs, free job slots, powered CPUs, job slots (a multiblock CPU has one; it is
+--- powered when its network works)
 function M.cpu_summary(net)
 	local s = state()
 	local total, free, powered, slots = 0, 0, 0, 0
@@ -2377,13 +2551,6 @@ function M.cpu_summary(net)
 		total, slots = total + 1, slots + 1
 		if not g.job then free = free + 1 end
 		if group_network(g) then powered = powered + 1 end
-	end
-	for _, rec in pairs(cpus_in(s, net)) do
-		total = total + 1
-		local n = cpu_slots(rec)
-		slots = slots + n
-		free = free + math.max(0, n - cpu_load(rec))
-		if cpu_powered(rec.entity) then powered = powered + 1 end
 	end
 	return total, free, powered, slots
 end
@@ -2393,9 +2560,6 @@ function M.free_slot(net)
 	local s = state()
 	for _, g in ipairs(groups_in(s, net)) do
 		if not g.job and group_network(g) then return true end
-	end
-	for _, rec in pairs(cpus_in(s, net)) do
-		if cpu_powered(rec.entity) and cpu_load(rec) < cpu_slots(rec) then return true end
 	end
 	return false
 end
@@ -2451,15 +2615,17 @@ end
 --- the job step of a planned step
 local function job_step_of(st)
 	local step = { pid = st.pid, def = st.def, kind = st.def.kind, recipe = st.def.recipe, runs = st.runs, issued = 0, done = 0 }
-	if step.kind == "processing" then step.received = {} end
+	if step.kind == "processing" then
+		step.received = {}
+		step.keys = st.keys and copy_map(st.keys) or nil       -- issue #171: the outputs the job waits for
+	end
 	return step
 end
 
 --- Start a job for `amount` of `key` in the network of `entity` (a network member such as the
 --- terminal). `owner`: unit number of the level maintainer that asked for it (nil for a player).
 --- Returns the job id, or nil, a reason key and the plan. Issue #6: the job needs a CPU now (a free multiblock CPU
---- with plan.bytes, or a free slot of a legacy CPU): else "cpu-too-small" (plan.biggest: the biggest CPU's bytes) or
---- "no-free-cpu".
+--- with plan.bytes): else "cpu-too-small" (plan.biggest: the biggest CPU's bytes) or "no-free-cpu".
 function M.start(entity, key, amount, owner)
 	local s = state()
 	local net = network_of(entity)
@@ -2468,7 +2634,7 @@ function M.start(entity, key, amount, owner)
 	if amount < 1 then return nil, "bad-amount" end
 	if amount > (is_fluid(key) and MAX_FLUID_AMOUNT or MAX_AMOUNT) then return nil, "too-many" end
 	if not proto_of(key) then return nil, "no-pattern" end
-	if #cpus_in(s, net) == 0 and #groups_in(s, net) == 0 then return nil, "no-cpu" end
+	if #groups_in(s, net) == 0 then return nil, "no-cpu" end
 	local plan = make_plan(s, net, key, amount)
 	if rescan_plan(s, net, plan) then plan = make_plan(s, net, key, amount) end
 	if plan.no_pattern then return nil, "no-pattern", plan end
@@ -2482,13 +2648,13 @@ function M.start(entity, key, amount, owner)
 	local pool, taken = {}, {}
 	local function undo()
 		for _, k in pairs(taken) do
-			if is_fluid(k) then store_fluid(net, fluid_name(k), pool[k]) else store_item(net, k, QUALITY, pool[k]) end
+			if is_fluid(k) then store_fluid(net, k, pool[k]) else store_item(net, k, QUALITY, pool[k]) end
 		end
 	end
 	for k, count in pairs(plan.reserve) do
 		local removed
 		if is_fluid(k) then
-			removed = fluids.remove(net, fluid_name(k), count + FLUID_MARGIN)   -- a little extra covers fixed point rounding
+			removed = fluids.remove_key(net, k, count + FLUID_MARGIN)   -- a little extra covers fixed point rounding
 		else
 			removed = N.extract(net, k, QUALITY, count)
 		end
@@ -2513,13 +2679,7 @@ function M.start(entity, key, amount, owner)
 	}
 	s.active[#s.active + 1] = id
 	local job = s.jobs[id]
-	if kind == "group" then
-		give_group(cpu, job)
-	else
-		cpu_jobs(cpu)[id] = true
-		job.cpu, job.status = cpu.entity.unit_number, "running"
-		job.pos = { x = cpu.entity.position.x, y = cpu.entity.position.y }
-	end
+	give_group(cpu, job)
 	return id, nil, plan
 end
 
@@ -2581,16 +2741,15 @@ function M.job(id)
 	local s = state()
 	local job = s.jobs[id]
 	if not job then return nil end
-	local rec = job.cpu and s.cpus[job.cpu]
 	local steps = {}
 	for i, st in ipairs(job.steps) do
 		steps[i] = { pid = st.pid, kind = st.kind, recipe = st.recipe, runs = st.runs, issued = st.issued, done = st.done,
-			received = st.received }
+			received = st.received, keys = st.keys }
 	end
 	return { id = job.id, item = job.item, amount = job.amount, status = job.status, closing = job.closing,
 		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool,
-		leases = #job.leases, owner = job.owner, cpu = job.cpu, ops = job_ops(s, job), group = job.group, bytes = job_bytes(job),
-		cpu_name = rec and rec.entity.valid and rec.entity.name or nil, steps = steps, reason = job.reason, problem = job.problem }
+		leases = #job.leases, owner = job.owner, ops = job_ops(s, job), group = job.group, bytes = job_bytes(job),
+		steps = steps, reason = job.reason, problem = job.problem }
 end
 
 --- LocalisedString "12x A, 3x B, 100 C (fluid)" for a { key -> count } table (at most `limit` entries)
@@ -2604,7 +2763,7 @@ function M.item_list(counts, limit)
 		local proto = proto_of(key)
 		local sep = i > 1 and ", " or ""
 		if is_fluid(key) then                            -- one nested string per entry: at most limit + 1 parameters
-			out[#out + 1] = { "", sep .. fluids.format(counts[key]) .. " ", proto and proto.localised_name or fluid_name(key) }
+			out[#out + 1] = { "", sep .. fluids.format(counts[key]) .. " ", proto and fluids.key_name(key) or fluid_name(key) }
 		else
 			out[#out + 1] = { "", sep .. counts[key] .. "x ", proto and proto.localised_name or key }
 		end
@@ -2640,9 +2799,6 @@ local function register(s, entity)
 		end
 		scan_provider(s.providers[unit])
 		s.dirty = true
-	elseif cpu_spec(entity.name) then
-		local unit = entity.unit_number
-		s.cpus[unit] = s.cpus[unit] or { entity = entity, jobs = {} }
 	elseif block_spec(entity.name) then
 		add_block(s, entity)
 	end
@@ -2797,30 +2953,6 @@ function M.provider_info(entity)
 	return { slots = slots, slot_count = SLOTS, machines = machines, priority = p.priority or 0, network = p.net ~= nil }
 end
 
---- the CPU window's data: its tier (job slots, speed), power, and the jobs it runs or that wait in its network
-function M.cpu_info(entity)
-	local s = state()
-	if not (entity and entity.valid and cpu_spec(entity.name)) then return nil end
-	register(s, entity)
-	local rec = s.cpus[entity.unit_number]
-	local spec = cpu_spec(entity.name)
-	local jobs = {}
-	for id in pairs(cpu_jobs(rec)) do
-		local j = M.job(id)
-		if j then jobs[#jobs + 1] = j end
-	end
-	table.sort(jobs, function(a, b) return a.id < b.id end)
-	local waiting = {}
-	local net = network_of(entity)
-	if net then
-		for _, j in ipairs(M.jobs(net)) do
-			if j.status == "queued" then waiting[#waiting + 1] = j end
-		end
-	end
-	return { slots = spec.jobs, speed = spec.speed, powered = cpu_powered(entity), network = net ~= nil,
-		jobs = jobs, waiting = waiting }
-end
-
 --- settings paste (shift right click, shift left click): the priority. Patterns are items: they are not copied.
 function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
@@ -2910,7 +3042,7 @@ end
 --- `tags`: the blueprint tags of a built ghost; `source`: the original of a cloned entity (its priority is copied,
 --- its patterns are items and stay with it)
 function M.on_built(entity, tags, source)
-	if not (entity and entity.valid and (entity.name == PROVIDER or cpu_spec(entity.name) or block_spec(entity.name))) then return end
+	if not (entity and entity.valid and (entity.name == PROVIDER or block_spec(entity.name))) then return end
 	register(state(), entity)
 	if entity.name ~= PROVIDER then return end
 	if type(tags) == "table" and (tags[BP_TAG] or tags[OLD_TAG]) then
@@ -3063,138 +3195,15 @@ function M.group_info(entity)
 		bytes = g.bytes, used = job and job.bytes or 0, coprocessors = g.coprocessors, speed = group_speed(g),
 		monitors = monitors, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job }
 end
---------------------------------------------------------------------------------
---- migration (issue #80): providers of 0.4.1 and older read the recipe of the machines next to them (furnaces:
---- a recipe chosen in the provider). Each gets encoded patterns for what it provided, so running setups, level
---- maintainers and saved jobs keep working. Logged as FORK-ME-MIGRATE lines.
---------------------------------------------------------------------------------
-
---- the recipe an old provider stood for with a furnace: the choice when the furnace can make it, else the recipe
---- it runs, else the one it smelted last (0.4.1 rules; research is not asked: a processing pattern does not need
---- it, and the update resets the technology effects before this runs)
-local function old_furnace_recipe(m, choice)
-	local proto = choice and prototypes.recipe[choice]
-	if proto and m.prototype.crafting_categories[proto.category] and not proto.hidden
-		and not has_fluid(proto.ingredients, proto.products) then
-		return choice
-	end
-	local recipe = m.get_recipe()
-	if recipe then return recipe.name end
-	local previous = m.previous_recipe
-	local name = previous and previous.name
-	if name ~= nil and type(name) ~= "string" then name = name.name end
-	return name
-end
-
---- encoded patterns for what an old provider provided: a crafting pattern per assembling machine recipe, a
---- processing pattern per furnace recipe (each once). Returns the list.
-local function old_patterns(entity, choice)
-	local out, seen = {}, {}
-	for _, m in ipairs(neighbors_of(entity)) do
-		local def
-		if m.type == "assembling-machine" then
-			local r = m.get_recipe()
-			if r then def = P.normalize{ kind = "crafting", recipe = r.name } end
-		elseif m.type == "furnace" then
-			local name = old_furnace_recipe(m, choice)
-			if name and prototypes.recipe[name] then
-				local inputs, outputs = P.recipe_rows(name)
-				def = P.processing(inputs, outputs, name)
-			end
-		end
-		if def then
-			local id = P.id_of(def)
-			if not seen[id] then
-				seen[id] = true
-				out[#out + 1] = def
-			end
-		end
-	end
-	return out
-end
-
-local function migrate_providers(s, choices)
-	local n, total = 0, 0
-	for _, unit in ipairs(s.plist) do
-		local p = s.providers[unit]
-		if p and p.entity.valid then
-			local list = old_patterns(p.entity, choices[unit])
-			local names = {}
-			for i, def in ipairs(list) do
-				if i <= SLOTS then
-					p.slots[i] = def
-					names[#names + 1] = def.kind .. " " .. (def.recipe or P.id_of(def))
-				else
-					names[#names + 1] = "dropped " .. P.id_of(def)
-				end
-			end
-			if #list > 0 then
-				n = n + 1
-				total = total + math.min(#list, SLOTS)
-				log("FORK-ME-MIGRATE: patterns: provider " .. unit .. " at " .. p.entity.position.x .. "," .. p.entity.position.y
-					.. " on " .. p.entity.surface.name .. ": " .. table.concat(names, ", "))
-			end
-			scan_provider(p)
-		end
-	end
-	log("FORK-ME-MIGRATE: patterns: " .. total .. " encoded patterns in " .. n .. " of " .. #s.plist .. " pattern providers")
-end
-
---- job steps and leases of older saves name a recipe: they get the pattern that makes it now (the crafting
---- pattern of the recipe, or the processing pattern migrated from a furnace recipe)
-local function migrate_job(s, job)
-	local net = job_network(job)
-	local defs = net and (s.patterns[net.id] or NO_PATTERNS).defs or {}
-	for _, step in ipairs(job.steps) do
-		if not step.pid and step.recipe then
-			local pid, def = "c/" .. step.recipe, nil
-			def = defs[pid]
-			if not def then
-				for id, d in pairs(defs) do
-					if d.kind == "processing" and d.recipe == step.recipe then pid, def = id, d break end
-				end
-			end
-			def = def or P.normalize{ kind = "crafting", recipe = step.recipe }
-			if def then
-				step.pid, step.def, step.kind = P.id_of(def), def, def.kind
-				if step.kind == "processing" then
-					step.received = {}
-					for _, r in ipairs(def.outputs) do step.received[r.key] = step.done * r.amount end
-				end
-			end
-		end
-	end
-	for _, lease in pairs(job.leases) do
-		local step = job.steps[lease.step]
-		if step and step.def and not lease.kind then
-			lease.pid, lease.kind = step.pid, step.kind
-			lease.chosen = nil
-			if lease.kind == "processing" then
-				lease.given = {}
-				for _, ing in pairs(P.ingredients(step.def)) do
-					lease.given[key_of(ing)] = (ing.type == "fluid" and fixed_up(ing.amount) or ing.amount) * lease.runs
-				end
-				lease.finished0 = nil
-			end
-		end
-	end
-end
-
 --- Rebuild the registries from the world, drop stale references, and repair the job books.
 --- Jobs and their pools are kept; provider slots, blueprint patterns and priorities are kept by unit number.
 function M.on_configuration_changed()
 	local s = state()
-	local legacy = s.pattern_version ~= PATTERN_VERSION
-	local kept, choices = {}, {}
-	for unit, p in pairs(s.providers) do
-		if legacy then
-			if p.recipe and prototypes.recipe[p.recipe] then choices[unit] = p.recipe end
-		else
-			kept[unit] = p
-		end
-	end
+	s.pattern_version = PATTERN_VERSION
+	local kept = {}
+	for unit, p in pairs(s.providers) do kept[unit] = p end
 	s.providers, s.plist, s.pcursor, s.patterns, s.dirty, s.await = {}, {}, 1, {}, true, nil
-	s.cpus = {}
+	s.cpus = nil                                          -- issue #145: the legacy CPUs are gone
 	s.cblocks, s.cgrid, s.groups = {}, {}, {}             -- issue #6: the groups are built again from the blocks
 	s.next_group = s.next_group or 1
 	local names = cpu_names()
@@ -3219,32 +3228,19 @@ function M.on_configuration_changed()
 	for _, k in pairs(kept) do
 		if k.slots and next(k.slots) then vanish_provider(s, k) end
 	end
-	if legacy then
-		migrate_providers(s, choices)
-		s.pattern_version = PATTERN_VERSION
-	end
 	refresh_providers(s)
 	ensure_patterns(s)
 	s.busy = {}
-	for _, rec in pairs(s.cpus) do rec.job, rec.jobs = nil, {} end
 	for _, id in pairs(shallow(s.active)) do
 		local job = s.jobs[id]
 		if not job then
 			remove_value(s.active, id)
 		else
-			if legacy then migrate_job(s, job) end
-			--- issue #6: a job stays on its legacy CPU (while it is one, with a slot); every other job is queued and
-			--- takes the next CPU that fits (multiblock groups are built again, they lose their jobs)
-			local rec = job.cpu and s.cpus[job.cpu]
+			--- every running job is queued and takes the next CPU that fits (multiblock groups are built again, they lose
+			--- their jobs); issue #145: a job of an older save that ran on a legacy CPU (the engine removed the CPU with its
+			--- prototype) is queued so too, with its pool and its machines' work: nothing is lost
 			job.cpu, job.group = nil, nil
-			if job.status == "running" and not job.closing then
-				if rec and rec.entity.valid and cpu_load(rec) < cpu_slots(rec) then
-					cpu_jobs(rec)[job.id] = true
-					job.cpu = rec.entity.unit_number
-				else
-					job.status = "queued"
-				end
-			end
+			if job.status == "running" and not job.closing then job.status = "queued" end
 			for _, lease in pairs(shallow(job.leases)) do
 				local step = job.steps[lease.step]
 				if lease.machine.valid and step and step.def then

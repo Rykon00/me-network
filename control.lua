@@ -9,10 +9,6 @@ local fork_sbus = require("scripts.fork-me-storagebus")
 --- ME Interface (items, and fluids through its four sides) and import/export buses, the I/O step (also runs the
 --- storage bus visits)
 local fork_io = require("scripts.fork-me-io")
---- issue #3: the old fluid blocks (ME Fluid Interface, ME Fluid Import / Export / Storage Bus) become the unified ones
-local fork_unify = require("scripts.fork-me-unify")
---- migration of ME networks of Gregtorio Continued 0.3.2 and older (logistic network based)
-local fork_migrate = require("scripts.fork-me-migrate")
 --- ME terminal (the hub window), routes the GUI events of every ME window (scripts/fork-me-gui.lua)
 local fork_me = require("scripts.fork-me-terminal")
 --- autocrafting, pattern providers with encoded patterns and crafting CPUs (the pattern items in
@@ -43,7 +39,6 @@ fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_net.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_sbus.tag_blueprint
 
 local function on_built(entity, tags, event)
-	if fork_unify.on_built(entity, tags) then return end      -- an old fluid block (or its ghost): replaced
 	fork_net.on_built(entity, event)
 	fork_io.on_built(entity, tags)                            -- (any other entity: the buses facing it wake)
 	fork_sbus.on_built(entity, tags)
@@ -64,7 +59,6 @@ end)
 --- cloned entities (e.g. by other mods) need to be registered as well (the settings of drives, interfaces, buses,
 --- providers, level maintainers and circuit interfaces are copied; an interface takes its cloned side tanks)
 script.on_event(defines.events.on_entity_cloned, function(event)
-	if fork_unify.on_built(event.destination) then return end
 	fork_net.on_built(event.destination)
 	fork_net.on_cloned(event.source, event.destination)
 	fork_io.on_built(event.destination, nil, event.source)
@@ -151,13 +145,43 @@ script.on_event(defines.events.on_player_rotated_entity, function(event)
 	fork_sbus.on_rotated(event.entity)
 end)
 
---- a new game, or this mod added to a save: first the state of a Gregtorio Continued save, if there is one
+--- Issue #146: saves from before 0.5.0 are no longer converted (the old drives, controller and interface of before the
+--- ME rework, the old fluid blocks of issue #3, the providers of before issue #80 are gone). Such a save is refused
+--- before anything is changed: the engine aborts the load, the file stays as it was. `old`: the mod's version in the
+--- save, or nil for the state of a Gregtorio Continued 0.4.x save (the hand-over).
+local CUT_OFF = { 0, 5, 0 }
+local function before_cut_off(version)
+	local parts = {}
+	for n in string.gmatch(version, "%d+") do parts[#parts + 1] = tonumber(n) end
+	for i = 1, 3 do
+		local a, b = parts[i] or 0, CUT_OFF[i]
+		if a ~= b then return a < b end
+	end
+	return false
+end
+local function refuse_old_save(old)
+	error("\n\nme-network: this save holds an ME network of " .. (old and ("me-network " .. old) or "Gregtorio Continued 0.4.x")
+		.. ".\nSince 0.5.1 me-network no longer converts saves from before 0.5.0 (issue #146).\n"
+		.. "Load the save once with me-network 0.5.0" .. (old and "" or " (and a Gregtorio Continued version that works with it)")
+		.. ", save it, then update. The save file was not changed.\n", 0)
+end
+local function handover_pending()
+	local iface = remote.interfaces["gregtorio-me-handover"]
+	return iface and iface.pending and remote.call("gregtorio-me-handover", "pending") and true or false
+end
+
+--- a new game, or this mod added to a save: first the state of a Gregtorio Continued save, if there is one (issue #146:
+--- that state is from before 0.5.0 and refused)
 script.on_init(function()
+	if handover_pending() then refuse_old_save(nil) end
 	handover.pull()
 	fork_me.on_init()
 end)
 
 script.on_configuration_changed(function(data)
+	local change = data.mod_changes[script.mod_name]
+	if change and change.old_version and before_cut_off(change.old_version) then refuse_old_save(change.old_version) end
+	if handover_pending() then refuse_old_save(nil) end
 	--- recipes newly added to researched technologies are unlocked in existing saves (a mod that changes this
 	--- mod's recipes or technologies, like Gregtorio Continued, does the same for its own updates)
 	if data.mod_changes[script.mod_name] or data.mod_startup_settings_changed then
@@ -166,11 +190,10 @@ script.on_configuration_changed(function(data)
 		end
 	end
 	handover.pull()
-	--- the graph first (the only map scan), then the migration of old ME networks, then the modules that read it
+	--- the graph first (the only map scan), then the modules that read it
 	fork_net.rebuild()
-	fork_migrate.run_fluids()
-	fork_migrate.run()
-	fork_unify.run()                -- issue #3: the old fluid blocks, their ghosts and items
+	--- issue #146: the reports of the conversions of old saves (0.5.0 and older) are gone with them
+	storage.fork_me_migrate, storage.fork_me_migrate_fluids, storage.fork_me_unify = nil, nil, nil
 	fork_me.on_configuration_changed()
 	fork_fluids.on_configuration_changed()
 	fork_ae2.on_configuration_changed()

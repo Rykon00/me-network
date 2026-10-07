@@ -28,7 +28,7 @@ M.MAX_AMOUNT = 1000000     -- per row
 local FLUID_PREFIX = "fluid/"
 
 local function is_fluid(key) return key:sub(1, #FLUID_PREFIX) == FLUID_PREFIX end
-local function fluid_name(key) return key:sub(#FLUID_PREFIX + 1) end
+local function fluid_name(key) return N.fluid_name(key) end
 M.is_fluid = is_fluid
 
 --- item keys of a pattern are plain items (no items with tags: their data cannot be moved by name and count)
@@ -41,8 +41,13 @@ local function valid_key(key)
 end
 M.valid_key = valid_key
 
-local function key_of(entry)
-	if entry.type == "fluid" then return FLUID_PREFIX .. entry.name end
+--- issue #159: a fluid ingredient with a temperature is that temperature's filter key (else every temperature), a
+--- fluid product the storage key of its temperature
+local function key_of(entry, product)
+	if entry.type == "fluid" then
+		if product then return N.fluid_key(entry.name, entry.temperature) end
+		return N.fluid_filter_key(entry.name, entry.temperature)
+	end
 	return entry.name
 end
 
@@ -58,10 +63,10 @@ end
 
 --- the inputs and outputs of a recipe as { key, amount } lists (amounts summed per key)
 local function recipe_lists(proto)
-	local function list(entries, amount_of)
+	local function list(entries, amount_of, product)
 		local out, at = {}, {}
 		for _, e in pairs(entries) do
-			local key = key_of(e)
+			local key = key_of(e, product)
 			local n = amount_of(e)
 			if n > 0 then
 				if at[key] then out[at[key]].amount = out[at[key]].amount + n
@@ -73,17 +78,20 @@ local function recipe_lists(proto)
 		end
 		return out
 	end
-	return list(proto.ingredients, function(e) return e.amount end), list(proto.products, expected)
+	return list(proto.ingredients, function(e) return e.amount end), list(proto.products, expected, true)
 end
 
 --- A clean copy of a list of { key, amount }: valid keys, positive amounts (items whole), each key once, at most
---- `max` rows. Returns nil when the list is empty or a row is invalid.
-local function clean_list(list, max)
+--- `max` rows. Returns nil when the list is empty or a row is invalid. Issue #159: a fluid key is a filter key of the
+--- inputs ("fluid/<name>": any temperature, "fluid/<name>@<degrees>": that one), and a storage key of the outputs
+--- (`outputs`: what comes out has one temperature, the default one without a temperature).
+local function clean_list(list, max, outputs)
 	if type(list) ~= "table" then return nil end
 	local out, at = {}, {}
 	for _, row in ipairs(list) do
 		if type(row) ~= "table" or not valid_key(row.key) then return nil end
-		local key = is_fluid(row.key) and row.key or (N.alias(row.key) or row.key)   -- a replaced item (issue #3)
+		local key = is_fluid(row.key) and N.clean_fluid_filter(row.key) or (N.alias(row.key) or row.key)   -- a replaced item (issue #3)
+		if outputs and is_fluid(key) then key = N.fluid_storage_key(key) end
 		local amount = tonumber(row.amount)
 		if not amount or amount <= 0 or amount ~= amount then return nil end
 		if not is_fluid(key) then amount = math.floor(amount + 1e-9) end
@@ -117,7 +125,7 @@ function M.normalize(def)
 		return { kind = "crafting", recipe = proto.name, inputs = inputs, outputs = outputs }
 	elseif def.kind == "processing" then
 		local inputs = clean_list(def.inputs, M.MAX_INPUTS)
-		local outputs = clean_list(def.outputs, M.MAX_OUTPUTS)
+		local outputs = clean_list(def.outputs, M.MAX_OUTPUTS, true)
 		if not (inputs and outputs) then return nil, "invalid" end
 		local out = { kind = "processing", inputs = inputs, outputs = outputs }
 		if type(def.recipe) == "string" and prototypes.recipe[def.recipe] then out.recipe = def.recipe end   -- where it came from
@@ -149,11 +157,30 @@ function M.processing(inputs, outputs, recipe)
 	return M.normalize{ kind = "processing", inputs = packed(inputs), outputs = packed(outputs), recipe = recipe }
 end
 
---- the inputs and outputs of a recipe as processing pattern rows (the encoding window's "From recipe")
+--- the inputs and outputs of a recipe as processing pattern rows (the encoding window's "From recipe", a provider that
+--- takes over an assembler's recipe). Issue #171: a processing pattern's row is an amount every run gives, so the
+--- products with a chance (a byproduct at 5 %, a range) stay out of the rows, as a GT New Horizons player leaves the
+--- chance outputs out of a processing pattern; they still go into the network when they come. A recipe whose every
+--- product has a chance keeps them, at least 1 of an item (their expected amount would round down to nothing).
 function M.recipe_rows(recipe)
 	local proto = prototypes.recipe[recipe]
 	if not proto then return nil end
 	local inputs, outputs = recipe_lists(proto)
+	local certain = {}
+	for _, p in pairs(proto.products) do
+		if p.amount and (p.probability or 1) >= 1 then certain[key_of(p, true)] = true end
+	end
+	if next(certain) then
+		local kept = {}
+		for _, row in ipairs(outputs) do
+			if certain[row.key] then kept[#kept + 1] = row end
+		end
+		outputs = kept
+	else
+		for _, row in ipairs(outputs) do
+			if not is_fluid(row.key) then row.amount = math.max(1, math.floor(row.amount + 0.5)) end
+		end
+	end
 	return inputs, outputs
 end
 
@@ -184,7 +211,12 @@ function M.ingredients(def)
 	end
 	local out = {}
 	for _, r in ipairs(def.inputs) do
-		out[#out + 1] = { type = is_fluid(r.key) and "fluid" or "item", name = is_fluid(r.key) and fluid_name(r.key) or r.key, amount = r.amount }
+		if is_fluid(r.key) then                              -- (issue #159: a temperature in the key is exact)
+			local name, deg = N.split_fluid_key(r.key)
+			out[#out + 1] = { type = "fluid", name = name, amount = r.amount, temperature = deg }
+		else
+			out[#out + 1] = { type = "item", name = r.key, amount = r.amount }
+		end
 	end
 	return out
 end
@@ -196,7 +228,12 @@ function M.products(def)
 	end
 	local out = {}
 	for _, r in ipairs(def.outputs) do
-		out[#out + 1] = { type = is_fluid(r.key) and "fluid" or "item", name = is_fluid(r.key) and fluid_name(r.key) or r.key, amount = r.amount }
+		if is_fluid(r.key) then
+			local name, deg = N.split_fluid_key(r.key)
+			out[#out + 1] = { type = "fluid", name = name, amount = r.amount, temperature = deg }
+		else
+			out[#out + 1] = { type = "item", name = r.key, amount = r.amount }
+		end
 	end
 	return out
 end
@@ -230,7 +267,9 @@ end
 local function row_text(r)
 	if is_fluid(r.key) then
 		local proto = prototypes.fluid[fluid_name(r.key)]
-		return { "", "\n  [fluid=" .. fluid_name(r.key) .. "] " .. num(r.amount) .. " ", proto and proto.localised_name or r.key }
+		local _, deg = N.split_fluid_key(r.key)
+		return { "", "\n  [fluid=" .. fluid_name(r.key) .. "] " .. num(r.amount) .. " ", proto and proto.localised_name or r.key,
+			deg and (" (" .. deg .. " °C)") or "" }
 	end
 	local proto = prototypes.item[r.key]
 	return { "", "\n  [item=" .. r.key .. "] " .. num(r.amount) .. "x ", proto and proto.localised_name or r.key }

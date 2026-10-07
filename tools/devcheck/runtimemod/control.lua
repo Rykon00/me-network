@@ -24,7 +24,7 @@
 --- the "line" (this script) turns the inputs into outputs in another chest and an import bus brings them back.
 --- Fluids (issue #68 step R2, prototypes/fluids.lua, scripts/fork-me-fluids.lua): a network with a
 --- drive of four 1k fluid cells, an import interface with a tank of chlorine connected to it, an export interface,
---- a roboport with construction robots, and pattern machines with fluid recipes (chemical reactors, an extractor).
+--- a roboport with construction robots, and pattern machines with fluid recipes (chemical reactors, a fluid extractor).
 --- Checks the import and export totals, a fluid cell taken out (its fluid in the tags), stored in the network and
 --- put back, the drive mined by robots (cells with their fluid in the storage chest) and rebuilt, full cells, a
 --- reported fluid shortfall, and jobs with a fluid ingredient, a fluid product and both. ME fluid cells
@@ -602,6 +602,17 @@ function me_drive(s, fails, what, x, y, items, tier, fluid)
 	return d
 end
 
+--- issue #145: a Crafting CPU where a legacy 2x2 one stood (its centre x, y): a 2x2 rectangle of crafting blocks, a 256k
+--- crafting storage (north-west) and three crafting units, touching what the old CPU touched. Returns the storage block.
+function place_cpu(s, fails, what, x, y)
+	local storage_block
+	for i, d in ipairs({ { -0.5, -0.5 }, { 0.5, -0.5 }, { -0.5, 0.5 }, { 0.5, 0.5 } }) do
+		local e = me_place(s, fails, what, i == 1 and "me-256k-crafting-storage" or "me-crafting-unit", x + d[1], y + d[2])
+		if i == 1 then storage_block = e end
+	end
+	return storage_block
+end
+
 --- ME cables from the controller (members[1]) to every other member
 function me_connect(fails, what, members)
 	local ok = true
@@ -754,6 +765,18 @@ crafter59 = require("crafter")({ me_place = me_place, power = power, me_report =
 --- me-network issue #76: what can be stored (storable.lua)
 storable76 = require("storable")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #159: fluids keep their temperature (temperature.lua)
+temperature159 = require("temperature")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #158: the pattern provider runs the machines next to it (providers.lua)
+providers158 = require("providers")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #157: a machine fed by an interface that keeps one craft (pastecraft.lua)
+pastecraft157 = require("pastecraft")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #150: the terminal's hand-over buffer (buffer150.lua)
+buffer150 = require("buffer150")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
@@ -789,7 +812,6 @@ local function tests_running()
 	check(storage.me_fsbus and storage.me_fsbus.done, "ME fluid storage bus")
 	check(storage.unified and storage.unified.done, "ME unified I/O")
 	check(storage.maint38 and storage.maint38.done, "level maintainer")
-	check(storage.tiers38 and storage.tiers38.done, "crafting CPU tiers")
 	check(storage.circuit38 and storage.circuit38.done, "circuit interface")
 	check(storage.settings38 and storage.settings38.done, "settings copy")
 	check(storage.sched_test and storage.sched_test.done, "ME scheduler")
@@ -818,6 +840,10 @@ local function tests_running()
 	crafter59.running(check)
 	holders43.running(check)
 	storable76.running(check)
+	temperature159.running(check)
+	providers158.running(check)
+	pastecraft157.running(check)
+	buffer150.running(check)
 	graph43.running(check)
 	return running
 end
@@ -859,7 +885,7 @@ function setup_autocraft_test(s)
 	place("substation", 13, AC_Y + 2)
 	local ctrl = place("me-network-controller", 6, AC_Y)
 	local term = place("me-terminal", 8.5, AC_Y + 4.5)
-	local cpu = place("me-crafting-cpu", 10, AC_Y)
+	local cpu = place_cpu(s, fails, "autocraft", 10, AC_Y)
 	local drive = me_drive(s, fails, "autocraft", 8.5, AC_Y + 6.5,
 		{ ["raw-iron"] = 20, ["iron-plate"] = AC_PLATES, ["iron-stick"] = AC_STICKS })
 	place("me-molecular-assembler", 15.5, AC_Y + 0.5, "iron-gear-crafting-table")
@@ -1000,9 +1026,10 @@ local function autocraft_test()
 	elseif phase == "cpu-lease" then
 		local j = job_of(st.job)
 		if j.leases > 0 then
-			local cpu = s.find_entity("me-crafting-cpu", { 10, AC_Y })
+			--- (issue #145: the crafting storage of the multiblock CPU; without it the rectangle is no CPU)
+			local cpu = s.find_entity("me-256k-crafting-storage", { 9.5, AC_Y - 0.5 })
 			expect(cpu, "CPU not found")
-			if cpu then cpu.destroy() end
+			if cpu then cpu.destroy{ raise_destroy = true } end
 			return next_phase("cpu-paused")
 		end
 		timeout_after(200, "CPU scenario (waiting for a machine to work)")
@@ -1011,7 +1038,7 @@ local function autocraft_test()
 			local j = job_of(st.job)
 			expect(j.status == "queued" and j.done < j.total, "job without CPU should be paused, status " .. j.status)
 			local ok, cpu = pcall(function()
-				return s.create_entity{ name = "me-crafting-cpu", position = { 10, AC_Y }, force = "player", raise_built = true }
+				return s.create_entity{ name = "me-256k-crafting-storage", position = { 9.5, AC_Y - 0.5 }, force = "player", raise_built = true }
 			end)
 			--- the CPU stands where the old one stood: the cables that connected it are still there
 			expect(ok and cpu and remote.call(NET, "same_network", cpu, terminal), "the new CPU is not in the network")
@@ -1116,7 +1143,7 @@ function setup_furnace_test(s)
 	local ctrl = place("me-network-controller", FU_X + 6, FU_Y)
 	local term = place("me-terminal", FU_X + 8.5, FU_Y + 4.5)
 	local pterm = place("me-pattern-terminal", FU_X + 5.5, FU_Y + 4.5)          -- issue #130: the patterns are encoded here
-	local cpu = place("me-crafting-cpu", FU_X + 10, FU_Y)
+	local cpu = place_cpu(s, fails, "furnace test", FU_X + 10, FU_Y)
 	local drive = me_drive(s, fails, "furnace test", FU_X + 8.5, FU_Y + 6.5, { [FU_INPUT] = 10, [BLANK] = FU_BLANKS })
 	for _, pos in pairs({ { FU_X + 15, FU_Y + 11 }, { FU_X + 6, FU_Y + 11 } }) do
 		local f = place("iron-furnace", pos[1], pos[2])
@@ -1350,8 +1377,8 @@ local function pattern_network(s, fails, x, y, items, cpus)
 	end
 	place("substation", x + 13, y + 2)
 	local members = { place("me-network-controller", x + 6, y), place("me-terminal", x + 8.5, y + 4.5),
-		place("me-crafting-cpu", x + 10, y) }
-	if cpus > 1 then members[#members + 1] = place("me-crafting-cpu", x + 10, y - 3) end
+		place_cpu(s, fails, "issue #80", x + 10, y) }
+	if cpus > 1 then members[#members + 1] = place_cpu(s, fails, "issue #80", x + 10, y - 3) end
 	members[#members + 1] = me_drive(s, fails, "issue #80", x + 8.5, y + 6.5, items)
 	return members
 end
@@ -1698,7 +1725,6 @@ script.on_nth_tick(10, function()
 	fluid_storage_bus_test()
 	unified_test()
 	if not (storage.maint38 and storage.maint38.done) then maintainer_test() end
-	if not (storage.tiers38 and storage.tiers38.done) then cpu_tier_test() end
 	if not (storage.circuit38 and storage.circuit38.done) then circuit_test() end
 	settings_test()
 	if not (storage.sched_test and storage.sched_test.done) then scheduler_test() end
@@ -1727,6 +1753,10 @@ script.on_nth_tick(10, function()
 	crafter59.tick()
 	holders43.tick()
 	storable76.tick()
+	temperature159.tick()
+	providers158.tick()
+	pastecraft157.tick()
+	buffer150.tick()
 	graph43.tick()
 	done_test()
 end)
@@ -1759,7 +1789,8 @@ local FL = {
 	chest = { "iron-chest", 14.5, FL_Y + 2.5 },
 	store = { "storage-chest", 20.5, FL_Y + 2.5 },        -- the robots' storage
 	reactor_a = { "hv-chemical-reactor", 12.5, FL_Y + 7.5 },
-	extractor = { "ev-extractor", 16.5, FL_Y + 7.5 },
+	-- Gregtorio issue #152: the melts run in the Fluid Extractor; the Extractor of a Gregtorio before it
+	extractor = { prototypes.entity["ev-fluid-extractor"] and "ev-fluid-extractor" or "ev-extractor", 16.5, FL_Y + 7.5 },
 	reactor_c = { "hv-chemical-reactor", 12.5, FL_Y + 11.5 },
 	reactor_d = { "hv-chemical-reactor", 20.5, FL_Y + 11.5 },
 }
@@ -1792,7 +1823,11 @@ function setup_fluid_test(s)
 	place("substation", 3, FL_Y)
 	place("substation", 16, FL_Y + 4)
 	local ctrl = place("me-network-controller", 6, FL_Y)
-	local cpu = place("me-quantum-crafting-cpu", 10, FL_Y)       -- three jobs at once (issue #6: no queue behind a busy CPU)
+	--- three jobs at once (issue #6: no queue behind a busy CPU): three Crafting CPUs of one crafting storage each, not
+	--- touching each other (issue #145: the quantum CPU that ran three jobs is gone)
+	local cpu = place("me-256k-crafting-storage", 9.5, FL_Y - 0.5)
+	local cpu2 = place("me-256k-crafting-storage", 10.5, FL_Y + 0.5)
+	local cpu3 = place("me-256k-crafting-storage", 12.5, FL_Y - 0.5)
 	local term = place(FL.terminal[1], FL.terminal[2], FL.terminal[3])
 	local fdrive = me_drive(s, fails, "fluids", FL_DRIVE_POS[1], FL_DRIVE_POS[2], {}, "1k", true)
 	local idrive = me_drive(s, fails, "fluids", FL.idrive[2], FL.idrive[3],
@@ -1821,7 +1856,7 @@ function setup_fluid_test(s)
 	machine(FL.reactor_d, "hydrochloric-acid")
 	local p3 = place("me-pattern-provider", 18.5, FL_Y + 11.5)
 	place("pipe", 19.5, FL_Y + 9.5)                    -- on the north-west input port of reactor D
-	me_connect(fails, "fluids", { ctrl, cpu, term, fdrive, idrive, ia, ib, p1, p2, p3 })
+	me_connect(fails, "fluids", { ctrl, cpu, cpu2, cpu3, term, fdrive, idrive, ia, ib, p1, p2, p3 })
 	--- issue #80: crafting patterns of the fluid recipes set in the machines
 	for _, p in pairs({ p1, p2, p3 }) do
 		if p then give_patterns(p, machine_patterns(p), fails) end
@@ -2277,7 +2312,7 @@ function setup_r3_test(s)
 	me_place(s, fails, "R3", "me-terminal", RX + 11.5, RY - 0.5)
 	local x = RX
 	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-network-interface",
-		"me-pattern-provider", "me-crafting-cpu", "me-level-maintainer", "me-circuit-interface" }) do
+		"me-pattern-provider", "me-crafting-unit", "me-level-maintainer", "me-circuit-interface" }) do
 		me_place(s, fails, "R3", name, x + 0.5, RY + 6.5)
 		x = x + 4
 	end
@@ -2404,7 +2439,7 @@ function me_r3_test()
 	local blocks = {}
 	local x = RX
 	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-network-interface",
-		"me-pattern-provider", "me-crafting-cpu", "me-level-maintainer", "me-circuit-interface" }) do
+		"me-pattern-provider", "me-crafting-unit", "me-level-maintainer", "me-circuit-interface" }) do
 		blocks[name] = s.find_entity(name, { x + 0.5, RY + 6.5 })
 		expect(blocks[name] and remote.call(GUI, "has_window", blocks[name]), "no window for " .. name)
 		x = x + 4
@@ -2438,8 +2473,8 @@ function me_r3_test()
 	local pd = remote.call(GUI, "provider_data", blocks["me-pattern-provider"])
 	expect(pd and pd.machines and #pd.machines == 0 and pd.slot_count == 9 and next(pd.slots) == nil and pd.priority == 0,
 		"provider_data " .. serpent.line(pd))
-	local cpu = remote.call(GUI, "cpu_data", blocks["me-crafting-cpu"])
-	expect(cpu and cpu.slots == 1 and #cpu.jobs == 0, "cpu_data " .. serpent.line(cpu))
+	local ccpu = remote.call(GUI, "crafting_cpu_data", blocks["me-crafting-unit"])     -- (issue #145: a block, no CPU yet)
+	expect(ccpu and ccpu.status ~= "ok", "crafting_cpu_data of a lone crafting unit " .. serpent.line(ccpu))
 	local maint = blocks["me-level-maintainer"]
 	expect(remote.call(GUI, "set_maintainer_target", maint, "iron-plate"), "set_maintainer_target")
 	local md = remote.call(GUI, "maintainer_data", maint)
@@ -2562,7 +2597,7 @@ function me_r3_test()
 	for i, name in ipairs({ "me-network-interface", "me-import-bus", "me-export-bus", "me-level-maintainer", "me-circuit-interface" }) do
 		row[#row + 1] = s.create_entity{ name = name, position = { RX + 11.5 + i, RY - 0.5 }, force = "player", raise_built = true }
 	end
-	row[#row + 1] = s.create_entity{ name = "me-crafting-cpu", position = { RX + 18, RY }, force = "player", raise_built = true }
+	row[#row + 1] = s.create_entity{ name = "me-256k-crafting-storage", position = { RX + 17.5, RY - 0.5 }, force = "player", raise_built = true }
 	row[#row + 1] = ctrl
 	for _, e in pairs(row) do
 		pinv[5].set_stack{ name = "stone-brick", count = 3 }
@@ -2927,13 +2962,13 @@ end
 
 --------------------------------------------------------------------------------
 --- Items and fluids in one block (me-network issue #3; scripts/fork-me-io.lua, fork-me-storagebus.lua,
---- fork-me-unify.lua): own network. The ME Interface with an item row and a fluid row (the fluid row takes the first
+--- issue #146): own network. The ME Interface with an item row and a fluid row (the fluid row takes the first
 --- side with a pipe), an import side, a side switched off, a pipe loop between an export and an import side, the
 --- fluid of its sides back into the network when it is mined; an export bus on a machine with a fluid recipe (items
 --- into the input inventory, the fluid into an input box), an import bus on such a machine (the output inventory and
 --- an output box; the input box is left alone); a storage bus that faces a chest, then a tank (it becomes the fluid
---- side), then a cable; mixed filters; the old fluid blocks: built by a script, their ghosts with old tags (revived
---- with the settings), their items (hidden, placing the unified block, no recipe, no unlock).
+--- side), then a cable; mixed filters; the old fluid blocks and the old entities of before the ME rework are gone
+--- (issue #146), the old drive items stay.
 --------------------------------------------------------------------------------
 
 local UX, UY = 300, 240
@@ -2999,7 +3034,7 @@ function unified_test()
 	end
 	local net = remote.call(NET, "network", t)
 	expect(net and net.ok, "network " .. serpent.line(net))
-	local function fluid(name) return remote.call(NET, "fluid_count", t, name) end
+	local function fluid(name, temperature) return remote.call(NET, "fluid_count", t, name, temperature) end
 	local function item(name) return remote.call(NET, "count", t, name) end
 	local function tanks(e) return remote.call(IO, "interface_tanks", e) or {} end
 	local function side(e, d) return (remote.call(IO, "get_interface", e) or { fluids = {} }).fluids[d] or {} end
@@ -3022,17 +3057,18 @@ function unified_test()
 	local seg = tanks(i)[2].fluidbox.get_fluid_segment_contents(1) or {}
 	expect(near(water0 - fluid("water"), seg.water or 0, 0.05), "water out of the network " .. (water0 - fluid("water"))
 		.. ", in the east segment " .. tostring(seg.water))
-	expect(near(fluid("steam"), 50) and (steam_pipe.fluidbox[1] == nil or steam_pipe.fluidbox[1].amount < 1e-3),
-		"import side: steam " .. fluid("steam") .. ", pipe " .. serpent.line(steam_pipe.fluidbox[1]))
+	--- (issue #159: the steam keeps its 165 degrees)
+	expect(near(fluid("steam", 165), 50) and fluid("steam") == 0 and (steam_pipe.fluidbox[1] == nil or steam_pipe.fluidbox[1].amount < 1e-3),
+		"import side: steam " .. fluid("steam", 165) .. " at 165, " .. fluid("steam") .. " at 15, pipe " .. serpent.line(steam_pipe.fluidbox[1]))
 	expect(side(i, 3).status == "import" and side(i, 2).status == "ok", "side status " .. serpent.line(side(i, 2)) .. serpent.line(side(i, 3)))
 	--- a side switched off keeps what is piped in
 	remote.call(IO, "set_interface_side", i, 3, "off")
 	steam_pipe.fluidbox[1] = { name = "steam", amount = 20, temperature = 165 }
 	step(i)
-	expect(near(fluid("steam"), 50) and side(i, 3).status == "off", "an off side imported: " .. fluid("steam"))
+	expect(near(fluid("steam", 165), 50) and side(i, 3).status == "off", "an off side imported: " .. fluid("steam", 165))
 	remote.call(IO, "set_interface_side", i, 3, "import")
 	step(i)
-	expect(near(fluid("steam"), 70), "the side imports again: " .. fluid("steam"))
+	expect(near(fluid("steam", 165), 70), "the side imports again: " .. fluid("steam", 165))
 	--- the loop: an export side and an import side on one pipe network
 	remote.call(IO, "set_interface_config", l, { [1] = { type = "fluid", name = "water", amount = 500 } }, { [2] = 1 })
 	local w1 = fluid("water")
@@ -3125,40 +3161,18 @@ function unified_test()
 	si = remote.call("gregtorio-me-storagebus", "info", sb)
 	expect(si and si.status == "me-target" and si.side == "item" and fluid("lubricant") == 0, "rotated onto the cable " .. serpent.line(si))
 
-	--- the old fluid blocks: one built by a script becomes the unified one; their ghosts become unified ghosts with
-	--- the settings in their tags
-	s.create_entity{ name = "me-fluid-import-bus", position = { UX + 35.5, UY + 0.5 }, direction = defines.direction.south,
-		force = "player", raise_built = true }
-	expect(find("me-fluid-import-bus", 35.5, 0.5) == nil, "an old fluid import bus built by a script stayed")
-	local new = find("me-import-bus", 35.5, 0.5)
-	expect(new and new.direction == defines.direction.south, "no unified import bus in its place")
-	local function ghost(name, x, tags, dir)
-		s.create_entity{ name = "entity-ghost", inner_name = name, position = { UX + x, UY + 4.5 }, direction = dir,
-			force = "player", tags = tags, raise_built = true }
-		local g = s.find_entities_filtered{ type = "entity-ghost", position = { UX + x, UY + 4.5 } }[1]
-		local e
-		if g then _, e = g.revive{ raise_revive = true } end
-		return g, e
-	end
-	local _, e1 = ghost("me-fluid-export-bus", 12.5, { fork_me_bus = { filters = { "water" } } }, defines.direction.east)
-	local b1 = e1 and remote.call(IO, "get_bus", e1)
-	expect(e1 and e1.name == "me-export-bus" and e1.direction == defines.direction.east and b1
-		and serpent.line(b1.filters) == serpent.line({ "fluid/water" }), "old export bus ghost: " .. tostring(e1 and e1.name) .. " " .. serpent.line(b1))
-	local _, e2 = ghost("me-fluid-interface", 14.5, { fork_me_fluid_interface = { mode = "export", fluid = "water", level = 777 } })
-	local c2 = e2 and remote.call(IO, "get_interface_config", e2)
-	local s2 = e2 and remote.call(IO, "get_interface_sides", e2)
-	expect(e2 and e2.name == "me-network-interface" and c2[1] and c2[1].type == "fluid" and c2[1].name == "water" and c2[1].amount == 777
-		and serpent.line(s2) == serpent.line({ 1, 1, 1, 1 }), "old fluid interface ghost: " .. serpent.line(c2) .. " " .. serpent.line(s2))
-	local _, e3 = ghost("me-fluid-storage-bus", 16.5, { fork_me_fluid_storage_bus = { mode = "read", priority = 3, filters = { "water" } } })
-	local g3 = e3 and remote.call("gregtorio-me-storagebus", "get_settings", e3)
-	expect(e3 and e3.name == "me-storage-bus" and g3 and g3.mode == "read" and g3.priority == 3
-		and serpent.line(g3.filters) == serpent.line({ "fluid/water" }), "old fluid storage bus ghost: " .. serpent.line(g3))
-	--- the old items: hidden, they place the unified block, no recipe makes them, no technology unlocks them
-	for old_name, unified in pairs({ ["me-fluid-interface"] = "me-network-interface", ["me-fluid-import-bus"] = "me-import-bus",
-		["me-fluid-export-bus"] = "me-export-bus", ["me-fluid-storage-bus"] = "me-storage-bus" }) do
-		local p = prototypes.item[old_name]
-		expect(p and p.hidden and p.place_result and p.place_result.name == unified, old_name .. ": " .. tostring(p and p.place_result and p.place_result.name))
+	--- the old fluid blocks are gone (issue #146): no entity, no item; the old drive items stay (they place an ME Drive)
+	for _, old_name in pairs({ "me-fluid-interface", "me-fluid-import-bus", "me-fluid-export-bus", "me-fluid-storage-bus" }) do
+		expect(prototypes.entity[old_name] == nil and prototypes.item[old_name] == nil, old_name .. " still exists")
 		expect(prototypes.recipe[old_name] == nil, "the recipe " .. old_name .. " exists")
+	end
+	for _, old_name in pairs({ "me-drive-1k", "me-controller", "me-interface", "me-fluid-drive-1k" }) do
+		local p = prototypes.entity[old_name]
+		expect(p == nil, "the old entity " .. old_name .. " still exists")
+	end
+	for _, old_name in pairs({ "me-drive-256k", "me-fluid-drive-256k" }) do
+		local p = prototypes.item[old_name]
+		expect(p and p.hidden and p.place_result and p.place_result.name == "me-drive", "the old drive item " .. old_name)
 	end
 	for _, eff in pairs(prototypes.technology["me-fluid-storage"].effects) do
 		expect(not (eff.recipe and eff.recipe:find("^me%-fluid%-") and not eff.recipe:find("cell")), "me-fluid-storage unlocks " .. tostring(eff.recipe))
@@ -3300,10 +3314,10 @@ function fluid_storage_bus_test()
 	--- the network's fluid must be the cells' plus the segments of the working buses (each segment once)
 	local pairs_ = { { b1, t1 }, { b2, t2 }, { b3, t3 }, { b4, t4 }, { b5, t5 } }
 	local function consistent(label)
-		local want = {}
+		local want = {}                                      -- (by storage key: issue #159, a key per temperature)
 		for _, c in pairs(remote.call(NET, "drive", drive)) do
 			for k, n in pairs(c.items) do
-				if k:sub(1, 6) == "fluid/" then want[k:sub(7)] = (want[k:sub(7)] or 0) + n end
+				if k:sub(1, 6) == "fluid/" then want[k] = (want[k] or 0) + n end
 			end
 		end
 		for _, p in ipairs(pairs_) do
@@ -3314,17 +3328,19 @@ function fluid_storage_bus_test()
 			if p[1].valid and p[2].valid then
 				local i = info(p[1])
 				local id = p[2].fluidbox.get_fluid_segment_id(1)
-				if (i.status == "ok" or i.status == "temperature") and i.mode ~= "write" and not done[id] then
+				if i.status == "ok" and i.mode ~= "write" and not done[id] then
 					done[id] = true
 					local allow = {}
 					for _, f in pairs(i.filters) do allow[f] = true end
+					local held = p[2].fluidbox[1]
 					for name, n in pairs(seg(p[2])) do
-						if #i.filters == 0 or allow["fluid/" .. name] then want[name] = (want[name] or 0) + n end
+						local key = remote.call(NET, "fluid_key", name, held and held.temperature)
+						if #i.filters == 0 or allow["fluid/" .. name] then want[key] = (want[key] or 0) + n end
 					end
 				end
 			end
 		end
-		local have = remote.call(NET, "fluid_contents", t)
+		local have = remote.call(NET, "fluid_key_contents", t)
 		local diff = {}
 		for k, n in pairs(want) do if not near(have[k], n) then diff[#diff + 1] = k .. " " .. tostring(have[k]) .. "/" .. n end end
 		for k, n in pairs(have) do if not want[k] then diff[#diff + 1] = k .. " " .. n .. "/0" end end
@@ -3411,15 +3427,25 @@ function fluid_storage_bus_test()
 	expect(near(remote.call(NET, "extract_fluid", t, "water", 120), 20) and fcount("water") == 0 and (seg(t4).water or 0) < 1e-6,
 		"stale extract: network " .. fcount("water"))
 	consistent("after the stale extract")
-	--- another temperature: hot steam in T4 is read, the network's steam (default temperature) does not go in
+	--- another temperature (issue #159): hot steam in T4 is storage at its temperature ("fluid/steam@500"), the network's
+	--- steam at the default temperature does not go in, steam at 500 does (T4 at priority 10), each comes out at its own
 	t4.insert_fluid{ name = "steam", amount = 100, temperature = 500 }
 	visit(b4)
 	local i4 = info(b4)
-	expect(i4.status == "temperature" and near(i4.temperature, 500) and near(fcount("steam"), 100), "hot steam: " .. serpent.line(i4))
+	local hot = remote.call(NET, "fluid_key", "steam", 500)
+	local function hcount() return remote.call(NET, "fluid_count", t, "steam", 500) end
+	expect(hot == "fluid/steam@500" and i4.status == "ok" and near(i4.temperature, 500) and near(fcount("steam"), 0) and near(hcount(), 100)
+		and near((i4.contents or {})[hot], 100), "hot steam: " .. serpent.line(i4))
 	expect(near(remote.call(NET, "insert_fluid", t, "steam", 50), 50) and near(seg(t4).steam, 100) and near(cells("steam"), 50)
-		and near(t4.fluidbox[1].temperature, 500), "steam inserted into the hot tank: T4 " .. tostring(seg(t4).steam))
-	expect(near(remote.call(NET, "extract_fluid", t, "steam", 120), 120) and near(seg(t4).steam, 0) and near(cells("steam"), 30),
-		"steam taken: T4 " .. tostring(seg(t4).steam) .. ", cells " .. cells("steam"))
+		and near(t4.fluidbox[1].temperature, 500), "cold steam inserted into the hot tank: T4 " .. tostring(seg(t4).steam))
+	remote.call(FSB, "set_settings", b4, { mode = "readwrite", priority = 10 })
+	expect(near(remote.call(NET, "insert_fluid", t, "steam", 30, 500), 30) and near(seg(t4).steam, 130) and near(t4.fluidbox[1].temperature, 500)
+		and near(hcount(), 130), "hot steam into the hot tank: T4 " .. tostring(seg(t4).steam) .. " at " .. t4.fluidbox[1].temperature)
+	expect(near(remote.call(NET, "extract_fluid", t, "steam", 120), 50) and near(seg(t4).steam, 130) and near(cells("steam"), 0),
+		"cold steam taken: T4 " .. tostring(seg(t4).steam) .. ", cells " .. cells("steam"))
+	expect(near(remote.call(NET, "extract_fluid", t, "steam", 130, 500), 130) and (seg(t4).steam or 0) < 1e-6 and near(hcount(), 0),
+		"hot steam taken: T4 " .. tostring(seg(t4).steam))
+	remote.call(FSB, "set_settings", b4, { mode = "readwrite", priority = 0 })
 	consistent("after the temperature")
 	--- removals: a tank removed with an event leaves at once, a removed bus takes its segment out
 	t3.destroy{ raise_destroy = true }
@@ -3487,7 +3513,7 @@ end
 --------------------------------------------------------------------------------
 
 local X38 = 250
-local LM_Y, CT_Y, CI_Y, SC_Y = -80, -20, 40, 100
+local LM_Y, CI_Y, SC_Y = -80, 40, 100
 local LM_ITEM, LM_KEEP, LM_TAKE, LM_CIRCUIT, LM_LATER = "iron-gear-wheel", 10, 3, 14, 20
 local GEAR_RECIPE = "iron-gear-crafting-table"
 local AC38, C38, F38 = "gregtorio-me-autocraft", "gregtorio-me-circuit", "gregtorio-me-fluids"
@@ -3516,7 +3542,7 @@ local function network38(s, fails, y, cpu)
 	end
 	place38(s, fails, "substation", X38 + 13, y + 2)
 	local members = { place38(s, fails, "me-network-controller", X38 + 6, y), place38(s, fails, "me-terminal", X38 + 8.5, y + 4.5) }
-	if cpu then members[#members + 1] = place38(s, fails, cpu, X38 + 10, y) end
+	if cpu then members[#members + 1] = place_cpu(s, fails, "issue #38", X38 + 10, y) end
 	members[#members + 1] = me_drive(s, fails, "issue #38", X38 + 8.5, y + 6.5, { ["iron-plate"] = 200, ["iron-stick"] = 200 })
 	return members
 end
@@ -3538,26 +3564,16 @@ end
 
 function setup_issue38_tests(s)
 	local fails = {}
-	--- level maintainer: two base CPUs (a free slot while a job runs: only the maintainer's own rule keeps it
+	--- level maintainer: two Crafting CPUs (a free one while a job runs: only the maintainer's own rule keeps it
 	--- from starting a second job), one gear machine, a constant combinator for the circuit input
-	local m = network38(s, fails, LM_Y, "me-crafting-cpu")
-	m[#m + 1] = place38(s, fails, "me-crafting-cpu", X38 + 10, LM_Y - 3)
+	local m = network38(s, fails, LM_Y, true)
+	m[#m + 1] = place_cpu(s, fails, "issue #38", X38 + 10, LM_Y - 3)
 	place38(s, fails, "me-molecular-assembler", X38 + 15.5, LM_Y + 0.5, GEAR_RECIPE)
 	m[#m + 1] = place38(s, fails, "me-pattern-provider", X38 + 16.5, LM_Y + 0.5)
 	m[#m + 1] = place38(s, fails, "me-level-maintainer", X38 + 4.5, LM_Y + 8.5)
 	place38(s, fails, "constant-combinator", X38 + 3.5, LM_Y + 10.5)
 	me_connect(fails, "level maintainer", m)
 	give_patterns(s.find_entity("me-pattern-provider", { X38 + 16.5, LM_Y + 0.5 }), { { kind = "crafting", recipe = GEAR_RECIPE } }, fails)
-	--- CPU tiers: a co-processing CPU and two gear machines
-	m = network38(s, fails, CT_Y, "me-co-processing-cpu")
-	place38(s, fails, "me-molecular-assembler", X38 + 15.5, CT_Y + 0.5, GEAR_RECIPE)
-	m[#m + 1] = place38(s, fails, "me-pattern-provider", X38 + 16.5, CT_Y + 0.5)
-	place38(s, fails, "me-molecular-assembler", X38 + 19.5, CT_Y + 0.5, GEAR_RECIPE)
-	m[#m + 1] = place38(s, fails, "me-pattern-provider", X38 + 18.5, CT_Y + 0.5)
-	me_connect(fails, "CPU tiers", m)
-	for _, x in pairs({ 16.5, 18.5 }) do
-		give_patterns(s.find_entity("me-pattern-provider", { X38 + x, CT_Y + 0.5 }), { { kind = "crafting", recipe = GEAR_RECIPE } }, fails)
-	end
 	--- circuit interface: a fluid drive, the interface wired to a pole
 	m = network38(s, fails, CI_Y, nil)
 	m[#m + 1] = me_drive(s, fails, "circuit interface", X38 + 14.5, CI_Y + 6.5, {}, "1k", true)
@@ -3637,8 +3653,8 @@ function maintainer_test()
 			st.amounts[#st.amounts + 1] = j.amount
 			expect(j.owner == m.unit_number, "job " .. j.id .. " was not started by the maintainer (owner " .. tostring(j.owner) .. ")")
 			local info = remote.call(AC38, "job", j.id)
-			expect(info.cpu_name == nil or (info.cpu_name == "me-crafting-cpu" and info.ops == 6),
-				"a job on the ME Crafting CPU: " .. tostring(info.cpu_name) .. " with " .. tostring(info.ops) .. " hand-overs per step")
+			expect(info.group == nil or info.ops == 6,
+				"a job on a Crafting CPU without co-processors: " .. tostring(info.ops) .. " hand-overs per step")
 		end
 	end
 	if #problems > 0 then return finish() end
@@ -3722,68 +3738,6 @@ function maintainer_test()
 	if #problems > 0 then finish() end
 end
 
---- CPU tiers: two jobs at once on a co-processing CPU, a third one waits; the quantum CPU's slots
-function cpu_tier_test()
-	local s = game.surfaces[1]
-	local terminal = s.find_entity("me-terminal", { X38 + 8.5, CT_Y + 4.5 })
-	local net = terminal and remote.call(NET, "network", terminal)
-	local st = storage.tiers38
-	local problems = {}
-	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
-	local function finish(note)
-		storage.tiers38.done = true
-		report38("CPUTIERS", "crafting CPU tiers", problems, note)
-	end
-	local function count(item) return me_count(terminal, item) end
-
-	if not st then
-		if game.tick < 60 then return end
-		storage.tiers38 = { started = game.tick }
-		st = storage.tiers38
-		if not (terminal and net) then expect(false, "entities missing") return finish() end
-		local n, free, _, slots = remote.call(AC38, "cpus", terminal)
-		expect(n == 1 and slots == 2 and free == 2, "co-processing CPU: " .. n .. " CPUs, " .. tostring(slots) .. " slots, " .. free .. " free")
-		local a = remote.call(AC38, "start", terminal, LM_ITEM, 8)
-		local b = remote.call(AC38, "start", terminal, LM_ITEM, 8)
-		expect(a and b, "the two jobs did not start")
-		if not (a and b) then return finish() end
-		local ja, jb = remote.call(AC38, "job", a), remote.call(AC38, "job", b)
-		expect(ja.status == "running" and jb.status == "running", "the two jobs do not run at once: " .. ja.status .. ", " .. jb.status)
-		expect(ja.cpu == jb.cpu and ja.cpu_name == "me-co-processing-cpu", "the jobs are not on the co-processing CPU: " .. tostring(ja.cpu_name))
-		expect(ja.ops == 12 and jb.ops == 12, "hand-overs per step on the co-processing CPU: " .. ja.ops .. ", " .. jb.ops)
-		local _, free2 = remote.call(AC38, "cpus", terminal)
-		expect(free2 == 0, "free slots with two jobs: " .. free2)
-		local c, why = remote.call(AC38, "start", terminal, LM_ITEM, 1)
-		expect(c == nil and why == "no-free-cpu", "a third job must be refused while both slots run (issue #6): " .. tostring(c) .. " " .. tostring(why))
-		if c then remote.call(AC38, "cancel", c) end
-		st.a, st.b, st.c = a, b, c
-		if #problems > 0 then return finish() end
-		return
-	end
-	if st.done then return end
-	local ja, jb = remote.call(AC38, "job", st.a), remote.call(AC38, "job", st.b)
-	if ja.leases > 0 and jb.leases > 0 then st.overlap = true end     -- both jobs had a machine crafting at once
-	local function over(j) return j.status == "done" or j.status == "failed" or j.status == "cancelled" end
-	if over(ja) and over(jb) then
-		expect(ja.status == "done" and jb.status == "done", "jobs ended as " .. ja.status .. ", " .. jb.status)
-		expect(st.overlap, "the two jobs never had a machine crafting at the same time")
-		expect(count(LM_ITEM) >= 16, "gears after both jobs: " .. count(LM_ITEM))
-		local jc = st.c and remote.call(AC38, "job", st.c)
-		expect(not jc or jc.status == "cancelled", "the third job: " .. tostring(jc and jc.status))
-		--- the upgrade planner's result, by script: a quantum CPU with four slots
-		local cpu = s.find_entity("me-co-processing-cpu", { X38 + 10, CT_Y })
-		if cpu then cpu.destroy() end
-		local q = s.create_entity{ name = "me-quantum-crafting-cpu", position = { X38 + 10, CT_Y }, force = "player", raise_built = true }
-		local n, free, _, slots = remote.call(AC38, "cpus", terminal)
-		expect(q and n == 1 and slots == 4 and free == 4, "quantum CPU: " .. n .. " CPUs, " .. tostring(slots) .. " slots, " .. free .. " free")
-		if #problems > 0 then return finish() end
-		return finish("two jobs of 8 gears at once, " .. (game.tick - st.started) .. " ticks")
-	end
-	if game.tick > st.started + 900 then
-		expect(false, "the two jobs timed out: " .. serpent.line(ja) .. " / " .. serpent.line(jb))
-		finish()
-	end
-end
 
 --- circuit interface: the wire carries the network contents, then the filtered ones, and follows a change
 function circuit_test()
@@ -4342,6 +4296,7 @@ function setup_paste_test(s)
 	machine("hv-chemical-reactor", 26.5, "hydrochloric-acid")
 	machine("zz-devcheck-paste-machine", 30.5, "zz-devcheck-paste-many")
 	machine("zz-devcheck-paste-machine", 34.5, "zz-devcheck-paste-fluids")
+	machine("zz-devcheck-paste-machine", 46.5, "zz-devcheck-paste-big")                -- issue #157: more than a side holds
 	game.forces.player.recipes["iron-dust-smelter"].enabled = true    -- a furnace only picks enabled recipes
 	for _, x in pairs({ 38, 41 }) do
 		local f = me_place(s, fails, what, "iron-furnace", PAX + x, PAY + 7)
@@ -4422,7 +4377,13 @@ function paste_test()
 		return me_report("RECIPEPASTE", "recipe paste", { "entities missing" })
 	end
 	local volume = remote.call(IO, "get_interface", i1).volume
-	local function stack(name) return prototypes.item[name].stack_size end
+	--- issue #157: a row keeps one craft (the recipe's ingredient amount; a fluid's in whole units, rounded up)
+	local function per_craft(recipe, name)
+		for _, g in ipairs(prototypes.recipe[recipe].ingredients) do
+			if g.name == name then return math.ceil(g.amount - 1e-6) end
+		end
+		return 0
+	end
 	local function config_line(e)
 		local out = {}
 		for i, c in pairs(remote.call(IO, "get_interface_config", e)) do
@@ -4436,8 +4397,11 @@ function paste_test()
 	--- the gear recipe's two items in the recipe's order (Gregtorio's lists the stick first)
 	local gear = {}
 	for _, g in ipairs(prototypes.recipe["iron-gear-crafting-table"].ingredients) do gear[#gear + 1] = g.name end
-	local function gear_rows(q) return "1=" .. gear[1] .. "@" .. q .. ":" .. stack(gear[1]) .. " 2=" .. gear[2] .. "@" .. q .. ":" .. stack(gear[2]) end
-	--- an item recipe onto an interface: its rows are replaced, one stack each
+	local function gear_rows(q)
+		local r = "iron-gear-crafting-table"
+		return "1=" .. gear[1] .. "@" .. q .. ":" .. per_craft(r, gear[1]) .. " 2=" .. gear[2] .. "@" .. q .. ":" .. per_craft(r, gear[2])
+	end
+	--- an item recipe onto an interface: its rows are replaced, one craft each (issue #157)
 	remote.call(IO, "set_interface_config", i2, { { name = "copper-plate", quality = "normal", amount = 10 } })
 	local msgs = remote.call(RP, "paste", m1, i2)
 	local want = gear_rows("normal")
@@ -4460,11 +4424,12 @@ function paste_test()
 	expect(line(keys(msgs)) == line({ "no-items" }) and line(remote.call(SB, "get_settings", sb1)) == line(st1),
 		"fluid-only recipe onto a storage bus on a chest: " .. line(remote.call(SB, "get_settings", sb1)) .. " " .. line(keys(msgs)))
 
-	--- a fluid recipe onto an interface: the fluid row gets the side's volume and the side with a pipe (east); the
+	--- a fluid recipe onto an interface: the fluid row gets one craft (issue #157) and the side with a pipe (east); the
 	--- north side stays off
 	remote.call(IO, "set_interface_side", i1, 1, "off")
 	msgs = remote.call(RP, "paste", r1, i1)
-	want = "1=resin-circuit-board@normal:" .. stack("resin-circuit-board") .. " 2=fluid/phenol:" .. volume
+	want = "1=resin-circuit-board@normal:" .. per_craft("phenolic-circuit-board", "resin-circuit-board") .. " 2=fluid/phenol:"
+		.. per_craft("phenolic-circuit-board", "phenol")
 	expect(#keys(msgs) == 0 and config_line(i1) == want and sides(i1) == line({ "off", 2 }),
 		"fluid recipe onto an interface with a pipe: " .. config_line(i1) .. " sides " .. sides(i1) .. " " .. line(keys(msgs)))
 	--- a side tied to a fluid that comes again keeps it; then a recipe without it: the side imports again, the two new
@@ -4473,7 +4438,7 @@ function paste_test()
 	msgs = remote.call(RP, "paste", r1, i4)
 	expect(#keys(msgs) == 0 and sides(i4) == line({ [1] = "off", [3] = 2 }), "a fluid's side kept: " .. sides(i4) .. " " .. line(keys(msgs)))
 	msgs = remote.call(RP, "paste", r2, i4)
-	want = "1=fluid/chlorine:" .. volume .. " 2=fluid/hydrogen:" .. volume
+	want = "1=fluid/chlorine:" .. per_craft("hydrochloric-acid", "chlorine") .. " 2=fluid/hydrogen:" .. per_craft("hydrochloric-acid", "hydrogen")
 	expect(config_line(i4) == want and sides(i4) == line({ "off", 1, 2 }) and line(keys(msgs)) == line({ "no-pipe", "no-pipe" }),
 		"two fluids onto sides without a pipe: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
 	--- the fluid recipe onto the buses and storage buses
@@ -4556,7 +4521,20 @@ function paste_test()
 	--- the furnace while it smelts (its current recipe)
 	local busy = f1.get_recipe() ~= nil
 	msgs = remote.call(RP, "paste", f1, i7)
-	expect(#keys(msgs) == 0 and config_line(i7) == "1=iron-dust@normal:" .. stack("iron-dust"), "furnace onto an interface: " .. config_line(i7) .. " " .. line(keys(msgs)))
+	expect(#keys(msgs) == 0 and config_line(i7) == "1=iron-dust@normal:" .. per_craft("iron-dust-smelter", "iron-dust"),
+		"furnace onto an interface: " .. config_line(i7) .. " " .. line(keys(msgs)))
+	--- issue #157: one craft needs more of a fluid than a side holds: the row holds a side's volume, the player is told
+	local mbig = s.find_entity("zz-devcheck-paste-machine", { PAX + 46.5, PAY + 6.5 })
+	if mbig then
+		msgs = remote.call(RP, "paste", mbig, i2)
+		local big = prototypes.recipe["zz-devcheck-paste-big"].ingredients
+		local bitem, bfluid = big[1].type == "item" and big[1] or big[2], big[1].type == "fluid" and big[1] or big[2]
+		want = "1=" .. bitem.name .. "@normal:3 2=fluid/" .. bfluid.name .. ":" .. volume
+		expect(config_line(i2) == want and line(keys(msgs)) == line({ "no-pipe", "amount-capped" }),
+			"a craft of more fluid than a side holds: " .. config_line(i2) .. " " .. line(keys(msgs)))
+	else
+		expect(false, "the machine of the big recipe is missing")
+	end
 	--- a paste between ME blocks is no recipe paste (their own handlers copy the settings)
 	expect(remote.call(RP, "paste", i1, i2) == nil and remote.call(RP, "paste", e1, e2) == nil, "a paste between ME blocks taken as a recipe paste")
 	st.note = machines .. " crafting machines can paste onto the four blocks, furnace " .. (busy and "smelting" or "already idle") .. " at the first paste"
@@ -4631,6 +4609,10 @@ script.on_init(function()
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
