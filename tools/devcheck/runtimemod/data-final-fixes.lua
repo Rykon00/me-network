@@ -41,3 +41,15 @@ do
 		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
 	} })
 end
+
+--- issue #158 (providers.lua): a second recipe of the macerator's category (Gregtorio's or the stand-in of data.lua), so a
+--- test can keep the machine busy on another recipe
+do
+	local m = data.raw["assembling-machine"]["ev-macerator"]
+	local cat = m and m.crafting_categories and m.crafting_categories[1]
+	if cat then
+		data:extend({ { type = "recipe", name = "zz-devcheck-macerate-plate", category = cat, energy_required = 4, enabled = true,
+			ingredients = { { type = "item", name = "iron-plate", amount = 1 } }, results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } },
+			icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
+	end
+end

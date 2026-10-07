@@ -64,6 +64,24 @@ do
 			{ { type = "fluid", name = "steam", amount = 10, temperature = 300 } }) })
 end
 
+--- issue #158 (providers.lua): a machine with a fixed recipe and a second recipe of its category
+do
+	local m = table.deepcopy(data.raw["assembling-machine"]["assembling-machine-2"])
+	m.name = "zz-devcheck-fixed-machine"
+	m.crafting_categories = { "zz-devcheck-fixed" }
+	m.fixed_recipe = "zz-devcheck-fixed"
+	m.minable = nil
+	m.next_upgrade = nil
+	m.fast_replaceable_group = nil
+	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local function r(name)
+		return { type = "recipe", name = name, category = "zz-devcheck-fixed", energy_required = 1, enabled = true, icon = icon,
+			subgroup = "intermediate-product", ingredients = { { type = "item", name = "iron-plate", amount = 1 } },
+			results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } } }
+	end
+	data:extend({ { type = "recipe-category", name = "zz-devcheck-fixed" }, m, r("zz-devcheck-fixed"), r("zz-devcheck-unfixed") })
+end
+
 if mods["gregtorio-continued"] then return end
 
 local ICON = "__base__/graphics/icons/signal/signal-info.png"

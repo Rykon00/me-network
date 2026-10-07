@@ -621,8 +621,18 @@ A processing pattern has free inputs and outputs. The provider **pushes the inpu
 * a **furnace** (stone, iron or steel furnace, any `furnace` machine): it picks its recipe from the input. Encode the
   furnace recipe as a processing pattern ("Fill from a recipe" in processing mode). A crafting pattern next to a
   furnace is no pattern (status `furnace`).
-* an **assembling machine with a recipe of its own** (set by you; the provider never changes it): the inputs go into
-  it like an inserter would put them. A machine without a recipe cannot take a processing pattern (`no-recipe`).
+* an **assembling machine**, when the pattern **names the recipe it was encoded from** (the ME Pattern Terminal's
+  "Fill from a recipe" and the patterns encoded from a machine's recipe do; issue #158 of ME Network): the provider
+  treats the machine as for a crafting pattern. It needs the recipe's category, no fixed recipe of another one, the
+  recipe researched and fitting boxes; an idle machine that has another recipe or none is **switched** to the
+  pattern's recipe (what is left in it goes into the network first), a busy one is used when it is done. Any
+  assembling machine works so, the Molecular Assembler and the machines of other mods (Gregtorio's tiers) alike; a
+  machine is switched between the patterns of its jobs one job at a time.
+* an **assembling machine with a recipe of its own**, for a processing pattern that names **no recipe** (written by
+  hand): the inputs go into it like an inserter would put them, and the provider never changes the recipe. A machine
+  without a recipe cannot take such a pattern (`no-recipe`).
+* Machines the provider cannot switch: a **furnace** chooses by its input (above); a **rocket silo** (its recipe is
+  fixed) and a **lab** are no machines of a provider.
 * a **chest** (iron, steel, logistic chest): the start of a production line. Items only.
 
 **Outputs** come back in two ways, and both count:

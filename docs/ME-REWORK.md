@@ -1081,6 +1081,17 @@ job). Decisions:
 
 A processing pattern's inputs are pushed into a machine next to the provider (a furnace, an assembling machine with a
 recipe of its own, which is never changed) as a lease, or into a chest next to it (no lease: the start of a line).
+**Issue #158 of ME Network:** a processing pattern that names the recipe it was encoded from (`def.recipe`, kept by
+`P.normalize` when the recipe exists) takes an assembling machine like a crafting pattern: `target_for` checks it with
+the crafting pattern's rules (`switch_problem`: category, fixed recipe, researched, stack, the fluid boxes with the
+outputs optional) whatever recipe the machine has, and `find_pusher` uses a machine that has the recipe and is idle,
+else switches an idle one (`switch_recipe`, what is left goes into the network first) after the other targets, as
+`find_crafter` does; a machine busy on another recipe (a craft in progress) is tried at the next step. Before, the
+machine had to have the recipe set by hand, a machine without one was `no-recipe` (the reproduction of the issue:
+the Molecular Assembler and Gregtorio's macerator and chemical reactor with a processing pattern, while crafting
+patterns worked), and a fixed-recipe machine took a processing pattern of another recipe. A furnace still chooses by
+its input; a rocket silo is no target (fixed recipe, not among the provider's neighbour types). No new per-tick work:
+the check is part of the scan of a provider, the switch part of a job step's hand-over.
 The question of the issue: how does a job know its outputs arrived?
 
 * **Count deltas against expected outputs** (compare the network's count with the count at hand-over) were rejected:

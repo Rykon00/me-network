@@ -757,6 +757,9 @@ storable76 = require("storable")({ me_place = me_place, cable_row = cable_row, p
 --- me-network issue #159: fluids keep their temperature (temperature.lua)
 temperature159 = require("temperature")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #158: the pattern provider runs the machines next to it (providers.lua)
+providers158 = require("providers")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
@@ -822,6 +825,7 @@ local function tests_running()
 	holders43.running(check)
 	storable76.running(check)
 	temperature159.running(check)
+	providers158.running(check)
 	graph43.running(check)
 	return running
 end
@@ -1732,6 +1736,7 @@ script.on_nth_tick(10, function()
 	holders43.tick()
 	storable76.tick()
 	temperature159.tick()
+	providers158.tick()
 	graph43.tick()
 	done_test()
 end)
@@ -4651,6 +4656,7 @@ script.on_init(function()
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end

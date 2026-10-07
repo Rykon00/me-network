@@ -511,6 +511,7 @@ RUNTIME_TESTS = (
     ("WBPICK69", "ME Cell Workbench partition buttons test"), ("WBTIP64", "ME cell tooltip test"), ("WBSLOTTIP75", "ME window slot tooltips test"), ("WBKEY79", "ME stored item descriptions test"),
     ("STORABLE", "ME storable items test"),
     ("TEMPERATURE", "ME fluid temperature test (issue #159)"),
+    ("PROVIDERS", "ME pattern provider machines test (issue #158)"),
     ("DONE", "all tests reported"),
 )
 
