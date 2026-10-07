@@ -434,7 +434,7 @@ G.on_window_closed(function(player, window)
 	local frame = picker_of(player)
 	if frame then
 		if frame.visible or frame.tags.cancel_tick == game.tick then
-			player.opened = window
+			G.focus(player, window)                      -- (the window, or its hand-over buffer: issue #168)
 			if frame.visible then
 				frame.visible = false
 				set_tags(frame, { cancel_tick = game.tick })
@@ -444,7 +444,7 @@ G.on_window_closed(function(player, window)
 		frame.destroy()                                  -- a picker hidden by an earlier close: this close is the window's
 	end
 	if window.tags.keep_tick == game.tick then          -- the confirm key just took a picker in: the window stays
-		player.opened = window
+		G.focus(player, window)
 		return true
 	end
 	return false
@@ -455,12 +455,12 @@ script.on_event("fork-me-picker-confirm", function(event)
 	local frame = player and picker_of(player)
 	if not frame then return end
 	if not (frame.visible or frame.tags.cancel_tick == game.tick) then return end
-	local window = player.gui.screen.fork_me_window
+	local window = G.window_of(player)
 	if window and window.valid then
 		local wt = window.tags
 		wt.keep_tick = game.tick
 		window.tags = wt
-		if player.opened ~= window then player.opened = window end
+		G.focus(player, window)
 	end
 	M.confirm(player)
 end)

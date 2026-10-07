@@ -1493,6 +1493,11 @@ end)
 
 remote.add_interface("gregtorio-me-gui", {
 	fmt = function(n) return G.fmt(n) end,
+	--- issue #150 (tests): the hand-over buffer of a relative window: its stacks into the block of window `name` (what it
+	--- refuses stays), and what is left back to `to` (a player or an inventory)
+	buffer_absorb = function(inv, name, entity) return G.buffer_absorb(inv, G.def_named(name), entity) end,
+	buffer_return = function(inv, to, entity) G.buffer_return(inv, to, entity) end,
+	buffer_slots = function() return G.BUFFER_SLOTS end,
 	--- true when the entity opens an ME window (click or open key)
 	has_window = function(entity) return G.has_window(entity) end,
 	drive_data = function(drive) return M.drive_data(drive) end,

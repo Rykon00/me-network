@@ -175,8 +175,18 @@ tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
 ## The ME windows
 
-Every ME block has its own window in one style (title bar with close button, drag it by the title bar), opened by
-**clicking the block** (the normal open key). Issue #28: **every ME window shows your inventory on its left**
+Every ME block has its own window in one style (title bar with close button), opened by **clicking the block** (the
+normal open key).
+
+**Beside the game's inventory** (issues #150 and #168, the default; map setting "ME windows beside the game's
+inventory"): an ME window opens next to the game's own inventory window, with its click rules. Between the two is a
+**hand-over buffer** of 20 slots ("Into the ME network"): what you put into it (shift + click, control + click for
+every stack of an item, a stack put down, half a stack) goes where a shift + click sends it below (into the network, a
+cell into the drive or the workbench, a pattern into the provider, a card into its slot); what the block cannot take
+stays in the buffer and comes back to you when the window closes (into your inventory, else onto the ground). E,
+Escape or the close button close the window.
+
+With the setting off, the windows draw your inventory themselves (issue #28): **every ME window shows your inventory on its left**
 ("Character"), the block's slots (cards, cell, cells of a drive, patterns) in the window: click a stack in your
 inventory to pick it up, put it down, merge or swap it, right click for half a stack, **shift + click to put it into
 the block** (a card into a card slot, a cell into the workbench or a free drive slot, a pattern into a free provider
