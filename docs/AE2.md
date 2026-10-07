@@ -585,7 +585,9 @@ Terminal: it draws its power (8 kW) through the controller, so it needs no pole,
   researched recipes are accepted. The inputs and outputs (fluids too) come from the recipe and are shown.
 * **Processing pattern:** up to **9 inputs** and **6 outputs**, each an item or fluid (signal button) with an amount
   per run. The recipe button fills the rows from a recipe ("Fill from a recipe"), which is the quick way to a
-  furnace pattern. Items with tags (cells, patterns) cannot be inputs or outputs.
+  furnace pattern. A product that comes only at a chance (a byproduct at 5 %) stays out of the rows (issue #171): a
+  row is what every run gives; the byproduct still goes into the network when it comes. A recipe whose every product
+  comes at a chance keeps them (at least 1 of an item). Items with tags (cells, patterns) cannot be inputs or outputs.
 * **The two slots** are the block's inventory (what lies in them stays when the window closes, is saved, comes out
   when the block is mined and is spilled when it is destroyed; blueprints, copies and clones start empty). The
   **blank pattern slot** takes only blank patterns (a stack): click with blanks in your hand, or shift + click a stack
@@ -658,7 +660,10 @@ A processing pattern has free inputs and outputs. The provider **pushes the inpu
    network is taken by the job first** (up to what its runs still owe), as in AE2. Outputs that a storage bus merely
    sees appearing in a chest do not count (they are not inserted).
 
-A run is done when all its outputs are back. Until then the job shows "Waiting for the outputs of a processing
+A run is done when the outputs the job wants of it are back: the item it was planned for (and what a later step
+needs of it), not every row of the pattern (issue #171). Another output, such as a byproduct listed in the pattern,
+goes into storage when it comes and never holds the job, as GT New Horizons' AE2 ends a job by its requested
+output. (A job started before this change still waits for every row.) Until then the job shows "Waiting for the outputs of a processing
 pattern to come back"; with no progress at all for 5 minutes it fails (and gives back what it still holds). What a
 job pushed into a chest is in the line: a cancelled or failed job cannot take it back, and outputs that come back
 later simply go into storage. If a machine takes none of the inputs (wrong recipe, full), they come back into the job

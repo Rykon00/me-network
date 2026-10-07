@@ -157,11 +157,30 @@ function M.processing(inputs, outputs, recipe)
 	return M.normalize{ kind = "processing", inputs = packed(inputs), outputs = packed(outputs), recipe = recipe }
 end
 
---- the inputs and outputs of a recipe as processing pattern rows (the encoding window's "From recipe")
+--- the inputs and outputs of a recipe as processing pattern rows (the encoding window's "From recipe", a provider that
+--- takes over an assembler's recipe). Issue #171: a processing pattern's row is an amount every run gives, so the
+--- products with a chance (a byproduct at 5 %, a range) stay out of the rows, as a GT New Horizons player leaves the
+--- chance outputs out of a processing pattern; they still go into the network when they come. A recipe whose every
+--- product has a chance keeps them, at least 1 of an item (their expected amount would round down to nothing).
 function M.recipe_rows(recipe)
 	local proto = prototypes.recipe[recipe]
 	if not proto then return nil end
 	local inputs, outputs = recipe_lists(proto)
+	local certain = {}
+	for _, p in pairs(proto.products) do
+		if p.amount and (p.probability or 1) >= 1 then certain[key_of(p, true)] = true end
+	end
+	if next(certain) then
+		local kept = {}
+		for _, row in ipairs(outputs) do
+			if certain[row.key] then kept[#kept + 1] = row end
+		end
+		outputs = kept
+	else
+		for _, row in ipairs(outputs) do
+			if not is_fluid(row.key) then row.amount = math.max(1, math.floor(row.amount + 0.5)) end
+		end
+	end
 	return inputs, outputs
 end
 
