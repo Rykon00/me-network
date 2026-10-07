@@ -1092,6 +1092,18 @@ the Molecular Assembler and Gregtorio's macerator and chemical reactor with a pr
 patterns worked), and a fixed-recipe machine took a processing pattern of another recipe. A furnace still chooses by
 its input; a rocket silo is no target (fixed recipe, not among the provider's neighbour types). No new per-tick work:
 the check is part of the scan of a provider, the switch part of a job step's hand-over.
+**Issue #164 (pipes on a used box):** a machine that switches its fluid boxes off without a fluid recipe
+(`fluid_boxes_off_when_no_fluid_recipe`, every Gregtorio machine) has no boxes to ask before the switch, so the scan
+showed such a machine as usable and the job refused it only after switching (`fluid-pipes`). `fluid_boxes_fit` now asks
+the prototype: for each normal pipe connection of the box (its tile for the machine's direction, `positions`, mirrored
+with the machine, and its direction turned with it) the entity on the tile it points at is asked whether one of its own
+pipe connections points back at that tile, which is what the engine joins once the box is on (`prototype_piped`, once
+per box and scan; tested with a pipe on an input box, the machine turned east, and a pipe beside the machine without a
+connection). **Decision on allowing such a box: no.** If the network's fluid and a pipe's shared an input box, a job
+could not tell its own fluid from the pipe's: the take-back of what a machine did not use would move the pipe's fluid
+into the job's pool (and on into the network), and what a craft used could not be split between the two. Gregtorio
+has 400 machine prototypes with fluid boxes (of 644); a recipe needs no pipe at a machine the provider feeds, the
+provider hands every fluid ingredient over itself, so the refusal costs a player only the pipe they would not need.
 The question of the issue: how does a job know its outputs arrived?
 
 * **Count deltas against expected outputs** (compare the network's count with the count at hand-over) were rejected:
