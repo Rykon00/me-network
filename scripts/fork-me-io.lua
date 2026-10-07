@@ -1204,15 +1204,19 @@ end
 --- Issue #159: what an export into the boxes `fb` may bring of fluid `name`: the temperature range of a box whose
 --- filter is the fluid (a machine's recipe: get_filter has its minimum and maximum) and the temperature of a box that
 --- holds the fluid already (nothing is mixed into it). nil where open. A machine's output boxes are left out (their
---- filter is the product's temperature, and nothing is inserted into them).
-local function export_range(fb, name)
+--- filter is the product's temperature, and nothing is inserted into them). Only a crafting machine (`machine`) has a
+--- recipe's filters: the box filters of anything else are not read.
+local CRAFTER = { ["assembling-machine"] = true, furnace = true, ["rocket-silo"] = true }
+local function export_range(fb, name, machine)
 	local lo, hi, temp
 	local B = N.bound(fb)
 	for i = 1, #fb do
 		local f = fb[i]
 		local has = f and f.name == name and f.amount > EPS
-		local flt = B.get_filter(i)
-		if has or (flt and flt.name == name) then
+		local flt = machine and B.get_filter(i)
+		if not machine then
+			if has then return nil, nil, f.temperature end
+		elseif has or (flt and flt.name == name) then
 			local p = B.get_prototype(i)
 			if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
 			if not (p and p.production_type == "output") then
@@ -1291,11 +1295,12 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 		rec.fleft = fleft
 	else
 		local fkeys = rec.fkeys
+		local machine = CRAFTER[t.type]
 		for fi, name in ipairs(rec.ffilters) do
-			local fk = fkeys and fkeys[fi] or (FLUID_PREFIX .. name)
+			local fk = fkeys and fkeys[fi] or N.fluid_key(name)
 			local key, total, tblock
 			if cap - moved > EPS then
-				local lo, hi, temp = export_range(fb, name)
+				local lo, hi, temp = export_range(fb, name, machine)
 				local keys, n = export_keys(net, name, fk, lo, hi, temp)
 				for k = 1, n do                                 -- issue #159: one temperature per filter and visit
 					key = keys[k]

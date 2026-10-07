@@ -751,10 +751,21 @@ end
 M.fluid_key = fluid_key
 
 --- the filter key of `name` at `temperature`: without one every temperature, with one only that one (also the default)
+local filter_key_cache = {}          -- name -> { [degrees] = filter key } (the key without a temperature: fluid_key_cache)
 function M.fluid_filter_key(name, temperature)
 	local d = clamp_degrees(name, temperature)
-	if d == nil then return FLUID_PREFIX .. name end
-	return FLUID_PREFIX .. name .. "@" .. d
+	if d == nil then return fluid_key(name) end
+	local c = filter_key_cache[name]
+	if not c then
+		c = {}
+		filter_key_cache[name] = c
+	end
+	local key = c[d]
+	if not key then
+		key = FLUID_PREFIX .. name .. "@" .. d
+		c[d] = key
+	end
+	return key
 end
 
 --- a fluid filter key checked against the prototypes and written as fluid_filter_key writes it; nil for no fluid

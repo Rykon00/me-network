@@ -227,7 +227,7 @@ M.handlers = {
 		if rec.mode == "write" then return 0 end
 		local name = fluid_of(key)
 		if not (name and owns(rec)) then return 0 end
-		if amount_of(rec, key, name) <= EPS then return 0 end            -- (the segment is at another temperature now)
+		--- (the engine asks `count` first, which is 0 while the segment is at another temperature: no second read here)
 		local t = rec.target
 		if t.fluidbox.get_fluid_segment_id(rec.box) then
 			return t.remove_fluid{ name = name, amount = amount }
