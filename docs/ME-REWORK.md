@@ -2244,9 +2244,14 @@ inventory), the workbench's cell into the cursor with its cards and back, a swap
 test and the generic window test of #30 stay. The drawing of the pane (`open_window`, `update_pane`, the hand, the
 events) was run against a mock of the GUI elements outside the game; how it looks only the game shows (`[Task-Ingame]`).
 
-### Experiment: the ME Terminal beside the game's inventory (me-network issue #150)
+### The windows beside the game's inventory (me-network issues #150 and #168)
 
-Behind the map setting "me-network-terminal-real-inventory" (off by default; only the ME Terminal) the terminal is a frame
+Issue #150 built it for the ME Terminal behind a map setting; after the maintainer's test in the game (#168: "much
+better so") every ME window opens so, and the map setting "me-network-real-inventory" is **on by default** (off: the
+pane of issue #28, kept as it was). `G.open_window` decides it for every window with a pane; the buffer does what the
+window's `shift` did for the pane (a cell into the drive, a pattern into the provider, a card into its slot, else into
+the network), and the picker (issue #94) keeps the close keys while it is open (its hook runs for the buffer's close
+too, `G.focus` makes the window or its buffer the opened GUI again). The ME window is a frame
 in `player.gui.relative` anchored right of a script inventory of 20 slots (`G.open_window(..., relative)`), which is the
 player's opened GUI: the game draws its own container window with the player's real inventory left of it, so the click
 rules are the game's. This is the layout pull request #30 had (the maintainer turned it down then for its three parts

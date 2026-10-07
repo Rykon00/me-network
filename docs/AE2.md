@@ -152,11 +152,6 @@ slot: the source slot's partition, or none) and by cloning.
 
 ## ME Terminal
 
-**Experimental** (issue #150, the map setting "Experimental: ME Terminal beside the game's inventory", off by default): the
-terminal opens next to the game's own inventory window instead of drawing your inventory itself. Between the two is a
-buffer of 20 slots: what you put into it (shift + click, a stack put down) goes into the network; what the network cannot
-take stays there and comes back to you when the window closes.
-
 Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
 fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs, and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
@@ -180,8 +175,18 @@ tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
 ## The ME windows
 
-Every ME block has its own window in one style (title bar with close button, drag it by the title bar), opened by
-**clicking the block** (the normal open key). Issue #28: **every ME window shows your inventory on its left**
+Every ME block has its own window in one style (title bar with close button), opened by **clicking the block** (the
+normal open key).
+
+**Beside the game's inventory** (issues #150 and #168, the default; map setting "ME windows beside the game's
+inventory"): an ME window opens next to the game's own inventory window, with its click rules. Between the two is a
+**hand-over buffer** of 20 slots ("Into the ME network"): what you put into it (shift + click, control + click for
+every stack of an item, a stack put down, half a stack) goes where a shift + click sends it below (into the network, a
+cell into the drive or the workbench, a pattern into the provider, a card into its slot); what the block cannot take
+stays in the buffer and comes back to you when the window closes (into your inventory, else onto the ground). E,
+Escape or the close button close the window.
+
+With the setting off, the windows draw your inventory themselves (issue #28): **every ME window shows your inventory on its left**
 ("Character"), the block's slots (cards, cell, cells of a drive, patterns) in the window: click a stack in your
 inventory to pick it up, put it down, merge or swap it, right click for half a stack, **shift + click to put it into
 the block** (a card into a card slot, a cell into the workbench or a free drive slot, a pattern into a free provider

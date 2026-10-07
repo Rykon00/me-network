@@ -117,8 +117,8 @@ local function pane_state()
 end
 
 --------------------------------------------------------------------------------
---- Issue #150, an experiment (the map setting "me-network-terminal-real-inventory", only the ME Terminal uses it): a
---- window opened `relative` is a frame in player.gui.relative anchored right of a script inventory of BUFFER_SLOTS
+--- Issue #150, rolled out to every ME window in #168 (the map setting "me-network-real-inventory", on by default; off:
+--- the pane of issue #28): a window opened `relative` is a frame in player.gui.relative anchored right of a script inventory of BUFFER_SLOTS
 --- slots, the hand-over buffer, which is the player's opened GUI: the game draws its own container window with the
 --- player's real inventory left of the buffer. What lands in the buffer (shift + click, a stack put down, a drag) goes
 --- into the network through the window's `shift` function. There is no event for a script inventory that changed, so
@@ -187,6 +187,18 @@ end
 local function opened_of(player, frame)
 	local b = frame and frame.parent == player.gui.relative and buffer_of(player)
 	return b and b.inv or frame
+end
+
+--- make the player's ME window the opened GUI again (the picker keeps a window open on the close keys)
+function M.focus(player, frame)
+	local o = opened_of(player, frame)
+	if player.opened ~= o then player.opened = o end
+end
+
+--- does a new window open beside the game's inventory? (issue #168: the map setting, on by default)
+local function real_inventory()
+	local s = settings.global["me-network-real-inventory"]
+	return s == nil or s.value == true
 end
 
 function M.close_window(player)
@@ -350,6 +362,7 @@ end
 --- Issue #150: `relative` (an experiment): no pane; the frame is anchored right of the hand-over buffer, which is the
 --- opened GUI (the game's own window with the player's inventory).
 function M.open_window(player, name, caption, tags, pane, relative)
+	if relative == nil then relative = pane ~= false and real_inventory() end   -- (issue #168: every window with a pane)
 	pane = pane ~= false and not relative
 	M.close_window(player)
 	local t = { fork_me_window = name, opened_tick = game.tick }
@@ -788,6 +801,12 @@ function M.on_closed(event)
 			if b.opened_tick == game.tick then
 				player.opened = b.inv
 				return true
+			end
+			local rel = player.gui.relative.fork_me_window
+			if rel and rel.valid then                      -- the picker above it takes the close keys first (issue #94)
+				for _, hook in ipairs(closed_hooks) do
+					if hook(player, rel) then return true end
+				end
 			end
 			M.close_window(player)
 			return true
