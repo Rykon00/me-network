@@ -23,11 +23,12 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   `me-acceleration-card` (category `me-acceleration`; `ME_NETWORK.ACCELERATION`) and `me-cell-workbench`; since 0.3.0 (issue #6)
   the crafting blocks of the multiblock crafting CPUs `me-crafting-unit`, `me-1k`...`me-256k-crafting-storage`,
   `me-crafting-co-processing-unit`, `me-crafting-monitor` (each with a recipe of the same name; subgroup
-  `fork-me-crafting-cpu`), while `me-crafting-cpu`, `me-co-processing-cpu` and `me-quantum-crafting-cpu` are legacy
-  blocks without a recipe (in `ME_NETWORK.removed`); hidden: the old drive items of Gregtorio saves, and since 0.2.0
+  `fork-me-crafting-cpu`); the legacy CPUs `me-crafting-cpu`, `me-co-processing-cpu` and `me-quantum-crafting-cpu`
+  are gone since 0.5.1 (issue #145; still in `ME_NETWORK.removed`, their items migrate to `me-1k-crafting-storage`); hidden: the old drive items of Gregtorio saves, and since 0.2.0
   (issue #3: the ME Interface and the buses handle fluids) `me-fluid-interface`, `me-fluid-import-bus`,
   `me-fluid-export-bus`, `me-fluid-storage-bus` (no recipe; they place the unified block).
-- `ME_NETWORK.removed`: { old item -> the item that replaced it } for those four and the three legacy CPUs (0.3.0).
+- `ME_NETWORK.removed`: { old item -> the item that replaced it } for those four and the three legacy CPUs (0.3.0;
+  since 0.5.1 they map to `me-1k-crafting-storage` and have no prototype any more).
   Their recipes are gone: see
   `replace_recipe` and "Recipes of removed items" below.
 - Technologies: `me-network`, `me-storage-64k`, `me-storage-256k`, `me-autocrafting`, `me-automation`,

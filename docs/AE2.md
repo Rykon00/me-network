@@ -44,7 +44,7 @@ underground cable), `me-storage-64k` (EV),
 1. Place an **ME Controller** and give it power. It draws 120 kW, plus 4 kW for every drive, interface, bus, pattern
    provider and circuit interface of the network, 8 kW for every terminal, 30 kW for every level maintainer and what
    its crafting blocks need. Cables, terminals, level maintainers and every other block need no power connection of
-   their own (no pole next to a terminal); only the legacy single-block Crafting CPUs keep one.
+   their own (no pole next to a terminal).
 2. Connect everything else with **ME cables**: a cable connects on all four sides, and ME blocks that touch
    each other connect without a cable (a row of drives next to the controller is one network). Corners do not
    connect. Everything connected is one network. The cable picture shows its connections.
@@ -210,7 +210,6 @@ click uses the tool and opens no window, as on a chest.
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, power |
 | ME Pattern Provider | 9 pattern slots (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | Crafting block (any block of a Crafting CPU) | the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
-| ME Crafting CPU (legacy, all tiers) | job slots, speed, power, the jobs it runs (progress, **Cancel**) and the jobs waiting for a CPU |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
@@ -758,18 +757,11 @@ group).
 
 ### The old Crafting CPUs (legacy)
 
-The single 2x2 CPUs of earlier versions (issue #38) are **legacy blocks**: they can no longer be crafted, but those in
-a save, or in your inventory, keep working as before, and their running jobs go on through the update on the same CPU:
-
-| Entity | Jobs at once | Speed | Power |
-|---|---|---|---|
-| ME Crafting CPU | 1 | 1x (6 machine hand-overs per job every 20 ticks) | 60 kW |
-| ME Co-Processing Crafting CPU | 2 | 2x | 240 kW |
-| ME Quantum Crafting CPU | 4 | 4x | 960 kW |
-
-They have no byte limit. A job takes a free multiblock CPU first, a legacy CPU with a free slot after that. A job is
-no longer queued behind busy CPUs: with every slot busy, the start is refused. The upgrade planner still swaps the
-legacy tiers (a job on the replaced CPU pauses and goes on on the new one).
+The single 2x2 CPUs of earlier versions (issue #38: ME Crafting CPU, ME Co-Processing Crafting CPU, ME Quantum
+Crafting CPU) are **gone** since 0.5.1 (issue #145). Loading an older save removes the placed ones; a job that ran on
+one is **paused** with everything it holds (nothing is lost) and goes on as soon as a multiblock CPU of its network is
+free and big enough (**Cancel** gives everything back). Each of them in an inventory or a chest becomes a **1k
+crafting storage** (`migrations/me-network-legacy-cpus.json`). Build a multiblock CPU where they stood.
 
 ## Keeping items in stock: ME Level Maintainer
 
@@ -1275,7 +1267,7 @@ Design record: `docs/ME-REWORK.md`, "Crafting CPUs as multiblocks". In short: th
 are kept in `storage.fork_ae2` (`cblocks`, `cgrid`, `groups`) from the build and removal events (a vanished block from
 the network's sweep), merged on a build and split by one search over the group on a removal; a group is a CPU when its
 block count fills its bounding box and it has storage. `make_plan` returns `bytes`; `M.start` picks the CPU at once
-(`pick_cpu`: free multiblock CPUs that fit, smallest first, then legacy CPUs with a slot) or refuses the job
+(`pick_cpu`: free multiblock CPUs that fit, smallest first) or refuses the job
 (`cpu-too-small`, `no-free-cpu`). `assign_cpus` only places jobs that were paused. Nothing of this runs while no
 block is built or removed.
 
@@ -1416,7 +1408,7 @@ partitions start empty.
   A provider mined by another mod's script (not a player or robot) drops its patterns instead of giving them to
   that script's inventory.
 * Crafting CPUs (issue #6): no choice of the CPU in the terminal (the smallest free one that fits is taken), no
-  "requests from players only / automation only" mode; the legacy CPUs have no byte limit. The level maintainer
+  "requests from players only / automation only" mode. The level maintainer
   keeps one resource per block;
   a circuit signal sets its amount or switches it, but there is no "craft what the circuit asks for"
   request of several resources at once. Settings paste by hand and the upgrade planner on CPUs are untested in
@@ -1528,9 +1520,11 @@ Issue #6 (`runtimemod/cpus.lua`, its own network): the smallest CPU (one 1k craf
 of two units (no CPU, dark pictures), the bytes of a gear plan (5 per gear + 24), a job too big for every CPU
 (refused with the bytes, nothing taken; a level maintainer waits), two jobs on the two CPUs at once and a third one
 refused, a block removed during a job (the job pauses, goes on on the 2x2 rest of its CPU, is cancelled: every plate
-and stick back), the CPU rebuilt, a clone and a blueprint of it (each forms a CPU of its own), a legacy CPU that takes
-the job too big for every multiblock. `devcheck.py migrate --from-ref v0.2.0` loads a save with a running job on each
-of the three legacy CPUs: each must end done on the CPU it started on.
+and stick back), the CPU rebuilt, a clone and a blueprint of it (each forms a CPU of its own).
+`devcheck.py migrate --from-ref v0.2.0` loads a save with a running job on each of the three legacy CPUs (issue
+#145: gone now): each job must be queued right after the load and end done on a multiblock CPU built where the legacy
+ones stood; with every version that has them (`--from-ref v0.5.0` too) a chest holding the three CPU items must hold
+three 1k crafting storages after the load.
 `devcheck.py migrate --from-ref v0.4.1` (issue #80) builds providers next to a Molecular Assembler with the gear recipe
 and next to a fresh iron furnace with the smelting recipe chosen in the provider, a gear job and a level maintainer
 keeping 8 gears with the old version; after the update the providers must hold a crafting pattern of the gear recipe

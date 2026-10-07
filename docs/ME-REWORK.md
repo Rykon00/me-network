@@ -58,7 +58,8 @@ cables are free), set by the script when the network changes. It counts as power
 "no power" and its buffer is not empty (an energy interface without any pole reports no "no power" status;
 an underpowered controller keeps the network running at low power, like other machines).
 Since issue #128 the terminal and the level maintainer draw their power through the controller too (8 kW and 30 kW, the numbers
-in the mod-data `fork-me-network`, `member_power`); only the three legacy single-block CPUs keep a power connection of their own.
+in the mod-data `fork-me-network`, `member_power`); only the three legacy single-block CPUs kept a power connection of their own
+(gone since issue #145).
 Both are still lamps (a prototype whose type changes is removed from a saved game), with `energy_source = { type = "void" }`:
 such a lamp has no electric network and its status is always "working", so a pole next to it does nothing and a wire to it
 still works. A lamp with a void source is always on, so the terminal's picture is drawn by the script: the lamp's `picture_on`
@@ -2080,6 +2081,21 @@ then the legacy CPUs with a free slot, fastest first (as before). Starting a job
 needs such a CPU **now**: otherwise the start is refused with "needs N bytes; the biggest CPU of this network has M"
 or "every CPU that can take it is busy", and a level maintainer waits and tries again. (Before, a job could be queued
 behind busy legacy CPUs; jobs that are queued in a save keep waiting and start when a slot is free.)
+
+**Issue #145 (0.5.1): the legacy CPUs are removed.** Keeping them meant two kinds of CPU in every job path (slots,
+speed, their own power, their own window). Their prototypes are gone: the engine removes the placed ones when an older
+save loads. `on_configuration_changed` drops `storage.fork_ae2.cpus` and queues every running job (as it does for jobs
+on multiblock CPUs, whose groups are built again): the job keeps its pool and its machines' work, and takes the next
+free multiblock CPU of its network with enough bytes, or waits ("Paused: waiting for a free CPU"); **Cancel** gives
+everything back. `job.cpu` is only cleared. The items migrate to `me-1k-crafting-storage` (JSON migration
+`migrations/me-network-legacy-cpus.json`, the smallest crafting storage: a 1x1 block is all one item can become; the
+player builds the CPU). The names stay in `ME_NETWORK.removed` (now mapped to the 1k storage), so `data-final-fixes.lua`
+still deletes recipes another mod makes for them (Gregtorio's compat file has none). The technologies `me-co-processing`
+and `me-quantum-crafting` keep their names and the new blocks; their icons still come from the old CPU sprites.
+`migrate --from-ref v0.2.0` checks that the three jobs of the old save are queued after the load and end done on
+multiblock CPUs placed where the legacy ones stood; every version with the legacy CPUs checks the item migration.
+(v0.5.0 cannot run jobs on its legacy CPUs in the helper's tick-0 save: a lamp has no energy buffer then, the job
+start finds no powered CPU.)
 
 ### Graphics
 

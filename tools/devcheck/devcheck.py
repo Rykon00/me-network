@@ -494,7 +494,7 @@ RUNTIME_TESTS = (
     ("FLUIDCELLS", "ME fluid cell test"), ("MER3", "ME partitions and windows test"),
     ("MESTORAGEBUS", "ME storage bus test"), ("MEFLUIDSTORAGEBUS", "ME fluid storage bus test"),
     ("UNIFIED", "ME unified I/O test"),
-    ("MAINTAINER", "level maintainer test"), ("CPUTIERS", "crafting CPU tier test"),
+    ("MAINTAINER", "level maintainer test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
     ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("REFILL", "ME storage bus refill test"),
     ("PLANS", "ME kept plans test"),

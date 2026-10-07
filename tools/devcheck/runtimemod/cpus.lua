@@ -4,7 +4,7 @@
 --- rectangle (C) and one without storage (D). Checked: their status, bytes, speed and pictures, the bytes of a plan
 --- (5 per gear + 24), a job too big for every CPU (refused, a level maintainer waits), two jobs at once on A and B, a
 --- third one refused, a block removed during a job (it pauses, goes on on the rest of its CPU, cancelled: nothing
---- lost), a clone and a blueprint of a CPU, a legacy CPU (no byte limit). Loaded by control.lua: require("cpus")(H)
+--- lost), a clone and a blueprint of a CPU (issue #145: the legacy CPU's case is gone with it). Loaded by control.lua: require("cpus")(H)
 --- returns { setup, tick, running } like cards.lua.
 
 local NET, AC, C = "gregtorio-me-network", "gregtorio-me-autocraft", "gregtorio-me-circuit"
@@ -75,7 +75,7 @@ return function(H)
 			st.done = true
 			me_report("CPUS6", "crafting CPU multiblocks", problems, "smallest CPU, every block kind, not a rectangle, "
 				.. "no storage, plan bytes, too big (terminal and maintainer), two jobs, block removed during a job, clone, "
-				.. "blueprint, legacy CPU")
+				.. "blueprint")
 		end
 		local function count(name) return remote.call(NET, "count", t, name) end
 		local function info(e) return e and e.valid and remote.call(AC, "group_info", e) or {} end
@@ -248,26 +248,6 @@ return function(H)
 			local ip = info(blocks[1])
 			expect(#ghosts == 6 and ip.status == "ok" and ip.blocks == 6 and ip.bytes == 5120 and ip.coprocessors == 2,
 				"the blueprint of B: " .. #ghosts .. " ghosts, " .. line(ip))
-			--- a legacy CPU (it needs a moment for power): no byte limit, the job too big for every multiblock runs on it
-			st.legacy = me_place(s, problems, "legacy", "me-crafting-cpu", X + 41, Y + 1)
-			st.phase, st.tick = "legacy-start", game.tick
-			return
-		end
-
-		if st.phase == "legacy-start" then
-			if game.tick < st.tick + 30 then return end
-			local jl, why = remote.call(AC, "start", t, GEAR, BIG)
-			local xl = jl and job(jl) or {}
-			expect(jl and xl.cpu_name == "me-crafting-cpu" and xl.ops == 6, "the big job on the legacy CPU: " .. line({ jl, why, xl.cpu_name }))
-			if jl then remote.call(AC, "cancel", jl) end
-			st.jl, st.phase, st.tick = jl, "legacy", game.tick
-			return
-		end
-
-		if st.phase == "legacy" then
-			local xl = st.jl and job(st.jl) or { status = "cancelled" }
-			if xl.status ~= "cancelled" and game.tick < st.tick + 300 then return end
-			expect(xl.status == "cancelled", "the legacy job: " .. tostring(xl.status))
 			conserved("at the end")
 			return finish()
 		end

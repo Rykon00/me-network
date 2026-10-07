@@ -1,0 +1,8 @@
+{
+  "item":
+  [
+    ["me-crafting-cpu", "me-1k-crafting-storage"],
+    ["me-co-processing-cpu", "me-1k-crafting-storage"],
+    ["me-quantum-crafting-cpu", "me-1k-crafting-storage"]
+  ]
+}

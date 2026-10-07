@@ -64,7 +64,7 @@ return function(H)
 		power(s, fails, what, BX, BY)
 		local ctrl = me_place(s, fails, what, "me-network-controller", BX + 7, BY)
 		local drive = H.me_drive(s, fails, what, BX + 8.5, BY - 0.5, { ["raw-iron"] = 100, ["iron-plate"] = 100 }, "16k")
-		local cpu = me_place(s, fails, what, "me-crafting-cpu", BX + 11, BY)
+		local cpu = place_cpu(s, fails, what, BX + 11, BY)          -- (issue #145: a multiblock CPU)
 		local members = { ctrl, drive, cpu }
 		local scene = { ctrl = ctrl, cases = {} }
 		for i, c in ipairs(CASES) do

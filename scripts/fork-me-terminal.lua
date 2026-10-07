@@ -590,9 +590,8 @@ local function refresh_crafting(st, frame, net)
 	plan_grid.visible = #plan_grid.children > 0
 end
 
---- the name of a CPU of autocraft.cpu_list: "Crafting CPU 3 (2x3, 5k, 2 co-processors)" or the legacy entity's name
+--- the name of a CPU of autocraft.cpu_list: "Crafting CPU 3 (2x3, 5k, 2 co-processors)"
 function M.cpu_name(c)
-	if c.kind == "legacy" then return { "fork-me-craft.cpu-legacy", { "entity-name." .. c.name } } end
 	return { "fork-me-craft.cpu-name", c.id, c.width, c.height, G.fmt(c.bytes), c.coprocessors }
 end
 
