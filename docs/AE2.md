@@ -846,7 +846,7 @@ The block is set up for the machine's recipe; what it had is replaced:
 
 | Paste onto | Result | Kept | Holds |
 |---|---|---|---|
-| ME Interface | config rows = the ingredients in the recipe's order: one full stack of each item (whatever one craft needs), a fluid row of a side's volume for each fluid | sides that are off; a side tied to a fluid that is in the recipe again | 9 rows, 4 fluids |
+| ME Interface | config rows = the ingredients in the recipe's order, each with **one craft** of the recipe (issue #157 of ME Network; before: a full stack of each item and a side's volume of each fluid): the ingredient's amount per craft, a fluid's rounded up to whole units | sides that are off; a side tied to a fluid that is in the recipe again | 9 rows, 4 fluids; a row at most what it holds (a fluid a side's volume, 5000: the flying text says so) |
 | ME Storage Bus | filters = the ingredients: on a chest or cargo wagon the items, on a tank the fluids, facing nothing yet both | mode, priority, filter on extract, the cards | 18 filters (9 more per Capacity Card) |
 | ME Export Bus | filters = the ingredients, items and fluids | | 9 filters |
 | ME Import Bus | filters = the **products**, items and fluids | | 9 filters |
@@ -859,6 +859,11 @@ The block is set up for the machine's recipe; what it had is replaced:
 * A flying text names what did not fit, a fluid row with no side left (every side off or tied: set one in the
   window), and a machine without a recipe. Nothing is changed when the recipe has nothing for the block (no
   ingredients; a storage bus on a chest and a recipe of fluids only, or on a tank and no fluid).
+* One craft is enough to keep the machine running: the interface refills a row as soon as the machine's inserter or
+  pipe takes from it. Measured (issue #157, `runtimemod/pastecraft.lua`, vanilla and with Gregtorio): an iron furnace
+  and a chemical reactor (a board through an inserter, phenol through a pipe from a side) crafted 100 % of what they
+  can with one craft, two crafts or a stack in the interface; the Molecular Assembler made the same number with all
+  three (its inserters set its pace, not the interface). For more in stock, raise the rows in the interface's window.
 * A paste between two ME blocks of the same kind copies the settings as before.
 
 ## Fluids

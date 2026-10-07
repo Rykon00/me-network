@@ -28,6 +28,11 @@ local function recipe(name, n_items, n_fluids)
 	} })
 end
 recipe("zz-devcheck-paste-many", 20, 5)        -- more than the rows and filters of every block
+--- issue #157: one craft needs more of a fluid than an interface side holds (5000)
+data:extend({ { type = "recipe", name = "zz-devcheck-paste-big", category = "zz-devcheck-paste", energy_required = 1, enabled = false,
+	ingredients = { { type = "item", name = items[1], amount = 3 }, { type = "fluid", name = fluids[1], amount = 6000 } },
+	results = { { type = "item", name = items[1], amount = 1 } },
+	icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
 recipe("zz-devcheck-paste-fluids", 2, 5)       -- more fluids than the interface's four sides
 
 --- The provider scan test (me-network issue #50, lever 6, scan.lua): a recipe of the macerator's category whose research the

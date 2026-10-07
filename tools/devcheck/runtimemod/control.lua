@@ -760,6 +760,9 @@ temperature159 = require("temperature")({ me_place = me_place, power = power, me
 --- me-network issue #158: the pattern provider runs the machines next to it (providers.lua)
 providers158 = require("providers")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #157: a machine fed by an interface that keeps one craft (pastecraft.lua)
+pastecraft157 = require("pastecraft")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
@@ -826,6 +829,7 @@ local function tests_running()
 	storable76.running(check)
 	temperature159.running(check)
 	providers158.running(check)
+	pastecraft157.running(check)
 	graph43.running(check)
 	return running
 end
@@ -1737,6 +1741,7 @@ script.on_nth_tick(10, function()
 	storable76.tick()
 	temperature159.tick()
 	providers158.tick()
+	pastecraft157.tick()
 	graph43.tick()
 	done_test()
 end)
@@ -4366,6 +4371,7 @@ function setup_paste_test(s)
 	machine("hv-chemical-reactor", 26.5, "hydrochloric-acid")
 	machine("zz-devcheck-paste-machine", 30.5, "zz-devcheck-paste-many")
 	machine("zz-devcheck-paste-machine", 34.5, "zz-devcheck-paste-fluids")
+	machine("zz-devcheck-paste-machine", 46.5, "zz-devcheck-paste-big")                -- issue #157: more than a side holds
 	game.forces.player.recipes["iron-dust-smelter"].enabled = true    -- a furnace only picks enabled recipes
 	for _, x in pairs({ 38, 41 }) do
 		local f = me_place(s, fails, what, "iron-furnace", PAX + x, PAY + 7)
@@ -4446,7 +4452,13 @@ function paste_test()
 		return me_report("RECIPEPASTE", "recipe paste", { "entities missing" })
 	end
 	local volume = remote.call(IO, "get_interface", i1).volume
-	local function stack(name) return prototypes.item[name].stack_size end
+	--- issue #157: a row keeps one craft (the recipe's ingredient amount; a fluid's in whole units, rounded up)
+	local function per_craft(recipe, name)
+		for _, g in ipairs(prototypes.recipe[recipe].ingredients) do
+			if g.name == name then return math.ceil(g.amount - 1e-6) end
+		end
+		return 0
+	end
 	local function config_line(e)
 		local out = {}
 		for i, c in pairs(remote.call(IO, "get_interface_config", e)) do
@@ -4460,8 +4472,11 @@ function paste_test()
 	--- the gear recipe's two items in the recipe's order (Gregtorio's lists the stick first)
 	local gear = {}
 	for _, g in ipairs(prototypes.recipe["iron-gear-crafting-table"].ingredients) do gear[#gear + 1] = g.name end
-	local function gear_rows(q) return "1=" .. gear[1] .. "@" .. q .. ":" .. stack(gear[1]) .. " 2=" .. gear[2] .. "@" .. q .. ":" .. stack(gear[2]) end
-	--- an item recipe onto an interface: its rows are replaced, one stack each
+	local function gear_rows(q)
+		local r = "iron-gear-crafting-table"
+		return "1=" .. gear[1] .. "@" .. q .. ":" .. per_craft(r, gear[1]) .. " 2=" .. gear[2] .. "@" .. q .. ":" .. per_craft(r, gear[2])
+	end
+	--- an item recipe onto an interface: its rows are replaced, one craft each (issue #157)
 	remote.call(IO, "set_interface_config", i2, { { name = "copper-plate", quality = "normal", amount = 10 } })
 	local msgs = remote.call(RP, "paste", m1, i2)
 	local want = gear_rows("normal")
@@ -4484,11 +4499,12 @@ function paste_test()
 	expect(line(keys(msgs)) == line({ "no-items" }) and line(remote.call(SB, "get_settings", sb1)) == line(st1),
 		"fluid-only recipe onto a storage bus on a chest: " .. line(remote.call(SB, "get_settings", sb1)) .. " " .. line(keys(msgs)))
 
-	--- a fluid recipe onto an interface: the fluid row gets the side's volume and the side with a pipe (east); the
+	--- a fluid recipe onto an interface: the fluid row gets one craft (issue #157) and the side with a pipe (east); the
 	--- north side stays off
 	remote.call(IO, "set_interface_side", i1, 1, "off")
 	msgs = remote.call(RP, "paste", r1, i1)
-	want = "1=resin-circuit-board@normal:" .. stack("resin-circuit-board") .. " 2=fluid/phenol:" .. volume
+	want = "1=resin-circuit-board@normal:" .. per_craft("phenolic-circuit-board", "resin-circuit-board") .. " 2=fluid/phenol:"
+		.. per_craft("phenolic-circuit-board", "phenol")
 	expect(#keys(msgs) == 0 and config_line(i1) == want and sides(i1) == line({ "off", 2 }),
 		"fluid recipe onto an interface with a pipe: " .. config_line(i1) .. " sides " .. sides(i1) .. " " .. line(keys(msgs)))
 	--- a side tied to a fluid that comes again keeps it; then a recipe without it: the side imports again, the two new
@@ -4497,7 +4513,7 @@ function paste_test()
 	msgs = remote.call(RP, "paste", r1, i4)
 	expect(#keys(msgs) == 0 and sides(i4) == line({ [1] = "off", [3] = 2 }), "a fluid's side kept: " .. sides(i4) .. " " .. line(keys(msgs)))
 	msgs = remote.call(RP, "paste", r2, i4)
-	want = "1=fluid/chlorine:" .. volume .. " 2=fluid/hydrogen:" .. volume
+	want = "1=fluid/chlorine:" .. per_craft("hydrochloric-acid", "chlorine") .. " 2=fluid/hydrogen:" .. per_craft("hydrochloric-acid", "hydrogen")
 	expect(config_line(i4) == want and sides(i4) == line({ "off", 1, 2 }) and line(keys(msgs)) == line({ "no-pipe", "no-pipe" }),
 		"two fluids onto sides without a pipe: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
 	--- the fluid recipe onto the buses and storage buses
@@ -4580,7 +4596,20 @@ function paste_test()
 	--- the furnace while it smelts (its current recipe)
 	local busy = f1.get_recipe() ~= nil
 	msgs = remote.call(RP, "paste", f1, i7)
-	expect(#keys(msgs) == 0 and config_line(i7) == "1=iron-dust@normal:" .. stack("iron-dust"), "furnace onto an interface: " .. config_line(i7) .. " " .. line(keys(msgs)))
+	expect(#keys(msgs) == 0 and config_line(i7) == "1=iron-dust@normal:" .. per_craft("iron-dust-smelter", "iron-dust"),
+		"furnace onto an interface: " .. config_line(i7) .. " " .. line(keys(msgs)))
+	--- issue #157: one craft needs more of a fluid than a side holds: the row holds a side's volume, the player is told
+	local mbig = s.find_entity("zz-devcheck-paste-machine", { PAX + 46.5, PAY + 6.5 })
+	if mbig then
+		msgs = remote.call(RP, "paste", mbig, i2)
+		local big = prototypes.recipe["zz-devcheck-paste-big"].ingredients
+		local bitem, bfluid = big[1].type == "item" and big[1] or big[2], big[1].type == "fluid" and big[1] or big[2]
+		want = "1=" .. bitem.name .. "@normal:3 2=fluid/" .. bfluid.name .. ":" .. volume
+		expect(config_line(i2) == want and line(keys(msgs)) == line({ "no-pipe", "amount-capped" }),
+			"a craft of more fluid than a side holds: " .. config_line(i2) .. " " .. line(keys(msgs)))
+	else
+		expect(false, "the machine of the big recipe is missing")
+	end
 	--- a paste between ME blocks is no recipe paste (their own handlers copy the settings)
 	expect(remote.call(RP, "paste", i1, i2) == nil and remote.call(RP, "paste", e1, e2) == nil, "a paste between ME blocks taken as a recipe paste")
 	st.note = machines .. " crafting machines can paste onto the four blocks, furnace " .. (busy and "smelting" or "already idle") .. " at the first paste"
@@ -4657,6 +4686,7 @@ script.on_init(function()
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
