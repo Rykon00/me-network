@@ -512,6 +512,7 @@ RUNTIME_TESTS = (
     ("STORABLE", "ME storable items test"),
     ("TEMPERATURE", "ME fluid temperature test (issue #159)"),
     ("PROVIDERS", "ME pattern provider machines test (issue #158)"),
+    ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
     ("DONE", "all tests reported"),
 )
 
