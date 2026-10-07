@@ -303,6 +303,72 @@ local function connected(fb, index)
 	return #fb.get_connections(index) > 0
 end
 
+--- Issue #164: the pipe connections of a machine prototype's fluid boxes, per box index: { { direction, positions } }
+--- (the normal ones; `positions`: the connection's tile relative to the machine for each of its four directions, as
+--- the prototype gives them). Per prototype name and load: a prototype read makes new tables.
+local pipe_conn_cache = {}
+local function box_connections(entity)
+	local name = entity.name
+	local c = pipe_conn_cache[name]
+	if not c then
+		c = {}
+		for i, b in ipairs(entity.prototype.fluidbox_prototypes or {}) do
+			local list = {}
+			for _, pc in pairs(b.pipe_connections or {}) do
+				if (pc.connection_type or "normal") == "normal" and pc.positions then
+					list[#list + 1] = { direction = pc.direction or 0, positions = pc.positions }
+				end
+			end
+			c[i] = list
+		end
+		pipe_conn_cache[name] = c
+	end
+	return c
+end
+
+local DIR_VECTOR = { [0] = { 0, -1 }, [4] = { 1, 0 }, [8] = { 0, 1 }, [12] = { -1, 0 } }
+
+--- Issue #164: is box `index` of `entity` connected to a pipe while the machine has switched its boxes off (a machine
+--- without a fluid recipe, `fluid_boxes_off_when_no_fluid_recipe`: the entity then has no boxes to ask)? For each pipe
+--- connection of the box's prototype, turned with the machine (and mirrored), the entity on the tile it points at is
+--- asked whether one of its own pipe connections points back at the connection's tile: what the engine would join
+--- once the box is on.
+local function prototype_piped(entity, index)
+	local conns = box_connections(entity)[index]
+	if not (conns and conns[1]) then return false end
+	local edir = entity.direction or 0
+	local mirror = entity.mirroring
+	local px, py = entity.position.x, entity.position.y
+	local surface = entity.surface
+	for _, c in ipairs(conns) do
+		local pos = c.positions[math.floor(edir / 4) + 1] or c.positions[1]
+		local dx, dy = pos.x or pos[1], pos.y or pos[2]
+		local dir = (c.direction + edir) % 16
+		if mirror then
+			dx = -dx
+			if dir == 4 then dir = 12 elseif dir == 12 then dir = 4 end
+		end
+		local v = DIR_VECTOR[dir]
+		if v then
+			local sx, sy = px + dx, py + dy                       -- the tile of the connection, in the machine
+			for _, o in pairs(surface.find_entities_filtered{ position = { sx + v[1], sy + v[2] } }) do
+				if o ~= entity and o.valid then
+					local ok, ofb = pcall(function() return o.fluidbox end)
+					if ok and ofb and #ofb > 0 then
+						for j = 1, #ofb do
+							for _, oc in pairs(ofb.get_pipe_connections(j)) do
+								local t = oc.target_position
+								if t and math.abs(t.x - sx) < 0.5 and math.abs(t.y - sy) < 0.5 then return true end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
 local EMPTY_MAP = { inputs = {}, outputs = {} }
 
 --- an item's stack size, nil when there is no such item (per load, issue #59 lever 3: a prototype read makes a new object)
@@ -403,6 +469,17 @@ local function fluid_boxes_fit(machine, ingredients, products)
 	local fb = machine.fluidbox
 	local boxes = machine.facts.boxes
 	local live = #fb == #boxes                     -- the entity's boxes are the prototype's, by index
+	--- issue #164: with the boxes switched off, a pipe is found from the prototype's connections (once per box and scan)
+	local entity = rawget(machine, "entity") or machine
+	local piped_memo = {}
+	local function piped(i)
+		local x = piped_memo[i]
+		if x == nil then
+			x = prototype_piped(entity, i)
+			piped_memo[i] = x
+		end
+		return x
+	end
 	local ins, outs = {}, {}
 	for i, p in ipairs(boxes) do
 		local kind = p.production_type
@@ -417,6 +494,7 @@ local function fluid_boxes_fit(machine, ingredients, products)
 		local free, pipes = 0, false
 		for _, i in pairs(list) do
 			if live and connected(fb, i) then pipes = true
+			elseif not live and piped(i) then pipes = true                  -- (issue #164: the boxes are off)
 			elseif (live and fb.get_capacity(i) or boxes[i].volume) >= need then free = free + 1 end
 		end
 		if free >= n then return nil end

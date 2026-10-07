@@ -22,6 +22,9 @@ local CASES = {
 	{ id = "machine-item", machine = "ev-macerator", recipe = "crushed-iron" },
 	{ id = "machine-fluid", machine = "hv-chemical-reactor", recipe = "hydrochloric-acid" },
 	{ id = "machine-fluid-piped", machine = "hv-chemical-reactor", recipe = "hydrochloric-acid", pipe = true },
+	--- issue #164: the same machine turned east, and a pipe beside the machine on a tile without a connection
+	{ id = "machine-fluid-piped-east", machine = "hv-chemical-reactor", recipe = "hydrochloric-acid", pipe = true, dir = "east" },
+	{ id = "machine-fluid-pipe-beside", machine = "hv-chemical-reactor", recipe = "hydrochloric-acid", pipe = "beside" },
 	{ id = "fixed-other", machine = "zz-devcheck-fixed-machine", recipe = "zz-devcheck-unfixed" },
 	{ id = "fixed-own", machine = "zz-devcheck-fixed-machine", recipe = "zz-devcheck-fixed" },
 	{ id = "furnace", machine = "iron-furnace", recipe = "iron-dust-smelter" },
@@ -72,8 +75,11 @@ return function(H)
 				if proto and prototypes.recipe[c.recipe] then
 					local w = proto.tile_width
 					p = me_place(s, fails, what, "me-pattern-provider", x + 0.5, y + 0.5)
-					m = me_place(s, fails, what, c.machine, x + 1 + w / 2, y + 0.5)
-					if m and c.pipe then
+					m = me_place(s, fails, what, c.machine, x + 1 + w / 2, y + 0.5, c.dir and { direction = defines.direction[c.dir] } or nil)
+					if m and c.pipe == "beside" then
+						--- (the tile below the machine's middle column: no box of the chemical plant has a connection there)
+						me_place(s, fails, what, "pipe", m.position.x, m.position.y + 2)
+					elseif m and c.pipe then
 						--- a pipe on the pipe connection of the recipe's first fluid input box (after the recipe is set, the boxes exist)
 						pcall(m.set_recipe, c.recipe)
 						local fb = m.fluidbox
@@ -169,6 +175,10 @@ return function(H)
 				["assembler-item"] = { crafting = true, processing = true },
 				["machine-item"] = { crafting = true, processing = true },
 				["machine-fluid"] = { crafting = true, processing = true },
+				--- issue #164: a pipe on a used box is seen also while the machine's boxes are off (Gregtorio's machines)
+				["machine-fluid-piped"] = { crafting = "fluid-pipes", processing = "fluid-pipes" },
+				["machine-fluid-piped-east"] = { crafting = "fluid-pipes", processing = "fluid-pipes" },
+				["machine-fluid-pipe-beside"] = { crafting = true, processing = true },
 				["fixed-other"] = { crafting = "fixed-recipe", processing = "fixed-recipe" },
 				["fixed-own"] = { crafting = true, processing = true },
 				["furnace"] = { crafting = "furnace", processing = true },

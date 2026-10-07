@@ -677,7 +677,10 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   extractor, ...). Not usable, and counted per reason in the crafting tab's info line: patterns
   that need more of one ingredient than fits into a machine slot (`stack`), no usable box for the recipe
   (`fluid-box`: box too small for one craft, no matching box, a furnace or a chest with fluids), a pipe on a used
-  box (`fluid-pipes`), and recipes that need a fluid temperature no fluid can have (`fluid-temperature`: above the
+  box (`fluid-pipes`; also at a machine that switches its boxes off without a recipe, as Gregtorio's machines do: the
+  pipe is found from the machine's connections before it is switched, issue #164 of ME Network; the provider hands
+  every fluid ingredient over itself, so a pattern machine needs no pipes), and recipes that need a fluid temperature
+  no fluid can have (`fluid-temperature`: above the
   fluid's maximum temperature; see "Temperature" under "Fluids": the network keeps every temperature, so a recipe that
   needs hot steam takes the hot steam the network holds).
 * Only normal quality items are planned and crafted.
