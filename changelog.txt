@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.1
+Date: 2026-10-07
   Features:
     - Every ME window opens next to the game's own inventory window, with the game's click rules (issues #150, #168). Between them is a hand-over buffer of 20 slots: what you put into it goes where a shift + click sent it before (into the network, a cell into the drive, a pattern into the provider, a card into its slot); what the block cannot take stays there and comes back when the window closes. The map setting "ME windows beside the game's inventory" turns it off (the windows then draw your inventory themselves, as before).
     - Fluids keep their temperature in the network (issue #159): steam that goes in at 250 °C comes out at 250 °C (it came out at 15 °C, too cold for steam engines and turbines). Every temperature of a fluid is stored on its own, in whole degrees, and is a type of its own in the fluid cells; nothing is ever mixed. A fluid at its default temperature is stored as before, so saves, filters, interface rows, patterns and level maintainers keep working unchanged.
