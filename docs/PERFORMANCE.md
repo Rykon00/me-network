@@ -2947,3 +2947,20 @@ versions was up to twice its usual size; the third check does not flag it (1 -> 
 The medians of the working copy were 3 to 5 % above main in the first check and 0 to 1.5 % in the third, inside the
 noise of both. The 0.08 KB per tick more at base (0.2 KB at 1000 and 5000) are the box reads of the export buses (a
 `fluidbox[i]` read makes a table).
+
+## The hint of many fluid temperatures (issue #161)
+
+An import bus or interface side that stored a fluid walks that fluid's keys once (`mix_check`); nothing else of issue
+#161 runs per tick. `bench --check origin/main` (origin/main = issue #159 merged), three rounds in turns, the
+maintainer's game client running: **green, regressions 0**; throughput, latencies and the allocation identical.
+
+| | origin/main | issue #161 |
+|---|---|---|
+| base: script avg / p99 (ms) | 0.1453 / 0.378 | 0.1436 / 0.389 |
+| 1000: script avg / p99 (ms) | 0.3733 / 2.100 | 0.3710 / 2.096 |
+| 5000 (second check): script avg / p99 (ms) | 1.354 / 5.63 | 0.991 / 2.99 |
+| Lua allocation base / 1000 / 5000 (KB per tick) | 2.214 / 24.68 / 33.93 | 2.214 / 24.68 / 33.93 |
+
+At 5000 both checks were disturbed by the machine (the reference's rounds 1.02 to 1.81 ms, a worst tick of 223 ms in one
+of them; the first check had the same on the working copy's side); the working copy's quiet rounds (0.99 ms) are those of
+issue #159's measurement.
