@@ -2,8 +2,8 @@
 --- power from the network, not from a pole.
 --- One network at a power source with a substation; the terminal and the level maintainer sit 24 tiles away at the end of a cable
 --- row, far outside every pole's supply area (their lamps have a void energy source: no electric network of their own).
---- * they join: the controller's draw rises by exactly 8 kW (terminal) and 30 kW (level maintainer), and by nothing for a legacy
----   Crafting CPU (which keeps its own power connection: no pole, it reports no power)
+--- * they join: the controller's draw rises by exactly 8 kW (terminal) and 30 kW (level maintainer) (issue #145: the legacy
+---   Crafting CPU of this check is gone)
 --- * they work with no pole: the terminal has no problem, its screen is lit (a sprite render object of the mod's, under the
 ---   character: layer lower-object, and its light), the maintainer is stocked
 --- * the controller's power is cut (at tick 300, so that the dark network is still dark after the save and load of the
@@ -77,12 +77,6 @@ return function(H)
 			local n2 = info()
 			expect(n2 and n2.power == n0.power + 38000, "the controller draws " .. tostring(n2 and n2.power) .. " W with a level maintainer too, "
 				.. (n0.power + 38000) .. " expected (maintainer 30 kW)")
-			--- the legacy CPU (a single block with a power connection of its own): no draw through the controller, no pole: no power
-			st.cpu = s.create_entity{ name = "me-crafting-cpu", position = { BX + 22, BY + 1 }, force = "player", raise_built = true }
-			local n3 = info()
-			expect(n3 and n3.power == n2.power, "the controller's draw changed to " .. tostring(n3 and n3.power) .. " W for a legacy CPU")
-			expect(st.cpu and st.cpu.valid and st.cpu.status == defines.entity_status.no_power,
-				"the legacy CPU without a pole does not report no power: " .. tostring(st.cpu and st.cpu.status))
 			--- no pole reaches them
 			for _, e in pairs({ st.terminal, st.maintainer }) do
 				local poles = s.find_entities_filtered{ type = "electric-pole", position = e.position, radius = 14 }
@@ -178,7 +172,7 @@ return function(H)
 				local n = info()
 				expect(n and n.power == 162000, "the controller's draw at the end: " .. serpent.line(n))
 				st.lit_after = tick - st.back_at
-				return finish("a terminal and a level maintainer 24 tiles from a pole: +8 kW and +30 kW, no draw for a legacy CPU, dark and parked "
+				return finish("a terminal and a level maintainer 24 tiles from a pole: +8 kW and +30 kW, dark and parked "
 					.. "without power, lit and woken " .. st.lit_after .. " ticks after it came back, screens made, cloned and removed")
 			elseif tick - st.back_at > 300 then
 				problems[#problems + 1] = "the power came back but the screen stayed dark or the maintainer parked: " .. serpent.line(sc) .. " " .. serpent.line(sch)

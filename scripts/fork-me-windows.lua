@@ -14,7 +14,7 @@
 ---   * ME Pattern Provider (issue #80): the 9 pattern slots (click with an encoded pattern in hand to put it in,
 ---     click a pattern to take it out), the status of each pattern (usable by how many machines, or why not), the
 ---     machines and chests next to it, the priority.
----   * ME Crafting CPU: tier, power, the jobs it runs (progress, cancel) and the jobs waiting for a CPU.
+---   * ME Crafting CPU (issue #6: a multiblock of crafting blocks): its blocks, bytes, co-processors, its job.
 ---   * ME Level Maintainer: item or fluid, amount, amount from the circuit, the on/off circuit condition, status.
 ---   * ME Circuit Interface: 20 filters, output on/off, status.
 ---   * ME Interface: 9 config rows (an item or a fluid and its amount), the four fluid sides (import, off or a fluid
@@ -786,48 +786,6 @@ G.on("prov_priority", function(event, player, el)
 end)
 
 --------------------------------------------------------------------------------
---- ME Crafting CPU
---------------------------------------------------------------------------------
-
-function M.cpu_data(entity) return autocraft.cpu_info(entity) end
-
-local function open_cpu(player, entity)
-	local _, content = G.open_window(player, "cpu", caption_of(entity), { unit = entity.unit_number })
-	G.label(content, "", WIDTH, nil, "fork_me_cpu_info")
-	G.heading(content, { "fork-me-gui.cpu-jobs" })
-	content.add{ type = "table", name = "fork_me_cpu_jobs", column_count = 5 }
-	G.heading(content, { "fork-me-gui.cpu-waiting" })
-	content.add{ type = "table", name = "fork_me_cpu_waiting", column_count = 5 }
-	M.refresh_cpu(player, G.window_of(player))
-end
-
-function M.refresh_cpu(player, frame)
-	local entity = G.entity_of(player, frame)
-	if not entity then return false end
-	local d = M.cpu_data(entity)
-	if not d then return false end
-	G.find(frame, "fork_me_cpu_info").caption = { "fork-me-gui.cpu-info", d.slots, d.speed, #d.jobs,
-		{ d.powered and "fork-me-gui.powered" or "fork-me-gui.unpowered" },
-		{ d.network and "fork-me-net.drive-online" or "fork-me-net.status-no-network" } }
-	local function sig(list)
-		local out = {}
-		for _, j in ipairs(list) do out[#out + 1] = j.id .. ":" .. tostring(j.status) .. ":" .. tostring(j.wait) .. ":" .. j.done end
-		return table.concat(out, ",")
-	end
-	local jobs = {}
-	for _, j in ipairs(d.jobs) do
-		jobs[#jobs + 1] = { id = j.id, item = j.item, amount = j.amount, status = j.closing and (j.closing == "done" and "delivering" or "cancelling") or j.status,
-			wait = j.wait, done = j.done, total = j.total, active = not j.closing and (j.status == "queued" or j.status == "running") }
-	end
-	local t, w = G.find(frame, "fork_me_cpu_jobs"), G.find(frame, "fork_me_cpu_waiting")
-	if t.tags.sig ~= sig(jobs) then t.tags = { sig = sig(jobs) } terminal.job_rows(t, jobs) end
-	if w.tags.sig ~= sig(d.waiting) then w.tags = { sig = sig(d.waiting) } terminal.job_rows(w, d.waiting) end
-	return true
-end
-
-G.window("cpu", storing({ open = open_cpu, refresh = M.refresh_cpu, entities = { "cpu" } }))
-
---------------------------------------------------------------------------------
 --- a crafting block (issue #6): the window of its Crafting CPU (any block of it)
 --------------------------------------------------------------------------------
 
@@ -1511,7 +1469,6 @@ remote.add_interface("gregtorio-me-gui", {
 	set_partition_slot = function(drive, slot, index, key) return M.set_partition_slot(drive, slot, index, key) end,
 	controller_data = function(entity) return M.controller_data(entity) end,
 	provider_data = function(entity) return M.provider_data(entity) end,
-	cpu_data = function(entity) return M.cpu_data(entity) end,
 	crafting_cpu_data = function(entity) return M.crafting_cpu_data(entity) end,
 	maintainer_data = function(entity) return M.maintainer_data(entity) end,
 	set_maintainer_target = function(entity, signal) return M.set_maintainer_target(entity, signal) end,

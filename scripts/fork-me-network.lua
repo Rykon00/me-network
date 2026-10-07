@@ -87,7 +87,6 @@ local function kinds()
 	k["me-circuit-interface"] = "circuit"
 	k["me-fluid-interface"] = "fluid-interface"
 	local ac = prototypes.mod_data["fork-me-autocraft"]
-	for name in pairs(ac and ac.data.cpus or {}) do k[name] = "cpu" end
 	--- issue #6: the blocks of the multiblock crafting CPUs (scripts/fork-me-autocraft.lua finds the CPUs among them)
 	for name in pairs(ac and ac.data.blocks or {}) do k[name] = "crafting" end
 	k["me-fluid-import-bus"] = "fluid-import-bus"
@@ -101,8 +100,8 @@ local function kinds()
 end
 
 --- kinds with a power connection of their own (or none at all: the cable): the controller draws nothing for them. Issue #128:
---- the terminal and the level maintainer are not among them any more; the legacy CPUs are (single blocks without a recipe)
-local POWERED_SELF = { cable = true, underground = true, controller = true, cpu = true }
+--- the terminal and the level maintainer are not among them any more; issue #145: the legacy CPUs are gone
+local POWERED_SELF = { cable = true, underground = true, controller = true }
 
 --- Issue #128: the power (W) a kind draws through the controller where it is not the default (mod-data "fork-me-network",
 --- member_power: terminal, level maintainer, pattern terminal), read once per load like the rest of the mod-data

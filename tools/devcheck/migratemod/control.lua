@@ -146,8 +146,11 @@ local function setup_unified(s)
 	place(s, fails, "me-terminal", 60.5, 1.5)
 	local far = place(s, fails, "me-level-maintainer", 61.5, 1.5)
 	if far then remote.call("gregtorio-me-circuit", "set_maintainer", far, "iron-gear-wheel", 5) end
-	--- me-network issue #6: the three legacy CPUs, each running a job (copper cables on three Molecular Assemblers)
+	--- me-network issue #6: the three legacy CPUs, each running a job (copper cables on three Molecular Assemblers); issue #145:
+	--- they are gone in the working copy (the jobs must be queued with what they hold and go on on multiblock CPUs), their
+	--- items in a chest must have become 1k crafting storages
 	local jobs = {}
+	local one_tile = prototypes.entity["me-molecular-assembler"].tile_width == 1
 	local term = s.find_entity("me-terminal", { 12.5, 0.5 })
 	--- copper cables are not unlocked at the start with Space Age: its technology researched (the load runs
 	--- on_configuration_changed, which resets the technology effects)
@@ -158,7 +161,8 @@ local function setup_unified(s)
 	end
 	game.forces.player.recipes["copper-cable"].enabled = true
 	for _, x in pairs({ 28.5, 32.5, 36.5 }) do
-		local m = place(s, fails, "me-molecular-assembler", x, -1.5)
+		--- (a one-tile assembler, 0.5.0 and later, right next to its provider; a 3x3 one touching it)
+		local m = place(s, fails, "me-molecular-assembler", x, one_tile and -0.5 or -1.5)
 		local p = place(s, fails, "me-pattern-provider", x, 0.5)
 		local inv = game.create_inventory(2)
 		inv.insert{ name = "me-blank-pattern", count = 1 }
@@ -173,21 +177,32 @@ local function setup_unified(s)
 		if not (m and p and stack and remote.call(AC, "insert_pattern", p, stack)) then fails[#fails + 1] = "pattern at " .. x end
 		inv.destroy()
 	end
-	--- (an old version with the multiblock CPUs of issue #6 starts no new job on a legacy CPU: no jobs then)
-	local legacy_jobs = not prototypes.entity["me-crafting-unit"]
+	--- the legacy CPUs stand in every old version that has them; a version before the multiblock CPUs (issue #6) runs a job on
+	--- each. (A version with them asks whether a legacy CPU has power, which a lamp has only after its first tick: the save is
+	--- made at tick 0, so no job can start on one there.)
+	local has_legacy = prototypes.entity["me-crafting-cpu"] ~= nil
+	local legacy_jobs = has_legacy and not prototypes.entity["me-crafting-unit"]
 	if not legacy_jobs then jobs = nil end
+	local legacy_chest
+	if has_legacy then
+		legacy_chest = place(s, fails, "iron-chest", 40.5, -2.5)
+		for _, name in ipairs({ "me-crafting-cpu", "me-co-processing-cpu", "me-quantum-crafting-cpu" }) do
+			if legacy_chest and prototypes.item[name] then legacy_chest.insert{ name = name, count = 1 } end
+		end
+	end
 	--- me-network issue #131: such a version runs the job on a multiblock CPU (one crafting storage next to the terminal); the
 	--- assemblers of the three providers above are 3x3 there and one tile in the working copy, so the provider that touched the
 	--- edge of the big block has no machine after the load, and the job that waited for it must not hang
 	--- (only for a version whose assembler is 3x3: from 0.5.0 on it is one tile in the old save too, two tiles from its provider)
 	local multi_job
-	if not legacy_jobs and term and prototypes.entity["me-molecular-assembler"].tile_width ~= 1 then
+	if prototypes.entity["me-crafting-unit"] and term and not one_tile then
 		place(s, fails, "me-1k-crafting-storage", 13.5, 0.5)
 		local id, why = remote.call(AC, "start", term, "copper-cable", 8)
 		if id then multi_job = id else fails[#fails + 1] = "the job on the crafting storage: " .. tostring(why) end
 	end
-	for i, cpu in ipairs(legacy_jobs and { { "me-crafting-cpu", 19 }, { "me-co-processing-cpu", 22 }, { "me-quantum-crafting-cpu", 25 } } or {}) do
+	for i, cpu in ipairs(has_legacy and { { "me-crafting-cpu", 19 }, { "me-co-processing-cpu", 22 }, { "me-quantum-crafting-cpu", 25 } } or {}) do
 		local c = place(s, fails, cpu[1], cpu[2], 0)
+		if not legacy_jobs then goto next_cpu end
 		local id, why
 		if term then id, why = remote.call(AC, "start", term, "copper-cable", 8) end
 		local j = id and remote.call(AC, "job", id)
@@ -195,6 +210,7 @@ local function setup_unified(s)
 			fails[#fails + 1] = "job " .. i .. " on " .. cpu[1] .. ": " .. tostring(why) .. " " .. serpent.line(j and { j.status, j.cpu_name })
 		end
 		jobs[i] = { id = id, cpu = cpu[1] }
+		::next_cpu::
 	end
 	--- me-network issue #28: an old version with upgrade cards (0.3.0 / main before #28) keeps a storage bus's cards as
 	--- names in its record and a workbench's cell (its cards in its tags) in an inventory of one slot: a bus with two
@@ -228,7 +244,8 @@ local function setup_unified(s)
 		end
 		inv.destroy()
 	end
-	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, jobs = jobs, cards = cards, multi_job = multi_job }
+	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, jobs = jobs, cards = cards, multi_job = multi_job,
+		legacy_chest = legacy_chest, one_tile = one_tile }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
 		.. (jobs and "; jobs on the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "") .. ")"
@@ -289,17 +306,40 @@ local function check_unified(st)
 		local sch = ib and remote.call(IO, "schedule", ib)
 		expect(sch and sch.due and sch.due > game.tick, "the import bus has no due tick: " .. serpent.line(sch))
 	end
-	--- me-network issue #6: the jobs on the three legacy CPUs went on and are done (each 8 copper cables)
+	--- me-network issue #6: the jobs on the three legacy CPUs. Issue #145: the CPUs are gone; the jobs were queued with what they
+	--- held (j.after: their status right after the load), three multiblock CPUs were placed where the legacy ones stood, and
+	--- the jobs went on there: done (each 8 copper cables) where the assemblers stand next to their providers, else (the 3x3
+	--- assemblers of an old version, one tile now: issue #131) still waiting for a machine, never lost
+	local legacy_gone = not prototypes.entity["me-crafting-cpu"]
 	for i, j in ipairs(st.jobs or {}) do
 		local info = j.id and remote.call(AC, "job", j.id)
-		expect(info and info.status == "done" and info.done == info.total and j.after == j.cpu, "job " .. i .. " on the legacy " .. j.cpu .. ": "
-			.. serpent.line(info and { info.status, info.done, info.total, info.wait, j.after }))
+		if not legacy_gone then
+			expect(info and info.status == "done" and info.done == info.total, "job " .. i .. " on the legacy " .. j.cpu .. ": "
+				.. serpent.line(info and { info.status, info.done, info.total, info.wait }))
+		else
+			expect(j.after == "queued", "job " .. i .. " of the legacy " .. j.cpu .. " right after the load: " .. tostring(j.after))
+			if st.one_tile then
+				expect(info and info.status == "done" and info.done == info.total, "job " .. i .. " of the legacy " .. j.cpu
+					.. " on a multiblock CPU: " .. serpent.line(info and { info.status, info.done, info.total, info.wait }))
+			else
+				expect(info and info.status ~= "failed" and info.status ~= "cancelled", "job " .. i .. " of the legacy " .. j.cpu
+					.. " lost: " .. serpent.line(info and { info.status, info.wait }))
+			end
+		end
 	end
-	if st.jobs then expect(count("copper-cable") == 24, "copper cables of the three jobs: " .. count("copper-cable")) end
+	if st.jobs and (not legacy_gone or st.one_tile) then
+		expect(count("copper-cable") == 24, "copper cables of the three jobs: " .. count("copper-cable"))
+	end
+	--- issue #145: the legacy CPU items in a chest became 1k crafting storages (migrations/me-network-legacy-cpus.json)
+	if st.legacy_chest and legacy_gone then
+		local c = st.legacy_chest
+		expect(c.valid and c.get_item_count("me-1k-crafting-storage") == 3, "the legacy CPU items in the chest: "
+			.. (c.valid and serpent.line(c.get_inventory(defines.inventory.chest).get_contents()) or "chest gone"))
+	end
 	--- me-network issue #131: the old save's assemblers are one tile now; each stays where its centre was, with its recipe, and the
 	--- provider that touched the edge of the 3x3 block is one tile away: its patterns have no machine (a provider window and the
 	--- pattern status say so), and the job that ran on it was not left hanging
-	if prototypes.entity["me-molecular-assembler"].tile_width == 1 then
+	if prototypes.entity["me-molecular-assembler"].tile_width == 1 and not st.one_tile then   -- (an old save with 3x3 assemblers)
 		for i, x in ipairs({ 28.5, 32.5, 36.5 }) do
 			local prov, asm = at("me-pattern-provider", x, 0.5), at("me-molecular-assembler", x, -1.5)
 			local info = prov and remote.call(AC, "provider_info", prov)
@@ -351,7 +391,7 @@ local function check_unified(st)
 	end
 	for _, p in pairs(problems) do L("FAIL", p) end
 	L("UNIFIED", (#problems == 0 and "ok" or "failed") .. " (a save of unified blocks: buses, interfaces, storage buses, circuit "
-		.. "interface and maintainer work after the load" .. (st.jobs and "; the jobs running on the three legacy CPUs are done" or "")
+		.. "interface and maintainer work after the load" .. (st.jobs and "; the jobs of the three legacy CPUs (gone: issue #145) were queued and went on on multiblock CPUs" or "") .. (st.legacy_chest and "; legacy CPU items became 1k crafting storages" or "")
 		.. (st.cards and "; the cards of a storage bus and a workbench's cell are items in their inventories" or "") .. ")")
 end
 
@@ -604,10 +644,16 @@ end)
 script.on_nth_tick(10, function()
 	local st = storage.mig
 	if st and st.unified then
-		if not st.start then                                    -- issue #6: the CPU each job runs on after the load
+		if not st.start then                                    -- issue #145: each job's status right after the load
 			for _, j in ipairs(st.jobs or {}) do
 				local info = j.id and remote.call(AC, "job", j.id)
-				j.after = info and info.cpu_name
+				j.after = info and info.status
+			end
+			--- the legacy CPUs are gone: a multiblock CPU (one 256k crafting storage, on the cable row) where each stood
+			if st.jobs and not prototypes.entity["me-crafting-cpu"] then
+				for _, x in ipairs({ 18.5, 21.5, 24.5 }) do
+					game.surfaces[1].create_entity{ name = "me-256k-crafting-storage", position = { x, 0.5 }, force = "player", raise_built = true }
+				end
 			end
 		end
 		st.start = st.start or game.tick

@@ -32,7 +32,7 @@ return function(H)
 		me_place(s, fails, what, "substation", BX + 20, BY + 5)
 		local ctrl = me_place(s, fails, what, "me-network-controller", BX + 7, BY)
 		local drive = me_drive(s, fails, what, BX + 8.5, BY - 0.5, { ["iron-plate"] = 400, ["iron-stick"] = 400 })
-		local cpu = me_place(s, fails, what, "me-crafting-cpu", BX + 11, BY)
+		local cpu = place_cpu(s, fails, what, BX + 11, BY)          -- (issue #145: a multiblock CPU)
 		local px, py = BX + 14.5, BY + 5.5
 		local prov = me_place(s, fails, what, "me-pattern-provider", px, py)
 		local ms = {}
