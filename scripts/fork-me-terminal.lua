@@ -669,13 +669,6 @@ local function refresh_jobs(st, frame, net)
 	M.job_rows(G.find(frame, "fork_me_jobs"), jobs)
 end
 
---- a cell's slot button for a cell list (terminal cells tab, drive window): fill in percent as the number
-function M.cell_tooltip(c)
-	local tip = { "", { "fork-me-gui.cell-fill", G.fmt(c.bytes), G.fmt(c.bytes_total), c.types, c.types_total } }
-	if #c.partition > 0 then tip[#tip + 1] = { "fork-me-gui.cell-partitioned", #c.partition } end
-	return tip
-end
-
 local function refresh_cells(st, frame, net)
 	local drives = N.drives_of(net, true)
 	local sig = {}
@@ -683,7 +676,7 @@ local function refresh_cells(st, frame, net)
 		sig[#sig + 1] = d.unit .. "p" .. d.priority
 		for slot = 1, 10 do
 			local c = d.cells[slot]
-			sig[#sig + 1] = c and (c.name .. c.bytes .. "/" .. c.types .. "/" .. #c.partition) or "-"
+			sig[#sig + 1] = c and N.drive_cell_sig(d.entity, slot) or "-"   -- issue #147: what the tooltip shows
 		end
 	end
 	sig = table.concat(sig, ",")
@@ -707,7 +700,7 @@ local function refresh_cells(st, frame, net)
 			if c then
 				local pct = c.bytes_total > 0 and math.floor(100 * c.bytes / c.bytes_total) or 0
 				row.add{ type = "sprite-button", sprite = "item/" .. c.name, number = pct,
-					style = #c.partition > 0 and "yellow_slot_button" or "slot_button", tooltip = M.cell_tooltip(c),
+					style = #c.partition > 0 and "yellow_slot_button" or "slot_button", tooltip = N.drive_cell_tooltip(d.entity, slot),
 					tags = G.act("term_cell", { drive = d.unit, slot = slot }) }
 			else
 				row.add{ type = "sprite-button", style = "slot_button", enabled = false }

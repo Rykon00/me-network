@@ -1022,6 +1022,71 @@ return function(H)
 			.. "plain keys, a broken json and one without a description give none, another partition is another key")
 	end
 
+	--- Issue #147: the tooltip of a cell inside a drive (the drive window's slots and the ME Terminal's Cells tab use
+	--- N.drive_cell_tooltip; the window's buttons need a player, so the window's function is called through the GUI
+	--- interface). An item cell with a partition of two, an Inverter Card and seven kinds, a fluid cell with water: the
+	--- head, the fill, the partition, the mode and the cards as one nested part, the first five kinds held and "+2 more",
+	--- the click hints last; the window's signature changes when the contents change.
+	local function drive_tip_test()
+		local st = storage.wbdrive147
+		if (st and st.done) or game.tick < 150 then return end
+		st = { problems = {}, done = true }
+		storage.wbdrive147 = st
+		local problems = st.problems
+		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
+		local drive = game.surfaces[1].create_entity{ name = "me-drive", position = { WX + 34.5, WY + 4.5 }, force = "player", raise_built = true }
+		if not drive then return me_report("WBDRIVETIP147", "ME drive cell tooltips", { "no drive" }) end
+		local inv = game.create_inventory(1)
+		local hand = inv[1]
+		local items = { ["iron-plate"] = 100, ["copper-plate"] = 70, ["steel-plate"] = 50, ["stone"] = 40, ["coal"] = 30,
+			["iron-gear-wheel"] = 20, ["copper-cable"] = 10 }
+		hand.set_stack{ name = "me-1k-storage-cell", count = 1, tags = { fork_me_cell = { items = items, data = {},
+			partition = { ["iron-plate"] = true, ["copper-plate"] = true }, cards = { CARD.inverter } } } }
+		expect(remote.call(NET, "insert_cell", drive, hand, 1) == 1, "the item cell into the drive")
+		hand.set_stack{ name = "me-1k-fluid-storage-cell", count = 1 }
+		expect(remote.call(NET, "insert_cell", drive, hand, 2) == 2, "the fluid cell into the drive")
+		remote.call(NET, "store_fluid_in_drive", drive, "water", 250)
+		--- the parts of a concatenation ("" first) without its line breaks
+		local function parts(t)
+			if type(t) ~= "table" or t[1] ~= "" then return nil end
+			local out = {}
+			for i = 2, #t do if t[i] ~= "\n" then out[#out + 1] = t[i] end end
+			return out
+		end
+		local function tip_lines(slot)
+			local outer = parts(remote.call(GUI, "drive_cell_tooltip", drive, slot))
+			return outer, outer and parts(outer[1])
+		end
+		local outer, l = tip_lines(1)
+		expect(outer and #outer == 2 and line(outer[2]) == line({ "fork-me-gui.drive-slot-tooltip" }), "the click hints last " .. line(outer))
+		expect(l and #l == 5, "five lines (head, fill, partition, mode and cards, holds) " .. line(l))
+		if l and #l == 5 then
+			expect(l[1][1] == "fork-me-gui.cell-tip-head", "head " .. line(l[1]))
+			expect(l[2][1] == "fork-me-gui.cell-fill" and tostring(l[2][4]) == "7", "fill " .. line(l[2]))
+			expect(line(l[3]) == line({ "fork-me-net.cell-tip-partition", "[item=copper-plate] [item=iron-plate]" }), "partition " .. line(l[3]))
+			local mode = parts(l[4])
+			expect(mode and #mode == 2 and line(mode[1]) == line({ "fork-me-gui.cell-mode-blacklist" })
+				and line(mode[2]) == line({ "fork-me-net.cell-tip-cards", "[item=" .. CARD.inverter .. "]" }), "mode and cards " .. line(l[4]))
+			expect(l[5][1] == "fork-me-gui.cell-tip-holds-more" and l[5][2] == "100 [item=iron-plate], 70 [item=copper-plate], 50 [item=steel-plate], "
+				.. "40 [item=stone], 30 [item=coal]" and tostring(l[5][3]) == "2", "holds " .. line(l[5]))
+		end
+		--- the fluid cell: the fluid head, the fill, no partition or mode, the water it holds
+		local _, f = tip_lines(2)
+		expect(f and #f == 3 and f[1][1] == "fork-me-gui.cell-tip-head-fluid" and f[3][1] == "fork-me-gui.cell-tip-holds"
+			and tostring(f[3][2]):find("250 [fluid=water]", 1, true), "the fluid cell " .. line(f))
+		--- an empty slot: the empty slot's tooltip
+		expect(line(remote.call(GUI, "drive_cell_tooltip", drive, 3)) == line({ "fork-me-net.drive-slot-empty" }), "an empty slot")
+		--- the window's signature follows the contents, and stays when nothing changed
+		local sig = remote.call(GUI, "drive_sig", drive)
+		expect(sig == remote.call(GUI, "drive_sig", drive), "the signature of an unchanged drive stays")
+		remote.call(NET, "store_fluid_in_drive", drive, "water", 1)
+		expect(sig ~= remote.call(GUI, "drive_sig", drive), "the signature after a change of the contents")
+		inv.destroy()
+		drive.destroy()
+		me_report("WBDRIVETIP147", "ME drive cell tooltips", problems, "an item cell with partition, Inverter Card and seven kinds, a fluid "
+			.. "cell, an empty slot, the click hints, the signature")
+	end
+
 	function T.tick()
 		workbench_test()
 		slots_test()
@@ -1030,6 +1095,7 @@ return function(H)
 		tip_test()
 		slot_tip_test()
 		key_tip_test()
+		drive_tip_test()
 	end
 	function T.running(check)
 		check(storage.wb17 and storage.wb17.done, "ME Cell Workbench")
@@ -1039,6 +1105,7 @@ return function(H)
 		check(storage.wbtip64 and storage.wbtip64.done, "ME cell tooltip")
 		check(storage.wbslot75 and storage.wbslot75.done, "ME window slot tooltips")
 		check(storage.wbkey79 and storage.wbkey79.done, "ME stored item descriptions")
+		check(storage.wbdrive147 and storage.wbdrive147.done, "ME drive cell tooltips")
 	end
 	return T
 end

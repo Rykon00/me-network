@@ -462,6 +462,13 @@ keeps its old tooltip (what it holds, or "Empty, partitioned for N kinds") until
 workbench; the mod does not walk the inventories of the map for it. The cell's tags and the saved state are not
 changed: only the description.
 
+A cell inside a drive (a slot of the **ME Drive** window, a cell of the **Cells** tab of the ME Terminal) has a
+tooltip of the same lines with two more (issue #147): first the cell's name, item or fluid cell and its size ("ME 1k
+Storage Cell (item cell, 1024 bytes)") and the fill ("33 of 1024 bytes, 2 of 63 types"), then the partition, the mode and
+the cards as above, and last what it holds: the five kinds it holds most of with their amounts, then "+N more" ("Holds:
+100 [iron plate], 30 [copper plate]"); the full list stays in the right click view. The drive window adds its click
+hints after it. The tooltip follows the cell: the window is drawn anew when its contents, partition or cards change.
+
 The partition is not marked on the item itself (no label, no colour): the label of a stack is a plain text, not a
 localised one (an item would show by its internal name), and only a stack object can carry it, not the item definition
 every drive, mining and spilling path writes. The drive window and the Cells tab frame a partitioned cell in yellow.
