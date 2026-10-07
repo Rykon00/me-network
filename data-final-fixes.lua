@@ -2,8 +2,9 @@
 
 --- Issue #3: the old fluid blocks (ME_NETWORK.removed: ME Fluid Interface, ME Fluid Import / Export / Storage Bus) are
 --- made by no recipe. A mod that makes a recipe for one of them itself (Gregtorio Continued 0.5.0 does, in its
---- prototypes/120-fork-me-network-compat.lua) loses that recipe here, and every technology loses its unlock; the item
---- stays hidden (saves still hold it, scripts/fork-me-unify.lua turns it into the unified item).
+--- prototypes/120-fork-me-network-compat.lua) loses that recipe here, and every technology loses its unlock (issue #146:
+--- the items are gone, so such a recipe would stop the game from loading; migrations/me-network-old-fluid-blocks.json
+--- turns a stray item into the unified one). The legacy Crafting CPUs (issue #145) are in ME_NETWORK.removed too.
 local ME = ME_NETWORK
 local function makes_removed(recipe)
 	if ME.removed[recipe.name] then return true end

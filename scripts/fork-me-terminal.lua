@@ -961,16 +961,6 @@ function M.on_configuration_changed()
 	for index in pairs(storage.fork_me_terminal) do
 		if not game.get_player(index) then storage.fork_me_terminal[index] = nil end
 	end
-	for _, player in pairs(game.players) do
-		--- the frames of the windows and panels before R3
-		for _, old in pairs({ "fork_me_terminal", "fork_me_drive", "fork_me_bus", "fork_ae2_provider",
-			"fork_me_maintainer", "fork_me_circuit", "fork_me_fluid_interface" }) do
-			for _, root in pairs({ player.gui.screen, player.gui.relative }) do
-				local frame = root[old]
-				if frame then frame.destroy() end
-			end
-		end
-	end
 	G.close_all()
 	storage.fork_me_gui_bypass = nil
 end

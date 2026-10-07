@@ -59,7 +59,7 @@ local md_cache
 local function mod_data()
 	if not md_cache then
 		local md = prototypes.mod_data["fork-me-network"]
-		md_cache = md and md.data or { cells = {}, legacy_drives = {}, drive_slots = 10, names = {}, legacy = {} }
+		md_cache = md and md.data or { cells = {}, legacy_drives = {}, drive_slots = 10, names = {} }
 	end
 	return md_cache
 end
@@ -122,7 +122,6 @@ local function member_power(node)
 	end
 	return node.entity.valid and block_power_cache[node.entity.name] or MEMBER_POWER
 end
---- (the old ME Fluid Drives are no members since issue #68 step R2: scripts/fork-me-migrate.lua replaces them)
 
 --- the entity names of all members, sorted (cached: the filter of every find_entities_filtered of the graph)
 function M.node_names()
@@ -3511,21 +3510,8 @@ end
 --- events
 --------------------------------------------------------------------------------
 
---- legacy ghosts (old drives, controller, interface) become ghosts of the new entities
-local function swap_legacy_ghost(entity)
-	local md = mod_data()
-	local name = entity.ghost_name
-	local target
-	if md.legacy_drives[name] then target = md.names.drive
-	elseif name == md.legacy.controller and entity.ghost_type == "roboport" then target = md.names.controller
-	elseif name == md.legacy.interface and entity.ghost_type == "logistic-container" then target = md.names.interface end
-	if not target then return end
-	local surface, pos, force = entity.surface, entity.position, entity.force
-	entity.destroy()
-	surface.create_entity{ name = "entity-ghost", inner_name = target, position = pos, force = force }
-end
-
---- the old drive item a build consumed (placing it gives an ME Drive with its four empty cells)
+--- the old drive item a build consumed (placing it gives an ME Drive with its four empty cells; issue #146: the items
+--- stay, 0.5.0 left them in inventories as they were)
 local function legacy_item(event)
 	local md = mod_data()
 	local function tags_of(st) return st.is_item_with_tags and st.tags or nil end
@@ -3544,7 +3530,6 @@ end
 --- `event`: the build event (for the item that was placed); `source`: the original of a clone
 function M.on_built(entity, event)
 	if not (entity and entity.valid) then return end
-	if entity.name == "entity-ghost" then swap_legacy_ghost(entity) return end
 	local kind = kinds()[entity.name]
 	if not kind then return end
 	local s = state()
@@ -3751,46 +3736,6 @@ function M.quick_insert(player, entity)
 	local _, why = M.insert_cell(entity, cursor)
 	if why then player.create_local_flying_text{ text = { "fork-me-net.error-" .. why }, create_at_cursor = true } end
 	return true
-end
-
---------------------------------------------------------------------------------
---- issue #3: replaced items in the drives (scripts/fork-me-unify.lua)
---------------------------------------------------------------------------------
-
---- The cells in the drives hold replaced items under their replacement's key (bytes, types and partitions counted
---- again, the networks recomputed), the drives' partition templates too. Returns the number of items renamed.
-function M.apply_aliases()
-	local s = storage.fork_me_net
-	if not s then return 0 end
-	local moved, changed = 0, false
-	for _, d in pairs(s.drives) do
-		for slot, cell in pairs(d.slots) do
-			local hit = false
-			for key, n in pairs(cell.items) do
-				if alias_key(key) ~= key then hit = true moved = moved + n end
-			end
-			for key in pairs(cell.partition or {}) do
-				if alias_key(key) ~= key then hit = true end
-			end
-			if hit then
-				d.slots[slot] = cell_from_tags(cell.name, cell_stack(cell).tags)
-				s.dirty[d.entity.unit_number] = true
-				changed = true
-			end
-		end
-		for slot, keys in pairs(d.slot_partition or {}) do
-			local out = {}
-			for i, key in pairs(keys) do
-				out[i] = alias_key(key)
-				if out[i] ~= key then changed = true end
-			end
-			d.slot_partition[slot] = out
-		end
-	end
-	if changed then
-		for _, net in pairs(s.nets) do recompute(s, net) end
-	end
-	return moved
 end
 
 --------------------------------------------------------------------------------

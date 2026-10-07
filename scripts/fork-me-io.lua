@@ -978,7 +978,7 @@ local function config_from_tag(t)
 	return nil
 end
 
---- the interface's tag (blueprints, scripts/fork-me-unify.lua): { config, sides, priority (issue #17, only when not 0) }
+--- the interface's tag (blueprints): { config, sides, priority (issue #17, only when not 0) }
 function M.interface_tag(config, sides, priority)
 	return { config = config_tag(clean_config(config)), sides = sides_tag(sides),
 		priority = priority and priority ~= 0 and priority or nil }

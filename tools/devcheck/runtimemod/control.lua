@@ -2962,13 +2962,13 @@ end
 
 --------------------------------------------------------------------------------
 --- Items and fluids in one block (me-network issue #3; scripts/fork-me-io.lua, fork-me-storagebus.lua,
---- fork-me-unify.lua): own network. The ME Interface with an item row and a fluid row (the fluid row takes the first
+--- issue #146): own network. The ME Interface with an item row and a fluid row (the fluid row takes the first
 --- side with a pipe), an import side, a side switched off, a pipe loop between an export and an import side, the
 --- fluid of its sides back into the network when it is mined; an export bus on a machine with a fluid recipe (items
 --- into the input inventory, the fluid into an input box), an import bus on such a machine (the output inventory and
 --- an output box; the input box is left alone); a storage bus that faces a chest, then a tank (it becomes the fluid
---- side), then a cable; mixed filters; the old fluid blocks: built by a script, their ghosts with old tags (revived
---- with the settings), their items (hidden, placing the unified block, no recipe, no unlock).
+--- side), then a cable; mixed filters; the old fluid blocks and the old entities of before the ME rework are gone
+--- (issue #146), the old drive items stay.
 --------------------------------------------------------------------------------
 
 local UX, UY = 300, 240
@@ -3161,40 +3161,18 @@ function unified_test()
 	si = remote.call("gregtorio-me-storagebus", "info", sb)
 	expect(si and si.status == "me-target" and si.side == "item" and fluid("lubricant") == 0, "rotated onto the cable " .. serpent.line(si))
 
-	--- the old fluid blocks: one built by a script becomes the unified one; their ghosts become unified ghosts with
-	--- the settings in their tags
-	s.create_entity{ name = "me-fluid-import-bus", position = { UX + 35.5, UY + 0.5 }, direction = defines.direction.south,
-		force = "player", raise_built = true }
-	expect(find("me-fluid-import-bus", 35.5, 0.5) == nil, "an old fluid import bus built by a script stayed")
-	local new = find("me-import-bus", 35.5, 0.5)
-	expect(new and new.direction == defines.direction.south, "no unified import bus in its place")
-	local function ghost(name, x, tags, dir)
-		s.create_entity{ name = "entity-ghost", inner_name = name, position = { UX + x, UY + 4.5 }, direction = dir,
-			force = "player", tags = tags, raise_built = true }
-		local g = s.find_entities_filtered{ type = "entity-ghost", position = { UX + x, UY + 4.5 } }[1]
-		local e
-		if g then _, e = g.revive{ raise_revive = true } end
-		return g, e
-	end
-	local _, e1 = ghost("me-fluid-export-bus", 12.5, { fork_me_bus = { filters = { "water" } } }, defines.direction.east)
-	local b1 = e1 and remote.call(IO, "get_bus", e1)
-	expect(e1 and e1.name == "me-export-bus" and e1.direction == defines.direction.east and b1
-		and serpent.line(b1.filters) == serpent.line({ "fluid/water" }), "old export bus ghost: " .. tostring(e1 and e1.name) .. " " .. serpent.line(b1))
-	local _, e2 = ghost("me-fluid-interface", 14.5, { fork_me_fluid_interface = { mode = "export", fluid = "water", level = 777 } })
-	local c2 = e2 and remote.call(IO, "get_interface_config", e2)
-	local s2 = e2 and remote.call(IO, "get_interface_sides", e2)
-	expect(e2 and e2.name == "me-network-interface" and c2[1] and c2[1].type == "fluid" and c2[1].name == "water" and c2[1].amount == 777
-		and serpent.line(s2) == serpent.line({ 1, 1, 1, 1 }), "old fluid interface ghost: " .. serpent.line(c2) .. " " .. serpent.line(s2))
-	local _, e3 = ghost("me-fluid-storage-bus", 16.5, { fork_me_fluid_storage_bus = { mode = "read", priority = 3, filters = { "water" } } })
-	local g3 = e3 and remote.call("gregtorio-me-storagebus", "get_settings", e3)
-	expect(e3 and e3.name == "me-storage-bus" and g3 and g3.mode == "read" and g3.priority == 3
-		and serpent.line(g3.filters) == serpent.line({ "fluid/water" }), "old fluid storage bus ghost: " .. serpent.line(g3))
-	--- the old items: hidden, they place the unified block, no recipe makes them, no technology unlocks them
-	for old_name, unified in pairs({ ["me-fluid-interface"] = "me-network-interface", ["me-fluid-import-bus"] = "me-import-bus",
-		["me-fluid-export-bus"] = "me-export-bus", ["me-fluid-storage-bus"] = "me-storage-bus" }) do
-		local p = prototypes.item[old_name]
-		expect(p and p.hidden and p.place_result and p.place_result.name == unified, old_name .. ": " .. tostring(p and p.place_result and p.place_result.name))
+	--- the old fluid blocks are gone (issue #146): no entity, no item; the old drive items stay (they place an ME Drive)
+	for _, old_name in pairs({ "me-fluid-interface", "me-fluid-import-bus", "me-fluid-export-bus", "me-fluid-storage-bus" }) do
+		expect(prototypes.entity[old_name] == nil and prototypes.item[old_name] == nil, old_name .. " still exists")
 		expect(prototypes.recipe[old_name] == nil, "the recipe " .. old_name .. " exists")
+	end
+	for _, old_name in pairs({ "me-drive-1k", "me-controller", "me-interface", "me-fluid-drive-1k" }) do
+		local p = prototypes.entity[old_name]
+		expect(p == nil, "the old entity " .. old_name .. " still exists")
+	end
+	for _, old_name in pairs({ "me-drive-256k", "me-fluid-drive-256k" }) do
+		local p = prototypes.item[old_name]
+		expect(p and p.hidden and p.place_result and p.place_result.name == "me-drive", "the old drive item " .. old_name)
 	end
 	for _, eff in pairs(prototypes.technology["me-fluid-storage"].effects) do
 		expect(not (eff.recipe and eff.recipe:find("^me%-fluid%-") and not eff.recipe:find("cell")), "me-fluid-storage unlocks " .. tostring(eff.recipe))

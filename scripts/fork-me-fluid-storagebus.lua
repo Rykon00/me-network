@@ -36,7 +36,7 @@ local T = require("scripts.fork-me-targets")
 
 local M = {}
 
-local OLD_KIND = "fluid-storage-bus"      -- the old ME Fluid Storage Bus (records until scripts/fork-me-unify.lua runs)
+local OLD_KIND = "fluid-storage-bus"      -- the handler name (of the old ME Fluid Storage Bus, kept: saves store it)
 local MIN_INTERVAL = 30                   -- ticks until a bus whose segment changed reads it again
 local EPS = 1e-6
 
