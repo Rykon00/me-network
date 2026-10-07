@@ -10,6 +10,10 @@
 ---     arrives in the network, the machine is idle again with the pattern's recipe;
 ---   * the macerator busy on another recipe (plates in it): a second job waits, the machine is switched when it is done
 ---     with them (what was left of them went into the network), the job ends done.
+--- Issue #171: the macerator's recipe has a byproduct at a chance (Gregtorio's nickel dust at 5 %, the stand-in of data.lua
+--- too) and the processing pattern lists it as an output (as a player may encode it by hand): the jobs still end, their
+--- step waits only for the crushed iron the plan wants of it; the Pattern Terminal's "From recipe" leaves the chance
+--- byproduct out of the rows and makes a valid pattern.
 --- Loaded by control.lua: require("providers")(H) returns { setup, tick, running }.
 
 local AC, NET = "gregtorio-me-autocraft", "gregtorio-me-network"
@@ -224,6 +228,9 @@ return function(H)
 			end
 			local got = remote.call(NET, "count", sc.ctrl, "crushed-iron") - st.before
 			expect((not j or j.status == "done") and got >= 2, "the first job: " .. serpent.line(j and j.status) .. ", crushed iron " .. got)
+			local step = j and j.steps and j.steps[1]
+			expect(not step or serpent.line(step.keys) == serpent.line({ ["crushed-iron"] = true }),
+				"the first job's step waits for " .. serpent.line(step and step.keys))
 			expect(recipe() == c.recipe and m.crafting_progress == 0 and m.get_inventory(defines.inventory.crafter_input).is_empty(),
 				"the macerator after the first job: " .. tostring(recipe()) .. ", progress " .. m.crafting_progress)
 			--- busy on another recipe: plates in it
@@ -252,7 +259,21 @@ return function(H)
 			expect(st.waited and (not j or j.status == "done") and got >= 2 and recipe() == c.recipe,
 				"the second job: waited " .. tostring(st.waited) .. ", " .. serpent.line(j and j.status) .. ", crushed iron " .. got
 				.. ", recipe " .. tostring(recipe()))
-			return finish("census, a processing pattern switches a machine, a busy machine switched after it")
+			--- issue #171: "From recipe" of a recipe with a chance byproduct: the certain outputs only, a valid pattern
+			local PT, force = "gregtorio-me-pattern-terminal", sc.ctrl.force
+			local ed = remote.call(PT, "new_editor")
+			ed.mode = "processing"
+			local ok, why
+			ok, why, ed = remote.call(PT, "set_editor_recipe", force, ed, c.recipe)
+			local proto = prototypes.recipe[c.recipe]
+			local chance = 0
+			for _, p in pairs(proto.products) do if (p.probability or 1) < 1 then chance = chance + 1 end end
+			expect(ok and #ed.outputs == #proto.products - chance and ed.outputs[1] and ed.outputs[1].key == "crushed-iron",
+				"From recipe: " .. tostring(why) .. " " .. serpent.line(ed.outputs) .. " (" .. chance .. " chance products)")
+			expect(chance > 0, "the macerator's recipe has no chance byproduct (the stand-in of data.lua should)")
+			expect(remote.call(PT, "pattern_of", force, ed) ~= nil, "From recipe makes no valid pattern " .. serpent.line(ed.outputs))
+			return finish("census, a processing pattern switches a machine, a busy machine switched after it; a chance byproduct "
+				.. "listed in the pattern does not hold the jobs, From recipe leaves it out")
 		end
 	end
 

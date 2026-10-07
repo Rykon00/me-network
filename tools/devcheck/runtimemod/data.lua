@@ -116,14 +116,18 @@ local function machine(name, base_type, base, categories, speed)
 end
 
 for _, n in pairs({ "raw-iron", "crushed-iron", "iron-dust", "iron-ingot", "tin-ingot", "raw-silicon",
-	"resin-circuit-board", "phenolic-circuit-board" }) do item(n) end
+	"resin-circuit-board", "phenolic-circuit-board", "nickel-dust" }) do item(n) end
 for _, n in pairs({ "chlorine", "hydrogen", "phenol", "silicon-tetrachloride", "molten-tin", "hydrochloric-acid" }) do fluid(n) end
 for _, c in pairs({ "zz-macerator", "zz-chemical-reactor", "zz-extractor" }) do category(c) end
 
 --- Gregtorio's gear recipe (crafting table): 1 plate + 2 sticks -> 1 gear, a hand recipe the molecular assembler
 --- also makes
 recipe("iron-gear-crafting-table", "crafting", 1, { I("iron-plate", 1), I("iron-stick", 2) }, { I("iron-gear-wheel", 1) })
-recipe("crushed-iron", "zz-macerator", 20, { I("raw-iron", 1) }, { I("crushed-iron", 2) })
+--- Gregtorio's macerator recipe of raw iron (since its issue #202 as GT New Horizons': nickel dust at 5 %; me-network
+--- issue #171: a byproduct at a chance)
+recipe("crushed-iron", "zz-macerator", 20, { I("raw-iron", 1) },
+	{ I("crushed-iron", 2), { type = "item", name = "nickel-dust", amount = 1, probability = 0.05 } })
+data.raw.recipe["crushed-iron"].main_product = "crushed-iron"
 recipe("iron-dust-smelter", "smelting", 10, { I("iron-dust", 1) }, { I("iron-ingot", 1) })
 recipe("silicon-tetrachloride", "zz-chemical-reactor", 3, { I("raw-silicon", 1), F("chlorine", 400) }, { F("silicon-tetrachloride", 100) })
 recipe("molten-tin", "zz-extractor", 1.2, { I("tin-ingot", 1) }, { F("molten-tin", 14.4) })

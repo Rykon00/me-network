@@ -1067,11 +1067,12 @@ local function apply_pattern(ctx, pid, key, count, path, depth)
 	end
 	local step = ctx.steps[pid]
 	if not step then
-		step = { pid = pid, runs = 0 }
+		step = { pid = pid, runs = 0, keys = {} }
 		jset(ctx, ctx.steps, pid, step)
 		jset(ctx, ctx.order, #ctx.order + 1, pid)    -- ingredients were planned first: dependencies come first
 	end
 	jset(ctx, step, "runs", step.runs + runs)
+	if not step.keys[key] then jset(ctx, step.keys, key, true) end   -- issue #171: what the plan wants of it
 	if exact then                                    -- surplus of a certain yield can be used by later demand
 		local over = runs * yield - count
 		if not is_fluid(key) then over = math.floor(over + 1e-9) end
@@ -1282,7 +1283,7 @@ local function make_plan(s, net, key, amount, fresh_only)
 	local steps, runs = {}, 0
 	for _, pid in ipairs(ctx.order) do
 		local step = ctx.steps[pid]
-		steps[#steps + 1] = { pid = pid, def = patterns.defs[pid], runs = step.runs }
+		steps[#steps + 1] = { pid = pid, def = patterns.defs[pid], runs = step.runs, keys = copy_map(step.keys) }
 		runs = runs + step.runs
 	end
 	local reserve, reserved = {}, 0
@@ -1621,12 +1622,22 @@ end
 local function step_ingredients(step) return def_ingredients(step.def) end
 local function step_products(step) return def_products(step.def) end
 
---- runs of a processing step whose outputs are all back (received)
+--- whether a job step waits for its output `key`. Issue #171: only for the outputs the plan wants of the step (its
+--- `keys`); another output of the pattern (a byproduct, which may come at a chance) never holds the job, as GT New
+--- Horizons' AE2 ends a job by its requested output (CraftingCPUCluster: finalOutput). A step of a job started before
+--- (no `keys`) waits for every output.
+local function waits_for(step, key)
+	return step.keys == nil or step.keys[key] == true
+end
+
+--- runs of a processing step whose wanted outputs are all back (received)
 local function processing_done(step)
 	local done
 	for _, r in ipairs(step.def.outputs) do
-		local n = math.floor(((step.received[r.key] or 0) + FLUID_EPS) / r.amount)
-		done = done and math.min(done, n) or n
+		if waits_for(step, r.key) then
+			local n = math.floor(((step.received[r.key] or 0) + FLUID_EPS) / r.amount)
+			done = done and math.min(done, n) or n
+		end
 	end
 	return math.min(done or 0, step.issued)
 end
@@ -2442,9 +2453,11 @@ local function await_index(s)
 						local keys = idx[net.id] or {}
 						idx[net.id] = keys
 						for _, r in ipairs(step.def.outputs) do
-							local ids = keys[r.key] or {}
-							keys[r.key] = ids
-							if ids[#ids] ~= id then ids[#ids + 1] = id end
+							if waits_for(step, r.key) then
+								local ids = keys[r.key] or {}
+								keys[r.key] = ids
+								if ids[#ids] ~= id then ids[#ids + 1] = id end
+							end
 						end
 					end
 				end
@@ -2466,7 +2479,7 @@ local function awaiting(net, key)
 	for _, id in ipairs(ids) do
 		local job = s.jobs[id]
 		for _, step in ipairs(job and job.steps or {}) do
-			if step.kind == "processing" then
+			if step.kind == "processing" and waits_for(step, key) then
 				local per = P.output_of(step.def, key)
 				if per > 0 then n = n + math.max(0, step.issued * per - (step.received[key] or 0)) end
 			end
@@ -2602,7 +2615,10 @@ end
 --- the job step of a planned step
 local function job_step_of(st)
 	local step = { pid = st.pid, def = st.def, kind = st.def.kind, recipe = st.def.recipe, runs = st.runs, issued = 0, done = 0 }
-	if step.kind == "processing" then step.received = {} end
+	if step.kind == "processing" then
+		step.received = {}
+		step.keys = st.keys and copy_map(st.keys) or nil       -- issue #171: the outputs the job waits for
+	end
 	return step
 end
 
@@ -2728,7 +2744,7 @@ function M.job(id)
 	local steps = {}
 	for i, st in ipairs(job.steps) do
 		steps[i] = { pid = st.pid, kind = st.kind, recipe = st.recipe, runs = st.runs, issued = st.issued, done = st.done,
-			received = st.received }
+			received = st.received, keys = st.keys }
 	end
 	return { id = job.id, item = job.item, amount = job.amount, status = job.status, closing = job.closing,
 		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool,
