@@ -476,8 +476,11 @@ local function def_facts(def)
 		for _, i in pairs(ingredients) do
 			if i.type == "item" then items = items + 1 elseif i.type == "fluid" then fluid_in = true end
 		end
+		--- issue #158: a processing pattern that names the recipe it was encoded from (P.normalize keeps only an existing
+		--- one) switches an assembling machine to it, as a crafting pattern does: its category too
+		local recipe = def.recipe and prototypes.recipe[def.recipe]
 		f = { stack = stack_problem(ingredients), items = items, fluid_in = fluid_in,
-			category = def.kind == "crafting" and prototypes.recipe[def.recipe].category or nil }
+			category = recipe and recipe.category or nil, switch = def.kind == "processing" and recipe ~= nil or nil }
 		facts_cache[def] = f
 	end
 	return f
@@ -548,14 +551,40 @@ local function machine_view(entity)
 	return setmetatable({ entity = entity, type = entity.type, unit = entity.unit_number }, VIEW)
 end
 
+--- Can an assembling machine (view `v`) be switched to the recipe of pattern `def`? nil when it can, else the reason
+--- ("category", "fixed-recipe", "not-researched", "stack", the fluid reasons). `outputs_optional`: a processing pattern
+--- (its outputs may come back elsewhere).
+local function switch_problem(v, def, facts, outputs_optional)
+	local machine = v.facts
+	if not machine.categories[facts.category] then return "category" end
+	local fixed = machine.fixed
+	if fixed and fixed ~= "" and fixed ~= def.recipe then return "fixed-recipe" end
+	local r = v.recipes[def.recipe]
+	if not (r and r.enabled) then return "not-researched" end
+	if facts.stack then return facts.stack end
+	local ingredients, products = def_ingredients(def), def_products(def)
+	if v.recipe == def.recipe then
+		local _, reason = fluid_map(v, ingredients, products, outputs_optional)
+		return reason
+	end
+	return fluid_boxes_fit(v, ingredients, outputs_optional and {} or products)
+end
+
 --- Can the machine of view `v` (next to a provider) do pattern `def`? Returns a target entry { entity, unit, mode } or nil
 --- and the reason: crafting patterns need an assembling machine that can make the recipe ("category",
 --- "not-researched", "fixed-recipe", "stack", the fluid reasons; a furnace: "furnace"), processing patterns a
 --- machine ("no-recipe": an assembling machine without a recipe; "stack", fluid reasons) or a chest (items only).
+--- Issue #158: a processing pattern that names its recipe takes an assembling machine as a crafting pattern does (any
+--- recipe set or none: the job step switches an idle one, `recipe` in the entry); a furnace keeps choosing by its input.
 --- Chests are no target of crafting patterns (nil, nil: not counted).
 local function target_for(v, def)
 	local etype = v.type
 	local facts = def_facts(def)
+	if facts.switch and etype == "assembling-machine" then
+		local why = switch_problem(v, def, facts, true)
+		if why then return nil, why end
+		return { entity = v.entity, unit = v.unit, mode = "push", recipe = def.recipe }
+	end
 	if def.kind == "crafting" then
 		if etype == "furnace" then return nil, "furnace" end
 		if etype ~= "assembling-machine" then return nil, nil end
@@ -2065,19 +2094,38 @@ local function find_crafter(s, net, job, step, targets)
 end
 
 --- A target for a processing step: an idle machine ("push") or a chest ("chest"). Returns the entity, its mode and
---- the fluid map.
-local function find_pusher(s, job, step, targets)
+--- the fluid map. Issue #158: a target with a `recipe` (a processing pattern that names its recipe, at an assembling
+--- machine) is used when it has that recipe and is idle; else, after the other targets, an idle one is switched to it
+--- (switch_recipe: what is left in it goes into the network first), as find_crafter does for crafting steps.
+local function find_pusher(s, net, job, step, targets)
 	local ingredients, products = step_ingredients(step), step_products(step)
+	local others
 	for _, t in pairs(targets) do
 		local e = t.entity
 		if e.valid and not s.busy[t.unit] and not rejected(job, t.unit, step.pid) then
 			if t.mode == "chest" then
 				return e, "chest", EMPTY_MAP
 			elseif t.mode == "push" and not e.disabled_by_script then
-				local map, why = fluid_map(e, ingredients, products, true)
-				if not map then reject(job, t.unit, step.pid) job.problem = why
-				elseif machine_idle(e, ingredients, map) then return e, "push", map end
+				local current = t.recipe and N.bound(e).get_recipe()
+				if t.recipe and not (current ~= nil and current.name == t.recipe) then
+					others = others or {}
+					others[#others + 1] = t
+				else
+					local map, why = fluid_map(e, ingredients, products, true)
+					if not map then reject(job, t.unit, step.pid) job.problem = why
+					elseif machine_idle(e, ingredients, map) then return e, "push", map end
+				end
 			end
+		end
+	end
+	if not (others and net) then return nil end
+	for _, t in ipairs(others) do
+		local e = t.entity
+		if e.crafting_progress == 0 and switch_recipe(net, e, t.recipe) then
+			local map, why = fluid_map(e, ingredients, products, true)
+			if map then return e, "push", map end
+			reject(job, t.unit, step.pid)
+			job.problem = why
 		end
 	end
 	return nil
@@ -2248,7 +2296,7 @@ local function job_step(s, job, work)
 				machine, map = find_crafter(s, net, job, step, targets)
 				mode = "craft"
 			else
-				machine, mode, map = find_pusher(s, job, step, targets)
+				machine, mode, map = find_pusher(s, net, job, step, targets)
 			end
 			if not machine then waiting = waiting or "machine" break end
 			if mode ~= "chest" then
