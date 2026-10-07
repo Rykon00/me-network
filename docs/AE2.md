@@ -262,7 +262,7 @@ from the drives through export buses into labs; labs that sit next to each other
 | Bus | Takes from / puts into | Filters |
 |---|---|---|
 | Import | the output of an assembler or furnace, or any slot of a chest, and the fluid in the output boxes of a machine (a tank: all of it), into the network | only those items and fluids; none: everything |
-| Export | from the network into the input of an assembler, furnace or **lab** (up to a stack of each filtered item) or a chest, and its filtered fluids into the machine's input boxes or the tank, at the fluid's default temperature | the items and fluids to export (none: nothing) |
+| Export | from the network into the input of an assembler, furnace or **lab** (up to a stack of each filtered item) or a chest, and its filtered fluids into the machine's input boxes or the tank, at the temperature they have in the network | the items and fluids to export (none: nothing) |
 
 A bus moves up to 256 items and 4000 units of fluid per second (map settings "Bus speed"), however many buses the
 map has: a bus that is visited less often moves more per visit. An interface handles 8 slots per quarter second since
@@ -365,10 +365,11 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
   extract", "From contents", "Clear" and the cards too (a Fuzzy Card does nothing for fluids). With an **Overflow
   Destruction Card** what does not fit into the segment is destroyed; a tank that holds another fluid or is at another
   temperature takes nothing and destroys nothing.
-* **Temperature**: the network stores one temperature per fluid (see "Fluids"). A tank at another temperature (hot
-  steam) is shown and can be taken from (what leaves the network has the fluid's default temperature, as with the
-  import bus), but the network puts nothing into it, so the tank keeps its heat. The window shows the
-  temperature and "the fluid is not at its default temperature".
+* **Temperature** (issue #159 of ME Network, see "Fluids"): the segment's fluid is storage at the temperature it has:
+  a tank of steam at 400 °C is "Steam (400 °C)" in the terminal, and what is taken from it leaves at 400 °C. The
+  network puts a fluid into the tank only while the tank is empty or holds that fluid at the same temperature (whole
+  degrees): steam at 15 °C never goes into the tank of hot steam, steam at 400 °C does. The window shows the
+  temperature.
 * Pumps and pipes change the segment without the network noticing at once: every bus looks at its segment about
   every quarter second (50 buses: every 1.75 s); taking out always checks the segment first, so no fluid is ever
   duplicated. Removing a pipe or tank of a segment is seen within a quarter second.
@@ -666,8 +667,9 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   extractor, ...). Not usable, and counted per reason in the crafting tab's info line: patterns
   that need more of one ingredient than fits into a machine slot (`stack`), no usable box for the recipe
   (`fluid-box`: box too small for one craft, no matching box, a furnace or a chest with fluids), a pipe on a used
-  box (`fluid-pipes`), and recipes that need a fluid temperature the network cannot deliver (`fluid-temperature`,
-  see the temperature rule below).
+  box (`fluid-pipes`), and recipes that need a fluid temperature no fluid can have (`fluid-temperature`: above the
+  fluid's maximum temperature; see "Temperature" under "Fluids": the network keeps every temperature, so a recipe that
+  needs hot steam takes the hot steam the network holds).
 * Only normal quality items are planned and crafted.
 
 ### Patterns in providers: mining, destroying, blueprints
@@ -796,8 +798,8 @@ and cloning keep them.
 Tech `me-automation`. The **ME Circuit Interface** is a constant combinator (no power) connected to the
 network. Connect red or green wires to it: they carry
 
-* every item of the network (with its quality) and every fluid, fluids rounded down to whole units,
-  or
+* every item of the network (with its quality) and every fluid, fluids rounded down to whole units (a fluid's
+  temperatures added up: a signal has no temperature, issue #159), or
 * only the resources chosen as **filters**: click it, its ME window has up to 20 signal buttons and the
   output on/off switch. Items and fluids only; without filters everything is sent.
 
@@ -899,11 +901,56 @@ cell (8 000 units per "1k"). An item cell takes no fluid and a fluid cell no ite
 * **Blueprints:** a drive from a blueprint is empty (cells are items; priority and partitions are kept). The rows and
   sides of an ME Interface are kept in blueprints and copied by settings paste and cloning.
 
-**Temperature:** the network stores fluids by name only, without a temperature. Importing drops the temperature;
-an export, an export bus and the hand-over to a pattern machine deliver the fluid at its default
-temperature. Steam therefore loses its heat in the network (it comes out at 15 °C, which no steam engine or
-turbine accepts); the Gregtorio fluids have a single temperature and are not affected. A recipe whose fluid box
-needs a temperature the default does not satisfy is not a pattern (`fluid-temperature` in the info line).
+### Temperature
+
+Since issue #159 of ME Network the network keeps a fluid's temperature. Steam that comes in at 250 °C goes out at
+250 °C; nothing is mixed in the network.
+
+* **Every temperature is stored on its own**, in whole degrees (249.6 °C and 250.2 °C are one: 250 °C; a temperature
+  is first clamped to the fluid's range, as the game does). The fluid at its **default temperature** (water and steam:
+  15 °C) is stored as before, so saves, filters, interface rows, patterns, level maintainers and circuit filters of
+  older versions work unchanged.
+* **Terminal:** one entry per temperature; the tooltip says "Steam (250 °C)", the default one has no temperature.
+* **Fluid cells:** every temperature is a type of its own (bytes and types as for another fluid). Steam of several
+  temperatures that mixes in pipes before the import comes in at every whole degree the mix reaches, and each is a
+  type: import each boiler line or heat exchanger line by its own interface side or bus.
+* **Choosing a fluid** (an interface row, an import or export bus filter, a storage bus filter, the ME Cell
+  Workbench's partition, a level maintainer, a circuit interface filter, a row of the pattern terminal): the picker
+  has a field **Temperature (°C)** below the fluids. Empty: a filter, an interface row, an export bus and a pattern
+  input take **every temperature** of the fluid; a number: that temperature only (the default one too, e.g. 15). A
+  level maintainer and a pattern output name one temperature: empty is the default one. A filter of one temperature
+  shows the degrees as the number of its slot. A cell partition set in the cell window (the game's own picker) takes
+  every temperature.
+* **Export without a temperature** (an interface row, an export bus): the default temperature first, then the others
+  from the coldest to the hottest. There is **no fallback to 15 °C**: a network that holds only steam at 250 °C exports
+  steam at 250 °C. One temperature goes into a side or a box per visit, and never into a side, box or tank that already
+  holds the fluid at another temperature (more than 1 °C apart): what is there is used up first. An interface row with
+  a temperature first gives back what its side holds of the fluid at another temperature.
+* **Machines with a temperature range:** a recipe can ask for a fluid between a minimum and a maximum temperature (its
+  input box says so). An export bus puts in only what fits the range, a pattern machine gets only that. When the
+  network holds the fluid only at temperatures that cannot go, nothing moves and the bus's status line says why:
+  "The network holds [water] only at 15 °C, the target takes 50-100 °C: nothing is mixed." (an interface side: in its
+  tooltip).
+* **Storage bus on a tank:** see "ME Storage Bus on a tank".
+* **Circuit interface:** a signal has no temperature: a fluid's signal is the sum of its temperatures (with filters:
+  of the temperatures the filters take). A **level maintainer** counts and crafts the one temperature it names.
+* **Autocrafting:** a recipe's fluid product has the recipe's temperature (a recipe that makes steam at 500 °C makes
+  "Steam (500 °C)", and the crafting tab lists it so). A fluid ingredient with a temperature takes exactly that one;
+  without one, or with a range, it takes every temperature the network has in its range: the plan takes the
+  ingredient's own temperature first (the default one when it is in the range, else the end of the range next to it),
+  then the network's other temperatures in the range (the default first, then from the coldest), before anything is
+  crafted. A machine's input box gets one fluid at their mean temperature (in the range); what a cancelled job gives
+  back returns at the temperature it had. A pattern is refused with `fluid-temperature` only when no fluid can have
+  the temperature its recipe needs.
+* **Old saves:** everything stored was at the default temperature and stays so; nothing is converted.
+
+Fluids at more than one temperature (base game, Space Age, Gregtorio Continued 0.5.x): **steam** (boilers 165 °C,
+heat exchangers and acid neutralisation 500 °C, Gregtorio's boilers and its large heat exchanger 165 °C, recipe
+products and Gregtorio's large turbines 15 °C). The hot and cold fluoroketone, Gregtorio's superheated steam, hot
+coolant and plasmas are fluids of their own, each made at its default temperature; Gregtorio's water purification
+fluids (25 to 100 °C) are only made at 25 °C. No recipe of either needs a temperature range.
+
+### Old fluid drives
 
 **Old fluid drives** (before step R2: four fluid cells crafted into an ME Fluid Drive) are converted when the save
 is loaded (`docs/ME-REWORK.md`, "Migration of fluids (R2)"): each becomes an ME Drive with four fluid cells of its
@@ -1030,19 +1077,30 @@ The **ME Interface's sides** (issue #3 of ME Network) are four hidden 1x1 storag
 one pipe connection each. The interface is visited by the scheduler (`scripts/fork-me-io.lua`, issue #5); after its
 items it looks at its sides. Import side: the tank's fluid is removed
 with `remove_fluid`, limited to what the network can take (`can_insert_fluid`); this takes the whole fluid segment.
-Export side: `want = amount - held`, `insert_fluid` of `min(want, stored)` at the default temperature. In both
+Export side: `want = amount - held`, `insert_fluid` of `min(want, stored)` of one storage key at its temperature
+(issue #159: `export_keys`, the row's key, or every temperature of the fluid in the order above, the side's own
+temperature only while it holds the fluid). In both
 directions only what the engine reports as removed or inserted is booked, never the requested amount, so fluid is
 conserved. An interface without fluid rows whose sides held nothing looks at them only every fourth visit.
 
 The **buses** move fluids in the same visit as items (`fork-me-io.lua`, `fluid_bus_step`), when their target has
 fluid boxes (decided once, by its prototype, when the target is found): the import
 bus reads the target's fluid boxes by index and skips input boxes (`production_type == "input"`), takes at most
-what the network can store and writes the rest back into the box; the export bus uses `insert_fluid` (the engine
-picks the box) and books what it reports. The bus's speed times the ticks since its last visit (1000 units per 15
+what the network can store and writes the rest back into the box, under the key of the box's temperature; the export
+bus uses `insert_fluid` (the engine picks the box) with the temperature of one key (`export_keys` within the range of
+the boxes' filters, `get_filter` has the recipe's minimum and maximum, and the temperature of a box that holds the
+fluid) and books what it reports. The bus's speed times the ticks since its last visit (1000 units per 15
 ticks by default).
 
-Fluids are stored by name only. One temperature per fluid keeps totals, export and hand-over unambiguous; the
-price is the temperature rule above.
+Issue #159: a fluid's storage key carries its temperature: `fluid/<name>` at the default temperature (the key of
+every save before), `fluid/<name>@<degrees>` otherwise (`N.fluid_key`: clamped to the fluid's default and max
+temperature, rounded to whole degrees; a filter key may name the default temperature, `fluid/<name>@15`, which a
+storage key never does). The engine stays one engine of keys: a temperature is a type like another fluid. What is
+new: a filter without a temperature takes every temperature (`listed` looks up the other filter key of a storage
+key, `alt_key`; the partition lookups `parts` of a storage key are searched under both), a waiter on `fluid/<name>`
+wakes when any temperature of it arrives (`moved_key`), and the keys of one fluid a network holds are kept in order
+(`N.fluid_keys`, derived from the index per load, outside `storage`). The fluid API takes an optional temperature
+(nil: the default; `docs/API.md`), the calls of before are unchanged.
 
 ### Patterns
 
@@ -1293,8 +1351,8 @@ partitions start empty.
 
 ## Limits and open points
 
-* One temperature per fluid: stored by name, exported at the default temperature. Hot steam loses
-  its heat; recipes that need another temperature are not patterns.
+* Temperatures are whole degrees: a fluid at 249.6 °C goes out at 250 °C. Steam mixed of several temperatures in
+  pipes before the import is a type of every whole degree it reaches (issue #159).
 * Cells are not part of blueprints: a drive built from a blueprint starts empty. A destroyed drive drops its
   cells with their items and fluids.
 
@@ -1485,7 +1543,8 @@ six fluid storage buses on storage tanks, a pump, a fluid export bus and a level
 one segment are counted once and the second bus is refused, the terminal's entry, an extract out of the segment, a
 split segment (pipe removed: no extraction beyond what the first bus still owns, then the second bus takes its part),
 a filtered insert into its tank and the rest into the cells, priority 10 and -10, read only, write only, a stale look
-(fluid taken out by hand), hot steam (counted, nothing put in, the tank keeps its temperature), a removed tank and bus,
+(fluid taken out by hand), hot steam (issue #159: stored at 500 °C, steam at 15 °C kept out, steam at 500 °C put in and
+both taken out at their temperature), a removed tank and bus,
 a bus facing a cable, the network's fluid against cells plus segments after every part, the settings in a blueprint,
 on a revived ghost, by paste and clone; then the fluid export bus taking from a segment, a level maintainer counting it
 and a pump's fluid seen within the storage bus idle limit. It reports `ME fluid storage bus test (issue #68): ok`. Since

@@ -678,6 +678,141 @@ local FLUID_FIRST = FLUID_PREFIX:byte(1)
 local function is_fluid_key(key) return key:byte(1) == FLUID_FIRST and key:sub(1, #FLUID_PREFIX) == FLUID_PREFIX end   -- (no substring for the usual item)
 local function fluid_cell(spec) return spec.kind == "fluid" end
 M.is_fluid_key = is_fluid_key
+M.FLUID_PREFIX = FLUID_PREFIX
+
+--- Issue #159: fluids keep their temperature. The storage key of a fluid at its default temperature is "fluid/<name>"
+--- (the key of every save before), at any other temperature "fluid/<name>@<degrees>": the temperature clamped to the
+--- fluid's [default_temperature, max_temperature] as the engine does, rounded to whole degrees (249.6 and 250.2 are
+--- one type). A filter key may also name the default temperature ("fluid/<name>@<default>": that temperature only); a
+--- filter without a temperature takes every temperature of the fluid (fluid_matches, listed). Everything here is
+--- derived from the prototypes and kept per load, never in `storage`.
+local fluid_parts = {}               -- key -> { name, degrees or false }
+local function split_fluid_key(key)
+	local p = fluid_parts[key]
+	if p == nil then
+		local body = key:sub(#FLUID_PREFIX + 1)
+		local name, deg = body:match("^(.+)@(%-?%d+)$")
+		if name and prototypes.fluid[name] then p = { name, tonumber(deg) } else p = { body, false } end
+		fluid_parts[key] = p
+	end
+	return p[1], p[2] or nil
+end
+M.split_fluid_key = split_fluid_key
+
+--- { default temperature, max temperature, default in whole degrees } of a fluid, nil for no fluid
+local fluid_temps = {}
+local function temps_of(name)
+	local t = fluid_temps[name]
+	if t == nil then
+		local p = prototypes.fluid[name]
+		if p then
+			local d = p.default_temperature
+			t = { d, math.max(d, p.max_temperature or d), math.floor(d + 0.5) }
+		else
+			t = false
+		end
+		fluid_temps[name] = t
+	end
+	return t or nil
+end
+
+--- the default and the max temperature of a fluid (nil for no fluid; per load)
+function M.fluid_range(name)
+	local t = temps_of(name)
+	if not t then return nil end
+	return t[1], t[2]
+end
+
+--- a temperature as whole degrees within the fluid's range (nil without the fluid or a temperature)
+local function clamp_degrees(name, temperature)
+	local t = temperature and temps_of(name)
+	if not t then return nil end
+	if temperature < t[1] then temperature = t[1] elseif temperature > t[2] then temperature = t[2] end
+	return math.floor(temperature + 0.5)
+end
+
+local fluid_key_cache = {}           -- name -> { [degrees] = key, [""] = default key }
+--- the storage key of `name` at `temperature` (nil: the default temperature)
+local function fluid_key(name, temperature)
+	local c = fluid_key_cache[name]
+	if not c then
+		c = { [""] = FLUID_PREFIX .. name }
+		fluid_key_cache[name] = c
+	end
+	local d = clamp_degrees(name, temperature)
+	if d == nil or d == fluid_temps[name][3] then return c[""] end
+	local key = c[d]
+	if not key then
+		key = FLUID_PREFIX .. name .. "@" .. d
+		c[d] = key
+	end
+	return key
+end
+M.fluid_key = fluid_key
+
+--- the filter key of `name` at `temperature`: without one every temperature, with one only that one (also the default)
+function M.fluid_filter_key(name, temperature)
+	local d = clamp_degrees(name, temperature)
+	if d == nil then return FLUID_PREFIX .. name end
+	return FLUID_PREFIX .. name .. "@" .. d
+end
+
+--- a fluid filter key checked against the prototypes and written as fluid_filter_key writes it; nil for no fluid
+function M.clean_fluid_filter(key)
+	if type(key) ~= "string" or not is_fluid_key(key) then return nil end
+	local name, deg = split_fluid_key(key)
+	if not prototypes.fluid[name] then return nil end
+	return M.fluid_filter_key(name, deg)
+end
+
+--- the fluid name of a fluid key (storage or filter key), nil for no fluid key
+function M.fluid_name(key)
+	if not is_fluid_key(key) then return nil end
+	return (split_fluid_key(key))
+end
+
+--- the temperature the fluid of a storage key has: its degrees, or the fluid's default temperature
+function M.fluid_temperature(key)
+	local name, deg = split_fluid_key(key)
+	if deg then return deg end
+	local t = temps_of(name)
+	return t and t[1] or 15
+end
+
+--- the storage key a filter key names exactly (a filter without a temperature: the default key)
+function M.fluid_storage_key(key)
+	local name, deg = split_fluid_key(key)
+	return fluid_key(name, deg)
+end
+
+--- does the fluid filter `filter` take the storage key `key`? (another fluid: no; no temperature: every temperature)
+local function fluid_matches(filter, key)
+	if filter == key then return true end
+	local fname, fdeg = split_fluid_key(filter)
+	local kname = split_fluid_key(key)
+	if fname ~= kname then return false end
+	if not fdeg then return true end
+	return fluid_key(fname, fdeg) == key
+end
+M.fluid_matches = fluid_matches
+
+--- The other filter key that takes a storage key (`listed`, the partition lookups): for "fluid/<name>@<degrees>" the
+--- filter of every temperature "fluid/<name>", for the default key "fluid/<name>@<default>"; false for items
+local alt_keys = {}
+local function alt_key(key)
+	local a = alt_keys[key]
+	if a == nil then
+		a = false
+		if is_fluid_key(key) then
+			local name, deg = split_fluid_key(key)
+			local t = temps_of(name)
+			if deg then a = FLUID_PREFIX .. name
+			elseif t then a = FLUID_PREFIX .. name .. "@" .. t[3] end
+		end
+		alt_keys[key] = a
+	end
+	return a
+end
 
 local function type_bytes(spec, count)
 	return spec.per_type + math.ceil(count / (spec.per_byte or 8) - ZERO)
@@ -698,12 +833,17 @@ end
 --- any quality)
 local function listed(set, fnames, key)
 	if set[key] then return true end
+	local alt = alt_key(key)                      -- issue #159: a fluid filter of every temperature, or of the default
+	if alt and set[alt] then return true end
 	if fnames then
 		local n = name_of_key(key)
 		return n ~= nil and fnames[n] == true
 	end
 	return false
 end
+
+--- is the storage key `key` in the filter set `set` ({ key -> true }; issue #159: a fluid filter of every temperature)?
+function M.listed(set, key) return listed(set, nil, key) end
 
 --- Does the filter of a cell (a drive cell or a storage bus) let `key` in? `partition` is a whitelist (R3), `deny` a
 --- blacklist (issue #17, an Inverter Card), `fnames` makes either match every quality (a Fuzzy Card).
@@ -721,7 +861,7 @@ local function cell_room(cell, spec, key)
 	if fluid_cell(spec) ~= is_fluid_key(key) then return 0 end
 	local p = cell.partition                                  -- partitioned (R3); a fuzzy list or a blacklist (#17)
 	if p then
-		if next(p) and not p[key] and not (cell.fnames and listed(p, cell.fnames, key)) then return 0 end
+		if next(p) and not listed(p, cell.fnames, key) then return 0 end
 	elseif cell.deny and not accepts(cell, key) then
 		return 0
 	end
@@ -801,7 +941,7 @@ local function cell_from_tags(name, tags)
 	table.sort(keys)
 	for _, key in ipairs(keys) do
 		if is_fluid_key(key) then
-			if fluid_cell(spec) and prototypes.fluid[key:sub(#FLUID_PREFIX + 1)] then cell_add(cell, spec, key, counts[key]) end
+			if fluid_cell(spec) and prototypes.fluid[(split_fluid_key(key))] then cell_add(cell, spec, key, counts[key]) end
 		elseif not fluid_cell(spec) and prototypes.item[(parse_key(key))] then
 			cell_add(cell, spec, key, math.floor(counts[key]))
 			local d = data[key]
@@ -827,13 +967,13 @@ function M.clean_partition(spec, partition)
 	local keys = {}
 	for k, v in pairs(partition) do
 		local key = type(k) == "string" and v == true and k or (type(v) == "string" and v or nil)
-		if key then keys[#keys + 1] = alias_key(key) end
+		if key then keys[#keys + 1] = is_fluid_key(key) and M.clean_fluid_filter(key) or alias_key(key) end
 	end
 	table.sort(keys)
 	local out, n = {}, 0
 	for _, key in ipairs(keys) do
 		local ok
-		if is_fluid_key(key) then ok = fluid_cell(spec) and prototypes.fluid[key:sub(#FLUID_PREFIX + 1)] ~= nil
+		if is_fluid_key(key) then ok = fluid_cell(spec) and prototypes.fluid[(split_fluid_key(key))] ~= nil
 		else ok = not fluid_cell(spec) and not key:find("#") and prototypes.item[(parse_key(key))] ~= nil end
 		if ok and not out[key] and n < spec.types then
 			out[key] = true
@@ -945,7 +1085,10 @@ local TIP_KEYS = 12
 
 --- the rich text icon of a key: [item=name], [item=name,quality=q] (not for normal) or [fluid=name]
 local function key_icon(key)
-	if is_fluid_key(key) then return "[fluid=" .. key:sub(#FLUID_PREFIX + 1) .. "]" end
+	if is_fluid_key(key) then
+		local name, deg = split_fluid_key(key)
+		return "[fluid=" .. name .. "]" .. (deg and (deg .. "°C") or "")
+	end
 	local name, q = parse_key(key)
 	if q ~= "normal" then return "[item=" .. name .. ",quality=" .. q .. "]" end
 	return "[item=" .. name .. "]"
@@ -1033,7 +1176,7 @@ local function cell_stack(cell)
 	for i = 1, math.min(5, #keys) do
 		local key = keys[i]
 		if is_fluid_key(key) then
-			list[#list + 1] = amount_text(items[key]) .. " [fluid=" .. key:sub(#FLUID_PREFIX + 1) .. "]"
+			list[#list + 1] = amount_text(items[key]) .. " " .. key_icon(key)
 		else
 			list[#list + 1] = items[key] .. " [item=" .. parse_key(key) .. "]"
 		end
@@ -1129,7 +1272,12 @@ end
 local function moved_key(net, key, up)
 	net.cver = (net.cver or 0) + 1
 	local waits = up and net.wait_in or net.wait_out
-	if waits and waits[key] then fire(net, waits, key) end
+	if waits then
+		if waits[key] then fire(net, waits, key) end
+		--- issue #159: a wait for a fluid at every temperature ("fluid/<name>") wakes when any temperature of it arrives
+		local alt = up and alt_key(key)
+		if alt and waits[alt] then fire(net, waits, alt) end
+	end
 	if not up and net.wait_below and net.wait_below[key] then fire_below(net, key) end
 end
 
@@ -1310,11 +1458,54 @@ end
 --- lookups below)
 local holders_changed
 
+--- Issue #159: the storage keys of each fluid a network has held (fluid name -> keys: the default key first, then by
+--- temperature), made from the index when first asked and kept up to date by idx_add; a key whose amount went to 0
+--- stays listed (the callers read net.items). Per load, weak: nothing is saved.
+local fluid_sets = setmetatable({}, { __mode = "k" })
+local EMPTY_KEYS = {}
+local function by_degrees(a, b)
+	local _, da = split_fluid_key(a)
+	local _, db = split_fluid_key(b)
+	if (da == nil) ~= (db == nil) then return da == nil end
+	if da ~= db then return da < db end
+	return a < b
+end
+local function note_fluid(fs, key)
+	local name = split_fluid_key(key)
+	local l = fs[name]
+	if not l then
+		l = {}
+		fs[name] = l
+	end
+	for i = 1, #l do if l[i] == key then return end end
+	l[#l + 1] = key
+	table.sort(l, by_degrees)
+end
+
+--- the storage keys of fluid `name` the network holds or held (shared: callers must not change it), default first,
+--- then from the coldest to the hottest
+function M.fluid_keys(net, name)
+	local fs = fluid_sets[net]
+	if not fs then
+		fs = {}
+		local keys = {}
+		for key in pairs(net.index) do if is_fluid_key(key) then keys[#keys + 1] = key end end
+		table.sort(keys)
+		for _, key in ipairs(keys) do note_fluid(fs, key) end
+		fluid_sets[net] = fs
+	end
+	return fs[name] or EMPTY_KEYS
+end
+
 local function idx_add(net, key, cid)
 	local idx = net.index[key]
 	if not idx then
 		idx = {}
 		net.index[key] = idx
+		if is_fluid_key(key) then
+			local fs = fluid_sets[net]
+			if fs then note_fluid(fs, key) end
+		end
 	end
 	if not idx[cid] then
 		idx[cid] = true
@@ -1362,6 +1553,11 @@ function net_cell(net, cid, cell, sign)
 		if waits and waits[key] then
 			woken = woken or {}
 			woken[#woken + 1] = key
+		end
+		local alt = sign > 0 and waits and alt_key(key)            -- issue #159 (moved_key)
+		if alt and waits[alt] then
+			woken = woken or {}
+			woken[#woken + 1] = alt
 		end
 	end
 	net.cver = (net.cver or 0) + 1
@@ -1427,6 +1623,7 @@ function recompute(s, net)
 		end
 	end
 	net.items, net.index, net.cells, net.cell_list, net.order_dirty = {}, {}, {}, {}, true
+	fluid_sets[net] = nil
 	net.bytes, net.bytes_total, net.types, net.types_total = 0, 0, 0, 0
 	net.fbytes, net.fbytes_total, net.ftypes, net.ftypes_total = 0, 0, 0, 0
 	drive_cells(net, s, function(cid, cell) net_cell(net, cid, cell, 1) end)
@@ -2128,8 +2325,17 @@ local function room_for(net, key, want)
 	end
 	local kind = is_fluid_key(key) and "fluid" or "item"
 	local fname = c.fuzzy and name_of_key(key)
+	local alt = alt_key(key)                                     -- issue #159: the other fluid filter that takes the key
 	for _, g in ipairs(c.groups) do
 		for _, cid in ipairs(g.parts[key] or EMPTY) do
+			local cell = net.cells[cid]
+			if not cell.items[key] then
+				if cell.void and voids(cell, key) then return want or math.huge end
+				n = n + room_in(cell, key)
+				if want and n >= want then return n end
+			end
+		end
+		for _, cid in ipairs(alt and g.parts[alt] or EMPTY) do
 			local cell = net.cells[cid]
 			if not cell.items[key] then
 				if cell.void and voids(cell, key) then return want or math.huge end
@@ -2277,6 +2483,13 @@ local function insert_key(net, key, count, data)
 			for _, cid in ipairs(g.parts[key] or EMPTY) do
 				local full = cells[cid].full
 				if not (full and full[key]) and put(cid) then break end
+			end
+			local alt = ins.left > 0 and alt_key(key)                    -- 1: the other fluid filter of the key (issue #159)
+			if alt then
+				for _, cid in ipairs(g.parts[alt] or EMPTY) do
+					local full = cells[cid].full
+					if not (full and full[key]) and put(cid) then break end
+				end
 			end
 			if fname and ins.left > 0 then                                -- 1: a fuzzy whitelist (issue #17)
 				for _, cid in ipairs(g.fparts[fname] or EMPTY) do
@@ -2478,37 +2691,80 @@ function M.plain_counts(net)
 	return out
 end
 
---- the fluid API (fluids are stored by name, one temperature per fluid): amounts may be fractional
-function M.insert_fluid(net, name, amount)
+--- The fluid API: amounts may be fractional. Issue #159: a fluid is stored per temperature (fluid_key); `temperature`
+--- nil is the fluid's default temperature (the calls of before keep working), a number its key (whole degrees).
+function M.insert_fluid(net, name, amount, temperature)
 	if not (M.usable(net) and prototypes.fluid[name] and amount and amount > 0) then return 0 end
-	local key = FLUID_PREFIX .. name
+	local key = fluid_key(name, temperature)
 	local claimed = arrive(net, key, amount)
 	if claimed >= amount then return amount end
 	return claimed + insert_key(net, key, amount - claimed)
 end
 
-function M.extract_fluid(net, name, amount)
+function M.extract_fluid(net, name, amount, temperature)
 	if not (M.usable(net) and amount and amount > 0) then return 0 end
-	return extract_key(net, FLUID_PREFIX .. name, amount)
+	return extract_key(net, fluid_key(name, temperature), amount)
 end
 
-function M.fluid_count(net, name)
+function M.fluid_count(net, name, temperature)
 	if not M.usable(net) then return 0 end
-	return net.items[FLUID_PREFIX .. name] or 0
+	return net.items[fluid_key(name, temperature)] or 0
 end
 
-function M.can_insert_fluid(net, name, amount)
+function M.can_insert_fluid(net, name, amount, temperature)
 	if not M.usable(net) then return 0 end
-	local key = FLUID_PREFIX .. name
+	local key = fluid_key(name, temperature)
 	return math.min(amount, room_for(net, key, amount) + awaited(net, key))
 end
 
---- { fluid name -> amount }
+--- the same by storage key ("fluid/<name>" or "fluid/<name>@<degrees>")
+function M.insert_fluid_key(net, key, amount)
+	if not (M.usable(net) and amount and amount > 0 and is_fluid_key(key) and prototypes.fluid[(split_fluid_key(key))]) then return 0 end
+	local claimed = arrive(net, key, amount)
+	if claimed >= amount then return amount end
+	return claimed + insert_key(net, key, amount - claimed)
+end
+
+function M.extract_fluid_key(net, key, amount)
+	if not (M.usable(net) and amount and amount > 0) then return 0 end
+	return extract_key(net, key, amount)
+end
+
+function M.can_insert_fluid_key(net, key, amount)
+	if not M.usable(net) then return 0 end
+	return math.min(amount, room_for(net, key, amount) + awaited(net, key))
+end
+
+--- what the network holds of fluid `name` at every temperature, or of those a filter key takes
+function M.fluid_total(net, name, filter)
+	if not M.usable(net) then return 0 end
+	local items, n = net.items, 0
+	for _, key in ipairs(M.fluid_keys(net, name)) do
+		local a = items[key]
+		if a and (not filter or fluid_matches(filter, key)) then n = n + a end
+	end
+	return n
+end
+
+--- { fluid name -> amount } (every temperature of a fluid added up)
 function M.fluid_contents(net)
 	local out = {}
 	if not M.usable(net) then return out end
 	for key, amount in pairs(net.items) do
-		if is_fluid_key(key) then out[key:sub(#FLUID_PREFIX + 1)] = amount end
+		if is_fluid_key(key) then
+			local name = split_fluid_key(key)
+			out[name] = (out[name] or 0) + amount
+		end
+	end
+	return out
+end
+
+--- { storage key -> amount } of the fluids (one entry per temperature)
+function M.fluid_key_contents(net)
+	local out = {}
+	if not M.usable(net) then return out end
+	for key, amount in pairs(net.items) do
+		if is_fluid_key(key) then out[key] = amount end
 	end
 	return out
 end
@@ -3914,12 +4170,17 @@ remote.add_interface("gregtorio-me-network", {
 		return out
 	end,
 	insert_stack = function(entity, stack) return M.insert_stack(M.network_of(entity), stack) end,
-	--- fluids (issue #68, R2): by name, amounts may be fractional
-	insert_fluid = function(entity, name, amount) return M.insert_fluid(M.network_of(entity), name, amount) end,
-	extract_fluid = function(entity, name, amount) return M.extract_fluid(M.network_of(entity), name, amount) end,
-	fluid_count = function(entity, name) return M.fluid_count(M.network_of(entity), name) end,
-	can_insert_fluid = function(entity, name, amount) return M.can_insert_fluid(M.network_of(entity), name, amount) end,
+	--- fluids (issue #68, R2): by name, amounts may be fractional; issue #159: an optional temperature (nil: the default)
+	insert_fluid = function(entity, name, amount, temperature) return M.insert_fluid(M.network_of(entity), name, amount, temperature) end,
+	extract_fluid = function(entity, name, amount, temperature) return M.extract_fluid(M.network_of(entity), name, amount, temperature) end,
+	fluid_count = function(entity, name, temperature) return M.fluid_count(M.network_of(entity), name, temperature) end,
+	can_insert_fluid = function(entity, name, amount, temperature)
+		return M.can_insert_fluid(M.network_of(entity), name, amount, temperature)
+	end,
 	fluid_contents = function(entity) return M.fluid_contents(M.network_of(entity)) end,
+	--- issue #159: { storage key -> amount }, one entry per temperature ("fluid/<name>", "fluid/<name>@<degrees>")
+	fluid_key_contents = function(entity) return M.fluid_key_contents(M.network_of(entity)) end,
+	fluid_key = function(name, temperature) return fluid_key(name, temperature) end,
 	store_fluid_in_drive = function(drive, name, amount) return M.store_fluid_in_drive(drive, name, amount) end,
 	--- `count` of `name` straight into the cells of one drive (also without power; the migration's function)
 	store_in_drive = function(drive, name, count, quality)

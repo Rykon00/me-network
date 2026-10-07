@@ -754,6 +754,9 @@ crafter59 = require("crafter")({ me_place = me_place, power = power, me_report =
 --- me-network issue #76: what can be stored (storable.lua)
 storable76 = require("storable")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #159: fluids keep their temperature (temperature.lua)
+temperature159 = require("temperature")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
@@ -818,6 +821,7 @@ local function tests_running()
 	crafter59.running(check)
 	holders43.running(check)
 	storable76.running(check)
+	temperature159.running(check)
 	graph43.running(check)
 	return running
 end
@@ -1727,6 +1731,7 @@ script.on_nth_tick(10, function()
 	crafter59.tick()
 	holders43.tick()
 	storable76.tick()
+	temperature159.tick()
 	graph43.tick()
 	done_test()
 end)
@@ -3000,7 +3005,7 @@ function unified_test()
 	end
 	local net = remote.call(NET, "network", t)
 	expect(net and net.ok, "network " .. serpent.line(net))
-	local function fluid(name) return remote.call(NET, "fluid_count", t, name) end
+	local function fluid(name, temperature) return remote.call(NET, "fluid_count", t, name, temperature) end
 	local function item(name) return remote.call(NET, "count", t, name) end
 	local function tanks(e) return remote.call(IO, "interface_tanks", e) or {} end
 	local function side(e, d) return (remote.call(IO, "get_interface", e) or { fluids = {} }).fluids[d] or {} end
@@ -3023,17 +3028,18 @@ function unified_test()
 	local seg = tanks(i)[2].fluidbox.get_fluid_segment_contents(1) or {}
 	expect(near(water0 - fluid("water"), seg.water or 0, 0.05), "water out of the network " .. (water0 - fluid("water"))
 		.. ", in the east segment " .. tostring(seg.water))
-	expect(near(fluid("steam"), 50) and (steam_pipe.fluidbox[1] == nil or steam_pipe.fluidbox[1].amount < 1e-3),
-		"import side: steam " .. fluid("steam") .. ", pipe " .. serpent.line(steam_pipe.fluidbox[1]))
+	--- (issue #159: the steam keeps its 165 degrees)
+	expect(near(fluid("steam", 165), 50) and fluid("steam") == 0 and (steam_pipe.fluidbox[1] == nil or steam_pipe.fluidbox[1].amount < 1e-3),
+		"import side: steam " .. fluid("steam", 165) .. " at 165, " .. fluid("steam") .. " at 15, pipe " .. serpent.line(steam_pipe.fluidbox[1]))
 	expect(side(i, 3).status == "import" and side(i, 2).status == "ok", "side status " .. serpent.line(side(i, 2)) .. serpent.line(side(i, 3)))
 	--- a side switched off keeps what is piped in
 	remote.call(IO, "set_interface_side", i, 3, "off")
 	steam_pipe.fluidbox[1] = { name = "steam", amount = 20, temperature = 165 }
 	step(i)
-	expect(near(fluid("steam"), 50) and side(i, 3).status == "off", "an off side imported: " .. fluid("steam"))
+	expect(near(fluid("steam", 165), 50) and side(i, 3).status == "off", "an off side imported: " .. fluid("steam", 165))
 	remote.call(IO, "set_interface_side", i, 3, "import")
 	step(i)
-	expect(near(fluid("steam"), 70), "the side imports again: " .. fluid("steam"))
+	expect(near(fluid("steam", 165), 70), "the side imports again: " .. fluid("steam", 165))
 	--- the loop: an export side and an import side on one pipe network
 	remote.call(IO, "set_interface_config", l, { [1] = { type = "fluid", name = "water", amount = 500 } }, { [2] = 1 })
 	local w1 = fluid("water")
@@ -3301,10 +3307,10 @@ function fluid_storage_bus_test()
 	--- the network's fluid must be the cells' plus the segments of the working buses (each segment once)
 	local pairs_ = { { b1, t1 }, { b2, t2 }, { b3, t3 }, { b4, t4 }, { b5, t5 } }
 	local function consistent(label)
-		local want = {}
+		local want = {}                                      -- (by storage key: issue #159, a key per temperature)
 		for _, c in pairs(remote.call(NET, "drive", drive)) do
 			for k, n in pairs(c.items) do
-				if k:sub(1, 6) == "fluid/" then want[k:sub(7)] = (want[k:sub(7)] or 0) + n end
+				if k:sub(1, 6) == "fluid/" then want[k] = (want[k] or 0) + n end
 			end
 		end
 		for _, p in ipairs(pairs_) do
@@ -3315,17 +3321,19 @@ function fluid_storage_bus_test()
 			if p[1].valid and p[2].valid then
 				local i = info(p[1])
 				local id = p[2].fluidbox.get_fluid_segment_id(1)
-				if (i.status == "ok" or i.status == "temperature") and i.mode ~= "write" and not done[id] then
+				if i.status == "ok" and i.mode ~= "write" and not done[id] then
 					done[id] = true
 					local allow = {}
 					for _, f in pairs(i.filters) do allow[f] = true end
+					local held = p[2].fluidbox[1]
 					for name, n in pairs(seg(p[2])) do
-						if #i.filters == 0 or allow["fluid/" .. name] then want[name] = (want[name] or 0) + n end
+						local key = remote.call(NET, "fluid_key", name, held and held.temperature)
+						if #i.filters == 0 or allow["fluid/" .. name] then want[key] = (want[key] or 0) + n end
 					end
 				end
 			end
 		end
-		local have = remote.call(NET, "fluid_contents", t)
+		local have = remote.call(NET, "fluid_key_contents", t)
 		local diff = {}
 		for k, n in pairs(want) do if not near(have[k], n) then diff[#diff + 1] = k .. " " .. tostring(have[k]) .. "/" .. n end end
 		for k, n in pairs(have) do if not want[k] then diff[#diff + 1] = k .. " " .. n .. "/0" end end
@@ -3412,15 +3420,25 @@ function fluid_storage_bus_test()
 	expect(near(remote.call(NET, "extract_fluid", t, "water", 120), 20) and fcount("water") == 0 and (seg(t4).water or 0) < 1e-6,
 		"stale extract: network " .. fcount("water"))
 	consistent("after the stale extract")
-	--- another temperature: hot steam in T4 is read, the network's steam (default temperature) does not go in
+	--- another temperature (issue #159): hot steam in T4 is storage at its temperature ("fluid/steam@500"), the network's
+	--- steam at the default temperature does not go in, steam at 500 does (T4 at priority 10), each comes out at its own
 	t4.insert_fluid{ name = "steam", amount = 100, temperature = 500 }
 	visit(b4)
 	local i4 = info(b4)
-	expect(i4.status == "temperature" and near(i4.temperature, 500) and near(fcount("steam"), 100), "hot steam: " .. serpent.line(i4))
+	local hot = remote.call(NET, "fluid_key", "steam", 500)
+	local function hcount() return remote.call(NET, "fluid_count", t, "steam", 500) end
+	expect(hot == "fluid/steam@500" and i4.status == "ok" and near(i4.temperature, 500) and near(fcount("steam"), 0) and near(hcount(), 100)
+		and near((i4.contents or {})[hot], 100), "hot steam: " .. serpent.line(i4))
 	expect(near(remote.call(NET, "insert_fluid", t, "steam", 50), 50) and near(seg(t4).steam, 100) and near(cells("steam"), 50)
-		and near(t4.fluidbox[1].temperature, 500), "steam inserted into the hot tank: T4 " .. tostring(seg(t4).steam))
-	expect(near(remote.call(NET, "extract_fluid", t, "steam", 120), 120) and near(seg(t4).steam, 0) and near(cells("steam"), 30),
-		"steam taken: T4 " .. tostring(seg(t4).steam) .. ", cells " .. cells("steam"))
+		and near(t4.fluidbox[1].temperature, 500), "cold steam inserted into the hot tank: T4 " .. tostring(seg(t4).steam))
+	remote.call(FSB, "set_settings", b4, { mode = "readwrite", priority = 10 })
+	expect(near(remote.call(NET, "insert_fluid", t, "steam", 30, 500), 30) and near(seg(t4).steam, 130) and near(t4.fluidbox[1].temperature, 500)
+		and near(hcount(), 130), "hot steam into the hot tank: T4 " .. tostring(seg(t4).steam) .. " at " .. t4.fluidbox[1].temperature)
+	expect(near(remote.call(NET, "extract_fluid", t, "steam", 120), 50) and near(seg(t4).steam, 130) and near(cells("steam"), 0),
+		"cold steam taken: T4 " .. tostring(seg(t4).steam) .. ", cells " .. cells("steam"))
+	expect(near(remote.call(NET, "extract_fluid", t, "steam", 130, 500), 130) and (seg(t4).steam or 0) < 1e-6 and near(hcount(), 0),
+		"hot steam taken: T4 " .. tostring(seg(t4).steam))
+	remote.call(FSB, "set_settings", b4, { mode = "readwrite", priority = 0 })
 	consistent("after the temperature")
 	--- removals: a tank removed with an event leaves at once, a removed bus takes its segment out
 	t3.destroy{ raise_destroy = true }
@@ -4632,6 +4650,7 @@ script.on_init(function()
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end

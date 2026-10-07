@@ -84,7 +84,7 @@ local function info_of(key)
 	if not i then
 		if key_info_n >= 50000 then key_info, key_info_n = {}, 0 end   -- (keys with data can be many)
 		if N.is_fluid_key(key) then
-			local name = key:sub(7)
+			local name = N.fluid_name(key)                  -- (issue #159: one entry per temperature, "fluid/<name>@<degrees>")
 			i = { fluid = true, name = name, ok = prototypes.fluid[name] ~= nil }
 		else
 			local name, quality, json = N.parse_key(key)
@@ -525,8 +525,8 @@ local function refresh_crafting(st, frame, net)
 		if (filter == "" or key:find(filter, 1, true)) and #shown < MAX_CRAFT_BUTTONS then
 			local d = autocraft.describe(key)
 			if d then
-				local count = d.fluid and N.fluid_count(net, d.name) or N.count(net, key, "normal")
-				shown[#shown + 1] = { key = d.fluid and ("fluid/" .. d.name) or key, craft = key, count = count }
+				local count = d.fluid and N.count_key(net, key) or N.count(net, key, "normal")
+				shown[#shown + 1] = { key = key, craft = key, count = count }
 				sig[#sig + 1] = key .. "=" .. count
 			end
 		end
@@ -582,9 +582,7 @@ local function refresh_crafting(st, frame, net)
 		for k in pairs(list) do keys[#keys + 1] = k end
 		table.sort(keys)
 		for _, k in ipairs(keys) do
-			local dk = autocraft.describe(k)
-			local key = dk and dk.fluid and ("fluid/" .. dk.name) or k
-			G.slot(plan_grid, key, list[k], nil, style, tip)
+			G.slot(plan_grid, k, list[k], nil, style, tip)
 		end
 	end
 	add(p.missing, "red_slot_button", { "fork-me-gui.missing-tooltip" })
@@ -643,8 +641,7 @@ function M.job_rows(t, jobs)
 	t.clear()
 	for _, j in ipairs(jobs) do
 		local d = autocraft.describe(j.item)
-		local key = d and d.fluid and ("fluid/" .. d.name) or j.item
-		G.slot(t, key, j.amount)
+		G.slot(t, j.item, j.amount)
 		local name = t.add{ type = "label", caption = { "", G.fmt(j.amount), " ", d and d.localised_name or j.item } }
 		name.style.minimal_width = 140
 		local bar = t.add{ type = "progressbar", value = j.total > 0 and j.done / j.total or 0,

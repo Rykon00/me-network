@@ -39,6 +39,31 @@ do
 	data:extend({ { type = "recipe-category", name = "zz-devcheck-paste" }, m })
 end
 
+--- issue #159 (temperature.lua): fluid temperatures in recipes, which neither the base game nor Gregtorio has: a machine
+--- (an assembling machine 2 of its own category, so it works with Gregtorio too) with a recipe that takes steam between
+--- 200 and 600 °C, one that takes water between 50 and 100 °C, and one that makes steam at 300 °C
+do
+	local m = table.deepcopy(data.raw["assembling-machine"]["assembling-machine-2"])
+	m.name = "zz-devcheck-hot-machine"
+	m.crafting_categories = { "zz-devcheck-hot" }
+	m.minable = nil
+	m.next_upgrade = nil
+	m.fast_replaceable_group = nil
+	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local function hot(name, ingredients, results)
+		return { type = "recipe", name = name, category = "zz-devcheck-hot", energy_required = 1, enabled = true, icon = icon,
+			subgroup = "intermediate-product", ingredients = ingredients, results = results }
+	end
+	data:extend({ { type = "recipe-category", name = "zz-devcheck-hot" }, m,
+		{ type = "item", name = "zz-devcheck-hot-token", icon = icon, stack_size = 50, subgroup = "intermediate-product" },
+		hot("zz-devcheck-hot-steam", { { type = "fluid", name = "steam", amount = 10, minimum_temperature = 200, maximum_temperature = 600 } },
+			{ { type = "item", name = "zz-devcheck-hot-token", amount = 1 } }),
+		hot("zz-devcheck-warm-water", { { type = "fluid", name = "water", amount = 10, minimum_temperature = 50, maximum_temperature = 100 } },
+			{ { type = "item", name = "zz-devcheck-hot-token", amount = 1 } }),
+		hot("zz-devcheck-heat-steam", { { type = "fluid", name = "water", amount = 10 } },
+			{ { type = "fluid", name = "steam", amount = 10, temperature = 300 } }) })
+end
+
 if mods["gregtorio-continued"] then return end
 
 local ICON = "__base__/graphics/icons/signal/signal-info.png"

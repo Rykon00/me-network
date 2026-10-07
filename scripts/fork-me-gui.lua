@@ -435,6 +435,22 @@ function M.key_description(key)
 	return d or nil
 end
 
+--- Issue #159: the fluid name and the degrees (nil: none) of a fluid key ("fluid/<name>", "fluid/<name>@<degrees>"),
+--- and its name as a LocalisedString ("Steam (250 °C)"). (This module is a leaf: the network's own parser is not used.)
+local function fluid_parts(key)
+	local body = key:sub(7)
+	local name, deg = body:match("^(.+)@(%-?%d+)$")
+	if name and prototypes.fluid[name] then return name, tonumber(deg) end
+	return body, nil
+end
+function M.fluid_label(key)
+	local name, deg = fluid_parts(key)
+	local proto = prototypes.fluid[name]
+	local ln = proto and proto.localised_name or name
+	if deg then return { "fork-me-gui.fluid-at-temperature", ln, tostring(deg) }, name, deg end
+	return ln, name, nil
+end
+
 --- A slot button for an item or fluid (`key`: item name, "name@quality" or "fluid/<name>"; for an item with tags
 --- the key's description is the first lines of the tooltip, below the item's own), with the amount formatted in the
 --- tooltip and the button's number. `style` defaults to slot_button. `index`: the place among the parent's children
@@ -443,10 +459,9 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 	local def = { type = "sprite-button", style = style or "slot_button", tags = tags, index = index }
 	if key then
 		if key:sub(1, 6) == "fluid/" then
-			local name = key:sub(7)
-			local proto = prototypes.fluid[name]
-			if proto then def.sprite = "fluid/" .. name end
-			def.tooltip = { "", proto and proto.localised_name or name, amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
+			local label, name = M.fluid_label(key)
+			if prototypes.fluid[name] then def.sprite = "fluid/" .. name end
+			def.tooltip = { "", label, amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
 		else
 			local name, q = key:match("^([^@#]+)@?([^#]*)")
 			q = (q and q ~= "") and q or "normal"
@@ -476,9 +491,9 @@ function M.key_button(parent, key, tags, tooltip)
 		if q and q ~= "" and q ~= "normal" and prototypes.quality[q] and script.feature_flags.quality then b.quality = q end
 		if prototypes.item[name] then b.tooltip = tooltip else b.tooltip = { "", key, "\n", tooltip or "" } end
 	elseif key then
-		local name = key:sub(7)
-		local proto = prototypes.fluid[name]
-		b.tooltip = { "", proto and proto.localised_name or name, "\n", tooltip or "" }
+		local label, _, deg = M.fluid_label(key)
+		b.tooltip = { "", label, "\n", tooltip or "" }
+		if deg then b.number = deg end                 -- issue #159: a filter of one temperature shows it
 	else
 		b.tooltip = tooltip
 	end
@@ -490,9 +505,7 @@ end
 function M.slot_amount(button, key, amount, extra_tooltip)
 	button.number = amount and math.floor(amount) or nil
 	if key and key:sub(1, 6) == "fluid/" then
-		local name = key:sub(7)
-		local proto = prototypes.fluid[name]
-		button.tooltip = { "", proto and proto.localised_name or name, amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
+		button.tooltip = { "", (M.fluid_label(key)), amount and (": " .. M.fmt(amount)) or "", extra_tooltip or "" }
 	end
 end
 

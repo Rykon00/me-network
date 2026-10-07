@@ -2,7 +2,7 @@
 --- FORK AE2: IMPORT AND EXPORT (issue #68, step R1; issue #3 of me-network: items and fluids in one block;
 --- prototypes/network.lua, prototypes/fluids.lua, docs/ME-REWORK.md)
 ---   * ME Interface: a container with up to CONFIG_SLOTS config rows (R3, AE2's config slots), each an item
----     (name, quality, amount) or a fluid (type "fluid", name, amount), mixed. The network keeps the amount of
+---     (name, quality, amount) or a fluid (type "fluid", name, amount, an optional temperature: issue #159), mixed. The network keeps the amount of
 ---     each configured item in the container (fills up, takes back the surplus); every other item in it is
 ---     imported into the network (items the network cannot store stay). Inserters work with it like with a
 ---     chest. Saves before R3 used the container's slot filters: they become config rows (one full stack per
@@ -28,9 +28,15 @@
 ---     (assembler, furnace result, chest) and fluid from its output boxes (a tank: every box); the export bus
 ---     puts its filtered items into the entity's input (machine: up to one stack each; chest: as far as it has
 ---     room) and its filtered fluids into the input boxes or the tank. Up to MAX_FILTERS filters, items and
----     fluids mixed (keys: item name, "fluid/<name>"), split into an item and a fluid set when they are set
+---     fluids mixed (keys: item name, "fluid/<name>", "fluid/<name>@<degrees>"), split into an item and a fluid set when they are set
 ---     (import: none = everything, items and fluids; export: none = nothing). Kept in blueprints (tag
 ---     fork_me_bus), settings paste and clones. The windows are in scripts/fork-me-windows.lua.
+--- Temperature (issue #159): what is imported keeps its temperature (a key per temperature, scripts/fork-me-network.lua).
+--- A fluid filter or row without a temperature exports every temperature of the fluid: the default temperature first,
+--- then from the coldest to the hottest; with one only that temperature. An export never mixes: into a box or tank that
+--- holds the fluid already only the same temperature goes (TEMP_TOLERANCE), into a machine's box only what fits the
+--- temperature range of its recipe (LuaFluidBox.get_filter); one temperature per side or box and visit. When the network
+--- has the fluid only at temperatures that cannot go, the status is "temperature".
 --- Visits (issue #5, issue #38; scripts/fork-me-schedule.lua): every interface and bus is due at a tick (s.q,
 --- rec.due); the on_tick handler of control.lua visits what is due, at most the setting "at most" per tick. When a
 --- block is due comes from the buffer on its other side (the headroom rule): a visit knows what the target holds
@@ -66,6 +72,7 @@ local CONFIG_SLOTS = 9
 local MAX_AMOUNT = 1000000
 local EPS = 1e-6
 local FLUID_PREFIX = "fluid/"
+local TEMP_TOLERANCE = 1             -- degrees: a box this close to a key's temperature takes it (issue #159)
 local IFACE_TAG, BUS_TAG = "fork_me_interface", "fork_me_bus"
 --- the sides of the interface: 1 north, 2 east, 3 south, 4 west (the directions of its side tanks)
 local SIDES = { defines.direction.north, defines.direction.east, defines.direction.south, defines.direction.west }
@@ -278,7 +285,7 @@ end
 --- an item or fluid key from a filter: "fluid/<name>", or a plain name (an item if there is one, else a fluid)
 local function filter_key(f)
 	if type(f) ~= "string" then return nil end
-	if N.is_fluid_key(f) then return prototypes.fluid[f:sub(#FLUID_PREFIX + 1)] and f or nil end
+	if N.is_fluid_key(f) then return N.clean_fluid_filter(f) end
 	if prototypes.item[f] then return f end
 	if prototypes.fluid[f] then return FLUID_PREFIX .. f end
 	return nil
@@ -324,9 +331,9 @@ end
 
 local function is_fluid_row(c) return c ~= nil and c.type == "fluid" end
 
---- the key of a config row ("fluid/<name>" for a fluid)
+--- the key of a config row (a fluid: its filter key, "fluid/<name>" or "fluid/<name>@<degrees>")
 local function row_key(c)
-	if is_fluid_row(c) then return FLUID_PREFIX .. c.name end
+	if is_fluid_row(c) then return N.fluid_filter_key(c.name, c.temperature) end
 	return N.key_of(c.name, c.quality)
 end
 M.row_key = row_key
@@ -341,9 +348,12 @@ local function clean_config(config)
 		local i = type(c) == "table" and tonumber(c.slot) or tonumber(k)
 		if type(c) == "table" and i and i >= 1 and i <= CONFIG_SLOTS and i == math.floor(i) then
 			if c.type == "fluid" then
-				if type(c.name) == "string" and prototypes.fluid[c.name] and not seen[FLUID_PREFIX .. c.name] then
-					seen[FLUID_PREFIX .. c.name] = true
-					out[i] = { type = "fluid", name = c.name,
+				local temp = tonumber(c.temperature)
+				local key = type(c.name) == "string" and prototypes.fluid[c.name] and N.fluid_filter_key(c.name, temp)
+				if key and not seen[key] then
+					seen[key] = true
+					local _, deg = N.split_fluid_key(key)
+					out[i] = { type = "fluid", name = c.name, temperature = deg,
 						amount = math.max(0, math.min(volume(), math.floor(tonumber(c.amount) or 0))) }
 				end
 			elseif type(c.name) == "string" and prototypes.item[c.name] then
@@ -470,11 +480,11 @@ local function tank_to_network(t, held, net)
 	local fb = T.fluidbox(t)
 	local segment = N.bound(fb).get_fluid_segment_contents(1)
 	local available = math.max(held.amount, (segment and segment[held.name] or 0) + 1)   -- segment counts are rounded
-	local room = N.can_insert_fluid(net, held.name, available)
+	local room = N.can_insert_fluid(net, held.name, available, held.temperature)          -- (issue #159: its temperature)
 	if room <= EPS then return 0, "full" end
 	local removed = N.bound(t).remove_fluid{ name = held.name, amount = room }
 	if removed <= 0 then return 0, "ok" end
-	local stored = N.insert_fluid(net, held.name, removed)
+	local stored = N.insert_fluid(net, held.name, removed, held.temperature)
 	if stored < removed - EPS then          -- cannot happen (room was checked), but never lose fluid
 		t.insert_fluid{ name = held.name, amount = removed - stored, temperature = held.temperature }
 	end
@@ -482,32 +492,79 @@ local function tank_to_network(t, held, net)
 end
 M.tank_to_network = tank_to_network
 
+--- Issue #159: the storage keys an export may take of fluid `name` for the filter key `fk` (no temperature: every
+--- temperature, the default first, then from the coldest; with one: that key), that the network holds, within [lo, hi]
+--- (nil: open) and, while the target holds the fluid at `held` degrees, at that temperature only. Returns a shared list
+--- (read it before the next call) and its length.
+local CAND, ONE = {}, {}
+local function export_keys(net, name, fk, lo, hi, held)
+	local _, deg = N.split_fluid_key(fk)
+	local list
+	if deg then
+		ONE[1] = N.fluid_storage_key(fk)
+		list = ONE
+	else
+		list = N.fluid_keys(net, name)
+	end
+	local items, n = net.items, 0
+	for i = 1, #list do
+		local key = list[i]
+		if (items[key] or 0) > EPS then
+			local t = N.fluid_temperature(key)
+			if (not lo or t >= lo - EPS) and (not hi or t <= hi + EPS) and (not held or math.abs(t - held) <= TEMP_TOLERANCE) then
+				n = n + 1
+				CAND[n] = key
+			end
+		end
+	end
+	for i = n + 1, #CAND do CAND[i] = nil end
+	return CAND, n
+end
+M.export_keys = export_keys
+
+--- does the fluid `held` (a box's contents) belong to row or filter key `fk`? (its fluid, and its temperature if `fk`
+--- names one)
+local function holds_key(held, fk)
+	return N.fluid_matches(fk, N.fluid_key(held.name, held.temperature))
+end
+
 --- keep a side's tank at its row's amount of the row's fluid; returns the status, the amount moved and what the
---- side still lacks. `p`: the interface's priority when priorities are in use (issue #17: what interfaces of a higher
+--- side still lacks, and the storage key it waits for (issue #159). `p`: the interface's priority when priorities are in use (issue #17: what interfaces of a higher
 --- priority lack is left in the network)
 local function export_side(t, held, row, net, p)
 	local moved = 0
-	if held and held.name ~= row.name then              -- another fluid: into the network first
+	local fk = row_key(row)
+	if held and not holds_key(held, fk) then           -- another fluid (or a temperature the row does not take): into the network first
 		moved = tank_to_network(t, held, net)
 		held = T.fluidbox(t)[1]
 		if held and held.amount <= EPS then held = nil end
-		if held and held.name ~= row.name then return "blocked", moved, 0 end
+		if held and not holds_key(held, fk) then return "blocked", moved, 0 end
 	end
 	local want = math.min(row.amount, volume()) - (held and held.amount or 0)
-	if want <= EPS then return "ok", moved, 0 end
-	local avail = N.fluid_count(net, row.name)
-	if avail <= EPS then return "empty-network", moved, want end
-	if p then avail = avail - reserved(net, FLUID_PREFIX .. row.name, p) end
-	if avail <= EPS then return "reserved", moved, want end
-	local inserted = N.bound(t).insert_fluid{ name = row.name, amount = math.min(want, avail) }
+	local first = N.fluid_storage_key(fk)
+	if want <= EPS then return "ok", moved, 0, first end
+	local keys, n = export_keys(net, row.name, fk, nil, nil, held and held.temperature)
+	if n == 0 then
+		if N.fluid_total(net, row.name, fk) > EPS then return "temperature", moved, want, first end
+		return "empty-network", moved, want, first
+	end
+	local key, avail
+	for i = 1, n do                                      -- one temperature per visit: the tank holds it then
+		key = keys[i]
+		avail = net.items[key] or 0
+		if p then avail = avail - reserved(net, key, p) end
+		if avail > EPS then break end
+	end
+	if avail <= EPS then return "reserved", moved, want, keys[1] end
+	local inserted = N.bound(t).insert_fluid{ name = row.name, amount = math.min(want, avail), temperature = N.fluid_temperature(key) }
 	local got = 0
 	if inserted > 0 then
-		got = N.extract_fluid(net, row.name, inserted)
+		got = N.extract_fluid_key(net, key, inserted)
 		--- a storage bus's segment had less than its snapshot: never duplicate
 		if got < inserted - EPS then t.remove_fluid{ name = row.name, amount = inserted - got } end
 		moved = moved + got
 	end
-	return "ok", moved, math.max(0, want - got)
+	return "ok", moved, math.max(0, want - got), key
 end
 
 --- one pass over the four sides; rec.fstatus[d] is what the window shows. Returns the fluid moved (an export side
@@ -533,12 +590,15 @@ local function interface_sides(rec, net, config, short, dt)
 		if setting == "off" then
 			fstatus[d] = "off"
 		elseif type(setting) == "number" and is_fluid_row(config[setting]) then
-			local key = FLUID_PREFIX .. config[setting].name
 			if not held then sstarved = true end                      -- the side's tank had run out
-			local why, n, lack = export_side(t, held, config[setting], net, short and (rec.priority or 0))
+			local why, n, lack, key = export_side(t, held, config[setting], net, short and (rec.priority or 0))
 			fstatus[d] = why
 			moved = moved + n
-			if why == "empty-network" or why == "reserved" then N.wait_for(net, key, "io", rec.entity.unit_number, true) end
+			if why == "empty-network" or why == "reserved" or why == "temperature" then
+				--- (a row of every temperature waits for "fluid/<name>": any temperature of it wakes it, issue #159)
+				N.wait_for(net, why == "reserved" and key or row_key(config[setting]), "io", rec.entity.unit_number, true)
+			end
+			key = key or row_key(config[setting])
 			if short and lack > EPS then short[key] = (short[key] or 0) + lack end
 			if n + lack > EPS then                                   -- the side is drained at (n + lack) per dt
 				local tt = math.min(config[setting].amount, volume()) * dt / (n + lack)
@@ -566,7 +626,7 @@ local function interface_sides(rec, net, config, short, dt)
 					local tt = volume() * dt / n
 					if tt < time then time = tt end
 				elseif why == "full" then                            -- the network takes none: woken when room appears
-					N.wait_for(net, FLUID_PREFIX .. held.name, "io", rec.entity.unit_number, false)
+					N.wait_for(net, N.fluid_key(held.name, held.temperature), "io", rec.entity.unit_number, false)
 					N.wait_room(net, "io", rec.entity.unit_number)
 				end
 			end
@@ -750,7 +810,7 @@ function M.get_interface_config(entity)
 	if kind(entity) ~= "interface" then return nil end
 	local out = {}
 	for i, c in pairs(config_of(register(state(), entity))) do
-		out[i] = { type = c.type, name = c.name, quality = c.quality, amount = c.amount }
+		out[i] = { type = c.type, name = c.name, quality = c.quality, amount = c.amount, temperature = c.temperature }
 	end
 	return out
 end
@@ -822,8 +882,9 @@ function M.set_interface_key(entity, i, key, amount)
 	local config = M.get_interface_config(entity)
 	local sides = M.get_interface_sides(entity)
 	local row
-	if key and N.is_fluid_key(key) and prototypes.fluid[key:sub(#FLUID_PREFIX + 1)] then
-		row = { type = "fluid", name = key:sub(#FLUID_PREFIX + 1) }
+	if key and N.clean_fluid_filter(key) then
+		local name, deg = N.split_fluid_key(N.clean_fluid_filter(key))
+		row = { type = "fluid", name = name, temperature = deg }
 	elseif key then
 		local name, q = N.parse_key(key)
 		if prototypes.item[name] then row = { name = name, quality = q } end
@@ -874,7 +935,7 @@ local function config_tag(config)
 	local out = {}
 	for i = 1, CONFIG_SLOTS do
 		local c = config[i]
-		if c then out[#out + 1] = { slot = i, type = c.type, name = c.name, quality = c.quality, amount = c.amount } end
+		if c then out[#out + 1] = { slot = i, type = c.type, name = c.name, quality = c.quality, amount = c.amount, temperature = c.temperature } end
 	end
 	return out
 end
@@ -922,6 +983,7 @@ function M.get_interface(entity)
 		local held = t and t.fluidbox[1]
 		fl[d] = { setting = sides[d] or "import", status = rec.fstatus and rec.fstatus[d] or nil,
 			name = held and held.amount > EPS and held.name or nil, amount = held and held.amount or 0,
+			temperature = held and held.amount > EPS and held.temperature or nil,
 			connected = t ~= nil and #t.fluidbox.get_connections(1) > 0 }
 	end
 	local short = {}
@@ -1121,9 +1183,53 @@ local function export_items(rec, net, t, cap, info)
 	return moved
 end
 
+--- Issue #159: why an export moved none of fluid `name` that the network holds (the window's status line): { fluid,
+--- the temperatures the network has (text), what the target takes (text) }
+local function temperature_why(net, name, fk, lo, hi, temp)
+	local has = {}
+	for _, key in ipairs(N.fluid_keys(net, name)) do
+		if (net.items[key] or 0) > EPS and N.fluid_matches(fk, key) and #has < 4 then
+			has[#has + 1] = string.format("%.0f", N.fluid_temperature(key))
+		end
+	end
+	local want
+	if temp then want = string.format("%.0f", temp)
+	elseif lo and hi then want = lo == hi and string.format("%.0f", lo) or string.format("%.0f-%.0f", lo, hi)
+	elseif lo then want = string.format(">=%.0f", lo)
+	elseif hi then want = string.format("<=%.0f", hi)
+	else want = "?" end
+	return { name, table.concat(has, ", "), want }
+end
+
+--- Issue #159: what an export into the boxes `fb` may bring of fluid `name`: the temperature range of a box whose
+--- filter is the fluid (a machine's recipe: get_filter has its minimum and maximum) and the temperature of a box that
+--- holds the fluid already (nothing is mixed into it). nil where open. A machine's output boxes are left out (their
+--- filter is the product's temperature, and nothing is inserted into them).
+local function export_range(fb, name)
+	local lo, hi, temp
+	local B = N.bound(fb)
+	for i = 1, #fb do
+		local f = fb[i]
+		local has = f and f.name == name and f.amount > EPS
+		local flt = B.get_filter(i)
+		if has or (flt and flt.name == name) then
+			local p = B.get_prototype(i)
+			if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
+			if not (p and p.production_type == "output") then
+				if has then temp = temp or f.temperature end
+				if flt and flt.name == name then
+					if flt.minimum_temperature and (not lo or flt.minimum_temperature > lo) then lo = flt.minimum_temperature end
+					if flt.maximum_temperature and (not hi or flt.maximum_temperature < hi) then hi = flt.maximum_temperature end
+				end
+			end
+		end
+	end
+	return lo, hi, temp
+end
+
 --- The fluid part of a visit: the import bus empties the output boxes of a machine (any box of a tank) into the
---- network, the export bus fills its filtered fluids into the entity (insert_fluid: the machine's input boxes, a
---- tank), at the fluid's default temperature. Up to `cap` units (by default what one visit moved before issue #5).
+--- network, at the temperature they have (issue #159), the export bus fills its filtered fluids into the entity
+--- (insert_fluid: the machine's input boxes, a tank), at the temperature of the key it takes (export_keys). Up to `cap` units (by default what one visit moved before issue #5).
 --- Returns the units moved. `info` (issue #38, see export_items): the import side learns the rate a box fills and
 --- its capacity (`rec.fleft`: what was left in each box), the export side the capacity of what it fills
 --- (`rec.fcap`, the most it ever inserted) and the rate that drains it.
@@ -1139,7 +1245,13 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 		local fleft = rec.fleft or {}
 		for i = 1, #fb do
 			local f = fb[i]
-			if f and f.amount > EPS and (all or set[f.name]) then
+			local v = f and f.amount > EPS and (all or set[f.name])
+			if v and v ~= true then                          -- issue #159: filters with a temperature
+				local key, ok = N.fluid_key(f.name, f.temperature), false
+				for _, fk in ipairs(v) do if N.fluid_matches(fk, key) then ok = true break end end
+				v = ok
+			end
+			if v then
 				local p = N.bound(fb).get_prototype(i)
 				if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
 				if not (p and p.production_type == "input") then
@@ -1148,18 +1260,18 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 					if f.amount >= capf - EPS then info.starved = true end           -- a full box: the machine waited
 					local left = f.amount
 					if cap - moved > EPS then
-						local take = N.can_insert_fluid(net, f.name, math.min(f.amount, cap - moved))
+						local take = N.can_insert_fluid(net, f.name, math.min(f.amount, cap - moved), f.temperature)
 						if take > EPS then
 							left = f.amount - take
 							fb[i] = left > EPS and { name = f.name, amount = left, temperature = f.temperature } or nil
-							local stored = N.insert_fluid(net, f.name, take)
+							local stored = N.insert_fluid(net, f.name, take, f.temperature)
 							if stored < take - EPS then                 -- cannot happen (room was checked), but never lose fluid
 								t.insert_fluid{ name = f.name, amount = take - stored, temperature = f.temperature }
 							end
 							moved = moved + stored
 						else
 							info.netfull = true
-							N.wait_for(net, FLUID_PREFIX .. f.name, "io", unit, false)
+							N.wait_for(net, N.fluid_key(f.name, f.temperature), "io", unit, false)
 						end
 					end
 					fleft[i] = left
@@ -1178,16 +1290,32 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 		end
 		rec.fleft = fleft
 	else
-		for _, name in ipairs(rec.ffilters) do
-			local total = N.fluid_count(net, name)
-			if total <= EPS then
-				N.wait_for(net, FLUID_PREFIX .. name, "io", unit, true)
+		local fkeys = rec.fkeys
+		for fi, name in ipairs(rec.ffilters) do
+			local fk = fkeys and fkeys[fi] or (FLUID_PREFIX .. name)
+			local key, total, tblock
+			if cap - moved > EPS then
+				local lo, hi, temp = export_range(fb, name)
+				local keys, n = export_keys(net, name, fk, lo, hi, temp)
+				for k = 1, n do                                 -- issue #159: one temperature per filter and visit
+					key = keys[k]
+					total = net.items[key] or 0
+					if total > EPS then break end
+				end
+				if not key and N.fluid_total(net, name, fk) > EPS then
+					--- the network has it, but only at temperatures the target cannot take: blocked on the target's side
+					info.temperature = temperature_why(net, name, fk, lo, hi, temp)
+					info.blocked, tblock = true, true
+				end
+			end
+			if not key and cap - moved > EPS and not tblock then
+				N.wait_for(net, fk, "io", unit, true)            -- (any temperature of a filter without one wakes it)
 				info.nokey = true
-			elseif cap - moved > EPS then
+			elseif key then
 				local want = math.min(total, cap - moved)
-				local inserted = N.bound(t).insert_fluid{ name = name, amount = want }
+				local inserted = N.bound(t).insert_fluid{ name = name, amount = want, temperature = N.fluid_temperature(key) }
 				if inserted > 0 then
-					local got = N.extract_fluid(net, name, inserted)
+					local got = N.extract_fluid_key(net, key, inserted)
 					--- a storage bus's segment had less than its snapshot: never duplicate
 					if got < inserted - EPS then t.remove_fluid{ name = name, amount = inserted - got } end
 					moved = moved + got
@@ -1242,13 +1370,14 @@ function M.bus_step(rec, dt, u)
 	local info = INFO
 	info.time, info.dt = math.huge, ticks
 	info.held, info.main, info.slots, info.netfull, info.nokey, info.blocked, info.starved = nil, nil, nil, nil, nil, nil, nil
+	info.temperature = nil
 	local has_items = rec.t_inv and (rec.all or #rec.filters > 0)
 	local has_fluid = rec.t_fluid and (rec.all or #rec.ffilters > 0)
 	if has_items then
 		items = import and import_items(rec, net, t, icap, info) or export_items(rec, net, t, icap, info)
 	end
 	if has_fluid then fluid = M.fluid_bus_step(rec, net, t, fcap, info) end
-	rec.status = "ok"
+	rec.status, rec.tstat = "ok", nil
 	local moved = items + fluid
 	local full = items >= icap or fluid >= fcap - EPS
 	if moved <= 0 then
@@ -1258,6 +1387,7 @@ function M.bus_step(rec, dt, u)
 			rec.left = 0                                      -- (seen empty: what the next visit finds arrived since)
 			return 0, false, nil, "empty", false, net
 		end
+		if info.temperature then rec.status, rec.tstat = "temperature", info.temperature end   -- (issue #159)
 		if info.blocked or not info.nokey then return 0, false, nil, "full", false, net end
 		return 0, false, nil, "no-key", false, net
 	end
@@ -1293,15 +1423,23 @@ function M.set_bus_filters(entity, filters)
 	if not BUSES[k] then return false end
 	local rec = register(state(), entity)
 	local keys, items, fl, iset, fset, seen = {}, {}, {}, {}, {}, {}
+	local fkeys, temps = {}, false
 	for _, f in pairs(filters or {}) do
 		local key = filter_key(f)
 		if key and not seen[key] and #keys < MAX_FILTERS then
 			seen[key] = true
 			keys[#keys + 1] = key
 			if N.is_fluid_key(key) then
-				local name = key:sub(#FLUID_PREFIX + 1)
+				local name, deg = N.split_fluid_key(key)
 				fl[#fl + 1] = name
-				fset[name] = true
+				fkeys[#fkeys + 1] = key
+				--- issue #159: a fluid without a temperature takes every one (true), else the list of its filter keys
+				if not deg then fset[name] = true
+				elseif fset[name] ~= true then
+					fset[name] = fset[name] or {}
+					table.insert(fset[name], key)
+				end
+				if deg then temps = true end
 			else
 				items[#items + 1] = key
 				iset[key] = true
@@ -1309,6 +1447,7 @@ function M.set_bus_filters(entity, filters)
 		end
 	end
 	rec.keys, rec.filters, rec.ffilters, rec.iset, rec.fset = keys, items, fl, iset, fset
+	rec.fkeys = temps and fkeys or nil                    -- (the filter keys of rec.ffilters, only with a temperature)
 	rec.all = IMPORTS[k] and #keys == 0 or nil
 	wake(entity.unit_number)
 	return true
@@ -1358,6 +1497,7 @@ function M.bus_info(entity)
 	local b = M.get_bus(entity)
 	b.kind, b.import, b.max = k, IMPORTS[k] == true, MAX_FILTERS
 	b.items, b.fluids = rec.t_inv ~= nil, rec.t_fluid == true
+	b.tstat = rec.status == "temperature" and rec.tstat or nil      -- issue #159: { fluid, the network has, the target takes }
 	--- issue #110: the card slots (the window shows them), the factor of the cards, the cards it waits for
 	b.slots, b.accel = N.card_rules().bus.slots, rec.accel or 1
 	b.rate = Sched.setting("bus_items") * b.accel          -- items per second at most

@@ -132,3 +132,16 @@ biggest` with the new reasons `cpu-too-small` and `no-free-cpu` (a job needs a f
 `width`, `height`, `bytes`, `used`, `coprocessors`, `speed`, `monitors`, `job`). `cpu_list(entity, bytes)` lists the CPUs of the network in the
 order a job takes them (`fits`, `free`); `monitor(block)` is what a crafting monitor shows. `gregtorio-me-terminal`
 `craft_preview` reports `bytes`, `biggest` and `cpu_list`; `gregtorio-me-gui` has `crafting_cpu_data(block)`.
+
+Since 0.5.1 (issue #159, fluids keep their temperature): a fluid's storage key is `fluid/<name>` at its default
+temperature (as before) and `fluid/<name>@<degrees>` at any other (whole degrees, clamped to the fluid's default and
+max temperature). The fluid calls take an optional temperature after their arguments (nil: the default temperature,
+so every call of before does what it did): `gregtorio-me-network` `insert_fluid(entity, name, amount, temperature)`,
+`extract_fluid`, `fluid_count`, `can_insert_fluid`, and the new `fluid_key_contents(entity)` (`{ key -> amount }`, one
+entry per temperature) and `fluid_key(name, temperature)` (the storage key); `fluid_contents` adds the temperatures
+of a fluid up. `gregtorio-me-fluids` `count(entity, fluid, temperature)` (`temperature = "any"`: every temperature),
+`insert` and `remove` with a temperature, and `key_totals(entity)`; `totals` adds the temperatures up. Filter keys
+(bus, storage bus, circuit interface filters, cell partitions, processing pattern inputs) may name a temperature,
+`fluid/<name>@<degrees>`; without one they take every temperature. Interface config rows take `temperature`
+(`{ type = "fluid", name, amount, temperature }`), `get_interface` reports each side's `temperature`, `bus_info`
+reports `tstat` (`{ fluid, the temperatures the network has, what the target takes }`) with the status `temperature`.
