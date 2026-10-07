@@ -1198,6 +1198,92 @@ local function cell_stack(cell)
 end
 M.cell_stack = cell_stack
 
+--- Issue #147: the tooltip of a cell inside a drive (the drive window and the ME Terminal's Cells tab), read from the
+--- cell record (no copies), one line each:
+---   1. the cell's name, item or fluid cell, its bytes
+---   2. the fill (bytes and types used of total)
+---   3. the partition as icons, as the item tooltip (issue #64): at most TIP_KEYS, then "+N more"
+---   4. whitelist or blacklist, the cards as icons and what they do, in the words of the item tooltip and the windows
+---   5. the first TIP_HOLDS kinds it holds with their amounts (fluids as the fluid cell's tooltip), then "+N more"
+--- Lines that do not apply are left out. The sentences of 4 are one nested concatenation, so the outer one stays far
+--- below the engine's 20 parameters (the drive window adds its click hints after it).
+local TIP_HOLDS = 5
+
+local function drive_cell(drive, slot)
+	local s = storage.fork_me_net
+	local d = s and drive and drive.valid and s.drives[drive.unit_number]
+	return d and d.slots[slot]
+end
+
+function M.drive_cell_tooltip(drive, slot)
+	local cell = drive_cell(drive, slot)
+	if not cell then return nil end
+	local spec = cell_spec(cell.name) or { bytes = 0, types = 0 }
+	local fluid = fluid_cell(spec)
+	local proto = prototypes.item[cell.name]
+	local lines = {
+		{ fluid and "fork-me-gui.cell-tip-head-fluid" or "fork-me-gui.cell-tip-head", proto and proto.localised_name or cell.name,
+			G.fmt(spec.bytes) },
+		{ "fork-me-gui.cell-fill", G.fmt(cell.bytes), G.fmt(spec.bytes), cell.types, spec.types },
+	}
+	local plist = cell.partition or cell.deny
+	local flags = cell_flags(cell)
+	if plist then
+		local sorted, icons = M.cell_keys(cell), {}
+		for i = 1, math.min(TIP_KEYS, #sorted) do icons[i] = key_icon(sorted[i]) end
+		lines[#lines + 1] = #sorted > TIP_KEYS and { "fork-me-net.cell-tip-partition-more", table.concat(icons, " "), #sorted - TIP_KEYS }
+			or { "fork-me-net.cell-tip-partition", table.concat(icons, " ") }
+	end
+	local mode = { "" }
+	local function add(text)
+		if #mode > 1 then mode[#mode + 1] = "\n" end
+		mode[#mode + 1] = text
+	end
+	if flags.inverted then add(M.cell_mode_text("inverted", flags))
+	elseif plist then add({ "fork-me-gui.cell-mode-whitelist" }) end
+	if cell.cards and #cell.cards > 0 then
+		local icons = {}
+		for i, name in ipairs(cell.cards) do icons[i] = "[item=" .. name .. "]" end
+		add({ "fork-me-net.cell-tip-cards", table.concat(icons, " ") })
+		for _, kind in ipairs({ "fuzzy", "equal", "void" }) do
+			local text = M.cell_mode_text(kind, flags)
+			if text then add(text) end
+		end
+	end
+	if #mode > 1 then lines[#lines + 1] = mode end
+	local keys = {}
+	for key in pairs(cell.items) do keys[#keys + 1] = key end
+	if #keys > 0 then
+		table.sort(keys, function(a, b)
+			if cell.items[a] ~= cell.items[b] then return cell.items[a] > cell.items[b] end
+			return a < b
+		end)
+		local list = {}
+		for i = 1, math.min(TIP_HOLDS, #keys) do
+			local key = keys[i]
+			list[i] = (is_fluid_key(key) and amount_text(cell.items[key]) or tostring(cell.items[key])) .. " " .. key_icon(key)
+		end
+		lines[#lines + 1] = #keys > TIP_HOLDS and { "fork-me-gui.cell-tip-holds-more", table.concat(list, ", "), #keys - TIP_HOLDS }
+			or { "fork-me-gui.cell-tip-holds", table.concat(list, ", ") }
+	end
+	local tip = { "" }
+	for i, l in ipairs(lines) do
+		if i > 1 then tip[#tip + 1] = "\n" end
+		tip[#tip + 1] = l
+	end
+	return tip
+end
+
+--- what the tooltip above shows changes when this does (the cell lists rebuild their buttons on a new signature)
+function M.drive_cell_sig(drive, slot)
+	local cell = drive_cell(drive, slot)
+	if not cell then return "-" end
+	local parts = { cell.name, cell.bytes, cell.types, tostring(cell.deny ~= nil), tostring(cell.eq), tostring(cell.void),
+		tostring(cell.fnames ~= nil), table.concat(cell.cards or {}, "|"), table.concat(M.cell_keys(cell), "|") }
+	for key, count in pairs(cell.items) do parts[#parts + 1] = key .. "=" .. count end
+	return table.concat(parts, ":")
+end
+
 --- the fill state of a cell: "room", "high" (above 75 % of the bytes), "full" (bytes or types)
 local function cell_state(cell)
 	local spec = cell_spec(cell.name)

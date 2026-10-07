@@ -169,6 +169,12 @@ local function cell_line(c)
 	return { "fork-me-net.drive-slot-short", G.fmt(c.bytes), G.fmt(c.bytes_total), c.types, c.types_total }
 end
 
+--- issue #147: the tooltip of a cell slot, what the cell's own tooltip says and what it holds, then the click hints
+function M.drive_cell_tooltip(drive, slot)
+	local tip = N.drive_cell_tooltip(drive, slot)
+	return tip and { "", tip, "\n", { "fork-me-gui.drive-slot-tooltip" } } or { "fork-me-net.drive-slot-empty" }
+end
+
 local function build_drive_cells(box, drive)
 	local data = M.drive_data(drive)
 	local t = box.add{ type = "table", column_count = 2 }
@@ -178,7 +184,7 @@ local function build_drive_cells(box, drive)
 		local row = G.row(t)
 		if c then
 			row.add{ type = "sprite-button", sprite = "item/" .. c.name, style = #c.partition > 0 and "yellow_slot_button" or "slot_button",
-				tooltip = { "", terminal.cell_tooltip(c), "\n", { "fork-me-gui.drive-slot-tooltip" } },
+				tooltip = M.drive_cell_tooltip(drive, slot),
 				tags = G.act("drive_slot", { slot = slot }) }
 			local col = row.add{ type = "flow", direction = "vertical" }
 			local bar = col.add{ type = "progressbar", value = c.bytes_total > 0 and c.bytes / c.bytes_total or 1 }
@@ -197,8 +203,7 @@ local function drive_sig(drive)
 	local data = M.drive_data(drive)
 	local sig = { tostring(data.online) }
 	for slot = 1, data.slots do
-		local c = data.cells[slot]
-		sig[#sig + 1] = c and (c.name .. ":" .. c.bytes .. ":" .. c.types .. ":" .. #c.partition) or "-"
+		sig[#sig + 1] = data.cells[slot] and N.drive_cell_sig(drive, slot) or "-"   -- issue #147: what the tooltip shows
 	end
 	return table.concat(sig, ",")
 end
@@ -1459,6 +1464,9 @@ remote.add_interface("gregtorio-me-gui", {
 	--- true when the entity opens an ME window (click or open key)
 	has_window = function(entity) return G.has_window(entity) end,
 	drive_data = function(drive) return M.drive_data(drive) end,
+	--- issue #147 (tests): the tooltip of a cell slot of the drive window and the window's rebuild signature
+	drive_cell_tooltip = function(drive, slot) return M.drive_cell_tooltip(drive, slot) end,
+	drive_sig = function(drive) return drive_sig(drive) end,
 	cell_data = function(drive, slot) return M.cell_data(drive, slot) end,
 	--- issue #75: what a slot of a window gives a stack (the tooltip next to the item's own, the signature piece)
 	stack_tooltip = function(stack, base) return G.stack_tooltip(stack, base) end,
