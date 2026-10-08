@@ -465,4 +465,25 @@ script.on_event("fork-me-picker-confirm", function(event)
 	M.confirm(player)
 end)
 
+--- Focus the search field of the player's open ME picker, else of the open ME window (the Terminal's), and select its
+--- text so that typing replaces the old search (issue #148). Returns true when a field was focused. The picker sits on
+--- top of its window, so it comes first; a hidden picker (Escape) does not count.
+function M.focus_search(player)
+	local frame = picker_of(player)
+	local field = frame and frame.visible and G.find(frame, "fork_me_pk_search")
+	if not field then
+		local window = G.window_of(player)
+		field = window and window.valid and G.find(window, "fork_me_search")
+	end
+	if not (field and field.valid) then return false end
+	field.focus()
+	field.select_all()
+	return true
+end
+
+script.on_event("fork-me-focus-search", function(event)
+	local player = game.get_player(event.player_index)
+	if player then M.focus_search(player) end
+end)
+
 return M
