@@ -25,8 +25,12 @@ return function(H)
 		local drive = H.me_drive(s, fails, what, BX + 8.5, BY - 0.5, {}, "16k")
 		local term = me_place(s, fails, what, "me-terminal", BX + 12.5, BY - 2.5)
 		local bench = me_place(s, fails, what, "me-cell-workbench", BX + 16.5, BY + 4.5)   -- no cable: it needs no network
+		--- issue #179: the other take-out paths (their records need no network)
+		local provider = me_place(s, fails, what, "me-pattern-provider", BX + 20.5, BY + 4.5)
+		local bus = me_place(s, fails, what, "me-import-bus", BX + 22.5, BY + 4.5)
+		local pterm = me_place(s, fails, what, "me-pattern-terminal", BX + 24.5, BY + 4.5)
 		H.me_connect(fails, what, { ctrl, drive, term })
-		storage.remoteview_scene = { term = term, drive = drive, bench = bench }
+		storage.remoteview_scene = { term = term, drive = drive, bench = bench, provider = provider, bus = bus, pterm = pterm }
 		return fails
 	end
 
@@ -90,6 +94,54 @@ return function(H)
 		why, out = g("block_click", bench, 1, nil, char, true)
 		expect(why == nil and out == "out" and bench_cell() == nil and char.get_item_count("me-1k-storage-cell") == 1,
 			"workbench cell into the inventory: " .. tostring(why) .. "/" .. tostring(out))
+
+		--- issue #179: every other take-out path refuses without an inventory and keeps the item, and takes into one
+		local AC, IO, PT = "gregtorio-me-autocraft", "gregtorio-me-io", "gregtorio-me-pattern-terminal"
+		--- the workbench's card slot: the cell back in, a Fuzzy Card into its first card slot
+		local cell = char.find_item_stack("me-1k-storage-cell")
+		if cell then hand[1].transfer_stack(cell) end
+		remote.call(WB, "cell_click", bench, hand[1], char, false)
+		hand[1].set_stack{ name = "me-fuzzy-card", count = 1 }
+		expect(remote.call(WB, "card_click", bench, 1, hand[1], char, false) == nil and not hand[1].valid_for_read, "a card into the workbench")
+		why = g("block_click", bench, 2, nil, nil, true)
+		expect(why == "no-inventory" and remote.call(WB, "inventory", bench)[2].valid_for_read, "workbench card without an inventory: " .. tostring(why))
+		why, out = g("block_click", bench, 2, nil, char, true)
+		expect(why == nil and out == "out" and char.get_item_count("me-fuzzy-card") == 1, "workbench card into the inventory: " .. tostring(why))
+		--- the provider's pattern slot
+		local provider, bus, pterm = sc.provider, sc.bus, sc.pterm
+		if provider and provider.valid and bus and bus.valid and pterm and pterm.valid then
+			local tmp = game.create_inventory(2)
+			tmp.insert{ name = "me-blank-pattern", count = 1 }
+			local ew, ewhy = remote.call(PT, "encode_def", tmp, nil, { kind = "processing", inputs = { { key = "stone", amount = 2 } },
+				outputs = { { key = "stone-brick", amount = 1 } } })
+			local enc = tmp.find_item_stack("me-encoded-pattern")
+			local ins, iwhy = remote.call(AC, "insert_pattern", provider, enc)
+			expect(ins == 1, "a pattern into the provider: encode " .. tostring(ew) .. "/" .. tostring(ewhy) .. ", insert " .. tostring(ins) .. "/" .. tostring(iwhy))
+			why = remote.call(AC, "provider_click", nil, nil, provider, 1, true)
+			expect(why == "no-inventory" and remote.call(AC, "provider_info", provider).slots[1] ~= nil, "provider without an inventory: " .. tostring(why))
+			why, out = remote.call(AC, "provider_click", nil, char, provider, 1, true)
+			expect(why == nil and out == "out" and char.get_item_count("me-encoded-pattern") == 1, "provider pattern into the inventory: " .. tostring(why))
+			--- the import bus's card slot
+			hand[1].set_stack{ name = "me-acceleration-card", count = 1 }
+			expect(remote.call(IO, "bus_card_click", bus, 1, hand[1], char, false) == nil, "a card into the bus")
+			why = remote.call(IO, "bus_card_click", bus, 1, nil, nil, true)
+			expect(why == "no-inventory" and remote.call(IO, "bus_inventory", bus)[1].valid_for_read, "bus card without an inventory: " .. tostring(why))
+			why, out = remote.call(IO, "bus_card_click", bus, 1, nil, char, true)
+			expect(why == nil and out == "out" and char.get_item_count("me-acceleration-card") == 1, "bus card into the inventory: " .. tostring(why))
+			--- the pattern terminal's output slot
+			local pat = char.find_item_stack("me-encoded-pattern")
+			if pat then hand[1].transfer_stack(pat) else hand[1].clear() end
+			expect(hand[1].valid_for_read and remote.call(PT, "click", pterm, 2, hand[1], char, false) == nil and not hand[1].valid_for_read,
+				"a pattern into the output slot")
+			why = remote.call(PT, "click", pterm, 2, nil, nil, true)
+			expect(why == "no-inventory" and remote.call(PT, "inventory", pterm)[2].valid_for_read, "pattern terminal without an inventory: " .. tostring(why))
+			why, out = remote.call(PT, "click", pterm, 2, nil, char, true)
+			expect(why == nil and out == "out" and char.get_item_count("me-encoded-pattern") == 1, "pattern terminal into the inventory: " .. tostring(why))
+			tmp.destroy()
+		else
+			expect(false, "the provider, the bus or the pattern terminal was not built")
+		end
+		char.clear()
 		hand.destroy()
 
 		--- the terminal's take buttons: remote view takes into the inventory (a stack, or one item), never the hand
@@ -146,6 +198,14 @@ return function(H)
 		expect(not tmp[1].valid_for_read and g("stand_in_parked", "normal") == 0 and ground_items(surface, { 0, 0 }) > ground,
 			"a normal player with a full inventory: spilled")
 
+		--- issue #179: a removed player's parked items go with the player (as the game drops a removed player's inventory)
+		tmp.insert{ name = "copper-plate", count = 4 }
+		g("stand_in", "gone", { remote = true, index = 9009 })
+		g("stand_in_give_back", "gone", tmp[1], term)
+		expect(g("stand_in_parked", "gone") == 4, "parked for a player who will be removed: " .. g("stand_in_parked", "gone"))
+		g("forget_player", 9009)
+		expect(g("stand_in_parked", "gone") == 0, "nothing is kept for a removed player: " .. g("stand_in_parked", "gone"))
+		g("stand_in_forget", "gone")
 		for _, name in ipairs{ "normal", "remote", "none" } do g("stand_in_forget", name) end
 		tmp.destroy()
 		main.destroy()

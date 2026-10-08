@@ -199,7 +199,10 @@ character (the editor, a spectator) there is no inventory: the window says so, n
 everything stays where it is. Items that have no place any more (a window closed with something in its buffer, cards a
 cell does not take) are never spilled from remote view: they are kept for you ("the items are kept for you") and come
 back into your inventory the next time you have room (when you open or close a window, or within a second). The
-command `/me-remote-probe` prints what the game reports for your controller.
+command `/me-remote-probe` prints what the game reports for your controller. What the hand does elsewhere has a way in remote view too
+(issue #179): **Store item in hand** of the terminal is a click on the stack in the pane; for **Load pattern** and **Clear
+pattern** of the ME Pattern Terminal click the encoded pattern in the pane (it goes into the output slot), then press the
+button (they work on the output slot when the hand is empty).
 
 With the setting off, the windows draw your inventory themselves (issue #28): **every ME window shows your inventory on its left**
 ("Character"), the block's slots (cards, cell, cells of a drive, patterns) in the window: click a stack in your

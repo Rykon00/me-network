@@ -1680,6 +1680,7 @@ remote.add_interface("gregtorio-me-gui", {
 	stand_in_return_parked = function(name) return G.return_parked(stand_ins[name]) end,
 	stand_in_texts = function(name) return stand_ins[name].texts end,
 	stand_in_forget = function(name) stand_ins[name] = nil end,
+	forget_player = function(index) G.forget_player(index) end,      -- (issue #179: what on_player_removed does)
 	--- every registered window: { [name] = { pane = true, shift = has a shift + click target, control, message } }
 	windows = function() return G.window_list() end,
 	--- a click on slot `slot` of the block in `entity`'s window (its cards, its cell); returns the reason of a refusal

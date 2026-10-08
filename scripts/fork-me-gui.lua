@@ -1047,6 +1047,20 @@ function M.on_inventory_changed(event)
 	if player then M.update_pane(player) end
 end
 
+--- Issue #179: a player was removed from the game: what the windows kept for them goes (the parked items of remote view and a
+--- hand-over buffer, like the game drops a removed player's own inventory; the pane's state)
+function M.forget_player(index)
+	for _, key in ipairs({ "fork_me_gui_parked", "fork_me_gui_buffer" }) do
+		local list = storage[key]
+		local p = list and list[index]
+		if p then
+			if p.inv and p.inv.valid then p.inv.destroy() end
+			list[index] = nil
+		end
+	end
+	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[index] = nil end
+end
+
 --- a player left the game: the window closes
 function M.on_left(player)
 	if player and player.valid then M.close_window(player) end

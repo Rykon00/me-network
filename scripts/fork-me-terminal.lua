@@ -1029,6 +1029,9 @@ script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
 	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[event.player_index] = nil end
 	if storage.fork_me_pterm_ui then storage.fork_me_pterm_ui[event.player_index] = nil end      -- (the ME Pattern Terminal's editor)
+	G.forget_player(event.player_index)                                                          -- (issue #179: parked items, buffer)
+	local w = storage.fork_me_wireless                                                           -- (the wireless link and mode)
+	if w and w.players then w.players[event.player_index] = nil end
 end)
 
 return M
