@@ -107,6 +107,13 @@ local. Nothing is exclusive (the terminal block already works so).
 
 ## Split into issues
 
-The numbers of the issues are in #153 (a comment): access point and boosters, the terminal handle and the wireless window, the
-Wireless Terminal item with hotkey and linking, the ME Charger, the equipment module, the pattern mode, graphics, locale and
-docs, the Gregtorio compat issue, and a `[Task-Ingame]` for the look and handling.
+- #205 the Wireless Access Point and the Wireless Boosters (with the range query)
+- #206 the terminal handle and the wireless window path
+- #207 the Wireless ME Terminal item and its hotkey (linking, energy, the mode switch)
+- #208 the ME Charger
+- #209 the power-armour equipment module (first step: check the equipment energy headless)
+- #210 the pattern mode
+- #211 graphics, locale, docs and the Gregtorio recipes
+
+Order: #205 and #206 first (the second can start with a stub range), then #207 and #208, then #209 and #210, #211 alongside.
+A `[Task-Ingame]` issue follows each piece that has something to look at.
