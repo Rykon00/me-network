@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.3
+  Features:
+    - Ctrl + F (the game's "Focus search" key, also when rebound) puts the cursor into the search field of the ME Terminal and of the item picker and selects its text, as in the game's own windows (issue #148). With the picker open the key goes to the picker.
+---------------------------------------------------------------------------------------------------
 Version: 0.5.2
 Date: 2026-10-08
   Features:

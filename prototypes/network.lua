@@ -460,6 +460,16 @@ data:extend({ {
 	consuming = "none",
 } })
 
+--- The search key (linked to the game's "focus-search", Ctrl + F by default): focuses the search field of the ME Terminal
+--- and of the mod's item picker (scripts/fork-me-picker.lua, issue #148); the game's own search fields keep it
+data:extend({ {
+	type = "custom-input",
+	name = "fork-me-focus-search",
+	key_sequence = "",
+	linked_game_control = "focus-search",
+	consuming = "none",
+} })
+
 
 
 --------------------------------------------------------------------------------
