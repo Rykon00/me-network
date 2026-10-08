@@ -158,18 +158,32 @@ local function buffer_of(player)
 end
 M.buffer_of = buffer_of
 
---- every stack of `inv` into the window's block through `def.shift` (what it refuses stays); the number of stacks taken
-function M.buffer_absorb(inv, def, entity)
-	if not (inv and inv.valid and def and def.shift and entity and entity.valid) or inv.is_empty() then return 0 end
+--- what a buffer slot holds, for `seen` (name, count, quality and, for an item with tags, its number)
+local function slot_key(st)
+	return st.name .. "#" .. st.count .. "@" .. st.quality.name .. M.stack_ident(st)
+end
+
+--- Every stack of `inv` into the window's block through `def.shift` (what it refuses stays); the number of stacks taken.
+--- Issue #201: with `seen` (what the slots held after the last call: { [slot] = key }) a stack that is still what the block
+--- refused last time is left alone. Otherwise a stack of cards in the buffer (the block takes three, the rest stays) filled a card
+--- slot again as soon as the player took a card out of it: a click on a card made a second one. A stack that is new or
+--- changed is tried. The second value is the new `seen`.
+function M.buffer_absorb(inv, def, entity, seen)
+	if not (inv and inv.valid and def and def.shift and entity and entity.valid) or inv.is_empty() then return 0, {} end
 	local n = 0
 	for i = 1, #inv do
 		local st = inv[i]
-		if st.valid_for_read then
+		if st.valid_for_read and not (seen and seen[i] == slot_key(st)) then
 			local why = def.shift(entity, st, inv)
 			if not why and not st.valid_for_read then n = n + 1 end
 		end
 	end
-	return n
+	local now = {}
+	for i = 1, #inv do
+		local st = inv[i]
+		if st.valid_for_read then now[i] = slot_key(st) end
+	end
+	return n, now
 end
 
 --- what is left in `inv` back to `to` (a player or an inventory; give_back: else the ground at `entity`)
@@ -196,7 +210,10 @@ local function absorb(player)
 	if not b or b.inv.is_empty() then return end
 	local frame, name = M.window_of(player)
 	local entity = frame and M.entity_of(player, frame)
-	if entity then M.buffer_absorb(b.inv, windows[name], entity) end
+	if entity then
+		local _, seen = M.buffer_absorb(b.inv, windows[name], entity, b.seen)
+		b.seen = seen
+	end
 end
 
 --- the window's GUI for player.opened: the frame, or the buffer of a relative window
