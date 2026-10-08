@@ -1,6 +1,6 @@
 # Wireless ME Terminal: design note (issue #153)
 
-Status: **design only, no code.** The decisions of 2026-10-06 and the confirmation of 2026-10-09 are fixed; the work is split
+Status: **design only, no code.** The decisions of 2026-10-06 and the confirmation of 2026-10-08 are fixed; the work is split
 into the issues named in the last section.
 
 ## Fixed by the maintainer
@@ -63,7 +63,7 @@ entity.
    the player's inventory** (what shift + click on Encode does at the block), so no per-player item inventory is needed.
 5. **Nothing else changes**: the schedule, the storage engine and the planner do not know about wireless.
 
-## Open points: confirmed by the maintainer on 2026-10-09 (boosters, charging by an ME Charger, linking, the pattern mode)
+## Open points: confirmed by the maintainer on 2026-10-08 (boosters, charging by an ME Charger, linking, the pattern mode)
 
 **Booster numbers (the maintainer asked for AE2's as the start).** AE2's 16 blocks base range fits a Minecraft base; a Factorio base
 is wider. Proposal, written as a table so the numbers can be moved: the access point has a card slot row (the generic card code)
@@ -71,7 +71,7 @@ for up to 4 **Wireless Boosters**; range `32 + 24 x b^1.5` tiles (b = 0..4: 32, 
 controller `20 kW + 10 kW x b^(1 + b / 16)` (20, 30, 45, 66, 90 kW). Same dimension (surface) only, nearest active access point.
 Cap and prices are one table in mod-data, not scattered.
 
-**Charging the item (decided: an ME Charger block, 2026-10-09).** As in AE2: a 1x1 **ME Charger**, a member of the network that
+**Charging the item (decided: an ME Charger block, 2026-10-08).** As in AE2: a 1x1 **ME Charger**, a member of the network that
 draws its power through the controller, holds one Wireless Terminal item in a one-slot script inventory (shown in its window,
 given back when it is mined, spilled when it is destroyed) and fills the item's energy tag while the network has power. Its
 power draw is its charge rate while an item is not full and a small idle draw otherwise; it changes only when an item is put in
