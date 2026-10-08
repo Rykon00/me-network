@@ -324,13 +324,33 @@ def dim(rgb, f=0.35):
     return tuple(int(c * f) for c in rgb)
 
 
-def crafting_face(gt, kind, lit, colour=None):
+CPU_AMBER = (255, 200, 80)         # the details of a block of a CPU that runs a job
+CPU_DARK, CPU_LIT, CPU_BUSY = 0, 1, 2
+CPU_STATES = 3
+# bit of each side in the mask of a picture: N 1, E 2, S 4, W 8 (as the cable's), variation = 1 + mask + 16 * state
+SIDE_N, SIDE_E, SIDE_S, SIDE_W = 1, 2, 4, 8
+
+
+def crafting_face(gt, kind, state, colour=None, mask=0):
     """16x16: the EV casing with the block's face (unit: four chips; storage: a memory chip in the size's colour with
-    three cell bars; co-processor: a fluix core with traces; monitor: a GT screen)."""
+    three cell bars; co-processor: a fluix core with traces; monitor: a GT screen). Issue #152: `mask` names the sides
+    that touch another block of the same CPU; the dark interior runs on to the tile's edge there (no casing, no outline),
+    and where two connected sides meet the corner is filled too, so the blocks of a CPU read as one slab. `state`:
+    CPU_DARK (a group that is no CPU), CPU_LIT, CPU_BUSY (a job runs: the details turn amber)."""
     img = hull(gt, "EV")
     d = ImageDraw.Draw(img)
+    lit = state != CPU_DARK
     def c(rgb):
         return (rgb if lit else dim(rgb)) + (255,)
+    def detail(rgb):
+        return (CPU_AMBER if state == CPU_BUSY else rgb if lit else dim(rgb)) + (255,)
+    fill, edge = (20, 20, 26, 255), (60, 60, 72, 255)
+    n, e, so, w = (bool(mask & m) for m in (SIDE_N, SIDE_E, SIDE_S, SIDE_W))
+    x0, y0, x1, y1 = (0 if w else 2), (0 if n else 2), (15 if e else 13), (15 if so else 13)
+    d.rectangle((x0, y0, x1, y1), fill=fill)
+    for flag, box in ((not n, (x0, y0, x1, y0)), (not so, (x0, y1, x1, y1)), (not w, (x0, y0, x0, y1)), (not e, (x1, y0, x1, y1))):
+        if flag:
+            d.rectangle(box, fill=edge)
     if kind == "monitor":
         if lit:
             screen = frames_of(load(gt_path(gt, "gregtech:iconsets/OVERLAY_SCREEN")))[0]
@@ -338,41 +358,95 @@ def crafting_face(gt, kind, lit, colour=None):
         else:
             img.alpha_composite(frames_of(load(gt_path(gt, "gregtech:iconsets/SCREEN_OFF")))[0])
         return img
-    d.rectangle((2, 2, 13, 13), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
     if kind == "unit":
         for x, y in ((4, 4), (9, 4), (4, 9), (9, 9)):
             d.rectangle((x, y, x + 2, y + 2), fill=(45, 45, 55, 255), outline=(85, 85, 100, 255))
-            d.point((x + 1, y + 1), fill=c(CPU_CYAN))
+            d.point((x + 1, y + 1), fill=detail(CPU_CYAN))
     elif kind == "storage":
         d.rectangle((4, 4, 11, 11), fill=(45, 45, 55, 255), outline=c(colour))
         for y in (6, 8, 10):
-            d.line((6, y - 1, 9, y - 1), fill=c(colour))
+            d.line((6, y - 1, 9, y - 1), fill=detail(colour))
         for x in (3, 12):                                   # the chip's pins
             for y in (5, 7, 9):
                 d.point((x, y), fill=(150, 150, 160, 255))
     elif kind == "coprocessor":
-        for x0, y0, x1, y1 in ((3, 7, 5, 8), (10, 7, 12, 8), (7, 3, 8, 5), (7, 10, 8, 12)):
-            d.rectangle((x0, y0, x1, y1), fill=c(FLUIX))
+        for bx0, by0, bx1, by1 in ((3, 7, 5, 8), (10, 7, 12, 8), (7, 3, 8, 5), (7, 10, 8, 12)):
+            d.rectangle((bx0, by0, bx1, by1), fill=c(FLUIX))
         d.rectangle((5, 5, 10, 10), fill=c(FLUIX), outline=c(FLUIX_LIGHT))
-        d.rectangle((7, 7, 8, 8), fill=c((235, 225, 255)))
+        d.rectangle((7, 7, 8, 8), fill=detail((235, 225, 255)))
     return img
 
 
+CRAFTING_BLOCKS = [("me-crafting-unit", "unit", None), ("me-crafting-co-processing-unit", "coprocessor", None),
+                   ("me-crafting-monitor", "monitor", None)] + \
+                  [(f"me-{k}-crafting-storage", "storage", rgb) for k, rgb in CRAFTING_STORAGE.items()]
+
+
 def crafting_cpu(gt):
-    """the eight crafting blocks: entity sheets (dark | lit) and item icons"""
-    blocks = [("me-crafting-unit", "unit", None), ("me-crafting-co-processing-unit", "coprocessor", None),
-              ("me-crafting-monitor", "monitor", None)]
-    blocks += [(f"me-{k}-crafting-storage", "storage", rgb) for k, rgb in CRAFTING_STORAGE.items()]
+    """the eight crafting blocks: entity sheets of 48 pictures (variation 1 + mask + 16 * state, 32 px each, state 0 dark,
+    1 lit, 2 lit and busy) and item icons (the lit block alone)"""
     written = []
-    for name, kind, colour in blocks:
-        dark, lit = up(crafting_face(gt, kind, False, colour)), up(crafting_face(gt, kind, True, colour))
-        sheet = Image.new("RGBA", (2 * TILE, TILE))
-        sheet.paste(dark, (0, 0))
-        sheet.paste(lit, (TILE, 0))
+    for name, kind, colour in CRAFTING_BLOCKS:
+        sheet = Image.new("RGBA", (16 * CPU_STATES * TILE, TILE))
+        for state in range(CPU_STATES):
+            for mask in range(16):
+                sheet.paste(up(crafting_face(gt, kind, state, colour, mask)), ((16 * state + mask) * TILE, 0))
         sheet.save(OUT_ENTITY / f"{name}.png")
-        lit.save(OUT_ICON / f"{name}.png")
+        up(crafting_face(gt, kind, CPU_LIT, colour, 0)).save(OUT_ICON / f"{name}.png")
         written += [OUT_ENTITY / f"{name}.png", OUT_ICON / f"{name}.png"]
+    written.append(crafting_cpu_sheet(gt))
     return written
+
+
+def crafting_cpu_sheet(gt):
+    """the contact sheet of issue #152 (docs/graphics-review/crafting-cpu-152.png): a lone block, a 2 x 3, a 4 x 4 and a
+    3 x 3 CPU in the three states, a ring that is no rectangle (dark), and a CPU with a storage, a co-processor and a
+    monitor in each position"""
+    storages = [b for b in CRAFTING_BLOCKS if b[1] == "storage"]
+
+    def layout(width, height, pick=None, hole=None):
+        """{(x, y): (kind, colour)} of a rectangle; `pick(x, y)` chooses the block, `hole` a tile left out"""
+        return {(x, y): (pick(x, y) if pick else ("unit", None)) for x in range(width) for y in range(height)
+                if (x, y) != hole}
+
+    def draw(tiles, state, ox, oy, sheet):
+        for (x, y), (kind, colour) in tiles.items():
+            mask = (SIDE_N if (x, y - 1) in tiles else 0) | (SIDE_E if (x + 1, y) in tiles else 0) \
+                | (SIDE_S if (x, y + 1) in tiles else 0) | (SIDE_W if (x - 1, y) in tiles else 0)
+            sheet.paste(up(crafting_face(gt, kind, state, colour, mask)), (ox + x * TILE, oy + y * TILE))
+
+    def mixed(x, y):
+        k = (x + 2 * y) % 5
+        if k == 0:
+            return ("coprocessor", None)
+        if k == 1:
+            return ("monitor", None)
+        if k == 2:
+            return ("unit", None)
+        return ("storage", storages[(x + y) % len(storages)][2])
+
+    shapes = [
+        ("1x1", layout(1, 1)), ("2x3", layout(2, 3)), ("4x4", layout(4, 4)), ("3x3 mixed", layout(3, 3, mixed)),
+        ("4x4 mixed", layout(4, 4, mixed)), ("ring (no CPU)", layout(3, 3, hole=(1, 1))),
+    ]
+    gap = 24
+    sheet = Image.new("RGBA", (3 * (4 * TILE + gap) + gap, len(shapes) * (4 * TILE + gap) + gap), (40, 40, 48, 255))
+    for row, (label, tiles) in enumerate(shapes):
+        for state in range(CPU_STATES):
+            if label.startswith("ring") and state:
+                continue
+            draw(tiles, state, gap + state * (4 * TILE + gap), gap + row * (4 * TILE + gap), sheet)
+    # a strip of all 16 masks of the unit in the three states, lit
+    strip = Image.new("RGBA", (16 * TILE, CPU_STATES * TILE), (40, 40, 48, 255))
+    for state in range(CPU_STATES):
+        for mask in range(16):
+            strip.paste(up(crafting_face(gt, "unit", state, None, mask)), (mask * TILE, state * TILE))
+    out = Image.new("RGBA", (max(sheet.width, strip.width), sheet.height + strip.height + gap), (40, 40, 48, 255))
+    out.paste(sheet, (0, 0))
+    out.paste(strip, (0, sheet.height + gap))
+    path = ROOT / "docs/graphics-review/crafting-cpu-152.png"
+    out.save(path)
+    return path
 
 
 # --- fluids (prototypes/fluids.lua) -------------------------------------------

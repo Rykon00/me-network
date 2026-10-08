@@ -1395,22 +1395,51 @@ local function pause_group_job(s, g)
 	end
 end
 
+--- Issue #152: the picture of a crafting block, variation 1 + mask + 16 * state: the mask has a bit for each side (N 1, E 2,
+--- S 4, W 8, as SIDES) that touches a block of the same group (no frame there: the CPU reads as one slab), the state is 0
+--- for a group that is no CPU, 1 for a CPU, 2 for a CPU that runs a job. Nothing runs on a tick: a block that is built or
+--- removed paints itself and its neighbours, a change of the group's state (status or job) paints the whole group.
+local SIDE_BITS = { 1, 2, 4, 8 }
+
+local function group_state(g)
+	if g.status ~= "ok" then return 0 end
+	return g.job and 2 or 1
+end
+
+local function paint_block(s, b, state)
+	if not b.entity.valid then return end
+	local mask = 0
+	for i, d in ipairs(SIDES) do
+		local u = s.cgrid[grid_key(b.surface, b.x + d[1], b.y + d[2])]
+		local o = u and s.cblocks[u]
+		if o and o.group == b.group then mask = mask + SIDE_BITS[i] end
+	end
+	local v = 1 + mask + 16 * state
+	if b.entity.graphics_variation ~= v then b.entity.graphics_variation = v end
+end
+
+--- paint the whole group when its state is not the one it was painted in (`force`: whatever it was)
+local function repaint_group(s, g, force)
+	local state = group_state(g)
+	if g.pstate == state and not force then return end
+	g.pstate = state
+	for unit in pairs(g.blocks) do
+		local b = s.cblocks[unit]
+		if b then paint_block(s, b, state) end
+	end
+end
+
 local function group_changed(g)
+	local s = storage.fork_ae2
+	if s and s.groups and s.groups[g.id] == g and g.n > 0 then repaint_group(s, g) end    -- (a job started or ended: issue #152)
 	for _, hook in pairs(M.group_hooks) do hook(g) end
 end
 
---- status, pictures (dark: no CPU, lit: a CPU) and the job of a group whose blocks changed
+--- status, pictures and the job of a group whose blocks changed
 local function settle_group(s, g)
-	local was = g.status
 	local rect = g.n == (g.x2 - g.x1 + 1) * (g.y2 - g.y1 + 1)
 	g.status = not rect and "not-rectangle" or g.bytes <= 0 and "no-storage" or "ok"
-	if g.status ~= was then
-		local variation = g.status == "ok" and 2 or 1
-		for unit in pairs(g.blocks) do
-			local e = s.cblocks[unit].entity
-			if e.valid then e.graphics_variation = variation end
-		end
-	end
+	repaint_group(s, g)
 	local job = g.job and s.jobs[g.job]
 	if job and not (g.status == "ok" and g.bytes >= job_bytes(job)) then pause_group_job(s, g) end
 	group_changed(g)
@@ -1441,6 +1470,7 @@ local function add_block(s, entity)
 		local other = s.groups[ids[i]]
 		if other.job then jobs[#jobs + 1] = other.job end
 		pause_group_job(s, other)
+		g.pstate = nil                                  -- (issue #152: the blocks of the other group are painted again)
 		for u in pairs(other.blocks) do add_to_group(g, u, s.cblocks[u]) end
 		s.groups[other.id] = nil
 		group_changed(other)
@@ -1454,8 +1484,10 @@ local function add_block(s, entity)
 		end
 	end
 	add_to_group(g, unit, b)
-	entity.graphics_variation = g.status == "ok" and 2 or 1      -- (settle_group sets every block when the status changes)
 	settle_group(s, g)
+	local state = group_state(g)                         -- (settle_group paints the whole group when its state changed)
+	paint_block(s, b, state)
+	for _, u in ipairs(block_neighbours(s, b, g.id)) do paint_block(s, s.cblocks[u], state) end
 end
 
 --- a crafting block was removed (mined, destroyed, or vanished without an event): it leaves its group, which may split
@@ -1520,6 +1552,11 @@ local function remove_block(s, unit)
 	end
 	recount_group(s, g)
 	settle_group(s, g)
+	for _, u in ipairs(block_neighbours(s, b)) do        -- (issue #152: the sides that touched the removed block have a frame now)
+		local nb = s.cblocks[u]
+		local ng = nb and s.groups[nb.group]
+		if ng then paint_block(s, nb, group_state(ng)) end
+	end
 end
 
 --- the working network of a group (that of its blocks), nil when it has none or it does not work

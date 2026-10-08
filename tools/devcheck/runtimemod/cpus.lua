@@ -80,6 +80,27 @@ return function(H)
 		local function count(name) return remote.call(NET, "count", t, name) end
 		local function info(e) return e and e.valid and remote.call(AC, "group_info", e) or {} end
 		local function job(id) return remote.call(AC, "job", id) or {} end
+		--- issue #152: every crafting block of the scene shows the picture of its neighbours and its group: variation
+		--- 1 + mask (N 1, E 2, S 4, W 8: a crafting block on that side) + 16 * state (0 no CPU, 1 CPU, 2 CPU with a job)
+		local block_names = { "me-crafting-unit", "me-1k-crafting-storage", "me-4k-crafting-storage", "me-16k-crafting-storage",
+			"me-64k-crafting-storage", "me-256k-crafting-storage", "me-crafting-co-processing-unit", "me-crafting-monitor" }
+		local function check_pictures(tag)
+			local n = 0
+			for _, e in pairs(s.find_entities_filtered{ area = { { X - 1, Y - 3 }, { X + 60, Y + 6 } }, name = block_names }) do
+				local mask = 0
+				for bit, d in ipairs({ { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }) do
+					local o = s.find_entities_filtered{ position = { e.position.x + d[1], e.position.y + d[2] }, radius = 0.3, name = block_names }
+					if #o > 0 then mask = mask + 2 ^ (bit - 1) end
+				end
+				local gi = info(e)
+				local state = gi.status ~= "ok" and 0 or gi.job and 2 or 1
+				local want = 1 + mask + 16 * state
+				n = n + 1
+				expect(e.graphics_variation == want, tag .. ": " .. e.name .. " at " .. e.position.x .. "," .. e.position.y .. " shows "
+					.. e.graphics_variation .. ", expected " .. want .. " (mask " .. mask .. ", state " .. state .. ")")
+			end
+			expect(n >= 1, tag .. ": no crafting block found")
+		end
 		local function conserved(what)
 			local gears = count(GEAR)
 			expect(count("iron-plate") + gears == PLATES and count("iron-stick") + 2 * gears == STICKS,
@@ -92,13 +113,14 @@ return function(H)
 			local ia, ib = info(a), info(b1)
 			expect(ia.status == "ok" and ia.bytes == 1024 and ia.blocks == 1 and ia.speed == 1 and ia.network and ia.working,
 				"the smallest CPU: " .. line(ia))
-			expect(a.graphics_variation == 2, "a CPU's block shows the dark picture")
+			check_pictures("start")
+			expect(a.graphics_variation == 17, "a lone CPU block shows the lit picture with all four frames: " .. a.graphics_variation)
 			expect(ib.status == "ok" and ib.bytes == 5120 and ib.blocks == 6 and ib.width == 3 and ib.height == 2
 				and ib.coprocessors == 2 and ib.speed == 3 and ib.monitors == 1, "the rectangle of every block kind: " .. line(ib))
 			local ic, id = info(find("me-crafting-unit", 22, 1)), info(find("me-crafting-unit", 26, 0))
 			expect(ic.status == "not-rectangle" and ic.blocks == 3 and ic.bytes == 1024, "the L: " .. line(ic))
 			expect(id.status == "no-storage" and id.blocks == 2, "the units: " .. line(id))
-			expect(find("me-crafting-unit", 22, 1).graphics_variation == 1, "a block of no CPU shows the lit picture")
+			expect(find("me-crafting-unit", 22, 1).graphics_variation <= 16, "a block of no CPU shows a dark picture")
 			local n, free, powered, slots = remote.call(AC, "cpus", t)
 			expect(n == 2 and free == 2 and powered == 2 and slots == 2, "CPUs of the network (only A and B): " .. n .. " " .. free .. " " .. powered .. " " .. slots)
 			local plan = remote.call(AC, "plan", t, GEAR, 150)
@@ -165,6 +187,7 @@ return function(H)
 			expect(mon and mon.sprite == "item/" .. GEAR and mon.text == "20" and mon.job == jb, "the monitor: " .. line(mon))
 			local pv = remote.call(TERM, "craft_preview", t, GEAR, 5)
 			expect(not pv.ok and pv.reason == "no-free-cpu", "preview while both CPUs run: " .. line({ pv.reason }))
+			check_pictures("two jobs running")
 			st.ja, st.jb, st.phase, st.tick = ja, jb, "two", game.tick
 			return
 		end
@@ -191,6 +214,7 @@ return function(H)
 			expect(script.active_mods["gregtorio-continued"] or (st.mon_counted or 0) >= 1, "the monitor was never looked at while the job was part done")
 			expect(count(GEAR) == 30, "gears after the two jobs: " .. count(GEAR))
 			conserved("after the two jobs")
+			check_pictures("after the two jobs")
 			--- a job that only B can take (300 gears: 1524 bytes)
 			local jf, why = remote.call(AC, "start", t, GEAR, 300)
 			expect(jf and job(jf).group == info(b1).id, "the big job is not on B: " .. tostring(why))
@@ -211,10 +235,12 @@ return function(H)
 			expect(ib.status == "not-rectangle" and ib.blocks == 5, "B without a corner: " .. line(ib))
 			xf = job(st.jf)
 			expect(xf.status == "queued" and not xf.group, "the job did not pause: " .. line({ xf.status, xf.group }))
+			check_pictures("B without a corner")
 			--- the column completed away: the rest is a 2x2 CPU with 5120 bytes, the job goes on there
 			find("me-crafting-monitor", 18, 1).destroy{ raise_destroy = true }
 			ib = info(b1)
 			expect(ib.status == "ok" and ib.blocks == 4 and ib.bytes == 5120 and ib.monitors == 0, "the rest of B: " .. line(ib))
+			check_pictures("the rest of B")
 			st.phase, st.tick = "paused", game.tick
 			return
 		end
@@ -243,6 +269,7 @@ return function(H)
 			me_place(s, problems, "rebuild", "me-crafting-monitor", X + 18.5, Y + 1.5)
 			local ib = info(b1)
 			expect(ib.status == "ok" and ib.blocks == 6 and ib.bytes == 5120 and ib.monitors == 1, "B rebuilt: " .. line(ib))
+			check_pictures("B rebuilt")
 			local originals = {}
 			for _, b in ipairs(B) do originals[#originals + 1] = find(b[1], b[2], b[3]) end
 			s.clone_entities{ entities = originals, destination_offset = { 30, 0 } }
