@@ -58,7 +58,7 @@ local REREAD = 5                    -- ticks until a bus whose inventory was emp
 local MAX_FILTERS = 18              -- the filters without a Capacity Card (AE2's 18)
 local FILTER_LIMIT = 63             -- with five Capacity Cards (AE2: 18 + 5 x 9): what a bus keeps
 local MAX_PRIORITY = 1000
-local TAG = "fork_me_storage_bus"   -- blueprint tag: { mode, priority, filters = { keys }, extract, cards = { names } }
+local TAG = "fork_me_storage_bus"   -- blueprint tag: { mode, priority, filters = { keys }, extract, blacklist, cards = { names } }
 local OLD_TAG = "fork_me_fluid_storage_bus"   -- the old ME Fluid Storage Bus's tag: { mode, priority, filters = { fluid names } }
 local MODES = { readwrite = true, read = true, write = true }
 local INVENTORY = T.STORAGE
@@ -564,7 +564,7 @@ local function filter_count(rec)
 end
 
 --- The fields the storage engine reads, from the filters, the cards and the settings: `partition` (whitelist) or
---- `deny` (blacklist, Inverter Card) of the first filter_count() filters, `fnames` (Fuzzy Card: the item names),
+--- `deny` (blacklist: the setting `blacklist`, or an Inverter Card) of the first filter_count() filters, `fnames` (Fuzzy Card: the item names),
 --- `void` (Overflow Destruction Card), `inonly` (filter only what goes in). A bus without cards and with the default
 --- settings gets exactly the fields of 0.3.0.
 function apply(rec)
@@ -580,7 +580,8 @@ function apply(rec)
 			names[(N.parse_key(key))] = true
 		end
 	end
-	if counts.inverter then rec.partition, rec.deny = nil, set else rec.partition, rec.deny = set, nil end
+	--- issue #155: the filter mode is a setting of the bus (rec.blacklist); an Inverter Card makes the blacklist too
+	if counts.inverter or rec.blacklist then rec.partition, rec.deny = nil, set else rec.partition, rec.deny = set, nil end
 	rec.fnames = names
 	rec.void = counts.void and true or nil
 	rec.inonly = rec.extract == false or nil
@@ -625,13 +626,15 @@ local function clean_filters(filters)
 end
 
 --- the settings of a bus: { mode, priority, filters = { keys }, extract = false (only when the filters decide only
---- what goes in), cards = { names } (the cards it has, or waits for; only when there are any) }
+--- what goes in), blacklist = true (only when the filters are a blacklist by the switch of issue #155, not by a card),
+--- cards = { names } (the cards it has, or waits for; only when there are any) }
 function M.get_settings(entity)
 	local rec = rec_of(entity)
 	if not rec then return nil end
 	local out = { mode = rec.mode, priority = rec.priority or 0, filters = { table.unpack(rec.filters) },
 		cards = rec.want and { table.unpack(rec.want) } or card_list(rec) }
 	if rec.extract == false then out.extract = false end
+	if rec.blacklist then out.blacklist = true end
 	return out
 end
 
@@ -647,6 +650,7 @@ function M.set_settings(entity, settings)
 	end
 	if settings.filters ~= nil then rec.filters = clean_filters(settings.filters) end
 	if settings.extract == false then rec.extract = false elseif settings.extract ~= nil then rec.extract = nil end
+	if settings.blacklist == true then rec.blacklist = true elseif settings.blacklist ~= nil then rec.blacklist = nil end
 	rec.hidden = rec.mode == "write" or nil
 	apply(rec)
 	M.visit(rec)
@@ -716,7 +720,7 @@ end
 
 --- the window's data: { side, mode, priority, filters, max, status, target, items, types, contents; on fluid also
 --- fluid, amount, temperature, segment; issue #17: cards = { [slot] = name }, slots, want (the cards it waits for),
---- extract, inverted, fuzzy, void, voided (amount destroyed so far) }
+--- extract, inverted (an Inverter Card), blacklist (the switch of issue #155), fuzzy, void, voided (amount destroyed so far) }
 function M.info(entity)
 	local rec = rec_of(entity)
 	if not rec then return nil end
@@ -734,6 +738,7 @@ function M.info(entity)
 		target = t and t.valid and t.name or nil, items = items, types = types, contents = rec.items,
 		cards = cards, slots = rules().slots, want = rec.want and missing_cards(rec, rec.want) or nil,
 		extract = rec.extract ~= false, inverted = counts.inverter ~= nil, fuzzy = counts.fuzzy ~= nil,
+		blacklist = rec.blacklist == true,
 		void = rec.void == true, voided = rec.voided or 0 }
 	if rec.side == "fluid" then
 		out.fluid, out.amount, out.temperature, out.segment = rec.fluid, items, rec.temp, rec.seg
@@ -835,6 +840,7 @@ function M.on_entity_settings_pasted(event)
 	if not (is_bus(src) and is_bus(dst)) then return end
 	local st = M.get_settings(src)
 	if st.extract == nil then st.extract = true end
+	if st.blacklist == nil then st.blacklist = false end
 	M.set_settings(dst, st)
 	M.want_cards(dst, st.cards or {}, event.player_index and game.get_player(event.player_index) or nil)
 end
@@ -844,7 +850,7 @@ function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
 		if is_bus(entity) then
 			local st = M.get_settings(entity)
-			if st and (st.mode ~= "readwrite" or st.priority ~= 0 or #st.filters > 0 or st.extract == false or st.cards) then
+			if st and (st.mode ~= "readwrite" or st.priority ~= 0 or #st.filters > 0 or st.extract == false or st.blacklist or st.cards) then
 				bp.set_blueprint_entity_tag(index, TAG, st)
 			end
 		end
@@ -873,7 +879,7 @@ function M.on_configuration_changed()
 		rec.target, rec.target_unit, rec.dir, rec.box, rec.seg = nil, nil, nil, nil, nil
 		rec.filters = clean_filters(rec.filters)          -- (a save before issue #3 had item keys only: unchanged)
 		inv_of(rec)                                       -- issue #28: the card names of an older save become the slots' cards
-		if rec.cards or rec.extract == false then apply(rec) end   -- (no cards before issue #17: the fields stay)
+		if rec.cards or rec.extract == false or rec.blacklist then apply(rec) end   -- (no cards before issue #17: the fields stay)
 	end
 	for _, e in ipairs(all) do M.visit(N.ext_get(e.unit_number)) end
 end
