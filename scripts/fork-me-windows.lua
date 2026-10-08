@@ -1287,6 +1287,12 @@ interface_window.shift = function(entity, stack, inv)
 	return store_into_network(entity, stack, inv)
 end
 interface_window.click = function(entity, slot, cursor, inv, shift) return io.interface_card_click(entity, slot, cursor, inv, shift) end
+--- the reasons of a refused card are the windows' own (fork-me-gui.refused-*; the network module has no text for them)
+local store_message = interface_window.message
+interface_window.message = function(why)
+	if why == "not-here" or why == "limit" or why == "full" then return { "fork-me-gui.refused-" .. why } end
+	return store_message(why)
+end
 G.window("interface", interface_window)
 
 G.on("if_item", function(event, player, el)
