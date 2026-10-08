@@ -1103,6 +1103,33 @@ local function key_icon(key)
 	return "[item=" .. name .. "]"
 end
 
+--- Issue #147 (the maintainer's comment): the icon of a key with its name behind it, [item=iron-plate] Iron plate; an item
+--- of another quality names the quality, a fluid of a temperature the degrees. A LocalisedString.
+local function key_label(key)
+	local fluid = is_fluid_key(key)
+	local name, q, deg
+	if fluid then name, deg = split_fluid_key(key) else name, q = parse_key(key) end
+	local proto = (fluid and prototypes.fluid or prototypes.item)[name]
+	local label = { "", key_icon(key), " ", proto and proto.localised_name or name }
+	if q and q ~= "normal" then label[#label + 1] = { "", " (", { "quality-name." .. q }, ")" } end
+	if deg then label[#label + 1] = " (" .. deg .. "°C)" end
+	return label
+end
+
+--- the labels of `keys` (at most `n`) one per line, as one LocalisedString, each line after a newline
+local function key_lines(keys, n, amounts)
+	local out = { "" }
+	for i = 1, math.min(n, #keys) do
+		local key = keys[i]
+		out[#out + 1] = "\n"
+		if amounts then
+			out[#out + 1] = (is_fluid_key(key) and amount_text(amounts[key]) or tostring(amounts[key])) .. " "
+		end
+		out[#out + 1] = key_label(key)
+	end
+	return out
+end
+
 --- What a cell's cards make of its partition, as the modes the windows and the item tooltip name (`kind`: "inverted",
 --- "fuzzy", "equal", "void"; `c`: the fields of drive_info or cell_flags): one localised sentence, or nil. The
 --- window joins them into one line (cell_mode_caption), the tooltip puts them on lines of their own.
@@ -1208,6 +1235,7 @@ M.cell_stack = cell_stack
 --- Lines that do not apply are left out. The sentences of 4 are one nested concatenation, so the outer one stays far
 --- below the engine's 20 parameters (the drive window adds its click hints after it).
 local TIP_HOLDS = 5
+local TIP_NAMES = 6                       -- (partition entries with their names, one per line: fewer than the icons of the item tooltip)
 
 local function drive_cell(drive, slot)
 	local s = storage.fork_me_net
@@ -1229,10 +1257,9 @@ function M.drive_cell_tooltip(drive, slot)
 	local plist = cell.partition or cell.deny
 	local flags = cell_flags(cell)
 	if plist then
-		local sorted, icons = M.cell_keys(cell), {}
-		for i = 1, math.min(TIP_KEYS, #sorted) do icons[i] = key_icon(sorted[i]) end
-		lines[#lines + 1] = #sorted > TIP_KEYS and { "fork-me-net.cell-tip-partition-more", table.concat(icons, " "), #sorted - TIP_KEYS }
-			or { "fork-me-net.cell-tip-partition", table.concat(icons, " ") }
+		local sorted = M.cell_keys(cell)
+		lines[#lines + 1] = #sorted > TIP_NAMES and { "fork-me-gui.cell-tip-partition-list-more", key_lines(sorted, TIP_NAMES), #sorted - TIP_NAMES }
+			or { "fork-me-gui.cell-tip-partition-list", key_lines(sorted, TIP_NAMES) }
 	end
 	local mode = { "" }
 	local function add(text)
@@ -1258,13 +1285,9 @@ function M.drive_cell_tooltip(drive, slot)
 			if cell.items[a] ~= cell.items[b] then return cell.items[a] > cell.items[b] end
 			return a < b
 		end)
-		local list = {}
-		for i = 1, math.min(TIP_HOLDS, #keys) do
-			local key = keys[i]
-			list[i] = (is_fluid_key(key) and amount_text(cell.items[key]) or tostring(cell.items[key])) .. " " .. key_icon(key)
-		end
-		lines[#lines + 1] = #keys > TIP_HOLDS and { "fork-me-gui.cell-tip-holds-more", table.concat(list, ", "), #keys - TIP_HOLDS }
-			or { "fork-me-gui.cell-tip-holds", table.concat(list, ", ") }
+		local list = key_lines(keys, TIP_HOLDS, cell.items)
+		lines[#lines + 1] = #keys > TIP_HOLDS and { "fork-me-gui.cell-tip-holds-more", list, #keys - TIP_HOLDS }
+			or { "fork-me-gui.cell-tip-holds", list }
 	end
 	local tip = { "" }
 	for i, l in ipairs(lines) do

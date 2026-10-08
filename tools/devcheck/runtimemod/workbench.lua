@@ -1063,17 +1063,29 @@ return function(H)
 		if l and #l == 5 then
 			expect(l[1][1] == "fork-me-gui.cell-tip-head", "head " .. line(l[1]))
 			expect(l[2][1] == "fork-me-gui.cell-fill" and tostring(l[2][4]) == "7", "fill " .. line(l[2]))
-			expect(line(l[3]) == line({ "fork-me-net.cell-tip-partition", "[item=copper-plate] [item=iron-plate]" }), "partition " .. line(l[3]))
+			--- issue #147: one line per key, the icon and the name behind it (copper before iron)
+			local pl = line(l[3])
+			local cu, fe = pl:find("[item=copper-plate]", 1, true), pl:find("[item=iron-plate]", 1, true)
+			expect(l[3][1] == "fork-me-gui.cell-tip-partition-list" and cu and fe and cu < fe and pl:find("item-name.copper-plate", 1, true)
+				and pl:find("item-name.iron-plate", 1, true), "partition " .. pl)
 			local mode = parts(l[4])
 			expect(mode and #mode == 2 and line(mode[1]) == line({ "fork-me-gui.cell-mode-blacklist" })
 				and line(mode[2]) == line({ "fork-me-net.cell-tip-cards", "[item=" .. CARD.inverter .. "]" }), "mode and cards " .. line(l[4]))
-			expect(l[5][1] == "fork-me-gui.cell-tip-holds-more" and l[5][2] == "100 [item=iron-plate], 70 [item=copper-plate], 50 [item=steel-plate], "
-				.. "40 [item=stone], 30 [item=coal]" and tostring(l[5][3]) == "2", "holds " .. line(l[5]))
+			local hl = line(l[5])
+			local order = { '"100 ", {"", "[item=iron-plate]"', '"70 ", {"", "[item=copper-plate]"', '"50 ", {"", "[item=steel-plate]"', '"40 ", {"", "[item=stone]"', '"30 ", {"", "[item=coal]"' }
+			local last, ordered = 0, true
+			for _, o in ipairs(order) do
+				local at = hl:find(o, 1, true)
+				if not at or at < last then ordered = false end
+				last = at or last
+			end
+			expect(l[5][1] == "fork-me-gui.cell-tip-holds-more" and ordered and hl:find("item-name.iron-plate", 1, true)
+				and hl:find("item-name.coal", 1, true) and tostring(l[5][3]) == "2", "holds " .. hl)
 		end
 		--- the fluid cell: the fluid head, the fill, no partition or mode, the water it holds
 		local _, f = tip_lines(2)
 		expect(f and #f == 3 and f[1][1] == "fork-me-gui.cell-tip-head-fluid" and f[3][1] == "fork-me-gui.cell-tip-holds"
-			and tostring(f[3][2]):find("250 [fluid=water]", 1, true), "the fluid cell " .. line(f))
+			and line(f[3]):find('"250 ", {"", "[fluid=water]"', 1, true) and line(f[3]):find("fluid-name.water", 1, true), "the fluid cell " .. line(f))
 		--- an empty slot: the empty slot's tooltip
 		expect(line(remote.call(GUI, "drive_cell_tooltip", drive, 3)) == line({ "fork-me-net.drive-slot-empty" }), "an empty slot")
 		--- the window's signature follows the contents, and stays when nothing changed
