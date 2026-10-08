@@ -776,8 +776,15 @@ local function open_provider(player, entity)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.provider-priority-tooltip" } }
 	G.number_field(row, autocraft.get_priority(entity), G.act("prov_priority"), 70, true).tooltip = { "fork-me-gui.provider-priority-tooltip" }
-	G.heading(content, { "fork-me-gui.provider-patterns" })
-	content.add{ type = "flow", name = "fork_me_provider_slots", direction = "vertical" }
+	--- issue #156: the card slots (only the Pattern Capacity Card fits), then the patterns: "n of m", a list that scrolls
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.provider-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_prov_cards", direction = "horizontal" }
+	G.label(content, "", WIDTH, nil, "fork_me_prov_want")
+	G.label(content, "", WIDTH, "caption_label", "fork_me_provider_count")
+	local scroll = content.add{ type = "scroll-pane", name = "fork_me_provider_scroll", horizontal_scroll_policy = "never" }
+	scroll.style.maximal_height = 380
+	scroll.add{ type = "flow", name = "fork_me_provider_slots", direction = "vertical" }
 	content.add{ type = "line" }
 	G.heading(content, { "fork-me-gui.provider-machines" })
 	content.add{ type = "flow", name = "fork_me_provider_machines", direction = "vertical" }
@@ -789,6 +796,14 @@ function M.refresh_provider(player, frame)
 	local entity = G.entity_of(player, frame)
 	if not entity then return false end
 	local slots_sig, machines_sig = provider_sig(entity)
+	local pinfo = M.provider_data(entity)
+	block_slots(frame, "fork_me_prov_cards", autocraft.provider_inventory(entity), 1, pinfo.card_slots, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end)
+	local want = {}
+	for _, name in ipairs(pinfo.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
+	G.find(frame, "fork_me_prov_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
+	G.find(frame, "fork_me_provider_count").caption = { "fork-me-gui.provider-count", pinfo.filled, pinfo.slot_count }
 	rebuild(frame, "fork_me_provider_slots", slots_sig, function(box) build_provider_slots(box, entity) end)
 	rebuild(frame, "fork_me_provider_machines", machines_sig, function(box) build_provider_machines(box, entity) end)
 	local info = M.provider_data(entity)
@@ -796,11 +811,19 @@ function M.refresh_provider(player, frame)
 	return true
 end
 
+--- the reasons of a refused card are the windows' own (fork-me-gui.refused-*), the others the network module's
+local PROVIDER_CARD_REASONS = { ["not-here"] = true, limit = true, full = true, ["patterns-above"] = true }
 G.window("provider", { open = open_provider, refresh = M.refresh_provider, entities = { "provider" },
-	shift = function(entity, stack)                    -- an encoded pattern into the first free slot
+	shift = function(entity, stack)                    -- an encoded pattern into the first free slot, a card into a card slot (issue #156)
+		if stack.valid_for_read and N.card_kind(stack.name) then return autocraft.provider_shift_in(entity, stack) end
 		local _, why = autocraft.insert_pattern(entity, stack)
 		return why
-	end, message = G.net_message })
+	end,
+	click = function(entity, slot, cursor, inv, shift) return autocraft.provider_card_click(entity, slot, cursor, inv, shift) end,
+	message = function(why)
+		if PROVIDER_CARD_REASONS[why] then return { "fork-me-gui.refused-" .. why } end
+		return G.net_message(why)
+	end })
 
 G.on("prov_slot", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end

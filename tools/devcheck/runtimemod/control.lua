@@ -783,6 +783,9 @@ remoteview176 = require("remoteview")({ me_place = me_place, power = power, me_r
 --- me-network issue #155: the storage bus's filter mode (sbusmode.lua)
 sbusmode155 = require("sbusmode")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #156: the ME Pattern Capacity Card (patterncap.lua)
+patterncap156 = require("patterncap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
@@ -850,6 +853,7 @@ local function tests_running()
 	providers158.running(check)
 	pastecraft157.running(check)
 	buffer150.running(check)
+	patterncap156.running(check)
 	sbusmode155.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
@@ -1765,6 +1769,7 @@ script.on_nth_tick(10, function()
 	providers158.tick()
 	pastecraft157.tick()
 	buffer150.tick()
+	patterncap156.tick()
 	sbusmode155.tick()
 	remoteview176.tick()
 	graph43.tick()
@@ -4623,6 +4628,7 @@ script.on_init(function()
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(patterncap156.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end

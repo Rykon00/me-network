@@ -27,7 +27,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
-| ME Pattern Provider | holds 9 encoded patterns; the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
+| ME Pattern Provider | holds 9 encoded patterns (up to 36 with Pattern Capacity Cards); the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
 | ME Pattern Terminal | 1x1, no pole needed (the controller draws its 8 kW), can be walked over: encodes patterns (this page, **Patterns: encoding and clearing**); two slots, one for blank patterns and one for the encoded pattern |
 | Blank / Encoded Pattern | a blank pattern is encoded in an ME Pattern Terminal into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
 | ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
@@ -222,7 +222,7 @@ click uses the tool and opens no window, as on a chest.
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, the power in W, kW or MW and where it goes (issue #149: a line per kind of block with the number of blocks, the power in all and of one, biggest first, the controller's base draw as the first line; the lines add up to the total), and a line when the controller's power buffer is not full (its electric network delivers less than the network asks for) |
-| ME Pattern Provider | 9 pattern slots (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
+| ME Pattern Provider | 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
@@ -417,6 +417,7 @@ card is made from a component card and one item:
 | Basic Card (2 per craft) | 2 iron plates, 2 copper cables, an electronic circuit, an advanced circuit | | component |
 | Advanced Card (2 per craft) | 2 iron plates, a processing unit, an electronic circuit, an advanced circuit | | component |
 | Capacity Card | basic card + iron chest | storage bus, up to 5 | 9 more filters each (18 + 9 per card, up to 63) |
+| Pattern Capacity Card | advanced card + capacity card | ME Pattern Provider, up to 3 | 9 more pattern slots each (9 + 9 per card, up to 36); fits nowhere else, and the Capacity Card does not fit the provider (AE2-Unofficial's Pattern Capacity Card) |
 | Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
@@ -563,7 +564,7 @@ Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks:
 | **ME Pattern Terminal** | 1x1 block that encodes patterns (it was the Patterns tab of the ME Terminal): ME Terminal + blank pattern + processing unit + 2 fluix cable |
 | **ME Blank Pattern** | cheap item (LV assembler: 2 glass, certus quartz, aluminium plate, fluix cable). Encoded in an **ME Pattern Terminal** |
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
-| **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns**; each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
+| **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns** (**Pattern Capacity Cards** in its three card slots add 9 each, up to 36); each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
 | **ME Molecular Assembler** | **1x1** (one tile, like AE2's block) assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW, five module slots for Acceleration Cards. Up to three of them fit around one provider (its fourth side joins the network) |
 | **Crafting blocks** | 1x1 members of the network; a solid rectangle of them with at least one **crafting storage** is a Crafting CPU running one job (see [Crafting CPUs](#crafting-cpus)). The first: a single **ME 1k Crafting Storage** |
 
@@ -862,7 +863,7 @@ largest amounts first).
 
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
-| ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network) | yes (priority) | yes (patterns pending a blank pattern); clone: priority |
+| ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network) | yes (priority, cards) | yes (patterns pending a blank pattern, cards); clone: priority, cards |
 | ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority | yes | yes (old blueprints with slot filters are converted) |
 | ME Import Bus, ME Export Bus | filters (items and fluids); which Acceleration Cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
