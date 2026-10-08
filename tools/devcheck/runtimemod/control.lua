@@ -780,6 +780,9 @@ buffer150 = require("buffer150")({ me_place = me_place, power = power, me_report
 --- me-network issues #176 and #177: ME windows in remote view (remoteview.lua)
 remoteview176 = require("remoteview")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #155: the storage bus's filter mode (sbusmode.lua)
+sbusmode155 = require("sbusmode")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
@@ -847,6 +850,7 @@ local function tests_running()
 	providers158.running(check)
 	pastecraft157.running(check)
 	buffer150.running(check)
+	sbusmode155.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
 	return running
@@ -1761,6 +1765,7 @@ script.on_nth_tick(10, function()
 	providers158.tick()
 	pastecraft157.tick()
 	buffer150.tick()
+	sbusmode155.tick()
 	remoteview176.tick()
 	graph43.tick()
 	done_test()
@@ -4618,6 +4623,7 @@ script.on_init(function()
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")

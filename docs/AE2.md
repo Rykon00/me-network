@@ -228,7 +228,7 @@ click uses the tool and opens no window, as on a chest.
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids), the entity it faces and whether the bus uses its items, fluids or both, status |
-| ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; a blacklist with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
+| ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
 the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
@@ -326,6 +326,11 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
   shows and stores only those; without filters everything the network can store (a bus with only fluid filters takes
   no item). With an **Inverter Card** the filters are a **blacklist**: everything except them; with a **Fuzzy Card** a
   filter matches its item in **every quality**.
+* **Filter mode** (issue #155, a drop-down): **Whitelist** (only the filters) or **Blacklist** (everything except the
+  filters). It is a setting of the bus, kept in blueprints, settings paste and clones; a bus that never had it is a
+  whitelist. With an **Inverter Card** in it the mode shows "Blacklist (Inverter Card)" and cannot be changed; without
+  the card you switch freely (the choice you made returns when the card is taken out). With no filters the bus handles
+  everything in either mode. A line under it says whether the **Fuzzy Card** makes a filter match every quality.
 * **Filter on extract** (a check box, on by default, AE2's setting of the same name): on, the filters decide what goes
   in and what the network sees and takes; off, they decide only what goes in, and the network sees and takes everything
   in the chest it can hold (an input chest that also takes back what a machine left in it).

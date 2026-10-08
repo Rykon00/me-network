@@ -1406,6 +1406,12 @@ local function open_storage_bus(player, entity)
 		if mode == d.mode then index = i end
 	end
 	row.add{ type = "drop-down", items = items, selected_index = index, tags = G.act("sbus_mode") }
+	--- issue #155: the filter mode (an Inverter Card makes the blacklist and fixes the drop-down), and what the Fuzzy Card does
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.storage-bus-filtermode" }, tooltip = { "fork-me-gui.storage-bus-filtermode-tooltip" } }
+	row.add{ type = "drop-down", name = "fork_me_sbus_filtermode", items = {}, tags = G.act("sbus_filtermode"),
+		tooltip = { "fork-me-gui.storage-bus-filtermode-tooltip" } }
+	G.label(content, "", WIDTH, nil, "fork_me_sbus_fuzzy")
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.storage-bus-priority-tooltip" } }
 	G.number_field(row, d.priority, G.act("sbus_priority"), 70, true).tooltip = { "fork-me-gui.storage-bus-priority-tooltip" }
@@ -1448,6 +1454,18 @@ function M.refresh_storage_bus(player, frame)
 	G.find(frame, "fork_me_sbus_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_sbus_void").caption = d.void and { "fork-me-gui.storage-bus-void", G.fmt(d.voided) } or ""
 	G.find(frame, "fork_me_sbus_extract").state = d.extract
+	--- the filter mode drop-down: whitelist / blacklist; with an Inverter Card the second entry says so and it cannot be changed
+	local fm = G.find(frame, "fork_me_sbus_filtermode")
+	local carded = d.inverted and true or false
+	if fm.tags.carded ~= carded then
+		fm.items = { { "fork-me-gui.storage-bus-filtermode-whitelist" },
+			{ "fork-me-gui.storage-bus-filtermode-blacklist" .. (carded and "-card" or "") } }
+		fm.tags = { fork_me_act = "sbus_filtermode", carded = carded }
+	end
+	fm.selected_index = (carded or d.blacklist) and 2 or 1
+	fm.enabled = not carded
+	G.find(frame, "fork_me_sbus_fuzzy").caption = d.side == "fluid" and ""
+		or { d.fuzzy and "fork-me-gui.storage-bus-fuzzy-on" or "fork-me-gui.storage-bus-fuzzy-off" }
 	G.find(frame, "fork_me_sbus_filters_caption").caption = { "fork-me-gui.storage-bus-filters" .. (d.inverted and "-blacklist" or ""),
 		d.max, d.fuzzy and { "fork-me-gui.storage-bus-fuzzy" } or "" }
 	local holds
@@ -1475,6 +1493,12 @@ G.on("sbus_mode", function(event, player, el)
 	if event.name ~= defines.events.on_gui_selection_state_changed then return end
 	local entity = window_entity(player)
 	if entity then sbus.set_mode(entity, SBUS_MODES[el.selected_index] or "readwrite") G.refresh_one(player) end
+end)
+
+G.on("sbus_filtermode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = window_entity(player)
+	if entity then sbus.set_settings(entity, { blacklist = el.selected_index == 2 }) G.refresh_one(player) end
 end)
 
 G.on("sbus_priority", function(event, player, el)
