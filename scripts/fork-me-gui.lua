@@ -74,6 +74,16 @@ function M.fmt(n)
 	return (neg and "-" or "") .. out
 end
 
+--- a power in W as the game writes it: "950 W", "124 kW", "1.9 MW" (issue #149)
+function M.fmt_power(w)
+	w = tonumber(w) or 0
+	local units = { "W", "kW", "MW", "GW", "TW" }
+	local i = 1
+	while w >= 1000 and i < #units do w = w / 1000 i = i + 1 end
+	local text = w == math.floor(w) and string.format("%d", w) or string.format("%.1f", w)
+	return text .. " " .. units[i]
+end
+
 --------------------------------------------------------------------------------
 --- building blocks
 --------------------------------------------------------------------------------
