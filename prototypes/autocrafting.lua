@@ -206,6 +206,15 @@ local BLOCKS = {
 data:extend({ { type = "item-subgroup", name = "fork-me-crafting-cpu", group = data.raw["item-subgroup"]["fork-me-network"].group,
 	order = "b-me-c" } })
 
+--- the 48 pictures of a crafting block's sheet (see the entity below)
+local function crafting_pictures(name)
+	local pictures = {}
+	for i = 0, 47 do
+		pictures[i + 1] = { filename = ENTITY_PATH .. name .. ".png", priority = "high", width = 32, height = 32, x = 32 * i }
+	end
+	return pictures
+end
+
 local block_data, block_tech = {}, {}
 for _, b in ipairs(BLOCKS) do
 	local ingredients = b.ingredients or I{ "me-crafting-unit", 1, b.component, 1 }
@@ -235,11 +244,10 @@ for _, b in ipairs(BLOCKS) do
 		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
 		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 		fast_replaceable_group = "me-crafting-block",
-		--- the sheet holds the dark and the lit picture side by side (tools/gen_ae2_sprites.py --crafting-cpu)
-		pictures = {
-			{ filename = ENTITY_PATH .. b.name .. ".png", priority = "high", width = 32, height = 32, x = 0 },
-			{ filename = ENTITY_PATH .. b.name .. ".png", priority = "high", width = 32, height = 32, x = 32 },
-		},
+		--- issue #152: the sheet holds 48 pictures side by side (tools/gen_ae2_sprites.py --crafting-cpu): variation
+		--- 1 + mask + 16 * state, mask = N 1 + E 2 + S 4 + W 8 for the sides that touch another block of the same CPU
+		--- (no frame there), state 0 = a group that is no CPU (dark), 1 = a CPU (lit), 2 = a CPU that runs a job
+		pictures = crafting_pictures(b.name),
 		localised_description = description,
 	} })
 	block_data[b.name] = { bytes = b.bytes, coprocessors = b.coprocessors or 0, monitor = b.monitor or false, power = b.power }
