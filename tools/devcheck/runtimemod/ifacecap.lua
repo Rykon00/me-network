@@ -80,6 +80,24 @@ return function(H)
 		expect(put(a, CARD, 2) == nil and put(a, CARD, 3) == nil and data(a).config[36] and not data(a).kept,
 			"the cards back, row 36 is active again")
 
+		--- issue #201: a plain click (the hand is the cursor) takes a card out into the hand: one card moves, none is made
+		local function cards_everywhere()
+			local n = back.get_item_count(CARD) + (hand.valid_for_read and hand.name == CARD and hand.count or 0)
+			local slots = remote.call(IO, "interface_inventory", a)
+			for i = 1, #slots do if slots[i].valid_for_read and slots[i].name == CARD then n = n + slots[i].count end end
+			return n
+		end
+		local total = cards_everywhere()
+		hand.clear()
+		local why_plain = remote.call(IO, "interface_card_click", a, 3, hand, back, false)
+		expect(why_plain == nil and hand.valid_for_read and hand.name == CARD and hand.count == 1 and data(a).slots == 27,
+			"a plain click takes the card into the hand: " .. tostring(why_plain) .. ", " .. data(a).slots .. " rows")
+		expect(cards_everywhere() == total, "no card was made or lost by the plain click: " .. total .. " -> " .. cards_everywhere())
+		--- and puts it back with the hand
+		expect(remote.call(IO, "interface_card_click", a, 3, hand, back, false) == nil and not hand.valid_for_read and data(a).slots == 36,
+			"the card back from the hand")
+		expect(cards_everywhere() == total, "still the same number of cards: " .. cards_everywhere())
+
 		--- a settings paste from an interface with cards onto a bare one: the cards come from the network, and the rows
 		remote.call(NET, "insert", t, CARD, 10)
 		local before = count(CARD)
