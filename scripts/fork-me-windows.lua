@@ -825,15 +825,36 @@ end)
 
 function M.crafting_cpu_data(entity) return autocraft.group_info(entity) end
 
+--- the window's title (issue #151): the Crafting CPU's name, the same whichever block of it was clicked; a group that is no
+--- CPU is "Crafting blocks"
+function M.crafting_cpu_title(d)
+	if d and d.status == "ok" then return { "fork-me-gui.ccpu-title", d.id } end
+	return { "fork-me-gui.ccpu-title-none" }
+end
+
+--- the value labels of the facts table, by name
+local CCPU_FACTS = { "size", "storage", "coprocessors", "monitors" }
+
 local function open_crafting_cpu(player, entity)
-	local _, content = G.open_window(player, "crafting-cpu", caption_of(entity), { unit = entity.unit_number })
-	G.label(content, "", WIDTH, nil, "fork_me_ccpu_status")
-	G.label(content, "", WIDTH, nil, "fork_me_ccpu_info")
+	local d = M.crafting_cpu_data(entity)
+	local _, content = G.open_window(player, "crafting-cpu", M.crafting_cpu_title(d), { unit = entity.unit_number })
+	G.label(content, "", WIDTH, nil, "fork_me_ccpu_status").tooltip = { "fork-me-gui.ccpu-help" }
+	local why = G.label(content, "", WIDTH, nil, "fork_me_ccpu_why")
+	why.visible = false
+	local facts = content.add{ type = "table", name = "fork_me_ccpu_facts", column_count = 2 }
+	facts.style.horizontally_stretchable = true
+	facts.style.column_alignments[2] = "right"
+	for _, key in ipairs(CCPU_FACTS) do
+		facts.add{ type = "label", caption = { "fork-me-gui.ccpu-" .. key } }
+		local v = facts.add{ type = "label", name = "fork_me_ccpu_" .. key }
+		v.style.horizontally_stretchable = true
+		v.style.horizontal_align = "right"
+	end
 	local bar = content.add{ type = "progressbar", name = "fork_me_ccpu_bar", value = 0 }
 	bar.style.horizontally_stretchable = true
+	content.add{ type = "flow", name = "fork_me_ccpu_parts", direction = "horizontal" }
 	G.heading(content, { "fork-me-gui.ccpu-job" })
 	content.add{ type = "table", name = "fork_me_ccpu_job", column_count = 5 }
-	G.label(content, { "fork-me-gui.ccpu-help" }, WIDTH)
 	M.refresh_crafting_cpu(player, G.window_of(player))
 end
 
@@ -842,21 +863,43 @@ function M.refresh_crafting_cpu(player, frame)
 	if not entity then return false end
 	local d = M.crafting_cpu_data(entity)
 	if not d then return false end
-	local status
+	--- the title follows the group (a block added or removed can change its number or make it a CPU)
+	local title = frame.children[1] and frame.children[1].children[1]
+	if title and title.type == "label" then title.caption = M.crafting_cpu_title(d) end
+	local status, why
 	if d.status == "not-rectangle" then
-		status = { "fork-me-gui.ccpu-not-rectangle", d.blocks, d.width, d.height }
+		status, why = "not-cpu", { "fork-me-gui.ccpu-not-rectangle", d.blocks, d.width, d.height }
 	elseif d.status == "no-storage" then
-		status = { "fork-me-gui.ccpu-no-storage" }
+		status, why = "not-cpu", { "fork-me-gui.ccpu-no-storage" }
 	elseif not d.network then
-		status = { "fork-me-net.status-no-network" }
+		status, why = "no-network", { "fork-me-net.status-no-network" }
 	elseif not d.working then
-		status = { "fork-me-gui.ccpu-not-working" }
+		status, why = "no-network", { "fork-me-gui.ccpu-not-working" }
 	else
-		status = { "fork-me-gui.ccpu-ok", d.id }
+		status = d.job and "working" or "idle"
 	end
-	G.find(frame, "fork_me_ccpu_status").caption = status
-	G.find(frame, "fork_me_ccpu_info").caption = { "fork-me-gui.ccpu-info", d.width, d.height, d.blocks, G.fmt(d.used),
-		G.fmt(d.bytes), d.coprocessors, d.speed, d.monitors }
+	G.find(frame, "fork_me_ccpu_status").caption = { "fork-me-gui.ccpu-status-" .. status }
+	local wl = G.find(frame, "fork_me_ccpu_why")
+	wl.visible = why ~= nil
+	wl.caption = why or ""
+	G.find(frame, "fork_me_ccpu_size").caption = { "fork-me-gui.ccpu-size-value", d.width, d.height, d.blocks }
+	G.find(frame, "fork_me_ccpu_storage").caption = { "fork-me-gui.ccpu-storage-value", G.fmt(d.used), G.fmt(d.bytes) }
+	G.find(frame, "fork_me_ccpu_coprocessors").caption = { "fork-me-gui.ccpu-coprocessors-value", d.coprocessors, d.speed }
+	G.find(frame, "fork_me_ccpu_monitors").caption = tostring(d.monitors)
+	--- the blocks of the CPU by type as icons with their counts (rebuilt only when the counts change)
+	local pf = G.find(frame, "fork_me_ccpu_parts")
+	local psig = {}
+	for _, part in ipairs(d.parts or {}) do psig[#psig + 1] = part.name .. "=" .. part.count end
+	psig = table.concat(psig, ",")
+	if pf.tags.sig ~= psig then
+		pf.tags = { sig = psig }
+		pf.clear()
+		for _, part in ipairs(d.parts or {}) do
+			local b = pf.add{ type = "sprite-button", style = "slot_button", sprite = "item/" .. part.name, number = part.count,
+				tooltip = { "entity-name." .. part.name }, ignored_by_interaction = true }
+			b.tags = {}
+		end
+	end
 	G.find(frame, "fork_me_ccpu_bar").value = d.bytes > 0 and math.min(1, d.used / d.bytes) or 0
 	local jobs = {}
 	local j = d.job
@@ -1509,6 +1552,7 @@ remote.add_interface("gregtorio-me-gui", {
 	controller_power_text = function(entity) return M.power_text(M.controller_data(entity)) end,    -- (issue #149)
 	provider_data = function(entity) return M.provider_data(entity) end,
 	crafting_cpu_data = function(entity) return M.crafting_cpu_data(entity) end,
+	crafting_cpu_title = function(entity) return M.crafting_cpu_title(M.crafting_cpu_data(entity)) end,    -- (issue #151)
 	maintainer_data = function(entity) return M.maintainer_data(entity) end,
 	set_maintainer_target = function(entity, signal) return M.set_maintainer_target(entity, signal) end,
 	circuit_data = function(entity) return M.circuit_data(entity) end,
