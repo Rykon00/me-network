@@ -852,6 +852,7 @@ local function open_crafting_cpu(player, entity)
 	end
 	local bar = content.add{ type = "progressbar", name = "fork_me_ccpu_bar", value = 0 }
 	bar.style.horizontally_stretchable = true
+	content.add{ type = "flow", name = "fork_me_ccpu_parts", direction = "horizontal" }
 	G.heading(content, { "fork-me-gui.ccpu-job" })
 	content.add{ type = "table", name = "fork_me_ccpu_job", column_count = 5 }
 	M.refresh_crafting_cpu(player, G.window_of(player))
@@ -885,6 +886,20 @@ function M.refresh_crafting_cpu(player, frame)
 	G.find(frame, "fork_me_ccpu_storage").caption = { "fork-me-gui.ccpu-storage-value", G.fmt(d.used), G.fmt(d.bytes) }
 	G.find(frame, "fork_me_ccpu_coprocessors").caption = { "fork-me-gui.ccpu-coprocessors-value", d.coprocessors, d.speed }
 	G.find(frame, "fork_me_ccpu_monitors").caption = tostring(d.monitors)
+	--- the blocks of the CPU by type as icons with their counts (rebuilt only when the counts change)
+	local pf = G.find(frame, "fork_me_ccpu_parts")
+	local psig = {}
+	for _, part in ipairs(d.parts or {}) do psig[#psig + 1] = part.name .. "=" .. part.count end
+	psig = table.concat(psig, ",")
+	if pf.tags.sig ~= psig then
+		pf.tags = { sig = psig }
+		pf.clear()
+		for _, part in ipairs(d.parts or {}) do
+			local b = pf.add{ type = "sprite-button", style = "slot_button", sprite = "item/" .. part.name, number = part.count,
+				tooltip = { "entity-name." .. part.name }, ignored_by_interaction = true }
+			b.tags = {}
+		end
+	end
 	G.find(frame, "fork_me_ccpu_bar").value = d.bytes > 0 and math.min(1, d.used / d.bytes) or 0
 	local jobs = {}
 	local j = d.job

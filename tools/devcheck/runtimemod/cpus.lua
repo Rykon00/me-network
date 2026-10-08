@@ -125,6 +125,10 @@ return function(H)
 			local t1, t2, t3 = title("me-4k-crafting-storage", 16, 0), title("me-crafting-unit", 18, 0), title("me-crafting-monitor", 18, 1)
 			expect(t1[1] == "fork-me-gui.ccpu-title" and t1[2] == ib.id and line(t1) == line(t2) and line(t2) == line(t3),
 				"the title of one CPU from three blocks: " .. line({ t1, t2, t3 }) .. " id " .. tostring(ib.id))
+			local parts = remote.call(GUI, "crafting_cpu_data", find("me-4k-crafting-storage", 16, 0)).parts
+			local total = 0
+			for _, part in ipairs(parts or {}) do total = total + part.count end
+			expect(parts and #parts >= 3 and total == ib.blocks, "the blocks of the CPU by type (issue #151): " .. line(parts))
 			local tl = title("me-crafting-unit", 22, 1)
 			expect(tl[1] == "fork-me-gui.ccpu-title-none", "the title of an L: " .. line(tl))
 			local wd = remote.call(GUI, "crafting_cpu_data", find("me-crafting-unit", 22, 1))

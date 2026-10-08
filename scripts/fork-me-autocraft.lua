@@ -3192,10 +3192,18 @@ function M.group_info(entity)
 	local g = s.groups[s.cblocks[entity.unit_number].group]
 	local monitors = 0
 	for _ in pairs(g.monitors) do monitors = monitors + 1 end
+	--- issue #151: the blocks by type, { name, count }, in the order of their names (read when a window refreshes, once a second)
+	local by, parts = {}, {}
+	for unit in pairs(g.blocks) do
+		local b = s.cblocks[unit]
+		if b and b.entity.valid then by[b.entity.name] = (by[b.entity.name] or 0) + 1 end
+	end
+	for name, n in pairs(by) do parts[#parts + 1] = { name = name, count = n } end
+	table.sort(parts, function(a, b) return a.name < b.name end)
 	local job = g.job and M.job(g.job)
 	return { id = g.id, status = g.status, blocks = g.n, width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1,
 		bytes = g.bytes, used = job and job.bytes or 0, coprocessors = g.coprocessors, speed = group_speed(g),
-		monitors = monitors, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job }
+		monitors = monitors, parts = parts, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job }
 end
 --- Rebuild the registries from the world, drop stale references, and repair the job books.
 --- Jobs and their pools are kept; provider slots, blueprint patterns and priorities are kept by unit number.
