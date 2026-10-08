@@ -2964,3 +2964,28 @@ maintainer's game client running: **green, regressions 0**; throughput, latencie
 At 5000 both checks were disturbed by the machine (the reference's rounds 1.02 to 1.81 ms, a worst tick of 223 ms in one
 of them; the first check had the same on the working copy's side); the working copy's quiet rounds (0.99 ms) are those of
 issue #159's measurement.
+
+## The Pattern Capacity Card (issue #156)
+
+A pattern provider has 9 pattern slots and up to 36 with three Pattern Capacity Cards. What changes at runtime: `scan_provider`
+and `rebuild_patterns` loop over the provider's own number of slots (`slots_of(p)`: `p.nslots`, nil for 9) instead of the
+constant 9, and the round robin step (`maintenance`) fills a wanted card before it scans. A provider without cards does exactly
+what it did. A provider with 36 patterns costs up to four times the work of one with 9 per scan (one `normalized` lookup per
+slot, one `target_for` per slot and machine around it: at most 144 checks); the scan visits one provider per 2 ticks round
+robin (`PROVIDER_SCAN_TICKS`) and does nothing more when nothing changed, so it is the same bounded work per tick, only a
+longer lap. The planner reads the same lists.
+
+Measured with the planner scene (`bench --planner-only --sizes 100 --runs 3 --check origin/main`, three rounds in turns, one
+pattern per provider, so it shows that a provider without cards costs the same; it does not fill providers to 36 patterns):
+
+| | origin/main | with the card |
+|---|---|---|
+| script average ms/tick | 0.2475 ±0.187 | 0.2343 ±0.00645 |
+| script 99th percentile ms | 2.255 ±1.9 | 2.158 ±0.0978 |
+| ticks over 5 ms | 3 ±38.5 | 1 ±0 |
+| Lua alloc KB per tick | 26.79 | 26.79 |
+| mod heap kB | 13 640 | 13 650 |
+| burst build / remove ms | 171.8 / 76.2 | 166 / 80.8 |
+
+`regressions beyond the noise: 0`. The cost of full 36-pattern providers is reasoned, not measured: the bench scene has no
+provider with more than a few patterns.

@@ -920,6 +920,7 @@ def patterns():
 # from them carry a GT SMD chip next to the contacts and, on the right, the sign of a GT machine GUI button in a
 # colour of their own, so that they are told apart at 32 px:
 #   capacity              plus_large (green)        fuzzy                 analog: a wave, "about" (magenta)
+#   pattern capacity      plus_large (violet, on the advanced card's blue body: the capacity card's plus on gray) (issue #156)
 #   inverter              disable: a slashed ring   equal distribution    cyclic: round robin arrows (cyan)
 #                         (orange)                  acceleration          x2: "twice as fast" (lime)
 # The Overflow Destruction Card is a warning: a yellow triangle with a black "!" (drawn) and black and yellow hazard
@@ -940,6 +941,7 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-capacity-card": ("basic", "gui/overlay_button/plus_large", (70, 200, 90)),
     "me-overflow-destruction-card": ("basic", "warning", HAZARD),
     "me-fuzzy-card": ("advanced", "gui/overlay_button/analog", (235, 95, 215)),
+    "me-pattern-capacity-card": ("advanced", "gui/overlay_button/plus_large", (150, 110, 255)),   # issue #156: a violet plus on the blue body
     "me-inverter-card": ("advanced", "gui/overlay_button/disable", (245, 120, 30)),
     "me-equal-distribution-card": ("advanced", "gui/overlay_button/cyclic", (60, 225, 210)),
     "me-acceleration-card": ("advanced", "gui/overlay_button/x2", (185, 240, 70)),   # issue #110: the "x2" sign (lime)

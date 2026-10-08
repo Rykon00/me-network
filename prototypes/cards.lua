@@ -27,6 +27,10 @@ local CARDS = {
 	{ name = "me-overflow-destruction-card", order = "d", kind = "void",
 	  ingredients = I{ "me-basic-card", 1, "advanced-circuit", 1 } },
 	{ name = "me-fuzzy-card", order = "e", kind = "fuzzy", ingredients = I{ "me-advanced-card", 1, "copper-cable", 1 } },
+	--- issue #156: AE2-Unofficial's Pattern Capacity Card (Upgrades.PATTERN_CAPACITY): 9 more pattern slots in an ME Pattern
+	--- Provider each, up to 3; the storage Capacity Card does not work there and this one only where there are patterns
+	{ name = "me-pattern-capacity-card", order = "e2", kind = "pattern_capacity",
+	  ingredients = I{ "me-advanced-card", 1, "me-capacity-card", 1 } },
 	{ name = "me-inverter-card", order = "f", kind = "inverter",
 	  ingredients = I{ "me-advanced-card", 1, "decider-combinator", 1 } },
 	{ name = "me-equal-distribution-card", order = "g", kind = "equal",
@@ -70,6 +74,9 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	--- cards, PartImportBus / PartExportBus); `speed`: by the number of cards, the factor on the items per second of the map
 	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation)
 	bus = { slots = 4, limits = { speed = 4 } },
+	--- issue #156: the ME Pattern Provider takes up to 3 Pattern Capacity Cards (AE2-U: Registration.java, `blocks.iface()`, 3);
+	--- it has `patterns` pattern slots and `per_capacity` more with each card (9 / 18 / 27 / 36)
+	provider = { slots = 3, limits = { pattern_capacity = 3 }, patterns = 9, per_capacity = 9 },
 	speed = { 1, 8, 32, 64, 96 },
 }
 
