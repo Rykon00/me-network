@@ -2891,7 +2891,9 @@ function M.provider_click(cursor, inventory, provider, slot, shift)
 		return nil
 	end
 	if shift then
-		if not (inventory and M.take_pattern(provider, slot, inventory)) then return "inventory-full" end
+		if not inventory then return "no-inventory" end          -- (remote view without a character: the pattern stays)
+		if not M.take_pattern(provider, slot, inventory) then return "inventory-full" end
+		return nil, "out"
 	elseif cursor then
 		if not M.take_pattern(provider, slot, cursor) then return "inventory-full" end
 	end

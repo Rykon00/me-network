@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.2
+Date: 2026-10-08
+  Features:
+    - The command /me-remote-probe prints what the game reports for your controller (controller, character, main inventory, cursor), for bug reports from remote view.
+  Bugfixes:
+    - ME windows work in remote view on a space platform (issue #176): the game has no inventory window there, so the window draws your character's inventory on its left (even when the character is on another planet), and a click on a stack in it sends it to the drive, workbench, provider, bus or network. Before, nothing could be put in at all. Without a character the window says that you have no inventory.
+    - Taking an item out of an ME window in remote view (issue #177): a cell, pattern, card or terminal stack goes straight into the character's inventory with the message "Moved to your inventory", never silently through the hand. Without an inventory, or when it is full, it stays in the block and the window says why (it said "inventory full" for a missing inventory). Items that have no place any more are never spilled onto the character's planet from remote view: they are kept for you and come back when you have room.
+---------------------------------------------------------------------------------------------------
 Version: 0.5.1
 Date: 2026-10-07
   Features:

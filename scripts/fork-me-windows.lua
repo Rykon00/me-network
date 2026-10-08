@@ -248,7 +248,10 @@ G.on("drive_slot", function(event, player, el)
 		if N.drive_info(drive)[slot] then G.open("cell", player, drive, { slot = slot, via = frame.tags.via }) end
 		return
 	end
-	flying(player, N.drive_click(player.cursor_stack, player.get_main_inventory(), drive, slot, event.shift))
+	local cursor, inv, remote = G.hand(player)      -- (remote view, issue #177: the cell goes straight into the character's inventory)
+	local why, out = N.drive_click(cursor, inv, drive, slot, event.shift or remote)
+	flying(player, why)
+	if remote and out then G.moved_text(player) end
 	G.refresh_one(player)
 end)
 
@@ -780,7 +783,10 @@ G.on("prov_slot", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if not entity then return end
-	flying(player, autocraft.provider_click(player.cursor_stack, player.get_main_inventory(), entity, el.tags.slot, event.shift))
+	local cursor, inv, remote = G.hand(player)
+	local why, out = autocraft.provider_click(cursor, inv, entity, el.tags.slot, event.shift or remote)
+	flying(player, why)
+	if remote and out then G.moved_text(player) end
 	G.refresh_one(player)
 end)
 
@@ -1454,6 +1460,7 @@ end)
 --- remote interface (the runtime test: the data and set functions of every window)
 --------------------------------------------------------------------------------
 
+local stand_ins = {}            -- name -> a table standing for a LuaPlayer (the tests, stand_in below)
 remote.add_interface("gregtorio-me-gui", {
 	fmt = function(n) return G.fmt(n) end,
 	--- issue #150 (tests): the hand-over buffer of a relative window: its stacks into the block of window `name` (what it
@@ -1505,6 +1512,30 @@ remote.add_interface("gregtorio-me-gui", {
 	inventory_click = function(cursor, inventory, slot, mode, entity, window)
 		return G.inventory_click(cursor, inventory, slot, mode, window and G.def_named(window) or G.def_of(entity), entity)
 	end,
+	--- Issues #176 and #177: the harness has no player and a remote call cannot carry functions, so a table standing for a
+	--- LuaPlayer is made here from plain data: `spec` = { remote = in remote view, main = the main inventory (not in remote
+	--- view), character = the character's main inventory (nil: no character), index = a number }; kept under `name`.
+	stand_in = function(name, spec)
+		local texts = {}
+		local sp = { object_name = "LuaPlayer", valid = true, index = spec.index or 9001, texts = texts,
+			controller_type = spec.remote and defines.controllers.remote or defines.controllers.character,
+			get_main_inventory = function() return not spec.remote and spec.main or nil end,
+			create_local_flying_text = function(a) texts[#texts + 1] = a.text end }
+		if spec.character then
+			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
+				get_inventory = function() return spec.character end }
+		end
+		stand_ins[name] = sp
+		return true
+	end,
+	stand_in_inventory = function(name) return G.player_inventory(stand_ins[name]) end,
+	stand_in_hand = function(name) return G.hand(stand_ins[name]) end,
+	stand_in_uses_buffer = function(name) return G.uses_buffer(stand_ins[name]) end,
+	stand_in_give_back = function(name, stack, entity) G.give_back(stand_ins[name], stack, entity) end,
+	stand_in_parked = function(name) return G.parked_count(stand_ins[name]) end,
+	stand_in_return_parked = function(name) return G.return_parked(stand_ins[name]) end,
+	stand_in_texts = function(name) return stand_ins[name].texts end,
+	stand_in_forget = function(name) stand_ins[name] = nil end,
 	--- every registered window: { [name] = { pane = true, shift = has a shift + click target, control, message } }
 	windows = function() return G.window_list() end,
 	--- a click on slot `slot` of the block in `entity`'s window (its cards, its cell); returns the reason of a refusal

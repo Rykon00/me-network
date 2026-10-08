@@ -378,9 +378,10 @@ function M.cell_click(entity, cursor, inventory, shift)
 		return nil
 	end
 	if not slot.valid_for_read then return nil end
+	if shift and not (inventory and inventory.valid) then return "no-inventory" end   -- (nothing moved: the cell stays)
 	release(rec, inv)
 	if shift then
-		if not (inventory and inventory.valid and inventory.insert(slot) >= 1) then
+		if inventory.insert(slot) < 1 then
 			M.sync(rec, inventory, {})                     -- (back: the cards return to the slots)
 			return "inventory-full"
 		end
@@ -390,7 +391,7 @@ function M.cell_click(entity, cursor, inventory, shift)
 		return "inventory-full"
 	end
 	M.sync(rec, inventory, {})
-	return nil
+	return nil, shift and "out" or nil
 end
 
 --- the partition button `index`: `key` (nil: remove) replaces the key at that place of the list. Without a cell
@@ -479,6 +480,7 @@ function M.card_click(entity, slot, cursor, inventory, shift)
 	if not stack then return "no-cell" end
 	local inv = inv_of(rec)
 	local r = rules_of(N.cell_spec(cell.name))
+	local out
 	if cursor and cursor.valid_for_read then
 		local kind = N.card_kind(cursor.name)
 		local limit = kind and r.limits[kind]
@@ -494,14 +496,16 @@ function M.card_click(entity, slot, cursor, inventory, shift)
 		local at = slot + 1
 		if not (at >= 2 and at <= #inv and inv[at].valid_for_read) then return nil end
 		if shift then
-			if not (inventory and inventory.valid and inventory.insert(inv[at]) >= 1) then return "inventory-full" end
+			if not (inventory and inventory.valid) then return "no-inventory" end
+			if inventory.insert(inv[at]) < 1 then return "inventory-full" end
 			inv[at].clear()
+			out = "out"
 		elseif not (cursor and cursor.transfer_stack(inv[at])) then
 			return "inventory-full"
 		end
 	end
 	M.sync(rec, inventory, {})
-	return nil
+	return nil, out
 end
 
 --- Issue #28: shift + click on stack `stack` of the player's inventory in the workbench's window: a cell goes into the
