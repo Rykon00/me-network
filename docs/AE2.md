@@ -26,6 +26,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face; can be walked over |
 | ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
+| ME Wireless Access Point, ME Charger | 1x1 members, power through the controller: the range of the Wireless ME Terminal (with Wireless Boosters) and its charging (this page, **Wireless**) |
 | Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns (up to 36 with Pattern Capacity Cards); the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
 | ME Pattern Terminal | 1x1, no pole needed (the controller draws its 8 kW), can be walked over: encodes patterns (this page, **Patterns: encoding and clearing**); two slots, one for blank patterns and one for the encoded pattern |
@@ -233,6 +234,31 @@ click uses the tool and opens no window, as on a chest.
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
 the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
 same lamp condition, so blueprints and settings paste of the game keep it).
+
+## Wireless: the Wireless ME Terminal
+
+(issues #153, #205 to #211; technology **ME Wireless Terminal**, after ME Upgrade Cards and Battery; design:
+`docs/ME-WIRELESS.md`)
+
+* **ME Wireless Access Point**: a 1x1 member of the network (no pole, the controller draws its power). A Wireless ME Terminal
+  reaches the network while you are within the range of one of its access points: **32 tiles**, more with **Wireless Boosters**
+  in its 4 card slots (open it; shift + click a booster in your inventory): 32, 56, 99, 156, 224 tiles with 0 to 4 boosters, at
+  20, 30, 45, 66, 90 kW. Only on the same surface; the nearest access point in range is used. Mined, the boosters come with it;
+  blueprints, settings paste and clones want them (from your inventory, then the network).
+* **Wireless ME Terminal** (an item, one per stack): press the **wireless terminal key** (Ctrl + Shift + T by default, in the
+  controls) while it is in your inventory: the ME Terminal of its network opens, as if you stood at a terminal (the drive and
+  cell windows opened from it too). **Link** it first: click an access point or the ME Controller of the network with the
+  terminal in your hand (one network per terminal; linking again replaces it). The item shows its network and its charge. A
+  button in the window switches to the **ME Pattern Terminal** (Encode takes a blank pattern from the network and puts the
+  pattern into your inventory; Load and Clear work on the pattern in your hand); the key opens the one you used last; pressed
+  again it closes the window.
+* **Energy**: the terminal holds 100 MJ and uses 0.2 MW while its window is open, more the farther you are from the access
+  point (twice that at the edge of its range). Empty or out of range, the window closes (nothing is lost: the window only shows
+  the network). Charge it in an **ME Charger**: a 1x1 member with one slot (click it with the terminal in hand); it draws 1 MW
+  from the network while it charges (a full charge in 100 s) and 2 kW otherwise, and waits while the network has no power.
+* **ME Wireless Terminal Module**: equipment for the armour's grid (2 x 2) that works like the item without charging: the grid
+  charges it (20 MJ) and the window is paid from it. It is used before an item. Link it by pointing at an access point or the
+  ME Controller and pressing the key.
 
 ## Import and export
 

@@ -1,6 +1,13 @@
 # Wireless ME Terminal: design note (issue #153)
 
-Status: **design only, no code.** The decisions of 2026-10-06 and the confirmation of 2026-10-08 are fixed; the work is split
+Status: **built** (issues #205 to #211). How it was built differs in one point from the plan below: the "terminal handle" is
+the **access point entity** itself (a member of the network, so `N.network_of` and every terminal function work unchanged); the
+reach test becomes the wireless check (`G.reachable`, `G.remote_reach`), and the energy is paid at the existing refresh
+(`G.refresh_hooks`). The charger charges in the network's existing slow step (`N.slow_hooks`, once a second, a loop over the
+chargers). Issue #209's first step: a script that lowers `LuaEquipment.energy` of a battery piece is kept by the engine (the
+runtime test logs it).
+
+The text below is the design as written before: The decisions of 2026-10-06 and the confirmation of 2026-10-08 are fixed; the work is split
 into the issues named in the last section.
 
 ## Fixed by the maintainer

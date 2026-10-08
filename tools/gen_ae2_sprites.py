@@ -1045,6 +1045,74 @@ def card_icon(gt, name):
     return img
 
 
+
+# --- the wireless terminal (me-network issues #205 to #211) --------------------------------------------------------
+# Drawn from this mod's own PNGs (the interface's MV casing, the terminal icon), no AE2 textures: an antenna with fluix
+# rings stands for the wireless parts, a lightning bolt for the charger.
+WIRELESS_RING = FLUIX_LIGHT
+
+
+def antenna(d, cx, top, bottom, rings=2, colour=FLUIX):
+    """a mast from `bottom` up to `top` at column `cx` with a knob and `rings` arcs left and right of it"""
+    d.line((cx, top + 2, cx, bottom), fill=(170, 170, 185, 255), width=2)
+    d.ellipse((cx - 2, top, cx + 2, top + 4), fill=colour + (255,))
+    for i in range(1, rings + 1):
+        r = 3 + 3 * i
+        d.arc((cx - r, top + 2 - r, cx + r, top + 2 + r), 200, 250, fill=WIRELESS_RING + (255,), width=1)
+        d.arc((cx - r, top + 2 - r, cx + r, top + 2 + r), 290, 340, fill=WIRELESS_RING + (255,), width=1)
+
+
+def wireless():
+    """the access point, the booster, the terminal item, the charger and the module: entity sprites, icons, technology"""
+    written = []
+    casing = load(OUT_ENTITY / "me-interface.png")
+    # the access point: the casing, a dark panel and an antenna with two rings
+    ap = casing_ring(casing)
+    d = ImageDraw.Draw(ap)
+    d.rectangle((9, 22, 22, 26), fill=(45, 45, 55, 255), outline=(85, 85, 100, 255))
+    antenna(d, 16, 5, 22, 2)
+    ap.save(OUT_ENTITY / "me-wireless-access-point.png")
+    ap.save(OUT_ICON / "me-wireless-access-point.png")
+    written += [OUT_ENTITY / "me-wireless-access-point.png", OUT_ICON / "me-wireless-access-point.png"]
+    # the booster: a small board with an antenna (the cards' body colour)
+    b = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(b)
+    d.rounded_rectangle((4, 16, 27, 27), radius=2, fill=(60, 70, 95, 255), outline=(30, 30, 38, 255))
+    for x in (7, 11, 15, 19, 23):
+        d.point((x, 25), fill=(230, 190, 70, 255))
+    antenna(d, 16, 3, 16, 2)
+    b.save(OUT_ICON / "me-wireless-booster.png")
+    written.append(OUT_ICON / "me-wireless-booster.png")
+    # the terminal item: the terminal's icon, smaller, with an antenna on top
+    term = load(ROOT / "graphics/icons/me-terminal.png").resize((24, 24), Image.LANCZOS)
+    t = Image.new("RGBA", (TILE, TILE))
+    t.alpha_composite(term, (4, 8))
+    d = ImageDraw.Draw(t)
+    antenna(d, 25, 1, 10, 1)
+    t.save(OUT_ICON / "me-wireless-terminal.png")
+    written.append(OUT_ICON / "me-wireless-terminal.png")
+    # the charger: the casing, a dark panel, a yellow bolt
+    c = casing_ring(casing)
+    d = ImageDraw.Draw(c)
+    d.polygon([(18, 5), (10, 17), (15, 17), (13, 27), (22, 13), (17, 13), (20, 5)], fill=(250, 205, 40, 255),
+              outline=(150, 115, 35, 255))
+    c.save(OUT_ENTITY / "me-charger.png")
+    c.save(OUT_ICON / "me-charger.png")
+    written += [OUT_ENTITY / "me-charger.png", OUT_ICON / "me-charger.png"]
+    # the module: an equipment plate (gray, like the game's equipment) with the terminal and an antenna
+    m = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(m)
+    d.rounded_rectangle((1, 1, 30, 30), radius=3, fill=(70, 72, 80, 255), outline=(30, 30, 38, 255))
+    m.alpha_composite(load(ROOT / "graphics/icons/me-terminal.png").resize((18, 18), Image.LANCZOS), (4, 10))
+    d = ImageDraw.Draw(m)
+    antenna(d, 24, 3, 14, 1)
+    m.save(OUT_ICON / "me-wireless-module.png")
+    written.append(OUT_ICON / "me-wireless-module.png")
+    # the technology: the access point, upscaled
+    upscale(ap).save(OUT_TECH / "me-wireless.png")
+    written.append(OUT_TECH / "me-wireless.png")
+    return written
+
 def cards_tech(gt):
     """256x256: three cards fanned out (Overflow Destruction behind, Fuzzy, Capacity in front)."""
     img = Image.new("RGBA", (40, 40))
@@ -1347,6 +1415,9 @@ def main():
                     help="only the upgrade card icons, their technology icon and the ME Cell Workbench with its shadow "
                          "(me-network issues #17 and #20): the cards from the textures of the GT5-Unofficial checkout "
                          "GT, the workbench from the interface PNG")
+    ap.add_argument("--wireless", action="store_true",
+                    help="only the wireless parts (me-network issues #205 to #211): access point, booster, terminal item, "
+                         "charger, module and their technology, drawn from this mod's own PNGs")
     ap.add_argument("--thumbnail", action="store_true",
                     help="only thumbnail.png, from the drive, terminal and cable PNGs (me-network issue #20)")
     ap.add_argument("--sheet", type=Path, metavar="PNG",
@@ -1370,7 +1441,7 @@ def main():
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
-            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit):
+            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
@@ -1424,6 +1495,9 @@ def main():
     if a.gt or a.cards:
         written = cards(a.gt or a.cards)
         print("ME card icons:", len(written))
+    if a.gt or a.wireless:
+        written = wireless()
+        print("ME wireless sprites:", len(written))
     if a.gt or a.crafting_cpu:
         written = crafting_cpu(a.gt or a.crafting_cpu)
         print("ME crafting block sprites:", len(written))

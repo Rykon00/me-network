@@ -789,6 +789,9 @@ patterncap156 = require("patterncap")({ me_place = me_place, cable_row = cable_r
 --- me-network issue #196: the ME Interface Capacity Card (ifacecap.lua)
 ifacecap196 = require("ifacecap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issues #205 to #210: the wireless terminal (wireless.lua)
+wireless205 = require("wireless")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
 --- me-network issue #129: the buses and the terminal are walkable (walkable.lua)
@@ -856,6 +859,7 @@ local function tests_running()
 	providers158.running(check)
 	pastecraft157.running(check)
 	buffer150.running(check)
+	wireless205.running(check)
 	ifacecap196.running(check)
 	patterncap156.running(check)
 	sbusmode155.running(check)
@@ -1773,6 +1777,7 @@ script.on_nth_tick(10, function()
 	providers158.tick()
 	pastecraft157.tick()
 	buffer150.tick()
+	wireless205.tick()
 	ifacecap196.tick()
 	patterncap156.tick()
 	sbusmode155.tick()
@@ -4633,6 +4638,7 @@ script.on_init(function()
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(wireless205.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ifacecap196.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(patterncap156.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end

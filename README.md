@@ -45,6 +45,7 @@ The repository root is the mod itself.
 | `scripts/fork-me-recipe-paste.lua` | a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12); `gregtorio-me-recipe-paste` |
 | `scripts/fork-me-terminal.lua`, `fork-me-gui.lua`, `fork-me-windows.lua` | the terminal (hub window), the shared GUI and the windows of every block; `gregtorio-me-terminal`, `gregtorio-me-gui` |
 | `scripts/fork-me-patternterm.lua` | the ME Pattern Terminal (issue #130): the pattern editor window and the block's blank and output slots; `gregtorio-me-pattern-terminal` |
+| `prototypes/wireless.lua`, `scripts/fork-me-wireless.lua` | the wireless terminal (issues #153, #205 to #211): ME Wireless Access Point and Wireless Boosters, the Wireless ME Terminal item and its hotkey, the ME Charger, the equipment module; the wireless window is the terminal's (or the pattern terminal's) with the access point as its entity; mod-data `fork-me-network` `wireless`, technology `me-wireless`; `gregtorio-me-wireless` |
 | `scripts/fork-me-picker.lua` | the mod's own item and fluid picker (groups, search, qualities, green check; issue #94), used by the ME Cell Workbench |
 | `scripts/fork-me-autocraft.lua`, `fork-me-patterns.lua` | providers with encoded patterns, planner (with the bytes of a job), jobs, the multiblock CPUs (groups of crafting blocks kept up to date on build and removal), the pattern items; `gregtorio-me-autocraft` |
 | `scripts/fork-me-circuit.lua` | level maintainer and circuit interface; `gregtorio-me-circuit` |
