@@ -300,10 +300,11 @@ function M.click(entity, slot, cursor, inventory, shift)
 		end
 		if stack.valid_for_read then
 			if shift then
-				local got = inventory and inventory.valid and inventory.insert(stack) or 0
+				if not (inventory and inventory.valid) then return "no-inventory" end
+				local got = inventory.insert(stack)
 				if got < 1 then return "inventory-full" end
 				if got >= stack.count then stack.clear() else stack.count = stack.count - got end
-				return nil
+				return nil, "out"
 			end
 			if not (cursor and cursor.transfer_stack(stack)) then return "inventory-full" end
 			return nil
@@ -321,9 +322,10 @@ function M.click(entity, slot, cursor, inventory, shift)
 		end
 		if not stack.valid_for_read then return nil end
 		if shift then
-			if not (inventory and inventory.valid and inventory.insert(stack) >= 1) then return "inventory-full" end
+			if not (inventory and inventory.valid) then return "no-inventory" end
+			if inventory.insert(stack) < 1 then return "inventory-full" end
 			stack.clear()
-			return nil
+			return nil, "out"
 		end
 		if not (cursor and cursor.transfer_stack(stack)) then return "inventory-full" end
 		return nil
@@ -553,7 +555,7 @@ end
 G.on("pat_encode", function(event, player)
 	local u, entity = ui_of(player), window_entity(player)
 	if not (u and u.pat and entity) then return end
-	local where, why = M.encode(entity, player.force, u.pat, event.shift and player.get_main_inventory() or nil)
+	local where, why = M.encode(entity, player.force, u.pat, event.shift and G.player_inventory(player) or nil)
 	if where then
 		player.create_local_flying_text{ text = { "fork-me-pattern-terminal.encoded-" .. where }, create_at_cursor = true }
 	else
@@ -565,7 +567,7 @@ end)
 G.on("pat_clear", function(event, player)
 	local entity = window_entity(player)
 	if not entity then return end
-	local _, why = M.clear(entity, player.cursor_stack, player)
+	local _, why = M.clear(entity, (G.hand(player)), player)
 	report(player, why)
 	G.refresh_one(player)
 end)
@@ -574,7 +576,7 @@ G.on("pat_load", function(event, player)
 	local u, entity = ui_of(player), window_entity(player)
 	if not (u and entity) then return end
 	u.pat = u.pat or new_editor()
-	local _, why = M.load_pattern(entity, player.cursor_stack, u.pat)
+	local _, why = M.load_pattern(entity, (G.hand(player)), u.pat)
 	report(player, why)
 	u.shown = nil
 	G.refresh_one(player)

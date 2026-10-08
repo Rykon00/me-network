@@ -204,6 +204,7 @@ function M.new(def)
 		local rec = def.rec_of(entity)
 		if not rec then return "no-bus" end
 		local inv = inv_of(rec)
+		local out
 		if cursor and cursor.valid_for_read then
 			local free, why = card_fits(rec, cursor.name)
 			if not free then return why end
@@ -213,8 +214,10 @@ function M.new(def)
 			local stack = slot >= 1 and slot <= #inv and inv[slot]
 			if not (stack and stack.valid_for_read) then return nil end
 			if shift then
-				if not (inventory and inventory.valid and inventory.insert(stack) >= 1) then return "inventory-full" end
+				if not (inventory and inventory.valid) then return "no-inventory" end
+				if inventory.insert(stack) < 1 then return "inventory-full" end
 				stack.clear()
+				out = "out"
 			elseif not (cursor and cursor.transfer_stack(stack)) then
 				return "inventory-full"
 			end
@@ -222,7 +225,7 @@ function M.new(def)
 		end
 		rec.want = nil
 		def.on_cards(rec)
-		return nil
+		return nil, out
 	end
 
 	--- Issue #28: shift + click on stack `stack` of the player's inventory in the block's window: its cards go into the
@@ -295,7 +298,7 @@ function M.new(def)
 		--- what is too many goes first (so the limits leave room for the wanted ones)
 		local _, extra = missing_cards(rec, list)
 		local net = N.active_of(entity)
-		local pinv = player and player.valid and player.get_main_inventory()
+		local pinv = player and player.valid and G.player_inventory(player)
 		for slot = 1, rules.slots do
 			local name = rec.cards and rec.cards[slot]
 			local stack = inv[slot]
@@ -306,9 +309,13 @@ function M.new(def)
 				if got >= stack.count then stack.clear() end
 				if stack.valid_for_read and net and N.insert(net, stack.name, stack.quality.name, stack.count) >= stack.count then stack.clear() end
 				if stack.valid_for_read then
-					local where = player and player.valid and player.character and player.character.valid and player.character or entity
-					where.surface.spill_item_stack{ position = where.position, stack = stack, allow_belts = false }
-					stack.clear()
+					if player and player.valid and G.in_remote_view(player) then
+						rec.cards[slot] = name                  -- (issue #177: never spilled from remote view: it stays in its slot)
+					else
+						local where = player and player.valid and player.character and player.character.valid and player.character or entity
+						where.surface.spill_item_stack{ position = where.position, stack = stack, allow_belts = false }
+						stack.clear()
+					end
 				end
 			end
 		end

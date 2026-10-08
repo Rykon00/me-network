@@ -268,6 +268,42 @@ commands.add_command("me-stats", { "me-stats.help" }, function(command)
 	for _, line in ipairs(M.run(player, command.parameter)) do say(player, line) end
 end)
 
+--- Issues #176 and #177: what the API says to a player in remote view (a space platform), for the maintainer's in-game
+--- check; the lines are plain text (a diagnostic, not a player-facing message). `player` is a LuaPlayer or a stand-in.
+function M.remote_probe(player)
+	local function yn(v) return v and "yes" or "no" end
+	local controllers = {}
+	for name, id in pairs(defines.controllers) do controllers[id] = name end
+	local c = player.character
+	local cinv = c and c.valid and c.get_inventory(defines.inventory.character_main)
+	local probes = {
+		{ "controller_type", function() return tostring(controllers[player.controller_type]) end },
+		{ "physical_controller_type", function() return tostring(controllers[player.physical_controller_type]) end },
+		{ "character", function() return yn(player.character ~= nil) end },
+		{ "get_main_inventory()", function() return player.get_main_inventory() and "an inventory" or "nil" end },
+		{ "character main inventory", function()
+			return cinv and (#cinv .. " slots, " .. (cinv.is_empty() and "empty" or "not empty")) or "nil" end },
+		{ "cursor_stack", function()
+			local cs = player.cursor_stack
+			return cs == nil and "nil" or (cs.valid_for_read and ("holds " .. cs.name) or "valid, empty") end },
+		{ "cursor_ghost", function() return yn(player.cursor_ghost ~= nil) end },
+		{ "surfaces (character, viewed)", function()
+			return (c and c.valid and c.surface.name or "-") .. ", " .. player.surface.name end },
+	}
+	local lines = {}
+	for _, p in ipairs(probes) do
+		local ok, text = pcall(p[2])
+		lines[#lines + 1] = p[1] .. ": " .. (ok and text or ("error: " .. tostring(text)))
+	end
+	return lines
+end
+
+commands.add_command("me-remote-probe", { "me-remote-probe.help" }, function(command)
+	local player = command.player_index and game.get_player(command.player_index) or nil
+	if not player then game.print("Use /me-remote-probe as a player.") return end
+	for _, line in ipairs(M.remote_probe(player)) do player.print(line) end
+end)
+
 remote.add_interface("gregtorio-me-stats", {
 	report = function(entity)
 		local net = entity and N.network_of(entity)

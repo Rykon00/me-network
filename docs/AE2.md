@@ -186,6 +186,20 @@ cell into the drive or the workbench, a pattern into the provider, a card into i
 stays in the buffer and comes back to you when the window closes (into your inventory, else onto the ground). E,
 Escape or the close button close the window.
 
+**In remote view** (issues #176 and #177; a space platform, or the map): the game has no inventory window there (it shows
+the ghost picker), the hand holds nothing and you have no main inventory of your own, so the buffer is not used and the
+setting makes no difference: the window draws your **character's inventory** on its left (the "Character" pane), even
+when the character stands on another planet. A click on a stack in it sends it to the block, like shift + click (a cell
+into the drive or the workbench, a pattern into the provider, a card into its slot, else into the network). What you
+take out of a block (a click on a cell in the drive, a pattern in the provider, a card in a slot, a stack in the terminal
+(right click: one item)) goes **straight into the character's inventory**, with the message "Moved to your inventory"; it
+never goes through the hand. If the inventory is full the item stays in the block and the window says so; without a
+character (the editor, a spectator) there is no inventory: the window says so, nothing can be put in or taken out and
+everything stays where it is. Items that have no place any more (a window closed with something in its buffer, cards a
+cell does not take) are never spilled from remote view: they are kept for you ("the items are kept for you") and come
+back into your inventory the next time you have room (when you open or close a window, or within a second). The
+command `/me-remote-probe` prints what the game reports for your controller.
+
 With the setting off, the windows draw your inventory themselves (issue #28): **every ME window shows your inventory on its left**
 ("Character"), the block's slots (cards, cell, cells of a drive, patterns) in the window: click a stack in your
 inventory to pick it up, put it down, merge or swap it, right click for half a stack, **shift + click to put it into
