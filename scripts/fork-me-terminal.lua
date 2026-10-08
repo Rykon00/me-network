@@ -308,9 +308,9 @@ function M.take_to(cursor, inv, terminal, key, mode)
 		local n, w = M.store_stack(terminal, cursor)
 		return n and -n or nil, w
 	end
-	if mode == "inventory" then
-		if not inv then return nil, "inventory-full" end
-		local n = N.extract_to(net, inv, key, proto.stack_size)
+	if mode == "inventory" or mode == "inventory-one" then      -- ("inventory-one": remote view's right click, issue #177)
+		if not inv then return nil, "no-inventory" end
+		local n = N.extract_to(net, inv, key, mode == "inventory" and proto.stack_size or 1)
 		if n == 0 then return nil, "inventory-full" end
 		return n
 	end
@@ -327,12 +327,18 @@ function M.take_to(cursor, inv, terminal, key, mode)
 	return N.extract_to(net, cursor, key, mode == "one" and 1 or proto.stack_size)
 end
 
+--- Remote view (issue #177): the hand holds nothing, so "stack" and "one" go into the character's inventory
+--- (or nil and "no-inventory"); the third value tells the window to say where the items went.
 function M.take(player, terminal, key, mode)
-	return M.take_to(player.cursor_stack, player.get_main_inventory(), terminal, key, mode)
+	local cursor, inv, remote = G.hand(player)
+	if remote then mode = mode == "one" and "inventory-one" or "inventory" end
+	local n, why = M.take_to(cursor, inv, terminal, key, mode)
+	return n, why, remote and n and n > 0
 end
 
 --- Store what the player holds in the cursor. Returns the count, or nil and a reason.
 function M.store_cursor(player, terminal)
+	if G.in_remote_view(player) then return nil, "no-hand" end   -- (issue #177: the hand holds nothing in remote view)
 	return M.store_stack(terminal, player.cursor_stack)
 end
 
@@ -826,8 +832,9 @@ G.on("term_take", function(event, player, el)
 	local st = st_of(player)
 	if not (st and event.name == defines.events.on_gui_click) then return end
 	local mode = event.shift and "inventory" or event.button == defines.mouse_button_type.right and "one" or "stack"
-	local _, why = M.take(player, st.entity, el.tags.key, mode)
+	local _, why, moved = M.take(player, st.entity, el.tags.key, mode)
 	report(player, why)
+	if moved then G.moved_text(player) end
 	M.refresh(player)
 	follow_up(player)
 end)

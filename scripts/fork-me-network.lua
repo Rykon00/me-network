@@ -3564,7 +3564,9 @@ end
 --------------------------------------------------------------------------------
 
 --- a click on a slot: with a cell in the cursor it goes into the slot (a cell there is swapped into the cursor);
---- with an empty cursor the cell goes into the cursor (shift: into the inventory). Returns a reason on failure.
+--- with an empty cursor the cell goes into the cursor (shift: into the inventory). Returns a reason on failure
+--- ("no-inventory" when shift asks for an inventory and there is none: remote view without a character, issue #177; the
+--- cell stays), and "out" as the second value when a cell was taken into the inventory.
 function M.drive_click(cursor, inventory, drive, slot, shift)
 	local s = state()
 	if not (drive and drive.valid and M.kind_of(drive.name) == "drive") then return "no-drive" end
@@ -3585,7 +3587,9 @@ function M.drive_click(cursor, inventory, drive, slot, shift)
 	end
 	if not d.slots[slot] then return nil end
 	if shift then
-		if not (inventory and M.take_cell(drive, slot, inventory)) then return "inventory-full" end
+		if not inventory then return "no-inventory" end
+		if not M.take_cell(drive, slot, inventory) then return "inventory-full" end
+		return nil, "out"
 	elseif cursor then
 		if not M.take_cell(drive, slot, cursor) then return "inventory-full" end
 	end

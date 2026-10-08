@@ -516,6 +516,7 @@ RUNTIME_TESTS = (
     ("PROVIDERS", "ME pattern provider machines test (issue #158)"),
     ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
     ("BUFFER", "ME terminal buffer (issue #150, experiment)"),
+    ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("DONE", "all tests reported"),
 )
 

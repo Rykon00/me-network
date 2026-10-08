@@ -2297,6 +2297,51 @@ side by side and the stub of an empty script inventory); here the middle part is
   emptying on an inventory event, Escape closing and returning). The look, the window order, drag and the keys can only
   be judged in the game: `[Task-Ingame]` issue.
 
+### Remote view (me-network issues #176 and #177)
+
+On a space platform the player is in the remote controller (`player.controller_type == defines.controllers.remote`,
+2.0.7). There `LuaPlayer.get_main_inventory()` is `nil` ([forum](https://forums.factorio.com/viewtopic.php?p=638851&t=121320)),
+the game's inventory window is the ghost picker and the hand holds nothing. The windows assumed all three. The rules now:
+
+* **One helper**, `G.player_inventory(player)` (next to `G.cursor_flags`): the main inventory, else the character's main
+  inventory (`player.character.get_inventory(defines.inventory.character_main)`), else `nil` (no character). Every
+  former `player.get_main_inventory()` call of the windows uses it. The maintainer decided that the windows may use the
+  character's inventory from remote view although the character can be on another planet.
+* **`G.hand(player)`** gives a click its cursor, inventory and whether the player is in remote view. In remote view the
+  cursor is `nil`: an item never goes through the hand (it cannot hold one, so the game moved a cell the window put into
+  `cursor_stack` into the character's inventory without a word, #177). The window handlers (`drive_slot`, `prov_slot`,
+  `block_slot`, the terminal's `term_take`) then pass `shift = true`, so every take-out is a shift + click into the
+  inventory, and say "Moved to your inventory" when the function returned `"out"` (second value; the terminal returns it
+  as a third value of `M.take`). Terminal: left click and shift + click take a stack, right click one item
+  (`take_to` mode `inventory-one`); "Store item in hand" says the hand holds nothing.
+* **Refusals have their own reason**: `"no-inventory"` (the take-out functions got no inventory: nothing moved, the item
+  stays in the block; text `error-no-inventory` / `refused-no-inventory`) and `"inventory-full"` only when the insert
+  really found no room. This holds for `N.drive_click`, `autocraft.provider_click`, the card slots, the workbench's cell
+  and card slots, the pattern terminal's slots and `take_to`.
+* **The pane, not the buffer**: `G.uses_buffer(player)` is false in remote view, so `open_window` builds the pane of
+  issue #28 whatever the map setting says; the game's inventory window and its relative anchor are not usable there. The
+  pane shows the helper's inventory, has a line that says what a click does, and without an inventory a line that says
+  there is none (no table). In remote view a click on a pane stack acts like shift + click (the hand cannot hold the
+  stack). The pane follows the inventory by the events of the main inventory and at the refresh; whether the engine
+  raises `on_player_main_inventory_changed` for a character's inventory in remote view is not known, the refresh once a
+  second catches it.
+* **No spill from remote view.** `G.give_back` to a player in remote view puts the stack into the helper's inventory; what
+  does not fit (or all of it without an inventory) is **parked** (`storage.fork_me_gui_parked[player_index] = { inv, told }`,
+  a script inventory that grows by 20 slots when it is full), with a message once per tick, and `G.return_parked` hands it
+  over when the player has room: at the end of `close_window` (so when a window opens or closes) and in `refresh_all`
+  (once a second for connected players while something is parked). A part of a stack that did not go is merged back
+  into the stack (nothing is lost in the `count` path). Outside remote view `give_back` is unchanged (inventory, else the
+  ground at the character). The cards `want_cards` would drop stay in their slot in remote view (they were spilled at the
+  character).
+* Tested headless (`runtimemod/remoteview.lua`): a table standing for a LuaPlayer, made by the remote interface
+  (`gregtorio-me-gui stand_in`; a remote call cannot carry functions) with `controller_type`, `get_main_inventory`,
+  `character`: the helper for a normal player and for remote view with and without a character; the buffer is not used; a
+  cell out of a drive and out of the workbench and a terminal take with no inventory (stays, `no-inventory`), with a full
+  one (`inventory-full`) and with a free one (arrives, `out`); `give_back` never spills from remote view, parks and
+  returns, and spills outside it. The remote controller itself cannot be created headless: what the API returns there (the
+  forum report: `get_main_inventory()` nil, the character's inventory reachable) and how the pane looks is checked in the
+  game with `/me-remote-probe` (`scripts/fork-me-stats.lua`) on a space platform.
+
 ## Open points
 
 * Patterns (issue #80, left open on purpose; the data model keeps room for them): upgrade cards on providers
