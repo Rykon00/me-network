@@ -22,7 +22,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Drive | 1x1, holds up to 10 storage cells; has a priority |
 | Storage cell (1k ... 256k) | holds the items (AE2 bytes and types); keeps them when taken out of the drive; can be partitioned |
 | ME Terminal | the hub: storage, **crafting**, jobs, the drives and cells of the network; no pole needed (the controller draws its 8 kW), its screen is dark while the network does not work; can be walked over |
-| ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount): keeps those in stock in it, imports everything else (this page, **Import and export**) |
+| ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount; 36 with Interface Capacity Cards): keeps those in stock in it, imports everything else (this page, **Import and export**) |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face; can be walked over |
 | ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
@@ -226,7 +226,7 @@ click uses the tool and opens no window, as on a chest.
 | Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
-| ME Interface | the priority, 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
+| ME Interface | the priority, 3 card slots (Interface Capacity Cards only: 9 more config rows each), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids), the entity it faces and whether the bus uses its items, fluids or both, status |
 | ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
@@ -237,7 +237,7 @@ same lamp condition, so blueprints and settings paste of the game keep it).
 ## Import and export
 
 **ME Interface** (18 slots, like a chest for inserters and belts, and a tank on each of its four sides for pipes).
-Its window has **9 config rows** (AE2's config slots): each an item (with quality) or a fluid, and an amount. A row's
+Its window has **9 config rows** (AE2's config slots; **Interface Capacity Cards** in its 3 card slots add 9 each, up to 36: a list that scrolls, issue #196; a card taken out leaves the rows it gave kept but idle until a card gives them room again): each an item (with quality) or a fluid, and an amount. A row's
 button opens the **picker** (issue #70, see "ME Cell Workbench": item groups, search, qualities, the green check or the
 confirm key), right click empties the row; no virtual signal can be chosen.
 
@@ -417,6 +417,7 @@ card is made from a component card and one item:
 | Basic Card (2 per craft) | 2 iron plates, 2 copper cables, an electronic circuit, an advanced circuit | | component |
 | Advanced Card (2 per craft) | 2 iron plates, a processing unit, an electronic circuit, an advanced circuit | | component |
 | Capacity Card | basic card + iron chest | storage bus, up to 5 | 9 more filters each (18 + 9 per card, up to 63) |
+| Interface Capacity Card | advanced card + capacity card | ME Interface, up to 3 | 9 more config rows each (9 + 9 per card, up to 36); fits nowhere else (issue #196; AE2's interface has no such card: its pattern slots are the Pattern Provider's here) |
 | Pattern Capacity Card | advanced card + capacity card | ME Pattern Provider, up to 3 | 9 more pattern slots each (9 + 9 per card, up to 36); fits nowhere else, and the Capacity Card does not fit the provider (AE2-Unofficial's Pattern Capacity Card) |
 | Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
@@ -864,7 +865,7 @@ largest amounts first).
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
 | ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network) | yes (priority, cards) | yes (patterns pending a blank pattern, cards); clone: priority, cards |
-| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority | yes | yes (old blueprints with slot filters are converted) |
+| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority, its Interface Capacity Cards (the copy wants them from the player, then the network) | yes | yes (old blueprints with slot filters are converted); the cards first, so the rows they give room for are there |
 | ME Import Bus, ME Export Bus | filters (items and fluids); which Acceleration Cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |

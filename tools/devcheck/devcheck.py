@@ -517,6 +517,7 @@ RUNTIME_TESTS = (
     ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
     ("BUFFER", "ME terminal buffer (issue #150, experiment)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
+    ("IFACECAP", "ME Interface Capacity Card (issue #196)"),
     ("SBUSMODE", "ME storage bus filter mode (issue #155)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("DONE", "all tests reported"),

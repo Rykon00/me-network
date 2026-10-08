@@ -31,6 +31,10 @@ local CARDS = {
 	--- Provider each, up to 3; the storage Capacity Card does not work there and this one only where there are patterns
 	{ name = "me-pattern-capacity-card", order = "e2", kind = "pattern_capacity",
 	  ingredients = I{ "me-advanced-card", 1, "me-capacity-card", 1 } },
+	--- issue #196: an ME Interface Capacity Card: 9 more config rows in an ME Interface each, up to 3 (option (b) of the issue:
+	--- AE2's interface has no such card; its pattern slots are the Pattern Provider's here)
+	{ name = "me-interface-capacity-card", order = "e3", kind = "interface_capacity",
+	  ingredients = I{ "me-advanced-card", 1, "me-capacity-card", 1 } },
 	{ name = "me-inverter-card", order = "f", kind = "inverter",
 	  ingredients = I{ "me-advanced-card", 1, "decider-combinator", 1 } },
 	{ name = "me-equal-distribution-card", order = "g", kind = "equal",
@@ -77,6 +81,8 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	--- issue #156: the ME Pattern Provider takes up to 3 Pattern Capacity Cards (AE2-U: Registration.java, `blocks.iface()`, 3);
 	--- it has `patterns` pattern slots and `per_capacity` more with each card (9 / 18 / 27 / 36)
 	provider = { slots = 3, limits = { pattern_capacity = 3 }, patterns = 9, per_capacity = 9 },
+	--- issue #196: the ME Interface takes up to 3 Interface Capacity Cards: `rows` config rows and `per_capacity` more with each
+	interface = { slots = 3, limits = { interface_capacity = 3 }, rows = 9, per_capacity = 9 },
 	speed = { 1, 8, 32, 64, 96 },
 }
 

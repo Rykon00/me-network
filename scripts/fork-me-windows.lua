@@ -1180,7 +1180,15 @@ local function open_interface(player, entity)
 	local row = G.row(content)                        -- issue #17: the interface's priority
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.interface-priority-tooltip" } }
 	G.number_field(row, io.get_interface_priority(entity), G.act("if_priority"), 70, true).tooltip = { "fork-me-gui.interface-priority-tooltip" }
-	content.add{ type = "flow", name = "fork_me_if_config", direction = "vertical" }
+	--- issue #196: the card slots (only the Interface Capacity Card fits), the rows in a list that scrolls when cards add rows
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.interface-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_if_cards", direction = "horizontal" }
+	G.label(content, "", WIDTH, nil, "fork_me_if_want")
+	G.label(content, "", WIDTH, nil, "fork_me_if_kept")
+	local scroll = content.add{ type = "scroll-pane", name = "fork_me_if_scroll", horizontal_scroll_policy = "never" }
+	scroll.style.maximal_height = 300
+	scroll.add{ type = "flow", name = "fork_me_if_config", direction = "vertical" }
 	G.heading(content, { "fork-me-gui.interface-sides" })
 	content.add{ type = "flow", name = "fork_me_if_sides", direction = "vertical" }
 	G.heading(content, { "fork-me-gui.interface-contents" })
@@ -1191,9 +1199,9 @@ local function open_interface(player, entity)
 	M.refresh_interface(player, G.window_of(player))
 end
 
-local function config_sig(config)
+local function config_sig(config, slots)
 	local out = {}
-	for i = 1, io.CONFIG_SLOTS do
+	for i = 1, slots do
 		local c = config[i]
 		out[i] = c and io.row_key(c) or "-"            -- not the amounts: their fields keep the focus
 	end
@@ -1221,7 +1229,14 @@ function M.refresh_interface(player, frame)
 	local d = M.interface_data(entity)
 	local have = {}
 	for _, c in ipairs(d.contents) do have[c.key] = c.count end
-	rebuild(frame, "fork_me_if_config", config_sig(d.config), function(box)
+	block_slots(frame, "fork_me_if_cards", io.interface_inventory(entity), 1, d.card_slots, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end)
+	local want = {}
+	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
+	G.find(frame, "fork_me_if_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
+	G.find(frame, "fork_me_if_kept").caption = d.kept and { "fork-me-gui.interface-rows-kept" } or ""
+	rebuild(frame, "fork_me_if_config", config_sig(d.config, d.slots), function(box)
 		local t = box.add{ type = "table", column_count = 6 }
 		for i = 1, d.slots do
 			local c = d.config[i]
@@ -1231,7 +1246,7 @@ function M.refresh_interface(player, frame)
 			f.tooltip = c and c.type == "fluid" and { "fork-me-gui.interface-fluid-amount", G.fmt(d.volume) } or nil
 		end
 	end)
-	local side_sig = { config_sig(d.config) }
+	local side_sig = { config_sig(d.config, d.slots) }
 	for s = 1, io.SIDES do side_sig[#side_sig + 1] = tostring(d.sides[s] or "import") end
 	rebuild(frame, "fork_me_if_sides", table.concat(side_sig, ","), function(box)
 		local t = box.add{ type = "table", column_count = 3 }
@@ -1264,7 +1279,15 @@ function M.refresh_interface(player, frame)
 	return true
 end
 
-G.window("interface", storing({ open = open_interface, refresh = M.refresh_interface, entities = { "interface" } }))
+local interface_window = storing({ open = open_interface, refresh = M.refresh_interface, entities = { "interface" } })
+local store_into_network = interface_window.shift
+--- shift + click: a card into the card slots (issue #196), anything else is stored in the network as before
+interface_window.shift = function(entity, stack, inv)
+	if stack.valid_for_read and N.card_kind(stack.name) then return io.interface_shift_in(entity, stack) end
+	return store_into_network(entity, stack, inv)
+end
+interface_window.click = function(entity, slot, cursor, inv, shift) return io.interface_card_click(entity, slot, cursor, inv, shift) end
+G.window("interface", interface_window)
 
 G.on("if_item", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
