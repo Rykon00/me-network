@@ -77,6 +77,19 @@ return function(H)
 			local n2 = info()
 			expect(n2 and n2.power == n0.power + 38000, "the controller draws " .. tostring(n2 and n2.power) .. " W with a level maintainer too, "
 				.. (n0.power + 38000) .. " expected (maintainer 30 kW)")
+			--- issue #149: the breakdown by kind adds up to the total, biggest first, with the controller's base as a row
+			local rows = n2 and n2.power_rows or {}
+			local sum, want, sorted = 0, { controller = 120000, maintainer = 30000, terminal = 8000, drive = 4000 }, true
+			for i, row in ipairs(rows) do
+				sum = sum + row.w
+				if i > 1 and rows[i - 1].w < row.w then sorted = false end
+				expect(want[row.key] == row.w and row.per * row.n == row.w, "power row " .. serpent.line(row))
+				want[row.key] = nil
+			end
+			expect(sum == n2.power and sorted and next(want) == nil and #rows == 4, "power breakdown " .. serpent.line(rows) .. " for "
+				.. tostring(n2.power) .. " W")
+			local text = remote.call("gregtorio-me-gui", "controller_power_text", ctrl)
+			expect(type(text) == "table" and text[1] == "" and #text >= 3, "the power text " .. serpent.line(text))
 			--- no pole reaches them
 			for _, e in pairs({ st.terminal, st.maintainer }) do
 				local poles = s.find_entities_filtered{ type = "electric-pole", position = e.position, radius = 14 }

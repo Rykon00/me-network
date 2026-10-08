@@ -1687,10 +1687,25 @@ end
 local function update_power(s, net)
 	net.power_dirty = nil
 	local members = 0
+	--- issue #149: where the power goes, by kind (a crafting block: by its entity name): { n = blocks, w = watts, entity = true
+	--- for a crafting block }; the controller's base is a row of its own, so the rows add up to net.power exactly
+	local by = { controller = { n = 1, w = BASE_POWER } }
 	for unit in pairs(net.nodes) do
 		local node = s.nodes[unit]
-		if node and not POWERED_SELF[node.kind] then members = members + member_power(node) end
+		if node and not POWERED_SELF[node.kind] then
+			local w = member_power(node)
+			members = members + w
+			local crafting = node.kind == "crafting" and node.entity.valid
+			local key = crafting and node.entity.name or node.kind
+			local row = by[key]
+			if not row then
+				row = { n = 0, w = 0, entity = crafting or nil }
+				by[key] = row
+			end
+			row.n, row.w = row.n + 1, row.w + w
+		end
 	end
+	net.power_by = by
 	net.power = BASE_POWER + members
 	for unit in pairs(net.controllers) do
 		local node = s.nodes[unit]
@@ -2864,6 +2879,21 @@ function M.fluid_key_contents(net)
 	return out
 end
 
+--- Issue #149: the rows of the power breakdown, biggest first: { key (a kind, or a crafting block's entity name), entity (true
+--- for the latter), n (blocks), w (watts in all), per (watts of one block) }; their `w` add up to the network's power.
+local function power_rows(net)
+	if not net.power_by then update_power(state(), net) end    -- (a save from before the breakdown)
+	local rows = {}
+	for key, row in pairs(net.power_by) do
+		rows[#rows + 1] = { key = key, entity = row.entity, n = row.n, w = row.w, per = row.w / row.n }
+	end
+	table.sort(rows, function(a, b)
+		if a.w ~= b.w then return a.w > b.w end
+		return a.key < b.key
+	end)
+	return rows
+end
+
 function M.stats(net)
 	local ok, why = M.usable(net)
 	local drives, cells, fcells, buses, fbuses = 0, 0, 0, 0, 0
@@ -2877,6 +2907,7 @@ function M.stats(net)
 	end
 	return { ok = ok, status = ok and "ok" or why, bytes = net.bytes, bytes_total = net.bytes_total,
 		types = net.types, types_total = net.types_total, drives = drives, cells = cells, power = net.power,
+		power_rows = power_rows(net),
 		fbytes = net.fbytes or 0, fbytes_total = net.fbytes_total or 0, ftypes = net.ftypes or 0,
 		ftypes_total = net.ftypes_total or 0, fluid_cells = fcells, storage_buses = buses,
 		fluid_storage_buses = fbuses, members = net.n, id = net.id }

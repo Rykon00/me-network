@@ -620,6 +620,9 @@ function M.controller_data(entity)
 	if not net then return { status = "no-network" } end
 	local st = N.stats(net)
 	st.energy = entity.energy
+	local cap = entity.prototype.electric_energy_source_prototype
+	cap = cap and cap.buffer_capacity
+	st.supply = cap and cap > 0 and math.min(1, st.energy / cap) or nil    -- (issue #149: the buffer stays full while the network delivers)
 	return st
 end
 
@@ -627,7 +630,26 @@ local function open_controller(player, entity)
 	local _, content = G.open_window(player, "controller", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, "", WIDTH, nil, "fork_me_ctrl_status")
 	G.label(content, "", WIDTH, nil, "fork_me_ctrl_stats")
+	G.label(content, "", WIDTH, nil, "fork_me_ctrl_power")
 	M.refresh_controller(player, G.window_of(player))
+end
+
+--- Issue #149: the power breakdown under the total: one line per kind (blocks, power in all, power of one), biggest first,
+--- and a line when the controller's buffer is not full (its network delivers less than it asks for). A LocalisedString
+--- takes 20 parts at most, so the lines go in groups.
+function M.power_text(d)
+	if not d.power_rows then return "" end
+	local parts, group = { "" }, { "" }
+	for _, row in ipairs(d.power_rows) do
+		local name = row.entity and { "entity-name." .. row.key } or { "fork-me-gui.power-kind-" .. row.key }
+		group[#group + 1] = { "fork-me-gui.power-row", name, row.n, G.fmt_power(row.w), G.fmt_power(row.per) }
+		if #group == 19 then parts[#parts + 1] = group group = { "" } end
+	end
+	parts[#parts + 1] = group
+	if d.supply and d.supply < 0.99 then
+		parts[#parts + 1] = { "fork-me-gui.power-supply", math.floor(d.supply * 100) }
+	end
+	return { "", { "fork-me-gui.power-heading" }, parts }
 end
 
 function M.refresh_controller(player, frame)
@@ -639,10 +661,11 @@ function M.refresh_controller(player, frame)
 	if d.members then
 		local f = G.fmt
 		stats.caption = { "fork-me-gui.controller-stats", d.members, d.drives, d.cells, d.fluid_cells, f(d.bytes), f(d.bytes_total),
-			d.types, d.types_total, f(d.fbytes), f(d.fbytes_total), d.ftypes, d.ftypes_total, f(d.power / 1000) }
+			d.types, d.types_total, f(d.fbytes), f(d.fbytes_total), d.ftypes, d.ftypes_total, G.fmt_power(d.power) }
 	else
 		stats.caption = ""
 	end
+	G.find(frame, "fork_me_ctrl_power").caption = M.power_text(d)
 	return true
 end
 
@@ -1483,6 +1506,7 @@ remote.add_interface("gregtorio-me-gui", {
 	cell_mode_caption = function(c) return M.cell_mode_caption(c) end,
 	set_partition_slot = function(drive, slot, index, key) return M.set_partition_slot(drive, slot, index, key) end,
 	controller_data = function(entity) return M.controller_data(entity) end,
+	controller_power_text = function(entity) return M.power_text(M.controller_data(entity)) end,    -- (issue #149)
 	provider_data = function(entity) return M.provider_data(entity) end,
 	crafting_cpu_data = function(entity) return M.crafting_cpu_data(entity) end,
 	maintainer_data = function(entity) return M.maintainer_data(entity) end,
