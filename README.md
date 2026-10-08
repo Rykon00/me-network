@@ -15,7 +15,7 @@ and puts it on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lu
 numbers in the code and in `docs/` before 0.1.0 are Gregtorio's.
 
 The player guide is `docs/AE2.md`, the design record `docs/ME-REWORK.md`, the data-stage API for other mods
-`docs/API.md`, the measured cost at megabase size `docs/PERFORMANCE.md`.
+`docs/API.md`, the measured cost at megabase size `docs/PERFORMANCE.md`. The design note of the wireless terminal (issue #153, not built yet) is `docs/ME-WIRELESS.md`.
 
 **Old saves:** since 0.5.1 a save is converted only from ME Network 0.5.0 on (issue #146). A save of an older version
 (ME Network 0.1.0 to 0.3.x, or Gregtorio Continued 0.4.x and older) is refused with a message when it loads; load it
