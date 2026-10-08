@@ -1,7 +1,7 @@
 # Wireless ME Terminal: design note (issue #153)
 
-Status: **design only, no code.** The decisions of 2026-10-06 are fixed (below); the open points have a proposal each and wait
-for the maintainer's confirmation in issue #153. After that the work is split into issues (the last section).
+Status: **design only, no code.** The decisions of 2026-10-06 and the confirmation of 2026-10-09 are fixed; the work is split
+into the issues named in the last section.
 
 ## Fixed by the maintainer
 
@@ -63,7 +63,7 @@ entity.
    the player's inventory** (what shift + click on Encode does at the block), so no per-player item inventory is needed.
 5. **Nothing else changes**: the schedule, the storage engine and the planner do not know about wireless.
 
-## Open points: proposals (to be confirmed)
+## Open points: confirmed by the maintainer on 2026-10-09 (boosters, charging by an ME Charger, linking, the pattern mode)
 
 **Booster numbers (the maintainer asked for AE2's as the start).** AE2's 16 blocks base range fits a Minecraft base; a Factorio base
 is wider. Proposal, written as a table so the numbers can be moved: the access point has a card slot row (the generic card code)
@@ -71,12 +71,14 @@ for up to 4 **Wireless Boosters**; range `32 + 24 x b^1.5` tiles (b = 0..4: 32, 
 controller `20 kW + 10 kW x b^(1 + b / 16)` (20, 30, 45, 66, 90 kW). Same dimension (surface) only, nearest active access point.
 Cap and prices are one table in mod-data, not scattered.
 
-**Charging the item.** Options: (A) put `battery` items into the wireless window's charge slot, they are consumed (1 battery =
-a fixed amount; Gregtorio's compat can map its own battery); (B) an ME Charger block like AE2's, powered by the network;
-(C) the item charges from an access point in range at the network's cost, so a terminal used near the base never empties.
-Recommendation **(A)**: no new block, works anywhere, and a design the compat can change. An empty item closes the window
-(`G.refresh_all` finds it); nothing in the window is lost because the window only shows the network. Proposal for the numbers:
-buffer 100 MJ, use `0.2 MJ/s + 0.002 MJ/s per tile of the distance to its access point`, one battery 5 MJ.
+**Charging the item (decided: an ME Charger block, 2026-10-09).** As in AE2: a 1x1 **ME Charger**, a member of the network that
+draws its power through the controller, holds one Wireless Terminal item in a one-slot script inventory (shown in its window,
+given back when it is mined, spilled when it is destroyed) and fills the item's energy tag while the network has power. Its
+power draw is its charge rate while an item is not full and a small idle draw otherwise; it changes only when an item is put in
+or taken out or becomes full (an event, not a tick: the controller's power is recomputed through the existing `power_dirty`).
+Numbers to start from (one table in mod-data): item buffer 100 MJ, charge rate 1 MW (a full charge in 100 s), idle 2 kW; use of
+the item `0.2 MW` over the distance factor `1 + distance / range` while its window is open. An empty item closes the window
+(`G.refresh_all` finds it); nothing is lost, the window only shows the network. The equipment module needs no charger.
 
 **Linking.** The item keeps **one linked network** in its tags (the controller's unit number plus a display name), as AE2's
 does; the module keeps one link per player. Linking: the "open GUI" key with the item in the cursor on an access point or a
@@ -98,16 +100,13 @@ local. Nothing is exclusive (the terminal block already works so).
 | Access point block | entity + item + recipe + sprites, member kind, booster item and its card rules | graph kinds, power table, `docs/API.md` |
 | Remote window path | handle in `N.network_of`, `G.entity_of`, window tags | terminal module (about 35 lines), blueprints untouched |
 | Item + hotkey | `item-with-tags`, custom input, link and energy in tags | the open-key handler (link by click) |
+| ME Charger block | entity + item + recipe + sprites, member kind, one-slot inventory, charge power | graph kinds, power table |
 | Equipment module | equipment prototype, per-player link, drain at refresh | none |
 | Wireless pattern mode | mode switch in the window, encode into the inventory | pattern terminal module (editor reuse) |
 | Gregtorio | nothing in this mod | its compat file: recipes of the item, the module, the access point, the booster |
 
-## Split into issues (after the confirmation)
+## Split into issues
 
-1. Access point block and boosters (the range and power table), with the range query.
-2. The terminal handle and the wireless window path (terminal tabs), tests with a stand-in player.
-3. The Wireless Terminal item: tags, hotkey, linking, charging.
-4. The equipment module.
-5. The pattern mode (the encode into the inventory).
-6. Graphics, locale, `docs/AE2.md`; Gregtorio compat issue for the GT recipes.
-7. `[Task-Ingame]` for the look and the handling.
+The numbers of the issues are in #153 (a comment): access point and boosters, the terminal handle and the wireless window, the
+Wireless Terminal item with hotkey and linking, the ME Charger, the equipment module, the pattern mode, graphics, locale and
+docs, the Gregtorio compat issue, and a `[Task-Ingame]` for the look and handling.
