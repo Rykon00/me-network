@@ -942,6 +942,7 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-overflow-destruction-card": ("basic", "warning", HAZARD),
     "me-fuzzy-card": ("advanced", "gui/overlay_button/analog", (235, 95, 215)),
     "me-pattern-capacity-card": ("advanced", "gui/overlay_button/plus_large", (150, 110, 255)),   # issue #156: a violet plus on the blue body
+    "me-interface-capacity-card": ("basic", "gui/overlay_button/plus_large", (240, 150, 50)),   # issue #196: an orange plus on the gray body
     "me-inverter-card": ("advanced", "gui/overlay_button/disable", (245, 120, 30)),
     "me-equal-distribution-card": ("advanced", "gui/overlay_button/cyclic", (60, 225, 210)),
     "me-acceleration-card": ("advanced", "gui/overlay_button/x2", (185, 240, 70)),   # issue #110: the "x2" sign (lime)

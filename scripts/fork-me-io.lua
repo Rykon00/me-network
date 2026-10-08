@@ -68,7 +68,13 @@ local ACTIVE_INTERVAL = 60           -- ... of a block that moves something but 
 local MAX_CATCH_UP = 600             -- ticks of speed a visit may catch up at most
 local IFACE_SLOTS_PER_VISIT = 8      -- item slots an interface handles per STEP_TICKS since its last visit
 local MAX_FILTERS = 9
-local CONFIG_SLOTS = 9
+local CONFIG_SLOTS = 9               -- the config rows of an interface without cards
+local MAX_ROWS = 36                  -- with three Interface Capacity Cards (issue #196: 9 more rows each)
+
+--- the config rows of an interface (issue #196): 9 and 9 more per Interface Capacity Card (`rec.nrows`, made from its cards by
+--- resize_rows; nil: 9). Rows beyond them are kept aside (`rec.extra`) and come back when a card gives them room.
+local function rows_of(rec) return rec.nrows or CONFIG_SLOTS end
+local icards                         -- the interface's card slots (scripts/fork-me-cardslots.lua), made below
 local MAX_AMOUNT = 1000000
 local EPS = 1e-6
 local FLUID_PREFIX = "fluid/"
@@ -347,7 +353,7 @@ local function clean_config(config)
 	if type(config) ~= "table" then return out end
 	for k, c in pairs(config) do
 		local i = type(c) == "table" and tonumber(c.slot) or tonumber(k)
-		if type(c) == "table" and i and i >= 1 and i <= CONFIG_SLOTS and i == math.floor(i) then
+		if type(c) == "table" and i and i >= 1 and i <= MAX_ROWS and i == math.floor(i) then
 			if c.type == "fluid" then
 				local temp = tonumber(c.temperature)
 				local key = type(c.name) == "string" and prototypes.fluid[c.name] and N.fluid_filter_key(c.name, temp)
@@ -369,6 +375,21 @@ local function clean_config(config)
 		end
 	end
 	return out
+end
+
+--- `config` (checked) as the interface's active rows (`rec.config`) and the rows its cards do not give room for (`rec.extra`)
+local function split_rows(rec, config)
+	local n = rows_of(rec)
+	local active, extra = {}, nil
+	for i, c in pairs(config) do
+		if i <= n then
+			active[i] = c
+		else
+			extra = extra or {}
+			extra[i] = c
+		end
+	end
+	rec.config, rec.extra = active, extra
 end
 
 --- the sides checked against a config: { [1..4] = "off" | row index of a fluid row } (missing: import)
@@ -668,6 +689,7 @@ end
 --- whether a row had run empty, its network, and the ticks until its buffer runs out at the rate this visit saw.
 function M.interface_step(rec, dt, u)
 	local e = rec.entity
+	if rec.want then icards.fill_cards(rec) end                       -- issue #196: the cards a blueprint or a paste asked for
 	local config = config_of(rec)
 	local net = u and N.active_of_unit(u) or not u and N.active_of(e) or nil   -- (`u`: the unit of a visit, issue #115)
 	if not net then
@@ -697,7 +719,7 @@ function M.interface_step(rec, dt, u)
 		rows = {}
 		rec.rows = rows
 	end
-	for i = 1, CONFIG_SLOTS do
+	for i = 1, rows_of(rec) do
 		local c = config[i]
 		if c and c.type ~= "fluid" then
 			local key = c.key
@@ -829,8 +851,11 @@ end
 function M.get_interface_config(entity)
 	if kind(entity) ~= "interface" then return nil end
 	local out = {}
-	for i, c in pairs(config_of(register(state(), entity))) do
-		out[i] = { type = c.type, name = c.name, quality = c.quality, amount = c.amount, temperature = c.temperature }
+	local rec = register(state(), entity)
+	for _, rows in ipairs({ config_of(rec), rec.extra or {} }) do          -- (issue #196: and the rows no card gives room for)
+		for i, c in pairs(rows) do
+			out[i] = { type = c.type, name = c.name, quality = c.quality, amount = c.amount, temperature = c.temperature }
+		end
 	end
 	return out
 end
@@ -850,7 +875,7 @@ function M.set_interface_config(entity, config, sides)
 	if kind(entity) ~= "interface" then return false end
 	local rec = register(state(), entity)
 	config_of(rec)
-	rec.config = clean_config(config)
+	split_rows(rec, clean_config(config))
 	rec.sides = clean_sides(sides or rec.sides, rec.config)
 	refresh_exporting(rec)
 	wake(entity.unit_number)
@@ -897,8 +922,9 @@ end
 --- the row keeps its amount, a key moved from another row keeps that row's amount and sides (the other row is
 --- cleared), a new item starts with one stack, a new fluid with a side's volume and the first free side.
 function M.set_interface_key(entity, i, key, amount)
-	if kind(entity) ~= "interface" or not (i >= 1 and i <= CONFIG_SLOTS) then return false end
+	if kind(entity) ~= "interface" then return false end
 	local rec = register(state(), entity)
+	if not (i >= 1 and i <= rows_of(rec)) then return false end
 	local config = M.get_interface_config(entity)
 	local sides = M.get_interface_sides(entity)
 	local row
@@ -953,7 +979,7 @@ end
 --- the config as a list for blueprint tags (sparse tables do not survive tags): { { slot, name, quality, amount, type } }
 local function config_tag(config)
 	local out = {}
-	for i = 1, CONFIG_SLOTS do
+	for i = 1, MAX_ROWS do
 		local c = config[i]
 		if c then out[#out + 1] = { slot = i, type = c.type, name = c.name, quality = c.quality, amount = c.amount, temperature = c.temperature } end
 	end
@@ -978,10 +1004,11 @@ local function config_from_tag(t)
 	return nil
 end
 
---- the interface's tag (blueprints): { config, sides, priority (issue #17, only when not 0) }
-function M.interface_tag(config, sides, priority)
+--- the interface's tag (blueprints): { config, sides, priority (issue #17, only when not 0), cards (issue #196: the Interface
+--- Capacity Cards it has, only when there are any) }
+function M.interface_tag(config, sides, priority, cards)
 	return { config = config_tag(clean_config(config)), sides = sides_tag(sides),
-		priority = priority and priority ~= 0 and priority or nil }
+		priority = priority and priority ~= 0 and priority or nil, cards = cards }
 end
 
 --- the interface's state for its window: { config, sides, status, contents = { { key, count } }, fluids = { [1..4] =
@@ -1013,10 +1040,17 @@ function M.get_interface(entity)
 		if e then short[key] = e[2] end
 	end
 	return { config = M.get_interface_config(entity), sides = sides, status = rec.status, contents = contents,
-		fluids = fl, slots = CONFIG_SLOTS, volume = volume(), priority = rec.priority or 0, short = short,
-		fmix = rec.fmix and { rec.fmix[1], rec.fmix[2] } or nil }
+		fluids = fl, slots = rows_of(rec), volume = volume(), priority = rec.priority or 0, short = short,
+		fmix = rec.fmix and { rec.fmix[1], rec.fmix[2] } or nil, card_slots = N.card_rules().interface.slots,
+		want = rec.want and icards.missing_cards(rec, rec.want) or nil, kept = rec.extra and next(rec.extra) ~= nil or nil }
 end
 M.CONFIG_SLOTS = CONFIG_SLOTS
+
+--- the config rows of an interface with its cards (recipe paste: how many fit)
+function M.row_capacity(entity)
+	local rec = kind(entity) == "interface" and register(state(), entity)
+	return rec and rows_of(rec) or CONFIG_SLOTS
+end
 M.MAX_FILTERS = MAX_FILTERS
 M.side_volume = function() return volume() end      -- the amount a new fluid row gets
 M.SIDES = #SIDES
@@ -1047,6 +1081,34 @@ cards = CS.new{
 		rec.accel = n > 0 and N.card_rules().speed[n + 1] or nil
 		if not light and rec.entity and rec.entity.valid then wake(rec.entity.unit_number) end
 	end,
+}
+
+--- Issue #196: the card slots of an ME Interface (scripts/fork-me-cardslots.lua): only the Interface Capacity Card fits, 3 of them,
+--- each gives 9 more config rows (9, 18, 27 or 36). A card taken out (or lost another way) leaves the rows it gave in
+--- `rec.extra`: they are kept, shown nowhere and do nothing, until a card gives them room again. `rec.nrows` is the number of rows.
+local function iface_rec(entity)
+	local s = storage.fork_me_io
+	return s and entity and entity.valid and entity.unit_number and kind(entity) == "interface" and s.recs[entity.unit_number] or nil
+end
+M.iface_rec = iface_rec
+
+local function resize_rows(rec)
+	local rules = N.card_rules().interface
+	local size = rules.rows + rules.per_capacity * (icards.counts(rec).interface_capacity or 0)
+	rec.nrows = size ~= CONFIG_SLOTS and size or nil
+	local all = {}
+	for _, rows in ipairs({ rec.config or {}, rec.extra or {} }) do for i, c in pairs(rows) do all[i] = c end end
+	split_rows(rec, all)
+	rec.sides = clean_sides(rec.sides, rec.config)
+	refresh_exporting(rec)
+	if rec.entity.valid then wake(rec.entity.unit_number) end
+end
+
+icards = CS.new{
+	rules = function() return N.card_rules().interface end,
+	title = function(rec) return rec.entity and rec.entity.valid and rec.entity.localised_name or { "entity-name.me-interface" } end,
+	rec_of = iface_rec,
+	on_cards = function(rec) resize_rows(rec) end,
 }
 
 --- The entity in front of a bus that has an inventory of the bus's kind or fluid boxes; what it has is kept with it
@@ -1505,6 +1567,17 @@ function M.set_bus_filter(entity, index, key)
 end
 
 --- issue #110: the card slots of a bus for its window (the inventory whose slots it shows, the clicks on them)
+function M.interface_inventory(entity)
+	local rec = iface_rec(entity)
+	return rec and icards.inv_of(rec) or nil
+end
+function M.interface_card_click(entity, slot, cursor, inventory, shift) return icards.card_click(entity, slot, cursor, inventory, shift) end
+function M.interface_shift_in(entity, stack) return icards.shift_in(entity, stack) end
+function M.interface_sync(entity, back)
+	local rec = iface_rec(entity)
+	return rec ~= nil and icards.sync(rec, back)
+end
+
 function M.bus_inventory(entity)
 	local rec = bus_rec(entity)
 	return rec and cards.inv_of(rec) or nil
@@ -1642,6 +1715,7 @@ local function visit(rec, unit, fallback)
 	if not e.valid then
 		destroy_tanks(rec)                    -- an interface removed without an event
 		if BUSES[rec.kind] then cards.detach(rec) end        -- issue #110: a bus's cards are spilled where it stood
+		if rec.kind == "interface" then icards.detach(rec) end   -- issue #196: an interface's cards are spilled where it stood
 		drop(s, unit)                         -- (its shortfalls go too)
 		return
 	end
@@ -1758,10 +1832,15 @@ function M.on_built(entity, tags, source)
 		ensure_tanks(rec)
 		local t = type(tags) == "table" and tags[IFACE_TAG] or nil
 		local config, sides = config_from_tag(t)
+		--- issue #196: the cards first (from the network, never from nothing), so the rows they give room for are there
+		if type(t) == "table" and type(t.cards) == "table" and #t.cards > 0 then icards.want_cards(entity, t.cards, nil) end
 		if config then
 			M.set_interface_config(entity, config, sides or {})
 			if type(t) == "table" and t.priority then M.set_interface_priority(entity, t.priority) end
 		elseif source and source.valid and kind(source) == "interface" then
+			local from_rec = iface_rec(source)
+			local list = from_rec and icards.card_list(from_rec)
+			if list then icards.want_cards(entity, list, nil) end
 			M.set_interface_config(entity, M.get_interface_config(source), M.get_interface_sides(source))
 			M.set_interface_priority(entity, M.get_interface_priority(source))
 		end
@@ -1827,6 +1906,9 @@ function M.on_removed(entity, mined)
 			if held and held.amount > EPS then tank_to_network(t, held, net) end
 		end
 		destroy_tanks(rec)
+		--- issue #196: the Interface Capacity Cards of a mined interface go into the buffer, those of a destroyed one onto the ground
+		if type(mined) == "userdata" or type(mined) == "table" then icards.give_cards(rec, mined) else icards.spill_cards(rec) end
+		icards.detach(rec)
 	elseif BUSES[rec.kind] then
 		--- issue #110: the cards of a mined bus go into the buffer, those of a destroyed one onto the ground
 		if type(mined) == "userdata" or type(mined) == "table" then cards.give_cards(rec, mined) else cards.spill_cards(rec) end
@@ -1849,6 +1931,12 @@ function M.on_entity_settings_pasted(event)
 	if not (src and src.valid and dst and dst.valid and src.name == dst.name) then return end
 	local k = kind(src)
 	if k == "interface" then
+		--- issue #196: the source's Interface Capacity Cards are what the destination is to have (from the player, then the network)
+		local from_rec = iface_rec(src)
+		if from_rec then
+			local player = event.player_index and game.get_player(event.player_index) or nil
+			icards.want_cards(dst, from_rec.want and { table.unpack(from_rec.want) } or icards.card_list(from_rec) or {}, player)
+		end
 		M.set_interface_config(dst, M.get_interface_config(src), M.get_interface_sides(src))
 		M.set_interface_priority(dst, M.get_interface_priority(src))
 	elseif BUSES[k] then
@@ -1870,8 +1958,10 @@ function M.tag_blueprint(bp, mapping)
 		if k == "interface" then
 			local config, sides = M.get_interface_config(entity), M.get_interface_sides(entity)
 			local p = M.get_interface_priority(entity)
-			if next(config) or next(sides) or p ~= 0 then
-				bp.set_blueprint_entity_tag(index, IFACE_TAG, M.interface_tag(config, sides, p))
+			local rec = iface_rec(entity)
+			local list = rec and (rec.want and { table.unpack(rec.want) } or icards.card_list(rec))
+			if next(config) or next(sides) or p ~= 0 or list then
+				bp.set_blueprint_entity_tag(index, IFACE_TAG, M.interface_tag(config, sides, p, list))
 			end
 		elseif BUSES[k] then
 			local b = M.get_bus(entity)
@@ -1905,7 +1995,13 @@ function M.on_configuration_changed()
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.accel = o.inv, o.cards, o.want, o.where, o.accel end   -- issue #110
 			end
 			if rec.kind == "interface" then
-				if o and o.config then rec.config = clean_config(o.config) end
+				if o then rec.inv, rec.cards, rec.want, rec.where, rec.nrows = o.inv, o.cards, o.want, o.where, o.nrows end   -- issue #196
+				if o and o.config then split_rows(rec, clean_config(o.config)) end
+				if o and o.extra then
+					local all = {}
+					for _, rows in ipairs({ rec.config or {}, o.extra }) do for i, c in pairs(rows) do all[i] = c end end
+					split_rows(rec, clean_config(all))
+				end
 				if o and o.priority then
 					rec.priority = o.priority
 					s.prio[e.unit_number] = o.priority
@@ -2028,6 +2124,14 @@ remote.add_interface("gregtorio-me-io", {
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,
 	--- issue #110: the card slots of a bus (what the window's clicks do; `want`: a list of names)
 	bus_inventory = function(entity) local rec = bus_rec(entity) return rec and cards.inv_of(rec) or nil end,
+	--- issue #196: the card slots of an interface (the window's functions and the tests')
+	interface_inventory = function(entity) return M.interface_inventory(entity) end,
+	interface_card_click = function(entity, slot, cursor, inventory, shift) return icards.card_click(entity, slot, cursor, inventory, shift) end,
+	interface_want_cards = function(entity, want, player_index)
+		return icards.want_cards(entity, want, player_index and game.get_player(player_index) or nil)
+	end,
+	interface_sync = function(entity, back) return M.interface_sync(entity, back) end,
+	row_capacity = function(entity) return M.row_capacity(entity) end,
 	bus_card_click = function(entity, slot, cursor, inventory, shift) return cards.card_click(entity, slot, cursor, inventory, shift) end,
 	bus_shift_in = function(entity, stack) return cards.shift_in(entity, stack) end,
 	bus_want_cards = function(entity, want, player_index)

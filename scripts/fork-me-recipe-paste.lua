@@ -96,7 +96,7 @@ local function paste_interface(dst, recipe, quality, msgs)
 	local config, row_of_fluid, fluids = {}, {}, 0
 	local rows_full, fluids_full, capped = {}, {}, {}
 	for _, e in ipairs(wanted) do
-		if #config >= io.CONFIG_SLOTS then
+		if #config >= io.row_capacity(dst) then
 			rows_full[#rows_full + 1] = e
 		elseif e.type == "fluid" then
 			if fluids >= MAX_FLUID_ROWS then
@@ -149,7 +149,7 @@ local function paste_interface(dst, recipe, quality, msgs)
 			end
 		end
 	end
-	if #rows_full > 0 then msg(msgs, "rows-full", tostring(io.CONFIG_SLOTS), icons(rows_full)) end
+	if #rows_full > 0 then msg(msgs, "rows-full", tostring(io.row_capacity(dst)), icons(rows_full)) end
 	if #fluids_full > 0 then msg(msgs, "fluids-full", tostring(MAX_FLUID_ROWS), icons(fluids_full)) end
 	if #capped > 0 then msg(msgs, "amount-capped", icons(capped)) end
 end

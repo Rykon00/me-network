@@ -106,7 +106,7 @@ end
 --- recipe list (Gregtorio Continued does) has not heard of a card this mod added later, so the card's recipe, its own
 --- (Gregtorio's compat file gives it the GregTech ingredients) or ours, is unlocked there as well.
 --- Issue #156: the same for the Pattern Capacity Card.
-for _, name in ipairs({ "me-acceleration-card", "me-pattern-capacity-card" }) do
+for _, name in ipairs({ "me-acceleration-card", "me-pattern-capacity-card", "me-interface-capacity-card" }) do
 	local tech, recipe = data.raw.technology["me-upgrade-cards"], data.raw.recipe[name]
 	if tech and recipe and not unlocked[name] then
 		tech.effects = tech.effects or {}
