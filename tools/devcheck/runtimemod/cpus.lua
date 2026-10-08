@@ -119,6 +119,14 @@ return function(H)
 			local w = remote.call(GUI, "inventory_click", pinv[2], pinv, 1, "shift", a)
 			expect(w == nil and count("stone") == s0 + 3 and not pinv[1].valid_for_read, "shift + click in a crafting block's window: " .. tostring(w))
 			pinv.destroy()
+			--- issue #151: the window's title is the CPU's, whichever of its blocks was clicked (storage, unit, monitor); a group
+			--- that is no CPU is "Crafting blocks"
+			local function title(name, x, y) return remote.call(GUI, "crafting_cpu_title", find(name, x, y)) end
+			local t1, t2, t3 = title("me-4k-crafting-storage", 16, 0), title("me-crafting-unit", 18, 0), title("me-crafting-monitor", 18, 1)
+			expect(t1[1] == "fork-me-gui.ccpu-title" and t1[2] == ib.id and line(t1) == line(t2) and line(t2) == line(t3),
+				"the title of one CPU from three blocks: " .. line({ t1, t2, t3 }) .. " id " .. tostring(ib.id))
+			local tl = title("me-crafting-unit", 22, 1)
+			expect(tl[1] == "fork-me-gui.ccpu-title-none", "the title of an L: " .. line(tl))
 			local wd = remote.call(GUI, "crafting_cpu_data", find("me-crafting-unit", 22, 1))
 			expect(wd and wd.status == "not-rectangle" and wd.width == 2 and wd.height == 2, "the window data of the L: " .. line(wd))
 			--- too big for every CPU: refused, nothing taken; a level maintainer waits
