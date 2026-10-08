@@ -1007,7 +1007,11 @@ function M.refresh_all()
 				M.close_window(player)                     -- dying or another GUI closed it without an event
 			else
 				absorb(player)                             -- issue #150: the buffer, also without an event
-				local ok = def.refresh and def.refresh(player, frame)
+				local ok = true
+				for _, hook in ipairs(M.refresh_hooks) do
+					if hook(player, frame) == false then ok = false end
+				end
+				ok = ok and (def.refresh and def.refresh(player, frame))
 				if ok == false then
 					M.close_window(player)
 				elseif storage.fork_me_gui_pane and storage.fork_me_gui_pane[player.index] then
@@ -1054,9 +1058,26 @@ function M.entity_of(player, frame)
 	local e = M.entity_by_unit(frame.tags.unit)
 	if not (e and e.valid) then return nil end
 	local via = M.entity_by_unit(frame.tags.via)
-	if not player.can_reach_entity((via and via.valid) and via or e) then return nil end
+	if not M.reachable(player, (via and via.valid) and via or e) then return nil end
 	return e
 end
+
+--- Issue #206: may the player use the window of `anchor` from where they stand? In reach, or by a hook of `remote_reach` (the
+--- wireless terminal: `anchor` is an access point in range of the player's linked terminal, which has energy).
+M.remote_reach = {}
+function M.reachable(player, anchor)
+	if player.can_reach_entity(anchor) then return true end
+	for _, f in ipairs(M.remote_reach) do
+		if f(player, anchor) then return true end
+	end
+	return false
+end
+
+--- Issue #206: functions(player, frame) run at the refresh of every open window before the window's own (the wireless terminal
+--- pays its energy there); one that returns false closes the window. And functions(player, entity) the open key tries first
+--- (the wireless terminal: an item in the cursor is linked to the network of the clicked block); one that returns true ends it.
+M.refresh_hooks = {}
+M.open_key_hooks = {}
 
 --- a "Back" button to the terminal for a window opened from one
 function M.back_button(parent, via)

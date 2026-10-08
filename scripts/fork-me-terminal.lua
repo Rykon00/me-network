@@ -432,8 +432,9 @@ local function build_cells(tab)
 	scroll.add{ type = "table", name = "fork_me_cells", column_count = 2 }
 end
 
+--- `entity`: the terminal, or (issue #206) the access point a wireless terminal reaches the network through
 local function open(player, entity)
-	if not (entity and entity.valid and entity.name == "me-terminal") then return end
+	if not (entity and entity.valid and (entity.name == "me-terminal" or N.kind_of(entity.name) == "access-point")) then return end
 	local _, content = G.open_window(player, "terminal", { "fork-me-terminal.title" }, { unit = entity.unit_number })
 	local st = state()[player.index]
 	if not (st and st.entity == entity) then
@@ -442,6 +443,7 @@ local function open(player, entity)
 	end
 	st.shown, st.craft_shown, st.jobs_shown, st.cells_shown, st.plan_shown = nil, nil, nil, nil, nil
 	G.label(content, "", WIDTH, nil, "fork_me_net_line")
+	if G.wireless_mode_button then G.wireless_mode_button(content, entity, "pattern") end   -- (issue #210: a wireless window)
 	local top = G.row(content)
 	top.add{ type = "label", caption = { "fork-me-terminal.search" } }
 	local search = top.add{ type = "textfield", name = "fork_me_search", text = st.filter or "", tags = G.act("term_search") }
@@ -720,7 +722,7 @@ function M.refresh(player, frame)
 	local st = state()[player.index]
 	if not (frame and st) then return false end
 	local entity = st.entity
-	if not (entity and entity.valid and player.can_reach_entity(entity)) then return false end
+	if not (entity and entity.valid and G.reachable(player, entity)) then return false end    -- (issue #206: or wireless)
 	local net_line, tabs = G.find(frame, "fork_me_net_line"), G.find(frame, "fork_me_tabs")
 	if not (net_line and tabs) then return false end                    -- built by an older version
 	local net, why = network(entity)
@@ -981,6 +983,9 @@ script.on_event("fork-me-terminal-open", function(event)
 	local e = player.selected
 	G.clear_bypass(player)
 	if not G.click_opens(player.cursor_stack, G.cursor_flags(player, e)) then return end
+	for _, hook in ipairs(G.open_key_hooks) do                          -- (issue #207: a wireless terminal is linked)
+		if hook(player, e) then return end
+	end
 	if N.quick_insert(player, e) then return end
 	if autocraft.quick_insert(player, e) then return end
 	G.open_entity(player, e)

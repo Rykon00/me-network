@@ -22,6 +22,8 @@ local fork_circuit = require("scripts.fork-me-circuit")
 local fork_pt = require("scripts.fork-me-patternterm")
 --- the windows of the ME blocks (after the modules whose functions they call)
 require("scripts.fork-me-windows")
+--- issues #205 to #210: the access point, the wireless terminal and its hotkey, the charger, the equipment module
+local fork_wl = require("scripts.fork-me-wireless")
 --- a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12)
 local fork_paste = require("scripts.fork-me-recipe-paste")
 --- the ME Cell Workbench: a cell's partition and upgrade cards (issue #17)
@@ -37,6 +39,7 @@ require("scripts.fork-me-stats")
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_net.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_sbus.tag_blueprint
+fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_wl.tag_blueprint
 
 local function on_built(entity, tags, event)
 	fork_net.on_built(entity, event)
@@ -47,6 +50,7 @@ local function on_built(entity, tags, event)
 	fork_circuit.on_built(entity, tags)
 	fork_bench.on_built(entity)
 	fork_pt.on_built(entity)
+	fork_wl.on_built(entity, tags)
 end
 
 --- built by players and robots, by other scripts and on space platforms
@@ -67,6 +71,7 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 	fork_circuit.on_built(event.destination, nil, event.source)
 	fork_bench.on_built(event.destination)                     -- (a cloned workbench is empty: its cell is an item)
 	fork_pt.on_built(event.destination)                        -- (a cloned pattern terminal has empty slots)
+	fork_wl.on_built(event.destination, nil, event.source)     -- (an access point wants its boosters, a charger is empty)
 end)
 
 --- the priority of an ME Pattern Provider (its patterns travel in blueprints, see fork-me-autocraft.lua) and the
@@ -80,6 +85,7 @@ script.on_event(defines.events.on_entity_settings_pasted, function(event)
 	fork_ae2.on_entity_settings_pasted(event)
 	fork_circuit.on_entity_settings_pasted(event)
 	fork_paste.on_entity_settings_pasted(event)
+	fork_wl.on_entity_settings_pasted(event)
 end)
 
 script.on_event(defines.events.on_player_setup_blueprint, function(event)
@@ -106,6 +112,7 @@ local function on_mined(event)
 	fork_ae2.on_removed(event.entity, event.buffer)
 	fork_bench.on_removed(event.entity, event.buffer)
 	fork_pt.on_removed(event.entity, event.buffer)          -- (issue #130: its two slots come along)
+	fork_wl.on_removed(event.entity, event.buffer)          -- (an access point's boosters, a charger's terminal)
 	fork_net.on_removed(event.entity, event.buffer)
 end
 for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
@@ -117,6 +124,7 @@ local function on_destroyed(event)
 	fork_ae2.on_removed(event.entity, nil)
 	fork_bench.on_removed(event.entity, nil)
 	fork_pt.on_removed(event.entity, nil)                   -- (spilled where it stood)
+	fork_wl.on_removed(event.entity, nil)
 	fork_net.on_removed(event.entity, nil)
 end
 script.on_event(defines.events.on_entity_died, on_destroyed, REMOVED_FILTER)
@@ -201,4 +209,5 @@ script.on_configuration_changed(function(data)
 	fork_io.on_configuration_changed()
 	fork_sbus.on_configuration_changed()
 	fork_bench.on_configuration_changed()
+	fork_wl.on_configuration_changed()
 end)

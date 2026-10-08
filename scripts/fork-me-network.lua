@@ -81,6 +81,8 @@ local function kinds()
 		if n.pattern_terminal then k[n.pattern_terminal] = "pattern-terminal" end      -- issue #130
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
+		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
+		if n.charger then k[n.charger] = "charger" end                -- issue #208
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -111,9 +113,15 @@ local function kind_power(kind)
 	return kind_power_cache[kind] or MEMBER_POWER
 end
 
+--- Issue #205: kinds whose power depends on their state (the access point's boosters, the charger while it charges): kind ->
+--- function(entity) returning W. A change of that state calls M.power_changed(entity).
+M.power_hooks = {}
+
 --- issue #6: the power (W) of a crafting block drawn through the controller (mod-data "fork-me-autocraft", blocks)
 local block_power_cache
 local function member_power(node)
+	local hook = M.power_hooks[node.kind]
+	if hook then return node.entity.valid and hook(node.entity) or MEMBER_POWER end
 	if node.kind ~= "crafting" then return kind_power(node.kind) end
 	if not block_power_cache then
 		local ac = prototypes.mod_data["fork-me-autocraft"]
@@ -3784,6 +3792,12 @@ end
 --- functions(unit) of other modules called for a member that vanished without an event (issue #6: a crafting block
 --- leaves its CPU)
 M.vanish_hooks = {}
+
+--- a member whose power draw changed (M.power_hooks): its network computes the controller's draw again before its next use
+function M.power_changed(entity)
+	local net = entity and entity.valid and M.network_of(entity)
+	if net then net.power_dirty = true end
+end
 
 --- functions of other modules called at every slow step (the Cell Workbench's sweep, issue #17)
 M.slow_hooks = {}
