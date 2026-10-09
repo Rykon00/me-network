@@ -172,8 +172,8 @@ M.ACCELERATION_SLOTS = 5          -- AE2: a Molecular Assembler takes up to 5 ac
 function M.make_molecular_assembler(def)
 	local assembler = table.deepcopy(data.raw["assembling-machine"][def.base])
 	assembler.name = "me-molecular-assembler"
-	assembler.icon = M.icons .. "fork/me-molecular-assembler.png"
-	assembler.icon_size = 32
+	assembler.icon = M.hd_icons .. "me-molecular-assembler.png"
+	assembler.icon_size = 64
 	assembler.icons = nil
 	assembler.minable = { mining_time = 0.5, result = "me-molecular-assembler" }
 	assembler.fast_replaceable_group = nil
@@ -193,16 +193,16 @@ function M.make_molecular_assembler(def)
 	assembler.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
 	assembler.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
 	assembler.drawing_box_vertical_extension = nil
-	--- the pictures: 32 px, the one tile (a working strip of four frames below each other). A frozen patch of the base machine
+	--- the pictures: 64 px at scale 0.5 (issue #220: the 3D style), the one tile (a working strip of four frames below each other). A frozen patch of the base machine
 	--- (Space Age) is not kept: it is a picture of the base's 3x3 body.
 	assembler.graphics_set = {
 		idle_animation = { layers = { {
-			filename = M.entity_path .. "me-molecular-assembler-idle.png",
-			width = 32, height = 32, frame_count = 1, repeat_count = 4, shift = { 0, 0 },
+			filename = M.hd_entity_path .. "me-molecular-assembler-idle.png",
+			width = 64, height = 64, scale = 0.5, frame_count = 1, repeat_count = 4, shift = { 0, 0 },
 		} } },
 		animation = { layers = { {
-			filename = M.entity_path .. "me-molecular-assembler-working.png",
-			width = 32, height = 32, frame_count = 4, line_length = 1, animation_speed = 0.3, shift = { 0, 0 },
+			filename = M.hd_entity_path .. "me-molecular-assembler-working.png",
+			width = 64, height = 64, scale = 0.5, frame_count = 4, line_length = 1, animation_speed = 0.3, shift = { 0, 0 },
 		} } },
 	}
 	--- what else a 3x3 machine lays out for its size: the recipe icon of the alt mode and the icons of the five Acceleration Cards

@@ -1310,6 +1310,102 @@ def hd_batch2():
     return written
 
 
+def hd_block_connected(face, mask, depth=HD_DEPTH):
+    """Issue #220: a crafting block of a CPU (the connected pictures of #152): the face runs to the tile's edge on a side
+    that touches another block of the CPU (`mask`: N 1, E 2, S 4, W 8); the east and south depth strips and the outline only
+    on the outer sides, so a CPU is one block with depth around its outside."""
+    n, e, so, w = (bool(mask & m) for m in (1, 2, 4, 8))
+    img = Image.new("RGBA", (HD, HD))
+    fw, fh = HD - (0 if e else depth), HD - (0 if so else depth)
+    f = hd_up(face).resize((fw, fh), Image.NEAREST)
+    # a strip runs on past the tile's edge where the CPU goes on (into the next block's strip)
+    if not e:
+        y0 = -depth if n else 0
+        edge_e = f.crop((f.width - 4, 0, f.width, f.height)).resize((depth, fh - y0), Image.NEAREST)
+        hd_affine(img, hd_shade(edge_e, 0.72), (fw, y0), (depth, depth), (0, fh - y0))
+    if not so:
+        x0 = -depth if w else 0
+        edge_s = f.crop((0, f.height - 4, f.width, f.height)).resize((fw - x0, depth), Image.NEAREST)
+        hd_affine(img, hd_shade(edge_s, 0.5), (x0, fh), (fw - x0, 0), (depth, depth))
+    img.alpha_composite(f, (0, 0))
+    d = ImageDraw.Draw(img)
+    if not n:
+        d.line((0, 0, fw - 1, 0), fill=CONTOUR)
+    if not w:
+        d.line((0, 0, 0, fh - 1), fill=CONTOUR)
+    if not e:
+        d.line((fw, 0, fw, fh), fill=CONTOUR)
+        d.line((HD - 1, 0 if n else depth, HD - 1, HD - 1), fill=CONTOUR)
+    if not so:
+        d.line((0, fh, fw, fh), fill=CONTOUR)
+        d.line((0 if w else depth, HD - 1, HD - 1, HD - 1), fill=CONTOUR)
+    return img
+
+
+def hd_batch3():
+    """issue #220: the pattern provider, the molecular assembler (idle, working), the cell workbench, the crafting blocks (48
+    connected pictures each), the wireless access point and the charger"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for name in ("me-pattern-provider", "me-molecular-assembler-idle", "me-cell-workbench", "me-wireless-access-point", "me-charger"):
+        save(hd_block(load(OUT_ENTITY / f"{name}.png")), HD_ENTITY / f"{name}.png")
+    work = load(OUT_ENTITY / "me-molecular-assembler-working.png")
+    frames = work.height // TILE
+    strip = Image.new("RGBA", (HD, HD * frames))
+    for i in range(frames):
+        strip.alpha_composite(hd_block(work.crop((0, i * TILE, TILE, (i + 1) * TILE))), (0, i * HD))
+    save(strip, HD_ENTITY / "me-molecular-assembler-working.png")
+    for name, _, _ in CRAFTING_BLOCKS:
+        src = load(OUT_ENTITY / f"{name}.png")
+        n = src.width // TILE
+        sheet = Image.new("RGBA", (HD * n, HD))
+        for i in range(n):
+            sheet.alpha_composite(hd_block_connected(src.crop((i * TILE, 0, (i + 1) * TILE, TILE)), i % 16), (i * HD, 0))
+        save(sheet, HD_ENTITY / f"{name}.png")
+        save(hd_cube(src.crop((16 * TILE, 0, 17 * TILE, TILE))), HD_ICON / f"{name}.png")       # the lit lone block
+    for name, src in (("me-pattern-provider", "me-pattern-provider"), ("me-molecular-assembler", "me-molecular-assembler-idle"),
+                      ("me-cell-workbench", "me-cell-workbench"), ("me-wireless-access-point", "me-wireless-access-point"),
+                      ("me-charger", "me-charger")):
+        save(hd_cube(load(OUT_ENTITY / f"{src}.png")), HD_ICON / f"{name}.png")
+    return written
+
+
+def hd_sheet_batch3(path):
+    pairs = [("pattern provider", OUT_ENTITY / "me-pattern-provider.png", HD_ENTITY / "me-pattern-provider.png"),
+             ("assembler idle", OUT_ENTITY / "me-molecular-assembler-idle.png", HD_ENTITY / "me-molecular-assembler-idle.png"),
+             ("cell workbench", OUT_ENTITY / "me-cell-workbench.png", HD_ENTITY / "me-cell-workbench.png"),
+             ("access point", OUT_ENTITY / "me-wireless-access-point.png", HD_ENTITY / "me-wireless-access-point.png"),
+             ("charger", OUT_ENTITY / "me-charger.png", HD_ENTITY / "me-charger.png"),
+             ("provider icon", OUT_ICON / "me-pattern-provider.png", HD_ICON / "me-pattern-provider.png"),
+             ("assembler icon", OUT_ICON / "me-molecular-assembler.png", HD_ICON / "me-molecular-assembler.png"),
+             ("crafting unit icon", OUT_ICON / "me-crafting-unit.png", HD_ICON / "me-crafting-unit.png"),
+             ("4k storage icon", OUT_ICON / "me-4k-crafting-storage.png", HD_ICON / "me-4k-crafting-storage.png")]
+    hd_sheet(path, "issue #220", pairs)
+    # a 3 x 3 CPU (unit, storages, co-processors, monitor) as it lies on the ground, lit, at 2x, next to today's
+    img = load(path)
+    out = Image.new("RGBA", (img.width, img.height + 260), (40, 40, 48, 255))
+    out.alpha_composite(img)
+    names = [b[0] for b in CRAFTING_BLOCKS]
+    layout = [[names[3], names[4], names[0]], [names[1], names[2], names[5]], [names[6], names[7], names[0]]]
+    y0 = img.height + 20
+    for gy in range(3):
+        for gx in range(3):
+            mask = (1 if gy > 0 else 0) | (2 if gx < 2 else 0) | (4 if gy < 2 else 0) | (8 if gx > 0 else 0)
+            v = 16 + mask
+            old = load(OUT_ENTITY / f"{layout[gy][gx]}.png").crop((v * TILE, 0, (v + 1) * TILE, TILE))
+            new = load(HD_ENTITY / f"{layout[gy][gx]}.png").crop((v * HD, 0, (v + 1) * HD, HD))
+            out.alpha_composite(hd_up(old, 2), (180 + gx * 64, y0 + gy * 64))
+            out.alpha_composite(new, (420 + gx * 64, y0 + gy * 64))
+    out.save(path)
+    return path
+
+
 def hd_sheet(path, title, pairs, patch=None):
     """a contact sheet: per row today's picture (4x), the new one (2x) and at game size; `patch`: pictures for a 3 x 2 patch"""
     rh = 150
@@ -1785,6 +1881,9 @@ def main():
         written = hd_batch2()
         hd_sheet_batch2(ROOT / "docs/graphics-review/graphics-batch2-219.png")
         print("ME 3D pictures (batch 2):", len(written))
+        written = hd_batch3()
+        hd_sheet_batch3(ROOT / "docs/graphics-review/graphics-batch3-220.png")
+        print("ME 3D pictures (batch 3):", len(written))
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
         print("thumbnail.png")

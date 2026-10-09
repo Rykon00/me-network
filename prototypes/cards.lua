@@ -95,7 +95,8 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 --- 4 iron ingots, chest) as vanilla items that Gregtorio Continued has too.
 ME.add_item{
 	name = "me-cell-workbench",
-	icon = ICON_FORK .. "me-cell-workbench.png",
+	icon = ME.hd_icons .. "me-cell-workbench.png",
+	icon_size = 64,
 	subgroup = "fork-me-cards",
 	order = "z",
 	stack_size = 10,
@@ -105,8 +106,8 @@ ME.add_item{
 data:extend({ {
 	type = "simple-entity-with-force",
 	name = "me-cell-workbench",
-	icon = ICON_FORK .. "me-cell-workbench.png",
-	icon_size = 32,
+	icon = ME.hd_icons .. "me-cell-workbench.png",
+	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.2, result = "me-cell-workbench" },
 	placeable_by = { item = "me-cell-workbench", count = 1 },
@@ -116,7 +117,7 @@ data:extend({ {
 	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	picture = { layers = {
-		{ filename = ME.entity_path .. "me-cell-workbench.png", priority = "high", width = 32, height = 32 },
+		{ filename = ME.hd_entity_path .. "me-cell-workbench.png", priority = "high", width = 64, height = 64, scale = 0.5 },
 		--- its shadow: tools/gen_ae2_sprites.py WORKBENCH_SHADOW (6, 4) px to the east and the south, the PNG's top left
 		--- at the block's top left
 		{ filename = ME.entity_path .. "me-cell-workbench-shadow.png", priority = "high", width = 38, height = 36,

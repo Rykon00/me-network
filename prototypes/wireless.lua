@@ -45,8 +45,8 @@ local function block(name, description)
 	data:extend({ {
 		type = "simple-entity-with-force",
 		name = name,
-		icon = ICON_FORK .. name .. ".png",
-		icon_size = 32,
+		icon = ME.hd_icons .. name .. ".png",          -- (issue #220: the 3D style)
+		icon_size = 64,
 		flags = { "placeable-neutral", "player-creation" },
 		minable = { mining_time = 0.2, result = name },
 		placeable_by = { item = name, count = 1 },
@@ -55,14 +55,15 @@ local function block(name, description)
 		corpse = "small-remnants",
 		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
 		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
-		picture = { filename = ENTITY_PATH .. name .. ".png", priority = "high", width = 32, height = 32 },
+		picture = { filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, scale = 0.5 },
 		localised_description = description,
 	} })
 end
 
 ME.add_item{
 	name = "me-wireless-access-point",
-	icon = ICON_FORK .. "me-wireless-access-point.png",
+	icon = ME.hd_icons .. "me-wireless-access-point.png",
+	icon_size = 64,
 	subgroup = "fork-me-wireless",
 	order = "a",
 	stack_size = 50,
@@ -97,7 +98,8 @@ recipes[#recipes + 1] = "me-wireless-terminal"
 
 ME.add_item{
 	name = "me-charger",
-	icon = ICON_FORK .. "me-charger.png",
+	icon = ME.hd_icons .. "me-charger.png",
+	icon_size = 64,
 	subgroup = "fork-me-wireless",
 	order = "d",
 	stack_size = 50,

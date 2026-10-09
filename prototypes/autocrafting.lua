@@ -36,7 +36,8 @@ local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = 
 
 ME.add_item{
 	name = "me-pattern-provider",
-	icon = ICON_FORK .. "me-pattern-provider.png",
+	icon = ME.hd_icons .. "me-pattern-provider.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "e",
 	stack_size = 50,
@@ -82,7 +83,8 @@ data:extend({ {
 
 ME.add_item{
 	name = "me-molecular-assembler",
-	icon = ICON_FORK .. "me-molecular-assembler.png",
+	icon = ME.hd_icons .. "me-molecular-assembler.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "f",
 	stack_size = 10,
@@ -100,8 +102,8 @@ ME.add_item{
 data:extend({ {
 	type = "simple-entity-with-force",
 	name = "me-pattern-provider",
-	icon = ICON_FORK .. "me-pattern-provider.png",
-	icon_size = 32,
+	icon = ME.hd_icons .. "me-pattern-provider.png",
+	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.2, result = "me-pattern-provider" },
 	max_health = 150,
@@ -111,7 +113,7 @@ data:extend({ {
 	selection_priority = 60,
 	additional_pastable_entities = { "me-pattern-provider" },   -- settings paste copies the priority (issue #80)
 	picture = {
-		filename = ENTITY_PATH .. "me-pattern-provider.png",
+		filename = ME.hd_entity_path .. "me-pattern-provider.png",
 		priority = "extra-high",
 		width = 32, height = 32,
 	},
@@ -207,11 +209,12 @@ local BLOCKS = {
 data:extend({ { type = "item-subgroup", name = "fork-me-crafting-cpu", group = data.raw["item-subgroup"]["fork-me-network"].group,
 	order = "b-me-c" } })
 
---- the 48 pictures of a crafting block's sheet (see the entity below)
+--- the 48 pictures of a crafting block's sheet (see the entity below; issue #220: 64 px, the 3D style)
 local function crafting_pictures(name)
 	local pictures = {}
 	for i = 0, 47 do
-		pictures[i + 1] = { filename = ENTITY_PATH .. name .. ".png", priority = "high", width = 32, height = 32, x = 32 * i }
+		pictures[i + 1] = { filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 64 * i,
+			scale = 0.5 }
 	end
 	return pictures
 end
@@ -223,7 +226,8 @@ for _, b in ipairs(BLOCKS) do
 		or { "entity-description." .. b.name }
 	ME.add_item{
 		name = b.name,
-		icon = ICON_FORK .. b.name .. ".png",
+		icon = ME.hd_icons .. b.name .. ".png",
+		icon_size = 64,
 		subgroup = "fork-me-crafting-cpu",
 		order = b.order,
 		stack_size = 50,
@@ -234,8 +238,8 @@ for _, b in ipairs(BLOCKS) do
 	data:extend({ {
 		type = "simple-entity-with-force",
 		name = b.name,
-		icon = ICON_FORK .. b.name .. ".png",
-		icon_size = 32,
+		icon = ME.hd_icons .. b.name .. ".png",
+		icon_size = 64,
 		flags = { "placeable-neutral", "player-creation" },
 		minable = { mining_time = 0.2, result = b.name },
 		placeable_by = { item = b.name, count = 1 },

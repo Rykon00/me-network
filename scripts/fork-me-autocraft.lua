@@ -3267,6 +3267,14 @@ function monitor_progress(job)
 	end
 end
 
+--- issue #220: in the 3D style a crafting block's face gives up 10 of its 64 px to the depth strip on an east or south side that
+--- no other block of the CPU touches (tools/gen_ae2_sprites.py hd_block_connected): the centre of the face, in tiles
+local function face_centre(e)
+	local mask = (e.graphics_variation - 1) % 16
+	local d = 5 / 64
+	return { bit32.band(mask, 2) == 0 and -d or 0, bit32.band(mask, 4) == 0 and -d or 0 }
+end
+
 local function draw_monitors(g)
 	local s = storage.fork_ae2
 	if not (s and s.cblocks) then return end
@@ -3283,10 +3291,11 @@ local function draw_monitors(g)
 			clear_monitor(s, unit)
 		elseif not (shown and shown.job == job.id) then
 			clear_monitor(s, unit)
+			local c = face_centre(e)
 			s.monitors[unit] = {
-				icon = rendering.draw_sprite{ sprite = sprite, target = { entity = e, offset = { 0, -0.1 } }, surface = e.surface,
+				icon = rendering.draw_sprite{ sprite = sprite, target = { entity = e, offset = { c[1], c[2] - 0.1 } }, surface = e.surface,
 					x_scale = 0.55, y_scale = 0.55, render_layer = "higher-object-under" },
-				text = rendering.draw_text{ text = amount_text(remaining_of(job)), target = { entity = e, offset = { 0, 0.12 } },
+				text = rendering.draw_text{ text = amount_text(remaining_of(job)), target = { entity = e, offset = { c[1], c[2] + 0.12 } },
 					surface = e.surface, color = { 0.6, 0.95, 1 }, scale = 0.6, alignment = "center", render_layer = "higher-object-under" },
 				job = job.id, left = remaining_of(job),
 			}
