@@ -80,31 +80,48 @@ local HD_ICON, HD_ENTITY = ME.hd_icons, ME.hd_entity_path       -- issue #218: t
 
 local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = "item", name = list[i], amount = list[i + 1] } end return t end
 
+--- Recipes (issue #233): AE2's recipes (modern AE2, data/ae2/recipe; AE2-Unofficial for its own cards) with AE2's ingredients
+--- and counts, every AE2 material by one vanilla stand-in (docs/AE2.md, "Recipes"): iron ingot = iron plate, copper ingot and
+--- gold ingot = copper plate, diamond = processing unit, redstone, glowstone, fluix crystal and fluix dust = copper cable, certus
+--- quartz = stone, glass, quartz glass and quartz fiber = plastic bar, sky stone = stone brick, logic processor = electronic
+--- circuit, calculation processor = advanced circuit, engineering processor = processing unit (the ME Controller and the ME
+--- Drive: an advanced circuit, so the network comes after advanced circuits as before), annihilation and formation core =
+--- electronic circuit, illuminated panel = small lamp, piston = fast inserter, redstone torch = decider combinator, crafting
+--- table = assembling machine 1, wool = copper cable, wireless receiver = radar, dense energy cell = 4 batteries, ender dust =
+--- electronic circuit. Gregtorio Continued replaces them with its own (ME_NETWORK.replace_recipe).
+
+--- fluix glass cable: 1 quartz fiber, 2 fluix crystals -> 4
 ME.add_item{ name = "fluix-cable", icon = HD_ICON .. "fluix-cable.png", icon_size = 64, subgroup = "fork-me-network", order = "a0",
-	recipe = { ingredients = I{ "copper-cable", 2, "plastic-bar", 1 }, amount = 2, energy_required = 0.5 } }
+	recipe = { ingredients = I{ "plastic-bar", 1, "copper-cable", 2 }, amount = 4, energy_required = 0.5 } }
+--- controller: 4 smooth sky stone, 4 fluix crystals, an engineering processor (an advanced circuit, see above)
 ME.add_item{ name = "me-controller", icon = HD_ICON .. "me-controller.png", icon_size = 64, subgroup = "fork-me-network", order = "a", stack_size = 10,
-	recipe = { ingredients = I{ "steel-plate", 10, "advanced-circuit", 10, "fluix-cable", 4 }, energy_required = 5 } }
+	recipe = { ingredients = I{ "stone-brick", 4, "copper-cable", 4, "advanced-circuit", 1 }, energy_required = 5 } }
+--- interface: 4 iron, 2 glass, an annihilation core, a formation core
 ME.add_item{ name = "me-interface", icon = HD_ICON .. "me-interface.png", icon_size = 64, subgroup = "fork-me-network", order = "b", stack_size = 50,
-	recipe = { ingredients = I{ "iron-chest", 1, "steel-plate", 4, "advanced-circuit", 2, "fluix-cable", 2 }, energy_required = 2 } }
+	recipe = { ingredients = I{ "iron-plate", 4, "plastic-bar", 2, "electronic-circuit", 2 }, energy_required = 2 } }
+--- terminal: a formation core, an annihilation core, a logic processor, an illuminated panel
 ME.add_item{ name = "me-terminal", icon = HD_ICON .. "me-terminal.png", icon_size = 64, subgroup = "fork-me-network", order = "c", stack_size = 50,
-	recipe = { ingredients = I{ "electronic-circuit", 4, "advanced-circuit", 1, "fluix-cable", 1 }, energy_required = 2 } }
---- issue #229: AE2's recipe (glass, ME Terminal, glass / fluix cable, fluix cable / iron, copper, iron; the glass has no vanilla
---- counterpart). The ME Drive still takes it as an ingredient.
+	recipe = { ingredients = I{ "electronic-circuit", 3, "small-lamp", 1 }, energy_required = 2 } }
+--- ME Chest (issue #229): 2 glass, a terminal, 2 fluix cables, 2 iron, a copper
 ME.add_item{ name = "me-chest", icon = HD_ICON .. "me-chest.png", icon_size = 64, subgroup = "fork-me-network", order = "d",
 	stack_size = 50,
-	recipe = { ingredients = I{ "me-terminal", 1, "fluix-cable", 2, "iron-plate", 2, "copper-plate", 1 }, energy_required = 2 } }
+	recipe = { ingredients = I{ "plastic-bar", 2, "me-terminal", 1, "fluix-cable", 2, "iron-plate", 2, "copper-plate", 1 }, energy_required = 2 } }
+--- drive: 4 iron, 2 engineering processors (advanced circuits, see above), 2 fluix cables (no ME Chest: issue #231)
 ME.add_item{ name = "me-drive", icon = HD_ICON .. "me-drive.png", icon_size = 64, subgroup = "fork-me-drives", order = "a", stack_size = 10,
-	recipe = { ingredients = I{ "me-chest", 1, "steel-plate", 4, "advanced-circuit", 4, "fluix-cable", 2 }, energy_required = 5 } }
+	recipe = { ingredients = I{ "iron-plate", 4, "advanced-circuit", 2, "fluix-cable", 2 }, energy_required = 5 } }
 
 --- AE2: a cell is a storage component in a housing; each component is made from three of the tier below
+--- (housing: 2 quartz glass, 3 redstone, 2 iron, a copper; components: 1k 4 redstone, 4 certus quartz, a logic processor; 4k ...
+--- 256k three of the tier below, a calculation processor, a quartz glass and 4 redstone (4k), glowstone (16k, 64k) or sky stone
+--- dust (256k))
 ME.add_item{ name = "basic-storage-housing", subgroup = "fork-me-cells", order = "a0",
-	recipe = { ingredients = I{ "steel-plate", 2, "plastic-bar", 2 }, energy_required = 2 } }
+	recipe = { ingredients = I{ "plastic-bar", 2, "copper-cable", 3, "iron-plate", 2, "copper-plate", 1 }, energy_required = 2 } }
 local COMPONENTS = {
-	{ "1k",   I{ "electronic-circuit", 4, "copper-cable", 6 } },
-	{ "4k",   I{ "me-1k-storage-component", 3, "advanced-circuit", 2 } },
-	{ "16k",  I{ "me-4k-storage-component", 3, "advanced-circuit", 4 } },
-	{ "64k",  I{ "me-16k-storage-component", 3, "processing-unit", 2 } },
-	{ "256k", I{ "me-64k-storage-component", 3, "processing-unit", 4 } },
+	{ "1k",   I{ "copper-cable", 4, "stone", 4, "electronic-circuit", 1 } },
+	{ "4k",   I{ "me-1k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "copper-cable", 4 } },
+	{ "16k",  I{ "me-4k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "copper-cable", 4 } },
+	{ "64k",  I{ "me-16k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "copper-cable", 4 } },
+	{ "256k", I{ "me-64k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
 }
 for i, c in ipairs(COMPONENTS) do
 	ME.add_item{ name = "me-" .. c[1] .. "-storage-component", subgroup = "fork-me-cells", order = "a" .. i,
@@ -405,8 +422,8 @@ for _, bus in pairs({
 		order = bus.order,
 		stack_size = 50,
 		place_result = bus.name,
-		recipe = { energy_required = 2, ingredients = I{ "fast-inserter", 1, "advanced-circuit", 1,
-			"steel-plate", 2, "fluix-cable", 2 } },
+		--- AE2: an annihilation (import) or formation core (export), 2 iron, a piston
+		recipe = { energy_required = 2, ingredients = I{ "electronic-circuit", 1, "iron-plate", 2, "fast-inserter", 1 } },
 	}
 	block{
 		name = bus.name, icon = HD_ICON .. bus.name .. ".png", icon_size = 64,
@@ -430,7 +447,7 @@ ME.add_item{
 	order = "a1",
 	stack_size = 50,
 	place_result = UNDERGROUND,
-	recipe = { energy_required = 1, amount = 2, ingredients = I{ "fluix-cable", 8, "steel-plate", 2 } },
+	recipe = { energy_required = 1, amount = 2, ingredients = I{ "fluix-cable", 8, "iron-plate", 2 } },   -- (not in AE2)
 }
 --- A real pipe-to-ground whose fluid box has its own connection category: it never connects to pipes or carries
 --- fluid, but the engine pairs the ends exactly like underground pipes (reach, rotation, blocking, dragging) and
@@ -481,7 +498,7 @@ ME.add_item{
 	order = "b4",
 	stack_size = 50,
 	place_result = STORAGE_BUS,
-	recipe = { energy_required = 2, ingredients = I{ "me-interface", 1, "fast-inserter", 2, "fluix-cable", 2 } },
+	recipe = { energy_required = 2, ingredients = I{ "me-interface", 1, "fast-inserter", 2 } },   -- (AE2: an interface, 2 pistons)
 }
 block{
 	name = STORAGE_BUS, icon = HD_ICON .. STORAGE_BUS .. ".png", icon_size = 64,
@@ -604,7 +621,7 @@ data:extend({ {
 --------------------------------------------------------------------------------
 
 --- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k
-ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit" }, unit = ME.unit(2, 300), recipes = {
+ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "lamp", "fast-inserter" }, unit = ME.unit(2, 300), recipes = {
 	"fluix-cable", "me-controller", "me-chest", "me-drive", "me-interface", "me-terminal", "basic-storage-housing",
 	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,

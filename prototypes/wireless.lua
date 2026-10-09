@@ -68,7 +68,8 @@ ME.add_item{
 	order = "a",
 	stack_size = 50,
 	place_result = "me-wireless-access-point",
-	recipe = { energy_required = 5, ingredients = I{ "radar", 1, "fluix-cable", 2, "processing-unit", 1 } },
+	--- AE2 (issue #233; prototypes/network.lua, the stand-ins): a wireless receiver, a calculation processor, a fluix cable
+	recipe = { energy_required = 5, ingredients = I{ "radar", 1, "advanced-circuit", 1, "fluix-cable", 1 } },
 }
 block("me-wireless-access-point", { "entity-description.me-wireless-access-point" })
 recipes[#recipes + 1] = "me-wireless-access-point"
@@ -80,7 +81,8 @@ ME.add_item{
 	order = "b",
 	stack_size = 64,
 	localised_description = { "item-description.me-wireless-booster" },
-	recipe = { energy_required = 2, ingredients = I{ "advanced-circuit", 1, "copper-cable", 4, "iron-plate", 2 } },
+	--- AE2: a fluix dust, a certus quartz, an ender dust, 3 iron -> 2
+	recipe = { energy_required = 2, amount = 2, ingredients = I{ "copper-cable", 1, "stone", 1, "electronic-circuit", 1, "iron-plate", 3 } },
 }
 recipes[#recipes + 1] = "me-wireless-booster"
 
@@ -92,7 +94,8 @@ ME.add_item{
 	order = "c",
 	stack_size = 1,
 	localised_description = { "item-description.me-wireless-terminal" },
-	recipe = { energy_required = 5, ingredients = I{ "me-terminal", 1, "me-wireless-booster", 1, "battery", 4, "processing-unit", 1 } },
+	--- AE2: a wireless receiver, a terminal, a dense energy cell
+	recipe = { energy_required = 5, ingredients = I{ "radar", 1, "me-terminal", 1, "battery", 4 } },
 }
 recipes[#recipes + 1] = "me-wireless-terminal"
 
@@ -104,7 +107,8 @@ ME.add_item{
 	order = "d",
 	stack_size = 50,
 	place_result = "me-charger",
-	recipe = { energy_required = 3, ingredients = I{ "battery", 2, "fluix-cable", 1, "advanced-circuit", 2, "iron-plate", 4 } },
+	--- AE2's charger: 5 iron, 2 copper
+	recipe = { energy_required = 3, ingredients = I{ "iron-plate", 5, "copper-plate", 2 } },
 }
 block("me-charger", { "entity-description.me-charger" })
 recipes[#recipes + 1] = "me-charger"

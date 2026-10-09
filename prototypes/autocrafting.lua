@@ -42,12 +42,12 @@ ME.add_item{
 	order = "e",
 	stack_size = 50,
 	place_result = "me-pattern-provider",
-	recipe = { energy_required = 5, ingredients = I{ "me-interface", 1, "processing-unit", 2, "fluix-cable", 4 } },
+	--- AE2 (issue #233): 4 iron, 2 crafting tables, an annihilation core, a formation core (prototypes/network.lua, the stand-ins)
+	recipe = { energy_required = 5, ingredients = I{ "iron-plate", 4, "assembling-machine-1", 2, "electronic-circuit", 2 } },
 }
 
---- issue #130: the ME Pattern Terminal encodes patterns (it was the Patterns tab of the ME Terminal). AE2's (and GTNH's) recipe is
---- a terminal, a blank pattern and an engineering processor; standalone: an ME Terminal, a blank pattern, a processing unit and
---- fluix cable.
+--- issue #130: the ME Pattern Terminal encodes patterns (it was the Patterns tab of the ME Terminal). AE2's recipe: a crafting
+--- terminal (a terminal, a crafting table, a calculation processor) and an engineering processor.
 ME.add_item{
 	name = "me-pattern-terminal",
 	icon = ME.hd_icons .. "me-pattern-terminal.png",
@@ -56,7 +56,7 @@ ME.add_item{
 	order = "e0",
 	stack_size = 50,
 	place_result = "me-pattern-terminal",
-	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "me-blank-pattern", 1, "processing-unit", 1, "fluix-cable", 2 } },
+	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "assembling-machine-1", 1, "advanced-circuit", 1, "processing-unit", 1 } },
 }
 
 --- issue #80: a cheap blank pattern (AE2: quartz glass, certus quartz, iron)
@@ -66,7 +66,9 @@ ME.add_item{
 	subgroup = "fork-me-network",
 	order = "e1",
 	stack_size = 64,
-	recipe = { energy_required = 1, ingredients = I{ "iron-plate", 2, "electronic-circuit", 1, "fluix-cable", 1 } },
+	--- AE2 (issue #233): 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2
+	recipe = { energy_required = 1, amount = 2,
+		ingredients = I{ "plastic-bar", 2, "copper-cable", 3, "stone", 1, "iron-plate", 2, "copper-plate", 1 } },
 }
 
 --- the encoded pattern: no recipe, made from a blank pattern in the ME Pattern Terminal (its tag fork_me_pattern holds it)
@@ -89,7 +91,8 @@ ME.add_item{
 	order = "f",
 	stack_size = 10,
 	place_result = "me-molecular-assembler",
-	recipe = { energy_required = 5, ingredients = I{ "assembling-machine-2", 1, "processing-unit", 2, "fluix-cable", 4 } },
+	--- AE2 (issue #233): 4 iron, 2 quartz glass, an annihilation core, a formation core, a crafting table
+	recipe = { energy_required = 5, ingredients = I{ "iron-plate", 4, "plastic-bar", 2, "electronic-circuit", 2, "assembling-machine-1", 1 } },
 }
 
 
@@ -203,7 +206,8 @@ local BLOCKS = {
 	{ name = "me-crafting-co-processing-unit", bytes = 0, coprocessors = 1, power = 32000, order = "h6",
 	  ingredients = I{ "me-crafting-unit", 1, "processing-unit", 1 }, tech = "me-co-processing" },
 	{ name = "me-crafting-monitor", bytes = 0, monitor = true, power = 4000, order = "h7",
-	  ingredients = I{ "me-crafting-unit", 1, "small-lamp", 1, "electronic-circuit", 1 }, tech = "me-autocrafting" },
+	  --- AE2: a crafting unit and a storage monitor (a level emitter: a redstone torch and a calculation processor; an illuminated panel)
+	  ingredients = I{ "me-crafting-unit", 1, "decider-combinator", 1, "advanced-circuit", 1, "small-lamp", 1 }, tech = "me-autocrafting" },
 }
 
 data:extend({ { type = "item-subgroup", name = "fork-me-crafting-cpu", group = data.raw["item-subgroup"]["fork-me-network"].group,
@@ -375,7 +379,7 @@ local function with_blocks(tech, recipes)
 	return recipes
 end
 
-ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2" }, unit = ME.unit(3, 500),
+ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2", "circuit-network" }, unit = ME.unit(3, 500),
 	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-blank-pattern", "me-molecular-assembler" }) }
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs
