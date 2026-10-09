@@ -4,9 +4,11 @@
 Sources:
   * GregTech 5 machine casings and screen overlays from a checkout of
     GTNewHorizons/GT5-Unofficial (LGPL-3.0), tinted with the GT material color of the tier; for the upgrade
-    cards its circuit boards, circuits, an SMD chip and the signs of its machine GUI buttons (--cards)
-  * existing icons of this mod (ME drive, storage housing; drawn for Gregtorio, where this network was made)
-  * everything else (drive bays, cell LEDs, interface arrows) is drawn here with Pillow
+    cards its circuit boards, circuits, an SMD chip and the signs of its machine GUI buttons (--cards), for the
+    storage components its circuit boards and memory chips (--own-icons)
+  * everything else (drive bays, cell LEDs, interface arrows) is drawn here with Pillow; since issue #238 also the 17 icons
+    of graphics/icons/ (blocks, storage housing, storage components, fluix cable: --own-icons), which until 0.5.2 were
+    taken over from Gregtorio 0.1.9; nothing is made from those old files (tools/upstream-icon-hashes.tsv)
   * the fluid variants (prototypes/fluids.lua) are derived from the item PNGs
     generated here: the same shapes with blue accents instead of fluix purple
   * never graphics of Applied Energistics 2: they are CC BY-NC-SA 3.0 and live only in their own folder
@@ -26,6 +28,10 @@ Sources:
     python tools/gen_ae2_sprites.py --cards C:/00_Repositories/GT5-Unofficial   # only the upgrade cards (from GT
                                                   # boards, chips and GUI signs), their technology and the ME Cell
                                                   # Workbench (me-network issues #17 and #20)
+    python tools/gen_ae2_sprites.py --own-icons C:/00_Repositories/GT5-Unofficial   # only the 17 icons of graphics/icons/
+                                                  # (issue #238) and what is made from them (cells, old drive items, fluid
+                                                  # variants, technologies, 3D-style cells and cable), with their contact
+                                                  # sheet docs/graphics-review/own-icons-238.png
     python tools/gen_ae2_sprites.py --thumbnail   # only thumbnail.png, from the drive and terminal PNGs (issue #20)
     python tools/gen_ae2_sprites.py --crafting-cpu C:/00_Repositories/GT5-Unofficial   # only the crafting blocks of
                                                   # the multiblock crafting CPUs (me-network issue #6): GT casings and
@@ -46,6 +52,7 @@ Output:
   graphics/icons/fork/me-*.png             32x32 item icons (also pattern provider, molecular assembler,
                                            crafting CPU of prototypes/autocrafting.lua)
   graphics/technology/fork/me-*.png        256x256 technology icons
+  graphics/icons/*.png                     the 17 icons of issue #238 (32x32, --own-icons)
   fluids (--fluids, or after everything else with --gt):
   graphics/entity/fork/ae2/me-fluid-drive-<tier>.png, me-fluid-interface.png
   graphics/icons/fork/me-<tier>-fluid-storage-cell.png, me-fluid-drive-<tier>.png, me-fluid-interface.png
@@ -168,19 +175,17 @@ def controller_sprite(gt):
 
 
 def cell_icon(cell):
-    """Storage housing icon, the component window and the status LED in the tier color."""
+    """Storage housing icon (issue #238: housing_icon), the component window and the status LED in the tier color."""
     led, _ = CELLS[cell]
     img = load(ICONS / "basic-storage-housing.png")
-    px = img.load()
-    for y in range(img.height):
-        for x in range(img.width):
-            r, g, b, a = px[x, y]
-            if not a:
-                continue
-            if r > 150 and g < 90 and b < 90:                     # red LED
-                px[x, y] = led + (a,)
-            elif max(r, g, b) < 40 and 9 <= x <= 22 and 9 <= y <= 22:   # dark component window
-                px[x, y] = (led[0] * 2 // 3, led[1] * 2 // 3, led[2] * 2 // 3, a)
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = HOUSING_WINDOW
+    d.rectangle(HOUSING_WINDOW, fill=(led[0] * 2 // 3, led[1] * 2 // 3, led[2] * 2 // 3, 255))   # the component behind the
+    d.line((x0, y0, x1, y0), fill=led + (255,))                                                    # window in the tier colour,
+    glint = tuple(min(255, c + 70) for c in led) + (255,)                                          # a glint on the glass
+    for i in range(2):
+        d.line((x0 + 2 + i, y0 + 6, x0 + 5 + i, y0 + 3), fill=glint)
+    d.rectangle((HOUSING_LED[0] + 1, HOUSING_LED[1] + 1, HOUSING_LED[2] - 1, HOUSING_LED[3] - 1), fill=led + (255,))
     return img
 
 
@@ -1051,7 +1056,7 @@ def card_icon(gt, name):
 
 
 # --- the wireless terminal (me-network issues #205 to #211) --------------------------------------------------------
-# Drawn from this mod's own PNGs (the interface's MV casing, the terminal icon), no AE2 textures: an antenna with fluix
+# Drawn from this mod's own PNGs (the interface's MV casing, the lit terminal picture), no AE2 textures: an antenna with fluix
 # rings stands for the wireless parts, a lightning bolt for the charger.
 WIRELESS_RING = FLUIX_LIGHT
 
@@ -1087,8 +1092,8 @@ def wireless():
     antenna(d, 16, 3, 16, 2)
     b.save(OUT_ICON / "me-wireless-booster.png")
     written.append(OUT_ICON / "me-wireless-booster.png")
-    # the terminal item: the terminal's icon, smaller, with an antenna on top
-    term = load(ROOT / "graphics/icons/me-terminal.png").resize((24, 24), Image.LANCZOS)
+    # the terminal item: the lit terminal's picture, smaller, with an antenna on top (issue #238: no longer the old icon)
+    term = load(OUT_ENTITY / "me-terminal-lit.png").resize((24, 24), Image.LANCZOS)
     t = Image.new("RGBA", (TILE, TILE))
     t.alpha_composite(term, (4, 8))
     d = ImageDraw.Draw(t)
@@ -1107,7 +1112,7 @@ def wireless():
     m = Image.new("RGBA", (TILE, TILE))
     d = ImageDraw.Draw(m)
     d.rounded_rectangle((1, 1, 30, 30), radius=3, fill=(70, 72, 80, 255), outline=(30, 30, 38, 255))
-    m.alpha_composite(load(ROOT / "graphics/icons/me-terminal.png").resize((18, 18), Image.LANCZOS), (4, 10))
+    m.alpha_composite(load(OUT_ENTITY / "me-terminal-lit.png").resize((18, 18), Image.LANCZOS), (4, 10))
     d = ImageDraw.Draw(m)
     antenna(d, 24, 3, 14, 1)
     m.save(OUT_ICON / "me-wireless-module.png")
@@ -1151,7 +1156,191 @@ def chest():
     return written + [HD_ENTITY / "me-chest.png", HD_ICON / "me-chest.png", sheet]
 
 
-# --- the 3D style of issue #154 (route A), batch 1 (#218) -------------------------------------------------------------
+# --- issue #238: the item icons of graphics/icons/ drawn here ---------------------------------------------------------
+# Until 0.5.2 these 17 files were the icons of Gregtorio 0.1.9 (they looked like another mod's art); they are drawn here now,
+# from GT5-Unofficial textures and Pillow shapes only, and never from the old files (tools/upstream-icon-hashes.tsv lists
+# their hashes, `devcheck.py check` fails on a file with one of them):
+#   * the blocks (controller, drive, terminal, interface, chest): the isometric cube of their 3D-style icon (hd_cube of the
+#     block's face, GT casings), at 32 px;
+#   * the storage housing: an empty steel cartridge (the GT MV casing as its body), a dark window for the component, an
+#     unlit LED and gold contacts at the bottom; the storage cells are this housing with the window and the LED in the
+#     tier's colour (cell_icon);
+#   * the storage components: a memory module, a GT circuit board with GT memory chips and a gold edge connector, the
+#     tier's colour as a stripe along the top and one to five lit pips; 1k to 256k on the green board with RAM chips, 1m to
+#     256m (no items of this mod, kept for other mods) on the red board with NAND chips;
+#   * the fluix cable: a coil of the ME cable (its colours) with a plug at the free end.
+OWN_BLOCKS = ("me-controller", "me-drive", "me-terminal", "me-interface", "me-chest")
+COMPONENT_TIERS = (                 # tier -> (stripe and pip colour, pips); the cell LED colours of CELLS for 1k to 256k
+    ("1k", (235, 235, 235), 1), ("4k", (245, 215, 70), 2), ("16k", (95, 225, 95), 3),
+    ("64k", (70, 205, 245), 4), ("256k", (225, 95, 245), 5),
+    ("1m", (235, 235, 235), 1), ("4m", (245, 215, 70), 2), ("16m", (95, 225, 95), 3),
+    ("64m", (70, 205, 245), 4), ("256m", (225, 95, 245), 5),
+)
+MODULE_BOARD = {"k": ("items/gt.metaitem.03/5", "items/gt.metaitem.03/39"),     # board, chip: green board, RAM chip
+                "m": ("items/gt.metaitem.03/8", "items/gt.metaitem.03/41")}     # red board, NAND chip
+MODULE_BOX = (3, 6, TILE - 4, 25)       # the module's board: 26 x 20 px
+HOUSING_BOX = (6, 4, 25, 27)            # the housing: 20 x 24 px (hd_cell stretches a cell to 20 x 24)
+HOUSING_WINDOW = (10, 9, 21, 19)        # the component window inside it
+HOUSING_LED = (18, 21, 21, 24)          # the status LED below the window (2 x 2 inside its rim)
+HOUSING_LED_OFF = (66, 68, 78)
+
+
+def tiled(tex, box):
+    """`tex` repeated over the box (x0, y0, x1, y1) of a new 32 x 32 picture, cut to it"""
+    fill = Image.new("RGBA", (TILE, TILE))
+    for y in range(box[1], box[3] + 1, tex.height):
+        for x in range(box[0], box[2] + 1, tex.width):
+            fill.alpha_composite(tex, (x, y))
+    mask = Image.new("L", (TILE, TILE))
+    ImageDraw.Draw(mask).rounded_rectangle(box, radius=2, fill=255)
+    img = Image.new("RGBA", (TILE, TILE))
+    img.paste(fill, (0, 0), mask)
+    return img
+
+
+def chip_body(gt, rel):
+    """the black chip of a GT chip texture without its gray wafer plate"""
+    tex = gt_texture(gt, rel)
+    out = Image.new("RGBA", tex.size)
+    src, px = tex.load(), out.load()
+    for y in range(tex.height):
+        for x in range(tex.width):
+            r, g, b, a = src[x, y]
+            if a and max(r, g, b) < 40:
+                px[x, y] = (r, g, b, 255)
+    return opaque(out)
+
+
+def housing_icon(gt):
+    """the empty storage housing (basic-storage-housing)"""
+    body = hull(gt, "MV").crop((1, 1, GT_PX - 1, GT_PX - 1))
+    img = tiled(body, HOUSING_BOX)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle(HOUSING_BOX, radius=2, outline=CARD_OUTLINE + (255,))
+    x0, y0, x1, y1 = HOUSING_BOX
+    d.rectangle((x0 + 6, y0 + 2, x1 - 6, y0 + 3), fill=(40, 42, 50, 255))                  # the grip slot
+    wx0, wy0, wx1, wy1 = HOUSING_WINDOW
+    d.rectangle(HOUSING_WINDOW, fill=(24, 24, 30, 255))
+    d.line((wx0, wy1 + 1, wx1 + 1, wy1 + 1), fill=(215, 225, 240, 255))                    # lit lower and right edge
+    d.line((wx1 + 1, wy0, wx1 + 1, wy1 + 1), fill=(215, 225, 240, 255))
+    d.rectangle(HOUSING_LED, fill=HOUSING_LED_OFF + (255,), outline=CARD_OUTLINE + (255,))
+    for x in range(x0 + 3, x1 - 2, 3):                                                     # contacts along the bottom
+        d.rectangle((x, y1 - 2, x + 1, y1 - 1), fill=CONTACT + (255,))
+        d.point((x + 1, y1 - 1), fill=CONTACT_DARK + (255,))
+    return img
+
+
+def component_icon(gt, tier):
+    """a storage component: a memory module (board, chips, edge connector, the tier's stripe and pips)"""
+    colour, pips = next((c, p) for t, c, p in COMPONENT_TIERS if t == tier)
+    board, chip = MODULE_BOARD[tier[-1]]
+    tex = gt_texture(gt, board).crop((1, 1, GT_PX - 1, GT_PX - 1))
+    img = tiled(tex, MODULE_BOX)
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = MODULE_BOX
+    d.rectangle((x0 + 1, y0 + 1, x1 - 1, y0 + 2), fill=colour + (255,))                   # the tier stripe
+    body = chip_body(gt, chip)
+    body = body.resize((min(body.width, 10), min(body.height, 7)), Image.NEAREST)
+    for cx in (x0 + 3, x1 - 2 - body.width):
+        img.alpha_composite(body, (cx, y0 + 5))
+    for i in range(pips):                                                                  # one to five pips
+        px0 = x0 + 4 + i * 4
+        d.rectangle((px0, y1 - 7, px0 + 1, y1 - 6), fill=colour + (255,))
+    d.rectangle((x0 + 2, y1 - 3, x1 - 2, y1), fill=CARD_OUTLINE + (255,))                 # the edge connector
+    for x in range(x0 + 3, x1 - 2, 2):
+        d.line((x, y1 - 2, x, y1), fill=CONTACT + (255,))
+    d.rounded_rectangle(MODULE_BOX, radius=2, outline=CARD_OUTLINE + (255,))
+    d.rectangle((TILE // 2 - 1, y1 - 3, TILE // 2, y1), fill=(0, 0, 0, 0))                 # the key notch
+    return img
+
+
+def fluix_cable_icon():
+    """a cable drum: the ME cable (its colours) wound between two steel flanges, the free end hanging down"""
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    d.ellipse((3, 4, 13, 28), fill=(120, 124, 138, 255), outline=CARD_OUTLINE + (255,))   # the back flange
+    d.rectangle((8, 8, 23, 24), fill=CABLE_CORE + (255,))                                 # the turns
+    for x in range(9, 23, 3):
+        d.line((x, 8, x, 24), fill=CABLE_EDGE + (255,))
+        d.line((x + 1, 8, x + 1, 24), fill=CABLE_GLOW + (255,))
+    d.line((8, 7, 23, 7), fill=CARD_OUTLINE + (255,))
+    d.line((8, 25, 23, 25), fill=CARD_OUTLINE + (255,))
+    d.ellipse((18, 4, 28, 28), fill=(150, 154, 168, 255), outline=CARD_OUTLINE + (255,))  # the front flange and its hub
+    d.ellipse((21, 13, 25, 19), fill=(60, 62, 72, 255), outline=CARD_OUTLINE + (255,))
+    d.line((12, 25, 6, 30), fill=CARD_OUTLINE + (255,), width=4)                           # the free end
+    d.line((12, 25, 6, 30), fill=CABLE_CORE + (255,), width=2)
+    return img
+
+
+def block_icon(front):
+    """a block's icon at 32 px: the cube of its 3D-style icon"""
+    return hd_cube(front).resize((TILE, TILE), Image.LANCZOS)
+
+
+def own_icons(gt):
+    """the 17 icons of graphics/icons/ (issue #238), then what is made from them: the cell and drive icons, their
+    technologies, the fluid variants (fluids()), the 3D-style cells and cable (hd_batch1)"""
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    fronts = {"me-controller": load(OUT_ENTITY / "me-network-controller.png").resize((TILE, TILE), Image.LANCZOS),
+              "me-drive": load(OUT_ENTITY / "me-drive.png"), "me-terminal": load(OUT_ENTITY / "me-terminal-lit.png"),
+              "me-interface": load(OUT_ENTITY / "me-interface-unified.png"), "me-chest": chest_sprite(True)}
+    for name in OWN_BLOCKS:
+        save(block_icon(fronts[name]), ICONS / f"{name}.png")
+    save(housing_icon(gt), ICONS / "basic-storage-housing.png")
+    for tier, _, _ in COMPONENT_TIERS:
+        save(component_icon(gt, tier), ICONS / f"me-{tier}-storage-component.png")
+    save(fluix_cable_icon(), ICONS / "fluix-cable.png")
+    for cell in CELLS:
+        save(cell_icon(cell), OUT_ICON / f"me-{cell}-storage-cell.png")
+        save(drive_icon(cell), OUT_ICON / f"me-drive-{cell}.png")
+    for tech, icon in (("me-network", "me-drive-16k"), ("me-storage-64k", "me-drive-64k"),
+                       ("me-storage-256k", "me-drive-256k")):
+        save(upscale(load(OUT_ICON / f"{icon}.png")), OUT_TECH / f"{tech}.png")
+    return written
+
+
+def own_icons_sheet(path):
+    """contact sheet of issue #238: the 17 icons and what is made from them, at game size in inventory slots and 4x
+    (the new pictures only)"""
+    groups = [("blocks", [ICONS / f"{n}.png" for n in OWN_BLOCKS]),
+              ("housing, cable, components 1k to 256k", [ICONS / "basic-storage-housing.png", ICONS / "fluix-cable.png"]
+               + [ICONS / f"me-{t}-storage-component.png" for t, _, _ in COMPONENT_TIERS[:5]]),
+              ("components 1m to 256m (no items here)", [ICONS / f"me-{t}-storage-component.png" for t, _, _ in COMPONENT_TIERS[5:]]),
+              ("cells (32 px)", [OUT_ICON / f"me-{c}-storage-cell.png" for c in CELLS]),
+              ("fluid cells (32 px)", [OUT_ICON / f"me-{c}-fluid-storage-cell.png" for c in CELLS]),
+              ("old drive items", [OUT_ICON / f"me-drive-{c}.png" for c in CELLS]),
+              ("old fluid drive items", [OUT_ICON / f"me-fluid-drive-{c}.png" for c in CELLS]),
+              ("wireless terminal, module", [OUT_ICON / "me-wireless-terminal.png", OUT_ICON / "me-wireless-module.png"]),
+              ("3D style: cable, cells (64 px)", [HD_ICON / "fluix-cable.png"] + [HD_ICON / f"me-{c}-storage-cell.png" for c in CELLS]),
+              ("3D style: fluid cells (64 px)", [HD_ICON / f"me-{c}-fluid-storage-cell.png" for c in CELLS]),
+              ("technologies (256 px)", [OUT_TECH / f"{t}.png" for t in ("me-network", "me-storage-64k", "me-storage-256k",
+                                                                         "me-fluid-storage", "me-fluid-storage-256k")])]
+    rh, cw = 150, 180
+    img = Image.new("RGBA", (20 + cw * max(len(f) for _, f in groups), 30 + rh * len(groups)), SHEET_BG + (255,))
+    d = ImageDraw.Draw(img)
+    d.text((10, 8), "issue #238: icons drawn here (game size in a slot | 4x; technologies at 3/8)", fill=SHEET_TEXT + (255,))
+    for g, (title, files) in enumerate(groups):
+        y = 30 + g * rh
+        d.rectangle((4, y, img.width - 5, y + rh - 6), fill=SHEET_PANEL + (255,))
+        d.text((10, y + 4), title, fill=SHEET_DIM + (255,))
+        for i, f in enumerate(files):
+            pic = load(f)
+            x = 10 + i * cw
+            d.rectangle((x, y + 24, x + 39, y + 63), fill=SLOT_BG + (255,), outline=SLOT_EDGE + (255,))
+            img.alpha_composite(pic if pic.width == TILE else pic.resize((TILE, TILE), Image.LANCZOS), (x + 4, y + 28))
+            big = pic.resize((128, 128), Image.NEAREST) if pic.width <= 64 else pic.resize((96, 96), Image.LANCZOS)
+            img.alpha_composite(big, (x + 46, y + 16))
+            d.text((x, y + rh - 22), f.stem, fill=SHEET_DIM + (255,))
+    img.save(path)
+    return path
+
+
+# --- the 3D style of issue #154 (route A), batch 1 (#218)-------------------------------------------------------------
 # Every picture at 64 px per tile (the prototypes use scale 0.5), made from the 32 px pictures above, which stay the sources:
 #   * blocks: the face over HD_FACE of the tile (top left), the east and the south side as depth strips (the last columns /
 #     rows of the face's casing, shaded 0.72 and 0.5), a dark contour and the two inner edges; lit from the top left. This is
@@ -1830,6 +2019,10 @@ def main():
     ap.add_argument("--chest", action="store_true",
                     help="only the ME Chest (me-network issue #229): 32 px pictures and the 64 px ones of the 3D style, drawn from "
                          "the interface PNG")
+    ap.add_argument("--own-icons", type=Path, metavar="GT",
+                    help="only the 17 icons of graphics/icons/ (me-network issue #238: blocks, housing, components, fluix cable) "
+                         "from the textures of the GT5-Unofficial checkout GT and the block PNGs, then the pictures made from "
+                         "them (cells, old drive items, fluid variants, technologies, the 3D-style cells and cable) and the contact sheet docs/graphics-review/own-icons-238.png")
     ap.add_argument("--thumbnail", action="store_true",
                     help="only thumbnail.png, from the drive, terminal and cable PNGs (me-network issue #20)")
     ap.add_argument("--sheet", type=Path, metavar="PNG",
@@ -1853,9 +2046,11 @@ def main():
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
-            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest):
+            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
+            or a.own_icons):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --thumbnail, --sheet,"
+                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --own-icons,"
+                 " --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
@@ -1863,23 +2058,14 @@ def main():
     if a.gt:
         for cell in CELLS:
             drive_sprite(a.gt, cell).save(OUT_ENTITY / f"me-drive-{cell}.png")
-            cell_icon(cell).save(OUT_ICON / f"me-{cell}-storage-cell.png")
-            drive_icon(cell).save(OUT_ICON / f"me-drive-{cell}.png")
         interface_sprite(a.gt).save(OUT_ENTITY / "me-interface.png")
         off, lit = terminal_sprites(a.gt)
         off.save(OUT_ENTITY / "me-terminal-off.png")
         lit.save(OUT_ENTITY / "me-terminal-on.png")
         terminal_lit()
         controller_sprite(a.gt).save(OUT_ENTITY / "me-controller.png")
-
-        for tech, icon in (("me-network", "me-drive-16k"), ("me-storage-64k", "me-drive-64k"),
-                           ("me-storage-256k", "me-drive-256k")):
-            upscale(load(OUT_ICON / f"{icon}.png")).save(OUT_TECH / f"{tech}.png")
         autocrafting(a.gt)
         print("ME sprites:", len(list(OUT_ENTITY.glob("*.png"))))
-    if a.gt or a.fluids:
-        written = fluids()
-        print("ME fluid sprites:", len(written))
     if a.gt or a.extras:
         written = extras()
         print("ME issue #38 sprites:", len(written))
@@ -1913,6 +2099,12 @@ def main():
     if a.gt or a.chest:
         written = chest()
         print("ME Chest sprites:", len(written))
+    if a.gt or a.own_icons:                     # (after the blocks' faces: the R1 drive, the unified interface, the chest)
+        written = own_icons(a.gt or a.own_icons)
+        print("ME icons of graphics/icons (issue #238) and the cell and drive icons:", len(written))
+    if a.gt or a.fluids or a.own_icons:         # (from the cell and drive icons)
+        written = fluids()
+        print("ME fluid sprites:", len(written))
     if a.gt or a.crafting_cpu:
         written = crafting_cpu(a.gt or a.crafting_cpu)
         print("ME crafting block sprites:", len(written))
@@ -1926,6 +2118,12 @@ def main():
         written = hd_batch3()
         hd_sheet_batch3(ROOT / "docs/graphics-review/graphics-batch3-220.png")
         print("ME 3D pictures (batch 3):", len(written))
+    elif a.own_icons:                           # the 3D-style cells and cable are made from the 32 px icons
+        written = hd_batch1()
+        hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")
+        print("ME 3D pictures (batch 1):", len(written))
+    if a.gt or a.own_icons:
+        print("contact sheet:", own_icons_sheet(ROOT / "docs/graphics-review/own-icons-238.png"))
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
         print("thumbnail.png")

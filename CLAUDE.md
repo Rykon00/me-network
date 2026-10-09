@@ -91,7 +91,10 @@
 - Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`, `--r2`,
   `--patterns` and the other switches for parts, see its docstring); it makes the GPLv3/LGPL graphics and never reads
   AE2 graphics. AE2 graphics: `tools/import_ae2_textures.py` into `graphics/ae2/` only (the rule above); a script that
-  transforms them reads only from `graphics/ae2/` and writes only into it.
+  transforms them reads only from `graphics/ae2/` and writes only into it. The 17 icons of `graphics/icons/` are drawn by
+  `--own-icons` (issue #238); until 0.5.2 they were taken over from the original Gregtorio 0.1.9 and looked like AE2's
+  art. Never bring those old files back or make anything from them: `devcheck check` fails on a file under `graphics/` or
+  `thumbnail.png` with a hash of `tools/upstream-icon-hashes.tsv` (`tools/upstream_icons.py`).
 - **Issues and the board:** every open issue of this repository and of its sister repository is on the project board
   "Gregtorio Continued Backlog" (https://github.com/users/Rykon00/projects/1). The board only follows the issue state: a
   closed issue moves to Done and is archived a day later; nothing else moves a card. So the pull request that finishes an
