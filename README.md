@@ -23,7 +23,8 @@ once with ME Network 0.5.0, save it, then update (`docs/AE2.md`, "Old saves").
 
 ## Layout
 
-The repository root is the mod itself.
+The repository root is the mod itself. The folder `ae2-textures/` is a second, optional mod, ME Network - AE2 Textures
+(`me-network-ae2-textures`, CC BY-NC-SA 3.0, issue #239), built into a zip of its own; see "License".
 
 | Path | Contents |
 |---|---|
@@ -52,16 +53,16 @@ The repository root is the mod itself.
 | `scripts/fork-me-fluids.lua` | the fluid calls of the other modules; `gregtorio-me-fluids` |
 | `scripts/fork-me-handover.lua` | takes the ME state of a Gregtorio Continued save once (Gregtorio issue #83) |
 | `graphics/` | sprites, icons and technology icons (`tools/gen_ae2_sprites.py`), GPLv3/LGPL-3.0 |
-| `graphics/ae2/` | graphics of Applied Energistics 2 under CC BY-NC-SA 3.0, nothing else (issue #235): its license file, `README.md` and `MANIFEST.tsv` (`docs/LICENSES.md`) |
+| `ae2-textures/` | the second mod, `me-network-ae2-textures` (issue #239), CC BY-NC-SA 3.0, nothing of it is GPL: its `info.json` (depends on `me-network`), `overrides.lua` (which sprites of this mod it replaces, by prototype name; empty so far) and `data-final-fixes.lua` (sets them, one file or layer at a time), locale, changelog, license file, `README.md`, `MANIFEST.tsv` and in `graphics/` the AE2-derived images (none yet); never in the me-network zip (`ae2-textures/README.md`, `docs/LICENSES.md`) |
 | `locale/en/me-network.cfg` | English names and texts |
 | `tools/devcheck/` | headless test harness: static checks and the runtime tests, on vanilla and with Gregtorio, and the benchmark (`bench`, `docs/PERFORMANCE.md`) (`tools/devcheck/README.md`) |
-| `tools/build.py` | builds `dist/me-network_<version>.zip` (`--portal` for the mod portal, `--install` into the mods folder) |
+| `tools/build.py` | builds `dist/me-network_<version>.zip` (without `ae2-textures/`) and `dist/me-network-ae2-textures_<version>.zip` (`ae2-textures/` alone) and fails when a zip breaks the license split (`--portal` for the mod portal, `--install` into the mods folder) |
 | `.discord/server.yml` | this mod's category on the Discord server (channels, forum tags), applied by `.github/workflows/discord.yml` with the tool of https://github.com/Rykon00/gregtorio-me-network_discord-bot; a pull request that only changes `.discord/` is merged and applied automatically |
-| `tools/dev_link.py` | links the repository into the Factorio mods folder |
+| `tools/dev_link.py` | links the repository into the Factorio mods folder, and `ae2-textures/` as `me-network-ae2-textures_<version>` (`--no-textures` leaves it out) |
 | `tools/check_syntax.py` | Lua syntax check (`--loaded`: only the files the mod loads) |
 | `tools/gen_ae2_sprites.py` | the sprites and icons (GT5-Unofficial casings, screens, circuit boards, memory chips and GUI signs + Pillow) |
 | `tools/upstream_icons.py`, `tools/upstream-icon-hashes.tsv` | the hashes of the 17 icons taken over from Gregtorio 0.1.9 until 0.5.2 and the guard that `devcheck check` runs: no file under `graphics/` and not `thumbnail.png` may have one (issue #238) |
-| `tools/import_ae2_textures.py`, `tools/ae2_manifest.py` | the only way AE2 graphics get into `graphics/ae2/` (copied from an AE2 checkout, recorded in the manifest), and the manifest's guard that `devcheck check` runs |
+| `tools/import_ae2_textures.py`, `tools/ae2_manifest.py` | the only way AE2 graphics get into `ae2-textures/graphics/` (copied from an AE2 checkout, recorded in the manifest), and the guard of the texture mod that `devcheck check` runs |
 
 The names (`fork-me-*.lua`, the storage keys `fork_me_*`, the remote interfaces `gregtorio-me-*`, every prototype
 name) are kept from Gregtorio Continued: saves find their entities and items by name, the state of a Gregtorio save is
@@ -77,7 +78,7 @@ message (both would run the same network).
 ## Workflow
 
 ```bash
-python tools/dev_link.py                        # once: the working copy is loaded by Factorio
+python tools/dev_link.py                        # once: the working copy (and the texture mod) is loaded by Factorio
 python tools/devcheck/devcheck.py setup         # once (see tools/devcheck/README.md)
 python tools/devcheck/devcheck.py all           # before every pull request: RESULT: OK
 python tools/devcheck/devcheck.py all --with-gregtorio ../Gregtorio
@@ -89,31 +90,33 @@ Releases: `CONTRIBUTING.md`.
 
 ## License
 
-The license is split, the way Applied Energistics 2 splits its own (issue #235; every origin is listed in
-`docs/LICENSES.md`):
+This repository holds two mods with two licenses (issue #239; every origin is listed in `docs/LICENSES.md`):
 
-- **GPLv3** (see `LICENSE`), like Gregtorio Continued, where this network was made: the code, the locale, the docs,
-  the tools and everything else that is not in `graphics/ae2/`.
-- **CC BY-NC-SA 3.0:** the folder `graphics/ae2/` only, the graphics taken from Applied Energistics 2 (© AlgorithmX2
-  et al., in today's AE2 also © 2020 Ridanisaurus Rid), with their own license file, attribution and manifest:
-  [`graphics/ae2/README.md`](graphics/ae2/README.md). The `LICENSE` file (GPLv3) does not cover that folder.
+| Mod | Folder | License | Contents |
+|---|---|---|---|
+| **ME Network** (`me-network`) | the repository root, without `ae2-textures/` | **GPLv3** (`LICENSE`), like Gregtorio Continued, where this network was made; its GT5-Unofficial graphics **LGPL-3.0** | the code, the locale, the graphics, the docs and the tools |
+| **ME Network - AE2 Textures** (`me-network-ae2-textures`) | `ae2-textures/` | **CC BY-NC-SA 3.0** (`ae2-textures/LICENSE-CC-BY-NC-SA-3.0.txt`), nothing of it GPL | graphics taken from Applied Energistics 2 (© AlgorithmX2 et al., in today's AE2 also © 2020 Ridanisaurus Rid), with their attribution and manifest, and the code that puts them in place: [`ae2-textures/README.md`](ae2-textures/README.md) |
 
-What that means for the folder, in short:
+The two are built into two zips (`tools/build.py`), and no zip contains both licenses. **The texture mod is optional:
+me-network never needs it** and does not know it; it depends on me-network and replaces sprites when a player installs
+both. Gregtorio Continued depends on me-network only.
 
-- **BY:** every file in it names its author, its source, the license and whether it was changed (`MANIFEST.tsv`).
-- **NC:** the folder may not be used commercially, by this mod or by anyone who takes it.
+What CC BY-NC-SA 3.0 means for the texture mod, in short:
+
+- **BY:** every image in it names its author, its source, the license and whether it was changed (`MANIFEST.tsv`).
+- **NC:** it may not be used commercially, by us or by anyone who takes it; me-network itself has no NC part.
 - **SA:** a changed version of a file in it stays CC BY-NC-SA 3.0.
-- Origins are never mixed in one image: a sprite with an AE2 part and a part of another origin is two layers.
+- Origins are never mixed in one image: the texture mod replaces one file or layer of a sprite at a time.
 
-The graphics outside that folder are generated by `tools/gen_ae2_sprites.py` from
+The graphics of me-network are generated by `tools/gen_ae2_sprites.py` from
 [GT5-Unofficial](https://github.com/GTNewHorizons/GT5-Unofficial) by GTNewHorizons (LGPL-3.0: machine casings and
 screens; for the upgrade cards its circuit boards, circuits, an SMD chip and the signs of its machine GUI buttons; for
 the storage components its circuit boards and memory chips) and shapes drawn with Pillow; the ME cable, the drive's cell
 bays, the bus plates and arrows and the ME Cell Workbench are drawn by the script or derived from those sprites, and
-`thumbnail.png` is put together from them (a drive and a terminal). The script never reads AE2 graphics. `graphics/ae2/`
-holds no graphics yet: which sprites are replaced by AE2's is decided per asset group (issue #236).
+`thumbnail.png` is put together from them (a drive and a terminal). The script never reads AE2 graphics. The texture
+mod holds no graphics yet: which sprites it replaces by AE2's is decided per asset group (issue #236).
 
-As far as the maintainer knows, no graphics of the original Gregtorio and none of Applied Energistics 2 are used. Older
+As far as the maintainer knows, me-network uses no graphics of the original Gregtorio and none of Applied Energistics 2. Older
 releases (0.1.0 to 0.5.2) contain 17 icons in `graphics/icons/` that were taken over from the original Gregtorio 0.1.9
 by Damien Reave and look like Applied Energistics 2's art; issue #238 replaced them by icons the script draws, and
 `devcheck.py check` fails on a file with the bytes of one of them (`tools/upstream-icon-hashes.tsv`).
