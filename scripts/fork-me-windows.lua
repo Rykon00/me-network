@@ -1518,7 +1518,7 @@ function M.refresh_storage_bus(player, frame)
 	fm.enabled = not carded
 	G.find(frame, "fork_me_sbus_fuzzy").caption = d.side == "fluid" and ""
 		or { d.fuzzy and "fork-me-gui.storage-bus-fuzzy-on" or "fork-me-gui.storage-bus-fuzzy-off" }
-	G.find(frame, "fork_me_sbus_filters_caption").caption = { "fork-me-gui.storage-bus-filters" .. (d.inverted and "-blacklist" or ""),
+	G.find(frame, "fork_me_sbus_filters_caption").caption = { "fork-me-gui.storage-bus-filters" .. ((d.inverted or d.blacklist) and "-blacklist" or ""),
 		d.max, d.fuzzy and { "fork-me-gui.storage-bus-fuzzy" } or "" }
 	local holds
 	if d.side == "fluid" then
