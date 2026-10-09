@@ -10,14 +10,22 @@ advice.
 | Origin | License | Where | How it gets in |
 |---|---|---|---|
 | ME Network's own code, locale, docs and tools | GPLv3 (`LICENSE`) | everything not named below | written here |
-| [GT5-Unofficial](https://github.com/GTNewHorizons/GT5-Unofficial) graphics by GTNewHorizons: machine casings and screens, circuit boards, circuits, an SMD chip, the signs of its machine GUI buttons | LGPL-3.0 | inside the sprites and icons of `graphics/entity/`, `graphics/icons/`, `graphics/technology/`, `thumbnail.png` | `tools/gen_ae2_sprites.py --gt <checkout>` |
-| Original Gregtorio by Damien Reave: some item icons | GPLv3 | `graphics/icons/` | taken over from Gregtorio Continued |
+| [GT5-Unofficial](https://github.com/GTNewHorizons/GT5-Unofficial) graphics by GTNewHorizons: machine casings and screens, circuit boards, circuits, memory chips, an SMD chip, the signs of its machine GUI buttons | LGPL-3.0 | inside the sprites and icons of `graphics/entity/`, `graphics/icons/`, `graphics/technology/`, `thumbnail.png` | `tools/gen_ae2_sprites.py --gt <checkout>` |
 | [Applied Energistics 2](https://github.com/AppliedEnergistics/Applied-Energistics-2) code (© 2013 - 2020 AlgorithmX2 et al.): functions ported to Lua | LGPL-3.0 (its API MIT) | the ported functions, each with a comment naming its source; the files are listed in `README.md`, "License" (none so far) | written anew for Lua and the Factorio API |
 | Applied Energistics 2 textures and models (AE2: © 2020 Ridanisaurus Rid, © 2013 - 2020 AlgorithmX2 et al.; AE2-Unofficial: © 2013 - 2015 AlgorithmX2 et al.) | CC BY-NC-SA 3.0 | `graphics/ae2/` only (`graphics/ae2/README.md`, `graphics/ae2/MANIFEST.tsv`) | `tools/import_ae2_textures.py` only |
 | Applied Energistics 2 text and translations | CC0 | `locale/`, `docs/`: the block and item names follow AE2's | names taken over, texts written here |
 
 The sprites under `graphics/entity/fork/ae2/` are named after AE2's blocks but are **not** AE2 graphics: the script
 draws them from GT5-Unofficial textures and Pillow shapes, so they are GPLv3/LGPL-3.0 like the rest.
+
+**No graphics of the original Gregtorio (issue #238).** Until 0.5.2, 17 icons in `graphics/icons/` (the ME controller,
+drive, terminal, interface and chest, the fluix cable, the storage housing and the storage components 1k to 256m) were
+byte-identical to the original Gregtorio 0.1.9 by Damien Reave and look like Applied Energistics 2's art. Issue #238
+replaced them by icons that `tools/gen_ae2_sprites.py --own-icons` draws, and drew the graphics that had been made from
+them anew (cells, old drive items, fluid variants, the wireless terminal and module, five technology icons).
+`tools/upstream-icon-hashes.tsv` keeps the old files' hashes, and `devcheck.py check` fails on a file with one of them
+under `graphics/` or as `thumbnail.png` (with `--with-gregtorio` in that checkout too). As far as the maintainer knows,
+no graphics of the original Gregtorio are left; releases 0.1.0 to 0.5.2 still contain the 17 files.
 
 ## Rules
 
