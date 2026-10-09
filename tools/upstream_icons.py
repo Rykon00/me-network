@@ -16,7 +16,7 @@ these hashes (with --with-gregtorio no file of that checkout either).
 import re
 from pathlib import Path
 
-from ae2_manifest import identical_files, sha256, tree_files      # (the same file walk as the guard of graphics/ae2/)
+from ae2_manifest import identical_files, sha256, tree_files      # (the same file walk as the guard of the texture mod)
 
 ROOT = Path(__file__).resolve().parent.parent
 LIST = "tools/upstream-icon-hashes.tsv"

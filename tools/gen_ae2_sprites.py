@@ -11,9 +11,10 @@ Sources:
     taken over from Gregtorio 0.1.9; nothing is made from those old files (tools/upstream-icon-hashes.tsv)
   * the fluid variants (prototypes/fluids.lua) are derived from the item PNGs
     generated here: the same shapes with blue accents instead of fluix purple
-  * never graphics of Applied Energistics 2: they are CC BY-NC-SA 3.0 and live only in their own folder
-    (docs/LICENSES.md, tools/import_ae2_textures.py); what this script makes is GPLv3/LGPL-3.0, and a sprite that
-    needs an AE2 part too is two layers in the prototype, never one image (issue #235)
+  * never graphics of Applied Energistics 2: they are CC BY-NC-SA 3.0 and live only in the separate texture mod
+    me-network-ae2-textures (docs/LICENSES.md, tools/import_ae2_textures.py); what this script makes is
+    GPLv3/LGPL-3.0, and the texture mod replaces one of its files or layers at a time, never one image of both
+    (issues #235, #239)
 
     python tools/gen_ae2_sprites.py --gt C:/00_Repositories/GT5-Unofficial   # everything
     python tools/gen_ae2_sprites.py --fluids      # only the fluid graphics, from the existing item PNGs

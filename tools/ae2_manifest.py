@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""The folder of Applied Energistics 2 graphics, graphics/ae2/ (issue #235): its manifest and its guard.
+"""The texture mod ae2-textures/ (issue #239, before it the folder graphics/ae2/ of issue #235): its manifest and its guard.
 
-graphics/ae2/ is the one part of this mod under CC BY-NC-SA 3.0 (docs/LICENSES.md); everything else is GPLv3 or
-LGPL-3.0. It holds AE2-derived images and three documentation files: LICENSE-CC-BY-NC-SA-3.0.txt, README.md and
-MANIFEST.tsv, one row per image:
+ae2-textures/ is a mod of its own, me-network-ae2-textures, under CC BY-NC-SA 3.0 (docs/LICENSES.md); the repository
+root is the mod me-network under GPLv3 (its GT5-Unofficial graphics LGPL-3.0), and no zip holds both
+(tools/build.py). The texture mod holds its mod files (MOD_FILES, locale/<language>/*.cfg), three documentation
+files (LICENSE-CC-BY-NC-SA-3.0.txt, README.md, MANIFEST.tsv) and in graphics/ the AE2-derived images, one manifest
+row per image:
 
-    file           the image's path inside graphics/ae2/ ("cable/fluix.png")
+    file           the image's path inside ae2-textures/graphics/ ("cable/fluix.png")
     repository     the AE2 repository it came from (one of REPOSITORIES)
     source         its path in that repository (under the repository's textures folder)
     commit         the commit of the checkout it was taken from (git rev-parse HEAD)
@@ -16,17 +18,22 @@ MANIFEST.tsv, one row per image:
     note           one line: what the file is for and, when changed, what was changed
 
 Rows are written by tools/import_ae2_textures.py only. check_tree() is the guard that `devcheck.py check` runs:
-every image has a row, every row has its image, nothing else lies in the folder, no file outside the folder (and
-none in another checkout, --with-gregtorio) is byte-identical to a file of the manifest or to its AE2 source, and
-tools/gen_ae2_sprites.py (GPLv3/LGPL graphics) never names the folder or an AE2 checkout.
+every image has a row, every row has its image, nothing else lies in the texture mod, no file outside it (and none
+in another checkout, --with-gregtorio) is byte-identical to a file of the manifest or to its AE2 source, and
+tools/gen_ae2_sprites.py (GPLv3/LGPL graphics) never names the texture mod or an AE2 checkout.
 """
 import hashlib, os, re, subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FOLDER = "graphics/ae2"
+MOD_FOLDER = "ae2-textures"                 # the texture mod, me-network-ae2-textures
+MOD_NAME = "me-network-ae2-textures"
+FOLDER = MOD_FOLDER + "/graphics"           # its images, the only files with a manifest row
 LICENSE_FILE = "LICENSE-CC-BY-NC-SA-3.0.txt"
 DOCS = (LICENSE_FILE, "README.md", "MANIFEST.tsv")
+# the texture mod's own files besides DOCS, locale/<language>/*.cfg and the images (all CC BY-NC-SA 3.0)
+MOD_FILES = ("info.json", "changelog.txt", "data-final-fixes.lua", "overrides.lua")
+LOCALE = re.compile(r"locale/[a-zA-Z-]+/[A-Za-z0-9_.-]+\.cfg")
 COLUMNS = ("file", "repository", "source", "commit", "source_sha256", "author", "license", "changed", "note")
 LICENSE = "CC BY-NC-SA 3.0"
 # SHA-256 of https://creativecommons.org/licenses/by-nc-sa/3.0/legalcode.txt (LF line ends, .gitattributes)
@@ -41,7 +48,7 @@ IMAGE_SUFFIXES = (".png",)
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 # the generator of the GPLv3/LGPL sprites: it never reads AE2 graphics (CLAUDE.md, "Graphics")
 AE2_FREE = ("tools/gen_ae2_sprites.py",)
-AE2_NAMES = re.compile(r"graphics/ae2/|graphics\\ae2\\|Applied-Energistics-2")
+AE2_NAMES = re.compile(r"ae2-textures[/\\]|__me-network-ae2-textures__|graphics/ae2/|graphics\\ae2\\|Applied-Energistics-2")
 # never walked when a tree is not a git checkout: the harness folder holds junctions to other checkouts
 SKIP_DIRS = {".git", ".devcheck", "dist", "__pycache__"}
 
@@ -55,7 +62,7 @@ def sha256(path):
 
 
 def manifest_path(root=ROOT):
-    return Path(root) / FOLDER / "MANIFEST.tsv"
+    return Path(root) / MOD_FOLDER / "MANIFEST.tsv"
 
 
 def read_manifest(root=ROOT):
@@ -63,10 +70,10 @@ def read_manifest(root=ROOT):
     rows, problems = [], []
     p = manifest_path(root)
     if not p.exists():
-        return rows, [f"{FOLDER}/MANIFEST.tsv is missing"]
+        return rows, [f"{MOD_FOLDER}/MANIFEST.tsv is missing"]
     lines = p.read_text(encoding="utf-8").splitlines()
     if not lines or tuple(lines[0].split("\t")) != COLUMNS:
-        return rows, [f"{FOLDER}/MANIFEST.tsv: the first line must be the header " + "\\t".join(COLUMNS)]
+        return rows, [f"{MOD_FOLDER}/MANIFEST.tsv: the first line must be the header " + "\\t".join(COLUMNS)]
     for n, line in enumerate(lines[1:], 2):
         if not line.strip():
             continue
@@ -94,9 +101,7 @@ def row_problems(r):
     where, bad = f"MANIFEST.tsv line {r['line']} ({r['file']})", []
     f = r["file"]
     if not f or f.startswith("/") or "\\" in f or ".." in f.split("/") or not f.lower().endswith(IMAGE_SUFFIXES):
-        bad.append("file must be a relative path with / inside graphics/ae2/, ending in " + ", ".join(IMAGE_SUFFIXES))
-    elif f in DOCS:
-        bad.append("file names a documentation file")
+        bad.append(f"file must be a relative path with / inside {FOLDER}/, ending in " + ", ".join(IMAGE_SUFFIXES))
     prefix = REPOSITORIES.get(r["repository"])
     if prefix is None:
         bad.append(f"repository {r['repository']!r} is not an AE2 repository (" + ", ".join(REPOSITORIES) + ")")
@@ -134,12 +139,13 @@ def tree_files(root):
 
 
 def identical_files(root, hashes, skip_folder=False):
-    """files of a tree whose bytes are one of `hashes` ({sha256: what it is}): [(path, what)]"""
+    """files of a tree whose bytes are one of `hashes` ({sha256: what it is}): [(path, what)]; skip_folder leaves
+    the texture mod out"""
     if not hashes:
         return []
     hits = []
     for f in tree_files(root):
-        if skip_folder and (f + "/").startswith(FOLDER + "/"):
+        if skip_folder and (f + "/").startswith(MOD_FOLDER + "/"):
             continue
         h = sha256(Path(root) / f)
         if h in hashes:
@@ -147,20 +153,43 @@ def identical_files(root, hashes, skip_folder=False):
     return hits
 
 
+def mod_file_problem(rel):
+    """why a path inside the texture mod (relative to it, /) does not belong there, or None (an image under
+    graphics/ is checked against the manifest by check_tree)"""
+    if rel in DOCS or rel in MOD_FILES or LOCALE.fullmatch(rel) or rel.startswith("graphics/"):
+        return None
+    return (f"{MOD_FOLDER}/{rel}: not a file of the texture mod; it holds {', '.join(MOD_FILES + DOCS)}, "
+            "locale/<language>/*.cfg and the AE2-derived images in graphics/")
+
+
+def manifest_hashes(root=ROOT):
+    """{sha256: what it is} of every image of the manifest and of its AE2 source"""
+    rows, _ = read_manifest(root)
+    hashes = {}
+    for r in rows:
+        p = Path(root) / FOLDER / r["file"]
+        if p.is_file():
+            hashes[sha256(p)] = f"{FOLDER}/{r['file']}"
+    for r in rows:
+        if re.fullmatch(r"[0-9a-f]{64}", r["source_sha256"]):
+            hashes.setdefault(r["source_sha256"], f"the AE2 source of {FOLDER}/{r['file']} ({r['source']})")
+    return hashes
+
+
 def check_tree(root=ROOT, others=()):
     """the guard: (number of AE2 files in the manifest, problems, {other tree: files compared}); `others` are other
     checkouts (Gregtorio Continued) that must hold no file byte-identical to an AE2 file or its source"""
     root = Path(root)
-    folder = root / FOLDER
+    mod, folder = root / MOD_FOLDER, root / FOLDER
     problems, compared = [], {}
-    if not folder.is_dir():
-        return 0, [f"{FOLDER}/ is missing"], compared
-    for d in DOCS:
-        if not (folder / d).is_file():
-            problems.append(f"{FOLDER}/{d} is missing")
-    lic = folder / LICENSE_FILE
+    if not mod.is_dir():
+        return 0, [f"{MOD_FOLDER}/ is missing"], compared
+    for d in DOCS + MOD_FILES:
+        if not (mod / d).is_file():
+            problems.append(f"{MOD_FOLDER}/{d} is missing")
+    lic = mod / LICENSE_FILE
     if lic.is_file() and sha256(lic) != LICENSE_SHA256:
-        problems.append(f"{FOLDER}/{LICENSE_FILE} is not the legal code text of CC BY-NC-SA 3.0 "
+        problems.append(f"{MOD_FOLDER}/{LICENSE_FILE} is not the legal code text of CC BY-NC-SA 3.0 "
                         "(https://creativecommons.org/licenses/by-nc-sa/3.0/legalcode.txt)")
     rows, bad = read_manifest(root)
     problems += bad
@@ -170,20 +199,21 @@ def check_tree(root=ROOT, others=()):
         if r["file"] in by_file:
             problems.append(f"MANIFEST.tsv line {r['line']}: {r['file']} has a row already (line {by_file[r['file']]['line']})")
         by_file.setdefault(r["file"], r)
-    present = sorted(p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file())
+    for p in sorted(mod.rglob("*")):
+        why = p.is_file() and mod_file_problem(p.relative_to(mod).as_posix())
+        if why:
+            problems.append(why)
+    present = sorted(p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file()) if folder.is_dir() else []
     for f in present:
-        if f in DOCS:
-            continue
         p = folder / f
         if not f.lower().endswith(IMAGE_SUFFIXES):
-            problems.append(f"{FOLDER}/{f}: not an image; the folder holds only AE2-derived images and {', '.join(DOCS)}")
+            problems.append(f"{FOLDER}/{f}: not an image; {FOLDER}/ holds only AE2-derived images")
             continue
         with open(p, "rb") as fh:
             if fh.read(len(PNG_MAGIC)) != PNG_MAGIC:
                 problems.append(f"{FOLDER}/{f}: not a PNG file")
         if f not in by_file:
             problems.append(f"{FOLDER}/{f}: no row in MANIFEST.tsv (import AE2 graphics with tools/import_ae2_textures.py)")
-    hashes = {}
     for f, r in by_file.items():
         p = folder / f
         if not p.is_file():
@@ -195,8 +225,7 @@ def check_tree(root=ROOT, others=()):
                             "record a change with tools/import_ae2_textures.py --mark-changed")
         if r["changed"] == "yes" and h == r["source_sha256"]:
             problems.append(f"{FOLDER}/{f}: changed is yes, but the file is the source's bytes")
-        hashes[h] = f"{FOLDER}/{f}"
-        hashes.setdefault(r["source_sha256"], f"the AE2 source of {FOLDER}/{f} ({r['source']})")
+    hashes = manifest_hashes(root)
     for f, what in identical_files(root, hashes, skip_folder=True):
         problems.append(f"{f} is byte-identical to {what}: AE2 graphics belong in {FOLDER}/ only")
     for other in others:
@@ -209,6 +238,6 @@ def check_tree(root=ROOT, others=()):
         if p.is_file():
             for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
                 if AE2_NAMES.search(line):
-                    problems.append(f"{f} line {n} names {FOLDER}/ or an AE2 checkout: its graphics are GPLv3/LGPL "
-                                    "and never read AE2 graphics")
+                    problems.append(f"{f} line {n} names the texture mod or an AE2 checkout: its graphics are "
+                                    "GPLv3/LGPL and never read AE2 graphics")
     return len(by_file), problems, compared
