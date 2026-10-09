@@ -26,6 +26,9 @@ M.root = "__me-network__/"
 M.icons = M.root .. "graphics/icons/"
 M.entity_path = M.root .. "graphics/entity/fork/ae2/"
 M.technology_path = M.root .. "graphics/technology/fork/"
+--- issue #154: the 64 px pictures of the 3D style (tools/gen_ae2_sprites.py --hd): icons 64 x 64, entity pictures at scale 0.5
+M.hd_icons = M.root .. "graphics/icons/hd/"
+M.hd_entity_path = M.entity_path .. "hd/"
 --- what can be walked over (the ME cable, since issue #129 the buses and the ME Terminal): a building's collision mask without the
 --- "player" layer, so a character passes through; nothing can be built on it (the "object" layer stays) and no item lies on it
 --- (the "item" layer). Cars and tanks pass too (their mask has the "player" layer as well).

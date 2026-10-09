@@ -49,7 +49,8 @@ ME.add_item{
 --- fluix cable.
 ME.add_item{
 	name = "me-pattern-terminal",
-	icon = ICON_FORK .. "me-pattern-terminal.png",
+	icon = ME.hd_icons .. "me-pattern-terminal.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "e0",
 	stack_size = 50,
@@ -131,8 +132,8 @@ local PATTERN_TERMINAL_POWER = 8000             -- W drawn through the ME Contro
 data:extend({ {
 	type = "simple-entity-with-force",
 	name = "me-pattern-terminal",
-	icon = ICON_FORK .. "me-pattern-terminal.png",
-	icon_size = 32,
+	icon = ME.hd_icons .. "me-pattern-terminal.png",
+	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.2, result = "me-pattern-terminal" },
 	placeable_by = { item = "me-pattern-terminal", count = 1 },
@@ -146,8 +147,8 @@ data:extend({ {
 	render_layer = "lower-object",
 	random_variation_on_create = false,
 	pictures = {
-		{ filename = ENTITY_PATH .. "me-pattern-terminal.png", priority = "high", width = 32, height = 32, x = 0 },
-		{ filename = ENTITY_PATH .. "me-pattern-terminal.png", priority = "high", width = 32, height = 32, x = 32 },
+		{ filename = ME.hd_entity_path .. "me-pattern-terminal.png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
+		{ filename = ME.hd_entity_path .. "me-pattern-terminal.png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
 	},
 	localised_description = { "entity-description.me-pattern-terminal", tostring(PATTERN_TERMINAL_POWER / 1000) },
 } })

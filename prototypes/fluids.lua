@@ -72,7 +72,8 @@ for i, c in ipairs(CELLS) do
 	local item = ME.add_item{
 		type = "item-with-tags",
 		name = cell,
-		icon = ICON_FORK .. cell .. ".png",
+		icon = ME.hd_icons .. cell .. ".png",                 -- (issue #218: the 3D style)
+		icon_size = 64,
 		subgroup = "fork-me-fluid-cells",
 		order = order,
 		stack_size = 1,

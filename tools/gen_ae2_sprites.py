@@ -1114,6 +1114,213 @@ def wireless():
     written.append(OUT_TECH / "me-wireless.png")
     return written
 
+
+# --- the 3D style of issue #154 (route A), batch 1 (#218) -------------------------------------------------------------
+# Every picture at 64 px per tile (the prototypes use scale 0.5), made from the 32 px pictures above, which stay the sources:
+#   * blocks: the face over HD_FACE of the tile (top left), the east and the south side as depth strips (the last columns /
+#     rows of the face's casing, shaded 0.72 and 0.5), a dark contour and the two inner edges; lit from the top left. This is
+#     the look of Gregtorio's machine blocks (its issue #148), so both mods have one style.
+#   * icons of blocks: an isometric cube, the face in front (left), the casing on the top and the right side.
+#   * flat things on the ground (the cable, the underground cable): 2x with a contour and a short shadow to the south-east.
+#   * storage cells: an upright box (the cell's picture in front, its housing as the top and the right side).
+HD = 64
+HD_DEPTH = 10                       # px of a 64 px tile that the depth strips take (scripts/fork-me-network.lua: FACE)
+HD_ENTITY = OUT_ENTITY / "hd"
+HD_ICON = ROOT / "graphics/icons/hd"
+CONTOUR = (18, 18, 22, 255)
+
+
+def hd_up(img, f=2):
+    return img.resize((img.width * f, img.height * f), Image.NEAREST)
+
+
+def hd_shade(img, f):
+    out = img.copy()
+    px = out.load()
+    for y in range(out.height):
+        for x in range(out.width):
+            r, g, b, a = px[x, y]
+            px[x, y] = (int(r * f), int(g * f), int(b * f), a)
+    return out
+
+
+def hd_affine(dst, src, p0, u, v):
+    """paste `src` so that its top left lands on p0, its width along u, its height along v"""
+    w, h = src.size
+    det = u[0] * v[1] - u[1] * v[0]
+    a, b = v[1] / det * w, -v[0] / det * w
+    d, e = -u[1] / det * h, u[0] / det * h
+    dst.alpha_composite(src.transform(dst.size, Image.AFFINE,
+                                      (a, b, -(a * p0[0] + b * p0[1]), d, e, -(d * p0[0] + e * p0[1])), resample=Image.NEAREST))
+
+
+def hd_contour(img):
+    alpha = img.getchannel("A").load()
+    out = img.copy()
+    o = out.load()
+    w, h = img.size
+    for y in range(h):
+        for x in range(w):
+            if alpha[x, y] == 0:
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < w and 0 <= ny < h and alpha[nx, ny] > 0:
+                        o[x, y] = CONTOUR
+                        break
+    return out
+
+
+def hd_block(face, tiles=1, depth=HD_DEPTH):
+    """a block of `tiles` x `tiles` from its 32 px face picture: 64 px per tile"""
+    size = HD * tiles
+    img = Image.new("RGBA", (size, size))
+    f = hd_up(face, 2 * tiles // tiles).resize((size - depth, size - depth), Image.NEAREST)
+    edge_e = f.crop((f.width - 4, 0, f.width, f.height)).resize((depth, size - depth), Image.NEAREST)
+    edge_s = f.crop((0, f.height - 4, f.width, f.height)).resize((size - depth, depth), Image.NEAREST)
+    hd_affine(img, hd_shade(edge_e, 0.72), (size - depth, 0), (depth, depth), (0, size - depth))
+    hd_affine(img, hd_shade(edge_s, 0.5), (0, size - depth), (size - depth, 0), (depth, depth))
+    img.alpha_composite(f, (0, 0))
+    d = ImageDraw.Draw(img)
+    d.line((size - depth, 0, size - depth, size - depth), fill=CONTOUR)
+    d.line((0, size - depth, size - depth, size - depth), fill=CONTOUR)
+    return hd_contour(img)
+
+
+def hd_plain_top(face):
+    """the casing of a face without its inside: the top and the right side of an icon cube"""
+    top = face.copy()
+    ImageDraw.Draw(top).rectangle((3, 3, face.width - 4, face.height - 4), fill=(60, 64, 76, 255))
+    return top
+
+
+def hd_cube(front, top=None, side=None):
+    """a 64 x 64 icon: an isometric cube with `front` (32 px) on its left face"""
+    top = top or hd_plain_top(front)
+    side = side or top
+    img = Image.new("RGBA", (HD, HD))
+    w, h = HD // 2 - 2, (HD // 2 - 2) // 2
+    cx, y0 = HD // 2, 4
+    hd_affine(img, hd_up(top), (cx, y0), (w, h), (-w, h))
+    hd_affine(img, hd_shade(hd_up(front), 0.85), (cx - w, y0 + h), (w, h), (0, w))
+    hd_affine(img, hd_shade(hd_up(side), 0.6), (cx, y0 + 2 * h), (w, -h), (0, w))
+    return hd_contour(img)
+
+
+def hd_flat(img):
+    """a thing that lies on the ground (cable): 2x, a contour, a shadow two pixels to the south-east"""
+    big = hd_up(img)
+    out = Image.new("RGBA", big.size)
+    shadow = Image.new("RGBA", big.size, (0, 0, 0, 0))
+    shadow.putalpha(big.getchannel("A").point(lambda v: 70 if v else 0))
+    out.alpha_composite(shadow, (2, 2))
+    out.alpha_composite(hd_contour(big))
+    return out
+
+
+def hd_flat_sheet(sheet, frames):
+    """the same for a sheet of `frames` 32 px pictures side by side"""
+    out = Image.new("RGBA", (HD * frames, HD))
+    for i in range(frames):
+        out.alpha_composite(hd_flat(sheet.crop((i * TILE, 0, (i + 1) * TILE, TILE))), (i * HD, 0))
+    return out
+
+
+def hd_cell(icon):
+    """a storage cell as an upright box: a housing panel with the cell's picture in front, the housing as the top and the
+    right side"""
+    body = icon.crop(icon.getbbox() or (0, 0, TILE, TILE))
+    panel = Image.new("RGBA", (24, 28), (128, 130, 140, 255))
+    pd = ImageDraw.Draw(panel)
+    pd.rectangle((0, 0, 23, 27), outline=(70, 72, 82, 255))
+    pd.line((1, 1, 22, 1), fill=(175, 177, 187, 255))
+    pd.line((1, 1, 1, 26), fill=(175, 177, 187, 255))
+    art = body.resize((20, 24), Image.NEAREST)
+    panel.alpha_composite(art, (2, 2))
+    front = hd_up(panel)
+    img = Image.new("RGBA", (HD, HD))
+    x0, y0, depth = 6, 12, 12
+    housing = Image.new("RGBA", (8, 8), (150, 152, 162, 255))
+    hd_affine(img, hd_shade(housing, 0.95), (x0 + depth, y0 - depth * 0.6), (front.width, 0), (-depth, depth * 0.6))
+    hd_affine(img, hd_shade(housing, 0.62), (x0 + front.width, y0), (depth, -depth * 0.6), (0, front.height))
+    img.alpha_composite(front, (x0, y0))
+    return hd_contour(img)
+
+
+def hd_batch1():
+    """issue #218: terminals, controller, cable and underground cable, drive and the cells"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for name in ("me-terminal-off", "me-terminal-lit", "me-drive"):
+        save(hd_block(load(OUT_ENTITY / f"{name}.png")), HD_ENTITY / f"{name}.png")
+    pt = load(OUT_ENTITY / "me-pattern-terminal.png")              # dark | lit
+    sheet = Image.new("RGBA", (2 * HD, HD))
+    for i in range(2):
+        sheet.alpha_composite(hd_block(pt.crop((i * TILE, 0, (i + 1) * TILE, TILE))), (i * HD, 0))
+    save(sheet, HD_ENTITY / "me-pattern-terminal.png")
+    save(hd_block(load(OUT_ENTITY / "me-network-controller.png").resize((TILE, TILE), Image.LANCZOS)
+                  if False else load(OUT_ENTITY / "me-network-controller.png"), tiles=2, depth=2 * HD_DEPTH),
+         HD_ENTITY / "me-network-controller.png")
+    save(hd_flat_sheet(load(OUT_ENTITY / "me-cable.png"), 16), HD_ENTITY / "me-cable.png")
+    for d in ("north", "east", "south", "west"):
+        save(hd_flat(load(OUT_ENTITY / f"me-underground-cable-{d}.png")), HD_ENTITY / f"me-underground-cable-{d}.png")
+    # icons
+    save(hd_cube(load(OUT_ENTITY / "me-terminal-lit.png")), HD_ICON / "me-terminal.png")
+    save(hd_cube(pt.crop((TILE, 0, 2 * TILE, TILE))), HD_ICON / "me-pattern-terminal.png")
+    ctrl = load(OUT_ENTITY / "me-network-controller.png").resize((TILE, TILE), Image.LANCZOS)
+    save(hd_cube(ctrl), HD_ICON / "me-controller.png")
+    save(hd_cube(load(OUT_ENTITY / "me-drive.png")), HD_ICON / "me-drive.png")
+    save(hd_flat(load(OUT_ICON / "me-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "me-cable.png")
+    save(hd_flat(load(ROOT / "graphics/icons/fluix-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "fluix-cable.png")
+    save(hd_flat(load(OUT_ICON / "me-underground-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "me-underground-cable.png")
+    for k in ("1k", "4k", "16k", "64k", "256k"):
+        for kind in ("storage-cell", "fluid-storage-cell"):
+            save(hd_cell(load(OUT_ICON / f"me-{k}-{kind}.png")), HD_ICON / f"me-{k}-{kind}.png")
+    return written
+
+
+def hd_sheet_batch1(path):
+    """the contact sheet of batch 1: today (4x) and the new pictures (2x and at game size)"""
+    pairs = [("terminal dark", OUT_ENTITY / "me-terminal-off.png", HD_ENTITY / "me-terminal-off.png"),
+             ("terminal lit", OUT_ENTITY / "me-terminal-lit.png", HD_ENTITY / "me-terminal-lit.png"),
+             ("drive", OUT_ENTITY / "me-drive.png", HD_ENTITY / "me-drive.png"),
+             ("controller", OUT_ENTITY / "me-network-controller.png", HD_ENTITY / "me-network-controller.png"),
+             ("underground N", OUT_ENTITY / "me-underground-cable-north.png", HD_ENTITY / "me-underground-cable-north.png"),
+             ("terminal icon", ROOT / "graphics/icons/me-terminal.png", HD_ICON / "me-terminal.png"),
+             ("pattern terminal icon", OUT_ICON / "me-pattern-terminal.png", HD_ICON / "me-pattern-terminal.png"),
+             ("controller icon", ROOT / "graphics/icons/me-controller.png", HD_ICON / "me-controller.png"),
+             ("drive icon", ROOT / "graphics/icons/me-drive.png", HD_ICON / "me-drive.png"),
+             ("1k cell", OUT_ICON / "me-1k-storage-cell.png", HD_ICON / "me-1k-storage-cell.png"),
+             ("64k fluid cell", OUT_ICON / "me-64k-fluid-storage-cell.png", HD_ICON / "me-64k-fluid-storage-cell.png"),
+             ("cable icon", ROOT / "graphics/icons/fluix-cable.png", HD_ICON / "fluix-cable.png")]
+    rw, rh = 760, 150
+    img = Image.new("RGBA", (rw, 30 + rh * len(pairs) + 160), (40, 40, 48, 255))
+    d = ImageDraw.Draw(img)
+    d.text((10, 8), "issue #218: today (4x) | new (2x) | new at game size", fill=(220, 220, 230, 255))
+    for i, (name, old, new) in enumerate(pairs):
+        y = 30 + i * rh
+        o, n = load(old), load(new)
+        d.text((10, y + 60), name, fill=(220, 220, 230, 255))
+        o4 = hd_up(o, 4) if o.width <= 32 else hd_up(o, 2)
+        img.alpha_composite(o4.resize((128, 128), Image.NEAREST), (180, y + 10))
+        img.alpha_composite(n.resize((128, 128), Image.NEAREST), (340, y + 10))
+        img.alpha_composite(n.resize((32, 32), Image.LANCZOS), (500, y + 58))
+    # the cable's 16 pictures and a 3x3 patch of blocks as they lie on the ground
+    y = 30 + rh * len(pairs)
+    cable = load(HD_ENTITY / "me-cable.png")
+    img.alpha_composite(cable.resize((cable.width // 2, cable.height // 2), Image.LANCZOS), (10, y + 10))
+    drive, term = load(HD_ENTITY / "me-drive.png"), load(HD_ENTITY / "me-terminal-lit.png")
+    for gx in range(3):
+        for gy in range(2):
+            img.alpha_composite((drive if (gx + gy) % 2 else term).resize((32, 32), Image.LANCZOS), (560 + gx * 32, y + 60 + gy * 32))
+    img.save(path)
+    return path
+
 def cards_tech(gt):
     """256x256: three cards fanned out (Overflow Destruction behind, Fuzzy, Capacity in front)."""
     img = Image.new("RGBA", (40, 40))
@@ -1419,6 +1626,9 @@ def main():
     ap.add_argument("--wireless", action="store_true",
                     help="only the wireless parts (me-network issues #205 to #211): access point, booster, terminal item, "
                          "charger, module and their technology, drawn from this mod's own PNGs")
+    ap.add_argument("--hd", action="store_true",
+                    help="the 64 px pictures of the 3D style (me-network issues #154, #218: batch 1) from the 32 px ones, into "
+                         "graphics/entity/fork/ae2/hd/ and graphics/icons/hd/, and their contact sheet")
     ap.add_argument("--thumbnail", action="store_true",
                     help="only thumbnail.png, from the drive, terminal and cable PNGs (me-network issue #20)")
     ap.add_argument("--sheet", type=Path, metavar="PNG",
@@ -1442,7 +1652,7 @@ def main():
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
-            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless):
+            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
@@ -1502,6 +1712,10 @@ def main():
     if a.gt or a.crafting_cpu:
         written = crafting_cpu(a.gt or a.crafting_cpu)
         print("ME crafting block sprites:", len(written))
+    if a.gt or a.hd:                                                     # (last: made from the 32 px pictures)
+        written = hd_batch1()
+        hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")
+        print("ME 3D pictures (batch 1):", len(written))
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
         print("thumbnail.png")

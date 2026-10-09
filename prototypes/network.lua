@@ -72,19 +72,21 @@ data:extend({
 --- housing (the items of Gregtorio's upstream file 13-mv-age-item.lua; the entities they place are below)
 --------------------------------------------------------------------------------
 
+local HD_ICON, HD_ENTITY = ME.hd_icons, ME.hd_entity_path       -- issue #218: the 64 px pictures of the 3D style
+
 local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = "item", name = list[i], amount = list[i + 1] } end return t end
 
-ME.add_item{ name = "fluix-cable", subgroup = "fork-me-network", order = "a0",
+ME.add_item{ name = "fluix-cable", icon = HD_ICON .. "fluix-cable.png", icon_size = 64, subgroup = "fork-me-network", order = "a0",
 	recipe = { ingredients = I{ "copper-cable", 2, "plastic-bar", 1 }, amount = 2, energy_required = 0.5 } }
-ME.add_item{ name = "me-controller", subgroup = "fork-me-network", order = "a", stack_size = 10,
+ME.add_item{ name = "me-controller", icon = HD_ICON .. "me-controller.png", icon_size = 64, subgroup = "fork-me-network", order = "a", stack_size = 10,
 	recipe = { ingredients = I{ "steel-plate", 10, "advanced-circuit", 10, "fluix-cable", 4 }, energy_required = 5 } }
 ME.add_item{ name = "me-interface", subgroup = "fork-me-network", order = "b", stack_size = 50,
 	recipe = { ingredients = I{ "iron-chest", 1, "steel-plate", 4, "advanced-circuit", 2, "fluix-cable", 2 }, energy_required = 2 } }
-ME.add_item{ name = "me-terminal", subgroup = "fork-me-network", order = "c", stack_size = 50,
+ME.add_item{ name = "me-terminal", icon = HD_ICON .. "me-terminal.png", icon_size = 64, subgroup = "fork-me-network", order = "c", stack_size = 50,
 	recipe = { ingredients = I{ "electronic-circuit", 4, "advanced-circuit", 1, "fluix-cable", 1 }, energy_required = 2 } }
 ME.add_item{ name = "me-chest", subgroup = "fork-me-network", order = "d",
 	recipe = { ingredients = I{ "steel-chest", 1, "electronic-circuit", 4, "fluix-cable", 2 }, energy_required = 2 } }
-ME.add_item{ name = "me-drive", subgroup = "fork-me-drives", order = "a", stack_size = 10,
+ME.add_item{ name = "me-drive", icon = HD_ICON .. "me-drive.png", icon_size = 64, subgroup = "fork-me-drives", order = "a", stack_size = 10,
 	recipe = { ingredients = I{ "me-chest", 1, "steel-plate", 4, "advanced-circuit", 4, "fluix-cable", 2 }, energy_required = 5 } }
 
 --- AE2: a cell is a storage component in a housing; each component is made from three of the tier below
@@ -118,7 +120,8 @@ for i, c in ipairs(CELLS) do
 	local item = ME.add_item{
 		type = "item-with-tags",
 		name = cell,
-		icon = ICON_FORK .. cell .. ".png",
+		icon = HD_ICON .. cell .. ".png",
+		icon_size = 64,
 		subgroup = "fork-me-cells",
 		order = order,
 		stack_size = 1,
@@ -163,7 +166,7 @@ local function block(def)
 		type = "simple-entity-with-force",
 		name = def.name,
 		icon = def.icon,
-		icon_size = 32,
+		icon_size = def.icon_size or 32,
 		flags = { "placeable-neutral", "player-creation" },
 		minable = { mining_time = def.mining_time or 0.2, result = def.item or def.name },
 		placeable_by = { item = def.item or def.name, count = 1 },
@@ -182,13 +185,13 @@ local function block(def)
 end
 
 block{
-	name = CABLE, item = "fluix-cable", icon = ICON_FORK .. "me-cable.png", health = 50, mining_time = 0.1,
+	name = CABLE, item = "fluix-cable", icon = HD_ICON .. "me-cable.png", icon_size = 64, health = 50, mining_time = 0.1,
 	selection_priority = 40,
 	description = { "entity-description.me-cable" },
 	extra = {
 		pictures = { sheet = {
-			filename = ENTITY_PATH .. "me-cable.png",
-			priority = "extra-high", width = 32, height = 32, variation_count = 16, line_length = 16,
+			filename = HD_ENTITY .. "me-cable.png",
+			priority = "extra-high", width = 64, height = 64, scale = 0.5, variation_count = 16, line_length = 16,
 		} },
 		random_variation_on_create = false,
 		render_layer = "lower-object",
@@ -206,8 +209,8 @@ data.raw.item["fluix-cable"].place_result = CABLE
 data:extend({ {
 	type = "electric-energy-interface",
 	name = CONTROLLER,
-	icon = ICON_PATH .. "me-controller.png",
-	icon_size = 32,
+	icon = HD_ICON .. "me-controller.png",
+	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.3, result = "me-controller" },
 	placeable_by = { item = "me-controller", count = 1 },
@@ -227,8 +230,8 @@ data:extend({ {
 	energy_production = "0W",
 	energy_usage = "120kW",
 	picture = {
-		filename = ENTITY_PATH .. "me-network-controller.png",
-		priority = "high", width = 64, height = 64,
+		filename = HD_ENTITY .. "me-network-controller.png",
+		priority = "high", width = 128, height = 128, scale = 0.5,
 	},
 	localised_description = { "entity-description.me-network-controller" },
 } })
@@ -241,11 +244,11 @@ data.raw.item["me-controller"].place_result = CONTROLLER
 --------------------------------------------------------------------------------
 
 block{
-	name = DRIVE, icon = ICON_PATH .. "me-drive.png", health = 400,
+	name = DRIVE, icon = HD_ICON .. "me-drive.png", icon_size = 64, health = 400,
 	description = { "entity-description.me-drive", tostring(DRIVE_SLOTS) },
 	extra = { picture = {
-		filename = ENTITY_PATH .. "me-drive.png",
-		priority = "extra-high", width = 32, height = 32,
+		filename = HD_ENTITY .. "me-drive.png",
+		priority = "extra-high", width = 64, height = 64, scale = 0.5,
 	},
 	--- settings paste of the priority and the cell partitions (issue #68 step R3, scripts/fork-me-network.lua)
 	additional_pastable_entities = { DRIVE } },
@@ -289,10 +292,11 @@ data.raw.item["me-interface"].place_result = INTERFACE
 --- ME IMPORT BUS / ME EXPORT BUS (rotatable: the arrow points at the entity they work on)
 --------------------------------------------------------------------------------
 
-local function four_way(name)
+local function four_way(name, hd)
 	local out = {}
 	for _, dir in pairs({ "north", "east", "south", "west" }) do
-		out[dir] = { filename = ENTITY_PATH .. name .. "-" .. dir .. ".png", priority = "extra-high", width = 32, height = 32 }
+		out[dir] = hd and { filename = HD_ENTITY .. name .. "-" .. dir .. ".png", priority = "extra-high", width = 64, height = 64, scale = 0.5 }
+			or { filename = ENTITY_PATH .. name .. "-" .. dir .. ".png", priority = "extra-high", width = 32, height = 32 }
 	end
 	return out
 end
@@ -327,7 +331,8 @@ end
 
 ME.add_item{
 	name = UNDERGROUND,
-	icon = ICON_FORK .. UNDERGROUND .. ".png",
+	icon = HD_ICON .. UNDERGROUND .. ".png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "a1",
 	stack_size = 50,
@@ -341,8 +346,8 @@ ME.add_item{
 data:extend({ {
 	type = "pipe-to-ground",
 	name = UNDERGROUND,
-	icon = ICON_FORK .. UNDERGROUND .. ".png",
-	icon_size = 32,
+	icon = HD_ICON .. UNDERGROUND .. ".png",
+	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.1, result = UNDERGROUND },
 	placeable_by = { item = UNDERGROUND, count = 1 },
@@ -362,7 +367,7 @@ data:extend({ {
 			  max_underground_distance = UNDERGROUND_REACH, connection_category = "me-cable" },
 		},
 	},
-	pictures = four_way(UNDERGROUND),
+	pictures = four_way(UNDERGROUND, true),
 	localised_description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
 } })
 
@@ -409,8 +414,8 @@ local TERMINAL_POWER = 8000             -- W drawn through the ME Controller (is
 
 local terminal = table.deepcopy(data.raw.lamp["small-lamp"])
 terminal.name = "me-terminal"
-terminal.icon = ICON_PATH .. "me-terminal.png"
-terminal.icon_size = 32
+terminal.icon = HD_ICON .. "me-terminal.png"
+terminal.icon_size = 64
 terminal.minable = { mining_time = 0.2, result = "me-terminal" }
 terminal.max_health = 200
 terminal.corpse = "small-remnants"
@@ -434,10 +439,10 @@ data.raw.item["me-terminal"].place_result = "me-terminal"
 
 --- the screen the script draws (render objects need sprite prototypes); the light is the game's
 data:extend({
-	{ type = "sprite", name = "me-terminal-screen-on", filename = ENTITY_PATH .. "me-terminal-lit.png",
-	  priority = "high", width = 32, height = 32 },
-	{ type = "sprite", name = "me-terminal-screen-off", filename = ENTITY_PATH .. "me-terminal-off.png",
-	  priority = "high", width = 32, height = 32 },
+	{ type = "sprite", name = "me-terminal-screen-on", filename = HD_ENTITY .. "me-terminal-lit.png",
+	  priority = "high", width = 64, height = 64, scale = 0.5 },
+	{ type = "sprite", name = "me-terminal-screen-off", filename = HD_ENTITY .. "me-terminal-off.png",
+	  priority = "high", width = 64, height = 64, scale = 0.5 },
 })
 
 --- The "open GUI" key: opens the ME window of a block (scripts/fork-me-gui.lua; works whether or not the

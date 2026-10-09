@@ -45,6 +45,9 @@ local DRIVE_TAG = "fork_me_drive"   -- blueprint tag of a drive: { priority, par
 local OFF = 16                      -- pixels from the drive's left/top edge to its center
 --- bay rectangles of the drive sprite (tools/gen_ae2_sprites.py: DRIVE_BAY_X, DRIVE_BAY_Y)
 local BAY_X, BAY_Y = { 5, 17 }, { 4, 9, 14, 19, 24 }
+--- issue #218: in the 3D style the drive's face covers 54 of the 64 px of its tile (tools/gen_ae2_sprites.py HD_DEPTH = 10, the
+--- face drawn top left): a light sits at the bay's place on the face, scaled from the 32 px picture
+local FACE = 54 / 64
 local LED_GREEN, LED_ORANGE, LED_RED = { 0.3, 0.85, 0.4 }, { 1, 0.6, 0.1 }, { 0.95, 0.2, 0.15 }
 
 --------------------------------------------------------------------------------
@@ -3635,8 +3638,8 @@ local function draw_leds(s, d)
 				local x0, y0 = BAY_X[col + 1], BAY_Y[row + 1]
 				d.leds[slot] = rendering.draw_rectangle{
 					color = color, filled = true, surface = e.surface,
-					left_top = { entity = e, offset = { (x0 + 1 - OFF) / 32, (y0 + 1 - OFF) / 32 } },
-					right_bottom = { entity = e, offset = { (x0 + 9 - OFF) / 32, (y0 + 3 - OFF) / 32 } },
+					left_top = { entity = e, offset = { ((x0 + 1) * FACE - OFF) / 32, ((y0 + 1) * FACE - OFF) / 32 } },
+					right_bottom = { entity = e, offset = { ((x0 + 9) * FACE - OFF) / 32, ((y0 + 3) * FACE - OFF) / 32 } },
 				}.id
 			elseif d.led_state[slot] ~= st then
 				obj.color = color
