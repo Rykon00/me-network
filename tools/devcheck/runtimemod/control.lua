@@ -792,6 +792,9 @@ ifacecap196 = require("ifacecap")({ me_place = me_place, cable_row = cable_row, 
 --- me-network issues #205 to #210: the wireless terminal (wireless.lua)
 wireless205 = require("wireless")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #229: the ME Chest (chest.lua)
+chest229 = require("chest")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #193: the Sticky Card (sticky.lua)
 sticky193 = require("sticky")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -863,6 +866,7 @@ local function tests_running()
 	pastecraft157.running(check)
 	buffer150.running(check)
 	sticky193.running(check)
+	chest229.running(check)
 	wireless205.running(check)
 	ifacecap196.running(check)
 	patterncap156.running(check)
@@ -1782,6 +1786,7 @@ script.on_nth_tick(10, function()
 	pastecraft157.tick()
 	buffer150.tick()
 	sticky193.tick()
+	chest229.tick()
 	wireless205.tick()
 	ifacecap196.tick()
 	patterncap156.tick()
@@ -4644,6 +4649,7 @@ script.on_init(function()
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sticky193.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(chest229.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wireless205.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ifacecap196.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(patterncap156.setup(s)) do fails[#fails + 1] = f end

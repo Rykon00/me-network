@@ -139,6 +139,7 @@ local function on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ae2.on_tick(tick)
 	fork_me.on_tick(tick)
+	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
 

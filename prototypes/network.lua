@@ -47,6 +47,10 @@ local IMPORT_BUS, EXPORT_BUS = "me-import-bus", "me-export-bus"
 local STORAGE_BUS = "me-storage-bus"
 local UNDERGROUND = "me-underground-cable"
 local UNDERGROUND_REACH = 10        -- max_underground_distance of the underground cable (the underground pipe's)
+--- issue #229: the ME Chest and its hidden parts on its tile (its own power buffer, its fluid input)
+local CHEST, CHEST_POWER, CHEST_FLUID = "me-chest", "me-chest-power", "me-chest-fluid"
+local CHEST_WATTS = 4000            -- W: what it draws from the power grid on its own (a member's 4 kW through the controller)
+local CHEST_FLUID_VOLUME = 1000
 --- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask. Since issue #129 so can the
 --- buses and the ME Terminal (prototypes/api.lua)
 local WALKABLE = ME.WALKABLE
@@ -84,8 +88,11 @@ ME.add_item{ name = "me-interface", icon = HD_ICON .. "me-interface.png", icon_s
 	recipe = { ingredients = I{ "iron-chest", 1, "steel-plate", 4, "advanced-circuit", 2, "fluix-cable", 2 }, energy_required = 2 } }
 ME.add_item{ name = "me-terminal", icon = HD_ICON .. "me-terminal.png", icon_size = 64, subgroup = "fork-me-network", order = "c", stack_size = 50,
 	recipe = { ingredients = I{ "electronic-circuit", 4, "advanced-circuit", 1, "fluix-cable", 1 }, energy_required = 2 } }
-ME.add_item{ name = "me-chest", subgroup = "fork-me-network", order = "d",
-	recipe = { ingredients = I{ "steel-chest", 1, "electronic-circuit", 4, "fluix-cable", 2 }, energy_required = 2 } }
+--- issue #229: AE2's recipe (glass, ME Terminal, glass / fluix cable, fluix cable / iron, copper, iron; the glass has no vanilla
+--- counterpart). The ME Drive still takes it as an ingredient.
+ME.add_item{ name = "me-chest", icon = HD_ICON .. "me-chest.png", icon_size = 64, subgroup = "fork-me-network", order = "d",
+	stack_size = 50,
+	recipe = { ingredients = I{ "me-terminal", 1, "fluix-cable", 2, "iron-plate", 2, "copper-plate", 1 }, energy_required = 2 } }
 ME.add_item{ name = "me-drive", icon = HD_ICON .. "me-drive.png", icon_size = 64, subgroup = "fork-me-drives", order = "a", stack_size = 10,
 	recipe = { ingredients = I{ "me-chest", 1, "steel-plate", 4, "advanced-circuit", 4, "fluix-cable", 2 }, energy_required = 5 } }
 
@@ -254,6 +261,91 @@ block{
 	additional_pastable_entities = { DRIVE } },
 }
 data.raw.item["me-drive"].place_result = DRIVE
+
+
+
+--------------------------------------------------------------------------------
+--- ME CHEST (issue #229, AE2's ME Chest): one cell slot and a terminal of its own that sees that cell only (script window);
+--- a container of one slot that inserters fill: the runtime empties it into the cell every tick (input only). On its tile a
+--- hidden storage tank with a pipe connection on every side (a fluid cell is filled from it) and a hidden energy interface,
+--- its own power buffer: the chest works without a network on power from the grid (scripts/fork-me-network.lua, ME CHEST).
+--------------------------------------------------------------------------------
+
+local HIDDEN_FLAGS = { "not-on-map", "not-blueprintable", "not-deconstructable", "not-upgradable", "hide-alt-info",
+	"no-copy-paste", "not-in-kill-statistics", "placeable-off-grid" }
+
+data:extend({ {
+	type = "container",
+	name = CHEST,
+	icon = HD_ICON .. "me-chest.png",
+	icon_size = 64,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = "me-chest" },
+	placeable_by = { item = "me-chest", count = 1 },
+	max_health = 300,
+	corpse = "small-remnants",
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	inventory_size = 1,
+	inventory_type = "normal",
+	picture = { filename = HD_ENTITY .. "me-chest.png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
+	--- the priority and the cell's partition (drive settings) go with a paste between chests and drives
+	additional_pastable_entities = { CHEST, DRIVE },
+	localised_description = { "entity-description.me-chest" },
+}, {
+	type = "electric-energy-interface",
+	name = CHEST_POWER,
+	icon = HD_ICON .. "me-chest.png",
+	icon_size = 64,
+	flags = HIDDEN_FLAGS,
+	hidden = true,
+	selectable_in_game = false,
+	max_health = 300,
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_mask = { layers = {} },                 -- shares the tile with the chest's container
+	gui_mode = "none",
+	allow_copy_paste = false,
+	energy_source = {
+		type = "electric",
+		usage_priority = "secondary-input",
+		buffer_capacity = "100kJ",                    -- 25 s on its own (AE2: 500 AE)
+		input_flow_limit = "40kW",
+		output_flow_limit = "0W",
+		render_no_network_icon = false,
+		render_no_power_icon = false,
+	},
+	energy_production = "0W",
+	energy_usage = tostring(CHEST_WATTS) .. "W",
+	localised_name = { "entity-name.me-chest" },
+}, {
+	type = "storage-tank",
+	name = CHEST_FLUID,
+	icon = HD_ICON .. "me-chest.png",
+	icon_size = 64,
+	flags = HIDDEN_FLAGS,
+	hidden = true,
+	selectable_in_game = false,
+	max_health = 300,
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_mask = { layers = {} },
+	fluid_box = {
+		volume = CHEST_FLUID_VOLUME,
+		hide_connection_info = true,
+		pipe_connections = {
+			{ direction = defines.direction.north, position = { 0, 0 } },
+			{ direction = defines.direction.east, position = { 0, 0 } },
+			{ direction = defines.direction.south, position = { 0, 0 } },
+			{ direction = defines.direction.west, position = { 0, 0 } },
+		},
+	},
+	window_bounding_box = { { 0, 0 }, { 0, 0 } },
+	flow_length_in_ticks = 360,
+	pictures = { picture = { filename = "__core__/graphics/empty.png", priority = "extra-high", width = 1, height = 1 } },
+	two_direction_only = false,
+	circuit_wire_max_distance = 0,
+	localised_name = { "entity-name.me-chest" },
+} })
+data.raw.item["me-chest"].place_result = CHEST
 
 
 
@@ -494,7 +586,10 @@ data:extend({ {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
+			chest = CHEST,
 		},
+		--- issue #229: the ME Chest's hidden parts and what it draws on its own
+		chest = { power = CHEST_POWER, fluid = CHEST_FLUID, watts = CHEST_WATTS },
 		--- issue #128: the power (W) the ME Controller draws for a block that has no power connection of its own, by kind;
 		--- a kind that is not here draws the default (4 kW), a crafting block its own number (mod-data "fork-me-autocraft")
 		member_power = { terminal = TERMINAL_POWER },
