@@ -268,7 +268,8 @@ end
 
 ME.add_item{
 	name = "me-level-maintainer",
-	icon = ICON_FORK .. "me-level-maintainer.png",
+	icon = ME.hd_icons .. "me-level-maintainer.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "g4",
 	stack_size = 50,
@@ -278,8 +279,8 @@ ME.add_item{
 
 local maintainer = table.deepcopy(data.raw.lamp["small-lamp"])
 maintainer.name = "me-level-maintainer"
-maintainer.icon = ICON_FORK .. "me-level-maintainer.png"
-maintainer.icon_size = 32
+maintainer.icon = ME.hd_icons .. "me-level-maintainer.png"
+maintainer.icon_size = 64
 maintainer.minable = { mining_time = 0.2, result = "me-level-maintainer" }
 maintainer.max_health = 200
 maintainer.corpse = "small-remnants"
@@ -293,12 +294,12 @@ maintainer.always_on = true
 maintainer.light = nil
 maintainer.light_when_colored = nil
 maintainer.picture_off = { layers = { {
-	filename = ENTITY_PATH .. "me-level-maintainer-off.png",
-	priority = "high", width = 32, height = 32,
+	filename = ME.hd_entity_path .. "me-level-maintainer-off.png",
+	priority = "high", width = 64, height = 64, scale = 0.5,
 } } }
 maintainer.picture_on = {
-	filename = ENTITY_PATH .. "me-level-maintainer-on.png",
-	priority = "high", width = 32, height = 32,
+	filename = ME.hd_entity_path .. "me-level-maintainer-on.png",
+	priority = "high", width = 64, height = 64, scale = 0.5,
 }
 maintainer.fast_replaceable_group = nil
 maintainer.next_upgrade = nil
@@ -316,7 +317,8 @@ data.raw["mod-data"]["fork-me-network"].data.member_power["pattern-terminal"] = 
 
 ME.add_item{
 	name = "me-circuit-interface",
-	icon = ICON_FORK .. "me-circuit-interface.png",
+	icon = ME.hd_icons .. "me-circuit-interface.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "g5",
 	stack_size = 50,
@@ -326,16 +328,16 @@ ME.add_item{
 
 local circuit = table.deepcopy(data.raw["constant-combinator"]["constant-combinator"])
 circuit.name = "me-circuit-interface"
-circuit.icon = ICON_FORK .. "me-circuit-interface.png"
-circuit.icon_size = 32
+circuit.icon = ME.hd_icons .. "me-circuit-interface.png"
+circuit.icon_size = 64
 circuit.icons = nil
 circuit.minable = { mining_time = 0.2, result = "me-circuit-interface" }
 circuit.max_health = 200
 circuit.corpse = "small-remnants"
 circuit.dying_explosion = nil
 circuit.sprites = {
-	filename = ENTITY_PATH .. "me-circuit-interface.png",
-	priority = "high", width = 32, height = 32,
+	filename = ME.hd_entity_path .. "me-circuit-interface.png",
+	priority = "high", width = 64, height = 64, scale = 0.5,
 }
 circuit.fast_replaceable_group = nil
 circuit.next_upgrade = nil
