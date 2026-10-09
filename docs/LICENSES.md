@@ -48,7 +48,9 @@ no graphics of the original Gregtorio are left; releases 0.1.0 to 0.5.2 still co
   bytes of an image of `ae2-textures/MANIFEST.tsv` or of its AE2 source, and no Lua file or `info.json` of it names the
   texture mod: me-network does not know it. The texture zip contains only its own files (`info.json`, `changelog.txt`,
   `data-final-fixes.lua`, `overrides.lua`, `locale/<language>/*.cfg`, the license text, `README.md`, `MANIFEST.tsv`)
-  and the images of its manifest, never the GPL text. `tools/build.py` fails otherwise.
+  and the images of its manifest, never the GPL text. `tools/build.py` fails otherwise. Each zip goes only to its own
+  page on the mod portal (`me-network`, `me-network-ae2-textures`): the release workflow uploads both through
+  `tools/portal_upload.sh`, which takes the mod name from the zip's own `info.json` (issue #243).
 - **Never mix origins in one image.** An image is either AE2-derived (and lies in `ae2-textures/graphics/`) or not; a
   file derived from AE2 and from GT5-Unofficial or Gregtorio graphics would have no license that satisfies both. The
   texture mod replaces one file or one layer of a me-network sprite at a time (`ae2-textures/overrides.lua`); the
