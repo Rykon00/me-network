@@ -160,9 +160,10 @@ end
 --------------------------------------------------------------------------------
 
 function M.drive_data(drive)
-	if not (drive and drive.valid and N.kind_of(drive.name) == "drive") then return nil end
+	if not (drive and drive.valid and N.CELL_KINDS[N.kind_of(drive.name)]) then return nil end      -- (issue #229: an ME Chest too)
 	local net = N.network_of(drive)
-	return { priority = N.get_priority(drive), cells = N.drive_info(drive), slots = 10, online = net and N.usable(net) or false }
+	return { priority = N.get_priority(drive), cells = N.drive_info(drive), slots = N.slots_of(drive),
+		online = net and N.usable(net) or false }
 end
 
 local function cell_line(c)

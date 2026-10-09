@@ -49,6 +49,8 @@ local BAY_X, BAY_Y = { 5, 17 }, { 4, 9, 14, 19, 24 }
 --- face drawn top left): a light sits at the bay's place on the face, scaled from the 32 px picture
 local FACE = 54 / 64
 local LED_GREEN, LED_ORANGE, LED_RED = { 0.3, 0.85, 0.4 }, { 1, 0.6, 0.1 }, { 0.95, 0.2, 0.15 }
+--- issue #229: the ME Chest's light: its one bay (tools/gen_ae2_sprites.py CHEST_BAY), dark without power
+local CHEST_LED = { bay = { 11, 22 }, off = { 0.06, 0.06, 0.08 } }
 
 --------------------------------------------------------------------------------
 --- prototype data
@@ -86,6 +88,7 @@ local function kinds()
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
 		if n.charger then k[n.charger] = "charger" end                -- issue #208
+		if n.chest then k[n.chest] = "chest" end                      -- issue #229
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -157,6 +160,13 @@ function M.card_rules() return mod_data().cards end
 function M.card_kind(name) return name and mod_data().cards.kinds[name] or nil end
 
 local function drive_slots() return mod_data().drive_slots or 10 end
+
+--- issue #229: the kinds that hold storage cells, the ME Drive (drive_slots) and the ME Chest (one): both keep a drive record
+--- (s.drives) whose cells are network storage at its priority, cell id "<unit>:<slot>"
+local CELL_KINDS = { drive = true, chest = true }
+M.CELL_KINDS = CELL_KINDS
+local function slots_of(entity) return kinds()[entity.name] == "chest" and 1 or drive_slots() end
+M.slots_of = slots_of
 
 --------------------------------------------------------------------------------
 --- state
@@ -330,6 +340,8 @@ end
 
 local recompute
 local net_cell
+--- issue #229: the ME Chest (its section below the drives)
+local CH = {}
 local take_waits, fire_all_waits
 local screen_made, screen_gone
 
@@ -522,7 +534,7 @@ local function add_node(s, entity, kind)
 		--- bus already registered (its external cell): no recompute, no rescan of every provider
 		s.version = s.version + 1
 		net.power_dirty = true
-		if kind == "drive" then
+		if CELL_KINDS[kind] then
 			net.drives[unit] = true
 			local d = s.drives[unit]
 			for slot = 1, drive_slots() do
@@ -614,7 +626,7 @@ function remove_node_graph(s, unit)
 			local pnode = s.nodes[u]
 			pnode.net = part.id
 			if pnode.kind == "controller" then light = false end
-			if pnode.kind == "drive" or (s.ext and s.ext[u]) then leaving[#leaving + 1] = u end
+			if CELL_KINDS[pnode.kind] or (s.ext and s.ext[u]) then leaving[#leaving + 1] = u end
 			local kind = net.wunits and net.wunits[u]
 			if kind then                               -- (issue #38: a waiting endpoint that moved registers again on its new network)
 				net.wunits[u] = nil
@@ -1757,7 +1769,7 @@ function recompute(s, net)
 		local node = s.nodes[unit]
 		if node then
 			if node.kind == "controller" then net.controllers[unit] = true nc = nc + 1 end
-			if node.kind == "drive" then net.drives[unit] = true end
+			if CELL_KINDS[node.kind] then net.drives[unit] = true end
 		end
 	end
 	net.status = nc == 0 and "no-controller" or nc > 1 and "conflict" or "ok"
@@ -1784,6 +1796,7 @@ end
 --- true when the network works; else false and the reason ("no-controller", "conflict", "no-power")
 function M.usable(net)
 	if not net then return false, "no-network" end
+	if net.chest then return CH.usable(net) end              -- (issue #229: the view of an ME Chest)
 	if net.status ~= "ok" then return false, net.status end
 	if net.power_dirty then update_power(state(), net) end    -- (before the cache: a member that joined this tick counts at once)
 	if net.usable_tick == game.tick then return net.usable, net.why end
@@ -2611,6 +2624,7 @@ end
 --- network instead of walking every cell.
 local function insert_key(net, key, count, data)
 	if count <= 0 then return 0 end
+	if net.chest then return CH.store(net, key, count, data) end   -- (issue #229: into the ME Chest's cell only)
 	local s = state()
 	ins.net, ins.key, ins.left, ins.data, ins.s, ins.void = net, key, count, data, s, 0
 	local c = lookups(s, net)
@@ -2712,6 +2726,7 @@ end
 
 local function extract_key(net, key, count)
 	if count <= 0 or not net.items[key] then return 0 end
+	if net.chest then return CH.take(net, key, count) end          -- (issue #229: out of the ME Chest's cell only)
 	local s = state()
 	local left = count
 	--- extraction is the reverse of insertion: lower drive priority first, storage buses before cells of the same
@@ -2763,6 +2778,7 @@ end
 
 --- data ({ tags, description }) of an item-with-tags key in the network
 local function data_of(net, key)
+	if net.chest then return CH.data(net, key) end
 	for cid in pairs(net.index[key] or {}) do
 		local d = net.cells[cid].data
 		if d and d[key] then return d[key] end
@@ -3138,7 +3154,7 @@ function M.insert_stack(net, stack)
 	if not ok then return nil, why end
 	local problem, key, data = M.storable(stack)
 	if problem then return nil, problem end
-	local claimed = data and 0 or arrive(net, key, stack.count)
+	local claimed = (data or net.chest) and 0 or arrive(net, key, stack.count)
 	local n = claimed + insert_key(net, key, stack.count - claimed, data)
 	if n <= 0 then return nil, "no-storage" end
 	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
@@ -3152,7 +3168,7 @@ function M.insert_partial(net, stack, max)
 	local problem, key, data = M.storable(stack)
 	if problem then return nil, problem end
 	local want = math.min(stack.count, math.floor(max))
-	local claimed = data and 0 or arrive(net, key, want)
+	local claimed = (data or net.chest) and 0 or arrive(net, key, want)
 	local n = claimed + insert_key(net, key, want - claimed, data)
 	if n <= 0 then return nil, "no-storage" end
 	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
@@ -3213,7 +3229,8 @@ local function drive_record(s, entity)
 	local d = s.drives[unit]
 	if not d then
 		d = { entity = entity, slots = {}, surface = entity.surface.index, force = entity.force.name,
-			position = { x = entity.position.x, y = entity.position.y }, leds = {} }
+			position = { x = entity.position.x, y = entity.position.y }, leds = {},
+			chest = kinds()[entity.name] == "chest" or nil }                  -- (issue #229: one slot, its own light)
 		s.drives[unit] = d
 	end
 	return d
@@ -3253,15 +3270,16 @@ end
 --- Put the cell in `stack` into `slot` (the first free one when nil). Returns the slot, or nil and a reason.
 function M.insert_cell(drive, stack, slot)
 	local s = state()
-	if not (drive and drive.valid and M.kind_of(drive.name) == "drive") then return nil, "no-drive" end
+	if not (drive and drive.valid and CELL_KINDS[M.kind_of(drive.name)]) then return nil, "no-drive" end
 	if not (stack and stack.valid_for_read and cell_spec(stack.name)) then return nil, "not-a-cell" end
 	local d = drive_record(s, drive)
 	if slot == nil then
-		for i = 1, drive_slots() do
+		for i = 1, slots_of(drive) do
 			if not d.slots[i] then slot = i break end
 		end
 		if not slot then return nil, "drive-full" end
 	end
+	if slot > slots_of(drive) then return nil, "drive-full" end
 	if d.slots[slot] then return nil, "slot-taken" end
 	local cell = cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
 	if stack.count > 1 then stack.count = stack.count - 1 else stack.clear() end
@@ -3330,6 +3348,281 @@ function M.store_in_drive(drive, stack)
 	if n <= 0 then return nil, "no-storage" end
 	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
 	return n
+end
+
+--------------------------------------------------------------------------------
+--- ME CHEST (issue #229; AE2's MEChestBlockEntity). A member with one cell slot: a drive record of one slot (s.drives), so
+--- its cell is network storage at its priority like a drive's. The entity is a one-slot container that inserters fill; the
+--- chest empties it into its cell every tick (input only, AE2's InputInventoryFilter: what the cell refuses stays in the slot,
+--- the window gives it back). On its tile: a hidden storage tank with a pipe connection on every side (a fluid cell is filled
+--- from it) and a hidden electric buffer. AE2's chest draws on its network first, then on its own buffer: here the buffer draws
+--- from the power grid while the chest's network does not work (a member of a working network is paid by the controller, the
+--- usual 4 kW). Its own terminal works on its cell only, with or without a network (the view below; AE2: the integrated
+--- terminal sees the mounted cell only). s.chests[unit] = { entity, power, tank, powered, wait }.
+--------------------------------------------------------------------------------
+
+CH.RETRY = 30                       -- ticks: the input is tried again this much later when the cell took nothing of it
+CH.inv = {}                         -- unit -> the container's inventory (per load: derived from the entity)
+CH.views = {}                       -- unit -> the chest's view (per load, below)
+CH.NO_ITEMS = {}
+
+function CH.names() return mod_data().chest or {} end
+
+--- the hidden parts of a chest: found on its tile (a clone, a rebuild) or made
+function CH.parts(s, entity)
+	s.chests = s.chests or {}
+	local unit = entity.unit_number
+	local c = s.chests[unit]
+	if not c then
+		c = {}
+		s.chests[unit] = c
+	end
+	c.entity = entity
+	local names = CH.names()
+	local function part(name)
+		if not name then return nil end
+		local e = entity.surface.find_entity(name, entity.position)
+		if not (e and e.valid) then
+			e = entity.surface.create_entity{ name = name, position = entity.position, force = entity.force,
+				create_build_effect_smoke = false }
+		end
+		if e then e.destructible = false end
+		return e
+	end
+	if not (c.power and c.power.valid) then c.power = part(names.power) end
+	if not (c.tank and c.tank.valid) then c.tank = part(names.fluid) end
+	return c
+end
+
+--- a chest left: its hidden parts go (the fluid in its tank with them)
+function CH.gone(s, unit)
+	local c = s.chests and s.chests[unit]
+	if not c then return end
+	if c.power and c.power.valid then c.power.destroy() end
+	if c.tank and c.tank.valid then c.tank.destroy() end
+	s.chests[unit] = nil
+	CH.inv[unit] = nil
+end
+
+--- is the chest powered: its network works, or its own buffer has energy (AE2: isPowered)
+function CH.powered(s, unit)
+	local node = s.nodes[unit]
+	local net = node and s.nets[node.net]
+	if net and M.usable(net) then return true end
+	local c = s.chests and s.chests[unit]
+	local e = c and c.power
+	return e ~= nil and e.valid and e.energy > 0
+end
+
+--- once a second (slow step): the buffer draws from the grid only while the chest's network does not work; a change of the
+--- power state redraws the chest's light (dark without power, AE2's black LED)
+function CH.power_step(s)
+	if not s.chests then return end
+	local draw = (CH.names().watts or MEMBER_POWER) / 60
+	for unit, c in pairs(s.chests) do
+		if c.entity and c.entity.valid then
+			local node = s.nodes[unit]
+			local net = node and s.nets[node.net]
+			local want = (net and M.usable(net)) and 0 or draw
+			local p = c.power
+			if p and p.valid and p.power_usage ~= want then p.power_usage = want end
+			local on = CH.powered(s, unit)
+			if on ~= c.powered then
+				c.powered = on
+				mark_drive(s, unit)
+			end
+		end
+	end
+end
+
+--- Every tick (control.lua): what inserters put into a chest and what pipes put into its tank goes into its cell, while the
+--- chest is powered. One table walk while there is no chest.
+function M.chest_tick(tick)
+	local s = storage.fork_me_net
+	local list = s and s.chests
+	if not list or next(list) == nil then return end
+	for unit, c in pairs(list) do
+		local d = s.drives[unit]
+		local cell = d and d.slots[1]
+		local e = c.entity
+		if cell and e and e.valid and not (c.wait and c.wait > tick) then
+			local spec = cell_spec(cell.name)
+			if spec and fluid_cell(spec) then
+				local tank = c.tank
+				local fb = tank and tank.valid and tank.fluidbox[1]
+				if fb and CH.powered(s, unit) then
+					--- (the tank's share of its fluid segment: remove_fluid takes what was stored out of the segment; setting the
+					--- fluid box would empty the pipes connected to it as well)
+					local key = fluid_key(fb.name, fb.temperature)
+					local n = store_key_in_drive(s, d, unit, key, fb.amount)
+					if n > 0 then
+						local got = tank.remove_fluid{ name = fb.name, amount = n, temperature = fb.temperature }
+						if got < n - ZERO then CH.take_from_drive(s, d, unit, key, n - got) end   -- (never more than came out)
+					else
+						c.wait = tick + CH.RETRY
+					end
+				end
+			elseif spec then
+				local inv = CH.inv[unit]
+				if not (inv and inv.valid) then
+					inv = e.get_inventory(defines.inventory.chest)
+					CH.inv[unit] = inv
+				end
+				if inv and not inv.is_empty() and CH.powered(s, unit) then
+					local stack = inv[1]
+					local n = 0
+					if stack.valid_for_read then
+						local problem, key, data = M.storable(stack)
+						if not problem then n = store_key_in_drive(s, d, unit, key, stack.count, data) end
+						if n >= stack.count then stack.clear() elseif n > 0 then stack.count = stack.count - n end
+					end
+					if n <= 0 then c.wait = tick + CH.RETRY end
+				end
+			end
+		end
+	end
+end
+
+--- up to `amount` of `key` out of the cells of drive record `d` (slot order), its network's totals updated: the cell part of
+--- extract_key for one drive; returns the amount taken
+function CH.take_from_drive(s, d, unit, key, amount)
+	local net = drive_net(s, unit)
+	local left = amount
+	for slot = 1, drive_slots() do
+		if left <= 0 then break end
+		local cell = d.slots[slot]
+		local n = cell and math.min(left, cell.items[key] or 0) or 0
+		if n > 0 then
+			local spec = cell_spec(cell.name)
+			local had_room = not cell.eq and spec.bytes - cell.bytes > 0
+			local db, dt = cell_add(cell, spec, key, -n)
+			local cid = unit .. ":" .. slot
+			if net and net.cells[cid] == cell then
+				local p = fluid_cell(spec) and "f" or ""
+				net[p .. "bytes"], net[p .. "types"] = net[p .. "bytes"] + db, net[p .. "types"] + dt
+				local now = (net.items[key] or 0) - n
+				net.items[key] = now > ZERO and now or nil
+				if not cell.items[key] then idx_del(net, key, cid) end
+				if (db < 0 or dt < 0) and not cell.partition then reopen(net, cid, had_room) end
+				if dt < 0 and net.wait_room then fire_units(net, "wait_room") end
+				if net.wait_room then net.room_pending = true end
+				moved_key(net, key, false)
+			end
+			left = left - n
+			if left < ZERO then left = 0 end
+		end
+	end
+	if left < amount then mark_drive(s, unit) end
+	return amount - left
+end
+
+--- The view of a chest: stands in for a network where the terminal module takes one. M.usable, insert_key, extract_key and
+--- data_of know it (`view.chest`), so insert_stack, insert_partial, extract_to, contents and the terminal's grid work on the
+--- chest's cell alone. Its `items` are the cell's; its `cver` is its network's id and contents version (every change of a
+--- mounted cell counts there). One per chest and load: the terminal keeps its lists per view.
+function CH.view_cell(v)
+	local s = storage.fork_me_net
+	local d = s and s.drives[v.chest]
+	return d and d.slots[1] or nil
+end
+CH.view_mt = { __index = function(v, k)
+	if k == "items" then
+		local cell = CH.view_cell(v)
+		return cell and cell.items or CH.NO_ITEMS
+	elseif k == "cver" then
+		local s = storage.fork_me_net
+		local node = s and s.nodes[v.chest]
+		local net = node and s.nets[node.net]
+		return net and (net.id .. ":" .. (net.cver or 0)) or "-"
+	end
+	return nil
+end }
+
+--- the view of a chest entity (nil for anything else)
+function M.chest_view(entity)
+	if not (entity and entity.valid and kinds()[entity.name] == "chest") then return nil end
+	local unit = entity.unit_number
+	local v = CH.views[unit]
+	if not (v and v.entity == entity) then
+		v = setmetatable({ chest = unit, entity = entity }, CH.view_mt)
+		CH.views[unit] = v
+	end
+	return v
+end
+
+function CH.usable(v)
+	local s = storage.fork_me_net
+	if not (v.entity.valid and s and s.nodes[v.chest]) then return false, "no-network" end
+	local d = s.drives[v.chest]
+	if not (d and d.slots[1]) then return false, "chest-no-cell" end
+	if not CH.powered(s, v.chest) then return false, "chest-no-power" end
+	return true
+end
+
+function CH.store(v, key, count, data)
+	local s = storage.fork_me_net
+	local d = s and s.drives[v.chest]
+	if not d or count <= 0 then return 0 end
+	return store_key_in_drive(s, d, v.chest, key, count, data)
+end
+
+function CH.take(v, key, count)
+	local s = storage.fork_me_net
+	local d = s and s.drives[v.chest]
+	if not d or count <= 0 then return 0 end
+	return CH.take_from_drive(s, d, v.chest, key, count)
+end
+
+function CH.data(v, key)
+	local cell = CH.view_cell(v)
+	return cell and cell.data and cell.data[key] or nil
+end
+
+--- what the chest's window shows (and the tests read): { priority, network (its network works), powered, own (it runs on
+--- its own buffer), energy, buffer, cell = { name, bytes, bytes_total, types, types_total, fluid, state }, input = { name,
+--- quality, count } (what waits in the input slot), fluid = { name, amount, temperature } (in its tank) }
+function M.chest_info(entity)
+	local s = storage.fork_me_net
+	if not (s and entity and entity.valid and kinds()[entity.name] == "chest") then return nil end
+	local unit = entity.unit_number
+	local c = s.chests and s.chests[unit]
+	local d = s.drives[unit]
+	local cell = d and d.slots[1]
+	local node = s.nodes[unit]
+	local net = node and s.nets[node.net]
+	local net_ok = (net and M.usable(net)) and true or false
+	local p = c and c.power
+	local powered = CH.powered(s, unit)
+	local out = { priority = d and d.priority or 0, network = net_ok, powered = powered, own = powered and not net_ok,
+		energy = p and p.valid and p.energy or 0, buffer = p and p.valid and p.electric_buffer_size or 0 }
+	if cell then
+		local spec = cell_spec(cell.name) or { bytes = 0, types = 0 }
+		out.cell = { name = cell.name, bytes = cell.bytes, bytes_total = spec.bytes, types = cell.types,
+			types_total = spec.types, fluid = fluid_cell(spec), state = cell_state(cell) }
+	end
+	local inv = entity.get_inventory(defines.inventory.chest)
+	local st = inv and inv[1]
+	if st and st.valid_for_read then out.input = { name = st.name, quality = st.quality.name, count = st.count } end
+	local tank = c and c.tank
+	local fb = tank and tank.valid and tank.fluidbox[1]
+	if fb then out.fluid = { name = fb.name, amount = fb.amount, temperature = fb.temperature } end
+	return out
+end
+
+--- the window's input slot: what waits there goes into `target` (an empty cursor stack, or an inventory); true when it moved
+function M.chest_take_input(entity, target)
+	if not (entity and entity.valid and kinds()[entity.name] == "chest" and target) then return false end
+	local inv = entity.get_inventory(defines.inventory.chest)
+	local st = inv and inv[1]
+	if not (st and st.valid_for_read) then return false end
+	if target.object_name == "LuaItemStack" then
+		if target.valid_for_read then return false end
+		return target.transfer_stack(st)
+	end
+	local n = target.insert(st)
+	if n <= 0 then return false end
+	if n >= st.count then st.clear() else st.count = st.count - n end
+	return true
 end
 
 --- Store up to `amount` of fluid `name` in the fluid cells of one drive, whether or not its network works (the
@@ -3463,7 +3756,7 @@ function M.get_priority(drive)
 end
 
 function M.set_priority(drive, priority)
-	if not (drive and drive.valid and M.kind_of(drive.name) == "drive") then return false end
+	if not (drive and drive.valid and CELL_KINDS[M.kind_of(drive.name)]) then return false end
 	local s = state()
 	local d = drive_record(s, drive)
 	local p = math.floor(tonumber(priority) or 0)
@@ -3522,13 +3815,13 @@ end
 --- Apply drive settings: the priority, and each slot's partition onto the cell in it (a slot without a cell keeps
 --- the partition for the next cell put into it, as a blueprint does).
 function M.apply_drive_settings(drive, settings)
-	if type(settings) ~= "table" or not (drive and drive.valid and M.kind_of(drive.name) == "drive") then return false end
+	if type(settings) ~= "table" or not (drive and drive.valid and CELL_KINDS[M.kind_of(drive.name)]) then return false end
 	local s = state()
 	local d = drive_record(s, drive)
 	M.set_priority(drive, settings.priority or 0)
 	for slot_text, keys in pairs(type(settings.partitions) == "table" and settings.partitions or {}) do
 		local slot = tonumber(slot_text)
-		if slot and slot >= 1 and slot <= drive_slots() and type(keys) == "table" then
+		if slot and slot >= 1 and slot <= slots_of(drive) and type(keys) == "table" then
 			if d.slots[slot] then
 				M.set_partition(drive, slot, keys)
 			else
@@ -3632,10 +3925,12 @@ local function draw_leds(s, d)
 		if obj and not obj.valid then obj = nil end
 		if cell then
 			local st = cell_state(cell)
-			local color = st == "full" and LED_RED or st == "high" and LED_ORANGE or LED_GREEN
+			if d.chest and not CH.powered(s, e.unit_number) then st = "off" end   -- (issue #229: AE2's black LED)
+			local color = st == "off" and CHEST_LED.off or st == "full" and LED_RED or st == "high" and LED_ORANGE or LED_GREEN
 			if not obj then
 				local col, row = (slot - 1) % 2, math.floor((slot - 1) / 2)
 				local x0, y0 = BAY_X[col + 1], BAY_Y[row + 1]
+				if d.chest then x0, y0 = CHEST_LED.bay[1], CHEST_LED.bay[2] end
 				d.leds[slot] = rendering.draw_rectangle{
 					color = color, filled = true, surface = e.surface,
 					left_top = { entity = e, offset = { ((x0 + 1) * FACE - OFF) / 32, ((y0 + 1) * FACE - OFF) / 32 } },
@@ -3662,7 +3957,7 @@ end
 --- cell stays), and "out" as the second value when a cell was taken into the inventory.
 function M.drive_click(cursor, inventory, drive, slot, shift)
 	local s = state()
-	if not (drive and drive.valid and M.kind_of(drive.name) == "drive") then return "no-drive" end
+	if not (drive and drive.valid and CELL_KINDS[M.kind_of(drive.name)]) then return "no-drive" end
 	local d = drive_record(s, drive)
 	if cursor and cursor.valid_for_read then
 		if not cell_spec(cursor.name) then return "not-a-cell" end
@@ -3735,8 +4030,12 @@ function M.on_built(entity, event)
 			end
 		end
 	end
+	if kind == "chest" then
+		drive_record(s, entity)
+		CH.parts(s, entity)
+	end
 	add_node(s, entity, kind)
-	if kind == "drive" then
+	if CELL_KINDS[kind] then
 		mark_drive(s, entity.unit_number)
 		--- priority and partitions from a blueprint (R3)
 		local t = event and type(event.tags) == "table" and event.tags[DRIVE_TAG]
@@ -3747,7 +4046,7 @@ end
 --- the drive settings of a clone (on_entity_cloned; the cells of the source are not copied)
 function M.on_cloned(source, destination)
 	if not (source and source.valid and destination and destination.valid) then return end
-	if kinds()[source.name] == "drive" and kinds()[destination.name] == "drive" then
+	if CELL_KINDS[kinds()[source.name]] and CELL_KINDS[kinds()[destination.name]] then
 		M.apply_drive_settings(destination, M.drive_settings(source) or { priority = 0, partitions = {} })
 	end
 end
@@ -3756,7 +4055,7 @@ end
 function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
 	if not (src and src.valid and dst and dst.valid) then return end
-	if kinds()[src.name] ~= "drive" or kinds()[dst.name] ~= "drive" then return end
+	if not (CELL_KINDS[kinds()[src.name]] and CELL_KINDS[kinds()[dst.name]]) then return end
 	local settings = M.drive_settings(src) or { priority = 0, partitions = {} }
 	--- every slot of the destination gets the source slot's partition (none: cleared)
 	for slot = 1, drive_slots() do
@@ -3769,7 +4068,7 @@ end
 --- blueprint hook of the autocrafting module: the drive settings as tag fork_me_drive
 function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
-		if entity.valid and kinds()[entity.name] == "drive" then
+		if entity.valid and CELL_KINDS[kinds()[entity.name]] then
 			local settings = M.drive_settings(entity)
 			if settings then bp.set_blueprint_entity_tag(index, DRIVE_TAG, settings) end
 		end
@@ -3792,6 +4091,7 @@ function M.on_removed(entity, buffer)
 		s.drives[entity.unit_number] = nil
 		s.dirty[entity.unit_number] = nil
 	end
+	CH.gone(s, entity.unit_number)              -- (issue #229: an ME Chest's hidden parts)
 	M.ext_detach(entity.unit_number)               -- a storage bus: its inventory leaves the network
 	remove_node(s, entity.unit_number)
 end
@@ -3815,6 +4115,7 @@ local function vanish(s, unit)
 		s.drives[unit] = nil
 		s.dirty[unit] = nil
 	end
+	CH.gone(s, unit)
 	M.ext_detach(unit)
 	for _, f in ipairs(M.vanish_hooks) do f(unit) end
 	if node then remove_node(s, unit) end
@@ -3864,6 +4165,7 @@ function M.slow_step()
 		end
 	end
 	refresh_screens(s)
+	CH.power_step(s)
 	local n = 0
 	for unit in pairs(s.dirty) do
 		if n >= LEDS_PER_STEP_N then break end
@@ -3918,7 +4220,7 @@ end
 --- the open key on a drive with a cell in the cursor: the cell goes into the first free slot (true when it did
 --- something; else the drive window opens)
 function M.quick_insert(player, entity)
-	if not (entity and entity.valid and kinds()[entity.name] == "drive") then return false end
+	if not (entity and entity.valid and CELL_KINDS[kinds()[entity.name]]) then return false end
 	local cursor = player.cursor_stack
 	if not (cursor and cursor.valid_for_read and cell_spec(cursor.name)) then return false end
 	if not player.can_reach_entity(entity) then return true end
@@ -3935,6 +4237,9 @@ function M.rebuild()
 	names_cache, names_list = nil, nil
 	local s = state()
 	local old_drives = s.drives
+	for unit, c in pairs(s.chests or {}) do               -- (issue #229: the hidden parts of chests that are gone)
+		if not (c.entity and c.entity.valid) then CH.gone(s, unit) end
+	end
 	for _, node in pairs(s.nodes) do clear_link(node) end
 	local ids = {}
 	for id in pairs(s.nets) do ids[#ids + 1] = id end
@@ -3958,12 +4263,17 @@ function M.rebuild()
 	table.sort(units)
 	--- drives keep their cells (by unit number); cells of drives that are gone are spilled where they stood
 	for unit, d in pairs(old_drives) do
-		if d.entity.valid and kinds()[d.entity.name] == "drive" then
+		if d.entity.valid and CELL_KINDS[kinds()[d.entity.name]] then
 			s.drives[unit] = d
 			d.leds = d.leds or {}
+			d.chest = kinds()[d.entity.name] == "chest" or nil
 			clear_leds(d)
 			for slot in pairs(d.slots) do
-				if slot > drive_slots() or not cell_spec(d.slots[slot].name) then d.slots[slot] = nil end
+				if slot > slots_of(d.entity) or not cell_spec(d.slots[slot].name) then
+					local surface = slot > slots_of(d.entity) and game.get_surface(d.surface)
+					if surface then spill(surface, d.position, cell_stack(d.slots[slot])) end
+					d.slots[slot] = nil
+				end
 			end
 			s.dirty[unit] = true
 		else
@@ -4013,7 +4323,8 @@ function M.rebuild()
 		s.nodes[unit] = node
 		s.nlist[#s.nlist + 1] = unit                       -- (`units` is sorted)
 		if kind == "underground" then node.dir = dir end
-		if kind == "drive" then drive_record(s, e) s.dirty[unit] = true end
+		if CELL_KINDS[kind] then drive_record(s, e) s.dirty[unit] = true end
+		if kind == "chest" then CH.parts(s, e) end
 	end
 	--- the neighbours: the members that touch a member's box along an edge, from a grid of the tiles the members cover (one table
 	--- per surface), not from an engine query per member (a query with the names of all members: 1.2 s at 20 000 members). The
@@ -4282,6 +4593,14 @@ local function info(net)
 end
 
 remote.add_interface("gregtorio-me-network", {
+	--- issue #229: what an ME Chest's window shows (M.chest_info), its input slot into a target, its view's grid entries
+	chest = function(entity) return M.chest_info(entity) end,
+	chest_take_input = function(entity, target) return M.chest_take_input(entity, target) end,
+	removed = function(entity, buffer) M.on_removed(entity, buffer) end,
+	chest_count = function(entity, key)
+		local v = M.chest_view(entity)
+		return v and v.items[key] or 0
+	end,
 	--- issue #59 (tests): the kept holder lists and cursors against lists sorted anew: lists, differing, the first problem
 	check_holder_lists = function() return M.check_holder_lists() end,
 	--- tests: is the sweep list the members, each once, each node at its place? (true, or false and what is wrong)

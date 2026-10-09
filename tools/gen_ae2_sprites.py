@@ -1115,6 +1115,39 @@ def wireless():
     return written
 
 
+# the ME Chest (issue #229): the screen of its terminal on top, one cell bay below it; the bay's light is drawn by the runtime
+# (scripts/fork-me-network.lua CHEST_BAY), the icon shows it green
+CHEST_BAY = (11, 22)                 # left and top edge of the bay (10 x 4 px, as a drive's)
+
+
+def chest_sprite(lit_bay=False):
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    d.rectangle((6, 4, 25, 17), fill=(18, 16, 30, 255), outline=FLUIX + (255,))
+    for i, colour in enumerate(((200, 200, 210), (230, 190, 70), (120, 175, 255), (95, 225, 120), (200, 120, 90), (170, 170, 185))):
+        x, y = 8 + (i % 3) * 6, 6 + (i // 3) * 6
+        d.rectangle((x, y, x + 3, y + 3), fill=colour + (255,))
+    x, y = CHEST_BAY
+    d.rectangle((x, y, x + 9, y + 3), fill=BAY + (255,), outline=(55, 55, 66, 255))
+    if lit_bay:
+        d.rectangle((x + 1, y + 1, x + 8, y + 2), fill=(77, 217, 102, 255))
+    return img
+
+
+def chest():
+    written = [OUT_ENTITY / "me-chest.png", OUT_ICON / "me-chest.png"]
+    chest_sprite().save(written[0])
+    chest_sprite(True).save(written[1])
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    hd_block(chest_sprite()).save(HD_ENTITY / "me-chest.png")
+    hd_cube(chest_sprite(True)).save(HD_ICON / "me-chest.png")
+    sheet = hd_sheet(ROOT / "docs/graphics-review/me-chest-229.png", "issue #229 (32 px | 3D style)",
+                     [("ME Chest", OUT_ENTITY / "me-chest.png", HD_ENTITY / "me-chest.png"),
+                      ("ME Chest icon", OUT_ICON / "me-chest.png", HD_ICON / "me-chest.png")])
+    return written + [HD_ENTITY / "me-chest.png", HD_ICON / "me-chest.png", sheet]
+
+
 # --- the 3D style of issue #154 (route A), batch 1 (#218) -------------------------------------------------------------
 # Every picture at 64 px per tile (the prototypes use scale 0.5), made from the 32 px pictures above, which stay the sources:
 #   * blocks: the face over HD_FACE of the tile (top left), the east and the south side as depth strips (the last columns /
@@ -1791,6 +1824,9 @@ def main():
     ap.add_argument("--hd", action="store_true",
                     help="the 64 px pictures of the 3D style (me-network issues #154, #218: batch 1) from the 32 px ones, into "
                          "graphics/entity/fork/ae2/hd/ and graphics/icons/hd/, and their contact sheet")
+    ap.add_argument("--chest", action="store_true",
+                    help="only the ME Chest (me-network issue #229): 32 px pictures and the 64 px ones of the 3D style, drawn from "
+                         "the interface PNG")
     ap.add_argument("--thumbnail", action="store_true",
                     help="only thumbnail.png, from the drive, terminal and cable PNGs (me-network issue #20)")
     ap.add_argument("--sheet", type=Path, metavar="PNG",
@@ -1814,7 +1850,7 @@ def main():
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
-            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd):
+            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
@@ -1871,6 +1907,9 @@ def main():
     if a.gt or a.wireless:
         written = wireless()
         print("ME wireless sprites:", len(written))
+    if a.gt or a.chest:
+        written = chest()
+        print("ME Chest sprites:", len(written))
     if a.gt or a.crafting_cpu:
         written = crafting_cpu(a.gt or a.crafting_cpu)
         print("ME crafting block sprites:", len(written))
