@@ -27,8 +27,11 @@
 Everything is kept in .devcheck/ in the repository root (git-ignored). The working copy is linked into the test
 mod folder, so every run tests the current files.
 
-`check` fails (exit code 1) when graphics/ae2/ (the CC BY-NC-SA 3.0 graphics of Applied Energistics 2, issue #235)
-breaks its manifest or an AE2 file's bytes lie outside it (tools/ae2_manifest.py; with Gregtorio in its checkout too),
+`check` fails (exit code 1) when the texture mod ae2-textures/ (me-network-ae2-textures, the CC BY-NC-SA 3.0 graphics of
+Applied Energistics 2, issues #235 and #239) breaks its manifest or an AE2 file's bytes lie outside it
+(tools/ae2_manifest.py; with Gregtorio in its checkout too), when one of the two zips of tools/build.py breaks the
+license split, when the second load with the texture mod (a throw-away copy with two stand-in overrides) fails or does
+not replace the stand-ins' sprites,
 when a file under graphics/ or thumbnail.png has the bytes of an icon taken over from Gregtorio 0.1.9 (issue #238,
 tools/upstream_icons.py, tools/upstream-icon-hashes.tsv; with Gregtorio in its checkout too), when the mods do not load, a recipe or technology references a missing prototype, a
 referenced __me-network__/ file is missing, a sprite sheet is too small, a name is missing in locale/en, a
@@ -53,6 +56,7 @@ DEFAULT_SEED = 3115102263
 CUT_OFF = (0, 5, 0)
 BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails"}
 NAME = "me-network"
+TEXTURES = "me-network-ae2-textures"     # the optional texture mod in ae2-textures/ (issue #239); never with Gregtorio
 GREGTORIO = "gregtorio-continued"
 HELPERS = ("zz-me-network-devcheck",)
 # factorio.com (Cloudflare) answers the default "Python-urllib" user agent with 403
@@ -206,15 +210,23 @@ def remove_path(p):
         shutil.rmtree(p)
 
 
-def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False, bench_dir=None):
+def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False, bench_dir=None,
+                 textures=None):
     """mods/ = this mod (working copy, or `mod_dir`: an older version or the instrumented copy of `bench --profile`)
     + the devcheck helper mods (`bench_dir`: the benchmark mod with its config, instead of the check mod); with
-    Gregtorio its checkout and its dependency zips. base_only: without Space Age and quality."""
+    Gregtorio its checkout and its dependency zips. base_only: without Space Age and quality. textures: a folder
+    of the texture mod me-network-ae2-textures to load next to this mod (issue #239; never with Gregtorio, which
+    depends on me-network only)."""
+    if textures and gregtorio:
+        sys.exit("the texture mod is never loaded with Gregtorio Continued (issue #239)")
     MODS.mkdir(parents=True, exist_ok=True)
     for p in MODS.iterdir():
-        if p.name in (NAME, GREGTORIO, "mod-list.json") or p.name.startswith(HELPERS):
+        if p.name in (NAME, TEXTURES, GREGTORIO, "mod-list.json") or p.name.startswith(HELPERS) \
+                or p.name.startswith(TEXTURES + "_"):
             remove_path(p)
     link_dir(MODS / NAME, Path(mod_dir) if mod_dir else ROOT)
+    if textures:
+        link_dir(MODS / TEXTURES, Path(textures))
     if bench_dir:
         link_dir(MODS / "zz-me-network-devcheck-bench", bench_dir)
         enabled = ["base", NAME, "zz-me-network-devcheck-bench"]
@@ -236,6 +248,8 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=No
     if with_migrate:
         link_dir(MODS / "zz-me-network-devcheck-migrate", HERE / "migratemod")
         enabled.append("zz-me-network-devcheck-migrate")
+    if textures:
+        enabled.append(TEXTURES)
     (MODS / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in enabled]
                                                     + [{"name": n, "enabled": False} for n in disabled]}))
 
@@ -384,25 +398,32 @@ class Model:
         return out
 
 
-def check_files(sec):
+def mod_file(path, textures=None):
+    """the file on disk of an `__me-network__/` path (or of `__me-network-ae2-textures__/`, in the folder `textures`
+    or ae2-textures/), None for another mod's"""
+    for prefix, folder in (("__me-network__/", ROOT), (f"__{TEXTURES}__/", Path(textures or ROOT / "ae2-textures"))):
+        if path.startswith(prefix):
+            return folder / path[len(prefix):]
+    return None
+
+
+def check_files(sec, textures=None):
     missing = []
     for path, owner in sec.get("PATHS", []):
-        if not (ROOT / path[len("__me-network__/"):]).exists():
+        if not mod_file(path, textures).exists():
             missing.append(f"{path} ({owner})")
     return sorted(set(missing))
 
 
-def check_sprites(sec):
+def check_sprites(sec, textures=None):
     try:
         from PIL import Image
     except ImportError:
         return ["(Pillow not installed, sprite sizes not checked: pip install pillow)"]
     bad = []
     for name, key, fn, w, h, fc, ll, x, y in sec.get("SPRITES", []):
-        if not fn.startswith("__me-network__/"):
-            continue
-        f = ROOT / fn[len("__me-network__/"):]
-        if not f.exists():
+        f = mod_file(fn, textures)
+        if not f or not f.exists():
             continue
         w, h, fc, ll, x, y = map(int, (w, h, fc, ll, x, y))
         ll = ll or fc
@@ -435,25 +456,39 @@ def report(title, items, limit=40):
 
 
 def check_ae2_graphics(gregtorio=None):
-    """issue #235: the guard of graphics/ae2/ (the CC BY-NC-SA 3.0 part, tools/ae2_manifest.py) and its self-test;
-    with Gregtorio, its checkout must hold no file byte-identical to an AE2 file or its source either"""
+    """issues #235 and #239: the guard of the texture mod ae2-textures/ (CC BY-NC-SA 3.0, tools/ae2_manifest.py), the
+    package checks of tools/build.py on the two zips of the working copy (built into a temporary folder) and their
+    self-test; with Gregtorio, its checkout must hold no file byte-identical to an AE2 file or its source either, and
+    it never depends on the texture mod"""
+    import tempfile
     sys.path.insert(0, str(ROOT / "tools"))
     sys.path.insert(0, str(HERE))
-    import ae2_manifest, test_ae2_guard
+    import ae2_manifest, build, test_ae2_guard
     others = [Path(gregtorio).resolve()] if gregtorio else []
     count, problems, compared = ae2_manifest.check_tree(ROOT, others)
-    print(f"AE2 graphics in {ae2_manifest.FOLDER}/ (CC BY-NC-SA 3.0): {count} files in MANIFEST.tsv")
+    print(f"texture mod {ae2_manifest.MOD_FOLDER}/ ({ae2_manifest.MOD_NAME}, CC BY-NC-SA 3.0): {count} AE2 files "
+          "in MANIFEST.tsv")
+    with tempfile.TemporaryDirectory(prefix="me-network-zips-") as d:
+        me, tex, zips = build.build_all(ROOT, d, no_psd=True)
+    print(f"  packages: {me.name} (GPLv3) and {tex.name} (CC BY-NC-SA 3.0): "
+          + ("no zip holds both licenses" if not zips else f"{len(zips)} problems"))
     for other in others:
         n = compared.get(str(other), 0)
         print(f"  Gregtorio Continued ({other}): "
               + (f"no file byte-identical to {n} AE2 hashes" if n else "nothing to compare (the manifest is empty)"))
+        info = other / "info.json"
+        deps = json.loads(info.read_text(encoding="utf-8")).get("dependencies", []) if info.is_file() else []
+        if any(ae2_manifest.MOD_NAME in dep for dep in deps):
+            problems.append(f"{info}: Gregtorio Continued depends on {ae2_manifest.MOD_NAME}; it depends on me-network only")
     ran, failed = test_ae2_guard.run_quiet()
-    print(f"  guard self-test: {ran - len(failed)} of {ran} cases as expected")
+    print(f"  guard and package self-test: {ran - len(failed)} of {ran} cases as expected")
     if problems:
         report("problems of the AE2 graphics", problems)
+    if zips:
+        report("problems of the packages", zips)
     if failed:
         report("guard self-test cases that failed", failed)
-    return problems + failed
+    return problems + zips + failed
 
 
 def check_upstream_icons(gregtorio=None):
@@ -480,12 +515,10 @@ def check_upstream_icons(gregtorio=None):
     return problems + failed
 
 
-def check(a):
-    prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only)
-    print("mods: " + ("base only" if a.base_only else "base, Space Age, quality")
-          + (" + Gregtorio Continued" if a.with_gregtorio else ""))
-    ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio)
-    log, err = create_map(WORK / "check-map.zip")
+def check_map(a, mapfile, textures=None):
+    """creates the map with the mods prepared and runs the static checks on its dump: (ok, sections, log); sections
+    is None when the mods did not load"""
+    log, err = create_map(mapfile)
     sec = sections(log)
     validate = [" ".join(r) for r in sec.get("VALIDATE", [])]
     print(f"load: {'FAILED' if err else 'ok'}")
@@ -493,7 +526,7 @@ def check(a):
         report("references to missing prototypes", validate)
     if err:
         print("\n" + err)
-        return 1
+        return False, None, log
     m = Model(sec["DUMP"])
     own = sec.get("OWN", [])
     own_recipes = [n for k, n in own if k == "recipe"]
@@ -523,12 +556,144 @@ def check(a):
         uncraft = []
     stuck = sorted(t for t, v in m.T.items() if v["en"] and t not in m.researched)
     report("technologies of the game the model cannot research (information)", stuck)
-    files, sprites, locale = check_files(sec), check_sprites(sec), check_locale(sec)
+    files, sprites, locale = check_files(sec, textures), check_sprites(sec, textures), check_locale(sec)
     report("missing graphics files", files)
     report("sprite sheets too small", sprites)
     report("names missing in locale/en", locale)
-    ok = not (validate or files or [s for s in sprites if not s.startswith("(")] or techs or recipes or uncraft or locale
-              or ae2)
+    ok = not (validate or files or [s for s in sprites if not s.startswith("(")] or techs or recipes or uncraft or locale)
+    return ok, sec, log
+
+
+# issue #239, step 4: the stand-ins of the texture mod's proof run, one per form of ae2-textures/overrides.lua
+PROOF_ITEM = "item:me-controller"       # its icon (the file-name form: the prototype uses one file of me-network)
+PROOF_ENTITY = "me-drive"               # one file of the entity of that name (the table form: old file -> new file)
+PROOF_DIR = "ae2-textures-proof"        # the throw-away copy in the work folder
+
+
+def stand_in_png(size):
+    """a plain PNG of (width, height), generated here (one grey; nothing of AE2 or of any other image)"""
+    import struct, zlib
+    w, h = size
+    chunk = lambda kind, data: (struct.pack(">I", len(data)) + kind + data
+                                + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff))
+    rows = b"".join(b"\0" + b"\x80\x80\x80\xff" * w for _ in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+def png_size(path):
+    import struct
+    with open(path, "rb") as f:
+        head = f.read(24)
+    return struct.unpack(">II", head[16:24])
+
+
+def owners(sec):
+    """{owner prototype ("type:name"): {files of me-network and of the texture mod it names}}"""
+    out = {}
+    for path, owner in sec.get("PATHS", []):
+        out.setdefault(owner, set()).add(path)
+    return out
+
+
+def proof_copy(base_sec):
+    """a throw-away copy of ae2-textures/ with two stand-in overrides added to its overrides.lua: the icon of
+    PROOF_ITEM and one file of the entity PROOF_ENTITY, each a generated PNG of the replaced file's size. Returns
+    (folder, {owner: (old file, new file)}, problems)."""
+    by_owner = owners(base_sec)
+    problems, cases = [], {}
+    item = sorted(by_owner.get(PROOF_ITEM, ()))
+    if len(item) != 1:
+        problems.append(f"proof: {PROOF_ITEM} names {len(item)} files of me-network, the file-name form needs one")
+    else:
+        cases[PROOF_ITEM] = (item[0], f"__{TEXTURES}__/graphics/devcheck-stand-in-icon.png")
+    entity = sorted(o for o, fs in by_owner.items() if o.endswith(":" + PROOF_ENTITY)
+                    and o.split(":")[0] not in ("item", "recipe", "technology") and len(fs) > 1)
+    if not entity:
+        problems.append(f"proof: no entity {PROOF_ENTITY} with more than one file of me-network")
+    else:
+        cases[entity[0]] = (sorted(by_owner[entity[0]])[0], f"__{TEXTURES}__/graphics/devcheck-stand-in-entity.png")
+    dest = WORK / PROOF_DIR
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(ROOT / "ae2-textures", dest)
+    lines = []
+    for owner, (old, new) in cases.items():
+        f = dest / new[len(f"__{TEXTURES}__/"):]
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(stand_in_png(png_size(mod_file(old))))
+        key = owner.replace(":", "/", 1)
+        lines.append(f'OVERRIDES["{key}"] = "{new}"' if owner == PROOF_ITEM
+                     else f'OVERRIDES["{key}"] = {{ ["{old}"] = "{new}" }}')
+    src = (dest / "overrides.lua").read_text(encoding="utf-8")
+    (dest / "overrides.lua").write_text("-- devcheck: overrides.lua of ae2-textures/ plus the stand-ins of issue #239\n"
+                                        "local OVERRIDES = (function()\n" + src + "\nend)()\n"
+                                        + "\n".join(lines) + "\nreturn OVERRIDES\n", encoding="utf-8")
+    return dest, cases, problems
+
+
+def check_textures(a, base_sec):
+    """issue #239: the second load, with the texture mod next to me-network (a throw-away copy of ae2-textures/ with
+    the stand-ins of proof_copy): the same static checks, no override skipped, each stand-in in place of its file
+    and nothing else of the prototype changed; without the texture mod (the first load) no file of it is named.
+    The copy and its link are removed afterwards and ae2-textures/ is left as it was."""
+    print(f"\n--- with the texture mod {TEXTURES} (issue #239): a throw-away copy of ae2-textures/ with two stand-in "
+          "overrides ---")
+    before = {p.relative_to(ROOT).as_posix(): p.read_bytes() for p in (ROOT / "ae2-textures").rglob("*") if p.is_file()}
+    copy, cases, problems = proof_copy(base_sec)
+    try:
+        prepare_mods(base_only=a.base_only, textures=copy)
+        ok, sec, log = check_map(a, WORK / "check-map-textures.zip", textures=copy)
+    finally:
+        link = MODS / TEXTURES
+        if link.is_symlink() or (hasattr(link, "is_junction") and link.is_junction()) or link.exists():
+            remove_path(link)                   # the link first: never delete through it
+        shutil.rmtree(copy)
+    after = {p.relative_to(ROOT).as_posix(): p.read_bytes() for p in (ROOT / "ae2-textures").rglob("*") if p.is_file()}
+    if before != after:
+        problems.append("ae2-textures/ changed during the proof run")
+    if copy.exists() or (MODS / TEXTURES).exists():
+        problems.append("the proof run left its copy or its link behind")
+    applied = re.findall(rf"data-final-fixes\.lua:\d+: {TEXTURES}: (.*)", log)
+    skipped = [l for l in applied if "SKIPPED" in l]
+    problems += [f"override skipped: {l}" for l in skipped]
+    stray = sorted({p for p, _ in base_sec.get("PATHS", []) if p.startswith(f"__{TEXTURES}__/")})
+    if stray:
+        problems.append(f"without the texture mod the prototypes name its files: {stray[:3]}")
+    if sec is not None:
+        base, now = owners(base_sec), owners(sec)
+        for owner, (old, new) in cases.items():
+            got = now.get(owner, set())
+            if new not in got or old in got:
+                problems.append(f"proof: {owner} names {sorted(got)}, expected {new} in place of {old}")
+            elif got - {new} != base.get(owner, set()) - {old}:
+                problems.append(f"proof: {owner}: other files changed ({sorted(got ^ base.get(owner, set()))})")
+            else:
+                print(f"proof: {owner}: {old} -> {new} with the texture mod, {old} without it")
+    print(f"overrides applied: {len(applied) - len(skipped)} (the {len(cases)} stand-ins), skipped: {len(skipped)}")
+    print("stand-ins and copy removed: " + ("yes" if not (copy.exists() or (MODS / TEXTURES).exists()) else "NO"))
+    report("problems of the texture mod run", problems)
+    return ok and sec is not None and not problems
+
+
+def check(a):
+    prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only)
+    print("mods: " + ("base only" if a.base_only else "base, Space Age, quality")
+          + (" + Gregtorio Continued" if a.with_gregtorio else ""))
+    ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio)
+    if a.with_gregtorio:
+        # issue #239: Gregtorio depends on me-network only; the texture mod is never in its mods folder setup
+        stray = [p.name for p in MODS.iterdir() if p.name == TEXTURES or p.name.startswith(TEXTURES + "_")]
+        stray += [TEXTURES + " in mod-list.json"] if TEXTURES in (MODS / "mod-list.json").read_text() else []
+        print(f"texture mod {TEXTURES}: " + ("not in the mods folder (Gregtorio depends on me-network only)"
+                                             if not stray else f"IN THE MODS FOLDER: {stray}"))
+        ae2 += [f"{s}: the texture mod is never loaded with Gregtorio" for s in stray]
+    ok, sec, _ = check_map(a, WORK / "check-map.zip")
+    if sec is None:
+        return 1
+    if not a.with_gregtorio:
+        ok = check_textures(a, sec) and ok
+    ok = ok and not ae2
     print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
     return 0 if ok else 1
 

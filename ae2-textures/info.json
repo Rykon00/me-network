@@ -1,0 +1,13 @@
+{
+  "name": "me-network-ae2-textures",
+  "version": "0.1.0",
+  "title": "ME Network - AE2 Textures",
+  "author": "rykon_",
+  "homepage": "https://github.com/Rykon00/me-network",
+  "factorio_version": "2.0",
+  "dependencies": [
+    "base >= 2.0",
+    "me-network >= 0.5.2"
+  ],
+  "description": "Optional graphics for ME Network: textures of Applied Energistics 2 in place of ME Network's own sprites. The textures are by AlgorithmX2 et al. (and, in today's AE2, Ridanisaurus Rid) under CC BY-NC-SA 3.0, and so is everything in this mod: no commercial use, changed versions under the same license. Install ME Network too; it runs without this mod. This version replaces nothing yet. Source: https://github.com/Rykon00/me-network (folder ae2-textures)"
+}

@@ -1,0 +1,4 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.1.0
+  Info:
+    - First version (ME Network issue #239): the optional texture mod of ME Network, under CC BY-NC-SA 3.0, with its license text, attribution and manifest. It replaces no sprite yet: no graphics of Applied Energistics 2 are in it so far. Needs ME Network 0.5.2 or later.

@@ -1,12 +1,15 @@
 name: Build & Release
 
-# Every push and pull request: Lua syntax check and zip build. Pull requests into main that change
-# the game must also change changelog.txt (label "no changelog" to skip).
+# Every push and pull request: Lua syntax check and the build of both zips (issue #239): me-network (GPLv3,
+# the repository without ae2-textures/) and the optional texture mod me-network-ae2-textures (CC BY-NC-SA 3.0,
+# ae2-textures/ alone); tools/build.py fails when a zip breaks that split. Pull requests into main that change
+# the game must also change changelog.txt, and those that change the texture mod ae2-textures/changelog.txt
+# (label "no changelog" to skip).
 # Branches: main is development; upstream/release is the published state. A release pull request
 # into upstream/release (from a branch made from main, merged with a merge commit) must bump
 # "version" in info.json (no tag vX.Y.Z yet) and add its changelog.txt section. When it is merged,
-# this workflow creates the GitHub release vX.Y.Z with the zip, uploads the same zip to the
-# Factorio mod portal and fast-forwards main to the merged upstream/release, so main has the
+# this workflow creates the GitHub release vX.Y.Z with both zips, uploads the me-network zip to the
+# Factorio mod portal (the texture mod is never uploaded by this workflow) and fast-forwards main to the merged upstream/release, so main has the
 # version bump too. If main has commits that upstream/release lacks, the push is rejected and the
 # run only warns: then merge upstream/release into main by hand.
 # A tag vX.Y.Z pushed by hand releases too.
@@ -49,18 +52,26 @@ jobs:
               exit 1
             fi
           fi
+          if echo "$CHANGED" | grep -qE '^ae2-textures/(graphics/|locale/|[^/]+\.lua$)'; then
+            if ! echo "$CHANGED" | grep -qx 'ae2-textures/changelog.txt'; then
+              echo "::error::This pull request changes the texture mod but not ae2-textures/changelog.txt. Add its lines to the topmost section, or set the label 'no changelog'."
+              exit 1
+            fi
+          fi
 
       - name: Lua syntax check (loaded files only)
         run: |
           sudo apt-get install -y -qq lua5.4 >/dev/null
           python3 tools/check_syntax.py --loaded
 
-      - name: Build zip
-        run: python3 tools/build.py --portal
+      - name: Build both zips (me-network, me-network-ae2-textures)
+        run: |
+          python3 tools/build.py --portal
+          for z in dist/*.zip; do echo "== $z"; python3 -c "import sys,zipfile;print('\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))" "$z"; done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mod-zip
+          name: mod-zips
           path: dist/*.zip
 
       - name: Decide whether this is a release
@@ -71,6 +82,9 @@ jobs:
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "zip=dist/${NAME}_${V}.zip" >> "$GITHUB_OUTPUT"
+          TNAME=$(python3 -c "import json;print(json.load(open('ae2-textures/info.json'))['name'])")
+          TV=$(python3 -c "import json;print(json.load(open('ae2-textures/info.json'))['version'])")
+          echo "textures_zip=dist/${TNAME}_${TV}.zip" >> "$GITHUB_OUTPUT"
           RELEASE=false
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} != info.json version $V"; exit 1; }
@@ -103,9 +117,12 @@ jobs:
           tag_name: v${{ steps.rel.outputs.version }}
           target_commitish: ${{ github.sha }}
           name: v${{ steps.rel.outputs.version }}
-          files: ${{ steps.rel.outputs.zip }}
+          files: |
+            ${{ steps.rel.outputs.zip }}
+            ${{ steps.rel.outputs.textures_zip }}
           body_path: dist/release-notes.md
 
+      # me-network only: the texture mod (CC BY-NC-SA 3.0) is attached to the GitHub release above and never uploaded here
       - name: Upload to the Factorio mod portal
         if: steps.rel.outputs.release == 'true'
         env:

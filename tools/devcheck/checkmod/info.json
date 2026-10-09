@@ -7,6 +7,7 @@
   "description": "Test helper for tools/devcheck: validates and dumps the prototypes into the log. Not meant for normal play.",
   "dependencies": [
     "? me-network",
+    "? me-network-ae2-textures",
     "? gregtorio-continued"
   ]
 }

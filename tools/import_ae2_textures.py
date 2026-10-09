@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Imports a texture of Applied Energistics 2 into graphics/ae2/ and records it in graphics/ae2/MANIFEST.tsv
-(issue #235). graphics/ae2/ is the CC BY-NC-SA 3.0 part of this mod (graphics/ae2/README.md, docs/LICENSES.md):
-AE2 graphics enter the mod only through this tool, never traced, never merged with graphics of another origin.
+"""Imports a texture of Applied Energistics 2 into ae2-textures/graphics/ and records it in ae2-textures/MANIFEST.tsv
+(issues #235, #239). ae2-textures/ is the texture mod me-network-ae2-textures, under CC BY-NC-SA 3.0
+(ae2-textures/README.md, docs/LICENSES.md), never part of the me-network zip: AE2 graphics enter the repository only
+through this tool, never traced, never merged with graphics of another origin.
 
     python tools/import_ae2_textures.py --ae2 ../Applied-Energistics-2 \\
         src/main/resources/assets/ae2/textures/block/drive/drive_bottom.png drive/bottom.png --note "ME Drive side"
@@ -13,20 +14,22 @@ The source is a path in the AE2 checkout (relative to it, or absolute inside it)
 repository's textures folder (ae2_manifest.REPOSITORIES: AE2 or GTNewHorizons' AE2-Unofficial, found by the
 checkout's `origin`), tracked by git and unchanged against HEAD, because the manifest records `git rev-parse HEAD`
 as the commit it came from, with the SHA-256 of the source. The author is the copyright line of "Textures and
-Models" in the checkout's README.md, which must name CC BY-NC-SA 3.0. The target is a PNG path inside graphics/ae2/;
+Models" in the checkout's README.md, which must name CC BY-NC-SA 3.0. The target is a PNG path inside
+ae2-textures/graphics/;
 an existing target or row is refused unless --replace says so.
 
 The copy is byte-identical (changed: no). A file changed afterwards (recoloured, cropped, scaled to the sprite grid,
 put into an animation strip) stays CC BY-NC-SA 3.0: record it with --mark-changed and a note of what was done. A
-script that transforms these files reads only from graphics/ae2/ and writes only into it, never into another
-graphics folder and never from one; tools/gen_ae2_sprites.py (GPLv3/LGPL) never touches them. A sprite that needs
-an AE2 part and a part of another origin is two layers in the prototype, one file per origin.
+script that transforms these files reads only from ae2-textures/graphics/ and writes only into it, never into another
+graphics folder and never from one; tools/gen_ae2_sprites.py (GPLv3/LGPL) never touches them. The texture mod puts
+a file in place of one file or layer of me-network (ae2-textures/overrides.lua); the layers of another origin around
+it stay separate files.
 """
 import argparse, re, shutil, subprocess, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ae2_manifest import (COLUMNS, DOCS, FOLDER, IMAGE_SUFFIXES, LICENSE, PNG_MAGIC, REPOSITORIES, ROOT,
+from ae2_manifest import (COLUMNS, FOLDER, IMAGE_SUFFIXES, LICENSE, PNG_MAGIC, REPOSITORIES, ROOT,
                           read_manifest, sha256, write_manifest)
 
 
@@ -65,7 +68,7 @@ def author_of(checkout):
 
 def target_path(name):
     name = name.replace("\\", "/")
-    if name.startswith("/") or ".." in name.split("/") or not name.lower().endswith(IMAGE_SUFFIXES) or name in DOCS:
+    if name.startswith("/") or ".." in name.split("/") or not name.lower().endswith(IMAGE_SUFFIXES):
         fail(f"target {name!r} must be a relative path inside {FOLDER}/ ending in " + ", ".join(IMAGE_SUFFIXES))
     return name, ROOT / FOLDER / name
 
