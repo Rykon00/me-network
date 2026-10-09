@@ -84,12 +84,16 @@ for t, _ in pairs(defines.prototypes.item) do
 end
 section("DUMP", dump)
 
---- Every __me-network__/ file referenced anywhere, with its owner prototype
+--- Every __me-network__/ file referenced anywhere, with its owner prototype (and every file of the texture mod
+--- me-network-ae2-textures, issue #239, when it is loaded)
+local function mine(v)
+	return type(v) == "string" and (v:sub(1, 15) == "__me-network__/" or v:sub(1, 28) == "__me-network-ae2-textures__/")
+end
 local paths, seen = {}, {}
 local function scan(t, owner, depth)
 	if depth > 12 then return end
 	for _, v in pairs(t) do
-		if type(v) == "string" and v:sub(1, 15) == "__me-network__/" then
+		if mine(v) then
 			local k = v .. "\t" .. owner
 			if not seen[k] then seen[k] = true; paths[#paths + 1] = k end
 		elseif type(v) == "table" then
@@ -121,7 +125,7 @@ section("SPRITES", sprites)
 
 --- Prototypes with an icon of this mod: their names must be in the locale
 local loc = {}
-local function own(p) return type(p.icon) == "string" and p.icon:sub(1, 15) == "__me-network__/" end
+local function own(p) return mine(p.icon) end
 for t, _ in pairs(defines.prototypes.item) do
 	for n, p in pairs(data.raw[t] or {}) do if own(p) and not p.hidden then loc[#loc + 1] = "item-name	" .. n end end
 end
