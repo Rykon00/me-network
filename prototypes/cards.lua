@@ -35,6 +35,9 @@ local CARDS = {
 	--- AE2's interface has no such card; its pattern slots are the Pattern Provider's here)
 	{ name = "me-interface-capacity-card", order = "e3", kind = "interface_capacity",
 	  ingredients = I{ "me-advanced-card", 1, "me-capacity-card", 1 } },
+	--- issue #193: AE2-Unofficial's Sticky Card (Upgrades.STICKY): a cell or storage bus with it gets an item it already holds
+	--- (or is partitioned for) before every other storage, whatever the priorities (NetworkInventoryHandler's sticky pass)
+	{ name = "me-sticky-card", order = "e4", kind = "sticky", ingredients = I{ "me-advanced-card", 1, "iron-chest", 1 } },
 	{ name = "me-inverter-card", order = "f", kind = "inverter",
 	  ingredients = I{ "me-advanced-card", 1, "decider-combinator", 1 } },
 	{ name = "me-equal-distribution-card", order = "g", kind = "equal",
@@ -71,9 +74,9 @@ end
 --- .createFilter())
 data.raw["mod-data"]["fork-me-network"].data.cards = {
 	kinds = kinds,
-	storage_bus = { slots = 5, limits = { capacity = 5, fuzzy = 1, inverter = 1, void = 1 }, filters = 18, per_capacity = 9 },
-	item_cell = { slots = 4, limits = { fuzzy = 1, inverter = 1, equal = 1, void = 1 } },
-	fluid_cell = { slots = 3, limits = { inverter = 1, equal = 1, void = 1 } },
+	storage_bus = { slots = 5, limits = { capacity = 5, fuzzy = 1, inverter = 1, void = 1, sticky = 1 }, filters = 18, per_capacity = 9 },
+	item_cell = { slots = 4, limits = { fuzzy = 1, inverter = 1, equal = 1, void = 1, sticky = 1 } },
+	fluid_cell = { slots = 3, limits = { inverter = 1, equal = 1, void = 1, sticky = 1 } },
 	--- issue #110: the ME Import Bus and Export Bus take up to 4 Acceleration Cards (AE2's upgrade slots of the buses: its speed
 	--- cards, PartImportBus / PartExportBus); `speed`: by the number of cards, the factor on the items per second of the map
 	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation)

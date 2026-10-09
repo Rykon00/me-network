@@ -519,6 +519,7 @@ RUNTIME_TESTS = (
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
     ("IFACECAP", "ME Interface Capacity Card (issue #196)"),
     ("WIRELESS", "ME wireless terminal (issues #205 to #210)"),
+    ("STICKY", "ME Sticky Card (issue #193)"),
     ("SBUSMODE", "ME storage bus filter mode (issue #155)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("DONE", "all tests reported"),

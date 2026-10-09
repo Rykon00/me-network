@@ -129,6 +129,10 @@ Two AE2 storage features decide **which cell** an item or fluid goes into (and c
 
 The rules (`scripts/fork-me-network.lua`, `insert_key` and `extract_key`):
 
+0. **Sticky Card** (issue #193, AE2-Unofficial's): before all of rule 1, a cell or storage bus with a Sticky Card that
+   **already holds** the item or is **partitioned** for it gets it, whatever the priorities. When there is such a
+   storage the insert ends there: what it cannot take is not stored anywhere else (as in AE2), so the item waits where it
+   came from. Taking out is not changed.
 1. **Storing**: the drives of the **highest priority** first. Within one priority: first the cells
    **partitioned** for the item, then the cells that **already hold** it, then any cell with room. A partitioned
    cell never takes anything else, whatever its priority.
@@ -451,6 +455,7 @@ card is made from a component card and one item:
 | Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
+| Sticky Card | advanced card + iron chest | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
 | Acceleration Card | advanced card + processing unit | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
 
