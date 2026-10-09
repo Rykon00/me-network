@@ -29,7 +29,8 @@ mod folder, so every run tests the current files.
 
 `check` fails (exit code 1) when graphics/ae2/ (the CC BY-NC-SA 3.0 graphics of Applied Energistics 2, issue #235)
 breaks its manifest or an AE2 file's bytes lie outside it (tools/ae2_manifest.py; with Gregtorio in its checkout too),
-when the mods do not load, a recipe or technology references a missing prototype, a
+when a file under graphics/ or thumbnail.png has the bytes of an icon taken over from Gregtorio 0.1.9 (issue #238,
+tools/upstream_icons.py, tools/upstream-icon-hashes.tsv; with Gregtorio in its checkout too), when the mods do not load, a recipe or technology references a missing prototype, a
 referenced __me-network__/ file is missing, a sprite sheet is too small, a name is missing in locale/en, a
 technology of this mod cannot be researched, a recipe of this mod is not unlocked by a researchable technology or
 cannot be crafted, or an unlocked recipe of the game cannot be crafted. `runtime` fails when a runtime test fails
@@ -455,11 +456,35 @@ def check_ae2_graphics(gregtorio=None):
     return problems + failed
 
 
+def check_upstream_icons(gregtorio=None):
+    """issue #238: no file under graphics/ and not thumbnail.png has the bytes of an icon taken over from Gregtorio 0.1.9
+    (tools/upstream_icons.py) and its self-test; with Gregtorio, no file of its checkout either"""
+    sys.path.insert(0, str(ROOT / "tools"))
+    sys.path.insert(0, str(HERE))
+    import upstream_icons, test_upstream_icon_guard
+    others = [Path(gregtorio).resolve()] if gregtorio else []
+    count, problems, compared = upstream_icons.check_tree(ROOT, others)
+    print(f"icons taken over from Gregtorio 0.1.9 ({upstream_icons.LIST}): {count} hashes, "
+          + ("none under graphics/ or as thumbnail.png" if not problems else "found"))
+    for other in others:
+        hits = [p for p in problems if p.startswith(f"{other}:")]
+        print(f"  Gregtorio Continued ({other}): "
+              + (f"no file byte-identical to the {compared.get(str(other), 0)} hashes" if not hits else f"{len(hits)} files"))
+    ran, failed, skipped = test_upstream_icon_guard.run_quiet()
+    print(f"  guard self-test: {ran - len(failed) - len(skipped)} of {ran} cases as expected"
+          + "".join(f"; skipped {s}" for s in skipped))
+    if problems:
+        report("files with the bytes of an icon taken over from Gregtorio 0.1.9", problems)
+    if failed:
+        report("guard self-test cases that failed", failed)
+    return problems + failed
+
+
 def check(a):
     prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only)
     print("mods: " + ("base only" if a.base_only else "base, Space Age, quality")
           + (" + Gregtorio Continued" if a.with_gregtorio else ""))
-    ae2 = check_ae2_graphics(a.with_gregtorio)
+    ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio)
     log, err = create_map(WORK / "check-map.zip")
     sec = sections(log)
     validate = [" ".join(r) for r in sec.get("VALIDATE", [])]
