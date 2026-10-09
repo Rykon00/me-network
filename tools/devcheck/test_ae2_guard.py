@@ -54,13 +54,12 @@ class Guard(unittest.TestCase):
         count, problems, _ = M.check_tree(self.root, others)
         return count, problems
 
-    def fails(self, expected):
-        count, problems = self.guard()
+    def fails(self, expected, others=()):
+        count, problems = self.guard(others)
         self.assertTrue(problems, "the guard passed a broken tree")
         self.assertTrue(any(expected in p for p in problems), f"no problem names {expected!r}: {problems}")
         if VERBOSE:
-            for p in problems:
-                print(f"\n    guard: {p}", end="", file=sys.stderr)
+            print("".join(f"\n    guard: {p}" for p in problems), end="\n    ", file=sys.stderr)
         return problems
 
     def test_empty_folder_passes(self):
@@ -98,8 +97,7 @@ class Guard(unittest.TestCase):
         other = self.tmp / "gregtorio"
         (other / "graphics").mkdir(parents=True)
         (other / "graphics/me.png").write_bytes(PNG)
-        count, problems = self.guard([other])
-        self.assertTrue(any("graphics/me.png is byte-identical" in p for p in problems), problems)
+        self.fails("graphics/me.png is byte-identical to graphics/ae2/drive/bottom.png", [other])
 
     def test_not_an_image(self):
         (self.root / M.FOLDER / "notes.txt").write_text("x", encoding="utf-8")
