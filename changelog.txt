@@ -18,6 +18,7 @@ Version: 0.5.3
     - 3D-style pictures for the ME Interface, the ME Import, Export and Storage Bus (every direction; the buses lie flatter, they can be walked over), the ME Level Maintainer (on and off) and the ME Circuit Interface, and their icons (issue #219, the second batch of #154).
     - New 3D-style pictures for the ME Terminal, the ME Pattern Terminal, the ME Controller, the ME Drive, the cable and the underground cable, and the storage cells (issue #218, the first batch of #154): blocks with depth to the east and south and an outline, isometric item icons, cells as boxes, all at 64 px.
   Bugfixes:
+    - The ME Storage Bus window's filter caption says "Blacklist" also when the filter mode (not an Inverter Card) makes the blacklist (issue #194).
     - A player removed from a multiplayer game no longer leaves items parked from remote view (and a hand-over buffer) in the save (issue #179).
     - The ME Interface window says why a card is refused ("This does not fit here", the limit, every slot taken) instead of showing a missing text.
     - Cards in the hand-over buffer no longer fill a card slot again when you take a card out (issue #201): with a stack of cards lying in the buffer beside your inventory (the block takes three, the rest stays), a click on a card in a slot put a new one in at once, so a card seemed to duplicate and shift + click filled your inventory card by card. A stack the block refused is left alone until it changes.
