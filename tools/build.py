@@ -7,7 +7,9 @@
     python tools/build.py --no-psd     # leave out Photoshop sources (smaller zip)
     python tools/build.py --portal     # zip for the mod portal (same as --no-psd)
 
-The mod is "me-network" (ME Network) on the mod portal and in the repo.
+The mod is "me-network" (ME Network) on the mod portal and in the repo. The zip must carry both license files: LICENSE
+(GPLv3) and graphics/ae2/LICENSE-CC-BY-NC-SA-3.0.txt with that folder's README.md and MANIFEST.tsv (issue #235); the
+build fails without them and prints them.
 """
 import argparse, json, os, shutil, sys, zipfile
 from pathlib import Path
@@ -53,6 +55,17 @@ def main():
                 if f.name in (".DS_Store", "Thumbs.db"):
                     continue
                 z.write(f, f"{base}/{rel.as_posix()}")
+        # issue #235: the zip carries both licenses; graphics/ae2/ (CC BY-NC-SA 3.0) with its license, README and
+        # manifest, so the attribution goes wherever its files go
+        names = set(z.namelist())
+    ae2 = [f"{base}/graphics/ae2/{d}" for d in ("LICENSE-CC-BY-NC-SA-3.0.txt", "README.md", "MANIFEST.tsv")]
+    missing = [n for n in [f"{base}/LICENSE"] + ae2 if n not in names]
+    if missing:
+        out.unlink()
+        sys.exit("build: the zip would lack " + ", ".join(missing))
+    images = sum(1 for n in names if n.startswith(f"{base}/graphics/ae2/") and n not in ae2)
+    print(f"licenses: {base}/LICENSE (GPLv3), {ae2[0]} (CC BY-NC-SA 3.0, {images} AE2 files; "
+          f"attribution in {ae2[1]}, {ae2[2]})")
     # release notes = topmost section of changelog.txt
     cl = ROOT / "changelog.txt"
     if cl.exists():
