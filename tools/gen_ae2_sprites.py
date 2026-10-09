@@ -1284,6 +1284,72 @@ def hd_batch1():
     return written
 
 
+BUS_DEPTH = 6                       # the buses lie flat (they can be walked over): a lower block
+
+
+def hd_batch2():
+    """issue #219: the interface, the import, export and storage bus (four directions), the level maintainer, the circuit
+    interface"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for name in ("me-interface-unified", "me-level-maintainer-off", "me-level-maintainer-on", "me-circuit-interface"):
+        save(hd_block(load(OUT_ENTITY / f"{name}.png")), HD_ENTITY / f"{name}.png")
+    for bus in ("me-import-bus", "me-export-bus", "me-storage-bus"):
+        for d in ("north", "east", "south", "west"):
+            save(hd_block(load(OUT_ENTITY / f"{bus}-{d}.png"), depth=BUS_DEPTH), HD_ENTITY / f"{bus}-{d}.png")
+        save(hd_cube(load(OUT_ENTITY / f"{bus}-south.png")), HD_ICON / f"{bus}.png")
+    save(hd_cube(load(OUT_ENTITY / "me-interface-unified.png")), HD_ICON / "me-interface.png")
+    save(hd_cube(load(OUT_ENTITY / "me-level-maintainer-on.png")), HD_ICON / "me-level-maintainer.png")
+    save(hd_cube(load(OUT_ENTITY / "me-circuit-interface.png")), HD_ICON / "me-circuit-interface.png")
+    return written
+
+
+def hd_sheet(path, title, pairs, patch=None):
+    """a contact sheet: per row today's picture (4x), the new one (2x) and at game size; `patch`: pictures for a 3 x 2 patch"""
+    rh = 150
+    img = Image.new("RGBA", (760, 30 + rh * len(pairs) + (120 if patch else 0)), (40, 40, 48, 255))
+    d = ImageDraw.Draw(img)
+    d.text((10, 8), title + ": today (4x) | new (2x) | new at game size", fill=(220, 220, 230, 255))
+    for i, (name, old, new) in enumerate(pairs):
+        y = 30 + i * rh
+        o, n = load(old), load(new)
+        d.text((10, y + 60), name, fill=(220, 220, 230, 255))
+        img.alpha_composite(o.resize((128, 128), Image.NEAREST), (180, y + 10))
+        img.alpha_composite(n.resize((128, 128), Image.NEAREST), (340, y + 10))
+        img.alpha_composite(n.resize((32, 32), Image.LANCZOS), (500, y + 58))
+    if patch:
+        y = 30 + rh * len(pairs)
+        for gx in range(3):
+            for gy in range(2):
+                p = load(patch[(gx + gy * 3) % len(patch)])
+                img.alpha_composite(p.resize((32, 32), Image.LANCZOS), (180 + gx * 32, y + 20 + gy * 32))
+    img.save(path)
+    return path
+
+
+def hd_sheet_batch2(path):
+    pairs = [("interface", OUT_ENTITY / "me-interface-unified.png", HD_ENTITY / "me-interface-unified.png"),
+             ("level maintainer off", OUT_ENTITY / "me-level-maintainer-off.png", HD_ENTITY / "me-level-maintainer-off.png"),
+             ("level maintainer on", OUT_ENTITY / "me-level-maintainer-on.png", HD_ENTITY / "me-level-maintainer-on.png"),
+             ("circuit interface", OUT_ENTITY / "me-circuit-interface.png", HD_ENTITY / "me-circuit-interface.png")]
+    for bus in ("import", "export", "storage"):
+        for dr in ("north", "east"):
+            pairs.append((f"{bus} bus {dr}", OUT_ENTITY / f"me-{bus}-bus-{dr}.png", HD_ENTITY / f"me-{bus}-bus-{dr}.png"))
+        pairs.append((f"{bus} bus icon", OUT_ICON / f"me-{bus}-bus.png", HD_ICON / f"me-{bus}-bus.png"))
+    pairs += [("interface icon", ROOT / "graphics/icons/me-interface.png", HD_ICON / "me-interface.png"),
+              ("maintainer icon", OUT_ICON / "me-level-maintainer.png", HD_ICON / "me-level-maintainer.png"),
+              ("circuit icon", OUT_ICON / "me-circuit-interface.png", HD_ICON / "me-circuit-interface.png")]
+    return hd_sheet(path, "issue #219", pairs, [HD_ENTITY / "me-interface-unified.png", HD_ENTITY / "me-import-bus-north.png",
+                                                 HD_ENTITY / "me-storage-bus-east.png", HD_ENTITY / "me-level-maintainer-on.png",
+                                                 HD_ENTITY / "me-export-bus-south.png", HD_ENTITY / "me-circuit-interface.png"])
+
+
 def hd_sheet_batch1(path):
     """the contact sheet of batch 1: today (4x) and the new pictures (2x and at game size)"""
     pairs = [("terminal dark", OUT_ENTITY / "me-terminal-off.png", HD_ENTITY / "me-terminal-off.png"),
@@ -1716,6 +1782,9 @@ def main():
         written = hd_batch1()
         hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")
         print("ME 3D pictures (batch 1):", len(written))
+        written = hd_batch2()
+        hd_sheet_batch2(ROOT / "docs/graphics-review/graphics-batch2-219.png")
+        print("ME 3D pictures (batch 2):", len(written))
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
         print("thumbnail.png")

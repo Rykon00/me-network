@@ -80,7 +80,7 @@ ME.add_item{ name = "fluix-cable", icon = HD_ICON .. "fluix-cable.png", icon_siz
 	recipe = { ingredients = I{ "copper-cable", 2, "plastic-bar", 1 }, amount = 2, energy_required = 0.5 } }
 ME.add_item{ name = "me-controller", icon = HD_ICON .. "me-controller.png", icon_size = 64, subgroup = "fork-me-network", order = "a", stack_size = 10,
 	recipe = { ingredients = I{ "steel-plate", 10, "advanced-circuit", 10, "fluix-cable", 4 }, energy_required = 5 } }
-ME.add_item{ name = "me-interface", subgroup = "fork-me-network", order = "b", stack_size = 50,
+ME.add_item{ name = "me-interface", icon = HD_ICON .. "me-interface.png", icon_size = 64, subgroup = "fork-me-network", order = "b", stack_size = 50,
 	recipe = { ingredients = I{ "iron-chest", 1, "steel-plate", 4, "advanced-circuit", 2, "fluix-cable", 2 }, energy_required = 2 } }
 ME.add_item{ name = "me-terminal", icon = HD_ICON .. "me-terminal.png", icon_size = 64, subgroup = "fork-me-network", order = "c", stack_size = 50,
 	recipe = { ingredients = I{ "electronic-circuit", 4, "advanced-circuit", 1, "fluix-cable", 1 }, energy_required = 2 } }
@@ -265,8 +265,8 @@ data.raw.item["me-drive"].place_result = DRIVE
 data:extend({ {
 	type = "container",
 	name = INTERFACE,
-	icon = ICON_PATH .. "me-interface.png",
-	icon_size = 32,
+	icon = HD_ICON .. "me-interface.png",
+	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.2, result = "me-interface" },
 	placeable_by = { item = "me-interface", count = 1 },
@@ -277,8 +277,8 @@ data:extend({ {
 	inventory_size = INTERFACE_SLOTS,
 	inventory_type = "with_filters_and_bar",
 	picture = {                                       -- issue #3: with its four pipe sides (tools/gen_ae2_sprites.py --unified)
-		filename = ENTITY_PATH .. "me-interface-unified.png",
-		priority = "extra-high", width = 32, height = 32,
+		filename = HD_ENTITY .. "me-interface-unified.png",
+		priority = "extra-high", width = 64, height = 64, scale = 0.5,
 	},
 	--- a container has no settings of its own: this lets the runtime copy the filters (settings paste)
 	additional_pastable_entities = { INTERFACE },
@@ -307,7 +307,8 @@ for _, bus in pairs({
 }) do
 	ME.add_item{
 		name = bus.name,
-		icon = ICON_FORK .. bus.name .. ".png",
+		icon = HD_ICON .. bus.name .. ".png",
+		icon_size = 64,
 		subgroup = "fork-me-network",
 		order = bus.order,
 		stack_size = 50,
@@ -316,10 +317,10 @@ for _, bus in pairs({
 			"steel-plate", 2, "fluix-cable", 2 } },
 	}
 	block{
-		name = bus.name, icon = ICON_FORK .. bus.name .. ".png",
+		name = bus.name, icon = HD_ICON .. bus.name .. ".png", icon_size = 64,
 		description = { "entity-description." .. bus.name },
 		--- walkable like the cable (issue #129): drawn under the character
-		extra = { picture = four_way(bus.name), render_layer = "lower-object", collision_mask = WALKABLE },
+		extra = { picture = four_way(bus.name, true), render_layer = "lower-object", collision_mask = WALKABLE },
 	}
 end
 
@@ -382,7 +383,8 @@ data.raw["simple-entity-with-force"][EXPORT_BUS].additional_pastable_entities = 
 
 ME.add_item{
 	name = STORAGE_BUS,
-	icon = ICON_FORK .. STORAGE_BUS .. ".png",
+	icon = HD_ICON .. STORAGE_BUS .. ".png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "b4",
 	stack_size = 50,
@@ -390,9 +392,9 @@ ME.add_item{
 	recipe = { energy_required = 2, ingredients = I{ "me-interface", 1, "fast-inserter", 2, "fluix-cable", 2 } },
 }
 block{
-	name = STORAGE_BUS, icon = ICON_FORK .. STORAGE_BUS .. ".png",
+	name = STORAGE_BUS, icon = HD_ICON .. STORAGE_BUS .. ".png", icon_size = 64,
 	description = { "entity-description." .. STORAGE_BUS },
-	extra = { picture = four_way(STORAGE_BUS), additional_pastable_entities = { STORAGE_BUS },
+	extra = { picture = four_way(STORAGE_BUS, true), additional_pastable_entities = { STORAGE_BUS },
 		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 
