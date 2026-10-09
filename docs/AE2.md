@@ -441,6 +441,68 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
   of its own (machines are not part of segments); fluid wagons are not supported.
 * Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
 
+## Recipes (standalone)
+
+On its own, ME Network uses **AE2's recipes** (modern AE2; AE2-Unofficial for its own cards) with AE2's ingredients and
+counts (issue #233). Each AE2 material is replaced by one vanilla item:
+
+| AE2 | Stand-in |
+|---|---|
+| iron ingot | iron plate |
+| copper ingot, gold ingot | copper plate |
+| diamond | processing unit |
+| redstone, glowstone, fluix crystal, fluix dust, wool | copper cable |
+| certus quartz | stone |
+| glass, quartz glass, quartz fiber | plastic bar |
+| sky stone (block, dust) | stone brick |
+| logic processor | electronic circuit |
+| calculation processor | advanced circuit |
+| engineering processor | processing unit; **in the ME Controller and the ME Drive an advanced circuit**, so the network still comes right after advanced circuits |
+| annihilation core, formation core | electronic circuit |
+| illuminated panel | small lamp |
+| piston | fast inserter |
+| redstone torch | decider combinator |
+| crafting table | assembling machine 1 |
+| wireless receiver | radar |
+| dense energy cell | 4 batteries |
+| ender dust | electronic circuit |
+
+The recipes that follow:
+
+| Item | Recipe | AE2 |
+|---|---|---|
+| Fluix cable (4) | a plastic bar, 2 copper cables | a quartz fiber, 2 fluix crystals -> 4 |
+| ME Controller | 4 stone bricks, 4 copper cables, an advanced circuit | 4 smooth sky stone, 4 fluix crystals, an engineering processor |
+| ME Interface | 4 iron plates, 2 plastic bars, 2 electronic circuits | 4 iron, 2 glass, an annihilation and a formation core |
+| ME Terminal | 3 electronic circuits, a small lamp | a formation and an annihilation core, a logic processor, an illuminated panel |
+| ME Chest | 2 plastic bars, an ME Terminal, 2 fluix cables, 2 iron plates, a copper plate | 2 glass, a terminal, 2 fluix cables, 2 iron, a copper |
+| ME Drive | 4 iron plates, 2 advanced circuits, 2 fluix cables | 4 iron, 2 engineering processors, 2 fluix cables |
+| Storage housing | 2 plastic bars, 3 copper cables, 2 iron plates, a copper plate | 2 quartz glass, 3 redstone, 2 iron, a copper |
+| 1k storage component | 4 copper cables, 4 stone, an electronic circuit | 4 redstone, 4 certus quartz, a logic processor |
+| 4k / 16k / 64k component | 3 of the tier below, an advanced circuit, a plastic bar, 4 copper cables | 3 of the tier below, a calculation processor, a quartz glass, 4 redstone (4k) or glowstone |
+| 256k component | 3 64k components, an advanced circuit, a plastic bar, 4 stone bricks | ... 4 sky stone dust |
+| Storage cell | a component and a housing | the same |
+| Fluid storage cell | a component, 2 plastic bars, 3 copper cables, 3 copper plates | a component in a fluid cell housing (2 quartz glass, 3 redstone, 3 copper) |
+| ME Import / Export Bus | an electronic circuit, 2 iron plates, a fast inserter | an annihilation (import) or formation core (export), 2 iron, a piston |
+| ME Storage Bus | an ME Interface, 2 fast inserters | an interface, 2 pistons |
+| ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
+| ME Pattern Terminal | an ME Terminal, an assembling machine 1, an advanced circuit, a processing unit | a crafting terminal (terminal, crafting table, calculation processor), an engineering processor |
+| Blank Pattern (2) | 2 plastic bars, 3 copper cables, a stone, 2 iron plates, a copper plate | 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2 |
+| ME Molecular Assembler | 4 iron plates, 2 plastic bars, 2 electronic circuits, an assembling machine 1 | 4 iron, 2 quartz glass, an annihilation and a formation core, a crafting table |
+| Crafting unit | 4 iron plates, 2 advanced circuits, 2 fluix cables, an electronic circuit | the same |
+| Crafting storage, co-processing unit | a crafting unit and a component, a processing unit | the same |
+| Crafting monitor | a crafting unit, a decider combinator, an advanced circuit, a small lamp | a crafting unit and a storage monitor (level emitter: redstone torch, calculation processor; illuminated panel) |
+| ME Cell Workbench | 2 copper cables, an advanced circuit, 5 iron plates, a wooden chest | 2 wool, a calculation processor, 5 iron, a wooden chest |
+| ME Wireless Access Point | a radar, an advanced circuit, a fluix cable | a wireless receiver, a calculation processor, a fluix cable |
+| Wireless Booster (2) | a copper cable, a stone, an electronic circuit, 3 iron plates | a fluix dust, a certus quartz, an ender dust, 3 iron -> 2 |
+| Wireless ME Terminal | a radar, an ME Terminal, 4 batteries | a wireless receiver, a terminal, a dense energy cell |
+| ME Charger | 5 iron plates, 2 copper plates | 5 iron, 2 copper |
+
+The cards are in **Upgrade cards**. Not in AE2, kept as they were (with the stand-ins): the underground cable (8 fluix
+cables, 2 iron plates -> 2), the level maintainer, the circuit interface, the Interface Capacity Card and the wireless
+module. The technologies need what their recipes take: ME Network also needs Lamp and Fast inserter, ME Autocrafting and
+ME Upgrade Cards need Circuit network.
+
 ## Upgrade cards
 
 AE2's upgrade cards (me-network issue #17, technology **ME Upgrade Cards** after ME 64k Storage, with its cost). Each
@@ -448,17 +510,17 @@ card is made from a component card and one item:
 
 | Card | Recipe (standalone) | Goes into | Does |
 |---|---|---|---|
-| Basic Card (2 per craft) | 2 iron plates, 2 copper cables, an electronic circuit, an advanced circuit | | component |
-| Advanced Card (2 per craft) | 2 iron plates, a processing unit, an electronic circuit, an advanced circuit | | component |
-| Capacity Card | basic card + iron chest | storage bus, up to 5 | 9 more filters each (18 + 9 per card, up to 63) |
+| Basic Card (2 per craft) | 2 copper plates, 3 iron plates, a copper cable, an advanced circuit (AE2: 2 gold, 3 iron, a redstone, a calculation processor) | | component |
+| Advanced Card (2 per craft) | 2 processing units, 3 iron plates, a copper cable, an advanced circuit (AE2: 2 diamonds instead of the gold) | | component |
+| Capacity Card | basic card + stone (AE2: certus quartz) | storage bus, up to 5 | 9 more filters each (18 + 9 per card, up to 63) |
 | Interface Capacity Card | advanced card + capacity card | ME Interface, up to 3 | 9 more config rows each (9 + 9 per card, up to 36); fits nowhere else (issue #196; AE2's interface has no such card: its pattern slots are the Pattern Provider's here) |
-| Pattern Capacity Card | advanced card + capacity card | ME Pattern Provider, up to 3 | 9 more pattern slots each (9 + 9 per card, up to 36); fits nowhere else, and the Capacity Card does not fit the provider (AE2-Unofficial's Pattern Capacity Card) |
+| Pattern Capacity Card | advanced card, 2 16k storage components, an ME Interface (AE2-Unofficial's) | ME Pattern Provider, up to 3 | 9 more pattern slots each (9 + 9 per card, up to 36); fits nowhere else, and the Capacity Card does not fit the provider (AE2-Unofficial's Pattern Capacity Card) |
 | Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
-| Sticky Card | advanced card + iron chest | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
+| Sticky Card | basic card + iron chest (AE2-Unofficial: a slimeball, which has no stand-in) | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
-| Acceleration Card | advanced card + processing unit | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
+| Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
 
 On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
 like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards

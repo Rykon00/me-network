@@ -1778,9 +1778,9 @@ with its tags); mined, the cell goes into the buffer, destroyed or removed by a 
 cell slot (click with a cell in hand, click the cell to take it), the cell's partition (items with quality, or fluids;
 as the cell window has it), the cell's card slots (4 for item cells, 3 for fluid cells, AE2's limits), "From contents",
 "Clear" and AE2's copy mode ("Keep the partition when the cell is taken out": it stays in the workbench and goes onto
-the next cell whose partition is empty). Every change is written into the cell's tags at once. Recipe: AE2's crafting
-table, 2 white wool, calculation processor, 4 iron ingots and chest become an assembling machine 1, 2 plastic bars, an
-advanced circuit, 4 iron plates and an iron chest.
+the next cell whose partition is empty). Every change is written into the cell's tags at once. Recipe (issue #233): AE2's
+2 wool, calculation processor, 5 iron ingots and wooden chest become 2 copper cables, an advanced circuit, 5 iron plates
+and a wooden chest (docs/AE2.md, "Recipes").
 
 **The partition without a cell (issue #37).** The copy mode's kept partition (`rec.config`) was a line of text
 ("Kept partition: N kinds") and the slots were gone without a cell. Now the slots are always there: without a cell

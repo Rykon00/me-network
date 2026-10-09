@@ -19,25 +19,28 @@ data:extend({ { type = "module-category", name = ME.ACCELERATION } })      -- is
 
 --- name, order, recipe; `kind`: what the card does at runtime (nil: a component)
 local CARDS = {
+	--- AE2 (issue #233; prototypes/network.lua, the stand-ins): 2 gold, 3 iron, a redstone, a calculation processor -> 2; the
+	--- advanced card 2 diamonds instead of the gold
 	{ name = "me-basic-card", order = "a", amount = 2,
-	  ingredients = I{ "iron-plate", 2, "copper-cable", 2, "electronic-circuit", 1, "advanced-circuit", 1 } },
+	  ingredients = I{ "copper-plate", 2, "iron-plate", 3, "copper-cable", 1, "advanced-circuit", 1 } },
 	{ name = "me-advanced-card", order = "b", amount = 2,
-	  ingredients = I{ "iron-plate", 2, "processing-unit", 1, "electronic-circuit", 1, "advanced-circuit", 1 } },
-	{ name = "me-capacity-card", order = "c", kind = "capacity", ingredients = I{ "me-basic-card", 1, "iron-chest", 1 } },
+	  ingredients = I{ "processing-unit", 2, "iron-plate", 3, "copper-cable", 1, "advanced-circuit", 1 } },
+	{ name = "me-capacity-card", order = "c", kind = "capacity", ingredients = I{ "me-basic-card", 1, "stone", 1 } },   -- (certus)
 	{ name = "me-overflow-destruction-card", order = "d", kind = "void",
 	  ingredients = I{ "me-basic-card", 1, "advanced-circuit", 1 } },
 	{ name = "me-fuzzy-card", order = "e", kind = "fuzzy", ingredients = I{ "me-advanced-card", 1, "copper-cable", 1 } },
 	--- issue #156: AE2-Unofficial's Pattern Capacity Card (Upgrades.PATTERN_CAPACITY): 9 more pattern slots in an ME Pattern
 	--- Provider each, up to 3; the storage Capacity Card does not work there and this one only where there are patterns
-	{ name = "me-pattern-capacity-card", order = "e2", kind = "pattern_capacity",
-	  ingredients = I{ "me-advanced-card", 1, "me-capacity-card", 1 } },
+	{ name = "me-pattern-capacity-card", order = "e2", kind = "pattern_capacity",                  -- (AE2-Unofficial's recipe)
+	  ingredients = I{ "me-advanced-card", 1, "me-16k-storage-component", 2, "me-interface", 1 } },
 	--- issue #196: an ME Interface Capacity Card: 9 more config rows in an ME Interface each, up to 3 (option (b) of the issue:
 	--- AE2's interface has no such card; its pattern slots are the Pattern Provider's here)
 	{ name = "me-interface-capacity-card", order = "e3", kind = "interface_capacity",
 	  ingredients = I{ "me-advanced-card", 1, "me-capacity-card", 1 } },
 	--- issue #193: AE2-Unofficial's Sticky Card (Upgrades.STICKY): a cell or storage bus with it gets an item it already holds
 	--- (or is partitioned for) before every other storage, whatever the priorities (NetworkInventoryHandler's sticky pass)
-	{ name = "me-sticky-card", order = "e4", kind = "sticky", ingredients = I{ "me-advanced-card", 1, "iron-chest", 1 } },
+	--- (AE2-Unofficial: a basic card and a slimeball, which has no stand-in: an iron chest, as before)
+	{ name = "me-sticky-card", order = "e4", kind = "sticky", ingredients = I{ "me-basic-card", 1, "iron-chest", 1 } },
 	{ name = "me-inverter-card", order = "f", kind = "inverter",
 	  ingredients = I{ "me-advanced-card", 1, "decider-combinator", 1 } },
 	{ name = "me-equal-distribution-card", order = "g", kind = "equal",
@@ -48,7 +51,7 @@ local CARDS = {
 	--- in the game than AE2's table (1.3, 1.7, 2.0, 2.5, 5.0 times); a module's effect is the same for every card.
 	{ name = "me-acceleration-card", order = "h", kind = "speed", fields = {
 		category = ME.ACCELERATION, tier = 1, effect = { speed = 0.8, consumption = 0.8 } },
-	  ingredients = I{ "me-advanced-card", 1, "processing-unit", 1 } },
+	  ingredients = I{ "me-advanced-card", 1, "copper-cable", 1 } },                                  -- (a fluix crystal)
 }
 
 local kinds = {}
@@ -91,8 +94,8 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 
 --- The ME Cell Workbench (part 3 of issue #17): one cell, its partition and its card slots. AE2's workbench needs
 --- neither the network nor power (blockentity/misc/CellWorkbenchBlockEntity.java extends AEBaseBlockEntity): no ME
---- member, no power (scripts/fork-me-workbench.lua). AE2's recipe (crafting table, 2 white wool, calculation processor,
---- 4 iron ingots, chest) as vanilla items that Gregtorio Continued has too.
+--- member, no power (scripts/fork-me-workbench.lua). AE2's recipe: 2 wool, a calculation processor, 5 iron, a wooden chest
+--- (issue #233; prototypes/network.lua, the stand-ins).
 ME.add_item{
 	name = "me-cell-workbench",
 	icon = ME.hd_icons .. "me-cell-workbench.png",
@@ -101,7 +104,7 @@ ME.add_item{
 	order = "z",
 	stack_size = 10,
 	place_result = "me-cell-workbench",
-	recipe = { energy_required = 2, ingredients = I{ "iron-chest", 1, "iron-plate", 4, "advanced-circuit", 1, "electronic-circuit", 2 } },
+	recipe = { energy_required = 2, ingredients = I{ "copper-cable", 2, "advanced-circuit", 1, "iron-plate", 5, "wooden-chest", 1 } },
 }
 data:extend({ {
 	type = "simple-entity-with-force",
@@ -129,4 +132,4 @@ recipes[#recipes + 1] = "me-cell-workbench"
 
 --- after ME 64k Storage (the advanced card needs a processing unit); its cost follows that technology in
 --- data-final-fixes.lua unless another mod sets it (ME_NETWORK.set_technology)
-ME.add_technology{ name = "me-upgrade-cards", prerequisites = { "me-storage-64k" }, unit = ME.unit(3, 400), recipes = recipes }
+ME.add_technology{ name = "me-upgrade-cards", prerequisites = { "me-storage-64k", "circuit-network" }, unit = ME.unit(3, 400), recipes = recipes }
