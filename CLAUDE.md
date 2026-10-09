@@ -67,19 +67,31 @@
   release pull request into `upstream/release`.
 - **Applied Energistics 2 as a reference:** a checkout of AE2 (https://github.com/AppliedEnergistics/Applied-Energistics-2)
   may lie next to this one (`..\Applied-Energistics-2` on the maintainer's machine). It is read-only: never a worktree,
-  never the target of a junction, nothing of it is committed here; if it is missing, say so in your report and go on.
+  never the target of a junction, nothing of it is committed here except what `tools/import_ae2_textures.py` copies
+  into `graphics/ae2/` (below); if it is missing, say so in your report and go on.
   Its code is LGPL-3.0 (its API MIT), which GPLv3 can take in. Read it when a design question is open (the storage
   lists, the crafting calculation, the tick management); when a function here is a port of AE2's, say so in a comment
   at the function (`ported from Applied Energistics 2, <its path>, LGPL-3.0, (c) AlgorithmX2 et al.`) and name the file
-  in the "License" section of `README.md`. Its textures, models and sounds are CC BY-NC-SA 3.0: never copied, traced or
-  given to `tools/gen_ae2_sprites.py`. AE2 is Java on Minecraft, so a port is written anew for Lua and the Factorio
-  API, tested and measured like any other change; "AE2 does it this way" is no reason by itself, the number is.
+  in the "License" section of `README.md`. Its textures, models and sounds are CC BY-NC-SA 3.0 (issue #235,
+  `docs/LICENSES.md`): AE2 graphics enter this repository **only** through `tools/import_ae2_textures.py` into
+  `graphics/ae2/`, the one CC BY-NC-SA 3.0 folder, with its manifest row (repository, source path, commit, SHA-256,
+  author, license, changed). They are never traced, never merged into one image with graphics of another origin (a
+  sprite with an AE2 part and a GT part is two `layers` in the prototype, one file per origin), never given to
+  `tools/gen_ae2_sprites.py` (it stays AE2-free: GPLv3/LGPL graphics) and never taken from anything else than an AE2
+  checkout; `..\Applied-Energistics-2-Unofficial`'s textures are the same authors' work under the same license, and
+  the manifest records which checkout and commit a file came from. A change to a file there stays in the folder and is
+  recorded with `--mark-changed`; a contribution touching `graphics/ae2/` is CC BY-NC-SA 3.0. `devcheck check` fails on
+  a file without a row, a row without a file, anything but images in the folder and an AE2 file's bytes anywhere else
+  (also in the Gregtorio checkout with `--with-gregtorio`). AE2 is Java on Minecraft, so a port is written anew for Lua
+  and the Factorio API, tested and measured like any other change; "AE2 does it this way" is no reason by itself, the number is.
   Next to it on that machine, read-only in the same way: `..\Applied-Energistics-2-Unofficial` (GTNewHorizons' fork of
   AE2, the one GT New Horizons plays; where it differs from AE2 and Gregtorio is concerned, it is the one to follow;
   read its own license notes before porting from it), `..\GT5-Unofficial` (what `--gt` takes) and
   `..\GT-New-Horizons-Modpack` (the pack's configs and scripts).
 - Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`, `--r2`,
-  `--patterns` and the other switches for parts, see its docstring).
+  `--patterns` and the other switches for parts, see its docstring); it makes the GPLv3/LGPL graphics and never reads
+  AE2 graphics. AE2 graphics: `tools/import_ae2_textures.py` into `graphics/ae2/` only (the rule above); a script that
+  transforms them reads only from `graphics/ae2/` and writes only into it.
 - **Issues and the board:** every open issue of this repository and of its sister repository is on the project board
   "Gregtorio Continued Backlog" (https://github.com/users/Rykon00/projects/1). The board only follows the issue state: a
   closed issue moves to Done and is archived a day later; nothing else moves a card. So the pull request that finishes an

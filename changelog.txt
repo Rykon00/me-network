@@ -25,6 +25,8 @@ Version: 0.5.3
     - A player removed from a multiplayer game no longer leaves items parked from remote view (and a hand-over buffer) in the save (issue #179).
     - The ME Interface window says why a card is refused ("This does not fit here", the limit, every slot taken) instead of showing a missing text.
     - Cards in the hand-over buffer no longer fill a card slot again when you take a card out (issue #201): with a stack of cards lying in the buffer beside your inventory (the block takes three, the rest stays), a click on a card in a slot put a new one in at once, so a card seemed to duplicate and shift + click filled your inventory card by card. A stack the block refused is left alone until it changes.
+  Info:
+    - The license is split (issue #235): the code and the graphics so far keep their licenses (GPLv3, the GT5-Unofficial parts LGPL-3.0), and the new folder graphics/ae2/ is kept for graphics of Applied Energistics 2 under CC BY-NC-SA 3.0, with its own license file, attribution and manifest (graphics/ae2/README.md). The mod zip therefore carries a second license file. The folder holds no graphics yet.
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.2
 Date: 2026-10-08
