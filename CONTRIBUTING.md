@@ -5,6 +5,21 @@
 **Everything that lands on GitHub is written in English:** code, comments, log messages, locale entries, commit
 messages, pull requests, issues, README and other docs.
 
+## Licenses
+
+The code, locale, docs, tools and graphics are GPLv3 (the GT5-Unofficial parts of the graphics LGPL-3.0), except the
+folder `graphics/ae2/`: graphics of Applied Energistics 2 under CC BY-NC-SA 3.0. Every origin and its rules:
+[`docs/LICENSES.md`](docs/LICENSES.md).
+
+- AE2 graphics get into the repository only through `tools/import_ae2_textures.py`, into `graphics/ae2/`, which
+  records each file in `graphics/ae2/MANIFEST.tsv`. They are never traced, never merged into one image with graphics of
+  another origin (a sprite that needs both is two layers in the prototype, one file per origin), never given to
+  `tools/gen_ae2_sprites.py` and never taken from anywhere else than a checkout of AE2 or of GTNewHorizons'
+  AE2-Unofficial (the same authors' work under the same license; the manifest records which checkout and commit).
+- A contribution that touches `graphics/ae2/` is made under CC BY-NC-SA 3.0. A changed file stays in the folder and is
+  recorded with `tools/import_ae2_textures.py --mark-changed`.
+- AE2 code (LGPL-3.0) can be ported into the GPLv3 part: a comment at the function names its source.
+
 ## Workflow
 
 1. Work on a branch, open a pull request into `main`.

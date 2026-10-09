@@ -27,7 +27,9 @@
 Everything is kept in .devcheck/ in the repository root (git-ignored). The working copy is linked into the test
 mod folder, so every run tests the current files.
 
-`check` fails (exit code 1) when the mods do not load, a recipe or technology references a missing prototype, a
+`check` fails (exit code 1) when graphics/ae2/ (the CC BY-NC-SA 3.0 graphics of Applied Energistics 2, issue #235)
+breaks its manifest or an AE2 file's bytes lie outside it (tools/ae2_manifest.py; with Gregtorio in its checkout too),
+when the mods do not load, a recipe or technology references a missing prototype, a
 referenced __me-network__/ file is missing, a sprite sheet is too small, a name is missing in locale/en, a
 technology of this mod cannot be researched, a recipe of this mod is not unlocked by a researchable technology or
 cannot be crafted, or an unlocked recipe of the game cannot be crafted. `runtime` fails when a runtime test fails
@@ -431,10 +433,33 @@ def report(title, items, limit=40):
         print(f"  ... {len(items) - limit} more")
 
 
+def check_ae2_graphics(gregtorio=None):
+    """issue #235: the guard of graphics/ae2/ (the CC BY-NC-SA 3.0 part, tools/ae2_manifest.py) and its self-test;
+    with Gregtorio, its checkout must hold no file byte-identical to an AE2 file or its source either"""
+    sys.path.insert(0, str(ROOT / "tools"))
+    sys.path.insert(0, str(HERE))
+    import ae2_manifest, test_ae2_guard
+    others = [Path(gregtorio).resolve()] if gregtorio else []
+    count, problems, compared = ae2_manifest.check_tree(ROOT, others)
+    print(f"AE2 graphics in {ae2_manifest.FOLDER}/ (CC BY-NC-SA 3.0): {count} files in MANIFEST.tsv")
+    for other in others:
+        n = compared.get(str(other), 0)
+        print(f"  Gregtorio Continued ({other}): "
+              + (f"no file byte-identical to {n} AE2 hashes" if n else "nothing to compare (the manifest is empty)"))
+    ran, failed = test_ae2_guard.run_quiet()
+    print(f"  guard self-test: {ran - len(failed)} of {ran} cases as expected")
+    if problems:
+        report("problems of the AE2 graphics", problems)
+    if failed:
+        report("guard self-test cases that failed", failed)
+    return problems + failed
+
+
 def check(a):
     prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only)
     print("mods: " + ("base only" if a.base_only else "base, Space Age, quality")
           + (" + Gregtorio Continued" if a.with_gregtorio else ""))
+    ae2 = check_ae2_graphics(a.with_gregtorio)
     log, err = create_map(WORK / "check-map.zip")
     sec = sections(log)
     validate = [" ".join(r) for r in sec.get("VALIDATE", [])]
@@ -477,7 +502,8 @@ def check(a):
     report("missing graphics files", files)
     report("sprite sheets too small", sprites)
     report("names missing in locale/en", locale)
-    ok = not (validate or files or [s for s in sprites if not s.startswith("(")] or techs or recipes or uncraft or locale)
+    ok = not (validate or files or [s for s in sprites if not s.startswith("(")] or techs or recipes or uncraft or locale
+              or ae2)
     print("\nRESULT:", "OK" if ok else "PROBLEMS FOUND")
     return 0 if ok else 1
 

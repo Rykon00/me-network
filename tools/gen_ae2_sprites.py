@@ -9,6 +9,9 @@ Sources:
   * everything else (drive bays, cell LEDs, interface arrows) is drawn here with Pillow
   * the fluid variants (prototypes/fluids.lua) are derived from the item PNGs
     generated here: the same shapes with blue accents instead of fluix purple
+  * never graphics of Applied Energistics 2: they are CC BY-NC-SA 3.0 and live only in their own folder
+    (docs/LICENSES.md, tools/import_ae2_textures.py); what this script makes is GPLv3/LGPL-3.0, and a sprite that
+    needs an AE2 part too is two layers in the prototype, never one image (issue #235)
 
     python tools/gen_ae2_sprites.py --gt C:/00_Repositories/GT5-Unofficial   # everything
     python tools/gen_ae2_sprites.py --fluids      # only the fluid graphics, from the existing item PNGs
@@ -315,7 +318,7 @@ def autocrafting(gt):
 # --- crafting CPU multiblocks (me-network issue #6, prototypes/autocrafting.lua) ----------------------------
 # 1x1 blocks: the EV casing (the legacy CPU's) around a dark face; each sheet holds the block of a group that is no CPU
 # (dark: the face's colours dimmed, no light) and of a CPU (lit) side by side, 64x32. The item icon is the lit block.
-# AE2's crafting block textures are not used: they are CC BY-NC-SA 3.0 (see README.md, License).
+# AE2's crafting block textures are not used: they are CC BY-NC-SA 3.0 (docs/LICENSES.md).
 CRAFTING_STORAGE = {"1k": CELLS["1k"][0], "4k": CELLS["4k"][0], "16k": CELLS["16k"][0], "64k": CELLS["64k"][0],
                     "256k": CELLS["256k"][0]}
 
