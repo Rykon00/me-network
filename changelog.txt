@@ -1,6 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.3
   Features:
+    - The Sticky Card (issue #193, AE2-Unofficial's): in an ME Storage Bus or a storage cell (ME Cell Workbench), an item or fluid the storage already holds, or is partitioned for, goes into it before any other storage, whatever the priorities; when that storage is full the item is not stored elsewhere. Made from an advanced card and an iron chest, unlocked with ME Upgrade Cards.
     - The Wireless ME Terminal (issues #153, #205 to #211; technology ME Wireless Terminal): a hotkey (Ctrl + Shift + T by default) opens the ME Terminal of its network from anywhere in range of an ME Wireless Access Point, and a button switches to the ME Pattern Terminal (Encode puts the pattern into your inventory). Link the terminal by clicking an access point or the ME Controller with it in hand. It holds 100 MJ and uses 0.2 MW while open (more far from the access point); charge it in the new ME Charger (1 MW from the network while it charges).
     - ME Wireless Access Point: a network member with a range of 32 tiles, up to 224 with four Wireless Boosters in its card slots (20 to 90 kW through the controller).
     - ME Wireless Terminal Module: armour equipment that works like the terminal item and is charged by the grid.

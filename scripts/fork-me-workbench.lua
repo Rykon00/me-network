@@ -548,7 +548,7 @@ function M.info(entity)
 		out.cell = { name = cell.name, fluid = spec.kind == "fluid", items = items, bytes = cell.bytes, bytes_total = spec.bytes,
 			types = cell.types, types_total = spec.types, partition = N.cell_keys(cell), cards = cards,
 			slots = rules_of(spec).slots, inverted = N.has_card(cell, "inverter"), fuzzy = N.has_card(cell, "fuzzy"),
-			equal = cell.eq, void = cell.void == true }
+			equal = cell.eq, void = cell.void == true, sticky = cell.sticky == true }
 	end
 	return out
 end

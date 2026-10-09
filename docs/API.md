@@ -18,7 +18,7 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   `me-storage-bus`, `me-pattern-provider`, `me-blank-pattern`, `me-encoded-pattern` (no recipe),
   `me-molecular-assembler`, `me-crafting-cpu`, `me-co-processing-cpu`, `me-quantum-crafting-cpu`,
   `me-level-maintainer`, `me-circuit-interface`; since 0.3.0 (issue #17) the upgrade cards `me-basic-card`,
-  `me-advanced-card`, `me-capacity-card`, `me-overflow-destruction-card`, `me-fuzzy-card`, `me-pattern-capacity-card` (issue #156), `me-inverter-card`,
+  `me-advanced-card`, `me-capacity-card`, `me-overflow-destruction-card`, `me-fuzzy-card`, `me-pattern-capacity-card` (issue #156), `me-sticky-card` (issue #193), `me-inverter-card`,
   `me-equal-distribution-card` (each with a recipe of the same name), since issue #110 the module
   `me-acceleration-card` (category `me-acceleration`; `ME_NETWORK.ACCELERATION`) and `me-cell-workbench`; since issues #205 to #209 the wireless items `me-wireless-access-point`, `me-wireless-booster`, `me-wireless-terminal` (item-with-tags), `me-charger`, `me-wireless-module` (equipment of type battery-equipment, grid category `armor`), technology `me-wireless`; since 0.3.0 (issue #6)
   the crafting blocks of the multiblock crafting CPUs `me-crafting-unit`, `me-1k`...`me-256k-crafting-storage`,

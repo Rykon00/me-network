@@ -361,7 +361,7 @@ end
 --- sentences are N.cell_mode_text's, which the item tooltip of the cell (issue #64) puts on lines of their own.
 function M.cell_mode_caption(c)
 	local parts = { "" }
-	for _, kind in ipairs({ "inverted", "fuzzy", "equal", "void" }) do
+	for _, kind in ipairs({ "inverted", "fuzzy", "equal", "void", "sticky" }) do
 		local text = N.cell_mode_text(kind, c)
 		if text then
 			if #parts > 1 then parts[#parts + 1] = " " end

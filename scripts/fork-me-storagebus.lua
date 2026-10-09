@@ -584,6 +584,7 @@ function apply(rec)
 	if counts.inverter or rec.blacklist then rec.partition, rec.deny = nil, set else rec.partition, rec.deny = set, nil end
 	rec.fnames = names
 	rec.void = counts.void and true or nil
+	rec.sticky = counts.sticky and true or nil         -- issue #193
 	rec.inonly = rec.extract == false or nil
 	N.ext_touch(rec.unit)
 end

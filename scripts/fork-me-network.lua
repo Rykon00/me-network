@@ -1064,6 +1064,7 @@ function M.apply_cell_cards(cell)
 	end
 	cell.fnames = names
 	cell.void = kinds.void or nil
+	cell.sticky = kinds.sticky or nil                  -- issue #193
 	cell.eq = nil
 	if kinds.equal then cell.eq = equal_share(cell, spec) end
 	if cell.cards and #cell.cards == 0 then cell.cards = nil end
@@ -1146,12 +1147,13 @@ function M.cell_mode_text(kind, c)
 	if kind == "fuzzy" then return c.fuzzy and { "fork-me-gui.cell-mode-fuzzy" } or nil end
 	if kind == "equal" then return c.equal and { "fork-me-gui.cell-mode-equal", G.fmt(c.equal) } or nil end
 	if kind == "void" then return c.void and { "fork-me-gui.cell-mode-void" } or nil end
+	if kind == "sticky" then return c.sticky and { "fork-me-gui.cell-mode-sticky" } or nil end
 end
 
 --- the same fields as drive_info's for a cell record (drive_info keeps its own copy: it is the hot one)
 local function cell_flags(cell)
 	return { inverted = cell.deny ~= nil or M.has_card(cell, "inverter"), fuzzy = cell.fnames ~= nil or M.has_card(cell, "fuzzy"),
-		equal = cell.eq, void = cell.void == true }
+		equal = cell.eq, void = cell.void == true, sticky = cell.sticky == true }
 end
 
 --- Issue #64: the tooltip of a cell that is not a fresh one, the same lines in the same order for every cell, so two
@@ -1192,7 +1194,7 @@ local function cell_description(cell, spec, plist, cards, keys, list)
 		local icons = {}
 		for i, name in ipairs(cards) do icons[i] = "[item=" .. name .. "]" end
 		line({ "fork-me-net.cell-tip-cards", table.concat(icons, " ") })
-		for _, kind in ipairs({ "fuzzy", "equal", "void" }) do
+		for _, kind in ipairs({ "fuzzy", "equal", "void", "sticky" }) do
 			local text = M.cell_mode_text(kind, flags)
 			if text then line(text) end
 		end
@@ -1280,7 +1282,7 @@ function M.drive_cell_tooltip(drive, slot)
 		local icons = {}
 		for i, name in ipairs(cell.cards) do icons[i] = "[item=" .. name .. "]" end
 		add({ "fork-me-net.cell-tip-cards", table.concat(icons, " ") })
-		for _, kind in ipairs({ "fuzzy", "equal", "void" }) do
+		for _, kind in ipairs({ "fuzzy", "equal", "void", "sticky" }) do
 			local text = M.cell_mode_text(kind, flags)
 			if text then add(text) end
 		end
@@ -2168,6 +2170,10 @@ local function lookups(s, net)
 		local cell = net.cells[cid]
 		local at = { g = g, rank = rank }
 		c.at[cid] = at
+		if cell.sticky and not (cell.ext and cell.mode == "read") then   -- issue #193: the sticky storage, in insertion order
+			c.sticky = c.sticky or {}
+			c.sticky[#c.sticky + 1] = cid
+		end
 		if cell.partition then
 			--- issue #17: a fuzzy whitelist is found by the item name (any quality), its fluid keys as they are
 			local fnames = cell.fnames
@@ -2616,7 +2622,28 @@ local function insert_key(net, key, count, data)
 		local hr = holders(net, c, key, true)
 		local h = first_holder(net, c, key, hr, "hfr", true)
 		local fname = c.fuzzy and name_of_key(key)
-		for _, g in ipairs(c.groups) do
+		--- Issue #193, AE2-Unofficial's sticky pass (NetworkInventoryHandler.injectItems; written anew): before the priorities, the
+		--- storage with a Sticky Card that holds the key or is partitioned for it gets it; when there is such a storage the insert
+		--- ends there (what it cannot take is not stored elsewhere, as in AE2). A network without a sticky storage skips this.
+		local groups = c.groups
+		if c.sticky then
+			local found = false
+			local index = net.index[key]
+			for _, cid in ipairs(c.sticky) do
+				if ins.left <= 0 then break end
+				local cell = net.cells[cid]
+				local p = cell.partition
+				local listed = p and (p[key] or (cell.fnames and fname and cell.fnames[fname]))
+				local holds = not p and index and index[cid] and not (cell.deny and cell.deny[key])
+				if listed or holds then
+					found = true
+					local full = cell.full
+					if not (full and full[key]) then put(cid) end
+				end
+			end
+			if found then groups = EMPTY end
+		end
+		for _, g in ipairs(groups) do
 			if ins.left <= 0 then break end
 			--- 1: partitioned for the key. Issue #115: a storage bus marked full for the key (until its next read) refuses it at
 			--- once in put; at 20 000 ten of eleven calls per insert were such, so the test is made here without the call
@@ -3553,6 +3580,7 @@ function M.drive_info(drive, light)
 				--- issue #17: the cell's cards (from the Cell Workbench)
 				cards = not light and { table.unpack(cell.cards or {}) } or nil, inverted = cell.deny ~= nil or M.has_card(cell, "inverter"),
 				fuzzy = cell.fnames ~= nil or M.has_card(cell, "fuzzy"), equal = cell.eq, void = cell.void == true,
+				sticky = cell.sticky == true,
 				voided = cell.voided or 0 }
 		end
 	end

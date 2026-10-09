@@ -2989,3 +2989,19 @@ pattern per provider, so it shows that a provider without cards costs the same; 
 
 `regressions beyond the noise: 0`. The cost of full 36-pattern providers is reasoned, not measured: the bench scene has no
 provider with more than a few patterns.
+
+## The Sticky Card (issue #193)
+
+The insert of a key (`insert_key`) gets a pass before the priority groups when the network has a storage with a Sticky Card
+(`c.sticky`, made with the lookups, so nothing is walked when there is none): for each sticky storage one look at the key's
+index or its partition. A network without a Sticky Card pays one table test per insert.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no Sticky Card):
+
+| | origin/main | with the card |
+|---|---|---|
+| 100: script average / p99 ms | 0.191 / 1.785 | 0.1953 / 1.817 |
+| 1000: script average / p99 ms | 0.3492 / 1.975 | 0.3414 / 1.938 |
+| Lua alloc KB per tick (100 / 1000) | 26.79 / 24.68 | 26.79 / 24.68 |
+
+`regressions beyond the noise: 0`. The cost with sticky storage is that pass, bounded by the number of sticky storages.
