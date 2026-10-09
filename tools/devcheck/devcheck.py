@@ -515,6 +515,20 @@ def check_upstream_icons(gregtorio=None):
     return problems + failed
 
 
+def check_release_texture():
+    """issue #243: the self-test of the texture mod's release (tools/release_textures.py on temporary git repositories,
+    tools/portal_upload.sh against a fake mod portal, the wiring of .github/workflows/release.yml)"""
+    sys.path.insert(0, str(ROOT / "tools"))
+    sys.path.insert(0, str(HERE))
+    import test_release_texture
+    ran, failed, skipped = test_release_texture.run_quiet()
+    print(f"texture mod release (version check, portal upload) self-test: {ran - len(failed) - len(skipped)} of {ran} "
+          "cases as expected" + "".join(f"; skipped {s}" for s in skipped))
+    if failed:
+        report("release self-test cases that failed", failed)
+    return failed
+
+
 def check_map(a, mapfile, textures=None):
     """creates the map with the mods prepared and runs the static checks on its dump: (ok, sections, log); sections
     is None when the mods did not load"""
@@ -680,7 +694,7 @@ def check(a):
     prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only)
     print("mods: " + ("base only" if a.base_only else "base, Space Age, quality")
           + (" + Gregtorio Continued" if a.with_gregtorio else ""))
-    ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio)
+    ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio) + check_release_texture()
     if a.with_gregtorio:
         # issue #239: Gregtorio depends on me-network only; the texture mod is never in its mods folder setup
         stray = [p.name for p in MODS.iterdir() if p.name == TEXTURES or p.name.startswith(TEXTURES + "_")]

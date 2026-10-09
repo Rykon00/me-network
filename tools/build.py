@@ -11,6 +11,7 @@
     python tools/build.py --mods-dir PATH --install
     python tools/build.py --no-psd     # leave out Photoshop sources (smaller zip)
     python tools/build.py --portal     # zips for the mod portal (same as --no-psd)
+    python tools/build.py --no-texture-notes   # release notes without the texture mod (its version is not new, #243)
 
 No zip holds both licenses. The build fails and deletes both zips when the me-network zip holds a path under
 ae2-textures/, a file with the bytes of an image of ae2-textures/MANIFEST.tsv or of its AE2 source, the CC BY-NC-SA
@@ -172,6 +173,8 @@ def main():
     ap.add_argument("--mods-dir", type=Path)
     ap.add_argument("--no-psd", action="store_true")
     ap.add_argument("--portal", action="store_true", help="zips for the mod portal (same as --no-psd)")
+    ap.add_argument("--no-texture-notes", action="store_true",
+                    help="release notes without the texture mod's section (a release that does not attach its zip)")
     a = ap.parse_args()
     if a.portal:
         a.no_psd = True
@@ -182,11 +185,12 @@ def main():
     count = len(M.read_manifest()[0])
     print(f"licenses: {me.name}: LICENSE (GPLv3); {tex.name}: {M.LICENSE_FILE} (CC BY-NC-SA 3.0, {count} AE2 files; "
           f"attribution in README.md, MANIFEST.tsv)")
-    # release notes = topmost section of each changelog.txt
+    # release notes = topmost section of each changelog.txt (the texture mod's only when the release attaches it)
     notes = "```\n" + topmost_section(ROOT / "changelog.txt") + "\n```\n"
     tex_info = info_of(ROOT / M.MOD_FOLDER)
-    notes += (f"\n{tex_info['title']} {tex_info['version']} ({tex.name}, CC BY-NC-SA 3.0, optional):\n\n```\n"
-              + topmost_section(ROOT / M.MOD_FOLDER / "changelog.txt") + "\n```\n")
+    if not a.no_texture_notes:
+        notes += (f"\n{tex_info['title']} {tex_info['version']} ({tex.name}, CC BY-NC-SA 3.0, optional):\n\n```\n"
+                  + topmost_section(ROOT / M.MOD_FOLDER / "changelog.txt") + "\n```\n")
     (dist / "release-notes.md").write_text(notes, encoding="utf-8")
     for out in (me, tex):
         print(f"built: {out} ({out.stat().st_size/1e6:.1f} MB)")

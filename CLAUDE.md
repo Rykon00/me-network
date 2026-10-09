@@ -63,8 +63,11 @@
 - Every referenced `__me-network__/...` file must exist (headless Factorio does not load graphics, the real game
   crashes on missing files); `devcheck check` lists missing ones and names missing in `locale/en`.
 - **Changelog:** every change to the game adds its player-facing lines to the topmost section of `changelog.txt` (the
-  next version, no `Date:` line yet). Do not change `version` in `info.json` and do not add a `Date:`; that is the
-  release pull request into `upstream/release`.
+  next version, no `Date:` line yet). Do not change `version` in `info.json` or `ae2-textures/info.json` and do not
+  add a `Date:`; that is the release pull request into `upstream/release`. The texture mod's version is its own: a
+  release attaches and uploads its zip only when `ae2-textures/` changed since the last release tag, and then its
+  version must be unused (`tools/release_textures.py`, issue #243). So any change under `ae2-textures/`, even to its
+  `README.md`, means a new texture version at the next release.
 - **Applied Energistics 2 as a reference:** a checkout of AE2 (https://github.com/AppliedEnergistics/Applied-Energistics-2)
   may lie next to this one (`..\Applied-Energistics-2` on the maintainer's machine). It is read-only: never a worktree,
   never the target of a junction, nothing of it is committed here except what `tools/import_ae2_textures.py` copies

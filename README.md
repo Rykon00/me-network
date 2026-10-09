@@ -57,6 +57,7 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second, o
 | `locale/en/me-network.cfg` | English names and texts |
 | `tools/devcheck/` | headless test harness: static checks and the runtime tests, on vanilla and with Gregtorio, and the benchmark (`bench`, `docs/PERFORMANCE.md`) (`tools/devcheck/README.md`) |
 | `tools/build.py` | builds `dist/me-network_<version>.zip` (without `ae2-textures/`) and `dist/me-network-ae2-textures_<version>.zip` (`ae2-textures/` alone) and fails when a zip breaks the license split (`--portal` for the mod portal, `--install` into the mods folder) |
+| `tools/release_textures.py`, `tools/portal_upload.sh` | the release workflow's texture mod version check (is `ae2-textures/` new since the last release tag, and its version unused) and its mod portal upload of each zip to its own page (issue #243) |
 | `.discord/server.yml` | this mod's category on the Discord server (channels, forum tags), applied by `.github/workflows/discord.yml` with the tool of https://github.com/Rykon00/gregtorio-me-network_discord-bot; a pull request that only changes `.discord/` is merged and applied automatically |
 | `tools/dev_link.py` | links the repository into the Factorio mods folder, and `ae2-textures/` as `me-network-ae2-textures_<version>` (`--no-textures` leaves it out) |
 | `tools/check_syntax.py` | Lua syntax check (`--loaded`: only the files the mod loads) |
@@ -97,7 +98,10 @@ This repository holds two mods with two licenses (issue #239; every origin is li
 | **ME Network** (`me-network`) | the repository root, without `ae2-textures/` | **GPLv3** (`LICENSE`), like Gregtorio Continued, where this network was made; its GT5-Unofficial graphics **LGPL-3.0** | the code, the locale, the graphics, the docs and the tools |
 | **ME Network - AE2 Textures** (`me-network-ae2-textures`) | `ae2-textures/` | **CC BY-NC-SA 3.0** (`ae2-textures/LICENSE-CC-BY-NC-SA-3.0.txt`), nothing of it GPL | graphics taken from Applied Energistics 2 (© AlgorithmX2 et al., in today's AE2 also © 2020 Ridanisaurus Rid), with their attribution and manifest, and the code that puts them in place: [`ae2-textures/README.md`](ae2-textures/README.md) |
 
-The two are built into two zips (`tools/build.py`), and no zip contains both licenses. **The texture mod is optional:
+The two are built into two zips (`tools/build.py`), and no zip contains both licenses; each has its own page on the mod
+portal ([me-network](https://mods.factorio.com/mod/me-network),
+[me-network-ae2-textures](https://mods.factorio.com/mod/me-network-ae2-textures)), and the release workflow uploads
+each zip to its own page only, the texture mod's when its version is new (issue #243). **The texture mod is optional:
 me-network never needs it** and does not know it; it depends on me-network and replaces sprites when a player installs
 both. Gregtorio Continued depends on me-network only.
 

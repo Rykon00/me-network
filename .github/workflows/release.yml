@@ -8,16 +8,25 @@ name: Build & Release
 # Branches: main is development; upstream/release is the published state. A release pull request
 # into upstream/release (from a branch made from main, merged with a merge commit) must bump
 # "version" in info.json (no tag vX.Y.Z yet) and add its changelog.txt section. When it is merged,
-# this workflow creates the GitHub release vX.Y.Z with both zips, uploads the me-network zip to the
-# Factorio mod portal (the texture mod is never uploaded by this workflow) and fast-forwards main to the merged upstream/release, so main has the
+# this workflow creates the GitHub release vX.Y.Z with the me-network zip, uploads it to the
+# Factorio mod portal and fast-forwards main to the merged upstream/release, so main has the
 # version bump too. If main has commits that upstream/release lacks, the push is rejected and the
 # run only warns: then merge upstream/release into main by hand.
 # A tag vX.Y.Z pushed by hand releases too.
-# The portal upload needs the repository secret FACTORIO_MOD_API_KEY (an API key from
-# https://factorio.com/profile with the "ModPortal: Upload Mods" permission). Without it, or when
-# the portal already has that version, the upload step is skipped.
+# The texture mod (issue #243) has a version of its own, checked by tools/release_textures.py in the
+# release pull request and again when releasing: if anything under ae2-textures/ changed since the
+# last release tag, ae2-textures/info.json needs a version no earlier release used (no tag, not on the
+# portal) and ae2-textures/changelog.txt a section for it. Only such a new version is attached to the
+# GitHub release and uploaded to its own portal page (mods.factorio.com/mod/me-network-ae2-textures);
+# a release where ae2-textures/ did not change attaches and uploads no texture zip.
+# Both uploads run tools/portal_upload.sh, each in a step of its own; it takes the mod name and
+# version from the zip's own info.json and refuses a zip of another mod than the step's, so neither
+# zip can reach the other's page. They need the repository secret FACTORIO_MOD_API_KEY (an API key
+# from https://factorio.com/profile with the "ModPortal: Upload Mods" permission, account-wide, so
+# one key serves both mods). Without it, or when the portal already has that version, an upload is skipped.
 # After a release the job "announce" posts a digest of the version's changelog.txt section to the
-# Discord channel #me-network-releases (secret DISCORD_BOT_TOKEN; without it the job only warns). It is a job
+# Discord channel #me-network-releases, and a second one of ae2-textures/changelog.txt when the texture
+# version is new (secret DISCORD_BOT_TOKEN; without it the job only warns). It is a job
 # of its own, so a problem with Discord never touches the release, and it can be re-run alone:
 # announcing a version twice does nothing. The tool is https://github.com/Rykon00/gregtorio-me-network_discord-bot.
 
@@ -37,6 +46,10 @@ jobs:
       release: ${{ steps.rel.outputs.release }}
       name: ${{ steps.rel.outputs.name }}
       version: ${{ steps.rel.outputs.version }}
+      textures_new: ${{ steps.rel.outputs.textures_new }}
+      textures_name: ${{ steps.rel.outputs.textures_name }}
+      textures_title: ${{ steps.rel.outputs.textures_title }}
+      textures_version: ${{ steps.rel.outputs.textures_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,16 +77,6 @@ jobs:
           sudo apt-get install -y -qq lua5.4 >/dev/null
           python3 tools/check_syntax.py --loaded
 
-      - name: Build both zips (me-network, me-network-ae2-textures)
-        run: |
-          python3 tools/build.py --portal
-          for z in dist/*.zip; do echo "== $z"; python3 -c "import sys,zipfile;print('\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))" "$z"; done
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mod-zips
-          path: dist/*.zip
-
       - name: Decide whether this is a release
         id: rel
         run: |
@@ -82,9 +85,6 @@ jobs:
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "zip=dist/${NAME}_${V}.zip" >> "$GITHUB_OUTPUT"
-          TNAME=$(python3 -c "import json;print(json.load(open('ae2-textures/info.json'))['name'])")
-          TV=$(python3 -c "import json;print(json.load(open('ae2-textures/info.json'))['version'])")
-          echo "textures_zip=dist/${TNAME}_${TV}.zip" >> "$GITHUB_OUTPUT"
           RELEASE=false
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} != info.json version $V"; exit 1; }
@@ -98,8 +98,12 @@ jobs:
             fi
           fi
           echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          # issue #243: is the texture mod's version new (attach and upload it)? A broken version stops the release.
+          if [ "$RELEASE" = true ]; then
+            python3 tools/release_textures.py --release-tag "v$V" --output "$GITHUB_OUTPUT"
+          fi
 
-      - name: Release pull request checks (version bump, changelog)
+      - name: Release pull request checks (version bumps, changelogs)
         if: github.event_name == 'pull_request' && github.base_ref == 'upstream/release'
         run: |
           V=${{ steps.rel.outputs.version }}
@@ -108,7 +112,18 @@ jobs:
             exit 1
           fi
           grep -q "^Version: $V$" changelog.txt || { echo "::error::changelog.txt has no section 'Version: $V'."; exit 1; }
+          python3 tools/release_textures.py --release-tag "v$V"
           echo "Merging this pull request releases $V (GitHub release and mod portal)."
+
+      - name: Build both zips (me-network, me-network-ae2-textures)
+        run: |
+          python3 tools/build.py --portal ${{ steps.rel.outputs.textures_new != 'true' && '--no-texture-notes' || '' }}
+          for z in dist/*.zip; do echo "== $z"; python3 -c "import sys,zipfile;print('\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))" "$z"; done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod-zips
+          path: dist/*.zip
 
       - name: GitHub release
         if: steps.rel.outputs.release == 'true'
@@ -119,34 +134,26 @@ jobs:
           name: v${{ steps.rel.outputs.version }}
           files: |
             ${{ steps.rel.outputs.zip }}
-            ${{ steps.rel.outputs.textures_zip }}
+            ${{ steps.rel.outputs.textures_attach }}
           body_path: dist/release-notes.md
 
-      # me-network only: the texture mod (CC BY-NC-SA 3.0) is attached to the GitHub release above and never uploaded here
-      - name: Upload to the Factorio mod portal
+      # tools/portal_upload.sh takes the mod name from the zip's info.json and refuses a zip that is not of $MOD
+      - name: Upload me-network to the Factorio mod portal
         if: steps.rel.outputs.release == 'true'
         env:
           API_KEY: ${{ secrets.FACTORIO_MOD_API_KEY }}
           MOD: ${{ steps.rel.outputs.name }}
-          VERSION: ${{ steps.rel.outputs.version }}
           ZIP: ${{ steps.rel.outputs.zip }}
-        run: |
-          if [ -z "$API_KEY" ]; then
-            echo "::warning::Secret FACTORIO_MOD_API_KEY is not set: skipping the mod portal upload."
-            exit 0
-          fi
-          if curl -fsS "https://mods.factorio.com/api/mods/$MOD" \
-               | python3 -c "import json,sys,os;d=json.load(sys.stdin);sys.exit(0 if any(r['version']==os.environ['VERSION'] for r in d.get('releases',[])) else 1)"; then
-            echo "The mod portal already has $MOD $VERSION: skipping the upload."
-            exit 0
-          fi
-          UPLOAD_URL=$(curl -fsS -X POST https://mods.factorio.com/api/v2/mods/releases/init_upload \
-                         -H "Authorization: Bearer $API_KEY" -F "mod=$MOD" \
-                       | python3 -c "import json,sys;d=json.load(sys.stdin);print(d.get('upload_url') or sys.exit('init_upload failed: %s' % d))")
-          RESULT=$(curl -sS -X POST "$UPLOAD_URL" -F "file=@$ZIP")
-          echo "$RESULT"
-          echo "$RESULT" | python3 -c "import json,sys;d=json.load(sys.stdin);sys.exit(0 if d.get('success') else 'upload failed')"
-          echo "Uploaded $MOD $VERSION to https://mods.factorio.com/mod/$MOD"
+        run: bash tools/portal_upload.sh "$ZIP" "$MOD"
+
+      # issue #243: the texture mod (CC BY-NC-SA 3.0) to its own page, only a new version, with the same key
+      - name: Upload the texture mod to the Factorio mod portal
+        if: steps.rel.outputs.release == 'true' && steps.rel.outputs.textures_new == 'true'
+        env:
+          API_KEY: ${{ secrets.FACTORIO_MOD_API_KEY }}
+          MOD: ${{ steps.rel.outputs.textures_name }}
+          ZIP: ${{ steps.rel.outputs.textures_zip }}
+        run: bash tools/portal_upload.sh "$ZIP" "$MOD"
 
       - name: Fast-forward main to the release
         if: github.event_name == 'push' && github.ref_name == 'upstream/release'
@@ -179,6 +186,10 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           MOD: ${{ needs.build.outputs.name }}
           VERSION: ${{ needs.build.outputs.version }}
+          TEXTURES_NEW: ${{ needs.build.outputs.textures_new }}
+          TEXTURES_MOD: ${{ needs.build.outputs.textures_name }}
+          TEXTURES_TITLE: ${{ needs.build.outputs.textures_title }}
+          TEXTURES_VERSION: ${{ needs.build.outputs.textures_version }}
         run: |
           if [ -z "$DISCORD_BOT_TOKEN" ]; then
             echo "::warning::Secret DISCORD_BOT_TOKEN is not set: skipping the Discord announcement."
@@ -194,4 +205,15 @@ jobs:
             --link "Mod portal=https://mods.factorio.com/mod/$MOD" \
             --summary-file "$RUNNER_TEMP/announce.md" || status=$?
           [ -f "$RUNNER_TEMP/announce.md" ] && cat "$RUNNER_TEMP/announce.md" >> "$GITHUB_STEP_SUMMARY"
+          # issue #243: a post of its own for the texture mod, only when this release made its version new
+          if [ "$TEXTURES_NEW" = true ]; then
+            python tool/discord_announce.py \
+              --guild-config tool/server.yml \
+              --channel me-network-releases --title "$TEXTURES_TITLE" --version "$TEXTURES_VERSION" \
+              --changelog mod/ae2-textures/changelog.txt \
+              --link "Full changelog=https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
+              --link "Mod portal=https://mods.factorio.com/mod/$TEXTURES_MOD" \
+              --summary-file "$RUNNER_TEMP/announce-textures.md" || status=$?
+            [ -f "$RUNNER_TEMP/announce-textures.md" ] && cat "$RUNNER_TEMP/announce-textures.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
           exit "$status"
