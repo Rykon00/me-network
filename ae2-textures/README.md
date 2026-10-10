@@ -8,7 +8,7 @@ depends on it and does nothing alone, while ME Network runs complete without thi
 replaces the item icons of the item and fluid storage cells (1k to 256k), the storage components and the housing, the
 upgrade cards and the blank and encoded pattern (issues #247, #250, #251). AE2-Unofficial has no fluid cell and no
 interface capacity card: the fluid cells show its item cell of their tier with a blue frame and body, the ME
-Interface Capacity Card its Capacity Card with the turquoise stripe of an advanced card. The ME Drive, ME Chest, ME
+Interface Capacity Card its Capacity Card with the capacity sign in orange (issue #294). The ME Drive, ME Chest, ME
 Interface, ME Molecular Assembler, ME Cell Workbench and ME Charger are AE2-Unofficial's blocks in the world and AE2
 cubes as icons (issue #260), the ME Pattern Provider its purple interface skin (issue #269, AE2-Unofficial has no provider); a cell in the drive or the chest is drawn as AE2 draws it (issue #264, through ME
 Network's drive view). The ME Controller is four AE2-Unofficial controllers, dark without power, with AE2's running
