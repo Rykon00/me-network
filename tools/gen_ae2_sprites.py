@@ -98,6 +98,7 @@ ICONS = ROOT / "graphics/icons"
 OUT_ENTITY = ROOT / "graphics/entity/fork/ae2"
 OUT_ICON = ROOT / "graphics/icons/fork"
 OUT_TECH = ROOT / "graphics/technology/fork"
+OUT_TECH_HD = ROOT / "graphics/technology/hd"           # issue #222: the technology icons of the 3D style
 
 TILE = 32
 GT_PX = 16                     # GT textures are 16x16, scaled 2x to one Factorio tile
@@ -1724,6 +1725,48 @@ def hd_sheet_batch4(path):
     return hd_sheet(path, "issue #221", pairs)
 
 
+# --- issue #222 (batch 5 of #154): the technology icons, from the 3D-style icons ------------------------------------
+# technology -> the 64 px icon of graphics/icons/hd it shows (the subjects of before, in the 3D style; the drives per tier
+# are gone, so the storage technologies show the cells of their tier)
+TECH_ICONS = {
+    "me-network": "me-drive",
+    "me-storage-64k": "me-64k-storage-cell",
+    "me-storage-256k": "me-256k-storage-cell",
+    "me-fluid-storage": "me-16k-fluid-storage-cell",
+    "me-fluid-storage-256k": "me-256k-fluid-storage-cell",
+    "me-autocrafting": "me-molecular-assembler",
+    "me-automation": "me-level-maintainer",
+    "me-co-processing": "me-crafting-co-processing-unit",
+    "me-quantum-crafting": "me-256k-crafting-storage",
+    "me-wireless": "me-wireless-access-point",
+}
+
+
+def hd_batch5():
+    """issue #222: 256 x 256 technology icons, each a 3D-style icon at the largest whole factor that leaves a margin
+    (upscale); ME Upgrade Cards three card plates fanned out (Overflow Destruction behind, Fuzzy, Capacity in front)"""
+    OUT_TECH_HD.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for tech, icon in TECH_ICONS.items():
+        save(upscale(load(HD_ICON / f"{icon}.png")), OUT_TECH_HD / f"{tech}.png")
+    fan = Image.new("RGBA", (HD + 32, HD + 40))
+    for i, name in enumerate(("me-overflow-destruction-card", "me-fuzzy-card", "me-capacity-card")):
+        fan.alpha_composite(load(HD_ICON / f"{name}.png"), (i * 16, i * 20))
+    save(upscale(fan), OUT_TECH_HD / "me-upgrade-cards.png")
+    return written
+
+
+def hd_sheet_batch5(path):
+    pairs = [(t.replace("me-", ""), OUT_TECH / f"{t}.png", OUT_TECH_HD / f"{t}.png")
+             for t in list(TECH_ICONS) + ["me-upgrade-cards"]]
+    return hd_sheet(path, "issue #222", pairs)
+
+
 def hd_sheet_batch3(path):
     pairs = [("pattern provider", OUT_ENTITY / "me-pattern-provider.png", HD_ENTITY / "me-pattern-provider.png"),
              ("assembler idle", OUT_ENTITY / "me-molecular-assembler-idle.png", HD_ENTITY / "me-molecular-assembler-idle.png"),
@@ -2245,6 +2288,9 @@ def main():
         written = hd_batch4()
         hd_sheet_batch4(ROOT / "docs/graphics-review/graphics-batch4-221.png")
         print("ME 3D pictures (batch 4):", len(written))
+        written = hd_batch5()
+        hd_sheet_batch5(ROOT / "docs/graphics-review/graphics-batch5-222.png")
+        print("ME 3D technology icons (batch 5):", len(written))
     elif a.own_icons:                           # the 3D-style cells and cable are made from the 32 px icons
         written = hd_batch1()
         hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")

@@ -25,7 +25,7 @@ M.version = "0.1.0"
 M.root = "__me-network__/"
 M.icons = M.root .. "graphics/icons/"
 M.entity_path = M.root .. "graphics/entity/fork/ae2/"
-M.technology_path = M.root .. "graphics/technology/fork/"
+M.technology_path = M.root .. "graphics/technology/hd/"       -- (issue #222: the 3D style; fork/ holds the flat ones of before)
 --- issue #154: the 64 px pictures of the 3D style (tools/gen_ae2_sprites.py --hd): icons 64 x 64, entity pictures at scale 0.5
 M.hd_icons = M.root .. "graphics/icons/hd/"
 M.hd_entity_path = M.entity_path .. "hd/"
