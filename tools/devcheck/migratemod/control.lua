@@ -255,6 +255,8 @@ local function check_unified(st)
 			expect(ms and ms.on and ms.sprite == "me-level-maintainer-screen-on",
 				"a level maintainer of the old save has no lit picture: " .. serpent.line(ms))
 		end
+		local list_ok, why = remote.call(NET, "screen_list_ok")
+		expect(list_ok, "the screen list made for the old save: " .. tostring(why))
 	end
 	--- me-network issue #17: a storage bus and an interface of the old version have no cards and the defaults
 	local sbus = remote.interfaces["gregtorio-me-storagebus"]

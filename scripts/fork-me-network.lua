@@ -1865,6 +1865,7 @@ end
 local function screen_place(s, sc, unit)
 	if sc and sc.li then return sc.li end
 	local sl = screen_list(s)
+	if sc and sc.li then return sc.li end              -- (a save from before: the list was just made, with this record)
 	sl[#sl + 1] = unit
 	return #sl
 end
