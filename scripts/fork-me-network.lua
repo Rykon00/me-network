@@ -1836,13 +1836,17 @@ local SCREENS = {
 	maintainer = { "me-level-maintainer-screen-on", "me-level-maintainer-screen-off" },
 }
 function has_screen(kind) return SCREENS[kind] ~= nil or kind == "pattern-terminal" end
---- issue #254: derived per load, never in `storage`: the units of `s.screens` in order (made again when one comes or
---- goes) and the control behaviour of each level maintainer (one read of a kept object instead of a new one per second)
+--- issue #254: the benchmark's scenes have a level maintainer per ten buses (2000 at 20 000), so the slow step must not
+--- look at every screen every second. It sets them all only when something they show may have changed: the graph
+--- (`s.version`, kept as `s.screen_version`) or the state of a network (`net.screen_on`, what its screens were last set
+--- to); otherwise only the level maintainers with a circuit condition switched on (`s.screen_cond`, set when one joins and
+--- when its window or a paste sets the condition, the only ways a maintainer gets one: the lamp's window is replaced) are
+--- read. What decides is in `storage`; derived per load: the units of `s.screens` in order and each condition
+--- maintainer's control behaviour (#115: one kept object instead of a new one per read).
 local screen_order, maintainer_cbs = nil, {}
 
 --- sets the screen of terminal or level maintainer `unit` to `on`, drawing it first if it is missing (a save from
---- before, a clone). A screen that shows `on` already costs one comparison (issue #254: the benchmark's scenes have a
---- level maintainer per ten buses).
+--- before, a clone). A screen that shows `on` already costs one comparison.
 local function set_screen(s, unit, entity, on, kind)
 	local list = s.screens
 	local sc = list[unit]
@@ -1855,6 +1859,7 @@ local function set_screen(s, unit, entity, on, kind)
 		return
 	end
 	if sc and sc.on == on then return end
+	if not entity.valid then return end
 	local def = SCREENS[kind]
 	local spr = sc and sc.spr and rendering.get_object_by_id(sc.spr)
 	local light = sc and sc.light and rendering.get_object_by_id(sc.light)
@@ -1875,21 +1880,32 @@ local function set_screen(s, unit, entity, on, kind)
 	if light then light.visible = on end
 end
 
---- the state a screen shows now: its network works (and a level maintainer's circuit condition lets it run: the lamp's
---- condition, as fork-me-circuit.lua reads it)
-local function screen_state(s, node)
+--- a level maintainer's lamp with a circuit condition switched on: its control behaviour, else nil
+local function condition_of(unit, entity)
+	local cb = maintainer_cbs[unit]
+	if not (cb and cb.valid) then
+		cb = entity.valid and entity.get_control_behavior() or nil
+		maintainer_cbs[unit] = cb
+	end
+	if cb and (cb.circuit_enable_disable or cb.connect_to_logistic_network) then return cb end
+	return nil
+end
+
+--- notes whether level maintainer `unit` has a condition switched on (it joined, or its condition was set)
+local function note_condition(s, unit, entity)
+	maintainer_cbs[unit] = nil
+	s.screen_cond = s.screen_cond or {}
+	s.screen_cond[unit] = condition_of(unit, entity) and true or nil
+end
+
+--- the state a screen shows now: its network works, and a level maintainer's circuit condition lets it run (the lamp's
+--- condition, as fork-me-circuit.lua reads it; it counts only on a circuit network)
+local function screen_state(s, unit, node)
 	local net = s.nets[node.net]
 	if not (net ~= nil and M.usable(net)) then return false end
-	if node.kind == "maintainer" then
-		local unit = node.entity.unit_number
-		local cb = maintainer_cbs[unit]
-		if cb == nil or (cb and not cb.valid) then
-			cb = node.entity.get_control_behavior() or false      -- (false: none yet; M.update_screen forgets it)
-			maintainer_cbs[unit] = cb
-		end
-		--- (`disabled` first: false for nearly every maintainer; a freshly wired lamp reads disabled while its condition is
-		--- still off, as in fork-me-circuit.lua)
-		if cb and cb.disabled and (cb.circuit_enable_disable or cb.connect_to_logistic_network) then return false end
+	if s.screen_cond and s.screen_cond[unit] then
+		local cb = condition_of(unit, node.entity)
+		if cb and cb.disabled then return false end
 	end
 	return true
 end
@@ -1897,41 +1913,81 @@ end
 function screen_made(s, unit, entity, kind)
 	if not s.screens then return end                       -- (the first slow step makes them all)
 	local node = s.nodes[unit]
-	set_screen(s, unit, entity, node and node.net and screen_state(s, node) or false, kind or (node and node.kind))
+	kind = kind or (node and node.kind)
+	if kind == "maintainer" then note_condition(s, unit, entity) end
+	set_screen(s, unit, entity, node and node.net and screen_state(s, unit, node) or false, kind)
 end
 
 function screen_gone(s, unit)
 	if s.screens then s.screens[unit] = nil end
+	if s.screen_cond then s.screen_cond[unit] = nil end
 	screen_order, maintainer_cbs[unit] = nil, nil
 end
 
---- every screen to its network's state; also the first time on a save from before (one pass over the members), and once
---- for the level maintainers of a save from before issue #254 (`s.maintainer_screens`)
+--- the screens to their state: all of them when the graph or a network's state changed since the last time, else the
+--- level maintainers with a condition; the first time on a save from before also one pass over the members to make the
+--- screens (and once for the level maintainers of a save from before issue #254, `s.maintainer_screens`)
 local function refresh_screens(s)
 	if not s.screens or not s.maintainer_screens then
 		s.screens = s.screens or {}
 		s.maintainer_screens = true
+		local units = {}
 		for unit, node in pairs(s.nodes) do
-			if has_screen(node.kind) and node.entity.valid and not s.screens[unit] then
-				set_screen(s, unit, node.entity, false, node.kind)
-			end
+			if has_screen(node.kind) and node.entity.valid and not s.screens[unit] then units[#units + 1] = unit end
+		end
+		table.sort(units)
+		for _, unit in ipairs(units) do
+			local node = s.nodes[unit]
+			if node.kind == "maintainer" then note_condition(s, unit, node.entity) end
+			set_screen(s, unit, node.entity, false, node.kind)
+		end
+		s.screen_version = nil
+	end
+	local nodes, screens, nets = s.nodes, s.screens, s.nets
+	local all = s.screen_version ~= s.version
+	if not all then
+		local ids = {}
+		for id in pairs(nets) do ids[#ids + 1] = id end
+		table.sort(ids)
+		for _, id in ipairs(ids) do
+			local net = nets[id]
+			if net.screen_on ~= (M.usable(net) and true or false) then all = true break end
 		end
 	end
-	local units = screen_order
-	if not units then
-		units = {}
-		for unit in pairs(s.screens) do units[#units + 1] = unit end
+	if all then
+		local units = screen_order
+		if not units then
+			units = {}
+			for unit in pairs(screens) do units[#units + 1] = unit end
+			table.sort(units)
+			screen_order = units
+		end
+		for i = 1, #units do
+			local unit = units[i]
+			local node = nodes[unit]
+			if node and screens[unit] then
+				set_screen(s, unit, node.entity, screen_state(s, unit, node), node.kind)
+			elseif screens[unit] then
+				screens[unit], screen_order, maintainer_cbs[unit] = nil, nil, nil
+				if s.screen_cond then s.screen_cond[unit] = nil end
+			end
+		end
+		local ids = {}
+		for id in pairs(nets) do ids[#ids + 1] = id end
+		table.sort(ids)
+		for _, id in ipairs(ids) do nets[id].screen_on = M.usable(nets[id]) and true or false end
+		s.screen_version = s.version
+	elseif s.screen_cond and next(s.screen_cond) then
+		local units = {}
+		for unit in pairs(s.screen_cond) do units[#units + 1] = unit end
 		table.sort(units)
-		screen_order = units
-	end
-	local nodes, screens = s.nodes, s.screens
-	for i = 1, #units do
-		local unit = units[i]
-		local node = nodes[unit]
-		if node and screens[unit] and node.entity.valid then
-			set_screen(s, unit, node.entity, screen_state(s, node), node.kind)
-		elseif screens[unit] then
-			screens[unit], screen_order, maintainer_cbs[unit] = nil, nil, nil
+		for _, unit in ipairs(units) do
+			local node = nodes[unit]
+			if node and screens[unit] then
+				set_screen(s, unit, node.entity, screen_state(s, unit, node), node.kind)
+			else
+				s.screen_cond[unit] = nil
+			end
 		end
 	end
 end
@@ -1954,10 +2010,11 @@ end
 --- step's second
 function M.update_screen(entity)
 	local s = storage.fork_me_net
-	local node = s and s.screens and entity and entity.valid and s.nodes[entity.unit_number]
+	local unit = entity and entity.valid and entity.unit_number
+	local node = s and s.screens and unit and s.nodes[unit]
 	if not (node and has_screen(node.kind)) then return end
-	maintainer_cbs[entity.unit_number] = nil
-	set_screen(s, entity.unit_number, entity, screen_state(s, node), node.kind)
+	if node.kind == "maintainer" then note_condition(s, unit, entity) end
+	set_screen(s, unit, entity, screen_state(s, unit, node), node.kind)
 end
 
 --- the network an entity is a member of (working or not), nil if it is no member
