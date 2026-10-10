@@ -211,7 +211,14 @@ return function(H)
 				expect(n and n.power == 162000, "the controller's draw at the end: " .. serpent.line(n))
 				st.lit_after = tick - st.back_at
 				maintainer_lit(true, "with the power back")
-				--- issue #254: a condition that is false (iron plates > 0 on no wire) makes it dark, switched off lit again
+				--- issue #254: a condition that is false makes it dark, switched off lit again (a condition counts only on a
+				--- circuit network: a constant combinator with no signal on a red wire, iron plates > 0)
+				local cc = s.create_entity{ name = "constant-combinator", position = { BX + MAINTAINER_X + 0.5, BY + 1.5 },
+					force = "player" }
+				local RED = defines.wire_connector_id.circuit_red
+				expect(cc and maintainer.get_wire_connector(RED, true).connect_to(cc.get_wire_connector(RED, true), false),
+					"the level maintainer could not be wired to a constant combinator")
+				st.combinator = cc
 				remote.call(CIRC, "set_condition", maintainer, true, { type = "item", name = "iron-plate" }, ">", 0)
 				st.cond_at, st.phase = tick, "condition"
 			elseif tick - st.back_at > 300 then
@@ -228,6 +235,7 @@ return function(H)
 			if tick < st.cond_at + 5 then return end
 			remote.call(NET, "slow_step")
 			maintainer_lit(true, "with the circuit condition switched off")
+			if st.combinator and st.combinator.valid then st.combinator.destroy() end
 			return finish("a terminal and a level maintainer 24 tiles from a pole: +8 kW and +30 kW, dark and parked "
 				.. "without power, lit and woken " .. st.lit_after .. " ticks after it came back, screens made, cloned and "
 				.. "removed; the maintainer dark outside a network and with a false condition (issue #254)")
