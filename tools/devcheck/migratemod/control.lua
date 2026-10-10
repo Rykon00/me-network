@@ -259,6 +259,15 @@ local function check_unified(st)
 		end
 		local list_ok, why = remote.call(NET, "screen_list_ok")
 		expect(list_ok, "the screen list made for the old save: " .. tostring(why))
+		--- me-network issue #267: the drives' lights of the old save (rectangles) are entities now, none left behind
+		for _ = 1, 3 do remote.call(NET, "slow_step") end
+		local rects = 0
+		for _, o in pairs(rendering.get_all_objects("me-network")) do
+			if o.valid and o.type == "rectangle" then rects = rects + 1 end
+		end
+		local lights = game.surfaces[1].count_entities_filtered{ name = "me-drive-light" }
+		expect(rects == 0 and lights > 0, "the drives' lights after the update: " .. rects .. " rectangles left, " .. lights
+			.. " light entities")
 	end
 	--- me-network issue #17: a storage bus and an interface of the old version have no cards and the defaults
 	local sbus = remote.interfaces["gregtorio-me-storagebus"]

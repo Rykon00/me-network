@@ -114,3 +114,57 @@ for _, name in ipairs({ "me-acceleration-card", "me-pattern-capacity-card", "me-
 		recipe.enabled = false
 	end
 end
+
+--- Issue #267: the cell lights (and a graphics mod's cells) of the ME Drive and the ME Chest are hidden entities on the
+--- block's position, not render objects: the game draws an entity in the order of its y position, so a character south of
+--- a drive is drawn over its lights like over its picture, one north of it under them. secondary_draw_order puts them
+--- above the block's picture (0) at the same position: the cell 1, the light 2. Their pictures are made here, after
+--- every mod set the mod-data's drive view (docs/API.md: in data.lua or data-updates.lua), one variation per bay and
+--- state: a light is the white square tinted (variation (bay - 1) * 4 + state, the states of LIGHT_COLORS), a cell the
+--- view's sprite (variation (bay - 1) * 2 + 1 for an item cell, + 2 for a fluid cell). scripts/fork-me-network.lua
+--- draw_leds sets the variation.
+do
+	local md = data.raw["mod-data"]["fork-me-network"]
+	local view = md and md.data.drive_view
+	local LIGHT = "__me-network__/graphics/entity/fork/ae2/hd/me-light.png"
+	--- room, high (above 75 %), full, off (a chest without power): the script's order
+	local LIGHT_COLORS = { { 0.3, 0.85, 0.4 }, { 1, 0.6, 0.1 }, { 0.95, 0.2, 0.15 }, { 0.06, 0.06, 0.08 } }
+	local FLAGS = { "not-on-map", "not-blueprintable", "not-deconstructable", "not-upgradable", "hide-alt-info",
+		"no-copy-paste", "not-in-kill-statistics", "placeable-off-grid" }
+	--- a point of the 64 px picture (64 px a tile, from its top left) as a shift from the entity's center
+	local function shift(x, y) return { x / 64 - 0.5, y / 64 - 0.5 } end
+	local function part(name, pictures, order)
+		return { type = "simple-entity-with-force", name = name, hidden = true, flags = FLAGS, selectable_in_game = false,
+			collision_box = { { 0, 0 }, { 0, 0 } }, collision_mask = { layers = {} }, max_health = 1,
+			render_layer = "object", secondary_draw_order = order, random_variation_on_create = false, pictures = pictures,
+			icon = "__me-network__/graphics/icons/hd/me-drive.png", icon_size = 64 }
+	end
+	for _, kind in pairs({ "drive", "chest" }) do
+		local v = view and view[kind]
+		if v and v.bays and v.light then
+			local l, lights = v.light, {}
+			for _, bay in ipairs(v.bays) do
+				for _, c in ipairs(LIGHT_COLORS) do
+					--- the square at scale 1/16: 8 of its px are one px of the 64 px picture
+					lights[#lights + 1] = { filename = LIGHT, priority = "high", scale = 1 / 16, tint = c,
+						width = math.max(1, math.floor(l.w * 8 + 0.5)), height = math.max(1, math.floor(l.h * 8 + 0.5)),
+						shift = shift(bay.x + l.x + l.w / 2, bay.y + l.y + l.h / 2) }
+				end
+			end
+			data:extend({ part("me-" .. kind .. "-light", lights, 2) })
+			local cells = v.cells
+			local item, fluid = cells and data.raw.sprite[cells.item], cells and data.raw.sprite[cells.fluid]
+			if item and fluid then
+				local pictures = {}
+				for _, bay in ipairs(v.bays) do
+					for _, sprite in ipairs({ item, fluid }) do
+						pictures[#pictures + 1] = { filename = sprite.filename, priority = "high", width = sprite.width,
+							height = sprite.height, x = sprite.x, y = sprite.y, scale = sprite.scale,
+							shift = shift(bay.x + cells.w / 2, bay.y + cells.h / 2) }
+					end
+				end
+				data:extend({ part("me-" .. kind .. "-cell", pictures, 1) })
+			end
+		end
+	end
+end

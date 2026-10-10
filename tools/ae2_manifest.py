@@ -34,7 +34,7 @@ FOLDER = MOD_FOLDER + "/graphics"           # its images, the only files with a 
 LICENSE_FILE = "LICENSE-CC-BY-NC-SA-3.0.txt"
 DOCS = (LICENSE_FILE, "README.md", "MANIFEST.tsv")
 # the texture mod's own files besides DOCS, locale/<language>/*.cfg and the images (all CC BY-NC-SA 3.0)
-MOD_FILES = ("info.json", "changelog.txt", "data-final-fixes.lua", "overrides.lua")
+MOD_FILES = ("info.json", "changelog.txt", "data-updates.lua", "data-final-fixes.lua", "overrides.lua")
 LOCALE = re.compile(r"locale/[a-zA-Z-]+/[A-Za-z0-9_.-]+\.cfg")
 COLUMNS = ("file", "repository", "source", "commit", "source_sha256", "author", "license", "changed", "note")
 LICENSE = "CC BY-NC-SA 3.0"

@@ -42,12 +42,10 @@ local BASE_POWER = 120000           -- W: controller
 local MEMBER_POWER = 4000           -- W: per member without its own power connection
 local CELL_TAG = "fork_me_cell"
 local DRIVE_TAG = "fork_me_drive"   -- blueprint tag of a drive: { priority, partitions = { ["slot"] = { keys } } }
---- issue #264: where the lights (and a graphics mod's cells) sit on the drive's and the chest's picture: the mod-data's
---- `drive_view` (prototypes/network.lua, docs/API.md), px of the 64 px picture, 64 px a tile
-local VIEW_PX = 64
-local LED_GREEN, LED_ORANGE, LED_RED = { 0.3, 0.85, 0.4 }, { 1, 0.6, 0.1 }, { 0.95, 0.2, 0.15 }
---- issue #229: the ME Chest's light is dark without power
-local CHEST_LED = { off = { 0.06, 0.06, 0.08 } }
+--- issue #267: a cell's light is a hidden entity on the drive's (or chest's) position whose picture variation is its bay and
+--- state (data-final-fixes.lua: (bay - 1) * 4 + LIGHT_STATE; issue #229: "off" is the dark light of a chest without
+--- power); a graphics mod's cell (issue #264) the same, (bay - 1) * 2 + 1 for an item cell, + 2 for a fluid cell
+local LIGHT_STATE = { room = 1, high = 2, full = 3, off = 4 }
 
 --------------------------------------------------------------------------------
 --- prototype data
@@ -189,6 +187,7 @@ local function state()
 			--- the screens of terminals and level maintainers (see "screens"), made when they join (issue #254: a new map has
 			--- them from the start, so a big scene is not drawn at once at its first slow step)
 			screens = {}, screen_list = {}, maintainer_screens = true, screen_layer = SCREEN_LAYER,
+			light_parts = true,   -- issue #267: the drives' lights are entities (a save from before redraws them once)
 		}
 		storage.fork_me_net = s
 	end
@@ -4052,93 +4051,108 @@ local function spill(surface, position, def)
 end
 M.spill = spill
 
---- the drive's lights (and cells, issue #264) are kept as render object ids (numbers)
+--- the names of a drive's (or chest's) light and cell entities, and how many bays their pictures have (the mod-data's
+--- drive view: issue #264, docs/API.md); the cell entity exists only when a graphics mod gave the view cell sprites
+local function part_names(d)
+	local kind = d.chest and "chest" or "drive"
+	local v = mod_data().drive_view
+	local bays = v and v[kind] and v[kind].bays
+	local cell = "me-" .. kind .. "-cell"
+	return "me-" .. kind .. "-light", prototypes.entity[cell] and cell or nil, bays and #bays or 0
+end
+
+local function destroy_part(p)
+	if type(p) == "number" then                          -- (a render object of a save from before issue #267)
+		local obj = rendering.get_object_by_id(p)
+		if obj and obj.valid then obj.destroy() end
+	elseif p and p.valid then
+		p.destroy()
+	end
+end
+
+--- the drive's lights and cells (issue #267: entities; before it render object ids)
 local function clear_leds(d)
 	for _, list in pairs({ d.leds or {}, d.cells or {} }) do
-		for _, id in pairs(list) do
-			local obj = type(id) == "number" and rendering.get_object_by_id(id)
-			if obj and obj.valid then obj.destroy() end
-		end
+		for _, p in pairs(list) do destroy_part(p) end
 	end
 	d.leds, d.led_state, d.cells, d.cell_kinds = {}, {}, nil, nil
 end
 
---- issue #264: the view of a drive (or a chest): { bays = { {x, y} per slot }, light = {x, y, w, h}, cells = nil or
---- { item = sprite, fluid = sprite, w, h } }, px of its 64 px picture from the top left
-local function drive_view(d)
-	local v = mod_data().drive_view
-	return v and v[d.chest and "chest" or "drive"]
+local function new_part(e, name, variation)
+	local p = e.surface.create_entity{ name = name, position = e.position, force = e.force, create_build_effect_smoke = false }
+	if p then
+		p.destructible = false
+		p.graphics_variation = variation
+	end
+	return p
 end
 
---- an offset from the entity's center, in tiles, of a point given in px of its picture
-local function view_offset(x, y) return { x / VIEW_PX - 0.5, y / VIEW_PX - 0.5 } end
-
---- the lights of a drive: one rectangle per cell, colored by its fill state. Issue #5: a light is created when a cell
---- goes in, destroyed when it goes out and only recolored when the cell's state changes (d.led_state[slot]); every
---- other redraw request costs one state check per slot.
+--- the lights of a drive: one per cell, by its fill state, and with a graphics mod's view the cell itself. Issue #5: a
+--- light is made when a cell goes in, destroyed when it goes out and only changed when the cell's state changes
+--- (d.led_state[slot]); every other redraw request costs one state check per slot. Issue #267: the first time a drive
+--- record draws (a new drive, a clone, a save from before) the parts on its tile go first: a clone's copies of its
+--- source's parts, the render objects of before.
 local function draw_leds(s, d)
 	local e = d.entity
 	if not e.valid then clear_leds(d) return end
+	local light_name, cell_name, bays = part_names(d)
+	if not d.parts then
+		clear_leds(d)
+		local names = { light_name, cell_name }
+		for _, p in pairs(e.surface.find_entities_filtered{ name = names, position = e.position, radius = 0.01 }) do p.destroy() end
+		d.parts = true
+	end
 	d.leds = d.leds or {}
 	d.led_state = d.led_state or {}
-	local view = drive_view(d)
-	local cells = view and view.cells
 	for slot = 1, drive_slots() do
 		local cell = d.slots[slot]
-		local bay = view and view.bays[slot]
-		local id = d.leds[slot]
-		local obj = type(id) == "number" and rendering.get_object_by_id(id) or nil
-		if obj and not obj.valid then obj = nil end
-		--- issue #264: the cell itself, when a graphics mod gives sprites for it (under the light: drawn first)
-		local kind = cell and cells and bay and (fluid_cell(cell_spec(cell.name) or {}) and "fluid" or "item") or nil
-		local cid = d.cells and d.cells[slot]
-		if (d.cell_kinds and d.cell_kinds[slot]) ~= kind then
-			local cobj = type(cid) == "number" and rendering.get_object_by_id(cid)
-			if cobj and cobj.valid then cobj.destroy() end
-			d.cells, d.cell_kinds = d.cells or {}, d.cell_kinds or {}
-			d.cells[slot], d.cell_kinds[slot] = nil, kind
-			if kind then
-				d.cells[slot] = rendering.draw_sprite{ sprite = cells[kind], surface = e.surface,
-					target = { entity = e, offset = view_offset(bay.x + cells.w / 2, bay.y + cells.h / 2) } }.id
-				if obj then obj.destroy() obj = nil end           -- (the light again on top of the new cell)
+		local light = d.leds[slot]
+		if light and not (type(light) ~= "number" and light.valid) then destroy_part(light) light = nil end
+		if cell and slot <= bays then
+			--- issue #264: the cell itself, when a graphics mod gives sprites for it
+			local kind = cell_name and (fluid_cell(cell_spec(cell.name) or {}) and 2 or 1) or nil
+			if (d.cell_kinds and d.cell_kinds[slot]) ~= kind then
+				d.cells, d.cell_kinds = d.cells or {}, d.cell_kinds or {}
+				destroy_part(d.cells[slot])
+				d.cells[slot] = kind and new_part(e, cell_name, (slot - 1) * 2 + kind) or nil
+				d.cell_kinds[slot] = kind
 			end
-		end
-		if cell and bay then
 			local st = cell_state(cell)
 			if d.chest and not CH.powered(s, e.unit_number) then st = "off" end   -- (issue #229: AE2's black LED)
-			local color = st == "off" and CHEST_LED.off or st == "full" and LED_RED or st == "high" and LED_ORANGE or LED_GREEN
-			if not obj then
-				local l = view.light
-				d.leds[slot] = rendering.draw_rectangle{
-					color = color, filled = true, surface = e.surface,
-					left_top = { entity = e, offset = view_offset(bay.x + l.x, bay.y + l.y) },
-					right_bottom = { entity = e, offset = view_offset(bay.x + l.x + l.w, bay.y + l.y + l.h) },
-				}.id
+			local variation = (slot - 1) * 4 + LIGHT_STATE[st]
+			if not light then
+				d.leds[slot] = new_part(e, light_name, variation)
 			elseif d.led_state[slot] ~= st then
-				obj.color = color
+				light.graphics_variation = variation
 			end
 			d.led_state[slot] = st
 		else
-			if obj then obj.destroy() end
+			destroy_part(light)
 			d.leds[slot], d.led_state[slot] = nil, nil
+			if d.cells and d.cells[slot] then
+				destroy_part(d.cells[slot])
+				d.cells[slot], d.cell_kinds[slot] = nil, nil
+			end
 		end
 	end
 end
 
---- (tests, issue #264) what a drive or chest shows per slot: { [slot] = { light = { left_top, right_bottom, color },
---- cell = { sprite, offset } } }
+--- (tests, issues #264, #267) what a drive or chest shows per slot: { [slot] = { light = { name, variation, position },
+--- cell = { name, variation, position } } }
 function M.drive_lights_of(entity)
 	local s = storage.fork_me_net
 	local d = s and s.drives and entity and entity.valid and s.drives[entity.unit_number]
 	if not d then return nil end
 	local out = {}
 	for slot = 1, drive_slots() do
-		local l = d.leds and d.leds[slot] and rendering.get_object_by_id(d.leds[slot])
-		local c = d.cells and d.cells[slot] and rendering.get_object_by_id(d.cells[slot])
-		if (l and l.valid) or (c and c.valid) then
+		local l = d.leds and d.leds[slot]
+		local c = d.cells and d.cells[slot]
+		l = type(l) ~= "number" and l and l.valid and l or nil
+		c = type(c) ~= "number" and c and c.valid and c or nil
+		if l or c then
 			out[slot] = {
-				light = l and l.valid and { left_top = l.left_top.offset, right_bottom = l.right_bottom.offset, color = l.color } or nil,
-				cell = c and c.valid and { sprite = c.sprite, offset = c.target.offset } or nil,
+				light = l and { name = l.name, variation = l.graphics_variation, position = l.position } or nil,
+				cell = c and { name = c.name, variation = c.graphics_variation, position = c.position } or nil,
 			}
 		end
 	end
@@ -4364,6 +4378,10 @@ function M.slow_step()
 	end
 	refresh_screens(s)
 	CH.power_step(s)
+	if not s.light_parts then                                      -- issue #267: the lights of a save from before
+		s.light_parts = true
+		for unit in pairs(s.drives) do s.dirty[unit] = true end
+	end
 	local n = 0
 	for unit in pairs(s.dirty) do
 		if n >= LEDS_PER_STEP_N then break end
