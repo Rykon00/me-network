@@ -114,7 +114,8 @@ ME.add_item{ name = "me-drive", icon = HD_ICON .. "me-drive.png", icon_size = 64
 --- (housing: 2 quartz glass, 3 redstone, 2 iron, a copper; components: 1k 4 redstone, 4 certus quartz, a logic processor; 4k ...
 --- 256k three of the tier below, a calculation processor, a quartz glass and 4 redstone (4k), glowstone (16k, 64k) or sky stone
 --- dust (256k))
-ME.add_item{ name = "basic-storage-housing", subgroup = "fork-me-cells", order = "a0",
+ME.add_item{ name = "basic-storage-housing", icon = HD_ICON .. "basic-storage-housing.png", icon_size = 64,   -- (issue #221)
+	subgroup = "fork-me-cells", order = "a0",
 	recipe = { ingredients = I{ "plastic-bar", 2, "copper-cable", 3, "iron-plate", 2, "copper-plate", 1 }, energy_required = 2 } }
 local COMPONENTS = {
 	{ "1k",   I{ "copper-cable", 4, "stone", 4, "electronic-circuit", 1 } },
@@ -124,7 +125,8 @@ local COMPONENTS = {
 	{ "256k", I{ "me-64k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
 }
 for i, c in ipairs(COMPONENTS) do
-	ME.add_item{ name = "me-" .. c[1] .. "-storage-component", subgroup = "fork-me-cells", order = "a" .. i,
+	ME.add_item{ name = "me-" .. c[1] .. "-storage-component", icon = HD_ICON .. "me-" .. c[1] .. "-storage-component.png",
+		icon_size = 64, subgroup = "fork-me-cells", order = "a" .. i,                              -- (issue #221)
 		recipe = { ingredients = c[2], energy_required = 2 * i } }
 end
 

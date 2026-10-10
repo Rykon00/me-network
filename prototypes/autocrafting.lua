@@ -62,7 +62,8 @@ ME.add_item{
 --- issue #80: a cheap blank pattern (AE2: quartz glass, certus quartz, iron)
 ME.add_item{
 	name = "me-blank-pattern",
-	icon = ICON_FORK .. "me-blank-pattern.png",
+	icon = ME.hd_icons .. "me-blank-pattern.png",     -- (issue #221)
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "e1",
 	stack_size = 64,
@@ -75,8 +76,8 @@ ME.add_item{
 data:extend({ {
 	type = "item-with-tags",
 	name = "me-encoded-pattern",
-	icon = ICON_FORK .. "me-encoded-pattern.png",
-	icon_size = 32,
+	icon = ME.hd_icons .. "me-encoded-pattern.png",   -- (issue #221)
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "e2",
 	stack_size = 1,

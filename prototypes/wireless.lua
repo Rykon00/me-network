@@ -76,7 +76,8 @@ recipes[#recipes + 1] = "me-wireless-access-point"
 
 ME.add_item{
 	name = "me-wireless-booster",
-	icon = ICON_FORK .. "me-wireless-booster.png",
+	icon = ME.hd_icons .. "me-wireless-booster.png",  -- (issue #221)
+	icon_size = 64,
 	subgroup = "fork-me-wireless",
 	order = "b",
 	stack_size = 64,
@@ -89,7 +90,8 @@ recipes[#recipes + 1] = "me-wireless-booster"
 ME.add_item{
 	type = "item-with-tags",
 	name = "me-wireless-terminal",
-	icon = ICON_FORK .. "me-wireless-terminal.png",
+	icon = ME.hd_icons .. "me-wireless-terminal.png", -- (issue #221)
+	icon_size = 64,
 	subgroup = "fork-me-wireless",
 	order = "c",
 	stack_size = 1,
@@ -116,7 +118,8 @@ recipes[#recipes + 1] = "me-charger"
 --- the equipment module: a battery piece of the armour's grid (the grid charges it, the script pays the window from it)
 ME.add_item{
 	name = "me-wireless-module",
-	icon = ICON_FORK .. "me-wireless-module.png",
+	icon = ME.hd_icons .. "me-wireless-module.png",   -- (issue #221)
+	icon_size = 64,
 	subgroup = "fork-me-wireless",
 	order = "e",
 	stack_size = 10,
@@ -127,7 +130,7 @@ ME.add_item{
 data:extend({ {
 	type = "battery-equipment",
 	name = "me-wireless-module",
-	sprite = { filename = ICON_FORK .. "me-wireless-module.png", width = 32, height = 32, priority = "medium", scale = 2 },
+	sprite = { filename = ME.hd_icons .. "me-wireless-module.png", width = 64, height = 64, priority = "medium" },   -- (2 x 2 cells)
 	shape = { width = 2, height = 2, type = "full" },
 	energy_source = { type = "electric", buffer_capacity = (NUMBERS.module_buffer / 1000000) .. "MJ", input_flow_limit = "2MW",
 		output_flow_limit = "0W", usage_priority = "tertiary" },
