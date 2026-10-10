@@ -15,6 +15,12 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
   AE2's pixels at the size of the others (a 2 x 2 cluster of AE2 controllers, none of them a column or inside block);
 * an icon (64 x 64): an isometric cube, the face in front, the face's frame (its inside in the frame's colour) on the
   top and the right side, shaded;
+* a panel (issue #281, the ME Terminal and the ME Pattern Terminal): AE2 draws a terminal as a 12 x 12 plate on the
+  cable (AbstractPartDisplay: bounds 2..14), so the plate of its 16 px front x3 (36 px) with depth strips of 6 px (the
+  plate is two AE2 pixels thick), centred in the 64 px tile; dark (the frame, its inside on the frame's darkest colour) or
+  lit (AE2's three screen layers over it, tinted in the Fluix colours of AEColor.Transparent: Bright with the white
+  variant, Dark with the medium one, Colored with the black one, each imported as its own file and added to the row with
+  --add-source); a sheet of both side by side for an entity with two variations; and as an icon a slab of the lit plate;
 * a cell piece (issue #264): a rectangle of AE2's cell textures (MEStorageCellTextures.png), mirrored as AE2 draws it on
   a block's front, x3: the cell that me-network draws in a drive bay or the chest's slot (its drive view).
 
@@ -55,6 +61,15 @@ CELL_PIECES = {
     "blocks/cells/chest-cell-item.png": (9, 0, 15, 3),
     "blocks/cells/chest-cell-fluid.png": (9, 4, 15, 7),
 }
+# issue #281: a terminal's three screen layers (blocks/lights/), and their tints: AEColor.Transparent (Fluix) whiteVariant,
+# mediumVariant, blackVariant, as AbstractPartDisplay.renderStatic draws Bright, Dark and Colored
+SCREEN_TINTS = ((0xD7, 0xBB, 0xEC), (0x89, 0x5C, 0xA8), (0x1B, 0x23, 0x44))
+SCREENS = {
+    "terminal": tuple(f"blocks/lights/me-terminal-screen-{n}.png" for n in ("bright", "dark", "colored")),
+    "pattern-terminal": tuple(f"blocks/lights/me-pattern-terminal-screen-{n}.png" for n in ("bright", "dark", "colored")),
+}
+PLATE = (2, 2, 14, 14)      # the plate of a part's 16 px front
+PANEL_DEPTH = 6
 # file inside ae2-textures/graphics/ -> what it becomes (and, for a strip, the file of its lights and their frames; a
 # block or strip of 2 x 2 tiles names the size last)
 MAKE = {
@@ -65,6 +80,12 @@ MAKE = {
     "blocks/me-controller-on.png": ("strip", "blocks/lights/me-controller-lights.png", 12, 2),
     "blocks/me-controller-conflict.png": ("strip", "blocks/lights/me-controller-conflict.png", 1, 2),
     "icons/blocks/me-controller.png": ("icon",),
+    # issue #281: the terminals (the lamp's picture and its two screens; the pattern terminal's two variations)
+    "blocks/me-terminal-off.png": ("panel", None),
+    "blocks/me-terminal-lit.png": ("panel", "terminal"),
+    "blocks/me-pattern-terminal.png": ("panel-sheet", "pattern-terminal"),
+    "icons/blocks/me-terminal.png": ("panel-icon", "terminal"),
+    "icons/blocks/me-pattern-terminal.png": ("panel-icon", "pattern-terminal"),
     **{f"icons/blocks/{i}.png": ("icon",) for i in ICONS},
     **{f: ("piece", box) for f, box in CELL_PIECES.items()},
 }
@@ -185,6 +206,73 @@ def strip(face, lights, frames, n=1):
     return out
 
 
+def tint(img, c):
+    """multiplies the colour of every pixel by `c` (as Minecraft's Tessellator colour does)"""
+    out = img.copy()
+    px = out.load()
+    for y in range(out.height):
+        for x in range(out.width):
+            r, g, b, a = px[x, y]
+            if a:
+                px[x, y] = (r * c[0] // 255, g * c[1] // 255, b * c[2] // 255, a)
+    return out
+
+
+def screen(face, layers):
+    """a terminal's 16 px front: the frame, its inside on the frame's darkest colour, with `layers` (Bright, Dark,
+    Colored) tinted over it; without layers dark"""
+    f = filled(face)
+    for img, c in zip(layers or (), SCREEN_TINTS):
+        f.alpha_composite(tint(img, c))
+    return f
+
+
+def panel(front):
+    """a 64 x 64 picture of a part's plate (PLATE of its 16 px front) x3 with depth strips, centred"""
+    size = (PLATE[2] - PLATE[0]) * K
+    f = front.crop(PLATE).resize((size, size), Image.NEAREST)
+    img = Image.new("RGBA", (size + PANEL_DEPTH, size + PANEL_DEPTH))
+    affine(img, shade(f.crop((size - PANEL_DEPTH, 0, size, size)), 0.72), (size, 0), (PANEL_DEPTH, PANEL_DEPTH), (0, size))
+    affine(img, shade(f.crop((0, size - PANEL_DEPTH, size, size)), 0.5), (0, size), (size, 0), (PANEL_DEPTH, PANEL_DEPTH))
+    img.alpha_composite(f, (0, 0))
+    d = ImageDraw.Draw(img)
+    d.line((size, 0, size, size), fill=CONTOUR)
+    d.line((0, size, size, size), fill=CONTOUR)
+    out = Image.new("RGBA", (TILE, TILE))
+    at = (TILE - size - PANEL_DEPTH) // 2
+    out.alpha_composite(img, (at, at))
+    return contour(out)
+
+
+def slab(front):
+    """a 64 x 64 icon: the plate (PLATE of the 16 px front) upright, seen from the front left, a third of its width
+    deep: the front, and the frame's colour on the top and the right side, shaded"""
+    plate = front.crop(PLATE)
+    w = 36                                    # the front's width; its slant h = w / 2
+    h, t = w // 2, 6                          # t: the depth (x) of the top and the side, rising t / 2
+    big = plate.resize((plate.width * 3, plate.height * 3), Image.NEAREST)
+    edge = frame_colour(plate)
+    img = Image.new("RGBA", (TILE, TILE))
+    x0 = (TILE - w - t) // 2
+    y0 = (TILE - (h + w + t // 2)) // 2 + t // 2
+    side = Image.new("RGBA", (8, 8), edge)
+    affine(img, side, (x0 + t, y0 - t // 2), (w, h), (-t, t // 2))                 # the top
+    affine(img, shade(side, 0.6), (x0 + w, y0 + h), (t, -t // 2), (0, w))          # the right side
+    affine(img, shade(big, 0.92), (x0, y0), (w, h), (0, w))                        # the front
+    return contour(img)
+
+
+def frame_colour(img):
+    """the most common opaque colour of the outermost ring"""
+    px = img.load()
+    ring = {}
+    for y in range(img.height):
+        for x in range(img.width):
+            if min(x, y, img.width - 1 - x, img.height - 1 - y) == 0 and px[x, y][3] == 255:
+                ring[px[x, y]] = ring.get(px[x, y], 0) + 1
+    return max(ring, key=ring.get)
+
+
 def make(name, how):
     """the made image of `name`, or None when it is made already (not a 16 x 16 face any more)"""
     path = GRAPHICS / name
@@ -202,6 +290,35 @@ def make(name, how):
         piece = face.crop((x0, y0, x1, y1)).transpose(Image.FLIP_LEFT_RIGHT)
         return piece.resize((piece.width * K, piece.height * K), Image.NEAREST), \
             f"cell piece: x {x0}..{x1 - 1}, y {y0}..{y1 - 1} of the texture, mirrored (as AE2 draws it on a front), x3"
+    if how[0].startswith("panel"):
+        layers = None
+        if how[1]:
+            layers = []
+            for f in SCREENS[how[1]]:
+                img = Image.open(GRAPHICS / f).convert("RGBA")
+                if img.size != (FACE, FACE):
+                    sys.exit(f"ae2_blocks: ae2-textures/graphics/{f} is {img.size[0]} x {img.size[1]}, expected {FACE} x {FACE}")
+                layers.append(img)
+        tints = "Bright, Dark, Colored tinted #D7BBEC, #895CA8, #1B2344 (AE2's Fluix colours)"
+        if how[0] == "panel-icon":
+            return slab(screen(face, layers)), ("icon: the lit plate (x 2..13, y 2..13 of the frame, its inside on the "
+                                                f"frame's darkest colour, the screen layers {tints}) as an upright slab "
+                                                "seen from the front left, the frame's colour on the top and the side, "
+                                                "shaded, a contour, 64 x 64")
+        if how[0] == "panel-sheet":
+            out = Image.new("RGBA", (2 * TILE, TILE))
+            out.alpha_composite(panel(screen(face, None)), (0, 0))
+            out.alpha_composite(panel(screen(face, layers)), (TILE, 0))
+            return out, ("panel sheet: dark (the plate x 2..13, y 2..13 of the frame, its inside on the frame's darkest "
+                         f"colour) and lit (the screen layers {tints} over it), each x3 with depth strips of 6 px and a "
+                         "contour, centred in 64 x 64, side by side")
+        if layers:
+            return panel(screen(face, layers)), ("lit panel: the plate x 2..13, y 2..13 of the frame, its inside on the "
+                                                 f"frame's darkest colour, the screen layers {tints}, x3 with depth "
+                                                 "strips of 6 px and a contour, centred in 64 x 64")
+        return panel(screen(face, None)), ("dark panel: the plate x 2..13, y 2..13 of the frame, its inside on the "
+                                           "frame's darkest colour, x3 with depth strips of 6 px and a contour, centred "
+                                           "in 64 x 64")
     if how[0] == "icon":
         return icon(filled(face)), "icon: an isometric cube of the face (holes filled with its darkest colour), its frame " \
             "on the top and the right side (inside in the frame's colour), shaded, a contour, 64 x 64"

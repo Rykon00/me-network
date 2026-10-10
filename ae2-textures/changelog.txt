@@ -8,6 +8,7 @@ Version: 0.2.0
     - The ME Pattern Provider (ME Network issue #269): AE2-Unofficial has no pattern provider block (in GT New Horizons the interface holds the patterns), so it is its purple interface skin, in the world and as a cube icon.
     - Cells in the ME Drive and the ME Chest (ME Network issue #264): a cell in a bay is drawn as AE2-Unofficial draws it, a piece of its cell texture (grey for item cells, blue for fluid cells) with ME Network's light as a single AE2 pixel in it, instead of ME Network's coloured bars. Needs ME Network 0.5.3 or later (its drive view); with an older one the bars stay. The cells and lights are hidden behind a character standing in front of the block like the block's picture (ME Network issue #267).
     - The ME Controller (ME Network issue #278): four AE2-Unofficial controllers side by side, as a 2 x 2 cluster of controllers looks in AE2, and an AE2 cube as its icon. Dark without power, AE2's running lights while its network works, AE2's red pattern when a second controller makes a conflict. The lights need ME Network 0.5.3 or later (its controller view); with an older one the controller stays dark.
+    - The ME Terminal and the ME Pattern Terminal (ME Network issue #281): AE2-Unofficial's terminal panels, smaller than a block as in AE2, at the pixel size of the other blocks. Dark while their network does not work, AE2's screen in its Fluix colours while it does; their icons are the lit panels.
 ---------------------------------------------------------------------------------------------------
 Version: 0.1.0
   Info:
