@@ -29,6 +29,7 @@ local N = require("scripts.fork-me-network")
 local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
 local Sched = require("scripts.fork-me-schedule")
+local Names = require("scripts.fork-me-names")
 
 local M = {}
 
@@ -165,9 +166,12 @@ local KEEP_LISTS = 16
 --- The entries of the storage grid: the items, then the fluids (key "fluid/<name>", fluid = true), each filtered
 --- by the search and sorted by amount or name. `kind`: "all" (default), "items" or "fluids". Issue #50, lever 8: the
 --- same table as the last call while the network's contents did not change (do not change it). `fresh` (tests, the
---- benchmark): made from nothing, as at a first refresh, and not kept.
-function M.entries(net, filter, sort, kind, fresh)
-	filter = (filter or ""):lower():gsub("%s+", "-")
+--- benchmark): made from nothing, as at a first refresh, and not kept. Issue #295: `index` is the player whose
+--- translated names the search matches too (a kept list of a search is the player's, of the version of their names).
+function M.entries(net, filter, sort, kind, fresh, index)
+	local lower
+	filter, lower = Names.search(filter)
+	local names = filter ~= "" and Names.names_of(index) or nil
 	local usable = N.usable(net) and true or false
 	local per = lists[net]
 	if not per then
@@ -175,6 +179,7 @@ function M.entries(net, filter, sort, kind, fresh)
 		lists[net] = per
 	end
 	local id = tostring(sort) .. "|" .. tostring(kind) .. "|" .. filter
+	if names then id = id .. "|" .. index .. "@" .. Names.version(index) end
 	local last = not fresh and per.of[id] or nil
 	if last and last.cver == net.cver and last.usable == usable then
 		list_stats.kept = list_stats.kept + 1
@@ -189,7 +194,7 @@ function M.entries(net, filter, sort, kind, fresh)
 	if usable then
 		for key, count in pairs(net.items) do
 			local i = info_of(key)
-			if i.ok and (filter == "" or i.name:find(filter, 1, true)) then
+			if i.ok and Names.matches(names, i.fluid and "fluid" or "item", i.name, filter, lower) then
 				if i.fluid then
 					if kind ~= "items" then liquids[key] = { key = key, name = i.name, count = count, fluid = true } end
 				elseif kind ~= "fluids" then
@@ -490,6 +495,7 @@ local function open(player, entity)
 	local chest = N.kind_of(entity.name) == "chest"
 	local _, content = G.open_window(player, "terminal", chest and { "entity-name.me-chest" } or { "fork-me-terminal.title" },
 		{ unit = entity.unit_number })
+	Names.ensure(player)                                          -- (issue #295: the names for the search)
 	local st = state()[player.index]
 	if not (st and st.entity == entity) then
 		st = { entity = entity, filter = "", sort = "count", kind = "all", amount = 1, tab = 1 }
@@ -527,7 +533,7 @@ M.open = open
 
 local function refresh_storage(player, st, frame, net)
 	local status, grid = G.find(frame, "fork_me_status"), G.find(frame, "fork_me_grid")
-	local items = M.entries(net, st.filter, st.sort, st.kind)
+	local items = M.entries(net, st.filter, st.sort, st.kind, nil, player.index)
 	local n = math.min(#items, MAX_BUTTONS)
 	local sort, kind = st.sort or "count", st.kind or "all"
 	--- What the grid shows is kept in storage (every peer sets the same buttons) and compared entry by entry. Issue #50,
@@ -580,15 +586,19 @@ local function refresh_storage(player, st, frame, net)
 	end
 end
 
-local function refresh_crafting(st, frame, net)
+local function refresh_crafting(st, frame, net, index)
 	local total, free, _, slots = autocraft.cpu_summary(net)
 	local keys, ignored = autocraft.craftable(net)
 	G.find(frame, "fork_me_craft_info").caption = { "fork-me-craft.info", total, free, #keys, ignored.total or 0,
 		autocraft.ignored_list(ignored), slots }
-	local filter = (st.filter or ""):lower():gsub("%s+", "-")
+	local filter, lower = Names.search(st.filter)
+	local names = filter ~= "" and Names.names_of(index) or nil      -- (issue #295: the names the player sees)
 	local shown, sig = {}, {}
 	for _, key in pairs(keys) do
-		if (filter == "" or key:find(filter, 1, true)) and #shown < MAX_CRAFT_BUTTONS then
+		local fluid = key:sub(1, 6) == "fluid/"
+		local name = fluid and key:sub(7) or N.parse_key(key)
+		if (filter == "" or key:find(filter, 1, true) or Names.matches(names, fluid and "fluid" or "item", name, filter, lower))
+			and #shown < MAX_CRAFT_BUTTONS then
 			local d = autocraft.describe(key)
 			if d then
 				local count = d.fluid and N.count_key(net, key) or N.count(net, key, "normal")
@@ -800,7 +810,7 @@ function M.refresh(player, frame)
 	local tab = TABS[tabs.selected_tab_index or 1]
 	st.tab = tabs.selected_tab_index
 	if tab == "storage" then refresh_storage(player, st, frame, net)
-	elseif tab == "crafting" then refresh_crafting(st, frame, net)
+	elseif tab == "crafting" then refresh_crafting(st, frame, net, player.index)
 	elseif tab == "jobs" then refresh_jobs(st, frame, net)
 	else refresh_cells(st, frame, net) end
 	return true
@@ -828,6 +838,11 @@ G.window("terminal", { open = open, refresh = function(player, frame) return M.r
 --------------------------------------------------------------------------------
 
 local function st_of(player) return state()[player.index] end
+
+--- issue #295: a player's names arrived: an open window searches by them
+Names.on_done[#Names.on_done + 1] = function(player)
+	if G.window_of(player) then G.refresh_one(player) end
+end
 
 G.on("term_search", function(event, player, el)
 	if event.name ~= defines.events.on_gui_text_changed then return end
@@ -1006,9 +1021,9 @@ remote.add_interface("gregtorio-me-terminal", {
 	end,
 	--- the grid's entries for a search text, a sort ("count" or "name") and a kind ("all", "items", "fluids")
 	--- `fresh` (tests, the benchmark): made from nothing, as at a first refresh, and not kept
-	entries = function(terminal, filter, sort, kind, fresh)
+	entries = function(terminal, filter, sort, kind, fresh, index)
 		local net = network(terminal)
-		return net and M.entries(net, filter, sort, kind, fresh) or {}
+		return net and M.entries(net, filter, sort, kind, fresh, index) or {}
 	end,
 	--- issue #50, lever 8: { kept, resorted, sorted } since the load: lists given back unchanged, made from the last one, sorted
 	--- with table.sort after too many moves
@@ -1129,6 +1144,7 @@ script.on_event(defines.events.on_player_removed, function(event)
 	G.forget_player(event.player_index)                                                          -- (issue #179: parked items, buffer)
 	local w = storage.fork_me_wireless                                                           -- (the wireless link and mode)
 	if w and w.players then w.players[event.player_index] = nil end
+	Names.forget(event.player_index)                                                             -- (issue #295: the names)
 end)
 
 return M

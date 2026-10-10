@@ -566,6 +566,42 @@ function me_terminal_test()
 	expect(#all >= 2 and all[1].name == "iron-plate", "sort by amount: " .. serpent.line(all[1]))
 	local by_name = remote.call(TERM, "entries", t, "", "name")
 	expect(by_name[1].name <= by_name[#by_name].name and by_name[1].name == "copper-plate", "sort by name: " .. serpent.line(by_name[1]))
+	--- issue #295: the search matches the name the player sees (runtimemod/data.lua: zz-devcheck-renamed-item is shown as
+	--- "Fancy Gadget"). The harness has no player, so the names of player 1 are set as if its translations had arrived.
+	local GUI = "gregtorio-me-gui"
+	local RN = "zz-devcheck-renamed-item"
+	remote.call(NET, "insert", t, RN, 3)
+	local function term_has(text, index)
+		for _, e in pairs(remote.call(TERM, "entries", t, text, "count", nil, nil, index)) do if e.name == RN then return true end end
+		return false
+	end
+	local function picker_has(text, index)
+		for _, e in pairs(remote.call(GUI, "picker_entries", { item = true }, text, nil, index)) do if e.name == RN then return true end end
+		return false
+	end
+	expect(not term_has("fancy gadget", 1) and not picker_has("fancy gadget", 1), "the translated name matched before it arrived")
+	expect(term_has("zz-devcheck-renamed", 1) and picker_has("devcheck renamed", 1), "the prototype name does not match (before)")
+	remote.call(GUI, "names_set", 1, { ["item/" .. RN] = "Fancy Gadget" })
+	expect(term_has("fancy gadget", 1) and term_has("Gadget", 1) and picker_has("Fancy gadget", 1) and picker_has("fancy", 1),
+		"the translated name does not match: terminal " .. tostring(term_has("fancy gadget", 1)) .. ", picker "
+		.. tostring(picker_has("Fancy gadget", 1)))
+	expect(term_has("zz-devcheck-renamed", 1) and picker_has("devcheck renamed", 1), "the prototype name does not match (after)")
+	expect(not term_has("fancy gadget", 2) and not picker_has("fancy gadget", 2) and not term_has("fancy gadget"),
+		"another player's (or no player's) search matched player 1's names")
+	expect(not term_has("gadget fancy", 1), "a search text that is no part of the name matched")
+	--- the arrival of the names (on_string_translated): a name per answer, an untranslated one left out, another mod's
+	--- request ignored, the player's names complete (version up) with the last one
+	remote.call(GUI, "names_pending", 3, { [101] = "item/" .. RN, [102] = "item/iron-plate", [103] = "fluid/water" })
+	remote.call(GUI, "names_translated", { player_index = 3, id = 101, result = "Fancy Gadget", translated = true })
+	remote.call(GUI, "names_translated", { player_index = 3, id = 999, result = "Someone Else's", translated = true })
+	remote.call(GUI, "names_translated", { player_index = 3, id = 102, result = "", translated = false })
+	local v0 = remote.call(GUI, "names_version", 3)
+	remote.call(GUI, "names_translated", { player_index = 3, id = 103, result = "Wasser", translated = true })
+	local n3 = remote.call(GUI, "names_of", 3) or {}
+	expect(n3["item/" .. RN] == "fancy gadget" and n3["fluid/water"] == "wasser" and n3["item/iron-plate"] == nil and v0 == 0
+		and remote.call(GUI, "names_version", 3) == 1 and term_has("fancy", 3),
+		"the names as they arrive: " .. serpent.line(n3) .. " version " .. v0 .. " -> " .. remote.call(GUI, "names_version", 3))
+	remote.call(NET, "extract", t, RN, 3)
 	--- what cannot be stored: spoiling items, blueprints
 	local spoiling
 	for name, p in pairs(prototypes.item) do

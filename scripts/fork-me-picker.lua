@@ -18,6 +18,7 @@
 --------------------------------------------------------------------------------
 
 local G = require("scripts.fork-me-gui")
+local Names = require("scripts.fork-me-names")
 local N = require("scripts.fork-me-network")
 
 local M = {}
@@ -124,6 +125,7 @@ local function catalog_of()
 end
 
 --- the search text as the terminal's search takes it: lower case, spaces as dashes, matched against the prototype name
+--- (issue #295: and as it is against the name the player sees, Names.matches)
 local function normal(text)
 	return ((text or ""):lower():gsub("%s+", "-"))
 end
@@ -145,15 +147,17 @@ local function groups_for(kinds)
 end
 
 --- the entries the picker lists: { { kind, name, group } } of the allowed kinds, in the game's order, whose name
---- contains the search text. `group` (a name): only that group's. For tests and the window.
-function M.entries(kinds, filter, group)
-	filter = normal(filter)
+--- contains the search text (issue #295: the prototype name, or the translated name of player `index`). `group` (a
+--- name): only that group's. For tests and the window.
+function M.entries(kinds, filter, group, index)
+	local dashed, lower = Names.search(filter)
+	local names = Names.names_of(index)
 	local out = {}
 	for _, g in ipairs(catalog_of()) do
 		if group == nil or g.name == group then
 			for _, s in ipairs(g.subs) do
 				for _, e in ipairs(s.list) do
-					if kinds[e.kind] and (filter == "" or e.name:find(filter, 1, true)) then
+					if kinds[e.kind] and Names.matches(names, e.kind, e.name, dashed, lower) then
 						out[#out + 1] = { kind = e.kind, name = e.name, group = g.name }
 					end
 				end
@@ -202,14 +206,15 @@ local function fill(frame)
 	local body = G.find(frame, "fork_me_pk_body")
 	if not body then return end
 	body.clear()
-	local filter = normal(t.filter)
+	local filter, lower = Names.search(t.filter)
+	local names = Names.names_of(frame.player_index)               -- (issue #295: the names the player sees)
 	local shown, more = 0, false
 	for _, g in ipairs(groups_for(t.kinds)) do
 		if filter ~= "" or g.name == t.group then
 			for _, s in ipairs(g.subs) do
 				local tbl
 				for _, e in ipairs(s.list) do
-					if t.kinds[e.kind] and (filter == "" or e.name:find(filter, 1, true)) then
+					if t.kinds[e.kind] and Names.matches(names, e.kind, e.name, filter, lower) then
 						if shown >= MAX_SHOWN then more = true break end
 						shown = shown + 1
 						tbl = tbl or body.add{ type = "table", column_count = COLUMNS, style = "filter_slot_table" }
@@ -252,12 +257,22 @@ local function sync(frame)
 	if ok then ok.enabled = t.name ~= nil end
 end
 
+--- issue #295: a player's names arrived: an open picker lists by them
+Names.on_done[#Names.on_done + 1] = function(player)
+	local frame = picker_of(player)
+	if frame then
+		fill(frame)
+		sync(frame)
+	end
+end
+
 --- Open the picker for `player`. `spec`: { callback = a name given to on_confirm, data = what the callback gets back (plain
 --- data), kinds = { item = bool, fluid = bool } (what can be chosen), preset = { kind, name, quality } (what is chosen
 --- at first, optional), quality = false (the place takes no quality: no quality row, the choice has none), title = a
 --- LocalisedString }. Returns false when no kind is allowed.
 function M.open(player, spec)
 	M.close(player)
+	Names.ensure(player)                                          -- (issue #295: the names for the search)
 	local kinds = { item = spec.kinds.item and true or false, fluid = spec.kinds.fluid and true or false }
 	if not (kinds.item or kinds.fluid) then return false end
 	local t = { callback = spec.callback, data = spec.data or {}, kinds = kinds, filter = "", quality = "normal",

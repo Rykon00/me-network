@@ -39,6 +39,7 @@ local io = require("scripts.fork-me-io")
 local sbus = require("scripts.fork-me-storagebus")
 local bench = require("scripts.fork-me-workbench")
 local picker = require("scripts.fork-me-picker")
+local Names = require("scripts.fork-me-names")
 local terminal = require("scripts.fork-me-terminal")
 
 local M = {}
@@ -1654,7 +1655,13 @@ remote.add_interface("gregtorio-me-gui", {
 	workbench_set = function(entity, index, kind, name, quality) return M.workbench_set(entity, index, kind, name, quality) end,
 	workbench_clear_slot = function(entity, index) return M.workbench_clear_slot(entity, index) end,
 	picker_groups = function(kinds) return picker.group_names(kinds) end,
-	picker_entries = function(kinds, filter, group) return picker.entries(kinds, filter, group) end,
+	picker_entries = function(kinds, filter, group, index) return picker.entries(kinds, filter, group, index) end,
+	--- issue #295: a player's translated names as if they had arrived (the harness has no player), and what they hold
+	names_set = function(index, names) Names.set_names(index, names) end,
+	names_of = function(index) return Names.names_of(index) end,
+	names_version = function(index) return Names.version(index) end,
+	names_pending = function(index, pending) Names.set_pending(index, pending) end,
+	names_translated = function(event) Names.on_translated(event) end,
 	workbench_qualities = function() return picker.qualities() end,
 	--- issue #291: how many quality buttons the picker puts in a row (`n` qualities, with or without the temperature field)
 	picker_quality_columns = function(n, temperature) return picker.quality_columns(n, temperature) end,

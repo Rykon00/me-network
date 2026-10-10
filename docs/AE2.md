@@ -159,7 +159,8 @@ slot: the source slot's partition, or none) and by cloning.
 ## ME Terminal
 
 Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
-fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs, and four
+fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs (it matches the
+name you see in your language, issue #295, and the internal name), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
 * **Storage:** sort (by amount or by name) and **Show: all / items / fluids**. **Left click** an item: a stack into
@@ -1506,7 +1507,9 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
 * Network storage (issue #68): no channels, no fluid wagons on the storage bus, no cards on the import and export bus
   and the ME Interface (capacity, speed, fuzzy, inverter, redstone and crafting card: a follow-up of me-network issue
-  #17); the terminal search matches internal item names only; spoiling items, items with an inventory and damaged items cannot be stored. Old
+  #17); the search of the terminal and the picker matches the shown names (issue #295) only once your client has
+  translated them, a few ticks after the first terminal or picker opens (before that, and for a name your language
+  lacks, the internal name; upper and lower case are told apart in ASCII letters only); spoiling items, items with an inventory and damaged items cannot be stored. Old
   ghosts of ME blocks disappear when an old save is loaded (the game removes them before any script runs).
 * The ME windows cannot be opened in the headless test (no player): their data and set functions are tested,
   building the windows, the clicks and the replacement of the game's windows are checked by hand (click-through

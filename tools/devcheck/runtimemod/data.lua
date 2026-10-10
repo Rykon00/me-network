@@ -100,6 +100,11 @@ do
 	data:extend({ { type = "recipe-category", name = "zz-devcheck-fixed" }, m, r("zz-devcheck-fixed"), r("zz-devcheck-unfixed") })
 end
 
+--- me-network issue #295: an item whose name the player sees differs from its prototype name (as Gregtorio's renamed
+--- items), for the search of the terminal and the picker (control.lua, the terminal test); with Gregtorio too
+data:extend({ { type = "item", name = "zz-devcheck-renamed-item", localised_name = { "", "Fancy Gadget" },
+	icon = "__base__/graphics/icons/iron-gear-wheel.png", stack_size = 50, subgroup = "intermediate-product" } })
+
 --- me-network issue #264: stand-in sprites for a cell in a drive bay (what a graphics mod gives in the drive view), so the
 --- runtime test (netpower.lua) sees the cells drawn; me-network's own view has none (with Gregtorio too: before its return)
 data:extend({
