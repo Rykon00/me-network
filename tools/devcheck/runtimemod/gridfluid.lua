@@ -5,8 +5,8 @@
 --- 0.123456, would be delivered short: it rounds up to 0.123457).
 ---   * "From recipe" in the pattern editor gives 14.4 and 0.123457; the rule over many values: an input's amount is
 ---     delivered at fixed_up of it, never less than the recipe's; an output's never more than the recipe gives;
----   * a job of each runs in a machine next to a provider and is done, every run started: the network gave
----     fixed_up(14.4) and fixed_up(0.123457) per run.
+---   * a job of each (one after the other: the network has one crafting CPU) runs in a machine next to a provider and is
+---     done, every run started: the network gave fixed_up(14.4) and fixed_up(0.123457) per run.
 --- Loaded by control.lua: require("gridfluid")(H) returns { setup, tick, running }.
 
 local NET, AC, PT = "gregtorio-me-network", "gregtorio-me-autocraft", "gregtorio-me-pattern-terminal"
@@ -102,27 +102,34 @@ return function(H)
 			give_patterns(sc.pb, { { kind = "processing", inputs = eb.inputs, outputs = eb.outputs } }, problems)
 			st.water = remote.call(NET, "insert_fluid", t, "water", 1000)
 			expect(st.water == 1000, "water into the network: " .. tostring(st.water))
-			st.ja = remote.call(AC, "start", t, "zz-devcheck-grid-token-a", RUNS_A)
-			st.jb = remote.call(AC, "start", t, "zz-devcheck-grid-token-b", RUNS_B)
-			expect(st.ja and st.jb, "the jobs did not start: " .. tostring(st.ja) .. ", " .. tostring(st.jb))
 			if #problems > 0 then return finish() end
-			st.started = tick
-			return
 		end
 
-		local ja, jb = remote.call(AC, "job", st.ja), remote.call(AC, "job", st.jb)
+		--- the jobs one after the other: start, wait until it ended
 		local function over(j) return not j or j.status == "done" or j.status == "failed" or j.status == "cancelled" end
-		if not (over(ja) and over(jb)) then
-			if tick - st.started > TIMEOUT then
-				expect(false, "the jobs did not end in " .. TIMEOUT .. " ticks: " .. serpent.line(ja and ja.steps) .. " "
-					.. serpent.line(jb and jb.steps) .. "; machine A's water " .. serpent.line(sc.ma.fluidbox[1])
-					.. ", B's " .. serpent.line(sc.mb.fluidbox[1]))
-				return finish()
+		for _, k in ipairs({ { "ja", "zz-devcheck-grid-token-a", RUNS_A, "ma" }, { "jb", "zz-devcheck-grid-token-b", RUNS_B, "mb" } }) do
+			local field, item, runs, machine = k[1], k[2], k[3], k[4]
+			if not st[field] then
+				local id, why = remote.call(AC, "start", t, item, runs)
+				expect(id, "the job for " .. item .. " did not start: " .. tostring(why))
+				if not id then return finish() end
+				st[field], st.started = id, tick
+				return
 			end
-			return
+			local j = remote.call(AC, "job", st[field])
+			if not over(j) then
+				if tick - st.started > TIMEOUT then
+					expect(false, "the job for " .. item .. " did not end in " .. TIMEOUT .. " ticks: " .. serpent.line(j and j.steps)
+						.. "; the machine's water " .. serpent.line(sc[machine].fluidbox[1]))
+					return finish()
+				end
+				return
+			end
+			if not st[field .. "_checked"] then
+				st[field .. "_checked"] = true
+				expect(j and j.status == "done", "the job for " .. item .. " ended as " .. tostring(j and j.status))
+			end
 		end
-		expect(ja and ja.status == "done" and jb and jb.status == "done", "the jobs ended as " .. tostring(ja and ja.status)
-			.. " and " .. tostring(jb and jb.status))
 		expect(remote.call(NET, "count", t, "zz-devcheck-grid-token-a") == RUNS_A
 			and remote.call(NET, "count", t, "zz-devcheck-grid-token-b") == RUNS_B, "tokens made: "
 			.. remote.call(NET, "count", t, "zz-devcheck-grid-token-a") .. ", " .. remote.call(NET, "count", t, "zz-devcheck-grid-token-b"))
