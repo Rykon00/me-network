@@ -2,8 +2,9 @@
 """Scales the AE2 item icons of the texture mod (issue #247) from 16 x 16 to the size of the me-network icon they
 replace: nearest neighbour by an integer factor, so every pixel becomes a block of equal pixels and no new pixel
 value appears. Palette images are written as RGBA with the same colours and transparency. Before scaling, the files
-of RECOLOUR get some of their colours swapped for others (issues #250, #251: me-network items that AE2-Unofficial
-has no icon for take the icon of a related AE2-Unofficial item in other colours); every other pixel stays as it is.
+of RECOLOUR get some of their colours swapped for others (issues #250, #251, #294: me-network items that AE2-Unofficial
+has no icon for take the icon of a related AE2-Unofficial item in other colours), in the whole icon or in a box of
+it; every other pixel stays as it is.
 
     python tools/scale_ae2_icons.py            # recolour and scale what is still 16 x 16, record it with --mark-changed
     python tools/scale_ae2_icons.py --check    # only say which files are not at their size yet
@@ -39,7 +40,8 @@ SIZES = {
     "icons/patterns/me-encoded-pattern.png": 32,
 }
 
-# file -> (what it is, {colour of the source: colour it becomes}); each source colour must be in the file
+# file -> (what it is, {colour of the source: colour it becomes}[, (x0, y0, x1, y1): only in this box of the 16 px
+# source, ends excluded]); each source colour must be in the file (in the box)
 # issue #250: a fluid cell is AE2-Unofficial's item cell of its tier with the dark frame and the body in blue (the
 # maintainer's choice, variant C of the preview); the body is the tier's grey, each turned blue at about its brightness
 FRAME_BLUE = {(55, 49, 39): (28, 52, 96)}
@@ -50,24 +52,28 @@ BODY_BLUE = {
     "64k": {(191, 191, 191): (139, 178, 246)},
     "256k": {(216, 216, 216): (158, 201, 255)},
 }
-# issue #251: AE2-Unofficial tells an advanced card by its turquoise stripe (ItemMaterial.AdvCard) where a basic card
-# has a yellow one (ItemMaterial.BasicCard); the interface capacity card is the Capacity Card made advanced
-ADVANCED_STRIPE = {(255, 212, 0): (140, 244, 226)}
+# issue #294 (it replaced #251's turquoise stripe, which made it look like the Pattern Capacity Card): the interface
+# capacity card is AE2-Unofficial's Capacity Card (ItemMaterial.CardCapacity, the basic card's yellow stripe) with its
+# capacity sign in orange, as ME Network's own icon has an orange plus. The sign is the card's darkest colour, which
+# its edge has too, so only inside the face (x 6..14, y 3..12). The orange is dark enough that the sign stays visible
+# on the grey body without colour, and much lighter than the Pattern Capacity Card's dark sign.
+INTERFACE_SIGN = {(55, 49, 39): (200, 80, 0)}
 RECOLOUR = {
     **{f"icons/cells/me-{t}-fluid-storage-cell.png": ("the frame and the body in blue (the fluid cell)",
                                                       {**FRAME_BLUE, **BODY_BLUE[t]}) for t in TIERS},
-    "icons/cards/me-interface-capacity-card.png": ("the yellow stripe of a basic card in the turquoise of an advanced "
-                                                   "card", ADVANCED_STRIPE),
+    "icons/cards/me-interface-capacity-card.png": ("the capacity sign in orange, inside the face (x 6..14, y 3..12)",
+                                                   INTERFACE_SIGN, (6, 3, 15, 13)),
 }
 
 
-def recolour(im, mapping, name):
-    """`im` (RGBA) with the colours of `mapping` swapped, alpha kept"""
+def recolour(im, mapping, name, box=None):
+    """`im` (RGBA) with the colours of `mapping` swapped (only in `box`, if given), alpha kept"""
     im = im.copy()
     px = im.load()
     found = set()
-    for y in range(im.size[1]):
-        for x in range(im.size[0]):
+    x0, y0, x1, y1 = box or (0, 0, im.size[0], im.size[1])
+    for y in range(y0, y1):
+        for x in range(x0, x1):
             r, g, b, a = px[x, y]
             if a and (r, g, b) in mapping:
                 px[x, y] = mapping[(r, g, b)] + (a,)
@@ -88,7 +94,7 @@ def scale(path, size, name):
                  f"expected {SOURCE} x {SOURCE} (to scale to {size}) or {size} x {size}")
     src = im.convert("RGBA")
     if name in RECOLOUR:
-        src = recolour(src, RECOLOUR[name][1], name)
+        src = recolour(src, RECOLOUR[name][1], name, RECOLOUR[name][2] if len(RECOLOUR[name]) > 2 else None)
     out = src.resize((size, size), Image.NEAREST)
     k = size // SOURCE
     for y in range(size):                   # every pixel is its source pixel: nothing new
