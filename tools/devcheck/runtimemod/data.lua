@@ -139,3 +139,14 @@ machine("ev-macerator", "assembling-machine", "assembling-machine-2", { "zz-mace
 machine("hv-chemical-reactor", "assembling-machine", "chemical-plant", { "zz-chemical-reactor" }, 4)
 machine("ev-fluid-extractor", "assembling-machine", "chemical-plant", { "zz-extractor" }, 8)   -- Gregtorio issue #152
 machine("iron-furnace", "furnace", "stone-furnace", { "smelting" }, 2)
+
+--- me-network issue #264: stand-in sprites for a cell in a drive bay (what a graphics mod gives in the drive view), so the
+--- runtime test (netpower.lua) sees the cells drawn; me-network's own view has none
+data:extend({
+	{ type = "sprite", name = "zz-devcheck-drive-cell-item", filename = "__core__/graphics/empty.png", width = 1, height = 1 },
+	{ type = "sprite", name = "zz-devcheck-drive-cell-fluid", filename = "__core__/graphics/empty.png", width = 1, height = 1 },
+})
+local drive_view = data.raw["mod-data"]["fork-me-network"] and data.raw["mod-data"]["fork-me-network"].data.drive_view
+if drive_view then
+	drive_view.drive.cells = { item = "zz-devcheck-drive-cell-item", fluid = "zz-devcheck-drive-cell-fluid", w = 15, h = 6 }
+end

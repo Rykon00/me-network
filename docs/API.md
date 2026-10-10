@@ -104,6 +104,28 @@ legacy CPUs). Gregtorio Continued 0.5.0 makes the recipes of the four old fluid
 blocks itself (not through the API) and keeps loading: they are removed there, and the unified blocks keep the
 recipes Gregtorio gives them. A mod should drop those recipes and unlocks from its own files.
 
+## The drive view (graphics mods)
+
+The script draws a light for each cell in an ME Drive (ten bays) and in the ME Chest (one), and can draw the cell
+itself. Where, is the mod-data `fork-me-network`'s `drive_view` (since issue #264), which a graphics mod that replaces
+the drive's or the chest's picture can set in its `data-final-fixes.lua`:
+
+```lua
+local view = data.raw["mod-data"]["fork-me-network"].data.drive_view
+view.drive = {
+	bays = { { x = 9, y = 6 }, { x = 30, y = 6 }, ... },   -- one per slot (1 and 2 the top row, left and right), top left
+	light = { x = 9, y = 3, w = 3, h = 3 },               -- the light, from a bay's top left
+	cells = { item = "my-cell-sprite", fluid = "my-fluid-cell-sprite", w = 15, h = 6 },   -- optional
+}
+view.chest = { bays = { { x = 18, y = 30 } }, light = { ... }, cells = { ... } }
+```
+
+All numbers are px of the 64 px picture of the drive and the chest (drawn at scale 0.5: 64 px a tile), from its top
+left. `cells` names two sprite prototypes, one for item cells and one for fluid cells, drawn `w` x `h` px at the bay
+(under the light) for every slot that holds a cell; without `cells` only the light is drawn. me-network's own view is
+the geometry of its own pictures and has no `cells`. The light's colour is me-network's (green, orange above 75 %,
+red when full; the chest's dark without power).
+
 ## Runtime
 
 The remote interfaces are `gregtorio-me-network` (storage: `insert`, `extract`, `count`, `contents`,
