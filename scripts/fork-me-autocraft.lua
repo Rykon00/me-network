@@ -2229,7 +2229,14 @@ local function close_lease(s, job, net, lease)
 			local key = key_of(ing)
 			local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
 			local given = lease.given and lease.given[key] or per * lease.runs
-			used = math.min(used, math.floor((given - (back[key] or 0)) / per + 1e-6))
+			local left = back[key] or 0
+			--- issue #270: a lease closes when the machine is idle, that is with less than one run of a fluid left; that
+			--- rest is the pattern's surplus over what the machine's recipe takes (a pattern of 0.123457 or of 15 for a
+			--- recipe of 0.1234564 or 14.4) or the margin, not a run it did not use. Counted as one, the last run was
+			--- handed out again and the machine rejected for the pattern: the job waited for a machine forever. (The
+			--- rest still went back into the pool above.)
+			if ing.type == "fluid" and left < per - FLUID_EPS then left = 0 end
+			used = math.min(used, math.floor((given - left) / per + 1e-6))
 		end
 		used = math.max(0, used)
 		if used < lease.runs then step.issued = step.issued - (lease.runs - used) end

@@ -77,6 +77,9 @@ do
 	end
 	for _, p in pairs(g("a", 14.4)) do data:extend({ p }) end
 	for _, p in pairs(g("b", 0.1234564)) do data:extend({ p }) end
+	--- issue #270: the same amounts for the patterns with a surplus (0.123457 and 15)
+	for _, p in pairs(g("c", 0.1234564)) do data:extend({ p }) end
+	for _, p in pairs(g("d", 14.4)) do data:extend({ p }) end
 end
 
 --- issue #158 (providers.lua): a machine with a fixed recipe and a second recipe of its category
