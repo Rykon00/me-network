@@ -186,6 +186,9 @@ local function state()
 			nlist = {},       -- the units of the members, in the order they joined (a member that leaves is replaced by the last): the sweep
 			                  -- walks it (issue #43); each node keeps its place in `li`. Saves before it get it at their first sweep.
 			ext = {},         -- unit -> external cell of a member (storage bus, scripts/fork-me-storagebus.lua)
+			--- the screens of terminals and level maintainers (see "screens"), made when they join (issue #254: a new map has
+			--- them from the start, so a big scene is not drawn at once at its first slow step)
+			screens = {}, screen_list = {}, maintainer_screens = true,
 		}
 		storage.fork_me_net = s
 	end
@@ -343,7 +346,7 @@ local net_cell
 --- issue #229: the ME Chest (its section below the drives)
 local CH = {}
 local take_waits, fire_all_waits
-local screen_made, screen_gone
+local screen_made, screen_gone, has_screen
 
 --- The parts a removal left (issue #38, lever 5). `starts`: the neighbours of the removed member, in order; `total`: the
 --- members the network has left. A search runs from each of them, one member at a time, in turns; two searches that meet
@@ -526,7 +529,7 @@ local function add_node(s, entity, kind)
 	net.nodes[unit] = true
 	net.n = net.n + 1
 	node.net = net.id
-	if kind == "terminal" or kind == "pattern-terminal" then screen_made(s, unit, entity, kind) end
+	if has_screen(kind) then screen_made(s, unit, entity, kind) end
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
 	if #order == 1 and kind ~= "controller" then
@@ -567,7 +570,7 @@ function remove_node_graph(s, unit)
 	local node = s.nodes[unit]
 	if not node then return end
 	s.nodes[unit] = nil
-	if node.kind == "terminal" or node.kind == "pattern-terminal" then screen_gone(s, unit) end
+	if has_screen(node.kind) then screen_gone(s, unit) end
 	local nl, li = s.nlist, node.li
 	if nl and li and nl[li] == unit then                -- the last member takes its place in the sweep list
 		local last = #nl
@@ -1824,91 +1827,228 @@ end
 --- state, and a terminal that joins a network is set at once. Setting a screen that is right already costs one comparison.
 --- The ME Pattern Terminal (issue #130) is an entity with two pictures (graphics variation 1 dark, 2 lit, like the crafting
 --- blocks): its record is `{ variation = true, on }` and it is set the same way.
+--- The ME Level Maintainer (issue #254) is a lamp with a void energy source too, so the game drew it lit all the time: its
+--- whole picture is a screen of the same kind without a light (`{ spr, on }`), lit while its network works and its circuit
+--- condition lets it run, dark otherwise.
 --------------------------------------------------------------------------------
 
-local SCREEN_ON, SCREEN_OFF = "me-terminal-screen-on", "me-terminal-screen-off"
 local SCREEN_LIGHT = { intensity = 0.4, scale = 0.7, color = { 0.7, 0.55, 1 } }
+--- kind -> { lit sprite, dark sprite, light }
+local SCREENS = {
+	terminal = { "me-terminal-screen-on", "me-terminal-screen-off", SCREEN_LIGHT },
+	maintainer = { "me-level-maintainer-screen-on", "me-level-maintainer-screen-off" },
+}
+function has_screen(kind) return SCREENS[kind] ~= nil or kind == "pattern-terminal" end
+--- issue #254: the benchmark's scenes have a level maintainer per ten buses (2000 at 20 000), so the slow step must not
+--- look at every screen every second, and must not sort them (#43: about 7 µs an element). `s.screen_list` holds the
+--- units of `s.screens` in the order they came (a screen that goes is replaced by the last one, each record keeps its
+--- place in `li`), like `s.nlist`. The slow step sets them all only when something they show may have changed: the graph
+--- (`s.version`, kept as `s.screen_version`) or the state of a network (`net.screen_on`, what its screens were last set
+--- to); otherwise only the level maintainers with a circuit condition switched on (`s.screen_cond`, noted when one joins
+--- and when its window or a paste sets the condition, the only ways a maintainer gets one: the lamp's window is replaced).
+--- Derived per load: each condition maintainer's control behaviour (#115: one kept object instead of a new one per read).
+local maintainer_cbs = {}
 
---- sets the screen of terminal `unit` to `on`, drawing it first if it is missing (a save from before, a clone)
+--- the screen list of a save from before issue #254: made once, sorted
+local function screen_list(s)
+	local sl = s.screen_list
+	if sl then return sl end
+	sl = {}
+	for unit in pairs(s.screens) do sl[#sl + 1] = unit end
+	table.sort(sl)
+	for i, unit in ipairs(sl) do s.screens[unit].li = i end
+	s.screen_list = sl
+	return sl
+end
+
+--- the place in the screen list of a new record of `unit` (or the place its old record had)
+local function screen_place(s, sc, unit)
+	if sc and sc.li then return sc.li end
+	local sl = screen_list(s)
+	if sc and sc.li then return sc.li end              -- (a save from before: the list was just made, with this record)
+	sl[#sl + 1] = unit
+	return #sl
+end
+
+--- sets the screen of terminal or level maintainer `unit` to `on`, drawing it first if it is missing (a save from
+--- before, a clone). A screen that shows `on` already costs one comparison.
 local function set_screen(s, unit, entity, on, kind)
 	local list = s.screens
 	local sc = list[unit]
 	if kind == "pattern-terminal" or (sc and sc.variation) then
 		if not (sc and sc.on == on and entity.graphics_variation == (on and 2 or 1)) then
 			entity.graphics_variation = on and 2 or 1
-			list[unit] = { variation = true, on = on }
+			list[unit] = { variation = true, on = on, li = screen_place(s, sc, unit) }
 		end
 		return
 	end
+	if sc and sc.on == on then return end
+	if not entity.valid then return end
+	local def = SCREENS[kind]
 	local spr = sc and sc.spr and rendering.get_object_by_id(sc.spr)
 	local light = sc and sc.light and rendering.get_object_by_id(sc.light)
-	if not (spr and spr.valid and light and light.valid) then
+	if not (spr and spr.valid and (not def[3] or (light and light.valid))) then
 		if spr and spr.valid then spr.destroy() end
 		if light and light.valid then light.destroy() end
 		local surface = entity.surface
-		spr = rendering.draw_sprite{ sprite = on and SCREEN_ON or SCREEN_OFF, target = entity, surface = surface,
+		spr = rendering.draw_sprite{ sprite = on and def[1] or def[2], target = entity, surface = surface,
 			render_layer = "lower-object" }
-		light = rendering.draw_light{ sprite = "utility/light_medium", target = entity, surface = surface,
-			scale = SCREEN_LIGHT.scale, intensity = SCREEN_LIGHT.intensity, color = SCREEN_LIGHT.color, visible = on }
-		list[unit] = { spr = spr.id, light = light.id, on = on }
+		local l = def[3]
+		light = l and rendering.draw_light{ sprite = "utility/light_medium", target = entity, surface = surface,
+			scale = l.scale, intensity = l.intensity, color = l.color, visible = on }
+		list[unit] = { spr = spr.id, light = light and light.id or nil, on = on, li = screen_place(s, sc, unit) }
 		return
 	end
-	if sc.on == on then return end
 	sc.on = on
-	spr.sprite = on and SCREEN_ON or SCREEN_OFF
-	light.visible = on
+	spr.sprite = on and def[1] or def[2]
+	if light then light.visible = on end
 end
 
---- the state a terminal's screen shows now: its network works
-local function screen_state(s, node)
+--- a level maintainer's lamp with a circuit condition switched on: its control behaviour, else nil
+local function condition_of(unit, entity)
+	local cb = maintainer_cbs[unit]
+	if not (cb and cb.valid) then
+		cb = entity.valid and entity.get_control_behavior() or nil
+		maintainer_cbs[unit] = cb
+	end
+	if cb and (cb.circuit_enable_disable or cb.connect_to_logistic_network) then return cb end
+	return nil
+end
+
+--- notes whether level maintainer `unit` has a condition switched on (it joined, or its condition was set)
+local function note_condition(s, unit, entity)
+	maintainer_cbs[unit] = nil
+	s.screen_cond = s.screen_cond or {}
+	s.screen_cond[unit] = condition_of(unit, entity) and true or nil
+end
+
+--- the state a screen shows now: its network works, and a level maintainer's circuit condition lets it run (the lamp's
+--- condition, as fork-me-circuit.lua reads it; it counts only on a circuit network)
+local function screen_state(s, unit, node)
 	local net = s.nets[node.net]
-	return net ~= nil and M.usable(net) and true or false
+	if not (net ~= nil and M.usable(net)) then return false end
+	if s.screen_cond and s.screen_cond[unit] then
+		local cb = condition_of(unit, node.entity)
+		if cb and cb.disabled then return false end
+	end
+	return true
 end
 
 function screen_made(s, unit, entity, kind)
 	if not s.screens then return end                       -- (the first slow step makes them all)
 	local node = s.nodes[unit]
-	set_screen(s, unit, entity, node and node.net and screen_state(s, node) or false, kind or (node and node.kind))
+	kind = kind or (node and node.kind)
+	if kind == "maintainer" then note_condition(s, unit, entity) end
+	set_screen(s, unit, entity, node and node.net and screen_state(s, unit, node) or false, kind)
 end
 
 function screen_gone(s, unit)
-	if s.screens then s.screens[unit] = nil end
+	local sc = s.screens and s.screens[unit]
+	if not sc then return end
+	s.screens[unit] = nil
+	if s.screen_cond then s.screen_cond[unit] = nil end
+	maintainer_cbs[unit] = nil
+	local sl, li = s.screen_list, sc.li
+	if sl and li and sl[li] == unit then                -- the last screen takes its place in the list
+		local last = #sl
+		local moved = sl[last]
+		sl[li] = moved
+		sl[last] = nil
+		local msc = s.screens[moved]
+		if msc then msc.li = li end
+	end
 end
 
---- every screen to its network's state; also the first time on a save from before (one pass over the members)
+--- the screens to their state: all of them when the graph or a network's state changed since the last time, else the
+--- level maintainers with a condition; the first time on a save from before also one pass over the members to make the
+--- screens (and once for the level maintainers of a save from before issue #254, `s.maintainer_screens`)
 local function refresh_screens(s)
-	if not s.screens then
-		s.screens = {}
+	if not s.screens or not s.maintainer_screens then
+		s.screens = s.screens or {}
+		s.maintainer_screens = true
+		screen_list(s)
+		local units = {}
 		for unit, node in pairs(s.nodes) do
-			if (node.kind == "terminal" or node.kind == "pattern-terminal") and node.entity.valid then
-				set_screen(s, unit, node.entity, false, node.kind)
+			if has_screen(node.kind) and node.entity.valid and not s.screens[unit] then units[#units + 1] = unit end
+		end
+		table.sort(units)
+		for _, unit in ipairs(units) do
+			local node = s.nodes[unit]
+			if node.kind == "maintainer" then note_condition(s, unit, node.entity) end
+			set_screen(s, unit, node.entity, false, node.kind)
+		end
+		s.screen_version = nil
+	end
+	local nodes, screens, nets = s.nodes, s.screens, s.nets
+	local ids = {}
+	for id in pairs(nets) do ids[#ids + 1] = id end
+	table.sort(ids)
+	local all = s.screen_version ~= s.version
+	if not all then
+		for _, id in ipairs(ids) do
+			local net = nets[id]
+			if net.screen_on ~= (M.usable(net) and true or false) then all = true break end
+		end
+	end
+	if all then
+		local sl = screen_list(s)
+		local i = 1
+		while i <= #sl do
+			local unit = sl[i]
+			local node = nodes[unit]
+			if node then
+				set_screen(s, unit, node.entity, screen_state(s, unit, node), node.kind)
+				i = i + 1
+			else
+				screen_gone(s, unit)                           -- (the last one took its place: look at it next)
+				if sl[i] == unit then                         -- (a place without its record)
+					local last = #sl
+					sl[i], sl[last] = sl[last], nil
+					local msc = i < last and screens[sl[i]]
+					if msc then msc.li = i end
+				end
+			end
+		end
+		for _, id in ipairs(ids) do nets[id].screen_on = M.usable(nets[id]) and true or false end
+		s.screen_version = s.version
+	elseif s.screen_cond and next(s.screen_cond) then
+		local units = {}
+		for unit in pairs(s.screen_cond) do units[#units + 1] = unit end
+		table.sort(units)
+		for _, unit in ipairs(units) do
+			local node = nodes[unit]
+			if node and screens[unit] then
+				set_screen(s, unit, node.entity, screen_state(s, unit, node), node.kind)
+			else
+				s.screen_cond[unit] = nil
 			end
 		end
 	end
-	local units = {}
-	for unit in pairs(s.screens) do units[#units + 1] = unit end
-	if #units == 0 then return end
-	table.sort(units)
-	for _, unit in ipairs(units) do
-		local node = s.nodes[unit]
-		if node and node.entity.valid then
-			set_screen(s, unit, node.entity, screen_state(s, node), node.kind)
-		else
-			s.screens[unit] = nil
-		end
-	end
 end
 
---- (tests) the state a terminal's screen shows: nil without a screen, else { on, sprite, light, layer, ids } (a lamp terminal) or
---- { on, variation } (a pattern terminal)
+--- (tests) the state a screen shows: nil without a screen, else { on, sprite, light, layer, ids } (a lamp terminal; a level
+--- maintainer without `light`) or { on, variation } (a pattern terminal)
 function M.screen_of(entity)
 	local s = storage.fork_me_net
 	local sc = s and s.screens and entity and entity.valid and s.screens[entity.unit_number]
 	if sc and sc.variation then return { on = sc.on, variation = entity.graphics_variation } end
 	local spr = sc and rendering.get_object_by_id(sc.spr)
-	local light = sc and rendering.get_object_by_id(sc.light)
-	if not (spr and spr.valid and light and light.valid) then return nil end
-	return { on = sc.on, sprite = spr.sprite, light = light.visible, layer = spr.render_layer, ids = { sc.spr, sc.light } }
+	local light = sc and sc.light and rendering.get_object_by_id(sc.light)
+	if not (spr and spr.valid) or (sc.light and not (light and light.valid)) then return nil end
+	return { on = sc.on, sprite = spr.sprite, light = light and light.visible or nil, layer = spr.render_layer,
+		ids = { sc.spr, sc.light } }
+end
+
+--- issue #254: sets the screen of a level maintainer now: its circuit condition was set in its window or pasted, the only
+--- ways it gets one (the lamp's own window is replaced); a change through the circuit network shows within the slow
+--- step's second
+function M.update_screen(entity)
+	local s = storage.fork_me_net
+	local unit = entity and entity.valid and entity.unit_number
+	local node = s and s.screens and unit and s.nodes[unit]
+	if not (node and has_screen(node.kind)) then return end
+	if node.kind == "maintainer" then note_condition(s, unit, entity) end
+	set_screen(s, unit, entity, screen_state(s, unit, node), node.kind)
 end
 
 --- the network an entity is a member of (working or not), nil if it is no member
@@ -4411,12 +4551,13 @@ function M.rebuild()
 		end
 	end
 	for _, node in pairs(s.nodes) do update_cable(s, node) end
-	--- issue #128: a terminal without a screen gets one (the others keep theirs: render objects are not made twice)
+	--- issue #128: a terminal (#254: or level maintainer) without a screen gets one (the others keep theirs: render objects
+	--- are not made twice)
 	if s.screens then
 		for _, unit in ipairs(units) do
 			local node = s.nodes[unit]
-			if node.kind == "terminal" or node.kind == "pattern-terminal" then
-				if s.screens[unit] and not node.entity.valid then s.screens[unit] = nil end
+			if has_screen(node.kind) then
+				if s.screens[unit] and not node.entity.valid then screen_gone(s, unit) end
 				if not s.screens[unit] then screen_made(s, unit, node.entity, node.kind) end
 			end
 		end
@@ -4614,6 +4755,19 @@ remote.add_interface("gregtorio-me-network", {
 			if list[node.li or 0] ~= unit then return false, "member " .. unit .. " is not at its place " .. tostring(node.li) end
 		end
 		if n ~= #list then return false, #list .. " in the list, " .. n .. " members" end
+		return true
+	end,
+	--- tests (issue #254): is the screen list the screens, each once, each record at its place? (true, or false and why)
+	screen_list_ok = function()
+		local s = storage.fork_me_net
+		local list = s and s.screen_list
+		if not list then return true end
+		local n = 0
+		for unit, sc in pairs(s.screens or {}) do
+			n = n + 1
+			if list[sc.li or 0] ~= unit then return false, "screen " .. unit .. " is not at its place " .. tostring(sc.li) end
+		end
+		if n ~= #list then return false, #list .. " in the screen list, " .. n .. " screens" end
 		return true
 	end,
 	--- { ok, status, id, members, controllers, drives, cells, bytes, bytes_total, types, types_total, power } or nil

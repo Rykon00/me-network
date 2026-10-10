@@ -272,6 +272,9 @@ end
 --- `member_power` of the mod-data "fork-me-network"). The lamp's circuit condition (kept on the entity, so the game
 --- copies and blueprints it) switches it on and off. Target, amount and the condition are set in its ME window
 --- (scripts/fork-me-windows.lua), which replaces the lamp's window.
+--- Issue #254: a lamp with a void energy source is always lit, so its own pictures cannot show whether it works. Like the
+--- ME Terminal's (prototypes/network.lua), both are empty and the script draws the whole picture (scripts/fork-me-network.lua,
+--- "screens"): lit while its network works and its condition lets it run, dark otherwise. A ghost of it has no picture.
 --------------------------------------------------------------------------------
 
 ME.add_item{
@@ -301,18 +304,19 @@ maintainer.energy_usage_per_tick = (MAINTAINER_POWER / 1000) .. "kW"
 maintainer.always_on = true
 maintainer.light = nil
 maintainer.light_when_colored = nil
-maintainer.picture_off = { layers = { {
-	filename = ME.hd_entity_path .. "me-level-maintainer-off.png",
-	priority = "high", width = 64, height = 64, scale = 0.5,
-} } }
-maintainer.picture_on = {
-	filename = ME.hd_entity_path .. "me-level-maintainer-on.png",
-	priority = "high", width = 64, height = 64, scale = 0.5,
-}
+maintainer.glow_size = 0
+maintainer.picture_off = util.empty_sprite()
+maintainer.picture_on = util.empty_sprite()
 maintainer.fast_replaceable_group = nil
 maintainer.next_upgrade = nil
 maintainer.localised_description = { "entity-description.me-level-maintainer", tostring(MAINTAINER_POWER / 1000) }
 data:extend({ maintainer })
+data:extend({
+	{ type = "sprite", name = "me-level-maintainer-screen-on", filename = ME.hd_entity_path .. "me-level-maintainer-on.png",
+	  priority = "high", width = 64, height = 64, scale = 0.5 },
+	{ type = "sprite", name = "me-level-maintainer-screen-off", filename = ME.hd_entity_path .. "me-level-maintainer-off.png",
+	  priority = "high", width = 64, height = 64, scale = 0.5 },
+})
 data.raw["mod-data"]["fork-me-network"].data.member_power.maintainer = MAINTAINER_POWER
 data.raw["mod-data"]["fork-me-network"].data.member_power["pattern-terminal"] = PATTERN_TERMINAL_POWER
 
