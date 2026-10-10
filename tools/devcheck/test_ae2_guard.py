@@ -120,6 +120,40 @@ class Guard(unittest.TestCase):
         (self.root / "graphics/entity/drive.png").write_bytes(PNG)
         self.fails("graphics/entity/drive.png is byte-identical to the AE2 source of ae2-textures/graphics/drive/bottom.png")
 
+    # issue #260: a file made from more than one texture of the same checkout
+    SECOND = M.PNG_MAGIC + b"\0\0\0\rIHDR the lights of an AE2 block"
+    SECOND_ROW = dict(changed="yes", note="a block with its lights",
+                      source=ROW["source"] + M.SOURCE_SEP + M.REPOSITORIES[REPO] + "block/drive/drive_lights.png",
+                      source_sha256=SRC_SHA + M.SOURCE_SEP + M.hashlib.sha256(SECOND).hexdigest())
+
+    def test_two_sources_pass(self):
+        self.add(**self.SECOND_ROW).write_bytes(PNG + b"made from both")
+        self.assertEqual(self.guard(), (1, []))
+
+    def test_two_sources_unchanged(self):
+        self.add(**dict(self.SECOND_ROW, changed="no"))
+        self.fails("a file made from several sources is changed: yes")
+
+    def test_two_sources_one_sha(self):
+        self.add(**dict(self.SECOND_ROW, source_sha256=SRC_SHA)).write_bytes(PNG + b"made from both")
+        self.fails("2 sources but 1 SHA-256 values")
+
+    def test_two_sources_still_second_bytes(self):
+        self.add(**self.SECOND_ROW).write_bytes(self.SECOND)
+        self.fails("changed is yes, but the file is the source's bytes")
+
+    def test_copy_of_second_source_outside_folder(self):
+        self.add(**self.SECOND_ROW).write_bytes(PNG + b"made from both")
+        (self.root / "graphics/entity").mkdir(parents=True)
+        (self.root / "graphics/entity/lights.png").write_bytes(self.SECOND)
+        self.fails("graphics/entity/lights.png is byte-identical to the AE2 source of ae2-textures/graphics/drive/bottom.png "
+                   "(src/main/resources/assets/ae2/textures/block/drive/drive_lights.png)")
+
+    def test_second_source_outside_textures(self):
+        self.add(**dict(self.SECOND_ROW, source=ROW["source"] + M.SOURCE_SEP + "src/main/java/Lights.png")
+                 ).write_bytes(PNG + b"made from both")
+        self.fails("source 'src/main/java/Lights.png' is not under src/main/resources/assets/ae2/textures/")
+
     def test_copy_in_other_checkout(self):
         self.add()
         other = self.tmp / "gregtorio"

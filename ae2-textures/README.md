@@ -60,9 +60,9 @@ What the license means for this mod, in short:
 |---|---|
 | `file` | the image's path inside `graphics/` |
 | `repository` | the AE2 repository it was taken from |
-| `source` | its path in that repository |
+| `source` | its path in that repository; a picture made from several textures of the same checkout (a block and its lights) lists them all, separated by `;` |
 | `commit` | the commit of the checkout it was taken from |
-| `source_sha256` | SHA-256 of the source file at that commit |
+| `source_sha256` | SHA-256 of the source file at that commit (one per source, in the same order) |
 | `author` | the copyright line of "Textures and Models" in that repository's README |
 | `license` | `CC BY-NC-SA 3.0` |
 | `changed` | `no` (a byte-identical copy) or `yes` |
