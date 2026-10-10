@@ -172,6 +172,9 @@ M.slots_of = slots_of
 --- state
 --------------------------------------------------------------------------------
 
+--- the render layer of the screens of terminals and level maintainers (issue #258, see "screens")
+local SCREEN_LAYER = "lower-object-above-shadow"
+
 local function state()
 	local s = storage.fork_me_net
 	if not s then
@@ -188,7 +191,7 @@ local function state()
 			ext = {},         -- unit -> external cell of a member (storage bus, scripts/fork-me-storagebus.lua)
 			--- the screens of terminals and level maintainers (see "screens"), made when they join (issue #254: a new map has
 			--- them from the start, so a big scene is not drawn at once at its first slow step)
-			screens = {}, screen_list = {}, maintainer_screens = true,
+			screens = {}, screen_list = {}, maintainer_screens = true, screen_layer = SCREEN_LAYER,
 		}
 		storage.fork_me_net = s
 	end
@@ -1833,6 +1836,8 @@ end
 --------------------------------------------------------------------------------
 
 local SCREEN_LIGHT = { intensity = 0.4, scale = 0.7, color = { 0.7, 0.55, 1 } }
+--- SCREEN_LAYER (issue #258, defined at the top): one layer above the dark picture that the game draws as the entity's
+--- `stateless_visualisation` (in `lower-object`, also on its ghost), below the character
 --- kind -> { lit sprite, dark sprite, light }
 local SCREENS = {
 	terminal = { "me-terminal-screen-on", "me-terminal-screen-off", SCREEN_LIGHT },
@@ -1892,7 +1897,7 @@ local function set_screen(s, unit, entity, on, kind)
 		if light and light.valid then light.destroy() end
 		local surface = entity.surface
 		spr = rendering.draw_sprite{ sprite = on and def[1] or def[2], target = entity, surface = surface,
-			render_layer = "lower-object" }
+			render_layer = SCREEN_LAYER }
 		local l = def[3]
 		light = l and rendering.draw_light{ sprite = "utility/light_medium", target = entity, surface = surface,
 			scale = l.scale, intensity = l.intensity, color = l.color, visible = on }
@@ -1978,6 +1983,15 @@ local function refresh_screens(s)
 			set_screen(s, unit, node.entity, false, node.kind)
 		end
 		s.screen_version = nil
+	end
+	if s.screen_layer ~= SCREEN_LAYER then
+		--- issue #258: the screens of a save from before go one layer up, above the dark picture the game draws now
+		for _, unit in ipairs(screen_list(s)) do
+			local sc = s.screens[unit]
+			local spr = sc and sc.spr and rendering.get_object_by_id(sc.spr)
+			if spr and spr.valid then spr.render_layer = SCREEN_LAYER end
+		end
+		s.screen_layer = SCREEN_LAYER
 	end
 	local nodes, screens, nets = s.nodes, s.screens, s.nets
 	local ids = {}

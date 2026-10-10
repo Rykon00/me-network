@@ -5,7 +5,7 @@
 --- * they join: the controller's draw rises by exactly 8 kW (terminal) and 30 kW (level maintainer) (issue #145: the legacy
 ---   Crafting CPU of this check is gone)
 --- * they work with no pole: the terminal has no problem, its screen is lit (a sprite render object of the mod's, under the
----   character: layer lower-object, and its light), the maintainer is stocked
+---   character: layer lower-object-above-shadow since issue #258, and its light), the maintainer is stocked
 --- * the controller's power is cut (at tick 300, so that the dark network is still dark after the save and load of the
 ---   save-and-load run at tick 500): the terminal says "no-power", its screen goes dark and its light off, the maintainer says
 ---   "no-power" and is parked for it
@@ -111,7 +111,7 @@ return function(H)
 		--- issue #254: the maintainer's screen shows `on`
 		local function maintainer_lit(on, when)
 			local sc = mscreen()
-			expect(sc and sc.on == on and sc.light == nil and sc.layer == "lower-object"
+			expect(sc and sc.on == on and sc.light == nil and sc.layer == "lower-object-above-shadow"
 				and sc.sprite == (on and "me-level-maintainer-screen-on" or "me-level-maintainer-screen-off"),
 				"the level maintainer's picture " .. when .. ": " .. serpent.line(sc) .. " (" .. (on and "lit" or "dark") .. " expected)")
 		end
@@ -121,7 +121,7 @@ return function(H)
 			if tick < START + 40 then return end
 			local sc = screen()
 			expect(problem() == nil, "the terminal without a pole has the problem " .. tostring(problem()))
-			expect(sc and sc.on and sc.light and sc.sprite == "me-terminal-screen-on" and sc.layer == "lower-object",
+			expect(sc and sc.on and sc.light and sc.sprite == "me-terminal-screen-on" and sc.layer == "lower-object-above-shadow",
 				"the screen of a terminal in a working network: " .. serpent.line(sc))
 			local m = maint()
 			expect(m and m.status == "stocked", "the level maintainer without a pole: " .. serpent.line(m))
