@@ -1,17 +1,18 @@
 --- Runtime test of me-network issue #261: fluid amounts of a processing pattern made from a recipe are clean numbers, and
 --- a clean amount never makes a machine wait. The engine keeps fluid amounts on a grid of 2^-24 (Gregtorio rounds every
 --- recipe's fluids up to it, its #117); runtimemod/data.lua has two recipes with water on that grid, as Gregtorio makes
---- them: ceil(14.4 * 2^24) / 2^24 (= 14.400000035762787) and ceil(0.1234564 * 2^24) / 2^24 (whose nearest 6 digits,
---- 0.123456, would be delivered short: it rounds up to 0.123457).
----   * "From recipe" in the pattern editor gives 14.4 and 0.123457; the rule over many values: an input's amount is
----     delivered at fixed_up of it, never less than the recipe's; an output's never more than the recipe gives;
+--- them: ceil(14.4 * 2^24) / 2^24 (= 14.400000035762787) and ceil(0.1234564 * 2^24) / 2^24 (no decimal of 6 digits lies on
+--- its grid step: it stays as it is; 0.123457 would hand the machine a surplus each run, which stalled the job).
+---   * "From recipe" in the pattern editor gives 14.4 and the exact second amount; the rule over many values: the clean
+---     amount lies on the same grid step (a job hands out exactly what the machine needs), decimals of up to 6 digits
+---     come back as themselves;
 ---   * a job of each (one after the other: the network has one crafting CPU) runs in a machine next to a provider and is
----     done, every run started: the network gave fixed_up(14.4) and fixed_up(0.123457) per run.
+---     done: the network gave exactly the recipes' amounts per run.
 --- Loaded by control.lua: require("gridfluid")(H) returns { setup, tick, running }.
 
 local NET, AC, PT = "gregtorio-me-network", "gregtorio-me-autocraft", "gregtorio-me-pattern-terminal"
 local BX, BY = -520, -420
-local START, TIMEOUT = 150, 1500
+local START, TIMEOUT = 150, 500
 local FIXED = 16777216
 local function grid(a) return math.ceil(a * FIXED) / FIXED end
 local RUNS_A, RUNS_B = 2, 3
@@ -74,15 +75,15 @@ return function(H)
 
 		if st.phase == 0 then
 			st.phase = 1
-			--- the rule over many values (inputs never short, outputs never more, at most 6 significant digits)
+			--- the rule over many values: on the same grid step; a decimal of up to 6 digits comes back as itself
 			for i = 1, 400 do
 				local a = grid(i * 0.0371 + (i % 7) * 13.31 + 1 / (i + 2))
-				local up = remote.call(PT, "clean_amount", a, true)
-				local down = remote.call(PT, "clean_amount", a, false)
-				expect(grid(up) >= a and down <= a and tonumber(string.format("%.6g", up)) == up
-					and tonumber(string.format("%.6g", down)) == down,
-					"clean amount of " .. string.format("%.17g", a) .. ": input " .. string.format("%.17g", up) .. ", output "
-					.. string.format("%.17g", down))
+				local r = remote.call(PT, "clean_amount", a)
+				expect(grid(r) == a and (r == a or tonumber(string.format("%.6g", r)) == r),
+					"clean amount of " .. string.format("%.17g", a) .. ": " .. string.format("%.17g", r))
+				local d = tonumber(string.format("%.6g", (i * 7.919) % 5000 + 0.001))
+				expect(remote.call(PT, "clean_amount", grid(d)) == d, "the decimal " .. d .. " on the grid came back as "
+					.. string.format("%.17g", remote.call(PT, "clean_amount", grid(d))))
 			end
 			--- "From recipe" in the editor
 			local force = t.force
@@ -96,7 +97,8 @@ return function(H)
 			end
 			local ea, eb = rows("zz-devcheck-grid-a"), rows("zz-devcheck-grid-b")
 			expect(ea.inputs[1] and ea.inputs[1].amount == 14.4, "the input of 14.4 on the grid: " .. serpent.line(ea.inputs))
-			expect(eb.inputs[1] and eb.inputs[1].amount == 0.123457, "the input of 0.1234564 on the grid: " .. serpent.line(eb.inputs))
+			expect(eb.inputs[1] and eb.inputs[1].amount == grid(0.1234564), "the input of 0.1234564 on the grid stays: "
+				.. serpent.line(eb.inputs))
 			--- the patterns into the providers, water into the network, a job of each
 			give_patterns(sc.pa, { { kind = "processing", inputs = ea.inputs, outputs = ea.outputs } }, problems)
 			give_patterns(sc.pb, { { kind = "processing", inputs = eb.inputs, outputs = eb.outputs } }, problems)
@@ -119,7 +121,7 @@ return function(H)
 			local j = remote.call(AC, "job", st[field])
 			if not over(j) then
 				if tick - st.started > TIMEOUT then
-					expect(false, "the job for " .. item .. " did not end in " .. TIMEOUT .. " ticks: " .. serpent.line(j and j.steps)
+					expect(false, "the job for " .. item .. " did not end in " .. TIMEOUT .. " ticks: " .. serpent.line(j)
 						.. "; the machine's water " .. serpent.line(sc[machine].fluidbox[1]))
 					return finish()
 				end
@@ -133,11 +135,12 @@ return function(H)
 		expect(remote.call(NET, "count", t, "zz-devcheck-grid-token-a") == RUNS_A
 			and remote.call(NET, "count", t, "zz-devcheck-grid-token-b") == RUNS_B, "tokens made: "
 			.. remote.call(NET, "count", t, "zz-devcheck-grid-token-a") .. ", " .. remote.call(NET, "count", t, "zz-devcheck-grid-token-b"))
-		local given = RUNS_A * grid(14.4) + RUNS_B * grid(0.123457)
+		local given = RUNS_A * grid(14.4) + RUNS_B * grid(0.1234564)
 		local water = remote.call(NET, "fluid_count", t, "water")
 		expect(math.abs(1000 - given - water) < 1e-4, "water left: " .. string.format("%.9f", water) .. ", expected "
 			.. string.format("%.9f", 1000 - given))
-		finish(RUNS_A .. " runs of 14.4 and " .. RUNS_B .. " of 0.123457 water (recipes on the 2^-24 grid) done; 400 amounts rounded safely")
+		finish(RUNS_A .. " runs of 14.4 and " .. RUNS_B .. " of the exact 0.1234564 water (recipes on the 2^-24 grid) done; 800 amounts "
+			.. "cleaned on their grid step")
 	end
 
 	function T.running(check) check(storage.gridfluid261 and storage.gridfluid261.done, "ME pattern fluid amounts on the engine's grid") end
