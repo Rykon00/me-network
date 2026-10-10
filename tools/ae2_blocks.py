@@ -39,8 +39,10 @@ AT = 3                      # where the 57 px block (and its contour) sits in th
 CONTOUR = (18, 18, 22, 255)
 RING = 2                    # face pixels of the frame an icon's top and side keep
 
-BLOCKS = ("me-drive", "me-chest", "me-interface", "me-molecular-assembler-idle", "me-cell-workbench", "me-charger")
-ICONS = ("me-drive", "me-chest", "me-interface", "me-molecular-assembler", "me-cell-workbench", "me-charger")
+BLOCKS = ("me-drive", "me-chest", "me-interface", "me-molecular-assembler-idle", "me-cell-workbench", "me-charger",
+          "me-pattern-provider")                                                          # (issue #269)
+ICONS = ("me-drive", "me-chest", "me-interface", "me-molecular-assembler", "me-cell-workbench", "me-charger",
+         "me-pattern-provider")
 # issue #264: the pieces of MEStorageCellTextures.png (16 x 16: bands of 4 rows for item, fluid, essentia and no cell, two
 # copies side by side) that AE2-Unofficial draws in a bay: RenderDrive.java (u 1..6, v 1..3 of a band: 5 x 2 px),
 # RenderMEChest.java (u 9..15, v 0..3: 6 x 3 px); both mirrored on the front, so the transparent pixel is where the light is
