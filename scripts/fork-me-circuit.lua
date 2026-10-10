@@ -512,7 +512,7 @@ function M.set_condition(entity, enabled, signal, comparator, constant)
 	cb.circuit_condition = cond
 	local rec = maintainer_record(state(), entity)
 	rec.retry = nil
-	N.update_screen(entity)                     -- issue #254: lit or dark at once (the circuit's own changes: the slow step)
+	N.update_screen(entity)                     -- issue #254: lit or dark at once (changes through the circuit: the slow step)
 	return true
 end
 
@@ -661,6 +661,7 @@ function M.on_entity_settings_pasted(event)
 	if src.name == MAINTAINER then
 		local from = M.get_maintainer(src) or { amount = 0, circuit = false }
 		M.set_maintainer(dst, from.key or false, from.amount, from.circuit)
+		N.update_screen(dst)                    -- issue #254: the pasted condition
 	elseif src.name == CIRCUIT then
 		local from = M.get_circuit(src)
 		M.set_circuit_filters(dst, from and from.filters or {})

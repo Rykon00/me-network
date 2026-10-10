@@ -1836,12 +1836,17 @@ local SCREENS = {
 	maintainer = { "me-level-maintainer-screen-on", "me-level-maintainer-screen-off" },
 }
 function has_screen(kind) return SCREENS[kind] ~= nil or kind == "pattern-terminal" end
+--- issue #254: derived per load, never in `storage`: the units of `s.screens` in order (made again when one comes or
+--- goes) and the control behaviour of each level maintainer (one read of a kept object instead of a new one per second)
+local screen_order, maintainer_cbs = nil, {}
 
 --- sets the screen of terminal or level maintainer `unit` to `on`, drawing it first if it is missing (a save from
---- before, a clone)
+--- before, a clone). A screen that shows `on` already costs one comparison (issue #254: the benchmark's scenes have a
+--- level maintainer per ten buses).
 local function set_screen(s, unit, entity, on, kind)
 	local list = s.screens
 	local sc = list[unit]
+	if not sc then screen_order = nil end
 	if kind == "pattern-terminal" or (sc and sc.variation) then
 		if not (sc and sc.on == on and entity.graphics_variation == (on and 2 or 1)) then
 			entity.graphics_variation = on and 2 or 1
@@ -1849,6 +1854,7 @@ local function set_screen(s, unit, entity, on, kind)
 		end
 		return
 	end
+	if sc and sc.on == on then return end
 	local def = SCREENS[kind]
 	local spr = sc and sc.spr and rendering.get_object_by_id(sc.spr)
 	local light = sc and sc.light and rendering.get_object_by_id(sc.light)
@@ -1864,7 +1870,6 @@ local function set_screen(s, unit, entity, on, kind)
 		list[unit] = { spr = spr.id, light = light and light.id or nil, on = on }
 		return
 	end
-	if sc.on == on then return end
 	sc.on = on
 	spr.sprite = on and def[1] or def[2]
 	if light then light.visible = on end
@@ -1876,8 +1881,15 @@ local function screen_state(s, node)
 	local net = s.nets[node.net]
 	if not (net ~= nil and M.usable(net)) then return false end
 	if node.kind == "maintainer" then
-		local cb = node.entity.get_control_behavior()
-		if cb and (cb.circuit_enable_disable or cb.connect_to_logistic_network) and cb.disabled then return false end
+		local unit = node.entity.unit_number
+		local cb = maintainer_cbs[unit]
+		if cb == nil or (cb and not cb.valid) then
+			cb = node.entity.get_control_behavior() or false      -- (false: none yet; M.update_screen forgets it)
+			maintainer_cbs[unit] = cb
+		end
+		--- (`disabled` first: false for nearly every maintainer; a freshly wired lamp reads disabled while its condition is
+		--- still off, as in fork-me-circuit.lua)
+		if cb and cb.disabled and (cb.circuit_enable_disable or cb.connect_to_logistic_network) then return false end
 	end
 	return true
 end
@@ -1890,6 +1902,7 @@ end
 
 function screen_gone(s, unit)
 	if s.screens then s.screens[unit] = nil end
+	screen_order, maintainer_cbs[unit] = nil, nil
 end
 
 --- every screen to its network's state; also the first time on a save from before (one pass over the members), and once
@@ -1904,16 +1917,21 @@ local function refresh_screens(s)
 			end
 		end
 	end
-	local units = {}
-	for unit in pairs(s.screens) do units[#units + 1] = unit end
-	if #units == 0 then return end
-	table.sort(units)
-	for _, unit in ipairs(units) do
-		local node = s.nodes[unit]
-		if node and node.entity.valid then
+	local units = screen_order
+	if not units then
+		units = {}
+		for unit in pairs(s.screens) do units[#units + 1] = unit end
+		table.sort(units)
+		screen_order = units
+	end
+	local nodes, screens = s.nodes, s.screens
+	for i = 1, #units do
+		local unit = units[i]
+		local node = nodes[unit]
+		if node and screens[unit] and node.entity.valid then
 			set_screen(s, unit, node.entity, screen_state(s, node), node.kind)
-		else
-			s.screens[unit] = nil
+		elseif screens[unit] then
+			screens[unit], screen_order, maintainer_cbs[unit] = nil, nil, nil
 		end
 	end
 end
@@ -1931,12 +1949,15 @@ function M.screen_of(entity)
 		ids = { sc.spr, sc.light } }
 end
 
---- issue #254: sets the screen of a level maintainer now (its circuit condition was changed in its window; a change
---- through the circuit network shows within the slow step's second)
+--- issue #254: sets the screen of a level maintainer now: its circuit condition was set in its window or pasted, the only
+--- ways it gets one (the lamp's own window is replaced); a change through the circuit network shows within the slow
+--- step's second
 function M.update_screen(entity)
 	local s = storage.fork_me_net
 	local node = s and s.screens and entity and entity.valid and s.nodes[entity.unit_number]
-	if node and has_screen(node.kind) then set_screen(s, entity.unit_number, entity, screen_state(s, node), node.kind) end
+	if not (node and has_screen(node.kind)) then return end
+	maintainer_cbs[entity.unit_number] = nil
+	set_screen(s, entity.unit_number, entity, screen_state(s, node), node.kind)
 end
 
 --- the network an entity is a member of (working or not), nil if it is no member
