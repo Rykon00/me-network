@@ -249,6 +249,12 @@ local function check_unified(st)
 		local fm = far_m and remote.call("gregtorio-me-circuit", "get_maintainer", far_m)
 		expect(fm and fm.status ~= "no-power" and fm.status ~= "no-network" and fm.stock ~= nil, "the level maintainer far from every pole: "
 			.. serpent.line(fm))
+		--- me-network issue #254: the level maintainers of an old save get their picture (their lamp pictures are empty now)
+		for _, mm in pairs({ maint, far_m }) do
+			local ms = remote.call(NET, "screen", mm)
+			expect(ms and ms.on and ms.sprite == "me-level-maintainer-screen-on",
+				"a level maintainer of the old save has no lit picture: " .. serpent.line(ms))
+		end
 	end
 	--- me-network issue #17: a storage bus and an interface of the old version have no cards and the defaults
 	local sbus = remote.interfaces["gregtorio-me-storagebus"]
