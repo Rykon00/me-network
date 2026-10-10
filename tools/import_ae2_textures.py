@@ -7,6 +7,8 @@ through this tool, never traced, never merged with graphics of another origin.
     python tools/import_ae2_textures.py --ae2 ../Applied-Energistics-2 \\
         src/main/resources/assets/ae2/textures/block/drive/drive_bottom.png drive/bottom.png --note "ME Drive side"
     python tools/import_ae2_textures.py --ae2 ../Applied-Energistics-2 <source> <target> --replace   # a new version
+    python tools/import_ae2_textures.py --ae2 ../Applied-Energistics-2-Unofficial --add-source blocks/assembler-working.png \\
+        src/main/resources/assets/appliedenergistics2/textures/blocks/BlockMolecularAssemblerLights.png
     python tools/import_ae2_textures.py --mark-changed drive/bottom.png --note "scaled to 64 px, recoloured"
     python tools/import_ae2_textures.py --remove drive/bottom.png
 
@@ -17,6 +19,10 @@ as the commit it came from, with the SHA-256 of the source. The author is the co
 Models" in the checkout's README.md, which must name CC BY-NC-SA 3.0. The target is a PNG path inside
 ae2-textures/graphics/;
 an existing target or row is refused unless --replace says so.
+
+A file made from more than one texture (issue #260: a block and its lights, all of the same checkout and commit) is
+imported from the first and gets the others with --add-source; it must then be changed (it is made from them) and
+recorded with --mark-changed.
 
 The copy is byte-identical (changed: no). A file changed afterwards (recoloured, cropped, scaled to the sprite grid,
 put into an animation strip) stays CC BY-NC-SA 3.0: record it with --mark-changed and a note of what was done. A
@@ -29,7 +35,7 @@ import argparse, re, shutil, subprocess, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ae2_manifest import (COLUMNS, FOLDER, IMAGE_SUFFIXES, LICENSE, PNG_MAGIC, REPOSITORIES, ROOT,
+from ae2_manifest import (COLUMNS, FOLDER, IMAGE_SUFFIXES, LICENSE, PNG_MAGIC, REPOSITORIES, ROOT, SOURCE_SEP,
                           read_manifest, sha256, write_manifest)
 
 
@@ -73,7 +79,9 @@ def target_path(name):
     return name, ROOT / FOLDER / name
 
 
-def do_import(a):
+def checked_source(a):
+    """(checkout, repository, path relative to it, absolute path, commit) of the source given with --ae2, after the
+    checks an import makes"""
     checkout = Path(a.ae2).resolve()
     repo = repository_of(checkout)
     src = Path(a.source)
@@ -93,7 +101,11 @@ def do_import(a):
         fail(f"{rel} is not tracked by git in {checkout}: the manifest needs a commit that holds it")
     if git(checkout, "status", "--porcelain", "--", rel)[1]:
         fail(f"{rel} differs from HEAD in {checkout}: commit, stash or check out the file first")
-    commit = git(checkout, "rev-parse", "HEAD")[1]
+    return checkout, repo, rel, src, git(checkout, "rev-parse", "HEAD")[1]
+
+
+def do_import(a):
+    checkout, repo, rel, src, commit = checked_source(a)
     author = author_of(checkout)
     name, dest = target_path(a.target)
     rows, bad = read_manifest()
@@ -113,6 +125,26 @@ def do_import(a):
         print(f"  {c}: {row[c]}")
 
 
+def do_add_source(a):
+    name, dest = target_path(a.add_source)
+    checkout, repo, rel, src, commit = checked_source(a)
+    rows, bad = read_manifest()
+    if bad:
+        fail("fix MANIFEST.tsv first: " + "; ".join(bad))
+    row = next((r for r in rows if r["file"] == name), None)
+    if row is None or not dest.is_file():
+        fail(f"{FOLDER}/{name} has no row or no file; import it from its first source first")
+    if row["repository"] != repo or row["commit"] != commit:
+        fail(f"{rel} is from {repo} at {commit}, {FOLDER}/{name} from {row['repository']} at {row['commit']}: "
+             "all sources of a file come from one checkout and commit")
+    if rel in row["source"].split(SOURCE_SEP):
+        fail(f"{rel} is a source of {FOLDER}/{name} already")
+    row.update(source=row["source"] + SOURCE_SEP + rel,
+               source_sha256=row["source_sha256"] + SOURCE_SEP + sha256(src))
+    write_manifest(rows)
+    print(f"added source: {FOLDER}/{name}: {rel} (record the change with --mark-changed)")
+
+
 def do_mark_changed(a):
     name, dest = target_path(a.mark_changed)
     if not a.note:
@@ -123,8 +155,8 @@ def do_mark_changed(a):
     row = next((r for r in rows if r["file"] == name), None)
     if row is None or not dest.is_file():
         fail(f"{FOLDER}/{name} has no row or no file")
-    if sha256(dest) == row["source_sha256"]:
-        fail(f"{FOLDER}/{name} is still the source's bytes; change the file first")
+    if sha256(dest) in row["source_sha256"].split(SOURCE_SEP):
+        fail(f"{FOLDER}/{name} is still a source's bytes; change the file first")
     row.update(changed="yes", note=a.note.strip())
     write_manifest(rows)
     print(f"changed: {FOLDER}/{name}: {row['note']}")
@@ -155,12 +187,19 @@ def main():
     ap.add_argument("target", nargs="?", help=f"the file's path inside {FOLDER}/")
     ap.add_argument("--note", help="one line: what the file is for (import) or what was changed (--mark-changed)")
     ap.add_argument("--replace", action="store_true", help="overwrite an existing file and its row")
+    ap.add_argument("--add-source", metavar="TARGET", help="with --ae2 CHECKOUT SOURCE: one more texture a file is made "
+                    "from (same checkout and commit)")
     ap.add_argument("--mark-changed", metavar="TARGET", help="record that a file was changed after its import")
     ap.add_argument("--remove", metavar="TARGET", help="delete a file and its row")
     a = ap.parse_args()
+    if a.add_source:
+        if not (a.ae2 and a.source) or a.target or a.mark_changed or a.remove:
+            ap.error("--add-source TARGET needs --ae2 CHECKOUT and SOURCE, nothing else")
+        return do_add_source(a)
     modes = [bool(a.ae2 or a.source or a.target), bool(a.mark_changed), bool(a.remove)]
     if sum(modes) != 1:
-        ap.error("give either --ae2 CHECKOUT SOURCE TARGET, or --mark-changed TARGET --note ..., or --remove TARGET")
+        ap.error("give either --ae2 CHECKOUT SOURCE TARGET, or --ae2 CHECKOUT --add-source TARGET SOURCE, or "
+                 "--mark-changed TARGET --note ..., or --remove TARGET")
     if a.mark_changed:
         return do_mark_changed(a)
     if a.remove:

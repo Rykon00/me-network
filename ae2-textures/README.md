@@ -8,8 +8,9 @@ depends on it and does nothing alone, while ME Network runs complete without thi
 replaces the item icons of the item and fluid storage cells (1k to 256k), the storage components and the housing, the
 upgrade cards and the blank and encoded pattern (issues #247, #250, #251). AE2-Unofficial has no fluid cell and no
 interface capacity card: the fluid cells show its item cell of their tier with a blue frame and body, the ME
-Interface Capacity Card its Capacity Card with the turquoise stripe of an advanced card. Every block, the cable and the
-buses look as without this mod.
+Interface Capacity Card its Capacity Card with the turquoise stripe of an advanced card. The ME Drive, ME Chest, ME
+Interface, ME Molecular Assembler, ME Cell Workbench and ME Charger are AE2-Unofficial's blocks in the world and AE2
+cubes as icons (issue #260). The other blocks, the cable and the buses look as without this mod.
 
 **Nothing here is GPL.** This folder is a mod of its own, built into a zip of its own (`tools/build.py`), and
 everything in it (the images, the code, the locale, these texts) is CC BY-NC-SA 3.0. ME Network is GPLv3 (its
@@ -18,11 +19,13 @@ in the repository.
 
 - **Source:** every image so far comes from GTNewHorizons'
   [Applied-Energistics-2-Unofficial](https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial), commit
-  `ab15e3a7259cbd9a7088138fade46e5f6f02ad18`, folder `src/main/resources/assets/appliedenergistics2/textures/items/`
-  (the look GT New Horizons plays); `MANIFEST.tsv` names each file's source. They are scaled from 16 x 16 to the size
-  of the icon they replace (32 or 64 px, nearest neighbour, no new pixels) by `tools/scale_ae2_icons.py` of the
-  repository, which first swaps some colours of the fluid cells and the interface capacity card (the manifest's
-  notes say which).
+  `ab15e3a7259cbd9a7088138fade46e5f6f02ad18`, folders `src/main/resources/assets/appliedenergistics2/textures/items/`
+  and `.../textures/blocks/` (the look GT New Horizons plays); `MANIFEST.tsv` names each file's source(s). The item
+  icons are scaled from 16 x 16 to the size of the icon they replace (32 or 64 px, nearest neighbour, no new pixels)
+  by `tools/scale_ae2_icons.py` of the repository, which first swaps some colours of the fluid cells and the
+  interface capacity card. The blocks and their icons are made from a block face by `tools/ae2_blocks.py`: the face
+  x3 with depth strips from its own edge and a contour, holes filled with its darkest colour; the working molecular
+  assembler also from AE2's light animation (its second source). The manifest's notes say what was done to each.
 - **Authors:** the AE2 textures and models are © 2013 - 2015 AlgorithmX2 et al. (AE2-Unofficial) and, in today's AE2,
   © 2020 Ridanisaurus Rid, © 2013 - 2020 AlgorithmX2 et al. The author of each file, as its repository's README states
   it, is in `MANIFEST.tsv`. The code and texts of this mod are by the ME Network contributors.
@@ -49,7 +52,7 @@ What the license means for this mod, in short:
 | `data-final-fixes.lua` | sets those files on the prototypes by name (ME Network never renames a prototype); what it cannot apply it skips with a line in the log (`devcheck check` fails on it) |
 | `locale/en/` | the mod's name and description |
 | `changelog.txt` | this mod's own changelog |
-| `graphics/` | the AE2-derived images, each with its row in `MANIFEST.tsv`: `icons/cells/`, `icons/cards/`, `icons/patterns/` |
+| `graphics/` | the AE2-derived images, each with its row in `MANIFEST.tsv`: `icons/cells/`, `icons/cards/`, `icons/patterns/`, `icons/blocks/`, `blocks/` (with `blocks/lights/`: a texture the working molecular assembler is made with) |
 | `LICENSE-CC-BY-NC-SA-3.0.txt`, `README.md`, `MANIFEST.tsv` | the license, this text, the manifest |
 
 ## The manifest
@@ -60,9 +63,9 @@ What the license means for this mod, in short:
 |---|---|
 | `file` | the image's path inside `graphics/` |
 | `repository` | the AE2 repository it was taken from |
-| `source` | its path in that repository |
+| `source` | its path in that repository; a picture made from several textures of the same checkout (a block and its lights) lists them all, separated by `;` |
 | `commit` | the commit of the checkout it was taken from |
-| `source_sha256` | SHA-256 of the source file at that commit |
+| `source_sha256` | SHA-256 of the source file at that commit (one per source, in the same order) |
 | `author` | the copyright line of "Textures and Models" in that repository's README |
 | `license` | `CC BY-NC-SA 3.0` |
 | `changed` | `no` (a byte-identical copy) or `yes` |
