@@ -518,7 +518,10 @@ block{
 --- render object that follows the entity (the whole picture, casing included), lit while the network works and dark when it
 --- does not, and a light that goes with it. A lamp always draws its `picture_off` and its `picture_on` on top of it when it
 --- is lit (the vanilla lamp's `picture_on` is only the glow): a `picture_off` of the casing would cover the script's picture,
---- which lies below it (issue #139: the terminal stayed dark). The price: a ghost of the terminal has no picture.
+--- which lies below it (issue #139: the terminal stayed dark).
+--- Issue #258: so that a ghost has a picture, the dark picture is the terminal's `stateless_visualisation`, drawn by the
+--- game on the entity and on its ghost (`draw_stateless_visualisations_in_ghost`) in the layer `lower-object`; the script's
+--- screen lies one layer above it (`lower-object-above-shadow`) and covers it, both below the character.
 --------------------------------------------------------------------------------
 
 local TERMINAL_POWER = 8000             -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
@@ -542,6 +545,9 @@ terminal.light_when_colored = nil
 terminal.glow_size = 0
 terminal.picture_off = util.empty_sprite()
 terminal.picture_on = util.empty_sprite()
+terminal.stateless_visualisation = { render_layer = "lower-object",
+	animation = { filename = HD_ENTITY .. "me-terminal-off.png", priority = "high", width = 64, height = 64, scale = 0.5 } }
+terminal.draw_stateless_visualisations_in_ghost = true
 terminal.fast_replaceable_group = nil
 terminal.next_upgrade = nil
 terminal.localised_description = { "entity-description.me-terminal", tostring(TERMINAL_POWER / 1000) }

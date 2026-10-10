@@ -274,7 +274,8 @@ end
 --- (scripts/fork-me-windows.lua), which replaces the lamp's window.
 --- Issue #254: a lamp with a void energy source is always lit, so its own pictures cannot show whether it works. Like the
 --- ME Terminal's (prototypes/network.lua), both are empty and the script draws the whole picture (scripts/fork-me-network.lua,
---- "screens"): lit while its network works and its condition lets it run, dark otherwise. A ghost of it has no picture.
+--- "screens"): lit while its network works and its condition lets it run, dark otherwise. Issue #258: as the terminal's, its
+--- dark picture is also its `stateless_visualisation`, so that its ghost has a picture (the screen covers it).
 --------------------------------------------------------------------------------
 
 ME.add_item{
@@ -307,6 +308,10 @@ maintainer.light_when_colored = nil
 maintainer.glow_size = 0
 maintainer.picture_off = util.empty_sprite()
 maintainer.picture_on = util.empty_sprite()
+maintainer.stateless_visualisation = { render_layer = "lower-object",
+	animation = { filename = ME.hd_entity_path .. "me-level-maintainer-off.png", priority = "high", width = 64, height = 64,
+		scale = 0.5 } }
+maintainer.draw_stateless_visualisations_in_ghost = true
 maintainer.fast_replaceable_group = nil
 maintainer.next_upgrade = nil
 maintainer.localised_description = { "entity-description.me-level-maintainer", tostring(MAINTAINER_POWER / 1000) }

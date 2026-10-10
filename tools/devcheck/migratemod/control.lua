@@ -246,6 +246,8 @@ local function check_unified(st)
 			.. tostring(remote.call("gregtorio-me-terminal", "problem", far_t)))
 		local sc = remote.interfaces[NET].screen and remote.call(NET, "screen", far_t)
 		expect(sc and sc.on and sc.light, "the terminal of the old save has no lit screen: " .. serpent.line(sc))
+		--- me-network issue #258: its screen moved one layer up, above the dark picture the game draws now
+		expect(sc and sc.layer == "lower-object-above-shadow", "the terminal screen's layer after the update: " .. serpent.line(sc))
 		local fm = far_m and remote.call("gregtorio-me-circuit", "get_maintainer", far_m)
 		expect(fm and fm.status ~= "no-power" and fm.status ~= "no-network" and fm.stock ~= nil, "the level maintainer far from every pole: "
 			.. serpent.line(fm))
