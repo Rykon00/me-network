@@ -9,6 +9,7 @@
 --- Issue #281 the ME Terminal and the ME Pattern Terminal: AE2's terminal panels, dark and lit.
 --- Issue #282 the ME Import, Export and Storage Bus: AE2's fronts as blocks; ME Network's marker (the plate on the side a
 --- bus faces and its arrows) is a layer of its own above them, which data-updates.lua moves onto the AE2 face.
+--- Issue #283 the cable: AE2's Fluix glass cable in the 16 variations of ME Network's cable sheet.
 ---
 --- A key is "<prototype type>/<prototype name>" of ME Network (it never renames a prototype). A value is either
 ---   a file of this mod, when the prototype uses exactly one file of ME Network (an item's icon):
@@ -147,4 +148,10 @@ return {
 		["__me-network__/graphics/icons/hd/me-storage-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
 	},
 	["item/me-storage-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
+	--- the cable (issue #283): the sheet of its 16 variations, in ME Network's layout; the item and the entity show the crossing
+	["simple-entity-with-force/me-cable"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-cable.png"] = "__me-network-ae2-textures__/graphics/blocks/me-cable.png",
+		["__me-network__/graphics/icons/hd/me-cable.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
+	},
+	["item/fluix-cable"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
 }

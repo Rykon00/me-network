@@ -21,6 +21,11 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
   lit (AE2's three screen layers over it, tinted in the Fluix colours of AEColor.Transparent: Bright with the white
   variant, Dark with the medium one, Colored with the black one, each imported as its own file and added to the row with
   --add-source); a sheet of both side by side for an entity with two variations; and as an icon a slab of the lit plate;
+* a cable sheet (issue #283): AE2's Fluix glass cable (PartCable: 4 AE2 pixels thick, x3 = 12 px) as the 16 variations
+  of me-network's cable (its connections: north 1, east 2, south 4, west 8), side by side, 64 px each: an arm to every
+  connected side made of the texture's middle band (rows 6..9, x3) from the tile's edge, so the band runs on into the
+  next tile's arm (its 48 px repeat), a hub of the texture's middle (6..9 x 6..9, x3) in the tile's middle; lying on the
+  ground: a shadow two pixels to the south-east and a contour; the icon is the crossing (variation 15);
 * a cell piece (issue #264): a rectangle of AE2's cell textures (MEStorageCellTextures.png), mirrored as AE2 draws it on
   a block's front, x3: the cell that me-network draws in a drive bay or the chest's slot (its drive view).
 
@@ -87,6 +92,9 @@ MAKE = {
     "blocks/me-pattern-terminal.png": ("panel-sheet", "pattern-terminal"),
     "icons/blocks/me-terminal.png": ("panel-icon", "terminal"),
     "icons/blocks/me-pattern-terminal.png": ("panel-icon", "pattern-terminal"),
+    # issue #283: the cable (me-cable.png's 16 variations) and its icon (the crossing)
+    "blocks/me-cable.png": ("cable-sheet",),
+    "icons/blocks/me-cable.png": ("cable-icon",),
     **{f"icons/blocks/{i}.png": ("icon",) for i in ICONS},
     **{f: ("piece", box) for f, box in CELL_PIECES.items()},
 }
@@ -263,6 +271,35 @@ def slab(front):
     return contour(img)
 
 
+CABLE_AT = (TILE - 4 * K) // 2           # the hub's (and the arms') top left: 26 of 64
+CABLE_SHADOW = 70
+
+
+def cable(glass, bits):
+    """one 64 x 64 variation of the cable: an arm to every side whose bit is set (north 1, east 2, south 4, west 8) and
+    the hub, lying on the ground"""
+    thick, c = 4 * K, CABLE_AT
+    band_h = glass.crop((0, 6, FACE, 10)).resize((FACE * K, thick), Image.NEAREST)        # 48 x 12, west to east
+    band_v = glass.crop((6, 0, 10, FACE)).resize((thick, FACE * K), Image.NEAREST)        # 12 x 48, north to south
+    arm = c                                                                                 # 26 px from the edge
+    o = Image.new("RGBA", (TILE, TILE))
+    if bits & 1:
+        o.alpha_composite(band_v.crop((0, 0, thick, arm)), (c, 0))
+    if bits & 4:
+        o.alpha_composite(band_v.crop((0, FACE * K - arm, thick, FACE * K)), (c, TILE - arm))
+    if bits & 8:
+        o.alpha_composite(band_h.crop((0, 0, arm, thick)), (0, c))
+    if bits & 2:
+        o.alpha_composite(band_h.crop((FACE * K - arm, 0, FACE * K, thick)), (TILE - arm, c))
+    o.alpha_composite(glass.crop((6, 6, 10, 10)).resize((thick, thick), Image.NEAREST), (c, c))
+    out = Image.new("RGBA", (TILE, TILE))
+    shadow = Image.new("RGBA", (TILE, TILE), (0, 0, 0, 0))
+    shadow.putalpha(o.getchannel("A").point(lambda v: CABLE_SHADOW if v else 0))
+    out.alpha_composite(shadow, (2, 2))
+    out.alpha_composite(contour(o))
+    return out
+
+
 def frame_colour(img):
     """the most common opaque colour of the outermost ring"""
     px = img.load()
@@ -291,6 +328,16 @@ def make(name, how):
         piece = face.crop((x0, y0, x1, y1)).transpose(Image.FLIP_LEFT_RIGHT)
         return piece.resize((piece.width * K, piece.height * K), Image.NEAREST), \
             f"cell piece: x {x0}..{x1 - 1}, y {y0}..{y1 - 1} of the texture, mirrored (as AE2 draws it on a front), x3"
+    if how[0] == "cable-sheet":
+        out = Image.new("RGBA", (16 * TILE, TILE))
+        for bits in range(16):
+            out.alpha_composite(cable(face, bits), (bits * TILE, 0))
+        return out, ("cable sheet: the 16 variations of ME Network's cable (connections north 1, east 2, south 4, west 8), "
+                     "64 x 64 each side by side: arms of the texture's middle band (rows 6..9, x3: 12 px) from the tile's "
+                     "edge, a hub of its middle (6..9 x 6..9, x3), a contour and a shadow two pixels to the south-east")
+    if how[0] == "cable-icon":
+        return cable(face, 15), ("icon: the cable's crossing (variation 15 of the cable sheet: four arms of the texture's "
+                                 "middle band and its hub, x3, a contour and a shadow), 64 x 64")
     if how[0].startswith("panel"):
         layers = None
         if how[1]:
