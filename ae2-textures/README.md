@@ -5,9 +5,11 @@ An optional mod for [ME Network](https://github.com/Rykon00/me-network): it puts
 [Applied-Energistics-2-Unofficial](https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial), the same
 authors' work under the same license) in place of ME Network's own sprites. **Install ME Network too**: this mod
 depends on it and does nothing alone, while ME Network runs complete without this mod and does not know it. It
-replaces the item icons of the storage cells (1k to 256k), the storage components and the housing, the upgrade cards
-and the blank and encoded pattern (issue #247); the fluid storage cells and the ME Interface Capacity Card keep ME
-Network's icons, AE2-Unofficial has none for them. Every block, the cable and the buses look as without this mod.
+replaces the item icons of the item and fluid storage cells (1k to 256k), the storage components and the housing, the
+upgrade cards and the blank and encoded pattern (issues #247, #250, #251). AE2-Unofficial has no fluid cell and no
+interface capacity card: the fluid cells show its item cell of their tier with a blue frame and outline, the ME
+Interface Capacity Card its Capacity Card with the turquoise stripe of an advanced card. Every block, the cable and the
+buses look as without this mod.
 
 **Nothing here is GPL.** This folder is a mod of its own, built into a zip of its own (`tools/build.py`), and
 everything in it (the images, the code, the locale, these texts) is CC BY-NC-SA 3.0. ME Network is GPLv3 (its
@@ -19,7 +21,8 @@ in the repository.
   `ab15e3a7259cbd9a7088138fade46e5f6f02ad18`, folder `src/main/resources/assets/appliedenergistics2/textures/items/`
   (the look GT New Horizons plays); `MANIFEST.tsv` names each file's source. They are scaled from 16 x 16 to the size
   of the icon they replace (32 or 64 px, nearest neighbour, no new pixels) by `tools/scale_ae2_icons.py` of the
-  repository.
+  repository, which first swaps some colours of the fluid cells and the interface capacity card (the manifest's
+  notes say which).
 - **Authors:** the AE2 textures and models are © 2013 - 2015 AlgorithmX2 et al. (AE2-Unofficial) and, in today's AE2,
   © 2020 Ridanisaurus Rid, © 2013 - 2020 AlgorithmX2 et al. The author of each file, as its repository's README states
   it, is in `MANIFEST.tsv`. The code and texts of this mod are by the ME Network contributors.
