@@ -305,8 +305,11 @@ side). Open one to set up to 9 filters, items and fluids mixed (the window also 
 whether the bus uses its items, its fluids or both). On a machine with an inventory and fluid boxes (an assembling
 machine with a fluid recipe, a chemical plant) one bus does both; on a chest only items, on a tank only fluids.
 
-The filter buttons of the buses open the same picker (items and fluids, no quality row: a bus filter is a plain item or a
-fluid), right click empties a filter. The ME Storage Bus's filters (items with quality, or fluids), the ME Level
+The filter buttons of the buses open the same picker (items with their quality, and fluids), right click empties a
+filter. Since issue #291 an item filter can name a quality: the import bus then takes only that quality of the item, the
+export bus exports that quality. A filter in normal quality (the plain item, as every filter of older saves and
+blueprints) keeps its meaning: the import bus takes the item in **every** quality, the export bus exports normal quality;
+the filter button's tooltip says which. The ME Storage Bus's filters (items with quality, or fluids), the ME Level
 Maintainer's target, the ME Circuit Interface's filters and the pattern editor's rows of the ME Terminal work the same
 way (the maintainer's, the circuit interface's and the pattern editor's without a quality).
 
@@ -603,7 +606,8 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
 * **Partition:** the cell's filled slots (items with quality, or fluids for a fluid cell) and one free slot at the end,
   **From contents** and **Clear**. A click on a slot (the free one adds, a filled one changes) opens the **picker**
   (issue #94), made like the game's own: the item groups as tabs (fluids in theirs), a search by name (as the
-  terminal's), the items and fluids of the group, a row with the **qualities** at the bottom (items only) and the **green
+  terminal's), the items and fluids of the group, a row with the **qualities** at the bottom (items only; with a mod that
+  adds many qualities they wrap into rows of 10, or of 5 next to a fluid's temperature field: issue #291) and the **green
   check** at its right end. Click an element, click a quality, click the check; the confirm key (the game's "Confirm
   GUI", "E" by default) is the check, Enter in the search field too, Escape or the X closes the picker only. A filled
   slot opens it with its element and quality chosen, so both can be changed; right click empties a slot. Only items
@@ -982,8 +986,9 @@ The block is set up for the machine's recipe; what it had is replaced:
 | ME Export Bus | filters = the ingredients, items and fluids | | 9 filters |
 | ME Import Bus | filters = the **products**, items and fluids | | 9 filters |
 
-* The recipe's quality is the quality of the interface's item rows and of the storage bus's item filters. The
-  import and export bus filter by name: the export bus moves normal quality only (a flying text says so).
+* The recipe's quality is the quality of the interface's item rows and of the storage bus's item filters, and since
+  issue #291 of the import and export bus's item filters too (a normal quality recipe gives plain filters, which the import
+  bus takes in every quality).
 * A furnace that is not smelting gives its last recipe.
 * A new fluid row gets the side a new fluid row gets in the window: the first import side with a pipe, else the first
   import side (the flying text says that it has no pipe yet). A side tied to a row that goes away imports again.
