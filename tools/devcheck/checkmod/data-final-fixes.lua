@@ -123,6 +123,22 @@ for n, e in pairs(data.raw["assembling-machine"]) do
 end
 section("SPRITES", sprites)
 
+--- Icons of this mod and of the texture mod with their icon_size (issue #247: headless Factorio loads no image, so a
+--- size that does not fit the file shows only in the game)
+local icons = {}
+local function icon_rows(p, owner)
+	if mine(p.icon) then icons[#icons + 1] = table.concat({ owner, p.icon, p.icon_size or 64 }, "\t") end
+	for _, l in pairs(type(p.icons) == "table" and p.icons or {}) do
+		if type(l) == "table" and mine(l.icon) then
+			icons[#icons + 1] = table.concat({ owner, l.icon, l.icon_size or p.icon_size or 64 }, "\t")
+		end
+	end
+end
+for t, ps in pairs(data.raw) do
+	for n, p in pairs(ps) do if type(p) == "table" then icon_rows(p, t .. ":" .. n) end end
+end
+section("ICONS", icons)
+
 --- Prototypes with an icon of this mod: their names must be in the locale
 local loc = {}
 local function own(p) return mine(p.icon) end

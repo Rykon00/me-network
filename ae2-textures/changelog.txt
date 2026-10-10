@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.0
+  Graphics:
+    - Storage cells (ME Network issue #247): the item icons of the 1k to 256k storage cells, the storage components 1k to 256k and the storage housing are AE2-Unofficial's. The fluid storage cells keep ME Network's icons (AE2-Unofficial has none).
+    - Upgrade cards: the basic, advanced, capacity, overflow destruction, fuzzy, pattern capacity, sticky, inverter, equal distribution and acceleration cards have AE2-Unofficial's icons. The ME Interface Capacity Card keeps ME Network's icon (AE2 has no such card).
+    - Patterns: the blank and the encoded pattern have AE2-Unofficial's icons.
+---------------------------------------------------------------------------------------------------
 Version: 0.1.0
   Info:
     - First version (ME Network issue #239): the optional texture mod of ME Network, under CC BY-NC-SA 3.0, with its license text, attribution and manifest. It replaces no sprite yet: no graphics of Applied Energistics 2 are in it so far. Needs ME Network 0.5.2 or later.

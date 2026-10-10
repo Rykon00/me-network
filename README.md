@@ -53,7 +53,7 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second, o
 | `scripts/fork-me-fluids.lua` | the fluid calls of the other modules; `gregtorio-me-fluids` |
 | `scripts/fork-me-handover.lua` | takes the ME state of a Gregtorio Continued save once (Gregtorio issue #83) |
 | `graphics/` | sprites, icons and technology icons (`tools/gen_ae2_sprites.py`), GPLv3/LGPL-3.0 |
-| `ae2-textures/` | the second mod, `me-network-ae2-textures` (issue #239), CC BY-NC-SA 3.0, nothing of it is GPL: its `info.json` (depends on `me-network`), `overrides.lua` (which sprites of this mod it replaces, by prototype name; empty so far) and `data-final-fixes.lua` (sets them, one file or layer at a time), locale, changelog, license file, `README.md`, `MANIFEST.tsv` and in `graphics/` the AE2-derived images (none yet); never in the me-network zip (`ae2-textures/README.md`, `docs/LICENSES.md`) |
+| `ae2-textures/` | the second mod, `me-network-ae2-textures` (issue #239), CC BY-NC-SA 3.0, nothing of it is GPL: its `info.json` (depends on `me-network`), `overrides.lua` (which sprites of this mod it replaces, by prototype name) and `data-final-fixes.lua` (sets them, one file or layer at a time), locale, changelog, license file, `README.md`, `MANIFEST.tsv` and in `graphics/` the AE2-derived images; never in the me-network zip (`ae2-textures/README.md`, `docs/LICENSES.md`) |
 | `locale/en/me-network.cfg` | English names and texts |
 | `tools/devcheck/` | headless test harness: static checks and the runtime tests, on vanilla and with Gregtorio, and the benchmark (`bench`, `docs/PERFORMANCE.md`) (`tools/devcheck/README.md`) |
 | `tools/build.py` | builds `dist/me-network_<version>.zip` (without `ae2-textures/`) and `dist/me-network-ae2-textures_<version>.zip` (`ae2-textures/` alone) and fails when a zip breaks the license split (`--portal` for the mod portal, `--install` into the mods folder) |
@@ -64,6 +64,7 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second, o
 | `tools/gen_ae2_sprites.py` | the sprites and icons (GT5-Unofficial casings, screens, circuit boards, memory chips and GUI signs + Pillow) |
 | `tools/upstream_icons.py`, `tools/upstream-icon-hashes.tsv` | the hashes of the 17 icons taken over from Gregtorio 0.1.9 until 0.5.2 and the guard that `devcheck check` runs: no file under `graphics/` and not `thumbnail.png` may have one (issue #238) |
 | `tools/import_ae2_textures.py`, `tools/ae2_manifest.py` | the only way AE2 graphics get into `ae2-textures/graphics/` (copied from an AE2 checkout, recorded in the manifest), and the guard of the texture mod that `devcheck check` runs |
+| `tools/scale_ae2_icons.py` | scales the AE2 item icons in `ae2-textures/graphics/` from 16 px to the size of the icon they replace (nearest neighbour, recorded with `--mark-changed`; issue #247); reads and writes only that folder |
 
 The names (`fork-me-*.lua`, the storage keys `fork_me_*`, the remote interfaces `gregtorio-me-*`, every prototype
 name) are kept from Gregtorio Continued: saves find their entities and items by name, the state of a Gregtorio save is

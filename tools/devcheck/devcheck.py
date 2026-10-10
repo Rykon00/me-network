@@ -434,6 +434,26 @@ def check_sprites(sec, textures=None):
     return bad
 
 
+def check_icons(sec, textures=None):
+    """issue #247: an icon of this mod or of the texture mod is a square image of its icon_size (or a mipmap strip of
+    that height); headless Factorio loads no image, so a wrong size would show only in the game"""
+    try:
+        from PIL import Image
+    except ImportError:
+        return ["(Pillow not installed, icon sizes not checked: pip install pillow)"]
+    bad, sizes = set(), {}
+    for owner, fn, size in sec.get("ICONS", []):
+        f = mod_file(fn, textures)
+        if not f or not f.exists():
+            continue
+        if f not in sizes:
+            sizes[f] = Image.open(f).size
+        w, h = sizes[f]
+        if h != int(size) or w % h:
+            bad.add(f"{owner}: {fn} is {w}x{h}, icon_size is {size}")
+    return sorted(bad)
+
+
 def check_locale(sec):
     """every item, entity and technology with an icon of this mod has a name in locale/en"""
     have, current = {}, None
@@ -571,10 +591,13 @@ def check_map(a, mapfile, textures=None):
     stuck = sorted(t for t, v in m.T.items() if v["en"] and t not in m.researched)
     report("technologies of the game the model cannot research (information)", stuck)
     files, sprites, locale = check_files(sec, textures), check_sprites(sec, textures), check_locale(sec)
+    icons = check_icons(sec, textures)
     report("missing graphics files", files)
     report("sprite sheets too small", sprites)
+    report("icons whose image does not fit their icon_size", icons)
     report("names missing in locale/en", locale)
-    ok = not (validate or files or [s for s in sprites if not s.startswith("(")] or techs or recipes or uncraft or locale)
+    ok = not (validate or files or [s for s in sprites + icons if not s.startswith("(")] or techs or recipes or uncraft
+              or locale)
     return ok, sec, log
 
 
@@ -684,7 +707,13 @@ def check_textures(a, base_sec):
                 problems.append(f"proof: {owner}: other files changed ({sorted(got ^ base.get(owner, set()))})")
             else:
                 print(f"proof: {owner}: {old} -> {new} with the texture mod, {old} without it")
-    print(f"overrides applied: {len(applied) - len(skipped)} (the {len(cases)} stand-ins), skipped: {len(skipped)}")
+    # issue #247: every entry of the real overrides.lua is applied, not only the stand-ins
+    src = (ROOT / "ae2-textures" / "overrides.lua").read_text(encoding="utf-8")
+    real = [k for k in re.findall(r'^\s*\["([^"]+)"\]\s*=', src, re.M) if not k.startswith("__")]   # (not a layer's file)
+    done = {l.split(": ", 1)[0] for l in applied if "SKIPPED" not in l}
+    problems += [f"override of overrides.lua not applied: {k}" for k in real if k not in done]
+    print(f"overrides applied: {len(applied) - len(skipped)} ({len(real)} of overrides.lua, the {len(cases)} "
+          f"stand-ins), skipped: {len(skipped)}")
     print("stand-ins and copy removed: " + ("yes" if not (copy.exists() or (MODS / TEXTURES).exists()) else "NO"))
     report("problems of the texture mod run", problems)
     return ok and sec is not None and not problems
