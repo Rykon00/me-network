@@ -167,4 +167,16 @@ do
 			end
 		end
 	end
+	--- issue #278: the ME Controller's state as a graphics mod draws it (the mod-data's controller view, docs/API.md): a
+	--- hidden entity of the same kind on the controller's position, above its picture, one animation variation per state
+	--- (off, on, conflict: scripts/fork-me-network.lua CONTROLLER_STATE); a state the view has no animation for shows the
+	--- controller's picture alone. Without any, no entity.
+	local cview = md and md.data.controller_view
+	if cview and (cview.off or cview.on or cview.conflict) then
+		local NONE = { filename = "__core__/graphics/empty.png", priority = "high", width = 1, height = 1 }
+		local light = part("me-controller-light", nil, 1)
+		light.icon = "__me-network__/graphics/icons/hd/me-controller.png"
+		light.animations = { cview.off or NONE, cview.on or NONE, cview.conflict or NONE }
+		data:extend({ light })
+	end
 end

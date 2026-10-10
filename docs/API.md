@@ -129,6 +129,25 @@ left. `cells` names two sprite prototypes (defined by then), one for item cells 
 the geometry of its own pictures and has no `cells`. The light's colour is me-network's (green, orange above 75 %,
 red when full; the chest's dark without power).
 
+## The controller view (graphics mods)
+
+The ME Controller's picture is the same whatever its state. A graphics mod can show the state, as AE2 does, with the
+mod-data `fork-me-network`'s `controller_view` (since issue #278), set in its `data.lua` or `data-updates.lua`:
+
+```lua
+local view = data.raw["mod-data"]["fork-me-network"].data.controller_view
+view.off = { ... }        -- no power (also a conflict without power)
+view.on = { filename = "__my-mod__/controller-lit.png", width = 128, height = 128, scale = 0.5, frame_count = 12,
+	line_length = 1, animation_speed = 1 / 9 }   -- its network works
+view.conflict = { ... }   -- a second controller in its network, with power
+```
+
+Each state is an `Animation` (a single frame is one too), drawn over the controller's picture at its position (the
+controller is 2 x 2 tiles: the shift is from its centre), above it and sorted with it against a character. Each is
+optional: a state without one shows the controller's picture alone. me-network's `data-final-fixes.lua` makes the
+hidden entity `me-controller-light` from them (one animation variation per state); the script sets every controller's
+part to its state once a second. With an empty view (me-network's own) there is no such entity.
+
 ## Runtime
 
 The remote interfaces are `gregtorio-me-network` (storage: `insert`, `extract`, `count`, `contents`,

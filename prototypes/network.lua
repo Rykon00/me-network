@@ -634,6 +634,10 @@ data:extend({ {
 		member_power = { terminal = TERMINAL_POWER },
 		underground_reach = UNDERGROUND_REACH,
 		drive_view = DRIVE_VIEW,
+		--- issue #278: how a graphics mod shows the ME Controller's state (docs/API.md "The controller view"): an Animation
+		--- per state ("off", "on", "conflict") drawn over the controller's picture; this mod's own view is empty (its
+		--- picture alone, whatever the state)
+		controller_view = {},
 	},
 } })
 

@@ -110,6 +110,14 @@ local drive_view = data.raw["mod-data"]["fork-me-network"] and data.raw["mod-dat
 if drive_view then
 	drive_view.drive.cells = { item = "zz-devcheck-drive-cell-item", fluid = "zz-devcheck-drive-cell-fluid", w = 15, h = 6 }
 end
+--- me-network issue #278: a stand-in controller view (what a graphics mod gives), so that netpower.lua sees the controller's
+--- part; me-network's own view is empty
+local controller_view = data.raw["mod-data"]["fork-me-network"] and data.raw["mod-data"]["fork-me-network"].data.controller_view
+if controller_view then
+	for _, st in pairs({ "off", "on", "conflict" }) do
+		controller_view[st] = { filename = "__core__/graphics/empty.png", width = 1, height = 1, frame_count = 1 }
+	end
+end
 
 if mods["gregtorio-continued"] then return end
 

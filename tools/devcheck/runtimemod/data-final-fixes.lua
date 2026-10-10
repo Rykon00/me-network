@@ -77,3 +77,14 @@ do
 			.. " pictures " .. tostring(light and light.pictures and #light.pictures) .. " cell " .. tostring(cell and #cell.pictures))
 	end
 end
+
+--- me-network issue #278: the controller's part from the controller view (runtimemod/data.lua's stand-ins): one animation
+--- per state, above the controller's picture at its position, y-sorted with it
+do
+	local c = data.raw["simple-entity-with-force"]["me-controller-light"]
+	if not (c and c.animations and #c.animations == 3 and c.secondary_draw_order == 1 and c.render_layer == "object"
+		and c.hidden and not c.selectable_in_game) then
+		error("devcheck (issue #278): the controller's part is not made from the controller view: "
+			.. serpent.line(c and { c.animations and #c.animations, c.secondary_draw_order, c.render_layer }))
+	end
+end
