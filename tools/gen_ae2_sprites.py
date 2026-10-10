@@ -20,7 +20,6 @@ Sources:
     python tools/gen_ae2_sprites.py --fluids      # only the fluid graphics, from the existing item PNGs
     python tools/gen_ae2_sprites.py --extras      # only the issue #38 graphics, from the existing PNGs
     python tools/gen_ae2_sprites.py --r1          # only the issue #68 (R1) graphics, from the existing PNGs
-    python tools/gen_ae2_sprites.py --r2          # only the issue #68 (R2) fluid bus graphics, from the R1 PNGs
     python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
     python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
     python tools/gen_ae2_sprites.py --bus-markers # only the marker layers of the import, export and storage bus
@@ -72,6 +71,26 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from gen_sprites import frames_of, gt_path, load, tint
+
+
+def _save_if_changed(self, fp, format=None, **params):
+    """Issue #241: a PNG whose pixels are those of the file already there is not written again. Pillow's encoder (its
+    version, zlib) may give other bytes than the one that wrote the tracked file, so a full run showed unchanged files as
+    modified. Every save of this script goes through here (Image.Image.save is replaced below, for this script only)."""
+    path = Path(fp) if isinstance(fp, (str, Path)) else None
+    if path is not None and path.suffix.lower() == ".png" and path.is_file():
+        try:
+            with Image.open(path) as old:
+                same = old.size == self.size and old.convert("RGBA").tobytes() == self.convert("RGBA").tobytes()
+        except OSError:
+            same = False
+        if same:
+            return None
+    return _PIL_SAVE(self, fp, format, **params)
+
+
+_PIL_SAVE = Image.Image.save
+Image.Image.save = _save_if_changed
 from gen_tech_icons import upscale
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -794,32 +813,6 @@ def r1():
         for direction in ("north", "east", "south", "west"):
             save(bus_sprite(accent, export, direction), OUT_ENTITY / f"{name}-{direction}.png")
         save(bus_sprite(accent, export, "north"), OUT_ICON / f"{name}.png")
-    return written
-
-
-# --- issue #68, step R2: fluid import and export bus --------------------------------------
-# Derived from the item bus sprites of R1: the accents in fluid blue and the pipe ring of the fluid
-# interface around the arrow.
-def fluid_bus_sprite(name, direction):
-    img = recolor(load(OUT_ENTITY / f"{name}-{direction}.png"),
-                  {IMPORT_ACCENT: FLUID_LIGHT, EXPORT_ACCENT: FLUID})
-    c = TILE // 2
-    ImageDraw.Draw(img).ellipse((c - 9, c - 9, c + 8, c + 8), outline=PIPE + (255,), width=2)
-    return img
-
-
-def r2():
-    written = []
-
-    def save(img, path):
-        img.save(path)
-        written.append(path)
-
-    for name in ("me-import-bus", "me-export-bus"):
-        fluid_name = name.replace("me-", "me-fluid-", 1)
-        for direction in ("north", "east", "south", "west"):
-            save(fluid_bus_sprite(name, direction), OUT_ENTITY / f"{fluid_name}-{direction}.png")
-        save(fluid_bus_sprite(name, "north"), OUT_ICON / f"{fluid_name}.png")
     return written
 
 
@@ -2042,8 +2035,6 @@ def main():
     ap.add_argument("--r1", action="store_true",
                     help="only the issue #68 (R1) graphics (cable, controller, drive with cell bays, buses), "
                          "derived from the existing PNGs (no checkout needed)")
-    ap.add_argument("--r2", action="store_true",
-                    help="only the issue #68 (R2) graphics (fluid import and export bus), derived from the R1 PNGs")
     ap.add_argument("--underground", action="store_true",
                     help="only the ME Underground Cable (drawn from the cable colours)")
     ap.add_argument("--storage-bus", action="store_true",
@@ -2096,11 +2087,11 @@ def main():
     ap.add_argument("--sheet-assembler", type=Path, metavar="PNG",
                     help="writes a contact sheet of the 1x1 ME Molecular Assembler (issue #131) to PNG")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
+    if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
             or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
             or a.own_icons or a.light or a.bus_markers):
-        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
+        ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
@@ -2124,9 +2115,6 @@ def main():
     if a.gt or a.r1:
         written = r1()
         print("ME issue #68 (R1) sprites:", len(written))
-    if a.gt or a.r2:
-        written = r2()
-        print("ME issue #68 (R2) sprites:", len(written))
     if a.gt or a.underground:
         written = underground()
         print("ME underground cable sprites:", len(written))

@@ -100,7 +100,7 @@
   AE2, the one GT New Horizons plays; where it differs from AE2 and Gregtorio is concerned, it is the one to follow;
   read its own license notes before porting from it), `..\GT5-Unofficial` (what `--gt` takes) and
   `..\GT-New-Horizons-Modpack` (the pack's configs and scripts).
-- Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`, `--r2`,
+- Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`,
   `--patterns` and the other switches for parts, see its docstring); it makes the GPLv3/LGPL graphics and never reads
   AE2 graphics. AE2 graphics: `tools/import_ae2_textures.py` into `ae2-textures/graphics/` only (the rule above); a script
   that transforms them reads only from `ae2-textures/graphics/` and writes only into it. The 17 icons of `graphics/icons/` are drawn by
