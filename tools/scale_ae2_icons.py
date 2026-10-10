@@ -41,6 +41,14 @@ SIZES = {
     "icons/wireless/me-wireless-terminal.png": 32,
     "icons/wireless/me-wireless-module.png": 32,
     "icons/wireless/me-wireless-booster.png": 32,
+    # issue #304: technology icons (256 px) of an AE2 item icon each (x16): ME Network's technologies have none of AE2's
+    "technology/me-storage-64k.png": 256,
+    "technology/me-storage-256k.png": 256,
+    "technology/me-fluid-storage.png": 256,
+    "technology/me-fluid-storage-256k.png": 256,
+    "technology/me-upgrade-cards.png": 256,
+    "technology/me-autocrafting.png": 256,
+    "technology/me-wireless.png": 256,
     "icons/patterns/me-encoded-pattern.png": 32,
 }
 
@@ -67,6 +75,10 @@ RECOLOUR = {
                                                       {**FRAME_BLUE, **BODY_BLUE[t]}) for t in TIERS},
     "icons/cards/me-interface-capacity-card.png": ("the capacity sign in orange, inside the face (x 6..14, y 3..12)",
                                                    INTERFACE_SIGN, (6, 3, 15, 13)),
+    # issue #304: the fluid storage technologies show the fluid cell of their tier (as its icon, issue #250)
+    "technology/me-fluid-storage.png": ("the frame and the body in blue (the 64k fluid cell)", {**FRAME_BLUE, **BODY_BLUE["64k"]}),
+    "technology/me-fluid-storage-256k.png": ("the frame and the body in blue (the 256k fluid cell)",
+                                             {**FRAME_BLUE, **BODY_BLUE["256k"]}),
 }
 
 

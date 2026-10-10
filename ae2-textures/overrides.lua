@@ -12,6 +12,7 @@
 --- Issue #283 the cable: AE2's Fluix glass cable in the 16 variations of ME Network's cable sheet.
 --- Issue #302 the blocks of a Crafting CPU: AE2 cubes, without a CPU and in AE2's formed look, in ME Network's sheet.
 --- Issue #303 the wireless group: the access point as a block, the terminal, its module and the booster as AE2's icons.
+--- Issue #304 the technology icons: AE2 has none, so each is one of these icons scaled up.
 ---
 --- A key is "<prototype type>/<prototype name>" of ME Network (it never renames a prototype). A value is either
 ---   a file of this mod, when the prototype uses exactly one file of ME Network (an item's icon):
@@ -210,4 +211,16 @@ return {
 	["item/me-wireless-module"] = { filename = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-module.png", icon_size = 32 },
 	["battery-equipment/me-wireless-module"] = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-module.png",
 	["item/me-wireless-booster"] = { filename = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-booster.png", icon_size = 32 },
+	--- the technology icons (issue #304, 256 px): a block's AE2 cube icon x4 or an AE2 item icon x16
+	["technology/me-network"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-network.png", icon_size = 256 },
+	["technology/me-storage-64k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-storage-64k.png", icon_size = 256 },
+	["technology/me-storage-256k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-storage-256k.png", icon_size = 256 },
+	["technology/me-fluid-storage"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-fluid-storage.png", icon_size = 256 },
+	["technology/me-fluid-storage-256k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-fluid-storage-256k.png", icon_size = 256 },
+	["technology/me-upgrade-cards"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-upgrade-cards.png", icon_size = 256 },
+	["technology/me-autocrafting"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-autocrafting.png", icon_size = 256 },
+	["technology/me-automation"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-automation.png", icon_size = 256 },
+	["technology/me-co-processing"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-co-processing.png", icon_size = 256 },
+	["technology/me-quantum-crafting"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-quantum-crafting.png", icon_size = 256 },
+	["technology/me-wireless"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-wireless.png", icon_size = 256 },
 }
