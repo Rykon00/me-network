@@ -11,6 +11,9 @@
 ---   "no-power" and is parked for it
 --- * the power comes back (tick 600): the screen is lit again, the maintainer is woken and checks again within the slow step's second
 --- * a terminal that is mined or destroyed takes its screen along (no render object left), a cloned one gets its own
+--- * issue #254: the level maintainer's picture is a screen of the same kind (no light): lit in the working network, dark
+---   without power and lit again with it, dark for one with no cable to a network, dark while its circuit condition is
+---   false and lit again when the condition is switched off
 --- Loaded by control.lua: require("netpower")(H) returns { setup, tick, running } like lab.lua.
 
 local NET, TERM, CIRC, IO = "gregtorio-me-network", "gregtorio-me-terminal", "gregtorio-me-circuit", "gregtorio-me-io"
@@ -104,6 +107,14 @@ return function(H)
 			return finish()
 		end
 		local function screen() return remote.call(NET, "screen", terminal) end
+		local function mscreen() return remote.call(NET, "screen", maintainer) end
+		--- issue #254: the maintainer's screen shows `on`
+		local function maintainer_lit(on, when)
+			local sc = mscreen()
+			expect(sc and sc.on == on and sc.light == nil and sc.layer == "lower-object"
+				and sc.sprite == (on and "me-level-maintainer-screen-on" or "me-level-maintainer-screen-off"),
+				"the level maintainer's picture " .. when .. ": " .. serpent.line(sc) .. " (" .. (on and "lit" or "dark") .. " expected)")
+		end
 		local function problem() return remote.call(TERM, "problem", terminal) end
 
 		if st.phase == "work" then
@@ -114,6 +125,18 @@ return function(H)
 				"the screen of a terminal in a working network: " .. serpent.line(sc))
 			local m = maint()
 			expect(m and m.status == "stocked", "the level maintainer without a pole: " .. serpent.line(m))
+			maintainer_lit(true, "in a working network")
+			--- a level maintainer with no cable to a network is dark, and takes its picture along when it is destroyed
+			local lone = s.create_entity{ name = "me-level-maintainer", position = { BX + 30.5, BY + 3.5 }, force = "player",
+				raise_built = true }
+			local ls = lone and remote.call(NET, "screen", lone)
+			expect(ls and ls.on == false and ls.sprite == "me-level-maintainer-screen-off",
+				"a level maintainer outside every network: " .. serpent.line(ls))
+			if lone then lone.destroy{ raise_destroy = true } end
+			for _, id in pairs(ls and ls.ids or {}) do
+				local o = rendering.get_object_by_id(id)
+				expect(not (o and o.valid), "a destroyed level maintainer left the render object " .. id)
+			end
 			local sch = remote.call(CIRC, "schedule", maintainer)
 			expect(sch and sch.parked == "stocked", "the level maintainer is not parked as stocked: " .. serpent.line(sch))
 			--- a second terminal, cloned: it gets a screen of its own; mined, a screen goes with it
@@ -144,6 +167,7 @@ return function(H)
 				expect(sc and not sc.on and not sc.light and sc.sprite == "me-terminal-screen-off",
 					"the screen of a network without power: " .. serpent.line(sc))
 				expect(maint() and maint().status == "no-power", "the maintainer's status without power: " .. serpent.line(maint()))
+				maintainer_lit(false, "in a network without power")
 				--- (a woken maintainer finds it and parks for the power)
 				remote.call(CIRC, "set_maintainer", maintainer, nil, 20, nil)
 				st.dark_at, st.phase = tick, "parked"
@@ -169,6 +193,7 @@ return function(H)
 			expect(problem() == "no-power", "the terminal after a while without power: " .. tostring(problem()))
 			local sch = remote.call(CIRC, "schedule", maintainer)
 			expect(sch and sch.parked == "no-power", "the maintainer after a while without power: " .. serpent.line(sch))
+			maintainer_lit(false, "after a while without power")
 			st.phase = "back"
 		elseif st.phase == "back" then
 			if tick < BACK then return end
@@ -185,12 +210,27 @@ return function(H)
 				local n = info()
 				expect(n and n.power == 162000, "the controller's draw at the end: " .. serpent.line(n))
 				st.lit_after = tick - st.back_at
-				return finish("a terminal and a level maintainer 24 tiles from a pole: +8 kW and +30 kW, dark and parked "
-					.. "without power, lit and woken " .. st.lit_after .. " ticks after it came back, screens made, cloned and removed")
+				maintainer_lit(true, "with the power back")
+				--- issue #254: a condition that is false (iron plates > 0 on no wire) makes it dark, switched off lit again
+				remote.call(CIRC, "set_condition", maintainer, true, { type = "item", name = "iron-plate" }, ">", 0)
+				st.cond_at, st.phase = tick, "condition"
 			elseif tick - st.back_at > 300 then
 				problems[#problems + 1] = "the power came back but the screen stayed dark or the maintainer parked: " .. serpent.line(sc) .. " " .. serpent.line(sch)
 				return finish()
 			end
+		elseif st.phase == "condition" then
+			if tick < st.cond_at + 5 then return end
+			remote.call(NET, "slow_step")
+			maintainer_lit(false, "with a false circuit condition")
+			remote.call(CIRC, "set_condition", maintainer, false)
+			st.cond_at, st.phase = tick, "condition-off"
+		elseif st.phase == "condition-off" then
+			if tick < st.cond_at + 5 then return end
+			remote.call(NET, "slow_step")
+			maintainer_lit(true, "with the circuit condition switched off")
+			return finish("a terminal and a level maintainer 24 tiles from a pole: +8 kW and +30 kW, dark and parked "
+				.. "without power, lit and woken " .. st.lit_after .. " ticks after it came back, screens made, cloned and "
+				.. "removed; the maintainer dark outside a network and with a false condition (issue #254)")
 		end
 	end
 

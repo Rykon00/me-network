@@ -512,6 +512,7 @@ function M.set_condition(entity, enabled, signal, comparator, constant)
 	cb.circuit_condition = cond
 	local rec = maintainer_record(state(), entity)
 	rec.retry = nil
+	N.update_screen(entity)                     -- issue #254: lit or dark at once (the circuit's own changes: the slow step)
 	return true
 end
 

@@ -343,7 +343,7 @@ local net_cell
 --- issue #229: the ME Chest (its section below the drives)
 local CH = {}
 local take_waits, fire_all_waits
-local screen_made, screen_gone
+local screen_made, screen_gone, has_screen
 
 --- The parts a removal left (issue #38, lever 5). `starts`: the neighbours of the removed member, in order; `total`: the
 --- members the network has left. A search runs from each of them, one member at a time, in turns; two searches that meet
@@ -526,7 +526,7 @@ local function add_node(s, entity, kind)
 	net.nodes[unit] = true
 	net.n = net.n + 1
 	node.net = net.id
-	if kind == "terminal" or kind == "pattern-terminal" then screen_made(s, unit, entity, kind) end
+	if has_screen(kind) then screen_made(s, unit, entity, kind) end
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
 	if #order == 1 and kind ~= "controller" then
@@ -567,7 +567,7 @@ function remove_node_graph(s, unit)
 	local node = s.nodes[unit]
 	if not node then return end
 	s.nodes[unit] = nil
-	if node.kind == "terminal" or node.kind == "pattern-terminal" then screen_gone(s, unit) end
+	if has_screen(node.kind) then screen_gone(s, unit) end
 	local nl, li = s.nlist, node.li
 	if nl and li and nl[li] == unit then                -- the last member takes its place in the sweep list
 		local last = #nl
@@ -1824,12 +1824,21 @@ end
 --- state, and a terminal that joins a network is set at once. Setting a screen that is right already costs one comparison.
 --- The ME Pattern Terminal (issue #130) is an entity with two pictures (graphics variation 1 dark, 2 lit, like the crafting
 --- blocks): its record is `{ variation = true, on }` and it is set the same way.
+--- The ME Level Maintainer (issue #254) is a lamp with a void energy source too, so the game drew it lit all the time: its
+--- whole picture is a screen of the same kind without a light (`{ spr, on }`), lit while its network works and its circuit
+--- condition lets it run, dark otherwise.
 --------------------------------------------------------------------------------
 
-local SCREEN_ON, SCREEN_OFF = "me-terminal-screen-on", "me-terminal-screen-off"
 local SCREEN_LIGHT = { intensity = 0.4, scale = 0.7, color = { 0.7, 0.55, 1 } }
+--- kind -> { lit sprite, dark sprite, light }
+local SCREENS = {
+	terminal = { "me-terminal-screen-on", "me-terminal-screen-off", SCREEN_LIGHT },
+	maintainer = { "me-level-maintainer-screen-on", "me-level-maintainer-screen-off" },
+}
+function has_screen(kind) return SCREENS[kind] ~= nil or kind == "pattern-terminal" end
 
---- sets the screen of terminal `unit` to `on`, drawing it first if it is missing (a save from before, a clone)
+--- sets the screen of terminal or level maintainer `unit` to `on`, drawing it first if it is missing (a save from
+--- before, a clone)
 local function set_screen(s, unit, entity, on, kind)
 	local list = s.screens
 	local sc = list[unit]
@@ -1840,29 +1849,37 @@ local function set_screen(s, unit, entity, on, kind)
 		end
 		return
 	end
+	local def = SCREENS[kind]
 	local spr = sc and sc.spr and rendering.get_object_by_id(sc.spr)
 	local light = sc and sc.light and rendering.get_object_by_id(sc.light)
-	if not (spr and spr.valid and light and light.valid) then
+	if not (spr and spr.valid and (not def[3] or (light and light.valid))) then
 		if spr and spr.valid then spr.destroy() end
 		if light and light.valid then light.destroy() end
 		local surface = entity.surface
-		spr = rendering.draw_sprite{ sprite = on and SCREEN_ON or SCREEN_OFF, target = entity, surface = surface,
+		spr = rendering.draw_sprite{ sprite = on and def[1] or def[2], target = entity, surface = surface,
 			render_layer = "lower-object" }
-		light = rendering.draw_light{ sprite = "utility/light_medium", target = entity, surface = surface,
-			scale = SCREEN_LIGHT.scale, intensity = SCREEN_LIGHT.intensity, color = SCREEN_LIGHT.color, visible = on }
-		list[unit] = { spr = spr.id, light = light.id, on = on }
+		local l = def[3]
+		light = l and rendering.draw_light{ sprite = "utility/light_medium", target = entity, surface = surface,
+			scale = l.scale, intensity = l.intensity, color = l.color, visible = on }
+		list[unit] = { spr = spr.id, light = light and light.id or nil, on = on }
 		return
 	end
 	if sc.on == on then return end
 	sc.on = on
-	spr.sprite = on and SCREEN_ON or SCREEN_OFF
-	light.visible = on
+	spr.sprite = on and def[1] or def[2]
+	if light then light.visible = on end
 end
 
---- the state a terminal's screen shows now: its network works
+--- the state a screen shows now: its network works (and a level maintainer's circuit condition lets it run: the lamp's
+--- condition, as fork-me-circuit.lua reads it)
 local function screen_state(s, node)
 	local net = s.nets[node.net]
-	return net ~= nil and M.usable(net) and true or false
+	if not (net ~= nil and M.usable(net)) then return false end
+	if node.kind == "maintainer" then
+		local cb = node.entity.get_control_behavior()
+		if cb and (cb.circuit_enable_disable or cb.connect_to_logistic_network) and cb.disabled then return false end
+	end
+	return true
 end
 
 function screen_made(s, unit, entity, kind)
@@ -1875,12 +1892,14 @@ function screen_gone(s, unit)
 	if s.screens then s.screens[unit] = nil end
 end
 
---- every screen to its network's state; also the first time on a save from before (one pass over the members)
+--- every screen to its network's state; also the first time on a save from before (one pass over the members), and once
+--- for the level maintainers of a save from before issue #254 (`s.maintainer_screens`)
 local function refresh_screens(s)
-	if not s.screens then
-		s.screens = {}
+	if not s.screens or not s.maintainer_screens then
+		s.screens = s.screens or {}
+		s.maintainer_screens = true
 		for unit, node in pairs(s.nodes) do
-			if (node.kind == "terminal" or node.kind == "pattern-terminal") and node.entity.valid then
+			if has_screen(node.kind) and node.entity.valid and not s.screens[unit] then
 				set_screen(s, unit, node.entity, false, node.kind)
 			end
 		end
@@ -1899,16 +1918,25 @@ local function refresh_screens(s)
 	end
 end
 
---- (tests) the state a terminal's screen shows: nil without a screen, else { on, sprite, light, layer, ids } (a lamp terminal) or
---- { on, variation } (a pattern terminal)
+--- (tests) the state a screen shows: nil without a screen, else { on, sprite, light, layer, ids } (a lamp terminal; a level
+--- maintainer without `light`) or { on, variation } (a pattern terminal)
 function M.screen_of(entity)
 	local s = storage.fork_me_net
 	local sc = s and s.screens and entity and entity.valid and s.screens[entity.unit_number]
 	if sc and sc.variation then return { on = sc.on, variation = entity.graphics_variation } end
 	local spr = sc and rendering.get_object_by_id(sc.spr)
-	local light = sc and rendering.get_object_by_id(sc.light)
-	if not (spr and spr.valid and light and light.valid) then return nil end
-	return { on = sc.on, sprite = spr.sprite, light = light.visible, layer = spr.render_layer, ids = { sc.spr, sc.light } }
+	local light = sc and sc.light and rendering.get_object_by_id(sc.light)
+	if not (spr and spr.valid) or (sc.light and not (light and light.valid)) then return nil end
+	return { on = sc.on, sprite = spr.sprite, light = light and light.visible or nil, layer = spr.render_layer,
+		ids = { sc.spr, sc.light } }
+end
+
+--- issue #254: sets the screen of a level maintainer now (its circuit condition was changed in its window; a change
+--- through the circuit network shows within the slow step's second)
+function M.update_screen(entity)
+	local s = storage.fork_me_net
+	local node = s and s.screens and entity and entity.valid and s.nodes[entity.unit_number]
+	if node and has_screen(node.kind) then set_screen(s, entity.unit_number, entity, screen_state(s, node), node.kind) end
 end
 
 --- the network an entity is a member of (working or not), nil if it is no member
@@ -4411,11 +4439,12 @@ function M.rebuild()
 		end
 	end
 	for _, node in pairs(s.nodes) do update_cable(s, node) end
-	--- issue #128: a terminal without a screen gets one (the others keep theirs: render objects are not made twice)
+	--- issue #128: a terminal (#254: or level maintainer) without a screen gets one (the others keep theirs: render objects
+	--- are not made twice)
 	if s.screens then
 		for _, unit in ipairs(units) do
 			local node = s.nodes[unit]
-			if node.kind == "terminal" or node.kind == "pattern-terminal" then
+			if has_screen(node.kind) then
 				if s.screens[unit] and not node.entity.valid then s.screens[unit] = nil end
 				if not s.screens[unit] then screen_made(s, unit, node.entity, node.kind) end
 			end
