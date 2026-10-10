@@ -186,6 +186,9 @@ local function state()
 			nlist = {},       -- the units of the members, in the order they joined (a member that leaves is replaced by the last): the sweep
 			                  -- walks it (issue #43); each node keeps its place in `li`. Saves before it get it at their first sweep.
 			ext = {},         -- unit -> external cell of a member (storage bus, scripts/fork-me-storagebus.lua)
+			--- the screens of terminals and level maintainers (see "screens"), made when they join (issue #254: a new map has
+			--- them from the start, so a big scene is not drawn at once at its first slow step)
+			screens = {}, screen_list = {}, maintainer_screens = true,
 		}
 		storage.fork_me_net = s
 	end
@@ -1837,24 +1840,44 @@ local SCREENS = {
 }
 function has_screen(kind) return SCREENS[kind] ~= nil or kind == "pattern-terminal" end
 --- issue #254: the benchmark's scenes have a level maintainer per ten buses (2000 at 20 000), so the slow step must not
---- look at every screen every second. It sets them all only when something they show may have changed: the graph
+--- look at every screen every second, and must not sort them (#43: about 7 µs an element). `s.screen_list` holds the
+--- units of `s.screens` in the order they came (a screen that goes is replaced by the last one, each record keeps its
+--- place in `li`), like `s.nlist`. The slow step sets them all only when something they show may have changed: the graph
 --- (`s.version`, kept as `s.screen_version`) or the state of a network (`net.screen_on`, what its screens were last set
---- to); otherwise only the level maintainers with a circuit condition switched on (`s.screen_cond`, set when one joins and
---- when its window or a paste sets the condition, the only ways a maintainer gets one: the lamp's window is replaced) are
---- read. What decides is in `storage`; derived per load: the units of `s.screens` in order and each condition
---- maintainer's control behaviour (#115: one kept object instead of a new one per read).
-local screen_order, maintainer_cbs = nil, {}
+--- to); otherwise only the level maintainers with a circuit condition switched on (`s.screen_cond`, noted when one joins
+--- and when its window or a paste sets the condition, the only ways a maintainer gets one: the lamp's window is replaced).
+--- Derived per load: each condition maintainer's control behaviour (#115: one kept object instead of a new one per read).
+local maintainer_cbs = {}
+
+--- the screen list of a save from before issue #254: made once, sorted
+local function screen_list(s)
+	local sl = s.screen_list
+	if sl then return sl end
+	sl = {}
+	for unit in pairs(s.screens) do sl[#sl + 1] = unit end
+	table.sort(sl)
+	for i, unit in ipairs(sl) do s.screens[unit].li = i end
+	s.screen_list = sl
+	return sl
+end
+
+--- the place in the screen list of a new record of `unit` (or the place its old record had)
+local function screen_place(s, sc, unit)
+	if sc and sc.li then return sc.li end
+	local sl = screen_list(s)
+	sl[#sl + 1] = unit
+	return #sl
+end
 
 --- sets the screen of terminal or level maintainer `unit` to `on`, drawing it first if it is missing (a save from
 --- before, a clone). A screen that shows `on` already costs one comparison.
 local function set_screen(s, unit, entity, on, kind)
 	local list = s.screens
 	local sc = list[unit]
-	if not sc then screen_order = nil end
 	if kind == "pattern-terminal" or (sc and sc.variation) then
 		if not (sc and sc.on == on and entity.graphics_variation == (on and 2 or 1)) then
 			entity.graphics_variation = on and 2 or 1
-			list[unit] = { variation = true, on = on }
+			list[unit] = { variation = true, on = on, li = screen_place(s, sc, unit) }
 		end
 		return
 	end
@@ -1872,7 +1895,7 @@ local function set_screen(s, unit, entity, on, kind)
 		local l = def[3]
 		light = l and rendering.draw_light{ sprite = "utility/light_medium", target = entity, surface = surface,
 			scale = l.scale, intensity = l.intensity, color = l.color, visible = on }
-		list[unit] = { spr = spr.id, light = light and light.id or nil, on = on }
+		list[unit] = { spr = spr.id, light = light and light.id or nil, on = on, li = screen_place(s, sc, unit) }
 		return
 	end
 	sc.on = on
@@ -1919,9 +1942,20 @@ function screen_made(s, unit, entity, kind)
 end
 
 function screen_gone(s, unit)
-	if s.screens then s.screens[unit] = nil end
+	local sc = s.screens and s.screens[unit]
+	if not sc then return end
+	s.screens[unit] = nil
 	if s.screen_cond then s.screen_cond[unit] = nil end
-	screen_order, maintainer_cbs[unit] = nil, nil
+	maintainer_cbs[unit] = nil
+	local sl, li = s.screen_list, sc.li
+	if sl and li and sl[li] == unit then                -- the last screen takes its place in the list
+		local last = #sl
+		local moved = sl[last]
+		sl[li] = moved
+		sl[last] = nil
+		local msc = s.screens[moved]
+		if msc then msc.li = li end
+	end
 end
 
 --- the screens to their state: all of them when the graph or a network's state changed since the last time, else the
@@ -1931,6 +1965,7 @@ local function refresh_screens(s)
 	if not s.screens or not s.maintainer_screens then
 		s.screens = s.screens or {}
 		s.maintainer_screens = true
+		screen_list(s)
 		local units = {}
 		for unit, node in pairs(s.nodes) do
 			if has_screen(node.kind) and node.entity.valid and not s.screens[unit] then units[#units + 1] = unit end
@@ -1944,37 +1979,35 @@ local function refresh_screens(s)
 		s.screen_version = nil
 	end
 	local nodes, screens, nets = s.nodes, s.screens, s.nets
+	local ids = {}
+	for id in pairs(nets) do ids[#ids + 1] = id end
+	table.sort(ids)
 	local all = s.screen_version ~= s.version
 	if not all then
-		local ids = {}
-		for id in pairs(nets) do ids[#ids + 1] = id end
-		table.sort(ids)
 		for _, id in ipairs(ids) do
 			local net = nets[id]
 			if net.screen_on ~= (M.usable(net) and true or false) then all = true break end
 		end
 	end
 	if all then
-		local units = screen_order
-		if not units then
-			units = {}
-			for unit in pairs(screens) do units[#units + 1] = unit end
-			table.sort(units)
-			screen_order = units
-		end
-		for i = 1, #units do
-			local unit = units[i]
+		local sl = screen_list(s)
+		local i = 1
+		while i <= #sl do
+			local unit = sl[i]
 			local node = nodes[unit]
-			if node and screens[unit] then
+			if node then
 				set_screen(s, unit, node.entity, screen_state(s, unit, node), node.kind)
-			elseif screens[unit] then
-				screens[unit], screen_order, maintainer_cbs[unit] = nil, nil, nil
-				if s.screen_cond then s.screen_cond[unit] = nil end
+				i = i + 1
+			else
+				screen_gone(s, unit)                           -- (the last one took its place: look at it next)
+				if sl[i] == unit then                         -- (a place without its record)
+					local last = #sl
+					sl[i], sl[last] = sl[last], nil
+					local msc = i < last and screens[sl[i]]
+					if msc then msc.li = i end
+				end
 			end
 		end
-		local ids = {}
-		for id in pairs(nets) do ids[#ids + 1] = id end
-		table.sort(ids)
 		for _, id in ipairs(ids) do nets[id].screen_on = M.usable(nets[id]) and true or false end
 		s.screen_version = s.version
 	elseif s.screen_cond and next(s.screen_cond) then
@@ -4523,7 +4556,7 @@ function M.rebuild()
 		for _, unit in ipairs(units) do
 			local node = s.nodes[unit]
 			if has_screen(node.kind) then
-				if s.screens[unit] and not node.entity.valid then s.screens[unit] = nil end
+				if s.screens[unit] and not node.entity.valid then screen_gone(s, unit) end
 				if not s.screens[unit] then screen_made(s, unit, node.entity, node.kind) end
 			end
 		end
@@ -4721,6 +4754,19 @@ remote.add_interface("gregtorio-me-network", {
 			if list[node.li or 0] ~= unit then return false, "member " .. unit .. " is not at its place " .. tostring(node.li) end
 		end
 		if n ~= #list then return false, #list .. " in the list, " .. n .. " members" end
+		return true
+	end,
+	--- tests (issue #254): is the screen list the screens, each once, each record at its place? (true, or false and why)
+	screen_list_ok = function()
+		local s = storage.fork_me_net
+		local list = s and s.screen_list
+		if not list then return true end
+		local n = 0
+		for unit, sc in pairs(s.screens or {}) do
+			n = n + 1
+			if list[sc.li or 0] ~= unit then return false, "screen " .. unit .. " is not at its place " .. tostring(sc.li) end
+		end
+		if n ~= #list then return false, #list .. " in the screen list, " .. n .. " screens" end
 		return true
 	end,
 	--- { ok, status, id, members, controllers, drives, cells, bytes, bytes_total, types, types_total, power } or nil

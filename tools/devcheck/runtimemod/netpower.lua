@@ -133,6 +133,8 @@ return function(H)
 			expect(ls and ls.on == false and ls.sprite == "me-level-maintainer-screen-off",
 				"a level maintainer outside every network: " .. serpent.line(ls))
 			if lone then lone.destroy{ raise_destroy = true } end
+			local list_ok, why = remote.call(NET, "screen_list_ok")
+			expect(list_ok, "the screen list after a maintainer and terminals came and went: " .. tostring(why))
 			for _, id in pairs(ls and ls.ids or {}) do
 				local o = rendering.get_object_by_id(id)
 				expect(not (o and o.valid), "a destroyed level maintainer left the render object " .. id)
@@ -235,6 +237,8 @@ return function(H)
 			if tick < st.cond_at + 5 then return end
 			remote.call(NET, "slow_step")
 			maintainer_lit(true, "with the circuit condition switched off")
+			local list_ok, why = remote.call(NET, "screen_list_ok")
+			expect(list_ok, "the screen list at the end: " .. tostring(why))
 			if st.combinator and st.combinator.valid then st.combinator.destroy() end
 			return finish("a terminal and a level maintainer 24 tiles from a pole: +8 kW and +30 kW, dark and parked "
 				.. "without power, lit and woken " .. st.lit_after .. " ticks after it came back, screens made, cloned and "
