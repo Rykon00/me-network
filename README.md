@@ -58,7 +58,7 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second, o
 | `locale/en/me-network.cfg` | English names and texts |
 | `tools/devcheck/` | headless test harness: static checks and the runtime tests, on vanilla and with Gregtorio, and the benchmark (`bench`, `docs/PERFORMANCE.md`) (`tools/devcheck/README.md`) |
 | `tools/build.py` | builds `dist/me-network_<version>.zip` (without `ae2-textures/`) and `dist/me-network-ae2-textures_<version>.zip` (`ae2-textures/` alone) and fails when a zip breaks the license split (`--portal` for the mod portal, `--install` into the mods folder) |
-| `tools/release_textures.py`, `tools/portal_upload.sh` | the release workflow's texture mod version check (is `ae2-textures/` new since the last release tag, and its version unused) and its mod portal upload of each zip to its own page (issue #243) |
+| `tools/release_textures.py`, `tools/portal_upload.sh` | the release workflow's texture mod version check (is `ae2-textures/` new since the last release tag, and its version unused; a texture-only release under the tag `me-network-ae2-textures-vX.Y.Z`, issue #245) and its mod portal upload of each zip to its own page (issue #243) |
 | `.discord/server.yml` | this mod's category on the Discord server (channels, forum tags), applied by `.github/workflows/discord.yml` with the tool of https://github.com/Rykon00/gregtorio-me-network_discord-bot; a pull request that only changes `.discord/` is merged and applied automatically |
 | `tools/dev_link.py` | links the repository into the Factorio mods folder, and `ae2-textures/` as `me-network-ae2-textures_<version>` (`--no-textures` leaves it out) |
 | `tools/check_syntax.py` | Lua syntax check (`--loaded`: only the files the mod loads) |
