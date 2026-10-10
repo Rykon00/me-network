@@ -10,6 +10,7 @@
 --- Issue #282 the ME Import, Export and Storage Bus: AE2's fronts as blocks; ME Network's marker (the plate on the side a
 --- bus faces and its arrows) is a layer of its own above them, which data-updates.lua moves onto the AE2 face.
 --- Issue #283 the cable: AE2's Fluix glass cable in the 16 variations of ME Network's cable sheet.
+--- Issue #302 the blocks of a Crafting CPU: AE2 cubes, without a CPU and in AE2's formed look, in ME Network's sheet.
 ---
 --- A key is "<prototype type>/<prototype name>" of ME Network (it never renames a prototype). A value is either
 ---   a file of this mod, when the prototype uses exactly one file of ME Network (an item's icon):
@@ -155,4 +156,46 @@ return {
 		["__me-network__/graphics/icons/hd/me-cable.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
 	},
 	["item/fluix-cable"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
+	--- the crafting blocks (issue #302): each a sheet of ME Network's 48 variations (16 without a CPU, 32 of a CPU: AE2's
+	--- formed look); a cube each, not ME Network's slab
+	["simple-entity-with-force/me-crafting-unit"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-unit.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-unit.png",
+		["__me-network__/graphics/icons/hd/me-crafting-unit.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-unit.png", icon_size = 64 },
+	},
+	["item/me-crafting-unit"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-unit.png", icon_size = 64 },
+	["simple-entity-with-force/me-crafting-co-processing-unit"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-co-processing-unit.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-co-processing-unit.png",
+		["__me-network__/graphics/icons/hd/me-crafting-co-processing-unit.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-co-processing-unit.png", icon_size = 64 },
+	},
+	["item/me-crafting-co-processing-unit"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-co-processing-unit.png", icon_size = 64 },
+	["simple-entity-with-force/me-1k-crafting-storage"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-1k-crafting-storage.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-1k-crafting-storage.png",
+		["__me-network__/graphics/icons/hd/me-1k-crafting-storage.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-1k-crafting-storage.png", icon_size = 64 },
+	},
+	["item/me-1k-crafting-storage"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-1k-crafting-storage.png", icon_size = 64 },
+	["simple-entity-with-force/me-4k-crafting-storage"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-4k-crafting-storage.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-4k-crafting-storage.png",
+		["__me-network__/graphics/icons/hd/me-4k-crafting-storage.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-4k-crafting-storage.png", icon_size = 64 },
+	},
+	["item/me-4k-crafting-storage"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-4k-crafting-storage.png", icon_size = 64 },
+	["simple-entity-with-force/me-16k-crafting-storage"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-16k-crafting-storage.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-16k-crafting-storage.png",
+		["__me-network__/graphics/icons/hd/me-16k-crafting-storage.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-16k-crafting-storage.png", icon_size = 64 },
+	},
+	["item/me-16k-crafting-storage"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-16k-crafting-storage.png", icon_size = 64 },
+	["simple-entity-with-force/me-64k-crafting-storage"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-64k-crafting-storage.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-64k-crafting-storage.png",
+		["__me-network__/graphics/icons/hd/me-64k-crafting-storage.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-64k-crafting-storage.png", icon_size = 64 },
+	},
+	["item/me-64k-crafting-storage"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-64k-crafting-storage.png", icon_size = 64 },
+	["simple-entity-with-force/me-256k-crafting-storage"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-256k-crafting-storage.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-256k-crafting-storage.png",
+		["__me-network__/graphics/icons/hd/me-256k-crafting-storage.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-256k-crafting-storage.png", icon_size = 64 },
+	},
+	["item/me-256k-crafting-storage"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-256k-crafting-storage.png", icon_size = 64 },
+	["simple-entity-with-force/me-crafting-monitor"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-monitor.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-monitor.png",
+		["__me-network__/graphics/icons/hd/me-crafting-monitor.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-monitor.png", icon_size = 64 },
+	},
+	["item/me-crafting-monitor"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-monitor.png", icon_size = 64 },
 }
