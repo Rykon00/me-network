@@ -875,6 +875,9 @@ gridfluid261 = require("gridfluid")({ me_place = me_place, power = power, me_rep
 --- me-network issue #313: an interface's import side that holds fluid is visited again (ifacewake.lua)
 ifacewake313 = require("ifacewake")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #311: the interface window shows the fluids its sides hold (ifacefluids.lua)
+ifacefluids311 = require("ifacefluids")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #158: the pattern provider runs the machines next to it (providers.lua)
 providers158 = require("providers")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -971,6 +974,7 @@ local function tests_running()
 	temperature159.running(check)
 	gridfluid261.running(check)
 	ifacewake313.running(check)
+	ifacefluids311.running(check)
 	providers158.running(check)
 	pastecraft157.running(check)
 	buffer150.running(check)
@@ -1893,6 +1897,7 @@ script.on_nth_tick(10, function()
 	temperature159.tick()
 	gridfluid261.tick()
 	ifacewake313.tick()
+	ifacefluids311.tick()
 	providers158.tick()
 	pastecraft157.tick()
 	buffer150.tick()
@@ -4759,6 +4764,7 @@ script.on_init(function()
 	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(gridfluid261.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ifacewake313.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(ifacefluids311.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end

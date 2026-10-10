@@ -792,6 +792,9 @@ RUNTIME_TESTS = (
     ("CHEST", "ME Chest (issue #229)"),
     ("SBUSMODE", "ME storage bus filter mode (issue #155)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
+    ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
+    ("IFACEWAKE", "ME interface wake (issue #313)"),
+    ("IFACEFLUIDS", "ME interface window fluids (issue #311)"),
     ("DONE", "all tests reported"),
 )
 
