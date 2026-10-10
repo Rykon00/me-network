@@ -7,6 +7,8 @@
 --- Issue #278 the ME Controller: its picture is AE2's controller without power; data-updates.lua gives ME Network the lit
 --- and the conflict pictures for its controller view.
 --- Issue #281 the ME Terminal and the ME Pattern Terminal: AE2's terminal panels, dark and lit.
+--- Issue #282 the ME Import, Export and Storage Bus: AE2's fronts as blocks; ME Network's marker (the plate on the side a
+--- bus faces and its arrows) is a layer of its own above them, which data-updates.lua moves onto the AE2 face.
 ---
 --- A key is "<prototype type>/<prototype name>" of ME Network (it never renames a prototype). A value is either
 ---   a file of this mod, when the prototype uses exactly one file of ME Network (an item's icon):
@@ -119,4 +121,30 @@ return {
 		["__me-network__/graphics/icons/hd/me-pattern-terminal.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
 	},
 	["item/me-pattern-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
+	--- the buses (issue #282): AE2's front of each, the same block in every direction (AE2's front shows none: ME Network's
+	--- marker layer stays and shows it); only the first layer of each direction is replaced
+	["simple-entity-with-force/me-import-bus"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-import-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-import-bus.png",
+		["__me-network__/graphics/entity/fork/ae2/hd/me-import-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-import-bus.png",
+		["__me-network__/graphics/entity/fork/ae2/hd/me-import-bus-south.png"] = "__me-network-ae2-textures__/graphics/blocks/me-import-bus.png",
+		["__me-network__/graphics/entity/fork/ae2/hd/me-import-bus-west.png"] = "__me-network-ae2-textures__/graphics/blocks/me-import-bus.png",
+		["__me-network__/graphics/icons/hd/me-import-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-import-bus.png", icon_size = 64 },
+	},
+	["item/me-import-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-import-bus.png", icon_size = 64 },
+	["simple-entity-with-force/me-export-bus"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
+		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
+		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-south.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
+		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-west.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
+		["__me-network__/graphics/icons/hd/me-export-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-export-bus.png", icon_size = 64 },
+	},
+	["item/me-export-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-export-bus.png", icon_size = 64 },
+	["simple-entity-with-force/me-storage-bus"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
+		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
+		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-south.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
+		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-west.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
+		["__me-network__/graphics/icons/hd/me-storage-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
+	},
+	["item/me-storage-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
 }

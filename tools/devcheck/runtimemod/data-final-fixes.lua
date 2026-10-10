@@ -88,3 +88,23 @@ do
 			.. serpent.line(c and { c.animations and #c.animations, c.secondary_draw_order, c.render_layer }))
 	end
 end
+
+--- me-network issue #282: each direction of a bus is its picture and, above it, its marker (plate and arrows) on the
+--- picture's face (me-network's own bus view: 58 px at the top left, scale 0.5)
+do
+	local bad = {}
+	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus" }) do
+		local e = data.raw["simple-entity-with-force"][name]
+		for _, dir in pairs({ "north", "east", "south", "west" }) do
+			local l = e and e.picture and e.picture[dir] and e.picture[dir].layers
+			local m = l and l[2]
+			local base = "/" .. name .. "-" .. dir
+			if not (l and #l == 2 and l[1].filename:sub(-#base - 4) == base .. ".png" and m.filename:sub(-#base - 11) == base .. "-marker.png"
+				and m.width == 58 and math.abs(m.scale - 0.5) < 1e-9 and math.abs(m.shift[1] + 0.046875) < 1e-9
+				and math.abs(m.shift[2] + 0.046875) < 1e-9) then
+				bad[#bad + 1] = name .. " " .. dir .. ": " .. serpent.line(l)
+			end
+		end
+	end
+	if #bad > 0 then error("devcheck (issue #282): the buses' marker layers: " .. table.concat(bad, "; ")) end
+end

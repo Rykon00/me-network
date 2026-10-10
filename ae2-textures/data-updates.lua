@@ -47,3 +47,12 @@ if cview then                                                        -- (ME Netw
 	cview.conflict = block("me-controller-conflict")
 	say("controller view", "AE2's controller lights and conflict pattern")
 end
+
+--- ME Network issue #282: its buses' marker (the plate on the side a bus faces and its arrows, a layer of its own) on the
+--- face of this mod's bus pictures (tools/ae2_blocks.py: AE2's 16 px front x3 at (3, 3) of the 64 px picture). ME Network
+--- moves it there from its bus view (its docs/API.md).
+local bview = mod_data and mod_data.data.bus_view
+if bview then                                                        -- (ME Network before 0.5.3 has none)
+	bview.x, bview.y, bview.size = 3, 3, 48
+	say("bus view", "the buses' plate and arrows on AE2's front")
+end

@@ -148,6 +148,22 @@ optional: a state without one shows the controller's picture alone. me-network's
 hidden entity `me-controller-light` from them (one animation variation per state); the script sets every controller's
 part to its state once a second. With an empty view (me-network's own) there is no such entity.
 
+## The bus view (graphics mods)
+
+The ME Import, Export and Storage Bus show where they work by a marker: the plate on the side they face and their
+arrows. Since issue #282 it is a layer of its own over each direction's picture (`me-<bus>-<direction>-marker.png`,
+the picture's own pixels), so a graphics mod can replace the picture (the first layer) and keep the marker. Where the
+marker is drawn is the mod-data `fork-me-network`'s `bus_view`, the square of the 64 px picture that is the bus's face,
+in px from its top left; me-network's own is `{ x = 0, y = 0, size = 58 }`. A mod whose bus has another face sets it in
+its `data.lua` or `data-updates.lua`:
+
+```lua
+local view = data.raw["mod-data"]["fork-me-network"].data.bus_view
+view.x, view.y, view.size = 3, 3, 48
+```
+
+me-network's `data-final-fixes.lua` scales and moves the marker layer of every bus and direction to that square.
+
 ## Runtime
 
 The remote interfaces are `gregtorio-me-network` (storage: `insert`, `extract`, `count`, `contents`,

@@ -23,6 +23,8 @@ Sources:
     python tools/gen_ae2_sprites.py --r2          # only the issue #68 (R2) fluid bus graphics, from the R1 PNGs
     python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
     python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
+    python tools/gen_ae2_sprites.py --bus-markers # only the marker layers of the import, export and storage bus
+                                                  # (issue #282: the plate and the arrows alone, drawn over the bus)
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
     python tools/gen_ae2_sprites.py --patterns    # only the blank and encoded pattern icons (issue #80)
     python tools/gen_ae2_sprites.py --unified     # only the ME Interface with its four pipe sides (me-network issue #3)
@@ -733,17 +735,21 @@ def controller_r1_sprite():
     return img
 
 
-def bus_sprite(accent, export, direction):
-    """1x1: MV casing, a plate on the side the bus faces and an arrow: towards the plate (export) or away
-    from it (import). Drawn facing north, then rotated."""
-    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
-    d = ImageDraw.Draw(img)
+def bus_marker(d, accent, export):
+    """the plate on the side the bus faces (north) and the arrow: towards the plate (export) or away from it (import)"""
     d.rectangle((4, 0, TILE - 5, 4), fill=accent + (255,), outline=(40, 40, 48, 255))   # the plate (north)
     d.rectangle((14, 7, 17, 24), fill=(235, 235, 245, 255))                             # arrow shaft
     if export:                                       # arrow head at the plate: items go out
         d.polygon([(9, 13), (22, 13), (15, 6)], fill=accent + (255,))
     else:                                            # arrow head away from the plate: items come in
         d.polygon([(9, 19), (22, 19), (15, 27)], fill=accent + (255,))
+
+
+def bus_sprite(accent, export, direction, marker_only=False):
+    """1x1: MV casing, a plate on the side the bus faces and an arrow: towards the plate (export) or away
+    from it (import). Drawn facing north, then rotated. marker_only (issue #282): the plate and the arrow alone."""
+    img = Image.new("RGBA", (TILE, TILE)) if marker_only else casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    bus_marker(ImageDraw.Draw(img), accent, export)
     turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
     return img.rotate(turns, resample=Image.NEAREST) if turns else img
 
@@ -825,13 +831,24 @@ CHEST_WOOD = (150, 105, 60)
 CHEST_DARK = (90, 60, 32)
 
 
-def storage_bus_sprite(direction):
-    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
-    d = ImageDraw.Draw(img)
+def storage_bus_marker(d):
+    """the plate on the side the storage bus faces (north) and the two-headed arrow"""
     d.rectangle((4, 0, TILE - 5, 4), fill=STORAGE_ACCENT + (255,), outline=(40, 40, 48, 255))   # the plate (north)
     d.rectangle((15, 9, 16, 15), fill=(235, 235, 245, 255))                                      # arrow shaft
     d.polygon([(12, 9), (19, 9), (15, 5)], fill=STORAGE_ACCENT + (255,))                       # head at the plate
     d.polygon([(12, 15), (19, 15), (15, 19)], fill=STORAGE_ACCENT + (255,))                      # head at the chest
+
+
+def storage_bus_sprite(direction, marker_only=False):
+    """marker_only (issue #282): the plate and the arrow alone, without the casing and the chest"""
+    if marker_only:
+        img = Image.new("RGBA", (TILE, TILE))
+        storage_bus_marker(ImageDraw.Draw(img))
+        turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+        return img.rotate(turns, resample=Image.NEAREST) if turns else img
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    storage_bus_marker(d)
     d.rectangle((9, 20, 22, 28), fill=CHEST_WOOD + (255,), outline=CHEST_DARK + (255,))          # the chest
     d.line((9, 23, 22, 23), fill=CHEST_DARK + (255,))                                             # lid
     d.rectangle((15, 22, 16, 25), fill=(230, 200, 90, 255))                                       # latch
@@ -1540,6 +1557,27 @@ def hd_batch2():
     save(hd_cube(load(OUT_ENTITY / "me-interface-unified.png")), HD_ICON / "me-interface.png")
     save(hd_cube(load(OUT_ENTITY / "me-level-maintainer-on.png")), HD_ICON / "me-level-maintainer.png")
     save(hd_cube(load(OUT_ENTITY / "me-circuit-interface.png")), HD_ICON / "me-circuit-interface.png")
+    return written + bus_markers()
+
+
+BUS_FACE = HD - BUS_DEPTH           # the face of a bus's 64 px picture: 58 px at its top left
+
+
+def bus_markers():
+    """issue #282: the marker of each bus and direction (the plate on the side it faces and its arrows; the storage bus
+    without its chest), alone: the face of its picture (BUS_FACE px, made like hd_block's) with nothing else, so it repeats
+    the picture's pixels exactly. prototypes/network.lua draws it as a layer over the picture, placed by the mod-data's
+    bus view, so a graphics mod that replaces the picture keeps the direction (docs/API.md "The bus view")."""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    written = []
+    markers = {"me-import-bus": lambda d: bus_sprite(IMPORT_ACCENT, False, d, True),
+               "me-export-bus": lambda d: bus_sprite(EXPORT_ACCENT, True, d, True),
+               "me-storage-bus": lambda d: storage_bus_sprite(d, True)}
+    for bus, draw in markers.items():
+        for d in ("north", "east", "south", "west"):
+            path = HD_ENTITY / f"{bus}-{d}-marker.png"
+            hd_up(draw(d)).resize((BUS_FACE, BUS_FACE), Image.NEAREST).save(path)
+            written.append(path)
     return written
 
 
@@ -2024,6 +2062,9 @@ def main():
     ap.add_argument("--hd", action="store_true",
                     help="the 64 px pictures of the 3D style (me-network issues #154, #218: batch 1) from the 32 px ones, into "
                          "graphics/entity/fork/ae2/hd/ and graphics/icons/hd/, and their contact sheet")
+    ap.add_argument("--bus-markers", action="store_true",
+                    help="only graphics/entity/fork/ae2/hd/me-<import|export|storage>-bus-<direction>-marker.png (issue "
+                         "#282): the plate and the arrows of each bus alone, drawn as a layer over its picture")
     ap.add_argument("--light", action="store_true",
                     help="only graphics/entity/fork/ae2/hd/me-light.png (me-network issue #267): a white square the drive's and the "
                          "chest's cell lights are cut from and tinted (data-final-fixes.lua)")
@@ -2058,7 +2099,7 @@ def main():
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
             or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
-            or a.own_icons or a.light):
+            or a.own_icons or a.light or a.bus_markers):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
@@ -2141,6 +2182,8 @@ def main():
     if a.gt or a.light:
         light_square()
         print("me-light.png")
+    if a.bus_markers:                                  # (with --gt: made by hd_batch2)
+        print("bus markers:", len(bus_markers()))
     if a.terminal_lit:
         terminal_lit()
         print("me-terminal-lit.png")

@@ -13,8 +13,9 @@ Interface, ME Molecular Assembler, ME Cell Workbench and ME Charger are AE2-Unof
 cubes as icons (issue #260), the ME Pattern Provider its purple interface skin (issue #269, AE2-Unofficial has no provider); a cell in the drive or the chest is drawn as AE2 draws it (issue #264, through ME
 Network's drive view). The ME Controller is four AE2-Unofficial controllers, dark without power, with AE2's running
 lights while its network works and red in a conflict (issue #278, through ME Network's controller view). The ME
-Terminal and the ME Pattern Terminal are AE2's terminal panels, dark or with their screen lit (issue #281). The other
-blocks, the cable and the buses look as without this mod.
+Terminal and the ME Pattern Terminal are AE2's terminal panels, dark or with their screen lit (issue #281). The ME
+Import, Export and Storage Bus are AE2's bus fronts with ME Network's plate and arrows on them (issue #282, through ME
+Network's bus view). The other blocks and the cable look as without this mod.
 
 **Nothing here is GPL.** This folder is a mod of its own, built into a zip of its own (`tools/build.py`), and
 everything in it (the images, the code, the locale, these texts) is CC BY-NC-SA 3.0. ME Network is GPLv3 (its
@@ -53,7 +54,7 @@ What the license means for this mod, in short:
 |---|---|
 | `info.json` | the mod: `me-network-ae2-textures`, its own version, depends on `me-network` |
 | `overrides.lua` | the table of what is replaced: `"<type>/<name>"` of an ME Network prototype to a file of this mod, or to a table from ME Network's file to this mod's (one entry per layer or file) |
-| `data-updates.lua` | sets ME Network's drive view: where the cells and their lights sit on this mod's drive and chest, and the cell sprites (ME Network issues #264, #267; it makes their entities' pictures from it in its data-final-fixes); and its controller view: the controller's lit and conflict pictures (issue #278) |
+| `data-updates.lua` | sets ME Network's drive view: where the cells and their lights sit on this mod's drive and chest, and the cell sprites (ME Network issues #264, #267; it makes their entities' pictures from it in its data-final-fixes); its controller view: the controller's lit and conflict pictures (issue #278); and its bus view: where the buses' plate and arrows sit on this mod's bus fronts (issue #282) |
 | `data-final-fixes.lua` | sets those files on the prototypes by name (ME Network never renames a prototype); what it cannot apply it skips with a line in the log (`devcheck check` fails on it) |
 | `locale/en/` | the mod's name and description |
 | `changelog.txt` | this mod's own changelog |
