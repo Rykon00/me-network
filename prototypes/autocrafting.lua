@@ -118,7 +118,7 @@ data:extend({ {
 	picture = {
 		filename = ME.hd_entity_path .. "me-pattern-provider.png",
 		priority = "extra-high",
-		width = 32, height = 32,
+		width = 64, height = 64, scale = 0.5,              -- (issue #269: the 3D-style 64 px picture; 32 drew its top left quarter)
 	},
 	localised_description = { "entity-description.me-pattern-provider" },
 } })

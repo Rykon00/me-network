@@ -89,4 +89,10 @@ return {
 		["__me-network__/graphics/icons/hd/me-molecular-assembler.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-molecular-assembler.png", icon_size = 64 },
 	},
 	["item/me-molecular-assembler"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-molecular-assembler.png", icon_size = 64 },
+	--- the pattern provider (issue #269): AE2-Unofficial has none, so its purple interface skin (BlockInterfaceAlternate_Purple)
+	["simple-entity-with-force/me-pattern-provider"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-pattern-provider.png"] = "__me-network-ae2-textures__/graphics/blocks/me-pattern-provider.png",
+		["__me-network__/graphics/icons/hd/me-pattern-provider.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-provider.png", icon_size = 64 },
+	},
+	["item/me-pattern-provider"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-provider.png", icon_size = 64 },
 }

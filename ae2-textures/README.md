@@ -10,7 +10,7 @@ upgrade cards and the blank and encoded pattern (issues #247, #250, #251). AE2-U
 interface capacity card: the fluid cells show its item cell of their tier with a blue frame and body, the ME
 Interface Capacity Card its Capacity Card with the turquoise stripe of an advanced card. The ME Drive, ME Chest, ME
 Interface, ME Molecular Assembler, ME Cell Workbench and ME Charger are AE2-Unofficial's blocks in the world and AE2
-cubes as icons (issue #260); a cell in the drive or the chest is drawn as AE2 draws it (issue #264, through ME
+cubes as icons (issue #260), the ME Pattern Provider its purple interface skin (issue #269, AE2-Unofficial has no provider); a cell in the drive or the chest is drawn as AE2 draws it (issue #264, through ME
 Network's drive view). The other blocks, the cable and the buses look as without this mod.
 
 **Nothing here is GPL.** This folder is a mod of its own, built into a zip of its own (`tools/build.py`), and
