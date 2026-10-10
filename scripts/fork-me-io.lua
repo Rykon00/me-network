@@ -126,6 +126,9 @@ end
 local function idle_limit(s)
 	return Sched.idle_limit(Sched.setting("idle"), #s.list, 24 / 15, MIN_INTERVAL)
 end
+--- the idle limit of this tick (computed once per tick by M.on_tick; read by the visits, the probes and the idle sides
+--- of issue #313)
+local tick_limit = MAX_CATCH_UP
 
 --- visit the block before everything else (its settings, its target or the network changed)
 local function wake(unit)
@@ -632,11 +635,38 @@ local function export_side(t, held, row, net, p)
 	return "ok", moved, math.max(0, want - got), key
 end
 
+--- issue #313: a visited interface that does not look at its sides looks at its tanks every SIDLE_LOOK idle limits (four
+--- reads each time: the bench's interfaces are visited less often than the idle limit, so every visit would read them)
+local SIDLE_LOOK = 4
+
+--- issue #313: does a tank of the interface hold fluid? (four reads; for an interface that does not look at its sides)
+local function tanks_hold(rec)
+	for _, t in pairs(rec.tanks or {}) do
+		if t.valid then
+			local f = T.fluidbox(t)[1]
+			if f and f.amount > EPS then return true end
+		end
+	end
+	return false
+end
+
 --- one pass over the four sides; rec.fstatus[d] is what the window shows. Returns the fluid moved (an export side
 --- whose fluid the network lacks waits for it: N.wait_for). `short`: the shortfalls of this visit (issue #17), nil
 --- while priorities are not in use.
 local function interface_sides(rec, net, config, short, dt)
-	if rec.sidle then return 0, math.huge end           -- nothing connected, nothing exported, nothing in the tanks (see the end)
+	--- nothing connected, nothing exported, nothing in the tanks (see the end): the sides are skipped. Issue #313: only up
+	--- to SIDLE_LOOK idle limits after the pass that found it (`rec.sidle`: its tick; `true` of a save from before: at
+	--- once): fluid that came without an event (a machine's fluid box connecting with its recipe, a rotated pump) is found
+	--- then by an interface its items keep busy (an idle one, probed, looks at the idle limit: probe_work)
+	if rec.sidle then
+		if game.tick - (rec.sidle == true and 0 or rec.sidle) < SIDLE_LOOK * tick_limit then return 0, math.huge end
+		--- at the idle limit one look at the tanks (four reads): only fluid in one of them makes the full pass
+		if rec.tanks and not tanks_hold(rec) then
+			rec.sidle = game.tick
+			return 0, math.huge
+		end
+		rec.sidle = nil
+	end
 	local tanks = ensure_tanks(rec)
 	if not tanks then return 0, math.huge end
 	local anyheld, sstarved = false, false
@@ -702,7 +732,7 @@ local function interface_sides(rec, net, config, short, dt)
 	end
 	--- no pipe or pump at a side (rec.fconn, kept by M.wake_near and ensure_tanks), no row that exports, nothing in the
 	--- tanks: the next passes would find the same; a wake, a connection or a changed row looks again (rec.sidle = nil)
-	if not (anyheld or rec.fconn or rec.exporting) then rec.sidle = true end
+	if not (anyheld or rec.fconn or rec.exporting) then rec.sidle = game.tick else rec.sidle = nil end
 	return moved, time, sstarved
 end
 
@@ -1053,7 +1083,10 @@ function M.get_interface(entity)
 	for d = 1, #SIDES do
 		local t = tanks and tanks[d]
 		local held = t and t.fluidbox[1]
-		fl[d] = { setting = sides[d] or "import", status = rec.fstatus and rec.fstatus[d] or nil,
+		local status = rec.fstatus and rec.fstatus[d] or nil
+		--- issue #313: the last pass found this import side empty; it holds fluid now: imported at the next visit
+		if status == "import" and held and held.amount > EPS then status = "waiting" end
+		fl[d] = { setting = sides[d] or "import", status = status,
 			name = held and held.amount > EPS and held.name or nil, amount = held and held.amount or 0,
 			temperature = held and held.amount > EPS and held.temperature or nil,
 			connected = t ~= nil and #t.fluidbox.get_connections(1) > 0 }
@@ -1655,23 +1688,34 @@ end
 local NET_SIDE = { ["no-key"] = true, ["net-full"] = true, ["no-network"] = true, ["no-power"] = true, unset = true }
 
 --- what the probe of a blocked block compares against: the items the source or the interface holds (one engine
---- call), plus the fluid of an interface's connected sides or of the source's boxes
+--- call), plus the fluid of an interface's sides (not of one that does not look at them, `rec.sidle`: probe_work looks
+--- at those at the idle limit, issue #313) or of the source's boxes. The second value of an interface: an import side
+--- holds fluid that waits (issue #313).
 local function probe_mark(rec)
 	local e = rec.entity
 	if rec.kind == "interface" then
 		local n = N.bound(T.inventory(e, defines.inventory.chest)).get_item_count()
-		local tanks = not rec.sidle and rec.tanks
+		local tanks, held = not rec.sidle and rec.tanks, false
 		if tanks then
 			local sides = rec.sides or {}
 			for d = 1, #SIDES do
 				local t = tanks[d]
-				if sides[d] ~= "off" and t and t.valid then
+				local setting = sides[d]
+				if setting ~= "off" and t and t.valid then
 					local f = T.fluidbox(t)[1]
-					if f then n = n + math.floor(f.amount) end
+					if f then
+						n = n + math.floor(f.amount)
+						--- (the safety net: an import side that waits for room or was not looked at; not one that feeds an
+						--- export side, "loop", or holds what the network does not take, which a visit cannot change)
+						local why = rec.fstatus and rec.fstatus[d]
+						if type(setting) ~= "number" and f.amount > EPS and (why == nil or why == "import" or why == "full") then
+							held = true
+						end
+					end
 				end
 			end
 		end
-		return n
+		return n, held
 	end
 	local t = rec.target
 	if not (t and t.valid) then return 0 end
@@ -1694,7 +1738,24 @@ end
 local function probe_work(rec)
 	local b = rec.block
 	if b == "no-target" then return target_of(rec) ~= nil end
-	if rec.kind == "interface" or b == "empty" then return probe_mark(rec) ~= rec.seen end
+	if rec.kind == "interface" then
+		local mark, held = probe_mark(rec)
+		if mark ~= rec.seen then return true end
+		--- issue #313: an interface that does not look at its sides (nothing was connected) looks at its tanks at the idle
+		--- limit: fluid that came without an event (a machine's fluid box connecting with its recipe, a rotated pump) wakes it
+		if rec.sidle then
+			if game.tick - (rec.sidle == true and 0 or rec.sidle) >= tick_limit then
+				if tanks_hold(rec) then return true end
+				rec.sidle = game.tick
+			end
+			return false
+		end
+		--- issue #313: the safety net: fluid waits in an import side, so it is visited at least at the idle limit even when
+		--- no wake came (room that appeared without one: a partition or a priority changed, ...); a missed wake costs
+		--- seconds, not ever
+		return held and game.tick - (rec.last or 0) >= tick_limit
+	end
+	if b == "empty" then return probe_mark(rec) ~= rec.seen end
 	--- "full": does the export target take something again?
 	local t = rec.target
 	if not (t and t.valid) then return true end
@@ -1743,9 +1804,6 @@ local function when(q, probe, unit, now, iv, late_ok)
 	local late = late_ok and math.min(math.floor(iv * 0.2), MAX_CATCH_UP - iv) or 0
 	return Sched.slot(q, probe, unit, now, iv, early, late)
 end
-
---- the idle limit of this tick (computed once per tick for the probes and visits of M.on_tick)
-local tick_limit = MAX_CATCH_UP
 
 --- one scheduled visit: the block moves what its speed and the ticks since its last visit allow, and is due again
 --- when the buffer on its other side needs it (the headroom rule); a block with nothing to do is probed or parked
@@ -2161,6 +2219,7 @@ remote.add_interface("gregtorio-me-io", {
 	set_interface_priority = function(entity, priority) return M.set_interface_priority(entity, priority) end,
 	--- the four side tanks (north, east, south, west)
 	interface_tanks = function(entity) return M.tanks_of(entity) end,
+	idle_limit = function() return storage.fork_me_io and idle_limit(storage.fork_me_io) or nil end,   -- (issue #313 tests)
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,
 	--- issue #110: the card slots of a bus (what the window's clicks do; `want`: a list of names)
 	bus_inventory = function(entity) local rec = bus_rec(entity) return rec and cards.inv_of(rec) or nil end,

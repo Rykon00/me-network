@@ -872,6 +872,9 @@ temperature159 = require("temperature")({ me_place = me_place, power = power, me
 --- me-network issue #261: fluid amounts of patterns from recipes on the engine's grid (gridfluid.lua)
 gridfluid261 = require("gridfluid")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #313: an interface's import side that holds fluid is visited again (ifacewake.lua)
+ifacewake313 = require("ifacewake")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #158: the pattern provider runs the machines next to it (providers.lua)
 providers158 = require("providers")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -967,6 +970,7 @@ local function tests_running()
 	storable76.running(check)
 	temperature159.running(check)
 	gridfluid261.running(check)
+	ifacewake313.running(check)
 	providers158.running(check)
 	pastecraft157.running(check)
 	buffer150.running(check)
@@ -1888,6 +1892,7 @@ script.on_nth_tick(10, function()
 	storable76.tick()
 	temperature159.tick()
 	gridfluid261.tick()
+	ifacewake313.tick()
 	providers158.tick()
 	pastecraft157.tick()
 	buffer150.tick()
@@ -4753,6 +4758,7 @@ script.on_init(function()
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(gridfluid261.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(ifacewake313.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
