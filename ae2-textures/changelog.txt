@@ -11,6 +11,7 @@ Version: 0.2.0
     - The ME Terminal and the ME Pattern Terminal (ME Network issue #281): AE2-Unofficial's terminal panels, smaller than a block as in AE2, at the pixel size of the other blocks. Dark while their network does not work, AE2's screen in its Fluix colours while it does; their icons are the lit panels.
     - The ME Import, Export and Storage Bus (ME Network issue #282): AE2-Unofficial's bus fronts as blocks, and AE2 cubes as their icons. ME Network's plate on the side a bus faces and its arrows are drawn on the AE2 front, so the direction stays visible (AE2's front shows none). Needs ME Network 0.5.3 or later (its bus view); with an older one the buses look as without this mod.
     - The cable (ME Network issue #283): AE2-Unofficial's Fluix glass cable, 4 AE2 pixels thick, its pattern running on from tile to tile; the fluix cable item shows a crossing of it. The ME Underground Cable has no AE2 counterpart and stays ME Network's.
+    - The blocks of a Crafting CPU (ME Network issue #302): the crafting unit, the co-processing unit, the 1k to 256k crafting storage and the crafting monitor are AE2-Unofficial's blocks, each a cube of its own as in AE2 (not ME Network's one slab): its plain block while it is no CPU, AE2's formed look (the coloured cross, the monitor's screen) while it is part of one. Their icons are AE2 cubes.
 ---------------------------------------------------------------------------------------------------
 Version: 0.1.0
   Info:

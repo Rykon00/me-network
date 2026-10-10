@@ -21,6 +21,12 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
   lit (AE2's three screen layers over it, tinted in the Fluix colours of AEColor.Transparent: Bright with the white
   variant, Dark with the medium one, Colored with the black one, each imported as its own file and added to the row with
   --add-source); a sheet of both side by side for an entity with two variations; and as an icon a slab of the lit plate;
+* a crafting block sheet (issue #302, the blocks of a Crafting CPU, as single AE2 cubes): ME Network's 48 variations
+  side by side (64 px each, 1 + mask + 16 * state, its issue #152): state 0 (no CPU) the block picture of the face,
+  states 1 and 2 (a CPU, one that runs a job) the block picture of AE2's formed look, its layers over each other (the
+  formed unit `BlockCraftingUnitFit` and the block's `*Fit` overlay; the monitor's outer frame and its three screen
+  layers tinted in the Fluix colours like the terminal's). The mask (the sides that touch the CPU) does not change the
+  cube: AE2 draws every block of a CPU as a cube of its own;
 * a cable sheet (issue #283): AE2's Fluix glass cable (PartCable: 4 AE2 pixels thick, x3 = 12 px) as the 16 variations
   of me-network's cable (its connections: north 1, east 2, south 4, west 8), side by side, 64 px each: an arm to every
   connected side made of the texture's middle band (rows 6..9, x3) from the tile's edge, so the band runs on into the
@@ -76,6 +82,19 @@ SCREENS = {
 }
 PLATE = (2, 2, 14, 14)      # the plate of a part's 16 px front
 PANEL_DEPTH = 6
+# issue #302: the crafting blocks: me-network's name -> the layers of AE2's formed look over each other (blocks/lights/
+# files, each with the tint it is drawn in, or None)
+CPU_FIT = "blocks/lights/crafting-unit-fit.png"
+CRAFTING = {
+    "me-crafting-unit": [(CPU_FIT, None)],
+    "me-crafting-co-processing-unit": [(CPU_FIT, None), ("blocks/lights/crafting-accelerator-fit.png", None)],
+    **{f"me-{t}-crafting-storage": [(CPU_FIT, None), (f"blocks/lights/crafting-storage-{t}-fit.png", None)]
+       for t in ("1k", "4k", "16k", "64k", "256k")},
+    "me-crafting-monitor": [("blocks/lights/crafting-monitor-outer.png", None),
+                            ("blocks/lights/crafting-monitor-fit-light.png", SCREEN_TINTS[0]),
+                            ("blocks/lights/crafting-monitor-fit-medium.png", SCREEN_TINTS[1]),
+                            ("blocks/lights/crafting-monitor-fit-dark.png", SCREEN_TINTS[2])],
+}
 # file inside ae2-textures/graphics/ -> what it becomes (and, for a strip, the file of its lights and their frames; a
 # block or strip of 2 x 2 tiles names the size last)
 MAKE = {
@@ -95,6 +114,9 @@ MAKE = {
     # issue #283: the cable (me-cable.png's 16 variations) and its icon (the crossing)
     "blocks/me-cable.png": ("cable-sheet",),
     "icons/blocks/me-cable.png": ("cable-icon",),
+    # issue #302: the crafting blocks and their icons (AE2 cubes of the face without a CPU)
+    **{f"blocks/crafting/{b}.png": ("crafting-sheet", b) for b in CRAFTING},
+    **{f"icons/blocks/{b}.png": ("icon",) for b in CRAFTING},
     **{f"icons/blocks/{i}.png": ("icon",) for i in ICONS},
     **{f: ("piece", box) for f, box in CELL_PIECES.items()},
 }
@@ -328,6 +350,25 @@ def make(name, how):
         piece = face.crop((x0, y0, x1, y1)).transpose(Image.FLIP_LEFT_RIGHT)
         return piece.resize((piece.width * K, piece.height * K), Image.NEAREST), \
             f"cell piece: x {x0}..{x1 - 1}, y {y0}..{y1 - 1} of the texture, mirrored (as AE2 draws it on a front), x3"
+    if how[0] == "crafting-sheet":
+        formed = None
+        for f, tint_of in CRAFTING[how[1]]:
+            layer = Image.open(GRAPHICS / f).convert("RGBA")
+            if layer.size != (FACE, FACE):
+                sys.exit(f"ae2_blocks: ae2-textures/graphics/{f} is {layer.size[0]} x {layer.size[1]}, expected {FACE} x {FACE}")
+            layer = tint(layer, tint_of) if tint_of else layer
+            if formed is None:
+                formed = layer.copy()
+            else:
+                formed.alpha_composite(layer)
+        lone, cpu = block(filled(face)), block(filled(formed))
+        out = Image.new("RGBA", (48 * TILE, TILE))
+        for v in range(48):
+            out.alpha_composite(lone if v < 16 else cpu, (v * TILE, 0))
+        tinted = " (the screen layers tinted #D7BBEC, #895CA8, #1B2344)" if how[1] == "me-crafting-monitor" else ""
+        return out, ("crafting block sheet: 48 block pictures (64 x 64, side by side, ME Network's variations 1 + mask + 16 * "
+                     "state): 1..16 the face (holes filled with its darkest colour) x3 with depth strips and a contour, "
+                     f"17..48 the same of AE2's formed look (the further sources over each other{tinted})")
     if how[0] == "cable-sheet":
         out = Image.new("RGBA", (16 * TILE, TILE))
         for bits in range(16):
