@@ -157,6 +157,29 @@ function M.processing(inputs, outputs, recipe)
 	return M.normalize{ kind = "processing", inputs = packed(inputs), outputs = packed(outputs), recipe = recipe }
 end
 
+--- Issue #261: the engine keeps fluid amounts on a grid of 2^-24 (FIXED, fork-me-autocraft.lua fixed_up; Gregtorio rounds
+--- every recipe's fluids up to it, its #117), so a recipe's 14.4 reads 14.400000035762787. A pattern made from a recipe
+--- keeps a clean amount of at most 6 significant digits (as M.id_of prints it): the nearest, unless that would hurt. An input
+--- (`up`) is delivered at fixed_up of the amount, which must not be less than the recipe's (the machine would wait); an
+--- output must not be more than the recipe gives (a run counts as done when its outputs came back). Then the amount is
+--- rounded up (an input) or down (an output) at the 6th digit instead.
+local FIXED = 16777216
+local function fixed_up(amount) return math.ceil(amount * FIXED) / FIXED end
+
+function M.clean_amount(n, up)
+	if type(n) ~= "number" or n <= 0 or n == math.floor(n) then return n end
+	local function ok(r) return up and fixed_up(r) >= fixed_up(n) or (not up and r <= n) end
+	local r = tonumber(string.format("%.6g", n))
+	if ok(r) then return r end
+	local step = 10 ^ (math.floor(math.log(n, 10)) - 5)
+	for i = 0, 2 do                                           -- (the 6th digit up or down, a step more if float noise)
+		local m = up and math.ceil(n / step) + i or math.floor(n / step) - i
+		r = tonumber(string.format("%.6g", m * step))
+		if r > 0 and ok(r) then return r end
+	end
+	return n
+end
+
 --- the inputs and outputs of a recipe as processing pattern rows (the encoding window's "From recipe", a provider that
 --- takes over an assembler's recipe). Issue #171: a processing pattern's row is an amount every run gives, so the
 --- products with a chance (a byproduct at 5 %, a range) stay out of the rows, as a GT New Horizons player leaves the
@@ -180,6 +203,13 @@ function M.recipe_rows(recipe)
 		for _, row in ipairs(outputs) do
 			if not is_fluid(row.key) then row.amount = math.max(1, math.floor(row.amount + 0.5)) end
 		end
+	end
+	--- issue #261: fluid amounts on the engine's grid as clean numbers (14.4, not 14.400000035762787)
+	for _, row in ipairs(inputs) do
+		if is_fluid(row.key) then row.amount = M.clean_amount(row.amount, true) end
+	end
+	for _, row in ipairs(outputs) do
+		if is_fluid(row.key) then row.amount = M.clean_amount(row.amount, false) end
 	end
 	return inputs, outputs
 end

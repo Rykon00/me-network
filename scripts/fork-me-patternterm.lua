@@ -396,7 +396,9 @@ local function editor_rows(parent, ed, which, max)
 	for i = 1, max do
 		local row = ed[which][i]
 		G.key_button(t, row and row.key, G.act("pat_row", { which = which, index = i }), { "fork-me-gui.key-slot-tooltip" })
-		local f = G.number_field(t, row and row.amount or 0, G.act("pat_amount", { which = which, index = i }), 60)
+		--- (issue #261: a fluid amount of a pattern from before, 14.400000035762787, shows as 14.4; typing changes the row)
+		local shown = row and P.clean_amount(row.amount, which == "inputs") or 0
+		local f = G.number_field(t, shown, G.act("pat_amount", { which = which, index = i }), 60)
 		f.allow_decimal = true
 		f.enabled = row ~= nil
 	end
@@ -653,6 +655,8 @@ remote.add_interface("gregtorio-me-pattern-terminal", {
 	inventory = function(entity) return M.inventory(entity) end,
 	--- the pattern in an encoded pattern stack (tags, tooltip data): { kind, recipe, inputs, outputs, valid, id, description }
 	pattern_info = function(stack) return P.info(stack) end,
+	--- (issue #261 tests) a fluid amount as a pattern keeps it: `up` for an input
+	clean_amount = function(n, up) return P.clean_amount(n, up) end,
 	problem = function(entity) local _, why = network(entity) return why end,
 	--- how many blocks have a record (a mined or destroyed block leaves none)
 	record_count = function() local n = 0 for _ in pairs(records()) do n = n + 1 end return n end,
