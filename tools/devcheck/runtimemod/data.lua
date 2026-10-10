@@ -64,6 +64,21 @@ do
 			{ { type = "fluid", name = "steam", amount = 10, temperature = 300 } }) })
 end
 
+--- issue #261 (gridfluid.lua): two recipes of the hot machine with water on the engine's grid of 2^-24, as Gregtorio
+--- rounds every recipe (its #117): 14.4 and 0.1234564 rounded up to the grid
+do
+	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local function grid(a) return math.ceil(a * 16777216) / 16777216 end
+	local function g(name, amount)
+		return { { type = "item", name = "zz-devcheck-grid-token-" .. name, icon = icon, stack_size = 50, subgroup = "intermediate-product" },
+			{ type = "recipe", name = "zz-devcheck-grid-" .. name, category = "zz-devcheck-hot", energy_required = 0.5, enabled = true,
+				icon = icon, subgroup = "intermediate-product", ingredients = { { type = "fluid", name = "water", amount = grid(amount) } },
+				results = { { type = "item", name = "zz-devcheck-grid-token-" .. name, amount = 1 } } } }
+	end
+	for _, p in pairs(g("a", 14.4)) do data:extend({ p }) end
+	for _, p in pairs(g("b", 0.1234564)) do data:extend({ p }) end
+end
+
 --- issue #158 (providers.lua): a machine with a fixed recipe and a second recipe of its category
 do
 	local m = table.deepcopy(data.raw["assembling-machine"]["assembling-machine-2"])
