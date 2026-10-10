@@ -410,6 +410,20 @@ local function four_way(name, hd)
 	return out
 end
 
+--- issue #282: a bus's picture and, as a layer of its own above it, its marker (the plate on the side it faces and its
+--- arrows, tools/gen_ae2_sprites.py --bus-markers: the picture's own pixels, so it changes nothing here). The marker sits
+--- on the picture's face, BUS_FACE px at its top left; data-final-fixes.lua moves it to the face of the mod-data's bus
+--- view, so a graphics mod that replaces the picture keeps the direction (docs/API.md "The bus view").
+local BUS_FACE = 58
+local function bus_picture(name)
+	local out = four_way(name, true)
+	for dir, sprite in pairs(out) do
+		out[dir] = { layers = { sprite, { filename = HD_ENTITY .. name .. "-" .. dir .. "-marker.png", priority = "extra-high",
+			width = BUS_FACE, height = BUS_FACE, scale = 0.5, shift = { BUS_FACE / 2 / 64 - 0.5, BUS_FACE / 2 / 64 - 0.5 } } } }
+	end
+	return out
+end
+
 for _, bus in pairs({
 	{ name = IMPORT_BUS, order = "b2" },
 	{ name = EXPORT_BUS, order = "b3" },
@@ -429,7 +443,7 @@ for _, bus in pairs({
 		name = bus.name, icon = HD_ICON .. bus.name .. ".png", icon_size = 64,
 		description = { "entity-description." .. bus.name },
 		--- walkable like the cable (issue #129): drawn under the character
-		extra = { picture = four_way(bus.name, true), render_layer = "lower-object", collision_mask = WALKABLE },
+		extra = { picture = bus_picture(bus.name), render_layer = "lower-object", collision_mask = WALKABLE },
 	}
 end
 
@@ -503,7 +517,7 @@ ME.add_item{
 block{
 	name = STORAGE_BUS, icon = HD_ICON .. STORAGE_BUS .. ".png", icon_size = 64,
 	description = { "entity-description." .. STORAGE_BUS },
-	extra = { picture = four_way(STORAGE_BUS, true), additional_pastable_entities = { STORAGE_BUS },
+	extra = { picture = bus_picture(STORAGE_BUS), additional_pastable_entities = { STORAGE_BUS },
 		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 
@@ -638,6 +652,9 @@ data:extend({ {
 		--- per state ("off", "on", "conflict") drawn over the controller's picture; this mod's own view is empty (its
 		--- picture alone, whatever the state)
 		controller_view = {},
+		--- issue #282: where a bus's marker (its plate and arrows, a layer of its own) is drawn on its picture: the square of
+		--- the 64 px picture that is its face, px from its top left (docs/API.md "The bus view"); this mod's own face
+		bus_view = { x = 0, y = 0, size = BUS_FACE },
 	},
 } })
 
