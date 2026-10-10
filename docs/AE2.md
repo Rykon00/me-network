@@ -603,7 +603,8 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
 * **Partition:** the cell's filled slots (items with quality, or fluids for a fluid cell) and one free slot at the end,
   **From contents** and **Clear**. A click on a slot (the free one adds, a filled one changes) opens the **picker**
   (issue #94), made like the game's own: the item groups as tabs (fluids in theirs), a search by name (as the
-  terminal's), the items and fluids of the group, a row with the **qualities** at the bottom (items only) and the **green
+  terminal's), the items and fluids of the group, a row with the **qualities** at the bottom (items only; with a mod that
+  adds many qualities they wrap into rows of 10, or of 5 next to a fluid's temperature field: issue #291) and the **green
   check** at its right end. Click an element, click a quality, click the check; the confirm key (the game's "Confirm
   GUI", "E" by default) is the check, Enter in the search field too, Escape or the X closes the picker only. A filled
   slot opens it with its element and quality chosen, so both can be changed; right click empties a slot. Only items

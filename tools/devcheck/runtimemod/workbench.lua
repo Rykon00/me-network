@@ -569,6 +569,12 @@ return function(H)
 		expect(#g1 > 0 and #g1 < #all, "the entries of one group")
 		local qs = remote.call(GUI, "workbench_qualities")
 		expect(type(qs) == "table" and (q == nil and #qs == 0 or qs[1] == "normal" and #qs >= 2), "the picker's qualities " .. line(qs))
+		--- issue #291: the quality buttons wrap: the game's five in one row, 30 (Infinite Quality Tiers) in rows of 10, or of 5
+		--- next to the temperature field, so the picker keeps its width
+		local function cols(n, temp) return remote.call(GUI, "picker_quality_columns", n, temp) end
+		expect(cols(5, false) == 5 and cols(5, true) == 5 and cols(2, true) == 2 and cols(30, false) == 10 and cols(30, true) == 5
+			and cols(200, false) == 10, "the picker's quality columns: " .. line({ cols(5, false), cols(5, true), cols(2, true),
+			cols(30, false), cols(30, true), cols(200, false) }))
 
 		--- an empty workbench: one free slot, both kinds offered
 		local sl = slots()

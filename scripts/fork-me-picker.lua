@@ -70,6 +70,15 @@ function M.qualities()
 	return out
 end
 
+--- Issue #291: the quality buttons wrap in a table. With a mod that adds many qualities (Infinite Quality Tiers) one row of
+--- them ran past the picker and the screen. As many columns as fit in the bottom row at the picker's width (COLUMNS
+--- entries: 424 px) next to the label and the check (10 tool buttons of 30 px), or next to the temperature field as well
+--- (5); the game's five qualities stay one row either way.
+local QUALITY_COLUMNS, QUALITY_COLUMNS_WITH_TEMPERATURE = 10, 5
+function M.quality_columns(n, temperature)
+	return math.max(1, math.min(n, temperature and QUALITY_COLUMNS_WITH_TEMPERATURE or QUALITY_COLUMNS))
+end
+
 --------------------------------------------------------------------------------
 --- the catalog: what the picker lists, derived from the prototypes only (kept outside storage, made again after a load)
 --------------------------------------------------------------------------------
@@ -298,16 +307,19 @@ function M.open(player, spec)
 
 	local bottom = G.row(content)
 	local qualities = M.qualities()
+	local with_temperature = spec.temperature ~= false and kinds.fluid
 	if #qualities > 1 and not t.plain then
 		bottom.add{ type = "label", caption = { "fork-me-picker.quality" } }
-		local q = bottom.add{ type = "flow", name = "fork_me_pk_q", direction = "horizontal" }
+		local q = bottom.add{ type = "table", name = "fork_me_pk_q",
+			column_count = M.quality_columns(#qualities, with_temperature) }        -- (issue #291: rows, not one long line)
 		q.style.horizontal_spacing = 2
+		q.style.vertical_spacing = 2
 		for _, name in ipairs(qualities) do
 			q.add{ type = "sprite-button", style = "tool_button", sprite = "quality/" .. name,
 				tooltip = prototypes.quality[name].localised_name, tags = G.act("pk_quality", { quality = name }) }
 		end
 	end
-	if spec.temperature ~= false and kinds.fluid then             -- issue #159: a fluid's temperature (optional)
+	if with_temperature then                                      -- issue #159: a fluid's temperature (optional)
 		local row = bottom.add{ type = "flow", name = "fork_me_pk_temp_row", direction = "horizontal" }
 		row.style.vertical_align = "center"
 		row.add{ type = "label", caption = { "fork-me-picker.temperature" }, tooltip = { "fork-me-picker.temperature-tooltip" } }

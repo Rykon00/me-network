@@ -1648,6 +1648,8 @@ remote.add_interface("gregtorio-me-gui", {
 	picker_groups = function(kinds) return picker.group_names(kinds) end,
 	picker_entries = function(kinds, filter, group) return picker.entries(kinds, filter, group) end,
 	workbench_qualities = function() return picker.qualities() end,
+	--- issue #291: how many quality buttons the picker puts in a row (`n` qualities, with or without the temperature field)
+	picker_quality_columns = function(n, temperature) return picker.quality_columns(n, temperature) end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
 	--- issue #70: the key of the picker's choice (`with_quality`: an item keeps its quality), a row from a choice
 	key_of_choice = function(choice, with_quality) return picker.key_of(choice, with_quality) end,
