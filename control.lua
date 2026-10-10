@@ -32,6 +32,8 @@ local fork_bench = require("scripts.fork-me-workbench")
 local handover = require("scripts.fork-me-handover")
 --- the scheduler's settings (issue #5)
 local sched = require("scripts.fork-me-schedule")
+--- issue #295: the translated names of items and fluids, for the search fields
+local names = require("scripts.fork-me-names")
 --- the command /me-stats (issue #38, part 3)
 require("scripts.fork-me-stats")
 
@@ -140,6 +142,7 @@ local function on_tick(tick)
 	fork_ae2.on_tick(tick)
 	fork_me.on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
+	names.step()                                              -- (issue #295: translation requests, while any wait)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
 
@@ -211,4 +214,5 @@ script.on_configuration_changed(function(data)
 	fork_sbus.on_configuration_changed()
 	fork_bench.on_configuration_changed()
 	fork_wl.on_configuration_changed()
+	names.on_configuration_changed()
 end)
