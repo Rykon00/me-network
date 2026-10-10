@@ -603,7 +603,8 @@ def check_map(a, mapfile, textures=None):
 
 # issue #239, step 4: the stand-ins of the texture mod's proof run, one per form of ae2-textures/overrides.lua; each the
 # first of its candidates that overrides.lua does not set itself (issue #260: the real entries are applied too)
-PROOF_ITEMS = ("item:me-controller", "item:fluix-cable", "item:me-terminal")    # an icon (the file-name form: one file)
+PROOF_ITEMS = ("item:me-controller", "item:fluix-cable", "item:me-terminal",     # an icon (the file-name form: one file)
+               "item:me-underground-cable", "item:me-level-maintainer", "item:me-circuit-interface")
 PROOF_ENTITIES = ("me-drive", "me-wireless-access-point", "me-network-controller", "me-terminal")  # (the table form)
 PROOF_DIR = "ae2-textures-proof"        # the throw-away copy in the work folder
 
