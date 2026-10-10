@@ -58,3 +58,22 @@ do
 			icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
 	end
 end
+
+--- me-network issue #267: the drive's cell lights are hidden entities whose picture variations sit where the render objects
+--- of before sat (me-network's own view): bay 1's light covered (-0.341796875, -0.3681640625) .. (-0.130859375,
+--- -0.3154296875) tiles, at 64 px a tile 13.5 x 3.375 px, i.e. 108 x 27 px of the white square at scale 1/16. The
+--- lights are above the cells, both above the drive's picture at its position (secondary_draw_order), y-sorted with it.
+do
+	local light, cell = data.raw["simple-entity-with-force"]["me-drive-light"], data.raw["simple-entity-with-force"]["me-drive-cell"]
+	local function near(a, b) return math.abs(a - b) < 1e-6 end
+	local p = light and light.pictures and light.pictures[1]
+	local ok = p and p.width == 108 and p.height == 27 and near(p.scale, 1 / 16)
+		and near(p.shift[1], (-0.341796875 - 0.130859375) / 2) and near(p.shift[2], (-0.3681640625 - 0.3154296875) / 2)
+		and #light.pictures == 40 and light.secondary_draw_order == 2 and light.render_layer == "object"
+		and cell and #cell.pictures == 20 and cell.secondary_draw_order == 1
+		and data.raw["simple-entity-with-force"]["me-chest-light"] and #data.raw["simple-entity-with-force"]["me-chest-light"].pictures == 4
+	if not ok then
+		error("devcheck (issue #267): the drive's light parts are not where the lights were: " .. serpent.line(p)
+			.. " pictures " .. tostring(light and light.pictures and #light.pictures) .. " cell " .. tostring(cell and #cell.pictures))
+	end
+end

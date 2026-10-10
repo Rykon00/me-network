@@ -50,6 +50,7 @@ What the license means for this mod, in short:
 |---|---|
 | `info.json` | the mod: `me-network-ae2-textures`, its own version, depends on `me-network` |
 | `overrides.lua` | the table of what is replaced: `"<type>/<name>"` of an ME Network prototype to a file of this mod, or to a table from ME Network's file to this mod's (one entry per layer or file) |
+| `data-updates.lua` | sets ME Network's drive view: where the cells and their lights sit on this mod's drive and chest, and the cell sprites (ME Network issues #264, #267; it makes their entities' pictures from it in its data-final-fixes) |
 | `data-final-fixes.lua` | sets those files on the prototypes by name (ME Network never renames a prototype); what it cannot apply it skips with a line in the log (`devcheck check` fails on it) |
 | `locale/en/` | the mod's name and description |
 | `changelog.txt` | this mod's own changelog |

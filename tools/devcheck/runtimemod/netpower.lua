@@ -136,12 +136,12 @@ return function(H)
 			end
 			local lights = drive and remote.call(NET, "drive_lights", drive) or {}
 			local one = lights[1]
-			--- (before the view: left_top ((5 + 1) * 54/64 - 16) / 32, ((4 + 1) * 54/64 - 16) / 32, right_bottom with + 9 and + 3)
-			expect(one and one.light and near(one.light.left_top, { -0.341796875, -0.3681640625 })
-				and near(one.light.right_bottom, { -0.130859375, -0.3154296875 }),
-				"the drive's first light moved: " .. serpent.line(one))
-			expect(one and one.cell and one.cell.sprite == "zz-devcheck-drive-cell-item"
-				and near(one.cell.offset, { (8.4375 + 7.5) / 64 - 0.5, (6.75 + 3) / 64 - 0.5 }),   -- (bay + half the cell)
+			--- issue #267: a light and a cell are entities on the drive's position (their pictures' places: runtimemod's
+			--- data-final-fixes.lua); variation (bay - 1) * 4 + state (1 room), (bay - 1) * 2 + 1 an item cell
+			local at = drive and { drive.position.x, drive.position.y } or { 0, 0 }
+			expect(one and one.light and one.light.name == "me-drive-light" and one.light.variation == 1 and near(one.light.position, at),
+				"the drive's first light: " .. serpent.line(one))
+			expect(one and one.cell and one.cell.name == "me-drive-cell" and one.cell.variation == 1 and near(one.cell.position, at),
 				"the drive's first cell: " .. serpent.line(one))
 			local n = 0
 			for slot in pairs(lights) do n = n + 1 end
@@ -152,11 +152,15 @@ return function(H)
 			remote.call(NET, "insert_cell", drive, inv[1], 5)
 			remote.call(NET, "slow_step")
 			local five = (remote.call(NET, "drive_lights", drive) or {})[5]
-			expect(five and five.cell and five.cell.sprite == "zz-devcheck-drive-cell-fluid" and five.light,
-				"a fluid cell in bay 5: " .. serpent.line(five))
+			expect(five and five.cell and five.cell.variation == 10 and five.light and five.light.variation == 17,
+				"a fluid cell in bay 5 (cell variation 10, light 17): " .. serpent.line(five))
+			local parts = s.count_entities_filtered{ name = { "me-drive-light", "me-drive-cell" }, position = drive.position, radius = 0.01 }
+			expect(parts == 10, "light and cell entities on the drive: " .. parts .. ", expected 10")
 			remote.call(NET, "take_cell", drive, 5, inv)
 			remote.call(NET, "slow_step")
 			expect(not (remote.call(NET, "drive_lights", drive) or {})[5], "bay 5 after its cell was taken out")
+			parts = s.count_entities_filtered{ name = { "me-drive-light", "me-drive-cell" }, position = drive.position, radius = 0.01 }
+			expect(parts == 8, "light and cell entities after the cell went: " .. parts .. ", expected 8")
 			inv.destroy()
 			--- a level maintainer with no cable to a network is dark, and takes its picture along when it is destroyed
 			local lone = s.create_entity{ name = "me-level-maintainer", position = { BX + 30.5, BY + 3.5 }, force = "player",

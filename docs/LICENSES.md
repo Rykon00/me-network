@@ -27,7 +27,7 @@ project has confirmed it (AE2 #9022 was closed without an answer to licensing qu
 | [GT5-Unofficial](https://github.com/GTNewHorizons/GT5-Unofficial) graphics by GTNewHorizons: machine casings and screens, circuit boards, circuits, memory chips, an SMD chip, the signs of its machine GUI buttons | LGPL-3.0 | inside the sprites and icons of `graphics/entity/`, `graphics/icons/`, `graphics/technology/`, `thumbnail.png` | `me-network` | `tools/gen_ae2_sprites.py --gt <checkout>` |
 | [Applied Energistics 2](https://github.com/AppliedEnergistics/Applied-Energistics-2) code (© 2013 - 2020 AlgorithmX2 et al.): functions ported to Lua | LGPL-3.0 (its API MIT) | the ported functions, each with a comment naming its source; the files are listed in `README.md`, "License" (none so far) | `me-network` | written anew for Lua and the Factorio API |
 | Applied Energistics 2 textures and models (AE2: © 2020 Ridanisaurus Rid, © 2013 - 2020 AlgorithmX2 et al.; AE2-Unofficial: © 2013 - 2015 AlgorithmX2 et al.) | CC BY-NC-SA 3.0 | `ae2-textures/graphics/` only (`ae2-textures/README.md`, `ae2-textures/MANIFEST.tsv`); so far the item icons of the cells, cards and patterns (issue #247) and seven blocks with their icons (issues #260, #269), from AE2-Unofficial | `me-network-ae2-textures` only | `tools/import_ae2_textures.py` only |
-| The texture mod's own code, locale and texts (`ae2-textures/info.json`, `overrides.lua`, `data-final-fixes.lua`, `locale/`, `changelog.txt`, `README.md`) | CC BY-NC-SA 3.0 (nothing in `ae2-textures/` is GPL) | `ae2-textures/` | `me-network-ae2-textures` | written here |
+| The texture mod's own code, locale and texts (`ae2-textures/info.json`, `overrides.lua`, `data-updates.lua`, `data-final-fixes.lua`, `locale/`, `changelog.txt`, `README.md`) | CC BY-NC-SA 3.0 (nothing in `ae2-textures/` is GPL) | `ae2-textures/` | `me-network-ae2-textures` | written here |
 | Applied Energistics 2 text and translations | CC0 | `locale/`, `docs/`: the block and item names follow AE2's | `me-network` | names taken over, texts written here |
 
 The sprites under `graphics/entity/fork/ae2/` are named after AE2's blocks but are **not** AE2 graphics: the script
@@ -47,7 +47,8 @@ no graphics of the original Gregtorio are left; releases 0.1.0 to 0.5.2 still co
 - **The package rule.** The me-network zip never contains `ae2-textures/`, the CC BY-NC-SA text or a file with the
   bytes of an image of `ae2-textures/MANIFEST.tsv` or of its AE2 source, and no Lua file or `info.json` of it names the
   texture mod: me-network does not know it. The texture zip contains only its own files (`info.json`, `changelog.txt`,
-  `data-final-fixes.lua`, `overrides.lua`, `locale/<language>/*.cfg`, the license text, `README.md`, `MANIFEST.tsv`)
+  `data-updates.lua`, `data-final-fixes.lua`, `overrides.lua`, `locale/<language>/*.cfg`, the license text, `README.md`,
+  `MANIFEST.tsv`)
   and the images of its manifest, never the GPL text. `tools/build.py` fails otherwise. Each zip goes only to its own
   page on the mod portal (`me-network`, `me-network-ae2-textures`): the release workflow uploads both through
   `tools/portal_upload.sh`, which takes the mod name from the zip's own `info.json` (issue #243).

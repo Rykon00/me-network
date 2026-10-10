@@ -1396,6 +1396,13 @@ def hd_contour(img):
     return out
 
 
+def light_square():
+    """issue #267: the cell lights of the ME Drive and the ME Chest are hidden entities whose picture variations are cut from
+    this white square and tinted (data-final-fixes.lua), drawn at scale 1/16 (8 px of it are one px of a 64 px block)"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (256, 256), (255, 255, 255, 255)).save(HD_ENTITY / "me-light.png")
+
+
 def hd_block(face, tiles=1, depth=HD_DEPTH):
     """a block of `tiles` x `tiles` from its 32 px face picture: 64 px per tile"""
     size = HD * tiles
@@ -2017,6 +2024,9 @@ def main():
     ap.add_argument("--hd", action="store_true",
                     help="the 64 px pictures of the 3D style (me-network issues #154, #218: batch 1) from the 32 px ones, into "
                          "graphics/entity/fork/ae2/hd/ and graphics/icons/hd/, and their contact sheet")
+    ap.add_argument("--light", action="store_true",
+                    help="only graphics/entity/fork/ae2/hd/me-light.png (me-network issue #267): a white square the drive's and the "
+                         "chest's cell lights are cut from and tinted (data-final-fixes.lua)")
     ap.add_argument("--chest", action="store_true",
                     help="only the ME Chest (me-network issue #229): 32 px pictures and the 64 px ones of the 3D style, drawn from "
                          "the interface PNG")
@@ -2048,7 +2058,7 @@ def main():
     if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
             or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
-            or a.own_icons):
+            or a.own_icons or a.light):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
@@ -2128,6 +2138,9 @@ def main():
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
         print("thumbnail.png")
+    if a.gt or a.light:
+        light_square()
+        print("me-light.png")
     if a.terminal_lit:
         terminal_lit()
         print("me-terminal-lit.png")

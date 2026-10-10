@@ -106,9 +106,12 @@ recipes Gregtorio gives them. A mod should drop those recipes and unlocks from i
 
 ## The drive view (graphics mods)
 
-The script draws a light for each cell in an ME Drive (ten bays) and in the ME Chest (one), and can draw the cell
-itself. Where, is the mod-data `fork-me-network`'s `drive_view` (since issue #264), which a graphics mod that replaces
-the drive's or the chest's picture can set in its `data-final-fixes.lua`:
+The ME Drive (ten bays) and the ME Chest (one) show a light for each cell, and can show the cell itself. Where, is the
+mod-data `fork-me-network`'s `drive_view` (since issue #264), which a graphics mod that replaces the drive's or the
+chest's picture can set in its `data.lua` or `data-updates.lua` (since issue #267 not later: me-network's
+`data-final-fixes.lua` makes the pictures of the hidden entities `me-drive-light`, `me-drive-cell`, `me-chest-light`
+and `me-chest-cell` from it, one variation per bay and state, drawn on the block's position above its picture and sorted
+with it against the character):
 
 ```lua
 local view = data.raw["mod-data"]["fork-me-network"].data.drive_view
@@ -121,8 +124,8 @@ view.chest = { bays = { { x = 18, y = 30 } }, light = { ... }, cells = { ... } }
 ```
 
 All numbers are px of the 64 px picture of the drive and the chest (drawn at scale 0.5: 64 px a tile), from its top
-left. `cells` names two sprite prototypes, one for item cells and one for fluid cells, drawn `w` x `h` px at the bay
-(under the light) for every slot that holds a cell; without `cells` only the light is drawn. me-network's own view is
+left. `cells` names two sprite prototypes (defined by then), one for item cells and one for fluid cells, drawn `w` x
+`h` px at the bay (under the light) for every slot that holds a cell; without `cells` only the light is drawn. me-network's own view is
 the geometry of its own pictures and has no `cells`. The light's colour is me-network's (green, orange above 75 %,
 red when full; the chest's dark without power).
 
