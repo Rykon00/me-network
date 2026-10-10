@@ -12,7 +12,8 @@ Interface Capacity Card its Capacity Card with the turquoise stripe of an advanc
 Interface, ME Molecular Assembler, ME Cell Workbench and ME Charger are AE2-Unofficial's blocks in the world and AE2
 cubes as icons (issue #260), the ME Pattern Provider its purple interface skin (issue #269, AE2-Unofficial has no provider); a cell in the drive or the chest is drawn as AE2 draws it (issue #264, through ME
 Network's drive view). The ME Controller is four AE2-Unofficial controllers, dark without power, with AE2's running
-lights while its network works and red in a conflict (issue #278, through ME Network's controller view). The other
+lights while its network works and red in a conflict (issue #278, through ME Network's controller view). The ME
+Terminal and the ME Pattern Terminal are AE2's terminal panels, dark or with their screen lit (issue #281). The other
 blocks, the cable and the buses look as without this mod.
 
 **Nothing here is GPL.** This folder is a mod of its own, built into a zip of its own (`tools/build.py`), and

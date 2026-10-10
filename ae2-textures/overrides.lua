@@ -6,6 +6,7 @@
 --- Issue #260 brought the first blocks: their pictures and icons made from AE2-Unofficial faces (tools/ae2_blocks.py).
 --- Issue #278 the ME Controller: its picture is AE2's controller without power; data-updates.lua gives ME Network the lit
 --- and the conflict pictures for its controller view.
+--- Issue #281 the ME Terminal and the ME Pattern Terminal: AE2's terminal panels, dark and lit.
 ---
 --- A key is "<prototype type>/<prototype name>" of ME Network (it never renames a prototype). A value is either
 ---   a file of this mod, when the prototype uses exactly one file of ME Network (an item's icon):
@@ -103,4 +104,19 @@ return {
 		["__me-network__/graphics/icons/hd/me-controller.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-controller.png", icon_size = 64 },
 	},
 	["item/me-controller"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-controller.png", icon_size = 64 },
+	--- the terminals (issue #281): AE2's 12 x 12 panel x3, dark and with its screen in the Fluix colours. The terminal is a lamp
+	--- with the dark picture; ME Network's script draws the screen (dark or lit) over it from the two sprites. The pattern
+	--- terminal's sheet holds its two variations side by side (dark, lit), as ME Network's does.
+	["lamp/me-terminal"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-terminal-off.png"] = "__me-network-ae2-textures__/graphics/blocks/me-terminal-off.png",
+		["__me-network__/graphics/icons/hd/me-terminal.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-terminal.png", icon_size = 64 },
+	},
+	["sprite/me-terminal-screen-off"] = "__me-network-ae2-textures__/graphics/blocks/me-terminal-off.png",
+	["sprite/me-terminal-screen-on"] = "__me-network-ae2-textures__/graphics/blocks/me-terminal-lit.png",
+	["item/me-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-terminal.png", icon_size = 64 },
+	["simple-entity-with-force/me-pattern-terminal"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-pattern-terminal.png"] = "__me-network-ae2-textures__/graphics/blocks/me-pattern-terminal.png",
+		["__me-network__/graphics/icons/hd/me-pattern-terminal.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
+	},
+	["item/me-pattern-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
 }
