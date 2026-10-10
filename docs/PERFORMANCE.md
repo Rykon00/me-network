@@ -3038,3 +3038,29 @@ in turns each):
 `regressions beyond the noise: 0`. The first tick after a load is faster than before: the terminals' screens are no longer
 sorted then either. The heap grows by the maintainers' render objects' records (about 0.4 KB each). A maintainer with a
 circuit condition costs one property read a second.
+
+## The ME Interface looks at its idle sides again (issue #313)
+
+An interface with nothing connected to its sides stopped looking at them (`rec.sidle`), and its probe left the tanks out, so
+fluid that came without a build event, or room that came without a wake, was never imported. Now an interface that does not
+look at its sides looks at its four tanks again: a probed (idle) one at the idle limit, a visited (busy) one every four idle
+limits; and an interface whose import side holds fluid that waits for room is visited at least at the idle limit. Measured
+with `bench --check origin/main --sizes 5000` (three rounds in turns each) and `--profile 5000 --exclusive`:
+
+1. The tanks in every probe, an idle side pass at the idle limit (with the connections read again): script average
+   0.9677 -> 1.005 ms, Lua allocation 33.04 -> **34.65 KB** per tick (the connection lists).
+2. Without reading the connections: allocation back to 33.04 KB, but the average still +0.02 .. 0.03 ms over the noise
+   (an A/A run of origin/main against itself: 0.9704 / 0.9679, so the difference was real).
+3. The profile: `io.interface_sides` 3.97 -> 6.81 us per call (0.0192 -> 0.0330 ms per tick). The bench's interfaces are
+   visited less often than the idle limit, so every visit of one that does not look at its sides read its four tanks.
+   A busy interface now looks every four idle limits, a probed one at the idle limit (in the probe, not in every probe):
+
+| 5000 | origin/main | this pull request |
+|---|---|---|
+| script average / p99 ms | 0.9603 / 2.857 | 0.9651 / 2.858 |
+| ticks over 5 ms | 4 | 4 |
+| gc average ms | 0.0529 | 0.0535 |
+| Lua alloc KB per tick | 33.04 | 33.04 |
+| throughput (items/s, fluid/s), latencies, io counters | | identical |
+
+`regressions beyond the noise: 0`.
