@@ -198,7 +198,9 @@ local function block(def)
 		--- a simple-entity-with-force is a military target by default; ME blocks are passive like chests
 		is_military_target = false,
 		corpse = "small-remnants",
-		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+		--- issue #268: a solid block can be walked between (ME.solid_box); one that is walked over (extra.collision_mask
+		--- WALKABLE: the cable, the buses) keeps its box, which only keeps other buildings off its tile
+		collision_box = (def.extra and def.extra.collision_mask) and { { -0.35, -0.35 }, { 0.35, 0.35 } } or ME.solid_box(),
 		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 		selection_priority = def.selection_priority or 60,
 		localised_description = def.description,
@@ -301,7 +303,7 @@ data:extend({ {
 	placeable_by = { item = "me-chest", count = 1 },
 	max_health = 300,
 	corpse = "small-remnants",
-	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	inventory_size = 1,
 	inventory_type = "normal",
@@ -381,7 +383,7 @@ data:extend({ {
 	placeable_by = { item = "me-interface", count = 1 },
 	max_health = 400,
 	corpse = "small-remnants",
-	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	inventory_size = INTERFACE_SLOTS,
 	inventory_type = "with_filters_and_bar",

@@ -70,7 +70,7 @@ return function(H)
 			expect(p.tile_width == 1 and p.tile_height == 1, "the assembler is " .. p.tile_width .. "x" .. p.tile_height)
 			local cb, sb = p.collision_box, p.selection_box
 			local function near(a, b) return math.abs(a - b) < 0.01 end
-			expect(near(cb.left_top.x, -0.35) and near(cb.right_bottom.x, 0.35) and near(cb.left_top.y, -0.35) and near(cb.right_bottom.y, 0.35),
+			expect(near(cb.left_top.x, -0.29) and near(cb.right_bottom.x, 0.29) and near(cb.left_top.y, -0.29) and near(cb.right_bottom.y, 0.29),   -- (issue #268)
 				"collision box " .. serpent.line(cb))
 			expect(near(sb.left_top.x, -0.5) and near(sb.right_bottom.x, 0.5) and near(sb.left_top.y, -0.5) and near(sb.right_bottom.y, 0.5),
 				"selection box " .. serpent.line(sb))

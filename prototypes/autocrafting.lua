@@ -111,7 +111,7 @@ data:extend({ {
 	minable = { mining_time = 0.2, result = "me-pattern-provider" },
 	max_health = 150,
 	corpse = "small-remnants",
-	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 60,
 	additional_pastable_entities = { "me-pattern-provider" },   -- settings paste copies the priority (issue #80)
@@ -250,6 +250,8 @@ for _, b in ipairs(BLOCKS) do
 		max_health = 200,
 		is_military_target = false,
 		corpse = "small-remnants",
+		--- issue #268: not ME.solid_box: the blocks of a Crafting CPU are one slab (#152), a gap a character walks into
+		--- between two of them would split it
 		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
 		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 		fast_replaceable_group = "me-crafting-block",
@@ -297,7 +299,7 @@ maintainer.minable = { mining_time = 0.2, result = "me-level-maintainer" }
 maintainer.max_health = 200
 maintainer.corpse = "small-remnants"
 maintainer.dying_explosion = nil
-maintainer.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
+maintainer.collision_box = ME.solid_box()                  -- (issue #268)
 maintainer.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
 local MAINTAINER_POWER = 30000          -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
 maintainer.energy_source = { type = "void" }
@@ -358,6 +360,7 @@ circuit.sprites = {
 }
 circuit.fast_replaceable_group = nil
 circuit.next_upgrade = nil
+circuit.collision_box = ME.solid_box()                     -- (issue #268; the constant combinator's is -0.35 .. 0.35)
 circuit.localised_description = { "entity-description.me-circuit-interface" }
 data:extend({ circuit })
 

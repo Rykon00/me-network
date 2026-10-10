@@ -53,7 +53,7 @@ local function block(name, description)
 		max_health = 200,
 		is_military_target = false,
 		corpse = "small-remnants",
-		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+		collision_box = ME.solid_box(),                   -- (issue #268)
 		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 		picture = { filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, scale = 0.5 },
 		localised_description = description,

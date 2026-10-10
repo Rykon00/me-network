@@ -117,7 +117,7 @@ data:extend({ {
 	max_health = 150,
 	is_military_target = false,
 	corpse = "small-remnants",
-	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	picture = { layers = {
 		{ filename = ME.hd_entity_path .. "me-cell-workbench.png", priority = "high", width = 64, height = 64, scale = 0.5 },
