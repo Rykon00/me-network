@@ -601,10 +601,17 @@ def check_map(a, mapfile, textures=None):
     return ok, sec, log
 
 
-# issue #239, step 4: the stand-ins of the texture mod's proof run, one per form of ae2-textures/overrides.lua
-PROOF_ITEM = "item:me-controller"       # its icon (the file-name form: the prototype uses one file of me-network)
-PROOF_ENTITY = "me-drive"               # one file of the entity of that name (the table form: old file -> new file)
+# issue #239, step 4: the stand-ins of the texture mod's proof run, one per form of ae2-textures/overrides.lua; each the
+# first of its candidates that overrides.lua does not set itself (issue #260: the real entries are applied too)
+PROOF_ITEMS = ("item:me-controller", "item:fluix-cable", "item:me-terminal")    # an icon (the file-name form: one file)
+PROOF_ENTITIES = ("me-drive", "me-wireless-access-point", "me-network-controller", "me-terminal")  # (the table form)
 PROOF_DIR = "ae2-textures-proof"        # the throw-away copy in the work folder
+
+
+def real_override_keys():
+    """the keys ("<type>/<name>") that ae2-textures/overrides.lua sets (not the file names of a table's entries)"""
+    src = (ROOT / "ae2-textures" / "overrides.lua").read_text(encoding="utf-8")
+    return [k for k in re.findall(r'^\s*\["([^"]+)"\]\s*=', src, re.M) if not k.startswith("__")]
 
 
 def stand_in_png(size):
@@ -634,22 +641,24 @@ def owners(sec):
 
 
 def proof_copy(base_sec):
-    """a throw-away copy of ae2-textures/ with two stand-in overrides added to its overrides.lua: the icon of
-    PROOF_ITEM and one file of the entity PROOF_ENTITY, each a generated PNG of the replaced file's size. Returns
-    (folder, {owner: (old file, new file)}, problems)."""
+    """a throw-away copy of ae2-textures/ with two stand-in overrides added to its overrides.lua: the icon of an item of
+    PROOF_ITEMS and one file of an entity of PROOF_ENTITIES (the first of each that overrides.lua does not set), each a
+    generated PNG of the replaced file's size. Returns (folder, {owner: (old file, new file)}, problems)."""
     by_owner = owners(base_sec)
     problems, cases = [], {}
-    item = sorted(by_owner.get(PROOF_ITEM, ()))
-    if len(item) != 1:
-        problems.append(f"proof: {PROOF_ITEM} names {len(item)} files of me-network, the file-name form needs one")
+    taken = {k.replace("/", ":", 1) for k in real_override_keys()}
+    item = next((o for o in PROOF_ITEMS if o not in taken and len(by_owner.get(o, ())) == 1), None)
+    if not item:
+        problems.append(f"proof: none of {PROOF_ITEMS} is free in overrides.lua and names one file of me-network")
     else:
-        cases[PROOF_ITEM] = (item[0], f"__{TEXTURES}__/graphics/devcheck-stand-in-icon.png")
-    entity = sorted(o for o, fs in by_owner.items() if o.endswith(":" + PROOF_ENTITY)
-                    and o.split(":")[0] not in ("item", "recipe", "technology") and len(fs) > 1)
+        cases[item] = (sorted(by_owner[item])[0], f"__{TEXTURES}__/graphics/devcheck-stand-in-icon.png")
+    entity = next((o for name in PROOF_ENTITIES for o in sorted(by_owner) if o.endswith(":" + name) and o not in taken
+                   and o.split(":")[0] not in ("item", "recipe", "technology") and len(by_owner[o]) > 1), None)
     if not entity:
-        problems.append(f"proof: no entity {PROOF_ENTITY} with more than one file of me-network")
+        problems.append(f"proof: none of the entities {PROOF_ENTITIES} is free in overrides.lua and names more than one "
+                        "file of me-network")
     else:
-        cases[entity[0]] = (sorted(by_owner[entity[0]])[0], f"__{TEXTURES}__/graphics/devcheck-stand-in-entity.png")
+        cases[entity] = (sorted(by_owner[entity])[0], f"__{TEXTURES}__/graphics/devcheck-stand-in-entity.png")
     dest = WORK / PROOF_DIR
     if dest.exists():
         shutil.rmtree(dest)
@@ -660,7 +669,7 @@ def proof_copy(base_sec):
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_bytes(stand_in_png(png_size(mod_file(old))))
         key = owner.replace(":", "/", 1)
-        lines.append(f'OVERRIDES["{key}"] = "{new}"' if owner == PROOF_ITEM
+        lines.append(f'OVERRIDES["{key}"] = "{new}"' if owner.startswith("item:")
                      else f'OVERRIDES["{key}"] = {{ ["{old}"] = "{new}" }}')
     src = (dest / "overrides.lua").read_text(encoding="utf-8")
     (dest / "overrides.lua").write_text("-- devcheck: overrides.lua of ae2-textures/ plus the stand-ins of issue #239\n"
@@ -708,8 +717,7 @@ def check_textures(a, base_sec):
             else:
                 print(f"proof: {owner}: {old} -> {new} with the texture mod, {old} without it")
     # issue #247: every entry of the real overrides.lua is applied, not only the stand-ins
-    src = (ROOT / "ae2-textures" / "overrides.lua").read_text(encoding="utf-8")
-    real = [k for k in re.findall(r'^\s*\["([^"]+)"\]\s*=', src, re.M) if not k.startswith("__")]   # (not a layer's file)
+    real = real_override_keys()
     done = {l.split(": ", 1)[0] for l in applied if "SKIPPED" not in l}
     problems += [f"override of overrides.lua not applied: {k}" for k in real if k not in done]
     print(f"overrides applied: {len(applied) - len(skipped)} ({len(real)} of overrides.lua, the {len(cases)} "
