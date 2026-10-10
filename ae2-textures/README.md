@@ -7,7 +7,7 @@ authors' work under the same license) in place of ME Network's own sprites. **In
 depends on it and does nothing alone, while ME Network runs complete without this mod and does not know it. It
 replaces the item icons of the item and fluid storage cells (1k to 256k), the storage components and the housing, the
 upgrade cards and the blank and encoded pattern (issues #247, #250, #251). AE2-Unofficial has no fluid cell and no
-interface capacity card: the fluid cells show its item cell of their tier with a blue frame and outline, the ME
+interface capacity card: the fluid cells show its item cell of their tier with a blue frame and body, the ME
 Interface Capacity Card its Capacity Card with the turquoise stripe of an advanced card. Every block, the cable and the
 buses look as without this mod.
 
