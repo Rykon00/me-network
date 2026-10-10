@@ -10,6 +10,7 @@
 --- Issue #282 the ME Import, Export and Storage Bus: AE2's fronts as blocks; ME Network's marker (the plate on the side a
 --- bus faces and its arrows) is a layer of its own above them, which data-updates.lua moves onto the AE2 face.
 --- Issue #283 the cable: AE2's Fluix glass cable in the 16 variations of ME Network's cable sheet.
+--- Issue #303 the wireless group: the access point as a block, the terminal, its module and the booster as AE2's icons.
 ---
 --- A key is "<prototype type>/<prototype name>" of ME Network (it never renames a prototype). A value is either
 ---   a file of this mod, when the prototype uses exactly one file of ME Network (an item's icon):
@@ -155,4 +156,15 @@ return {
 		["__me-network__/graphics/icons/hd/me-cable.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
 	},
 	["item/fluix-cable"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
+	--- the wireless group (issue #303): the access point an AE2 cube of its inside face (AE2's own model is an antenna); the
+	--- terminal, its module (AE2 has none: the terminal's icon, also the equipment's sprite) and the booster AE2's icons
+	["simple-entity-with-force/me-wireless-access-point"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-wireless-access-point.png"] = "__me-network-ae2-textures__/graphics/blocks/me-wireless-access-point.png",
+		["__me-network__/graphics/icons/hd/me-wireless-access-point.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-wireless-access-point.png", icon_size = 64 },
+	},
+	["item/me-wireless-access-point"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-wireless-access-point.png", icon_size = 64 },
+	["item-with-tags/me-wireless-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-terminal.png", icon_size = 32 },
+	["item/me-wireless-module"] = { filename = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-module.png", icon_size = 32 },
+	["battery-equipment/me-wireless-module"] = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-module.png",
+	["item/me-wireless-booster"] = { filename = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-booster.png", icon_size = 32 },
 }

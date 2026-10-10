@@ -37,6 +37,10 @@ SIZES = {
                                                      "pattern-capacity", "sticky", "inverter", "equal-distribution",
                                                      "acceleration", "interface-capacity")},
     "icons/patterns/me-blank-pattern.png": 32,
+    # issue #303: the wireless items (the module, which AE2 does not have, takes the terminal's icon)
+    "icons/wireless/me-wireless-terminal.png": 32,
+    "icons/wireless/me-wireless-module.png": 32,
+    "icons/wireless/me-wireless-booster.png": 32,
     "icons/patterns/me-encoded-pattern.png": 32,
 }
 

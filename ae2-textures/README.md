@@ -15,7 +15,8 @@ Network's drive view). The ME Controller is four AE2-Unofficial controllers, dar
 lights while its network works and red in a conflict (issue #278, through ME Network's controller view). The ME
 Terminal and the ME Pattern Terminal are AE2's terminal panels, dark or with their screen lit (issue #281). The ME
 Import, Export and Storage Bus are AE2's bus fronts with ME Network's plate and arrows on them (issue #282, through ME
-Network's bus view). The cable is AE2's Fluix glass cable (issue #283). The other blocks and the ME Underground Cable
+Network's bus view). The cable is AE2's Fluix glass cable (issue #283). The ME Wireless Access Point is an AE2 cube of its inside, the
+Wireless ME Terminal, its module and the booster have AE2's icons (issue #303). The other blocks and the ME Underground Cable
 look as without this mod.
 
 **Nothing here is GPL.** This folder is a mod of its own, built into a zip of its own (`tools/build.py`), and
