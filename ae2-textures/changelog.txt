@@ -1,8 +1,8 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.0
   Graphics:
-    - Storage cells (ME Network issue #247): the item icons of the 1k to 256k storage cells, the storage components 1k to 256k and the storage housing are AE2-Unofficial's. The fluid storage cells keep ME Network's icons (AE2-Unofficial has none).
-    - Upgrade cards: the basic, advanced, capacity, overflow destruction, fuzzy, pattern capacity, sticky, inverter, equal distribution and acceleration cards have AE2-Unofficial's icons. The ME Interface Capacity Card keeps ME Network's icon (AE2 has no such card).
+    - Storage cells (ME Network issue #247): the item icons of the 1k to 256k storage cells, the storage components 1k to 256k and the storage housing are AE2-Unofficial's. The fluid storage cells (ME Network issue #250), which AE2-Unofficial has no icon for, show its item cell of their tier with a blue frame and outline.
+    - Upgrade cards: the basic, advanced, capacity, overflow destruction, fuzzy, pattern capacity, sticky, inverter, equal distribution and acceleration cards have AE2-Unofficial's icons. The ME Interface Capacity Card (ME Network issue #251), which AE2 does not have, shows AE2-Unofficial's Capacity Card with the turquoise stripe of an advanced card.
     - Patterns: the blank and the encoded pattern have AE2-Unofficial's icons.
 ---------------------------------------------------------------------------------------------------
 Version: 0.1.0

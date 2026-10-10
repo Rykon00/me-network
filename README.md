@@ -64,7 +64,7 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second, o
 | `tools/gen_ae2_sprites.py` | the sprites and icons (GT5-Unofficial casings, screens, circuit boards, memory chips and GUI signs + Pillow) |
 | `tools/upstream_icons.py`, `tools/upstream-icon-hashes.tsv` | the hashes of the 17 icons taken over from Gregtorio 0.1.9 until 0.5.2 and the guard that `devcheck check` runs: no file under `graphics/` and not `thumbnail.png` may have one (issue #238) |
 | `tools/import_ae2_textures.py`, `tools/ae2_manifest.py` | the only way AE2 graphics get into `ae2-textures/graphics/` (copied from an AE2 checkout, recorded in the manifest), and the guard of the texture mod that `devcheck check` runs |
-| `tools/scale_ae2_icons.py` | scales the AE2 item icons in `ae2-textures/graphics/` from 16 px to the size of the icon they replace (nearest neighbour, recorded with `--mark-changed`; issue #247); reads and writes only that folder |
+| `tools/scale_ae2_icons.py` | scales the AE2 item icons in `ae2-textures/graphics/` from 16 px to the size of the icon they replace (nearest neighbour, recorded with `--mark-changed`; issue #247), after swapping some colours of the icons that stand in for items AE2-Unofficial lacks (fluid cells #250, interface capacity card #251); reads and writes only that folder |
 
 The names (`fork-me-*.lua`, the storage keys `fork_me_*`, the remote interfaces `gregtorio-me-*`, every prototype
 name) are kept from Gregtorio Continued: saves find their entities and items by name, the state of a Gregtorio save is
