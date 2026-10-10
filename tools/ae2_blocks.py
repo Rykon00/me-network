@@ -27,6 +27,7 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
   formed unit `BlockCraftingUnitFit` and the block's `*Fit` overlay; the monitor's outer frame and its three screen
   layers tinted in the Fluix colours like the terminal's). The mask (the sides that touch the CPU) does not change the
   cube: AE2 draws every block of a CPU as a cube of its own;
+* a technology cube (issue #304): the icon of the face (an isometric cube, as above) x4: 256 x 256, a technology icon;
 * a cable sheet (issue #283): AE2's Fluix glass cable (PartCable: 4 AE2 pixels thick, x3 = 12 px) as the 16 variations
   of me-network's cable (its connections: north 1, east 2, south 4, west 8), side by side, 64 px each: an arm to every
   connected side made of the texture's middle band (rows 6..9, x3) from the tile's edge, so the band runs on into the
@@ -115,6 +116,8 @@ MAKE = {
     # issue #283: the cable (me-cable.png's 16 variations) and its icon (the crossing)
     "blocks/me-cable.png": ("cable-sheet",),
     "icons/blocks/me-cable.png": ("cable-icon",),
+    # issue #304: the technology icons of blocks (ME Network's technologies, AE2 has none)
+    **{f"technology/{t}.png": ("tech-cube",) for t in ("me-network", "me-automation", "me-co-processing", "me-quantum-crafting")},
     # issue #302: the crafting blocks and their icons (AE2 cubes of the face without a CPU)
     **{f"blocks/crafting/{b}.png": ("crafting-sheet", b) for b in CRAFTING},
     **{f"icons/blocks/{b}.png": ("icon",) for b in CRAFTING},
@@ -370,6 +373,10 @@ def make(name, how):
         return out, ("crafting block sheet: 48 block pictures (64 x 64, side by side, ME Network's variations 1 + mask + 16 * "
                      "state): 1..16 the face (holes filled with its darkest colour) x3 with depth strips and a contour, "
                      f"17..48 the same of AE2's formed look (the further sources over each other{tinted})")
+    if how[0] == "tech-cube":
+        return icon(filled(face)).resize((4 * TILE, 4 * TILE), Image.NEAREST), (
+            "technology icon: the icon cube of the face (holes filled with its darkest colour; its frame on the top and the "
+            "right side, shaded, a contour) x4 (nearest neighbour), 256 x 256")
     if how[0] == "cable-sheet":
         out = Image.new("RGBA", (16 * TILE, TILE))
         for bits in range(16):
