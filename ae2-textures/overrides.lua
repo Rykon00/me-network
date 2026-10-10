@@ -22,7 +22,7 @@ return {
 	["item-with-tags/me-16k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-64k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-64k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-256k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-256k-storage-cell.png", icon_size = 64 },
-	--- fluid storage cells (64 px, issue #250): AE2-Unofficial has none, so its item cell of the tier with a blue frame
+	--- fluid storage cells (64 px, issue #250): AE2-Unofficial has none, so its item cell of the tier, frame and body blue
 	["item-with-tags/me-1k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-1k-fluid-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-4k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4k-fluid-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-16k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16k-fluid-storage-cell.png", icon_size = 64 },

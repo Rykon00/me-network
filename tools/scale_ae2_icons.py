@@ -40,14 +40,22 @@ SIZES = {
 }
 
 # file -> (what it is, {colour of the source: colour it becomes}); each source colour must be in the file
-# issue #250: a fluid cell is AE2-Unofficial's item cell of its tier with the dark frame and the outline in blue
-FLUID_CELL = {(55, 49, 39): (28, 52, 96), (64, 64, 64): (40, 70, 120)}
+# issue #250: a fluid cell is AE2-Unofficial's item cell of its tier with the dark frame and the body in blue (the
+# maintainer's choice, variant C of the preview); the body is the tier's grey, each turned blue at about its brightness
+FRAME_BLUE = {(55, 49, 39): (28, 52, 96)}
+BODY_BLUE = {
+    "1k": {(128, 128, 128): (93, 119, 173)},
+    "4k": {(145, 145, 145): (106, 135, 193)},
+    "16k": {(160, 160, 160): (117, 149, 210)},
+    "64k": {(191, 191, 191): (139, 178, 246)},
+    "256k": {(216, 216, 216): (158, 201, 255)},
+}
 # issue #251: AE2-Unofficial tells an advanced card by its turquoise stripe (ItemMaterial.AdvCard) where a basic card
 # has a yellow one (ItemMaterial.BasicCard); the interface capacity card is the Capacity Card made advanced
 ADVANCED_STRIPE = {(255, 212, 0): (140, 244, 226)}
 RECOLOUR = {
-    **{f"icons/cells/me-{t}-fluid-storage-cell.png": ("the frame and the outline in blue (the fluid cell)", FLUID_CELL)
-       for t in TIERS},
+    **{f"icons/cells/me-{t}-fluid-storage-cell.png": ("the frame and the body in blue (the fluid cell)",
+                                                      {**FRAME_BLUE, **BODY_BLUE[t]}) for t in TIERS},
     "icons/cards/me-interface-capacity-card.png": ("the yellow stripe of a basic card in the turquoise of an advanced "
                                                    "card", ADVANCED_STRIPE),
 }
