@@ -1196,6 +1196,8 @@ local function open_interface(player, entity)
 	G.heading(content, { "fork-me-gui.interface-contents" })
 	local grid = G.grid(content, 9, "fork_me_if_items")
 	grid.parent.style.minimal_width = 40 * 9 + 12
+	G.heading(content, { "fork-me-gui.interface-fluids" })        -- issue #311: the fluids its sides hold
+	content.add{ type = "flow", name = "fork_me_if_fluids", direction = "vertical" }
 	G.label(content, "", WIDTH, nil, "fork_me_if_status")
 	content.add{ type = "button", caption = { "fork-me-gui.interface-inventory" }, tags = G.act("if_inventory") }
 	M.refresh_interface(player, G.window_of(player))
@@ -1223,6 +1225,62 @@ local function side_choices(d, side)
 		end
 	end
 	return values, items, selected
+end
+
+--- Issue #311: the sides that hold fluid, in side order (a fluid in two sides is two entries: each side has a tank of
+--- its own): { side, key (with its temperature when not the default), name, amount, fill (0..1 of the side's volume),
+--- segment (what its tank and pipes hold together; nil when that is no more than the tank, or nothing is connected) }
+function M.interface_fluid_entries(d)
+	local out = {}
+	for s = 1, io.SIDES do
+		local f = d.fluids[s]
+		if f and f.name and prototypes.fluid[f.name] then
+			out[#out + 1] = { side = s, key = N.fluid_key(f.name, f.temperature), name = f.name, amount = f.amount,
+				fill = d.volume > 0 and math.min(1, f.amount / d.volume) or 0,
+				segment = f.connected and f.segment and f.segment > f.amount + 1 and f.segment or nil }
+		end
+	end
+	return out
+end
+
+local function percent(fill) return tostring(math.floor(fill * 100)) end
+
+--- the fluid section of the interface window: built anew when a side starts or stops holding a fluid or holds another
+--- one (or the same at another temperature), the amounts set in place (G.slot_amount) at every refresh
+local function refresh_interface_fluids(frame, d)
+	local box = G.find(frame, "fork_me_if_fluids")
+	if not box then return end
+	local entries = M.interface_fluid_entries(d)
+	local sig = {}
+	for i, e in ipairs(entries) do sig[i] = e.side .. "=" .. e.key end
+	rebuild(frame, "fork_me_if_fluids", table.concat(sig, ","), function(flow)
+		if #entries == 0 then
+			G.label(flow, { "fork-me-gui.interface-fluids-none" }, WIDTH)
+			return
+		end
+		local t = flow.add{ type = "table", column_count = 4 }
+		t.style.horizontal_spacing = 8
+		for _, e in ipairs(entries) do
+			t.add{ type = "label", caption = { "fork-me-gui.interface-side-" .. SIDE_NAMES[e.side] } }
+			local b = G.slot(t, e.key, e.amount)
+			b.name = "fork_me_if_fluid_" .. e.side
+			b.elem_tooltip = { type = "fluid", name = e.name }            -- the game's fluid tooltip
+			t.add{ type = "progressbar", name = "fork_me_if_fbar_" .. e.side }.style.width = 90
+			G.label(t, "", 220, nil, "fork_me_if_ftext_" .. e.side)
+		end
+	end)
+	for _, e in ipairs(entries) do
+		local s = e.side
+		local b = G.find(box, "fork_me_if_fluid_" .. s)
+		if b then
+			local pipes = e.segment and { "fork-me-gui.interface-fluid-pipes", G.fmt(e.segment) } or ""
+			G.slot_amount(b, e.key, e.amount, { "", "\n", { "fork-me-gui.interface-fluid-tooltip",
+				{ "fork-me-gui.interface-side-" .. SIDE_NAMES[s] }, G.fmt(d.volume) }, e.segment and "\n" or "", pipes })
+			G.find(box, "fork_me_if_fbar_" .. s).value = e.fill
+			G.find(box, "fork_me_if_ftext_" .. s).caption = { "", { "fork-me-gui.interface-fluid-fill", (G.fluid_label(e.key)),
+				G.fmt(e.amount), G.fmt(d.volume), percent(e.fill) }, e.segment and "\n" or "", pipes }
+		end
+	end
 end
 
 function M.refresh_interface(player, frame)
@@ -1264,14 +1322,15 @@ function M.refresh_interface(player, frame)
 		local f = d.fluids[s]
 		local label = G.find(frame, "fork_me_if_side_" .. s)
 		if label then
+			--- issue #311: short (the fluid's icon and how full the tank is), the amounts are in the fluid section below
 			local proto = f.name and prototypes.fluid[f.name]
-			--- (issue #159: with its temperature when it is not the default one)
-			local holds = proto and { "fork-me-gui.tank-holds", G.fmt(f.amount), G.fmt(d.volume), (G.fluid_label(N.fluid_key(f.name, f.temperature))) }
-				or { "fork-me-gui.tank-empty", G.fmt(d.volume) }
+			local holds = proto and { "fork-me-gui.interface-side-holds", f.name, percent(math.min(1, f.amount / d.volume)) }
+				or { "fork-me-gui.interface-side-empty" }
 			label.caption = { "", holds, f.connected and "" or { "fork-me-gui.interface-side-unconnected" } }
 			label.tooltip = f.status and { "fork-me-gui.interface-side-status-" .. f.status } or nil
 		end
 	end
+	refresh_interface_fluids(frame, d)
 	local sig = {}
 	for _, c in ipairs(d.contents) do sig[#sig + 1] = c.key .. "=" .. c.count end
 	rebuild(frame, "fork_me_if_items", table.concat(sig, ","), function(grid)
@@ -1613,6 +1672,22 @@ end)
 --------------------------------------------------------------------------------
 
 local stand_ins = {}            -- name -> a table standing for a LuaPlayer (the tests, stand_in below)
+local stand_in_frames = {}      -- name -> a table standing for a window's frame (issue #311, interface_fluid_view below)
+
+--- Issue #311 (tests): a table standing for a LuaGuiElement, as much of one as the window code that builds and updates
+--- a section uses (add, clear, children, name, tags, style and the fields it sets)
+local function stand_in_element(def)
+	local el = { type = def.type, name = def.name, caption = def.caption, sprite = def.sprite, number = def.number,
+		tooltip = def.tooltip, elem_tooltip = def.elem_tooltip, value = def.value, tags = def.tags or {}, style = {},
+		children = {} }
+	el.add = function(d)
+		local c = stand_in_element(d)
+		el.children[#el.children + 1] = c
+		return c
+	end
+	el.clear = function() el.children = {} end
+	return el
+end
 remote.add_interface("gregtorio-me-gui", {
 	fmt = function(n) return G.fmt(n) end,
 	--- issue #150 (tests): the hand-over buffer of a relative window: its stacks into the block of window `name` (what it
@@ -1697,7 +1772,36 @@ remote.add_interface("gregtorio-me-gui", {
 	stand_in_parked = function(name) return G.parked_count(stand_ins[name]) end,
 	stand_in_return_parked = function(name) return G.return_parked(stand_ins[name]) end,
 	stand_in_texts = function(name) return stand_ins[name].texts end,
-	stand_in_forget = function(name) stand_ins[name] = nil end,
+	stand_in_forget = function(name) stand_ins[name] = nil stand_in_frames[name] = nil end,
+	--- Issue #311: the fluid entries of an interface's window, and its fluid section built into a stand-in frame kept
+	--- under `name` (like an open window between its refreshes; the harness has no player): { rebuilt = built anew by
+	--- this call, none = the "no side holds fluid" line, rows = { { side, sprite, number, tooltip, elem_tooltip, value,
+	--- caption } } }
+	interface_fluid_entries = function(entity) return M.interface_fluid_entries(M.interface_data(entity)) end,
+	interface_fluid_view = function(name, entity)
+		local frame = stand_in_frames[name]
+		if not frame then
+			frame = stand_in_element{ type = "frame" }
+			frame.add{ type = "flow", name = "fork_me_if_fluids" }
+			stand_in_frames[name] = frame
+		end
+		local box = frame.children[1]
+		local before = box.children[1]
+		refresh_interface_fluids(frame, M.interface_data(entity))
+		local first = box.children[1]
+		local out = { rebuilt = first ~= before, rows = {} }
+		if first and first.type == "label" then
+			out.none = first.caption
+		elseif first then
+			local c = first.children
+			for i = 1, #c, 4 do
+				local side, button, bar, text = c[i], c[i + 1], c[i + 2], c[i + 3]
+				out.rows[#out.rows + 1] = { side = side.caption, sprite = button.sprite, number = button.number,
+					tooltip = button.tooltip, elem_tooltip = button.elem_tooltip, value = bar.value, caption = text.caption }
+			end
+		end
+		return out
+	end,
 	forget_player = function(index) G.forget_player(index) end,      -- (issue #179: what on_player_removed does)
 	--- every registered window: { [name] = { pane = true, shift = has a shift + click target, control, message } }
 	windows = function() return G.window_list() end,

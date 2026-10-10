@@ -1067,7 +1067,9 @@ function M.interface_tag(config, sides, priority, cards)
 end
 
 --- the interface's state for its window: { config, sides, status, contents = { { key, count } }, fluids = { [1..4] =
---- { setting, status, name, amount, connected } }, slots, volume }
+--- { setting, status, name, amount, temperature, connected, segment } }, slots, volume }. `segment` (issue #311): what the
+--- side's fluid segment (its tank and the pipes without a pump between) holds of the tank's fluid, read only here (the
+--- open window, once a second); 0 when the tank is empty.
 function M.get_interface(entity)
 	if kind(entity) ~= "interface" then return nil end
 	local rec = register(state(), entity)
@@ -1086,10 +1088,15 @@ function M.get_interface(entity)
 		local status = rec.fstatus and rec.fstatus[d] or nil
 		--- issue #313: the last pass found this import side empty; it holds fluid now: imported at the next visit
 		if status == "import" and held and held.amount > EPS then status = "waiting" end
+		local segment = 0
+		if held and held.amount > EPS then
+			local c = T.fluidbox(t).get_fluid_segment_contents(1)
+			segment = math.max(held.amount, c and c[held.name] or 0)
+		end
 		fl[d] = { setting = sides[d] or "import", status = status,
 			name = held and held.amount > EPS and held.name or nil, amount = held and held.amount or 0,
 			temperature = held and held.amount > EPS and held.temperature or nil,
-			connected = t ~= nil and #t.fluidbox.get_connections(1) > 0 }
+			connected = t ~= nil and #t.fluidbox.get_connections(1) > 0, segment = segment }
 	end
 	local short = {}
 	for key in pairs(rec.short or {}) do
