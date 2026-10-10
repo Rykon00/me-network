@@ -3005,3 +3005,36 @@ index or its partition. A network without a Sticky Card pays one table test per 
 | Lua alloc KB per tick (100 / 1000) | 26.79 / 24.68 | 26.79 / 24.68 |
 
 `regressions beyond the noise: 0`. The cost with sticky storage is that pass, bounded by the number of sticky storages.
+
+## The level maintainer's screen (issue #254)
+
+The level maintainer was drawn lit all the time (a lamp with a void energy source); like the terminal's (#128), its picture is
+now a screen render object that the script sets lit or dark. The bench scenes have a level maintainer per ten buses (500 at
+5000, 2000 at 20 000), so the terminal's way of setting the screens (every screen every second, a new sorted list of them each
+time, both render objects fetched) did not scale. Three rounds of `bench --check origin/main --sizes 5000,20000` (three rounds
+in turns each):
+
+1. Every screen every second (the terminal's way, plus the condition read): at 20 000 the 99th percentile 4.33 -> **7.45 ms** and
+   193 ticks over 5 ms (every slow step), the first tick after a load 22.8 -> **42.3 ms**.
+2. Only when something changed: all screens are set only when the graph changed (`s.version`, kept as `s.screen_version`) or a
+   network's state did (`net.screen_on`); otherwise only the maintainers with a circuit condition switched on are read
+   (`s.screen_cond`, none in the scenes); a screen that is right costs one comparison. Steady state at the reference's, but the
+   first tick after a load still 23.4 -> **44.0 ms**: the per-load sorted list of the screens (about 7 µs an element, as #43
+   found for the sweep) and a scene built before its first slow step got all its screens then.
+3. `s.screen_list` in `storage`, kept like `s.nlist` (in the order they came, a screen that goes replaced by the last), and a new
+   map has its screens table from the start, so screens are made when their blocks join:
+
+| | origin/main | this pull request |
+|---|---|---|
+| 5000: script average / p99 ms | 0.9964 / 2.975 | 0.9929 / 2.926 |
+| 5000: ticks over 5 ms | 6 | 4 |
+| 5000: first tick after the load ms | 8.409 | **4.198** |
+| 20 000: script average / p99 ms | 2.09 / 4.349 | 2.12 / 4.345 |
+| 20 000: ticks over 5 ms | 49 | 47 |
+| 20 000: first tick after the load ms | 23.04 | **7.144** |
+| Lua alloc KB per tick (5000 / 20 000) | 33.94 / 55.3 | 33.94 / 55.3 |
+| mod heap kB (5000 / 20 000) | 73 220 / 277 600 | 73 420 / 278 400 |
+
+`regressions beyond the noise: 0`. The first tick after a load is faster than before: the terminals' screens are no longer
+sorted then either. The heap grows by the maintainers' render objects' records (about 0.4 KB each). A maintainer with a
+circuit condition costs one property read a second.
