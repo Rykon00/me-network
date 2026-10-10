@@ -1640,6 +1640,90 @@ def hd_batch3():
     return written
 
 
+# --- issue #221 (batch 4 of #154): the upgrade cards, patterns, storage components, housing, wireless items -------------
+CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'inverter', 'equal-distribution', 'acceleration')
+
+
+def hd_plate(icon, depth=5):
+    """a thin plate (a card, a handheld device) seen from above like the blocks (route A of #154): the 32 px picture at 2x
+    and its body pushed `depth` px to the south-east as its side, shaded, a contour. (The study's slab lying on its back
+    left a card's sign too small at the game's icon size.)"""
+    big = hd_up(icon).resize((HD - depth, HD - depth), Image.NEAREST)
+    img = Image.new("RGBA", (HD, HD))
+    side = hd_shade(big, 0.5)
+    for k in range(depth, 0, -1):
+        img.alpha_composite(side, (k, k))
+    img.alpha_composite(big, (0, 0))
+    return hd_contour(img)
+
+
+def hd_bevel(icon):
+    """a flat item (a pattern, a component, the housing, the booster) at 2x, lit from the top left (route B of #154, for the
+    items without a body): a light edge two pixels wide where its shape has its top or left side, a dark one at its bottom and
+    right, a contour and a drop shadow"""
+    big = hd_up(icon)
+    a = big.getchannel("A").load()
+    px = big.load()
+    w, h = big.size
+    out = big.copy()
+    o = out.load()
+
+    def empty(x, y, dx, dy):
+        for k in (1, 2):
+            nx, ny = x + dx * k, y + dy * k
+            if not (0 <= nx < w and 0 <= ny < h) or a[nx, ny] == 0:
+                return True
+        return False
+
+    for y in range(h):
+        for x in range(w):
+            if a[x, y] == 0:
+                continue
+            r, g, b, al = px[x, y]
+            if empty(x, y, 0, -1) or empty(x, y, -1, 0):
+                o[x, y] = (min(255, r + 55), min(255, g + 55), min(255, b + 55), al)
+            elif empty(x, y, 0, 1) or empty(x, y, 1, 0):
+                o[x, y] = (int(r * 0.6), int(g * 0.6), int(b * 0.6), al)
+    res = Image.new("RGBA", (w, h))
+    shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    shadow.putalpha(out.getchannel("A").point(lambda v: 80 if v else 0))
+    res.alpha_composite(shadow, (3, 3))
+    res.alpha_composite(hd_contour(out))
+    return res
+
+
+def hd_batch4():
+    """issue #221: the upgrade cards (plates), the blank and the encoded pattern, the storage components and the housing
+    (bevelled), the wireless terminal and its module (plates), the booster (bevelled); 64 x 64 icons from the 32 px ones.
+    The module's picture is also its equipment sprite (2 x 2 cells of the grid). The old fluid drive items and the fluid
+    interface are hidden prototypes of old saves: no new picture (#154)."""
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for c in CARDS:
+        save(hd_plate(load(OUT_ICON / f"me-{c}-card.png")), HD_ICON / f"me-{c}-card.png")
+    for name in ("me-blank-pattern", "me-encoded-pattern", "me-wireless-booster"):
+        save(hd_bevel(load(OUT_ICON / f"{name}.png")), HD_ICON / f"{name}.png")
+    for name in [f"me-{t}-storage-component" for t in CELLS] + ["basic-storage-housing"]:
+        save(hd_bevel(load(ICONS / f"{name}.png")), HD_ICON / f"{name}.png")
+    for name in ("me-wireless-terminal", "me-wireless-module"):
+        save(hd_plate(load(OUT_ICON / f"{name}.png")), HD_ICON / f"{name}.png")
+    return written
+
+
+def hd_sheet_batch4(path):
+    pairs = [(f"{c} card", OUT_ICON / f"me-{c}-card.png", HD_ICON / f"me-{c}-card.png") for c in CARDS]
+    pairs += [(n.replace("me-", ""), OUT_ICON / f"{n}.png", HD_ICON / f"{n}.png")
+              for n in ("me-blank-pattern", "me-encoded-pattern", "me-wireless-terminal", "me-wireless-booster", "me-wireless-module")]
+    pairs += [(n.replace("me-", ""), ICONS / f"{n}.png", HD_ICON / f"{n}.png")
+              for n in [f"me-{t}-storage-component" for t in CELLS] + ["basic-storage-housing"]]
+    return hd_sheet(path, "issue #221", pairs)
+
+
 def hd_sheet_batch3(path):
     pairs = [("pattern provider", OUT_ENTITY / "me-pattern-provider.png", HD_ENTITY / "me-pattern-provider.png"),
              ("assembler idle", OUT_ENTITY / "me-molecular-assembler-idle.png", HD_ENTITY / "me-molecular-assembler-idle.png"),
@@ -2158,6 +2242,9 @@ def main():
         written = hd_batch3()
         hd_sheet_batch3(ROOT / "docs/graphics-review/graphics-batch3-220.png")
         print("ME 3D pictures (batch 3):", len(written))
+        written = hd_batch4()
+        hd_sheet_batch4(ROOT / "docs/graphics-review/graphics-batch4-221.png")
+        print("ME 3D pictures (batch 4):", len(written))
     elif a.own_icons:                           # the 3D-style cells and cable are made from the 32 px icons
         written = hd_batch1()
         hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")

@@ -209,7 +209,9 @@ return {
 	["item/me-wireless-access-point"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-wireless-access-point.png", icon_size = 64 },
 	["item-with-tags/me-wireless-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-terminal.png", icon_size = 32 },
 	["item/me-wireless-module"] = { filename = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-module.png", icon_size = 32 },
-	["battery-equipment/me-wireless-module"] = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-module.png",
+	--- (32 px at scale 2 over its 2 x 2 cells: ME Network's own sprite is 64 px since its issue #221)
+	["battery-equipment/me-wireless-module"] = { filename = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-module.png",
+		width = 32, height = 32, scale = 2 },
 	["item/me-wireless-booster"] = { filename = "__me-network-ae2-textures__/graphics/icons/wireless/me-wireless-booster.png", icon_size = 32 },
 	--- the technology icons (issue #304, 256 px): a block's AE2 cube icon x4 or an AE2 item icon x16
 	["technology/me-network"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-network.png", icon_size = 256 },

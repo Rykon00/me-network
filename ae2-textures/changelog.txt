@@ -14,6 +14,7 @@ Version: 0.2.0
     - The blocks of a Crafting CPU (ME Network issue #302): the crafting unit, the co-processing unit, the 1k to 256k crafting storage and the crafting monitor are AE2-Unofficial's blocks, each a cube of its own as in AE2 (not ME Network's one slab): its plain block while it is no CPU, AE2's formed look (the coloured cross, the monitor's screen) while it is part of one. Their icons are AE2 cubes.
     - The wireless group (ME Network issue #303): the ME Wireless Access Point is an AE2-Unofficial cube of its wireless block's inside (AE2's own model is an antenna), with an AE2 cube as its icon; the Wireless ME Terminal, the ME Wireless Booster and the ME Wireless Terminal Module (AE2 has none: the terminal's icon, in the item list and in the armour's grid) have AE2-Unofficial's icons.
     - The technology icons (ME Network issue #304): AE2 has none, so each of ME Network's technologies shows an icon of this mod scaled up: ME Network the controller, the storage technologies their cells (the fluid ones the blue fluid cells), ME Upgrade Cards the Capacity Card, ME Autocrafting the encoded pattern, ME Automation the Molecular Assembler, ME Co-Processing the co-processing unit, ME Quantum Crafting the 256k crafting storage, ME Wireless the Wireless ME Terminal.
+    - The ME Wireless Terminal Module in an armour's grid keeps its picture's size with ME Network's 64 px module sprite (ME Network issue #221).
 ---------------------------------------------------------------------------------------------------
 Version: 0.1.0
   Info:

@@ -61,7 +61,8 @@ for _, c in ipairs(CARDS) do
 		type = c.fields and "module" or nil,
 		fields = c.fields,
 		name = c.name,
-		icon = ICON_FORK .. c.name .. ".png",
+		icon = ME.hd_icons .. c.name .. ".png",          -- (issue #221: the 3D style, 64 px)
+		icon_size = 64,
 		subgroup = "fork-me-cards",
 		order = c.order,
 		stack_size = 64,
