@@ -33,6 +33,12 @@ M.hd_entity_path = M.entity_path .. "hd/"
 --- "player" layer, so a character passes through; nothing can be built on it (the "object" layer stays) and no item lies on it
 --- (the "item" layer). Cars and tanks pass too (their mask has the "player" layer as well).
 M.WALKABLE = { layers = { item = true, meltable = true, object = true, water_tile = true, is_lower_object = true } }
+--- issue #268: the collision box of a solid one-tile ME block (drive, chest, interface, pattern provider, level maintainer,
+--- circuit interface, cell workbench, molecular assembler, access point, charger; not the blocks of a Crafting CPU): two of them on neighbouring tiles leave a gap of 0.42 tiles,
+--- wider than a character (0.4), so it walks between them, with no other mod. (It was -0.35 .. 0.35: a gap of 0.3. Squeak
+--- Through 2 trims only boxes of its own list of types, and only to 0.3, so it did not reach the simple-entity-with-force
+--- blocks, and it leaves 0.29.) A new table each time, so no prototype shares it.
+function M.solid_box() return { { -0.29, -0.29 }, { 0.29, 0.29 } } end
 M.recipes = M.recipes or {}
 M.technologies = M.technologies or {}
 M.removed = M.removed or {}
@@ -190,7 +196,7 @@ function M.make_molecular_assembler(def)
 	assembler.allowed_effects = { "speed", "consumption" }
 	assembler.effect_receiver = { uses_module_effects = true, uses_beacon_effects = false, uses_surface_effects = true }
 	--- issue #131: one tile, like the other 1x1 ME blocks (a base machine's 3x3 boxes are not kept)
-	assembler.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
+	assembler.collision_box = M.solid_box()                      -- (issue #268)
 	assembler.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
 	assembler.drawing_box_vertical_extension = nil
 	--- the pictures: 64 px at scale 0.5 (issue #220: the 3D style), the one tile (a working strip of four frames below each other). A frozen patch of the base machine

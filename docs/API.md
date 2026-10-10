@@ -83,7 +83,7 @@ ME_NETWORK.set_technology("me-network", {
 Rebuilds the ME Molecular Assembler as a copy of another assembling machine: `def.base` (the machine's name),
 `def.crafting_categories`, `def.crafting_speed`, `def.energy_usage`. The copy gets the assembler's name, icon,
 graphics and mining result and no fluid boxes. **Its size is not the base's** (issue #131): the block is one tile
-(collision box -0.35 .. 0.35, selection box -0.5 .. 0.5, pictures of 32 px) whatever size `def.base` has, and what the
+(collision box -0.29 .. 0.29 since issue #268, selection box -0.5 .. 0.5, pictures of 32 px) whatever size `def.base` has, and what the
 copy would inherit that is laid out for a bigger machine is set for one tile (the recipe icon of the alt mode, the icons of
 the five module slots, the alert icon, the circuit connector if the base has one, the corpse and the dying explosion); a
 frozen patch of the base's graphics is not kept (the assembler runs item recipes; autocrafting checks the machine's
@@ -94,7 +94,11 @@ speed 2.5, 375 kW.
 
 `add_item`, `add_recipe`, `add_technology` and `unit` are what this mod's own prototype files use (items with the
 same fields as Gregtorio's upstream `create_item`, so saves and other mods see the same items). Other mods do not
-need them.
+need them. `ME_NETWORK.WALKABLE` is the collision mask of the blocks that are walked over (cable, buses, terminals), and
+`ME_NETWORK.solid_box()` (since issue #268) a new copy of the collision box of the solid one-tile blocks, -0.29 .. 0.29:
+two of them on neighbouring tiles leave a gap of 0.42 tiles, which a character (0.4 wide) walks through. A mod that adds
+a solid one-tile block next to ME blocks should give it that box (the blocks of a Crafting CPU keep -0.35 .. 0.35: they
+are one slab).
 
 ### Recipes of removed items
 
