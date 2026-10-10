@@ -10,6 +10,9 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
   from the top left as in the 3D style of #154), a contour, the block at (3, 3) of the tile;
 * a working strip: the same block once per frame of a light animation (a second texture, imported as its own file and
   added to the strip's row with --add-source), the lights between the hole filling and the face;
+* a 2 x 2 block (issue #278, the ME Controller: 128 x 128, a picture or a strip): four copies of the face side by side,
+  each x3 as above, depth strips of 18 px, the block at (6, 6): a block of the first kind at twice the size, with
+  AE2's pixels at the size of the others (a 2 x 2 cluster of AE2 controllers, none of them a column or inside block);
 * an icon (64 x 64): an isometric cube, the face in front, the face's frame (its inside in the frame's colour) on the
   top and the right side, shaded;
 * a cell piece (issue #264): a rectangle of AE2's cell textures (MEStorageCellTextures.png), mirrored as AE2 draws it on
@@ -52,10 +55,16 @@ CELL_PIECES = {
     "blocks/cells/chest-cell-item.png": (9, 0, 15, 3),
     "blocks/cells/chest-cell-fluid.png": (9, 4, 15, 7),
 }
-# file inside ae2-textures/graphics/ -> what it becomes (and, for a strip, the file of its lights and their frames)
+# file inside ae2-textures/graphics/ -> what it becomes (and, for a strip, the file of its lights and their frames; a
+# block or strip of 2 x 2 tiles names the size last)
 MAKE = {
     **{f"blocks/{b}.png": ("block",) for b in BLOCKS},
     "blocks/me-molecular-assembler-working.png": ("strip", "blocks/lights/me-molecular-assembler-lights.png", 12),
+    # issue #278: the ME Controller dark (its picture), lit (the lights) and in a conflict (AE2's red over the powered face)
+    "blocks/me-controller.png": ("block", 2),
+    "blocks/me-controller-on.png": ("strip", "blocks/lights/me-controller-lights.png", 12, 2),
+    "blocks/me-controller-conflict.png": ("strip", "blocks/lights/me-controller-conflict.png", 1, 2),
+    "icons/blocks/me-controller.png": ("icon",),
     **{f"icons/blocks/{i}.png": ("icon",) for i in ICONS},
     **{f: ("piece", box) for f, box in CELL_PIECES.items()},
 }
@@ -112,21 +121,26 @@ def contour(img):
     return out
 
 
-def block(face):
-    """a 64 x 64 block picture from an opaque 16 x 16 face"""
-    size = FACE * K
-    f = face.resize((size, size), Image.NEAREST)
-    img = Image.new("RGBA", (size + DEPTH, size + DEPTH))
-    edge_e = f.crop((size - DEPTH, 0, size, size))
-    edge_s = f.crop((0, size - DEPTH, size, size))
-    affine(img, shade(edge_e, 0.72), (size, 0), (DEPTH, DEPTH), (0, size))
-    affine(img, shade(edge_s, 0.5), (0, size), (size, 0), (DEPTH, DEPTH))
+def block(face, n=1):
+    """a 64 x 64 block picture from an opaque 16 x 16 face; with n = 2 one of 128 x 128 (2 x 2 tiles) from four copies of
+    it, the depth and the place doubled"""
+    one = FACE * K
+    size, depth = one * n, DEPTH * n
+    f = Image.new("RGBA", (size, size))
+    for y in range(n):
+        for x in range(n):
+            f.alpha_composite(face.resize((one, one), Image.NEAREST), (one * x, one * y))
+    img = Image.new("RGBA", (size + depth, size + depth))
+    edge_e = f.crop((size - depth, 0, size, size))
+    edge_s = f.crop((0, size - depth, size, size))
+    affine(img, shade(edge_e, 0.72), (size, 0), (depth, depth), (0, size))
+    affine(img, shade(edge_s, 0.5), (0, size), (size, 0), (depth, depth))
     img.alpha_composite(f, (0, 0))
     d = ImageDraw.Draw(img)
     d.line((size, 0, size, size), fill=CONTOUR)
     d.line((0, size, size, size), fill=CONTOUR)
-    out = Image.new("RGBA", (TILE, TILE))
-    out.alpha_composite(img, (AT, AT))
+    out = Image.new("RGBA", (TILE * n, TILE * n))
+    out.alpha_composite(img, (AT * n, AT * n))
     return contour(out)
 
 
@@ -157,16 +171,17 @@ def icon(face):
     return contour(img)
 
 
-def strip(face, lights, frames):
+def strip(face, lights, frames, n=1):
     """one block picture per frame of `lights` (frames of 16 x 16 below each other), stacked: the face's holes filled,
-    the lights over the filling, the face over the lights"""
-    out = Image.new("RGBA", (TILE, TILE * frames))
+    the lights over the filling, the face over the lights (n: the block's tiles per side)"""
+    t = TILE * n
+    out = Image.new("RGBA", (t, t * frames))
     base = filled(face)
     for i in range(frames):
         f = base.copy()
         f.alpha_composite(lights.crop((0, FACE * i, FACE, FACE * (i + 1))))
         f.alpha_composite(face)
-        out.alpha_composite(block(f), (0, TILE * i))
+        out.alpha_composite(block(f, n), (0, t * i))
     return out
 
 
@@ -176,6 +191,9 @@ def make(name, how):
     face = Image.open(path).convert("RGBA")
     if face.size != (FACE, FACE):
         return None, None
+    if how[0] == "block" and len(how) > 1:
+        return block(filled(face), how[1]), "2 x 2 block picture: four copies of the face side by side, each x3, with " \
+            "depth strips of their last six columns and rows (shaded 0.72 / 0.5) and a contour, 128 x 128"
     if how[0] == "block":
         return block(filled(face)), "block picture: the face (holes filled with its darkest colour) x3 with depth strips " \
             "of its last three columns and rows (shaded 0.72 / 0.5) and a contour, 64 x 64"
@@ -191,6 +209,12 @@ def make(name, how):
     if lights.size != (FACE, FACE * how[2]):
         sys.exit(f"ae2_blocks: ae2-textures/graphics/{how[1]} is {lights.size[0]} x {lights.size[1]}, "
                  f"expected {FACE} x {FACE * how[2]}")
+    n = how[3] if len(how) > 3 else 1
+    if n > 1:
+        return strip(face, lights, how[2], n), (f"2 x 2 strip: {how[2]} block picture(s) ({TILE * n} x {TILE * n}, below "
+                                               "each other) of four copies of the face with the frame(s) of the second "
+                                               "source between the hole filling and the face, each x3, depth strips, a "
+                                               "contour")
     return strip(face, lights, how[2]), (f"working strip: {how[2]} block pictures (64 x 64, below each other) of the "
                                         "face with the frames of its light animation (the second source) between the "
                                         "hole filling and the face, x3, depth strips, a contour")

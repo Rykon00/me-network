@@ -1,6 +1,7 @@
 --- ME Network - AE2 Textures: the second data stage. ME Network issue #267 draws a drive's cells and lights as hidden
---- entities whose pictures its data-final-fixes.lua makes from the drive view, so this mod sets the view here, before it
---- (a mod's data-final-fixes.lua runs after every data-updates.lua). ME Network does not know this mod.
+--- entities whose pictures its data-final-fixes.lua makes from the drive view (issue #278: the controller's state from
+--- the controller view), so this mod sets the views here, before it (a mod's data-final-fixes.lua runs after every
+--- data-updates.lua). ME Network does not know this mod.
 local MOD = "__me-network-ae2-textures__/"
 local function say(key, text) log("me-network-ae2-textures: " .. key .. ": " .. text) end
 --- ME Network issue #264: the cells in the ME Drive's bays and the ME Chest's slot as AE2-Unofficial draws them
@@ -28,4 +29,21 @@ if view then                                                         -- (ME Netw
 	view.chest = { bays = { { x = px(5), y = px(9) } }, light = { x = 12, y = 6, w = 3, h = 3 }, cells = { w = 18, h = 9,
 		item = "me-network-ae2-textures-chest-cell-item", fluid = "me-network-ae2-textures-chest-cell-fluid" } }
 	say("drive view", "the cells of the ME Drive and the ME Chest at AE2's places")
+end
+
+--- ME Network issue #278: the ME Controller's state as AE2-Unofficial shows it (BlockController.java,
+--- RenderBlockController.java): without power the dark block (the picture of overrides.lua), with power its lights run
+--- through their 12 frames (3 Minecraft ticks each: 9 ticks here), in a conflict (a second controller) its red pattern.
+--- ME Network draws them over the controller's picture from its controller view (its docs/API.md).
+local cview = mod_data and mod_data.data.controller_view
+if cview then                                                        -- (ME Network before 0.5.3 has none)
+	local function block(name, extra)
+		local a = { filename = MOD .. "graphics/blocks/" .. name .. ".png", priority = "high", width = 128, height = 128,
+			scale = 0.5 }
+		for k, v in pairs(extra or {}) do a[k] = v end
+		return a
+	end
+	cview.on = block("me-controller-on", { frame_count = 12, line_length = 1, animation_speed = 1 / 9 })
+	cview.conflict = block("me-controller-conflict")
+	say("controller view", "AE2's controller lights and conflict pattern")
 end

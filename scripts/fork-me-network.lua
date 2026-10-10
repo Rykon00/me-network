@@ -2034,6 +2034,7 @@ local function refresh_screens(s)
 			end
 		end
 	end
+	return ids
 end
 
 --- (tests) the state a screen shows: nil without a screen, else { on, sprite, light, layer, ids } (a lamp terminal; a level
@@ -4137,6 +4138,91 @@ local function draw_leds(s, d)
 	end
 end
 
+--- issue #278: the ME Controller's state as a graphics mod shows it (the mod-data's controller view, docs/API.md): a
+--- hidden entity on the controller's position (data-final-fixes.lua, only when the view has an animation) whose variation
+--- is the state: dark without power, lit while its network works, a conflict (two controllers) while it has power. The
+--- slow step sets every controller's part once a second with the look at its network's power that it makes anyway
+--- (refresh_screens); a part that shows its state already costs one comparison. `s.controller_lights[unit] = { part,
+--- st }`; a controller that is removed takes its part along, a clone (or a save from before) gets its own the next second.
+local CONTROLLER_LIGHT = "me-controller-light"
+local CONTROLLER_STATE = { off = 1, on = 2, conflict = 3 }
+
+local function controller_state(e, net)
+	if not (net and e.valid) then return "off" end
+	if net.status == "conflict" then
+		return (e.status ~= defines.entity_status.no_power and e.energy > 0) and "conflict" or "off"
+	end
+	return M.usable(net) and "on" or "off"
+end
+
+local function set_controller_light(s, unit, e, st)
+	local rec = s.controller_lights[unit]
+	local p = rec and rec.part
+	if p and p.valid then
+		if rec.st ~= st then
+			p.graphics_variation = CONTROLLER_STATE[st]
+			rec.st = st
+		end
+		return
+	end
+	--- (a clone's copy of its source's part goes first)
+	for _, old in pairs(e.surface.find_entities_filtered{ name = CONTROLLER_LIGHT, position = e.position, radius = 0.01 }) do
+		old.destroy()
+	end
+	s.controller_lights[unit] = { part = new_part(e, CONTROLLER_LIGHT, CONTROLLER_STATE[st]), st = st }
+end
+
+local function controller_light_gone(s, unit)
+	local rec = s.controller_lights and s.controller_lights[unit]
+	if not rec then return end
+	destroy_part(rec.part)
+	s.controller_lights[unit] = nil
+end
+
+--- every controller's part to its state (`ids`: the networks, sorted); nothing without a graphics mod's view
+local function refresh_controller_lights(s, ids)
+	if not prototypes.entity[CONTROLLER_LIGHT] then
+		s.controller_lights = nil                             -- (the view's mod is gone: the game removed the parts)
+		return
+	end
+	local cl = s.controller_lights
+	if not cl then
+		cl = {}
+		s.controller_lights = cl
+	end
+	if s.controller_version ~= s.version then                  -- a controller that left without an event
+		for unit in pairs(cl) do
+			local node = s.nodes[unit]
+			if not (node and node.kind == "controller") then controller_light_gone(s, unit) end
+		end
+		s.controller_version = s.version
+	end
+	for _, id in ipairs(ids) do
+		local net = s.nets[id]
+		local units
+		for unit in pairs(net.controllers or {}) do
+			units = units or {}
+			units[#units + 1] = unit
+		end
+		if units then
+			if #units > 1 then table.sort(units) end
+			for _, unit in ipairs(units) do
+				local e = s.nodes[unit] and s.nodes[unit].entity
+				if e and e.valid then set_controller_light(s, unit, e, controller_state(e, net)) end
+			end
+		end
+	end
+end
+
+--- (tests, issue #278) what a controller's part shows: nil without one, else { name, variation, position, state }
+function M.controller_light_of(entity)
+	local s = storage.fork_me_net
+	local rec = s and s.controller_lights and entity and entity.valid and s.controller_lights[entity.unit_number]
+	local p = rec and rec.part
+	if not (p and p.valid) then return nil end
+	return { name = p.name, variation = p.graphics_variation, position = p.position, state = rec.st }
+end
+
 --- (tests, issues #264, #267) what a drive or chest shows per slot: { [slot] = { light = { name, variation, position },
 --- cell = { name, variation, position } } }
 function M.drive_lights_of(entity)
@@ -4304,6 +4390,7 @@ function M.on_removed(entity, buffer)
 		s.dirty[entity.unit_number] = nil
 	end
 	CH.gone(s, entity.unit_number)              -- (issue #229: an ME Chest's hidden parts)
+	controller_light_gone(s, entity.unit_number)   -- (issue #278)
 	M.ext_detach(entity.unit_number)               -- a storage bus: its inventory leaves the network
 	remove_node(s, entity.unit_number)
 end
@@ -4328,6 +4415,7 @@ local function vanish(s, unit)
 		s.dirty[unit] = nil
 	end
 	CH.gone(s, unit)
+	controller_light_gone(s, unit)
 	M.ext_detach(unit)
 	for _, f in ipairs(M.vanish_hooks) do f(unit) end
 	if node then remove_node(s, unit) end
@@ -4376,7 +4464,7 @@ function M.slow_step()
 			if net.wait_room then fire_units(net, "wait_room") end
 		end
 	end
-	refresh_screens(s)
+	refresh_controller_lights(s, refresh_screens(s))
 	CH.power_step(s)
 	if not s.light_parts then                                      -- issue #267: the lights of a save from before
 		s.light_parts = true
@@ -4948,6 +5036,7 @@ remote.add_interface("gregtorio-me-network", {
 	kind = function(name) return M.kind_of(name) end,                 -- (issue #130 tests) the kind of an entity name
 	screen = function(entity) return M.screen_of(entity) end,         -- (issue #128 tests) what a terminal's screen shows
 	drive_lights = function(entity) return M.drive_lights_of(entity) end,  -- (issue #264 tests) a drive's lights and cells
+	controller_light = function(entity) return M.controller_light_of(entity) end,   -- (issue #278 tests) a controller's part
 	--- what the rotation event does (entity.rotate raises none)
 	rotated = function(entity) M.on_rotated(entity) end,
 	--- what on_configuration_changed does with the graph (the whole map)

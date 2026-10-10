@@ -4,6 +4,8 @@
 --- cells (#250) and the interface capacity card (#251), which AE2-Unofficial has no icon for, are related icons of it
 --- in other colours. Each entry names its icon_size, so it stays right when ME Network draws its own icon at another size.
 --- Issue #260 brought the first blocks: their pictures and icons made from AE2-Unofficial faces (tools/ae2_blocks.py).
+--- Issue #278 the ME Controller: its picture is AE2's controller without power; data-updates.lua gives ME Network the lit
+--- and the conflict pictures for its controller view.
 ---
 --- A key is "<prototype type>/<prototype name>" of ME Network (it never renames a prototype). A value is either
 ---   a file of this mod, when the prototype uses exactly one file of ME Network (an item's icon):
@@ -95,4 +97,10 @@ return {
 		["__me-network__/graphics/icons/hd/me-pattern-provider.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-provider.png", icon_size = 64 },
 	},
 	["item/me-pattern-provider"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-provider.png", icon_size = 64 },
+	--- the controller (issue #278, 2 x 2 tiles): four AE2 controllers without power, 128 px like ME Network's picture
+	["electric-energy-interface/me-network-controller"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-network-controller.png"] = "__me-network-ae2-textures__/graphics/blocks/me-controller.png",
+		["__me-network__/graphics/icons/hd/me-controller.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-controller.png", icon_size = 64 },
+	},
+	["item/me-controller"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-controller.png", icon_size = 64 },
 }
