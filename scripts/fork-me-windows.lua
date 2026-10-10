@@ -1371,7 +1371,15 @@ function M.refresh_bus(player, frame)
 	local d = M.bus_data(entity)
 	rebuild(frame, "fork_me_bus_filters", table.concat(d.filters, ","), function(box)
 		local t = box.add{ type = "table", column_count = d.max, style = "filter_slot_table" }
-		for i = 1, d.max do G.key_button(t, d.filters[i], G.act("bus_filter", { index = i }), { "fork-me-gui.key-slot-tooltip" }) end
+		for i = 1, d.max do
+			--- issue #291: what a filter without a quality takes (the import bus every quality, the export bus normal)
+			local key = d.filters[i]
+			local plain = key and script.feature_flags.quality and prototypes.item[key] ~= nil
+			G.key_button(t, key, G.act("bus_filter", { index = i }), plain
+				and { "", { "fork-me-gui.bus-filter-" .. (d.import and "any" or "normal") .. "-quality" }, "\n",
+					{ "fork-me-gui.key-slot-tooltip" } }
+				or { "fork-me-gui.key-slot-tooltip" })
+		end
 	end)
 	block_slots(frame, "fork_me_bus_cards", io.bus_inventory(entity), 1, d.slots, function(_, st)
 		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
@@ -1425,14 +1433,14 @@ G.on("bus_filter", function(event, player, el)
 		if key then io.set_bus_filter(entity, index, nil) G.refresh_one(player) end
 		return
 	end
-	key_picker(player, "bus_filter", { unit = entity.unit_number, index = index }, key, false)
+	key_picker(player, "bus_filter", { unit = entity.unit_number, index = index }, key, true)
 end)
 
---- issue #70: a bus filter is an item or a fluid, without a quality
+--- issue #70: a bus filter is an item or a fluid; issue #291: an item with its quality (normal: the plain name)
 picker.on_confirm("bus_filter", function(player, data, choice)
 	local entity = window_entity(player)
 	if not (entity and entity.unit_number == data.unit) then return end
-	local key = picker.key_of(choice, false)
+	local key = picker.key_of(choice, true)
 	if key then io.set_bus_filter(entity, data.index, key) else refused_choice(player) end
 	G.refresh_one(player)
 end)

@@ -295,7 +295,32 @@ local function filter_key(f)
 	if N.is_fluid_key(f) then return N.clean_fluid_filter(f) end
 	if prototypes.item[f] then return f end
 	if prototypes.fluid[f] then return FLUID_PREFIX .. f end
+	--- issue #291: an item of one quality, "name@quality" ("name@normal" is the plain name)
+	local name, q, json = N.parse_key(f)
+	if not json and prototypes.item[name] and prototypes.quality[q] and (q == "normal" or script.feature_flags.quality) then
+		return N.key_of(name, q)
+	end
 	return nil
+end
+
+--- Issue #291: a bus's item filter is a plain name or "name@quality". The import bus takes every quality of a plain
+--- name (as before) and only that quality of a filter with one; the export bus exports normal quality for a plain name
+--- and the filter's quality for one with a quality. The name and quality of a filter key, cached per load.
+local filter_items = {}
+local function filter_item(key)
+	local v = filter_items[key]
+	if not v then
+		local name, q = N.parse_key(key)
+		v = { name, q }
+		filter_items[key] = v
+	end
+	return v[1], v[2]
+end
+
+--- does the import filter set `set` take `name` of quality `q`? (`rec.iq`: the bus has a filter with a quality)
+local function import_takes(rec, set, name, q)
+	if set[name] then return true end
+	return rec.iq and q ~= nil and q ~= "normal" and set[N.key_of(name, q)] or false
 end
 
 --------------------------------------------------------------------------------
@@ -1166,7 +1191,7 @@ local function import_items(rec, net, t, cap, info)
 	local moved, stacks, held, main, mainc = 0, false, 0, nil, 0
 	local B = N.bound(inv)                                    -- (its methods: issue #115)
 	for _, c in pairs(B.get_contents()) do
-		if all or set[c.name] then
+		if all or import_takes(rec, set, c.name, c.quality) then
 			held = held + c.count
 			if c.count > mainc then main, mainc = c.name, c.count end
 			if moved < cap then
@@ -1196,7 +1221,8 @@ local function import_items(rec, net, t, cap, info)
 		for i = 1, #inv do
 			if moved >= cap then break end
 			local stack = inv[i]
-			if stack.valid_for_read and (all or set[stack.name]) and not by_count(stack.name, stack.quality.name) then
+			if stack.valid_for_read and (all or import_takes(rec, set, stack.name, stack.quality.name))
+				and not by_count(stack.name, stack.quality.name) then
 				local n, why = N.insert_partial(net, stack, cap - moved)
 				if n then moved = moved + n
 				elseif N.refuses_stack(why) then
@@ -1231,18 +1257,23 @@ local function export_items(rec, net, t, cap, info)
 		rec.tgt = tgt
 	end
 	local dt = info.dt or STEP_TICKS
-	for _, name in ipairs(rec.filters) do
+	for _, key in ipairs(rec.filters) do
+		local name, q = filter_item(key)                      -- (issue #291: a filter may name a quality)
 		if item_known(name) then
-			local have = N.bound(inv).get_item_count(name)
-			local prev = tgt[name]
+			local have
+			if q == "normal" then have = N.bound(inv).get_item_count(name)
+			else
+				Q_COUNT.name, Q_COUNT.quality = name, q
+				have = N.bound(inv).get_item_count(Q_COUNT)
+			end
+			local prev = tgt[key]
 			if prev and prev > 0 and have == 0 then info.starved = true end
 			local used = prev and prev - have or 0
 			local want = cap - moved
 			if machine then want = math.min(want, stack_of(name) - have) end
 			local got = 0
 			if want > 0 then
-				local key = name                                  -- (the key of a plain item of normal quality)
-				got = N.extract_to(net, inv, key, want)
+				got = N.extract_to(net, inv, key, want)          -- (a plain name: normal quality)
 				if got <= 0 then
 					if N.count_key(net, key) <= 0 then
 						N.wait_for(net, key, "io", rec.entity.unit_number, true)
@@ -1254,7 +1285,7 @@ local function export_items(rec, net, t, cap, info)
 				moved = moved + got
 			end
 			local after = have + got
-			tgt[name] = after
+			tgt[key] = after
 			if used > 0 and after > 0 then
 				local tt = after * dt / used
 				if tt < info.time then info.time = tt end
@@ -1505,14 +1536,15 @@ function M.bus_step(rec, dt, u)
 	return moved, full, Sched.headroom(info.time, full, MIN_INTERVAL, MAX_CATCH_UP, rec.sh), nil, info.starved or false, net, info.time
 end
 
---- Set the filters: a list of keys (item name, "fluid/<name>"; a plain name that is no item but a fluid is that
---- fluid), at most MAX_FILTERS. Split into rec.filters (item names) and rec.ffilters (fluid names) and their sets.
+--- Set the filters: a list of keys (item name, "name@quality" (issue #291), "fluid/<name>"; a plain name that is no
+--- item but a fluid is that fluid), at most MAX_FILTERS. Split into rec.filters (item keys) and rec.ffilters (fluid
+--- names) and their sets; rec.iq: a filter names a quality.
 function M.set_bus_filters(entity, filters)
 	local k = kind(entity)
 	if not BUSES[k] then return false end
 	local rec = register(state(), entity)
 	local keys, items, fl, iset, fset, seen = {}, {}, {}, {}, {}, {}
-	local fkeys, temps = {}, false
+	local fkeys, temps, iq = {}, false, false
 	for _, f in pairs(filters or {}) do
 		local key = filter_key(f)
 		if key and not seen[key] and #keys < MAX_FILTERS then
@@ -1532,10 +1564,12 @@ function M.set_bus_filters(entity, filters)
 			else
 				items[#items + 1] = key
 				iset[key] = true
+				if key:find("@", 1, true) then iq = true end
 			end
 		end
 	end
 	rec.keys, rec.filters, rec.ffilters, rec.iset, rec.fset = keys, items, fl, iset, fset
+	rec.iq = iq or nil
 	rec.fkeys = temps and fkeys or nil                    -- (the filter keys of rec.ffilters, only with a temperature)
 	rec.all = IMPORTS[k] and #keys == 0 or nil
 	wake(entity.unit_number)
@@ -1669,12 +1703,18 @@ local function probe_work(rec)
 		if inv then
 			local machine = T.SLOTTED[t.type]
 			local lab = t.type == "lab"
-			for _, name in ipairs(rec.filters) do
+			for _, key in ipairs(rec.filters) do
+				local name, q = filter_item(key)
 				if prototypes.item[name] then
+					local item = name
+					if q ~= "normal" then
+						Q_COUNT.name, Q_COUNT.quality = name, q
+						item = Q_COUNT
+					end
 					if machine then
 						--- (a lab takes only the packs it uses: a filter it refuses is no work, however empty its slot)
-						if inv.get_item_count(name) < stack_of(name) and (not lab or inv.can_insert{ name = name }) then return true end
-					elseif inv.can_insert{ name = name } then
+						if inv.get_item_count(item) < stack_of(name) and (not lab or inv.can_insert(item)) then return true end
+					elseif inv.can_insert(item) then
 						return true
 					end
 				end

@@ -702,6 +702,71 @@ function me_io_test()
 	remote.call(IO, "step", eb2)
 	local given = mol.get_inventory(defines.inventory.crafter_input).get_item_count("iron-plate")
 	expect(given == math.min(64, size) and count("iron-plate") == before - given, "export bus into the machine: " .. given)
+	--- issue #291: an item filter with a quality (with the quality mod): the import bus takes only that quality, a plain
+	--- filter every quality; the export bus exports the filter's quality, a plain filter normal quality; paste, clone and
+	--- blueprint keep it
+	if script.feature_flags.quality and prototypes.quality.rare and prototypes.quality.uncommon then
+		local function line(x) return serpent.line(x) end
+		local function cq(q) return remote.call(NET, "count", t, "iron-plate", q) end
+		local function ich(q) return ichest.get_item_count{ name = "iron-plate", quality = q } end
+		local function ech(q) return echest.get_item_count{ name = "iron-plate", quality = q } end
+		ichest.insert{ name = "iron-plate", quality = "rare", count = 7 }
+		ichest.insert{ name = "iron-plate", quality = "uncommon", count = 3 }
+		ichest.insert{ name = "iron-plate", count = 4 }
+		local rare0, unc0, nor0 = cq("rare"), cq("uncommon"), cq("normal")
+		remote.call(IO, "set_bus_filters", ib, { "iron-plate@rare" })
+		expect(line(remote.call(IO, "get_bus", ib).filters) == line({ "iron-plate@rare" }), "a quality filter " .. line(remote.call(IO, "get_bus", ib).filters))
+		local moved = remote.call(IO, "step", ib)
+		expect(moved == 7 and cq("rare") == rare0 + 7 and ich("rare") == 0 and ich("uncommon") == 3 and ich("normal") == 4,
+			"import bus with a Rare filter: moved " .. moved .. ", left uncommon " .. ich("uncommon") .. ", normal " .. ich("normal"))
+		remote.call(IO, "set_bus_filters", ib, { "iron-plate@normal" })        -- (the plain name)
+		expect(line(remote.call(IO, "get_bus", ib).filters) == line({ "iron-plate" }), "a normal quality filter is the plain name")
+		moved = remote.call(IO, "step", ib)
+		expect(moved == 7 and cq("uncommon") == unc0 + 3 and cq("normal") == nor0 + 4 and ich("uncommon") == 0 and ich("normal") == 0,
+			"import bus with a plain filter takes every quality: moved " .. moved)
+		remote.call(IO, "set_bus_filters", eb, { "iron-plate@rare" })
+		local nrare = cq("rare")
+		moved = remote.call(IO, "step", eb)
+		expect(moved == nrare and ech("rare") == nrare and cq("rare") == 0 and ech("normal") == 0,
+			"export bus with a Rare filter: moved " .. moved .. " of " .. nrare .. ", chest rare " .. ech("rare") .. ", normal " .. ech("normal"))
+		moved = remote.call(IO, "step", eb)
+		expect(moved == 0 and ech("rare") == nrare, "export bus with a Rare filter and no Rare plates in the network: " .. moved)
+		remote.call(IO, "set_bus_filters", eb, { "iron-plate" })
+		local unc1 = cq("uncommon")
+		moved = remote.call(IO, "step", eb)
+		expect(moved > 0 and ech("normal") == moved and ech("uncommon") == 0 and cq("uncommon") == unc1 and ech("rare") == nrare,
+			"export bus with a plain filter exports normal quality: moved " .. moved .. ", chest normal " .. ech("normal"))
+		if nrare > 0 then echest.remove_item{ name = "iron-plate", quality = "rare", count = nrare } end
+		if ech("normal") > 0 then echest.remove_item{ name = "iron-plate", count = ech("normal") } end
+		--- paste, clone and blueprint keep the quality
+		remote.call(IO, "set_bus_filters", eb, { "iron-plate@rare", "copper-plate", "iron-gear-wheel@uncommon" })
+		local want = line({ "iron-plate@rare", "copper-plate", "iron-gear-wheel@uncommon" })
+		local eb4 = s.create_entity{ name = "me-export-bus", position = { CX + 40.5, CY + 40.5 }, force = "player", raise_built = true }
+		if eb4 then
+			remote.call(IO, "paste", eb, eb4)
+			expect(line(remote.call(IO, "get_bus", eb4).filters) == want, "pasted quality filters " .. line(remote.call(IO, "get_bus", eb4).filters))
+			local eb5 = eb4.clone{ position = { CX + 42.5, CY + 40.5 } }
+			expect(eb5 and line(remote.call(IO, "get_bus", eb5).filters) == want, "cloned quality filters "
+				.. line(eb5 and remote.call(IO, "get_bus", eb5).filters))
+			local qbp = game.create_inventory(1)
+			qbp.insert{ name = "blueprint" }
+			local qmap = qbp[1].create_blueprint{ surface = s, force = "player", area = { { CX + 40, CY + 40 }, { CX + 41, CY + 41 } } }
+			remote.call(IO, "tag_blueprint", qbp[1], qmap)
+			local tag
+			for index, e in pairs(qmap or {}) do
+				if e == eb4 then tag = qbp[1].get_blueprint_entity_tag(index, "fork_me_bus") end
+			end
+			local eb6 = s.create_entity{ name = "me-export-bus", position = { CX + 44.5, CY + 40.5 }, force = "player" }
+			if eb6 and tag then remote.call(IO, "built", eb6, { fork_me_bus = tag }) end
+			expect(eb6 and tag and line(remote.call(IO, "get_bus", eb6).filters) == want, "quality filters through a blueprint: "
+				.. line(tag) .. " -> " .. line(eb6 and remote.call(IO, "get_bus", eb6).filters))
+			qbp.destroy()
+			for _, e in pairs({ eb4, eb5, eb6 }) do if e and e.valid then e.destroy{ raise_destroy = true } end end
+		else
+			expect(false, "the export bus for the quality paste test was not built")
+		end
+		remote.call(IO, "set_bus_filters", eb, { "iron-gear-wheel" })
+	end
 	--- rotated to face the import bus (an ME block): nothing to work with
 	eb.rotate{ reverse = true }
 	eb.rotate{ reverse = true }
@@ -4446,8 +4511,8 @@ function paste_test()
 	local msgs = remote.call(RP, "paste", m1, i2)
 	local want = gear_rows("normal")
 	expect(#keys(msgs) == 0 and config_line(i2) == want, "item recipe onto an interface: " .. config_line(i2) .. " " .. line(keys(msgs)))
-	--- a quality recipe: the rows and the storage bus filters take its quality (mode and priority stay), the export bus
-	--- has no quality and says so
+	--- a quality recipe: the rows, the storage bus filters and (issue #291) the export bus filters take its quality (mode
+	--- and priority stay)
 	msgs = remote.call(RP, "paste", m2, i3)
 	want = gear_rows("uncommon")
 	expect(#keys(msgs) == 0 and config_line(i3) == want, "quality recipe onto an interface: " .. config_line(i3))
@@ -4457,7 +4522,7 @@ function paste_test()
 	expect(#keys(msgs) == 0 and line(st1) == line({ mode = "read", priority = 7, filters = { gear[1] .. "@uncommon", gear[2] .. "@uncommon" } }),
 		"quality recipe onto a storage bus: " .. line(st1))
 	msgs = remote.call(RP, "paste", m2, e3)
-	expect(line(remote.call(IO, "get_bus", e3).filters) == line(gear) and line(keys(msgs)) == line({ "bus-quality" }),
+	expect(line(remote.call(IO, "get_bus", e3).filters) == line({ gear[1] .. "@uncommon", gear[2] .. "@uncommon" }) and #keys(msgs) == 0,
 		"quality recipe onto an export bus: " .. line(remote.call(IO, "get_bus", e3).filters) .. " " .. line(keys(msgs)))
 	--- a recipe without item ingredients onto a storage bus on a chest: unchanged, the player is told
 	msgs = remote.call(RP, "paste", r2, sb1)
@@ -4556,8 +4621,9 @@ function paste_test()
 	msgs = remote.call(RP, "paste", m3, i8)
 	expect(line(keys(msgs)) == line({ "no-recipe" }) and config_line(i8) == before, "assembler without a recipe: " .. line(keys(msgs)))
 	msgs = remote.call(RP, "paste", f2, e3)
-	expect(line(keys(msgs)) == line({ "no-recipe" }) and line(remote.call(IO, "get_bus", e3).filters) == line(gear),
-		"furnace that never smelted: " .. line(keys(msgs)))
+	--- (e3 keeps the filters of the quality recipe pasted above: issue #291)
+	expect(line(keys(msgs)) == line({ "no-recipe" }) and line(remote.call(IO, "get_bus", e3).filters)
+		== line({ gear[1] .. "@uncommon", gear[2] .. "@uncommon" }), "furnace that never smelted: " .. line(keys(msgs)))
 	--- the furnace while it smelts (its current recipe)
 	local busy = f1.get_recipe() ~= nil
 	msgs = remote.call(RP, "paste", f1, i7)
