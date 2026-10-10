@@ -12,6 +12,7 @@
     python tools/build.py --no-psd     # leave out Photoshop sources (smaller zip)
     python tools/build.py --portal     # zips for the mod portal (same as --no-psd)
     python tools/build.py --no-texture-notes   # release notes without the texture mod (its version is not new, #243)
+    python tools/build.py --texture-notes-only # release notes of the texture mod alone (a texture-only release, #245)
 
 No zip holds both licenses. The build fails and deletes both zips when the me-network zip holds a path under
 ae2-textures/, a file with the bytes of an image of ae2-textures/MANIFEST.tsv or of its AE2 source, the CC BY-NC-SA
@@ -175,7 +176,11 @@ def main():
     ap.add_argument("--portal", action="store_true", help="zips for the mod portal (same as --no-psd)")
     ap.add_argument("--no-texture-notes", action="store_true",
                     help="release notes without the texture mod's section (a release that does not attach its zip)")
+    ap.add_argument("--texture-notes-only", action="store_true",
+                    help="release notes of the texture mod alone (a texture-only release, issue #245)")
     a = ap.parse_args()
+    if a.no_texture_notes and a.texture_notes_only:
+        sys.exit("build: --no-texture-notes and --texture-notes-only exclude each other")
     if a.portal:
         a.no_psd = True
     dist = ROOT / "dist"
@@ -185,12 +190,18 @@ def main():
     count = len(M.read_manifest()[0])
     print(f"licenses: {me.name}: LICENSE (GPLv3); {tex.name}: {M.LICENSE_FILE} (CC BY-NC-SA 3.0, {count} AE2 files; "
           f"attribution in README.md, MANIFEST.tsv)")
-    # release notes = topmost section of each changelog.txt (the texture mod's only when the release attaches it)
-    notes = "```\n" + topmost_section(ROOT / "changelog.txt") + "\n```\n"
+    # release notes = topmost section of each changelog.txt (the texture mod's only when the release attaches it), or the
+    # texture mod's alone in a texture-only release (issue #245)
     tex_info = info_of(ROOT / M.MOD_FOLDER)
-    if not a.no_texture_notes:
-        notes += (f"\n{tex_info['title']} {tex_info['version']} ({tex.name}, CC BY-NC-SA 3.0, optional):\n\n```\n"
-                  + topmost_section(ROOT / M.MOD_FOLDER / "changelog.txt") + "\n```\n")
+    tex_notes = "```\n" + topmost_section(ROOT / M.MOD_FOLDER / "changelog.txt") + "\n```\n"
+    if a.texture_notes_only:
+        needs = next((d for d in tex_info.get("dependencies", []) if d.split()[0] == info_of(ROOT)["name"]), "")
+        notes = (f"{tex_info['title']} {tex_info['version']} alone ({tex.name}, CC BY-NC-SA 3.0, optional"
+                 + (f"; needs {needs}" if needs else "") + "):\n\n" + tex_notes)
+    else:
+        notes = "```\n" + topmost_section(ROOT / "changelog.txt") + "\n```\n"
+        if not a.no_texture_notes:
+            notes += f"\n{tex_info['title']} {tex_info['version']} ({tex.name}, CC BY-NC-SA 3.0, optional):\n\n" + tex_notes
     (dist / "release-notes.md").write_text(notes, encoding="utf-8")
     for out in (me, tex):
         print(f"built: {out} ({out.stat().st_size/1e6:.1f} MB)")

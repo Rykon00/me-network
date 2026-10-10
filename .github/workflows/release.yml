@@ -19,6 +19,11 @@ name: Build & Release
 # portal) and ae2-textures/changelog.txt a section for it. Only such a new version is attached to the
 # GitHub release and uploaded to its own portal page (mods.factorio.com/mod/me-network-ae2-textures);
 # a release where ae2-textures/ did not change attaches and uploads no texture zip.
+# A texture-only release (issue #245): a release pull request may keep me-network's version (tag vX.Y.Z
+# exists) when nothing the me-network zip holds changed since that tag and the texture version is new.
+# Its merge creates the tag me-network-ae2-textures-vX.Y.Z (the texture version; not "v*", so it
+# triggers nothing) and a GitHub release with the texture zip and the texture notes alone (not marked
+# as the latest release), uploads only the texture zip and announces only the texture mod.
 # Both uploads run tools/portal_upload.sh, each in a step of its own; it takes the mod name and
 # version from the zip's own info.json and refuses a zip of another mod than the step's, so neither
 # zip can reach the other's page. They need the repository secret FACTORIO_MOD_API_KEY (an API key
@@ -50,6 +55,8 @@ jobs:
       textures_name: ${{ steps.rel.outputs.textures_name }}
       textures_title: ${{ steps.rel.outputs.textures_title }}
       textures_version: ${{ steps.rel.outputs.textures_version }}
+      textures_only: ${{ steps.rel.outputs.textures_only }}
+      textures_tag: ${{ steps.rel.outputs.textures_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,21 +92,36 @@ jobs:
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "zip=dist/${NAME}_${V}.zip" >> "$GITHUB_OUTPUT"
+          TT=$(python3 -c "import json;i=json.load(open('ae2-textures/info.json'));print(i['name']+'-v'+i['version'])")
           RELEASE=false
+          ONLY=false
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} != info.json version $V"; exit 1; }
             RELEASE=true
           elif [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_NAME}" = "upstream/release" ]; then
-            if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
-              echo "Tag v$V exists already: no release."
-            else
+            if ! git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
               echo "info.json version $V has no tag yet: release."
               RELEASE=true
+            elif git rev-parse -q --verify "refs/tags/$TT" >/dev/null; then
+              echo "Tags v$V and $TT exist already: no release."
+            else
+              # issue #245: me-network is released already; a new texture version is a texture-only release
+              rm -f "$RUNNER_TEMP/textures.out"
+              python3 tools/release_textures.py --texture-only --release-tag "$TT" --output "$RUNNER_TEMP/textures.out"
+              if grep -qx 'textures_new=true' "$RUNNER_TEMP/textures.out"; then
+                echo "Tag v$V exists, the texture version is new: texture-only release $TT."
+                cat "$RUNNER_TEMP/textures.out" >> "$GITHUB_OUTPUT"
+                RELEASE=true
+                ONLY=true
+              else
+                echo "Tag v$V exists and the texture version is not new: no release."
+              fi
             fi
           fi
           echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "textures_only=$ONLY" >> "$GITHUB_OUTPUT"
           # issue #243: is the texture mod's version new (attach and upload it)? A broken version stops the release.
-          if [ "$RELEASE" = true ]; then
+          if [ "$RELEASE" = true ] && [ "$ONLY" = false ]; then
             python3 tools/release_textures.py --release-tag "v$V" --output "$GITHUB_OUTPUT"
           fi
 
@@ -108,8 +130,20 @@ jobs:
         run: |
           V=${{ steps.rel.outputs.version }}
           if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
-            echo "::error::info.json version $V is released already (tag v$V). Bump the version for this release."
-            exit 1
+            # issue #245: a texture-only release keeps me-network's version
+            TT=$(python3 -c "import json;i=json.load(open('ae2-textures/info.json'));print(i['name']+'-v'+i['version'])")
+            if git rev-parse -q --verify "refs/tags/$TT" >/dev/null; then
+              echo "::error::info.json version $V and the texture version (tag $TT) are released already. Bump a version for this release."
+              exit 1
+            fi
+            rm -f "$RUNNER_TEMP/textures.out"
+            python3 tools/release_textures.py --texture-only --release-tag "$TT" --output "$RUNNER_TEMP/textures.out"
+            if ! grep -qx 'textures_new=true' "$RUNNER_TEMP/textures.out"; then
+              echo "::error::info.json version $V is released already (tag v$V) and ae2-textures/ has no new version: nothing to release. Bump the version for this release."
+              exit 1
+            fi
+            echo "Merging this pull request makes the texture-only release $TT (GitHub release and mod portal); me-network stays $V."
+            exit 0
           fi
           grep -q "^Version: $V$" changelog.txt || { echo "::error::changelog.txt has no section 'Version: $V'."; exit 1; }
           python3 tools/release_textures.py --release-tag "v$V"
@@ -117,7 +151,7 @@ jobs:
 
       - name: Build both zips (me-network, me-network-ae2-textures)
         run: |
-          python3 tools/build.py --portal ${{ steps.rel.outputs.textures_new != 'true' && '--no-texture-notes' || '' }}
+          python3 tools/build.py --portal ${{ steps.rel.outputs.textures_only == 'true' && '--texture-notes-only' || steps.rel.outputs.textures_new != 'true' && '--no-texture-notes' || '' }}
           for z in dist/*.zip; do echo "== $z"; python3 -c "import sys,zipfile;print('\n'.join(zipfile.ZipFile(sys.argv[1]).namelist()))" "$z"; done
 
       - uses: actions/upload-artifact@v4
@@ -126,7 +160,7 @@ jobs:
           path: dist/*.zip
 
       - name: GitHub release
-        if: steps.rel.outputs.release == 'true'
+        if: steps.rel.outputs.release == 'true' && steps.rel.outputs.textures_only != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.rel.outputs.version }}
@@ -137,9 +171,21 @@ jobs:
             ${{ steps.rel.outputs.textures_attach }}
           body_path: dist/release-notes.md
 
+      # issue #245: a texture-only release has a tag of its own and only the texture zip and notes
+      - name: GitHub release (texture-only)
+        if: steps.rel.outputs.release == 'true' && steps.rel.outputs.textures_only == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.textures_tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.rel.outputs.textures_title }} ${{ steps.rel.outputs.textures_version }}
+          files: ${{ steps.rel.outputs.textures_zip }}
+          body_path: dist/release-notes.md
+          make_latest: false
+
       # tools/portal_upload.sh takes the mod name from the zip's info.json and refuses a zip that is not of $MOD
       - name: Upload me-network to the Factorio mod portal
-        if: steps.rel.outputs.release == 'true'
+        if: steps.rel.outputs.release == 'true' && steps.rel.outputs.textures_only != 'true'
         env:
           API_KEY: ${{ secrets.FACTORIO_MOD_API_KEY }}
           MOD: ${{ steps.rel.outputs.name }}
@@ -190,6 +236,8 @@ jobs:
           TEXTURES_MOD: ${{ needs.build.outputs.textures_name }}
           TEXTURES_TITLE: ${{ needs.build.outputs.textures_title }}
           TEXTURES_VERSION: ${{ needs.build.outputs.textures_version }}
+          TEXTURES_ONLY: ${{ needs.build.outputs.textures_only }}
+          TEXTURES_TAG: ${{ needs.build.outputs.textures_tag }}
         run: |
           if [ -z "$DISCORD_BOT_TOKEN" ]; then
             echo "::warning::Secret DISCORD_BOT_TOKEN is not set: skipping the Discord announcement."
@@ -197,7 +245,10 @@ jobs:
           fi
           python -m pip install --quiet -r tool/requirements.txt
           status=0
-          python tool/discord_announce.py \
+          # issue #245: a texture-only release announces the texture mod alone, its release page under its own tag
+          RELEASE_TAG="v$VERSION"
+          [ "$TEXTURES_ONLY" = true ] && RELEASE_TAG="$TEXTURES_TAG"
+          [ "$TEXTURES_ONLY" = true ] || python tool/discord_announce.py \
             --guild-config tool/server.yml \
             --channel me-network-releases --title "ME Network" --version "$VERSION" \
             --changelog mod/changelog.txt \
@@ -211,7 +262,7 @@ jobs:
               --guild-config tool/server.yml \
               --channel me-network-releases --title "$TEXTURES_TITLE" --version "$TEXTURES_VERSION" \
               --changelog mod/ae2-textures/changelog.txt \
-              --link "Full changelog=https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
+              --link "Full changelog=https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" \
               --link "Mod portal=https://mods.factorio.com/mod/$TEXTURES_MOD" \
               --summary-file "$RUNNER_TEMP/announce-textures.md" || status=$?
             [ -f "$RUNNER_TEMP/announce-textures.md" ] && cat "$RUNNER_TEMP/announce-textures.md" >> "$GITHUB_STEP_SUMMARY"

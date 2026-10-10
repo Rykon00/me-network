@@ -72,9 +72,16 @@ CC BY-NC-SA 3.0. They are built into two zips and no zip contains both. Every or
    texture version is new, a second one from `ae2-textures/changelog.txt` (repository secret
    `DISCORD_BOT_TOKEN`; without it the job only warns); if it fails, re-run that job alone.
    The very first version of each mod (me-network 0.1.0, the texture mod 0.1.0) was uploaded by hand: the portal API
-   only uploads new versions of an existing mod. A release is made by a new me-network version, so with the workflow
-   as it is a new texture version alone goes out with a me-network patch release (or is uploaded by hand and recorded
-   as above); a texture-only release is issue #245.
+   only uploads new versions of an existing mod.
+   **A texture-only release** (issue #245): when nothing the me-network zip holds (`tools/build.py` `INCLUDE`: the
+   game files, `info.json`, `changelog.txt`, ...) changed since the last tag `vX.Y.Z`, a release branch may bump only
+   the texture mod (its `version`, its changelog section and `Date:` line) and keep me-network's version. Its checks
+   then pass when the texture version is new and fail when the me-network files changed (bump me-network and release
+   both) or when nothing is new. The merge creates the tag `me-network-ae2-textures-vX.Y.Z` (the texture version; it
+   does not start a workflow run of its own) and a GitHub release under it with the texture zip and the texture
+   changelog section alone, not marked as the latest release; it uploads only the texture zip, announces only the
+   texture mod and fast-forwards `main` as above. Such a tag counts as a release of the texture mod: its version is
+   used, and "changed" is measured from the newer of it and the last `vX.Y.Z`.
 7. Gregtorio Continued depends on this mod: a version that Gregtorio needs is released here first, then Gregtorio
    raises its dependency `me-network >= X.Y.Z`.
 

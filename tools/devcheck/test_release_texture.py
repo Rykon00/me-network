@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-test of the texture mod's release (issue #243): tools/release_textures.py (is the version of ae2-textures/ new,
-may it be released) on temporary git repositories with release tags, and tools/portal_upload.sh (the upload step of
+may it be released, also in a texture-only release of issue #245) on temporary git repositories with release tags, and tools/portal_upload.sh (the upload step of
 .github/workflows/release.yml for both mods) against a fake mod portal on 127.0.0.1. Nothing reaches the real portal.
 Each failing case must fail with a message that names its cause; `devcheck.py check` runs these cases, and
 
@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import release_textures as R
 
 TEX = "me-network-ae2-textures"
+TT = TEX + "-v0.2.0"   # the tag of a texture-only release of 0.2.0 (issue #245)
 KEY = "fake-key-for-the-self-test"
 VERBOSE = False
 
@@ -88,8 +89,8 @@ class Decide(unittest.TestCase):
     def tearDown(self):
         rmtree(self.tmp)
 
-    def decide(self, release_tag="v0.5.3", portal=(), hand=None):
-        d = R.decide(self.repo.path, "HEAD", release_tag, portal, hand if hand is not None else {})
+    def decide(self, release_tag="v0.5.3", portal=(), hand=None, texture_only=False):
+        d = R.decide(self.repo.path, "HEAD", release_tag, portal, hand if hand is not None else {}, texture_only)
         say(*d["notes"], *(f"problem: {p}" for p in d["problems"]))
         return d
 
@@ -216,6 +217,89 @@ class Decide(unittest.TestCase):
         self.repo.git("tag", "v0.9.0", "HEAD~1")
         self.assertEqual(self.passes(True)["last_tag"], "v0.10.0")
 
+    # --- texture-only releases (issue #245): tag me-network-ae2-textures-vX.Y.Z, me-network's version stays
+
+    def test_texture_tag_does_not_trigger_a_release(self):
+        self.assertEqual(R.texture_tag(TEX, "0.2.0"), TT)
+        self.assertFalse(TT.startswith("v"), "the texture tag would match the workflow's tag trigger v*")
+        self.assertIsNone(R.tag_version(TT))
+
+    def test_texture_tag_counts_as_release(self):
+        """a texture tag is the last release tag when it is newer, and its version is used"""
+        self.released()
+        self.repo.textures("0.2.0", ["0.2.0", "0.1.0"], readme="second\n")
+        self.repo.commit(TT)
+        self.repo.write("ae2-textures/README.md", "third\n")
+        self.repo.commit()
+        d = self.fails(f"0.2.0 was released already (release {TT})")
+        self.assertEqual(d["last_tag"], TT)
+
+    def test_unchanged_since_texture_tag_is_not_new(self):
+        self.released()
+        self.repo.textures("0.2.0", ["0.2.0", "0.1.0"], readme="second\n")
+        self.repo.commit(TT)
+        self.repo.write("changelog.txt", "Version: 0.5.3\nVersion: 0.5.2\n")
+        self.repo.commit()
+        d = self.passes(False)
+        self.assertEqual(d["last_tag"], TT)
+        self.assertIn(f"unchanged since {TT}", d["notes"][0])
+
+    def test_newer_me_network_tag_is_the_base(self):
+        """v0.5.3 after the texture tag: ae2-textures/ is compared with v0.5.3"""
+        self.released()
+        self.repo.textures("0.2.0", ["0.2.0", "0.1.0"], readme="second\n")
+        self.repo.commit(TT)
+        self.repo.write("changelog.txt", "Version: 0.5.3\nVersion: 0.5.2\n")
+        self.repo.commit("v0.5.3")
+        self.repo.textures("0.3.0", ["0.3.0", "0.2.0", "0.1.0"], readme="third\n")
+        self.repo.commit()
+        self.assertEqual(self.passes(True, release_tag="v0.5.4")["last_tag"], "v0.5.3")
+
+    def test_texture_only_with_new_version_passes(self):
+        """only ae2-textures/ and files outside the me-network zip (tools/, docs) changed since v0.5.2"""
+        self.released()
+        self.repo.textures("0.2.0", ["0.2.0", "0.1.0"], readme="second\n")
+        self.repo.write("tools/helper.py", "print()\n")
+        self.repo.write("README.md", "docs\n")
+        self.repo.commit()
+        d = self.passes(True, release_tag=TT, texture_only=True)
+        self.assertIn(f"texture-only release: tag {TT}", d["notes"][0])
+
+    def test_texture_only_with_me_network_change_fails(self):
+        for path in ("scripts/fork-me-io.lua", "changelog.txt", "info.json"):
+            with self.subTest(path=path):
+                self.tearDown()
+                self.setUp()
+                self.released()
+                self.repo.textures("0.2.0", ["0.2.0", "0.1.0"], readme="second\n")
+                self.repo.write(path, "{}\n")
+                self.repo.commit()
+                self.fails("the files of the me-network zip changed since v0.5.2", release_tag=TT, texture_only=True)
+
+    def test_texture_only_without_me_network_tag_fails(self):
+        self.repo.textures("0.1.0")
+        self.repo.commit()
+        self.fails("needs a me-network release tag", release_tag=R.texture_tag(TEX, "0.1.0"), texture_only=True)
+
+    def test_texture_only_not_new_is_no_problem(self):
+        """me-network released, the texture mod unchanged: no release, and no problem either"""
+        self.released()
+        self.repo.write("tools/helper.py", "print()\n")
+        self.repo.commit()
+        self.passes(False, release_tag=R.texture_tag(TEX, "0.1.0"), texture_only=True)
+
+    def test_texture_only_reused_version_fails(self):
+        self.released()
+        self.repo.write("ae2-textures/README.md", "changed\n")
+        self.repo.commit()
+        self.fails("0.1.0 was released already", release_tag=R.texture_tag(TEX, "0.1.0"), texture_only=True)
+
+    def test_texture_tag_of_this_release_does_not_count(self):
+        self.released()
+        self.repo.textures("0.2.0", ["0.2.0", "0.1.0"], readme="second\n")
+        self.repo.commit(TT)
+        self.assertEqual(self.passes(True, release_tag=TT, texture_only=True)["last_tag"], "v0.5.2")
+
     # --- the command line the workflow runs
 
     def run_main(self, *args):
@@ -236,7 +320,24 @@ class Decide(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(outfile.read_text(encoding="utf-8").splitlines(), [
             f"textures_name={TEX}", "textures_title=ME Network - AE2 Textures", "textures_version=0.2.0",
-            f"textures_zip=dist/{TEX}_0.2.0.zip", "textures_new=true", f"textures_attach=dist/{TEX}_0.2.0.zip"])
+            f"textures_zip=dist/{TEX}_0.2.0.zip", f"textures_tag={TT}", "textures_new=true",
+            f"textures_attach=dist/{TEX}_0.2.0.zip"])
+
+    def test_cli_texture_only(self):
+        self.released()
+        self.repo.textures("0.2.0", ["0.2.0", "0.1.0"], readme="second\n")
+        self.repo.commit()
+        outfile = self.tmp / "github_output"
+        code, _ = self.run_main("--no-portal", "--texture-only", "--release-tag", TT, "--output", str(outfile))
+        self.assertEqual(code, 0)
+        lines = outfile.read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"textures_tag={TT}", lines)
+        self.assertIn("textures_new=true", lines)
+        self.repo.write("scripts/fork-me-io.lua", "-- changed\n")
+        self.repo.commit()
+        code, text = self.run_main("--no-portal", "--texture-only", "--release-tag", TT)
+        self.assertEqual(code, 1)
+        self.assertIn("::error::the files of the me-network zip changed since v0.5.2", text)
 
     def test_cli_not_new_attaches_nothing(self):
         self.released()
@@ -438,6 +539,11 @@ class Workflow(unittest.TestCase):
     def setUp(self):
         self.yml = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
+    def step(self, name):
+        """the text of the step called name, up to the next step"""
+        self.assertIn(f"- name: {name}\n", self.yml, f"release.yml has no step {name!r}")
+        return self.yml.split(f"- name: {name}\n", 1)[1].split("- name:", 1)[0]
+
     def test_every_upload_goes_through_the_script(self):
         self.assertNotIn("init_upload", self.yml, "an upload in release.yml does not use tools/portal_upload.sh")
         calls = re.findall(r"bash tools/portal_upload\.sh (\S+) (\S+)", self.yml)
@@ -448,13 +554,50 @@ class Workflow(unittest.TestCase):
         self.assertIn("steps.rel.outputs.textures_new == 'true'", step)
         self.assertIn("MOD: ${{ steps.rel.outputs.textures_name }}", step)
         self.assertIn("ZIP: ${{ steps.rel.outputs.textures_zip }}", step)
-        self.assertIn("${{ steps.rel.outputs.textures_attach }}", self.yml)
-        self.assertNotIn("${{ steps.rel.outputs.textures_zip }}\n          body_path", self.yml)
+        release = self.step("GitHub release")
+        self.assertIn("${{ steps.rel.outputs.textures_attach }}", release)
+        self.assertNotIn("${{ steps.rel.outputs.textures_zip }}", release)
 
     def test_me_network_upload_uses_its_own_name(self):
         step = self.yml.split("name: Upload me-network to the Factorio mod portal", 1)[1].split("- name:", 1)[0]
         self.assertIn("MOD: ${{ steps.rel.outputs.name }}", step)
         self.assertIn("ZIP: ${{ steps.rel.outputs.zip }}", step)
+
+    # --- issue #245: the texture-only release
+
+    def test_texture_tag_is_no_trigger(self):
+        trigger = re.search(r"tags: \[(.*)\]", self.yml).group(1)
+        self.assertEqual(trigger, '"v*"', "the tag trigger changed: does a texture tag now start a release?")
+
+    def test_texture_only_is_decided_by_the_script(self):
+        decide = self.step("Decide whether this is a release")
+        self.assertIn('--texture-only --release-tag "$TT" --output "$RUNNER_TEMP/textures.out"', decide)
+        self.assertIn("echo \"textures_only=$ONLY\" >> \"$GITHUB_OUTPUT\"", decide)
+        self.assertIn('if [ "$RELEASE" = true ] && [ "$ONLY" = false ]; then', decide)
+        checks = self.step("Release pull request checks (version bumps, changelogs)")
+        self.assertIn('--texture-only --release-tag "$TT"', checks)
+        self.assertIn("nothing to release", checks)
+
+    def test_texture_only_release_has_its_own_tag_zip_and_notes(self):
+        own = self.step("GitHub release (texture-only)")
+        self.assertIn("steps.rel.outputs.textures_only == 'true'", own)
+        self.assertIn("tag_name: ${{ steps.rel.outputs.textures_tag }}", own)
+        self.assertIn("files: ${{ steps.rel.outputs.textures_zip }}\n", own)
+        self.assertNotIn("steps.rel.outputs.zip", own)
+        self.assertIn("make_latest: false", own)
+        self.assertIn("steps.rel.outputs.textures_only != 'true'", self.step("GitHub release"))
+        self.assertIn("steps.rel.outputs.textures_only == 'true' && '--texture-notes-only'",
+                      self.step("Build both zips (me-network, me-network-ae2-textures)"))
+
+    def test_texture_only_uploads_and_announces_the_texture_mod_alone(self):
+        self.assertIn("steps.rel.outputs.textures_only != 'true'", self.step("Upload me-network to the Factorio mod portal"))
+        self.assertNotIn("textures_only", self.step("Upload the texture mod to the Factorio mod portal"))
+        post = self.step("Post the release to #me-network-releases")
+        self.assertIn("TEXTURES_ONLY: ${{ needs.build.outputs.textures_only }}", post)
+        self.assertIn('[ "$TEXTURES_ONLY" = true ] || python tool/discord_announce.py', post)
+        self.assertIn("releases/tag/$RELEASE_TAG", post)
+        for out in ("textures_only", "textures_tag"):
+            self.assertIn(f"{out}: ${{{{ steps.rel.outputs.{out} }}}}", self.yml)
 
 
 def run_quiet():
