@@ -598,6 +598,22 @@ data:extend({ {
 --- MOD DATA (read by scripts/fork-me-network.lua and fork-me-io.lua: no duplicated numbers)
 --------------------------------------------------------------------------------
 
+--- issue #264: where the script draws a cell's light (and, if a graphics mod gives sprites for it, the cell itself) on the
+--- ME Drive and the ME Chest, in px of their 64 px picture (scale 0.5: 64 px a tile) from its top left; docs/API.md "The
+--- drive view". These are the places on this mod's own pictures: the bays of tools/gen_ae2_sprites.py (DRIVE_BAY_X,
+--- DRIVE_BAY_Y, CHEST_BAY, 32 px) on the face of the 3D style, which covers 54 of the 64 px (issue #218).
+local VIEW_FACE = 54 / 64
+local function view_px(v) return 2 * VIEW_FACE * v end
+local DRIVE_BAYS = {}
+for _, y in ipairs({ 4, 9, 14, 19, 24 }) do
+	for _, x in ipairs({ 5, 17 }) do DRIVE_BAYS[#DRIVE_BAYS + 1] = { x = view_px(x), y = view_px(y) } end
+end
+local BAY_LIGHT = { x = view_px(1), y = view_px(1), w = view_px(8), h = view_px(2) }
+local DRIVE_VIEW = {
+	drive = { bays = DRIVE_BAYS, light = BAY_LIGHT },
+	chest = { bays = { { x = view_px(11), y = view_px(22) } }, light = BAY_LIGHT },
+}
+
 data:extend({ {
 	type = "mod-data",
 	name = "fork-me-network",
@@ -617,6 +633,7 @@ data:extend({ {
 		--- a kind that is not here draws the default (4 kW), a crafting block its own number (mod-data "fork-me-autocraft")
 		member_power = { terminal = TERMINAL_POWER },
 		underground_reach = UNDERGROUND_REACH,
+		drive_view = DRIVE_VIEW,
 	},
 } })
 

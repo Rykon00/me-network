@@ -82,6 +82,17 @@ do
 	data:extend({ { type = "recipe-category", name = "zz-devcheck-fixed" }, m, r("zz-devcheck-fixed"), r("zz-devcheck-unfixed") })
 end
 
+--- me-network issue #264: stand-in sprites for a cell in a drive bay (what a graphics mod gives in the drive view), so the
+--- runtime test (netpower.lua) sees the cells drawn; me-network's own view has none (with Gregtorio too: before its return)
+data:extend({
+	{ type = "sprite", name = "zz-devcheck-drive-cell-item", filename = "__core__/graphics/empty.png", width = 1, height = 1 },
+	{ type = "sprite", name = "zz-devcheck-drive-cell-fluid", filename = "__core__/graphics/empty.png", width = 1, height = 1 },
+})
+local drive_view = data.raw["mod-data"]["fork-me-network"] and data.raw["mod-data"]["fork-me-network"].data.drive_view
+if drive_view then
+	drive_view.drive.cells = { item = "zz-devcheck-drive-cell-item", fluid = "zz-devcheck-drive-cell-fluid", w = 15, h = 6 }
+end
+
 if mods["gregtorio-continued"] then return end
 
 local ICON = "__base__/graphics/icons/signal/signal-info.png"

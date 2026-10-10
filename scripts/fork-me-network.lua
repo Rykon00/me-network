@@ -42,15 +42,12 @@ local BASE_POWER = 120000           -- W: controller
 local MEMBER_POWER = 4000           -- W: per member without its own power connection
 local CELL_TAG = "fork_me_cell"
 local DRIVE_TAG = "fork_me_drive"   -- blueprint tag of a drive: { priority, partitions = { ["slot"] = { keys } } }
-local OFF = 16                      -- pixels from the drive's left/top edge to its center
---- bay rectangles of the drive sprite (tools/gen_ae2_sprites.py: DRIVE_BAY_X, DRIVE_BAY_Y)
-local BAY_X, BAY_Y = { 5, 17 }, { 4, 9, 14, 19, 24 }
---- issue #218: in the 3D style the drive's face covers 54 of the 64 px of its tile (tools/gen_ae2_sprites.py HD_DEPTH = 10, the
---- face drawn top left): a light sits at the bay's place on the face, scaled from the 32 px picture
-local FACE = 54 / 64
+--- issue #264: where the lights (and a graphics mod's cells) sit on the drive's and the chest's picture: the mod-data's
+--- `drive_view` (prototypes/network.lua, docs/API.md), px of the 64 px picture, 64 px a tile
+local VIEW_PX = 64
 local LED_GREEN, LED_ORANGE, LED_RED = { 0.3, 0.85, 0.4 }, { 1, 0.6, 0.1 }, { 0.95, 0.2, 0.15 }
---- issue #229: the ME Chest's light: its one bay (tools/gen_ae2_sprites.py CHEST_BAY), dark without power
-local CHEST_LED = { bay = { 11, 22 }, off = { 0.06, 0.06, 0.08 } }
+--- issue #229: the ME Chest's light is dark without power
+local CHEST_LED = { off = { 0.06, 0.06, 0.08 } }
 
 --------------------------------------------------------------------------------
 --- prototype data
@@ -4055,14 +4052,26 @@ local function spill(surface, position, def)
 end
 M.spill = spill
 
---- the drive's lights are kept as render object ids (numbers)
+--- the drive's lights (and cells, issue #264) are kept as render object ids (numbers)
 local function clear_leds(d)
-	for _, id in pairs(d.leds or {}) do
-		local obj = type(id) == "number" and rendering.get_object_by_id(id)
-		if obj and obj.valid then obj.destroy() end
+	for _, list in pairs({ d.leds or {}, d.cells or {} }) do
+		for _, id in pairs(list) do
+			local obj = type(id) == "number" and rendering.get_object_by_id(id)
+			if obj and obj.valid then obj.destroy() end
+		end
 	end
-	d.leds, d.led_state = {}, {}
+	d.leds, d.led_state, d.cells, d.cell_kinds = {}, {}, nil, nil
 end
+
+--- issue #264: the view of a drive (or a chest): { bays = { {x, y} per slot }, light = {x, y, w, h}, cells = nil or
+--- { item = sprite, fluid = sprite, w, h } }, px of its 64 px picture from the top left
+local function drive_view(d)
+	local v = mod_data().drive_view
+	return v and v[d.chest and "chest" or "drive"]
+end
+
+--- an offset from the entity's center, in tiles, of a point given in px of its picture
+local function view_offset(x, y) return { x / VIEW_PX - 0.5, y / VIEW_PX - 0.5 } end
 
 --- the lights of a drive: one rectangle per cell, colored by its fill state. Issue #5: a light is created when a cell
 --- goes in, destroyed when it goes out and only recolored when the cell's state changes (d.led_state[slot]); every
@@ -4072,23 +4081,38 @@ local function draw_leds(s, d)
 	if not e.valid then clear_leds(d) return end
 	d.leds = d.leds or {}
 	d.led_state = d.led_state or {}
+	local view = drive_view(d)
+	local cells = view and view.cells
 	for slot = 1, drive_slots() do
 		local cell = d.slots[slot]
+		local bay = view and view.bays[slot]
 		local id = d.leds[slot]
 		local obj = type(id) == "number" and rendering.get_object_by_id(id) or nil
 		if obj and not obj.valid then obj = nil end
-		if cell then
+		--- issue #264: the cell itself, when a graphics mod gives sprites for it (under the light: drawn first)
+		local kind = cell and cells and bay and (fluid_cell(cell_spec(cell.name) or {}) and "fluid" or "item") or nil
+		local cid = d.cells and d.cells[slot]
+		if (d.cell_kinds and d.cell_kinds[slot]) ~= kind then
+			local cobj = type(cid) == "number" and rendering.get_object_by_id(cid)
+			if cobj and cobj.valid then cobj.destroy() end
+			d.cells, d.cell_kinds = d.cells or {}, d.cell_kinds or {}
+			d.cells[slot], d.cell_kinds[slot] = nil, kind
+			if kind then
+				d.cells[slot] = rendering.draw_sprite{ sprite = cells[kind], surface = e.surface,
+					target = { entity = e, offset = view_offset(bay.x + cells.w / 2, bay.y + cells.h / 2) } }.id
+				if obj then obj.destroy() obj = nil end           -- (the light again on top of the new cell)
+			end
+		end
+		if cell and bay then
 			local st = cell_state(cell)
 			if d.chest and not CH.powered(s, e.unit_number) then st = "off" end   -- (issue #229: AE2's black LED)
 			local color = st == "off" and CHEST_LED.off or st == "full" and LED_RED or st == "high" and LED_ORANGE or LED_GREEN
 			if not obj then
-				local col, row = (slot - 1) % 2, math.floor((slot - 1) / 2)
-				local x0, y0 = BAY_X[col + 1], BAY_Y[row + 1]
-				if d.chest then x0, y0 = CHEST_LED.bay[1], CHEST_LED.bay[2] end
+				local l = view.light
 				d.leds[slot] = rendering.draw_rectangle{
 					color = color, filled = true, surface = e.surface,
-					left_top = { entity = e, offset = { ((x0 + 1) * FACE - OFF) / 32, ((y0 + 1) * FACE - OFF) / 32 } },
-					right_bottom = { entity = e, offset = { ((x0 + 9) * FACE - OFF) / 32, ((y0 + 3) * FACE - OFF) / 32 } },
+					left_top = { entity = e, offset = view_offset(bay.x + l.x, bay.y + l.y) },
+					right_bottom = { entity = e, offset = view_offset(bay.x + l.x + l.w, bay.y + l.y + l.h) },
 				}.id
 			elseif d.led_state[slot] ~= st then
 				obj.color = color
@@ -4099,6 +4123,26 @@ local function draw_leds(s, d)
 			d.leds[slot], d.led_state[slot] = nil, nil
 		end
 	end
+end
+
+--- (tests, issue #264) what a drive or chest shows per slot: { [slot] = { light = { left_top, right_bottom, color },
+--- cell = { sprite, offset } } }
+function M.drive_lights_of(entity)
+	local s = storage.fork_me_net
+	local d = s and s.drives and entity and entity.valid and s.drives[entity.unit_number]
+	if not d then return nil end
+	local out = {}
+	for slot = 1, drive_slots() do
+		local l = d.leds and d.leds[slot] and rendering.get_object_by_id(d.leds[slot])
+		local c = d.cells and d.cells[slot] and rendering.get_object_by_id(d.cells[slot])
+		if (l and l.valid) or (c and c.valid) then
+			out[slot] = {
+				light = l and l.valid and { left_top = l.left_top.offset, right_bottom = l.right_bottom.offset, color = l.color } or nil,
+				cell = c and c.valid and { sprite = c.sprite, offset = c.target.offset } or nil,
+			}
+		end
+	end
+	return out
 end
 
 --------------------------------------------------------------------------------
@@ -4885,6 +4929,7 @@ remote.add_interface("gregtorio-me-network", {
 	cable_variation = function(cable) return cable.graphics_variation end,
 	kind = function(name) return M.kind_of(name) end,                 -- (issue #130 tests) the kind of an entity name
 	screen = function(entity) return M.screen_of(entity) end,         -- (issue #128 tests) what a terminal's screen shows
+	drive_lights = function(entity) return M.drive_lights_of(entity) end,  -- (issue #264 tests) a drive's lights and cells
 	--- what the rotation event does (entity.rotate raises none)
 	rotated = function(entity) M.on_rotated(entity) end,
 	--- what on_configuration_changed does with the graph (the whole map)

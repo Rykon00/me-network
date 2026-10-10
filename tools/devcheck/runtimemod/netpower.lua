@@ -11,6 +11,9 @@
 ---   "no-power" and is parked for it
 --- * the power comes back (tick 600): the screen is lit again, the maintainer is woken and checks again within the slow step's second
 --- * a terminal that is mined or destroyed takes its screen along (no render object left), a cloned one gets its own
+--- * issue #264: the drive's lights sit where they did before the drive view (the same offsets), and with the stand-in
+---   cell sprites of runtimemod/data.lua each occupied bay shows its cell (item or fluid) under its light; a cell taken out
+---   takes both along
 --- * issue #254: the level maintainer's picture is a screen of the same kind (no light): lit in the working network, dark
 ---   without power and lit again with it, dark for one with no cable to a network, dark while its circuit condition is
 ---   false and lit again when the condition is switched off
@@ -126,6 +129,35 @@ return function(H)
 			local m = maint()
 			expect(m and m.status == "stocked", "the level maintainer without a pole: " .. serpent.line(m))
 			maintainer_lit(true, "in a working network")
+			--- issue #264: the drive view
+			local drive = s.find_entity("me-drive", { BX + 8.5, BY - 0.5 })
+			local function near(a, b)            -- (a vector as {x, y} or {1, 2})
+				return a ~= nil and math.abs((a.x or a[1]) - b[1]) < 1e-4 and math.abs((a.y or a[2]) - b[2]) < 1e-4
+			end
+			local lights = drive and remote.call(NET, "drive_lights", drive) or {}
+			local one = lights[1]
+			--- (before the view: left_top ((5 + 1) * 54/64 - 16) / 32, ((4 + 1) * 54/64 - 16) / 32, right_bottom with + 9 and + 3)
+			expect(one and one.light and near(one.light.left_top, { -0.341796875, -0.3681640625 })
+				and near(one.light.right_bottom, { -0.130859375, -0.3154296875 }),
+				"the drive's first light moved: " .. serpent.line(one))
+			expect(one and one.cell and one.cell.sprite == "zz-devcheck-drive-cell-item"
+				and near(one.cell.offset, { (8.4375 + 7.5) / 64 - 0.5, (6.75 + 3) / 64 - 0.5 }),   -- (bay + half the cell)
+				"the drive's first cell: " .. serpent.line(one))
+			local n = 0
+			for slot in pairs(lights) do n = n + 1 end
+			expect(n == 4 and lights[4] and lights[4].cell and not lights[5], "the drive's four cells: " .. serpent.line(lights))
+			--- a fluid cell in bay 5 shows the fluid sprite; taken out, its cell and its light go
+			local inv = game.create_inventory(1)
+			inv[1].set_stack{ name = "me-1k-fluid-storage-cell", count = 1 }
+			remote.call(NET, "insert_cell", drive, inv[1], 5)
+			remote.call(NET, "slow_step")
+			local five = (remote.call(NET, "drive_lights", drive) or {})[5]
+			expect(five and five.cell and five.cell.sprite == "zz-devcheck-drive-cell-fluid" and five.light,
+				"a fluid cell in bay 5: " .. serpent.line(five))
+			remote.call(NET, "take_cell", drive, 5, inv)
+			remote.call(NET, "slow_step")
+			expect(not (remote.call(NET, "drive_lights", drive) or {})[5], "bay 5 after its cell was taken out")
+			inv.destroy()
 			--- a level maintainer with no cable to a network is dark, and takes its picture along when it is destroyed
 			local lone = s.create_entity{ name = "me-level-maintainer", position = { BX + 30.5, BY + 3.5 }, force = "player",
 				raise_built = true }

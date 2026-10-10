@@ -5,6 +5,7 @@ Version: 0.2.0
     - Upgrade cards: the basic, advanced, capacity, overflow destruction, fuzzy, pattern capacity, sticky, inverter, equal distribution and acceleration cards have AE2-Unofficial's icons. The ME Interface Capacity Card (ME Network issue #251), which AE2 does not have, shows AE2-Unofficial's Capacity Card with the turquoise stripe of an advanced card.
     - Patterns: the blank and the encoded pattern have AE2-Unofficial's icons.
     - Blocks (ME Network issue #260): the ME Drive, ME Chest, ME Interface, ME Molecular Assembler, ME Cell Workbench and ME Charger are AE2-Unofficial's blocks in the world, made from its block faces with depth to the east and south, and their icons are AE2 cubes. The working Molecular Assembler shows AE2's running lights. ME Network's drive and chest lights stay where they are (in AE2's bays and slot); the interface no longer marks its pipe sides.
+    - Cells in the ME Drive and the ME Chest (ME Network issue #264): a cell in a bay is drawn as AE2-Unofficial draws it, a piece of its cell texture (grey for item cells, blue for fluid cells) with ME Network's light as a single AE2 pixel in it, instead of ME Network's coloured bars. Needs ME Network 0.5.3 or later (its drive view); with an older one the bars stay.
 ---------------------------------------------------------------------------------------------------
 Version: 0.1.0
   Info:
