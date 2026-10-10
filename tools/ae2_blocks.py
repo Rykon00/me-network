@@ -11,7 +11,9 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
 * a working strip: the same block once per frame of a light animation (a second texture, imported as its own file and
   added to the strip's row with --add-source), the lights between the hole filling and the face;
 * an icon (64 x 64): an isometric cube, the face in front, the face's frame (its inside in the frame's colour) on the
-  top and the right side, shaded.
+  top and the right side, shaded;
+* a cell piece (issue #264): a rectangle of AE2's cell textures (MEStorageCellTextures.png), mirrored as AE2 draws it on
+  a block's front, x3: the cell that me-network draws in a drive bay or the chest's slot (its drive view).
 
 Holes of a face (Minecraft shows the inside of the block there: the drive's bays, the assembler's glass, the chest's
 slot) are filled with the face's darkest colour. Everything is made from the AE2 texture(s) of the file's manifest row:
@@ -39,11 +41,21 @@ RING = 2                    # face pixels of the frame an icon's top and side ke
 
 BLOCKS = ("me-drive", "me-chest", "me-interface", "me-molecular-assembler-idle", "me-cell-workbench", "me-charger")
 ICONS = ("me-drive", "me-chest", "me-interface", "me-molecular-assembler", "me-cell-workbench", "me-charger")
+# issue #264: the pieces of MEStorageCellTextures.png (16 x 16: bands of 4 rows for item, fluid, essentia and no cell, two
+# copies side by side) that AE2-Unofficial draws in a bay: RenderDrive.java (u 1..6, v 1..3 of a band: 5 x 2 px),
+# RenderMEChest.java (u 9..15, v 0..3: 6 x 3 px); both mirrored on the front, so the transparent pixel is where the light is
+CELL_PIECES = {
+    "blocks/cells/drive-cell-item.png": (1, 1, 6, 3),
+    "blocks/cells/drive-cell-fluid.png": (1, 5, 6, 7),
+    "blocks/cells/chest-cell-item.png": (9, 0, 15, 3),
+    "blocks/cells/chest-cell-fluid.png": (9, 4, 15, 7),
+}
 # file inside ae2-textures/graphics/ -> what it becomes (and, for a strip, the file of its lights and their frames)
 MAKE = {
     **{f"blocks/{b}.png": ("block",) for b in BLOCKS},
     "blocks/me-molecular-assembler-working.png": ("strip", "blocks/lights/me-molecular-assembler-lights.png", 12),
     **{f"icons/blocks/{i}.png": ("icon",) for i in ICONS},
+    **{f: ("piece", box) for f, box in CELL_PIECES.items()},
 }
 
 
@@ -165,6 +177,11 @@ def make(name, how):
     if how[0] == "block":
         return block(filled(face)), "block picture: the face (holes filled with its darkest colour) x3 with depth strips " \
             "of its last three columns and rows (shaded 0.72 / 0.5) and a contour, 64 x 64"
+    if how[0] == "piece":
+        x0, y0, x1, y1 = how[1]
+        piece = face.crop((x0, y0, x1, y1)).transpose(Image.FLIP_LEFT_RIGHT)
+        return piece.resize((piece.width * K, piece.height * K), Image.NEAREST), \
+            f"cell piece: x {x0}..{x1 - 1}, y {y0}..{y1 - 1} of the texture, mirrored (as AE2 draws it on a front), x3"
     if how[0] == "icon":
         return icon(filled(face)), "icon: an isometric cube of the face (holes filled with its darkest colour), its frame " \
             "on the top and the right side (inside in the frame's colour), shaded, a contour, 64 x 64"
