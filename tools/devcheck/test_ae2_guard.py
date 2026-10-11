@@ -217,7 +217,8 @@ class Guard(unittest.TestCase):
         me, tex, problems = self.packages()
         self.assertEqual(problems, [])
         with zipfile.ZipFile(tex) as z:
-            self.assertIn("me-network-ae2-textures_0.1.0/graphics/drive/bottom.png", z.namelist())
+            version = json.loads((self.root / M.MOD_FOLDER / "info.json").read_text(encoding="utf-8"))["version"]
+            self.assertIn(f"me-network-ae2-textures_{version}/graphics/drive/bottom.png", z.namelist())
         with zipfile.ZipFile(me) as z:
             self.assertFalse([n for n in z.namelist() if "ae2-textures" in n or M.LICENSE_FILE in n])
 
