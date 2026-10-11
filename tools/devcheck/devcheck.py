@@ -585,15 +585,23 @@ def check_map(a, mapfile, textures=None):
     techs = [f"{t}: cannot be researched" for t in own_techs if t not in m.researched]
     print(f"technologies of me-network: {len(own_techs) - len(techs)} of {len(own_techs)} researchable")
     report("technologies of me-network that cannot be researched", techs)
-    recipes = []
+    # Rykon00/Gregtorio#215: a recipe Gregtorio keeps locked on purpose (its FORK_RECIPES_LOCKED) is not unlocked there
+    locked = {row[0]: row[1] if len(row) > 1 else "" for row in sec.get("GREGTORIOLOCKED", [])}
+    recipes, kept = [], []
     for r in own_recipes:
         if r not in m.R:
             recipes.append(f"{r}: does not exist")
         elif r not in m.unlocked:
-            recipes.append(f"{r}: not unlocked by a researchable technology")
+            if r in locked:
+                kept.append(f"{r}: {locked[r]}")
+            else:
+                recipes.append(f"{r}: not unlocked by a researchable technology")
+        elif r in locked:
+            recipes.append(f"{r}: in Gregtorio's FORK_RECIPES_LOCKED but unlocked")
         elif m.why_not(r):
             recipes.append(f"{r}: {m.why_not(r)}")
-    print(f"recipes of me-network: {len(own_recipes) - len(recipes)} of {len(own_recipes)} unlocked and craftable")
+    print(f"recipes of me-network: {len(own_recipes) - len(recipes) - len(kept)} of {len(own_recipes)} unlocked and craftable")
+    report("recipes of me-network kept locked by Gregtorio (its FORK_RECIPES_LOCKED, information)", kept)
     report("recipes of me-network not unlocked or not craftable", recipes)
     uncraft = [f"{r}: {why}" for r, why in m.uncraftable()]
     print(f"\nunlocked recipes of the game: {len(m.unlocked)}")
