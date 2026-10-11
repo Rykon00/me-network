@@ -30,3 +30,8 @@ categories:
         read_only: true
         writers: [Maintainer]
         topic: New versions of ME Network. Follow this channel to get them in your own server.
+      - name: ae2-textures-releases
+        type: announcement
+        read_only: true
+        writers: [Maintainer]
+        topic: New versions of ME Network - AE2 Textures. Follow this channel to get them in your own server.
