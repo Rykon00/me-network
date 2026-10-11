@@ -21,12 +21,17 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
   lit (AE2's three screen layers over it, tinted in the Fluix colours of AEColor.Transparent: Bright with the white
   variant, Dark with the medium one, Colored with the black one, each imported as its own file and added to the row with
   --add-source); a sheet of both side by side for an entity with two variations; and as an icon a slab of the lit plate;
-* a crafting block sheet (issue #302, the blocks of a Crafting CPU, as single AE2 cubes): ME Network's 48 variations
-  side by side (64 px each, 1 + mask + 16 * state, its issue #152): state 0 (no CPU) the block picture of the face,
-  states 1 and 2 (a CPU, one that runs a job) the block picture of AE2's formed look, its layers over each other (the
-  formed unit `BlockCraftingUnitFit` and the block's `*Fit` overlay; the monitor's outer frame and its three screen
-  layers tinted in the Fluix colours like the terminal's). The mask (the sides that touch the CPU) does not change the
-  cube: AE2 draws every block of a CPU as a cube of its own;
+* a crafting block sheet (issue #302, the blocks of a Crafting CPU): ME Network's 48 variations side by side (64 px
+  each, 1 + mask + 16 * state, its issue #152; the mask has a bit for each side that touches another block of the CPU,
+  N 1, E 2, S 4, W 8): state 0 (no CPU) the block picture of the face, a cube of its own; states 1 and 2 (a CPU, one that
+  runs a job) AE2's formed look as AE2-Unofficial draws it (issue #306, RenderBlockCraftingCPU): one big block. Its
+  layers over each other (the formed unit `BlockCraftingUnitFit`, or `BlockCraftingFitSolid` with the block's `*Fit`
+  overlay; the monitor's outer frame and its three screen layers tinted in the Fluix colours like the terminal's) run to
+  the edge on a side that touches the CPU and end 3 px before it elsewhere, where AE2's ring strip is (`RingLong` along
+  the north and south edges, `RingLongRotated` along the west and east edges) and, on a corner whose two sides touch
+  nothing, the ring box's corner (`Ring`); that face x4 fills the tile (one AE2 block per tile, so neighbouring faces run
+  on into each other), and on an east or south side that touches nothing its last 12 px (the ring) become the depth
+  strip, with a contour only around the CPU's outside;
 * a technology cube (issue #304): the icon of the face (an isometric cube, as above) x4: 256 x 256, a technology icon;
 * a cable sheet (issue #283): AE2's Fluix glass cable (PartCable: 4 AE2 pixels thick, x3 = 12 px) as the 16 variations
   of me-network's cable (its connections: north 1, east 2, south 4, west 8), side by side, 64 px each: an arm to every
@@ -87,16 +92,23 @@ PANEL_DEPTH = 6
 # issue #302: the crafting blocks: me-network's name -> the layers of AE2's formed look over each other (blocks/lights/
 # files, each with the tint it is drawn in, or None)
 CPU_FIT = "blocks/lights/crafting-unit-fit.png"
+FIT_SOLID = "blocks/lights/crafting-fit-solid.png"      # (issue #306: under every *Fit overlay, as AE2 draws it)
 CRAFTING = {
     "me-crafting-unit": [(CPU_FIT, None)],
-    "me-crafting-co-processing-unit": [(CPU_FIT, None), ("blocks/lights/crafting-accelerator-fit.png", None)],
-    **{f"me-{t}-crafting-storage": [(CPU_FIT, None), (f"blocks/lights/crafting-storage-{t}-fit.png", None)]
+    "me-crafting-co-processing-unit": [(FIT_SOLID, None), ("blocks/lights/crafting-accelerator-fit.png", None)],
+    **{f"me-{t}-crafting-storage": [(FIT_SOLID, None), (f"blocks/lights/crafting-storage-{t}-fit.png", None)]
        for t in ("1k", "4k", "16k", "64k", "256k")},
     "me-crafting-monitor": [("blocks/lights/crafting-monitor-outer.png", None),
                             ("blocks/lights/crafting-monitor-fit-light.png", SCREEN_TINTS[0]),
                             ("blocks/lights/crafting-monitor-fit-medium.png", SCREEN_TINTS[1]),
                             ("blocks/lights/crafting-monitor-fit-dark.png", SCREEN_TINTS[2])],
 }
+# issue #306: the ring of a formed CPU's outside (RenderBlockCraftingCPU: renderCorner, handleSide), and the depth of a
+# formed block's outer east and south sides (the ring's 3 px at x4)
+RINGS = ("blocks/lights/crafting-ring.png", "blocks/lights/crafting-ring-long.png",
+         "blocks/lights/crafting-ring-long-rotated.png")
+CPU_K = TILE // FACE
+CPU_DEPTH = 3 * CPU_K
 # file inside ae2-textures/graphics/ -> what it becomes (and, for a strip, the file of its lights and their frames; a
 # block or strip of 2 x 2 tiles names the size last)
 MAKE = {
@@ -198,6 +210,70 @@ def block(face, n=1):
     out = Image.new("RGBA", (TILE * n, TILE * n))
     out.alpha_composite(img, (AT * n, AT * n))
     return contour(out)
+
+
+def sides(mask):
+    """the sides of a crafting block that touch another block of its CPU (me-network's mask: N 1, E 2, S 4, W 8)"""
+    return tuple(bool(mask & m) for m in (1, 2, 4, 8))
+
+
+def formed_face(fit, rings, mask):
+    """Issue #306: the 16 x 16 face of a block of a formed Crafting CPU as AE2-Unofficial draws it (RenderBlockCraftingCPU):
+    the formed look `fit` from edge to edge on a side that touches another block of the CPU, else 3 px short of it; there
+    the ring strip (`RingLong` along the north and south edges, `RingLongRotated` along the west and east edges, as long
+    as the formed look runs), and the ring box's corner (`Ring`) where neither side of a corner touches the CPU. Every
+    texture gives its own pixels at their place in the face, as AE2's block-relative coordinates do."""
+    ring, long_, rotated = (r.load() for r in rings)
+    n, e, s, w = sides(mask)
+    x0, x1 = (0 if w else 3), (FACE if e else FACE - 3)
+    y0, y1 = (0 if n else 3), (FACE if s else FACE - 3)
+    out = Image.new("RGBA", (FACE, FACE))
+    o, f = out.load(), fit.load()
+    for y in range(FACE):
+        for x in range(FACE):
+            in_x, in_y = x0 <= x < x1, y0 <= y < y1
+            o[x, y] = f[x, y] if in_x and in_y else long_[x, y] if in_x else rotated[x, y] if in_y else ring[x, y]
+    return out
+
+
+def formed_block(face, mask):
+    """Issue #306: the 64 x 64 picture of a block of a formed Crafting CPU from its formed face (opaque, 16 x 16): the face
+    x4, one AE2 block per tile, so the faces of neighbouring blocks run on into each other as in AE2; on an east or south
+    side that touches no block of the CPU its last CPU_DEPTH px (the ring) are the depth strip (shaded 0.72 / 0.5, running
+    on into the neighbour's strip where the CPU goes on to the north or west), and a contour only around the CPU's outside"""
+    n, e, s, w = sides(mask)
+    big = face.resize((TILE, TILE), Image.NEAREST)
+    fw, fh = TILE - (0 if e else CPU_DEPTH), TILE - (0 if s else CPU_DEPTH)
+    img = Image.new("RGBA", (TILE, TILE))
+
+    def rows(img_, y0, y1):
+        """rows y0..y1 of a tile picture, those above it from the bottom of the tile (the face repeats per block)"""
+        out = Image.new("RGBA", (img_.width, y1 - y0))
+        for y in range(y0, y1):
+            out.alpha_composite(img_.crop((0, y % TILE, img_.width, y % TILE + 1)), (0, y - y0))
+        return out
+
+    if not e:
+        y0 = -CPU_DEPTH if n else 0
+        edge = rows(big.crop((fw, 0, TILE, TILE)), y0, fh)
+        affine(img, shade(edge, 0.72), (fw, y0), (CPU_DEPTH, CPU_DEPTH), (0, fh - y0))
+    if not s:
+        x0 = -CPU_DEPTH if w else 0
+        edge = rows(big.crop((0, fh, TILE, TILE)).transpose(Image.TRANSPOSE), x0, fw).transpose(Image.TRANSPOSE)
+        affine(img, shade(edge, 0.5), (x0, fh), (fw - x0, 0), (CPU_DEPTH, CPU_DEPTH))
+    img.alpha_composite(big.crop((0, 0, fw, fh)), (0, 0))
+    d = ImageDraw.Draw(img)
+    if not n:
+        d.line((0, 0, fw - 1, 0), fill=CONTOUR)
+    if not w:
+        d.line((0, 0, 0, fh - 1), fill=CONTOUR)
+    if not e:
+        d.line((fw, 0, fw, fh), fill=CONTOUR)
+        d.line((TILE - 1, 0 if n else CPU_DEPTH, TILE - 1, TILE - 1), fill=CONTOUR)
+    if not s:
+        d.line((0, fh, fw, fh), fill=CONTOUR)
+        d.line((0 if w else CPU_DEPTH, TILE - 1, TILE - 1, TILE - 1), fill=CONTOUR)
+    return img
 
 
 def frame_only(face):
@@ -365,14 +441,23 @@ def make(name, how):
                 formed = layer.copy()
             else:
                 formed.alpha_composite(layer)
-        lone, cpu = block(filled(face)), block(filled(formed))
+        rings = []
+        for f in RINGS:
+            layer = Image.open(GRAPHICS / f).convert("RGBA")
+            if layer.size != (FACE, FACE):
+                sys.exit(f"ae2_blocks: ae2-textures/graphics/{f} is {layer.size[0]} x {layer.size[1]}, expected {FACE} x {FACE}")
+            rings.append(layer)
+        lone = block(filled(face))
+        cpu = [formed_block(filled(formed_face(formed, rings, mask)), mask) for mask in range(16)]
         out = Image.new("RGBA", (48 * TILE, TILE))
         for v in range(48):
-            out.alpha_composite(lone if v < 16 else cpu, (v * TILE, 0))
+            out.alpha_composite(lone if v < 16 else cpu[v % 16], (v * TILE, 0))
         tinted = " (the screen layers tinted #D7BBEC, #895CA8, #1B2344)" if how[1] == "me-crafting-monitor" else ""
         return out, ("crafting block sheet: 48 block pictures (64 x 64, side by side, ME Network's variations 1 + mask + 16 * "
                      "state): 1..16 the face (holes filled with its darkest colour) x3 with depth strips and a contour, "
-                     f"17..48 the same of AE2's formed look (the further sources over each other{tinted})")
+                     f"17..48 AE2's formed look per mask (issue #306: its layers over each other{tinted}, to the edge on a "
+                     "side that touches the CPU, else the ring strips and corners of the last three sources, holes filled; "
+                     "x4, the outer east and south 12 px as shaded depth strips, a contour around the CPU's outside)")
     if how[0] == "tech-cube":
         return icon(filled(face)).resize((4 * TILE, 4 * TILE), Image.NEAREST), (
             "technology icon: the icon cube of the face (holes filled with its darkest colour; its frame on the top and the "
