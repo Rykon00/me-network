@@ -1642,7 +1642,8 @@ end
 --------------------------------------------------------------------------------
 
 --- the working network of a job: that of its CPU, else of the entity it was started at, else of the ME member at
---- its position (jobs of older saves)
+--- its position (jobs of older saves), else of the nearest ME member within 2 tiles of it (issue #332: the position of a
+--- removed legacy CPU, whose job's entity a conversion of issue #68 replaced; the cables to the CPU are next to it)
 local function job_network(job)
 	local s = state()
 	local g = job.group and s.groups and s.groups[job.group]
@@ -1655,6 +1656,17 @@ local function job_network(job)
 			job.anchor = e
 			return N.active_of(e)
 		end
+	end
+	local best, best_d
+	for _, e in pairs(surface.find_entities_filtered{ position = job.pos, radius = 2, name = N.node_names() }) do
+		if N.network_of(e) then
+			local dx, dy = e.position.x - job.pos.x, e.position.y - job.pos.y
+			if not best or dx * dx + dy * dy < best_d then best, best_d = e, dx * dx + dy * dy end
+		end
+	end
+	if best then
+		job.anchor = best
+		return N.active_of(best)
 	end
 	return nil
 end

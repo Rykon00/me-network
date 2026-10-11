@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.4
+  Bugfixes:
+    - A crafting job of a save of Gregtorio Continued 0.3.x (the logistic ME network) that was running on a legacy Crafting CPU went on after the update (issue #332): before, it stayed queued forever with the items it held and no terminal listed it, because the converted network had replaced the block it was started from and nothing stood where its CPU had been. It now finds its network through an ME block next to that place (the cables to the old CPU) and takes a free crafting CPU.
+---------------------------------------------------------------------------------------------------
 Version: 0.5.3
 Date: 2026-10-11
   Features:
