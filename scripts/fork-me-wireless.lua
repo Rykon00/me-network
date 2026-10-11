@@ -328,15 +328,18 @@ script.on_event("fork-me-wireless", function(event)
 	if player then M.open_for(player) end
 end)
 
---- the open key with a Wireless ME Terminal in the cursor on an access point or a controller: it is linked to that network
-G.open_key_hooks[#G.open_key_hooks + 1] = function(player, entity)
+--- the open key with a Wireless ME Terminal in the cursor on an access point or a controller: it is linked to that network.
+--- With the module in the cursor (issue #308: before it goes into the armour, or taken out of it) the player's module is
+--- linked, as the hotkey does while pointing at one: its link is the player's (equipment has no tags).
+function M.open_key(player, entity)
 	local cursor = player.cursor_stack
-	if not (cursor and cursor.valid_for_read and cursor.name == ITEM) then return false end
+	if not (cursor and cursor.valid_for_read and (cursor.name == ITEM or cursor.name == MODULE)) then return false end
 	if not (entity.name == AP or N.kind_of(entity.name) == "controller") then return false end
-	local ok, why = M.link(player, entity, cursor)
+	local ok, why = M.link(player, entity, cursor.name == ITEM and cursor or nil)
 	flying(player, ok and "linked" or ("refused-" .. why))
 	return true
 end
+G.open_key_hooks[#G.open_key_hooks + 1] = M.open_key
 
 --- the mode switch of the wireless window: the other window on the same access point
 G.on("wl_mode", function(event, player, el)
@@ -677,6 +680,10 @@ remote.add_interface("gregtorio-me-wireless", {
 		return true
 	end,
 	link_item = function(stack, entity) return M.link(nil, entity, stack) end,
+	--- issue #308: the open key of a player (`player`: { index, cursor_stack } standing for one) on `entity`, and the
+	--- player's module link (the controller's unit number, nil when not linked)
+	open_key = function(player, entity) return M.open_key(player, entity) end,
+	player_link = function(index) return player_state({ index = index }).link end,
 	drain_item = function(stack, joules) return M.drain({ kind = "item", stack = stack }, joules) end,
 	controller_unit = function(entity) return controller_unit(entity) end,
 	--- the charger

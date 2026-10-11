@@ -1356,6 +1356,33 @@ interface_window.message = function(why)
 end
 G.window("interface", interface_window)
 
+--- Issue #322: the fluids of an ME Interface's sides in its tooltip in the world (the container shows its items only):
+--- its custom status, "[fluid] amount/volume" per side that holds fluid (with the temperature when it is not the
+--- fluid's default), nil when none does. Written when a player starts to point at the interface and at the windows'
+--- refresh (once a second) while one does, so an interface nobody points at costs nothing.
+function M.interface_hover_status(entity)
+	local d = io.get_interface(entity)
+	if not d then return nil end
+	local parts = { "" }
+	for _, e in ipairs(M.interface_fluid_entries(d)) do
+		local _, _, deg = G.fluid_label(e.key)
+		parts[#parts + 1] = (#parts > 1 and "   " or "") .. "[fluid=" .. e.name .. "] " .. G.fmt(e.amount) .. "/" .. G.fmt(d.volume)
+			.. (deg and (" (" .. deg .. " °C)") or "")
+	end
+	if #parts == 1 then return nil end
+	return { diode = defines.entity_status_diode.green, label = { "fork-me-gui.interface-hover-fluids", parts } }
+end
+
+local function hover(player)
+	local e = player.selected
+	if e and e.valid and N.kind_of(e.name) == "interface" then e.custom_status = M.interface_hover_status(e) end
+end
+G.player_hooks[#G.player_hooks + 1] = hover
+script.on_event(defines.events.on_selected_entity_changed, function(event)
+	local player = game.get_player(event.player_index)
+	if player then hover(player) end
+end)
+
 G.on("if_item", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
@@ -1778,6 +1805,12 @@ remote.add_interface("gregtorio-me-gui", {
 	--- this call, none = the "no side holds fluid" line, rows = { { side, sprite, number, tooltip, elem_tooltip, value,
 	--- caption } } }
 	interface_fluid_entries = function(entity) return M.interface_fluid_entries(M.interface_data(entity)) end,
+	--- issue #322: what a player pointing at the interface writes into its custom status (the tooltip in the world), and
+	--- what the entity then holds
+	interface_hover = function(entity)
+		entity.custom_status = M.interface_hover_status(entity)
+		return entity.custom_status
+	end,
 	interface_fluid_view = function(name, entity)
 		local frame = stand_in_frames[name]
 		if not frame then

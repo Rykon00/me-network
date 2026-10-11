@@ -997,6 +997,7 @@ function M.refresh_all()
 		if storage.fork_me_gui_parked then M.return_parked(player) end
 		local picker = player.gui.screen.fork_me_picker      -- one that an Escape hid (scripts/fork-me-picker.lua)
 		if picker and picker.valid and not picker.visible and picker.tags.cancel_tick ~= game.tick then picker.destroy() end
+		for _, hook in ipairs(M.player_hooks) do hook(player) end
 		local frame, name = M.window_of(player)
 		if frame and n < REFRESH_MAX then
 			n = n + 1
@@ -1092,6 +1093,9 @@ end
 --- (the wireless terminal: an item in the cursor is linked to the network of the clicked block); one that returns true ends it.
 M.refresh_hooks = {}
 M.open_key_hooks = {}
+--- Issue #322: functions(player) run at the refresh for every connected player, window or not (the ME Interface's
+--- tooltip in the world follows the entity the player points at)
+M.player_hooks = {}
 
 --- a "Back" button to the terminal for a window opened from one
 function M.back_button(parent, via)
