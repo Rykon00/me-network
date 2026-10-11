@@ -1,10 +1,10 @@
 # ME Network - AE2 Textures (`me-network-ae2-textures`, CC BY-NC-SA 3.0)
 
-An optional mod for [ME Network](https://github.com/Rykon00/me-network): it puts textures of
+The graphics mod of [ME Network](https://github.com/Rykon00/me-network): it puts textures of
 [Applied Energistics 2](https://github.com/AppliedEnergistics/Applied-Energistics-2) (or of GTNewHorizons'
 [Applied-Energistics-2-Unofficial](https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial), the same
-authors' work under the same license) in place of ME Network's own sprites. **Install ME Network too**: this mod
-depends on it and does nothing alone, while ME Network runs complete without this mod and does not know it. It
+authors' work under the same license) in place of ME Network's own sprites. ME Network requires this mod (ME Network
+issue #325) and this mod depends on ME Network: the mod portal installs both. It
 replaces the item icons of the item and fluid storage cells (1k to 256k), the storage components and the housing, the
 upgrade cards and the blank and encoded pattern (issues #247, #250, #251). AE2-Unofficial has no fluid cell and no
 interface capacity card: the fluid cells show its item cell of their tier with a blue frame and body, the ME

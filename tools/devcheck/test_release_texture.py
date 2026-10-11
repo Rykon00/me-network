@@ -300,6 +300,38 @@ class Decide(unittest.TestCase):
         self.repo.commit(TT)
         self.assertEqual(self.passes(True, release_tag=TT, texture_only=True)["last_tag"], "v0.5.2")
 
+    # --- issue #325: me-network requires the texture mod; the version it asks for must be the one released with it
+
+    def requires(self, dep):
+        self.repo.write("info.json", json.dumps({"name": "me-network", "version": "0.5.3",
+                                                 "dependencies": ["base >= 2.0", dep]}))
+
+    def test_required_texture_version_released_with_it_passes(self):
+        self.released()
+        self.repo.textures("0.2.0", ["0.2.0", "0.1.0"], readme="second\n")
+        self.requires(f"~ {TEX} >= 0.2.0")
+        self.repo.commit()
+        self.passes(True)
+
+    def test_required_texture_version_released_before_passes(self):
+        self.released()
+        self.requires(f"~ {TEX} >= 0.1.0")
+        self.repo.commit()
+        self.passes(False)
+
+    def test_required_texture_version_missing_fails(self):
+        """me-network asks for 0.2.0, the texture mod is still 0.1.0 (unchanged, so not even new)"""
+        self.released()
+        self.requires(f"~ {TEX} >= 0.2.0")
+        self.repo.commit()
+        self.fails(f"info.json (me-network) requires {TEX} >= 0.2.0, but ae2-textures/info.json is 0.1.0")
+
+    def test_requirement_without_version_passes(self):
+        self.released()
+        self.requires(f"~ {TEX}")
+        self.repo.commit()
+        self.passes(False)
+
     # --- the command line the workflow runs
 
     def run_main(self, *args):
@@ -598,6 +630,16 @@ class Workflow(unittest.TestCase):
         self.assertIn("releases/tag/$RELEASE_TAG", post)
         for out in ("textures_only", "textures_tag"):
             self.assertIn(f"{out}: ${{{{ steps.rel.outputs.{out} }}}}", self.yml)
+
+    # --- issue #325: me-network requires the texture mod, so the texture mod goes out first
+
+    def test_texture_mod_uploaded_and_announced_first(self):
+        tex = self.yml.index("- name: Upload the texture mod to the Factorio mod portal")
+        me = self.yml.index("- name: Upload me-network to the Factorio mod portal")
+        self.assertLess(tex, me, "the texture mod must be uploaded before me-network, which requires it")
+        post = self.step("Post the release to #me-network-releases")
+        self.assertLess(post.index("--changelog mod/ae2-textures/changelog.txt"), post.index("--changelog mod/changelog.txt"),
+                        "the texture mod must be announced before me-network")
 
 
 def run_quiet():

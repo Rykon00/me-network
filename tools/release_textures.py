@@ -18,6 +18,9 @@
 - One exception, for versions uploaded to the portal by hand (HAND_RELEASES: version -> the commit whose ae2-textures/
   was uploaded): when ae2-textures/ is that commit's, the version is not new and nothing is wrong.
 
+- me-network requires the texture mod (issue #325): a version its info.json asks for ("~ <texture mod name> >= X") must
+  be the texture version at the commit (X at most it), so the release has the version me-network needs (it is released
+  already, or this release makes it new and uploads it first).
 - --texture-only (issue #245): the release is the texture mod's alone, tagged <texture mod name>-v<its version>, while
   me-network's version is released already. Then, when the texture version is new, nothing that the me-network zip
   holds (tools/build.py INCLUDE) may differ from the last vX.Y.Z tag: such a change needs a new me-network version and
@@ -114,6 +117,25 @@ def portal_versions(name, source=None):
     return {r["version"] for r in data.get("releases", [])}
 
 
+def version_tuple(v):
+    return tuple(int(x) for x in v.split("."))
+
+
+def required_versions(me_info, name):
+    """issue #325: [(operator, version)] of me-network's dependencies on the texture mod `name` that name a version"""
+    out = []
+    for dep in me_info.get("dependencies", []):
+        m = re.fullmatch(rf"[~?!()\s]*{re.escape(name)}\s*(>=|>|=|<=|<)\s*(\d+\.\d+\.\d+)", dep.strip())
+        if m:
+            out.append((m.group(1), m.group(2)))
+    return out
+
+
+def version_meets(v, op, need):
+    a, b = version_tuple(v), version_tuple(need)
+    return {">=": a >= b, ">": a > b, "=": a == b, "<=": a <= b, "<": a < b}[op]
+
+
 def decide(root=ROOT, ref="HEAD", release_tag=None, portal=(), hand=None, texture_only=False):
     """{name, title, version, last_tag, changed, new, notes: [line], problems: [line]} of the texture mod at ref"""
     hand = HAND_RELEASES if hand is None else hand
@@ -124,6 +146,10 @@ def decide(root=ROOT, ref="HEAD", release_tag=None, portal=(), hand=None, textur
         return out
     v = info["version"]
     out.update(name=info["name"], title=info.get("title", info["name"]), version=v)
+    for op, need in required_versions(show_json(root, ref, "info.json") or {}, info["name"]):
+        if not version_meets(v, op, need):
+            out["problems"].append(f"info.json (me-network) requires {info['name']} {op} {need}, but {FOLDER}/info.json "
+                                   f"is {v}: release that texture version with it, or lower the requirement.")
     tags = [t for t in release_tags(root, ref) if t != release_tag]
     last_me = tags[-1] if tags else None
     own = [t for t in texture_tags(root, info["name"], ref) if t != release_tag]

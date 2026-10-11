@@ -79,8 +79,9 @@
   `docs/LICENSES.md`), so they live in a **second mod**: `ae2-textures/` is ME Network - AE2 Textures
   (`me-network-ae2-textures`, CC BY-NC-SA 3.0, nothing in it is GPL), with its own `info.json`, version, changelog,
   license and manifest; it depends on me-network and replaces sprites by prototype name (`ae2-textures/overrides.lua`,
-  applied by its `data-final-fixes.lua`). me-network never depends on it, never names it and runs complete without it;
-  Gregtorio depends on me-network only. AE2 graphics enter this repository **only** through
+  applied by its `data-final-fixes.lua`). me-network requires it (issue #325: `~ me-network-ae2-textures` in its `info.json`, a
+  dependency without a load order; its code never names it), and Gregtorio, which depends on me-network only, gets it
+  through that; the devcheck runs load an empty stand-in of it, the proof run a copy of the real one. AE2 graphics enter this repository **only** through
   `tools/import_ae2_textures.py` into `ae2-textures/graphics/`, with its manifest row (repository, source path, commit,
   SHA-256, author, license, changed). They are **never in the me-network zip** (`tools/build.py` builds two zips and
   fails when one holds the other's files or license), never traced, never merged into one image with graphics of

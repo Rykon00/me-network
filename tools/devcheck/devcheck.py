@@ -31,7 +31,8 @@ mod folder, so every run tests the current files.
 Applied Energistics 2, issues #235 and #239) breaks its manifest or an AE2 file's bytes lie outside it
 (tools/ae2_manifest.py; with Gregtorio in its checkout too), when one of the two zips of tools/build.py breaks the
 license split, when the second load with the texture mod (a throw-away copy with two stand-in overrides) fails or does
-not replace the stand-ins' sprites,
+not replace the stand-ins' sprites. me-network requires the texture mod (issue #325): every other load has an empty
+stand-in of it in the mods folder (its info.json only), so those runs see me-network's own graphics;
 when a file under graphics/ or thumbnail.png has the bytes of an icon taken over from Gregtorio 0.1.9 (issue #238,
 tools/upstream_icons.py, tools/upstream-icon-hashes.tsv; with Gregtorio in its checkout too), when the mods do not load, a recipe or technology references a missing prototype, a
 referenced __me-network__/ file is missing, a sprite sheet is too small, a name is missing in locale/en, a
@@ -56,7 +57,8 @@ DEFAULT_SEED = 3115102263
 CUT_OFF = (0, 5, 0)
 BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails"}
 NAME = "me-network"
-TEXTURES = "me-network-ae2-textures"     # the optional texture mod in ae2-textures/ (issue #239); never with Gregtorio
+TEXTURES = "me-network-ae2-textures"     # the texture mod in ae2-textures/ (issue #239), required since issue #325
+STAND_IN = "stand-in of the texture mod (devcheck, issue #325)"     # the title of its empty stand-in (texture_stand_in)
 GREGTORIO = "gregtorio-continued"
 HELPERS = ("zz-me-network-devcheck",)
 # factorio.com (Cloudflare) answers the default "Python-urllib" user agent with 403
@@ -210,15 +212,28 @@ def remove_path(p):
         shutil.rmtree(p)
 
 
+def texture_stand_in():
+    """Issue #325: me-network requires the texture mod, so every load but the proof run's second one has an empty mod
+    of its name in the mods folder: its info.json only (the version of ae2-textures/info.json), no override, no
+    graphics; the prototypes are me-network's own, as without the texture mod before. Returns its folder."""
+    stub = MODS / TEXTURES
+    stub.mkdir()
+    real = json.loads((ROOT / "ae2-textures" / "info.json").read_text(encoding="utf-8"))
+    (stub / "info.json").write_text(json.dumps({"name": TEXTURES, "version": real["version"], "title": STAND_IN,
+                                                "author": "devcheck", "factorio_version": "2.0",
+                                                "dependencies": ["base >= 2.0"]}), encoding="utf-8")
+    return stub
+
+
 def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False, bench_dir=None,
                  textures=None):
     """mods/ = this mod (working copy, or `mod_dir`: an older version or the instrumented copy of `bench --profile`)
     + the devcheck helper mods (`bench_dir`: the benchmark mod with its config, instead of the check mod); with
     Gregtorio its checkout and its dependency zips. base_only: without Space Age and quality. textures: a folder
-    of the texture mod me-network-ae2-textures to load next to this mod (issue #239; never with Gregtorio, which
-    depends on me-network only)."""
+    of the texture mod me-network-ae2-textures to load next to this mod (issue #239, the proof run; never with
+    Gregtorio); without it the empty stand-in of texture_stand_in, which me-network requires (issue #325)."""
     if textures and gregtorio:
-        sys.exit("the texture mod is never loaded with Gregtorio Continued (issue #239)")
+        sys.exit("the texture mod's graphics are never loaded in a Gregtorio run (issue #239: the stand-in is)")
     MODS.mkdir(parents=True, exist_ok=True)
     for p in MODS.iterdir():
         if p.name in (NAME, TEXTURES, GREGTORIO, "mod-list.json") or p.name.startswith(HELPERS) \
@@ -227,6 +242,8 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=No
     link_dir(MODS / NAME, Path(mod_dir) if mod_dir else ROOT)
     if textures:
         link_dir(MODS / TEXTURES, Path(textures))
+    else:
+        texture_stand_in()
     if bench_dir:
         link_dir(MODS / "zz-me-network-devcheck-bench", bench_dir)
         enabled = ["base", NAME, "zz-me-network-devcheck-bench"]
@@ -248,8 +265,7 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=No
     if with_migrate:
         link_dir(MODS / "zz-me-network-devcheck-migrate", HERE / "migratemod")
         enabled.append("zz-me-network-devcheck-migrate")
-    if textures:
-        enabled.append(TEXTURES)
+    enabled.append(TEXTURES)
     (MODS / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in enabled]
                                                     + [{"name": n, "enabled": False} for n in disabled]}))
 
@@ -735,12 +751,17 @@ def check(a):
           + (" + Gregtorio Continued" if a.with_gregtorio else ""))
     ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio) + check_release_texture()
     if a.with_gregtorio:
-        # issue #239: Gregtorio depends on me-network only; the texture mod is never in its mods folder setup
-        stray = [p.name for p in MODS.iterdir() if p.name == TEXTURES or p.name.startswith(TEXTURES + "_")]
-        stray += [TEXTURES + " in mod-list.json"] if TEXTURES in (MODS / "mod-list.json").read_text() else []
-        print(f"texture mod {TEXTURES}: " + ("not in the mods folder (Gregtorio depends on me-network only)"
-                                             if not stray else f"IN THE MODS FOLDER: {stray}"))
-        ae2 += [f"{s}: the texture mod is never loaded with Gregtorio" for s in stray]
+        # issue #239: no AE2 graphics in a Gregtorio run; since issue #325 me-network requires the texture mod, so the
+        # Gregtorio run loads its empty stand-in (texture_stand_in), never the texture mod itself or a zip of it
+        stub = MODS / TEXTURES
+        stray = [p.name for p in MODS.iterdir() if p.name.startswith(TEXTURES + "_")]
+        if stub.is_symlink() or (hasattr(stub, "is_junction") and stub.is_junction()) or not stub.is_dir() \
+                or sorted(p.name for p in stub.iterdir()) != ["info.json"] \
+                or json.loads((stub / "info.json").read_text(encoding="utf-8")).get("title") != STAND_IN:
+            stray.append(TEXTURES)
+        print(f"texture mod {TEXTURES}: " + ("its empty stand-in (no AE2 graphics in the Gregtorio run)"
+                                             if not stray else f"NOT THE STAND-IN: {stray}"))
+        ae2 += [f"{s}: the texture mod's graphics are never loaded in a Gregtorio run" for s in stray]
     ok, sec, _ = check_map(a, WORK / "check-map.zip")
     if sec is None:
         return 1

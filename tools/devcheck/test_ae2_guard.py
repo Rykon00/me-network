@@ -238,7 +238,30 @@ class Guard(unittest.TestCase):
 
     def test_me_network_names_texture_mod(self):
         (self.root / "data.lua").write_text('if mods["me-network-ae2-textures"] then end\n', encoding="utf-8")
-        self.package_fails("data.lua names me-network-ae2-textures; me-network never knows the texture mod")
+        self.package_fails("data.lua names me-network-ae2-textures; me-network names it only in info.json")
+
+    # issue #325: me-network requires the texture mod, as a dependency without a load order, and names it nowhere else
+
+    def me_network_info(self, **fields):
+        (self.root / "info.json").write_text(json.dumps({"name": "me-network", "version": "9.9.9", **fields}),
+                                             encoding="utf-8")
+
+    def test_required_dependency_passes(self):
+        for dep in ("~ me-network-ae2-textures", "~ me-network-ae2-textures >= 0.2.0", "~me-network-ae2-textures>=1.10.3"):
+            with self.subTest(dep=dep):
+                self.me_network_info(dependencies=["base >= 2.0", dep])
+                self.assertEqual(self.packages()[2], [])
+
+    def test_optional_or_ordered_dependency_fails(self):
+        for dep in ("? me-network-ae2-textures", "(?) me-network-ae2-textures", "me-network-ae2-textures >= 0.2.0"):
+            with self.subTest(dep=dep):
+                self.me_network_info(dependencies=["base >= 2.0", dep])
+                self.package_fails("info.json names me-network-ae2-textures; me-network names it only in info.json")
+
+    def test_texture_mod_named_elsewhere_in_info_fails(self):
+        self.me_network_info(description="Install me-network-ae2-textures too.",
+                             dependencies=["~ me-network-ae2-textures"])
+        self.package_fails("info.json names me-network-ae2-textures; me-network names it only in info.json")
 
     def test_file_without_row_in_texture_zip(self):
         self.add()
