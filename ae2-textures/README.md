@@ -16,7 +16,8 @@ lights while its network works and red in a conflict (issue #278, through ME Net
 Terminal and the ME Pattern Terminal are AE2's terminal panels, dark or with their screen lit (issue #281). The ME
 Import, Export and Storage Bus are AE2's bus fronts with ME Network's plate and arrows on them (issue #282, through ME
 Network's bus view). The cable is AE2's Fluix glass cable (issue #283). The blocks of a Crafting CPU are AE2's crafting
-blocks, a cube each, plain or formed (issue #302). The ME Wireless Access Point is an AE2 cube of its inside, the
+blocks, a cube each without a CPU, and in a CPU one big block in AE2's formed look with its ring around the outside
+(issues #302, #306). The ME Wireless Access Point is an AE2 cube of its inside, the
 Wireless ME Terminal, its module and the booster have AE2's icons (issue #303). The technologies show these icons scaled
 up (issue #304). The other blocks and the ME Underground Cable
 look as without this mod.

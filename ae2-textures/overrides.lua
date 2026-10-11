@@ -10,7 +10,8 @@
 --- Issue #282 the ME Import, Export and Storage Bus: AE2's fronts as blocks; ME Network's marker (the plate on the side a
 --- bus faces and its arrows) is a layer of its own above them, which data-updates.lua moves onto the AE2 face.
 --- Issue #283 the cable: AE2's Fluix glass cable in the 16 variations of ME Network's cable sheet.
---- Issue #302 the blocks of a Crafting CPU: AE2 cubes, without a CPU and in AE2's formed look, in ME Network's sheet.
+--- Issue #302 the blocks of a Crafting CPU: AE2 cubes without a CPU, AE2's formed look (one big block, issue #306) in a
+--- CPU, in ME Network's sheet.
 --- Issue #303 the wireless group: the access point as a block, the terminal, its module and the booster as AE2's icons.
 --- Issue #304 the technology icons: AE2 has none, so each is one of these icons scaled up.
 ---
@@ -158,8 +159,8 @@ return {
 		["__me-network__/graphics/icons/hd/me-cable.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
 	},
 	["item/fluix-cable"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
-	--- the crafting blocks (issue #302): each a sheet of ME Network's 48 variations (16 without a CPU, 32 of a CPU: AE2's
-	--- formed look); a cube each, not ME Network's slab
+	--- the crafting blocks (issue #302): each a sheet of ME Network's 48 variations (16 without a CPU: a cube each; 32 of a
+	--- CPU: AE2's formed look per side that touches the CPU, one big block with AE2's ring around its outside, issue #306)
 	["simple-entity-with-force/me-crafting-unit"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-unit.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-unit.png",
 		["__me-network__/graphics/icons/hd/me-crafting-unit.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-unit.png", icon_size = 64 },
