@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.0
+Date: 2026-10-11
   Info:
     - ME Network requires this mod from ME Network 0.5.3 on (ME Network issue #325): the mod portal installs both.
   Graphics:
