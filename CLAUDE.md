@@ -63,23 +63,51 @@
 - Every referenced `__me-network__/...` file must exist (headless Factorio does not load graphics, the real game
   crashes on missing files); `devcheck check` lists missing ones and names missing in `locale/en`.
 - **Changelog:** every change to the game adds its player-facing lines to the topmost section of `changelog.txt` (the
-  next version, no `Date:` line yet). Do not change `version` in `info.json` and do not add a `Date:`; that is the
-  release pull request into `upstream/release`.
+  next version, no `Date:` line yet). Do not change `version` in `info.json` or `ae2-textures/info.json` and do not
+  add a `Date:`; that is the release pull request into `upstream/release`. The texture mod's version is its own: a
+  release attaches and uploads its zip only when `ae2-textures/` changed since the last release tag, and then its
+  version must be unused (`tools/release_textures.py`, issue #243). So any change under `ae2-textures/`, even to its
+  `README.md`, means a new texture version at the next release.
 - **Applied Energistics 2 as a reference:** a checkout of AE2 (https://github.com/AppliedEnergistics/Applied-Energistics-2)
   may lie next to this one (`..\Applied-Energistics-2` on the maintainer's machine). It is read-only: never a worktree,
-  never the target of a junction, nothing of it is committed here; if it is missing, say so in your report and go on.
+  never the target of a junction, nothing of it is committed here except what `tools/import_ae2_textures.py` copies
+  into `ae2-textures/graphics/` (below); if it is missing, say so in your report and go on.
   Its code is LGPL-3.0 (its API MIT), which GPLv3 can take in. Read it when a design question is open (the storage
   lists, the crafting calculation, the tick management); when a function here is a port of AE2's, say so in a comment
   at the function (`ported from Applied Energistics 2, <its path>, LGPL-3.0, (c) AlgorithmX2 et al.`) and name the file
-  in the "License" section of `README.md`. Its textures, models and sounds are CC BY-NC-SA 3.0: never copied, traced or
-  given to `tools/gen_ae2_sprites.py`. AE2 is Java on Minecraft, so a port is written anew for Lua and the Factorio
-  API, tested and measured like any other change; "AE2 does it this way" is no reason by itself, the number is.
+  in the "License" section of `README.md`. Its textures, models and sounds are CC BY-NC-SA 3.0 (issues #235, #239,
+  `docs/LICENSES.md`), so they live in a **second mod**: `ae2-textures/` is ME Network - AE2 Textures
+  (`me-network-ae2-textures`, CC BY-NC-SA 3.0, nothing in it is GPL), with its own `info.json`, version, changelog,
+  license and manifest; it depends on me-network and replaces sprites by prototype name (`ae2-textures/overrides.lua`,
+  applied by its `data-final-fixes.lua`). me-network requires it (issue #325: `~ me-network-ae2-textures` in its `info.json`, a
+  dependency without a load order; its code never names it), and Gregtorio, which depends on me-network only, gets it
+  through that; the devcheck runs load an empty stand-in of it, the proof run a copy of the real one. AE2 graphics enter this repository **only** through
+  `tools/import_ae2_textures.py` into `ae2-textures/graphics/`, with its manifest row (repository, source path, commit,
+  SHA-256, author, license, changed). They are **never in the me-network zip** (`tools/build.py` builds two zips and
+  fails when one holds the other's files or license), never traced, never merged into one image with graphics of
+  another origin (the texture mod replaces one file or layer of a sprite at a time; a sprite that needs a GT part and
+  an AE2 part keeps the GT part as a layer of its own), never given to `tools/gen_ae2_sprites.py` (it stays AE2-free:
+  GPLv3/LGPL graphics) and never taken from anything else than an AE2 checkout;
+  `..\Applied-Energistics-2-Unofficial`'s textures are the same authors' work under the same license, and the manifest
+  records which checkout and commit a file came from. A change to a file there stays in the folder and is recorded with
+  `--mark-changed`; a contribution touching `ae2-textures/` is CC BY-NC-SA 3.0 and adds its lines to
+  `ae2-textures/changelog.txt`. To make a sprite of me-network replaceable, keep its file name stable (or split it
+  into layers); never rename a prototype for it. `devcheck check` fails on an image without a row, a row without an
+  image, anything else in the folder, an AE2 file's bytes anywhere else (also in the Gregtorio checkout with
+  `--with-gregtorio`) and a zip that breaks the split, and loads the texture mod next to me-network once (a
+  throw-away copy with stand-in overrides that must apply). AE2 is Java on Minecraft, so a port is written anew for Lua
+  and the Factorio API, tested and measured like any other change; "AE2 does it this way" is no reason by itself, the number is.
   Next to it on that machine, read-only in the same way: `..\Applied-Energistics-2-Unofficial` (GTNewHorizons' fork of
   AE2, the one GT New Horizons plays; where it differs from AE2 and Gregtorio is concerned, it is the one to follow;
   read its own license notes before porting from it), `..\GT5-Unofficial` (what `--gt` takes) and
   `..\GT-New-Horizons-Modpack` (the pack's configs and scripts).
-- Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`, `--r2`,
-  `--patterns` and the other switches for parts, see its docstring).
+- Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`,
+  `--patterns` and the other switches for parts, see its docstring); it makes the GPLv3/LGPL graphics and never reads
+  AE2 graphics. AE2 graphics: `tools/import_ae2_textures.py` into `ae2-textures/graphics/` only (the rule above); a script
+  that transforms them reads only from `ae2-textures/graphics/` and writes only into it. The 17 icons of `graphics/icons/` are drawn by
+  `--own-icons` (issue #238); until 0.5.2 they were taken over from the original Gregtorio 0.1.9 and looked like AE2's
+  art. Never bring those old files back or make anything from them: `devcheck check` fails on a file under `graphics/` or
+  `thumbnail.png` with a hash of `tools/upstream-icon-hashes.tsv` (`tools/upstream_icons.py`).
 - **Issues and the board:** every open issue of this repository and of its sister repository is on the project board
   "Gregtorio Continued Backlog" (https://github.com/users/Rykon00/projects/1). The board only follows the issue state: a
   closed issue moves to Done and is archived a day later; nothing else moves a card. So the pull request that finishes an

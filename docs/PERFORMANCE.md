@@ -2964,3 +2964,103 @@ maintainer's game client running: **green, regressions 0**; throughput, latencie
 At 5000 both checks were disturbed by the machine (the reference's rounds 1.02 to 1.81 ms, a worst tick of 223 ms in one
 of them; the first check had the same on the working copy's side); the working copy's quiet rounds (0.99 ms) are those of
 issue #159's measurement.
+
+## The Pattern Capacity Card (issue #156)
+
+A pattern provider has 9 pattern slots and up to 36 with three Pattern Capacity Cards. What changes at runtime: `scan_provider`
+and `rebuild_patterns` loop over the provider's own number of slots (`slots_of(p)`: `p.nslots`, nil for 9) instead of the
+constant 9, and the round robin step (`maintenance`) fills a wanted card before it scans. A provider without cards does exactly
+what it did. A provider with 36 patterns costs up to four times the work of one with 9 per scan (one `normalized` lookup per
+slot, one `target_for` per slot and machine around it: at most 144 checks); the scan visits one provider per 2 ticks round
+robin (`PROVIDER_SCAN_TICKS`) and does nothing more when nothing changed, so it is the same bounded work per tick, only a
+longer lap. The planner reads the same lists.
+
+Measured with the planner scene (`bench --planner-only --sizes 100 --runs 3 --check origin/main`, three rounds in turns, one
+pattern per provider, so it shows that a provider without cards costs the same; it does not fill providers to 36 patterns):
+
+| | origin/main | with the card |
+|---|---|---|
+| script average ms/tick | 0.2475 ±0.187 | 0.2343 ±0.00645 |
+| script 99th percentile ms | 2.255 ±1.9 | 2.158 ±0.0978 |
+| ticks over 5 ms | 3 ±38.5 | 1 ±0 |
+| Lua alloc KB per tick | 26.79 | 26.79 |
+| mod heap kB | 13 640 | 13 650 |
+| burst build / remove ms | 171.8 / 76.2 | 166 / 80.8 |
+
+`regressions beyond the noise: 0`. The cost of full 36-pattern providers is reasoned, not measured: the bench scene has no
+provider with more than a few patterns.
+
+## The Sticky Card (issue #193)
+
+The insert of a key (`insert_key`) gets a pass before the priority groups when the network has a storage with a Sticky Card
+(`c.sticky`, made with the lookups, so nothing is walked when there is none): for each sticky storage one look at the key's
+index or its partition. A network without a Sticky Card pays one table test per insert.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no Sticky Card):
+
+| | origin/main | with the card |
+|---|---|---|
+| 100: script average / p99 ms | 0.191 / 1.785 | 0.1953 / 1.817 |
+| 1000: script average / p99 ms | 0.3492 / 1.975 | 0.3414 / 1.938 |
+| Lua alloc KB per tick (100 / 1000) | 26.79 / 24.68 | 26.79 / 24.68 |
+
+`regressions beyond the noise: 0`. The cost with sticky storage is that pass, bounded by the number of sticky storages.
+
+## The level maintainer's screen (issue #254)
+
+The level maintainer was drawn lit all the time (a lamp with a void energy source); like the terminal's (#128), its picture is
+now a screen render object that the script sets lit or dark. The bench scenes have a level maintainer per ten buses (500 at
+5000, 2000 at 20 000), so the terminal's way of setting the screens (every screen every second, a new sorted list of them each
+time, both render objects fetched) did not scale. Three rounds of `bench --check origin/main --sizes 5000,20000` (three rounds
+in turns each):
+
+1. Every screen every second (the terminal's way, plus the condition read): at 20 000 the 99th percentile 4.33 -> **7.45 ms** and
+   193 ticks over 5 ms (every slow step), the first tick after a load 22.8 -> **42.3 ms**.
+2. Only when something changed: all screens are set only when the graph changed (`s.version`, kept as `s.screen_version`) or a
+   network's state did (`net.screen_on`); otherwise only the maintainers with a circuit condition switched on are read
+   (`s.screen_cond`, none in the scenes); a screen that is right costs one comparison. Steady state at the reference's, but the
+   first tick after a load still 23.4 -> **44.0 ms**: the per-load sorted list of the screens (about 7 µs an element, as #43
+   found for the sweep) and a scene built before its first slow step got all its screens then.
+3. `s.screen_list` in `storage`, kept like `s.nlist` (in the order they came, a screen that goes replaced by the last), and a new
+   map has its screens table from the start, so screens are made when their blocks join:
+
+| | origin/main | this pull request |
+|---|---|---|
+| 5000: script average / p99 ms | 0.9964 / 2.975 | 0.9929 / 2.926 |
+| 5000: ticks over 5 ms | 6 | 4 |
+| 5000: first tick after the load ms | 8.409 | **4.198** |
+| 20 000: script average / p99 ms | 2.09 / 4.349 | 2.12 / 4.345 |
+| 20 000: ticks over 5 ms | 49 | 47 |
+| 20 000: first tick after the load ms | 23.04 | **7.144** |
+| Lua alloc KB per tick (5000 / 20 000) | 33.94 / 55.3 | 33.94 / 55.3 |
+| mod heap kB (5000 / 20 000) | 73 220 / 277 600 | 73 420 / 278 400 |
+
+`regressions beyond the noise: 0`. The first tick after a load is faster than before: the terminals' screens are no longer
+sorted then either. The heap grows by the maintainers' render objects' records (about 0.4 KB each). A maintainer with a
+circuit condition costs one property read a second.
+
+## The ME Interface looks at its idle sides again (issue #313)
+
+An interface with nothing connected to its sides stopped looking at them (`rec.sidle`), and its probe left the tanks out, so
+fluid that came without a build event, or room that came without a wake, was never imported. Now an interface that does not
+look at its sides looks at its four tanks again: a probed (idle) one at the idle limit, a visited (busy) one every four idle
+limits; and an interface whose import side holds fluid that waits for room is visited at least at the idle limit. Measured
+with `bench --check origin/main --sizes 5000` (three rounds in turns each) and `--profile 5000 --exclusive`:
+
+1. The tanks in every probe, an idle side pass at the idle limit (with the connections read again): script average
+   0.9677 -> 1.005 ms, Lua allocation 33.04 -> **34.65 KB** per tick (the connection lists).
+2. Without reading the connections: allocation back to 33.04 KB, but the average still +0.02 .. 0.03 ms over the noise
+   (an A/A run of origin/main against itself: 0.9704 / 0.9679, so the difference was real).
+3. The profile: `io.interface_sides` 3.97 -> 6.81 us per call (0.0192 -> 0.0330 ms per tick). The bench's interfaces are
+   visited less often than the idle limit, so every visit of one that does not look at its sides read its four tanks.
+   A busy interface now looks every four idle limits, a probed one at the idle limit (in the probe, not in every probe):
+
+| 5000 | origin/main | this pull request |
+|---|---|---|
+| script average / p99 ms | 0.9603 / 2.857 | 0.9651 / 2.858 |
+| ticks over 5 ms | 4 | 4 |
+| gc average ms | 0.0529 | 0.0535 |
+| Lua alloc KB per tick | 33.04 | 33.04 |
+| throughput (items/s, fluid/s), latencies, io counters | | identical |
+
+`regressions beyond the noise: 0`.

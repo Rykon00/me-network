@@ -157,6 +157,25 @@ function M.processing(inputs, outputs, recipe)
 	return M.normalize{ kind = "processing", inputs = packed(inputs), outputs = packed(outputs), recipe = recipe }
 end
 
+--- Issue #261: the engine keeps fluid amounts on a grid of 2^-24 (FIXED, fork-me-autocraft.lua fixed_up; Gregtorio rounds
+--- every recipe's fluids up to it, its #117), so a recipe's 14.4 reads 14.400000035762787. A pattern made from a recipe
+--- keeps the shortest decimal of at most 6 significant digits on the same grid step (fixed_up of it is the recipe's
+--- amount): 14.4. An input is then delivered at exactly what the machine needs (a job hands out fixed_up of a pattern's
+--- amount; even a tiny surplus per run, 0.123457 for 0.1234564, stalled a job in the test) and an output is never more
+--- than the machine gives. An amount that needs more digits for that step stays as it is.
+local FIXED = 16777216
+local function fixed_up(amount) return math.ceil(amount * FIXED) / FIXED end
+
+function M.clean_amount(n)
+	if type(n) ~= "number" or n <= 0 or n == math.floor(n) then return n end
+	local want = fixed_up(n)
+	for digits = 1, 6 do
+		local r = tonumber(string.format("%." .. digits .. "g", n))
+		if r > 0 and fixed_up(r) == want then return r end
+	end
+	return n
+end
+
 --- the inputs and outputs of a recipe as processing pattern rows (the encoding window's "From recipe", a provider that
 --- takes over an assembler's recipe). Issue #171: a processing pattern's row is an amount every run gives, so the
 --- products with a chance (a byproduct at 5 %, a range) stay out of the rows, as a GT New Horizons player leaves the
@@ -179,6 +198,12 @@ function M.recipe_rows(recipe)
 	else
 		for _, row in ipairs(outputs) do
 			if not is_fluid(row.key) then row.amount = math.max(1, math.floor(row.amount + 0.5)) end
+		end
+	end
+	--- issue #261: fluid amounts on the engine's grid as clean numbers (14.4, not 14.400000035762787)
+	for _, list in pairs({ inputs, outputs }) do
+		for _, row in ipairs(list) do
+			if is_fluid(row.key) then row.amount = M.clean_amount(row.amount) end
 		end
 	end
 	return inputs, outputs

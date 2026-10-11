@@ -74,6 +74,16 @@ function M.fmt(n)
 	return (neg and "-" or "") .. out
 end
 
+--- a power in W as the game writes it: "950 W", "124 kW", "1.9 MW" (issue #149)
+function M.fmt_power(w)
+	w = tonumber(w) or 0
+	local units = { "W", "kW", "MW", "GW", "TW" }
+	local i = 1
+	while w >= 1000 and i < #units do w = w / 1000 i = i + 1 end
+	local text = w == math.floor(w) and string.format("%d", w) or string.format("%.1f", w)
+	return text .. " " .. units[i]
+end
+
 --------------------------------------------------------------------------------
 --- building blocks
 --------------------------------------------------------------------------------
@@ -148,18 +158,32 @@ local function buffer_of(player)
 end
 M.buffer_of = buffer_of
 
---- every stack of `inv` into the window's block through `def.shift` (what it refuses stays); the number of stacks taken
-function M.buffer_absorb(inv, def, entity)
-	if not (inv and inv.valid and def and def.shift and entity and entity.valid) or inv.is_empty() then return 0 end
+--- what a buffer slot holds, for `seen` (name, count, quality and, for an item with tags, its number)
+local function slot_key(st)
+	return st.name .. "#" .. st.count .. "@" .. st.quality.name .. M.stack_ident(st)
+end
+
+--- Every stack of `inv` into the window's block through `def.shift` (what it refuses stays); the number of stacks taken.
+--- Issue #201: with `seen` (what the slots held after the last call: { [slot] = key }) a stack that is still what the block
+--- refused last time is left alone. Otherwise a stack of cards in the buffer (the block takes three, the rest stays) filled a card
+--- slot again as soon as the player took a card out of it: a click on a card made a second one. A stack that is new or
+--- changed is tried. The second value is the new `seen`.
+function M.buffer_absorb(inv, def, entity, seen)
+	if not (inv and inv.valid and def and def.shift and entity and entity.valid) or inv.is_empty() then return 0, {} end
 	local n = 0
 	for i = 1, #inv do
 		local st = inv[i]
-		if st.valid_for_read then
+		if st.valid_for_read and not (seen and seen[i] == slot_key(st)) then
 			local why = def.shift(entity, st, inv)
 			if not why and not st.valid_for_read then n = n + 1 end
 		end
 	end
-	return n
+	local now = {}
+	for i = 1, #inv do
+		local st = inv[i]
+		if st.valid_for_read then now[i] = slot_key(st) end
+	end
+	return n, now
 end
 
 --- what is left in `inv` back to `to` (a player or an inventory; give_back: else the ground at `entity`)
@@ -186,7 +210,10 @@ local function absorb(player)
 	if not b or b.inv.is_empty() then return end
 	local frame, name = M.window_of(player)
 	local entity = frame and M.entity_of(player, frame)
-	if entity then M.buffer_absorb(b.inv, windows[name], entity) end
+	if entity then
+		local _, seen = M.buffer_absorb(b.inv, windows[name], entity, b.seen)
+		b.seen = seen
+	end
 end
 
 --- the window's GUI for player.opened: the frame, or the buffer of a relative window
@@ -970,6 +997,7 @@ function M.refresh_all()
 		if storage.fork_me_gui_parked then M.return_parked(player) end
 		local picker = player.gui.screen.fork_me_picker      -- one that an Escape hid (scripts/fork-me-picker.lua)
 		if picker and picker.valid and not picker.visible and picker.tags.cancel_tick ~= game.tick then picker.destroy() end
+		for _, hook in ipairs(M.player_hooks) do hook(player) end
 		local frame, name = M.window_of(player)
 		if frame and n < REFRESH_MAX then
 			n = n + 1
@@ -980,7 +1008,11 @@ function M.refresh_all()
 				M.close_window(player)                     -- dying or another GUI closed it without an event
 			else
 				absorb(player)                             -- issue #150: the buffer, also without an event
-				local ok = def.refresh and def.refresh(player, frame)
+				local ok = true
+				for _, hook in ipairs(M.refresh_hooks) do
+					if hook(player, frame) == false then ok = false end
+				end
+				ok = ok and (def.refresh and def.refresh(player, frame))
 				if ok == false then
 					M.close_window(player)
 				elseif storage.fork_me_gui_pane and storage.fork_me_gui_pane[player.index] then
@@ -1016,6 +1048,20 @@ function M.on_inventory_changed(event)
 	if player then M.update_pane(player) end
 end
 
+--- Issue #179: a player was removed from the game: what the windows kept for them goes (the parked items of remote view and a
+--- hand-over buffer, like the game drops a removed player's own inventory; the pane's state)
+function M.forget_player(index)
+	for _, key in ipairs({ "fork_me_gui_parked", "fork_me_gui_buffer" }) do
+		local list = storage[key]
+		local p = list and list[index]
+		if p then
+			if p.inv and p.inv.valid then p.inv.destroy() end
+			list[index] = nil
+		end
+	end
+	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[index] = nil end
+end
+
 --- a player left the game: the window closes
 function M.on_left(player)
 	if player and player.valid then M.close_window(player) end
@@ -1027,9 +1073,29 @@ function M.entity_of(player, frame)
 	local e = M.entity_by_unit(frame.tags.unit)
 	if not (e and e.valid) then return nil end
 	local via = M.entity_by_unit(frame.tags.via)
-	if not player.can_reach_entity((via and via.valid) and via or e) then return nil end
+	if not M.reachable(player, (via and via.valid) and via or e) then return nil end
 	return e
 end
+
+--- Issue #206: may the player use the window of `anchor` from where they stand? In reach, or by a hook of `remote_reach` (the
+--- wireless terminal: `anchor` is an access point in range of the player's linked terminal, which has energy).
+M.remote_reach = {}
+function M.reachable(player, anchor)
+	if player.can_reach_entity(anchor) then return true end
+	for _, f in ipairs(M.remote_reach) do
+		if f(player, anchor) then return true end
+	end
+	return false
+end
+
+--- Issue #206: functions(player, frame) run at the refresh of every open window before the window's own (the wireless terminal
+--- pays its energy there); one that returns false closes the window. And functions(player, entity) the open key tries first
+--- (the wireless terminal: an item in the cursor is linked to the network of the clicked block); one that returns true ends it.
+M.refresh_hooks = {}
+M.open_key_hooks = {}
+--- Issue #322: functions(player) run at the refresh for every connected player, window or not (the ME Interface's
+--- tooltip in the world follows the entity the player points at)
+M.player_hooks = {}
 
 --- a "Back" button to the terminal for a window opened from one
 function M.back_button(parent, via)

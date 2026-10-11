@@ -36,43 +36,48 @@ local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = 
 
 ME.add_item{
 	name = "me-pattern-provider",
-	icon = ICON_FORK .. "me-pattern-provider.png",
+	icon = ME.hd_icons .. "me-pattern-provider.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "e",
 	stack_size = 50,
 	place_result = "me-pattern-provider",
-	recipe = { energy_required = 5, ingredients = I{ "me-interface", 1, "processing-unit", 2, "fluix-cable", 4 } },
+	--- AE2 (issue #233): 4 iron, 2 crafting tables, an annihilation core, a formation core (prototypes/network.lua, the stand-ins)
+	recipe = { energy_required = 5, ingredients = I{ "iron-plate", 4, "assembling-machine-1", 2, "electronic-circuit", 2 } },
 }
 
---- issue #130: the ME Pattern Terminal encodes patterns (it was the Patterns tab of the ME Terminal). AE2's (and GTNH's) recipe is
---- a terminal, a blank pattern and an engineering processor; standalone: an ME Terminal, a blank pattern, a processing unit and
---- fluix cable.
+--- issue #130: the ME Pattern Terminal encodes patterns (it was the Patterns tab of the ME Terminal). AE2's recipe: a crafting
+--- terminal (a terminal, a crafting table, a calculation processor) and an engineering processor.
 ME.add_item{
 	name = "me-pattern-terminal",
-	icon = ICON_FORK .. "me-pattern-terminal.png",
+	icon = ME.hd_icons .. "me-pattern-terminal.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "e0",
 	stack_size = 50,
 	place_result = "me-pattern-terminal",
-	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "me-blank-pattern", 1, "processing-unit", 1, "fluix-cable", 2 } },
+	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "assembling-machine-1", 1, "advanced-circuit", 1, "processing-unit", 1 } },
 }
 
 --- issue #80: a cheap blank pattern (AE2: quartz glass, certus quartz, iron)
 ME.add_item{
 	name = "me-blank-pattern",
-	icon = ICON_FORK .. "me-blank-pattern.png",
+	icon = ME.hd_icons .. "me-blank-pattern.png",     -- (issue #221)
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "e1",
 	stack_size = 64,
-	recipe = { energy_required = 1, ingredients = I{ "iron-plate", 2, "electronic-circuit", 1, "fluix-cable", 1 } },
+	--- AE2 (issue #233): 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2
+	recipe = { energy_required = 1, amount = 2,
+		ingredients = I{ "plastic-bar", 2, "copper-cable", 3, "stone", 1, "iron-plate", 2, "copper-plate", 1 } },
 }
 
 --- the encoded pattern: no recipe, made from a blank pattern in the ME Pattern Terminal (its tag fork_me_pattern holds it)
 data:extend({ {
 	type = "item-with-tags",
 	name = "me-encoded-pattern",
-	icon = ICON_FORK .. "me-encoded-pattern.png",
-	icon_size = 32,
+	icon = ME.hd_icons .. "me-encoded-pattern.png",   -- (issue #221)
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "e2",
 	stack_size = 1,
@@ -81,12 +86,14 @@ data:extend({ {
 
 ME.add_item{
 	name = "me-molecular-assembler",
-	icon = ICON_FORK .. "me-molecular-assembler.png",
+	icon = ME.hd_icons .. "me-molecular-assembler.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "f",
 	stack_size = 10,
 	place_result = "me-molecular-assembler",
-	recipe = { energy_required = 5, ingredients = I{ "assembling-machine-2", 1, "processing-unit", 2, "fluix-cable", 4 } },
+	--- AE2 (issue #233): 4 iron, 2 quartz glass, an annihilation core, a formation core, a crafting table
+	recipe = { energy_required = 5, ingredients = I{ "iron-plate", 4, "plastic-bar", 2, "electronic-circuit", 2, "assembling-machine-1", 1 } },
 }
 
 
@@ -99,20 +106,20 @@ ME.add_item{
 data:extend({ {
 	type = "simple-entity-with-force",
 	name = "me-pattern-provider",
-	icon = ICON_FORK .. "me-pattern-provider.png",
-	icon_size = 32,
+	icon = ME.hd_icons .. "me-pattern-provider.png",
+	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.2, result = "me-pattern-provider" },
 	max_health = 150,
 	corpse = "small-remnants",
-	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 60,
 	additional_pastable_entities = { "me-pattern-provider" },   -- settings paste copies the priority (issue #80)
 	picture = {
-		filename = ENTITY_PATH .. "me-pattern-provider.png",
+		filename = ME.hd_entity_path .. "me-pattern-provider.png",
 		priority = "extra-high",
-		width = 32, height = 32,
+		width = 64, height = 64, scale = 0.5,              -- (issue #269: the 3D-style 64 px picture; 32 drew its top left quarter)
 	},
 	localised_description = { "entity-description.me-pattern-provider" },
 } })
@@ -131,8 +138,8 @@ local PATTERN_TERMINAL_POWER = 8000             -- W drawn through the ME Contro
 data:extend({ {
 	type = "simple-entity-with-force",
 	name = "me-pattern-terminal",
-	icon = ICON_FORK .. "me-pattern-terminal.png",
-	icon_size = 32,
+	icon = ME.hd_icons .. "me-pattern-terminal.png",
+	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.2, result = "me-pattern-terminal" },
 	placeable_by = { item = "me-pattern-terminal", count = 1 },
@@ -146,8 +153,8 @@ data:extend({ {
 	render_layer = "lower-object",
 	random_variation_on_create = false,
 	pictures = {
-		{ filename = ENTITY_PATH .. "me-pattern-terminal.png", priority = "high", width = 32, height = 32, x = 0 },
-		{ filename = ENTITY_PATH .. "me-pattern-terminal.png", priority = "high", width = 32, height = 32, x = 32 },
+		{ filename = ME.hd_entity_path .. "me-pattern-terminal.png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
+		{ filename = ME.hd_entity_path .. "me-pattern-terminal.png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
 	},
 	localised_description = { "entity-description.me-pattern-terminal", tostring(PATTERN_TERMINAL_POWER / 1000) },
 } })
@@ -200,11 +207,22 @@ local BLOCKS = {
 	{ name = "me-crafting-co-processing-unit", bytes = 0, coprocessors = 1, power = 32000, order = "h6",
 	  ingredients = I{ "me-crafting-unit", 1, "processing-unit", 1 }, tech = "me-co-processing" },
 	{ name = "me-crafting-monitor", bytes = 0, monitor = true, power = 4000, order = "h7",
-	  ingredients = I{ "me-crafting-unit", 1, "small-lamp", 1, "electronic-circuit", 1 }, tech = "me-autocrafting" },
+	  --- AE2: a crafting unit and a storage monitor (a level emitter: a redstone torch and a calculation processor; an illuminated panel)
+	  ingredients = I{ "me-crafting-unit", 1, "decider-combinator", 1, "advanced-circuit", 1, "small-lamp", 1 }, tech = "me-autocrafting" },
 }
 
 data:extend({ { type = "item-subgroup", name = "fork-me-crafting-cpu", group = data.raw["item-subgroup"]["fork-me-network"].group,
 	order = "b-me-c" } })
+
+--- the 48 pictures of a crafting block's sheet (see the entity below; issue #220: 64 px, the 3D style)
+local function crafting_pictures(name)
+	local pictures = {}
+	for i = 0, 47 do
+		pictures[i + 1] = { filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 64 * i,
+			scale = 0.5 }
+	end
+	return pictures
+end
 
 local block_data, block_tech = {}, {}
 for _, b in ipairs(BLOCKS) do
@@ -213,7 +231,8 @@ for _, b in ipairs(BLOCKS) do
 		or { "entity-description." .. b.name }
 	ME.add_item{
 		name = b.name,
-		icon = ICON_FORK .. b.name .. ".png",
+		icon = ME.hd_icons .. b.name .. ".png",
+		icon_size = 64,
 		subgroup = "fork-me-crafting-cpu",
 		order = b.order,
 		stack_size = 50,
@@ -224,22 +243,23 @@ for _, b in ipairs(BLOCKS) do
 	data:extend({ {
 		type = "simple-entity-with-force",
 		name = b.name,
-		icon = ICON_FORK .. b.name .. ".png",
-		icon_size = 32,
+		icon = ME.hd_icons .. b.name .. ".png",
+		icon_size = 64,
 		flags = { "placeable-neutral", "player-creation" },
 		minable = { mining_time = 0.2, result = b.name },
 		placeable_by = { item = b.name, count = 1 },
 		max_health = 200,
 		is_military_target = false,
 		corpse = "small-remnants",
+		--- issue #268: not ME.solid_box: the blocks of a Crafting CPU are one slab (#152), a gap a character walks into
+		--- between two of them would split it
 		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
 		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 		fast_replaceable_group = "me-crafting-block",
-		--- the sheet holds the dark and the lit picture side by side (tools/gen_ae2_sprites.py --crafting-cpu)
-		pictures = {
-			{ filename = ENTITY_PATH .. b.name .. ".png", priority = "high", width = 32, height = 32, x = 0 },
-			{ filename = ENTITY_PATH .. b.name .. ".png", priority = "high", width = 32, height = 32, x = 32 },
-		},
+		--- issue #152: the sheet holds 48 pictures side by side (tools/gen_ae2_sprites.py --crafting-cpu): variation
+		--- 1 + mask + 16 * state, mask = N 1 + E 2 + S 4 + W 8 for the sides that touch another block of the same CPU
+		--- (no frame there), state 0 = a group that is no CPU (dark), 1 = a CPU (lit), 2 = a CPU that runs a job
+		pictures = crafting_pictures(b.name),
 		localised_description = description,
 	} })
 	block_data[b.name] = { bytes = b.bytes, coprocessors = b.coprocessors or 0, monitor = b.monitor or false, power = b.power }
@@ -255,11 +275,16 @@ end
 --- `member_power` of the mod-data "fork-me-network"). The lamp's circuit condition (kept on the entity, so the game
 --- copies and blueprints it) switches it on and off. Target, amount and the condition are set in its ME window
 --- (scripts/fork-me-windows.lua), which replaces the lamp's window.
+--- Issue #254: a lamp with a void energy source is always lit, so its own pictures cannot show whether it works. Like the
+--- ME Terminal's (prototypes/network.lua), both are empty and the script draws the whole picture (scripts/fork-me-network.lua,
+--- "screens"): lit while its network works and its condition lets it run, dark otherwise. Issue #258: as the terminal's, its
+--- dark picture is also its `stateless_visualisation`, so that its ghost has a picture (the screen covers it).
 --------------------------------------------------------------------------------
 
 ME.add_item{
 	name = "me-level-maintainer",
-	icon = ICON_FORK .. "me-level-maintainer.png",
+	icon = ME.hd_icons .. "me-level-maintainer.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "g4",
 	stack_size = 50,
@@ -269,13 +294,13 @@ ME.add_item{
 
 local maintainer = table.deepcopy(data.raw.lamp["small-lamp"])
 maintainer.name = "me-level-maintainer"
-maintainer.icon = ICON_FORK .. "me-level-maintainer.png"
-maintainer.icon_size = 32
+maintainer.icon = ME.hd_icons .. "me-level-maintainer.png"
+maintainer.icon_size = 64
 maintainer.minable = { mining_time = 0.2, result = "me-level-maintainer" }
 maintainer.max_health = 200
 maintainer.corpse = "small-remnants"
 maintainer.dying_explosion = nil
-maintainer.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
+maintainer.collision_box = ME.solid_box()                  -- (issue #268)
 maintainer.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
 local MAINTAINER_POWER = 30000          -- W drawn through the ME Controller (issue #128: what it drew from a pole before)
 maintainer.energy_source = { type = "void" }
@@ -283,18 +308,23 @@ maintainer.energy_usage_per_tick = (MAINTAINER_POWER / 1000) .. "kW"
 maintainer.always_on = true
 maintainer.light = nil
 maintainer.light_when_colored = nil
-maintainer.picture_off = { layers = { {
-	filename = ENTITY_PATH .. "me-level-maintainer-off.png",
-	priority = "high", width = 32, height = 32,
-} } }
-maintainer.picture_on = {
-	filename = ENTITY_PATH .. "me-level-maintainer-on.png",
-	priority = "high", width = 32, height = 32,
-}
+maintainer.glow_size = 0
+maintainer.picture_off = util.empty_sprite()
+maintainer.picture_on = util.empty_sprite()
+maintainer.stateless_visualisation = { render_layer = "lower-object",
+	animation = { filename = ME.hd_entity_path .. "me-level-maintainer-off.png", priority = "high", width = 64, height = 64,
+		scale = 0.5 } }
+maintainer.draw_stateless_visualisations_in_ghost = true
 maintainer.fast_replaceable_group = nil
 maintainer.next_upgrade = nil
 maintainer.localised_description = { "entity-description.me-level-maintainer", tostring(MAINTAINER_POWER / 1000) }
 data:extend({ maintainer })
+data:extend({
+	{ type = "sprite", name = "me-level-maintainer-screen-on", filename = ME.hd_entity_path .. "me-level-maintainer-on.png",
+	  priority = "high", width = 64, height = 64, scale = 0.5 },
+	{ type = "sprite", name = "me-level-maintainer-screen-off", filename = ME.hd_entity_path .. "me-level-maintainer-off.png",
+	  priority = "high", width = 64, height = 64, scale = 0.5 },
+})
 data.raw["mod-data"]["fork-me-network"].data.member_power.maintainer = MAINTAINER_POWER
 data.raw["mod-data"]["fork-me-network"].data.member_power["pattern-terminal"] = PATTERN_TERMINAL_POWER
 
@@ -307,7 +337,8 @@ data.raw["mod-data"]["fork-me-network"].data.member_power["pattern-terminal"] = 
 
 ME.add_item{
 	name = "me-circuit-interface",
-	icon = ICON_FORK .. "me-circuit-interface.png",
+	icon = ME.hd_icons .. "me-circuit-interface.png",
+	icon_size = 64,
 	subgroup = "fork-me-network",
 	order = "g5",
 	stack_size = 50,
@@ -317,19 +348,20 @@ ME.add_item{
 
 local circuit = table.deepcopy(data.raw["constant-combinator"]["constant-combinator"])
 circuit.name = "me-circuit-interface"
-circuit.icon = ICON_FORK .. "me-circuit-interface.png"
-circuit.icon_size = 32
+circuit.icon = ME.hd_icons .. "me-circuit-interface.png"
+circuit.icon_size = 64
 circuit.icons = nil
 circuit.minable = { mining_time = 0.2, result = "me-circuit-interface" }
 circuit.max_health = 200
 circuit.corpse = "small-remnants"
 circuit.dying_explosion = nil
 circuit.sprites = {
-	filename = ENTITY_PATH .. "me-circuit-interface.png",
-	priority = "high", width = 32, height = 32,
+	filename = ME.hd_entity_path .. "me-circuit-interface.png",
+	priority = "high", width = 64, height = 64, scale = 0.5,
 }
 circuit.fast_replaceable_group = nil
 circuit.next_upgrade = nil
+circuit.collision_box = ME.solid_box()                     -- (issue #268; the constant combinator's is -0.35 .. 0.35)
 circuit.localised_description = { "entity-description.me-circuit-interface" }
 data:extend({ circuit })
 
@@ -360,7 +392,7 @@ local function with_blocks(tech, recipes)
 	return recipes
 end
 
-ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2" }, unit = ME.unit(3, 500),
+ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2", "circuit-network" }, unit = ME.unit(3, 500),
 	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-blank-pattern", "me-molecular-assembler" }) }
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs

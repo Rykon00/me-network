@@ -18,9 +18,9 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   `me-storage-bus`, `me-pattern-provider`, `me-blank-pattern`, `me-encoded-pattern` (no recipe),
   `me-molecular-assembler`, `me-crafting-cpu`, `me-co-processing-cpu`, `me-quantum-crafting-cpu`,
   `me-level-maintainer`, `me-circuit-interface`; since 0.3.0 (issue #17) the upgrade cards `me-basic-card`,
-  `me-advanced-card`, `me-capacity-card`, `me-overflow-destruction-card`, `me-fuzzy-card`, `me-inverter-card`,
+  `me-advanced-card`, `me-capacity-card`, `me-overflow-destruction-card`, `me-fuzzy-card`, `me-pattern-capacity-card` (issue #156), `me-sticky-card` (issue #193), `me-inverter-card`,
   `me-equal-distribution-card` (each with a recipe of the same name), since issue #110 the module
-  `me-acceleration-card` (category `me-acceleration`; `ME_NETWORK.ACCELERATION`) and `me-cell-workbench`; since 0.3.0 (issue #6)
+  `me-acceleration-card` (category `me-acceleration`; `ME_NETWORK.ACCELERATION`) and `me-cell-workbench`; since issues #205 to #209 the wireless items `me-wireless-access-point`, `me-wireless-booster`, `me-wireless-terminal` (item-with-tags), `me-charger`, `me-wireless-module` (equipment of type battery-equipment, grid category `armor`), technology `me-wireless`; since 0.3.0 (issue #6)
   the crafting blocks of the multiblock crafting CPUs `me-crafting-unit`, `me-1k`...`me-256k-crafting-storage`,
   `me-crafting-co-processing-unit`, `me-crafting-monitor` (each with a recipe of the same name; subgroup
   `fork-me-crafting-cpu`); the legacy CPUs `me-crafting-cpu`, `me-co-processing-cpu` and `me-quantum-crafting-cpu`
@@ -83,7 +83,7 @@ ME_NETWORK.set_technology("me-network", {
 Rebuilds the ME Molecular Assembler as a copy of another assembling machine: `def.base` (the machine's name),
 `def.crafting_categories`, `def.crafting_speed`, `def.energy_usage`. The copy gets the assembler's name, icon,
 graphics and mining result and no fluid boxes. **Its size is not the base's** (issue #131): the block is one tile
-(collision box -0.35 .. 0.35, selection box -0.5 .. 0.5, pictures of 32 px) whatever size `def.base` has, and what the
+(collision box -0.29 .. 0.29 since issue #268, selection box -0.5 .. 0.5, pictures of 32 px) whatever size `def.base` has, and what the
 copy would inherit that is laid out for a bigger machine is set for one tile (the recipe icon of the alt mode, the icons of
 the five module slots, the alert icon, the circuit connector if the base has one, the corpse and the dying explosion); a
 frozen patch of the base's graphics is not kept (the assembler runs item recipes; autocrafting checks the machine's
@@ -94,7 +94,11 @@ speed 2.5, 375 kW.
 
 `add_item`, `add_recipe`, `add_technology` and `unit` are what this mod's own prototype files use (items with the
 same fields as Gregtorio's upstream `create_item`, so saves and other mods see the same items). Other mods do not
-need them.
+need them. `ME_NETWORK.WALKABLE` is the collision mask of the blocks that are walked over (cable, buses, terminals), and
+`ME_NETWORK.solid_box()` (since issue #268) a new copy of the collision box of the solid one-tile blocks, -0.29 .. 0.29:
+two of them on neighbouring tiles leave a gap of 0.42 tiles, which a character (0.4 wide) walks through. A mod that adds
+a solid one-tile block next to ME blocks should give it that box (the blocks of a Crafting CPU keep -0.35 .. 0.35: they
+are one slab).
 
 ### Recipes of removed items
 
@@ -103,6 +107,66 @@ unlock in every technology, with one log line each (since 0.3.0 also the recipes
 legacy CPUs). Gregtorio Continued 0.5.0 makes the recipes of the four old fluid
 blocks itself (not through the API) and keeps loading: they are removed there, and the unified blocks keep the
 recipes Gregtorio gives them. A mod should drop those recipes and unlocks from its own files.
+
+## The drive view (graphics mods)
+
+The ME Drive (ten bays) and the ME Chest (one) show a light for each cell, and can show the cell itself. Where, is the
+mod-data `fork-me-network`'s `drive_view` (since issue #264), which a graphics mod that replaces the drive's or the
+chest's picture can set in its `data.lua` or `data-updates.lua` (since issue #267 not later: me-network's
+`data-final-fixes.lua` makes the pictures of the hidden entities `me-drive-light`, `me-drive-cell`, `me-chest-light`
+and `me-chest-cell` from it, one variation per bay and state, drawn on the block's position above its picture and sorted
+with it against the character):
+
+```lua
+local view = data.raw["mod-data"]["fork-me-network"].data.drive_view
+view.drive = {
+	bays = { { x = 9, y = 6 }, { x = 30, y = 6 }, ... },   -- one per slot (1 and 2 the top row, left and right), top left
+	light = { x = 9, y = 3, w = 3, h = 3 },               -- the light, from a bay's top left
+	cells = { item = "my-cell-sprite", fluid = "my-fluid-cell-sprite", w = 15, h = 6 },   -- optional
+}
+view.chest = { bays = { { x = 18, y = 30 } }, light = { ... }, cells = { ... } }
+```
+
+All numbers are px of the 64 px picture of the drive and the chest (drawn at scale 0.5: 64 px a tile), from its top
+left. `cells` names two sprite prototypes (defined by then), one for item cells and one for fluid cells, drawn `w` x
+`h` px at the bay (under the light) for every slot that holds a cell; without `cells` only the light is drawn. me-network's own view is
+the geometry of its own pictures and has no `cells`. The light's colour is me-network's (green, orange above 75 %,
+red when full; the chest's dark without power).
+
+## The controller view (graphics mods)
+
+The ME Controller's picture is the same whatever its state. A graphics mod can show the state, as AE2 does, with the
+mod-data `fork-me-network`'s `controller_view` (since issue #278), set in its `data.lua` or `data-updates.lua`:
+
+```lua
+local view = data.raw["mod-data"]["fork-me-network"].data.controller_view
+view.off = { ... }        -- no power (also a conflict without power)
+view.on = { filename = "__my-mod__/controller-lit.png", width = 128, height = 128, scale = 0.5, frame_count = 12,
+	line_length = 1, animation_speed = 1 / 9 }   -- its network works
+view.conflict = { ... }   -- a second controller in its network, with power
+```
+
+Each state is an `Animation` (a single frame is one too), drawn over the controller's picture at its position (the
+controller is 2 x 2 tiles: the shift is from its centre), above it and sorted with it against a character. Each is
+optional: a state without one shows the controller's picture alone. me-network's `data-final-fixes.lua` makes the
+hidden entity `me-controller-light` from them (one animation variation per state); the script sets every controller's
+part to its state once a second. With an empty view (me-network's own) there is no such entity.
+
+## The bus view (graphics mods)
+
+The ME Import, Export and Storage Bus show where they work by a marker: the plate on the side they face and their
+arrows. Since issue #282 it is a layer of its own over each direction's picture (`me-<bus>-<direction>-marker.png`,
+the picture's own pixels), so a graphics mod can replace the picture (the first layer) and keep the marker. Where the
+marker is drawn is the mod-data `fork-me-network`'s `bus_view`, the square of the 64 px picture that is the bus's face,
+in px from its top left; me-network's own is `{ x = 0, y = 0, size = 58 }`. A mod whose bus has another face sets it in
+its `data.lua` or `data-updates.lua`:
+
+```lua
+local view = data.raw["mod-data"]["fork-me-network"].data.bus_view
+view.x, view.y, view.size = 3, 3, 48
+```
+
+me-network's `data-final-fixes.lua` scales and moves the marker layer of every bus and direction to that square.
 
 ## Runtime
 

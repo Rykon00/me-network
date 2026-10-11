@@ -7,3 +7,5 @@
 *.png binary
 *.psd binary
 *.ogg binary
+*.tsv text eol=lf
+*.sh text eol=lf

@@ -15,7 +15,8 @@
 ---   * ME Storage Bus: the filters become the ingredients (facing a chest or cargo wagon the items, facing a tank
 ---     the fluids, with no target yet both), items at the recipe's quality; mode and priority stay. 18 filters.
 ---   * ME Export Bus: the filters become the ingredients, ME Import Bus: the products; items and fluids, 9
----     filters. The buses' item filters have no quality (the export bus moves normal quality).
+---     filters, items at the recipe's quality (issue #291; normal quality: the plain name, which the import bus takes in
+---     every quality).
 ---   * Whatever did not fit, a fluid row without a pipe or side, a machine without a recipe: a flying text for the
 ---     player. When nothing applies to the block (no ingredients, no fluid for a tank, ...) the block is unchanged.
 ---   * Issue #161: a fluid with an exact temperature in the recipe (an ingredient's `temperature`, a product's) gets it in
@@ -96,7 +97,7 @@ local function paste_interface(dst, recipe, quality, msgs)
 	local config, row_of_fluid, fluids = {}, {}, 0
 	local rows_full, fluids_full, capped = {}, {}, {}
 	for _, e in ipairs(wanted) do
-		if #config >= io.CONFIG_SLOTS then
+		if #config >= io.row_capacity(dst) then
 			rows_full[#rows_full + 1] = e
 		elseif e.type == "fluid" then
 			if fluids >= MAX_FLUID_ROWS then
@@ -149,7 +150,7 @@ local function paste_interface(dst, recipe, quality, msgs)
 			end
 		end
 	end
-	if #rows_full > 0 then msg(msgs, "rows-full", tostring(io.CONFIG_SLOTS), icons(rows_full)) end
+	if #rows_full > 0 then msg(msgs, "rows-full", tostring(io.row_capacity(dst)), icons(rows_full)) end
 	if #fluids_full > 0 then msg(msgs, "fluids-full", tostring(MAX_FLUID_ROWS), icons(fluids_full)) end
 	if #capped > 0 then msg(msgs, "amount-capped", icons(capped)) end
 end
@@ -197,10 +198,9 @@ end
 local function paste_bus(dst, recipe, quality, msgs, import)
 	local wanted = entries(import and recipe.products or recipe.ingredients)
 	if #wanted == 0 then return msg(msgs, import and "no-products" or "no-ingredients") end
-	local keys, left = keys_of(wanted, nil, io.MAX_FILTERS)
+	local keys, left = keys_of(wanted, quality, io.MAX_FILTERS)
 	io.set_bus_filters(dst, keys)
 	if #left > 0 then msg(msgs, "filters-full", tostring(io.MAX_FILTERS), icons(left)) end
-	if not import and quality ~= "normal" and #only(wanted, "item") > 0 then msg(msgs, "bus-quality") end
 end
 
 local PASTE = {

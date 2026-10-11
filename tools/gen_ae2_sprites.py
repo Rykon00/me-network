@@ -4,25 +4,36 @@
 Sources:
   * GregTech 5 machine casings and screen overlays from a checkout of
     GTNewHorizons/GT5-Unofficial (LGPL-3.0), tinted with the GT material color of the tier; for the upgrade
-    cards its circuit boards, circuits, an SMD chip and the signs of its machine GUI buttons (--cards)
-  * existing icons of this mod (ME drive, storage housing; drawn for Gregtorio, where this network was made)
-  * everything else (drive bays, cell LEDs, interface arrows) is drawn here with Pillow
+    cards its circuit boards, circuits, an SMD chip and the signs of its machine GUI buttons (--cards), for the
+    storage components its circuit boards and memory chips (--own-icons)
+  * everything else (drive bays, cell LEDs, interface arrows) is drawn here with Pillow; since issue #238 also the 17 icons
+    of graphics/icons/ (blocks, storage housing, storage components, fluix cable: --own-icons), which until 0.5.2 were
+    taken over from Gregtorio 0.1.9; nothing is made from those old files (tools/upstream-icon-hashes.tsv)
   * the fluid variants (prototypes/fluids.lua) are derived from the item PNGs
     generated here: the same shapes with blue accents instead of fluix purple
+  * never graphics of Applied Energistics 2: they are CC BY-NC-SA 3.0 and live only in the separate texture mod
+    me-network-ae2-textures (docs/LICENSES.md, tools/import_ae2_textures.py); what this script makes is
+    GPLv3/LGPL-3.0, and the texture mod replaces one of its files or layers at a time, never one image of both
+    (issues #235, #239)
 
     python tools/gen_ae2_sprites.py --gt C:/00_Repositories/GT5-Unofficial   # everything
     python tools/gen_ae2_sprites.py --fluids      # only the fluid graphics, from the existing item PNGs
     python tools/gen_ae2_sprites.py --extras      # only the issue #38 graphics, from the existing PNGs
     python tools/gen_ae2_sprites.py --r1          # only the issue #68 (R1) graphics, from the existing PNGs
-    python tools/gen_ae2_sprites.py --r2          # only the issue #68 (R2) fluid bus graphics, from the R1 PNGs
     python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
     python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
+    python tools/gen_ae2_sprites.py --bus-markers # only the marker layers of the import, export and storage bus
+                                                  # (issue #282: the plate and the arrows alone, drawn over the bus)
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
     python tools/gen_ae2_sprites.py --patterns    # only the blank and encoded pattern icons (issue #80)
     python tools/gen_ae2_sprites.py --unified     # only the ME Interface with its four pipe sides (me-network issue #3)
     python tools/gen_ae2_sprites.py --cards C:/00_Repositories/GT5-Unofficial   # only the upgrade cards (from GT
                                                   # boards, chips and GUI signs), their technology and the ME Cell
                                                   # Workbench (me-network issues #17 and #20)
+    python tools/gen_ae2_sprites.py --own-icons C:/00_Repositories/GT5-Unofficial   # only the 17 icons of graphics/icons/
+                                                  # (issue #238) and what is made from them (cells, old drive items, fluid
+                                                  # variants, technologies, 3D-style cells and cable), with their contact
+                                                  # sheet docs/graphics-review/own-icons-238.png
     python tools/gen_ae2_sprites.py --thumbnail   # only thumbnail.png, from the drive and terminal PNGs (issue #20)
     python tools/gen_ae2_sprites.py --crafting-cpu C:/00_Repositories/GT5-Unofficial   # only the crafting blocks of
                                                   # the multiblock crafting CPUs (me-network issue #6): GT casings and
@@ -43,6 +54,7 @@ Output:
   graphics/icons/fork/me-*.png             32x32 item icons (also pattern provider, molecular assembler,
                                            crafting CPU of prototypes/autocrafting.lua)
   graphics/technology/fork/me-*.png        256x256 technology icons
+  graphics/icons/*.png                     the 17 icons of issue #238 (32x32, --own-icons)
   fluids (--fluids, or after everything else with --gt):
   graphics/entity/fork/ae2/me-fluid-drive-<tier>.png, me-fluid-interface.png
   graphics/icons/fork/me-<tier>-fluid-storage-cell.png, me-fluid-drive-<tier>.png, me-fluid-interface.png
@@ -59,6 +71,26 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from gen_sprites import frames_of, gt_path, load, tint
+
+
+def _save_if_changed(self, fp, format=None, **params):
+    """Issue #241: a PNG whose pixels are those of the file already there is not written again. Pillow's encoder (its
+    version, zlib) may give other bytes than the one that wrote the tracked file, so a full run showed unchanged files as
+    modified. Every save of this script goes through here (Image.Image.save is replaced below, for this script only)."""
+    path = Path(fp) if isinstance(fp, (str, Path)) else None
+    if path is not None and path.suffix.lower() == ".png" and path.is_file():
+        try:
+            with Image.open(path) as old:
+                same = old.size == self.size and old.convert("RGBA").tobytes() == self.convert("RGBA").tobytes()
+        except OSError:
+            same = False
+        if same:
+            return None
+    return _PIL_SAVE(self, fp, format, **params)
+
+
+_PIL_SAVE = Image.Image.save
+Image.Image.save = _save_if_changed
 from gen_tech_icons import upscale
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -66,6 +98,7 @@ ICONS = ROOT / "graphics/icons"
 OUT_ENTITY = ROOT / "graphics/entity/fork/ae2"
 OUT_ICON = ROOT / "graphics/icons/fork"
 OUT_TECH = ROOT / "graphics/technology/fork"
+OUT_TECH_HD = ROOT / "graphics/technology/hd"           # issue #222: the technology icons of the 3D style
 
 TILE = 32
 GT_PX = 16                     # GT textures are 16x16, scaled 2x to one Factorio tile
@@ -165,19 +198,17 @@ def controller_sprite(gt):
 
 
 def cell_icon(cell):
-    """Storage housing icon, the component window and the status LED in the tier color."""
+    """Storage housing icon (issue #238: housing_icon), the component window and the status LED in the tier color."""
     led, _ = CELLS[cell]
     img = load(ICONS / "basic-storage-housing.png")
-    px = img.load()
-    for y in range(img.height):
-        for x in range(img.width):
-            r, g, b, a = px[x, y]
-            if not a:
-                continue
-            if r > 150 and g < 90 and b < 90:                     # red LED
-                px[x, y] = led + (a,)
-            elif max(r, g, b) < 40 and 9 <= x <= 22 and 9 <= y <= 22:   # dark component window
-                px[x, y] = (led[0] * 2 // 3, led[1] * 2 // 3, led[2] * 2 // 3, a)
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = HOUSING_WINDOW
+    d.rectangle(HOUSING_WINDOW, fill=(led[0] * 2 // 3, led[1] * 2 // 3, led[2] * 2 // 3, 255))   # the component behind the
+    d.line((x0, y0, x1, y0), fill=led + (255,))                                                    # window in the tier colour,
+    glint = tuple(min(255, c + 70) for c in led) + (255,)                                          # a glint on the glass
+    for i in range(2):
+        d.line((x0 + 2 + i, y0 + 6, x0 + 5 + i, y0 + 3), fill=glint)
+    d.rectangle((HOUSING_LED[0] + 1, HOUSING_LED[1] + 1, HOUSING_LED[2] - 1, HOUSING_LED[3] - 1), fill=led + (255,))
     return img
 
 
@@ -315,7 +346,7 @@ def autocrafting(gt):
 # --- crafting CPU multiblocks (me-network issue #6, prototypes/autocrafting.lua) ----------------------------
 # 1x1 blocks: the EV casing (the legacy CPU's) around a dark face; each sheet holds the block of a group that is no CPU
 # (dark: the face's colours dimmed, no light) and of a CPU (lit) side by side, 64x32. The item icon is the lit block.
-# AE2's crafting block textures are not used: they are CC BY-NC-SA 3.0 (see README.md, License).
+# AE2's crafting block textures are not used: they are CC BY-NC-SA 3.0 (docs/LICENSES.md).
 CRAFTING_STORAGE = {"1k": CELLS["1k"][0], "4k": CELLS["4k"][0], "16k": CELLS["16k"][0], "64k": CELLS["64k"][0],
                     "256k": CELLS["256k"][0]}
 
@@ -324,13 +355,33 @@ def dim(rgb, f=0.35):
     return tuple(int(c * f) for c in rgb)
 
 
-def crafting_face(gt, kind, lit, colour=None):
+CPU_AMBER = (255, 200, 80)         # the details of a block of a CPU that runs a job
+CPU_DARK, CPU_LIT, CPU_BUSY = 0, 1, 2
+CPU_STATES = 3
+# bit of each side in the mask of a picture: N 1, E 2, S 4, W 8 (as the cable's), variation = 1 + mask + 16 * state
+SIDE_N, SIDE_E, SIDE_S, SIDE_W = 1, 2, 4, 8
+
+
+def crafting_face(gt, kind, state, colour=None, mask=0):
     """16x16: the EV casing with the block's face (unit: four chips; storage: a memory chip in the size's colour with
-    three cell bars; co-processor: a fluix core with traces; monitor: a GT screen)."""
+    three cell bars; co-processor: a fluix core with traces; monitor: a GT screen). Issue #152: `mask` names the sides
+    that touch another block of the same CPU; the dark interior runs on to the tile's edge there (no casing, no outline),
+    and where two connected sides meet the corner is filled too, so the blocks of a CPU read as one slab. `state`:
+    CPU_DARK (a group that is no CPU), CPU_LIT, CPU_BUSY (a job runs: the details turn amber)."""
     img = hull(gt, "EV")
     d = ImageDraw.Draw(img)
+    lit = state != CPU_DARK
     def c(rgb):
         return (rgb if lit else dim(rgb)) + (255,)
+    def detail(rgb):
+        return (CPU_AMBER if state == CPU_BUSY else rgb if lit else dim(rgb)) + (255,)
+    fill, edge = (20, 20, 26, 255), (60, 60, 72, 255)
+    n, e, so, w = (bool(mask & m) for m in (SIDE_N, SIDE_E, SIDE_S, SIDE_W))
+    x0, y0, x1, y1 = (0 if w else 2), (0 if n else 2), (15 if e else 13), (15 if so else 13)
+    d.rectangle((x0, y0, x1, y1), fill=fill)
+    for flag, box in ((not n, (x0, y0, x1, y0)), (not so, (x0, y1, x1, y1)), (not w, (x0, y0, x0, y1)), (not e, (x1, y0, x1, y1))):
+        if flag:
+            d.rectangle(box, fill=edge)
     if kind == "monitor":
         if lit:
             screen = frames_of(load(gt_path(gt, "gregtech:iconsets/OVERLAY_SCREEN")))[0]
@@ -338,41 +389,95 @@ def crafting_face(gt, kind, lit, colour=None):
         else:
             img.alpha_composite(frames_of(load(gt_path(gt, "gregtech:iconsets/SCREEN_OFF")))[0])
         return img
-    d.rectangle((2, 2, 13, 13), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
     if kind == "unit":
         for x, y in ((4, 4), (9, 4), (4, 9), (9, 9)):
             d.rectangle((x, y, x + 2, y + 2), fill=(45, 45, 55, 255), outline=(85, 85, 100, 255))
-            d.point((x + 1, y + 1), fill=c(CPU_CYAN))
+            d.point((x + 1, y + 1), fill=detail(CPU_CYAN))
     elif kind == "storage":
         d.rectangle((4, 4, 11, 11), fill=(45, 45, 55, 255), outline=c(colour))
         for y in (6, 8, 10):
-            d.line((6, y - 1, 9, y - 1), fill=c(colour))
+            d.line((6, y - 1, 9, y - 1), fill=detail(colour))
         for x in (3, 12):                                   # the chip's pins
             for y in (5, 7, 9):
                 d.point((x, y), fill=(150, 150, 160, 255))
     elif kind == "coprocessor":
-        for x0, y0, x1, y1 in ((3, 7, 5, 8), (10, 7, 12, 8), (7, 3, 8, 5), (7, 10, 8, 12)):
-            d.rectangle((x0, y0, x1, y1), fill=c(FLUIX))
+        for bx0, by0, bx1, by1 in ((3, 7, 5, 8), (10, 7, 12, 8), (7, 3, 8, 5), (7, 10, 8, 12)):
+            d.rectangle((bx0, by0, bx1, by1), fill=c(FLUIX))
         d.rectangle((5, 5, 10, 10), fill=c(FLUIX), outline=c(FLUIX_LIGHT))
-        d.rectangle((7, 7, 8, 8), fill=c((235, 225, 255)))
+        d.rectangle((7, 7, 8, 8), fill=detail((235, 225, 255)))
     return img
 
 
+CRAFTING_BLOCKS = [("me-crafting-unit", "unit", None), ("me-crafting-co-processing-unit", "coprocessor", None),
+                   ("me-crafting-monitor", "monitor", None)] + \
+                  [(f"me-{k}-crafting-storage", "storage", rgb) for k, rgb in CRAFTING_STORAGE.items()]
+
+
 def crafting_cpu(gt):
-    """the eight crafting blocks: entity sheets (dark | lit) and item icons"""
-    blocks = [("me-crafting-unit", "unit", None), ("me-crafting-co-processing-unit", "coprocessor", None),
-              ("me-crafting-monitor", "monitor", None)]
-    blocks += [(f"me-{k}-crafting-storage", "storage", rgb) for k, rgb in CRAFTING_STORAGE.items()]
+    """the eight crafting blocks: entity sheets of 48 pictures (variation 1 + mask + 16 * state, 32 px each, state 0 dark,
+    1 lit, 2 lit and busy) and item icons (the lit block alone)"""
     written = []
-    for name, kind, colour in blocks:
-        dark, lit = up(crafting_face(gt, kind, False, colour)), up(crafting_face(gt, kind, True, colour))
-        sheet = Image.new("RGBA", (2 * TILE, TILE))
-        sheet.paste(dark, (0, 0))
-        sheet.paste(lit, (TILE, 0))
+    for name, kind, colour in CRAFTING_BLOCKS:
+        sheet = Image.new("RGBA", (16 * CPU_STATES * TILE, TILE))
+        for state in range(CPU_STATES):
+            for mask in range(16):
+                sheet.paste(up(crafting_face(gt, kind, state, colour, mask)), ((16 * state + mask) * TILE, 0))
         sheet.save(OUT_ENTITY / f"{name}.png")
-        lit.save(OUT_ICON / f"{name}.png")
+        up(crafting_face(gt, kind, CPU_LIT, colour, 0)).save(OUT_ICON / f"{name}.png")
         written += [OUT_ENTITY / f"{name}.png", OUT_ICON / f"{name}.png"]
+    written.append(crafting_cpu_sheet(gt))
     return written
+
+
+def crafting_cpu_sheet(gt):
+    """the contact sheet of issue #152 (docs/graphics-review/crafting-cpu-152.png): a lone block, a 2 x 3, a 4 x 4 and a
+    3 x 3 CPU in the three states, a ring that is no rectangle (dark), and a CPU with a storage, a co-processor and a
+    monitor in each position"""
+    storages = [b for b in CRAFTING_BLOCKS if b[1] == "storage"]
+
+    def layout(width, height, pick=None, hole=None):
+        """{(x, y): (kind, colour)} of a rectangle; `pick(x, y)` chooses the block, `hole` a tile left out"""
+        return {(x, y): (pick(x, y) if pick else ("unit", None)) for x in range(width) for y in range(height)
+                if (x, y) != hole}
+
+    def draw(tiles, state, ox, oy, sheet):
+        for (x, y), (kind, colour) in tiles.items():
+            mask = (SIDE_N if (x, y - 1) in tiles else 0) | (SIDE_E if (x + 1, y) in tiles else 0) \
+                | (SIDE_S if (x, y + 1) in tiles else 0) | (SIDE_W if (x - 1, y) in tiles else 0)
+            sheet.paste(up(crafting_face(gt, kind, state, colour, mask)), (ox + x * TILE, oy + y * TILE))
+
+    def mixed(x, y):
+        k = (x + 2 * y) % 5
+        if k == 0:
+            return ("coprocessor", None)
+        if k == 1:
+            return ("monitor", None)
+        if k == 2:
+            return ("unit", None)
+        return ("storage", storages[(x + y) % len(storages)][2])
+
+    shapes = [
+        ("1x1", layout(1, 1)), ("2x3", layout(2, 3)), ("4x4", layout(4, 4)), ("3x3 mixed", layout(3, 3, mixed)),
+        ("4x4 mixed", layout(4, 4, mixed)), ("ring (no CPU)", layout(3, 3, hole=(1, 1))),
+    ]
+    gap = 24
+    sheet = Image.new("RGBA", (3 * (4 * TILE + gap) + gap, len(shapes) * (4 * TILE + gap) + gap), (40, 40, 48, 255))
+    for row, (label, tiles) in enumerate(shapes):
+        for state in range(CPU_STATES):
+            if label.startswith("ring") and state:
+                continue
+            draw(tiles, state, gap + state * (4 * TILE + gap), gap + row * (4 * TILE + gap), sheet)
+    # a strip of all 16 masks of the unit in the three states, lit
+    strip = Image.new("RGBA", (16 * TILE, CPU_STATES * TILE), (40, 40, 48, 255))
+    for state in range(CPU_STATES):
+        for mask in range(16):
+            strip.paste(up(crafting_face(gt, "unit", state, None, mask)), (mask * TILE, state * TILE))
+    out = Image.new("RGBA", (max(sheet.width, strip.width), sheet.height + strip.height + gap), (40, 40, 48, 255))
+    out.paste(sheet, (0, 0))
+    out.paste(strip, (0, sheet.height + gap))
+    path = ROOT / "docs/graphics-review/crafting-cpu-152.png"
+    out.save(path)
+    return path
 
 
 # --- fluids (prototypes/fluids.lua) -------------------------------------------
@@ -650,17 +755,21 @@ def controller_r1_sprite():
     return img
 
 
-def bus_sprite(accent, export, direction):
-    """1x1: MV casing, a plate on the side the bus faces and an arrow: towards the plate (export) or away
-    from it (import). Drawn facing north, then rotated."""
-    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
-    d = ImageDraw.Draw(img)
+def bus_marker(d, accent, export):
+    """the plate on the side the bus faces (north) and the arrow: towards the plate (export) or away from it (import)"""
     d.rectangle((4, 0, TILE - 5, 4), fill=accent + (255,), outline=(40, 40, 48, 255))   # the plate (north)
     d.rectangle((14, 7, 17, 24), fill=(235, 235, 245, 255))                             # arrow shaft
     if export:                                       # arrow head at the plate: items go out
         d.polygon([(9, 13), (22, 13), (15, 6)], fill=accent + (255,))
     else:                                            # arrow head away from the plate: items come in
         d.polygon([(9, 19), (22, 19), (15, 27)], fill=accent + (255,))
+
+
+def bus_sprite(accent, export, direction, marker_only=False):
+    """1x1: MV casing, a plate on the side the bus faces and an arrow: towards the plate (export) or away
+    from it (import). Drawn facing north, then rotated. marker_only (issue #282): the plate and the arrow alone."""
+    img = Image.new("RGBA", (TILE, TILE)) if marker_only else casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    bus_marker(ImageDraw.Draw(img), accent, export)
     turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
     return img.rotate(turns, resample=Image.NEAREST) if turns else img
 
@@ -708,32 +817,6 @@ def r1():
     return written
 
 
-# --- issue #68, step R2: fluid import and export bus --------------------------------------
-# Derived from the item bus sprites of R1: the accents in fluid blue and the pipe ring of the fluid
-# interface around the arrow.
-def fluid_bus_sprite(name, direction):
-    img = recolor(load(OUT_ENTITY / f"{name}-{direction}.png"),
-                  {IMPORT_ACCENT: FLUID_LIGHT, EXPORT_ACCENT: FLUID})
-    c = TILE // 2
-    ImageDraw.Draw(img).ellipse((c - 9, c - 9, c + 8, c + 8), outline=PIPE + (255,), width=2)
-    return img
-
-
-def r2():
-    written = []
-
-    def save(img, path):
-        img.save(path)
-        written.append(path)
-
-    for name in ("me-import-bus", "me-export-bus"):
-        fluid_name = name.replace("me-", "me-fluid-", 1)
-        for direction in ("north", "east", "south", "west"):
-            save(fluid_bus_sprite(name, direction), OUT_ENTITY / f"{fluid_name}-{direction}.png")
-        save(fluid_bus_sprite(name, "north"), OUT_ICON / f"{fluid_name}.png")
-    return written
-
-
 # --- issue #68: ME Storage Bus ----------------------------------------------------------------
 # The R1 bus casing with a green plate on the side it faces, a two-headed arrow (the network reads and
 # writes the inventory) and a small chest below it.
@@ -742,13 +825,24 @@ CHEST_WOOD = (150, 105, 60)
 CHEST_DARK = (90, 60, 32)
 
 
-def storage_bus_sprite(direction):
-    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
-    d = ImageDraw.Draw(img)
+def storage_bus_marker(d):
+    """the plate on the side the storage bus faces (north) and the two-headed arrow"""
     d.rectangle((4, 0, TILE - 5, 4), fill=STORAGE_ACCENT + (255,), outline=(40, 40, 48, 255))   # the plate (north)
     d.rectangle((15, 9, 16, 15), fill=(235, 235, 245, 255))                                      # arrow shaft
     d.polygon([(12, 9), (19, 9), (15, 5)], fill=STORAGE_ACCENT + (255,))                       # head at the plate
     d.polygon([(12, 15), (19, 15), (15, 19)], fill=STORAGE_ACCENT + (255,))                      # head at the chest
+
+
+def storage_bus_sprite(direction, marker_only=False):
+    """marker_only (issue #282): the plate and the arrow alone, without the casing and the chest"""
+    if marker_only:
+        img = Image.new("RGBA", (TILE, TILE))
+        storage_bus_marker(ImageDraw.Draw(img))
+        turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+        return img.rotate(turns, resample=Image.NEAREST) if turns else img
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    storage_bus_marker(d)
     d.rectangle((9, 20, 22, 28), fill=CHEST_WOOD + (255,), outline=CHEST_DARK + (255,))          # the chest
     d.line((9, 23, 22, 23), fill=CHEST_DARK + (255,))                                             # lid
     d.rectangle((15, 22, 16, 25), fill=(230, 200, 90, 255))                                       # latch
@@ -846,6 +940,7 @@ def patterns():
 # from them carry a GT SMD chip next to the contacts and, on the right, the sign of a GT machine GUI button in a
 # colour of their own, so that they are told apart at 32 px:
 #   capacity              plus_large (green)        fuzzy                 analog: a wave, "about" (magenta)
+#   pattern capacity      plus_large (violet, on the advanced card's blue body: the capacity card's plus on gray) (issue #156)
 #   inverter              disable: a slashed ring   equal distribution    cyclic: round robin arrows (cyan)
 #                         (orange)                  acceleration          x2: "twice as fast" (lime)
 # The Overflow Destruction Card is a warning: a yellow triangle with a black "!" (drawn) and black and yellow hazard
@@ -866,7 +961,10 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-capacity-card": ("basic", "gui/overlay_button/plus_large", (70, 200, 90)),
     "me-overflow-destruction-card": ("basic", "warning", HAZARD),
     "me-fuzzy-card": ("advanced", "gui/overlay_button/analog", (235, 95, 215)),
+    "me-pattern-capacity-card": ("advanced", "gui/overlay_button/plus_large", (150, 110, 255)),   # issue #156: a violet plus on the blue body
+    "me-interface-capacity-card": ("basic", "gui/overlay_button/plus_large", (240, 150, 50)),   # issue #196: an orange plus on the gray body
     "me-inverter-card": ("advanced", "gui/overlay_button/disable", (245, 120, 30)),
+    "me-sticky-card": ("advanced", "gui/overlay_button/lock", (250, 215, 60)),   # issue #193: a lock (yellow)
     "me-equal-distribution-card": ("advanced", "gui/overlay_button/cyclic", (60, 225, 210)),
     "me-acceleration-card": ("advanced", "gui/overlay_button/x2", (185, 240, 70)),   # issue #110: the "x2" sign (lime)
 }
@@ -967,6 +1065,814 @@ def card_icon(gt, name):
     img.alpha_composite(s, (TILE - 1 - s.width, mid - s.height // 2))
     return img
 
+
+
+# --- the wireless terminal (me-network issues #205 to #211) --------------------------------------------------------
+# Drawn from this mod's own PNGs (the interface's MV casing, the lit terminal picture), no AE2 textures: an antenna with fluix
+# rings stands for the wireless parts, a lightning bolt for the charger.
+WIRELESS_RING = FLUIX_LIGHT
+
+
+def antenna(d, cx, top, bottom, rings=2, colour=FLUIX):
+    """a mast from `bottom` up to `top` at column `cx` with a knob and `rings` arcs left and right of it"""
+    d.line((cx, top + 2, cx, bottom), fill=(170, 170, 185, 255), width=2)
+    d.ellipse((cx - 2, top, cx + 2, top + 4), fill=colour + (255,))
+    for i in range(1, rings + 1):
+        r = 3 + 3 * i
+        d.arc((cx - r, top + 2 - r, cx + r, top + 2 + r), 200, 250, fill=WIRELESS_RING + (255,), width=1)
+        d.arc((cx - r, top + 2 - r, cx + r, top + 2 + r), 290, 340, fill=WIRELESS_RING + (255,), width=1)
+
+
+def wireless():
+    """the access point, the booster, the terminal item, the charger and the module: entity sprites, icons, technology"""
+    written = []
+    casing = load(OUT_ENTITY / "me-interface.png")
+    # the access point: the casing, a dark panel and an antenna with two rings
+    ap = casing_ring(casing)
+    d = ImageDraw.Draw(ap)
+    d.rectangle((9, 22, 22, 26), fill=(45, 45, 55, 255), outline=(85, 85, 100, 255))
+    antenna(d, 16, 5, 22, 2)
+    ap.save(OUT_ENTITY / "me-wireless-access-point.png")
+    ap.save(OUT_ICON / "me-wireless-access-point.png")
+    written += [OUT_ENTITY / "me-wireless-access-point.png", OUT_ICON / "me-wireless-access-point.png"]
+    # the booster: a small board with an antenna (the cards' body colour)
+    b = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(b)
+    d.rounded_rectangle((4, 16, 27, 27), radius=2, fill=(60, 70, 95, 255), outline=(30, 30, 38, 255))
+    for x in (7, 11, 15, 19, 23):
+        d.point((x, 25), fill=(230, 190, 70, 255))
+    antenna(d, 16, 3, 16, 2)
+    b.save(OUT_ICON / "me-wireless-booster.png")
+    written.append(OUT_ICON / "me-wireless-booster.png")
+    # the terminal item: the lit terminal's picture, smaller, with an antenna on top (issue #238: no longer the old icon)
+    term = load(OUT_ENTITY / "me-terminal-lit.png").resize((24, 24), Image.LANCZOS)
+    t = Image.new("RGBA", (TILE, TILE))
+    t.alpha_composite(term, (4, 8))
+    d = ImageDraw.Draw(t)
+    antenna(d, 25, 1, 10, 1)
+    t.save(OUT_ICON / "me-wireless-terminal.png")
+    written.append(OUT_ICON / "me-wireless-terminal.png")
+    # the charger: the casing, a dark panel, a yellow bolt
+    c = casing_ring(casing)
+    d = ImageDraw.Draw(c)
+    d.polygon([(18, 5), (10, 17), (15, 17), (13, 27), (22, 13), (17, 13), (20, 5)], fill=(250, 205, 40, 255),
+              outline=(150, 115, 35, 255))
+    c.save(OUT_ENTITY / "me-charger.png")
+    c.save(OUT_ICON / "me-charger.png")
+    written += [OUT_ENTITY / "me-charger.png", OUT_ICON / "me-charger.png"]
+    # the module: an equipment plate (gray, like the game's equipment) with the terminal and an antenna
+    m = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(m)
+    d.rounded_rectangle((1, 1, 30, 30), radius=3, fill=(70, 72, 80, 255), outline=(30, 30, 38, 255))
+    m.alpha_composite(load(OUT_ENTITY / "me-terminal-lit.png").resize((18, 18), Image.LANCZOS), (4, 10))
+    d = ImageDraw.Draw(m)
+    antenna(d, 24, 3, 14, 1)
+    m.save(OUT_ICON / "me-wireless-module.png")
+    written.append(OUT_ICON / "me-wireless-module.png")
+    # the technology: the access point, upscaled
+    upscale(ap).save(OUT_TECH / "me-wireless.png")
+    written.append(OUT_TECH / "me-wireless.png")
+    return written
+
+
+# the ME Chest (issue #229): the screen of its terminal on top, one cell bay below it; the bay's light is drawn by the runtime
+# (scripts/fork-me-network.lua CHEST_BAY), the icon shows it green
+CHEST_BAY = (11, 22)                 # left and top edge of the bay (10 x 4 px, as a drive's)
+
+
+def chest_sprite(lit_bay=False):
+    img = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(img)
+    d.rectangle((6, 4, 25, 17), fill=(18, 16, 30, 255), outline=FLUIX + (255,))
+    for i, colour in enumerate(((200, 200, 210), (230, 190, 70), (120, 175, 255), (95, 225, 120), (200, 120, 90), (170, 170, 185))):
+        x, y = 8 + (i % 3) * 6, 6 + (i // 3) * 6
+        d.rectangle((x, y, x + 3, y + 3), fill=colour + (255,))
+    x, y = CHEST_BAY
+    d.rectangle((x, y, x + 9, y + 3), fill=BAY + (255,), outline=(55, 55, 66, 255))
+    if lit_bay:
+        d.rectangle((x + 1, y + 1, x + 8, y + 2), fill=(77, 217, 102, 255))
+    return img
+
+
+def chest():
+    written = [OUT_ENTITY / "me-chest.png", OUT_ICON / "me-chest.png"]
+    chest_sprite().save(written[0])
+    chest_sprite(True).save(written[1])
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    hd_block(chest_sprite()).save(HD_ENTITY / "me-chest.png")
+    hd_cube(chest_sprite(True)).save(HD_ICON / "me-chest.png")
+    sheet = hd_sheet(ROOT / "docs/graphics-review/me-chest-229.png", "issue #229 (32 px | 3D style)",
+                     [("ME Chest", OUT_ENTITY / "me-chest.png", HD_ENTITY / "me-chest.png"),
+                      ("ME Chest icon", OUT_ICON / "me-chest.png", HD_ICON / "me-chest.png")])
+    return written + [HD_ENTITY / "me-chest.png", HD_ICON / "me-chest.png", sheet]
+
+
+# --- issue #238: the item icons of graphics/icons/ drawn here ---------------------------------------------------------
+# Until 0.5.2 these 17 files were the icons of Gregtorio 0.1.9 (they looked like another mod's art); they are drawn here now,
+# from GT5-Unofficial textures and Pillow shapes only, and never from the old files (tools/upstream-icon-hashes.tsv lists
+# their hashes, `devcheck.py check` fails on a file with one of them):
+#   * the blocks (controller, drive, terminal, interface, chest): the isometric cube of their 3D-style icon (hd_cube of the
+#     block's face, GT casings), at 32 px;
+#   * the storage housing: an empty steel cartridge (the GT MV casing as its body), a dark window for the component, an
+#     unlit LED and gold contacts at the bottom; the storage cells are this housing with the window and the LED in the
+#     tier's colour (cell_icon);
+#   * the storage components: a memory module, a GT circuit board with GT memory chips and a gold edge connector, the
+#     tier's colour as a stripe along the top and one to five lit pips; 1k to 256k on the green board with RAM chips, 1m to
+#     256m (no items of this mod, kept for other mods) on the red board with NAND chips;
+#   * the fluix cable: a coil of the ME cable (its colours) with a plug at the free end.
+OWN_BLOCKS = ("me-controller", "me-drive", "me-terminal", "me-interface", "me-chest")
+COMPONENT_TIERS = (                 # tier -> (stripe and pip colour, pips); the cell LED colours of CELLS for 1k to 256k
+    ("1k", (235, 235, 235), 1), ("4k", (245, 215, 70), 2), ("16k", (95, 225, 95), 3),
+    ("64k", (70, 205, 245), 4), ("256k", (225, 95, 245), 5),
+    ("1m", (235, 235, 235), 1), ("4m", (245, 215, 70), 2), ("16m", (95, 225, 95), 3),
+    ("64m", (70, 205, 245), 4), ("256m", (225, 95, 245), 5),
+)
+MODULE_BOARD = {"k": ("items/gt.metaitem.03/5", "items/gt.metaitem.03/39"),     # board, chip: green board, RAM chip
+                "m": ("items/gt.metaitem.03/8", "items/gt.metaitem.03/41")}     # red board, NAND chip
+MODULE_BOX = (3, 6, TILE - 4, 25)       # the module's board: 26 x 20 px
+HOUSING_BOX = (6, 4, 25, 27)            # the housing: 20 x 24 px (hd_cell stretches a cell to 20 x 24)
+HOUSING_WINDOW = (10, 9, 21, 19)        # the component window inside it
+HOUSING_LED = (18, 21, 21, 24)          # the status LED below the window (2 x 2 inside its rim)
+HOUSING_LED_OFF = (66, 68, 78)
+
+
+def tiled(tex, box):
+    """`tex` repeated over the box (x0, y0, x1, y1) of a new 32 x 32 picture, cut to it"""
+    fill = Image.new("RGBA", (TILE, TILE))
+    for y in range(box[1], box[3] + 1, tex.height):
+        for x in range(box[0], box[2] + 1, tex.width):
+            fill.alpha_composite(tex, (x, y))
+    mask = Image.new("L", (TILE, TILE))
+    ImageDraw.Draw(mask).rounded_rectangle(box, radius=2, fill=255)
+    img = Image.new("RGBA", (TILE, TILE))
+    img.paste(fill, (0, 0), mask)
+    return img
+
+
+def chip_body(gt, rel):
+    """the black chip of a GT chip texture without its gray wafer plate"""
+    tex = gt_texture(gt, rel)
+    out = Image.new("RGBA", tex.size)
+    src, px = tex.load(), out.load()
+    for y in range(tex.height):
+        for x in range(tex.width):
+            r, g, b, a = src[x, y]
+            if a and max(r, g, b) < 40:
+                px[x, y] = (r, g, b, 255)
+    return opaque(out)
+
+
+def housing_icon(gt):
+    """the empty storage housing (basic-storage-housing)"""
+    body = hull(gt, "MV").crop((1, 1, GT_PX - 1, GT_PX - 1))
+    img = tiled(body, HOUSING_BOX)
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle(HOUSING_BOX, radius=2, outline=CARD_OUTLINE + (255,))
+    x0, y0, x1, y1 = HOUSING_BOX
+    d.rectangle((x0 + 6, y0 + 2, x1 - 6, y0 + 3), fill=(40, 42, 50, 255))                  # the grip slot
+    wx0, wy0, wx1, wy1 = HOUSING_WINDOW
+    d.rectangle(HOUSING_WINDOW, fill=(24, 24, 30, 255))
+    d.line((wx0, wy1 + 1, wx1 + 1, wy1 + 1), fill=(215, 225, 240, 255))                    # lit lower and right edge
+    d.line((wx1 + 1, wy0, wx1 + 1, wy1 + 1), fill=(215, 225, 240, 255))
+    d.rectangle(HOUSING_LED, fill=HOUSING_LED_OFF + (255,), outline=CARD_OUTLINE + (255,))
+    for x in range(x0 + 3, x1 - 2, 3):                                                     # contacts along the bottom
+        d.rectangle((x, y1 - 2, x + 1, y1 - 1), fill=CONTACT + (255,))
+        d.point((x + 1, y1 - 1), fill=CONTACT_DARK + (255,))
+    return img
+
+
+def component_icon(gt, tier):
+    """a storage component: a memory module (board, chips, edge connector, the tier's stripe and pips)"""
+    colour, pips = next((c, p) for t, c, p in COMPONENT_TIERS if t == tier)
+    board, chip = MODULE_BOARD[tier[-1]]
+    tex = gt_texture(gt, board).crop((1, 1, GT_PX - 1, GT_PX - 1))
+    img = tiled(tex, MODULE_BOX)
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = MODULE_BOX
+    d.rectangle((x0 + 1, y0 + 1, x1 - 1, y0 + 2), fill=colour + (255,))                   # the tier stripe
+    body = chip_body(gt, chip)
+    body = body.resize((min(body.width, 10), min(body.height, 7)), Image.NEAREST)
+    for cx in (x0 + 3, x1 - 2 - body.width):
+        img.alpha_composite(body, (cx, y0 + 5))
+    for i in range(pips):                                                                  # one to five pips
+        px0 = x0 + 4 + i * 4
+        d.rectangle((px0, y1 - 7, px0 + 1, y1 - 6), fill=colour + (255,))
+    d.rectangle((x0 + 2, y1 - 3, x1 - 2, y1), fill=CARD_OUTLINE + (255,))                 # the edge connector
+    for x in range(x0 + 3, x1 - 2, 2):
+        d.line((x, y1 - 2, x, y1), fill=CONTACT + (255,))
+    d.rounded_rectangle(MODULE_BOX, radius=2, outline=CARD_OUTLINE + (255,))
+    d.rectangle((TILE // 2 - 1, y1 - 3, TILE // 2, y1), fill=(0, 0, 0, 0))                 # the key notch
+    return img
+
+
+def fluix_cable_icon():
+    """a cable drum: the ME cable (its colours) wound between two steel flanges, the free end hanging down"""
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    d.ellipse((3, 4, 13, 28), fill=(120, 124, 138, 255), outline=CARD_OUTLINE + (255,))   # the back flange
+    d.rectangle((8, 8, 23, 24), fill=CABLE_CORE + (255,))                                 # the turns
+    for x in range(9, 23, 3):
+        d.line((x, 8, x, 24), fill=CABLE_EDGE + (255,))
+        d.line((x + 1, 8, x + 1, 24), fill=CABLE_GLOW + (255,))
+    d.line((8, 7, 23, 7), fill=CARD_OUTLINE + (255,))
+    d.line((8, 25, 23, 25), fill=CARD_OUTLINE + (255,))
+    d.ellipse((18, 4, 28, 28), fill=(150, 154, 168, 255), outline=CARD_OUTLINE + (255,))  # the front flange and its hub
+    d.ellipse((21, 13, 25, 19), fill=(60, 62, 72, 255), outline=CARD_OUTLINE + (255,))
+    d.line((12, 25, 6, 30), fill=CARD_OUTLINE + (255,), width=4)                           # the free end
+    d.line((12, 25, 6, 30), fill=CABLE_CORE + (255,), width=2)
+    return img
+
+
+def block_icon(front):
+    """a block's icon at 32 px: the cube of its 3D-style icon"""
+    return hd_cube(front).resize((TILE, TILE), Image.LANCZOS)
+
+
+def own_icons(gt):
+    """the 17 icons of graphics/icons/ (issue #238), then what is made from them: the cell and drive icons, their
+    technologies, the fluid variants (fluids()), the 3D-style cells and cable (hd_batch1)"""
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    fronts = {"me-controller": load(OUT_ENTITY / "me-network-controller.png").resize((TILE, TILE), Image.LANCZOS),
+              "me-drive": load(OUT_ENTITY / "me-drive.png"), "me-terminal": load(OUT_ENTITY / "me-terminal-lit.png"),
+              "me-interface": load(OUT_ENTITY / "me-interface-unified.png"), "me-chest": chest_sprite(True)}
+    for name in OWN_BLOCKS:
+        save(block_icon(fronts[name]), ICONS / f"{name}.png")
+    save(housing_icon(gt), ICONS / "basic-storage-housing.png")
+    for tier, _, _ in COMPONENT_TIERS:
+        save(component_icon(gt, tier), ICONS / f"me-{tier}-storage-component.png")
+    save(fluix_cable_icon(), ICONS / "fluix-cable.png")
+    for cell in CELLS:
+        save(cell_icon(cell), OUT_ICON / f"me-{cell}-storage-cell.png")
+        save(drive_icon(cell), OUT_ICON / f"me-drive-{cell}.png")
+    for tech, icon in (("me-network", "me-drive-16k"), ("me-storage-64k", "me-drive-64k"),
+                       ("me-storage-256k", "me-drive-256k")):
+        save(upscale(load(OUT_ICON / f"{icon}.png")), OUT_TECH / f"{tech}.png")
+    return written
+
+
+def own_icons_sheet(path):
+    """contact sheet of issue #238: the 17 icons and what is made from them, at game size in inventory slots and 4x
+    (the new pictures only)"""
+    groups = [("blocks", [ICONS / f"{n}.png" for n in OWN_BLOCKS]),
+              ("housing, cable, components 1k to 256k", [ICONS / "basic-storage-housing.png", ICONS / "fluix-cable.png"]
+               + [ICONS / f"me-{t}-storage-component.png" for t, _, _ in COMPONENT_TIERS[:5]]),
+              ("components 1m to 256m (no items here)", [ICONS / f"me-{t}-storage-component.png" for t, _, _ in COMPONENT_TIERS[5:]]),
+              ("cells (32 px)", [OUT_ICON / f"me-{c}-storage-cell.png" for c in CELLS]),
+              ("fluid cells (32 px)", [OUT_ICON / f"me-{c}-fluid-storage-cell.png" for c in CELLS]),
+              ("old drive items", [OUT_ICON / f"me-drive-{c}.png" for c in CELLS]),
+              ("old fluid drive items", [OUT_ICON / f"me-fluid-drive-{c}.png" for c in CELLS]),
+              ("wireless terminal, module", [OUT_ICON / "me-wireless-terminal.png", OUT_ICON / "me-wireless-module.png"]),
+              ("3D style: cable, cells (64 px)", [HD_ICON / "fluix-cable.png"] + [HD_ICON / f"me-{c}-storage-cell.png" for c in CELLS]),
+              ("3D style: fluid cells (64 px)", [HD_ICON / f"me-{c}-fluid-storage-cell.png" for c in CELLS]),
+              ("technologies (256 px)", [OUT_TECH / f"{t}.png" for t in ("me-network", "me-storage-64k", "me-storage-256k",
+                                                                         "me-fluid-storage", "me-fluid-storage-256k")])]
+    rh, cw = 150, 180
+    img = Image.new("RGBA", (20 + cw * max(len(f) for _, f in groups), 30 + rh * len(groups)), SHEET_BG + (255,))
+    d = ImageDraw.Draw(img)
+    d.text((10, 8), "issue #238: icons drawn here (game size in a slot | 4x; technologies at 3/8)", fill=SHEET_TEXT + (255,))
+    for g, (title, files) in enumerate(groups):
+        y = 30 + g * rh
+        d.rectangle((4, y, img.width - 5, y + rh - 6), fill=SHEET_PANEL + (255,))
+        d.text((10, y + 4), title, fill=SHEET_DIM + (255,))
+        for i, f in enumerate(files):
+            pic = load(f)
+            x = 10 + i * cw
+            d.rectangle((x, y + 24, x + 39, y + 63), fill=SLOT_BG + (255,), outline=SLOT_EDGE + (255,))
+            img.alpha_composite(pic if pic.width == TILE else pic.resize((TILE, TILE), Image.LANCZOS), (x + 4, y + 28))
+            big = pic.resize((128, 128), Image.NEAREST) if pic.width <= 64 else pic.resize((96, 96), Image.LANCZOS)
+            img.alpha_composite(big, (x + 46, y + 16))
+            d.text((x, y + rh - 22), f.stem, fill=SHEET_DIM + (255,))
+    img.save(path)
+    return path
+
+
+# --- the 3D style of issue #154 (route A), batch 1 (#218)-------------------------------------------------------------
+# Every picture at 64 px per tile (the prototypes use scale 0.5), made from the 32 px pictures above, which stay the sources:
+#   * blocks: the face over HD_FACE of the tile (top left), the east and the south side as depth strips (the last columns /
+#     rows of the face's casing, shaded 0.72 and 0.5), a dark contour and the two inner edges; lit from the top left. This is
+#     the look of Gregtorio's machine blocks (its issue #148), so both mods have one style.
+#   * icons of blocks: an isometric cube, the face in front (left), the casing on the top and the right side.
+#   * flat things on the ground (the cable, the underground cable): 2x with a contour and a short shadow to the south-east.
+#   * storage cells: an upright box (the cell's picture in front, its housing as the top and the right side).
+HD = 64
+HD_DEPTH = 10                       # px of a 64 px tile that the depth strips take (scripts/fork-me-network.lua: FACE)
+HD_ENTITY = OUT_ENTITY / "hd"
+HD_ICON = ROOT / "graphics/icons/hd"
+CONTOUR = (18, 18, 22, 255)
+
+
+def hd_up(img, f=2):
+    return img.resize((img.width * f, img.height * f), Image.NEAREST)
+
+
+def hd_shade(img, f):
+    out = img.copy()
+    px = out.load()
+    for y in range(out.height):
+        for x in range(out.width):
+            r, g, b, a = px[x, y]
+            px[x, y] = (int(r * f), int(g * f), int(b * f), a)
+    return out
+
+
+def hd_affine(dst, src, p0, u, v):
+    """paste `src` so that its top left lands on p0, its width along u, its height along v"""
+    w, h = src.size
+    det = u[0] * v[1] - u[1] * v[0]
+    a, b = v[1] / det * w, -v[0] / det * w
+    d, e = -u[1] / det * h, u[0] / det * h
+    dst.alpha_composite(src.transform(dst.size, Image.AFFINE,
+                                      (a, b, -(a * p0[0] + b * p0[1]), d, e, -(d * p0[0] + e * p0[1])), resample=Image.NEAREST))
+
+
+def hd_contour(img):
+    alpha = img.getchannel("A").load()
+    out = img.copy()
+    o = out.load()
+    w, h = img.size
+    for y in range(h):
+        for x in range(w):
+            if alpha[x, y] == 0:
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < w and 0 <= ny < h and alpha[nx, ny] > 0:
+                        o[x, y] = CONTOUR
+                        break
+    return out
+
+
+def light_square():
+    """issue #267: the cell lights of the ME Drive and the ME Chest are hidden entities whose picture variations are cut from
+    this white square and tinted (data-final-fixes.lua), drawn at scale 1/16 (8 px of it are one px of a 64 px block)"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (256, 256), (255, 255, 255, 255)).save(HD_ENTITY / "me-light.png")
+
+
+def hd_block(face, tiles=1, depth=HD_DEPTH):
+    """a block of `tiles` x `tiles` from its 32 px face picture: 64 px per tile"""
+    size = HD * tiles
+    img = Image.new("RGBA", (size, size))
+    f = hd_up(face, 2 * tiles // tiles).resize((size - depth, size - depth), Image.NEAREST)
+    edge_e = f.crop((f.width - 4, 0, f.width, f.height)).resize((depth, size - depth), Image.NEAREST)
+    edge_s = f.crop((0, f.height - 4, f.width, f.height)).resize((size - depth, depth), Image.NEAREST)
+    hd_affine(img, hd_shade(edge_e, 0.72), (size - depth, 0), (depth, depth), (0, size - depth))
+    hd_affine(img, hd_shade(edge_s, 0.5), (0, size - depth), (size - depth, 0), (depth, depth))
+    img.alpha_composite(f, (0, 0))
+    d = ImageDraw.Draw(img)
+    d.line((size - depth, 0, size - depth, size - depth), fill=CONTOUR)
+    d.line((0, size - depth, size - depth, size - depth), fill=CONTOUR)
+    return hd_contour(img)
+
+
+def hd_plain_top(face):
+    """the casing of a face without its inside: the top and the right side of an icon cube"""
+    top = face.copy()
+    ImageDraw.Draw(top).rectangle((3, 3, face.width - 4, face.height - 4), fill=(60, 64, 76, 255))
+    return top
+
+
+def hd_cube(front, top=None, side=None):
+    """a 64 x 64 icon: an isometric cube with `front` (32 px) on its left face"""
+    top = top or hd_plain_top(front)
+    side = side or top
+    img = Image.new("RGBA", (HD, HD))
+    w, h = HD // 2 - 2, (HD // 2 - 2) // 2
+    cx, y0 = HD // 2, 4
+    hd_affine(img, hd_up(top), (cx, y0), (w, h), (-w, h))
+    hd_affine(img, hd_shade(hd_up(front), 0.85), (cx - w, y0 + h), (w, h), (0, w))
+    hd_affine(img, hd_shade(hd_up(side), 0.6), (cx, y0 + 2 * h), (w, -h), (0, w))
+    return hd_contour(img)
+
+
+def hd_flat(img):
+    """a thing that lies on the ground (cable): 2x, a contour, a shadow two pixels to the south-east"""
+    big = hd_up(img)
+    out = Image.new("RGBA", big.size)
+    shadow = Image.new("RGBA", big.size, (0, 0, 0, 0))
+    shadow.putalpha(big.getchannel("A").point(lambda v: 70 if v else 0))
+    out.alpha_composite(shadow, (2, 2))
+    out.alpha_composite(hd_contour(big))
+    return out
+
+
+def hd_flat_sheet(sheet, frames):
+    """the same for a sheet of `frames` 32 px pictures side by side"""
+    out = Image.new("RGBA", (HD * frames, HD))
+    for i in range(frames):
+        out.alpha_composite(hd_flat(sheet.crop((i * TILE, 0, (i + 1) * TILE, TILE))), (i * HD, 0))
+    return out
+
+
+def hd_cell(icon):
+    """a storage cell as an upright box: a housing panel with the cell's picture in front, the housing as the top and the
+    right side"""
+    body = icon.crop(icon.getbbox() or (0, 0, TILE, TILE))
+    panel = Image.new("RGBA", (24, 28), (128, 130, 140, 255))
+    pd = ImageDraw.Draw(panel)
+    pd.rectangle((0, 0, 23, 27), outline=(70, 72, 82, 255))
+    pd.line((1, 1, 22, 1), fill=(175, 177, 187, 255))
+    pd.line((1, 1, 1, 26), fill=(175, 177, 187, 255))
+    art = body.resize((20, 24), Image.NEAREST)
+    panel.alpha_composite(art, (2, 2))
+    front = hd_up(panel)
+    img = Image.new("RGBA", (HD, HD))
+    x0, y0, depth = 6, 12, 12
+    housing = Image.new("RGBA", (8, 8), (150, 152, 162, 255))
+    hd_affine(img, hd_shade(housing, 0.95), (x0 + depth, y0 - depth * 0.6), (front.width, 0), (-depth, depth * 0.6))
+    hd_affine(img, hd_shade(housing, 0.62), (x0 + front.width, y0), (depth, -depth * 0.6), (0, front.height))
+    img.alpha_composite(front, (x0, y0))
+    return hd_contour(img)
+
+
+def hd_batch1():
+    """issue #218: terminals, controller, cable and underground cable, drive and the cells"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for name in ("me-terminal-off", "me-terminal-lit", "me-drive"):
+        save(hd_block(load(OUT_ENTITY / f"{name}.png")), HD_ENTITY / f"{name}.png")
+    pt = load(OUT_ENTITY / "me-pattern-terminal.png")              # dark | lit
+    sheet = Image.new("RGBA", (2 * HD, HD))
+    for i in range(2):
+        sheet.alpha_composite(hd_block(pt.crop((i * TILE, 0, (i + 1) * TILE, TILE))), (i * HD, 0))
+    save(sheet, HD_ENTITY / "me-pattern-terminal.png")
+    save(hd_block(load(OUT_ENTITY / "me-network-controller.png").resize((TILE, TILE), Image.LANCZOS)
+                  if False else load(OUT_ENTITY / "me-network-controller.png"), tiles=2, depth=2 * HD_DEPTH),
+         HD_ENTITY / "me-network-controller.png")
+    save(hd_flat_sheet(load(OUT_ENTITY / "me-cable.png"), 16), HD_ENTITY / "me-cable.png")
+    for d in ("north", "east", "south", "west"):
+        save(hd_flat(load(OUT_ENTITY / f"me-underground-cable-{d}.png")), HD_ENTITY / f"me-underground-cable-{d}.png")
+    # icons
+    save(hd_cube(load(OUT_ENTITY / "me-terminal-lit.png")), HD_ICON / "me-terminal.png")
+    save(hd_cube(pt.crop((TILE, 0, 2 * TILE, TILE))), HD_ICON / "me-pattern-terminal.png")
+    ctrl = load(OUT_ENTITY / "me-network-controller.png").resize((TILE, TILE), Image.LANCZOS)
+    save(hd_cube(ctrl), HD_ICON / "me-controller.png")
+    save(hd_cube(load(OUT_ENTITY / "me-drive.png")), HD_ICON / "me-drive.png")
+    save(hd_flat(load(OUT_ICON / "me-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "me-cable.png")
+    save(hd_flat(load(ROOT / "graphics/icons/fluix-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "fluix-cable.png")
+    save(hd_flat(load(OUT_ICON / "me-underground-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "me-underground-cable.png")
+    for k in ("1k", "4k", "16k", "64k", "256k"):
+        for kind in ("storage-cell", "fluid-storage-cell"):
+            save(hd_cell(load(OUT_ICON / f"me-{k}-{kind}.png")), HD_ICON / f"me-{k}-{kind}.png")
+    return written
+
+
+BUS_DEPTH = 6                       # the buses lie flat (they can be walked over): a lower block
+
+
+def hd_batch2():
+    """issue #219: the interface, the import, export and storage bus (four directions), the level maintainer, the circuit
+    interface"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for name in ("me-interface-unified", "me-level-maintainer-off", "me-level-maintainer-on", "me-circuit-interface"):
+        save(hd_block(load(OUT_ENTITY / f"{name}.png")), HD_ENTITY / f"{name}.png")
+    for bus in ("me-import-bus", "me-export-bus", "me-storage-bus"):
+        for d in ("north", "east", "south", "west"):
+            save(hd_block(load(OUT_ENTITY / f"{bus}-{d}.png"), depth=BUS_DEPTH), HD_ENTITY / f"{bus}-{d}.png")
+        save(hd_cube(load(OUT_ENTITY / f"{bus}-south.png")), HD_ICON / f"{bus}.png")
+    save(hd_cube(load(OUT_ENTITY / "me-interface-unified.png")), HD_ICON / "me-interface.png")
+    save(hd_cube(load(OUT_ENTITY / "me-level-maintainer-on.png")), HD_ICON / "me-level-maintainer.png")
+    save(hd_cube(load(OUT_ENTITY / "me-circuit-interface.png")), HD_ICON / "me-circuit-interface.png")
+    return written + bus_markers()
+
+
+BUS_FACE = HD - BUS_DEPTH           # the face of a bus's 64 px picture: 58 px at its top left
+
+
+def bus_markers():
+    """issue #282: the marker of each bus and direction (the plate on the side it faces and its arrows; the storage bus
+    without its chest), alone: the face of its picture (BUS_FACE px, made like hd_block's) with nothing else, so it repeats
+    the picture's pixels exactly. prototypes/network.lua draws it as a layer over the picture, placed by the mod-data's
+    bus view, so a graphics mod that replaces the picture keeps the direction (docs/API.md "The bus view")."""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    written = []
+    markers = {"me-import-bus": lambda d: bus_sprite(IMPORT_ACCENT, False, d, True),
+               "me-export-bus": lambda d: bus_sprite(EXPORT_ACCENT, True, d, True),
+               "me-storage-bus": lambda d: storage_bus_sprite(d, True)}
+    for bus, draw in markers.items():
+        for d in ("north", "east", "south", "west"):
+            path = HD_ENTITY / f"{bus}-{d}-marker.png"
+            hd_up(draw(d)).resize((BUS_FACE, BUS_FACE), Image.NEAREST).save(path)
+            written.append(path)
+    return written
+
+
+def hd_block_connected(face, mask, depth=HD_DEPTH):
+    """Issue #220: a crafting block of a CPU (the connected pictures of #152): the face runs to the tile's edge on a side
+    that touches another block of the CPU (`mask`: N 1, E 2, S 4, W 8); the east and south depth strips and the outline only
+    on the outer sides, so a CPU is one block with depth around its outside."""
+    n, e, so, w = (bool(mask & m) for m in (1, 2, 4, 8))
+    img = Image.new("RGBA", (HD, HD))
+    fw, fh = HD - (0 if e else depth), HD - (0 if so else depth)
+    f = hd_up(face).resize((fw, fh), Image.NEAREST)
+    # a strip runs on past the tile's edge where the CPU goes on (into the next block's strip)
+    if not e:
+        y0 = -depth if n else 0
+        edge_e = f.crop((f.width - 4, 0, f.width, f.height)).resize((depth, fh - y0), Image.NEAREST)
+        hd_affine(img, hd_shade(edge_e, 0.72), (fw, y0), (depth, depth), (0, fh - y0))
+    if not so:
+        x0 = -depth if w else 0
+        edge_s = f.crop((0, f.height - 4, f.width, f.height)).resize((fw - x0, depth), Image.NEAREST)
+        hd_affine(img, hd_shade(edge_s, 0.5), (x0, fh), (fw - x0, 0), (depth, depth))
+    img.alpha_composite(f, (0, 0))
+    d = ImageDraw.Draw(img)
+    if not n:
+        d.line((0, 0, fw - 1, 0), fill=CONTOUR)
+    if not w:
+        d.line((0, 0, 0, fh - 1), fill=CONTOUR)
+    if not e:
+        d.line((fw, 0, fw, fh), fill=CONTOUR)
+        d.line((HD - 1, 0 if n else depth, HD - 1, HD - 1), fill=CONTOUR)
+    if not so:
+        d.line((0, fh, fw, fh), fill=CONTOUR)
+        d.line((0 if w else depth, HD - 1, HD - 1, HD - 1), fill=CONTOUR)
+    return img
+
+
+def hd_batch3():
+    """issue #220: the pattern provider, the molecular assembler (idle, working), the cell workbench, the crafting blocks (48
+    connected pictures each), the wireless access point and the charger"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for name in ("me-pattern-provider", "me-molecular-assembler-idle", "me-cell-workbench", "me-wireless-access-point", "me-charger"):
+        save(hd_block(load(OUT_ENTITY / f"{name}.png")), HD_ENTITY / f"{name}.png")
+    work = load(OUT_ENTITY / "me-molecular-assembler-working.png")
+    frames = work.height // TILE
+    strip = Image.new("RGBA", (HD, HD * frames))
+    for i in range(frames):
+        strip.alpha_composite(hd_block(work.crop((0, i * TILE, TILE, (i + 1) * TILE))), (0, i * HD))
+    save(strip, HD_ENTITY / "me-molecular-assembler-working.png")
+    for name, _, _ in CRAFTING_BLOCKS:
+        src = load(OUT_ENTITY / f"{name}.png")
+        n = src.width // TILE
+        sheet = Image.new("RGBA", (HD * n, HD))
+        for i in range(n):
+            sheet.alpha_composite(hd_block_connected(src.crop((i * TILE, 0, (i + 1) * TILE, TILE)), i % 16), (i * HD, 0))
+        save(sheet, HD_ENTITY / f"{name}.png")
+        save(hd_cube(src.crop((16 * TILE, 0, 17 * TILE, TILE))), HD_ICON / f"{name}.png")       # the lit lone block
+    for name, src in (("me-pattern-provider", "me-pattern-provider"), ("me-molecular-assembler", "me-molecular-assembler-idle"),
+                      ("me-cell-workbench", "me-cell-workbench"), ("me-wireless-access-point", "me-wireless-access-point"),
+                      ("me-charger", "me-charger")):
+        save(hd_cube(load(OUT_ENTITY / f"{src}.png")), HD_ICON / f"{name}.png")
+    return written
+
+
+# --- issue #221 (batch 4 of #154): the upgrade cards, patterns, storage components, housing, wireless items -------------
+CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'inverter', 'equal-distribution', 'acceleration')
+
+
+def hd_plate(icon, depth=5):
+    """a thin plate (a card, a handheld device) seen from above like the blocks (route A of #154): the 32 px picture at 2x
+    and its body pushed `depth` px to the south-east as its side, shaded, a contour. (The study's slab lying on its back
+    left a card's sign too small at the game's icon size.)"""
+    big = hd_up(icon).resize((HD - depth, HD - depth), Image.NEAREST)
+    img = Image.new("RGBA", (HD, HD))
+    side = hd_shade(big, 0.5)
+    for k in range(depth, 0, -1):
+        img.alpha_composite(side, (k, k))
+    img.alpha_composite(big, (0, 0))
+    return hd_contour(img)
+
+
+def hd_bevel(icon):
+    """a flat item (a pattern, a component, the housing, the booster) at 2x, lit from the top left (route B of #154, for the
+    items without a body): a light edge two pixels wide where its shape has its top or left side, a dark one at its bottom and
+    right, a contour and a drop shadow"""
+    big = hd_up(icon)
+    a = big.getchannel("A").load()
+    px = big.load()
+    w, h = big.size
+    out = big.copy()
+    o = out.load()
+
+    def empty(x, y, dx, dy):
+        for k in (1, 2):
+            nx, ny = x + dx * k, y + dy * k
+            if not (0 <= nx < w and 0 <= ny < h) or a[nx, ny] == 0:
+                return True
+        return False
+
+    for y in range(h):
+        for x in range(w):
+            if a[x, y] == 0:
+                continue
+            r, g, b, al = px[x, y]
+            if empty(x, y, 0, -1) or empty(x, y, -1, 0):
+                o[x, y] = (min(255, r + 55), min(255, g + 55), min(255, b + 55), al)
+            elif empty(x, y, 0, 1) or empty(x, y, 1, 0):
+                o[x, y] = (int(r * 0.6), int(g * 0.6), int(b * 0.6), al)
+    res = Image.new("RGBA", (w, h))
+    shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    shadow.putalpha(out.getchannel("A").point(lambda v: 80 if v else 0))
+    res.alpha_composite(shadow, (3, 3))
+    res.alpha_composite(hd_contour(out))
+    return res
+
+
+def hd_batch4():
+    """issue #221: the upgrade cards (plates), the blank and the encoded pattern, the storage components and the housing
+    (bevelled), the wireless terminal and its module (plates), the booster (bevelled); 64 x 64 icons from the 32 px ones.
+    The module's picture is also its equipment sprite (2 x 2 cells of the grid). The old fluid drive items and the fluid
+    interface are hidden prototypes of old saves: no new picture (#154)."""
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for c in CARDS:
+        save(hd_plate(load(OUT_ICON / f"me-{c}-card.png")), HD_ICON / f"me-{c}-card.png")
+    for name in ("me-blank-pattern", "me-encoded-pattern", "me-wireless-booster"):
+        save(hd_bevel(load(OUT_ICON / f"{name}.png")), HD_ICON / f"{name}.png")
+    for name in [f"me-{t}-storage-component" for t in CELLS] + ["basic-storage-housing"]:
+        save(hd_bevel(load(ICONS / f"{name}.png")), HD_ICON / f"{name}.png")
+    for name in ("me-wireless-terminal", "me-wireless-module"):
+        save(hd_plate(load(OUT_ICON / f"{name}.png")), HD_ICON / f"{name}.png")
+    return written
+
+
+def hd_sheet_batch4(path):
+    pairs = [(f"{c} card", OUT_ICON / f"me-{c}-card.png", HD_ICON / f"me-{c}-card.png") for c in CARDS]
+    pairs += [(n.replace("me-", ""), OUT_ICON / f"{n}.png", HD_ICON / f"{n}.png")
+              for n in ("me-blank-pattern", "me-encoded-pattern", "me-wireless-terminal", "me-wireless-booster", "me-wireless-module")]
+    pairs += [(n.replace("me-", ""), ICONS / f"{n}.png", HD_ICON / f"{n}.png")
+              for n in [f"me-{t}-storage-component" for t in CELLS] + ["basic-storage-housing"]]
+    return hd_sheet(path, "issue #221", pairs)
+
+
+# --- issue #222 (batch 5 of #154): the technology icons, from the 3D-style icons ------------------------------------
+# technology -> the 64 px icon of graphics/icons/hd it shows (the subjects of before, in the 3D style; the drives per tier
+# are gone, so the storage technologies show the cells of their tier)
+TECH_ICONS = {
+    "me-network": "me-drive",
+    "me-storage-64k": "me-64k-storage-cell",
+    "me-storage-256k": "me-256k-storage-cell",
+    "me-fluid-storage": "me-16k-fluid-storage-cell",
+    "me-fluid-storage-256k": "me-256k-fluid-storage-cell",
+    "me-autocrafting": "me-molecular-assembler",
+    "me-automation": "me-level-maintainer",
+    "me-co-processing": "me-crafting-co-processing-unit",
+    "me-quantum-crafting": "me-256k-crafting-storage",
+    "me-wireless": "me-wireless-access-point",
+}
+
+
+def hd_batch5():
+    """issue #222: 256 x 256 technology icons, each a 3D-style icon at the largest whole factor that leaves a margin
+    (upscale); ME Upgrade Cards three card plates fanned out (Overflow Destruction behind, Fuzzy, Capacity in front)"""
+    OUT_TECH_HD.mkdir(parents=True, exist_ok=True)
+    written = []
+
+    def save(img, path):
+        img.save(path)
+        written.append(path)
+
+    for tech, icon in TECH_ICONS.items():
+        save(upscale(load(HD_ICON / f"{icon}.png")), OUT_TECH_HD / f"{tech}.png")
+    fan = Image.new("RGBA", (HD + 32, HD + 40))
+    for i, name in enumerate(("me-overflow-destruction-card", "me-fuzzy-card", "me-capacity-card")):
+        fan.alpha_composite(load(HD_ICON / f"{name}.png"), (i * 16, i * 20))
+    save(upscale(fan), OUT_TECH_HD / "me-upgrade-cards.png")
+    return written
+
+
+def hd_sheet_batch5(path):
+    pairs = [(t.replace("me-", ""), OUT_TECH / f"{t}.png", OUT_TECH_HD / f"{t}.png")
+             for t in list(TECH_ICONS) + ["me-upgrade-cards"]]
+    return hd_sheet(path, "issue #222", pairs)
+
+
+def hd_sheet_batch3(path):
+    pairs = [("pattern provider", OUT_ENTITY / "me-pattern-provider.png", HD_ENTITY / "me-pattern-provider.png"),
+             ("assembler idle", OUT_ENTITY / "me-molecular-assembler-idle.png", HD_ENTITY / "me-molecular-assembler-idle.png"),
+             ("cell workbench", OUT_ENTITY / "me-cell-workbench.png", HD_ENTITY / "me-cell-workbench.png"),
+             ("access point", OUT_ENTITY / "me-wireless-access-point.png", HD_ENTITY / "me-wireless-access-point.png"),
+             ("charger", OUT_ENTITY / "me-charger.png", HD_ENTITY / "me-charger.png"),
+             ("provider icon", OUT_ICON / "me-pattern-provider.png", HD_ICON / "me-pattern-provider.png"),
+             ("assembler icon", OUT_ICON / "me-molecular-assembler.png", HD_ICON / "me-molecular-assembler.png"),
+             ("crafting unit icon", OUT_ICON / "me-crafting-unit.png", HD_ICON / "me-crafting-unit.png"),
+             ("4k storage icon", OUT_ICON / "me-4k-crafting-storage.png", HD_ICON / "me-4k-crafting-storage.png")]
+    hd_sheet(path, "issue #220", pairs)
+    # a 3 x 3 CPU (unit, storages, co-processors, monitor) as it lies on the ground, lit, at 2x, next to today's
+    img = load(path)
+    out = Image.new("RGBA", (img.width, img.height + 260), (40, 40, 48, 255))
+    out.alpha_composite(img)
+    names = [b[0] for b in CRAFTING_BLOCKS]
+    layout = [[names[3], names[4], names[0]], [names[1], names[2], names[5]], [names[6], names[7], names[0]]]
+    y0 = img.height + 20
+    for gy in range(3):
+        for gx in range(3):
+            mask = (1 if gy > 0 else 0) | (2 if gx < 2 else 0) | (4 if gy < 2 else 0) | (8 if gx > 0 else 0)
+            v = 16 + mask
+            old = load(OUT_ENTITY / f"{layout[gy][gx]}.png").crop((v * TILE, 0, (v + 1) * TILE, TILE))
+            new = load(HD_ENTITY / f"{layout[gy][gx]}.png").crop((v * HD, 0, (v + 1) * HD, HD))
+            out.alpha_composite(hd_up(old, 2), (180 + gx * 64, y0 + gy * 64))
+            out.alpha_composite(new, (420 + gx * 64, y0 + gy * 64))
+    out.save(path)
+    return path
+
+
+def hd_sheet(path, title, pairs, patch=None):
+    """a contact sheet: per row today's picture (4x), the new one (2x) and at game size; `patch`: pictures for a 3 x 2 patch"""
+    rh = 150
+    img = Image.new("RGBA", (760, 30 + rh * len(pairs) + (120 if patch else 0)), (40, 40, 48, 255))
+    d = ImageDraw.Draw(img)
+    d.text((10, 8), title + ": today (4x) | new (2x) | new at game size", fill=(220, 220, 230, 255))
+    for i, (name, old, new) in enumerate(pairs):
+        y = 30 + i * rh
+        o, n = load(old), load(new)
+        d.text((10, y + 60), name, fill=(220, 220, 230, 255))
+        img.alpha_composite(o.resize((128, 128), Image.NEAREST), (180, y + 10))
+        img.alpha_composite(n.resize((128, 128), Image.NEAREST), (340, y + 10))
+        img.alpha_composite(n.resize((32, 32), Image.LANCZOS), (500, y + 58))
+    if patch:
+        y = 30 + rh * len(pairs)
+        for gx in range(3):
+            for gy in range(2):
+                p = load(patch[(gx + gy * 3) % len(patch)])
+                img.alpha_composite(p.resize((32, 32), Image.LANCZOS), (180 + gx * 32, y + 20 + gy * 32))
+    img.save(path)
+    return path
+
+
+def hd_sheet_batch2(path):
+    pairs = [("interface", OUT_ENTITY / "me-interface-unified.png", HD_ENTITY / "me-interface-unified.png"),
+             ("level maintainer off", OUT_ENTITY / "me-level-maintainer-off.png", HD_ENTITY / "me-level-maintainer-off.png"),
+             ("level maintainer on", OUT_ENTITY / "me-level-maintainer-on.png", HD_ENTITY / "me-level-maintainer-on.png"),
+             ("circuit interface", OUT_ENTITY / "me-circuit-interface.png", HD_ENTITY / "me-circuit-interface.png")]
+    for bus in ("import", "export", "storage"):
+        for dr in ("north", "east"):
+            pairs.append((f"{bus} bus {dr}", OUT_ENTITY / f"me-{bus}-bus-{dr}.png", HD_ENTITY / f"me-{bus}-bus-{dr}.png"))
+        pairs.append((f"{bus} bus icon", OUT_ICON / f"me-{bus}-bus.png", HD_ICON / f"me-{bus}-bus.png"))
+    pairs += [("interface icon", ROOT / "graphics/icons/me-interface.png", HD_ICON / "me-interface.png"),
+              ("maintainer icon", OUT_ICON / "me-level-maintainer.png", HD_ICON / "me-level-maintainer.png"),
+              ("circuit icon", OUT_ICON / "me-circuit-interface.png", HD_ICON / "me-circuit-interface.png")]
+    return hd_sheet(path, "issue #219", pairs, [HD_ENTITY / "me-interface-unified.png", HD_ENTITY / "me-import-bus-north.png",
+                                                 HD_ENTITY / "me-storage-bus-east.png", HD_ENTITY / "me-level-maintainer-on.png",
+                                                 HD_ENTITY / "me-export-bus-south.png", HD_ENTITY / "me-circuit-interface.png"])
+
+
+def hd_sheet_batch1(path):
+    """the contact sheet of batch 1: today (4x) and the new pictures (2x and at game size)"""
+    pairs = [("terminal dark", OUT_ENTITY / "me-terminal-off.png", HD_ENTITY / "me-terminal-off.png"),
+             ("terminal lit", OUT_ENTITY / "me-terminal-lit.png", HD_ENTITY / "me-terminal-lit.png"),
+             ("drive", OUT_ENTITY / "me-drive.png", HD_ENTITY / "me-drive.png"),
+             ("controller", OUT_ENTITY / "me-network-controller.png", HD_ENTITY / "me-network-controller.png"),
+             ("underground N", OUT_ENTITY / "me-underground-cable-north.png", HD_ENTITY / "me-underground-cable-north.png"),
+             ("terminal icon", ROOT / "graphics/icons/me-terminal.png", HD_ICON / "me-terminal.png"),
+             ("pattern terminal icon", OUT_ICON / "me-pattern-terminal.png", HD_ICON / "me-pattern-terminal.png"),
+             ("controller icon", ROOT / "graphics/icons/me-controller.png", HD_ICON / "me-controller.png"),
+             ("drive icon", ROOT / "graphics/icons/me-drive.png", HD_ICON / "me-drive.png"),
+             ("1k cell", OUT_ICON / "me-1k-storage-cell.png", HD_ICON / "me-1k-storage-cell.png"),
+             ("64k fluid cell", OUT_ICON / "me-64k-fluid-storage-cell.png", HD_ICON / "me-64k-fluid-storage-cell.png"),
+             ("cable icon", ROOT / "graphics/icons/fluix-cable.png", HD_ICON / "fluix-cable.png")]
+    rw, rh = 760, 150
+    img = Image.new("RGBA", (rw, 30 + rh * len(pairs) + 160), (40, 40, 48, 255))
+    d = ImageDraw.Draw(img)
+    d.text((10, 8), "issue #218: today (4x) | new (2x) | new at game size", fill=(220, 220, 230, 255))
+    for i, (name, old, new) in enumerate(pairs):
+        y = 30 + i * rh
+        o, n = load(old), load(new)
+        d.text((10, y + 60), name, fill=(220, 220, 230, 255))
+        o4 = hd_up(o, 4) if o.width <= 32 else hd_up(o, 2)
+        img.alpha_composite(o4.resize((128, 128), Image.NEAREST), (180, y + 10))
+        img.alpha_composite(n.resize((128, 128), Image.NEAREST), (340, y + 10))
+        img.alpha_composite(n.resize((32, 32), Image.LANCZOS), (500, y + 58))
+    # the cable's 16 pictures and a 3x3 patch of blocks as they lie on the ground
+    y = 30 + rh * len(pairs)
+    cable = load(HD_ENTITY / "me-cable.png")
+    img.alpha_composite(cable.resize((cable.width // 2, cable.height // 2), Image.LANCZOS), (10, y + 10))
+    drive, term = load(HD_ENTITY / "me-drive.png"), load(HD_ENTITY / "me-terminal-lit.png")
+    for gx in range(3):
+        for gy in range(2):
+            img.alpha_composite((drive if (gx + gy) % 2 else term).resize((32, 32), Image.LANCZOS), (560 + gx * 32, y + 60 + gy * 32))
+    img.save(path)
+    return path
 
 def cards_tech(gt):
     """256x256: three cards fanned out (Overflow Destruction behind, Fuzzy, Capacity in front)."""
@@ -1256,8 +2162,6 @@ def main():
     ap.add_argument("--r1", action="store_true",
                     help="only the issue #68 (R1) graphics (cable, controller, drive with cell bays, buses), "
                          "derived from the existing PNGs (no checkout needed)")
-    ap.add_argument("--r2", action="store_true",
-                    help="only the issue #68 (R2) graphics (fluid import and export bus), derived from the R1 PNGs")
     ap.add_argument("--underground", action="store_true",
                     help="only the ME Underground Cable (drawn from the cable colours)")
     ap.add_argument("--storage-bus", action="store_true",
@@ -1270,6 +2174,25 @@ def main():
                     help="only the upgrade card icons, their technology icon and the ME Cell Workbench with its shadow "
                          "(me-network issues #17 and #20): the cards from the textures of the GT5-Unofficial checkout "
                          "GT, the workbench from the interface PNG")
+    ap.add_argument("--wireless", action="store_true",
+                    help="only the wireless parts (me-network issues #205 to #211): access point, booster, terminal item, "
+                         "charger, module and their technology, drawn from this mod's own PNGs")
+    ap.add_argument("--hd", action="store_true",
+                    help="the 64 px pictures of the 3D style (me-network issues #154, #218: batch 1) from the 32 px ones, into "
+                         "graphics/entity/fork/ae2/hd/ and graphics/icons/hd/, and their contact sheet")
+    ap.add_argument("--bus-markers", action="store_true",
+                    help="only graphics/entity/fork/ae2/hd/me-<import|export|storage>-bus-<direction>-marker.png (issue "
+                         "#282): the plate and the arrows of each bus alone, drawn as a layer over its picture")
+    ap.add_argument("--light", action="store_true",
+                    help="only graphics/entity/fork/ae2/hd/me-light.png (me-network issue #267): a white square the drive's and the "
+                         "chest's cell lights are cut from and tinted (data-final-fixes.lua)")
+    ap.add_argument("--chest", action="store_true",
+                    help="only the ME Chest (me-network issue #229): 32 px pictures and the 64 px ones of the 3D style, drawn from "
+                         "the interface PNG")
+    ap.add_argument("--own-icons", type=Path, metavar="GT",
+                    help="only the 17 icons of graphics/icons/ (me-network issue #238: blocks, housing, components, fluix cable) "
+                         "from the textures of the GT5-Unofficial checkout GT and the block PNGs, then the pictures made from "
+                         "them (cells, old drive items, fluid variants, technologies, the 3D-style cells and cable) and the contact sheet docs/graphics-review/own-icons-238.png")
     ap.add_argument("--thumbnail", action="store_true",
                     help="only thumbnail.png, from the drive, terminal and cable PNGs (me-network issue #20)")
     ap.add_argument("--sheet", type=Path, metavar="PNG",
@@ -1291,11 +2214,13 @@ def main():
     ap.add_argument("--sheet-assembler", type=Path, metavar="PNG",
                     help="writes a contact sheet of the 1x1 ME Molecular Assembler (issue #131) to PNG")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras or a.r1 or a.r2 or a.underground or a.storage_bus or a.fluid_storage_bus
+    if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
-            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit):
-        ap.error("--gt <checkout>, --fluids, --extras, --r1, --r2, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --thumbnail, --sheet,"
+            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
+            or a.own_icons or a.light or a.bus_markers):
+        ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --fluid-storage-bus,"
+                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --own-icons,"
+                 " --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
         d.mkdir(parents=True, exist_ok=True)
@@ -1303,32 +2228,20 @@ def main():
     if a.gt:
         for cell in CELLS:
             drive_sprite(a.gt, cell).save(OUT_ENTITY / f"me-drive-{cell}.png")
-            cell_icon(cell).save(OUT_ICON / f"me-{cell}-storage-cell.png")
-            drive_icon(cell).save(OUT_ICON / f"me-drive-{cell}.png")
         interface_sprite(a.gt).save(OUT_ENTITY / "me-interface.png")
         off, lit = terminal_sprites(a.gt)
         off.save(OUT_ENTITY / "me-terminal-off.png")
         lit.save(OUT_ENTITY / "me-terminal-on.png")
         terminal_lit()
         controller_sprite(a.gt).save(OUT_ENTITY / "me-controller.png")
-
-        for tech, icon in (("me-network", "me-drive-16k"), ("me-storage-64k", "me-drive-64k"),
-                           ("me-storage-256k", "me-drive-256k")):
-            upscale(load(OUT_ICON / f"{icon}.png")).save(OUT_TECH / f"{tech}.png")
         autocrafting(a.gt)
         print("ME sprites:", len(list(OUT_ENTITY.glob("*.png"))))
-    if a.gt or a.fluids:
-        written = fluids()
-        print("ME fluid sprites:", len(written))
     if a.gt or a.extras:
         written = extras()
         print("ME issue #38 sprites:", len(written))
     if a.gt or a.r1:
         written = r1()
         print("ME issue #68 (R1) sprites:", len(written))
-    if a.gt or a.r2:
-        written = r2()
-        print("ME issue #68 (R2) sprites:", len(written))
     if a.gt or a.underground:
         written = underground()
         print("ME underground cable sprites:", len(written))
@@ -1347,12 +2260,51 @@ def main():
     if a.gt or a.cards:
         written = cards(a.gt or a.cards)
         print("ME card icons:", len(written))
+    if a.gt or a.wireless:
+        written = wireless()
+        print("ME wireless sprites:", len(written))
+    if a.gt or a.chest:
+        written = chest()
+        print("ME Chest sprites:", len(written))
+    if a.gt or a.own_icons:                     # (after the blocks' faces: the R1 drive, the unified interface, the chest)
+        written = own_icons(a.gt or a.own_icons)
+        print("ME icons of graphics/icons (issue #238) and the cell and drive icons:", len(written))
+    if a.gt or a.fluids or a.own_icons:         # (from the cell and drive icons)
+        written = fluids()
+        print("ME fluid sprites:", len(written))
     if a.gt or a.crafting_cpu:
         written = crafting_cpu(a.gt or a.crafting_cpu)
         print("ME crafting block sprites:", len(written))
+    if a.gt or a.hd:                                                     # (last: made from the 32 px pictures)
+        written = hd_batch1()
+        hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")
+        print("ME 3D pictures (batch 1):", len(written))
+        written = hd_batch2()
+        hd_sheet_batch2(ROOT / "docs/graphics-review/graphics-batch2-219.png")
+        print("ME 3D pictures (batch 2):", len(written))
+        written = hd_batch3()
+        hd_sheet_batch3(ROOT / "docs/graphics-review/graphics-batch3-220.png")
+        print("ME 3D pictures (batch 3):", len(written))
+        written = hd_batch4()
+        hd_sheet_batch4(ROOT / "docs/graphics-review/graphics-batch4-221.png")
+        print("ME 3D pictures (batch 4):", len(written))
+        written = hd_batch5()
+        hd_sheet_batch5(ROOT / "docs/graphics-review/graphics-batch5-222.png")
+        print("ME 3D technology icons (batch 5):", len(written))
+    elif a.own_icons:                           # the 3D-style cells and cable are made from the 32 px icons
+        written = hd_batch1()
+        hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")
+        print("ME 3D pictures (batch 1):", len(written))
+    if a.gt or a.own_icons:
+        print("contact sheet:", own_icons_sheet(ROOT / "docs/graphics-review/own-icons-238.png"))
     if a.gt or a.thumbnail:
         thumbnail().save(ROOT / "thumbnail.png")
         print("thumbnail.png")
+    if a.gt or a.light:
+        light_square()
+        print("me-light.png")
+    if a.bus_markers:                                  # (with --gt: made by hd_batch2)
+        print("bus markers:", len(bus_markers()))
     if a.terminal_lit:
         terminal_lit()
         print("me-terminal-lit.png")

@@ -20,14 +20,16 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Underground Cable | rotatable pair (MV, `me-network`, 8 fluix cables + 2 aluminium plates -> 2): carries the network under up to 10 tiles to the first underground cable facing it, like an underground pipe; above ground an end connects only on the side opposite its arrow; it is a pipe-to-ground with its own connection category, so the game pairs the ends and shows the pairing on hover and while placing exactly like underground pipes (it never connects to pipes or carries fluid); can be walked over |
 | ME Controller | 2x2, needs power; exactly one per network runs it (two are a conflict) |
 | ME Drive | 1x1, holds up to 10 storage cells; has a priority |
+| ME Chest | 1x1, one storage cell and a terminal of its own that sees that cell only; works without a controller on power from the grid (4 kW), in a working network its cell is network storage at the chest's priority; inserters and pipes put items and fluids in, nothing comes out (issue #229) |
 | Storage cell (1k ... 256k) | holds the items (AE2 bytes and types); keeps them when taken out of the drive; can be partitioned |
 | ME Terminal | the hub: storage, **crafting**, jobs, the drives and cells of the network; no pole needed (the controller draws its 8 kW), its screen is dark while the network does not work; can be walked over |
-| ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount): keeps those in stock in it, imports everything else (this page, **Import and export**) |
+| ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount; 36 with Interface Capacity Cards): keeps those in stock in it, imports everything else (this page, **Import and export**) |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face; can be walked over |
 | ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
+| ME Wireless Access Point, ME Charger | 1x1 members, power through the controller: the range of the Wireless ME Terminal (with Wireless Boosters) and its charging (this page, **Wireless**) |
 | Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
-| ME Pattern Provider | holds 9 encoded patterns; the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
+| ME Pattern Provider | holds 9 encoded patterns (up to 36 with Pattern Capacity Cards); the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
 | ME Pattern Terminal | 1x1, no pole needed (the controller draws its 8 kW), can be walked over: encodes patterns (this page, **Patterns: encoding and clearing**); two slots, one for blank patterns and one for the encoded pattern |
 | Blank / Encoded Pattern | a blank pattern is encoded in an ME Pattern Terminal into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
 | ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
@@ -128,6 +130,10 @@ Two AE2 storage features decide **which cell** an item or fluid goes into (and c
 
 The rules (`scripts/fork-me-network.lua`, `insert_key` and `extract_key`):
 
+0. **Sticky Card** (issue #193, AE2-Unofficial's): before all of rule 1, a cell or storage bus with a Sticky Card that
+   **already holds** the item or is **partitioned** for it gets it, whatever the priorities. When there is such a
+   storage the insert ends there: what it cannot take is not stored anywhere else (as in AE2), so the item waits where it
+   came from. Taking out is not changed.
 1. **Storing**: the drives of the **highest priority** first. Within one priority: first the cells
    **partitioned** for the item, then the cells that **already hold** it, then any cell with room. A partitioned
    cell never takes anything else, whatever its priority.
@@ -153,7 +159,8 @@ slot: the source slot's partition, or none) and by cloning.
 ## ME Terminal
 
 Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
-fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs, and four
+fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs (it matches the
+name you see in your language, issue #295, and the internal name), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
 * **Storage:** sort (by amount or by name) and **Show: all / items / fluids**. **Left click** an item: a stack into
@@ -198,7 +205,10 @@ character (the editor, a spectator) there is no inventory: the window says so, n
 everything stays where it is. Items that have no place any more (a window closed with something in its buffer, cards a
 cell does not take) are never spilled from remote view: they are kept for you ("the items are kept for you") and come
 back into your inventory the next time you have room (when you open or close a window, or within a second). The
-command `/me-remote-probe` prints what the game reports for your controller.
+command `/me-remote-probe` prints what the game reports for your controller. What the hand does elsewhere has a way in remote view too
+(issue #179): **Store item in hand** of the terminal is a click on the stack in the pane; for **Load pattern** and **Clear
+pattern** of the ME Pattern Terminal click the encoded pattern in the pane (it goes into the output slot), then press the
+button (they work on the output slot when the hand is empty).
 
 With the setting off, the windows draw your inventory themselves (issue #28): **every ME window shows your inventory on its left**
 ("Character"), the block's slots (cards, cell, cells of a drive, patterns) in the window: click a stack in your
@@ -221,23 +231,48 @@ click uses the tool and opens no window, as on a chest.
 | ME Pattern Terminal | the pattern editor, the blank pattern slot, **Encode**, the output slot, **Load pattern**, **Clear pattern**; shift + click in your inventory: blank patterns into the blank slot, an encoded pattern into the output slot |
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
-| ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, power |
-| ME Pattern Provider | 9 pattern slots (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
-| Crafting block (any block of a Crafting CPU) | the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
+| ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, the power in W, kW or MW and where it goes (issue #149: a line per kind of block with the number of blocks, the power in all and of one, biggest first, the controller's base draw as the first line; the lines add up to the total), and a line when the controller's power buffer is not full (its electric network delivers less than the network asks for) |
+| ME Pattern Provider | 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
+| Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
-| ME Interface | the priority, 9 config rows (an item or a fluid + amount), the four sides (import, off, or a fluid row; what each side's tank holds), what it holds, status, **Open inventory** (the container's own window, once) |
+| ME Interface | the priority, 3 card slots (Interface Capacity Cards only: 9 more config rows each), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount, temperature, a fill bar and what its pipes hold too), status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids), the entity it faces and whether the bus uses its items, fluids or both, status |
-| ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; a blacklist with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
+| ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
 the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
 same lamp condition, so blueprints and settings paste of the game keep it).
 
+## Wireless: the Wireless ME Terminal
+
+(issues #153, #205 to #211; technology **ME Wireless Terminal**, after ME Upgrade Cards and Battery; design:
+`docs/ME-WIRELESS.md`)
+
+* **ME Wireless Access Point**: a 1x1 member of the network (no pole, the controller draws its power). A Wireless ME Terminal
+  reaches the network while you are within the range of one of its access points: **32 tiles**, more with **Wireless Boosters**
+  in its 4 card slots (open it; shift + click a booster in your inventory): 32, 56, 99, 156, 224 tiles with 0 to 4 boosters, at
+  20, 30, 45, 66, 90 kW. Only on the same surface; the nearest access point in range is used. Mined, the boosters come with it;
+  blueprints, settings paste and clones want them (from your inventory, then the network).
+* **Wireless ME Terminal** (an item, one per stack): press the **wireless terminal key** (Ctrl + Shift + T by default, in the
+  controls) while it is in your inventory: the ME Terminal of its network opens, as if you stood at a terminal (the drive and
+  cell windows opened from it too). **Link** it first: click an access point or the ME Controller of the network with the
+  terminal in your hand (one network per terminal; linking again replaces it). The item shows its network and its charge. A
+  button in the window switches to the **ME Pattern Terminal** (Encode takes a blank pattern from the network and puts the
+  pattern into your inventory; Load and Clear work on the pattern in your hand); the key opens the one you used last; pressed
+  again it closes the window.
+* **Energy**: the terminal holds 100 MJ and uses 0.2 MW while its window is open, more the farther you are from the access
+  point (twice that at the edge of its range). Empty or out of range, the window closes (nothing is lost: the window only shows
+  the network). Charge it in an **ME Charger**: a 1x1 member with one slot (click it with the terminal in hand); it draws 1 MW
+  from the network while it charges (a full charge in 100 s) and 2 kW otherwise, and waits while the network has no power.
+* **ME Wireless Terminal Module**: equipment for the armour's grid (2 x 2) that works like the item without charging: the grid
+  charges it (20 MJ) and the window is paid from it. It is used before an item. Link it by pointing at an access point or the
+  ME Controller and pressing the key.
+
 ## Import and export
 
 **ME Interface** (18 slots, like a chest for inserters and belts, and a tank on each of its four sides for pipes).
-Its window has **9 config rows** (AE2's config slots): each an item (with quality) or a fluid, and an amount. A row's
+Its window has **9 config rows** (AE2's config slots; **Interface Capacity Cards** in its 3 card slots add 9 each, up to 36: a list that scrolls, issue #196; a card taken out leaves the rows it gave kept but idle until a card gives them room again): each an item (with quality) or a fluid, and an amount. A row's
 button opens the **picker** (issue #70, see "ME Cell Workbench": item groups, search, qualities, the green check or the
 confirm key), right click empties the row; no virtual signal can be chosen.
 
@@ -253,6 +288,12 @@ confirm key), right click empties the row; no virtual signal can be chosen.
   import side); several sides can keep the same row. A side holds one fluid, so **up to four fluids at once** (AE2's
   interface holds 9 fluids; a 1x1 block has four sides). A fluid row that no side keeps does nothing. An import side
   whose pipes run round to an export side of the same interface imports nothing (no pumping in a circle).
+  The window lists the fluids its sides hold (issue #311 of ME Network), one entry per side (a fluid in two sides is two
+  entries: each side has a tank of its own): the fluid with the game's tooltip, the amount of the side's volume with a
+  bar, its temperature when not the default, and what the tank and its pipes hold together when the pipes hold some
+  too. An import side shows its fluid only until it is imported (then it is in the network, and the side is empty).
+  Pointed at in the world, its tooltip lists them too (issue #322: the interface's status line, "Sides: [fluid]
+  amount/volume ...", refreshed once a second while someone points at it).
 * Mined, the fluid in its sides goes into the network; destroyed, it is lost like a tank's. Interfaces of saves from
   before 0.2.0 get their sides when the game is loaded; a side that an existing pipe, pump or tank points at is set
   to **Off**, so a pipeline that ran past the interface is not drained (switch it to Import in the window).
@@ -271,8 +312,11 @@ side). Open one to set up to 9 filters, items and fluids mixed (the window also 
 whether the bus uses its items, its fluids or both). On a machine with an inventory and fluid boxes (an assembling
 machine with a fluid recipe, a chemical plant) one bus does both; on a chest only items, on a tank only fluids.
 
-The filter buttons of the buses open the same picker (items and fluids, no quality row: a bus filter is a plain item or a
-fluid), right click empties a filter. The ME Storage Bus's filters (items with quality, or fluids), the ME Level
+The filter buttons of the buses open the same picker (items with their quality, and fluids), right click empties a
+filter. Since issue #291 an item filter can name a quality: the import bus then takes only that quality of the item, the
+export bus exports that quality. A filter in normal quality (the plain item, as every filter of older saves and
+blueprints) keeps its meaning: the import bus takes the item in **every** quality, the export bus exports normal quality;
+the filter button's tooltip says which. The ME Storage Bus's filters (items with quality, or fluids), the ME Level
 Maintainer's target, the ME Circuit Interface's filters and the pattern editor's rows of the ME Terminal work the same
 way (the maintainer's, the circuit interface's and the pattern editor's without a quality).
 
@@ -326,6 +370,11 @@ the tank's fluid storage of the network instead (see **ME Storage Bus on a tank*
   shows and stores only those; without filters everything the network can store (a bus with only fluid filters takes
   no item). With an **Inverter Card** the filters are a **blacklist**: everything except them; with a **Fuzzy Card** a
   filter matches its item in **every quality**.
+* **Filter mode** (issue #155, a drop-down): **Whitelist** (only the filters) or **Blacklist** (everything except the
+  filters). It is a setting of the bus, kept in blueprints, settings paste and clones; a bus that never had it is a
+  whitelist. With an **Inverter Card** in it the mode shows "Blacklist (Inverter Card)" and cannot be changed; without
+  the card you switch freely (the choice you made returns when the card is taken out). With no filters the bus handles
+  everything in either mode. A line under it says whether the **Fuzzy Card** makes a filter match every quality.
 * **Filter on extract** (a check box, on by default, AE2's setting of the same name): on, the filters decide what goes
   in and what the network sees and takes; off, they decide only what goes in, and the network sees and takes everything
   in the chest it can hold (an input chest that also takes back what a machine left in it).
@@ -402,6 +451,68 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
   of its own (machines are not part of segments); fluid wagons are not supported.
 * Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
 
+## Recipes (standalone)
+
+On its own, ME Network uses **AE2's recipes** (modern AE2; AE2-Unofficial for its own cards) with AE2's ingredients and
+counts (issue #233). Each AE2 material is replaced by one vanilla item:
+
+| AE2 | Stand-in |
+|---|---|
+| iron ingot | iron plate |
+| copper ingot, gold ingot | copper plate |
+| diamond | processing unit |
+| redstone, glowstone, fluix crystal, fluix dust, wool | copper cable |
+| certus quartz | stone |
+| glass, quartz glass, quartz fiber | plastic bar |
+| sky stone (block, dust) | stone brick |
+| logic processor | electronic circuit |
+| calculation processor | advanced circuit |
+| engineering processor | processing unit; **in the ME Controller and the ME Drive an advanced circuit**, so the network still comes right after advanced circuits |
+| annihilation core, formation core | electronic circuit |
+| illuminated panel | small lamp |
+| piston | fast inserter |
+| redstone torch | decider combinator |
+| crafting table | assembling machine 1 |
+| wireless receiver | radar |
+| dense energy cell | 4 batteries |
+| ender dust | electronic circuit |
+
+The recipes that follow:
+
+| Item | Recipe | AE2 |
+|---|---|---|
+| Fluix cable (4) | a plastic bar, 2 copper cables | a quartz fiber, 2 fluix crystals -> 4 |
+| ME Controller | 4 stone bricks, 4 copper cables, an advanced circuit | 4 smooth sky stone, 4 fluix crystals, an engineering processor |
+| ME Interface | 4 iron plates, 2 plastic bars, 2 electronic circuits | 4 iron, 2 glass, an annihilation and a formation core |
+| ME Terminal | 3 electronic circuits, a small lamp | a formation and an annihilation core, a logic processor, an illuminated panel |
+| ME Chest | 2 plastic bars, an ME Terminal, 2 fluix cables, 2 iron plates, a copper plate | 2 glass, a terminal, 2 fluix cables, 2 iron, a copper |
+| ME Drive | 4 iron plates, 2 advanced circuits, 2 fluix cables | 4 iron, 2 engineering processors, 2 fluix cables |
+| Storage housing | 2 plastic bars, 3 copper cables, 2 iron plates, a copper plate | 2 quartz glass, 3 redstone, 2 iron, a copper |
+| 1k storage component | 4 copper cables, 4 stone, an electronic circuit | 4 redstone, 4 certus quartz, a logic processor |
+| 4k / 16k / 64k component | 3 of the tier below, an advanced circuit, a plastic bar, 4 copper cables | 3 of the tier below, a calculation processor, a quartz glass, 4 redstone (4k) or glowstone |
+| 256k component | 3 64k components, an advanced circuit, a plastic bar, 4 stone bricks | ... 4 sky stone dust |
+| Storage cell | a component and a housing | the same |
+| Fluid storage cell | a component, 2 plastic bars, 3 copper cables, 3 copper plates | a component in a fluid cell housing (2 quartz glass, 3 redstone, 3 copper) |
+| ME Import / Export Bus | an electronic circuit, 2 iron plates, a fast inserter | an annihilation (import) or formation core (export), 2 iron, a piston |
+| ME Storage Bus | an ME Interface, 2 fast inserters | an interface, 2 pistons |
+| ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
+| ME Pattern Terminal | an ME Terminal, an assembling machine 1, an advanced circuit, a processing unit | a crafting terminal (terminal, crafting table, calculation processor), an engineering processor |
+| Blank Pattern (2) | 2 plastic bars, 3 copper cables, a stone, 2 iron plates, a copper plate | 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2 |
+| ME Molecular Assembler | 4 iron plates, 2 plastic bars, 2 electronic circuits, an assembling machine 1 | 4 iron, 2 quartz glass, an annihilation and a formation core, a crafting table |
+| Crafting unit | 4 iron plates, 2 advanced circuits, 2 fluix cables, an electronic circuit | the same |
+| Crafting storage, co-processing unit | a crafting unit and a component, a processing unit | the same |
+| Crafting monitor | a crafting unit, a decider combinator, an advanced circuit, a small lamp | a crafting unit and a storage monitor (level emitter: redstone torch, calculation processor; illuminated panel) |
+| ME Cell Workbench | 2 copper cables, an advanced circuit, 5 iron plates, a wooden chest | 2 wool, a calculation processor, 5 iron, a wooden chest |
+| ME Wireless Access Point | a radar, an advanced circuit, a fluix cable | a wireless receiver, a calculation processor, a fluix cable |
+| Wireless Booster (2) | a copper cable, a stone, an electronic circuit, 3 iron plates | a fluix dust, a certus quartz, an ender dust, 3 iron -> 2 |
+| Wireless ME Terminal | a radar, an ME Terminal, 4 batteries | a wireless receiver, a terminal, a dense energy cell |
+| ME Charger | 5 iron plates, 2 copper plates | 5 iron, 2 copper |
+
+The cards are in **Upgrade cards**. Not in AE2, kept as they were (with the stand-ins): the underground cable (8 fluix
+cables, 2 iron plates -> 2), the level maintainer, the circuit interface, the Interface Capacity Card and the wireless
+module. The technologies need what their recipes take: ME Network also needs Lamp and Fast inserter, ME Autocrafting and
+ME Upgrade Cards need Circuit network.
+
 ## Upgrade cards
 
 AE2's upgrade cards (me-network issue #17, technology **ME Upgrade Cards** after ME 64k Storage, with its cost). Each
@@ -409,14 +520,17 @@ card is made from a component card and one item:
 
 | Card | Recipe (standalone) | Goes into | Does |
 |---|---|---|---|
-| Basic Card (2 per craft) | 2 iron plates, 2 copper cables, an electronic circuit, an advanced circuit | | component |
-| Advanced Card (2 per craft) | 2 iron plates, a processing unit, an electronic circuit, an advanced circuit | | component |
-| Capacity Card | basic card + iron chest | storage bus, up to 5 | 9 more filters each (18 + 9 per card, up to 63) |
+| Basic Card (2 per craft) | 2 copper plates, 3 iron plates, a copper cable, an advanced circuit (AE2: 2 gold, 3 iron, a redstone, a calculation processor) | | component |
+| Advanced Card (2 per craft) | 2 processing units, 3 iron plates, a copper cable, an advanced circuit (AE2: 2 diamonds instead of the gold) | | component |
+| Capacity Card | basic card + stone (AE2: certus quartz) | storage bus, up to 5 | 9 more filters each (18 + 9 per card, up to 63) |
+| Interface Capacity Card | advanced card + capacity card | ME Interface, up to 3 | 9 more config rows each (9 + 9 per card, up to 36); fits nowhere else (issue #196; AE2's interface has no such card: its pattern slots are the Pattern Provider's here) |
+| Pattern Capacity Card | advanced card, 2 16k storage components, an ME Interface (AE2-Unofficial's) | ME Pattern Provider, up to 3 | 9 more pattern slots each (9 + 9 per card, up to 36); fits nowhere else, and the Capacity Card does not fit the provider (AE2-Unofficial's Pattern Capacity Card) |
 | Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
+| Sticky Card | basic card + iron chest (AE2-Unofficial: a slimeball, which has no stand-in) | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
-| Acceleration Card | advanced card + processing unit | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
+| Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
 
 On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
 like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards
@@ -499,7 +613,8 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
 * **Partition:** the cell's filled slots (items with quality, or fluids for a fluid cell) and one free slot at the end,
   **From contents** and **Clear**. A click on a slot (the free one adds, a filled one changes) opens the **picker**
   (issue #94), made like the game's own: the item groups as tabs (fluids in theirs), a search by name (as the
-  terminal's), the items and fluids of the group, a row with the **qualities** at the bottom (items only) and the **green
+  terminal's), the items and fluids of the group, a row with the **qualities** at the bottom (items only; with a mod that
+  adds many qualities they wrap into rows of 10, or of 5 next to a fluid's temperature field: issue #291) and the **green
   check** at its right end. Click an element, click a quality, click the check; the confirm key (the game's "Confirm
   GUI", "E" by default) is the check, Enter in the search field too, Escape or the X closes the picker only. A filled
   slot opens it with its element and quality chosen, so both can be changed; right click empties a slot. Only items
@@ -558,7 +673,7 @@ Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks:
 | **ME Pattern Terminal** | 1x1 block that encodes patterns (it was the Patterns tab of the ME Terminal): ME Terminal + blank pattern + processing unit + 2 fluix cable |
 | **ME Blank Pattern** | cheap item (LV assembler: 2 glass, certus quartz, aluminium plate, fluix cable). Encoded in an **ME Pattern Terminal** |
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
-| **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns**; each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
+| **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns** (**Pattern Capacity Cards** in its three card slots add 9 each, up to 36); each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
 | **ME Molecular Assembler** | **1x1** (one tile, like AE2's block) assembling machine for item-only crafting recipes (crafting table and assembler recipes up to EV, no fluid boxes), speed 6, 960 kW, five module slots for Acceleration Cards. Up to three of them fit around one provider (its fourth side joins the network) |
 | **Crafting blocks** | 1x1 members of the network; a solid rectangle of them with at least one **crafting storage** is a Crafting CPU running one job (see [Crafting CPUs](#crafting-cpus)). The first: a single **ME 1k Crafting Storage** |
 
@@ -857,8 +972,8 @@ largest amounts first).
 
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
-| ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network) | yes (priority) | yes (patterns pending a blank pattern); clone: priority |
-| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority | yes | yes (old blueprints with slot filters are converted) |
+| ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network) | yes (priority, cards) | yes (patterns pending a blank pattern, cards); clone: priority, cards |
+| ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority, its Interface Capacity Cards (the copy wants them from the player, then the network) | yes | yes (old blueprints with slot filters are converted); the cards first, so the rows they give room for are there |
 | ME Import Bus, ME Export Bus | filters (items and fluids); which Acceleration Cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
@@ -878,8 +993,9 @@ The block is set up for the machine's recipe; what it had is replaced:
 | ME Export Bus | filters = the ingredients, items and fluids | | 9 filters |
 | ME Import Bus | filters = the **products**, items and fluids | | 9 filters |
 
-* The recipe's quality is the quality of the interface's item rows and of the storage bus's item filters. The
-  import and export bus filter by name: the export bus moves normal quality only (a flying text says so).
+* The recipe's quality is the quality of the interface's item rows and of the storage bus's item filters, and since
+  issue #291 of the import and export bus's item filters too (a normal quality recipe gives plain filters, which the import
+  bus takes in every quality).
 * A furnace that is not smelting gives its last recipe.
 * A new fluid row gets the side a new fluid row gets in the window: the first import side with a pipe, else the first
   import side (the flying text says that it has no pipe yet). A side tied to a row that goes away imports again.
@@ -1397,7 +1513,9 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
 * Network storage (issue #68): no channels, no fluid wagons on the storage bus, no cards on the import and export bus
   and the ME Interface (capacity, speed, fuzzy, inverter, redstone and crafting card: a follow-up of me-network issue
-  #17); the terminal search matches internal item names only; spoiling items, items with an inventory and damaged items cannot be stored. Old
+  #17); the search of the terminal and the picker matches the shown names (issue #295) only once your client has
+  translated them, a few ticks after the first terminal or picker opens (before that, and for a name your language
+  lacks, the internal name; upper and lower case are told apart in ASCII letters only); spoiling items, items with an inventory and damaged items cannot be stored. Old
   ghosts of ME blocks disappear when an old save is loaded (the game removes them before any script runs).
 * The ME windows cannot be opened in the headless test (no player): their data and set functions are tested,
   building the windows, the clicks and the replacement of the game's windows are checked by hand (click-through

@@ -5,12 +5,22 @@
 --- * they join: the controller's draw rises by exactly 8 kW (terminal) and 30 kW (level maintainer) (issue #145: the legacy
 ---   Crafting CPU of this check is gone)
 --- * they work with no pole: the terminal has no problem, its screen is lit (a sprite render object of the mod's, under the
----   character: layer lower-object, and its light), the maintainer is stocked
+---   character: layer lower-object-above-shadow since issue #258, and its light), the maintainer is stocked
 --- * the controller's power is cut (at tick 300, so that the dark network is still dark after the save and load of the
 ---   save-and-load run at tick 500): the terminal says "no-power", its screen goes dark and its light off, the maintainer says
 ---   "no-power" and is parked for it
 --- * the power comes back (tick 600): the screen is lit again, the maintainer is woken and checks again within the slow step's second
 --- * a terminal that is mined or destroyed takes its screen along (no render object left), a cloned one gets its own
+--- * issue #264: the drive's lights sit where they did before the drive view (the same offsets), and with the stand-in
+---   cell sprites of runtimemod/data.lua each occupied bay shows its cell (item or fluid) under its light; a cell taken out
+---   takes both along
+--- * issue #254: the level maintainer's picture is a screen of the same kind (no light): lit in the working network, dark
+---   without power and lit again with it, dark for one with no cable to a network, dark while its circuit condition is
+---   false and lit again when the condition is switched off
+--- * issue #278: with the stand-in controller view of runtimemod/data.lua the controller has a part on its position whose
+---   variation is its state: on (2) in the working network, off (1) without power (also after the save and load) and on
+---   again with it, conflict (3) with a second controller in its network and on again when that one is mined; a mined
+---   controller takes its part along, a cloned one (clone_area copies the part too) has exactly one of its own
 --- Loaded by control.lua: require("netpower")(H) returns { setup, tick, running } like lab.lua.
 
 local NET, TERM, CIRC, IO = "gregtorio-me-network", "gregtorio-me-terminal", "gregtorio-me-circuit", "gregtorio-me-io"
@@ -77,6 +87,19 @@ return function(H)
 			local n2 = info()
 			expect(n2 and n2.power == n0.power + 38000, "the controller draws " .. tostring(n2 and n2.power) .. " W with a level maintainer too, "
 				.. (n0.power + 38000) .. " expected (maintainer 30 kW)")
+			--- issue #149: the breakdown by kind adds up to the total, biggest first, with the controller's base as a row
+			local rows = n2 and n2.power_rows or {}
+			local sum, want, sorted = 0, { controller = 120000, maintainer = 30000, terminal = 8000, drive = 4000 }, true
+			for i, row in ipairs(rows) do
+				sum = sum + row.w
+				if i > 1 and rows[i - 1].w < row.w then sorted = false end
+				expect(want[row.key] == row.w and row.per * row.n == row.w, "power row " .. serpent.line(row))
+				want[row.key] = nil
+			end
+			expect(sum == n2.power and sorted and next(want) == nil and #rows == 4, "power breakdown " .. serpent.line(rows) .. " for "
+				.. tostring(n2.power) .. " W")
+			local text = remote.call("gregtorio-me-gui", "controller_power_text", ctrl)
+			expect(type(text) == "table" and text[1] == "" and #text >= 3, "the power text " .. serpent.line(text))
 			--- no pole reaches them
 			for _, e in pairs({ st.terminal, st.maintainer }) do
 				local poles = s.find_entities_filtered{ type = "electric-pole", position = e.position, radius = 14 }
@@ -91,18 +114,86 @@ return function(H)
 			return finish()
 		end
 		local function screen() return remote.call(NET, "screen", terminal) end
+		local function mscreen() return remote.call(NET, "screen", maintainer) end
+		--- issue #254: the maintainer's screen shows `on`
+		local function maintainer_lit(on, when)
+			local sc = mscreen()
+			expect(sc and sc.on == on and sc.light == nil and sc.layer == "lower-object-above-shadow"
+				and sc.sprite == (on and "me-level-maintainer-screen-on" or "me-level-maintainer-screen-off"),
+				"the level maintainer's picture " .. when .. ": " .. serpent.line(sc) .. " (" .. (on and "lit" or "dark") .. " expected)")
+		end
 		local function problem() return remote.call(TERM, "problem", terminal) end
+		--- issue #278: the controller's part shows `state` (variation 1 off, 2 on, 3 conflict) on the controller's position
+		local CTRL_VARIATION = { off = 1, on = 2, conflict = 3 }
+		local function controller_lit(state, when, which)
+			which = which or ctrl
+			local l = remote.call(NET, "controller_light", which)
+			expect(l and l.name == "me-controller-light" and l.state == state and l.variation == CTRL_VARIATION[state]
+				and math.abs(l.position.x - which.position.x) < 1e-6 and math.abs(l.position.y - which.position.y) < 1e-6,
+				"the controller's part " .. when .. ": " .. serpent.line(l) .. " (" .. state .. " expected)")
+		end
+		local function parts_at(e)
+			return s.count_entities_filtered{ name = "me-controller-light", position = e.position, radius = 0.01 }
+		end
 
 		if st.phase == "work" then
 			if tick < START + 40 then return end
 			local sc = screen()
 			expect(problem() == nil, "the terminal without a pole has the problem " .. tostring(problem()))
-			expect(sc and sc.on and sc.light and sc.sprite == "me-terminal-screen-on" and sc.layer == "lower-object",
+			expect(sc and sc.on and sc.light and sc.sprite == "me-terminal-screen-on" and sc.layer == "lower-object-above-shadow",
 				"the screen of a terminal in a working network: " .. serpent.line(sc))
 			local m = maint()
 			expect(m and m.status == "stocked", "the level maintainer without a pole: " .. serpent.line(m))
+			maintainer_lit(true, "in a working network")
+			--- issue #264: the drive view
+			local drive = s.find_entity("me-drive", { BX + 8.5, BY - 0.5 })
+			local function near(a, b)            -- (a vector as {x, y} or {1, 2})
+				return a ~= nil and math.abs((a.x or a[1]) - b[1]) < 1e-4 and math.abs((a.y or a[2]) - b[2]) < 1e-4
+			end
+			local lights = drive and remote.call(NET, "drive_lights", drive) or {}
+			local one = lights[1]
+			--- issue #267: a light and a cell are entities on the drive's position (their pictures' places: runtimemod's
+			--- data-final-fixes.lua); variation (bay - 1) * 4 + state (1 room), (bay - 1) * 2 + 1 an item cell
+			local at = drive and { drive.position.x, drive.position.y } or { 0, 0 }
+			expect(one and one.light and one.light.name == "me-drive-light" and one.light.variation == 1 and near(one.light.position, at),
+				"the drive's first light: " .. serpent.line(one))
+			expect(one and one.cell and one.cell.name == "me-drive-cell" and one.cell.variation == 1 and near(one.cell.position, at),
+				"the drive's first cell: " .. serpent.line(one))
+			local n = 0
+			for slot in pairs(lights) do n = n + 1 end
+			expect(n == 4 and lights[4] and lights[4].cell and not lights[5], "the drive's four cells: " .. serpent.line(lights))
+			--- a fluid cell in bay 5 shows the fluid sprite; taken out, its cell and its light go
+			local inv = game.create_inventory(1)
+			inv[1].set_stack{ name = "me-1k-fluid-storage-cell", count = 1 }
+			remote.call(NET, "insert_cell", drive, inv[1], 5)
+			remote.call(NET, "slow_step")
+			local five = (remote.call(NET, "drive_lights", drive) or {})[5]
+			expect(five and five.cell and five.cell.variation == 10 and five.light and five.light.variation == 17,
+				"a fluid cell in bay 5 (cell variation 10, light 17): " .. serpent.line(five))
+			local parts = s.count_entities_filtered{ name = { "me-drive-light", "me-drive-cell" }, position = drive.position, radius = 0.01 }
+			expect(parts == 10, "light and cell entities on the drive: " .. parts .. ", expected 10")
+			remote.call(NET, "take_cell", drive, 5, inv)
+			remote.call(NET, "slow_step")
+			expect(not (remote.call(NET, "drive_lights", drive) or {})[5], "bay 5 after its cell was taken out")
+			parts = s.count_entities_filtered{ name = { "me-drive-light", "me-drive-cell" }, position = drive.position, radius = 0.01 }
+			expect(parts == 8, "light and cell entities after the cell went: " .. parts .. ", expected 8")
+			inv.destroy()
+			--- a level maintainer with no cable to a network is dark, and takes its picture along when it is destroyed
+			local lone = s.create_entity{ name = "me-level-maintainer", position = { BX + 30.5, BY + 3.5 }, force = "player",
+				raise_built = true }
+			local ls = lone and remote.call(NET, "screen", lone)
+			expect(ls and ls.on == false and ls.sprite == "me-level-maintainer-screen-off",
+				"a level maintainer outside every network: " .. serpent.line(ls))
+			if lone then lone.destroy{ raise_destroy = true } end
+			local list_ok, why = remote.call(NET, "screen_list_ok")
+			expect(list_ok, "the screen list after a maintainer and terminals came and went: " .. tostring(why))
+			for _, id in pairs(ls and ls.ids or {}) do
+				local o = rendering.get_object_by_id(id)
+				expect(not (o and o.valid), "a destroyed level maintainer left the render object " .. id)
+			end
 			local sch = remote.call(CIRC, "schedule", maintainer)
 			expect(sch and sch.parked == "stocked", "the level maintainer is not parked as stocked: " .. serpent.line(sch))
+			controller_lit("on", "in a working network")
 			--- a second terminal, cloned: it gets a screen of its own; mined, a screen goes with it
 			local two = s.create_entity{ name = "me-terminal", position = { BX + 20.5, BY + 3.5 }, force = "player", raise_built = true }
 			local three = two and two.clone{ position = { BX + 23.5, BY + 3.5 } }
@@ -131,6 +222,8 @@ return function(H)
 				expect(sc and not sc.on and not sc.light and sc.sprite == "me-terminal-screen-off",
 					"the screen of a network without power: " .. serpent.line(sc))
 				expect(maint() and maint().status == "no-power", "the maintainer's status without power: " .. serpent.line(maint()))
+				maintainer_lit(false, "in a network without power")
+				controller_lit("off", "without power")
 				--- (a woken maintainer finds it and parks for the power)
 				remote.call(CIRC, "set_maintainer", maintainer, nil, 20, nil)
 				st.dark_at, st.phase = tick, "parked"
@@ -156,6 +249,8 @@ return function(H)
 			expect(problem() == "no-power", "the terminal after a while without power: " .. tostring(problem()))
 			local sch = remote.call(CIRC, "schedule", maintainer)
 			expect(sch and sch.parked == "no-power", "the maintainer after a while without power: " .. serpent.line(sch))
+			maintainer_lit(false, "after a while without power")
+			controller_lit("off", "after a while without power")
 			st.phase = "back"
 		elseif st.phase == "back" then
 			if tick < BACK then return end
@@ -172,12 +267,69 @@ return function(H)
 				local n = info()
 				expect(n and n.power == 162000, "the controller's draw at the end: " .. serpent.line(n))
 				st.lit_after = tick - st.back_at
-				return finish("a terminal and a level maintainer 24 tiles from a pole: +8 kW and +30 kW, dark and parked "
-					.. "without power, lit and woken " .. st.lit_after .. " ticks after it came back, screens made, cloned and removed")
+				maintainer_lit(true, "with the power back")
+				controller_lit("on", "with the power back")
+				--- issue #254: a condition that is false makes it dark, switched off lit again (a condition counts only on a
+				--- circuit network: a constant combinator with no signal on a red wire, iron plates > 0)
+				local cc = s.create_entity{ name = "constant-combinator", position = { BX + MAINTAINER_X + 0.5, BY + 1.5 },
+					force = "player" }
+				local RED = defines.wire_connector_id.circuit_red
+				expect(cc and maintainer.get_wire_connector(RED, true).connect_to(cc.get_wire_connector(RED, true), false),
+					"the level maintainer could not be wired to a constant combinator")
+				st.combinator = cc
+				remote.call(CIRC, "set_condition", maintainer, true, { type = "item", name = "iron-plate" }, ">", 0)
+				st.cond_at, st.phase = tick, "condition"
 			elseif tick - st.back_at > 300 then
 				problems[#problems + 1] = "the power came back but the screen stayed dark or the maintainer parked: " .. serpent.line(sc) .. " " .. serpent.line(sch)
 				return finish()
 			end
+		elseif st.phase == "condition" then
+			if tick < st.cond_at + 5 then return end
+			remote.call(NET, "slow_step")
+			maintainer_lit(false, "with a false circuit condition")
+			remote.call(CIRC, "set_condition", maintainer, false)
+			st.cond_at, st.phase = tick, "condition-off"
+		elseif st.phase == "condition-off" then
+			if tick < st.cond_at + 5 then return end
+			remote.call(NET, "slow_step")
+			maintainer_lit(true, "with the circuit condition switched off")
+			local list_ok, why = remote.call(NET, "screen_list_ok")
+			expect(list_ok, "the screen list at the end: " .. tostring(why))
+			--- issue #278: a second controller on the cable row (a conflict), cloned with clone_area and mined
+			local two = s.create_entity{ name = "me-network-controller", position = { BX + 12, BY + 1 }, force = "player",
+				raise_built = true }
+			expect(two and info() and info().graph_status == "conflict", "a second controller made no conflict: " .. serpent.line(info()))
+			remote.call(NET, "slow_step")
+			controller_lit("conflict", "with a second controller in its network")
+			if two then
+				local copy_at = { BX + 42, BY + 21 }
+				s.clone_area{ source_area = { { BX + 11, BY }, { BX + 13, BY + 2 } },
+					destination_area = { { copy_at[1] - 1, copy_at[2] - 1 }, { copy_at[1] + 1, copy_at[2] + 1 } },
+					clone_tiles = false, clone_decoratives = false, clear_destination_entities = false, expand_map = false,
+					create_build_effect_smoke = false }
+				local copy = s.find_entity("me-network-controller", copy_at)
+				remote.call(NET, "slow_step")
+				expect(copy and parts_at(copy) == 1 and remote.call(NET, "controller_light", copy) ~= nil,
+					"a cloned controller's parts: " .. tostring(copy and parts_at(copy)) .. ", expected one of its own")
+				expect(parts_at(two) == 1, "the second controller's parts: " .. parts_at(two) .. ", expected 1")
+				local at = two.position
+				two.destroy{ raise_destroy = true }
+				expect(s.count_entities_filtered{ name = "me-controller-light", position = at, radius = 0.01 } == 0,
+					"a mined controller left its part")
+				if copy then
+					at = copy.position
+					copy.destroy{ raise_destroy = true }
+					expect(s.count_entities_filtered{ name = "me-controller-light", position = at, radius = 0.01 } == 0,
+						"a mined cloned controller left its part")
+				end
+			end
+			remote.call(NET, "slow_step")
+			controller_lit("on", "with the second controller mined")
+			if st.combinator and st.combinator.valid then st.combinator.destroy() end
+			return finish("a terminal and a level maintainer 24 tiles from a pole: +8 kW and +30 kW, dark and parked "
+				.. "without power, lit and woken " .. st.lit_after .. " ticks after it came back, screens made, cloned and "
+				.. "removed; the maintainer dark outside a network and with a false condition (issue #254); the controller's "
+				.. "part on, off, on, conflict, cloned and mined (issue #278)")
 		end
 	end
 

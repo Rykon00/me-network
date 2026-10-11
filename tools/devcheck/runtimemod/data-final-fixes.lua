@@ -58,3 +58,53 @@ do
 			icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
 	end
 end
+
+--- me-network issue #267: the drive's cell lights are hidden entities whose picture variations sit where the render objects
+--- of before sat (me-network's own view): bay 1's light covered (-0.341796875, -0.3681640625) .. (-0.130859375,
+--- -0.3154296875) tiles, at 64 px a tile 13.5 x 3.375 px, i.e. 108 x 27 px of the white square at scale 1/16. The
+--- lights are above the cells, both above the drive's picture at its position (secondary_draw_order), y-sorted with it.
+do
+	local light, cell = data.raw["simple-entity-with-force"]["me-drive-light"], data.raw["simple-entity-with-force"]["me-drive-cell"]
+	local function near(a, b) return math.abs(a - b) < 1e-6 end
+	local p = light and light.pictures and light.pictures[1]
+	local ok = p and p.width == 108 and p.height == 27 and near(p.scale, 1 / 16)
+		and near(p.shift[1], (-0.341796875 - 0.130859375) / 2) and near(p.shift[2], (-0.3681640625 - 0.3154296875) / 2)
+		and #light.pictures == 40 and light.secondary_draw_order == 2 and light.render_layer == "object"
+		and cell and #cell.pictures == 20 and cell.secondary_draw_order == 1
+		and data.raw["simple-entity-with-force"]["me-chest-light"] and #data.raw["simple-entity-with-force"]["me-chest-light"].pictures == 4
+	if not ok then
+		error("devcheck (issue #267): the drive's light parts are not where the lights were: " .. serpent.line(p)
+			.. " pictures " .. tostring(light and light.pictures and #light.pictures) .. " cell " .. tostring(cell and #cell.pictures))
+	end
+end
+
+--- me-network issue #278: the controller's part from the controller view (runtimemod/data.lua's stand-ins): one animation
+--- per state, above the controller's picture at its position, y-sorted with it
+do
+	local c = data.raw["simple-entity-with-force"]["me-controller-light"]
+	if not (c and c.animations and #c.animations == 3 and c.secondary_draw_order == 1 and c.render_layer == "object"
+		and c.hidden and not c.selectable_in_game) then
+		error("devcheck (issue #278): the controller's part is not made from the controller view: "
+			.. serpent.line(c and { c.animations and #c.animations, c.secondary_draw_order, c.render_layer }))
+	end
+end
+
+--- me-network issue #282: each direction of a bus is its picture and, above it, its marker (plate and arrows) on the
+--- picture's face (me-network's own bus view: 58 px at the top left, scale 0.5)
+do
+	local bad = {}
+	for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus" }) do
+		local e = data.raw["simple-entity-with-force"][name]
+		for _, dir in pairs({ "north", "east", "south", "west" }) do
+			local l = e and e.picture and e.picture[dir] and e.picture[dir].layers
+			local m = l and l[2]
+			local base = "/" .. name .. "-" .. dir
+			if not (l and #l == 2 and l[1].filename:sub(-#base - 4) == base .. ".png" and m.filename:sub(-#base - 11) == base .. "-marker.png"
+				and m.width == 58 and math.abs(m.scale - 0.5) < 1e-9 and math.abs(m.shift[1] + 0.046875) < 1e-9
+				and math.abs(m.shift[2] + 0.046875) < 1e-9) then
+				bad[#bad + 1] = name .. " " .. dir .. ": " .. serpent.line(l)
+			end
+		end
+	end
+	if #bad > 0 then error("devcheck (issue #282): the buses' marker layers: " .. table.concat(bad, "; ")) end
+end

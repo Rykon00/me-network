@@ -18,6 +18,7 @@
 --------------------------------------------------------------------------------
 
 local G = require("scripts.fork-me-gui")
+local Names = require("scripts.fork-me-names")
 local N = require("scripts.fork-me-network")
 
 local M = {}
@@ -70,6 +71,15 @@ function M.qualities()
 	return out
 end
 
+--- Issue #291: the quality buttons wrap in a table. With a mod that adds many qualities (Infinite Quality Tiers) one row of
+--- them ran past the picker and the screen. As many columns as fit in the bottom row at the picker's width (COLUMNS
+--- entries: 424 px) next to the label and the check (10 tool buttons of 30 px), or next to the temperature field as well
+--- (5); the game's five qualities stay one row either way.
+local QUALITY_COLUMNS, QUALITY_COLUMNS_WITH_TEMPERATURE = 10, 5
+function M.quality_columns(n, temperature)
+	return math.max(1, math.min(n, temperature and QUALITY_COLUMNS_WITH_TEMPERATURE or QUALITY_COLUMNS))
+end
+
 --------------------------------------------------------------------------------
 --- the catalog: what the picker lists, derived from the prototypes only (kept outside storage, made again after a load)
 --------------------------------------------------------------------------------
@@ -115,6 +125,7 @@ local function catalog_of()
 end
 
 --- the search text as the terminal's search takes it: lower case, spaces as dashes, matched against the prototype name
+--- (issue #295: and as it is against the name the player sees, Names.matches)
 local function normal(text)
 	return ((text or ""):lower():gsub("%s+", "-"))
 end
@@ -136,15 +147,17 @@ local function groups_for(kinds)
 end
 
 --- the entries the picker lists: { { kind, name, group } } of the allowed kinds, in the game's order, whose name
---- contains the search text. `group` (a name): only that group's. For tests and the window.
-function M.entries(kinds, filter, group)
-	filter = normal(filter)
+--- contains the search text (issue #295: the prototype name, or the translated name of player `index`). `group` (a
+--- name): only that group's. For tests and the window.
+function M.entries(kinds, filter, group, index)
+	local dashed, lower = Names.search(filter)
+	local names = Names.names_of(index)
 	local out = {}
 	for _, g in ipairs(catalog_of()) do
 		if group == nil or g.name == group then
 			for _, s in ipairs(g.subs) do
 				for _, e in ipairs(s.list) do
-					if kinds[e.kind] and (filter == "" or e.name:find(filter, 1, true)) then
+					if kinds[e.kind] and Names.matches(names, e.kind, e.name, dashed, lower) then
 						out[#out + 1] = { kind = e.kind, name = e.name, group = g.name }
 					end
 				end
@@ -193,14 +206,15 @@ local function fill(frame)
 	local body = G.find(frame, "fork_me_pk_body")
 	if not body then return end
 	body.clear()
-	local filter = normal(t.filter)
+	local filter, lower = Names.search(t.filter)
+	local names = Names.names_of(frame.player_index)               -- (issue #295: the names the player sees)
 	local shown, more = 0, false
 	for _, g in ipairs(groups_for(t.kinds)) do
 		if filter ~= "" or g.name == t.group then
 			for _, s in ipairs(g.subs) do
 				local tbl
 				for _, e in ipairs(s.list) do
-					if t.kinds[e.kind] and (filter == "" or e.name:find(filter, 1, true)) then
+					if t.kinds[e.kind] and Names.matches(names, e.kind, e.name, filter, lower) then
 						if shown >= MAX_SHOWN then more = true break end
 						shown = shown + 1
 						tbl = tbl or body.add{ type = "table", column_count = COLUMNS, style = "filter_slot_table" }
@@ -243,12 +257,22 @@ local function sync(frame)
 	if ok then ok.enabled = t.name ~= nil end
 end
 
+--- issue #295: a player's names arrived: an open picker lists by them
+Names.on_done[#Names.on_done + 1] = function(player)
+	local frame = picker_of(player)
+	if frame then
+		fill(frame)
+		sync(frame)
+	end
+end
+
 --- Open the picker for `player`. `spec`: { callback = a name given to on_confirm, data = what the callback gets back (plain
 --- data), kinds = { item = bool, fluid = bool } (what can be chosen), preset = { kind, name, quality } (what is chosen
 --- at first, optional), quality = false (the place takes no quality: no quality row, the choice has none), title = a
 --- LocalisedString }. Returns false when no kind is allowed.
 function M.open(player, spec)
 	M.close(player)
+	Names.ensure(player)                                          -- (issue #295: the names for the search)
 	local kinds = { item = spec.kinds.item and true or false, fluid = spec.kinds.fluid and true or false }
 	if not (kinds.item or kinds.fluid) then return false end
 	local t = { callback = spec.callback, data = spec.data or {}, kinds = kinds, filter = "", quality = "normal",
@@ -298,16 +322,19 @@ function M.open(player, spec)
 
 	local bottom = G.row(content)
 	local qualities = M.qualities()
+	local with_temperature = spec.temperature ~= false and kinds.fluid
 	if #qualities > 1 and not t.plain then
 		bottom.add{ type = "label", caption = { "fork-me-picker.quality" } }
-		local q = bottom.add{ type = "flow", name = "fork_me_pk_q", direction = "horizontal" }
+		local q = bottom.add{ type = "table", name = "fork_me_pk_q",
+			column_count = M.quality_columns(#qualities, with_temperature) }        -- (issue #291: rows, not one long line)
 		q.style.horizontal_spacing = 2
+		q.style.vertical_spacing = 2
 		for _, name in ipairs(qualities) do
 			q.add{ type = "sprite-button", style = "tool_button", sprite = "quality/" .. name,
 				tooltip = prototypes.quality[name].localised_name, tags = G.act("pk_quality", { quality = name }) }
 		end
 	end
-	if spec.temperature ~= false and kinds.fluid then             -- issue #159: a fluid's temperature (optional)
+	if with_temperature then                                      -- issue #159: a fluid's temperature (optional)
 		local row = bottom.add{ type = "flow", name = "fork_me_pk_temp_row", direction = "horizontal" }
 		row.style.vertical_align = "center"
 		row.add{ type = "label", caption = { "fork-me-picker.temperature" }, tooltip = { "fork-me-picker.temperature-tooltip" } }
@@ -463,6 +490,27 @@ script.on_event("fork-me-picker-confirm", function(event)
 		G.focus(player, window)
 	end
 	M.confirm(player)
+end)
+
+--- Focus the search field of the player's open ME picker, else of the open ME window (the Terminal's), and select its
+--- text so that typing replaces the old search (issue #148). Returns true when a field was focused. The picker sits on
+--- top of its window, so it comes first; a hidden picker (Escape) does not count.
+function M.focus_search(player)
+	local frame = picker_of(player)
+	local field = frame and frame.visible and G.find(frame, "fork_me_pk_search")
+	if not field then
+		local window = G.window_of(player)
+		field = window and window.valid and G.find(window, "fork_me_search")
+	end
+	if not (field and field.valid) then return false end
+	field.focus()
+	field.select_all()
+	return true
+end
+
+script.on_event("fork-me-focus-search", function(event)
+	local player = game.get_player(event.player_index)
+	if player then M.focus_search(player) end
 end)
 
 return M

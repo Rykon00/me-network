@@ -246,9 +246,28 @@ local function check_unified(st)
 			.. tostring(remote.call("gregtorio-me-terminal", "problem", far_t)))
 		local sc = remote.interfaces[NET].screen and remote.call(NET, "screen", far_t)
 		expect(sc and sc.on and sc.light, "the terminal of the old save has no lit screen: " .. serpent.line(sc))
+		--- me-network issue #258: its screen moved one layer up, above the dark picture the game draws now
+		expect(sc and sc.layer == "lower-object-above-shadow", "the terminal screen's layer after the update: " .. serpent.line(sc))
 		local fm = far_m and remote.call("gregtorio-me-circuit", "get_maintainer", far_m)
 		expect(fm and fm.status ~= "no-power" and fm.status ~= "no-network" and fm.stock ~= nil, "the level maintainer far from every pole: "
 			.. serpent.line(fm))
+		--- me-network issue #254: the level maintainers of an old save get their picture (their lamp pictures are empty now)
+		for _, mm in pairs({ maint, far_m }) do
+			local ms = remote.call(NET, "screen", mm)
+			expect(ms and ms.on and ms.sprite == "me-level-maintainer-screen-on",
+				"a level maintainer of the old save has no lit picture: " .. serpent.line(ms))
+		end
+		local list_ok, why = remote.call(NET, "screen_list_ok")
+		expect(list_ok, "the screen list made for the old save: " .. tostring(why))
+		--- me-network issue #267: the drives' lights of the old save (rectangles) are entities now, none left behind
+		for _ = 1, 3 do remote.call(NET, "slow_step") end
+		local rects = 0
+		for _, o in pairs(rendering.get_all_objects("me-network")) do
+			if o.valid and o.type == "rectangle" then rects = rects + 1 end
+		end
+		local lights = game.surfaces[1].count_entities_filtered{ name = "me-drive-light" }
+		expect(rects == 0 and lights > 0, "the drives' lights after the update: " .. rects .. " rectangles left, " .. lights
+			.. " light entities")
 	end
 	--- me-network issue #17: a storage bus and an interface of the old version have no cards and the defaults
 	local sbus = remote.interfaces["gregtorio-me-storagebus"]

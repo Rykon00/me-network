@@ -43,6 +43,8 @@
 
 local fluids = require("scripts.fork-me-fluids")
 local N = require("scripts.fork-me-network")
+local G = require("scripts.fork-me-gui")
+local CS = require("scripts.fork-me-cardslots")
 local P = require("scripts.fork-me-patterns")
 local Sched = require("scripts.fork-me-schedule")
 
@@ -70,10 +72,16 @@ local QUALITY = "normal"        -- only normal quality items are planned and cra
 local FLUID_MARGIN = 0.01       -- extra fluid reserved per job and fluid (fixed point rounding)
 local FLUID_EPS = 1e-6
 local FIXED = 16777216          -- fluid amounts are fixed point with 24 fractional bits
-local SLOTS = 9                 -- pattern slots of a provider (AE2)
+local SLOTS = 9                 -- pattern slots of a provider without cards (AE2)
+local MAX_SLOTS = 36            -- with three Pattern Capacity Cards (issue #156: 9 more each)
 local PATTERN_VERSION = 1       -- storage.fork_ae2.pattern_version: providers hold encoded patterns (issue #80; every
                                 -- save of 0.5.0 and later has it, issue #146)
-M.SLOTS = SLOTS
+M.SLOTS, M.MAX_SLOTS = SLOTS, MAX_SLOTS
+
+--- the pattern slots of a provider (issue #156): 9 and 9 more per Pattern Capacity Card (`p.nslots`, made from its cards by
+--- on_cards; nil: 9, a provider of before)
+local function slots_of(p) return p.nslots or SLOTS end
+local cards                                   -- the provider's card slots (scripts/fork-me-cardslots.lua), made below
 
 local PROVIDER = "me-pattern-provider"
 local NEIGHBORS = { { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
@@ -721,7 +729,7 @@ local function fill_pending(p, net)
 	for slot, def in pairs(p.pending) do
 		if p.slots[slot] then
 			p.pending[slot] = nil                      -- a pattern was put into the slot by hand
-		elseif N.extract(net, P.BLANK, "normal", 1) == 1 then
+		elseif slot <= slots_of(p) and N.extract(net, P.BLANK, "normal", 1) == 1 then   -- (a slot a card has not given yet waits)
 			p.slots[slot] = def
 			p.pending[slot] = nil
 			changed = true
@@ -775,7 +783,7 @@ local function scan_provider(p)
 	if net then
 		for i, m in ipairs(neighbors_of(e)) do around[i] = machine_view(m) end
 	end
-	for slot = 1, SLOTS do
+	for slot = 1, slots_of(p) do
 		local raw = p.slots[slot]
 		if raw then
 			local def, why, id = normalized(raw)
@@ -815,7 +823,8 @@ end
 local function vanish_provider(s, p)
 	local surface = game.get_surface(p.surface or 0)
 	local n = 0
-	for slot = 1, SLOTS do
+	if cards then cards.detach(p) end             -- (issue #156: its Pattern Capacity Cards are spilled where it stood)
+	for slot = 1, MAX_SLOTS do
 		local raw = p.slots and p.slots[slot]
 		if raw and surface then
 			local def = P.normalize(raw)
@@ -871,7 +880,7 @@ local function rebuild_patterns(s)
 				net = { items = {}, defs = {}, targets = {}, ignored = { total = 0 }, seen = {}, prov = {} }
 				patterns[p.net] = net
 			end
-			for slot = 1, SLOTS do
+			for slot = 1, slots_of(p) do
 				local st = p.status[slot]
 				local pat = p.patterns[slot]
 				if st and not st.ok then
@@ -941,6 +950,7 @@ local function maintenance(s, count)
 		local unit = s.plist[s.pcursor]
 		local p = s.providers[unit]
 		if p and p.entity.valid then
+			if p.want then cards.fill_cards(p) end                  -- issue #156: the cards a blueprint, a paste or a clone asked for
 			scan_provider(p)
 			s.pcursor = s.pcursor + 1
 		else
@@ -1395,22 +1405,51 @@ local function pause_group_job(s, g)
 	end
 end
 
+--- Issue #152: the picture of a crafting block, variation 1 + mask + 16 * state: the mask has a bit for each side (N 1, E 2,
+--- S 4, W 8, as SIDES) that touches a block of the same group (no frame there: the CPU reads as one slab), the state is 0
+--- for a group that is no CPU, 1 for a CPU, 2 for a CPU that runs a job. Nothing runs on a tick: a block that is built or
+--- removed paints itself and its neighbours, a change of the group's state (status or job) paints the whole group.
+local SIDE_BITS = { 1, 2, 4, 8 }
+
+local function group_state(g)
+	if g.status ~= "ok" then return 0 end
+	return g.job and 2 or 1
+end
+
+local function paint_block(s, b, state)
+	if not b.entity.valid then return end
+	local mask = 0
+	for i, d in ipairs(SIDES) do
+		local u = s.cgrid[grid_key(b.surface, b.x + d[1], b.y + d[2])]
+		local o = u and s.cblocks[u]
+		if o and o.group == b.group then mask = mask + SIDE_BITS[i] end
+	end
+	local v = 1 + mask + 16 * state
+	if b.entity.graphics_variation ~= v then b.entity.graphics_variation = v end
+end
+
+--- paint the whole group when its state is not the one it was painted in (`force`: whatever it was)
+local function repaint_group(s, g, force)
+	local state = group_state(g)
+	if g.pstate == state and not force then return end
+	g.pstate = state
+	for unit in pairs(g.blocks) do
+		local b = s.cblocks[unit]
+		if b then paint_block(s, b, state) end
+	end
+end
+
 local function group_changed(g)
+	local s = storage.fork_ae2
+	if s and s.groups and s.groups[g.id] == g and g.n > 0 then repaint_group(s, g) end    -- (a job started or ended: issue #152)
 	for _, hook in pairs(M.group_hooks) do hook(g) end
 end
 
---- status, pictures (dark: no CPU, lit: a CPU) and the job of a group whose blocks changed
+--- status, pictures and the job of a group whose blocks changed
 local function settle_group(s, g)
-	local was = g.status
 	local rect = g.n == (g.x2 - g.x1 + 1) * (g.y2 - g.y1 + 1)
 	g.status = not rect and "not-rectangle" or g.bytes <= 0 and "no-storage" or "ok"
-	if g.status ~= was then
-		local variation = g.status == "ok" and 2 or 1
-		for unit in pairs(g.blocks) do
-			local e = s.cblocks[unit].entity
-			if e.valid then e.graphics_variation = variation end
-		end
-	end
+	repaint_group(s, g)
 	local job = g.job and s.jobs[g.job]
 	if job and not (g.status == "ok" and g.bytes >= job_bytes(job)) then pause_group_job(s, g) end
 	group_changed(g)
@@ -1441,6 +1480,7 @@ local function add_block(s, entity)
 		local other = s.groups[ids[i]]
 		if other.job then jobs[#jobs + 1] = other.job end
 		pause_group_job(s, other)
+		g.pstate = nil                                  -- (issue #152: the blocks of the other group are painted again)
 		for u in pairs(other.blocks) do add_to_group(g, u, s.cblocks[u]) end
 		s.groups[other.id] = nil
 		group_changed(other)
@@ -1454,8 +1494,10 @@ local function add_block(s, entity)
 		end
 	end
 	add_to_group(g, unit, b)
-	entity.graphics_variation = g.status == "ok" and 2 or 1      -- (settle_group sets every block when the status changes)
 	settle_group(s, g)
+	local state = group_state(g)                         -- (settle_group paints the whole group when its state changed)
+	paint_block(s, b, state)
+	for _, u in ipairs(block_neighbours(s, b, g.id)) do paint_block(s, s.cblocks[u], state) end
 end
 
 --- a crafting block was removed (mined, destroyed, or vanished without an event): it leaves its group, which may split
@@ -1520,6 +1562,11 @@ local function remove_block(s, unit)
 	end
 	recount_group(s, g)
 	settle_group(s, g)
+	for _, u in ipairs(block_neighbours(s, b)) do        -- (issue #152: the sides that touched the removed block have a frame now)
+		local nb = s.cblocks[u]
+		local ng = nb and s.groups[nb.group]
+		if ng then paint_block(s, nb, group_state(ng)) end
+	end
 end
 
 --- the working network of a group (that of its blocks), nil when it has none or it does not work
@@ -2182,7 +2229,14 @@ local function close_lease(s, job, net, lease)
 			local key = key_of(ing)
 			local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
 			local given = lease.given and lease.given[key] or per * lease.runs
-			used = math.min(used, math.floor((given - (back[key] or 0)) / per + 1e-6))
+			local left = back[key] or 0
+			--- issue #270: a lease closes when the machine is idle, that is with less than one run of a fluid left; that
+			--- rest is the pattern's surplus over what the machine's recipe takes (a pattern of 0.123457 or of 15 for a
+			--- recipe of 0.1234564 or 14.4) or the margin, not a run it did not use. Counted as one, the last run was
+			--- handed out again and the machine rejected for the pattern: the job waited for a machine forever. (The
+			--- rest still went back into the pool above.)
+			if ing.type == "fluid" and left < per - FLUID_EPS then left = 0 end
+			used = math.min(used, math.floor((given - left) / per + 1e-6))
 		end
 		used = math.max(0, used)
 		if used < lease.runs then step.issued = step.issued - (lease.runs - used) end
@@ -2824,6 +2878,59 @@ local function changed(p)
 	state().dirty = true
 end
 
+--- Issue #156: the card slots of a provider (scripts/fork-me-cardslots.lua): only the Pattern Capacity Card fits, 3 of them,
+--- each gives 9 more pattern slots. Taking a card out is refused (`can_remove`) while a pattern sits in a slot the card
+--- gives. A provider that loses a card another way (a settings paste that wants fewer, a script) puts the patterns above
+--- its new size on the ground next to it and tells the force: a pattern is never lost.
+local function resize_provider(p)
+	local rules = N.card_rules().provider
+	local size = rules.patterns + rules.per_capacity * (cards.counts(p).pattern_capacity or 0)
+	p.nslots = size ~= SLOTS and size or nil
+	local n = 0
+	for slot = size + 1, MAX_SLOTS do
+		local raw = p.slots[slot]
+		if raw then
+			if p.entity.valid then spill(p.entity, slot_stack(raw)) end
+			p.slots[slot] = nil
+			n = n + 1
+		end
+	end
+	if n > 0 and p.entity.valid then
+		p.entity.force.print({ "fork-me-pattern.provider-shrunk", n, string.format("[gps=%d,%d,%s]", math.floor(p.position.x),
+			math.floor(p.position.y), p.entity.surface.name) })
+	end
+	changed(p)
+end
+
+cards = CS.new{
+	rules = function() return N.card_rules().provider end,
+	title = function(rec) return rec.entity and rec.entity.valid and rec.entity.localised_name or { "entity-name." .. PROVIDER } end,
+	rec_of = function(entity) return provider_record(entity) end,
+	on_cards = function(rec) resize_provider(rec) end,
+	can_remove = function(rec, stack)
+		if N.card_kind(stack.name) ~= "pattern_capacity" then return nil end
+		local rules = N.card_rules().provider
+		local size = rules.patterns + rules.per_capacity * ((cards.counts(rec).pattern_capacity or 1) - 1)
+		for slot = size + 1, MAX_SLOTS do
+			if rec.slots[slot] then return "patterns-above" end
+		end
+		return nil
+	end,
+}
+
+--- the window's functions for the card slots (issue #156): the inventory the window shows, a click on a card slot, shift + click
+--- of a card in the player's inventory
+function M.provider_inventory(entity)
+	local p = provider_record(entity)
+	return p and cards.inv_of(p) or nil
+end
+function M.provider_card_click(entity, slot, cursor, inventory, shift) return cards.card_click(entity, slot, cursor, inventory, shift) end
+function M.provider_shift_in(entity, stack) return cards.shift_in(entity, stack) end
+function M.provider_sync(entity, back)
+	local p = provider_record(entity)
+	return p ~= nil and cards.sync(p, back)
+end
+
 --- Put the encoded pattern in `stack` into `slot` of a provider (the first free one when nil). The stack is
 --- emptied. Returns the slot, or nil and a reason ("no-provider", "not-a-pattern", "provider-full",
 --- "pattern-slot-taken").
@@ -2832,12 +2939,12 @@ function M.insert_pattern(provider, stack, slot)
 	if not p then return nil, "no-provider" end
 	if not P.is_encoded(stack) then return nil, "not-a-pattern" end
 	if slot == nil then
-		for i = 1, SLOTS do
+		for i = 1, slots_of(p) do
 			if not p.slots[i] then slot = i break end
 		end
 		if not slot then return nil, "provider-full" end
 	end
-	if slot < 1 or slot > SLOTS then return nil, "pattern-slot-taken" end
+	if slot < 1 or slot > slots_of(p) then return nil, "pattern-slot-taken" end
 	if p.slots[slot] then return nil, "pattern-slot-taken" end
 	p.slots[slot] = P.read(stack) or {}
 	if p.pending then p.pending[slot] = nil end
@@ -2932,7 +3039,7 @@ function M.provider_info(entity)
 	if not p then return nil end
 	scan_provider(p)
 	local slots = {}
-	for slot = 1, SLOTS do
+	for slot = 1, slots_of(p) do
 		local raw = p.slots[slot]
 		local st = p.status[slot]
 		if raw then
@@ -2952,7 +3059,12 @@ function M.provider_info(entity)
 		machines[#machines + 1] = { name = m.name, unit = m.unit_number, type = m.type, recipe = r and r.name or nil,
 			busy = s.busy[m.unit_number] }
 	end
-	return { slots = slots, slot_count = SLOTS, machines = machines, priority = p.priority or 0, network = p.net ~= nil }
+	local filled = 0
+	for slot = 1, slots_of(p) do if p.slots[slot] then filled = filled + 1 end end
+	local out = { slots = slots, slot_count = slots_of(p), filled = filled, machines = machines, priority = p.priority or 0,
+		network = p.net ~= nil, card_slots = N.card_rules().provider.slots }
+	out.want = p.want and cards.missing_cards(p, p.want) or nil
+	return out
 end
 
 --- settings paste (shift right click, shift left click): the priority. Patterns are items: they are not copied.
@@ -2960,6 +3072,11 @@ function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
 	if not (src and src.valid and dst and dst.valid and src.name == PROVIDER and dst.name == PROVIDER) then return end
 	M.set_priority(dst, M.get_priority(src))
+	local from = provider_record(src)                -- issue #156: the Pattern Capacity Cards it has are wanted (from the player, then the network)
+	if from then
+		local player = event.player_index and game.get_player(event.player_index) or nil
+		cards.want_cards(dst, from.want and { table.unpack(from.want) } or cards.card_list(from) or {}, player)
+	end
 end
 
 --- The blueprint settings of a provider: { priority, patterns = { ["slot"] = pattern } } (its patterns and those
@@ -2968,11 +3085,12 @@ function M.provider_settings(entity)
 	local p = provider_record(entity)
 	if not p then return nil end
 	local patterns = {}
-	for slot = 1, SLOTS do
+	for slot = 1, MAX_SLOTS do
 		local def = p.slots[slot] and P.normalize(p.slots[slot]) or (p.pending and p.pending[slot])
 		if def then patterns[tostring(slot)] = def end
 	end
-	return { priority = p.priority or 0, patterns = patterns }
+	return { priority = p.priority or 0, patterns = patterns,
+		cards = p.want and { table.unpack(p.want) } or cards.card_list(p) }       -- (issue #156)
 end
 
 --- Apply blueprint settings to a provider: the priority, and the patterns as "pending" (each costs a blank
@@ -2986,7 +3104,7 @@ function M.apply_settings(entity, settings, old_recipe)
 		for key, raw in pairs(type(settings.patterns) == "table" and settings.patterns or {}) do
 			local slot = tonumber(key)
 			local def = P.normalize(raw)
-			if def and slot and slot >= 1 and slot <= SLOTS and not p.slots[slot] then
+			if def and slot and slot >= 1 and slot <= MAX_SLOTS and not p.slots[slot] then
 				p.pending = p.pending or {}
 				p.pending[slot] = def
 			end
@@ -2996,7 +3114,7 @@ function M.apply_settings(entity, settings, old_recipe)
 		local inputs, outputs = P.recipe_rows(old_recipe)
 		local def = P.processing(inputs, outputs, old_recipe)
 		if def then
-			for slot = 1, SLOTS do
+			for slot = 1, slots_of(p) do
 				if not p.slots[slot] and not (p.pending and p.pending[slot]) then
 					p.pending = p.pending or {}
 					p.pending[slot] = def
@@ -3017,7 +3135,7 @@ function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
 		if entity.valid and entity.name == PROVIDER then
 			local settings = M.provider_settings(entity)
-			if settings and (settings.priority ~= 0 or next(settings.patterns)) then
+			if settings and (settings.priority ~= 0 or next(settings.patterns) or settings.cards) then
 				bp.set_blueprint_entity_tag(index, BP_TAG, settings)
 			end
 		end
@@ -3049,8 +3167,13 @@ function M.on_built(entity, tags, source)
 	if entity.name ~= PROVIDER then return end
 	if type(tags) == "table" and (tags[BP_TAG] or tags[OLD_TAG]) then
 		M.apply_settings(entity, tags[BP_TAG], tags[OLD_TAG])
+		local list = type(tags[BP_TAG]) == "table" and tags[BP_TAG].cards
+		if type(list) == "table" and #list > 0 then cards.want_cards(entity, list, nil) end   -- issue #156: from the network, never from nothing
 	elseif source and source.valid and source.name == PROVIDER then
 		M.set_priority(entity, M.get_priority(source))
+		local from = provider_record(source)
+		local list = from and (from.want and { table.unpack(from.want) } or cards.card_list(from))
+		if list then cards.want_cards(entity, list, nil) end
 	end
 end
 
@@ -3066,7 +3189,7 @@ function M.on_removed(entity, buffer)
 	local s = storage.fork_ae2
 	local p = s and s.providers[entity.unit_number]
 	if not p then return end
-	for slot = 1, SLOTS do
+	for slot = 1, MAX_SLOTS do
 		local raw = p.slots[slot]
 		if raw then
 			local def = slot_stack(raw)
@@ -3075,6 +3198,8 @@ function M.on_removed(entity, buffer)
 			p.slots[slot] = nil
 		end
 	end
+	if buffer and buffer.valid then cards.give_cards(p, buffer) else cards.spill_cards(p) end   -- issue #156
+	cards.detach(p)
 	s.providers[entity.unit_number] = nil
 	remove_value(s.plist, entity.unit_number)
 	s.dirty = true
@@ -3149,6 +3274,14 @@ function monitor_progress(job)
 	end
 end
 
+--- issue #220: in the 3D style a crafting block's face gives up 10 of its 64 px to the depth strip on an east or south side that
+--- no other block of the CPU touches (tools/gen_ae2_sprites.py hd_block_connected): the centre of the face, in tiles
+local function face_centre(e)
+	local mask = (e.graphics_variation - 1) % 16
+	local d = 5 / 64
+	return { bit32.band(mask, 2) == 0 and -d or 0, bit32.band(mask, 4) == 0 and -d or 0 }
+end
+
 local function draw_monitors(g)
 	local s = storage.fork_ae2
 	if not (s and s.cblocks) then return end
@@ -3165,10 +3298,11 @@ local function draw_monitors(g)
 			clear_monitor(s, unit)
 		elseif not (shown and shown.job == job.id) then
 			clear_monitor(s, unit)
+			local c = face_centre(e)
 			s.monitors[unit] = {
-				icon = rendering.draw_sprite{ sprite = sprite, target = { entity = e, offset = { 0, -0.1 } }, surface = e.surface,
+				icon = rendering.draw_sprite{ sprite = sprite, target = { entity = e, offset = { c[1], c[2] - 0.1 } }, surface = e.surface,
 					x_scale = 0.55, y_scale = 0.55, render_layer = "higher-object-under" },
-				text = rendering.draw_text{ text = amount_text(remaining_of(job)), target = { entity = e, offset = { 0, 0.12 } },
+				text = rendering.draw_text{ text = amount_text(remaining_of(job)), target = { entity = e, offset = { c[1], c[2] + 0.12 } },
 					surface = e.surface, color = { 0.6, 0.95, 1 }, scale = 0.6, alignment = "center", render_layer = "higher-object-under" },
 				job = job.id, left = remaining_of(job),
 			}
@@ -3192,10 +3326,18 @@ function M.group_info(entity)
 	local g = s.groups[s.cblocks[entity.unit_number].group]
 	local monitors = 0
 	for _ in pairs(g.monitors) do monitors = monitors + 1 end
+	--- issue #151: the blocks by type, { name, count }, in the order of their names (read when a window refreshes, once a second)
+	local by, parts = {}, {}
+	for unit in pairs(g.blocks) do
+		local b = s.cblocks[unit]
+		if b and b.entity.valid then by[b.entity.name] = (by[b.entity.name] or 0) + 1 end
+	end
+	for name, n in pairs(by) do parts[#parts + 1] = { name = name, count = n } end
+	table.sort(parts, function(a, b) return a.name < b.name end)
 	local job = g.job and M.job(g.job)
 	return { id = g.id, status = g.status, blocks = g.n, width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1,
 		bytes = g.bytes, used = job and job.bytes or 0, coprocessors = g.coprocessors, speed = group_speed(g),
-		monitors = monitors, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job }
+		monitors = monitors, parts = parts, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job }
 end
 --- Rebuild the registries from the world, drop stale references, and repair the job books.
 --- Jobs and their pools are kept; provider slots, blueprint patterns and priorities are kept by unit number.
@@ -3222,6 +3364,7 @@ function M.on_configuration_changed()
 			s.plist[#s.plist + 1] = e.unit_number
 			local p = s.providers[e.unit_number]
 			p.slots, p.pending, p.priority = k.slots or {}, k.pending, k.priority or 0
+			p.inv, p.cards, p.want, p.where, p.nslots = k.inv, k.cards, k.want, k.where, k.nslots   -- issue #156
 			kept[e.unit_number] = nil
 		end
 		register(s, e)
@@ -3344,6 +3487,14 @@ remote.add_interface("gregtorio-me-autocraft", {
 	insert_pattern = function(provider, stack, slot) return M.insert_pattern(provider, stack, slot) end,
 	take_pattern = function(provider, slot, target) return M.take_pattern(provider, slot, target) end,
 	provider_click = function(cursor, inventory, provider, slot, shift) return M.provider_click(cursor, inventory, provider, slot, shift) end,
+	--- issue #156: the card slots of a provider (the window's functions and the tests')
+	provider_inventory = function(provider) local p = provider_record(provider) return p and cards.inv_of(p) or nil end,
+	provider_card_click = function(provider, slot, cursor, inventory, shift) return cards.card_click(provider, slot, cursor, inventory, shift) end,
+	provider_shift_in = function(provider, stack) return cards.shift_in(provider, stack) end,
+	provider_want_cards = function(provider, want, player_index)
+		return cards.want_cards(provider, want, player_index and game.get_player(player_index) or nil)
+	end,
+	provider_sync = function(provider, back) local p = provider_record(provider) return p ~= nil and cards.sync(p, back) end,
 	get_priority = function(provider) return M.get_priority(provider) end,
 	set_priority = function(provider, priority) return M.set_priority(provider, priority) end,
 	provider_settings = function(provider) return M.provider_settings(provider) end,
@@ -3351,6 +3502,7 @@ remote.add_interface("gregtorio-me-autocraft", {
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
 	--- the provider removal of the build events (mined: `buffer`, destroyed: nil)
 	on_removed = function(provider, buffer) M.on_removed(provider, buffer) end,
+	built = function(entity, tags, source) M.on_built(entity, tags, source) end,   -- (issue #156: a blueprint's tag, a clone)
 	--- what the jobs of the network of `entity` still wait for of `key` (processing outputs)
 	awaiting = function(entity, key)
 		local net = network_of(entity)

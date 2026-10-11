@@ -33,6 +33,10 @@ local BLANK_SLOT, OUTPUT_SLOT = 1, 2
 local COLUMNS = 10
 local WIDTH = 40 * COLUMNS + 12
 
+--- Issue #210: the window of a wireless terminal in pattern mode has an access point as its entity: no block, no slots; Encode
+--- takes the blank from the network and puts the pattern into the player's inventory, Load and Clear work on the hand.
+local function wireless(entity) return entity ~= nil and entity.valid and N.kind_of(entity.name) == "access-point" end
+
 local function records()
 	storage.fork_me_pterm = storage.fork_me_pterm or {}
 	return storage.fork_me_pterm
@@ -228,6 +232,7 @@ end
 --- or "inventory", or nil and the reason.
 function M.encode(entity, force, ed, back)
 	local rec = rec_of(entity)
+	if not rec and wireless(entity) then return M.encode_wireless(entity, force, ed, back) end
 	if not rec then return nil, "no-network" end
 	local net, why = network(entity)
 	if not net then return nil, why end
@@ -241,6 +246,29 @@ function M.encode(entity, force, ed, back)
 		return "inventory"
 	end
 	return "output"
+end
+
+--- Issue #210: Encode without a block (a wireless terminal): the blank from the network, the pattern into `back` (the player's
+--- inventory), refused before anything moves when there is no room. Returns "inventory", or nil and the reason.
+function M.encode_wireless(entity, force, ed, back)
+	if not (back and back.valid) then return nil, "no-inventory" end
+	local net, why = network(entity)
+	if not net then return nil, why end
+	local def, dwhy = M.pattern_of(force, ed)
+	if not def then return nil, dwhy end
+	if not back.can_insert{ name = P.ENCODED, count = 1 } then return nil, "inventory-full" end
+	local tmp = game.create_inventory(2)
+	local where, ewhy = P.encode_slots(tmp[BLANK_SLOT], tmp[OUTPUT_SLOT], net, def)
+	if where and tmp[OUTPUT_SLOT].valid_for_read then
+		if back.insert(tmp[OUTPUT_SLOT]) >= 1 then tmp[OUTPUT_SLOT].clear() end
+		if tmp[OUTPUT_SLOT].valid_for_read then N.insert_stack(net, tmp[OUTPUT_SLOT]) end   -- (no room after all: into the network)
+	end
+	for i = 1, 2 do
+		if tmp[i].valid_for_read then N.insert_stack(net, tmp[i]) end
+	end
+	tmp.destroy()
+	if not where then return nil, ewhy end
+	return "inventory"
 end
 
 --- Encode a pattern given as data onto the two slots of `inv` (a 2-slot inventory of a test, standing for the block: its first
@@ -368,7 +396,9 @@ local function editor_rows(parent, ed, which, max)
 	for i = 1, max do
 		local row = ed[which][i]
 		G.key_button(t, row and row.key, G.act("pat_row", { which = which, index = i }), { "fork-me-gui.key-slot-tooltip" })
-		local f = G.number_field(t, row and row.amount or 0, G.act("pat_amount", { which = which, index = i }), 60)
+		--- (issue #261: a fluid amount of a pattern from before, 14.400000035762787, shows as 14.4; typing changes the row)
+		local shown = row and P.clean_amount(row.amount) or 0
+		local f = G.number_field(t, shown, G.act("pat_amount", { which = which, index = i }), 60)
 		f.allow_decimal = true
 		f.enabled = row ~= nil
 	end
@@ -410,8 +440,9 @@ local function slot_column(parent, caption, name, slot, tooltip)
 end
 
 local function open(player, entity)
-	if not (entity and entity.valid and entity.name == NAME) then return end
-	rec_of(entity)
+	if not (entity and entity.valid and (entity.name == NAME or wireless(entity))) then return end
+	local remote_view = wireless(entity)
+	if not remote_view then rec_of(entity) end
 	local _, content = G.open_window(player, "pattern-terminal", { "fork-me-pattern-terminal.title" }, { unit = entity.unit_number })
 	local u = ui()[player.index]
 	if not u then
@@ -421,15 +452,20 @@ local function open(player, entity)
 	u.pat = u.pat or new_editor()
 	u.shown = nil
 	G.label(content, "", WIDTH, nil, "fork_me_net_line")
-	G.label(content, { "fork-me-gui.patterns-help" }, WIDTH)
+	if remote_view and G.wireless_mode_button then G.wireless_mode_button(content, entity, "terminal") end   -- (issue #210)
+	G.label(content, { remote_view and "fork-me-wireless.patterns-help" or "fork-me-gui.patterns-help" }, WIDTH)
 	content.add{ type = "flow", name = "fork_me_pat_box", direction = "vertical" }
 	content.add{ type = "line" }
 	local row = G.row(content)
-	slot_column(row, { "fork-me-pattern-terminal.blank-slot" }, "fork_me_pt_blank", BLANK_SLOT, { "fork-me-pattern-terminal.blank-slot-tooltip" })
+	if not remote_view then
+		slot_column(row, { "fork-me-pattern-terminal.blank-slot" }, "fork_me_pt_blank", BLANK_SLOT, { "fork-me-pattern-terminal.blank-slot-tooltip" })
+	end
 	local mid = row.add{ type = "flow", direction = "vertical" }
 	mid.add{ type = "button", name = "fork_me_pat_encode", caption = { "fork-me-gui.patterns-encode" }, style = "confirm_button",
-		tooltip = { "fork-me-gui.patterns-encode-tooltip" }, tags = G.act("pat_encode") }
-	slot_column(row, { "fork-me-pattern-terminal.output-slot" }, "fork_me_pt_output", OUTPUT_SLOT, { "fork-me-pattern-terminal.output-slot-tooltip" })
+		tooltip = { remote_view and "fork-me-wireless.encode-tooltip" or "fork-me-gui.patterns-encode-tooltip" }, tags = G.act("pat_encode") }
+	if not remote_view then
+		slot_column(row, { "fork-me-pattern-terminal.output-slot" }, "fork_me_pt_output", OUTPUT_SLOT, { "fork-me-pattern-terminal.output-slot-tooltip" })
+	end
 	row.add{ type = "empty-widget" }.style.horizontally_stretchable = true
 	local buttons = row.add{ type = "flow", direction = "vertical" }
 	buttons.add{ type = "button", caption = { "fork-me-gui.patterns-load" }, tooltip = { "fork-me-gui.patterns-load-tooltip" },
@@ -447,7 +483,7 @@ function M.refresh(player, frame)
 	if not (frame and u) then return false end
 	local entity = G.entity_of(player, frame)
 	local rec = entity and rec_of(entity)
-	if not rec then return false end
+	if not (rec or wireless(entity)) then return false end
 	local net_line, box = G.find(frame, "fork_me_net_line"), G.find(frame, "fork_me_pat_box")
 	if not (net_line and box) then return false end                           -- built by another version
 	local net, why = network(entity)
@@ -464,15 +500,18 @@ function M.refresh(player, frame)
 		box.clear()
 		build_pattern_box(box, player, ed)
 	end
-	G.render_slot(G.find(frame, "fork_me_pt_blank"), rec.inv[BLANK_SLOT], nil, { "fork-me-pattern-terminal.blank-slot-tooltip" })
-	G.render_slot(G.find(frame, "fork_me_pt_output"), rec.inv[OUTPUT_SLOT], nil, { "fork-me-pattern-terminal.output-slot-tooltip" })
+	local out = rec and rec.inv[OUTPUT_SLOT]
+	if rec then
+		G.render_slot(G.find(frame, "fork_me_pt_blank"), rec.inv[BLANK_SLOT], nil, { "fork-me-pattern-terminal.blank-slot-tooltip" })
+		G.render_slot(G.find(frame, "fork_me_pt_output"), out, nil, { "fork-me-pattern-terminal.output-slot-tooltip" })
+	end
 	local own, in_net = M.blanks(entity)
 	G.find(frame, "fork_me_pat_status").caption = { "", { "fork-me-pattern-terminal.blanks", own, in_net },
-		P.is_encoded(rec.inv[OUTPUT_SLOT]) and { "fork-me-pattern-terminal.in-output" } or "",
+		P.is_encoded(out) and { "fork-me-pattern-terminal.in-output" } or "",
 		P.is_encoded(player.cursor_stack) and { "fork-me-gui.patterns-in-hand" } or "" }
 	local def = M.pattern_of(player.force, ed)
 	G.find(frame, "fork_me_pat_encode").enabled = net ~= nil and def ~= nil
-		and (P.is_encoded(rec.inv[OUTPUT_SLOT]) or own > 0 or in_net > 0)
+		and (P.is_encoded(out) or own > 0 or in_net > 0)
 	return true
 end
 
@@ -555,7 +594,7 @@ end
 G.on("pat_encode", function(event, player)
 	local u, entity = ui_of(player), window_entity(player)
 	if not (u and u.pat and entity) then return end
-	local where, why = M.encode(entity, player.force, u.pat, event.shift and G.player_inventory(player) or nil)
+	local where, why = M.encode(entity, player.force, u.pat, (event.shift or wireless(entity)) and G.player_inventory(player) or nil)
 	if where then
 		player.create_local_flying_text{ text = { "fork-me-pattern-terminal.encoded-" .. where }, create_at_cursor = true }
 	else
@@ -603,6 +642,8 @@ remote.add_interface("gregtorio-me-pattern-terminal", {
 		return M.encode_def(inv, net, def)
 	end,
 	clear = function(entity, cursor, back) return M.clear(entity, cursor, back) end,
+	--- issue #210: Encode of a wireless terminal (`entity` its access point): the blank from the network, the pattern into `back`
+	encode_wireless = function(entity, force, ed, back) return M.encode_wireless(entity, force, ed, back) end,
 	load_pattern = function(entity, cursor, ed)
 		local ok, where = M.load_pattern(entity, cursor, ed)
 		return ok, where, ed
@@ -614,6 +655,8 @@ remote.add_interface("gregtorio-me-pattern-terminal", {
 	inventory = function(entity) return M.inventory(entity) end,
 	--- the pattern in an encoded pattern stack (tags, tooltip data): { kind, recipe, inputs, outputs, valid, id, description }
 	pattern_info = function(stack) return P.info(stack) end,
+	--- (issue #261 tests) a fluid amount as a pattern made from a recipe keeps it
+	clean_amount = function(n) return P.clean_amount(n) end,
 	problem = function(entity) local _, why = network(entity) return why end,
 	--- how many blocks have a record (a mined or destroyed block leaves none)
 	record_count = function() local n = 0 for _ in pairs(records()) do n = n + 1 end return n end,

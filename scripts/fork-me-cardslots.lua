@@ -11,6 +11,8 @@
 ---     title(rec)     the localised name of the block's inventory (shown in the game's inventory lists)
 ---     rec_of(entity) the block's record, or nil
 ---     on_cards(rec)  the cards changed: the fields the block's code reads are made from them (and the block is visited)
+---     can_remove(rec, stack)  optional: a reason (a locale key suffix) when the card in `stack` may not be taken out now (the
+---                    pattern provider: patterns sit in the slots the card gives, issue #156); the click is refused
 ---   The record keeps: inv, cards, want, where (its position, for a block that vanishes without an event).
 --------------------------------------------------------------------------------
 
@@ -213,6 +215,8 @@ function M.new(def)
 		else
 			local stack = slot >= 1 and slot <= #inv and inv[slot]
 			if not (stack and stack.valid_for_read) then return nil end
+			local keep = def.can_remove and def.can_remove(rec, stack)
+			if keep then return keep end
 			if shift then
 				if not (inventory and inventory.valid) then return "no-inventory" end
 				if inventory.insert(stack) < 1 then return "inventory-full" end

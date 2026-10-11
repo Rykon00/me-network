@@ -566,6 +566,42 @@ function me_terminal_test()
 	expect(#all >= 2 and all[1].name == "iron-plate", "sort by amount: " .. serpent.line(all[1]))
 	local by_name = remote.call(TERM, "entries", t, "", "name")
 	expect(by_name[1].name <= by_name[#by_name].name and by_name[1].name == "copper-plate", "sort by name: " .. serpent.line(by_name[1]))
+	--- issue #295: the search matches the name the player sees (runtimemod/data.lua: zz-devcheck-renamed-item is shown as
+	--- "Fancy Gadget"). The harness has no player, so the names of player 1 are set as if its translations had arrived.
+	local GUI = "gregtorio-me-gui"
+	local RN = "zz-devcheck-renamed-item"
+	remote.call(NET, "insert", t, RN, 3)
+	local function term_has(text, index)
+		for _, e in pairs(remote.call(TERM, "entries", t, text, "count", nil, nil, index)) do if e.name == RN then return true end end
+		return false
+	end
+	local function picker_has(text, index)
+		for _, e in pairs(remote.call(GUI, "picker_entries", { item = true }, text, nil, index)) do if e.name == RN then return true end end
+		return false
+	end
+	expect(not term_has("fancy gadget", 1) and not picker_has("fancy gadget", 1), "the translated name matched before it arrived")
+	expect(term_has("zz-devcheck-renamed", 1) and picker_has("devcheck renamed", 1), "the prototype name does not match (before)")
+	remote.call(GUI, "names_set", 1, { ["item/" .. RN] = "Fancy Gadget" })
+	expect(term_has("fancy gadget", 1) and term_has("Gadget", 1) and picker_has("Fancy gadget", 1) and picker_has("fancy", 1),
+		"the translated name does not match: terminal " .. tostring(term_has("fancy gadget", 1)) .. ", picker "
+		.. tostring(picker_has("Fancy gadget", 1)))
+	expect(term_has("zz-devcheck-renamed", 1) and picker_has("devcheck renamed", 1), "the prototype name does not match (after)")
+	expect(not term_has("fancy gadget", 2) and not picker_has("fancy gadget", 2) and not term_has("fancy gadget"),
+		"another player's (or no player's) search matched player 1's names")
+	expect(not term_has("gadget fancy", 1), "a search text that is no part of the name matched")
+	--- the arrival of the names (on_string_translated): a name per answer, an untranslated one left out, another mod's
+	--- request ignored, the player's names complete (version up) with the last one
+	remote.call(GUI, "names_pending", 3, { [101] = "item/" .. RN, [102] = "item/iron-plate", [103] = "fluid/water" })
+	remote.call(GUI, "names_translated", { player_index = 3, id = 101, result = "Fancy Gadget", translated = true })
+	remote.call(GUI, "names_translated", { player_index = 3, id = 999, result = "Someone Else's", translated = true })
+	remote.call(GUI, "names_translated", { player_index = 3, id = 102, result = "", translated = false })
+	local v0 = remote.call(GUI, "names_version", 3)
+	remote.call(GUI, "names_translated", { player_index = 3, id = 103, result = "Wasser", translated = true })
+	local n3 = remote.call(GUI, "names_of", 3) or {}
+	expect(n3["item/" .. RN] == "fancy gadget" and n3["fluid/water"] == "wasser" and n3["item/iron-plate"] == nil and v0 == 0
+		and remote.call(GUI, "names_version", 3) == 1 and term_has("fancy", 3),
+		"the names as they arrive: " .. serpent.line(n3) .. " version " .. v0 .. " -> " .. remote.call(GUI, "names_version", 3))
+	remote.call(NET, "extract", t, RN, 3)
 	--- what cannot be stored: spoiling items, blueprints
 	local spoiling
 	for name, p in pairs(prototypes.item) do
@@ -702,6 +738,71 @@ function me_io_test()
 	remote.call(IO, "step", eb2)
 	local given = mol.get_inventory(defines.inventory.crafter_input).get_item_count("iron-plate")
 	expect(given == math.min(64, size) and count("iron-plate") == before - given, "export bus into the machine: " .. given)
+	--- issue #291: an item filter with a quality (with the quality mod): the import bus takes only that quality, a plain
+	--- filter every quality; the export bus exports the filter's quality, a plain filter normal quality; paste, clone and
+	--- blueprint keep it
+	if script.feature_flags.quality and prototypes.quality.rare and prototypes.quality.uncommon then
+		local function line(x) return serpent.line(x) end
+		local function cq(q) return remote.call(NET, "count", t, "iron-plate", q) end
+		local function ich(q) return ichest.get_item_count{ name = "iron-plate", quality = q } end
+		local function ech(q) return echest.get_item_count{ name = "iron-plate", quality = q } end
+		ichest.insert{ name = "iron-plate", quality = "rare", count = 7 }
+		ichest.insert{ name = "iron-plate", quality = "uncommon", count = 3 }
+		ichest.insert{ name = "iron-plate", count = 4 }
+		local rare0, unc0, nor0 = cq("rare"), cq("uncommon"), cq("normal")
+		remote.call(IO, "set_bus_filters", ib, { "iron-plate@rare" })
+		expect(line(remote.call(IO, "get_bus", ib).filters) == line({ "iron-plate@rare" }), "a quality filter " .. line(remote.call(IO, "get_bus", ib).filters))
+		local moved = remote.call(IO, "step", ib)
+		expect(moved == 7 and cq("rare") == rare0 + 7 and ich("rare") == 0 and ich("uncommon") == 3 and ich("normal") == 4,
+			"import bus with a Rare filter: moved " .. moved .. ", left uncommon " .. ich("uncommon") .. ", normal " .. ich("normal"))
+		remote.call(IO, "set_bus_filters", ib, { "iron-plate@normal" })        -- (the plain name)
+		expect(line(remote.call(IO, "get_bus", ib).filters) == line({ "iron-plate" }), "a normal quality filter is the plain name")
+		moved = remote.call(IO, "step", ib)
+		expect(moved == 7 and cq("uncommon") == unc0 + 3 and cq("normal") == nor0 + 4 and ich("uncommon") == 0 and ich("normal") == 0,
+			"import bus with a plain filter takes every quality: moved " .. moved)
+		remote.call(IO, "set_bus_filters", eb, { "iron-plate@rare" })
+		local nrare = cq("rare")
+		moved = remote.call(IO, "step", eb)
+		expect(moved == nrare and ech("rare") == nrare and cq("rare") == 0 and ech("normal") == 0,
+			"export bus with a Rare filter: moved " .. moved .. " of " .. nrare .. ", chest rare " .. ech("rare") .. ", normal " .. ech("normal"))
+		moved = remote.call(IO, "step", eb)
+		expect(moved == 0 and ech("rare") == nrare, "export bus with a Rare filter and no Rare plates in the network: " .. moved)
+		remote.call(IO, "set_bus_filters", eb, { "iron-plate" })
+		local unc1 = cq("uncommon")
+		moved = remote.call(IO, "step", eb)
+		expect(moved > 0 and ech("normal") == moved and ech("uncommon") == 0 and cq("uncommon") == unc1 and ech("rare") == nrare,
+			"export bus with a plain filter exports normal quality: moved " .. moved .. ", chest normal " .. ech("normal"))
+		if nrare > 0 then echest.remove_item{ name = "iron-plate", quality = "rare", count = nrare } end
+		if ech("normal") > 0 then echest.remove_item{ name = "iron-plate", count = ech("normal") } end
+		--- paste, clone and blueprint keep the quality
+		remote.call(IO, "set_bus_filters", eb, { "iron-plate@rare", "copper-plate", "iron-gear-wheel@uncommon" })
+		local want = line({ "iron-plate@rare", "copper-plate", "iron-gear-wheel@uncommon" })
+		local eb4 = s.create_entity{ name = "me-export-bus", position = { CX + 40.5, CY + 40.5 }, force = "player", raise_built = true }
+		if eb4 then
+			remote.call(IO, "paste", eb, eb4)
+			expect(line(remote.call(IO, "get_bus", eb4).filters) == want, "pasted quality filters " .. line(remote.call(IO, "get_bus", eb4).filters))
+			local eb5 = eb4.clone{ position = { CX + 42.5, CY + 40.5 } }
+			expect(eb5 and line(remote.call(IO, "get_bus", eb5).filters) == want, "cloned quality filters "
+				.. line(eb5 and remote.call(IO, "get_bus", eb5).filters))
+			local qbp = game.create_inventory(1)
+			qbp.insert{ name = "blueprint" }
+			local qmap = qbp[1].create_blueprint{ surface = s, force = "player", area = { { CX + 40, CY + 40 }, { CX + 41, CY + 41 } } }
+			remote.call(IO, "tag_blueprint", qbp[1], qmap)
+			local tag
+			for index, e in pairs(qmap or {}) do
+				if e == eb4 then tag = qbp[1].get_blueprint_entity_tag(index, "fork_me_bus") end
+			end
+			local eb6 = s.create_entity{ name = "me-export-bus", position = { CX + 44.5, CY + 40.5 }, force = "player" }
+			if eb6 and tag then remote.call(IO, "built", eb6, { fork_me_bus = tag }) end
+			expect(eb6 and tag and line(remote.call(IO, "get_bus", eb6).filters) == want, "quality filters through a blueprint: "
+				.. line(tag) .. " -> " .. line(eb6 and remote.call(IO, "get_bus", eb6).filters))
+			qbp.destroy()
+			for _, e in pairs({ eb4, eb5, eb6 }) do if e and e.valid then e.destroy{ raise_destroy = true } end end
+		else
+			expect(false, "the export bus for the quality paste test was not built")
+		end
+		remote.call(IO, "set_bus_filters", eb, { "iron-gear-wheel" })
+	end
 	--- rotated to face the import bus (an ME block): nothing to work with
 	eb.rotate{ reverse = true }
 	eb.rotate{ reverse = true }
@@ -768,6 +869,15 @@ storable76 = require("storable")({ me_place = me_place, cable_row = cable_row, p
 --- me-network issue #159: fluids keep their temperature (temperature.lua)
 temperature159 = require("temperature")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #261: fluid amounts of patterns from recipes on the engine's grid (gridfluid.lua)
+gridfluid261 = require("gridfluid")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #313: an interface's import side that holds fluid is visited again (ifacewake.lua)
+ifacewake313 = require("ifacewake")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #311: the interface window shows the fluids its sides hold (ifacefluids.lua)
+ifacefluids311 = require("ifacefluids")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #158: the pattern provider runs the machines next to it (providers.lua)
 providers158 = require("providers")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -779,6 +889,24 @@ buffer150 = require("buffer150")({ me_place = me_place, power = power, me_report
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issues #176 and #177: ME windows in remote view (remoteview.lua)
 remoteview176 = require("remoteview")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #155: the storage bus's filter mode (sbusmode.lua)
+sbusmode155 = require("sbusmode")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #156: the ME Pattern Capacity Card (patterncap.lua)
+patterncap156 = require("patterncap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #196: the ME Interface Capacity Card (ifacecap.lua)
+ifacecap196 = require("ifacecap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issues #205 to #210: the wireless terminal (wireless.lua)
+wireless205 = require("wireless")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #229: the ME Chest (chest.lua)
+chest229 = require("chest")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #193: the Sticky Card (sticky.lua)
+sticky193 = require("sticky")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #128: the terminal and the level maintainer take their power from the network (netpower.lua)
 netpower128 = require("netpower")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report })
@@ -844,9 +972,18 @@ local function tests_running()
 	holders43.running(check)
 	storable76.running(check)
 	temperature159.running(check)
+	gridfluid261.running(check)
+	ifacewake313.running(check)
+	ifacefluids311.running(check)
 	providers158.running(check)
 	pastecraft157.running(check)
 	buffer150.running(check)
+	sticky193.running(check)
+	chest229.running(check)
+	wireless205.running(check)
+	ifacecap196.running(check)
+	patterncap156.running(check)
+	sbusmode155.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
 	return running
@@ -1758,9 +1895,18 @@ script.on_nth_tick(10, function()
 	holders43.tick()
 	storable76.tick()
 	temperature159.tick()
+	gridfluid261.tick()
+	ifacewake313.tick()
+	ifacefluids311.tick()
 	providers158.tick()
 	pastecraft157.tick()
 	buffer150.tick()
+	sticky193.tick()
+	chest229.tick()
+	wireless205.tick()
+	ifacecap196.tick()
+	patterncap156.tick()
+	sbusmode155.tick()
 	remoteview176.tick()
 	graph43.tick()
 	done_test()
@@ -4411,8 +4557,8 @@ function paste_test()
 	local msgs = remote.call(RP, "paste", m1, i2)
 	local want = gear_rows("normal")
 	expect(#keys(msgs) == 0 and config_line(i2) == want, "item recipe onto an interface: " .. config_line(i2) .. " " .. line(keys(msgs)))
-	--- a quality recipe: the rows and the storage bus filters take its quality (mode and priority stay), the export bus
-	--- has no quality and says so
+	--- a quality recipe: the rows, the storage bus filters and (issue #291) the export bus filters take its quality (mode
+	--- and priority stay)
 	msgs = remote.call(RP, "paste", m2, i3)
 	want = gear_rows("uncommon")
 	expect(#keys(msgs) == 0 and config_line(i3) == want, "quality recipe onto an interface: " .. config_line(i3))
@@ -4422,7 +4568,7 @@ function paste_test()
 	expect(#keys(msgs) == 0 and line(st1) == line({ mode = "read", priority = 7, filters = { gear[1] .. "@uncommon", gear[2] .. "@uncommon" } }),
 		"quality recipe onto a storage bus: " .. line(st1))
 	msgs = remote.call(RP, "paste", m2, e3)
-	expect(line(remote.call(IO, "get_bus", e3).filters) == line(gear) and line(keys(msgs)) == line({ "bus-quality" }),
+	expect(line(remote.call(IO, "get_bus", e3).filters) == line({ gear[1] .. "@uncommon", gear[2] .. "@uncommon" }) and #keys(msgs) == 0,
 		"quality recipe onto an export bus: " .. line(remote.call(IO, "get_bus", e3).filters) .. " " .. line(keys(msgs)))
 	--- a recipe without item ingredients onto a storage bus on a chest: unchanged, the player is told
 	msgs = remote.call(RP, "paste", r2, sb1)
@@ -4521,8 +4667,9 @@ function paste_test()
 	msgs = remote.call(RP, "paste", m3, i8)
 	expect(line(keys(msgs)) == line({ "no-recipe" }) and config_line(i8) == before, "assembler without a recipe: " .. line(keys(msgs)))
 	msgs = remote.call(RP, "paste", f2, e3)
-	expect(line(keys(msgs)) == line({ "no-recipe" }) and line(remote.call(IO, "get_bus", e3).filters) == line(gear),
-		"furnace that never smelted: " .. line(keys(msgs)))
+	--- (e3 keeps the filters of the quality recipe pasted above: issue #291)
+	expect(line(keys(msgs)) == line({ "no-recipe" }) and line(remote.call(IO, "get_bus", e3).filters)
+		== line({ gear[1] .. "@uncommon", gear[2] .. "@uncommon" }), "furnace that never smelted: " .. line(keys(msgs)))
 	--- the furnace while it smelts (its current recipe)
 	local busy = f1.get_recipe() ~= nil
 	msgs = remote.call(RP, "paste", f1, i7)
@@ -4615,9 +4762,18 @@ script.on_init(function()
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(storable76.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(temperature159.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(gridfluid261.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(ifacewake313.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(ifacefluids311.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(sticky193.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(chest229.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(wireless205.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(ifacecap196.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(patterncap156.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")

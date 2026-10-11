@@ -29,6 +29,7 @@ local N = require("scripts.fork-me-network")
 local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
 local Sched = require("scripts.fork-me-schedule")
+local Names = require("scripts.fork-me-names")
 
 local M = {}
 
@@ -47,6 +48,11 @@ end
 --- nil when the terminal can be used, otherwise the reason as a locale key of [fork-me-net] (status-...)
 local function problem(entity)
 	if not (entity and entity.valid) then return "no-network" end
+	local view = N.chest_view(entity)                -- (issue #229: an ME Chest's own terminal works on its cell only)
+	if view then
+		local ok, why = N.usable(view)
+		return not ok and why or nil
+	end
 	--- (issue #128: the terminal has no power of its own; it works when its network does)
 	local net = N.network_of(entity)
 	if not net then return "no-network" end
@@ -59,7 +65,7 @@ end
 local function network(entity)
 	local why = problem(entity)
 	if why then return nil, why end
-	return N.network_of(entity)
+	return N.chest_view(entity) or N.network_of(entity)
 end
 M.network = network
 
@@ -160,9 +166,12 @@ local KEEP_LISTS = 16
 --- The entries of the storage grid: the items, then the fluids (key "fluid/<name>", fluid = true), each filtered
 --- by the search and sorted by amount or name. `kind`: "all" (default), "items" or "fluids". Issue #50, lever 8: the
 --- same table as the last call while the network's contents did not change (do not change it). `fresh` (tests, the
---- benchmark): made from nothing, as at a first refresh, and not kept.
-function M.entries(net, filter, sort, kind, fresh)
-	filter = (filter or ""):lower():gsub("%s+", "-")
+--- benchmark): made from nothing, as at a first refresh, and not kept. Issue #295: `index` is the player whose
+--- translated names the search matches too (a kept list of a search is the player's, of the version of their names).
+function M.entries(net, filter, sort, kind, fresh, index)
+	local lower
+	filter, lower = Names.search(filter)
+	local names = filter ~= "" and Names.names_of(index) or nil
 	local usable = N.usable(net) and true or false
 	local per = lists[net]
 	if not per then
@@ -170,6 +179,7 @@ function M.entries(net, filter, sort, kind, fresh)
 		lists[net] = per
 	end
 	local id = tostring(sort) .. "|" .. tostring(kind) .. "|" .. filter
+	if names then id = id .. "|" .. index .. "@" .. Names.version(index) end
 	local last = not fresh and per.of[id] or nil
 	if last and last.cver == net.cver and last.usable == usable then
 		list_stats.kept = list_stats.kept + 1
@@ -184,7 +194,7 @@ function M.entries(net, filter, sort, kind, fresh)
 	if usable then
 		for key, count in pairs(net.items) do
 			local i = info_of(key)
-			if i.ok and (filter == "" or i.name:find(filter, 1, true)) then
+			if i.ok and Names.matches(names, i.fluid and "fluid" or "item", i.name, filter, lower) then
 				if i.fluid then
 					if kind ~= "items" then liquids[key] = { key = key, name = i.name, count = count, fluid = true } end
 				elseif kind ~= "fluids" then
@@ -378,6 +388,7 @@ end
 --------------------------------------------------------------------------------
 
 local TABS = { "storage", "crafting", "jobs", "cells" }
+local CHEST_TABS = { "storage" }                  -- issue #229: an ME Chest's terminal has its cell's grid only
 
 local function scroll_table(parent, name, columns, height)
 	local scroll = parent.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
@@ -432,42 +443,97 @@ local function build_cells(tab)
 	scroll.add{ type = "table", name = "fork_me_cells", column_count = 2 }
 end
 
+--- Issue #229: the top of an ME Chest's window: its cell slot with the cell's fill, the priority, the input slot, the power
+local function build_chest(content, entity)
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-terminal.chest-cell" } }
+	row.add{ type = "sprite-button", name = "fork_me_chest_cell", style = "slot_button", tags = G.act("chest_cell") }
+	row.add{ type = "label", name = "fork_me_chest_cell_line" }
+	row.add{ type = "empty-widget" }.style.horizontally_stretchable = true
+	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.priority-tooltip" } }
+	G.number_field(row, N.get_priority(entity), G.act("chest_priority"), 70, true).tooltip = { "fork-me-gui.priority-tooltip" }
+	local input = G.row(content)
+	input.add{ type = "label", caption = { "fork-me-terminal.chest-input" } }
+	input.add{ type = "sprite-button", name = "fork_me_chest_input", style = "slot_button", tags = G.act("chest_input") }
+	input.add{ type = "label", name = "fork_me_chest_power" }
+	content.add{ type = "line" }
+end
+
+local function refresh_chest(st, frame, entity)
+	local info = N.chest_info(entity)
+	local cell_button = G.find(frame, "fork_me_chest_cell")
+	if not (info and cell_button) then return end
+	local c = info.cell
+	local sig = c and N.drive_cell_sig(entity, 1) or "-"
+	if st.chest_sig ~= sig then                       -- (the tooltip is set again only when it changes: an open one stays)
+		st.chest_sig = sig
+		cell_button.sprite = c and ("item/" .. c.name) or ""
+		local tip = c and N.drive_cell_tooltip(entity, 1)
+		cell_button.tooltip = tip and { "", tip, "\n", { "fork-me-terminal.chest-cell-tooltip" } }
+			or { "fork-me-terminal.chest-cell-tooltip" }
+	end
+	G.find(frame, "fork_me_chest_cell_line").caption = c and { "fork-me-terminal.chest-cell-line", G.fmt(c.bytes),
+		G.fmt(c.bytes_total), c.types, c.types_total } or { "fork-me-terminal.chest-cell-empty" }
+	G.find(frame, "fork_me_chest_power").caption = info.network and { "fork-me-terminal.chest-power-network" }
+		or info.own and { "fork-me-terminal.chest-power-own", G.fmt(info.energy / 1000), G.fmt(info.buffer / 1000) }
+		or { "fork-me-terminal.chest-power-none" }
+	local b = G.find(frame, "fork_me_chest_input")
+	local i, f = info.input, info.fluid
+	b.sprite = i and ("item/" .. i.name) or f and ("fluid/" .. f.name) or ""
+	b.number = i and i.count or f and math.floor(f.amount) or nil
+	local fp = f and prototypes.fluid[f.name]
+	b.tooltip = i and { "fork-me-terminal.chest-input-waiting" }
+		or f and { "fork-me-terminal.chest-input-fluid", G.fmt(f.amount), fp and fp.localised_name or f.name }
+		or { "fork-me-terminal.chest-input-empty" }
+end
+
+--- `entity`: the terminal, or (issue #206) the access point a wireless terminal reaches the network through, or (issue
+--- #229) an ME Chest
 local function open(player, entity)
-	if not (entity and entity.valid and entity.name == "me-terminal") then return end
-	local _, content = G.open_window(player, "terminal", { "fork-me-terminal.title" }, { unit = entity.unit_number })
+	if not (entity and entity.valid and (entity.name == "me-terminal" or N.kind_of(entity.name) == "access-point"
+		or N.kind_of(entity.name) == "chest")) then return end
+	local chest = N.kind_of(entity.name) == "chest"
+	local _, content = G.open_window(player, "terminal", chest and { "entity-name.me-chest" } or { "fork-me-terminal.title" },
+		{ unit = entity.unit_number })
+	Names.ensure(player)                                          -- (issue #295: the names for the search)
 	local st = state()[player.index]
 	if not (st and st.entity == entity) then
 		st = { entity = entity, filter = "", sort = "count", kind = "all", amount = 1, tab = 1 }
 		state()[player.index] = st
 	end
 	st.shown, st.craft_shown, st.jobs_shown, st.cells_shown, st.plan_shown = nil, nil, nil, nil, nil
+	st.chest, st.chest_sig = chest or nil, nil
+	if chest then build_chest(content, entity) end
 	G.label(content, "", WIDTH, nil, "fork_me_net_line")
+	if G.wireless_mode_button then G.wireless_mode_button(content, entity, "pattern") end   -- (issue #210: a wireless window)
 	local top = G.row(content)
 	top.add{ type = "label", caption = { "fork-me-terminal.search" } }
 	local search = top.add{ type = "textfield", name = "fork_me_search", text = st.filter or "", tags = G.act("term_search") }
 	search.style.width = 200
 	local tabs = content.add{ type = "tabbed-pane", name = "fork_me_tabs", tags = G.act("term_tab") }
-	for _, name in ipairs(TABS) do
+	for _, name in ipairs(chest and CHEST_TABS or TABS) do
 		local tab = tabs.add{ type = "tab", caption = { "fork-me-gui.tab-" .. name } }
 		local flow = tabs.add{ type = "flow", name = "fork_me_tab_" .. name, direction = "vertical" }
 		flow.style.vertical_spacing = 6
 		tabs.add_tab(tab, flow)
 	end
 	build_storage(tabs.fork_me_tab_storage)
-	build_crafting(tabs.fork_me_tab_crafting)
-	build_jobs(tabs.fork_me_tab_jobs)
-	build_cells(tabs.fork_me_tab_cells)
-	tabs.selected_tab_index = st.tab or 1
+	if not chest then
+		build_crafting(tabs.fork_me_tab_crafting)
+		build_jobs(tabs.fork_me_tab_jobs)
+		build_cells(tabs.fork_me_tab_cells)
+	end
+	tabs.selected_tab_index = chest and 1 or st.tab or 1
 	G.find(content, "fork_me_sort").caption = { "fork-me-net.sort-" .. (st.sort or "count") }
 	G.find(content, "fork_me_kind").caption = { "fork-me-gui.kind-" .. (st.kind or "all") }
-	G.find(content, "fork_me_amount").text = tostring(st.amount or 1)
+	if not chest then G.find(content, "fork_me_amount").text = tostring(st.amount or 1) end
 	M.refresh(player)
 end
 M.open = open
 
 local function refresh_storage(player, st, frame, net)
 	local status, grid = G.find(frame, "fork_me_status"), G.find(frame, "fork_me_grid")
-	local items = M.entries(net, st.filter, st.sort, st.kind)
+	local items = M.entries(net, st.filter, st.sort, st.kind, nil, player.index)
 	local n = math.min(#items, MAX_BUTTONS)
 	local sort, kind = st.sort or "count", st.kind or "all"
 	--- What the grid shows is kept in storage (every peer sets the same buttons) and compared entry by entry. Issue #50,
@@ -520,15 +586,19 @@ local function refresh_storage(player, st, frame, net)
 	end
 end
 
-local function refresh_crafting(st, frame, net)
+local function refresh_crafting(st, frame, net, index)
 	local total, free, _, slots = autocraft.cpu_summary(net)
 	local keys, ignored = autocraft.craftable(net)
 	G.find(frame, "fork_me_craft_info").caption = { "fork-me-craft.info", total, free, #keys, ignored.total or 0,
 		autocraft.ignored_list(ignored), slots }
-	local filter = (st.filter or ""):lower():gsub("%s+", "-")
+	local filter, lower = Names.search(st.filter)
+	local names = filter ~= "" and Names.names_of(index) or nil      -- (issue #295: the names the player sees)
 	local shown, sig = {}, {}
 	for _, key in pairs(keys) do
-		if (filter == "" or key:find(filter, 1, true)) and #shown < MAX_CRAFT_BUTTONS then
+		local fluid = key:sub(1, 6) == "fluid/"
+		local name = fluid and key:sub(7) or N.parse_key(key)
+		if (filter == "" or key:find(filter, 1, true) or Names.matches(names, fluid and "fluid" or "item", name, filter, lower))
+			and #shown < MAX_CRAFT_BUTTONS then
 			local d = autocraft.describe(key)
 			if d then
 				local count = d.fluid and N.count_key(net, key) or N.count(net, key, "normal")
@@ -720,9 +790,10 @@ function M.refresh(player, frame)
 	local st = state()[player.index]
 	if not (frame and st) then return false end
 	local entity = st.entity
-	if not (entity and entity.valid and player.can_reach_entity(entity)) then return false end
+	if not (entity and entity.valid and G.reachable(player, entity)) then return false end    -- (issue #206: or wireless)
 	local net_line, tabs = G.find(frame, "fork_me_net_line"), G.find(frame, "fork_me_tabs")
 	if not (net_line and tabs) then return false end                    -- built by an older version
+	if st.chest then refresh_chest(st, frame, entity) end
 	local net, why = network(entity)
 	if not net then
 		net_line.caption = { "fork-me-net.status-" .. why }
@@ -730,11 +801,16 @@ function M.refresh(player, frame)
 		st.shown, st.craft_shown, st.jobs_shown, st.cells_shown, st.plan_shown = nil, nil, nil, nil, nil
 		return true
 	end
+	if st.chest then
+		net_line.caption = { "fork-me-net.status-ok" }
+		refresh_storage(player, st, frame, net)
+		return true
+	end
 	net_line.caption = status_line(net)
 	local tab = TABS[tabs.selected_tab_index or 1]
 	st.tab = tabs.selected_tab_index
 	if tab == "storage" then refresh_storage(player, st, frame, net)
-	elseif tab == "crafting" then refresh_crafting(st, frame, net)
+	elseif tab == "crafting" then refresh_crafting(st, frame, net, player.index)
 	elseif tab == "jobs" then refresh_jobs(st, frame, net)
 	else refresh_cells(st, frame, net) end
 	return true
@@ -742,7 +818,7 @@ end
 
 --- issue #28: shift + click in the inventory pane stores the stack, control + click every stack of that item
 G.window("terminal", { open = open, refresh = function(player, frame) return M.refresh(player, frame) end,
-	entities = { "me-terminal" }, hint = { "fork-me-gui.store-help" },
+	entities = { "me-terminal", "chest" }, hint = { "fork-me-gui.store-help" },
 	shift = function(entity, stack)
 		local n, why = M.store_stack(entity, stack)
 		if not n then return why end
@@ -762,6 +838,11 @@ G.window("terminal", { open = open, refresh = function(player, frame) return M.r
 --------------------------------------------------------------------------------
 
 local function st_of(player) return state()[player.index] end
+
+--- issue #295: a player's names arrived: an open window searches by them
+Names.on_done[#Names.on_done + 1] = function(player)
+	if G.window_of(player) then G.refresh_one(player) end
+end
 
 G.on("term_search", function(event, player, el)
 	if event.name ~= defines.events.on_gui_text_changed then return end
@@ -839,6 +920,39 @@ G.on("term_take", function(event, player, el)
 	follow_up(player)
 end)
 
+--- issue #229: the ME Chest's cell slot (as a drive's slot), its priority and its input slot
+G.on("chest_cell", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local st = st_of(player)
+	local e = st and st.entity
+	if not (e and e.valid) then return end
+	local cursor, inv, remote = G.hand(player)
+	local why, out = N.drive_click(cursor, inv, e, 1, event.shift or remote)
+	report(player, why)
+	if remote and out then G.moved_text(player) end
+	M.refresh(player)
+end)
+
+G.on("chest_priority", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local st = st_of(player)
+	if st and st.entity and st.entity.valid then N.set_priority(st.entity, tonumber(el.text) or 0) end
+end)
+
+G.on("chest_input", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local st = st_of(player)
+	local e = st and st.entity
+	if not (e and e.valid) then return end
+	local cursor, inv, remote = G.hand(player)
+	local to_hand = not (event.shift or remote) and cursor and not cursor.valid_for_read
+	local target = to_hand and cursor or inv
+	if not target then report(player, "no-inventory") return end
+	local info = N.chest_info(e)
+	if info and info.input and not N.chest_take_input(e, target) then report(player, "inventory-full") end
+	M.refresh(player)
+end)
+
 G.on("term_pick", function(event, player, el)
 	local st = st_of(player)
 	if not st then return end
@@ -907,9 +1021,9 @@ remote.add_interface("gregtorio-me-terminal", {
 	end,
 	--- the grid's entries for a search text, a sort ("count" or "name") and a kind ("all", "items", "fluids")
 	--- `fresh` (tests, the benchmark): made from nothing, as at a first refresh, and not kept
-	entries = function(terminal, filter, sort, kind, fresh)
+	entries = function(terminal, filter, sort, kind, fresh, index)
 		local net = network(terminal)
-		return net and M.entries(net, filter, sort, kind, fresh) or {}
+		return net and M.entries(net, filter, sort, kind, fresh, index) or {}
 	end,
 	--- issue #50, lever 8: { kept, resorted, sorted } since the load: lists given back unchanged, made from the last one, sorted
 	--- with table.sort after too many moves
@@ -981,6 +1095,9 @@ script.on_event("fork-me-terminal-open", function(event)
 	local e = player.selected
 	G.clear_bypass(player)
 	if not G.click_opens(player.cursor_stack, G.cursor_flags(player, e)) then return end
+	for _, hook in ipairs(G.open_key_hooks) do                          -- (issue #207: a wireless terminal is linked)
+		if hook(player, e) then return end
+	end
 	if N.quick_insert(player, e) then return end
 	if autocraft.quick_insert(player, e) then return end
 	G.open_entity(player, e)
@@ -1024,6 +1141,10 @@ script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
 	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[event.player_index] = nil end
 	if storage.fork_me_pterm_ui then storage.fork_me_pterm_ui[event.player_index] = nil end      -- (the ME Pattern Terminal's editor)
+	G.forget_player(event.player_index)                                                          -- (issue #179: parked items, buffer)
+	local w = storage.fork_me_wireless                                                           -- (the wireless link and mode)
+	if w and w.players then w.players[event.player_index] = nil end
+	Names.forget(event.player_index)                                                             -- (issue #295: the names)
 end)
 
 return M

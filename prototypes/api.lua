@@ -25,11 +25,20 @@ M.version = "0.1.0"
 M.root = "__me-network__/"
 M.icons = M.root .. "graphics/icons/"
 M.entity_path = M.root .. "graphics/entity/fork/ae2/"
-M.technology_path = M.root .. "graphics/technology/fork/"
+M.technology_path = M.root .. "graphics/technology/hd/"       -- (issue #222: the 3D style; fork/ holds the flat ones of before)
+--- issue #154: the 64 px pictures of the 3D style (tools/gen_ae2_sprites.py --hd): icons 64 x 64, entity pictures at scale 0.5
+M.hd_icons = M.root .. "graphics/icons/hd/"
+M.hd_entity_path = M.entity_path .. "hd/"
 --- what can be walked over (the ME cable, since issue #129 the buses and the ME Terminal): a building's collision mask without the
 --- "player" layer, so a character passes through; nothing can be built on it (the "object" layer stays) and no item lies on it
 --- (the "item" layer). Cars and tanks pass too (their mask has the "player" layer as well).
 M.WALKABLE = { layers = { item = true, meltable = true, object = true, water_tile = true, is_lower_object = true } }
+--- issue #268: the collision box of a solid one-tile ME block (drive, chest, interface, pattern provider, level maintainer,
+--- circuit interface, cell workbench, molecular assembler, access point, charger; not the blocks of a Crafting CPU): two of them on neighbouring tiles leave a gap of 0.42 tiles,
+--- wider than a character (0.4), so it walks between them, with no other mod. (It was -0.35 .. 0.35: a gap of 0.3. Squeak
+--- Through 2 trims only boxes of its own list of types, and only to 0.3, so it did not reach the simple-entity-with-force
+--- blocks, and it leaves 0.29.) A new table each time, so no prototype shares it.
+function M.solid_box() return { { -0.29, -0.29 }, { 0.29, 0.29 } } end
 M.recipes = M.recipes or {}
 M.technologies = M.technologies or {}
 M.removed = M.removed or {}
@@ -169,8 +178,8 @@ M.ACCELERATION_SLOTS = 5          -- AE2: a Molecular Assembler takes up to 5 ac
 function M.make_molecular_assembler(def)
 	local assembler = table.deepcopy(data.raw["assembling-machine"][def.base])
 	assembler.name = "me-molecular-assembler"
-	assembler.icon = M.icons .. "fork/me-molecular-assembler.png"
-	assembler.icon_size = 32
+	assembler.icon = M.hd_icons .. "me-molecular-assembler.png"
+	assembler.icon_size = 64
 	assembler.icons = nil
 	assembler.minable = { mining_time = 0.5, result = "me-molecular-assembler" }
 	assembler.fast_replaceable_group = nil
@@ -187,19 +196,19 @@ function M.make_molecular_assembler(def)
 	assembler.allowed_effects = { "speed", "consumption" }
 	assembler.effect_receiver = { uses_module_effects = true, uses_beacon_effects = false, uses_surface_effects = true }
 	--- issue #131: one tile, like the other 1x1 ME blocks (a base machine's 3x3 boxes are not kept)
-	assembler.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
+	assembler.collision_box = M.solid_box()                      -- (issue #268)
 	assembler.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
 	assembler.drawing_box_vertical_extension = nil
-	--- the pictures: 32 px, the one tile (a working strip of four frames below each other). A frozen patch of the base machine
+	--- the pictures: 64 px at scale 0.5 (issue #220: the 3D style), the one tile (a working strip of four frames below each other). A frozen patch of the base machine
 	--- (Space Age) is not kept: it is a picture of the base's 3x3 body.
 	assembler.graphics_set = {
 		idle_animation = { layers = { {
-			filename = M.entity_path .. "me-molecular-assembler-idle.png",
-			width = 32, height = 32, frame_count = 1, repeat_count = 4, shift = { 0, 0 },
+			filename = M.hd_entity_path .. "me-molecular-assembler-idle.png",
+			width = 64, height = 64, scale = 0.5, frame_count = 1, repeat_count = 4, shift = { 0, 0 },
 		} } },
 		animation = { layers = { {
-			filename = M.entity_path .. "me-molecular-assembler-working.png",
-			width = 32, height = 32, frame_count = 4, line_length = 1, animation_speed = 0.3, shift = { 0, 0 },
+			filename = M.hd_entity_path .. "me-molecular-assembler-working.png",
+			width = 64, height = 64, scale = 0.5, frame_count = 4, line_length = 1, animation_speed = 0.3, shift = { 0, 0 },
 		} } },
 	}
 	--- what else a 3x3 machine lays out for its size: the recipe icon of the alt mode and the icons of the five Acceleration Cards

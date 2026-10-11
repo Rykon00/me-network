@@ -72,14 +72,18 @@ for i, c in ipairs(CELLS) do
 	local item = ME.add_item{
 		type = "item-with-tags",
 		name = cell,
-		icon = ICON_FORK .. cell .. ".png",
+		icon = ME.hd_icons .. cell .. ".png",                 -- (issue #218: the 3D style)
+		icon_size = 64,
 		subgroup = "fork-me-fluid-cells",
 		order = order,
 		stack_size = 1,
 		recipe = { energy_required = 5, auto_recycle = false, ingredients = {
+			--- AE2 (issue #233): a component in a fluid cell housing (2 quartz glass, 3 redstone, 3 copper), which this mod has no
+			--- item for: its ingredients (prototypes/network.lua, the stand-ins)
 			{ type = "item", name = "me-" .. c.tier .. "-storage-component", amount = 1 },
-			{ type = "item", name = "basic-storage-housing", amount = 1 },
-			{ type = "item", name = "pump", amount = 1 },
+			{ type = "item", name = "plastic-bar", amount = 2 },
+			{ type = "item", name = "copper-cable", amount = 3 },
+			{ type = "item", name = "copper-plate", amount = 3 },
 		} },
 	}
 	local bytes = c.k * 1024

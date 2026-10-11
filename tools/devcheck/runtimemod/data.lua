@@ -64,6 +64,24 @@ do
 			{ { type = "fluid", name = "steam", amount = 10, temperature = 300 } }) })
 end
 
+--- issue #261 (gridfluid.lua): two recipes of the hot machine with water on the engine's grid of 2^-24, as Gregtorio
+--- rounds every recipe (its #117): 14.4 and 0.1234564 rounded up to the grid
+do
+	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local function grid(a) return math.ceil(a * 16777216) / 16777216 end
+	local function g(name, amount)
+		return { { type = "item", name = "zz-devcheck-grid-token-" .. name, icon = icon, stack_size = 50, subgroup = "intermediate-product" },
+			{ type = "recipe", name = "zz-devcheck-grid-" .. name, category = "zz-devcheck-hot", energy_required = 0.5, enabled = true,
+				icon = icon, subgroup = "intermediate-product", ingredients = { { type = "fluid", name = "water", amount = grid(amount) } },
+				results = { { type = "item", name = "zz-devcheck-grid-token-" .. name, amount = 1 } } } }
+	end
+	for _, p in pairs(g("a", 14.4)) do data:extend({ p }) end
+	for _, p in pairs(g("b", 0.1234564)) do data:extend({ p }) end
+	--- issue #270: the same amounts for the patterns with a surplus (0.123457 and 15)
+	for _, p in pairs(g("c", 0.1234564)) do data:extend({ p }) end
+	for _, p in pairs(g("d", 14.4)) do data:extend({ p }) end
+end
+
 --- issue #158 (providers.lua): a machine with a fixed recipe and a second recipe of its category
 do
 	local m = table.deepcopy(data.raw["assembling-machine"]["assembling-machine-2"])
@@ -80,6 +98,30 @@ do
 			results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } } }
 	end
 	data:extend({ { type = "recipe-category", name = "zz-devcheck-fixed" }, m, r("zz-devcheck-fixed"), r("zz-devcheck-unfixed") })
+end
+
+--- me-network issue #295: an item whose name the player sees differs from its prototype name (as Gregtorio's renamed
+--- items), for the search of the terminal and the picker (control.lua, the terminal test); with Gregtorio too
+data:extend({ { type = "item", name = "zz-devcheck-renamed-item", localised_name = { "", "Fancy Gadget" },
+	icon = "__base__/graphics/icons/iron-gear-wheel.png", stack_size = 50, subgroup = "intermediate-product" } })
+
+--- me-network issue #264: stand-in sprites for a cell in a drive bay (what a graphics mod gives in the drive view), so the
+--- runtime test (netpower.lua) sees the cells drawn; me-network's own view has none (with Gregtorio too: before its return)
+data:extend({
+	{ type = "sprite", name = "zz-devcheck-drive-cell-item", filename = "__core__/graphics/empty.png", width = 1, height = 1 },
+	{ type = "sprite", name = "zz-devcheck-drive-cell-fluid", filename = "__core__/graphics/empty.png", width = 1, height = 1 },
+})
+local drive_view = data.raw["mod-data"]["fork-me-network"] and data.raw["mod-data"]["fork-me-network"].data.drive_view
+if drive_view then
+	drive_view.drive.cells = { item = "zz-devcheck-drive-cell-item", fluid = "zz-devcheck-drive-cell-fluid", w = 15, h = 6 }
+end
+--- me-network issue #278: a stand-in controller view (what a graphics mod gives), so that netpower.lua sees the controller's
+--- part; me-network's own view is empty
+local controller_view = data.raw["mod-data"]["fork-me-network"] and data.raw["mod-data"]["fork-me-network"].data.controller_view
+if controller_view then
+	for _, st in pairs({ "off", "on", "conflict" }) do
+		controller_view[st] = { filename = "__core__/graphics/empty.png", width = 1, height = 1, frame_count = 1 }
+	end
 end
 
 if mods["gregtorio-continued"] then return end
