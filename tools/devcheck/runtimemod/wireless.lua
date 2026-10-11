@@ -101,6 +101,18 @@ return function(H)
 			d = remote.call(WL, "item_data", item)
 			expect(d.link ~= nil and d.link == remote.call(WL, "controller_unit", a), "the link is the controller: " .. serpent.line(d))
 			expect(remote.call(WL, "use_rate", "item", 50, 100) == 300000, "the use rate at half the range")
+			--- issue #308: the open key with the module in the cursor links the player's module (its link is the
+			--- player's); with a plate in the cursor the key does nothing here (the access point's window opens)
+			local module = inv[3]
+			module.set_stack{ name = "me-wireless-module", count = 1 }
+			local who = { index = 9308, cursor_stack = module }
+			expect(remote.call(WL, "player_link", 9308) == nil, "a player without a link")
+			expect(remote.call(WL, "open_key", who, a) == true, "the open key with the module in hand on an access point")
+			expect(remote.call(WL, "player_link", 9308) == remote.call(WL, "controller_unit", a),
+				"the module's link after the click: " .. tostring(remote.call(WL, "player_link", 9308)))
+			module.set_stack{ name = "iron-plate", count = 1 }
+			expect(remote.call(WL, "open_key", who, a) == false, "the open key with a plate in hand links nothing")
+			module.clear()
 			--- the charger: the terminal goes in, the charger draws its charge rate
 			local nb = remote.call(WL, "numbers")
 			hand.transfer_stack(item)

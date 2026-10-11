@@ -292,6 +292,8 @@ confirm key), right click empties the row; no virtual signal can be chosen.
   entries: each side has a tank of its own): the fluid with the game's tooltip, the amount of the side's volume with a
   bar, its temperature when not the default, and what the tank and its pipes hold together when the pipes hold some
   too. An import side shows its fluid only until it is imported (then it is in the network, and the side is empty).
+  Pointed at in the world, its tooltip lists them too (issue #322: the interface's status line, "Sides: [fluid]
+  amount/volume ...", refreshed once a second while someone points at it).
 * Mined, the fluid in its sides goes into the network; destroyed, it is lost like a tank's. Interfaces of saves from
   before 0.2.0 get their sides when the game is loaded; a side that an existing pipe, pump or tank points at is set
   to **Off**, so a pipeline that ran past the interface is not drained (switch it to Import in the window).

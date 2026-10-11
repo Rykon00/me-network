@@ -89,8 +89,8 @@ the item `0.2 MW` over the distance factor `1 + distance / range` while its wind
 
 **Linking.** The item keeps **one linked network** in its tags (the controller's unit number plus a display name), as AE2's
 does; the module keeps one link per player. Linking: the "open GUI" key with the item in the cursor on an access point or a
-controller (the way a cell in the cursor goes into a drive today); for the module the hotkey pressed while pointing at an
-access point. More than one network: one link at a time, the new link replaces the old one; a list of links is a later step if
+controller (the way a cell in the cursor goes into a drive today); for the module the same click with the module in the
+cursor (issue #308), or the hotkey pressed while pointing at an access point once it is in the armour. More than one network: one link at a time, the new link replaces the old one; a list of links is a later step if
 asked for.
 
 **The player's real inventory (#150, #168).** The hand-over buffer of #168 is the game's inventory window beside a script

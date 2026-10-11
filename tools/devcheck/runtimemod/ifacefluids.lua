@@ -101,6 +101,15 @@ return function(H)
 		expect(sm.side == EAST and sm.key == "fluid/steam@" .. DEG and sm.amount > 0 and sm.segment
 			and sm.segment >= STEAM - 1 and sm.segment > sm.amount + 1, "the steam entry (its pipes hold some) " .. serpent.line(sm))
 
+		--- issue #322: the tooltip in the world (the interface's custom status) names both fluids, the steam's temperature
+		local hs = remote.call(GUI, "interface_hover", iface)
+		local label = hs and type(hs.label) == "table" and hs.label or {}
+		local list = type(label[2]) == "table" and table.concat(label[2], "", 2) or ""
+		local water_text = "[fluid=water] " .. remote.call(GUI, "fmt", w.amount or 0) .. "/" .. remote.call(GUI, "fmt", d.volume)
+		expect(label[1] == "fork-me-gui.interface-hover-fluids" and list:find(water_text, 1, true)
+			and list:find("[fluid=steam] ", 1, true) and list:find("(" .. DEG .. " °C)", 1, true),
+			"the interface's custom status " .. serpent.line(hs))
+
 		--- the fluid section of the window
 		remote.call(GUI, "stand_in_forget", "if311")
 		local v = remote.call(GUI, "interface_fluid_view", "if311", iface)
@@ -126,9 +135,11 @@ return function(H)
 		expect(v.rebuilt and #v.rows == 0 and type(v.none) == "table" and v.none[1] == "fork-me-gui.interface-fluids-none",
 			"the section once the tanks are empty " .. serpent.line(v))
 		expect(#(remote.call(GUI, "interface_fluid_entries", iface) or { 0 }) == 0, "entries once the tanks are empty")
+		expect(remote.call(GUI, "interface_hover", iface) == nil and iface.custom_status == nil,
+			"no custom status once the tanks are empty: " .. serpent.line(iface.custom_status))
 		remote.call(GUI, "stand_in_forget", "if311")
 		return finish("north " .. WATER .. " water, east " .. string.format("%.0f", sm.amount or 0) .. " steam at " .. DEG
-			.. " °C in its tank, " .. string.format("%.0f", sm.segment or 0) .. " with its pipes; built once, amounts in place, emptied")
+			.. " °C in its tank, " .. string.format("%.0f", sm.segment or 0) .. " with its pipes; built once, amounts in place, emptied; custom status for the tooltip")
 	end
 
 	function T.running(check) check(storage.ifacefluids311 and storage.ifacefluids311.done, "ME interface window fluids (issue #311)") end
