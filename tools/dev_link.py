@@ -8,10 +8,12 @@ current working copy (no zip building/copying after every change).
     python tools/dev_link.py --mods-dir PATH
 
 Factorio loads an unpacked mod from a folder named like the mod ("me-network") or like the mod and its version.
-The links: "me-network" to the repository root, and "me-network-ae2-textures_<version>" to ae2-textures/, the
-optional texture mod (CC BY-NC-SA 3.0, issue #239; me-network runs without it). On Windows a link is a directory
-junction (no admin rights needed), elsewhere a symlink. A texture mod link of another version is replaced; only links
-are ever removed, never a real folder. Existing <name>_*.zip files in the mods folder (for example from the mod
+The links: "me-network" to the repository root, and "me-network-ae2-textures" to ae2-textures/, the texture mod
+(CC BY-NC-SA 3.0, issue #239; me-network requires it since issue #325). Both links carry the mod name without the
+version, so a version bump in an info.json keeps them valid (issue #328: a link named after the old version stopped
+Factorio at startup). Links of the texture mod with a version in their name ("me-network-ae2-textures_0.1.0", made by
+older versions of this script) are replaced, and --unlink removes them too. On Windows a link is a directory junction
+(no admin rights needed), elsewhere a symlink. Only links are ever removed, never a real folder. Existing <name>_*.zip files in the mods folder (for example from the mod
 portal) would compete with the folder, so they are moved next to the mods folder into <name>-zips-backup/ (nothing
 is deleted).
 Factorio only reads mods at startup: restart it after pulling changes.
@@ -74,8 +76,8 @@ def make_link(link, target):
 
 
 def texture_links(mods, name):
-    """the links of the texture mod in the mods folder, whatever their version"""
-    return [p for p in sorted(mods.glob(f"{name}_*")) if is_link(p)]
+    """the links of the texture mod in the mods folder: the one without a version and those with any version"""
+    return [p for p in [mods / name] + sorted(mods.glob(f"{name}_*")) if is_link(p)]
 
 
 def main():
@@ -88,7 +90,7 @@ def main():
     name = json.loads((ROOT / "info.json").read_text(encoding="utf-8"))["name"]
     tex = json.loads((TEXTURES / "info.json").read_text(encoding="utf-8"))
     link = mods / name
-    tex_link = mods / f"{tex['name']}_{tex['version']}"
+    tex_link = mods / tex["name"]
 
     if a.unlink:
         found = [p for p in [link] if p.exists() or is_link(p)] + texture_links(mods, tex["name"])
@@ -113,7 +115,7 @@ def main():
         for old in texture_links(mods, tex["name"]):
             if old.name != tex_link.name:
                 remove_link(old)
-                print(f"removed the link of another version {old}")
+                print(f"removed the old link {old} (the link has no version in its name now)")
         park_zips(mods, tex["name"])
         make_link(tex_link, TEXTURES)
     print("Restart Factorio to load the working copy.")
