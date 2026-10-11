@@ -45,8 +45,8 @@ no graphics of the original Gregtorio are left; releases 0.1.0 to 0.5.2 still co
 ## Rules
 
 - **The package rule.** The me-network zip never contains `ae2-textures/`, the CC BY-NC-SA text or a file with the
-  bytes of an image of `ae2-textures/MANIFEST.tsv` or of its AE2 source, and no Lua file or `info.json` of it names the
-  texture mod: me-network does not know it. The texture zip contains only its own files (`info.json`, `changelog.txt`,
+  bytes of an image of `ae2-textures/MANIFEST.tsv` or of its AE2 source, and no Lua file of it names the texture mod;
+  its `info.json` names it only as its required dependency `~ me-network-ae2-textures` (issue #325). The texture zip contains only its own files (`info.json`, `changelog.txt`,
   `data-updates.lua`, `data-final-fixes.lua`, `overrides.lua`, `locale/<language>/*.cfg`, the license text, `README.md`,
   `MANIFEST.tsv`)
   and the images of its manifest, never the GPL text. `tools/build.py` fails otherwise. Each zip goes only to its own
@@ -77,13 +77,15 @@ no graphics of the original Gregtorio are left; releases 0.1.0 to 0.5.2 still co
   this in mind for donations or paid offerings around it (nothing is decided here, it is only documented). me-network
   itself is GPLv3 and carries no NC part.
 - **SA:** any change to a file of the texture mod stays CC BY-NC-SA 3.0.
-- The texture mod is optional: me-network never needs it, and a player who installs only me-network gets nothing under
-  CC BY-NC-SA 3.0.
+- Since issue #325 me-network requires the texture mod: a player who installs me-network gets it from the mod portal
+  too, as a mod of its own under CC BY-NC-SA 3.0. NC applies to the texture mod, not to me-network's GPLv3 code, and
+  no zip holds both.
 
 ## Gregtorio Continued
 
 The sister repository ships no ME graphics since its issue #83, holds no AE2-derived file and depends on me-network
-only, never on the texture mod. It has to stay so: if it ever needs AE2 graphics, it first gets a mod, a manifest and
+only; through me-network's requirement (issue #325) its players get the texture mod too, but the repository itself
+has no AE2-derived file and names no texture mod. It has to stay so: if it ever needs AE2 graphics, it first gets a mod, a manifest and
 checks of its own (a separate issue). `devcheck.py check --with-gregtorio <checkout>` here fails when a file of that
 checkout is byte-identical to an image of `ae2-textures/MANIFEST.tsv` or to its AE2 source, or when its `info.json`
-names the texture mod; that run never loads the texture mod.
+names the texture mod; that run loads only an empty stand-in of the texture mod (its `info.json`, no graphics).

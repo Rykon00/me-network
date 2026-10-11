@@ -21,8 +21,9 @@ CC BY-NC-SA 3.0. They are built into two zips and no zip contains both. Every or
   the same license; the manifest records which checkout and commit).
 - A contribution that touches `ae2-textures/` is made under CC BY-NC-SA 3.0. A changed image stays in the folder and
   is recorded with `tools/import_ae2_textures.py --mark-changed`.
-- me-network never depends on the texture mod and never names it; the texture mod finds me-network's prototypes by
-  name, which is one more reason never to rename one.
+- me-network requires the texture mod only through its `info.json` (`~ me-network-ae2-textures`, issue #325) and
+  never names it in its code; the texture mod finds me-network's prototypes by name, which is one more reason never
+  to rename one.
 - AE2 code (LGPL-3.0) can be ported into the GPLv3 part: a comment at the function names its source.
 
 ## Workflow
@@ -71,6 +72,9 @@ CC BY-NC-SA 3.0. They are built into two zips and no zip contains both. Every or
    posts a digest of the version's changelog section to the Discord channel `#me-network-releases` and, when the
    texture version is new, a second one from `ae2-textures/changelog.txt` (repository secret
    `DISCORD_BOT_TOKEN`; without it the job only warns); if it fails, re-run that job alone.
+   me-network requires the texture mod (issue #325), so a release uploads and announces a new texture version before
+   me-network, and a texture version that me-network's `info.json` asks for (`~ me-network-ae2-textures >= X`) must be
+   the texture version of the release (`tools/release_textures.py` fails otherwise): raise both in the same release.
    The very first version of each mod (me-network 0.1.0, the texture mod 0.1.0) was uploaded by hand: the portal API
    only uploads new versions of an existing mod.
    **A texture-only release** (issue #245): when nothing the me-network zip holds (`tools/build.py` `INCLUDE`: the

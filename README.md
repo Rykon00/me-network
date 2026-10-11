@@ -23,8 +23,9 @@ once with ME Network 0.5.0, save it, then update (`docs/AE2.md`, "Old saves").
 
 ## Layout
 
-The repository root is the mod itself. The folder `ae2-textures/` is a second, optional mod, ME Network - AE2 Textures
-(`me-network-ae2-textures`, CC BY-NC-SA 3.0, issue #239), built into a zip of its own; see "License".
+The repository root is the mod itself. The folder `ae2-textures/` is a second mod, ME Network - AE2 Textures
+(`me-network-ae2-textures`, CC BY-NC-SA 3.0, issue #239), built into a zip of its own, which ME Network requires
+(issue #325); see "License".
 
 | Path | Contents |
 |---|---|
@@ -104,9 +105,11 @@ This repository holds two mods with two licenses (issue #239; every origin is li
 The two are built into two zips (`tools/build.py`), and no zip contains both licenses; each has its own page on the mod
 portal ([me-network](https://mods.factorio.com/mod/me-network),
 [me-network-ae2-textures](https://mods.factorio.com/mod/me-network-ae2-textures)), and the release workflow uploads
-each zip to its own page only, the texture mod's when its version is new (issue #243). **The texture mod is optional:
-me-network never needs it** and does not know it; it depends on me-network and replaces sprites when a player installs
-both. Gregtorio Continued depends on me-network only.
+each zip to its own page only, the texture mod's when its version is new (issue #243). **me-network requires the texture mod**
+(issue #325): its `info.json` has `~ me-network-ae2-textures`, a dependency without a load order (the texture mod
+depends on me-network and loads after it, so an optional or ordered one would be a cycle); its code never names it.
+The texture mod replaces sprites by prototype name. Gregtorio Continued depends on me-network and gets the texture
+mod through it.
 
 What CC BY-NC-SA 3.0 means for the texture mod, in short:
 

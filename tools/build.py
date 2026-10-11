@@ -20,7 +20,7 @@ ae2-textures/, a file with the bytes of an image of ae2-textures/MANIFEST.tsv or
 the texture zip holds anything but its own files (tools/ae2_manifest.py: MOD_FILES, DOCS, locale/<language>/*.cfg)
 and the images of its manifest with their bytes, or the GPL text.
 """
-import argparse, hashlib, json, os, shutil, sys, zipfile
+import argparse, hashlib, json, os, re, shutil, sys, zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -86,6 +86,20 @@ def entries_of(path):
 def digest(b):
     return hashlib.sha256(b).hexdigest()
 
+def names_texture_mod(rel, b):
+    """Whether a file of the me-network zip names the texture mod where it must not: a Lua file anywhere; info.json
+    anywhere but its one required dependency without a load order, "~ me-network-ae2-textures" with or without a
+    version (issue #325: me-network requires the texture mod; an optional or ordered dependency would be a cycle, the
+    texture mod depends on me-network and loads after it)"""
+    if rel.endswith(".lua"):
+        return M.MOD_NAME.encode() in b
+    if rel != "info.json" or M.MOD_NAME.encode() not in b:
+        return False
+    info = json.loads(b)
+    required = re.compile(rf"~\s*{re.escape(M.MOD_NAME)}(\s*(>=|>|=|<=|<)\s*\d+\.\d+\.\d+)?")
+    deps = [d for d in info.get("dependencies", []) if not required.fullmatch(d.strip())]
+    return M.MOD_NAME in json.dumps({**info, "dependencies": deps})
+
 def check_me_network_zip(path, root=ROOT):
     """what is wrong with the me-network zip (GPLv3): [problem]"""
     root = Path(root)
@@ -106,8 +120,9 @@ def check_me_network_zip(path, root=ROOT):
             problems.append(f"{name}: {rel} is byte-identical to {hashes[h]}: AE2 graphics are never in the me-network zip")
         if h == M.LICENSE_SHA256 or Path(rel).name == M.LICENSE_FILE:
             problems.append(f"{name}: {rel} is the CC BY-NC-SA 3.0 text; the me-network zip is GPLv3 only")
-        if (rel.endswith(".lua") or rel == "info.json") and M.MOD_NAME.encode() in b:
-            problems.append(f"{name}: {rel} names {M.MOD_NAME}; me-network never knows the texture mod")
+        if names_texture_mod(rel, b):
+            problems.append(f"{name}: {rel} names {M.MOD_NAME}; me-network names it only in info.json, as its required "
+                            f"dependency without a load order (\"~ {M.MOD_NAME}\", issue #325), never in its code")
     if "LICENSE" not in entries or (gpl and digest(entries["LICENSE"]) != gpl):
         problems.append(f"{name}: LICENSE (GPLv3) is missing or not the repository's")
     return problems

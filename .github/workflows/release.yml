@@ -24,6 +24,9 @@ name: Build & Release
 # Its merge creates the tag me-network-ae2-textures-vX.Y.Z (the texture version; not "v*", so it
 # triggers nothing) and a GitHub release with the texture zip and the texture notes alone (not marked
 # as the latest release), uploads only the texture zip and announces only the texture mod.
+# me-network requires the texture mod (issue #325: "~ me-network-ae2-textures" in info.json), so a release uploads
+# and announces a new texture version first, and tools/release_textures.py fails when info.json asks for a texture
+# version that is not the one at the commit.
 # Both uploads run tools/portal_upload.sh, each in a step of its own; it takes the mod name and
 # version from the zip's own info.json and refuses a zip of another mod than the step's, so neither
 # zip can reach the other's page. They need the repository secret FACTORIO_MOD_API_KEY (an API key
@@ -183,22 +186,23 @@ jobs:
           body_path: dist/release-notes.md
           make_latest: false
 
-      # tools/portal_upload.sh takes the mod name from the zip's info.json and refuses a zip that is not of $MOD
-      - name: Upload me-network to the Factorio mod portal
-        if: steps.rel.outputs.release == 'true' && steps.rel.outputs.textures_only != 'true'
-        env:
-          API_KEY: ${{ secrets.FACTORIO_MOD_API_KEY }}
-          MOD: ${{ steps.rel.outputs.name }}
-          ZIP: ${{ steps.rel.outputs.zip }}
-        run: bash tools/portal_upload.sh "$ZIP" "$MOD"
-
-      # issue #243: the texture mod (CC BY-NC-SA 3.0) to its own page, only a new version, with the same key
+      # tools/portal_upload.sh takes the mod name from the zip's info.json and refuses a zip that is not of $MOD.
+      # issue #243: the texture mod (CC BY-NC-SA 3.0) to its own page, only a new version, with the same key;
+      # issue #325: first, because me-network requires it (a failed upload stops the job before me-network's)
       - name: Upload the texture mod to the Factorio mod portal
         if: steps.rel.outputs.release == 'true' && steps.rel.outputs.textures_new == 'true'
         env:
           API_KEY: ${{ secrets.FACTORIO_MOD_API_KEY }}
           MOD: ${{ steps.rel.outputs.textures_name }}
           ZIP: ${{ steps.rel.outputs.textures_zip }}
+        run: bash tools/portal_upload.sh "$ZIP" "$MOD"
+
+      - name: Upload me-network to the Factorio mod portal
+        if: steps.rel.outputs.release == 'true' && steps.rel.outputs.textures_only != 'true'
+        env:
+          API_KEY: ${{ secrets.FACTORIO_MOD_API_KEY }}
+          MOD: ${{ steps.rel.outputs.name }}
+          ZIP: ${{ steps.rel.outputs.zip }}
         run: bash tools/portal_upload.sh "$ZIP" "$MOD"
 
       - name: Fast-forward main to the release
@@ -248,15 +252,8 @@ jobs:
           # issue #245: a texture-only release announces the texture mod alone, its release page under its own tag
           RELEASE_TAG="v$VERSION"
           [ "$TEXTURES_ONLY" = true ] && RELEASE_TAG="$TEXTURES_TAG"
-          [ "$TEXTURES_ONLY" = true ] || python tool/discord_announce.py \
-            --guild-config tool/server.yml \
-            --channel me-network-releases --title "ME Network" --version "$VERSION" \
-            --changelog mod/changelog.txt \
-            --link "Full changelog=https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
-            --link "Mod portal=https://mods.factorio.com/mod/$MOD" \
-            --summary-file "$RUNNER_TEMP/announce.md" || status=$?
-          [ -f "$RUNNER_TEMP/announce.md" ] && cat "$RUNNER_TEMP/announce.md" >> "$GITHUB_STEP_SUMMARY"
-          # issue #243: a post of its own for the texture mod, only when this release made its version new
+          # issue #243: a post of its own for the texture mod, only when this release made its version new;
+          # issue #325: before me-network's, which requires it
           if [ "$TEXTURES_NEW" = true ]; then
             python tool/discord_announce.py \
               --guild-config tool/server.yml \
@@ -267,4 +264,12 @@ jobs:
               --summary-file "$RUNNER_TEMP/announce-textures.md" || status=$?
             [ -f "$RUNNER_TEMP/announce-textures.md" ] && cat "$RUNNER_TEMP/announce-textures.md" >> "$GITHUB_STEP_SUMMARY"
           fi
+          [ "$TEXTURES_ONLY" = true ] || python tool/discord_announce.py \
+            --guild-config tool/server.yml \
+            --channel me-network-releases --title "ME Network" --version "$VERSION" \
+            --changelog mod/changelog.txt \
+            --link "Full changelog=https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" \
+            --link "Mod portal=https://mods.factorio.com/mod/$MOD" \
+            --summary-file "$RUNNER_TEMP/announce.md" || status=$?
+          [ -f "$RUNNER_TEMP/announce.md" ] && cat "$RUNNER_TEMP/announce.md" >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
