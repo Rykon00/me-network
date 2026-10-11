@@ -158,3 +158,12 @@ local own_rows = {}
 for _, n in pairs(ME_NETWORK and ME_NETWORK.recipes or {}) do own_rows[#own_rows + 1] = "recipe	" .. n end
 for _, n in pairs(ME_NETWORK and ME_NETWORK.technologies or {}) do own_rows[#own_rows + 1] = "technology	" .. n end
 section("OWN", own_rows)
+
+--- Rykon00/Gregtorio#215: the recipes of this mod that Gregtorio keeps locked on purpose (its FORK_RECIPES_LOCKED, name
+--- -> reason; absent without Gregtorio)
+local locked = {}
+for _, n in pairs(ME_NETWORK and ME_NETWORK.recipes or {}) do
+	local why = FORK_RECIPES_LOCKED and FORK_RECIPES_LOCKED[n]
+	if why then locked[#locked + 1] = n .. "	" .. why end
+end
+section("GREGTORIOLOCKED", locked)
