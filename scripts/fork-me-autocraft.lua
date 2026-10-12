@@ -721,7 +721,8 @@ local function new_provider(entity)
 		net = nil,           -- network id of the last scan
 		scanned_priority = nil }   -- priority of the last scan (before issue #50: `sig`, a signature string of the scan)
 		--- (issue #336, set later: `label`, the name given in the ME Interface Terminal; `near`, the entity names around it at the
-		--- last scan with a network)
+		--- last scan with a network; issue #335: `blocking` ("blocking", "smart" or nil) and `last_pid`, the pattern it pushed
+		--- last into a chest while in smart blocking)
 end
 
 --- blueprint patterns waiting for a blank pattern: encoded from the network's blanks (never out of nothing)
@@ -789,6 +790,34 @@ function EXT.note_near(p, around)
 	p.near = near
 end
 
+--- Issue #335: the blocking mode of a provider (AE2-Unofficial's Blocking and Smart Blocking, read in
+--- src/main/java/appeng/helpers/DualityInterface.java and written anew: no code of it is ported). It acts on the chests next to
+--- the provider only: a machine gets work only when it is idle and leased by no job, which blocks it already.
+---   "blocking": nothing is pushed into a chest while it holds any item (AE2: the target's `containsItems()`);
+---   "smart": the same, but the pattern this provider pushed last may push again into a chest that is not empty (AE2:
+---   `lastInputHash`, one per provider: `p.last_pid`);
+---   nil: off (a chest is filled as long as it has room).
+--- The check runs in the job step's hand-over (find_pusher), the visit that pushes anyway: no task of its own. The chest's
+--- target entry names its provider (`prov`, set by the scan); a chest next to two providers with one pattern is listed once,
+--- under the first of them in the pattern order (priority), and follows that provider's mode.
+EXT.BLOCKING = { blocking = true, smart = true }
+
+--- may pattern `pid` be pushed into the chest of target entry `t` now?
+function EXT.chest_open(s, t, pid)
+	local p = t.prov and s.providers[t.prov]
+	local mode = p and p.blocking
+	if not mode then return true end
+	if mode == "smart" and p.last_pid == pid then return true end
+	local inv = input_inventory(t.entity)
+	return inv ~= nil and N.bound(inv).is_empty()
+end
+
+--- pattern `pid` was pushed into the chest of target entry `t`: smart blocking remembers it for the provider
+function EXT.pushed(s, t, pid)
+	local p = t.prov and s.providers[t.prov]
+	if p and p.blocking == "smart" then p.last_pid = pid end
+end
+
 --- Scan a provider: the pattern in each slot, the machines next to it that can do it. The network's patterns are made
 --- again (dirty) when the scan found something else than the last one: the network, the priority, a slot's pattern, its
 --- reason or its machines. Issue #50, lever 6: compared with the last scan's records instead of a signature string
@@ -826,6 +855,7 @@ local function scan_provider(p)
 				local targets, reason = {}, nil
 				for _, v in ipairs(around) do
 					local t, r = target_for(v, def)
+					if t and t.mode == "chest" then t.prov = p.unit end          -- (issue #335: its blocking mode)
 					if t then targets[#targets + 1] = t else reason = reason or r end
 				end
 				patterns[slot] = { id = id, def = def, targets = targets, why = reason }
@@ -2178,14 +2208,17 @@ end
 --- the fluid map. Issue #158: a target with a `recipe` (a processing pattern that names its recipe, at an assembling
 --- machine) is used when it has that recipe and is idle; else, after the other targets, an idle one is switched to it
 --- (switch_recipe: what is left in it goes into the network first), as find_crafter does for crafting steps.
+--- Issue #335: a chest of a provider in blocking mode that may not be pushed into now is passed by; the fourth value is the
+--- chest's target entry (a chest found) or true when such a chest was passed by and nothing else was found.
 local function find_pusher(s, net, job, step, targets)
 	local ingredients, products = step_ingredients(step), step_products(step)
-	local others
+	local others, blocked
 	for _, t in pairs(targets) do
 		local e = t.entity
 		if e.valid and not s.busy[t.unit] and not rejected(job, t.unit, step.pid) then
 			if t.mode == "chest" then
-				return e, "chest", EMPTY_MAP
+				if EXT.chest_open(s, t, step.pid) then return e, "chest", EMPTY_MAP, t end
+				blocked = true
 			elseif t.mode == "push" and not e.disabled_by_script then
 				local current = t.recipe and N.bound(e).get_recipe()
 				if t.recipe and not (current ~= nil and current.name == t.recipe) then
@@ -2199,7 +2232,7 @@ local function find_pusher(s, net, job, step, targets)
 			end
 		end
 	end
-	if not (others and net) then return nil end
+	if not (others and net) then return nil, nil, nil, blocked end
 	for _, t in ipairs(others) do
 		local e = t.entity
 		if e.crafting_progress == 0 and switch_recipe(net, e, t.recipe) then
@@ -2209,7 +2242,7 @@ local function find_pusher(s, net, job, step, targets)
 			job.problem = why
 		end
 	end
-	return nil
+	return nil, nil, nil, blocked
 end
 
 --- crafts per hand-over that fit into the machine's fluid boxes
@@ -2372,14 +2405,14 @@ local function job_step(s, job, work)
 				end
 			end
 			if batch <= 0 then waiting = waiting or "ingredients" break end
-			local machine, mode, map
+			local machine, mode, map, chest
 			if step.kind == "crafting" then
 				machine, map = find_crafter(s, net, job, step, targets)
 				mode = "craft"
 			else
-				machine, mode, map = find_pusher(s, net, job, step, targets)
+				machine, mode, map, chest = find_pusher(s, net, job, step, targets)
 			end
-			if not machine then waiting = waiting or "machine" break end
+			if not machine then waiting = waiting or (chest and "blocking" or "machine") break end
 			if mode ~= "chest" then
 				for _, p in pairs(products) do        -- the products must fit into the output slot
 					if p.type == "item" then
@@ -2394,6 +2427,7 @@ local function job_step(s, job, work)
 			local ok
 			if mode == "chest" then                        -- a full chest (the line is backed up): one run, else wait
 				ok = push_chest(s, job, i, machine, batch) or (batch > 1 and push_chest(s, job, i, machine, 1))
+				if ok then EXT.pushed(s, chest, step.pid) end           -- (issue #335: smart blocking)
 			else
 				collect_output(job, net, machine, map)
 				ok = start_lease(s, job, i, machine, batch, map)
@@ -3067,6 +3101,22 @@ function M.set_priority(entity, priority)
 	return true
 end
 
+--- Issue #335: the blocking mode of a provider for the chests next to it: "blocking", "smart" (smart blocking) or nil (off);
+--- kept by blueprints, settings paste and clones like the priority
+function M.get_blocking(entity)
+	local p = provider_record(entity)
+	return p and p.blocking or nil
+end
+
+function M.set_blocking(entity, mode)
+	local p = provider_record(entity)
+	if not p then return false end
+	p.blocking = EXT.BLOCKING[mode] and mode or nil
+	if p.blocking ~= "smart" then p.last_pid = nil end
+	changed(p)                                      -- (the chests' target entries name the provider from this scan on)
+	return true
+end
+
 --- Issue #336: a provider's name, given in the ME Interface Terminal (nil: none). It is kept by blueprints and clones, not by a
 --- settings paste (two providers with one name would be no help). At most MAX_LABEL characters; an empty one clears it.
 EXT.MAX_LABEL = 60
@@ -3171,6 +3221,7 @@ function M.provider_info(entity)
 	local filled = 0
 	for slot = 1, slots_of(p) do if p.slots[slot] then filled = filled + 1 end end
 	local out = { slots = slots, slot_count = slots_of(p), filled = filled, machines = machines, priority = p.priority or 0,
+		blocking = p.blocking,                                                      -- (issue #335)
 		network = p.net ~= nil, card_slots = N.card_rules().provider.slots }
 	out.want = p.want and cards.missing_cards(p, p.want) or nil
 	return out
@@ -3181,6 +3232,7 @@ function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
 	if not (src and src.valid and dst and dst.valid and src.name == PROVIDER and dst.name == PROVIDER) then return end
 	M.set_priority(dst, M.get_priority(src))
+	M.set_blocking(dst, M.get_blocking(src))         -- (issue #335)
 	local from = provider_record(src)                -- issue #156: the Pattern Capacity Cards it has are wanted (from the player, then the network)
 	if from then
 		local player = event.player_index and game.get_player(event.player_index) or nil
@@ -3200,7 +3252,8 @@ function M.provider_settings(entity)
 	end
 	return { priority = p.priority or 0, patterns = patterns,
 		cards = p.want and { table.unpack(p.want) } or cards.card_list(p),        -- (issue #156)
-		label = p.label }                                                          -- (issue #336)
+		label = p.label,                                                           -- (issue #336)
+		blocking = p.blocking }                                                    -- (issue #335)
 end
 
 --- Apply blueprint settings to a provider: the priority, and the patterns as "pending" (each costs a blank
@@ -3212,6 +3265,9 @@ function M.apply_settings(entity, settings, old_recipe)
 	if type(settings) == "table" then
 		p.priority = math.max(-1000, math.min(1000, math.floor(tonumber(settings.priority) or 0)))
 		if settings.label ~= nil then p.label = EXT.clean_label(settings.label) end   -- (issue #336)
+		if settings.blocking ~= nil then                                             -- (issue #335)
+			p.blocking = EXT.BLOCKING[settings.blocking] and settings.blocking or nil
+		end
 		for key, raw in pairs(type(settings.patterns) == "table" and settings.patterns or {}) do
 			local slot = tonumber(key)
 			local def = P.normalize(raw)
@@ -3246,7 +3302,7 @@ function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
 		if entity.valid and entity.name == PROVIDER then
 			local settings = M.provider_settings(entity)
-			if settings and (settings.priority ~= 0 or next(settings.patterns) or settings.cards or settings.label) then
+			if settings and (settings.priority ~= 0 or next(settings.patterns) or settings.cards or settings.label or settings.blocking) then
 				bp.set_blueprint_entity_tag(index, BP_TAG, settings)
 			end
 		end
@@ -3284,6 +3340,7 @@ function M.on_built(entity, tags, source)
 		M.set_priority(entity, M.get_priority(source))
 		local from = provider_record(source)
 		if from and from.label then M.set_label(entity, from.label) end            -- (issue #336)
+		M.set_blocking(entity, M.get_blocking(source))                              -- (issue #335)
 		local list = from and (from.want and { table.unpack(from.want) } or cards.card_list(from))
 		if list then cards.want_cards(entity, list, nil) end
 	end
@@ -3609,6 +3666,10 @@ remote.add_interface("gregtorio-me-autocraft", {
 	provider_sync = function(provider, back) local p = provider_record(provider) return p ~= nil and cards.sync(p, back) end,
 	get_priority = function(provider) return M.get_priority(provider) end,
 	set_priority = function(provider, priority) return M.set_priority(provider, priority) end,
+	--- issue #335: the blocking mode ("blocking", "smart", nil) and the pattern smart blocking remembers
+	get_blocking = function(provider) return M.get_blocking(provider) end,
+	set_blocking = function(provider, mode) return M.set_blocking(provider, mode) end,
+	last_pid = function(provider) local p = provider_record(provider) return p and p.last_pid or nil end,
 	--- issue #336: the provider's name (the ME Interface Terminal), and the names of the machines and chests next to it (last scan)
 	get_label = function(provider) return M.get_label(provider) end,
 	set_label = function(provider, text) return M.set_label(provider, text) end,

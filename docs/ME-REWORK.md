@@ -274,6 +274,34 @@ other test through `encode_def` (the same function on a two-slot inventory that 
 needs a player: it was run once with a mock of the GUI elements (the module's own code: opening, refreshing, the actions);
 the real look is the in-game check.
 
+## Blocking mode of the pattern provider (issue #335)
+
+AE2-Unofficial's Blocking and Smart Blocking (`appeng/helpers/DualityInterface.java`: the push loop skips a target that
+`containsItems()` unless smart blocking and `lastInputHash` equal the pattern; read, not ported). The maintainer decided the
+scope: **chests only**. A machine already gets work only when it is idle and no job leases it (`find_crafter`,
+`find_pusher`, `machine_idle`, `s.busy`), so the issue's premise (a provider overfills a machine and mixes recipes) does not
+hold for machines; only `push_chest` filled a chest as long as it had room.
+
+*State:* `p.blocking` ("blocking", "smart" or nil) and `p.last_pid` (the pattern id the provider pushed last into a chest,
+kept only in smart blocking) in the provider record; in the blueprint tag `fork_me_provider` as `blocking`; copied by settings
+paste and clones (`M.set_blocking`, which rescans the provider). A chest's target entry names its provider (`t.prov`, set by
+`scan_provider`); entries are made new by every scan and the pattern lists rebuilt on `changed`, so a mode set later is found.
+Absent in older saves: off, no migration.
+
+*Where it runs:* in the job step's hand-over, the visit that pushes anyway. `find_pusher` asks `EXT.chest_open` (no mode: yes;
+smart and the same pattern: yes; else the chest's inventory `is_empty()`), passes a closed chest by and tries the pattern's
+other targets; when only closed chests were found the job waits with `wait = "blocking"`. After a push `EXT.pushed`
+remembers the pattern. No queue and no tick of its own; a provider without a mode costs one table lookup per chest
+hand-over (`bench --check origin/main`, docs/PERFORMANCE.md). One hand-over is a batch (up to `MAX_BATCH` runs of one
+pattern), not a single run as in AE2: the inputs in the chest are one pattern's either way, which is what the mode is for.
+
+*Not built:* AE2's Locking (`LockCraftingMode`): the provider has no circuit connection, so it waits for a decision (#346).
+
+*Test:* `tools/devcheck/runtimemod/blocking.lua` (three providers with a chest each, four CPUs: blocking holds the second
+batch of the same pattern and the other pattern, one kind at a time; smart lets the same pattern through, not the other;
+off fills both; the settings in data, blueprint, tag, paste and clone). With `chest_open` always true it fails ("both kinds
+in the chest").
+
 ## ME Interface Terminal (issue #336)
 
 AE2's Interface Terminal (AE2-Unofficial: `appeng/parts/reporting/PartInterfaceTerminal.java`, `GuiInterfaceTerminal.java`,
@@ -2387,8 +2415,8 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 
 ## Open points
 
-* Patterns (issue #80, left open on purpose; the data model keeps room for them): a blocking mode (push into a chest only
-  when it is empty; issue #335), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's
+* Patterns (issue #80, left open on purpose; the data model keeps room for them): AE2's Locking of a provider (#346; the
+  blocking mode for chests is built, issue #335), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's
   ingredient lookup are the places to change), clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
   bus.
 * A level maintainer with several resources. (The cards of the buses and the provider are built: the import and export
