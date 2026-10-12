@@ -1567,6 +1567,9 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   pattern tier with 36 slots. Clearing a pattern needs the terminal's button (an inventory click cannot be caught).
   A provider mined by another mod's script (not a player or robot) drops its patterns instead of giving them to
   that script's inventory.
+* The ME Interface Terminal (issue #336): its window is tested headless through its data and a stand-in of its page; the
+  window itself is checked in the game (#342). It has no wireless mode (AE2-Unofficial's Wireless Interface Terminal), an
+  interface cannot be renamed (only a provider), and the texture mod has no AE2 picture for it yet (#343).
 * Crafting CPUs (issue #6): no choice of the CPU in the terminal (the smallest free one that fits is taken), no
   "requests from players only / automation only" mode. The level maintainer
   keeps one resource per block;
