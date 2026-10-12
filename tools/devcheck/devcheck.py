@@ -816,6 +816,7 @@ RUNTIME_TESTS = (
     ("BUFFER", "ME terminal buffer (issue #150, experiment)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
     ("IFACETERM", "ME Interface Terminal (issue #336)"),
+    ("BLOCKING", "ME Pattern Provider blocking mode (issue #335)"),
     ("IFACECAP", "ME Interface Capacity Card (issue #196)"),
     ("WIRELESS", "ME wireless terminal (issues #205 to #210)"),
     ("STICKY", "ME Sticky Card (issue #193)"),

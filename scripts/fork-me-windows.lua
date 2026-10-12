@@ -775,6 +775,13 @@ end
 
 --- `opts.via`: the unit number of the ME Interface Terminal the window was opened from (issue #336: its reach counts, and a
 --- Back button leads to it)
+--- Issue #335: the blocking modes in the order of the provider window's drop-down, and the index of a mode
+local BLOCKING_MODES = { "off", "blocking", "smart" }
+function M.blocking_index(mode)
+	for i, m in ipairs(BLOCKING_MODES) do if m == (mode or "off") then return i end end
+	return 1
+end
+
 local function open_provider(player, entity, opts)
 	local via = opts and opts.via
 	local _, content = G.open_window(player, "provider", autocraft.get_label(entity) or caption_of(entity),
@@ -784,6 +791,13 @@ local function open_provider(player, entity, opts)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.provider-priority-tooltip" } }
 	G.number_field(row, autocraft.get_priority(entity), G.act("prov_priority"), 70, true).tooltip = { "fork-me-gui.provider-priority-tooltip" }
+	--- issue #335: the blocking mode (it acts on the chests next to the provider only)
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.provider-blocking" }, tooltip = { "fork-me-gui.provider-blocking-tooltip" } }
+	row.add{ type = "drop-down", name = "fork_me_prov_blocking", tags = G.act("prov_blocking"),
+		tooltip = { "fork-me-gui.provider-blocking-tooltip" },
+		items = { { "fork-me-gui.provider-blocking-off" }, { "fork-me-gui.provider-blocking-blocking" }, { "fork-me-gui.provider-blocking-smart" } },
+		selected_index = M.blocking_index(autocraft.get_blocking(entity)) }
 	--- issue #156: the card slots (only the Pattern Capacity Card fits), then the patterns: "n of m", a list that scrolls
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.provider-cards-tooltip" } }
@@ -812,6 +826,9 @@ function M.refresh_provider(player, frame)
 	for _, name in ipairs(pinfo.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_prov_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_provider_count").caption = { "fork-me-gui.provider-count", pinfo.filled, pinfo.slot_count }
+	local dd = G.find(frame, "fork_me_prov_blocking")          -- (issue #335: set elsewhere, by a paste or another player)
+	local index = M.blocking_index(pinfo.blocking)
+	if dd and dd.selected_index ~= index then dd.selected_index = index end
 	rebuild(frame, "fork_me_provider_slots", slots_sig, function(box) build_provider_slots(box, entity) end)
 	rebuild(frame, "fork_me_provider_machines", machines_sig, function(box) build_provider_machines(box, entity) end)
 	local info = M.provider_data(entity)
@@ -841,6 +858,13 @@ G.on("prov_slot", function(event, player, el)
 	local why, out = autocraft.provider_click(cursor, inv, entity, el.tags.slot, event.shift or remote)
 	flying(player, why)
 	if remote and out then G.moved_text(player) end
+	G.refresh_one(player)
+end)
+
+G.on("prov_blocking", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = window_entity(player)
+	if entity then autocraft.set_blocking(entity, BLOCKING_MODES[el.selected_index]) end
 	G.refresh_one(player)
 end)
 
@@ -1748,6 +1772,8 @@ remote.add_interface("gregtorio-me-gui", {
 	controller_data = function(entity) return M.controller_data(entity) end,
 	controller_power_text = function(entity) return M.power_text(M.controller_data(entity)) end,    -- (issue #149)
 	provider_data = function(entity) return M.provider_data(entity) end,
+	--- issue #335: the provider window's drop-down index of a blocking mode
+	blocking_index = function(mode) return M.blocking_index(mode) end,
 	crafting_cpu_data = function(entity) return M.crafting_cpu_data(entity) end,
 	crafting_cpu_title = function(entity) return M.crafting_cpu_title(M.crafting_cpu_data(entity)) end,    -- (issue #151)
 	maintainer_data = function(entity) return M.maintainer_data(entity) end,
