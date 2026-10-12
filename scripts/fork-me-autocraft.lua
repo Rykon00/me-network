@@ -722,7 +722,7 @@ local function new_provider(entity)
 		scanned_priority = nil }   -- priority of the last scan (before issue #50: `sig`, a signature string of the scan)
 		--- (issue #336, set later: `label`, the name given in the ME Interface Terminal; `near`, the entity names around it at the
 		--- last scan with a network; issue #335: `blocking` ("blocking", "smart" or nil) and `last_pid`, the pattern it pushed
-		--- last into a chest while in smart blocking)
+		--- last into a chest while in smart blocking; issue #346: `lock` ("result" or nil) and `locked`, what it waits for)
 end
 
 --- blueprint patterns waiting for a blank pattern: encoded from the network's blanks (never out of nothing)
@@ -802,20 +802,69 @@ end
 --- under the first of them in the pattern order (priority), and follows that provider's mode.
 EXT.BLOCKING = { blocking = true, smart = true }
 
---- may pattern `pid` be pushed into the chest of target entry `t` now?
+--- Issue #346: the lock "until the result is back" (AE2-Unofficial's LockCraftingMode.LOCK_UNTIL_RESULT, read in
+--- DualityInterface.java and written anew). After a hand-over into one of its chests a provider with `p.lock = "result"`
+--- pushes nothing more into its chests until the main product of what it handed over (the pattern's first output row
+--- times the runs; AE2: "the primary pattern result") has come into the provider's network, from anywhere: every item or
+--- fluid the network's insert functions offer to `N.on_arrival`, whether a job takes it or it is stored (AE2: a storage
+--- interceptor of the network). Machines are not locked: a machine gets work only when it is idle and its products are
+--- collected. State: `p.locked` = { [key] = amount still to come } while locked (fluids by name, any temperature),
+--- `s.locked` = { [unit] = true } of the locked providers, nil when none, so an arrival costs one nil check then.
+function EXT.lock_key(key)
+	if key:sub(1, #FLUID_PREFIX) == FLUID_PREFIX then return FLUID_PREFIX .. N.fluid_name(key) end
+	return key
+end
+
+function EXT.unlock(s, p)
+	if not p then return end
+	p.locked = nil
+	if s.locked then
+		s.locked[p.unit] = nil
+		if next(s.locked) == nil then s.locked = nil end
+	end
+end
+
+--- `count` of `key` came into network `net`: the locks waiting for it count it
+function EXT.arrived(s, net, key, count)
+	local k = EXT.lock_key(key)
+	for unit in pairs(s.locked) do
+		local p = s.providers[unit]
+		if not (p and p.locked) then
+			s.locked[unit] = nil
+		elseif p.locked[k] and N.network_of_unit(unit) == net then
+			local left = p.locked[k] - count
+			if left <= FLUID_EPS then p.locked[k] = nil else p.locked[k] = left end
+			if next(p.locked) == nil then p.locked = nil s.locked[unit] = nil end
+		end
+	end
+	if next(s.locked) == nil then s.locked = nil end
+end
+
+--- may pattern `pid` be pushed into the chest of target entry `t` now? true, or false and why ("locked", "blocking")
 function EXT.chest_open(s, t, pid)
 	local p = t.prov and s.providers[t.prov]
-	local mode = p and p.blocking
+	if not p then return true end
+	if p.locked then return false, "locked" end
+	local mode = p.blocking
 	if not mode then return true end
 	if mode == "smart" and p.last_pid == pid then return true end
 	local inv = input_inventory(t.entity)
-	return inv ~= nil and N.bound(inv).is_empty()
+	if inv ~= nil and N.bound(inv).is_empty() then return true end
+	return false, "blocking"
 end
 
---- pattern `pid` was pushed into the chest of target entry `t`: smart blocking remembers it for the provider
-function EXT.pushed(s, t, pid)
+--- `runs` of pattern `pid` (`def`) were pushed into the chest of target entry `t`: smart blocking remembers the pattern, the
+--- lock waits for its main product
+function EXT.pushed(s, t, pid, def, runs)
 	local p = t.prov and s.providers[t.prov]
-	if p and p.blocking == "smart" then p.last_pid = pid end
+	if not p then return end
+	if p.blocking == "smart" then p.last_pid = pid end
+	local out = p.lock == "result" and def.outputs and def.outputs[1]
+	if out and out.key and (out.amount or 0) > 0 then
+		p.locked = { [EXT.lock_key(out.key)] = out.amount * runs }
+		s.locked = s.locked or {}
+		s.locked[p.unit] = true
+	end
 end
 
 --- Scan a provider: the pattern in each slot, the machines next to it that can do it. The network's patterns are made
@@ -901,6 +950,7 @@ end
 local function drop_provider(s, unit)
 	local p = s.providers[unit]
 	if p and not (p.entity and p.entity.valid) then vanish_provider(s, p) end
+	if p then EXT.unlock(s, p) end                   -- (issue #346)
 	s.providers[unit] = nil
 	remove_value(s.plist, unit)
 	s.dirty = true
@@ -2208,8 +2258,9 @@ end
 --- the fluid map. Issue #158: a target with a `recipe` (a processing pattern that names its recipe, at an assembling
 --- machine) is used when it has that recipe and is idle; else, after the other targets, an idle one is switched to it
 --- (switch_recipe: what is left in it goes into the network first), as find_crafter does for crafting steps.
---- Issue #335: a chest of a provider in blocking mode that may not be pushed into now is passed by; the fourth value is the
---- chest's target entry (a chest found) or true when such a chest was passed by and nothing else was found.
+--- Issue #335: a chest of a provider in blocking mode (or locked, issue #346) that may not be pushed into now is passed by; the
+--- fourth value is the chest's target entry (a chest found) or, when such a chest was passed by and nothing else was found,
+--- why ("blocking" or "locked").
 local function find_pusher(s, net, job, step, targets)
 	local ingredients, products = step_ingredients(step), step_products(step)
 	local others, blocked
@@ -2217,8 +2268,9 @@ local function find_pusher(s, net, job, step, targets)
 		local e = t.entity
 		if e.valid and not s.busy[t.unit] and not rejected(job, t.unit, step.pid) then
 			if t.mode == "chest" then
-				if EXT.chest_open(s, t, step.pid) then return e, "chest", EMPTY_MAP, t end
-				blocked = true
+				local open, why = EXT.chest_open(s, t, step.pid)
+				if open then return e, "chest", EMPTY_MAP, t end
+				blocked = blocked or why
 			elseif t.mode == "push" and not e.disabled_by_script then
 				local current = t.recipe and N.bound(e).get_recipe()
 				if t.recipe and not (current ~= nil and current.name == t.recipe) then
@@ -2412,7 +2464,7 @@ local function job_step(s, job, work)
 			else
 				machine, mode, map, chest = find_pusher(s, net, job, step, targets)
 			end
-			if not machine then waiting = waiting or (chest and "blocking" or "machine") break end
+			if not machine then waiting = waiting or chest or "machine" break end
 			if mode ~= "chest" then
 				for _, p in pairs(products) do        -- the products must fit into the output slot
 					if p.type == "item" then
@@ -2426,8 +2478,13 @@ local function job_step(s, job, work)
 			end
 			local ok
 			if mode == "chest" then                        -- a full chest (the line is backed up): one run, else wait
-				ok = push_chest(s, job, i, machine, batch) or (batch > 1 and push_chest(s, job, i, machine, 1))
-				if ok then EXT.pushed(s, chest, step.pid) end           -- (issue #335: smart blocking)
+				local runs = batch
+				ok = push_chest(s, job, i, machine, batch)
+				if not ok and batch > 1 then
+					runs = 1
+					ok = push_chest(s, job, i, machine, 1)
+				end
+				if ok then EXT.pushed(s, chest, step.pid, step.def, runs) end   -- (issues #335, #346: smart blocking, the lock)
 			else
 				collect_output(job, net, machine, map)
 				ok = start_lease(s, job, i, machine, batch, map)
@@ -2614,6 +2671,7 @@ end
 local function on_arrival(net, key, count)
 	local s = storage.fork_ae2
 	if not s then return 0 end
+	if s.locked then EXT.arrived(s, net, key, count) end       -- (issue #346: the locks see every arrival)
 	local keys = await_index(s)[net.id]
 	local ids = keys and keys[key]
 	if not ids then return 0 end
@@ -3117,6 +3175,29 @@ function M.set_blocking(entity, mode)
 	return true
 end
 
+--- Issue #346: the lock of a provider ("result": until the result is back, nil: off), kept by blueprints, settings paste and
+--- clones; a change of it releases a lock in effect (as AE2's setting does), and so does `M.unlock` (the window's button)
+function M.get_lock(entity)
+	local p = provider_record(entity)
+	return p and p.lock or nil
+end
+
+function M.set_lock(entity, mode)
+	local p = provider_record(entity)
+	if not p then return false end
+	local new = mode == "result" and "result" or nil
+	if new ~= p.lock then EXT.unlock(state(), p) end
+	p.lock = new
+	return true
+end
+
+function M.unlock(entity)
+	local p = provider_record(entity)
+	if not p then return false end
+	EXT.unlock(state(), p)
+	return true
+end
+
 --- Issue #336: a provider's name, given in the ME Interface Terminal (nil: none). It is kept by blueprints and clones, not by a
 --- settings paste (two providers with one name would be no help). At most MAX_LABEL characters; an empty one clears it.
 EXT.MAX_LABEL = 60
@@ -3222,6 +3303,7 @@ function M.provider_info(entity)
 	for slot = 1, slots_of(p) do if p.slots[slot] then filled = filled + 1 end end
 	local out = { slots = slots, slot_count = slots_of(p), filled = filled, machines = machines, priority = p.priority or 0,
 		blocking = p.blocking,                                                      -- (issue #335)
+		lock = p.lock, locked = p.locked and shallow_map(p.locked) or nil,          -- (issue #346)
 		network = p.net ~= nil, card_slots = N.card_rules().provider.slots }
 	out.want = p.want and cards.missing_cards(p, p.want) or nil
 	return out
@@ -3233,6 +3315,7 @@ function M.on_entity_settings_pasted(event)
 	if not (src and src.valid and dst and dst.valid and src.name == PROVIDER and dst.name == PROVIDER) then return end
 	M.set_priority(dst, M.get_priority(src))
 	M.set_blocking(dst, M.get_blocking(src))         -- (issue #335)
+	M.set_lock(dst, M.get_lock(src))                 -- (issue #346)
 	local from = provider_record(src)                -- issue #156: the Pattern Capacity Cards it has are wanted (from the player, then the network)
 	if from then
 		local player = event.player_index and game.get_player(event.player_index) or nil
@@ -3253,7 +3336,8 @@ function M.provider_settings(entity)
 	return { priority = p.priority or 0, patterns = patterns,
 		cards = p.want and { table.unpack(p.want) } or cards.card_list(p),        -- (issue #156)
 		label = p.label,                                                           -- (issue #336)
-		blocking = p.blocking }                                                    -- (issue #335)
+		blocking = p.blocking,                                                     -- (issue #335)
+		lock = p.lock }                                                            -- (issue #346)
 end
 
 --- Apply blueprint settings to a provider: the priority, and the patterns as "pending" (each costs a blank
@@ -3268,6 +3352,7 @@ function M.apply_settings(entity, settings, old_recipe)
 		if settings.blocking ~= nil then                                             -- (issue #335)
 			p.blocking = EXT.BLOCKING[settings.blocking] and settings.blocking or nil
 		end
+		if settings.lock ~= nil then p.lock = settings.lock == "result" and "result" or nil end   -- (issue #346)
 		for key, raw in pairs(type(settings.patterns) == "table" and settings.patterns or {}) do
 			local slot = tonumber(key)
 			local def = P.normalize(raw)
@@ -3302,7 +3387,7 @@ function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
 		if entity.valid and entity.name == PROVIDER then
 			local settings = M.provider_settings(entity)
-			if settings and (settings.priority ~= 0 or next(settings.patterns) or settings.cards or settings.label or settings.blocking) then
+			if settings and (settings.priority ~= 0 or next(settings.patterns) or settings.cards or settings.label or settings.blocking or settings.lock) then
 				bp.set_blueprint_entity_tag(index, BP_TAG, settings)
 			end
 		end
@@ -3341,6 +3426,7 @@ function M.on_built(entity, tags, source)
 		local from = provider_record(source)
 		if from and from.label then M.set_label(entity, from.label) end            -- (issue #336)
 		M.set_blocking(entity, M.get_blocking(source))                              -- (issue #335)
+		M.set_lock(entity, M.get_lock(source))                                      -- (issue #346)
 		local list = from and (from.want and { table.unpack(from.want) } or cards.card_list(from))
 		if list then cards.want_cards(entity, list, nil) end
 	end
@@ -3369,6 +3455,7 @@ function M.on_removed(entity, buffer)
 	end
 	if buffer and buffer.valid then cards.give_cards(p, buffer) else cards.spill_cards(p) end   -- issue #156
 	cards.detach(p)
+	EXT.unlock(s, p)                                 -- (issue #346)
 	s.providers[entity.unit_number] = nil
 	remove_value(s.plist, entity.unit_number)
 	s.dirty = true
@@ -3670,6 +3757,12 @@ remote.add_interface("gregtorio-me-autocraft", {
 	get_blocking = function(provider) return M.get_blocking(provider) end,
 	set_blocking = function(provider, mode) return M.set_blocking(provider, mode) end,
 	last_pid = function(provider) local p = provider_record(provider) return p and p.last_pid or nil end,
+	--- issue #346: the lock ("result" or nil), what a locked provider still waits for, the window's Unlock, the locked units
+	get_lock = function(provider) return M.get_lock(provider) end,
+	set_lock = function(provider, mode) return M.set_lock(provider, mode) end,
+	unlock = function(provider) return M.unlock(provider) end,
+	locked = function(provider) local p = provider_record(provider) return p and p.locked or nil end,
+	locked_units = function() local s = storage.fork_ae2 return s and s.locked or nil end,
 	--- issue #336: the provider's name (the ME Interface Terminal), and the names of the machines and chests next to it (last scan)
 	get_label = function(provider) return M.get_label(provider) end,
 	set_label = function(provider, text) return M.set_label(provider, text) end,

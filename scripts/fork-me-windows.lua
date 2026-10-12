@@ -798,6 +798,14 @@ local function open_provider(player, entity, opts)
 		tooltip = { "fork-me-gui.provider-blocking-tooltip" },
 		items = { { "fork-me-gui.provider-blocking-off" }, { "fork-me-gui.provider-blocking-blocking" }, { "fork-me-gui.provider-blocking-smart" } },
 		selected_index = M.blocking_index(autocraft.get_blocking(entity)) }
+	--- issue #346: the lock until the result is back, what a locked provider still waits for, and Unlock
+	row = G.row(content)
+	row.add{ type = "checkbox", name = "fork_me_prov_lock", state = autocraft.get_lock(entity) == "result",
+		caption = { "fork-me-gui.provider-lock" }, tooltip = { "fork-me-gui.provider-lock-tooltip" }, tags = G.act("prov_lock") }
+	row = G.row(content, "fork_me_prov_locked_row")
+	G.label(row, "", WIDTH - 90, nil, "fork_me_prov_locked")
+	row.add{ type = "button", name = "fork_me_prov_unlock", caption = { "fork-me-gui.provider-unlock" },
+		tooltip = { "fork-me-gui.provider-unlock-tooltip" }, tags = G.act("prov_unlock") }
 	--- issue #156: the card slots (only the Pattern Capacity Card fits), then the patterns: "n of m", a list that scrolls
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.provider-cards-tooltip" } }
@@ -829,6 +837,13 @@ function M.refresh_provider(player, frame)
 	local dd = G.find(frame, "fork_me_prov_blocking")          -- (issue #335: set elsewhere, by a paste or another player)
 	local index = M.blocking_index(pinfo.blocking)
 	if dd and dd.selected_index ~= index then dd.selected_index = index end
+	local lock = G.find(frame, "fork_me_prov_lock")            -- (issue #346)
+	if lock and lock.state ~= (pinfo.lock == "result") then lock.state = pinfo.lock == "result" end
+	local locked_row = G.find(frame, "fork_me_prov_locked_row")
+	if locked_row then
+		locked_row.visible = pinfo.locked ~= nil
+		G.find(frame, "fork_me_prov_locked").caption = pinfo.locked and M.locked_text(pinfo.locked) or ""
+	end
 	rebuild(frame, "fork_me_provider_slots", slots_sig, function(box) build_provider_slots(box, entity) end)
 	rebuild(frame, "fork_me_provider_machines", machines_sig, function(box) build_provider_machines(box, entity) end)
 	local info = M.provider_data(entity)
@@ -858,6 +873,33 @@ G.on("prov_slot", function(event, player, el)
 	local why, out = autocraft.provider_click(cursor, inv, entity, el.tags.slot, event.shift or remote)
 	flying(player, why)
 	if remote and out then G.moved_text(player) end
+	G.refresh_one(player)
+end)
+
+--- Issue #346: what a locked provider still waits for: "Locked until these are back: 12 [item=pipe]"
+function M.locked_text(locked)
+	local keys = {}
+	for key in pairs(locked) do keys[#keys + 1] = key end
+	table.sort(keys)
+	local parts = {}
+	for _, key in ipairs(keys) do
+		local icon = key:sub(1, 6) == "fluid/" and ("[fluid=" .. key:sub(7) .. "]") or ("[item=" .. key .. "]")
+		parts[#parts + 1] = G.fmt(locked[key]) .. " " .. icon
+	end
+	return { "fork-me-gui.provider-locked", table.concat(parts, ", ") }
+end
+
+G.on("prov_lock", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then autocraft.set_lock(entity, el.state and "result" or nil) end
+	G.refresh_one(player)
+end)
+
+G.on("prov_unlock", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if entity then autocraft.unlock(entity) end
 	G.refresh_one(player)
 end)
 
@@ -1774,6 +1816,8 @@ remote.add_interface("gregtorio-me-gui", {
 	provider_data = function(entity) return M.provider_data(entity) end,
 	--- issue #335: the provider window's drop-down index of a blocking mode
 	blocking_index = function(mode) return M.blocking_index(mode) end,
+	--- issue #346: the line of a locked provider in its window
+	locked_text = function(locked) return M.locked_text(locked) end,
 	crafting_cpu_data = function(entity) return M.crafting_cpu_data(entity) end,
 	crafting_cpu_title = function(entity) return M.crafting_cpu_title(M.crafting_cpu_data(entity)) end,    -- (issue #151)
 	maintainer_data = function(entity) return M.maintainer_data(entity) end,

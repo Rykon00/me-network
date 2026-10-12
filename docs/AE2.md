@@ -234,7 +234,7 @@ click uses the tool and opens no window, as on a chest.
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, the power in W, kW or MW and where it goes (issue #149: a line per kind of block with the number of blocks, the power in all and of one, biggest first, the controller's base draw as the first line; the lines add up to the total), and a line when the controller's power buffer is not full (its electric network delivers less than the network asks for) |
-| ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
+| ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), **Lock until the result is back** with what a locked provider waits for and **Unlock** (issue #346), 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
@@ -832,8 +832,19 @@ A job that waits for such a chest shows "Waiting for the chest of a provider in 
 another machine or chest of the pattern meanwhile; like any wait, no progress at all for 5 minutes fails it. **Machines**
 are not affected: a machine next to a provider gets work only when it is idle and no job uses it, which blocks it already.
 A chest next to two providers that hold the same pattern follows the mode of the first of them in the pattern order.
-The mode goes with blueprints, settings paste and clones. AE2's Locking (a lock until a redstone signal or the last
-result) is not built: the provider has no circuit connection (#346).
+The mode goes with blueprints, settings paste and clones.
+
+**Lock until the result is back** (issue #346, AE2-Unofficial's Locking "until the result"; the check box in the provider
+window), also for the chests next to the provider, with or without a blocking mode: after a hand-over into one of its
+chests the provider puts **nothing more into its chests** until the **main product** of what it handed over (the
+pattern's first output row times the runs: 16 runs of "stone -> pipe" wait for 16 pipes) has come into the network,
+**from anywhere** (an import bus, an interface, the terminal), whether a job takes it or it is stored. For lines that
+must finish one batch before the next starts. The window shows what a locked provider still waits for ("Locked until
+these are back: 6 pipes") and an **Unlock** button (when the result will not come, for example after a cancelled job);
+switching the lock off releases it too. A job that waits for it shows "Waiting for the result of the last hand-over of a
+locked provider". Machines are not locked: a machine gets its next batch only when it is idle and its products are
+collected. The setting goes with blueprints, settings paste and clones (a lock in effect does not). AE2's locks by a
+redstone signal are not built: the provider has no circuit connection.
 
 **Outputs** come back in two ways, and both count:
 
@@ -898,8 +909,8 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   patterns as "waiting for a blank pattern" (yellow) and **encodes each one from a blank pattern of its network**
   as soon as the network has one (within a few seconds). Click such a slot to forget it. Old blueprints (0.4.1 and
   older) with a furnace recipe choice give a processing pattern of that recipe, the same way.
-* **Settings paste** (shift right click, shift left click) and cloning copy the **priority** and the **blocking mode**
-  (issue #335); patterns are items and stay where they are.
+* **Settings paste** (shift right click, shift left click) and cloning copy the **priority**, the **blocking mode**
+  (issue #335) and the **lock** setting (issue #346); patterns are items and stay where they are.
 * **The name** a provider got in the ME Interface Terminal (issue #336) goes with blueprints and clones, not with a
   settings paste (two providers of one name would not help to find either).
 
@@ -1028,7 +1039,7 @@ largest amounts first).
 
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
-| ME Pattern Provider | priority; its blocking mode (issue #335); its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network); its name (issue #336) | yes (priority, blocking mode, cards) | yes (patterns pending a blank pattern, blocking mode, cards, name); clone: priority, blocking mode, cards, name |
+| ME Pattern Provider | priority; its blocking mode (issue #335) and lock (issue #346); its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network); its name (issue #336) | yes (priority, blocking mode, lock, cards) | yes (patterns pending a blank pattern, blocking mode, lock, cards, name); clone: priority, blocking mode, lock, cards, name |
 | ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority, its Interface Capacity Cards (the copy wants them from the player, then the network) | yes | yes (old blueprints with slot filters are converted); the cards first, so the rows they give room for are there |
 | ME Import Bus, ME Export Bus | filters (items and fluids); which Acceleration Cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
@@ -1583,7 +1594,8 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
 * A furnace picks its recipe from its input: a processing pattern whose input fits several of its recipes may be
   smelted into the wrong product; the job then waits for its outputs and fails after 5 minutes.
 * Encoded patterns (issue #80): the provider's only card is the Pattern Capacity Card (9, 18, 27 or 36 slots, issue #156); no
-  substitutions or fuzzy patterns; the blocking mode (issue #335) acts on chests only and has no Locking (#346). Clearing a pattern needs the
+  substitutions or fuzzy patterns; the blocking mode (issue #335) and the lock (issue #346) act on chests only, and there is no
+  lock by a circuit signal. Clearing a pattern needs the
   ME Pattern Terminal's button (an inventory click cannot be caught).
   A provider mined by another mod's script (not a player or robot) drops its patterns instead of giving them to
   that script's inventory.
