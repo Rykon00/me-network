@@ -3123,17 +3123,21 @@ buses and interfaces) one read of `s.locked`, which is nil while no provider is 
 them (few: only providers with the lock and a result still to come). In the chest hand-over one more field read
 (`p.locked`). No queue, no tick of its own.
 
-Measured in turns against the branch it is built on (`origin/provider-blocking-335`). **The maintainer's game ran on the
-machine during these runs**, so the absolute numbers are about twice those of the sections above and the rounds scatter:
+Measured in turns against the branch it is built on (`origin/provider-blocking-335`), three rounds each, on an idle machine
+(`bench --planner-only --sizes 100 --runs 3 --check origin/provider-blocking-335` and `bench --sizes 1000 --runs 3 --check
+origin/provider-blocking-335`):
 
-| | planner scene (3 rounds), before | with the lock | size 1000 (5 rounds), before | with the lock |
+| | planner scene, before | with the lock | size 1000, before | with the lock |
 |---|---|---|---|---|
-| script average ms/tick | 0.2448 ±0.0092 | 0.2290 ±0.0028 | 0.5334 ±0.187 | 0.5078 ±0.171 |
-| script 99th percentile ms | 2.134 ±0.042 | 2.069 ±0.083 | 4.136 ±1.79 | 3.896 ±1.71 |
-| ticks over 5 ms | 4 ±0.5 | 3 ±0.5 | 12 ±36 | 6 ±27 |
+| script average ms/tick | 0.2106 ±0.0033 | 0.2108 ±0.0022 | 0.3726 ±0.0049 | 0.3691 ±0.0022 |
+| script 99th percentile ms | 1.872 ±0.045 | 1.892 ±0.017 | 2.079 ±0.067 | 2.044 ±0.012 |
+| ticks over 5 ms | 1 ±0.5 | 2 ±1 | 3 ±0.5 | 3 ±0.5 |
 | Lua alloc KB per tick | 26.67 | 26.67 | 24.32 | 24.32 |
+| mod heap kB | 13 960 | 13 970 | 28 500 | 28 510 |
+| burst build / remove ms | 147.8 / 74.7 | 146.6 / 74.7 | 378.5 / 84.5 | 389.7 / 83.5 |
+| load first tick ms | 1.67 | 1.74 | 3.63 | 3.40 |
 
-`regressions beyond the noise: 0` in both. A first run of size 1000 with 3 rounds reported "ticks over 5 ms: 48 -> 89
-(noise 40)" while both versions ran at twice their usual script time (0.69 and 0.82 ms/tick, rounds from 0.63 to 0.89, a
-worst tick of 224 ms); the run with 5 rounds above shows no difference. The allocation per tick is the same in all runs
-(the nil check makes no garbage). A run on an idle machine would give cleaner numbers.
+`regressions beyond the noise: 0` in both; throughput and crafts identical, the allocation per tick the same (the nil check
+makes no garbage). A first measurement while the maintainer's game ran on the machine (both versions at about twice their
+usual script time) had flagged "ticks over 5 ms: 48 -> 89" at size 1000; the runs above, without the game, show no
+difference.
