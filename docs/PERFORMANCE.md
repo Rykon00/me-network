@@ -3115,3 +3115,25 @@ own numbers are above), three rounds each; the planner scene has a provider and 
 `regressions beyond the noise: 0` in both; throughput and crafts identical. The cost of a chest that stays blocked is one
 `is_empty()` per job step of the waiting job; the scenes have no provider in blocking mode, so this is reasoned, not
 measured.
+
+## The pattern provider's lock until the result is back (issue #346)
+
+What runs: in `N.on_arrival` (every item or fluid the network's public insert functions take in, the hot path of the import
+buses and interfaces) one read of `s.locked`, which is nil while no provider is locked; with locked providers a loop over
+them (few: only providers with the lock and a result still to come). In the chest hand-over one more field read
+(`p.locked`). No queue, no tick of its own.
+
+Measured in turns against the branch it is built on (`origin/provider-blocking-335`). **The maintainer's game ran on the
+machine during these runs**, so the absolute numbers are about twice those of the sections above and the rounds scatter:
+
+| | planner scene (3 rounds), before | with the lock | size 1000 (5 rounds), before | with the lock |
+|---|---|---|---|---|
+| script average ms/tick | 0.2448 ±0.0092 | 0.2290 ±0.0028 | 0.5334 ±0.187 | 0.5078 ±0.171 |
+| script 99th percentile ms | 2.134 ±0.042 | 2.069 ±0.083 | 4.136 ±1.79 | 3.896 ±1.71 |
+| ticks over 5 ms | 4 ±0.5 | 3 ±0.5 | 12 ±36 | 6 ±27 |
+| Lua alloc KB per tick | 26.67 | 26.67 | 24.32 | 24.32 |
+
+`regressions beyond the noise: 0` in both. A first run of size 1000 with 3 rounds reported "ticks over 5 ms: 48 -> 89
+(noise 40)" while both versions ran at twice their usual script time (0.69 and 0.82 ms/tick, rounds from 0.63 to 0.89, a
+worst tick of 224 ms); the run with 5 rounds above shows no difference. The allocation per tick is the same in all runs
+(the nil check makes no garbage). A run on an idle machine would give cleaner numbers.
