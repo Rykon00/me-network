@@ -295,7 +295,29 @@ remembers the pattern. No queue and no tick of its own; a provider without a mod
 hand-over (`bench --check origin/main`, docs/PERFORMANCE.md). One hand-over is a batch (up to `MAX_BATCH` runs of one
 pattern), not a single run as in AE2: the inputs in the chest are one pattern's either way, which is what the mode is for.
 
-*Not built:* AE2's Locking (`LockCraftingMode`): the provider has no circuit connection, so it waits for a decision (#346).
+*Locking:* see the next section (issue #346): only "until the result is back"; the locks by a signal need a circuit
+connection the provider does not have.
+
+## Lock until the result is back (issue #346)
+
+AE2-Unofficial's `LockCraftingMode.LOCK_UNTIL_RESULT` (`DualityInterface.java`: after a push `unlockStacks` holds the
+pattern's outputs, a storage interceptor of the network counts every inserted stack down, the interface is busy until
+the list is empty; a change of the setting resets it). The maintainer chose this level only (no circuit connection).
+
+*Here:* `p.lock` = "result" or nil (setting; blueprint tag `lock`, settings paste, clones). `EXT.pushed`, after a hand-over
+into one of the provider's chests, sets `p.locked = { [key] = runs x amount of the first output row }` (AE2's enum says
+"the primary pattern result", its code takes every output; the first row, so a byproduct at a chance cannot lock a
+provider for good) and `s.locked[unit] = true`. `N.on_arrival` (every item or fluid the network's public insert
+functions take in, before a job claims it) calls `EXT.arrived` when `s.locked` is not nil: each locked provider of that
+network counts the key down (fluids by name, every temperature); at zero `p.locked` and its `s.locked` entry go, and
+`s.locked` is nil again when none is left, so with no lock an arrival costs one nil check. `EXT.chest_open` closes the
+chests of a locked provider (`wait = "locked"`), before the blocking mode is looked at. Released also by `M.unlock` (the
+window's button), by `M.set_lock` with another value, and when the provider is removed or vanishes. Machines are not
+locked: their next lease starts only when they are idle and their products are collected.
+
+*Test:* `tools/devcheck/runtimemod/lock.lua` (one batch of 20 runs handed over, the rest held with room in the chest, 10
+and 6 arrivals count it down, the last 4 runs go in, Unlock, switching off, the settings). With the lock check removed
+from `chest_open` it fails.
 
 *Test:* `tools/devcheck/runtimemod/blocking.lua` (three providers with a chest each, four CPUs: blocking holds the second
 batch of the same pattern and the other pattern, one kind at a time; smart lets the same pattern through, not the other;
@@ -2415,8 +2437,9 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 
 ## Open points
 
-* Patterns (issue #80, left open on purpose; the data model keeps room for them): AE2's Locking of a provider (#346; the
-  blocking mode for chests is built, issue #335), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's
+* Patterns (issue #80, left open on purpose; the data model keeps room for them): AE2's locks of a provider by a redstone
+  signal (no circuit connection; the blocking mode and the lock until the result for chests are built, issues #335 and
+  #346), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's
   ingredient lookup are the places to change), clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
   bus.
 * A level maintainer with several resources. (The cards of the buses and the provider are built: the import and export

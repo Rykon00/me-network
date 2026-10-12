@@ -3115,3 +3115,29 @@ own numbers are above), three rounds each; the planner scene has a provider and 
 `regressions beyond the noise: 0` in both; throughput and crafts identical. The cost of a chest that stays blocked is one
 `is_empty()` per job step of the waiting job; the scenes have no provider in blocking mode, so this is reasoned, not
 measured.
+
+## The pattern provider's lock until the result is back (issue #346)
+
+What runs: in `N.on_arrival` (every item or fluid the network's public insert functions take in, the hot path of the import
+buses and interfaces) one read of `s.locked`, which is nil while no provider is locked; with locked providers a loop over
+them (few: only providers with the lock and a result still to come). In the chest hand-over one more field read
+(`p.locked`). No queue, no tick of its own.
+
+Measured in turns against the branch it is built on (`origin/provider-blocking-335`), three rounds each, on an idle machine
+(`bench --planner-only --sizes 100 --runs 3 --check origin/provider-blocking-335` and `bench --sizes 1000 --runs 3 --check
+origin/provider-blocking-335`):
+
+| | planner scene, before | with the lock | size 1000, before | with the lock |
+|---|---|---|---|---|
+| script average ms/tick | 0.2106 ±0.0033 | 0.2108 ±0.0022 | 0.3726 ±0.0049 | 0.3691 ±0.0022 |
+| script 99th percentile ms | 1.872 ±0.045 | 1.892 ±0.017 | 2.079 ±0.067 | 2.044 ±0.012 |
+| ticks over 5 ms | 1 ±0.5 | 2 ±1 | 3 ±0.5 | 3 ±0.5 |
+| Lua alloc KB per tick | 26.67 | 26.67 | 24.32 | 24.32 |
+| mod heap kB | 13 960 | 13 970 | 28 500 | 28 510 |
+| burst build / remove ms | 147.8 / 74.7 | 146.6 / 74.7 | 378.5 / 84.5 | 389.7 / 83.5 |
+| load first tick ms | 1.67 | 1.74 | 3.63 | 3.40 |
+
+`regressions beyond the noise: 0` in both; throughput and crafts identical, the allocation per tick the same (the nil check
+makes no garbage). A first measurement while the maintainer's game ran on the machine (both versions at about twice their
+usual script time) had flagged "ticks over 5 ms: 48 -> 89" at size 1000; the runs above, without the game, show no
+difference.
