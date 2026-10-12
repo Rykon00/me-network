@@ -15,7 +15,7 @@ and puts it on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lu
 numbers in the code and in `docs/` before 0.1.0 are Gregtorio's.
 
 The player guide is `docs/AE2.md`, the design record `docs/ME-REWORK.md`, the data-stage API for other mods
-`docs/API.md`, the measured cost at megabase size `docs/PERFORMANCE.md`. The licenses of every part: `docs/LICENSES.md`. The design note of the wireless terminal (issue #153, not built yet) is `docs/ME-WIRELESS.md`.
+`docs/API.md`, the measured cost at megabase size `docs/PERFORMANCE.md`. The licenses of every part: `docs/LICENSES.md`. The design note of the wireless terminal (issue #153, built by issues #205 to #211) is `docs/ME-WIRELESS.md`.
 
 **Old saves:** since 0.5.1 a save is converted only from ME Network 0.5.0 on (issue #146). A save of an older version
 (ME Network 0.1.0 to 0.3.x, or Gregtorio Continued 0.4.x and older) is refused with a message when it loads; load it
@@ -42,6 +42,8 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second mo
 | `scripts/fork-me-stats.lua` | the command `/me-stats`: members, block states, the scheduler's counters of the last minute (issue #38, part 3) |
 | `scripts/fork-me-io.lua` | ME Interface (items, and fluids through its four sides) and import/export buses (items and fluids), their scheduled visits; `gregtorio-me-io` |
 | `scripts/fork-me-targets.lua` | what a bus works with: the entity types and inventories of the import, export and storage bus, the tile in front, fluid boxes |
+| `prototypes/cards.lua` | the upgrade cards (issue #17) and where they go (mod-data `fork-me-network` `cards`: the card slots and limits of each block, `N.card_rules()`), the ME Cell Workbench, technology `me-upgrade-cards` |
+| `scripts/fork-me-workbench.lua` | the ME Cell Workbench (issue #17, part 3): one storage cell, its partition and its card slots in a script inventory, the copy mode; no network member; `gregtorio-me-workbench` |
 | `scripts/fork-me-cardslots.lua` | the card slots of a block (a script inventory the window shows, the clicks, blueprints, mining): the storage bus's and, since issue #110, the import and export bus's |
 | `scripts/fork-me-storagebus.lua`, `scripts/fork-me-fluid-storagebus.lua` | the storage bus: its item side (a chest, logistic chest or cargo wagon) and its fluid side (a tank's fluid segment) as network storage; `gregtorio-me-storagebus`, `gregtorio-me-fluid-storagebus` (the old remote, on the storage bus) |
 | `scripts/fork-me-recipe-paste.lua` | a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12); `gregtorio-me-recipe-paste` |
