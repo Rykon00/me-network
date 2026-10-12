@@ -1548,9 +1548,10 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   Circuit Interface (issue #38).
 * Autocrafting plans and crafts only normal quality, no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
-* Network storage (issue #68): no channels, no fluid wagons on the storage bus, no cards on the import and export bus
-  and the ME Interface (capacity, speed, fuzzy, inverter, redstone and crafting card: a follow-up of me-network issue
-  #17); the search of the terminal and the picker matches the shown names (issue #295) only once your client has
+* Network storage (issue #68): no channels, no fluid wagons on the storage bus. The cards are where **Upgrade cards** lists
+  them: the import and export bus take only Acceleration Cards (up to 4, issue #110; no capacity, fuzzy or inverter card),
+  the ME Interface only Interface Capacity Cards (up to 3, issue #196); there is no redstone and no crafting card; the
+  search of the terminal and the picker matches the shown names (issue #295) only once your client has
   translated them, a few ticks after the first terminal or picker opens (before that, and for a name your language
   lacks, the internal name; upper and lower case are told apart in ASCII letters only); spoiling items, items with an inventory and damaged items cannot be stored. Old
   ghosts of ME blocks disappear when an old save is loaded (the game removes them before any script runs).
@@ -1562,9 +1563,9 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   shown (its circuit condition is in the ME window).
 * A furnace picks its recipe from its input: a processing pattern whose input fits several of its recipes may be
   smelted into the wrong product; the job then waits for its outputs and fails after 5 minutes.
-* Encoded patterns (issue #80): no upgrade cards on providers, no
-  substitutions or fuzzy patterns, no "blocking mode" (a provider pushes into a chest as long as it has room), no
-  pattern tier with 36 slots. Clearing a pattern needs the terminal's button (an inventory click cannot be caught).
+* Encoded patterns (issue #80): the provider's only card is the Pattern Capacity Card (9, 18, 27 or 36 slots, issue #156); no
+  substitutions or fuzzy patterns, no "blocking mode" (a provider pushes into a chest as long as it has room). Clearing a pattern needs the
+  ME Pattern Terminal's button (an inventory click cannot be caught).
   A provider mined by another mod's script (not a player or robot) drops its patterns instead of giving them to
   that script's inventory.
 * The ME Interface Terminal (issue #336): its window is tested headless through its data and a stand-in of its page; the

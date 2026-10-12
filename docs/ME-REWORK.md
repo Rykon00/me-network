@@ -229,7 +229,7 @@ central window of the network:
 
 * **Status line:** network state (working, no controller, controller conflict, no power), bytes used of
   total, types used of total, drives and cells, the controller's power draw.
-* **Storage tab:** a search field (matches the internal item name: a script cannot read localised names), a
+* **Storage tab:** a search field (the internal item name; since issue #295 also the name the player's client shows), a
   sort switch (by amount or by name) and the item grid. Left click on an item: a stack into the cursor
   (with something in the cursor: that is stored instead, like AE2). Right click: one item into the cursor
   (more of the same item: one more). Shift click: a stack into the inventory. Below the grid the fluids of the
@@ -2387,21 +2387,20 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 
 ## Open points
 
-* Patterns (issue #80, left open on purpose; the data model keeps room for them): upgrade cards on providers
-  (e.g. a blocking mode: push into a chest only when it is empty), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's ingredient lookup are the
-  places to change), a 36 slot provider tier (`SLOTS` is one constant; it needs a second prototype and window layout),
-  clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
+* Patterns (issue #80, left open on purpose; the data model keeps room for them): a blocking mode (push into a chest only
+  when it is empty; issue #335), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's
+  ingredient lookup are the places to change), clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
   bus.
-* A level maintainer with several resources; cards on the import and export bus and the ME Interface (capacity,
-  speed, fuzzy, inverter, redstone, crafting card: the follow-up of issue #17; the card items and `N.card_rules()` are
-  there, the buses need slots, limits from AE2's `InitUpgrades` and the speed setting replaced per bus).
+* A level maintainer with several resources. (The cards of the buses and the provider are built: the import and export
+  bus take Acceleration Cards, issue #110, the provider Pattern Capacity Cards, issue #156, the ME Interface Interface
+  Capacity Cards, issue #196; `N.card_rules()` holds their slots and limits. AE2's capacity, fuzzy and inverter cards on the
+  buses and its redstone and crafting cards are not built.)
 * Issue #3: an ME Interface keeps four fluids at most (one per side) and takes no surplus back from an export side; a
   fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
   library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block
   keep their old step (their patterns are converted).
 * Fluid wagons on the fluid storage bus. Issue #17 left: the card icons and the workbench sprite are placeholders;
   a storage bus with an Overflow Destruction Card facing nothing destroys nothing (AE2 would).
-* Terminal search by localised name (a script cannot read localised names).
 * The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
 
