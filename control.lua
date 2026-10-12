@@ -22,6 +22,8 @@ local fork_circuit = require("scripts.fork-me-circuit")
 local fork_pt = require("scripts.fork-me-patternterm")
 --- the windows of the ME blocks (after the modules whose functions they call)
 require("scripts.fork-me-windows")
+--- the ME Interface Terminal: the list of the network's providers and interfaces (issue #336; it uses the windows above)
+require("scripts.fork-me-ifaceterm")
 --- issues #205 to #210: the access point, the wireless terminal and its hotkey, the charger, the equipment module
 local fork_wl = require("scripts.fork-me-wireless")
 --- a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12)

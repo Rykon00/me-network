@@ -3064,3 +3064,30 @@ with `bench --check origin/main --sizes 5000` (three rounds in turns each) and `
 | throughput (items/s, fluid/s), latencies, io counters | | identical |
 
 `regressions beyond the noise: 0`.
+
+## The ME Interface Terminal (issue #336)
+
+The terminal adds no tick work: its window is refreshed by the refresh of open ME windows (once a second, only while one is
+open) and builds the buttons of its visible page only when the page's signature changed. What runs without a window is one
+change in the provider rescan (`scan_provider`, one provider every 2 ticks round robin): the entity names of the machines and
+chests next to the provider are compared with the ones kept in its record (`p.near`, one `name` read per neighbour, at most
+four) and written as a new list only when they changed. The windows' list reads those records and the network's interface
+nodes (table reads, no engine call but `valid`).
+
+Measured in turns against origin/main (three rounds each; `bench --planner-only --sizes 100 --runs 3 --check origin/main`, the
+planner scene with a provider and a chest per pattern, and `bench --sizes 1000 --runs 3 --check origin/main`):
+
+| | planner scene, origin/main | with the terminal | size 1000, origin/main | with the terminal |
+|---|---|---|---|---|
+| script average ms/tick | 0.2032 ±0.0032 | 0.2030 ±0.0031 | 0.3779 ±0.0092 | 0.3670 ±0.0131 |
+| script 99th percentile ms | 1.850 ±0.034 | 1.828 ±0.010 | 2.069 ±0.047 | 2.059 ±0.047 |
+| ticks over 5 ms | 2 ±0.5 | 1 ±1 | 3 ±1 | 3 ±1 |
+| Lua alloc KB per tick | 26.67 | 26.67 | 24.32 | 24.32 |
+| mod heap kB | 13 890 | 13 960 | 28 420 | 28 490 |
+| burst build / remove ms | 141.8 / 77.7 | 143.7 / 74.9 | 408.5 / 87.7 | 378.2 / 84.6 |
+| load first tick ms | 1.63 | 1.69 | 3.02 | 3.10 |
+
+`regressions beyond the noise: 0` in both; throughput, crafts and latencies identical. The heap grows by about 70 kB: the
+neighbour lists of the providers (written once, then only compared). The allocation per tick is the same, so a rescan that
+finds the same neighbours makes no table. The window's own cost is not measured (it needs a player); it is bounded by the
+network's providers and interfaces per refresh and six blocks of buttons per page.

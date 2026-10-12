@@ -720,6 +720,8 @@ local function new_provider(entity)
 		status = {},         -- [slot] = { ok, reason, machines } (scan)
 		net = nil,           -- network id of the last scan
 		scanned_priority = nil }   -- priority of the last scan (before issue #50: `sig`, a signature string of the scan)
+		--- (issue #336, set later: `label`, the name given in the ME Interface Terminal; `near`, the entity names around it at the
+		--- last scan with a network)
 end
 
 --- blueprint patterns waiting for a blank pattern: encoded from the network's blanks (never out of nothing)
@@ -767,6 +769,26 @@ local function same_scan(old, id, why, targets)
 	return true
 end
 
+--- The functions of later issues live in this one table: the main chunk is at Lua's limit of 200 locals (add new helpers here).
+local EXT = {}
+
+--- Issue #336: the entity names of the machines and chests next to a provider (`around`: their views), kept in its record for the
+--- ME Interface Terminal's filter by machine; written only when they changed (a provider is rescanned every few seconds), so a
+--- rescan that finds the same neighbours makes no table
+function EXT.note_near(p, around)
+	local near = p.near
+	local same = near ~= nil and #near == #around
+	if same then
+		for i, v in ipairs(around) do
+			if near[i] ~= v.entity.name then same = false break end
+		end
+	end
+	if same then return end
+	near = {}
+	for i, v in ipairs(around) do near[i] = v.entity.name end
+	p.near = near
+end
+
 --- Scan a provider: the pattern in each slot, the machines next to it that can do it. The network's patterns are made
 --- again (dirty) when the scan found something else than the last one: the network, the priority, a slot's pattern, its
 --- reason or its machines. Issue #50, lever 6: compared with the last scan's records instead of a signature string
@@ -782,6 +804,7 @@ local function scan_provider(p)
 	local around = {}
 	if net then
 		for i, m in ipairs(neighbors_of(e)) do around[i] = machine_view(m) end
+		EXT.note_near(p, around)
 	end
 	for slot = 1, slots_of(p) do
 		local raw = p.slots[slot]
@@ -3044,6 +3067,80 @@ function M.set_priority(entity, priority)
 	return true
 end
 
+--- Issue #336: a provider's name, given in the ME Interface Terminal (nil: none). It is kept by blueprints and clones, not by a
+--- settings paste (two providers with one name would be no help). At most MAX_LABEL characters; an empty one clears it.
+EXT.MAX_LABEL = 60
+function EXT.clean_label(text)
+	if type(text) ~= "string" then return nil end
+	text = (text:gsub("^%s+", ""):gsub("%s+$", ""))
+	if text == "" then return nil end
+	return text:sub(1, EXT.MAX_LABEL)
+end
+
+function M.get_label(entity)
+	local p = provider_record(entity)
+	return p and p.label or nil
+end
+
+function M.set_label(entity, text)
+	local p = provider_record(entity)
+	if not p then return false end
+	p.label = EXT.clean_label(text)
+	return true
+end
+
+--- Issue #336, the ME Interface Terminal's list: the records of the providers that are members of network `net` (by the graph,
+--- not by their last scan), in the order they were built. Read only; no engine call but `valid`.
+function M.provider_records(net)
+	local s = state()
+	local out = {}
+	for _, unit in ipairs(s.plist) do
+		local p = s.providers[unit]
+		if p and N.network_of_unit(unit) == net and p.entity.valid then out[#out + 1] = p end
+	end
+	return out
+end
+
+--- the number of pattern slots of a provider record (9 to 36), and how many hold a pattern
+function M.record_size(p)
+	local n = 0
+	local size = slots_of(p)
+	for slot = 1, size do if p.slots[slot] then n = n + 1 end end
+	return size, n
+end
+
+--- slot `slot` of a provider record as the windows show it, from the last scan: { kind, recipe, inputs, outputs, id, ok, reason,
+--- machines }, { pending = true, kind, recipe, inputs, outputs } (a blueprint's pattern waiting for a blank), or nil (empty)
+function M.record_slot(p, slot)
+	local raw = p.slots[slot]
+	if raw then
+		local def, _, id = normalized(raw)
+		local st = p.status[slot]
+		return { kind = raw.kind, recipe = raw.recipe, inputs = def and def.inputs or raw.inputs,
+			outputs = def and def.outputs or raw.outputs, id = id, ok = st and st.ok or false,
+			reason = st and st.reason or nil, machines = st and st.machines or 0 }
+	end
+	local def = p.pending and p.pending[slot]
+	if def then return { pending = true, kind = def.kind, recipe = def.recipe, inputs = def.inputs, outputs = def.outputs } end
+	return nil
+end
+
+--- calls fn(key) for the key of every output of every pattern of a provider record (and of the patterns waiting for a blank),
+--- without a table: the search of the ME Interface Terminal. Stops at the first call that returns true and returns true then.
+function M.any_output(p, fn)
+	for slot = 1, slots_of(p) do
+		local raw = p.slots[slot]
+		local def = raw and normalized(raw) or (p.pending and p.pending[slot])
+		local outputs = def and def.outputs or (type(raw) == "table" and raw.outputs)
+		if type(outputs) == "table" then
+			for _, o in ipairs(outputs) do
+				if type(o) == "table" and type(o.key) == "string" and fn(o.key) then return true end
+			end
+		end
+	end
+	return false
+end
+
 --- The pattern provider window's data: the slots (pattern, kind, recipe, inputs, outputs, status), the patterns
 --- waiting for a blank (blueprint), the machines and chests next to it, the priority.
 function M.provider_info(entity)
@@ -3102,7 +3199,8 @@ function M.provider_settings(entity)
 		if def then patterns[tostring(slot)] = def end
 	end
 	return { priority = p.priority or 0, patterns = patterns,
-		cards = p.want and { table.unpack(p.want) } or cards.card_list(p) }       -- (issue #156)
+		cards = p.want and { table.unpack(p.want) } or cards.card_list(p),        -- (issue #156)
+		label = p.label }                                                          -- (issue #336)
 end
 
 --- Apply blueprint settings to a provider: the priority, and the patterns as "pending" (each costs a blank
@@ -3113,6 +3211,7 @@ function M.apply_settings(entity, settings, old_recipe)
 	if not p then return false end
 	if type(settings) == "table" then
 		p.priority = math.max(-1000, math.min(1000, math.floor(tonumber(settings.priority) or 0)))
+		if settings.label ~= nil then p.label = EXT.clean_label(settings.label) end   -- (issue #336)
 		for key, raw in pairs(type(settings.patterns) == "table" and settings.patterns or {}) do
 			local slot = tonumber(key)
 			local def = P.normalize(raw)
@@ -3147,7 +3246,7 @@ function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
 		if entity.valid and entity.name == PROVIDER then
 			local settings = M.provider_settings(entity)
-			if settings and (settings.priority ~= 0 or next(settings.patterns) or settings.cards) then
+			if settings and (settings.priority ~= 0 or next(settings.patterns) or settings.cards or settings.label) then
 				bp.set_blueprint_entity_tag(index, BP_TAG, settings)
 			end
 		end
@@ -3184,6 +3283,7 @@ function M.on_built(entity, tags, source)
 	elseif source and source.valid and source.name == PROVIDER then
 		M.set_priority(entity, M.get_priority(source))
 		local from = provider_record(source)
+		if from and from.label then M.set_label(entity, from.label) end            -- (issue #336)
 		local list = from and (from.want and { table.unpack(from.want) } or cards.card_list(from))
 		if list then cards.want_cards(entity, list, nil) end
 	end
@@ -3509,6 +3609,10 @@ remote.add_interface("gregtorio-me-autocraft", {
 	provider_sync = function(provider, back) local p = provider_record(provider) return p ~= nil and cards.sync(p, back) end,
 	get_priority = function(provider) return M.get_priority(provider) end,
 	set_priority = function(provider, priority) return M.set_priority(provider, priority) end,
+	--- issue #336: the provider's name (the ME Interface Terminal), and the names of the machines and chests next to it (last scan)
+	get_label = function(provider) return M.get_label(provider) end,
+	set_label = function(provider, text) return M.set_label(provider, text) end,
+	provider_near = function(provider) local p = provider_record(provider) return p and p.near or nil end,
 	provider_settings = function(provider) return M.provider_settings(provider) end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,

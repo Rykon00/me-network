@@ -815,6 +815,7 @@ RUNTIME_TESTS = (
     ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
     ("BUFFER", "ME terminal buffer (issue #150, experiment)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
+    ("IFACETERM", "ME Interface Terminal (issue #336)"),
     ("IFACECAP", "ME Interface Capacity Card (issue #196)"),
     ("WIRELESS", "ME wireless terminal (issues #205 to #210)"),
     ("STICKY", "ME Sticky Card (issue #193)"),
