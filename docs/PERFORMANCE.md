@@ -3091,3 +3091,27 @@ planner scene with a provider and a chest per pattern, and `bench --sizes 1000 -
 neighbour lists of the providers (written once, then only compared). The allocation per tick is the same, so a rescan that
 finds the same neighbours makes no table. The window's own cost is not measured (it needs a player); it is bounded by the
 network's providers and interfaces per refresh and six blocks of buttons per page.
+
+## The pattern provider's blocking mode (issue #335)
+
+The mode is checked where a job hands a processing pattern's inputs to a chest anyway (`find_pusher`, the job step): for a
+chest target one table lookup of its provider's mode, and with a mode set one `is_empty()` of the chest's inventory per
+hand-over attempt. A closed chest is passed by; nothing is queued or polled, the job tries again at its next step (at most
+every 20 ticks), as it does for a busy machine. A provider without a mode does what it did.
+
+Measured in turns against the branch it is built on (`origin/docs-drift-340`: main with the ME Interface Terminal, whose
+own numbers are above), three rounds each; the planner scene has a provider and a chest per pattern, none with a mode:
+
+| | planner scene, before | with the mode | size 1000, before | with the mode |
+|---|---|---|---|---|
+| script average ms/tick | 0.2070 ±0.0038 | 0.2047 ±0.0016 | 0.3677 ±0.0024 | 0.3629 ±0.0013 |
+| script 99th percentile ms | 1.868 ±0.020 | 1.869 ±0.034 | 2.056 ±0.028 | 2.024 ±0.014 |
+| ticks over 5 ms | 2 ±0.5 | 1 ±0 | 3 ±1 | 3 ±1.5 |
+| Lua alloc KB per tick | 26.67 | 26.67 | 24.32 | 24.32 |
+| mod heap kB | 13 950 | 13 960 | 28 490 | 28 500 |
+| burst build / remove ms | 141.6 / 73.6 | 140.6 / 74.7 | 369.9 / 83.4 | 364.0 / 83.7 |
+| load first tick ms | 1.63 | 1.66 | 2.95 | 2.90 |
+
+`regressions beyond the noise: 0` in both; throughput and crafts identical. The cost of a chest that stays blocked is one
+`is_empty()` per job step of the waiting job; the scenes have no provider in blocking mode, so this is reasoned, not
+measured.
