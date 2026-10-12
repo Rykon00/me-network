@@ -42,6 +42,8 @@ Sources:
                                                   # (me-network issue #130): the dark and the lit picture, the icon
     python tools/gen_ae2_sprites.py --sheet-pattern-terminal docs/graphics-review/issue-130.png   # contact sheet of it
                                                   # at game size (and 4x) next to the ME Terminal
+    python tools/gen_ae2_sprites.py --interface-terminal C:/00_Repositories/GT5-Unofficial   # only the ME Interface
+                                                  # Terminal (me-network issue #336): dark and lit, the icon, 64 px
     python tools/gen_ae2_sprites.py --assembler C:/00_Repositories/GT5-Unofficial   # only the ME Molecular Assembler
                                                   # (1x1, me-network issue #131): idle, working strip, icons
     python tools/gen_ae2_sprites.py --sheet-assembler docs/graphics-review/issue-131.png   # contact sheet of the
@@ -294,6 +296,52 @@ def pattern_terminal(gt):
     lit.save(OUT_ICON / "me-pattern-terminal.png")
 
 
+def interface_terminal_sprites(gt):
+    """The ME Interface Terminal (me-network issue #336), 1x1: the ME Terminal's MV casing around a dark screen that shows a list,
+    four rows of a small block (a provider) and a line, the second row picked out: teal when lit (its network works),
+    dim when dark. Returns (dark, lit), 32 px."""
+    base = up(hull(gt, "MV"))
+
+    def face(lit):
+        img = base.copy()
+        d = ImageDraw.Draw(img)
+        d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+        col = PT_LIT if lit else (45, 72, 72)
+        mark = FLUIX_LIGHT if lit else (50, 56, 84)
+        for row in range(4):
+            y = 7 + row * 5
+            d.rectangle((7, y, 9, y + 2), fill=(mark if row == 1 else col) + (255,))
+            d.rectangle((12, y + 1, 24 - 3 * (row % 2), y + 1), fill=col + (255,))
+        return img
+
+    return face(False), face(True)
+
+
+def interface_terminal(gt):
+    """Entity sheet (dark at x = 0, lit at x = 32, the two variations of the entity) and the item icon (the lit picture), and
+    their 64 px pictures (as hd_batch1 makes the pattern terminal's)."""
+    dark, lit = interface_terminal_sprites(gt)
+    sheet = Image.new("RGBA", (2 * TILE, TILE))
+    sheet.paste(dark, (0, 0))
+    sheet.paste(lit, (TILE, 0))
+    sheet.save(OUT_ENTITY / "me-interface-terminal.png")
+    lit.save(OUT_ICON / "me-interface-terminal.png")
+    hd_interface_terminal()
+
+
+def hd_interface_terminal():
+    """the 64 px entity sheet and item icon of the ME Interface Terminal from its 32 px sheet"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    it = load(OUT_ENTITY / "me-interface-terminal.png")            # dark | lit
+    sheet = Image.new("RGBA", (2 * HD, HD))
+    for i in range(2):
+        sheet.alpha_composite(hd_block(it.crop((i * TILE, 0, (i + 1) * TILE, TILE))), (i * HD, 0))
+    sheet.save(HD_ENTITY / "me-interface-terminal.png")
+    hd_cube(it.crop((TILE, 0, 2 * TILE, TILE))).save(HD_ICON / "me-interface-terminal.png")
+    return [HD_ENTITY / "me-interface-terminal.png", HD_ICON / "me-interface-terminal.png"]
+
+
 def cpu_sprites(gt):
     """2x2: EV casing ring around a dark screen with a chip grid. off = base, on = lit chips only."""
     tile = up(hull(gt, "EV"))
@@ -334,6 +382,7 @@ def autocrafting(gt):
     provider_sprite(gt).save(OUT_ENTITY / "me-pattern-provider.png")
     provider_sprite(gt).save(OUT_ICON / "me-pattern-provider.png")
     pattern_terminal(gt)
+    interface_terminal(gt)
     assembler(gt)
     off, lit = cpu_sprites(gt)
     off.save(OUT_ENTITY / "me-crafting-cpu-off.png")
@@ -1516,6 +1565,8 @@ def hd_batch1():
     # icons
     save(hd_cube(load(OUT_ENTITY / "me-terminal-lit.png")), HD_ICON / "me-terminal.png")
     save(hd_cube(pt.crop((TILE, 0, 2 * TILE, TILE))), HD_ICON / "me-pattern-terminal.png")
+    if (OUT_ENTITY / "me-interface-terminal.png").exists():          # (issue #336)
+        written.extend(hd_interface_terminal())
     ctrl = load(OUT_ENTITY / "me-network-controller.png").resize((TILE, TILE), Image.LANCZOS)
     save(hd_cube(ctrl), HD_ICON / "me-controller.png")
     save(hd_cube(load(OUT_ENTITY / "me-drive.png")), HD_ICON / "me-drive.png")
@@ -2206,6 +2257,9 @@ def main():
                     help="only the ME Interface with its pipe sides (me-network issue #3), from the R1 PNGs")
     ap.add_argument("--pattern-terminal", type=Path, metavar="GT",
                     help="only the ME Pattern Terminal (me-network issue #130), from the casings of the GT5-Unofficial checkout GT")
+    ap.add_argument("--interface-terminal", type=Path, metavar="GT",
+                    help="only the ME Interface Terminal (me-network issue #336) and its 64 px pictures, from the casings of the "
+                         "GT5-Unofficial checkout GT")
     ap.add_argument("--sheet-pattern-terminal", type=Path, metavar="PNG",
                     help="writes a contact sheet of the ME Pattern Terminal (issue #130) to PNG")
     ap.add_argument("--assembler", type=Path, metavar="GT",
@@ -2216,10 +2270,10 @@ def main():
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
-            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
+            or a.sheet_assembler or a.pattern_terminal or a.interface_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
             or a.own_icons or a.light or a.bus_markers):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --own-icons,"
+                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --interface-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
@@ -2308,6 +2362,9 @@ def main():
     if a.terminal_lit:
         terminal_lit()
         print("me-terminal-lit.png")
+    if a.interface_terminal:
+        interface_terminal(a.interface_terminal)
+        print("ME Interface Terminal sprites")
     if a.pattern_terminal:
         pattern_terminal(a.pattern_terminal)
         print("ME Pattern Terminal sprites")

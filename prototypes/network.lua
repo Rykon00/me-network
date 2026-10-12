@@ -643,7 +643,7 @@ data:extend({ {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
-			chest = CHEST,
+			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
 		},
 		--- issue #229: the ME Chest's hidden parts and what it draws on its own
 		chest = { power = CHEST_POWER, fluid = CHEST_FLUID, watts = CHEST_WATTS },

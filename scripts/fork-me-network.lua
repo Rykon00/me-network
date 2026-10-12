@@ -79,6 +79,7 @@ local function kinds()
 		k[n.export_bus] = "export-bus"
 		k[n.terminal] = "terminal"
 		if n.pattern_terminal then k[n.pattern_terminal] = "pattern-terminal" end      -- issue #130
+		if n.interface_terminal then k[n.interface_terminal] = "interface-terminal" end   -- issue #336
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
@@ -107,7 +108,7 @@ end
 local POWERED_SELF = { cable = true, underground = true, controller = true }
 
 --- Issue #128: the power (W) a kind draws through the controller where it is not the default (mod-data "fork-me-network",
---- member_power: terminal, level maintainer, pattern terminal), read once per load like the rest of the mod-data
+--- member_power: terminal, level maintainer, pattern and interface terminal), read once per load like the rest of the mod-data
 local kind_power_cache
 local function kind_power(kind)
 	if not kind_power_cache then kind_power_cache = mod_data().member_power or {} end
@@ -1825,7 +1826,7 @@ end
 --- the slow step (once a second, with the look at the network's power it makes anyway) sets every screen to its network's
 --- state, and a terminal that joins a network is set at once. Setting a screen that is right already costs one comparison.
 --- The ME Pattern Terminal (issue #130) is an entity with two pictures (graphics variation 1 dark, 2 lit, like the crafting
---- blocks): its record is `{ variation = true, on }` and it is set the same way.
+--- blocks): its record is `{ variation = true, on }` and it is set the same way; so is the ME Interface Terminal (issue #336).
 --- The ME Level Maintainer (issue #254) is a lamp with a void energy source too, so the game drew it lit all the time: its
 --- whole picture is a screen of the same kind without a light (`{ spr, on }`), lit while its network works and its circuit
 --- condition lets it run, dark otherwise.
@@ -1839,7 +1840,9 @@ local SCREENS = {
 	terminal = { "me-terminal-screen-on", "me-terminal-screen-off", SCREEN_LIGHT },
 	maintainer = { "me-level-maintainer-screen-on", "me-level-maintainer-screen-off" },
 }
-function has_screen(kind) return SCREENS[kind] ~= nil or kind == "pattern-terminal" end
+--- (a screen that is a graphics variation, 1 dark and 2 lit: the ME Pattern Terminal and the ME Interface Terminal of issue #336; no
+--- local for it: the main chunk is at Lua's limit of 200)
+function has_screen(kind) return SCREENS[kind] ~= nil or kind == "pattern-terminal" or kind == "interface-terminal" end
 --- issue #254: the benchmark's scenes have a level maintainer per ten buses (2000 at 20 000), so the slow step must not
 --- look at every screen every second, and must not sort them (#43: about 7 µs an element). `s.screen_list` holds the
 --- units of `s.screens` in the order they came (a screen that goes is replaced by the last one, each record keeps its
@@ -1876,7 +1879,7 @@ end
 local function set_screen(s, unit, entity, on, kind)
 	local list = s.screens
 	local sc = list[unit]
-	if kind == "pattern-terminal" or (sc and sc.variation) then
+	if kind == "pattern-terminal" or kind == "interface-terminal" or (sc and sc.variation) then
 		if not (sc and sc.on == on and entity.graphics_variation == (on and 2 or 1)) then
 			entity.graphics_variation = on and 2 or 1
 			list[unit] = { variation = true, on = on, li = screen_place(s, sc, unit) }

@@ -274,6 +274,47 @@ other test through `encode_def` (the same function on a two-slot inventory that 
 needs a player: it was run once with a mock of the GUI elements (the module's own code: opening, refreshing, the actions);
 the real look is the in-game check.
 
+## ME Interface Terminal (issue #336)
+
+AE2's Interface Terminal (AE2-Unofficial: `appeng/parts/reporting/PartInterfaceTerminal.java`, `GuiInterfaceTerminal.java`,
+read for what it offers; no code of it is ported). `me-interface-terminal` is a 1x1 `simple-entity-with-force` like the
+ME Pattern Terminal: kind `interface-terminal` (mod-data `names.interface_terminal`, `member_power` 8 kW), walkable, its
+screen a graphics variation set by the slow step (`has_screen`/`set_screen` take it with the pattern terminal; the main
+chunk of `scripts/fork-me-network.lua` is at Lua's 200 locals, so the two kinds are named inline). Unlocked by
+`me-autocrafting` (and put back there by `data-final-fixes.lua` through `ME.crafting_block_tech`, as the pattern terminal).
+
+*What it lists:* the providers whose graph node is in the terminal's network (`autocraft.provider_records(net)`: the
+records of `storage.fork_ae2.providers` by `N.network_of_unit`, not by their last scan, so a provider that just joined is
+listed at once) and the `interface` nodes of `net.nodes` (sorted by unit: the set has no order of its own). It shows a
+provider's slots from its last scan (`autocraft.record_slot`: no rescan, which would call the engine for the neighbours).
+
+*New state:* a provider record has `label` (the name, at most 60 characters; in the blueprint tag `fork_me_provider` as
+`label`, copied by a clone, not by a settings paste) and `near` (the entity names on its four sides at its last scan with a
+network: the machine filter's data; written only when they changed, so the rescan of one provider every two ticks makes no
+table when nothing changed). Both are absent in older saves and come with the first rename or rescan: no migration. The
+window's settings of a player are `storage.fork_me_iterm_ui[player_index] = { search, filter, free, page, edit }` (dropped
+in `on_player_removed`). The main chunk of `scripts/fork-me-autocraft.lua` was at 199 locals: the new helpers are in one
+table `EXT`, where later ones belong too.
+
+*Cost:* no tick, no queue. The window's refresh is the one of every ME window (the terminal's 60 tick step, open windows
+only, `REFRESH_MAX`); it walks the provider records and the interface nodes (table reads; the interfaces' config rows only
+while a search is typed), filters, sorts and keeps the page; it rebuilds the page's elements only when the page's signature
+changed (the providers' pattern ids and states, the interfaces' rows, the names and the neighbours of the visible entries),
+the filter's drop-down only when the machines changed. A page holds six blocks, so at most 216 slot buttons are made.
+
+*The actions* (`it_*`): a slot click is `autocraft.provider_click` on the listed provider (after checking that it is still a
+member of the terminal's network), as the provider window's; the pane's shift + click puts an encoded pattern into the first
+free slot of the first provider of the player's filtered list (the pane's inventory gives the player: `player_owner`);
+**Open** is `G.open("provider" | "interface", player, entity, { via = terminal })`: the two windows take `opts.via` and show
+the Back button, and `G.entity_of` checks the reach of the terminal. **Locate** is a `highlight-box` for the player (600
+ticks) and a `[gps]` line in their chat.
+
+*Tests:* `tools/devcheck/runtimemod/ifaceterm.lua` (the list, its order, filters, search by product, translated name,
+interface row and name, pages, one entry's data, a page built into the stand-in GUI elements of `scripts/fork-me-windows.lua`,
+take and put by the window's click, the pane's shift + click, a provider of another network refused, rename, blueprint tag,
+clone and paste, the neighbours after a chest is removed, the screen and the power row). The window itself needs a player:
+the maintainer's test in the game.
+
 ## Import and export
 
 **ME Interface** (`me-network-interface`, placed by the existing `me-interface` item, 1x1 container

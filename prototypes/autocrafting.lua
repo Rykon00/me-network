@@ -59,6 +59,19 @@ ME.add_item{
 	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "assembling-machine-1", 1, "advanced-circuit", 1, "processing-unit", 1 } },
 }
 
+--- issue #336: the ME Interface Terminal lists the providers and interfaces of its network. AE2-Unofficial's recipe: an
+--- illuminated panel, an interface and an engineering processor (GTNH: an ME Terminal, an ME Interface, an engineering processor)
+ME.add_item{
+	name = "me-interface-terminal",
+	icon = ME.hd_icons .. "me-interface-terminal.png",
+	icon_size = 64,
+	subgroup = "fork-me-network",
+	order = "e0a",
+	stack_size = 50,
+	place_result = "me-interface-terminal",
+	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "me-interface", 1, "processing-unit", 1 } },
+}
+
 --- issue #80: a cheap blank pattern (AE2: quartz glass, certus quartz, iron)
 ME.add_item{
 	name = "me-blank-pattern",
@@ -157,6 +170,38 @@ data:extend({ {
 		{ filename = ME.hd_entity_path .. "me-pattern-terminal.png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
 	},
 	localised_description = { "entity-description.me-pattern-terminal", tostring(PATTERN_TERMINAL_POWER / 1000) },
+} })
+
+--------------------------------------------------------------------------------
+--- INTERFACE TERMINAL (issue #336): a 1x1 block like the pattern terminal (power through the controller, walkable, the dark and
+--- the lit picture as graphics variations 1 and 2). Its window lists the providers and interfaces of its network:
+--- scripts/fork-me-ifaceterm.lua. It has no slots and no settings.
+--------------------------------------------------------------------------------
+
+local INTERFACE_TERMINAL_POWER = 8000           -- W drawn through the ME Controller, like the ME Terminal's
+
+data:extend({ {
+	type = "simple-entity-with-force",
+	name = "me-interface-terminal",
+	icon = ME.hd_icons .. "me-interface-terminal.png",
+	icon_size = 64,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = "me-interface-terminal" },
+	placeable_by = { item = "me-interface-terminal", count = 1 },
+	max_health = 200,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	selection_priority = 60,
+	collision_mask = ME.WALKABLE,
+	render_layer = "lower-object",
+	random_variation_on_create = false,
+	pictures = {
+		{ filename = ME.hd_entity_path .. "me-interface-terminal.png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
+		{ filename = ME.hd_entity_path .. "me-interface-terminal.png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
+	},
+	localised_description = { "entity-description.me-interface-terminal", tostring(INTERFACE_TERMINAL_POWER / 1000) },
 } })
 
 --------------------------------------------------------------------------------
@@ -327,6 +372,7 @@ data:extend({
 })
 data.raw["mod-data"]["fork-me-network"].data.member_power.maintainer = MAINTAINER_POWER
 data.raw["mod-data"]["fork-me-network"].data.member_power["pattern-terminal"] = PATTERN_TERMINAL_POWER
+data.raw["mod-data"]["fork-me-network"].data.member_power["interface-terminal"] = INTERFACE_TERMINAL_POWER
 
 
 
@@ -393,7 +439,8 @@ local function with_blocks(tech, recipes)
 end
 
 ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2", "circuit-network" }, unit = ME.unit(3, 500),
-	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-blank-pattern", "me-molecular-assembler" }) }
+	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-interface-terminal", "me-blank-pattern",
+		"me-molecular-assembler" }) }
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs
 ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "circuit-network" }, unit = ME.unit(3, 500),
@@ -413,3 +460,4 @@ end
 --- issue #130: the ME Pattern Terminal is unlocked the same way (a mod that replaced the recipe list of `me-autocrafting` has not
 --- heard of it: data-final-fixes.lua puts its recipe back on the technology, unless a technology of that mod unlocks it)
 ME.crafting_block_tech["me-pattern-terminal"] = "me-autocrafting"
+ME.crafting_block_tech["me-interface-terminal"] = "me-autocrafting"            -- (issue #336, the same way)

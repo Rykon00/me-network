@@ -31,6 +31,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns (up to 36 with Pattern Capacity Cards); the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
 | ME Pattern Terminal | 1x1, no pole needed (the controller draws its 8 kW), can be walked over: encodes patterns (this page, **Patterns: encoding and clearing**); two slots, one for blank patterns and one for the encoded pattern |
+| ME Interface Terminal | 1x1, no pole needed (the controller draws its 8 kW), can be walked over: lists every pattern provider and ME Interface of the network with their patterns and config rows (this page, **The ME Interface Terminal**) |
 | Blank / Encoded Pattern | a blank pattern is encoded in an ME Pattern Terminal into an encoded pattern: a recipe (crafting pattern) or free inputs and outputs (processing pattern) |
 | ME Level Maintainer | keeps an item or fluid in stock by autocrafting (this page, **Keeping items in stock**) |
 | ME Circuit Interface | puts the network contents onto a circuit wire (this page, **Circuit network**) |
@@ -229,6 +230,7 @@ click uses the tool and opens no window, as on a chest.
 |---|---|
 | ME Terminal | the hub above; shift + click in your inventory stores |
 | ME Pattern Terminal | the pattern editor, the blank pattern slot, **Encode**, the output slot, **Load pattern**, **Clear pattern**; shift + click in your inventory: blank patterns into the blank slot, an encoded pattern into the output slot |
+| ME Interface Terminal | the network's providers and interfaces, six to a page: search, machine filter, "only with free slots"; per block its name, position, the machines next to it, its pattern slots (a click works as in the provider's window) or config rows, **Rename** (providers), **Locate**, **Open**; shift + click an encoded pattern in your inventory: into the first free slot of the first provider listed |
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, the power in W, kW or MW and where it goes (issue #149: a line per kind of block with the number of blocks, the power in all and of one, biggest first, the controller's base draw as the first line; the lines add up to the total), and a line when the controller's power buffer is not full (its electric network delivers less than the network asks for) |
@@ -497,6 +499,7 @@ The recipes that follow:
 | ME Storage Bus | an ME Interface, 2 fast inserters | an interface, 2 pistons |
 | ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
 | ME Pattern Terminal | an ME Terminal, an assembling machine 1, an advanced circuit, a processing unit | a crafting terminal (terminal, crafting table, calculation processor), an engineering processor |
+| ME Interface Terminal | an ME Terminal, an ME Interface, a processing unit | an illuminated panel, an interface, an engineering processor (GTNH: an ME Terminal, an ME Interface, an engineering processor) |
 | Blank Pattern (2) | 2 plastic bars, 3 copper cables, a stone, 2 iron plates, a copper plate | 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2 |
 | ME Molecular Assembler | 4 iron plates, 2 plastic bars, 2 electronic circuits, an assembling machine 1 | 4 iron, 2 quartz glass, an annihilation and a formation core, a crafting table |
 | Crafting unit | 4 iron plates, 2 advanced circuits, 2 fluix cables, an electronic circuit | the same |
@@ -671,6 +674,7 @@ Tech `me-autocrafting` (EV, needs `me-storage-64k`) unlocks:
 | Thing | What it does |
 |---|---|
 | **ME Pattern Terminal** | 1x1 block that encodes patterns (it was the Patterns tab of the ME Terminal): ME Terminal + blank pattern + processing unit + 2 fluix cable |
+| **ME Interface Terminal** | 1x1 block that lists every pattern provider and ME Interface of the network: take patterns out and put them in from one place, find a provider by what its patterns make or by the machine next to it ([below](#the-me-interface-terminal)) |
 | **ME Blank Pattern** | cheap item (LV assembler: 2 glass, certus quartz, aluminium plate, fluix cable). Encoded in an **ME Pattern Terminal** |
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
 | **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns** (**Pattern Capacity Cards** in its three card slots add 9 each, up to 36); each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
@@ -741,6 +745,37 @@ the network's storage inside it (AE2's does) and a separate processing pattern t
 
 Encoded patterns can be stored in the network like any item (they keep their pattern; equal patterns stack in the
 network), but the planner never uses them as ingredients.
+
+### The ME Interface Terminal
+
+The **ME Interface Terminal** (issue #336; AE2's Interface Terminal) is a 1x1 member of the network like the ME Pattern
+Terminal: it draws 8 kW through the controller, needs no pole, can be walked over, and its screen is lit while the network
+works. It has no slots and no settings. Its window lists **every ME Pattern Provider and ME Interface of its network**, six
+to a page (the arrows beside the count turn the pages; on the left your inventory, as in every ME window):
+
+* **Providers first**, grouped by the machine or chest next to them (as AE2's sections), named ones first by name, then in
+  the order they were built; then the **ME Interfaces**. A provider of another network is never listed.
+* **Each provider:** its name (or "ME Pattern Provider"), where it is, the icons of the machines and chests next to it (or
+  "no machine next to it"), and its pattern slots (9 to 36) as in its own window: green, red (why it cannot be used: the
+  tooltip) or yellow (a blueprint's pattern waiting for a blank). **Click a pattern** to take it into your hand (shift +
+  click: into your inventory; in remote view always into the inventory), **click a slot with an encoded pattern in your
+  hand** to put it in (a pattern there is swapped into your hand). The tooltip shows what the pattern takes and makes.
+* **Each interface:** its config rows (items and fluids with their amounts), shown only; change them in its own window.
+* **Search:** what the patterns make, the interfaces' config rows and the providers' names, by the prototype name and by the
+  name the game shows you (as the ME Terminal's search). **Filter:** all blocks, only the ME Interfaces, or only the
+  providers next to one kind of machine or chest (the list offers the ones next to the network's providers). **Only with
+  free slots:** the providers that can take another pattern.
+* **Shift + click an encoded pattern in your inventory:** it goes into the first free slot of the first provider of the
+  list as it is filtered and searched (so filter by the machine first).
+* **Per block:** **Locate** draws a highlight around it for ten seconds (only you see it) and puts a map marker into your
+  chat (click it to see the place on the map); **Open** opens the block's own window through the terminal (you need to be in
+  reach of the terminal, not of the block; **Back** returns to the list, which keeps your search, filter and page); a
+  provider has **Rename**: type its name and press Enter (or click Rename again); an empty name removes it. The name is shown
+  in the list and as the title of the provider's window, and goes with blueprints and clones (not with a settings paste).
+
+The search, the filter, "only with free slots" and the page are yours and kept while the window is closed. Nothing runs for
+the terminal while no window is open; an open window reads the network's providers and interfaces once a second and builds
+the buttons of the visible page only, and only when what they show changed.
 
 ### Crafting patterns: the provider sets the recipe
 
@@ -846,6 +881,8 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   older) with a furnace recipe choice give a processing pattern of that recipe, the same way.
 * **Settings paste** (shift right click, shift left click) and cloning copy the **priority** only; patterns are items
   and stay where they are.
+* **The name** a provider got in the ME Interface Terminal (issue #336) goes with blueprints and clones, not with a
+  settings paste (two providers of one name would not help to find either).
 
 ## Crafting CPUs
 
@@ -972,7 +1009,7 @@ largest amounts first).
 
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
-| ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network) | yes (priority, cards) | yes (patterns pending a blank pattern, cards); clone: priority, cards |
+| ME Pattern Provider | priority; its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network); its name (issue #336) | yes (priority, cards) | yes (patterns pending a blank pattern, cards, name); clone: priority, cards, name |
 | ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority, its Interface Capacity Cards (the copy wants them from the player, then the network) | yes | yes (old blueprints with slot filters are converted); the cards first, so the rows they give room for are there |
 | ME Import Bus, ME Export Bus | filters (items and fluids); which Acceleration Cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |

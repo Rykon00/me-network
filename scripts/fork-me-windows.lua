@@ -710,6 +710,7 @@ local function slot_tooltip(d)
 	local text = def and patterns.description(def) or { "fork-me-pattern.status-invalid" }
 	return { "", text, "\n\n", { d.pending and "fork-me-gui.provider-pending-tooltip" or "fork-me-gui.provider-slot-tooltip" } }
 end
+M.slot_tooltip = slot_tooltip
 
 local function build_provider_slots(box, entity)
 	local info = M.provider_data(entity)
@@ -772,8 +773,13 @@ local function provider_sig(entity)
 	return table.concat(sig, ","), table.concat(machines, ",")
 end
 
-local function open_provider(player, entity)
-	local _, content = G.open_window(player, "provider", caption_of(entity), { unit = entity.unit_number })
+--- `opts.via`: the unit number of the ME Interface Terminal the window was opened from (issue #336: its reach counts, and a
+--- Back button leads to it)
+local function open_provider(player, entity, opts)
+	local via = opts and opts.via
+	local _, content = G.open_window(player, "provider", autocraft.get_label(entity) or caption_of(entity),
+		{ unit = entity.unit_number, via = via })
+	G.back_button(content, via)
 	G.label(content, { "fork-me-gui.provider-help" }, WIDTH)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.provider-priority-tooltip" } }
@@ -1176,8 +1182,10 @@ function M.mix_status(status, fmix)
 	return { "", status, "\n", { "fork-me-gui.fluid-mixed", "[fluid=" .. fmix[1] .. "]", tostring(fmix[2]) } }
 end
 
-local function open_interface(player, entity)
-	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number })
+local function open_interface(player, entity, opts)
+	local via = opts and opts.via                   -- (issue #336: opened from an ME Interface Terminal)
+	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number, via = via })
+	G.back_button(content, via)
 	G.label(content, { "fork-me-gui.interface-help" }, WIDTH)
 	local row = G.row(content)                        -- issue #17: the interface's priority
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.interface-priority-tooltip" } }
@@ -1706,7 +1714,7 @@ local stand_in_frames = {}      -- name -> a table standing for a window's frame
 local function stand_in_element(def)
 	local el = { type = def.type, name = def.name, caption = def.caption, sprite = def.sprite, number = def.number,
 		tooltip = def.tooltip, elem_tooltip = def.elem_tooltip, value = def.value, tags = def.tags or {}, style = {},
-		children = {} }
+		style_name = def.style, text = def.text, children = {} }
 	el.add = function(d)
 		local c = stand_in_element(d)
 		el.children[#el.children + 1] = c
@@ -1715,6 +1723,7 @@ local function stand_in_element(def)
 	el.clear = function() el.children = {} end
 	return el
 end
+M.stand_in_element = stand_in_element                 -- (issue #336: the ME Interface Terminal's page in its test)
 remote.add_interface("gregtorio-me-gui", {
 	fmt = function(n) return G.fmt(n) end,
 	--- issue #150 (tests): the hand-over buffer of a relative window: its stacks into the block of window `name` (what it
