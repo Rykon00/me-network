@@ -932,6 +932,13 @@ end
 --- the value labels of the facts table, by name
 local CCPU_FACTS = { "size", "storage", "coprocessors", "monitors" }
 
+--- Issue #350: the CPU modes in the order of the window's drop-down, and the index of a mode
+M.CCPU_MODES = { "all", "player", "automation" }
+function M.ccpu_mode_index(mode)
+	for i, m in ipairs(M.CCPU_MODES) do if m == (mode or "all") then return i end end
+	return 1
+end
+
 local function open_crafting_cpu(player, entity)
 	local d = M.crafting_cpu_data(entity)
 	local _, content = G.open_window(player, "crafting-cpu", M.crafting_cpu_title(d), { unit = entity.unit_number })
@@ -947,6 +954,12 @@ local function open_crafting_cpu(player, entity)
 		v.style.horizontally_stretchable = true
 		v.style.horizontal_align = "right"
 	end
+	--- issue #350 (AE2-Unofficial's CraftingAllow): which requests the CPU takes
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.ccpu-mode" }, tooltip = { "fork-me-gui.ccpu-mode-tooltip" } }
+	row.add{ type = "drop-down", name = "fork_me_ccpu_mode", tags = G.act("ccpu_mode"), tooltip = { "fork-me-gui.ccpu-mode-tooltip" },
+		items = { { "fork-me-gui.ccpu-mode-all" }, { "fork-me-gui.ccpu-mode-player" }, { "fork-me-gui.ccpu-mode-automation" } },
+		selected_index = M.ccpu_mode_index(d and d.mode) }
 	local bar = content.add{ type = "progressbar", name = "fork_me_ccpu_bar", value = 0 }
 	bar.style.horizontally_stretchable = true
 	content.add{ type = "flow", name = "fork_me_ccpu_parts", direction = "horizontal" }
@@ -983,6 +996,12 @@ function M.refresh_crafting_cpu(player, frame)
 	G.find(frame, "fork_me_ccpu_storage").caption = { "fork-me-gui.ccpu-storage-value", G.fmt(d.used), G.fmt(d.bytes) }
 	G.find(frame, "fork_me_ccpu_coprocessors").caption = { "fork-me-gui.ccpu-coprocessors-value", d.coprocessors, d.speed }
 	G.find(frame, "fork_me_ccpu_monitors").caption = tostring(d.monitors)
+	local mode = G.find(frame, "fork_me_ccpu_mode")
+	if mode then
+		mode.enabled = d.status == "ok"
+		local i = M.ccpu_mode_index(d.mode)
+		if mode.selected_index ~= i then mode.selected_index = i end
+	end
 	--- the blocks of the CPU by type as icons with their counts (rebuilt only when the counts change)
 	local pf = G.find(frame, "fork_me_ccpu_parts")
 	local psig = {}
@@ -1016,6 +1035,13 @@ function M.refresh_crafting_cpu(player, frame)
 end
 
 G.window("crafting-cpu", storing({ open = open_crafting_cpu, refresh = M.refresh_crafting_cpu, entities = { "crafting" } }))
+
+G.on("ccpu_mode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = G.entity_of(player, G.window_of(player))
+	if entity then autocraft.set_cpu_mode(entity, M.CCPU_MODES[el.selected_index]) end
+	G.refresh_one(player)
+end)
 
 --------------------------------------------------------------------------------
 --- ME Level Maintainer
