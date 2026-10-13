@@ -902,6 +902,9 @@ blocking335 = require("blocking")({ me_place = me_place, cable_row = cable_row, 
 --- me-network issue #346: the pattern provider's lock until the result is back (lock.lua)
 lock346 = require("lock")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #354: the void cells (voidcell.lua)
+voidcell354 = require("voidcell")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #336: the ME Interface Terminal (ifaceterm.lua)
 ifaceterm336 = require("ifaceterm")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -995,6 +998,7 @@ local function tests_running()
 	ifaceterm336.running(check)
 	blocking335.running(check)
 	lock346.running(check)
+	voidcell354.running(check)
 	sbusmode155.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
@@ -1921,6 +1925,7 @@ script.on_nth_tick(10, function()
 	ifaceterm336.tick()
 	blocking335.tick()
 	lock346.tick()
+	voidcell354.tick()
 	sbusmode155.tick()
 	remoteview176.tick()
 	graph43.tick()
@@ -4791,6 +4796,7 @@ script.on_init(function()
 	for _, f in pairs(ifaceterm336.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(blocking335.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lock346.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(voidcell354.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end

@@ -3141,3 +3141,26 @@ origin/provider-blocking-335`):
 makes no garbage). A first measurement while the maintainer's game ran on the machine (both versions at about twice their
 usual script time) had flagged "ticks over 5 ms: 48 -> 89" at size 1000; the runs above, without the game, show no
 difference.
+
+## Void cells and the Group Filter Card (issue #354)
+
+A void cell is a cell of no bytes whose spec says `void`: it takes the Overflow Destruction Card's path (`cell.void`,
+`voids`), `open_cell` says yes at once and `cell_state` says "room". The Group Filter Card adds one field test to
+`accepts` and `cell_room` (`cell.gf`), and to the storage bus's `allowed`. The match itself (scripts/fork-me-groupfilter.lua)
+is a table lookup per text and key after its first time; the parsed terms and the results are kept per load, outside
+storage, and dropped all at once past 64 texts (a text typed letter by letter).
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have neither):
+
+| | origin/main | with the void cells and the card |
+|---|---|---|
+| 100: script average / p99 ms | 0.1858 / 1.742 | 0.1861 / 1.758 |
+| 1000: script average / p99 ms | 0.3282 / 1.877 | 0.3302 / 1.877 |
+| Lua alloc KB per tick (100 / 1000) | 26.67 / 24.32 | 26.67 / 24.32 |
+
+`regressions beyond the noise: 0`.
+
+The filter's cost per visit, measured once in the runtime test's world (a storage bus on a chest with 32 item types,
+2000 visits through the remote interface, three rounds; not part of the committed test): about 44 µs a visit with the card
+and an empty text (no filter), about 52 µs with the text `iron-*|*-plate&!copper-plate|raw-resource`, so about 0.25 µs per
+item type and visit. A new text costs its parse and one match of name, subgroup and group per key the first time.

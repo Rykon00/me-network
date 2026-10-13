@@ -363,7 +363,7 @@ end
 --- sentences are N.cell_mode_text's, which the item tooltip of the cell (issue #64) puts on lines of their own.
 function M.cell_mode_caption(c)
 	local parts = { "" }
-	for _, kind in ipairs({ "inverted", "fuzzy", "equal", "void", "sticky" }) do
+	for _, kind in ipairs({ "inverted", "fuzzy", "equal", "void", "sticky", "gfilter" }) do
 		local text = N.cell_mode_text(kind, c)
 		if text then
 			if #parts > 1 then parts[#parts + 1] = " " end
@@ -441,6 +441,7 @@ local function open_workbench(player, entity)
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.workbench-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_wb_cards", direction = "horizontal" }
+	M.gfilter_row(content, "fork_me_wb_gtext", "wb_gtext")
 	content.add{ type = "checkbox", name = "fork_me_wb_keep", state = false, caption = { "fork-me-gui.workbench-keep" },
 		tooltip = { "fork-me-gui.workbench-keep-tooltip" }, tags = G.act("wb_keep") }
 	M.refresh_workbench(player, G.window_of(player))
@@ -543,6 +544,7 @@ function M.refresh_workbench(player, frame)
 		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or (c and "fork-me-gui.card-slot-empty" or "fork-me-gui.workbench-card-no-cell") }
 	end)
 	G.find(frame, "fork_me_wb_keep").state = d.keep
+	M.gfilter_refresh(frame, "fork_me_wb_gtext", c and c.gfilter, c and c.gtext)
 	return true
 end
 
@@ -604,6 +606,32 @@ G.on("wb_contents", function(event, player)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if entity then bench.from_contents(entity) G.refresh_one(player) end
+end)
+
+--- issue #354: the Group Filter Card's text field (a row of the workbench and the storage bus window): written as typed,
+--- enabled while the card is in
+function M.gfilter_row(parent, name, act)
+	local row = G.row(parent)
+	row.add{ type = "label", caption = { "fork-me-gui.gfilter" }, tooltip = { "fork-me-gui.gfilter-tooltip" } }
+	local field = row.add{ type = "textfield", name = name, text = "", tags = G.act(act), tooltip = { "fork-me-gui.gfilter-tooltip" } }
+	field.style.width = 300
+	return field
+end
+
+--- the field shows the stored text (only set when it differs: the player may be typing) and is enabled with the card
+function M.gfilter_refresh(frame, name, enabled, text)
+	local field = G.find(frame, name)
+	if not field then return end
+	text = text or ""
+	if field.text ~= text then field.text = text end
+	field.enabled = enabled == true
+end
+
+G.on("wb_gtext", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then bench.set_gtext(entity, el.text) end
+	if event.name == defines.events.on_gui_confirmed then G.refresh_one(player) end
 end)
 
 G.on("wb_keep", function(event, player, el)
@@ -1634,6 +1662,7 @@ local function open_storage_bus(player, entity)
 	row.add{ type = "drop-down", name = "fork_me_sbus_filtermode", items = {}, tags = G.act("sbus_filtermode"),
 		tooltip = { "fork-me-gui.storage-bus-filtermode-tooltip" } }
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_fuzzy")
+	M.gfilter_row(content, "fork_me_sbus_gtext", "sbus_gtext")
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.storage-bus-priority-tooltip" } }
 	G.number_field(row, d.priority, G.act("sbus_priority"), 70, true).tooltip = { "fork-me-gui.storage-bus-priority-tooltip" }
@@ -1686,6 +1715,7 @@ function M.refresh_storage_bus(player, frame)
 	end
 	fm.selected_index = (carded or d.blacklist) and 2 or 1
 	fm.enabled = not carded
+	M.gfilter_refresh(frame, "fork_me_sbus_gtext", d.gfilter, d.gtext)
 	G.find(frame, "fork_me_sbus_fuzzy").caption = d.side == "fluid" and ""
 		or { d.fuzzy and "fork-me-gui.storage-bus-fuzzy-on" or "fork-me-gui.storage-bus-fuzzy-off" }
 	G.find(frame, "fork_me_sbus_filters_caption").caption = { "fork-me-gui.storage-bus-filters" .. ((d.inverted or d.blacklist) and "-blacklist" or ""),
@@ -1748,6 +1778,13 @@ picker.on_confirm("sbus_filter", function(player, data, choice)
 	local key = picker.key_of(choice, true)
 	if key then sbus.set_filter(entity, data.index, key) else refused_choice(player) end
 	G.refresh_one(player)
+end)
+
+G.on("sbus_gtext", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then sbus.set_settings(entity, { gtext = el.text }) end
+	if event.name == defines.events.on_gui_confirmed then G.refresh_one(player) end
 end)
 
 G.on("sbus_extract", function(event, player, el)

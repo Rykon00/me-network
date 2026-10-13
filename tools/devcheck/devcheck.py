@@ -818,6 +818,7 @@ RUNTIME_TESTS = (
     ("IFACETERM", "ME Interface Terminal (issue #336)"),
     ("BLOCKING", "ME Pattern Provider blocking mode (issue #335)"),
     ("LOCK", "ME Pattern Provider lock until the result is back (issue #346)"),
+    ("VOIDCELL", "Void ME Storage Cells (issue #354)"),
     ("IFACECAP", "ME Interface Capacity Card (issue #196)"),
     ("WIRELESS", "ME wireless terminal (issues #205 to #210)"),
     ("STICKY", "ME Sticky Card (issue #193)"),

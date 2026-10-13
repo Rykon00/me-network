@@ -1014,6 +1014,7 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-interface-capacity-card": ("basic", "gui/overlay_button/plus_large", (240, 150, 50)),   # issue #196: an orange plus on the gray body
     "me-inverter-card": ("advanced", "gui/overlay_button/disable", (245, 120, 30)),
     "me-sticky-card": ("advanced", "gui/overlay_button/lock", (250, 215, 60)),   # issue #193: a lock (yellow)
+    "me-group-filter-card": ("advanced", "gui/overlay_button/gate_or", (120, 205, 255)),   # issue #354: an OR gate (light blue)
     "me-equal-distribution-card": ("advanced", "gui/overlay_button/cyclic", (60, 225, 210)),
     "me-acceleration-card": ("advanced", "gui/overlay_button/x2", (185, 240, 70)),   # issue #110: the "x2" sign (lime)
 }
@@ -1693,7 +1694,7 @@ def hd_batch3():
 
 
 # --- issue #221 (batch 4 of #154): the upgrade cards, patterns, storage components, housing, wireless items -------------
-CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'inverter', 'equal-distribution', 'acceleration')
+CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'group-filter', 'inverter', 'equal-distribution', 'acceleration')
 
 
 def hd_plate(icon, depth=5):
