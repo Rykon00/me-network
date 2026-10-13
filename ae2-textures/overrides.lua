@@ -56,6 +56,9 @@ return {
 	["item/me-inverter-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-inverter-card.png", icon_size = 32 },
 	["item/me-equal-distribution-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-equal-distribution-card.png", icon_size = 32 },
 	["module/me-acceleration-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-acceleration-card.png", icon_size = 32 },
+	--- ME Network issue #356: AE2-Unofficial's Super Speed and Superluminal Speed Cards
+	["item/me-super-speed-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-super-speed-card.png", icon_size = 32 },
+	["item/me-superluminal-speed-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-superluminal-speed-card.png", icon_size = 32 },
 	--- issues #251, #294: no AE2 counterpart, so the Capacity Card with its capacity sign in orange (not the Pattern
 	--- Capacity Card's look: a dark sign and a turquoise stripe)
 	["item/me-interface-capacity-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-interface-capacity-card.png", icon_size = 32 },

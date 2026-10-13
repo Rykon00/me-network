@@ -3141,3 +3141,21 @@ origin/provider-blocking-335`):
 makes no garbage). A first measurement while the maintainer's game ran on the machine (both versions at about twice their
 usual script time) had flagged "ticks over 5 ms: 48 -> 89" at size 1000; the runs above, without the game, show no
 difference.
+
+## Super Speed and Superluminal Speed Cards (issue #356)
+
+The cards change only the bus's factor, made when its cards change (`on_cards`); a visit computes its item cap as before,
+now with a `math.min` against 2 147 483 647 (an engine count is 32 bit). What a visit moves is still bounded by its target and
+the network: an export bus with four Superluminal Speed Cards fills a chest in one visit, as one with four Acceleration Cards
+does once the chest is smaller than its cap. No new allocation per visit.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no such cards), run twice:
+
+| | origin/main | with the cards |
+|---|---|---|
+| 100: script average / p99 ms (second run) | 0.1844 / 1.741 | 0.1852 / 1.724 |
+| 1000: script average / p99 ms (second run) | 0.3256 / 1.866 | 0.3256 / 1.888 |
+| Lua alloc KB per tick (100 / 1000) | 26.67 / 24.32 | 26.67 / 24.32 |
+
+The first run reported one metric beyond the noise, the gc time at 1000 (0.0308 against 0.0329 ms, with the same Lua
+allocation per tick); the second run: `regressions beyond the noise: 0` (gc 0.0325 against 0.0334 ms).

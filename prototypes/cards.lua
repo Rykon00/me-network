@@ -52,6 +52,15 @@ local CARDS = {
 	{ name = "me-acceleration-card", order = "h", kind = "speed", fields = {
 		category = ME.ACCELERATION, tier = 1, effect = { speed = 0.8, consumption = 0.8 } },
 	  ingredients = I{ "me-advanced-card", 1, "copper-cable", 1 } },                                  -- (a fluix crystal)
+	--- issue #356: AE2-Unofficial's Super Speed Card and Superluminal Speed Card (Upgrades.SUPERSPEED, SUPERLUMINALSPEED;
+	--- MaterialType CardSuperSpeed, CardSuperluminalSpeed): the import and export bus take up to 4 of each, mixed with
+	--- Acceleration Cards in their 4 slots, and the items per operation add up (`bus` below). AE2-U's recipes
+	--- (materials/cards.recipe): an Acceleration Card and a 16k storage component; a Super Speed Card and a 1024k component,
+	--- which ME Network does not have: 4 256k components (the same bytes)
+	{ name = "me-super-speed-card", order = "h2", kind = "superspeed",
+	  ingredients = I{ "me-acceleration-card", 1, "me-16k-storage-component", 1 } },
+	{ name = "me-superluminal-speed-card", order = "h3", kind = "superluminal",
+	  ingredients = I{ "me-super-speed-card", 1, "me-256k-storage-component", 4 } },
 }
 
 local kinds = {}
@@ -83,8 +92,12 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	fluid_cell = { slots = 3, limits = { inverter = 1, equal = 1, void = 1, sticky = 1 } },
 	--- issue #110: the ME Import Bus and Export Bus take up to 4 Acceleration Cards (AE2's upgrade slots of the buses: its speed
 	--- cards, PartImportBus / PartExportBus); `speed`: by the number of cards, the factor on the items per second of the map
-	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation)
-	bus = { slots = 4, limits = { speed = 4 } },
+	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation). Issue #356: up to 4 Super Speed and 4 Superluminal Speed
+	--- Cards too, in the same 4 slots; `superspeed` and `superluminal`: by the number of each, what they add to that factor
+	--- (AE2-U: PartExportBus.calculateAmountToSend, the kinds add up)
+	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4 } },
+	superspeed = { 16, 128, 1024, 8192 },
+	superluminal = { 131072, 1048576, 8388608, 67108864 },
 	--- issue #156: the ME Pattern Provider takes up to 3 Pattern Capacity Cards (AE2-U: Registration.java, `blocks.iface()`, 3);
 	--- it has `patterns` pattern slots and `per_capacity` more with each card (9 / 18 / 27 / 36)
 	provider = { slots = 3, limits = { pattern_capacity = 3 }, patterns = 9, per_capacity = 9 },

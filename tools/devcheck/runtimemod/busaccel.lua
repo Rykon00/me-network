@@ -5,6 +5,9 @@
 ---   (the chest's limit: 4800 plates, 3072 where plates stack to 64); an import bus the same out of a full chest.
 --- * A mined bus gives its cards to the buffer, a destroyed one drops them; a paste, a clone and a blueprint's tag make a bus want
 ---   the cards (it takes them from the network).
+--- * Issue #356: the Super Speed and Superluminal Speed Cards fit the same slots and add to the factor (AE2-U): one Super Speed Card
+---   17, with an Acceleration Card 24, one Superluminal 131 073, four of them 67 108 865; a visit with one Super Speed Card moves
+---   64 * 17, with four Superluminal ones what the chest takes (the per-visit amount is capped, no engine error).
 --- Loaded by control.lua: require("busaccel")(H) returns { setup, tick, running } like margin.lua.
 
 local NET, IO = "gregtorio-me-network", "gregtorio-me-io"
@@ -25,7 +28,8 @@ return function(H)
 		local what = "bus cards"
 		power(s, fails, what, BX, BY)
 		local ctrl = me_place(s, fails, what, "me-network-controller", BX + 7, BY)
-		local drive = me_drive(s, fails, what, BX + 8.5, BY - 0.5, { ["iron-plate"] = 30000, [CARD] = 12 })
+		local drive = me_drive(s, fails, what, BX + 8.5, BY - 0.5, { ["iron-plate"] = 30000, [CARD] = 12,
+			["me-super-speed-card"] = 4, ["me-superluminal-speed-card"] = 4 })
 		local members = { ctrl, drive }
 		local function bus(name, x, chest)
 			local b = me_place(s, fails, what, name, BX + x, BY + 0.5, SOUTH)
@@ -137,6 +141,22 @@ return function(H)
 		end
 		take_all(I)
 
+		--- issue #356: the Super Speed and Superluminal Speed Cards
+		local SUPER, LUM = "me-super-speed-card", "me-superluminal-speed-card"
+		expect(put(E, SUPER) == nil and info(E).accel == 17, "one Super Speed Card: factor " .. tostring(info(E).accel))
+		ce.clear()
+		local m1 = remote.call(IO, "step", E)
+		expect(m1 == math.min(STEP * 17, CHEST), "a visit with one Super Speed Card moved " .. tostring(m1))
+		expect(put(E, CARD) == nil and info(E).accel == 24, "with an Acceleration Card: factor " .. tostring(info(E).accel))
+		take_all(E)
+		expect(put(E, LUM) == nil and info(E).accel == 131073, "one Superluminal Speed Card: factor " .. tostring(info(E).accel))
+		for _ = 2, 4 do put(E, LUM) end
+		expect(info(E).accel == 67108865 and put(E, SUPER) == "full", "four Superluminal Speed Cards: factor " .. tostring(info(E).accel))
+		ce.clear()
+		local m4 = remote.call(IO, "step", E)
+		expect(m4 == CHEST, "a visit with four Superluminal Speed Cards moved " .. tostring(m4) .. ", not the chest's " .. CHEST)
+		take_all(E)
+
 		--- a mined bus gives its cards to the buffer, a destroyed one drops them
 		put(M, CARD) put(M, CARD)
 		local buffer = game.create_inventory(2)
@@ -183,7 +203,8 @@ return function(H)
 		st.done = true
 		me_report("BUSACCEL", "ME bus acceleration cards", problems, "four slots that take only the card, factors " .. table.concat(FACTORS, ", ") .. " (a visit moves "
 			.. moved[0] .. ", " .. moved[1] .. ", " .. moved[2] .. ", " .. moved[3] .. ", " .. moved[4] .. " into a chest), the import bus alike, mined into the buffer, destroyed onto the ground, "
-			.. "paste, clone and blueprint tag, kept over a mod update")
+			.. "paste, clone and blueprint tag, kept over a mod update; Super Speed 17 and 24 with an Acceleration Card, Superluminal "
+			.. "131073, four 67108865 with a capped visit (issue #356)")
 	end
 
 	function T.running(check) check(storage.busaccel110 and storage.busaccel110.done, "ME bus acceleration cards") end

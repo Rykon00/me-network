@@ -534,6 +534,8 @@ card is made from a component card and one item:
 | Sticky Card | basic card + iron chest (AE2-Unofficial: a slimeball, which has no stand-in) | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
 | Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
+| Super Speed Card | Acceleration Card + 16k storage component (AE2-Unofficial's) | ME Import Bus and Export Bus, up to 4 | adds 16, 128, 1024, 8192 times the bus speed (issue #356) |
+| Superluminal Speed Card | Super Speed Card + 4 256k storage components (AE2-Unofficial: a 1024k component, which ME Network does not have) | ME Import Bus and Export Bus, up to 4 | adds 131 072, 1 048 576, 8 388 608, 67 108 864 times the bus speed (issue #356) |
 
 On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
 like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards
@@ -551,7 +553,12 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
   slots (your inventory is on the left, as in the storage bus's window); only this card goes in. The items per second a
   bus moves, the map setting "Bus speed" (256 by default), are multiplied by 1, 8, 32, 64 and 96 with 0 to 4 cards (AE2's
   1, 8, 32, 64, 96 items per operation); the window says the factor and the rate. Only items are sped up, not fluids (as in
-  AE2). A bus still moves what its machine, chest or the network can take: an export bus fills a machine to a stack of each
+  AE2). **Issue #356:** the Super Speed Card and the Superluminal Speed Card (AE2-Unofficial's) go into the same 4 slots,
+  mixed with Acceleration Cards (up to 4 of each kind, 4 cards in all), and their amounts add up as in AE2-U's
+  `calculateAmountToSend`: an Acceleration Card's factor (1, 8, 32, 64, 96) plus 16, 128, 1024 or 8192 for 1 to 4 Super Speed
+  Cards plus 131 072 ... 67 108 864 for 1 to 4 Superluminal ones (one Super Speed Card alone: 1 + 16 = 17; with an
+  Acceleration Card: 8 + 16 = 24). A visit moves at most 2 147 483 647 items (an engine count is 32 bit), far more than any
+  chest holds. A bus still moves what its machine, chest or the network can take: an export bus fills a machine to a stack of each
   item, a chest as far as it has room, so a faster bus mostly matters for a chest or a drive with a lot to move. Putting
   cards in, taking them out, mining (the cards go into your inventory), destruction (they drop) and blueprints, copy/paste,
   settings paste and clones work as for the storage bus (see below).
