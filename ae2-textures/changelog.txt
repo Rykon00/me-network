@@ -1,6 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.1
   Graphics:
+    - The Void ME Storage Cell and the Void ME Fluid Storage Cell (ME Network issue #364) have AE2-Unofficial's void cell icon (AE2-Unofficial has one void cell for items and fluids, so both show it), and the Group Filter Card has AE2-Unofficial's Ore Dictionary Filter Card icon.
     - The Super Speed Card and the Superluminal Speed Card (ME Network issue #356) have AE2-Unofficial's icons.
     - The ME Interface Terminal (ME Network issues #336, #343): AE2-Unofficial's interface terminal panel like the other terminals, dark while its network does not work and with AE2's screen in its Fluix colours while it does; its icon is the lit panel.
 ---------------------------------------------------------------------------------------------------
