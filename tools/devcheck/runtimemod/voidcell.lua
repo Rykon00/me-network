@@ -5,7 +5,9 @@
 ---   * 30 iron plates go into the 16k cell;
 ---   * 1000 water go in and are gone;
 ---   * a second network with only an unpartitioned void cell destroys whatever reaches it (20 copper plates), and its drive
----     shows the void cell as a cell with room.
+---     shows the void cell as a cell with room;
+---   * issue #376: the drive slot tooltips of both void cells (no cards) carry the void cell warning, and so does the item
+---     tooltip of the partitioned one once it is taken out of the drive.
 --- Part 2, the Group Filter Card:
 ---   * a 16k cell with the card, the text "iron-*|copper-plate" and a partition for stone (which the card replaces): iron
 ---     plates, iron ore and copper plates go in, stone and copper ore do not; the drive shows the card, the text and the kept
@@ -17,6 +19,15 @@
 
 local NET = "gregtorio-me-network"
 local SB = "gregtorio-me-storagebus"
+local GUI = "gregtorio-me-gui"
+local VOIDCELL = "fork-me-gui.cell-mode-voidcell"
+
+--- issue #376: whether a localised string holds `key` anywhere
+local function has_key(ls, key)
+	if type(ls) ~= "table" then return ls == key end
+	for _, v in ipairs(ls) do if has_key(v, key) then return true end end
+	return false
+end
 local BX, BY = 40, -380                 -- (inside the cleared test area, TEST_RADIUS of control.lua)
 local START = 190
 
@@ -132,6 +143,15 @@ return function(H)
 		local info2 = remote.call(NET, "drive", drive2)
 		expect(info2 and info2[1] and info2[1].state == "room", "the void cell has room: "
 			.. serpent.line(info2 and info2[1]))
+		--- issue #376: the void cell warning without a card, in the drive slot tooltip and in the item tooltip
+		local tip1, tip2 = remote.call(GUI, "drive_cell_tooltip", drive, 2), remote.call(GUI, "drive_cell_tooltip", drive2, 1)
+		expect(has_key(tip1, VOIDCELL) and has_key(tip2, VOIDCELL), "the drive tooltips of the void cells warn: "
+			.. serpent.line({ tip1, tip2 }))
+		local out = game.create_inventory(1)
+		local took = remote.call(NET, "take_cell", drive, 2, out[1])
+		local desc = took and out[1].valid_for_read and out[1].custom_description
+		expect(has_key(desc, VOIDCELL), "the item tooltip of the partitioned void cell warns: " .. serpent.line(desc))
+		out.destroy()
 		group_filter(find, expect)
 		return report()
 	end
