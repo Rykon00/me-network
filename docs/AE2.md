@@ -554,7 +554,7 @@ card is made from a component card and one item:
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
 | Sticky Card | basic card + iron chest (AE2-Unofficial: a slimeball, which has no stand-in) | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
-| Group Filter Card | advanced card + constant combinator (AE2-Unofficial's Ore Dictionary Filter Card: an advanced card and a book) | storage bus, item cells, 1 | a text filter over the item's name, subgroup and group takes the place of the filters (see below) |
+| Group Filter Card | advanced card + constant combinator (AE2-Unofficial's Ore Dictionary Filter Card: an advanced card and a book) | storage bus, item cells, ME Import and Export Bus (issue #363), 1 | a text filter over the item's name, subgroup and group takes the place of the filters (see below) |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
 | Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
 | Super Speed Card | Acceleration Card + 16k storage component (AE2-Unofficial's) | ME Import Bus and Export Bus, up to 4 | adds 16, 128, 1024, 8192 times the bus speed (issue #356) |
@@ -613,8 +613,14 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
   An Inverter Card (or the bus's Blacklist mode) makes the text a blacklist. On the bus the text filters what goes in and,
   unless "filter on extract" is off, what the network sees; blueprints, settings paste and clones carry it. On an item cell
   the text is set in the ME Cell Workbench and kept in the cell's tags. Fluid cells take no Group Filter Card (AE2-U: no
-  ore filter on fluid cells); on a bus that faces a tank the text matches the fluid's names. The ME Import and Export Bus
-  take no Group Filter Card yet.
+  ore filter on fluid cells); on a bus that faces a tank the text matches the fluid's names.
+  **On the ME Import and Export Bus** (issue #363, AE2-U's `PartBaseImportBus` and `PartBaseExportBus`) the text takes the
+  place of the item filters; the fluid filters stay. The import bus takes what matches from its machine or chest; with no
+  text it takes everything. The export bus goes through the network's items that match, in turn, at most as many a visit
+  as it has filters (9), each visit moving what its speed allows, and starts the next visit where this one stopped, so
+  every matching item gets its share; with no text it exports nothing. Its list of matching items is made again when an
+  item new to the network comes in. Its window has the Group filter field; blueprints, settings paste and clones carry
+  the text.
 
 ### The tooltip of a cell
 
@@ -1692,7 +1698,8 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
 * Autocrafting plans and crafts only normal quality, no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
 * Network storage (issue #68): no channels, no fluid wagons on the storage bus. The cards are where **Upgrade cards** lists
-  them: the import and export bus take only Acceleration Cards (up to 4, issue #110; no capacity, fuzzy or inverter card),
+  them: the import and export bus take speed cards (up to 4, issues #110, #356) and the Group Filter Card (issue #363; no
+  capacity, fuzzy or inverter card),
   the ME Interface only Interface Capacity Cards (up to 3, issue #196); there is no redstone and no crafting card; the
   search of the terminal and the picker matches the shown names (issue #295) only once your client has
   translated them, a few ticks after the first terminal or picker opens (before that, and for a name your language

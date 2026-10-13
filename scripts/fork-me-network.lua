@@ -1679,6 +1679,7 @@ local function idx_add(net, key, cid)
 	if not idx then
 		idx = {}
 		net.index[key] = idx
+		net.kgen = (net.kgen or 0) + 1                   -- (issue #363: a key new in the network)
 		if is_fluid_key(key) then
 			local fs = fluid_sets[net]
 			if fs then note_fluid(fs, key) end

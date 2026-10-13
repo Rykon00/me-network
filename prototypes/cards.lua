@@ -43,8 +43,8 @@ local CARDS = {
 	{ name = "me-sticky-card", order = "e4", kind = "sticky", ingredients = I{ "me-basic-card", 1, "iron-chest", 1 } },
 	--- issue #354: AE2-Unofficial's Ore Dictionary Filter Card (Upgrades.ORE_FILTER; recipe: an advanced card and a book,
 	--- materials/cards.recipe): here the Group Filter Card, a text over the item's name, subgroup and group
-	--- (scripts/fork-me-groupfilter.lua) in place of the filter slots, on item cells and the storage bus (AE2-U: no ore filter on
-	--- fluid cells). The book's stand-in: a constant combinator (a list written down).
+	--- (scripts/fork-me-groupfilter.lua) in place of the filter slots, on item cells, the storage bus and (issue #363) the import
+	--- and export bus (AE2-U: no ore filter on fluid cells). The book's stand-in: a constant combinator (a list written down).
 	{ name = "me-group-filter-card", order = "e5", kind = "gfilter",
 	  ingredients = I{ "me-advanced-card", 1, "constant-combinator", 1 } },
 	{ name = "me-inverter-card", order = "f", kind = "inverter",
@@ -101,7 +101,7 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation). Issue #356: up to 4 Super Speed and 4 Superluminal Speed
 	--- Cards too, in the same 4 slots; `superspeed` and `superluminal`: by the number of each, what they add to that factor
 	--- (AE2-U: PartExportBus.calculateAmountToSend, the kinds add up)
-	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4 } },
+	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1 } },   -- (issue #363: the Group Filter Card)
 	superspeed = { 16, 128, 1024, 8192 },
 	superluminal = { 131072, 1048576, 8388608, 67108864 },
 	--- issue #156: the ME Pattern Provider takes up to 3 Pattern Capacity Cards (AE2-U: Registration.java, `blocks.iface()`, 3);

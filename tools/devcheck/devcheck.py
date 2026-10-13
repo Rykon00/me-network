@@ -818,6 +818,7 @@ RUNTIME_TESTS = (
     ("IFACETERM", "ME Interface Terminal (issue #336)"),
     ("BLOCKING", "ME Pattern Provider blocking mode (issue #335)"),
     ("LOCK", "ME Pattern Provider lock until the result is back (issue #346)"),
+    ("GROUPBUS", "Group Filter Card on the import and export bus (issue #363)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),
