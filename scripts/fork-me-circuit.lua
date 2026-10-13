@@ -126,26 +126,31 @@ local function valid_key(key, exact)
 		if k and exact then k = N.fluid_storage_key(k) end
 		return k
 	end
-	return prototypes.item[key] and (N.alias(key) or key) or nil      -- a replaced item: its replacement (issue #3)
+	--- issue #352: an item in any quality the game has ("name@quality"); a replaced item: its replacement (issue #3)
+	local name, q = N.parse_key(key)
+	if key:find("#", 1, true) or not (prototypes.item[name] and prototypes.quality[q]) then return nil end
+	return N.key_of(N.alias(name) or name, q)
 end
 
 --- SignalID of a key, and the key of a SignalID (items and fluids only)
 local function signal_of(key)
 	if is_fluid(key) then return { type = "fluid", name = fluid_name(key) } end
-	return { type = "item", name = key }
+	local name, q = N.parse_key(key)
+	return { type = "item", name = name, quality = q }                -- (issue #352: the signal of its quality)
 end
 
 local function key_of_signal(sig)
 	if type(sig) ~= "table" or not sig.name then return nil end
 	if sig.type == "fluid" then return valid_key("fluid/" .. sig.name) end
-	if sig.type == nil or sig.type == "item" then return valid_key(sig.name) end
+	if sig.type == nil or sig.type == "item" then return valid_key(N.key_of(sig.name, sig.quality or "normal")) end
 	return nil
 end
 
---- what the network holds of a key (normal quality items)
+--- what the network holds of a key (issue #352: an item in its quality)
 local function stock_of(net, key)
 	if is_fluid(key) then return N.count_key(net, key) end      -- (one temperature: issue #159)
-	return N.count(net, key, "normal")
+	local name, q = N.parse_key(key)
+	return N.count(net, name, q)
 end
 
 --- the sum of the key's signal on the red and green wire
@@ -209,7 +214,7 @@ local function active_rows(rec)
 		for _, w in pairs(WIRES) do
 			local cn = rec.entity.get_circuit_network(w)
 			for _, sg in pairs(cn and cn.signals or {}) do
-				local key = sg.count > 0 and (not sg.signal.quality or sg.signal.quality == "normal") and key_of_signal(sg.signal)
+				local key = sg.count > 0 and key_of_signal(sg.signal)      -- (issue #352: every quality)
 				if key and is_fluid(key) then key = N.fluid_storage_key(key) end
 				if key then amounts[key] = (amounts[key] or 0) + sg.count end
 			end

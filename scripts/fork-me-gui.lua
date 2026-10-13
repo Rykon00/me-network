@@ -692,6 +692,7 @@ function M.slot(parent, key, amount, tags, style, extra_tooltip, index)
 			q = (q and q ~= "") and q or "normal"
 			if prototypes.item[name] and prototypes.quality[q] then
 				def.sprite = "item/" .. name
+				if q ~= "normal" then def.quality = q end    -- (issue #352: the quality's badge)
 				def.elem_tooltip = { type = "item-with-quality", name = name, quality = q }
 				local desc = M.key_description(key)
 				if desc and extra_tooltip then def.tooltip = { "", desc, "\n", extra_tooltip }

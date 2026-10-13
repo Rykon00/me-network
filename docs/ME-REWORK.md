@@ -1211,7 +1211,7 @@ The question of the issue: how does a job know its outputs arrived?
   `insert_partial`, `insert_fluid`: import bus, ME Interface, fluid import bus, fluid interface, terminal) offer what
   comes in to `N.on_arrival(net, key, count)` before storing it. A running job with processing steps that still owe
   `key` (issued runs times the amount, minus what was received) takes it into its pool, at most what it owes, in job
-  order; the rest is stored. Normal quality plain keys only. `can_insert` and `can_insert_fluid` add what jobs wait
+  order; the rest is stored. Plain keys only (issue #352: in every quality; no items with tags). `can_insert` and `can_insert_fluid` add what jobs wait
   for (an import bus may import outputs even when the cells are full). Outputs collected from the machine's output
   when a lease ends count the same way. A storage bus does not insert (it sees a chest change), so outputs that only
   appear in a chest behind a storage bus do not count (AE2 behaves the same).
