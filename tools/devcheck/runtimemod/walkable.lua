@@ -6,6 +6,8 @@
 --- walkable ones is the cable's, so the cars (whose mask names "player") pass too. The mask is prototype data: nothing is stored.
 --- (The draw order, the character above a bus, needs the game.) Loaded by control.lua: require("walkable")(H) returns
 --- { setup, tick, running } like lab.lua.
+--- Issue #378: the toggle buses (plain and inverted), the ME Interface Terminal and the storage, conversion and throughput
+--- monitors are in the walkable row too (the same mask and selection box as the buses).
 --- Issue #268: two of every solid one-tile block on neighbouring tiles (side by side and one above the other) leave a gap
 --- a character fits through (its box -0.2 .. 0.2 placed on the line between them), also a drive next to a chest; two
 --- blocks of a Crafting CPU (one slab, #152) do not; the solid blocks' collision box is -0.29 .. 0.29.
@@ -25,6 +27,10 @@ PAIRS[#PAIRS + 1] = { "me-drive", "me-chest", true, false }
 PAIRS[#PAIRS + 1] = { "me-crafting-unit", "me-crafting-unit", false, false }
 local PY = BY + 4                                                      -- (the pairs' rows, below the row of single blocks)
 
+--- the walkable blocks whose mask must be the cable's and whose selection box is the whole tile (issue #378: the last six)
+local SCOPE = { "me-import-bus", "me-export-bus", "me-storage-bus", "me-terminal", "me-toggle-bus", "me-inverted-toggle-bus",
+	"me-interface-terminal", "me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor" }
+
 local DIRS = { north = defines.direction.north, east = defines.direction.east, south = defines.direction.south, west = defines.direction.west }
 
 --- name, direction (nil: none), walkable
@@ -33,6 +39,8 @@ local ROW = {
 	{ "me-export-bus", "north", true }, { "me-export-bus", "east", true }, { "me-export-bus", "south", true }, { "me-export-bus", "west", true },
 	{ "me-storage-bus", "north", true }, { "me-storage-bus", "east", true }, { "me-storage-bus", "south", true }, { "me-storage-bus", "west", true },
 	{ "me-terminal", nil, true },
+	{ "me-toggle-bus", nil, true }, { "me-inverted-toggle-bus", nil, true }, { "me-interface-terminal", nil, true },
+	{ "me-storage-monitor", nil, true }, { "me-conversion-monitor", nil, true }, { "me-throughput-monitor", nil, true },
 	{ "me-cable", nil, true },
 	{ "me-network-interface", nil, false }, { "me-drive", nil, false }, { "me-pattern-provider", nil, false },
 	{ "me-level-maintainer", nil, false }, { "me-circuit-interface", nil, false }, { "me-crafting-unit", nil, false },
@@ -116,11 +124,11 @@ return function(H)
 			return true
 		end
 		local cable_mask = prototypes.entity["me-cable"].collision_mask.layers
-		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-terminal" }) do
+		for _, name in pairs(SCOPE) do
 			expect(same(prototypes.entity[name].collision_mask.layers, cable_mask), name .. ": the mask is not the cable's")
 		end
 		--- the selection box is the same as before: a block is clicked as it was (mining, windows, copy and paste)
-		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-terminal" }) do
+		for _, name in pairs(SCOPE) do
 			local box = prototypes.entity[name].selection_box
 			expect(box.left_top.x == -0.5 and box.right_bottom.x == 0.5 and box.left_top.y == -0.5 and box.right_bottom.y == 0.5,
 				name .. ": the selection box changed " .. serpent.line(box))

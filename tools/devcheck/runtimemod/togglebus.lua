@@ -8,6 +8,8 @@
 ---   * an inverted toggle bus I joins network C's drive without a wire and opens with the condition;
 ---   * the level emitter E gives the green check while A holds at least 1000 plates and not with "below"; by stored energy;
 ---     an item of B's side gives nothing while T is open; a second emitter takes E's settings by paste and by tags.
+---   * issue #378: T's circuit condition after copy_settings (onto a toggle bus of no network) and after a real blueprint
+---     round trip; the second emitter's tag written by the blueprint hook (tag_blueprint) and built.
 --- Loaded by control.lua: require("togglebus")(H) returns { setup, tick, running }.
 
 local NET, AC = "gregtorio-me-network", "gregtorio-me-autocraft"
@@ -56,6 +58,7 @@ return function(H)
 		cable_row(s, fails, BX + 11, BX + 11, BY + 9)
 		H.me_drive(s, fails, what, BX + 12.5, BY + 9.5, { ["copper-plate"] = 10 })
 		me_place(s, fails, what, "constant-combinator", BX + 10.5, BY + 11.5)
+		me_place(s, fails, what, "me-toggle-bus", BX + 30.5, BY + 4.5)             -- (issue #378: copy_settings, of no network)
 		return fails
 	end
 
@@ -70,6 +73,15 @@ return function(H)
 		local f = sec and sec.filters or {}
 		return #f == 1 and f[1].value and f[1].value.name == "signal-check" and f[1].min == 1
 	end
+
+	--- issue #378: a toggle bus's circuit condition
+	local function cond_of(e)
+		local cb = e and e.valid and e.get_control_behavior()
+		if not cb then return nil end
+		local c = cb.circuit_condition
+		return { on = cb.circuit_enable_disable, sig = c and c.first_signal and c.first_signal.name, cmp = c and c.comparator, n = c and c.constant }
+	end
+	local function same_cond(a, b) return a ~= nil and b ~= nil and a.on == b.on and a.sig == b.sig and a.cmp == b.cmp and a.n == b.n end
 
 	function T.tick()
 		local st = storage.togglebus355
@@ -86,7 +98,7 @@ return function(H)
 			st.done = true
 			me_report("TOGGLE", "ME Toggle Bus and Level Emitter", problems, "open without a condition, joined by the "
 				.. "condition, a job waits across a split and ends after the join, nothing lost, the inverted bus, the level "
-				.. "emitter by amount, mode, energy and an open toggle bus, paste and tags")
+				.. "emitter by amount, mode, energy and an open toggle bus, paste and tags, copies through copy_settings and a blueprint")
 		end
 		local t, tb = find("me-terminal", 9, -1), find("me-toggle-bus", 13, -1)
 		local k, e1, e2 = find("constant-combinator", 13, 1), find("me-level-emitter", 12, -2), find("me-level-emitter", 10, -2)
@@ -133,6 +145,12 @@ return function(H)
 			remote.call(EM, "built", e2, { fork_me_emitter = { key = "iron-plate", amount = 5, mode = "low", signal = { type = "virtual", name = "signal-B" } } })
 			g2 = remote.call(EM, "get", e2) or {}
 			expect(g2.key == "iron-plate" and g2.amount == 5 and g2.mode == "low" and g2.signal.name == "signal-B", "tags: " .. line(g2))
+			--- issue #378: the tag written by a real blueprint (the blueprint hook), then built
+			local ce, why, tags = H.blueprint_copy(e2, 26, 6)
+			local gc = ce and remote.call(EM, "get", ce) or {}
+			expect(tags and tags.fork_me_emitter and gc.key == "iron-plate" and gc.amount == 5 and gc.mode == "low" and gc.signal
+				and gc.signal.name == "signal-B", "a blueprint round trip of the emitter: tag " .. line(tags and tags.fork_me_emitter)
+				.. ", built " .. line(gc) .. (why and (" (" .. why .. ")") or ""))
 			--- T gets its condition and K's signal; I gets K's signal and its condition (it opens)
 			wire(tb, k)
 			signal(k, true)
@@ -140,6 +158,13 @@ return function(H)
 			wire(ib, kc)
 			signal(kc, true)
 			condition(ib)
+			--- issue #378: T's condition after copy_settings and after a real blueprint round trip
+			local want, t2 = cond_of(tb), find("me-toggle-bus", 30, 4)
+			local copied = t2 and t2.copy_settings(tb)
+			local ct, why2 = H.blueprint_copy(tb, 20, 5)
+			expect(want and want.on and want.sig == SIG.name and same_cond(want, cond_of(t2)) and same_cond(want, cond_of(ct)),
+				"T's condition " .. line(want) .. ", after copy_settings (" .. tostring(copied) .. ") " .. line(cond_of(t2))
+				.. ", after a blueprint round trip " .. line(cond_of(ct)) .. (why2 and (" (" .. why2 .. ")") or ""))
 			st.phase, st.tick = "join", game.tick
 			return
 		end

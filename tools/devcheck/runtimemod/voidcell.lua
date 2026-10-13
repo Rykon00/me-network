@@ -14,7 +14,8 @@
 ---     partition;
 ---   * a storage bus with the card on a chest: the text "<iron ore's subgroup>&!stone" takes iron ore, not stone (a negated
 ---     term) and an item of another subgroup only by the blacklist mode, which in turn refuses the iron ore; the item's group
----     as the text takes a wooden chest; an empty text takes everything; the settings carry the text.
+---     as the text takes a wooden chest; an empty text takes everything; the settings carry the text;
+---   * issue #378: a settings paste to a second bus (of no network) and a real blueprint round trip of the bus keep the text.
 --- Loaded by control.lua: require("voidcell")(H) returns { setup, tick, running }.
 
 local NET = "gregtorio-me-network"
@@ -63,6 +64,7 @@ return function(H)
 		local bus = me_place(s, fails, what, "me-storage-bus", BX + 12.5, BY - 25.5, { direction = defines.direction.south })
 		me_place(s, fails, what, "iron-chest", BX + 12.5, BY - 24.5)
 		H.me_connect(fails, what, { ctrl4, bus })
+		me_place(s, fails, what, "me-storage-bus", BX + 24.5, BY + 4.5, { direction = defines.direction.south })   -- (issue #378)
 		return fails
 	end
 
@@ -71,7 +73,7 @@ return function(H)
 		s.done = true
 		me_report("VOIDCELL", "Void ME Storage Cells", s.problems,
 			"partitioned void cell first, items and fluid destroyed, the other cell untouched, an unpartitioned one voids all;"
-		.. " group filter on a cell and a storage bus: names, subgroup, group, negation, blacklist, empty text")
+		.. " group filter on a cell and a storage bus: names, subgroup, group, negation, blacklist, empty text, kept by paste and blueprint")
 	end
 
 	--- part 2: the Group Filter Card on a cell and on a storage bus
@@ -105,6 +107,16 @@ return function(H)
 		expect(ins(ctrl4, "wooden-chest") == 5 and ins(ctrl4, "iron-ore") == 0, "the group as the text takes a wooden chest only")
 		local st = remote.call(SB, "get_settings", bus) or {}
 		expect(st.gtext == prototypes.item["wooden-chest"].group.name, "the settings carry the text: " .. serpent.line(st.gtext))
+		--- issue #378: a settings paste to a second bus and a real blueprint round trip keep the text
+		local bus2 = find("me-storage-bus", 24.5, 4.5)
+		if bus2 then remote.call(SB, "paste", bus, bus2) end
+		local st2 = bus2 and remote.call(SB, "get_settings", bus2) or {}
+		expect(st.gtext ~= nil and st2.gtext == st.gtext, "a settings paste keeps the text: " .. serpent.line(st2.gtext))
+		local copy, why, tags = H.blueprint_copy(bus, 16, 30)           -- (to BX + 28.5, BY + 4.5: in the cleared area)
+		local tag = tags and tags.fork_me_storage_bus
+		local st3 = copy and remote.call(SB, "get_settings", copy) or {}
+		expect(tag and tag.gtext == st.gtext and st3.gtext == st.gtext, "a blueprint round trip keeps the text: tag "
+			.. serpent.line(tag and tag.gtext) .. ", built " .. serpent.line(st3.gtext) .. (why and (" (" .. why .. ")") or ""))
 		remote.call(SB, "set_settings", bus, { gtext = "" })
 		expect(ins(ctrl4, "stone") == 5, "an empty text takes everything")
 		inv.destroy()

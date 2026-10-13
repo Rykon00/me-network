@@ -4,7 +4,9 @@
 ---   * the conversion monitor stores a stack shift-clicked into it (20 plates); Take gives nothing while it is unlocked, a
 ---     stack (the plate's stack size) once it is locked; a locked monitor keeps its resource;
 ---   * the throughput monitor's rate is positive after plates came in, in its unit;
----   * a settings paste and blueprint tags carry resource, lock and unit; an unknown resource is none.
+---   * a settings paste and blueprint tags carry resource, lock and unit; an unknown resource is none;
+---   * issue #378: the throughput monitor's unit after a settings paste (onto one of no network), a real blueprint round
+---     trip and entity.clone.
 --- Loaded by control.lua: require("monitors")(H) returns { setup, tick, running }.
 
 local MON, NET = "gregtorio-me-monitor", "gregtorio-me-network"
@@ -27,6 +29,7 @@ return function(H)
 		me_place(s, fails, what, "me-conversion-monitor", BX + 13.5, BY - 1.5)
 		me_place(s, fails, what, "me-throughput-monitor", BX + 14.5, BY - 1.5)
 		me_place(s, fails, what, "me-storage-monitor", BX + 12.5, BY + 8.5)        -- (of no network: the settings checks)
+		me_place(s, fails, what, "me-throughput-monitor", BX + 18.5, BY + 8.5)     -- (issue #378: the paste of the unit)
 		H.me_connect(fails, what, { ctrl, drive, term })
 		return fails
 	end
@@ -36,7 +39,8 @@ return function(H)
 		s.done = true
 		if s.inv and s.inv.valid then s.inv.destroy() end
 		me_report("MONITORS", "ME Storage, Conversion and Throughput Monitor", s.problems,
-			"amount on the face, the step refreshes it, conversion store and take when locked, throughput rate, paste and tags")
+			"amount on the face, the step refreshes it, conversion store and take when locked, throughput rate, paste and tags, "
+			.. "the unit through paste, blueprint and clone")
 	end
 
 	function T.tick()
@@ -79,7 +83,7 @@ return function(H)
 			expect(l.key == "iron-plate" and l.locked, "a settings paste: " .. serpent.line(l))
 			remote.call(MON, "built", s.lone, { fork_me_monitor = { key = "fluid/water", locked = false, unit = "hour" } })
 			l = remote.call(MON, "get", s.lone)
-			expect(l.key ~= nil and l.key:find("^fluid/water") and not l.locked, "blueprint tags: " .. serpent.line(l))
+			expect(l.key ~= nil and l.key:find("^fluid/water") and not l.locked and l.unit == "hour", "blueprint tags: " .. serpent.line(l))
 			remote.call(MON, "set", s.lone, "no-such-item", false)
 			expect(remote.call(MON, "get", s.lone).key == nil, "an unknown resource is none")
 			remote.call(NET, "insert", s.ctrl, "iron-plate", 50)
@@ -99,6 +103,16 @@ return function(H)
 			local t = remote.call(MON, "get", s.tm)
 			expect(t.rate and t.rate > 0 and t.unit == "minute" and t.text and t.text:find("/m"),
 				"the throughput monitor's rate: " .. serpent.line({ t.rate, t.unit, t.text }))
+			--- issue #378: the unit after a settings paste, a real blueprint round trip and entity.clone
+			local tm2 = find("me-throughput-monitor", 18.5, 8.5)
+			if tm2 then remote.call(MON, "paste", s.tm, tm2) end
+			local pu = tm2 and (remote.call(MON, "get", tm2) or {}).unit
+			local copy, why = H.blueprint_copy(s.tm, 16, 10)
+			local bu = copy and (remote.call(MON, "get", copy) or {}).unit
+			local clone = s.tm.clone{ position = { BX + 26.5, BY + 8.5 } }
+			local cu = clone and (remote.call(MON, "get", clone) or {}).unit
+			expect(pu == "minute" and bu == "minute" and cu == "minute", "the unit after a paste " .. tostring(pu) .. ", a blueprint round trip "
+				.. tostring(bu) .. (why and (" (" .. why .. ")") or "") .. ", a clone " .. tostring(cu))
 			return report()
 		end
 	end
