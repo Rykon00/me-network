@@ -607,7 +607,7 @@ local function refresh_crafting(st, frame, net, index)
 			and #shown < MAX_CRAFT_BUTTONS then
 			local d = autocraft.describe(key)
 			if d then
-				local count = d.fluid and N.count_key(net, key) or N.count(net, key, "normal")
+				local count = d.fluid and N.count_key(net, key) or N.count(net, d.name, d.quality)   -- (issue #352: its quality)
 				shown[#shown + 1] = { key = key, craft = key, count = count }
 				sig[#sig + 1] = key .. "=" .. count
 			end

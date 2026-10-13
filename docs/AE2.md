@@ -953,7 +953,17 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   no fluid can have (`fluid-temperature`: above the
   fluid's maximum temperature; see "Temperature" under "Fluids": the network keeps every temperature, so a recipe that
   needs hot steam takes the hot steam the network holds).
-* Only normal quality items are planned and crafted.
+* **Every quality** (issue #352, the maintainer's choice of AE2-Unofficial's substitutions for Factorio, which has no ore
+  dictionary and no damage values: its "same item, other variant" is the quality). A crafting pattern names its recipe
+  **with a quality** (the Pattern Terminal's recipe chooser shows the qualities the force has researched; another one is
+  refused, "That quality is not researched"): its machine is set to the recipe in that quality and gets the ingredients in
+  that quality, so a pattern of the gear recipe in uncommon makes uncommon gears from uncommon plates. A processing
+  pattern's rows name items with their quality (the picker's quality row); "From recipe" fills them in the recipe's
+  quality. The planner counts and takes every quality apart: an uncommon plate is never used for a normal one. The
+  terminal lists the craftable items with their quality, a level maintainer's row keeps an item in a quality, and "craft
+  what the circuit asks" reads every quality's signal. Normal quality keeps the plain item name everywhere, so patterns,
+  plans and jobs of older saves are unchanged. AE2-U's substitution flags (another variant of an ingredient may stand in)
+  are not built: a Factorio machine takes its ingredients only in its recipe's quality.
 
 ### Patterns in providers: mining, destroying, blueprints
 
@@ -1093,7 +1103,7 @@ What the window says:
   the wires (red plus green) is then the amount to keep, instead of the number field. No signal means
   0 (keep nothing).
 * **Craft what the circuit asks** (issue #351): with this box ticked the rows are not used; every item and fluid
-  signal on the maintainer's wires (red plus green, normal quality, the 20 largest) is an amount to keep, each with
+  signal on the maintainer's wires (red plus green, every quality apart: issue #352, the 20 largest) is an amount to keep, each with
   its own job. A constant combinator (or a whole circuit) wired to the maintainer asks for several resources at once.
 
 **Copying:** shift right click and shift left click copy the rows (resource, amount, batch, circuit option) and
@@ -1480,7 +1490,7 @@ capacities.
 ### Planning
 
 `need(key, count)` is a recursive resolution: surplus from earlier crafts of this plan, then
-storage (normal quality plain items of the network, fluids from `fluids.totals(net)`), then a
+storage (plain items of the network in each quality apart, issue #352; fluids from `fluids.totals(net)`), then a
 pattern. The resource asked for is always crafted (stock is not counted for the top level, as in
 AE2). Runs of a recipe are `ceil(count / expected yield)`; probabilities and ranges use the
 expected value; fluid amounts stay fractional (14.4 molten tin per craft is planned as such).
@@ -1607,7 +1617,7 @@ due at a tick of its own (issue #5, `scripts/fork-me-schedule.lua`).
   control behavior while its circuit (or logistic) condition is switched on (a freshly wired lamp reads
   `disabled` until its next circuit update, so the flag alone is not trusted), no network: status only. Otherwise the target is the amount,
   or the resource's signal on red plus green (`get_circuit_network(wire).get_signal`). The stock is
-  the network's `count` (normal quality) or `fluid_count`. Its own job still queued or running:
+  the network's `count` (the key's quality, issue #352) or `fluid_count`. Its own job still queued or running:
   nothing. Stock below target: if an active, not closing job of the network crafts the same key
   (`active_job_for`), nothing; else, if a powered CPU has a free slot (`free_slot`), `M.start` with the
   difference and the maintainer's unit number as the job's `owner`. At most one start per tick (a start
@@ -1695,7 +1705,7 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   surplus in an export side is not taken back. Four fluids at most per interface (one per side).
 * The ME Interface's sides have no circuit connection; the fluid totals reach the circuit network through the ME
   Circuit Interface (issue #38).
-* Autocrafting plans and crafts only normal quality, no items with own data (armor, tools, cells with
+* Autocrafting plans and crafts every quality (issue #352), but no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
 * Network storage (issue #68): no channels, no fluid wagons on the storage bus. The cards are where **Upgrade cards** lists
   them: the import and export bus take speed cards (up to 4, issues #110, #356) and the Group Filter Card (issue #363; no

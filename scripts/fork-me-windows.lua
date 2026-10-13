@@ -142,8 +142,8 @@ M.key_of_elem = key_of_elem
 
 --- Issue #70: the picker (scripts/fork-me-picker.lua) for a key slot button: `act` names the callback of the choice,
 --- `data` (plain data: the block's unit number, the slot's index) comes back with it, `key` is what the slot holds (the
---- picker opens on it), `with_quality` false for a place that takes no quality (buses, the maintainer's target, the
---- circuit interface's filters, the pattern editor's rows)
+--- picker opens on it), `with_quality` false for a place that takes no quality (buses, the circuit interface's filters;
+--- issue #352: the maintainer's target and the pattern editor's rows take one)
 local function key_picker(player, act, data, key, with_quality)
 	picker.open(player, { callback = act, data = data, kinds = { item = true, fluid = true }, preset = picker.preset_of(key),
 		quality = with_quality and true or false })
@@ -716,8 +716,8 @@ local function pattern_sprite(d)
 		if key:sub(1, 6) == "fluid/" then
 			local name = N.fluid_name(key)
 			if prototypes.fluid[name] then return "fluid/" .. name end
-		elseif prototypes.item[key] then
-			return "item/" .. key
+		elseif prototypes.item[(N.parse_key(key))] then
+			return "item/" .. N.parse_key(key)                  -- (issue #352: a key with a quality)
 		end
 	end
 	return "item/" .. patterns.ENCODED
@@ -1176,14 +1176,14 @@ G.on("maint_target", function(event, player, el)
 		return
 	end
 	local r = (M.maintainer_data(entity).rows or {})[row] or {}
-	key_picker(player, "maint_target", { unit = entity.unit_number, row = row }, r.key, false)
+	key_picker(player, "maint_target", { unit = entity.unit_number, row = row }, r.key, true)   -- (issue #352: with its quality)
 end)
 
---- issue #70: the target is an item or a fluid, without a quality
+--- issue #70: the target is an item or a fluid; issue #352: an item with its quality
 picker.on_confirm("maint_target", function(player, data, choice)
 	local entity = window_entity(player)
 	if not (entity and entity.unit_number == data.unit) then return end
-	local key = picker.key_of(choice, false)
+	local key = picker.key_of(choice, true)
 	if key then M.set_maintainer_target(entity, key, data.row) else refused_choice(player) end
 	G.refresh_one(player)
 end)

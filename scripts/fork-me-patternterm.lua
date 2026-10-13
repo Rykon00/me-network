@@ -151,33 +151,39 @@ function M.on_built(entity)
 end
 
 --------------------------------------------------------------------------------
---- the editor (a plain table: mode "crafting" or "processing", the recipe, the input and output rows)
+--- the editor (a plain table: mode "crafting" or "processing", the recipe, its quality (issue #352: nil for normal), the
+--- input and output rows)
 --------------------------------------------------------------------------------
 
 local function new_editor()
-	return { mode = "crafting", recipe = nil, inputs = {}, outputs = {} }
+	return { mode = "crafting", recipe = nil, quality = nil, inputs = {}, outputs = {} }
 end
 M.new_editor = new_editor
 
 --- The pattern the editor describes, or nil and the reason ("no-recipe", "not-researched", "invalid", ...)
 function M.pattern_of(force, ed)
-	if ed.mode == "crafting" then return P.crafting(force, ed.recipe) end
+	if ed.mode == "crafting" then return P.crafting(force, ed.recipe, ed.quality) end
 	local inputs, outputs = {}, {}
 	for i = 1, P.MAX_INPUTS do local r = ed.inputs[i] if r and r.key then inputs[#inputs + 1] = r end end
 	for i = 1, P.MAX_OUTPUTS do local r = ed.outputs[i] if r and r.key then outputs[#outputs + 1] = r end end
 	local recipe = ed.recipe and force.recipes[ed.recipe] and force.recipes[ed.recipe].enabled and ed.recipe or nil
-	return P.processing(inputs, outputs, recipe)
+	return P.processing(inputs, outputs, recipe, recipe and ed.quality or nil)
 end
 
 --- The recipe chooser: in crafting mode the pattern's recipe, in processing mode it fills the rows from the
---- recipe. Returns true, or nil and the reason ("not-researched", "too-many-rows").
-function M.set_editor_recipe(force, ed, recipe)
-	if recipe == nil then ed.recipe = nil return true end
+--- recipe. Issue #352: `quality` (nil: normal), a quality the force has unlocked; `recipe` may also be the chooser's value
+--- { name, quality }. Returns true, or nil and the reason ("not-researched", "quality-locked", "too-many-rows").
+function M.set_editor_recipe(force, ed, recipe, quality)
+	if type(recipe) == "table" then recipe, quality = recipe.name, recipe.quality end
+	if recipe == nil then ed.recipe, ed.quality = nil, nil return true end
 	local r = force.recipes[recipe]
 	if not (r and r.enabled and prototypes.recipe[recipe]) then return nil, "not-researched" end
-	ed.recipe = recipe
+	if type(quality) == "table" then quality = quality.name end
+	quality = quality ~= "normal" and quality or nil
+	if quality and not (P.valid_quality(quality) and force.is_quality_unlocked(quality)) then return nil, "quality-locked" end
+	ed.recipe, ed.quality = recipe, quality
 	if ed.mode == "processing" then
-		local inputs, outputs = P.recipe_rows(recipe)
+		local inputs, outputs = P.recipe_rows(recipe, quality)
 		if #inputs > P.MAX_INPUTS or #outputs > P.MAX_OUTPUTS then return nil, "too-many-rows" end
 		ed.inputs, ed.outputs = inputs, outputs
 	end
@@ -215,7 +221,7 @@ function M.load_pattern(entity, cursor, ed)
 	local raw = stack and P.read(stack)
 	local def = raw and P.normalize(raw)
 	if not def then return nil, "no-pattern-in-hand" end
-	ed.mode, ed.recipe = def.kind, def.recipe
+	ed.mode, ed.recipe, ed.quality = def.kind, def.recipe, def.quality
 	ed.inputs, ed.outputs = {}, {}
 	for i, r in ipairs(def.inputs) do if i <= P.MAX_INPUTS then ed.inputs[i] = { key = r.key, amount = r.amount } end end
 	for i, r in ipairs(def.outputs) do if i <= P.MAX_OUTPUTS then ed.outputs[i] = { key = r.key, amount = r.amount } end end
@@ -412,10 +418,12 @@ local function build_pattern_box(box, player, ed)
 		tags = G.act("pat_mode") }
 	local row = G.row(box)
 	row.add{ type = "label", caption = { ed.mode == "crafting" and "fork-me-gui.patterns-recipe" or "fork-me-gui.patterns-from-recipe" } }
-	row.add{ type = "choose-elem-button", elem_type = "recipe", recipe = ed.recipe, style = "slot_button",
+	--- (issue #352: the recipe with its quality)
+	row.add{ type = "choose-elem-button", elem_type = "recipe-with-quality", style = "slot_button",
+		["recipe-with-quality"] = ed.recipe and { name = ed.recipe, quality = ed.quality or "normal" } or nil,
 		elem_filters = { { filter = "hidden", invert = true } }, tags = G.act("pat_recipe") }
 	if ed.mode == "crafting" then
-		local def = ed.recipe and P.crafting(player.force, ed.recipe)
+		local def = ed.recipe and P.crafting(player.force, ed.recipe, ed.quality)
 		if not def then
 			G.label(box, { "fork-me-gui.patterns-choose-recipe" }, WIDTH)
 			return
@@ -491,7 +499,7 @@ function M.refresh(player, frame)
 	local ed = u.pat or new_editor()
 	u.pat = ed
 	--- the box is rebuilt when the mode, the recipe or a row's item changes (not the amounts: their fields keep the focus)
-	local sig = { ed.mode, tostring(ed.recipe) }
+	local sig = { ed.mode, tostring(ed.recipe), tostring(ed.quality) }
 	for i = 1, P.MAX_INPUTS do sig[#sig + 1] = ed.inputs[i] and ed.inputs[i].key or "-" end
 	for i = 1, P.MAX_OUTPUTS do sig[#sig + 1] = ed.outputs[i] and ed.outputs[i].key or "-" end
 	sig = table.concat(sig, ",")
@@ -544,14 +552,14 @@ G.on("pat_recipe", function(event, player, el)
 	u.pat = u.pat or new_editor()
 	local ok, why = M.set_editor_recipe(player.force, u.pat, el.elem_value)
 	if not ok then
-		el.elem_value = u.pat.recipe
+		el.elem_value = u.pat.recipe and { name = u.pat.recipe, quality = u.pat.quality or "normal" } or nil
 		report(player, why)
 	end
 	u.shown = nil
 	M.refresh(player)
 end)
 
---- issue #70: a click on a row's button opens the picker (items and fluids, no quality: a pattern names plain items), right
+--- issue #70: a click on a row's button opens the picker (items and fluids; issue #352: items with their quality), right
 --- click empties the row
 G.on("pat_row", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
@@ -565,14 +573,14 @@ G.on("pat_row", function(event, player, el)
 		return
 	end
 	picker.open(player, { callback = "pat_row", data = { which = which, index = index }, kinds = { item = true, fluid = true },
-		preset = picker.preset_of(row and row.key), quality = false })
+		preset = picker.preset_of(row and row.key), quality = true })
 end)
 
 --- (a key a pattern cannot name, an item with tags, empties the row, with the message, as before)
 picker.on_confirm("pat_row", function(player, data, choice)
 	local u = ui_of(player)
 	if not (u and u.pat) then return end
-	local key = picker.key_of(choice, false)
+	local key = picker.key_of(choice, true)
 	if key and not P.valid_key(key) then key = nil end
 	if not key then report(player, "not-a-pattern-row") end
 	M.set_editor_row(u.pat, data.which, data.index, key or false)
@@ -628,8 +636,8 @@ end)
 remote.add_interface("gregtorio-me-pattern-terminal", {
 	new_editor = function() return new_editor() end,
 	pattern_of = function(force, ed) return M.pattern_of(force, ed) end,
-	set_editor_recipe = function(force, ed, recipe)
-		local ok, why = M.set_editor_recipe(force, ed, recipe)
+	set_editor_recipe = function(force, ed, recipe, quality)
+		local ok, why = M.set_editor_recipe(force, ed, recipe, quality)
 		return ok, why, ed
 	end,
 	set_editor_row = function(ed, which, index, key, amount) local ok = M.set_editor_row(ed, which, index, key, amount) return ok, ed end,

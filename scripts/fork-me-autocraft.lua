@@ -68,7 +68,7 @@ local MAX_DEPTH = 40
 local MAX_AMOUNT = 100000       -- items per job
 local MAX_FLUID_AMOUNT = 10000000 -- fluid units per job
 M.MAX_AMOUNT, M.MAX_FLUID_AMOUNT = MAX_AMOUNT, MAX_FLUID_AMOUNT
-local QUALITY = "normal"        -- only normal quality items are planned and crafted
+--- (issue #352: every quality is planned and crafted; an item key carries its quality, "name@rare", normal the plain name)
 local FLUID_MARGIN = 0.01       -- extra fluid reserved per job and fluid (fixed point rounding)
 local FLUID_EPS = 1e-6
 local FIXED = 16777216          -- fluid amounts are fixed point with 24 fractional bits
@@ -114,7 +114,8 @@ local function cpu_names()
 end
 
 --------------------------------------------------------------------------------
---- resource keys: item name, or the storage key of a fluid ("fluid/<name>", "fluid/<name>@<degrees>": issue #159)
+--- resource keys: item name ("name@quality" for another quality than normal: issue #352), or the storage key of a fluid
+--- ("fluid/<name>", "fluid/<name>@<degrees>": issue #159)
 --------------------------------------------------------------------------------
 
 local FLUID_PREFIX = "fluid/"
@@ -132,7 +133,7 @@ local function key_of(ing)
 		end
 		return N.fluid_key(ing.name, t)
 	end
-	return ing.name
+	return N.key_of(ing.name, ing.quality or "normal")   -- (issue #352: a pattern's items carry its quality)
 end
 
 --- Issue #159: may a fluid ingredient take other temperatures than its key's? true and the range (nil: open) for a fluid
@@ -169,7 +170,8 @@ end
 --- the prototype behind a key (LuaItemPrototype or LuaFluidPrototype), nil if none
 local function proto_of(key)
 	if is_fluid(key) then return prototypes.fluid[fluid_name(key)] end
-	return prototypes.item[key]
+	local name, q = N.parse_key(key)
+	return prototypes.quality[q] and prototypes.item[name] or nil
 end
 
 M.key_of, M.is_fluid, M.fluid_name = key_of, is_fluid, fluid_name
@@ -655,7 +657,7 @@ local function target_for(v, def)
 	if facts.switch and etype == "assembling-machine" then
 		local why = switch_problem(v, def, facts, true)
 		if why then return nil, why end
-		return { entity = v.entity, unit = v.unit, mode = "push", recipe = def.recipe }
+		return { entity = v.entity, unit = v.unit, mode = "push", recipe = def.recipe, quality = def.quality }
 	end
 	if def.kind == "crafting" then
 		if etype == "furnace" then return nil, "furnace" end
@@ -1075,12 +1077,12 @@ local function plain_item(name)
 end
 
 --- What the plan finds of `key` in storage (issue #50: read when the plan first asks, not the whole stock per plan): the
---- plain items (not with data, no quality) and the fluids of a usable network, as stock_of of 0.3.0 had them.
+--- plain items (not with data; issue #352: in every quality) and the fluids of a usable network, as stock_of of 0.3.0 had them.
 local storable = {}                               -- key -> true when the plan may take it from storage (per load)
 local function base_count(net, key)
 	local ok = storable[key]
 	if ok == nil then
-		ok = is_fluid(key) or (not key:find("[@#]") and plain_item(key))
+		ok = is_fluid(key) or (not key:find("#", 1, true) and plain_item((N.parse_key(key))))
 		storable[key] = ok
 	end
 	return ok and net.items[key] or 0
@@ -1887,8 +1889,8 @@ end
 
 --- what the pool holds for an ingredient (a fluid without a temperature: every temperature in its range)
 local function ing_pool(job, ing)
-	if ing.type ~= "fluid" then return job.pool[ing.name] or 0 end
 	local key = key_of(ing)
+	if ing.type ~= "fluid" then return job.pool[key] or 0 end
 	local total = job.pool[key] or 0
 	local flex, lo, hi = ing_flex(ing)
 	if flex then
@@ -1907,7 +1909,8 @@ local function flush_pool(job, net)
 			if is_fluid(key) then
 				inserted = store_fluid(net, key, count)
 			else
-				inserted = store_item(net, key, QUALITY, count)
+				local name, q = N.parse_key(key)
+				inserted = store_item(net, name, q, count)
 			end
 		end
 		if inserted >= count - FLUID_EPS then job.pool[key] = nil else job.pool[key] = count - inserted end
@@ -1926,16 +1929,7 @@ local function collect_output(job, net, machine, map, step)
 	if out then
 		for _, c in pairs(N.bound(out).get_contents()) do
 			local removed = out.remove{ name = c.name, count = c.count, quality = c.quality }
-			if removed > 0 then
-				if (c.quality or QUALITY) == QUALITY then
-					got(c.name, removed)
-				else
-					local inserted = net and store_item(net, c.name, c.quality, removed) or 0
-					if inserted < removed then      -- no room: put it back, the machine keeps it
-						out.insert{ name = c.name, count = removed - inserted, quality = c.quality }
-					end
-				end
-			end
+			if removed > 0 then got(N.key_of(c.name, c.quality), removed) end   -- (issue #352: every quality is a key)
 		end
 	end
 	if map and #map.outputs > 0 then
@@ -1958,12 +1952,13 @@ local function take_back_input(job, machine, ingredients, map)
 	local inp = input_inventory(machine)
 	if inp then
 		for _, ing in pairs(ingredients) do
-			if ing.type == "item" and not back[ing.name] then
-				QI.name, QI.quality, QI.count = ing.name, QUALITY, nil
+			local key = ing.type == "item" and key_of(ing)
+			if key and not back[key] then
+				QI.name, QI.quality, QI.count = ing.name, ing.quality or "normal", nil
 				local held = N.bound(inp).get_item_count(QI)
 				QI.count = held
 				local removed = held > 0 and N.bound(inp).remove(QI) or 0
-				if removed > 0 then pool_add(job, ing.name, removed) back[ing.name] = removed end
+				if removed > 0 then pool_add(job, key, removed) back[key] = removed end
 			end
 		end
 	end
@@ -2084,7 +2079,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 			if g.fluid then
 				machine.fluidbox[g.index] = nil
 			elseif g.got > 0 then
-				inp.remove{ name = g.name, count = g.got, quality = QUALITY }
+				inp.remove{ name = g.name, count = g.got, quality = g.quality }
 			end
 			pool_add(job, g.key, g.got)
 		end
@@ -2092,9 +2087,10 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	for _, ing in pairs(ingredients) do
 		if ing.type == "item" then
 			local count = ing.amount * batch
-			local inserted = inp.insert{ name = ing.name, count = count, quality = QUALITY }
-			pool_add(job, ing.name, -inserted)
-			given[#given + 1] = { key = ing.name, name = ing.name, got = inserted }
+			local key, q = key_of(ing), ing.quality or "normal"
+			local inserted = inp.insert{ name = ing.name, count = count, quality = q }
+			pool_add(job, key, -inserted)
+			given[#given + 1] = { key = key, name = ing.name, quality = q, got = inserted }
 			if inserted < count then undo() return false end
 		end
 	end
@@ -2137,7 +2133,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	end
 	step.issued = step.issued + batch
 	local lease = { machine = machine, unit = machine.unit_number, step = step_index, pid = step.pid, kind = step.kind,
-		recipe = step.recipe, runs = batch, fluid = map }
+		recipe = step.recipe, quality = step.quality, runs = batch, fluid = map }
 	if step.kind == "crafting" then
 		lease.finished0 = machine.products_finished
 	else
@@ -2161,19 +2157,21 @@ local function push_chest(s, job, step_index, chest, batch)
 	if not inv then return false end
 	local put = {}
 	local function undo()
-		for name, n in pairs(put) do
-			inv.remove{ name = name, count = n, quality = QUALITY }
-			pool_add(job, name, n)
+		for key, n in pairs(put) do
+			local name, q = N.parse_key(key)
+			inv.remove{ name = name, count = n, quality = q }
+			pool_add(job, key, n)
 		end
 	end
 	for _, ing in pairs(step_ingredients(step)) do
 		if ing.type ~= "item" then undo() return false end
 		local count = ing.amount * batch
-		if (job.pool[ing.name] or 0) < count then undo() return false end
-		local n = inv.insert{ name = ing.name, count = count, quality = QUALITY }
+		local key = key_of(ing)
+		if (job.pool[key] or 0) < count then undo() return false end
+		local n = inv.insert{ name = ing.name, count = count, quality = ing.quality or "normal" }
 		if n > 0 then
-			pool_add(job, ing.name, -n)
-			put[ing.name] = (put[ing.name] or 0) + n
+			pool_add(job, key, -n)
+			put[key] = (put[key] or 0) + n
 		end
 		if n < count then undo() return false end
 	end
@@ -2194,14 +2192,14 @@ end
 
 --- Switch an idle machine to `recipe` (crafting patterns). What is left in it goes into the network first (items
 --- of its input and output, its fluid boxes); when the network cannot take it all, the machine is not switched
---- (it is tried again later). Returns true when the machine has the recipe now.
-local function switch_recipe(net, machine, recipe)
+--- (it is tried again later). Returns true when the machine has the recipe now (issue #352: in `quality`, nil for normal).
+local function switch_recipe(net, machine, recipe, quality)
 	if machine.crafting_progress > 0 then return false end
 	local inp, out = input_inventory(machine), output_inventory(machine)
 	local items = {}
 	for _, inv in pairs({ inp, out }) do
 		if inv then
-			for _, c in pairs(inv.get_contents()) do items[#items + 1] = { inv = inv, name = c.name, quality = c.quality or QUALITY, count = c.count } end
+			for _, c in pairs(inv.get_contents()) do items[#items + 1] = { inv = inv, name = c.name, quality = c.quality or "normal", count = c.count } end
 		end
 	end
 	local fb = machine.fluidbox
@@ -2228,14 +2226,19 @@ local function switch_recipe(net, machine, recipe)
 		N.insert_fluid(net, f.name, f.amount)
 		fb[f.index] = nil
 	end
-	local ok, returned = pcall(machine.set_recipe, recipe)
+	local ok, returned = pcall(machine.set_recipe, recipe, quality or "normal")
 	for _, it in pairs(ok and returned or {}) do              -- nothing should be left: never lose it anyway
-		local stored = N.insert(net, it.name, it.quality or QUALITY, it.count)
+		local stored = N.insert(net, it.name, it.quality or "normal", it.count)
 		if stored < it.count then spill(machine, { name = it.name, quality = it.quality, count = it.count - stored }) end
 	end
 	N.no_arrival = false
-	local now = machine.get_recipe()
-	return ok and now ~= nil and now.name == recipe
+	return ok and M.has_recipe(machine, recipe, quality)
+end
+
+--- issue #352: does the machine have `recipe` in `quality` (nil: normal)?
+function M.has_recipe(machine, recipe, quality)
+	local r, q = N.bound(machine).get_recipe()
+	return r ~= nil and r.name == recipe and (q and q.name or "normal") == (quality or "normal")
 end
 
 --- A machine for a crafting step: one that has the recipe and is idle, else an idle one that is switched to it.
@@ -2250,8 +2253,7 @@ local function find_crafter(s, net, job, step, targets)
 	for _, t in pairs(targets) do
 		local e = t.entity
 		if t.mode == "craft" and not busy[t.unit] and e.valid and not e.disabled_by_script and not rejected(job, t.unit, step.pid) then
-			local current = N.bound(e).get_recipe()
-			if current ~= nil and current.name == step.recipe then
+			if M.has_recipe(e, step.recipe, step.quality) then
 				local map, why = fluid_map(e, ingredients, products)
 				if not map then reject(job, t.unit, step.pid) job.problem = why
 				elseif machine_idle(e, ingredients, map) then return e, map end
@@ -2264,7 +2266,7 @@ local function find_crafter(s, net, job, step, targets)
 	if not others then return nil end
 	for _, t in ipairs(others) do
 		local e = t.entity
-		if e.crafting_progress == 0 and switch_recipe(net, e, step.recipe) then
+		if e.crafting_progress == 0 and switch_recipe(net, e, step.recipe, step.quality) then
 			local map, why = fluid_map(e, ingredients, products)
 			if map then return e, map end
 			reject(job, t.unit, step.pid)
@@ -2292,8 +2294,7 @@ local function find_pusher(s, net, job, step, targets)
 				if open then return e, "chest", EMPTY_MAP, t end
 				blocked = blocked or why
 			elseif t.mode == "push" and not e.disabled_by_script then
-				local current = t.recipe and N.bound(e).get_recipe()
-				if t.recipe and not (current ~= nil and current.name == t.recipe) then
+				if t.recipe and not M.has_recipe(e, t.recipe, t.quality) then
 					others = others or {}
 					others[#others + 1] = t
 				else
@@ -2307,7 +2308,7 @@ local function find_pusher(s, net, job, step, targets)
 	if not (others and net) then return nil, nil, nil, blocked end
 	for _, t in ipairs(others) do
 		local e = t.entity
-		if e.crafting_progress == 0 and switch_recipe(net, e, t.recipe) then
+		if e.crafting_progress == 0 and switch_recipe(net, e, t.recipe, t.quality) then
 			local map, why = fluid_map(e, ingredients, products, true)
 			if map then return e, "push", map end
 			reject(job, t.unit, step.pid)
@@ -2426,8 +2427,7 @@ local function job_step(s, job, work)
 				end
 			else
 				local step = job.steps[real.step]
-				local current = N.bound(m).get_recipe()
-				local recipe_changed = real.kind == "crafting" and not (current and current.name == real.recipe)
+				local recipe_changed = real.kind == "crafting" and not M.has_recipe(m, real.recipe, real.quality)
 				if recipe_changed and not job.closing then
 					take_back_input(job, m, step_ingredients(step), real.fluid)
 					collect_output(job, net, m, real.fluid)
@@ -2565,7 +2565,7 @@ local function job_step(s, job, work)
 						else
 							local short = ing.amount - (job.pool[key] or 0)
 							if short > 0 then
-								local got = N.extract(net, ing.name, QUALITY, short)
+								local got = N.extract(net, ing.name, ing.quality or "normal", short)
 								if got > 0 then pool_add(job, key, got) job.idle = 0 end
 							end
 						end
@@ -2740,7 +2740,10 @@ function M.describe(key)
 		return { key = key, name = fluid_name(key), fluid = true, sprite = "fluid/" .. fluid_name(key), localised_name = fluids.key_name(key),
 			temperature = deg }
 	end
-	return { key = key, name = key, fluid = false, sprite = "item/" .. key, localised_name = proto.localised_name }
+	local name, q = N.parse_key(key)                           -- (issue #352: with its quality)
+	local qp = q ~= "normal" and prototypes.quality[q] or nil
+	return { key = key, name = name, quality = q, fluid = false, sprite = "item/" .. name,
+		localised_name = qp and { "", proto.localised_name, " (", qp.localised_name, ")" } or proto.localised_name }
 end
 
 --- Crafting CPUs of the network: CPUs, free job slots, powered CPUs, job slots (a multiblock CPU has one; it is
@@ -2815,7 +2818,8 @@ end
 
 --- the job step of a planned step
 local function job_step_of(st)
-	local step = { pid = st.pid, def = st.def, kind = st.def.kind, recipe = st.def.recipe, runs = st.runs, issued = 0, done = 0 }
+	local step = { pid = st.pid, def = st.def, kind = st.def.kind, recipe = st.def.recipe, quality = st.def.quality, runs = st.runs,
+		issued = 0, done = 0 }
 	if step.kind == "processing" then
 		step.received = {}
 		step.keys = st.keys and copy_map(st.keys) or nil       -- issue #171: the outputs the job waits for
@@ -2850,7 +2854,10 @@ function M.start(entity, key, amount, owner, want)
 	local pool, taken = {}, {}
 	local function undo()
 		for _, k in pairs(taken) do
-			if is_fluid(k) then store_fluid(net, k, pool[k]) else store_item(net, k, QUALITY, pool[k]) end
+			if is_fluid(k) then store_fluid(net, k, pool[k]) else
+				local name, q = N.parse_key(k)
+				store_item(net, name, q, pool[k])
+			end
 		end
 	end
 	for k, count in pairs(plan.reserve) do
@@ -2858,7 +2865,8 @@ function M.start(entity, key, amount, owner, want)
 		if is_fluid(k) then
 			removed = fluids.remove_key(net, k, count + FLUID_MARGIN)   -- a little extra covers fixed point rounding
 		else
-			removed = N.extract(net, k, QUALITY, count)
+			local name, q = N.parse_key(k)
+			removed = N.extract(net, name, q, count)
 		end
 		if removed > 0 then pool[k] = removed taken[#taken + 1] = k end
 		if removed + FLUID_EPS < count then                     -- storage changed under us: undo
@@ -3565,7 +3573,7 @@ local function draw_monitors(g)
 	s.monitors = s.monitors or {}
 	local live = s.groups[g.id] == g and g.n > 0
 	local job = live and g.status == "ok" and g.job and s.jobs[g.job]
-	local sprite = job and (is_fluid(job.item) and ("fluid/" .. fluid_name(job.item)) or ("item/" .. job.item))
+	local sprite = job and (is_fluid(job.item) and ("fluid/" .. fluid_name(job.item)) or ("item/" .. (N.parse_key(job.item))))
 	if sprite and not helpers.is_valid_sprite_path(sprite) then sprite = nil end
 	for unit in pairs(g.monitors) do
 		local b = s.cblocks[unit]
