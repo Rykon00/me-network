@@ -144,6 +144,45 @@ local function me_report(key, name, problems, note)
 	log("DEVCHECK-RUNTIME-" .. key .. " " .. (#problems == 0 and "ok" or "failed") .. (note and (" (" .. note .. ")") or ""))
 end
 
+--- A real blueprint round trip, as a player and a robot make it: the entities in `area` into a blueprint
+--- (create_blueprint), tagged by the mod's handler of on_player_setup_blueprint (tag_blueprint), built as ghosts at `at`
+--- (build_blueprint) and revived with raise_revive (what a robot's build raises). `inspect(bp, mapping)`, if given,
+--- reads the blueprint before it is built. Returns the revived entities by name (the last one of a name) and the
+--- number of ghosts.
+local function blueprint_round_trip(s, area, at, inspect)
+	local inv = game.create_inventory(1)
+	inv.insert{ name = "blueprint" }
+	local bp = inv[1]
+	local mapping = bp.create_blueprint{ surface = s, force = "player", area = area } or {}
+	remote.call("gregtorio-me-autocraft", "tag_blueprint", bp, mapping)
+	if inspect then inspect(bp, mapping) end
+	local ghosts = bp.build_blueprint{ surface = s, force = "player", position = at } or {}
+	local built = {}
+	for _, g in pairs(ghosts) do
+		if g.valid and g.name == "entity-ghost" then
+			local name = g.ghost_name
+			local _, e = g.revive{ raise_revive = true }
+			if e then built[name] = e end
+		end
+	end
+	inv.destroy()
+	return built, #ghosts
+end
+
+--- issue #378: a one-tile entity copied through a real blueprint (blueprint_round_trip over its tile), built `dx`, `dy`
+--- tiles away (on free ground). Returns the revived copy (or nil and the reason) and the blueprint tags of the entity.
+local function blueprint_copy(entity, dx, dy)
+	if not (entity and entity.valid) then return nil, "nothing to copy" end
+	local p, name, tags = entity.position, entity.name, nil
+	local built, ghosts = blueprint_round_trip(entity.surface, { { p.x - 0.4, p.y - 0.4 }, { p.x + 0.4, p.y + 0.4 } },
+		{ p.x + dx, p.y + dy }, function(bp, mapping)
+			for index, e in pairs(mapping) do if e.valid and e.name == name then tags = bp.get_blueprint_entity_tags(index) end end
+		end)
+	local copy = built[name]
+	if not copy then return nil, name .. ": " .. ghosts .. " ghost(s), no copy revived", tags end
+	return copy, nil, tags
+end
+
 --- issue #80: a provider gets encoded patterns the way a player gives them: a blank pattern (made by script) is
 --- encoded onto the two slots of a stand-in for a pattern terminal (PT encode_def) and put into the provider's next free slot. `defs`: patterns as data
 --- ({ kind = "crafting", recipe } or { kind = "processing", inputs, outputs }). Returns the number put in.
@@ -904,22 +943,26 @@ lock346 = require("lock")({ me_place = me_place, cable_row = cable_row, power = 
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #351: the level maintainer's rows and "craft what the circuit asks" (maintrows.lua)
 maintrows351 = require("maintrows")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
-	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end,
+	blueprint_copy = blueprint_copy })
 --- me-network issue #350: the choice of the crafting CPU and the CPU modes (cpumode.lua)
 cpumode350 = require("cpumode")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #353: the ME Storage, Conversion and Throughput Monitor (monitors.lua)
 monitors353 = require("monitors")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
-	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end,
+	blueprint_copy = blueprint_copy })
 --- me-network issue #354: the void cells (voidcell.lua)
 voidcell354 = require("voidcell")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
-	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end,
+	blueprint_copy = blueprint_copy })
 --- me-network issue #336: the ME Interface Terminal (ifaceterm.lua)
 ifaceterm336 = require("ifaceterm")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #355: the toggle buses and the level emitter (togglebus.lua)
 togglebus355 = require("togglebus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
-	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end,
+	blueprint_copy = blueprint_copy })
 --- me-network issue #352: autocrafting in every quality (qualitycraft.lua)
 qualitycraft352 = require("qualitycraft")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -4084,39 +4127,26 @@ function settings_test()
 	end
 	check("original", m, ci, fi)
 
-	--- blueprint: the settings become entity tags (the handler of on_player_setup_blueprint)
-	local inv = game.create_inventory(1)
-	inv.insert{ name = "blueprint" }
-	local bp = inv[1]
-	local mapping = bp.create_blueprint{ surface = s, force = "player",
-		area = { { X38 + 2, SC_Y + 10 }, { X38 + 5, SC_Y + 11 } } }
-	remote.call(AC38, "tag_blueprint", bp, mapping)
+	--- blueprint: the settings become entity tags (the handler of on_player_setup_blueprint); built from the blueprint
+	--- (ghosts with the tags) and revived: the new entities have the settings
 	local tagged = {}
-	for index, e in pairs(mapping or {}) do
-		local tag = ({ ["me-level-maintainer"] = "fork_me_maintainer", ["me-circuit-interface"] = "fork_me_circuit",
-			["me-network-interface"] = "fork_me_interface" })[e.name]
-		if tag then tagged[e.name] = bp.get_blueprint_entity_tag(index, tag) end
-	end
+	local built = blueprint_round_trip(s, { { X38 + 2, SC_Y + 10 }, { X38 + 5, SC_Y + 11 } }, { X38 + 10, SC_Y + 14 },
+		function(bp, mapping)
+			for index, e in pairs(mapping) do
+				local tag = ({ ["me-level-maintainer"] = "fork_me_maintainer", ["me-circuit-interface"] = "fork_me_circuit",
+					["me-network-interface"] = "fork_me_interface" })[e.name]
+				if tag then tagged[e.name] = bp.get_blueprint_entity_tag(index, tag) end
+			end
+		end)
 	local tm, tc, tf = tagged["me-level-maintainer"], tagged["me-circuit-interface"], tagged["me-network-interface"]
 	expect(tm and tm.key == M_SET.key and tm.amount == M_SET.amount and tm.circuit == M_SET.circuit, "maintainer tag " .. serpent.line(tm))
 	expect(tc and serpent.line(tc.filters) == serpent.line(C_SET), "circuit interface tag " .. serpent.line(tc))
 	expect(tf and tf.config and #tf.config == 2 and tf.sides and #tf.sides == 2, "ME Interface tag " .. serpent.line(tf))
-	--- built from the blueprint (ghosts with the tags) and revived: the new entities have the settings
-	local ghosts = bp.build_blueprint{ surface = s, force = "player", position = { X38 + 10, SC_Y + 14 } }
-	local built = {}
-	for _, g in pairs(ghosts or {}) do
-		if g.valid then
-			local name = g.ghost_name
-			local _, e = g.revive{ raise_revive = true }
-			if e then built[name] = e end
-		end
-	end
 	built["me-cable"] = nil                         -- the cables that connected the originals are in the blueprint too
 	expect(table_size(built) == 3, "revived from the blueprint: " .. table_size(built) .. " of 3")
 	local cfails = {}
 	connect38(SC_Y, { built["me-level-maintainer"], built["me-circuit-interface"], built["me-network-interface"] }, cfails)
 	check("blueprint", built["me-level-maintainer"], built["me-circuit-interface"], built["me-network-interface"])
-	inv.destroy()
 
 	--- settings paste onto plain entities
 	local pm = s.create_entity{ name = "me-level-maintainer", position = { X38 + 2.5, SC_Y + 12.5 }, force = "player", raise_built = true }

@@ -5,7 +5,9 @@
 ---   * the rows cleared and "craft what the circuit asks" on, a constant combinator with pipe = 40 on its red wire: a job
 ---     of 40 pipes, listed in the rows of the signals;
 ---   * a settings paste and blueprint tags carry the rows, the batch and the option; a tag of a save from before (no rows)
----     sets row 1.
+---     sets row 1;
+---   * issue #378: five rows (rows 2 to 5 with their batches) and "craft what the circuit asks" through a real blueprint
+---     round trip of the maintainer of no network.
 --- Loaded by control.lua: require("maintrows")(H) returns { setup, tick, running }.
 
 local AC, PT, CI = "gregtorio-me-autocraft", "gregtorio-me-pattern-terminal", "gregtorio-me-circuit"
@@ -39,7 +41,7 @@ return function(H)
 		s.done = true
 		for _, id in pairs(s.jobs or {}) do pcall(remote.call, AC, "cancel", id) end
 		me_report("MAINTROWS", "ME level maintainer rows", s.problems,
-			"two rows with a batch, craft what the circuit asks, paste and blueprint tags")
+			"two rows with a batch, craft what the circuit asks, paste and blueprint tags, five rows through a blueprint")
 	end
 
 	local function encode(p, out)
@@ -99,6 +101,23 @@ return function(H)
 				{ key = "iron-stick", amount = 2, batch = 3 } }, circuit_all = true } })
 			l = remote.call(CI, "get_maintainer", s.lone)
 			expect(l.rows[2] and l.rows[2].batch == 3 and l.circuit_all, "blueprint tags with rows: " .. serpent.line(l.rows))
+			--- issue #378: five rows, their batches and the option through a real blueprint round trip
+			local set = { { "pipe", 10, false, 0 }, { "iron-stick", 20, false, 5 }, { "iron-plate", 30, false, 0 },
+				{ "copper-plate", 40, true, 0 }, { "stone", 50, false, 7 } }
+			for i, r in ipairs(set) do remote.call(CI, "set_maintainer", s.lone, r[1], r[2], r[3], i, r[4]) end
+			remote.call(CI, "set_circuit_all", s.lone, true)
+			local copy, why = H.blueprint_copy(s.lone, 12, 0)
+			local c = copy and remote.call(CI, "get_maintainer", copy) or {}
+			local got, same = {}, copy ~= nil and c.circuit_all == true
+			for i, w in ipairs(set) do
+				local row = (c.rows or {})[i] or {}
+				got[i] = { row.key, row.amount, row.circuit, row.batch }
+				if not (row.key == w[1] and row.amount == w[2] and row.circuit == w[3] and (row.batch or 0) == w[4]) then same = false end
+			end
+			expect(same, "a blueprint round trip with five rows: " .. serpent.line(got) .. ", circuit_all " .. tostring(c.circuit_all)
+				.. (why and (" (" .. why .. ")") or ""))
+			remote.call(CI, "set_circuit_all", s.lone, false)
+			if copy then remote.call(CI, "set_circuit_all", copy, false) end
 			--- craft what the circuit asks: the rows cleared, a combinator with pipe = 40
 			remote.call(CI, "set_circuit_all", s.m, false)
 			for _, id in pairs(s.jobs) do remote.call(AC, "cancel", id) end
