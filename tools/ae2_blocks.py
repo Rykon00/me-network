@@ -15,8 +15,8 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
   AE2's pixels at the size of the others (a 2 x 2 cluster of AE2 controllers, none of them a column or inside block);
 * an icon (64 x 64): an isometric cube, the face in front, the face's frame (its inside in the frame's colour) on the
   top and the right side, shaded;
-* a panel (issue #281, the ME Terminal and the ME Pattern Terminal): AE2 draws a terminal as a 12 x 12 plate on the
-  cable (AbstractPartDisplay: bounds 2..14), so the plate of its 16 px front x3 (36 px) with depth strips of 6 px (the
+* a panel (issue #281, the ME Terminal and the ME Pattern Terminal; issue #343, the ME Interface Terminal): AE2 draws
+  a terminal as a 12 x 12 plate on the cable (AbstractPartDisplay: bounds 2..14), so the plate of its 16 px front x3 (36 px) with depth strips of 6 px (the
   plate is two AE2 pixels thick), centred in the 64 px tile; dark (the frame, its inside on the frame's darkest colour) or
   lit (AE2's three screen layers over it, tinted in the Fluix colours of AEColor.Transparent: Bright with the white
   variant, Dark with the medium one, Colored with the black one, each imported as its own file and added to the row with
@@ -86,6 +86,8 @@ SCREEN_TINTS = ((0xD7, 0xBB, 0xEC), (0x89, 0x5C, 0xA8), (0x1B, 0x23, 0x44))
 SCREENS = {
     "terminal": tuple(f"blocks/lights/me-terminal-screen-{n}.png" for n in ("bright", "dark", "colored")),
     "pattern-terminal": tuple(f"blocks/lights/me-pattern-terminal-screen-{n}.png" for n in ("bright", "dark", "colored")),
+    # issue #343: the ME Interface Terminal (PartInterfaceTerm_*)
+    "interface-terminal": tuple(f"blocks/lights/me-interface-terminal-screen-{n}.png" for n in ("bright", "dark", "colored")),
 }
 PLATE = (2, 2, 14, 14)      # the plate of a part's 16 px front
 PANEL_DEPTH = 6
@@ -125,6 +127,9 @@ MAKE = {
     "blocks/me-pattern-terminal.png": ("panel-sheet", "pattern-terminal"),
     "icons/blocks/me-terminal.png": ("panel-icon", "terminal"),
     "icons/blocks/me-pattern-terminal.png": ("panel-icon", "pattern-terminal"),
+    # issue #343: the interface terminal's two variations and icon, as the pattern terminal's
+    "blocks/me-interface-terminal.png": ("panel-sheet", "interface-terminal"),
+    "icons/blocks/me-interface-terminal.png": ("panel-icon", "interface-terminal"),
     # issue #283: the cable (me-cable.png's 16 variations) and its icon (the crossing)
     "blocks/me-cable.png": ("cable-sheet",),
     "icons/blocks/me-cable.png": ("cable-icon",),

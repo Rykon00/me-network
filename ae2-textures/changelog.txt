@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.1
+  Graphics:
+    - The ME Interface Terminal (ME Network issues #336, #343): AE2-Unofficial's interface terminal panel like the other terminals, dark while its network does not work and with AE2's screen in its Fluix colours while it does; its icon is the lit panel.
+---------------------------------------------------------------------------------------------------
 Version: 0.2.0
 Date: 2026-10-11
   Info:
