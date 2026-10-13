@@ -1657,6 +1657,7 @@ local function remove_block(s, unit)
 		g.blocks = sizes[1].p                              -- the largest part keeps the group (and its job, if it fits)
 		for i = 2, #sizes do
 			local part = new_group(s, g.surface)
+			part.mode = g.mode                              -- (issue #350: the parts keep the CPU's mode)
 			part.blocks = sizes[i].p
 			for u in pairs(part.blocks) do s.cblocks[u].group = part.id end
 			recount_group(s, part)
@@ -1709,27 +1710,46 @@ end
 --- The CPU a job of `bytes` gets now in `net`: a free multiblock CPU that is big enough (issue #145: the legacy CPUs are
 --- gone). Returns the group (and its kind), or nil and why: "no-cpu" (none at all), "cpu-too-small" (no CPU of the
 --- network is big enough; also the biggest one's bytes), "no-free-cpu".
-local function pick_cpu(s, net, bytes)
-	local biggest, any = 0, false
+--- Issue #350: `owner` (a level maintainer's unit, nil for a player) must be allowed by the CPU's mode (M.cpu_allows);
+--- `want` is the id of the CPU the player chose in the terminal (nil: the first that fits); "cpu-not-allowed": the CPUs
+--- that are free and big enough take only the other kind of requests, "cpu-gone": the chosen CPU is no CPU any more.
+local function pick_cpu(s, net, bytes, owner, want)
+	local biggest, any, barred = 0, false, false
 	for _, g in ipairs(groups_in(s, net)) do
-		any = true
-		if g.bytes > biggest then biggest = g.bytes end
-		if g.bytes >= bytes and not g.job and group_network(g) then return g, "group" end
+		if not want or g.id == want then
+			any = true
+			if g.bytes > biggest then biggest = g.bytes end
+			if g.bytes >= bytes and not g.job and group_network(g) then
+				if M.cpu_allows(g, owner) then return g, "group" end
+				barred = true
+			end
+		end
 	end
-	if not any then return nil, "no-cpu" end
+	if not any then return nil, want and "cpu-gone" or "no-cpu" end
 	if biggest < bytes then return nil, "cpu-too-small", biggest end
+	if barred then return nil, "cpu-not-allowed", biggest end
 	return nil, "no-free-cpu", biggest
 end
 
+--- Issue #350, AE2-Unofficial's CraftingAllow (appeng/api/config/CraftingAllow.java; CraftingGridCache.java:654-707):
+--- a CPU's mode, nil (every request), "player" (only players' requests) or "automation" (only those of level maintainers
+--- and the circuit interface: a job with an owner). A setting of the whole CPU, kept in its group (storage).
+function M.cpu_allows(g, owner)
+	if g.mode == "player" then return owner == nil end
+	if g.mode == "automation" then return owner ~= nil end
+	return true
+end
+
 --- The CPUs of a network for the plan preview (issue #6), in the order a job takes them: { kind = "group", id, bytes,
---- coprocessors, speed, width, height, free, fits } (`bytes`: the job's; fits = big enough, free = can take a job now)
-function M.cpu_list(net, bytes)
+--- coprocessors, speed, width, height, free, fits, mode, allowed } (`bytes`: the job's; fits = big enough, free = can take
+--- a job now, allowed = its mode takes a request of `owner`, issue #350; nil: a player's)
+function M.cpu_list(net, bytes, owner)
 	local s = state()
 	local out = {}
 	for _, g in ipairs(groups_in(s, net)) do
 		out[#out + 1] = { kind = "group", id = g.id, bytes = g.bytes, coprocessors = g.coprocessors, speed = group_speed(g),
 			width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1, free = not g.job and group_network(g) ~= nil,
-			fits = g.bytes >= (bytes or 0) }
+			fits = g.bytes >= (bytes or 0), mode = g.mode, allowed = M.cpu_allows(g, owner) }
 	end
 	return out
 end
@@ -2035,7 +2055,7 @@ local function assign_cpus(s)
 				local bytes = job_bytes(job)
 				local given = false
 				for _, g in ipairs(groups_in(s, net)) do
-					if not g.job and g.bytes >= bytes then
+					if not g.job and g.bytes >= bytes and M.cpu_allows(g, job.owner) then
 						give_group(g, job)
 						given = true
 						break
@@ -2806,8 +2826,9 @@ end
 --- Start a job for `amount` of `key` in the network of `entity` (a network member such as the
 --- terminal). `owner`: unit number of the level maintainer that asked for it (nil for a player).
 --- Returns the job id, or nil, a reason key and the plan. Issue #6: the job needs a CPU now (a free multiblock CPU
---- with plan.bytes): else "cpu-too-small" (plan.biggest: the biggest CPU's bytes) or "no-free-cpu".
-function M.start(entity, key, amount, owner)
+--- with plan.bytes): else "cpu-too-small" (plan.biggest: the biggest CPU's bytes) or "no-free-cpu". Issue #350: `want`,
+--- the CPU the player chose (nil: the first that fits and takes the request), and the CPU's mode (pick_cpu).
+function M.start(entity, key, amount, owner, want)
 	local s = state()
 	local net = network_of(entity)
 	if not net then return nil, "no-network" end
@@ -2820,7 +2841,7 @@ function M.start(entity, key, amount, owner)
 	if rescan_plan(s, net, plan) then plan = make_plan(s, net, key, amount) end
 	if plan.no_pattern then return nil, "no-pattern", plan end
 	if not plan.ok then return nil, "missing", plan end
-	local cpu, kind, biggest = pick_cpu(s, net, plan.bytes)
+	local cpu, kind, biggest = pick_cpu(s, net, plan.bytes, owner, want)
 	if not cpu then
 		plan.biggest = biggest
 		return nil, kind, plan
@@ -3593,7 +3614,20 @@ function M.group_info(entity)
 	local job = g.job and M.job(g.job)
 	return { id = g.id, status = g.status, blocks = g.n, width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1,
 		bytes = g.bytes, used = job and job.bytes or 0, coprocessors = g.coprocessors, speed = group_speed(g),
-		monitors = monitors, parts = parts, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job }
+		monitors = monitors, parts = parts, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job,
+		mode = g.mode }
+end
+
+--- Issue #350: set the mode of the Crafting CPU of a crafting block: "all" (or nil), "player" or "automation"
+function M.set_cpu_mode(entity, mode)
+	if not (entity and entity.valid and block_spec(entity.name)) then return false end
+	local s = cstate(state())
+	if not s.cblocks[entity.unit_number] then add_block(s, entity) end
+	local g = s.groups[s.cblocks[entity.unit_number].group]
+	if not g then return false end
+	g.mode = (mode == "player" or mode == "automation") and mode or nil
+	s.await = nil                                         -- (a queued job may take the CPU now)
+	return true
 end
 --- Rebuild the registries from the world, drop stale references, and repair the job books.
 --- Jobs and their pools are kept; provider slots, blueprint patterns and priorities are kept by unit number.
@@ -3604,6 +3638,10 @@ function M.on_configuration_changed()
 	for unit, p in pairs(s.providers) do kept[unit] = p end
 	s.providers, s.plist, s.pcursor, s.patterns, s.dirty, s.await = {}, {}, 1, {}, true, nil
 	s.cpus = nil                                          -- issue #145: the legacy CPUs are gone
+	local modes = {}                                      -- issue #350: the CPUs' modes, by block, for the new groups
+	for _, g in pairs(s.groups or {}) do
+		if g.mode then for u in pairs(g.blocks) do modes[u] = g.mode end end
+	end
 	s.cblocks, s.cgrid, s.groups = {}, {}, {}             -- issue #6: the groups are built again from the blocks
 	s.next_group = s.next_group or 1
 	local names = cpu_names()
@@ -3624,6 +3662,11 @@ function M.on_configuration_changed()
 			kept[e.unit_number] = nil
 		end
 		register(s, e)
+	end
+	for _, g in pairs(s.groups) do
+		for u in pairs(g.blocks) do
+			if modes[u] then g.mode = modes[u] break end
+		end
 	end
 	--- providers whose entity is gone without an event: their patterns are dropped where they stood
 	for _, k in pairs(kept) do
@@ -3694,18 +3737,21 @@ remote.add_interface("gregtorio-me-autocraft", {
 	end,
 	--- issue #50: the kept plans' { hits, misses } since the load
 	kept_plan_stats = function() return M.kept_plan_stats() end,
-	start = function(entity, key, amount)
-		local id, why, p = M.start(entity, key, amount)
+	--- (issue #350: `owner`, a unit number for a request of automation, and `want`, the CPU chosen)
+	start = function(entity, key, amount, owner, want)
+		local id, why, p = M.start(entity, key, amount, owner, want)
 		return id, why, p and p.missing, p and p.bytes, p and p.biggest
 	end,
+	--- issue #350: the mode of the CPU of a crafting block ("all", "player", "automation")
+	set_cpu_mode = function(block, mode) return M.set_cpu_mode(block, mode) end,
 	cancel = function(id) return M.cancel(id) end,
 	--- issue #6: the CPU (group) of a crafting block: { id, status, blocks, width, height, bytes, used, coprocessors,
 	--- speed, monitors, network, working, job }
 	group_info = function(block) return M.group_info(block) end,
 	--- the CPUs of the network of `entity` for a job of `bytes` (the plan preview)
-	cpu_list = function(entity, bytes)
+	cpu_list = function(entity, bytes, owner)
 		local net = N.network_of(entity)
-		return net and M.cpu_list(net, bytes) or {}
+		return net and M.cpu_list(net, bytes, owner) or {}
 	end,
 	--- the render objects of a crafting monitor: { icon = sprite path, text } or nil
 	monitor = function(block)

@@ -224,7 +224,8 @@ end
 --- missing = { key -> n }, loops, cpus, free, bytes, cpu_list }. reason: "no-network", "bad-amount", "no-cpu",
 --- "missing", "no-pattern", "cpu-too-small" (no CPU is big enough), "no-free-cpu" (those that are, are busy) or nil
 --- when it can start. Issue #6: `bytes` is the crafting storage the job needs, `cpu_list` the CPUs of the network in
---- the order a job takes them (autocraft.cpu_list: fits, free).
+--- the order a job takes them (autocraft.cpu_list: fits, free). Issue #350: a CPU whose mode takes only automation's
+--- requests is no CPU for the player ("cpu-not-allowed" when only such CPUs are free and big enough).
 function M.craft_preview(terminal, key, amount)
 	local net, why = network(terminal)
 	if not net then return { ok = false, reason = "no-network", why = why } end
@@ -236,10 +237,11 @@ function M.craft_preview(terminal, key, amount)
 	out.reserve, out.missing, out.loops = plan.reserve or {}, plan.missing or {}, plan.loops or {}
 	out.runs, out.steps = plan.runs or 0, #(plan.steps or {})
 	out.bytes, out.cpu_list = plan.bytes, plan.bytes and autocraft.cpu_list(net, plan.bytes) or {}
-	local fits, free, biggest = false, false, 0
+	local fits, free, barred, biggest = false, false, false, 0
 	for _, c in ipairs(out.cpu_list) do
 		if c.fits then fits = true end
-		if c.fits and c.free then free = true end
+		if c.fits and c.free and c.allowed then free = true end
+		if c.fits and c.free and not c.allowed then barred = true end
 		if c.bytes and c.bytes > biggest then biggest = c.bytes end
 	end
 	out.biggest = biggest
@@ -247,14 +249,15 @@ function M.craft_preview(terminal, key, amount)
 	elseif not plan.ok then out.reason = "missing"
 	elseif total == 0 then out.reason = "no-cpu"
 	elseif not fits then out.reason = "cpu-too-small"
-	elseif not free then out.reason = "no-free-cpu"
+	elseif not free then out.reason = barred and "cpu-not-allowed" or "no-free-cpu"
 	else out.ok = true end
 	return out
 end
 
---- the Craft button: returns the job id, or nil and a reason (a locale key suffix of [fork-me-craft] error-...)
-function M.start_craft(terminal, key, amount)
-	local id, why, plan = autocraft.start(terminal, key, amount)
+--- the Craft button: returns the job id, or nil and a reason (a locale key suffix of [fork-me-craft] error-...).
+--- Issue #350: `cpu`, the id of the CPU chosen in the tab's drop-down (nil: automatic)
+function M.start_craft(terminal, key, amount, cpu)
+	local id, why, plan = autocraft.start(terminal, key, amount, nil, cpu)
 	return id, why, plan
 end
 
@@ -419,6 +422,9 @@ local function build_crafting(tab)
 	pick.add{ type = "empty-widget" }.style.horizontally_stretchable = true
 	pick.add{ type = "label", caption = { "fork-me-gui.amount" } }
 	G.number_field(pick, 1, G.act("term_amount"), 80, false, "fork_me_amount")
+	--- issue #350 (AE2-Unofficial's CPU choice in the confirm screen): automatic, or one of the CPUs that can take it now
+	pick.add{ type = "drop-down", name = "fork_me_cpu_pick", items = { { "fork-me-craft.cpu-auto" } }, selected_index = 1,
+		tooltip = { "fork-me-craft.cpu-pick-tooltip" }, tags = G.act("term_cpu", { ids = {} }) }
 	pick.add{ type = "button", name = "fork_me_craft", caption = { "fork-me-craft.craft" }, style = "confirm_button",
 		tags = G.act("term_craft") }
 	G.label(tab, "", WIDTH, nil, "fork_me_plan")
@@ -634,8 +640,11 @@ local function refresh_crafting(st, frame, net, index)
 	name.caption = d.localised_name
 	local p = M.craft_preview(st.entity, st.pick, st.amount)
 	button.enabled = p.ok
+	M.cpu_pick(G.find(frame, "fork_me_cpu_pick"), st, p)
 	local psig = { tostring(p.ok), tostring(p.reason), p.runs, p.steps, tostring(p.bytes) }
-	for _, c in ipairs(p.cpu_list or {}) do psig[#psig + 1] = c.kind .. c.id .. tostring(c.free) .. tostring(c.fits) .. (c.bytes or "") end
+	for _, c in ipairs(p.cpu_list or {}) do
+		psig[#psig + 1] = c.kind .. c.id .. tostring(c.free) .. tostring(c.fits) .. tostring(c.allowed) .. (c.bytes or "")
+	end
 	for k, n in pairs(p.reserve) do psig[#psig + 1] = "r" .. k .. "=" .. n end
 	for k, n in pairs(p.missing) do psig[#psig + 1] = "m" .. k .. "=" .. n end
 	psig = table.concat(psig, ",")
@@ -644,7 +653,7 @@ local function refresh_crafting(st, frame, net, index)
 	if p.reason == "bad-amount" then plan_label.caption = { "fork-me-craft.bad-amount" }
 	elseif p.reason == "no-cpu" then plan_label.caption = { "fork-me-craft.no-cpu" }
 	elseif p.reason == "no-pattern" then plan_label.caption = { "fork-me-craft.error-no-pattern" }
-	elseif p.reason == "cpu-too-small" or p.reason == "no-free-cpu" then
+	elseif p.reason == "cpu-too-small" or p.reason == "no-free-cpu" or p.reason == "cpu-not-allowed" then
 		plan_label.caption = { "fork-me-craft.error-" .. p.reason, G.fmt(p.bytes), G.fmt(p.biggest or 0) }
 	elseif p.reason == "missing" then
 		local text = { "", { "fork-me-gui.plan-missing" } }
@@ -664,6 +673,33 @@ local function refresh_crafting(st, frame, net, index)
 	add(p.missing, "red_slot_button", { "fork-me-gui.missing-tooltip" })
 	add(p.reserve, nil, { "fork-me-gui.uses-tooltip" })
 	plan_grid.visible = #plan_grid.children > 0
+end
+
+--- Issue #350: the CPU drop-down of the crafting tab: "Automatic" and the CPUs that can take the job now (big enough,
+--- free, their mode takes a player's request); a chosen CPU that can no longer take it goes back to automatic
+function M.cpu_pick(dd, st, p)
+	if not dd then return end
+	local ids, items = {}, { { "fork-me-craft.cpu-auto" } }
+	if p.ok then
+		for _, c in ipairs(p.cpu_list or {}) do
+			if c.fits and c.free and c.allowed then
+				ids[#ids + 1] = c.id
+				items[#items + 1] = M.cpu_name(c)
+			end
+		end
+	end
+	local sel = 1
+	for i, id in ipairs(ids) do if id == st.cpu then sel = i + 1 end end
+	if sel == 1 then st.cpu = nil end
+	local sig = table.concat(ids, ",")
+	if dd.tags.sig ~= sig then
+		dd.items = items
+		local tags = dd.tags
+		tags.ids, tags.sig = ids, sig
+		dd.tags = tags
+	end
+	if dd.selected_index ~= sel then dd.selected_index = sel end
+	dd.enabled = #ids > 0
 end
 
 --- the name of a CPU of autocraft.cpu_list: "Crafting CPU 3 (2x3, 5k, 2 co-processors)"
@@ -972,17 +1008,26 @@ G.on("term_craft", function(event, player)
 	if not (st and st.pick) then return end
 	local d = autocraft.describe(st.pick)
 	if not d then return end
-	local id, why, plan = M.start_craft(st.entity, st.pick, st.amount)
+	local id, why, plan = M.start_craft(st.entity, st.pick, st.amount, st.cpu)
 	if id then
 		player.print({ d.fluid and "fork-me-craft.started-fluid" or "fork-me-craft.started", st.amount, d.localised_name })
 		st.jobs_shown = nil
 	elseif why == "missing" then
 		player.print({ "fork-me-craft.plan-missing", autocraft.item_list(plan.missing, 8) })
-	elseif why == "cpu-too-small" or why == "no-free-cpu" then
+	elseif why == "cpu-too-small" or why == "no-free-cpu" or why == "cpu-not-allowed" then
 		player.print({ "fork-me-craft.error-" .. why, G.fmt(plan.bytes), G.fmt(plan.biggest or 0) })
 	else
 		player.print({ "fork-me-craft.error-" .. why })
 	end
+	M.refresh(player)
+end)
+
+--- issue #350: the CPU drop-down of the crafting tab
+G.on("term_cpu", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local st = st_of(player)
+	if not st then return end
+	st.cpu = el.tags.ids and el.tags.ids[el.selected_index - 1] or nil
 	M.refresh(player)
 end)
 
@@ -1032,7 +1077,7 @@ remote.add_interface("gregtorio-me-terminal", {
 	problem = function(terminal) return problem(terminal) end,
 	--- the crafting tab: preview and the Craft button; the jobs tab; the cells tab
 	craft_preview = function(terminal, key, amount) return M.craft_preview(terminal, key, amount) end,
-	start_craft = function(terminal, key, amount) return M.start_craft(terminal, key, amount) end,
+	start_craft = function(terminal, key, amount, cpu) return M.start_craft(terminal, key, amount, cpu) end,
 	cancel_job = function(id) return M.cancel_job(id) end,
 	jobs = function(terminal) return M.jobs(terminal) end,
 	cells = function(terminal)
