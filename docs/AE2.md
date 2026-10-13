@@ -55,7 +55,7 @@ underground cable), `me-storage-64k` (EV),
 4. Import and export with **ME Interfaces** (inserters, belts, pipes) or **buses** (directly on a machine, chest or
    tank); an **ME Storage Bus** makes a chest or a tank part of the network's storage.
 
-**Walking and driving:** the cable, the underground cable, the three buses and the terminal can be walked over (and driven
+**Walking and driving:** the cable, the underground cable, the three buses, the toggle buses and the terminal can be walked over (and driven
 over by cars and tanks: they collide through the same layer as the player); nothing can be built on them. The interface,
 drive, controller, provider, level maintainer, circuit interface, crafting blocks and the Cell Workbench stay solid.
 
@@ -112,6 +112,25 @@ item is another type. A network fills cells that already hold an item first, the
   repair pack or magazine; a stack whose top item is used is refused as a whole). Each refusal says what was refused.
 * **Old drive items** (ME Drive 1k ... 256k from before the rework) cannot be crafted any more; placing one
   builds an ME Drive with its four (empty) cells, the 256k one also gives its acceleration card back.
+
+### Void cells
+
+The **Void ME Storage Cell** and the **Void ME Fluid Storage Cell** (issue #354, AE2-Unofficial's Void ME Storage Cell,
+`ItemVoidStorageCell`, `VoidCellInventory`) go into an ME Drive like other cells, but **destroy** everything they take
+and hold nothing: they list nothing, nothing can be taken out of them and they are never full (their light stays green).
+AE2-U has one void cell for items and fluids; here a cell has one kind, so there are two (the item one with ME Network,
+the fluid one with ME Fluid Storage).
+
+* **Which items:** the filter decides. Partition the cell in the ME Cell Workbench (up to 63 items or 18 fluids, with a
+  Fuzzy, Inverter or Group Filter Card as on other cells): a partitioned void cell takes and destroys only those, and as
+  every partitioned cell it gets them before the unpartitioned cells of its priority (see **Partitions and priorities**).
+  **An unpartitioned void cell destroys everything that reaches it**: give its drive a lower priority than the other
+  storage, so that it only gets what nothing else takes.
+* Its tooltip, its window line and its item description warn in red. Items with tags (cells, patterns) are never
+  destroyed, as with the Overflow Destruction Card.
+* Recipe (standalone, AE2-U's: 2 quartz glass, 3 redstone, an ender pearl, 3 iron): 2 plastic bars, 3 copper cables, an
+  electronic circuit, 3 iron plates; the fluid one 3 copper plates instead of the iron. The icons are the 1k cells in
+  violet until the texture mod has AE2-U's picture.
 
 ### Partitions and priorities
 
@@ -477,7 +496,8 @@ counts (issue #233). Each AE2 material is replaced by one vanilla item:
 | crafting table | assembling machine 1 |
 | wireless receiver | radar |
 | dense energy cell | 4 batteries |
-| ender dust | electronic circuit |
+| ender dust, ender pearl | electronic circuit |
+| book | constant combinator |
 
 The recipes that follow:
 
@@ -495,6 +515,8 @@ The recipes that follow:
 | 256k component | 3 64k components, an advanced circuit, a plastic bar, 4 stone bricks | ... 4 sky stone dust |
 | Storage cell | a component and a housing | the same |
 | Fluid storage cell | a component, 2 plastic bars, 3 copper cables, 3 copper plates | a component in a fluid cell housing (2 quartz glass, 3 redstone, 3 copper) |
+| Void ME Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 iron plates | 2 quartz glass, 3 redstone, an ender pearl, 3 iron (AE2-Unofficial) |
+| Void ME Fluid Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 copper plates | (AE2-U's void cell takes fluids too; this one has the fluid cell housing's copper) |
 | ME Import / Export Bus | an electronic circuit, 2 iron plates, a fast inserter | an annihilation (import) or formation core (export), 2 iron, a piston |
 | ME Storage Bus | an ME Interface, 2 fast inserters | an interface, 2 pistons |
 | ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
@@ -532,6 +554,7 @@ card is made from a component card and one item:
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
 | Sticky Card | basic card + iron chest (AE2-Unofficial: a slimeball, which has no stand-in) | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
+| Group Filter Card | advanced card + constant combinator (AE2-Unofficial's Ore Dictionary Filter Card: an advanced card and a book) | storage bus, item cells, 1 | a text filter over the item's name, subgroup and group takes the place of the filters (see below) |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
 | Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
 | Super Speed Card | Acceleration Card + 16k storage component (AE2-Unofficial's) | ME Import Bus and Export Bus, up to 4 | adds 16, 128, 1024, 8192 times the bus speed (issue #356) |
@@ -575,6 +598,23 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
   bus had beyond them into your inventory. Taking a card out by hand ends the waiting. A bus without its cards works
   as if it had none.
 * A **Recipe paste** (a crafting machine onto the bus) changes only the filters; cards and settings stay.
+* **The Group Filter Card** (issue #354; AE2-Unofficial's Ore Dictionary Filter Card, `OreFilteredList`): Factorio has no
+  ore dictionary, so the names a filter text is matched against are the item's (or fluid's) **name, subgroup and group**,
+  the rows Factoriopedia sorts it into (`iron-ore`, `raw-resource`, `intermediate-products`). With the card in, the
+  window's **Group filter** field holds the text and the filter slots (the partition) are ignored; they stay and work
+  again when the card is taken out, and the text stays too (AE2-U keeps it). The syntax is AE2-U's:
+  * a term without `*` must match a whole name, `*` stands for any text (`*-plate`, `iron-*`, `*circuit*`);
+  * `!` before a term negates it;
+  * `&` (and) and `|` (or) join terms **from left to right without precedence** (AE2-U folds them so): `a|b&c` is
+    `(a or b) and c`. Example: `*-plate|*-ore&!uranium-ore` takes plates and ores but no uranium ore;
+  * case does not matter; AE2-U's regular expressions (a text with `\ ^ $ + ( ) [ ]`) are not supported, such a text is
+    matched literally;
+  * **an empty text is no filter**: everything goes in (AE2-U: an empty ore filter is an empty partition list).
+  An Inverter Card (or the bus's Blacklist mode) makes the text a blacklist. On the bus the text filters what goes in and,
+  unless "filter on extract" is off, what the network sees; blueprints, settings paste and clones carry it. On an item cell
+  the text is set in the ME Cell Workbench and kept in the cell's tags. Fluid cells take no Group Filter Card (AE2-U: no
+  ore filter on fluid cells); on a bus that faces a tank the text matches the fluid's names. The ME Import and Export Bus
+  take no Group Filter Card yet.
 
 ### The tooltip of a cell
 
@@ -638,6 +678,9 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   once it cannot take a new kind). Shift + click a card in your inventory, or click a card slot with it in hand; a card
   the cell cannot take, a second one of a kind and a card without a cell are refused. While the cell lies in the
   workbench its cards are the items in its card slots; taking the cell out puts them into it.
+* **Group filter** (issue #354): with a **Group Filter Card** in an item cell's card slots, the text field under the cards
+  holds the cell's filter text (see **Upgrade cards**, the Group Filter Card); it is written into the cell as you type and
+  stays in the cell when the card is taken out. Without the card the field is greyed out.
 * **Keep the partition when the cell is taken out** (AE2's copy mode): the partition stays in the workbench and goes
   onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
 * **Without a cell** the partition slots are there too: they show and set the workbench's own partition, the one the
@@ -948,7 +991,13 @@ group).
   fluid taken from storage. 100 electronic circuits need 932 bytes, 50 processing units from plates, plastic and acid
   12 189 bytes (a 16k crafting storage).
 * **One job per CPU.** A job starts only when a CPU of the network is free and big enough; it takes the smallest one
-  that fits. Otherwise the Craft button tells why ("needs N bytes, the biggest CPU has M", or "every CPU that can take
+  that fits, or the one chosen in the Crafting tab's **CPU** drop-down (issue #350, AE2-Unofficial's CPU choice in the
+  confirm screen: "Automatic", or one of the CPUs that can take the job now).
+* **The CPU's mode** (issue #350, AE2-Unofficial's CraftingAllow), set in the CPU window: **Every request** (as before),
+  **Players only** (the terminal's Craft button) or **Automation only** (level maintainers and the circuit interface).
+  A CPU that does not take a request is skipped as if it were busy; a job waiting for a CPU takes only one whose mode
+  allows it; when only such CPUs are free, the Craft button says so. The mode belongs to the whole CPU: a block added
+  keeps it, the parts of a split CPU keep it, and it survives a mod update. Otherwise the Craft button tells why ("needs N bytes, the biggest CPU has M", or "every CPU that can take
   it is busy") and starts nothing; a level maintainer waits and tries again.
 * **Speed:** every co-processing unit lets the CPU hand one more batch to the pattern machines per step: a CPU with n
   co-processors is 1 + n times as fast (at most 16 count). It matters when a job has many machines for the same
@@ -960,7 +1009,7 @@ group).
   that can take it now, those big enough but busy, those too small (each with its number, size, bytes and
   co-processors). The Craft button is off when no CPU can take it now.
 * **The CPU window** (click any block of the CPU): status, size, crafting storage used by its job and total,
-  co-processors and speed, monitors, and the job with its progress and **Cancel**.
+  co-processors and speed, monitors, the mode (**Requests**, issue #350), and the job with its progress and **Cancel**.
 * **ME Crafting Monitor:** shows the item or fluid the CPU is crafting and the amount still to make on its face: it
   counts down as the job's machines finish crafts (several monitors all show it).
 * **Changing a running CPU:** remove a block and the job **pauses** with everything it holds (nothing is lost: its
@@ -977,6 +1026,22 @@ one is **paused** with everything it holds (nothing is lost) and goes on as soon
 free and big enough (**Cancel** gives everything back). Each of them in an inventory or a chest becomes a **1k
 crafting storage** (`migrations/me-network-legacy-cpus.json`). Build a multiblock CPU where they stood.
 
+## Monitors: ME Storage, Conversion and Throughput Monitor
+
+Tech `me-network` (issue #353, AE2-Unofficial's monitors, `appeng/parts/reporting/`). Three 1x1 blocks, members of the
+network like the terminals (the controller draws their power, 2 kW each; they can be walked over). Click one to choose
+the item (with its quality) or fluid it shows; its face then shows that resource's icon and what the network holds of
+it, refreshed about once a second (at most 4 monitors a tick, each at most every second).
+
+| Monitor | Shows | Also |
+|---|---|---|
+| ME Storage Monitor | the resource and its amount | |
+| ME Conversion Monitor | the same | while its window is open, a stack shift-clicked in your inventory goes into the network (AE2: shift right click); when it is **locked**, **Take a stack** gives you a stack of its item (AE2: a click on the locked monitor) |
+| ME Throughput Monitor | the amount and how fast it changes (measured over the last ten seconds) | the unit of the rate: per tick, second, minute or hour (AE2: shift click cycles it) |
+
+**Lock:** a locked monitor keeps its resource (AE2 locks with a wrench; Factorio has none, the window has a box).
+Settings paste, blueprints and clones carry the resource, the lock and the unit.
+
 ## Keeping items in stock: ME Level Maintainer
 
 Tech `me-automation` (EV, needs `me-autocrafting` and Circuit network). The **ME Level Maintainer** is
@@ -985,14 +1050,18 @@ when its network does.
 
 1. Connect it to the network. Autocrafting must work for the resource: a pattern
    (an encoded pattern in a provider next to a machine) and a Crafting CPU big enough for the difference.
-2. Click it: its ME window opens. Choose the item or fluid in the signal button and type the amount to
-   keep (items, or fluid units).
+2. Click it: its ME window opens. It has **five rows** (issue #351, as GT New Horizons' level maintainer): in each,
+   choose the item or fluid in the signal button and type the amount to keep (items, or fluid units) and, if you
+   like, a **batch**: at most this much per crafting job (0: the whole difference at once). Each row works on its
+   own: its own job, stock and status (the column on the right).
 3. When the network holds less than that amount, the maintainer starts a crafting job for the
    difference, the way the Craft button does. It checks about once a second (several maintainers take
    turns, see **Design**).
-4. While that job runs, it starts no other one; nor does it while any other job of the network crafts
+4. While that job runs, it starts no other one for that row; nor does it while any other job of the network crafts
    the same resource (for example one you started in the terminal). When the job is done and the stock
-   is reached again, it waits until the stock drops.
+   is reached again, it waits until the stock drops. A row with a batch starts the next batch when its job is done
+   and the stock is still below the amount. The maintainer starts at most one job per check, so its rows start one
+   after the other; the status line shows the most urgent row.
 
 What the window says:
 
@@ -1014,11 +1083,15 @@ What the window says:
 * **On/off:** tick "Switch on and off by the circuit condition" in the window and set the condition
   (signal, comparator, number; it is the lamp's circuit condition). While the condition is false it
   starts nothing; a running job goes on.
-* **Amount from the circuit:** tick the box in the window. The signal of the chosen item or fluid on
+* **Amount from the circuit:** tick a row's box in the window. The signal of that row's item or fluid on
   the wires (red plus green) is then the amount to keep, instead of the number field. No signal means
   0 (keep nothing).
+* **Craft what the circuit asks** (issue #351): with this box ticked the rows are not used; every item and fluid
+  signal on the maintainer's wires (red plus green, normal quality, the 20 largest) is an amount to keep, each with
+  its own job. A constant combinator (or a whole circuit) wired to the maintainer asks for several resources at once.
 
-**Copying:** shift right click and shift left click copy the resource, amount and circuit option to
+**Copying:** shift right click and shift left click copy the rows (resource, amount, batch, circuit option) and
+"craft what the circuit asks" to
 another maintainer (the game copies the circuit condition). Blueprints, copy and paste (ctrl+C, ctrl+V)
 and cloning keep them.
 
@@ -1041,6 +1114,39 @@ paste, and clones. Since
 issue #68 the ME Controller has no circuit connection (it was a roboport): the Circuit Interface is the way to
 read the network. Items with tags (loaded cells) count under their item. Up to 1000 signals per interface (the
 largest amounts first).
+
+### ME Level Emitter
+
+Tech `me-automation` (issue #355, AE2-Unofficial's Level Emitter, `PartLevelEmitter`). A constant combinator connected to
+the network that gives **one signal**, its output signal with the value 1 (the green check unless another signal is set
+in its window), while the network holds **at least** the threshold of its item or fluid (**At or above**, AE2's "emit when
+levels are above or equal") or **less** than it (**Below**). With **Stored energy** it compares the energy the network's ME
+Controllers hold (J) instead. A network that does not work gives nothing. Checked several times a second (a queue with a
+budget of 8 emitters per tick, each at most every 10 ticks); the signal is written only when it changes. Resource, threshold,
+mode and output signal are copied by settings paste, blueprints and clones. AE2's Crafting Card mode (emit to have something
+crafted) is the level maintainer's job here; the Fuzzy Card is not taken over (an item filter names one quality).
+Standalone recipe (AE2's: a calculation processor and a redstone torch): an advanced circuit and a decider combinator.
+
+### ME Toggle Bus and ME Inverted Toggle Bus
+
+Tech `me-automation` (issue #355, AE2-Unofficial's `PartToggleBus` and `PartInvertedToggleBus`). A **cable piece** that
+connects whatever touches it, like the cable, but only while it is **joined**:
+
+* **ME Toggle Bus:** joined while its **circuit condition** holds. Connect it to a circuit network and open it: its window is
+  the game's lamp window, with the condition (AE2's redstone). Without a wire, or without the condition switched on, it is
+  open, as AE2's toggle bus without a signal.
+* **ME Inverted Toggle Bus:** the opposite: joined while the condition does **not** hold, also without a wire.
+* **Open**, the bus is no member: the networks on its sides are **apart**, as if a cable piece were taken out; each part has
+  its own storage, power and crafting (a part without a controller does not work). **Joined**, they are one network again
+  (two controllers then are a conflict, as for any network). Its tooltip says "Joined" or "Open".
+* Crafting jobs and windows go through a split as through a removed cable: a job whose machine is on the other side waits
+  and goes on after the join; nothing is lost.
+* The bus follows its condition within about 10 ticks (a queue with a budget of 8 buses per tick); a switch costs what
+  taking out or placing a cable costs (`docs/PERFORMANCE.md`). Blueprints, settings paste and clones keep the condition
+  (the game copies a lamp's). It can be walked over; its picture always shows the cable's four arms. Joined, it draws
+  500 W through the controller.
+* Standalone recipes (AE2's: 2 redstone, 2 cables and a lever; the inverted one from a toggle bus): 2 fluix cables, 2 copper
+  cables and a power switch; the inverted one from a toggle bus (AE2 also turns it back; left out here, a recipe loop).
 
 ## Settings in blueprints and copy/paste
 
@@ -1609,11 +1715,10 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
 * The ME Interface Terminal (issue #336): its window is tested headless through its data and a stand-in of its page; the
   window itself is checked in the game (#342). It has no wireless mode (AE2-Unofficial's Wireless Interface Terminal), an
   interface cannot be renamed (only a provider), and the texture mod has no AE2 picture for it yet (#343).
-* Crafting CPUs (issue #6): no choice of the CPU in the terminal (the smallest free one that fits is taken), no
-  "requests from players only / automation only" mode. The level maintainer
-  keeps one resource per block;
-  a circuit signal sets its amount or switches it, but there is no "craft what the circuit asks for"
-  request of several resources at once. Settings paste by hand and the upgrade planner on CPUs are untested in
+* Crafting CPUs (issue #6): a job does not join a busy CPU that crafts the same item (AE2-Unofficial merges such
+  standalone jobs). The CPU drop-down of the Crafting tab and the mode in the CPU window (#350) are tested headless
+  through their data and functions; the clicks are checked in the game. The level maintainer
+  keeps five rows (#351); "craft what the circuit asks" takes at most 20 signals. Settings paste by hand and the upgrade planner on CPUs are untested in
   the real game (the headless test calls the same functions).
 * A machine whose only input is shared with a belt, inserter or pipe will fight with the network.
 * Recipe paste (issue #12) is tested headless through its handler: the shift clicks themselves, the game raising the

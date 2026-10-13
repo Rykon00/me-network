@@ -105,9 +105,10 @@ end
 --- Issue #110: the Acceleration Card is unlocked by the cards technology in the same way: a mod that replaced that technology's
 --- recipe list (Gregtorio Continued does) has not heard of a card this mod added later, so the card's recipe, its own
 --- (Gregtorio's compat file gives it the GregTech ingredients) or ours, is unlocked there as well.
---- Issue #156: the same for the Pattern Capacity Card; issue #356: the Super Speed and Superluminal Speed Cards.
+--- Issue #156: the same for the Pattern Capacity Card; issue #354: the Group Filter Card; issue #356: the Super Speed and
+--- Superluminal Speed Cards.
 for _, name in ipairs({ "me-acceleration-card", "me-pattern-capacity-card", "me-interface-capacity-card", "me-sticky-card",
-		"me-super-speed-card", "me-superluminal-speed-card" }) do
+		"me-group-filter-card", "me-super-speed-card", "me-superluminal-speed-card" }) do
 	local tech, recipe = data.raw.technology["me-upgrade-cards"], data.raw.recipe[name]
 	if tech and recipe and not unlocked[name] then
 		tech.effects = tech.effects or {}

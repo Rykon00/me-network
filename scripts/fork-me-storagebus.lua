@@ -171,6 +171,7 @@ end
 local accepts = N.accepts
 --- may the network put `key` into the bus? (its filters: a whitelist, or a blacklist with an Inverter Card)
 local function allowed(rec, key)
+	if rec.gf then return accepts(rec, key) end                 -- issue #354: a group filter
 	local p = rec.partition
 	if p then return p[key] == true or (rec.fnames ~= nil and accepts(rec, key)) end
 	return rec.deny == nil or accepts(rec, key)
@@ -382,7 +383,7 @@ function M.visit(rec, cascade)
 	end
 	local inv = t and inventory_of(rec)
 	if inv and rec.mode ~= "write" then
-		local all = rec.inonly or not (rec.partition or rec.deny)    -- (no filter to check: the common case)
+		local all = rec.inonly or not (rec.partition or rec.deny or rec.gf)   -- (no filter to check: the common case)
 		local whole                                                  -- the whole stacks' counts, read when a tool or ammo is there
 		local dmg = rec.dmg                                          -- issue #84: keys with a damaged stack the bus found
 		for _, it in pairs(N.bound(inv).get_contents()) do
@@ -583,6 +584,13 @@ function apply(rec)
 	--- issue #155: the filter mode is a setting of the bus (rec.blacklist); an Inverter Card makes the blacklist too
 	if counts.inverter or rec.blacklist then rec.partition, rec.deny = nil, set else rec.partition, rec.deny = set, nil end
 	rec.fnames = names
+	--- issue #354: a Group Filter Card: the text (rec.gtext, kept when the card goes, as AE2-U's PartStorageBus) replaces the
+	--- filters; the filter mode or an Inverter Card make it a blacklist; no text lets everything in
+	rec.gf, rec.ginv = nil, nil
+	if counts.gfilter then
+		rec.partition, rec.deny, rec.fnames = nil, nil, nil
+		rec.gf, rec.ginv = rec.gtext, rec.gtext and (counts.inverter or rec.blacklist) and true or nil
+	end
 	rec.void = counts.void and true or nil
 	rec.sticky = counts.sticky and true or nil         -- issue #193
 	rec.inonly = rec.extract == false or nil
@@ -636,6 +644,7 @@ function M.get_settings(entity)
 		cards = rec.want and { table.unpack(rec.want) } or card_list(rec) }
 	if rec.extract == false then out.extract = false end
 	if rec.blacklist then out.blacklist = true end
+	out.gtext = rec.gtext                                       -- issue #354
 	return out
 end
 
@@ -652,6 +661,7 @@ function M.set_settings(entity, settings)
 	if settings.filters ~= nil then rec.filters = clean_filters(settings.filters) end
 	if settings.extract == false then rec.extract = false elseif settings.extract ~= nil then rec.extract = nil end
 	if settings.blacklist == true then rec.blacklist = true elseif settings.blacklist ~= nil then rec.blacklist = nil end
+	if settings.gtext ~= nil then rec.gtext = N.GF.clean(settings.gtext) end   -- issue #354 ("" clears it)
 	rec.hidden = rec.mode == "write" or nil
 	apply(rec)
 	M.visit(rec)
@@ -739,7 +749,7 @@ function M.info(entity)
 		target = t and t.valid and t.name or nil, items = items, types = types, contents = rec.items,
 		cards = cards, slots = rules().slots, want = rec.want and missing_cards(rec, rec.want) or nil,
 		extract = rec.extract ~= false, inverted = counts.inverter ~= nil, fuzzy = counts.fuzzy ~= nil,
-		blacklist = rec.blacklist == true,
+		blacklist = rec.blacklist == true, gfilter = counts.gfilter ~= nil, gtext = rec.gtext,
 		void = rec.void == true, voided = rec.voided or 0 }
 	if rec.side == "fluid" then
 		out.fluid, out.amount, out.temperature, out.segment = rec.fluid, items, rec.temp, rec.seg
@@ -880,7 +890,7 @@ function M.on_configuration_changed()
 		rec.target, rec.target_unit, rec.dir, rec.box, rec.seg = nil, nil, nil, nil, nil
 		rec.filters = clean_filters(rec.filters)          -- (a save before issue #3 had item keys only: unchanged)
 		inv_of(rec)                                       -- issue #28: the card names of an older save become the slots' cards
-		if rec.cards or rec.extract == false or rec.blacklist then apply(rec) end   -- (no cards before issue #17: the fields stay)
+		if rec.cards or rec.extract == false or rec.blacklist or rec.gtext then apply(rec) end   -- (no cards before issue #17: the fields stay)
 	end
 	for _, e in ipairs(all) do M.visit(N.ext_get(e.unit_number)) end
 end

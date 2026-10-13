@@ -41,6 +41,12 @@ local CARDS = {
 	--- (or is partitioned for) before every other storage, whatever the priorities (NetworkInventoryHandler's sticky pass)
 	--- (AE2-Unofficial: a basic card and a slimeball, which has no stand-in: an iron chest, as before)
 	{ name = "me-sticky-card", order = "e4", kind = "sticky", ingredients = I{ "me-basic-card", 1, "iron-chest", 1 } },
+	--- issue #354: AE2-Unofficial's Ore Dictionary Filter Card (Upgrades.ORE_FILTER; recipe: an advanced card and a book,
+	--- materials/cards.recipe): here the Group Filter Card, a text over the item's name, subgroup and group
+	--- (scripts/fork-me-groupfilter.lua) in place of the filter slots, on item cells and the storage bus (AE2-U: no ore filter on
+	--- fluid cells). The book's stand-in: a constant combinator (a list written down).
+	{ name = "me-group-filter-card", order = "e5", kind = "gfilter",
+	  ingredients = I{ "me-advanced-card", 1, "constant-combinator", 1 } },
 	{ name = "me-inverter-card", order = "f", kind = "inverter",
 	  ingredients = I{ "me-advanced-card", 1, "decider-combinator", 1 } },
 	{ name = "me-equal-distribution-card", order = "g", kind = "equal",
@@ -87,8 +93,8 @@ end
 --- .createFilter())
 data.raw["mod-data"]["fork-me-network"].data.cards = {
 	kinds = kinds,
-	storage_bus = { slots = 5, limits = { capacity = 5, fuzzy = 1, inverter = 1, void = 1, sticky = 1 }, filters = 18, per_capacity = 9 },
-	item_cell = { slots = 4, limits = { fuzzy = 1, inverter = 1, equal = 1, void = 1, sticky = 1 } },
+	storage_bus = { slots = 5, limits = { capacity = 5, fuzzy = 1, inverter = 1, void = 1, sticky = 1, gfilter = 1 }, filters = 18, per_capacity = 9 },
+	item_cell = { slots = 4, limits = { fuzzy = 1, inverter = 1, equal = 1, void = 1, sticky = 1, gfilter = 1 } },
 	fluid_cell = { slots = 3, limits = { inverter = 1, equal = 1, void = 1, sticky = 1 } },
 	--- issue #110: the ME Import Bus and Export Bus take up to 4 Acceleration Cards (AE2's upgrade slots of the buses: its speed
 	--- cards, PartImportBus / PartExportBus); `speed`: by the number of cards, the factor on the items per second of the map
