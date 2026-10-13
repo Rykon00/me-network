@@ -198,16 +198,19 @@ return function(H)
 			--- issue #140: the monitor shows what job B still has to make (20 gears, one per craft): the amount less the finished
 			--- crafts, whenever it is looked at (a job whose machines make everything in one batch jumps from 20 to nothing)
 			local mon = remote.call(AC, "monitor", find("me-crafting-monitor", 18, 1))
-			if mon and tonumber(mon.text) then
+			if mon and tonumber(mon.text) and xb.done then
 				expect(tonumber(mon.text) == 20 - xb.done, "the monitor shows " .. mon.text .. " with " .. xb.done .. " of 20 crafts done")
 				if xb.done > 0 and xb.done < 20 then st.mon_counted = (st.mon_counted or 0) + 1 end
 			end
-			local function over(j) return j.status == "done" or j.status == "failed" or j.status == "cancelled" end
-			if not (over(xa) and over(xb)) then
-				if game.tick > st.tick + 900 then problems[#problems + 1] = "the two jobs did not end: " .. line({ xa.status, xb.status }) return finish() end
+			--- the last status seen of each: a finished job leaves the list once more than MAX_FINISHED jobs of the map finished
+			--- after it (fork-me-autocraft.lua), which the other tests' jobs can make happen before the second job ends
+			st.sa, st.sb = xa.status or st.sa, xb.status or st.sb
+			local function over(status) return status == "done" or status == "failed" or status == "cancelled" end
+			if not (over(st.sa) and over(st.sb)) then
+				if game.tick > st.tick + 900 then problems[#problems + 1] = "the two jobs did not end: " .. line({ st.sa, st.sb }) return finish() end
 				return
 			end
-			expect(xa.status == "done" and xb.status == "done", "the two jobs ended as " .. xa.status .. ", " .. xb.status)
+			expect(st.sa == "done" and st.sb == "done", "the two jobs ended as " .. st.sa .. ", " .. st.sb)
 			expect(st.overlap, "the two jobs never had a machine crafting at the same time")
 			expect(remote.call(AC, "monitor", find("me-crafting-monitor", 18, 1)) == nil, "the monitor still shows the ended job")
 			--- (vanilla: the job is part done for a while; with Gregtorio its fast machines make all 20 in one batch)
