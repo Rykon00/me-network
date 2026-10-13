@@ -3244,3 +3244,23 @@ ingredient cache of #43). A machine's recipe test reads its recipe and quality i
 | provider crafts per second | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## The Group Filter Card on the import and export bus (issue #363)
+
+An import bus with the card asks the group filter for each item of its source (a table lookup per text and key after the
+first time, #354). An export bus with the card exports from a list of the network's matching item keys: made from
+`net.items` once and kept on the bus, made again only when the network got a key it did not have (`net.kgen`, counted in
+`idx_add` when a key's holder set is made: one addition on that path, nothing on the others). A visit tries at most as many
+keys of the list as a filter list has (9), from where the last visit stopped, so its cost stays that of a full filter list;
+it registers no wait per key: blocked, it is probed (a new key in the network, or the idle limit). Without the card nothing
+changes.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no such card):
+
+| | origin/main | with the card on the buses |
+|---|---|---|
+| 100: script average / p99 ms | 0.1840 / 1.730 | 0.1836 / 1.728 |
+| 1000: script average / p99 ms | 0.3283 / 1.870 | 0.3289 / 1.852 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+
+`regressions beyond the noise: 0`.

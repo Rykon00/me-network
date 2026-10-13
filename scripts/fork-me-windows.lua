@@ -1622,6 +1622,7 @@ local function open_bus(player, entity)
 	local row = G.row(content)                       -- issue #110: the Acceleration Card slots
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.bus-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_bus_cards", direction = "horizontal" }
+	M.gfilter_row(content, "fork_me_bus_gtext", "bus_gtext")    -- issue #363: the Group Filter Card's text
 	G.label(content, "", WIDTH, nil, "fork_me_bus_want")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_speed")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_target")
@@ -1652,6 +1653,7 @@ function M.refresh_bus(player, frame)
 	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_bus_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_bus_speed").caption = d.items and { "fork-me-gui.bus-speed", d.accel, G.fmt(d.rate) } or ""
+	M.gfilter_refresh(frame, "fork_me_bus_gtext", d.gfilter, d.gtext)
 	local target = d.target and prototypes.entity[d.target]
 	local what = d.items and d.fluids and "both" or d.fluids and "fluids" or "items"
 	G.find(frame, "fork_me_bus_target").caption = target
@@ -1853,6 +1855,13 @@ picker.on_confirm("sbus_filter", function(player, data, choice)
 	local key = picker.key_of(choice, true)
 	if key then sbus.set_filter(entity, data.index, key) else refused_choice(player) end
 	G.refresh_one(player)
+end)
+
+G.on("bus_gtext", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then io.set_bus_gtext(entity, el.text) end
+	if event.name == defines.events.on_gui_confirmed then G.refresh_one(player) end
 end)
 
 G.on("sbus_gtext", function(event, player, el)

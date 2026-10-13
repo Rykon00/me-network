@@ -1145,6 +1145,8 @@ cards = CS.new{
 	rec_of = bus_rec,
 	on_cards = function(rec, light)
 		local counts, r = cards.counts(rec), N.card_rules()
+		rec.gcard = counts.gfilter and true or nil            -- issue #363: a Group Filter Card
+		M.bus_gf(rec)
 		local f = r.speed[(counts.speed or 0) + 1]
 		--- issue #356: the Super Speed and Superluminal Speed Cards add to the factor (AE2-U: the kinds add up)
 		if counts.superspeed then f = f + r.superspeed[counts.superspeed] end
@@ -1232,12 +1234,13 @@ end
 local function import_items(rec, net, t, cap, info)
 	local inv = T.inventory(t, rec.t_inv)
 	if not inv then return 0 end
-	local all, set = rec.all, rec.iset
+	local all, set, gf = rec.all, rec.iset, rec.gf             -- (issue #363: a group filter's text in place of the item filters)
 	local unit = rec.entity.unit_number
 	local moved, stacks, held, main, mainc = 0, false, 0, nil, 0
 	local B = N.bound(inv)                                    -- (its methods: issue #115)
 	for _, c in pairs(B.get_contents()) do
-		if all or import_takes(rec, set, c.name, c.quality) then
+		if all or (gf and N.GF.match(gf, N.key_of(c.name, c.quality or "normal")))
+			or (not gf and import_takes(rec, set, c.name, c.quality)) then
 			held = held + c.count
 			if c.count > mainc then main, mainc = c.name, c.count end
 			if moved < cap then
@@ -1267,7 +1270,8 @@ local function import_items(rec, net, t, cap, info)
 		for i = 1, #inv do
 			if moved >= cap then break end
 			local stack = inv[i]
-			if stack.valid_for_read and (all or import_takes(rec, set, stack.name, stack.quality.name))
+			if stack.valid_for_read and (all or (gf and N.GF.match(gf, N.key_of(stack.name, stack.quality.name)))
+				or (not gf and import_takes(rec, set, stack.name, stack.quality.name)))
 				and not by_count(stack.name, stack.quality.name) then
 				local n, why = N.insert_partial(net, stack, cap - moved)
 				if n then moved = moved + n
@@ -1303,7 +1307,22 @@ local function export_items(rec, net, t, cap, info)
 		rec.tgt = tgt
 	end
 	local dt = info.dt or STEP_TICKS
-	for _, key in ipairs(rec.filters) do
+	--- the keys: the filters, or (issue #363) the group filter's keys in turn from where the last visit stopped, at most as many
+	--- as the filters (the visit's cost stays a filter list's); a key of that list registers no wait of its own
+	local gf = rec.gf
+	local list, i, count
+	if gf then
+		list = M.gf_list(rec, net)
+		i, count = rec.gcur or 1, math.min(#list, MAX_FILTERS)
+	else
+		list, i, count = rec.filters, 1, #rec.filters
+	end
+	local n = #list
+	for _ = 1, count do
+		if gf and moved >= cap then break end
+		if i > n then i = 1 end
+		local key = list[i]
+		i = i + 1
 		local name, q = filter_item(key)                      -- (issue #291: a filter may name a quality)
 		if item_known(name) then
 			local have
@@ -1322,8 +1341,10 @@ local function export_items(rec, net, t, cap, info)
 				got = N.extract_to(net, inv, key, want)          -- (a plain name: normal quality)
 				if got <= 0 then
 					if N.count_key(net, key) <= 0 then
-						N.wait_for(net, key, "io", rec.entity.unit_number, true)
-						info.nokey = true
+						if not gf then
+							N.wait_for(net, key, "io", rec.entity.unit_number, true)
+							info.nokey = true
+						end
 					else
 						info.blocked = true                      -- the target takes nothing: full
 					end
@@ -1339,6 +1360,10 @@ local function export_items(rec, net, t, cap, info)
 				info.time = MIN_INTERVAL                         -- (the rate is unknown yet: look again soon)
 			end
 		end
+	end
+	if gf then
+		rec.gcur = i
+		if moved <= 0 and not info.blocked then info.nokey = true end   -- (nothing that matches: probed, see probe_work)
 	end
 	return moved
 end
@@ -1538,7 +1563,7 @@ function M.bus_step(rec, dt, u)
 	info.time, info.dt = math.huge, ticks
 	info.held, info.main, info.slots, info.netfull, info.nokey, info.blocked, info.starved = nil, nil, nil, nil, nil, nil, nil
 	info.temperature = nil
-	local has_items = rec.t_inv and (rec.all or #rec.filters > 0)
+	local has_items = rec.t_inv and (rec.all or #rec.filters > 0 or rec.gf ~= nil)
 	local has_fluid = rec.t_fluid and (rec.all or #rec.ffilters > 0)
 	if has_items then
 		items = import and import_items(rec, net, t, icap, info) or export_items(rec, net, t, icap, info)
@@ -1618,9 +1643,44 @@ function M.set_bus_filters(entity, filters)
 	rec.keys, rec.filters, rec.ffilters, rec.iset, rec.fset = keys, items, fl, iset, fset
 	rec.iq = iq or nil
 	rec.fkeys = temps and fkeys or nil                    -- (the filter keys of rec.ffilters, only with a temperature)
-	rec.all = IMPORTS[k] and #keys == 0 or nil
+	M.bus_gf(rec)
 	wake(entity.unit_number)
 	return true
+end
+
+--- Issue #363: the Group Filter Card on an import or export bus (AE2-Unofficial: PartBaseImportBus.java:132,
+--- PartBaseExportBus.java:95). With the card, the text (rec.gtext, a setting kept when the card goes) takes the place of the
+--- item filters (the fluid filters stay): `rec.gf` is the text while the card is in. The import bus takes what matches from
+--- its target; without a text it takes everything (AE2-U: an empty filter is none). The export bus goes through the network's
+--- item keys that match, in turn (rec.glist, rebuilt when the network got new keys: net.kgen), at most MAX_FILTERS per visit
+--- (MAX_FILTERS, the filters' count), each visit moving what its speed allows; without a text it exports nothing.
+function M.bus_gf(rec)
+	rec.gf = rec.gcard and rec.gtext or nil
+	rec.all = IMPORTS[rec.kind] and ((rec.gcard and not rec.gtext) or (not rec.gcard and #(rec.keys or rec.filters or {}) == 0)) or nil
+	rec.glist, rec.gkgen = nil, nil
+end
+
+--- the bus's group filter text ("" or nil clears it); the bus is visited again
+function M.set_bus_gtext(entity, text)
+	if not BUSES[kind(entity)] then return false end
+	local rec = register(state(), entity)
+	rec.gtext = N.GF.clean(text)
+	M.bus_gf(rec)
+	wake(entity.unit_number)
+	return true
+end
+
+--- the network's item keys that match the export bus's text (sorted; rebuilt when the network got new keys)
+function M.gf_list(rec, net)
+	if rec.glist and rec.gkgen == (net.kgen or 0) and rec.gknet == net.id then return rec.glist end
+	local list, gf = {}, rec.gf
+	for key in pairs(net.items) do
+		if not N.is_fluid_key(key) and not key:find("#", 1, true) and N.GF.match(gf, key) then list[#list + 1] = key end
+	end
+	table.sort(list)
+	rec.glist, rec.gkgen, rec.gknet = list, net.kgen or 0, net.id
+	if (rec.gcur or 1) > #list then rec.gcur = 1 end
+	return list
 end
 
 --- { filters = keys, status, target }
@@ -1629,7 +1689,8 @@ function M.get_bus(entity)
 	local rec = s and entity and entity.valid and s.recs[entity.unit_number]
 	if not rec then return nil end
 	local t = rec.target
-	return { filters = { table.unpack(rec.keys or rec.filters) }, status = rec.status, target = t and t.valid and t.name or nil }
+	return { filters = { table.unpack(rec.keys or rec.filters) }, status = rec.status, target = t and t.valid and t.name or nil,
+		gtext = rec.gtext }
 end
 
 --- one filter of a bus (the window's filter buttons): `key` nil clears it; the list stays packed
@@ -1686,6 +1747,7 @@ function M.bus_info(entity)
 	b.cards = {}
 	for slot, name in pairs(rec.cards or {}) do b.cards[slot] = name end
 	b.want = rec.want and cards.missing_cards(rec, rec.want) or nil
+	b.gfilter = rec.gcard == true                          -- issue #363
 	return b
 end
 
@@ -1770,6 +1832,11 @@ local function probe_work(rec)
 		return held and game.tick - (rec.last or 0) >= tick_limit
 	end
 	if b == "empty" then return probe_mark(rec) ~= rec.seen end
+	--- issue #363: an export bus with a group filter waits for no key of its own: a key new in the network, or the idle limit
+	if rec.gf and not IMPORTS[rec.kind] then
+		local net = N.network_of(rec.entity)
+		return (net ~= nil and (net.kgen or 0) ~= rec.gkgen) or game.tick - (rec.last or 0) >= tick_limit
+	end
 	--- "full": does the export target take something again?
 	local t = rec.target
 	if not (t and t.valid) then return true end
@@ -1961,10 +2028,12 @@ function M.on_built(entity, tags, source)
 		local t = type(tags) == "table" and tags[BUS_TAG] or nil
 		if type(t) == "table" then
 			M.set_bus_filters(entity, t.filters)
+			if t.gtext then M.set_bus_gtext(entity, t.gtext) end               -- (issue #363)
 			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, nil) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)
 			M.set_bus_filters(entity, from and from.filters or {})
+			if from and from.gtext then M.set_bus_gtext(entity, from.gtext) end
 			local from_rec = bus_rec(source)
 			local list = from_rec and cards.card_list(from_rec)
 			if list then cards.want_cards(entity, list, nil) end
@@ -2054,6 +2123,7 @@ function M.on_entity_settings_pasted(event)
 	elseif BUSES[k] then
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
+		M.set_bus_gtext(dst, from and from.gtext or "")                    -- (issue #363)
 		--- issue #110: the source's cards are what the destination is to have (from the player's inventory, then the network)
 		local from_rec, dst_rec = bus_rec(src), bus_rec(dst)
 		if from_rec and dst_rec then
@@ -2079,7 +2149,9 @@ function M.tag_blueprint(bp, mapping)
 			local b = M.get_bus(entity)
 			local rec = bus_rec(entity)
 			local list = rec and (rec.want and { table.unpack(rec.want) } or cards.card_list(rec))
-			if b and (#b.filters > 0 or list) then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list }) end
+			if b and (#b.filters > 0 or list or b.gtext) then
+				bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list, gtext = b.gtext })
+			end
 		end
 	end
 end
@@ -2105,6 +2177,7 @@ function M.on_configuration_changed()
 			if BUSES[rec.kind] then
 				M.set_bus_filters(e, o and (o.keys or o.filters) or {})
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.accel = o.inv, o.cards, o.want, o.where, o.accel end   -- issue #110
+				if o then rec.gtext, rec.gcard = o.gtext, o.gcard M.bus_gf(rec) end                                       -- issue #363
 			end
 			if rec.kind == "interface" then
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.nrows = o.inv, o.cards, o.want, o.where, o.nrows end   -- issue #196
@@ -2235,6 +2308,8 @@ remote.add_interface("gregtorio-me-io", {
 	interface_tanks = function(entity) return M.tanks_of(entity) end,
 	idle_limit = function() return storage.fork_me_io and idle_limit(storage.fork_me_io) or nil end,   -- (issue #313 tests)
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,
+	--- issue #363: the Group Filter Card's text ("" clears it)
+	set_bus_gtext = function(entity, text) return M.set_bus_gtext(entity, text) end,
 	--- issue #110: the card slots of a bus (what the window's clicks do; `want`: a list of names)
 	bus_inventory = function(entity) local rec = bus_rec(entity) return rec and cards.inv_of(rec) or nil end,
 	--- issue #196: the card slots of an interface (the window's functions and the tests')
