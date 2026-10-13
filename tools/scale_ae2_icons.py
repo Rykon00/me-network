@@ -33,10 +33,12 @@ SIZES = {
     **{f"icons/cells/me-{t}-fluid-storage-cell.png": 64 for t in TIERS},
     **{f"icons/cells/me-{t}-storage-component.png": 32 for t in TIERS},
     "icons/cells/basic-storage-housing.png": 32,
+    "icons/cells/me-void-storage-cell.png": 64,          # issue #364: AE2-Unofficial's void cell, for both void cells
+    "icons/cells/me-void-fluid-storage-cell.png": 64,
     **{f"icons/cards/me-{c}-card.png": 32 for c in ("basic", "advanced", "capacity", "overflow-destruction", "fuzzy",
                                                      "pattern-capacity", "sticky", "inverter", "equal-distribution",
                                                      "acceleration", "interface-capacity",
-                                                     "super-speed", "superluminal-speed")},   # (issue #356: the last two)
+                                                     "super-speed", "superluminal-speed", "group-filter")},   # (issue #356: the last two)
     "icons/patterns/me-blank-pattern.png": 32,
     # issue #303: the wireless items (the module, which AE2 does not have, takes the terminal's icon)
     "icons/wireless/me-wireless-terminal.png": 32,

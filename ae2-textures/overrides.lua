@@ -31,6 +31,10 @@ return {
 	["item-with-tags/me-1k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-1k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-4k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-16k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16k-storage-cell.png", icon_size = 64 },
+	--- ME Network issue #364: AE2-Unofficial's void cell for both void cells (its one void cell takes items and fluids); ME
+	--- Network tints its own icon violet in `icons`: the tint is set to none here, so the AE2 picture keeps its colours
+	["item-with-tags/me-void-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-void-storage-cell.png", icon_size = 64, tint = { 1, 1, 1, 1 } },
+	["item-with-tags/me-void-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-void-fluid-storage-cell.png", icon_size = 64, tint = { 1, 1, 1, 1 } },
 	["item-with-tags/me-64k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-64k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-256k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-256k-storage-cell.png", icon_size = 64 },
 	--- fluid storage cells (64 px, issue #250): AE2-Unofficial has none, so its item cell of the tier, frame and body blue
@@ -53,6 +57,8 @@ return {
 	["item/me-fuzzy-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-fuzzy-card.png", icon_size = 32 },
 	["item/me-pattern-capacity-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-pattern-capacity-card.png", icon_size = 32 },
 	["item/me-sticky-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-sticky-card.png", icon_size = 32 },
+	--- ME Network issue #364: AE2-Unofficial's Ore Dictionary Filter Card for the Group Filter Card
+	["item/me-group-filter-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-group-filter-card.png", icon_size = 32 },
 	["item/me-inverter-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-inverter-card.png", icon_size = 32 },
 	["item/me-equal-distribution-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-equal-distribution-card.png", icon_size = 32 },
 	["module/me-acceleration-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-acceleration-card.png", icon_size = 32 },
