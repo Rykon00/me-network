@@ -1209,7 +1209,8 @@ end
 ---   1. what it holds, as before; an empty cell says its size instead
 ---   2. the partition as icons (at most TIP_KEYS, then "+N more")
 ---   3. whitelist or blacklist, in the words of the windows
----   4. the cards as icons, then what they do (fuzzy, equal distribution, overflow destruction), in the words of the windows
+---   4. the cards as icons, then what they do (fuzzy, equal distribution, overflow destruction), in the words of the windows;
+---      a void cell without cards gets its warning here (issue #376)
 --- One concatenation of at most 13 parts (a localised string takes 20), the icon lists plain strings. Cells written
 --- by an earlier version keep their old description until they pass through a drive or the workbench; its keys stay.
 local function cell_description(cell, spec, plist, cards, keys, list)
@@ -1246,6 +1247,8 @@ local function cell_description(cell, spec, plist, cards, keys, list)
 			local text = M.cell_mode_text(kind, flags)
 			if text then line(text) end
 		end
+	elseif flags.void then
+		line(M.cell_mode_text("void", flags))   -- issue #376: a void cell is void without a card
 	end
 	return desc
 end
@@ -1334,6 +1337,8 @@ function M.drive_cell_tooltip(drive, slot)
 			local text = M.cell_mode_text(kind, flags)
 			if text then add(text) end
 		end
+	elseif flags.void then
+		add(M.cell_mode_text("void", flags))   -- issue #376: a void cell is void without a card
 	end
 	if #mode > 1 then lines[#lines + 1] = mode end
 	local keys = {}
