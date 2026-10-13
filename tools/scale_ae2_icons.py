@@ -35,7 +35,8 @@ SIZES = {
     "icons/cells/basic-storage-housing.png": 32,
     **{f"icons/cards/me-{c}-card.png": 32 for c in ("basic", "advanced", "capacity", "overflow-destruction", "fuzzy",
                                                      "pattern-capacity", "sticky", "inverter", "equal-distribution",
-                                                     "acceleration", "interface-capacity")},
+                                                     "acceleration", "interface-capacity",
+                                                     "super-speed", "superluminal-speed")},   # (issue #356: the last two)
     "icons/patterns/me-blank-pattern.png": 32,
     # issue #303: the wireless items (the module, which AE2 does not have, takes the terminal's icon)
     "icons/wireless/me-wireless-terminal.png": 32,

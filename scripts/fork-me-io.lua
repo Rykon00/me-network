@@ -66,6 +66,7 @@ local STEP_TICKS = 15                -- the ticks a visit of the remote `step` s
 local MIN_INTERVAL = 15              -- ticks between two visits of a block that moved all it was allowed to
 local ACTIVE_INTERVAL = 60           -- ... of a block that moves something but less
 local MAX_CATCH_UP = 600             -- ticks of speed a visit may catch up at most
+local MAX_ICAP = 2 ^ 31 - 1          -- items a bus visit may move at most (issue #356: an engine count is 32 bit)
 local IFACE_SLOTS_PER_VISIT = 8      -- item slots an interface handles per STEP_TICKS since its last visit
 local MAX_FILTERS = 9
 local CONFIG_SLOTS = 9               -- the config rows of an interface without cards
@@ -1128,7 +1129,8 @@ local BUSES = { ["import-bus"] = true, ["export-bus"] = true, ["fluid-import-bus
 local IMPORTS = { ["import-bus"] = true, ["fluid-import-bus"] = true }   -- (the old fluid kinds until they are replaced)
 
 --- Issue #110: the card slots of an import and an export bus (scripts/fork-me-cardslots.lua; the cards of a block are the
---- items of a script inventory its window shows). Only the Acceleration Card fits: AE2's speed card, 4 of them, which
+--- items of a script inventory its window shows). Only the Acceleration Card fits (issue #356: and the Super Speed and Superluminal
+--- Speed Cards, whose amounts add to the factor): AE2's speed card, 4 of them, which
 --- multiply the items a bus moves per second (the map setting "bus speed") by 1, 8, 32, 64 and 96 (0 to 4 cards:
 --- `N.card_rules().speed`; AE2: PartImportBus and PartExportBus, 1, 8, 32, 64, 96 items per operation). Fluids are not
 --- sped up (AE2's cards act on items). `rec.accel` is that factor (nil: 1), made from the cards when they change.
@@ -1142,8 +1144,12 @@ cards = CS.new{
 	title = function(rec) return rec.entity and rec.entity.valid and rec.entity.localised_name or { "entity-name.me-import-bus" } end,
 	rec_of = bus_rec,
 	on_cards = function(rec, light)
-		local n = cards.counts(rec).speed or 0
-		rec.accel = n > 0 and N.card_rules().speed[n + 1] or nil
+		local counts, r = cards.counts(rec), N.card_rules()
+		local f = r.speed[(counts.speed or 0) + 1]
+		--- issue #356: the Super Speed and Superluminal Speed Cards add to the factor (AE2-U: the kinds add up)
+		if counts.superspeed then f = f + r.superspeed[counts.superspeed] end
+		if counts.superluminal then f = f + r.superluminal[counts.superluminal] end
+		rec.accel = f > 1 and f or nil
 		if not light and rec.entity and rec.entity.valid then wake(rec.entity.unit_number) end
 	end,
 }
@@ -1523,7 +1529,8 @@ function M.bus_step(rec, dt, u)
 	if not rec.iset then M.set_bus_filters(e, rec.filters) end          -- a record of a save before issue #3
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
 	if rec.want then cards.fill_cards(rec) end                         -- issue #110: the cards a blueprint or a paste asked for
-	local icap = math.max(1, math.floor(Sched.setting("bus_items") * (rec.accel or 1) * ticks / 60))
+	--- (issue #356: at most MAX_ICAP, what an engine call takes as a count; four Superluminal Speed Cards ask for billions)
+	local icap = math.max(1, math.min(MAX_ICAP, math.floor(Sched.setting("bus_items") * (rec.accel or 1) * ticks / 60)))
 	local fcap = Sched.setting("bus_fluid") * ticks / 60
 	local import = IMPORTS[rec.kind]
 	local items, fluid = 0, 0
