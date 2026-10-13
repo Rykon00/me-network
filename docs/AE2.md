@@ -113,6 +113,25 @@ item is another type. A network fills cells that already hold an item first, the
 * **Old drive items** (ME Drive 1k ... 256k from before the rework) cannot be crafted any more; placing one
   builds an ME Drive with its four (empty) cells, the 256k one also gives its acceleration card back.
 
+### Void cells
+
+The **Void ME Storage Cell** and the **Void ME Fluid Storage Cell** (issue #354, AE2-Unofficial's Void ME Storage Cell,
+`ItemVoidStorageCell`, `VoidCellInventory`) go into an ME Drive like other cells, but **destroy** everything they take
+and hold nothing: they list nothing, nothing can be taken out of them and they are never full (their light stays green).
+AE2-U has one void cell for items and fluids; here a cell has one kind, so there are two (the item one with ME Network,
+the fluid one with ME Fluid Storage).
+
+* **Which items:** the filter decides. Partition the cell in the ME Cell Workbench (up to 63 items or 18 fluids, with a
+  Fuzzy, Inverter or Group Filter Card as on other cells): a partitioned void cell takes and destroys only those, and as
+  every partitioned cell it gets them before the unpartitioned cells of its priority (see **Partitions and priorities**).
+  **An unpartitioned void cell destroys everything that reaches it**: give its drive a lower priority than the other
+  storage, so that it only gets what nothing else takes.
+* Its tooltip, its window line and its item description warn in red. Items with tags (cells, patterns) are never
+  destroyed, as with the Overflow Destruction Card.
+* Recipe (standalone, AE2-U's: 2 quartz glass, 3 redstone, an ender pearl, 3 iron): 2 plastic bars, 3 copper cables, an
+  electronic circuit, 3 iron plates; the fluid one 3 copper plates instead of the iron. The icons are the 1k cells in
+  violet until the texture mod has AE2-U's picture.
+
 ### Partitions and priorities
 
 Two AE2 storage features decide **which cell** an item or fluid goes into (and comes out of):
@@ -477,7 +496,8 @@ counts (issue #233). Each AE2 material is replaced by one vanilla item:
 | crafting table | assembling machine 1 |
 | wireless receiver | radar |
 | dense energy cell | 4 batteries |
-| ender dust | electronic circuit |
+| ender dust, ender pearl | electronic circuit |
+| book | constant combinator |
 
 The recipes that follow:
 
@@ -495,6 +515,8 @@ The recipes that follow:
 | 256k component | 3 64k components, an advanced circuit, a plastic bar, 4 stone bricks | ... 4 sky stone dust |
 | Storage cell | a component and a housing | the same |
 | Fluid storage cell | a component, 2 plastic bars, 3 copper cables, 3 copper plates | a component in a fluid cell housing (2 quartz glass, 3 redstone, 3 copper) |
+| Void ME Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 iron plates | 2 quartz glass, 3 redstone, an ender pearl, 3 iron (AE2-Unofficial) |
+| Void ME Fluid Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 copper plates | (AE2-U's void cell takes fluids too; this one has the fluid cell housing's copper) |
 | ME Import / Export Bus | an electronic circuit, 2 iron plates, a fast inserter | an annihilation (import) or formation core (export), 2 iron, a piston |
 | ME Storage Bus | an ME Interface, 2 fast inserters | an interface, 2 pistons |
 | ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
@@ -532,6 +554,7 @@ card is made from a component card and one item:
 | Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
 | Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
 | Sticky Card | basic card + iron chest (AE2-Unofficial: a slimeball, which has no stand-in) | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
+| Group Filter Card | advanced card + constant combinator (AE2-Unofficial's Ore Dictionary Filter Card: an advanced card and a book) | storage bus, item cells, 1 | a text filter over the item's name, subgroup and group takes the place of the filters (see below) |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
 | Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
 
@@ -568,6 +591,23 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
   bus had beyond them into your inventory. Taking a card out by hand ends the waiting. A bus without its cards works
   as if it had none.
 * A **Recipe paste** (a crafting machine onto the bus) changes only the filters; cards and settings stay.
+* **The Group Filter Card** (issue #354; AE2-Unofficial's Ore Dictionary Filter Card, `OreFilteredList`): Factorio has no
+  ore dictionary, so the names a filter text is matched against are the item's (or fluid's) **name, subgroup and group**,
+  the rows Factoriopedia sorts it into (`iron-ore`, `raw-resource`, `intermediate-products`). With the card in, the
+  window's **Group filter** field holds the text and the filter slots (the partition) are ignored; they stay and work
+  again when the card is taken out, and the text stays too (AE2-U keeps it). The syntax is AE2-U's:
+  * a term without `*` must match a whole name, `*` stands for any text (`*-plate`, `iron-*`, `*circuit*`);
+  * `!` before a term negates it;
+  * `&` (and) and `|` (or) join terms **from left to right without precedence** (AE2-U folds them so): `a|b&c` is
+    `(a or b) and c`. Example: `*-plate|*-ore&!uranium-ore` takes plates and ores but no uranium ore;
+  * case does not matter; AE2-U's regular expressions (a text with `\ ^ $ + ( ) [ ]`) are not supported, such a text is
+    matched literally;
+  * **an empty text is no filter**: everything goes in (AE2-U: an empty ore filter is an empty partition list).
+  An Inverter Card (or the bus's Blacklist mode) makes the text a blacklist. On the bus the text filters what goes in and,
+  unless "filter on extract" is off, what the network sees; blueprints, settings paste and clones carry it. On an item cell
+  the text is set in the ME Cell Workbench and kept in the cell's tags. Fluid cells take no Group Filter Card (AE2-U: no
+  ore filter on fluid cells); on a bus that faces a tank the text matches the fluid's names. The ME Import and Export Bus
+  take no Group Filter Card yet.
 
 ### The tooltip of a cell
 
@@ -631,6 +671,9 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
   once it cannot take a new kind). Shift + click a card in your inventory, or click a card slot with it in hand; a card
   the cell cannot take, a second one of a kind and a card without a cell are refused. While the cell lies in the
   workbench its cards are the items in its card slots; taking the cell out puts them into it.
+* **Group filter** (issue #354): with a **Group Filter Card** in an item cell's card slots, the text field under the cards
+  holds the cell's filter text (see **Upgrade cards**, the Group Filter Card); it is written into the cell as you type and
+  stays in the cell when the card is taken out. Without the card the field is greyed out.
 * **Keep the partition when the cell is taken out** (AE2's copy mode): the partition stays in the workbench and goes
   onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
 * **Without a cell** the partition slots are there too: they show and set the workbench's own partition, the one the

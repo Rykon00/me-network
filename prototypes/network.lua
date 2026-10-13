@@ -671,6 +671,44 @@ data:extend({ {
 --------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
+--- VOID CELLS (issue #354, AE2-Unofficial's Void ME Storage Cell: appeng/items/storage/ItemVoidStorageCell.java,
+--- appeng/me/storage/VoidCellInventory.java): a cell that takes and destroys whatever its filter lets in (partition, fuzzy,
+--- inverter in the Cell Workbench) and holds nothing. In the storage engine a cell of no bytes whose spec says `void`: the
+--- Overflow Destruction Card's path (cell.void). One for items and one for fluids (a cell here has one kind). Icons: the 1k
+--- cells in another colour until the texture mod has AE2's. Standalone recipe: AE2-U's (network/cells/storage.recipe: 2 quartz
+--- glass, 3 redstone, an ender pearl, 3 iron) with the stand-ins; the fluid one the fluid cell housing's 3 copper instead of the
+--- iron. Gregtorio gives them GTNH's.
+--------------------------------------------------------------------------------
+
+local VOID_CELLS = {
+	{ "me-void-storage-cell", "item", "me-1k-storage-cell", MAX_TYPES,
+		{ "plastic-bar", 2, "copper-cable", 3, "electronic-circuit", 1, "iron-plate", 3 } },
+	{ "me-void-fluid-storage-cell", "fluid", "me-1k-fluid-storage-cell", 18,
+		{ "plastic-bar", 2, "copper-cable", 3, "electronic-circuit", 1, "copper-plate", 3 } },
+}
+for i, v in ipairs(VOID_CELLS) do
+	local ing = {}
+	for j = 1, #v[5], 2 do ing[#ing + 1] = { type = "item", name = v[5][j], amount = v[5][j + 1] } end
+	local item = ME.add_item{
+		type = "item-with-tags",
+		name = v[1],
+		icon = HD_ICON .. v[3] .. ".png",
+		icon_size = 64,
+		subgroup = v[2] == "fluid" and "fork-me-fluid-cells" or "fork-me-cells",
+		order = "z" .. i,
+		stack_size = 1,
+		recipe = { energy_required = 5, auto_recycle = false, ingredients = ing },
+	}
+	item.icons = { { icon = HD_ICON .. v[3] .. ".png", icon_size = 64, tint = { 0.55, 0.3, 0.75 } } }   -- (add_item takes one icon)
+	item.localised_description = { "item-description.fork-me-void-cell", tostring(v[4]) }
+	cell_data[v[1]] = { tier = "void", kind = v[2] == "fluid" and "fluid" or nil, bytes = 0, per_type = 0, types = v[4],
+		void = true }
+end
+ME.crafting_block_tech = ME.crafting_block_tech or {}
+ME.crafting_block_tech["me-void-storage-cell"] = "me-network"
+ME.crafting_block_tech["me-void-fluid-storage-cell"] = "me-fluid-storage"
+
+--------------------------------------------------------------------------------
 --- MONITORS (issue #353, AE2-Unofficial's ME Storage, Conversion and Throughput Monitor, appeng/parts/reporting/): 1x1 blocks
 --- like the ME Interface Terminal (power through the controller, walkable, the dark and the lit picture as graphics variations
 --- 1 and 2); the resource's icon and amount are drawn on them by scripts/fork-me-monitor.lua. Standalone recipes (AE2: an
@@ -725,6 +763,7 @@ end
 ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "lamp", "fast-inserter" }, unit = ME.unit(2, 300), recipes = {
 	"fluix-cable", "me-controller", "me-chest", "me-drive", "me-interface", "me-terminal", "basic-storage-housing",
 	"me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor",
+	"me-void-storage-cell",
 	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
 } }
