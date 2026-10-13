@@ -84,6 +84,9 @@ local function kinds()
 		for _, m in pairs({ "storage", "conversion", "throughput" }) do                     -- issue #353: the monitors
 			if n[m .. "_monitor"] then k[n[m .. "_monitor"]] = m .. "-monitor" end
 		end
+		if n.toggle_bus then k[n.toggle_bus] = "toggle" end                             -- issue #355
+		if n.inverted_toggle_bus then k[n.inverted_toggle_bus] = "toggle" end
+		if n.level_emitter then k[n.level_emitter] = "level-emitter" end
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
@@ -4344,6 +4347,11 @@ function M.on_built(entity, event)
 	local kind = kinds()[entity.name]
 	if not kind then return end
 	local s = state()
+	if kind == "toggle" and not M.toggle_wants(entity) then         -- issue #355: an open toggle bus is no member
+		s.toggle_off = s.toggle_off or {}
+		s.toggle_off[entity.unit_number] = true
+		return
+	end
 	if kind == "drive" then
 		local d = drive_record(s, entity)
 		local old, tags = legacy_item(event)
@@ -4408,11 +4416,71 @@ function M.tag_blueprint(bp, mapping)
 	end
 end
 
+--------------------------------------------------------------------------------
+--- issue #355: the ME Toggle Bus and the ME Inverted Toggle Bus (prototypes/autocrafting.lua; their checks:
+--- scripts/fork-me-toggle.lua). A toggle bus is a member only while it joins: an open one is unregistered like a removed
+--- cable (the network splits as for a removal), a closing one registered like a built one (the networks it touches merge).
+--- `s.toggle_off` holds the open ones (rebuild skips them).
+--------------------------------------------------------------------------------
+
+M.TOGGLE_WIRES = { defines.wire_connector_id.circuit_red, defines.wire_connector_id.circuit_green }   -- (a field: no main-chunk local)
+
+--- does the toggle bus want to join? Its lamp's circuit condition, switched on and on a circuit network, holds (AE2's
+--- redstone signal); the inverted one wants the opposite, so it joins without a wire
+function M.toggle_wants(entity)
+	local cb = entity.get_control_behavior()
+	local holds = false
+	if cb and cb.circuit_enable_disable and not cb.disabled then
+		for _, w in pairs(M.TOGGLE_WIRES) do
+			if entity.get_circuit_network(w) then holds = true break end
+		end
+	end
+	if entity.name == mod_data().names.inverted_toggle_bus then return not holds end
+	return holds
+end
+
+--- is the toggle bus a member now (it joins)?
+function M.toggle_joined(entity)
+	local s = storage.fork_me_net
+	return s ~= nil and entity.valid and s.nodes[entity.unit_number] ~= nil
+end
+
+--- the toggle bus joins (`joined` true) or opens; returns true when that changed the graph
+function M.set_toggle(entity, joined)
+	if not (entity and entity.valid and kinds()[entity.name] == "toggle") then return false end
+	local s = state()
+	local unit = entity.unit_number
+	s.toggle_off = s.toggle_off or {}
+	if joined then
+		s.toggle_off[unit] = nil
+		if s.nodes[unit] then return false end
+		add_node(s, entity, "toggle")
+	else
+		s.toggle_off[unit] = true
+		if not s.nodes[unit] then return false end
+		remove_node_graph(s, unit)
+	end
+	return true
+end
+
+--- issue #355: the energy the network's controllers hold now (J; the level emitter's "stored energy")
+function M.stored_energy(net)
+	local s = storage.fork_me_net
+	local n = 0
+	for unit in pairs(net and net.controllers or {}) do
+		local node = s and s.nodes[unit]
+		local e = node and node.entity
+		if e and e.valid then n = n + e.energy end
+	end
+	return n
+end
+
 --- A member is mined (its cells go into `buffer`), destroyed (`died`: its cells are spilled) or removed by a
 --- script. Call before the entity is gone.
 function M.on_removed(entity, buffer)
 	if not (entity and entity.valid and entity.unit_number) then return end
 	local s = storage.fork_me_net
+	if s and s.toggle_off then s.toggle_off[entity.unit_number] = nil end   -- (issue #355)
 	if not (s and s.nodes[entity.unit_number]) then return end
 	local d = s.drives[entity.unit_number]
 	if d then
@@ -4594,9 +4662,11 @@ function M.rebuild()
 		local index = surface.index
 		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
 			local unit = e.unit_number
-			units[#units + 1] = unit
-			ents[unit] = e
-			surface_of[unit] = index
+			if not (s.toggle_off and s.toggle_off[unit]) then          -- (issue #355: an open toggle bus is no member)
+				units[#units + 1] = unit
+				ents[unit] = e
+				surface_of[unit] = index
+			end
 		end
 	end
 	table.sort(units)

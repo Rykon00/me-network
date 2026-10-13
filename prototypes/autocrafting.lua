@@ -414,6 +414,83 @@ data:extend({ circuit })
 
 
 --------------------------------------------------------------------------------
+--- TOGGLE BUSES AND LEVEL EMITTER (issue #355; runtime: scripts/fork-me-toggle.lua)
+--- AE2-Unofficial's ME Toggle Bus and ME Inverted Toggle Bus (appeng/parts/misc/PartToggleBus.java, PartInvertedToggleBus.java)
+--- and ME Level Emitter (appeng/parts/automation/PartLevelEmitter.java).
+---   * A toggle bus is a lamp: its circuit condition (the game's lamp window, kept on the entity, so the game copies and
+---     blueprints it) is AE2's redstone. While the condition holds it is a cable piece of the network and joins what touches
+---     it; otherwise it is no member and the networks on its sides are apart (AE2: no signal, no connection). The inverted
+---     one joins while the condition does not hold, also without a wire. Walkable like the cable; both pictures are the
+---     stateless visualisation (the lamp's own pictures follow the lamp, not the bus), its status says joined or apart.
+---   * The level emitter is a constant combinator whose signal the runtime writes: its output signal (1) while what the
+---     network holds of its resource (or the network's stored energy) is at or above its threshold, or below it.
+--- Standalone recipes, AE2-U's (network/parts/toggle-buses.recipe, emitters.recipe) with the stand-ins: a toggle bus from 2
+--- fluix cables, 2 copper cables (redstone) and a power switch (a lever); the inverted one from a toggle bus (AE2 also turns
+--- it back: left out, a recipe loop); the level emitter from an advanced circuit (calculation processor) and a decider
+--- combinator (redstone torch).
+--------------------------------------------------------------------------------
+
+local TOGGLE_POWER = 500                 -- W drawn through the ME Controller while joined
+for i, def in ipairs({
+	{ "me-toggle-bus", I{ "fluix-cable", 2, "copper-cable", 2, "power-switch", 1 } },
+	{ "me-inverted-toggle-bus", I{ "me-toggle-bus", 1 } },
+}) do
+	local name = def[1]
+	ME.add_item{ name = name, icon = ME.hd_icons .. name .. ".png", icon_size = 64, subgroup = "fork-me-network",
+		order = "g6" .. i, stack_size = 50, place_result = name, recipe = { energy_required = 1, ingredients = def[2] } }
+	local bus = table.deepcopy(data.raw.lamp["small-lamp"])
+	bus.name = name
+	bus.icon = ME.hd_icons .. name .. ".png"
+	bus.icon_size = 64
+	bus.minable = { mining_time = 0.2, result = name }
+	bus.max_health = 100
+	bus.corpse = "small-remnants"
+	bus.dying_explosion = nil
+	bus.collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } }
+	bus.collision_mask = ME.WALKABLE
+	bus.selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } }
+	bus.energy_source = { type = "void" }
+	bus.energy_usage_per_tick = "1W"
+	bus.always_on = true
+	bus.light = nil
+	bus.light_when_colored = nil
+	bus.glow_size = 0
+	bus.picture_off = util.empty_sprite()
+	bus.picture_on = util.empty_sprite()
+	bus.stateless_visualisation = { render_layer = "lower-object",
+		animation = { filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, scale = 0.5 } }
+	bus.draw_stateless_visualisations_in_ghost = true
+	bus.fast_replaceable_group = "me-toggle-bus"
+	bus.next_upgrade = nil
+	bus.localised_description = { "entity-description." .. name, tostring(TOGGLE_POWER) }
+	data:extend({ bus })
+end
+data.raw["mod-data"]["fork-me-network"].data.names.toggle_bus = "me-toggle-bus"
+data.raw["mod-data"]["fork-me-network"].data.names.inverted_toggle_bus = "me-inverted-toggle-bus"
+data.raw["mod-data"]["fork-me-network"].data.member_power.toggle = TOGGLE_POWER
+
+ME.add_item{
+	name = "me-level-emitter",
+	icon = ME.hd_icons .. "me-level-emitter.png",
+	icon_size = 64,
+	subgroup = "fork-me-network",
+	order = "g7",
+	stack_size = 50,
+	place_result = "me-level-emitter",
+	recipe = { energy_required = 1, ingredients = I{ "advanced-circuit", 1, "decider-combinator", 1 } },
+}
+local emitter = table.deepcopy(data.raw["constant-combinator"]["me-circuit-interface"])
+emitter.name = "me-level-emitter"
+emitter.icon = ME.hd_icons .. "me-level-emitter.png"
+emitter.minable = { mining_time = 0.2, result = "me-level-emitter" }
+emitter.sprites = { filename = ME.hd_entity_path .. "me-level-emitter.png", priority = "high", width = 64, height = 64, scale = 0.5 }
+emitter.localised_description = { "entity-description.me-level-emitter" }
+data:extend({ emitter })
+data.raw["mod-data"]["fork-me-network"].data.names.level_emitter = "me-level-emitter"
+
+
+
+--------------------------------------------------------------------------------
 --- MOD DATA (read by scripts/fork-me-autocraft.lua: no duplicated numbers)
 --------------------------------------------------------------------------------
 
@@ -444,7 +521,7 @@ ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k",
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs
 ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "circuit-network" }, unit = ME.unit(3, 500),
-	recipes = { "me-level-maintainer", "me-circuit-interface" } }
+	recipes = { "me-level-maintainer", "me-circuit-interface", "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter" } }   -- (#355)
 ME.add_technology{ name = "me-co-processing", prerequisites = { "me-autocrafting", "me-storage-256k" },
 	unit = ME.unit(4, 800), recipes = with_blocks("me-co-processing", {}) }
 ME.add_technology{ name = "me-quantum-crafting", prerequisites = { "me-co-processing", "utility-science-pack" },
@@ -461,3 +538,6 @@ end
 --- heard of it: data-final-fixes.lua puts its recipe back on the technology, unless a technology of that mod unlocks it)
 ME.crafting_block_tech["me-pattern-terminal"] = "me-autocrafting"
 ME.crafting_block_tech["me-interface-terminal"] = "me-autocrafting"            -- (issue #336, the same way)
+for _, name in ipairs({ "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter" }) do   -- (issue #355, the same way)
+	ME.crafting_block_tech[name] = "me-automation"
+end

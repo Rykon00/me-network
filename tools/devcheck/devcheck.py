@@ -822,6 +822,7 @@ RUNTIME_TESTS = (
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),
     ("VOIDCELL", "Void ME Storage Cells (issue #354)"),
+    ("TOGGLE", "ME Toggle Bus and Level Emitter (issue #355)"),
     ("IFACECAP", "ME Interface Capacity Card (issue #196)"),
     ("WIRELESS", "ME wireless terminal (issues #205 to #210)"),
     ("STICKY", "ME Sticky Card (issue #193)"),

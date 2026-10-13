@@ -3188,3 +3188,23 @@ The filter's cost per visit, measured once in the runtime test's world (a storag
 2000 visits through the remote interface, three rounds; not part of the committed test): about 44 µs a visit with the card
 and an empty text (no filter), about 52 µs with the text `iron-*|*-plate&!copper-plate|raw-resource`, so about 0.25 µs per
 item type and visit. A new text costs its parse and one match of name, subgroup and group per key the first time.
+
+## Toggle buses and the level emitter (issue #355)
+
+Both are checked by a step hook of the autocrafting step (issue #5's rule, no tick handler of their own), in the order of
+their lists, each at most every 10 ticks and at most 8 of each per tick: a toggle bus check reads its lamp's control
+behaviour (and its two wire connectors while the condition is switched on), a level emitter visit one count (or the
+controllers' energy) and writes its section only when the output changed. A map without them pays two empty list tests per
+tick. A toggle bus that switches is unregistered or registered like a removed or built cable (`remove_node_graph`,
+`add_node`): its cost is that of a cable removal or placement, the split search of issue #38 (lever 5) included, which the
+bench's burst build and burst remove measure.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have neither):
+
+| | origin/main | with the toggle buses and the level emitter |
+|---|---|---|
+| 100: script average / p99 ms | 0.1895 / 1.733 | 0.1875 / 1.714 |
+| 1000: script average / p99 ms | 0.3288 / 1.879 | 0.3286 / 1.907 |
+| Lua alloc KB per tick (100 / 1000) | 26.67 / 24.32 | 26.67 / 24.32 |
+
+`regressions beyond the noise: 0`.

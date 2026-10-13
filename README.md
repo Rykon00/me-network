@@ -32,7 +32,7 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second mo
 | `data.lua` | refuses to load next to Gregtorio Continued before 0.5.0 (which contains this network itself), then loads the prototypes |
 | `prototypes/api.lua` | the data-stage API `ME_NETWORK` (`docs/API.md`): items, recipes and technologies of this mod, replacing and removing recipes, setting technologies, the molecular assembler |
 | `prototypes/network.lua` | cable and underground cable, controller, drive, storage components and cells (items with tags), housing, ME chest (issue #229: one cell, its own terminal and power), interface, import, export and storage bus, terminal, the hidden old drive items, mod-data `fork-me-network`, technologies `me-network`, `me-storage-64k`, `me-storage-256k` |
-| `prototypes/autocrafting.lua` | pattern provider, pattern terminal, interface terminal (issue #336), blank and encoded pattern, molecular assembler, the crafting blocks of the multiblock crafting CPUs (issue #6), level maintainer, circuit interface, mod-data `fork-me-autocraft`, technologies `me-autocrafting`, `me-automation`, `me-co-processing`, `me-quantum-crafting` |
+| `prototypes/autocrafting.lua` | pattern provider, pattern terminal, interface terminal (issue #336), blank and encoded pattern, molecular assembler, the crafting blocks of the multiblock crafting CPUs (issue #6), level maintainer, circuit interface, toggle buses and level emitter (issue #355), mod-data `fork-me-autocraft`, technologies `me-autocrafting`, `me-automation`, `me-co-processing`, `me-quantum-crafting` |
 | `prototypes/fluids.lua` | fluid cells, the ME Interface's fluid sides, the hidden old fluid drive items, mod-data `fork-me-fluids`, technologies `me-fluid-storage`, `me-fluid-storage-256k` |
 | `data-final-fixes.lua` | removes the recipes (also another mod's) that make an item this mod no longer makes (`ME_NETWORK.removed`); unlocks a crafting block recipe that no technology unlocks any more (issue #6); lets every crafting machine paste its settings onto the ME Interface, the import, export and storage bus (`additional_pastable_entities`) |
 | `settings.lua` | the map settings: the scheduler's budgets, the bus speed and the idle limits (issue #5, `docs/PERFORMANCE.md`) |
@@ -56,6 +56,8 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second mo
 | `scripts/fork-me-names.lua` | the names of items and fluids in each player's language (requested from the client a few per tick), so the search of the picker and the terminal finds an item by the name it shows (issue #295) |
 | `scripts/fork-me-autocraft.lua`, `fork-me-patterns.lua` | providers with encoded patterns, planner (with the bytes of a job), jobs, the multiblock CPUs (groups of crafting blocks kept up to date on build and removal), the pattern items; `gregtorio-me-autocraft` |
 | `scripts/fork-me-circuit.lua` | level maintainer and circuit interface; `gregtorio-me-circuit` |
+| `scripts/fork-me-toggle.lua` | ME Toggle Bus and ME Inverted Toggle Bus: the checks of their condition (issue #355); `gregtorio-me-toggle` |
+| `scripts/fork-me-emitter.lua` | ME Level Emitter, its window (issue #355); `gregtorio-me-emitter` |
 | `scripts/fork-me-fluids.lua` | the fluid calls of the other modules; `gregtorio-me-fluids` |
 | `scripts/fork-me-handover.lua` | takes the ME state of a Gregtorio Continued save once (Gregtorio issue #83) |
 | `graphics/` | sprites, icons and technology icons (`tools/gen_ae2_sprites.py`), GPLv3/LGPL-3.0 |

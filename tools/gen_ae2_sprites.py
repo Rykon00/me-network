@@ -1863,6 +1863,52 @@ TECH_ICONS = {
 }
 
 
+# --- me-network issue #355: the ME Toggle Bus, the ME Inverted Toggle Bus and the ME Level Emitter --------------------------
+# Drawn from this mod's own 64 px pictures, no AE2 textures. A toggle bus is a cable piece: the cable's four-arm picture with a
+# switch box in the middle (its lever open, as AE2's toggle bus without a signal); the inverted one has a red bar across the
+# box (the inverter card's colour). The level emitter is the circuit interface's casing with a level gauge on its screen: three
+# bars and a red threshold line (AE2's level emitter is a redstone torch on a cable).
+TOGGLE_BOX = (18, 18, 45, 45)
+
+
+def toggle_sprite(inverted):
+    cable = load(HD_ENTITY / "me-cable.png")
+    img = cable.crop((15 * TILE * 2, 0, 16 * TILE * 2, TILE * 2)).copy()       # graphics variation 16: all four arms
+    d = ImageDraw.Draw(img)
+    x1, y1, x2, y2 = TOGGLE_BOX
+    d.rectangle((x1, y1, x2, y2), fill=(28, 28, 36, 255), outline=(70, 70, 86, 255))
+    d.rectangle((x1 + 1, y1 + 1, x2 - 1, y1 + 2), fill=FLUIX + (255,))          # fluix rim at the top
+    d.rectangle((x1 + 4, y2 - 8, x1 + 8, y2 - 4), fill=FLUIX_LIGHT + (255,))     # the two contacts
+    d.rectangle((x2 - 8, y2 - 8, x2 - 4, y2 - 4), fill=FLUIX_LIGHT + (255,))
+    d.line((x1 + 6, y2 - 6, x2 - 7, y1 + 7), fill=(220, 220, 230, 255), width=3)   # the lever, open
+    if inverted:
+        d.rectangle((x1 + 2, y1 + 5, x2 - 2, y1 + 7), fill=(245, 120, 30, 255))
+    return img
+
+
+def emitter_sprite():
+    img = load(HD_ENTITY / "me-circuit-interface.png").copy()
+    d = ImageDraw.Draw(img)
+    d.rectangle((18, 18, 45, 45), fill=(12, 12, 16, 255))                        # the screen, cleared
+    for i, h in enumerate((8, 14, 20)):                                           # a level gauge
+        x = 23 + i * 7
+        d.rectangle((x, 42 - h, x + 4, 42), fill=FLUIX_LIGHT + (255,))
+    d.rectangle((20, 28, 43, 29), fill=(235, 50, 40, 255))                        # the threshold
+    return img
+
+
+def toggle_emitter():
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name, img in (("me-toggle-bus", toggle_sprite(False)), ("me-inverted-toggle-bus", toggle_sprite(True)),
+                      ("me-level-emitter", emitter_sprite())):
+        for path in (HD_ENTITY / f"{name}.png", HD_ICON / f"{name}.png"):
+            img.save(path)
+            written.append(path)
+    return written
+
+
 def hd_batch5():
     """issue #222: 256 x 256 technology icons, each a 3D-style icon at the largest whole factor that leaves a margin
     (upscale); ME Upgrade Cards three card plates fanned out (Overflow Destruction behind, Fuzzy, Capacity in front)"""
@@ -2298,6 +2344,9 @@ def main():
     ap.add_argument("--wireless", action="store_true",
                     help="only the wireless parts (me-network issues #205 to #211): access point, booster, terminal item, "
                          "charger, module and their technology, drawn from this mod's own PNGs")
+    ap.add_argument("--toggle-emitter", action="store_true",
+                    help="only the ME Toggle Bus, the ME Inverted Toggle Bus and the ME Level Emitter (me-network issue #355), "
+                         "64 px pictures and icons from the cable and the circuit interface")
     ap.add_argument("--hd", action="store_true",
                     help="the 64 px pictures of the 3D style (me-network issues #154, #218: batch 1) from the 32 px ones, into "
                          "graphics/entity/fork/ae2/hd/ and graphics/icons/hd/, and their contact sheet")
@@ -2344,7 +2393,7 @@ def main():
     if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
             or a.sheet_assembler or a.pattern_terminal or a.interface_terminal or a.monitors or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
-            or a.own_icons or a.light or a.bus_markers):
+            or a.own_icons or a.light or a.bus_markers or a.toggle_emitter):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --interface-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
@@ -2418,7 +2467,9 @@ def main():
         written = hd_batch5()
         hd_sheet_batch5(ROOT / "docs/graphics-review/graphics-batch5-222.png")
         print("ME 3D technology icons (batch 5):", len(written))
-    elif a.own_icons:                           # the 3D-style cells and cable are made from the 32 px icons
+    if a.gt or a.hd or a.toggle_emitter:                                # (from the 64 px cable and circuit interface)
+        print("ME toggle buses and level emitter (issue #355):", len(toggle_emitter()))
+    if not (a.gt or a.hd) and a.own_icons:      # the 3D-style cells and cable are made from the 32 px icons
         written = hd_batch1()
         hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")
         print("ME 3D pictures (batch 1):", len(written))
