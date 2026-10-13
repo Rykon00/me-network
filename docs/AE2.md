@@ -55,7 +55,7 @@ underground cable), `me-storage-64k` (EV),
 4. Import and export with **ME Interfaces** (inserters, belts, pipes) or **buses** (directly on a machine, chest or
    tank); an **ME Storage Bus** makes a chest or a tank part of the network's storage.
 
-**Walking and driving:** the cable, the underground cable, the three buses and the terminal can be walked over (and driven
+**Walking and driving:** the cable, the underground cable, the three buses, the toggle buses and the terminal can be walked over (and driven
 over by cars and tanks: they collide through the same layer as the player); nothing can be built on them. The interface,
 drive, controller, provider, level maintainer, circuit interface, crafting blocks and the Cell Workbench stay solid.
 
@@ -1034,6 +1034,39 @@ paste, and clones. Since
 issue #68 the ME Controller has no circuit connection (it was a roboport): the Circuit Interface is the way to
 read the network. Items with tags (loaded cells) count under their item. Up to 1000 signals per interface (the
 largest amounts first).
+
+### ME Level Emitter
+
+Tech `me-automation` (issue #355, AE2-Unofficial's Level Emitter, `PartLevelEmitter`). A constant combinator connected to
+the network that gives **one signal**, its output signal with the value 1 (the green check unless another signal is set
+in its window), while the network holds **at least** the threshold of its item or fluid (**At or above**, AE2's "emit when
+levels are above or equal") or **less** than it (**Below**). With **Stored energy** it compares the energy the network's ME
+Controllers hold (J) instead. A network that does not work gives nothing. Checked several times a second (a queue with a
+budget of 8 emitters per tick, each at most every 10 ticks); the signal is written only when it changes. Resource, threshold,
+mode and output signal are copied by settings paste, blueprints and clones. AE2's Crafting Card mode (emit to have something
+crafted) is the level maintainer's job here; the Fuzzy Card is not taken over (an item filter names one quality).
+Standalone recipe (AE2's: a calculation processor and a redstone torch): an advanced circuit and a decider combinator.
+
+### ME Toggle Bus and ME Inverted Toggle Bus
+
+Tech `me-automation` (issue #355, AE2-Unofficial's `PartToggleBus` and `PartInvertedToggleBus`). A **cable piece** that
+connects whatever touches it, like the cable, but only while it is **joined**:
+
+* **ME Toggle Bus:** joined while its **circuit condition** holds. Connect it to a circuit network and open it: its window is
+  the game's lamp window, with the condition (AE2's redstone). Without a wire, or without the condition switched on, it is
+  open, as AE2's toggle bus without a signal.
+* **ME Inverted Toggle Bus:** the opposite: joined while the condition does **not** hold, also without a wire.
+* **Open**, the bus is no member: the networks on its sides are **apart**, as if a cable piece were taken out; each part has
+  its own storage, power and crafting (a part without a controller does not work). **Joined**, they are one network again
+  (two controllers then are a conflict, as for any network). Its tooltip says "Joined" or "Open".
+* Crafting jobs and windows go through a split as through a removed cable: a job whose machine is on the other side waits
+  and goes on after the join; nothing is lost.
+* The bus follows its condition within about 10 ticks (a queue with a budget of 8 buses per tick); a switch costs what
+  taking out or placing a cable costs (`docs/PERFORMANCE.md`). Blueprints, settings paste and clones keep the condition
+  (the game copies a lamp's). It can be walked over; its picture always shows the cable's four arms. Joined, it draws
+  500 W through the controller.
+* Standalone recipes (AE2's: 2 redstone, 2 cables and a lever; the inverted one from a toggle bus): 2 fluix cables, 2 copper
+  cables and a power switch; the inverted one from a toggle bus (AE2 also turns it back; left out here, a recipe loop).
 
 ## Settings in blueprints and copy/paste
 

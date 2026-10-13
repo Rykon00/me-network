@@ -3141,3 +3141,23 @@ origin/provider-blocking-335`):
 makes no garbage). A first measurement while the maintainer's game ran on the machine (both versions at about twice their
 usual script time) had flagged "ticks over 5 ms: 48 -> 89" at size 1000; the runs above, without the game, show no
 difference.
+
+## Toggle buses and the level emitter (issue #355)
+
+Both are checked by a step hook of the autocrafting step (issue #5's rule, no tick handler of their own), in the order of
+their lists, each at most every 10 ticks and at most 8 of each per tick: a toggle bus check reads its lamp's control
+behaviour (and its two wire connectors while the condition is switched on), a level emitter visit one count (or the
+controllers' energy) and writes its section only when the output changed. A map without them pays two empty list tests per
+tick. A toggle bus that switches is unregistered or registered like a removed or built cable (`remove_node_graph`,
+`add_node`): its cost is that of a cable removal or placement, the split search of issue #38 (lever 5) included, which the
+bench's burst build and burst remove measure.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have neither):
+
+| | origin/main | with the toggle buses and the level emitter |
+|---|---|---|
+| 100: script average / p99 ms | 0.1895 / 1.733 | 0.1875 / 1.714 |
+| 1000: script average / p99 ms | 0.3288 / 1.879 | 0.3286 / 1.907 |
+| Lua alloc KB per tick (100 / 1000) | 26.67 / 24.32 | 26.67 / 24.32 |
+
+`regressions beyond the noise: 0`.
