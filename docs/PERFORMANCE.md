@@ -3226,3 +3226,21 @@ does once the chest is smaller than its cap. No new allocation per visit.
 
 The first run reported one metric beyond the noise, the gc time at 1000 (0.0308 against 0.0329 ms, with the same Lua
 allocation per tick); the second run: `regressions beyond the noise: 0` (gc 0.0325 against 0.0334 ms).
+
+## Autocrafting in every quality (issue #352)
+
+The planner, the jobs and the hand-over read an item's quality from its key (`N.key_of` and `N.parse_key` of the storage
+engine); a normal quality item keeps the plain name as its key, so `key_of` returns the name as before and makes no string for
+it. A crafting pattern of another quality writes `quality` onto its recipe's item entries once per pattern definition (the
+ingredient cache of #43). A machine's recipe test reads its recipe and quality in one call (`has_recipe`).
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes' patterns are normal quality):
+
+| | origin/main | quality-aware autocrafting |
+|---|---|---|
+| 100: script average / p99 ms | 0.1850 / 1.738 | 0.1885 / 1.741 |
+| 1000: script average / p99 ms | 0.3295 / 1.886 | 0.3268 / 1.877 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| provider crafts per second | identical | identical |
+
+`regressions beyond the noise: 0`.
