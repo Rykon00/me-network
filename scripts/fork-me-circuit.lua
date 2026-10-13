@@ -43,6 +43,8 @@ local MAINTAINER_BUSY = 60           -- ... one whose job runs, or that waits fo
 local CIRCUIT_INTERVAL = 60
 local MAX_SIGNALS = 1000            -- per circuit interface: the largest amounts, written by type and name
 local MAX_FILTERS = 20
+local MAX_ROWS = 5                  -- issue #351: a maintainer's rows (GTNH's level maintainer: 5 slots)
+local MAX_CIRCUIT_ROWS = 20         -- issue #351: the signals "craft what the circuit asks" takes, the largest first
 local SIGNAL_MAX = 2147483647       -- signals are 32 bit
 local MAINT_TAG, CIRCUIT_TAG = "fork_me_maintainer", "fork_me_circuit"
 local WIRES = { defines.wire_connector_id.circuit_red, defines.wire_connector_id.circuit_green }
@@ -184,17 +186,108 @@ local function drop_maintainer(s, unit)
 	remove_value(s.mlist, unit)
 end
 
---- The target the maintainer keeps right now (the circuit signal if it takes the amount from there)
-local function target_of(rec)
-	if rec.circuit then return clamp_amount(rec.key, circuit_amount(rec.entity, rec.key)) end
-	return rec.amount
+--- Issue #351: a maintainer keeps up to MAX_ROWS resources (GTNH's level maintainer, AE2FC's 5 slots), each a row
+--- { key, amount, circuit, batch } with its own job and status; row 1 is also kept in the record's own fields key, amount,
+--- circuit and job (the fields of saves from before, of the blueprint tags and of the remote get_maintainer). With
+--- `circuit_all` ("craft what the circuit asks") the rows come from the signals on its wires instead: every item and
+--- fluid signal is an amount to keep (the MAX_CIRCUIT_ROWS largest), their state in rec.crows by key.
+local function rows_of(rec)
+	local rows = rec.rows
+	if not rows then
+		rows = { { key = rec.key, amount = rec.amount or 0, circuit = rec.circuit or false, job = rec.job,
+			missing = rec.missing, retry = rec.retry } }
+		rec.rows = rows
+	end
+	return rows
 end
 
---- One check. `budget.starts`: job starts left in this tick. Sets rec.status (a locale key suffix).
+--- the rows a check looks at: those with a resource, or those of the signals on the wires
+local function active_rows(rec)
+	local out = {}
+	if rec.circuit_all then
+		local amounts = {}
+		for _, w in pairs(WIRES) do
+			local cn = rec.entity.get_circuit_network(w)
+			for _, sg in pairs(cn and cn.signals or {}) do
+				local key = sg.count > 0 and (not sg.signal.quality or sg.signal.quality == "normal") and key_of_signal(sg.signal)
+				if key and is_fluid(key) then key = N.fluid_storage_key(key) end
+				if key then amounts[key] = (amounts[key] or 0) + sg.count end
+			end
+		end
+		local keys = {}
+		for k in pairs(amounts) do keys[#keys + 1] = k end
+		table.sort(keys, function(a, b) if amounts[a] ~= amounts[b] then return amounts[a] > amounts[b] end return a < b end)
+		local crows = rec.crows or {}
+		rec.crows = crows
+		local seen = {}
+		for i = 1, math.min(#keys, MAX_CIRCUIT_ROWS) do
+			local k = keys[i]
+			local row = crows[k] or { key = k }
+			crows[k] = row
+			row.fixed = clamp_amount(k, amounts[k])
+			seen[k] = true
+			out[#out + 1] = row
+		end
+		for k, row in pairs(crows) do
+			if not seen[k] and not row.job then crows[k] = nil end      -- (a row whose job runs stays until it ends)
+		end
+		return out
+	end
+	for _, row in ipairs(rows_of(rec)) do
+		if row.key then out[#out + 1] = row end
+	end
+	return out
+end
+
+--- the target a row keeps right now (the circuit signal if it takes the amount from there)
+local function row_target(e, row)
+	if row.fixed then return row.fixed end
+	if row.circuit then return clamp_amount(row.key, circuit_amount(e, row.key)) end
+	return row.amount or 0
+end
+
+--- One row's check. `budget.starts`: job starts left in this tick. Sets row.status (a locale key suffix).
+local function row_step(e, net, row, budget)
+	local target = row_target(e, row)
+	local stock = stock_of(net, row.key)
+	row.stock, row.target = stock, target
+	if row.job then
+		local j = autocraft.job(row.job)
+		if j and (j.status == "queued" or j.status == "running") then row.status = "running" return end
+		row.job = nil
+	end
+	if stock >= target then
+		row.status, row.missing, row.retry = "stocked", nil, nil
+		return
+	end
+	if autocraft.active_job_for(net, row.key) then row.status = "other-job" return end
+	if row.retry and game.tick < row.retry then return end            -- keeps the status of the failed start
+	if budget.starts <= 0 then row.status = "waiting" return end
+	if not autocraft.free_slot(net) then row.status = "no-cpu" return end
+	budget.starts = budget.starts - 1
+	local want = clamp_amount(row.key, math.ceil(target - stock - 1e-9))
+	if row.batch and row.batch > 0 and want > row.batch then want = row.batch end   -- (issue #351: at most a batch per job)
+	local id, why, plan = autocraft.start(e, row.key, want, e.unit_number)
+	if id then
+		row.job, row.status, row.missing, row.retry = id, "running", nil, nil
+	else
+		row.status = why or "failed"
+		row.missing = why == "missing" and plan and plan.missing or nil
+		row.retry = game.tick + RETRY_TICKS
+	end
+end
+
+--- the order in which a row's status becomes the maintainer's: a start left over first, then a job under way, then a failed
+--- start, then stocked
+local STATUS_RANK = { waiting = 1, running = 2, ["other-job"] = 3, ["no-cpu"] = 4, stocked = 9 }
+
+--- One check of every row. Sets rec.status (the maintainer's), rec.retry (the earliest of its rows) and rec.waits (the
+--- keys and targets to wake it when every row is stocked).
 local function maintainer_step(rec, budget)
 	local e = rec.entity
-	rec.stock, rec.target = nil, nil
-	if not rec.key then rec.status = "no-target" return end
+	rec.stock, rec.target, rec.waits = nil, nil, nil
+	local rows = active_rows(rec)
+	if #rows == 0 then rec.status = (rec.circuit_all and "circuit-none" or "no-target") return end
 	--- only while a condition is switched on: a freshly wired lamp reads disabled until its next circuit update
 	local cb = e.get_control_behavior()
 	if cb and (cb.circuit_enable_disable or cb.connect_to_logistic_network) and cb.disabled then
@@ -209,49 +302,76 @@ local function maintainer_step(rec, budget)
 		rec.status = why == "no-power" and "no-power" or "no-network"
 		return
 	end
-	local target = target_of(rec)
-	local stock = stock_of(net, rec.key)
-	rec.stock, rec.target = stock, target
-	if rec.job then
-		local j = autocraft.job(rec.job)
-		if j and (j.status == "queued" or j.status == "running") then rec.status = "running" return end
-		rec.job = nil
+	local best, retry, waits = nil, nil, {}
+	for _, row in ipairs(rows) do
+		row_step(e, net, row, budget)
+		local rank = STATUS_RANK[row.status] or 5
+		if not best or rank < (STATUS_RANK[best] or 5) then best = row.status end
+		if row.retry and (not retry or row.retry < retry) then retry = row.retry end
+		waits[#waits + 1] = { row.key, row.target }
 	end
-	if stock >= target then
-		rec.status, rec.missing, rec.retry = "stocked", nil, nil
-		return
-	end
-	if autocraft.active_job_for(net, rec.key) then rec.status = "other-job" return end
-	if rec.retry and game.tick < rec.retry then return end            -- keeps the status of the failed start
-	if budget.starts <= 0 then rec.status = "waiting" return end
-	if not autocraft.free_slot(net) then rec.status = "no-cpu" return end
-	budget.starts = budget.starts - 1
-	local want = clamp_amount(rec.key, math.ceil(target - stock - 1e-9))
-	local id, why, plan = autocraft.start(e, rec.key, want, e.unit_number)
-	if id then
-		rec.job, rec.status, rec.missing, rec.retry = id, "running", nil, nil
-	else
-		rec.status = why or "failed"
-		rec.missing = why == "missing" and plan and plan.missing or nil
-		rec.retry = game.tick + RETRY_TICKS
+	rec.status, rec.retry = best, retry
+	if best == "stocked" then rec.waits = waits end
+	--- row 1 in the record's own fields (saves, blueprints, the remote get_maintainer)
+	local first = rows[1]
+	rec.job, rec.stock, rec.target, rec.missing = first.job, first.stock, first.target, nil
+	for _, row in ipairs(rows) do
+		if row.missing then rec.missing = row.missing break end
 	end
 end
 
---- Set a maintainer's resource (key or nil), amount and circuit option; nil arguments stay as they are
---- (`key = false` clears the resource). Returns true when the entity is a maintainer.
-function M.set_maintainer(entity, key, amount, circuit)
+--- Set a maintainer's resource (key or nil), amount and circuit option of row `row` (1 to MAX_ROWS, default 1) and its
+--- batch (issue #351: at most this much per job, 0 the whole difference); nil arguments stay as they are (`key = false`
+--- clears the resource). Returns true when the entity is a maintainer.
+function M.set_maintainer(entity, key, amount, circuit, row, batch)
 	if not (entity and entity.valid and entity.name == MAINTAINER) then return false end
 	local rec = maintainer_record(state(), entity)
+	local rows = rows_of(rec)
+	row = math.floor(tonumber(row) or 1)
+	if row < 1 or row > MAX_ROWS then return false end
+	for i = #rows + 1, row do rows[i] = { amount = 0, circuit = false } end
+	local r = rows[row]
 	if key ~= nil then
 		local new = key and valid_key(key, true) or nil
-		if new ~= rec.key then rec.job, rec.missing = nil, nil end
-		rec.key = new
+		if new ~= r.key then r.job, r.missing = nil, nil end
+		r.key = new
 	end
-	if amount ~= nil then rec.amount = clamp_amount(rec.key, amount) end
-	if circuit ~= nil then rec.circuit = circuit and true or false end
+	if amount ~= nil then r.amount = clamp_amount(r.key, amount) end
+	if circuit ~= nil then r.circuit = circuit and true or false end
+	if batch ~= nil then r.batch = math.max(0, math.floor(tonumber(batch) or 0)) end
+	r.retry = nil
+	if row == 1 then rec.key, rec.amount, rec.circuit, rec.job = r.key, r.amount, r.circuit, r.job end
 	rec.retry = nil
 	wake_maintainer(entity.unit_number)
 	return true
+end
+
+--- Issue #351: "craft what the circuit asks": every item and fluid signal on the maintainer's wires is an amount to keep
+function M.set_circuit_all(entity, on)
+	if not (entity and entity.valid and entity.name == MAINTAINER) then return false end
+	local rec = maintainer_record(state(), entity)
+	rec.circuit_all = on and true or nil
+	rec.retry = nil
+	wake_maintainer(entity.unit_number)
+	return true
+end
+
+--- the settings of a maintainer: { key, amount, circuit, rows = { { key, amount, circuit, batch } }, circuit_all }
+local function settings_of(rec)
+	local rows = {}
+	for i, r in ipairs(rows_of(rec)) do rows[i] = { key = r.key, amount = r.amount, circuit = r.circuit, batch = r.batch } end
+	return { key = rec.key, amount = rec.amount, circuit = rec.circuit, rows = rows, circuit_all = rec.circuit_all }
+end
+
+--- apply settings (blueprint tags, a paste, a clone, a mod update); tags of saves from before have no rows
+local function apply_settings(entity, t)
+	if type(t) ~= "table" then return end
+	local rows = type(t.rows) == "table" and t.rows or { { key = t.key, amount = t.amount, circuit = t.circuit } }
+	for i = 1, MAX_ROWS do
+		local r = rows[i] or {}
+		M.set_maintainer(entity, r.key or false, r.amount or 0, r.circuit or false, i, r.batch or 0)
+	end
+	M.set_circuit_all(entity, t.circuit_all)
 end
 
 function M.get_maintainer(entity)
@@ -267,8 +387,18 @@ function M.get_maintainer(entity)
 		local ok, why = N.usable(net)
 		if not ok then status = why == "no-power" and "no-power" or "no-network" end
 	end
+	--- issue #351: the rows (settings and their last check) and the rows of the signals
+	local rows, crows = {}, {}
+	for i, r in ipairs(rows_of(rec)) do
+		rows[i] = { key = r.key, amount = r.amount, circuit = r.circuit, batch = r.batch, status = r.status, job = r.job,
+			stock = r.stock, target = r.target, missing = r.missing }
+	end
+	for k, r in pairs(rec.crows or {}) do
+		crows[#crows + 1] = { key = k, target = r.fixed, stock = r.stock, status = r.status, job = r.job }
+	end
+	table.sort(crows, function(a, b) return a.key < b.key end)
 	return { key = rec.key, amount = rec.amount, circuit = rec.circuit, status = status, job = rec.job,
-		stock = rec.stock, target = rec.target, missing = rec.missing }
+		stock = rec.stock, target = rec.target, missing = rec.missing, rows = rows, circuit_all = rec.circuit_all, crows = crows }
 end
 
 --------------------------------------------------------------------------------
@@ -476,11 +606,23 @@ function M.maintainer_status(entity)
 	local rec = M.get_maintainer(entity)
 	local st = rec and rec.status or "no-target"
 	if st == "running" then
-		local j = rec.job and autocraft.job(rec.job)
-		return { "fork-me-circuit.maintainer-running", rec.job or "?", j and j.done or 0, j and j.total or 0 }
+		--- (issue #351: the job of the first row that runs one)
+		local job = rec.job
+		for _, r in ipairs(rec.rows or {}) do if r.status == "running" and r.job then job = r.job break end end
+		local j = job and autocraft.job(job)
+		return { "fork-me-circuit.maintainer-running", job or "?", j and j.done or 0, j and j.total or 0 }
 	elseif st == "missing" and rec.missing then
 		return { "fork-me-circuit.maintainer-missing", autocraft.item_list(rec.missing, 6) }
 	end
+	return { "fork-me-circuit.maintainer-" .. st }
+end
+
+--- Issue #351: a row's status for the window (a LocalisedString), from a row of get_maintainer
+function M.row_status(r)
+	if not (r and r.key) then return "" end
+	local st = r.status or "no-target"
+	if st == "running" then return { "fork-me-circuit.row-running", r.job or "?" } end
+	if st == "missing" then return { "fork-me-circuit.row-missing" } end
 	return { "fork-me-circuit.maintainer-" .. st }
 end
 
@@ -578,11 +720,14 @@ local function visit_maintainer(rec, unit)
 			return 0
 		end
 	end
-	if st == "stocked" and rec.target then
+	if st == "stocked" and rec.waits then
 		local net = network_of(rec.entity)
 		if net then
-			N.wait_below(net, rec.key, "maint", unit, rec.target)
-			if not rec.circuit then
+			--- (issue #351: every row's key wakes it; a row that takes its amount from the circuit keeps it probed)
+			local circuit_bound = rec.circuit_all
+			for _, w in ipairs(rec.waits) do N.wait_below(net, w[1], "maint", unit, w[2]) end
+			for _, r in ipairs(rows_of(rec)) do if r.key and r.circuit then circuit_bound = true end end
+			if not circuit_bound then
 				Sched.park(s.mq, rec, unit, "stocked")
 				return 0
 			end
@@ -634,10 +779,10 @@ function M.on_built(entity, tags, source)
 		maintainer_record(state(), entity)
 		local t = type(tags) == "table" and tags[MAINT_TAG] or nil
 		if type(t) == "table" then
-			M.set_maintainer(entity, t.key or false, t.amount or 0, t.circuit or false)
+			apply_settings(entity, t)
 		elseif source and source.valid and source.name == MAINTAINER then
-			local from = M.get_maintainer(source)
-			if from then M.set_maintainer(entity, from.key or false, from.amount, from.circuit) end
+			local from = storage.fork_ae2.maintainers[source.unit_number]
+			if from then apply_settings(entity, settings_of(from)) end
 		end
 	elseif entity.name == CIRCUIT then
 		local rec = circuit_record(state(), entity)
@@ -659,8 +804,9 @@ function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
 	if not (src and src.valid and dst and dst.valid and src.name == dst.name) then return end
 	if src.name == MAINTAINER then
-		local from = M.get_maintainer(src) or { amount = 0, circuit = false }
-		M.set_maintainer(dst, from.key or false, from.amount, from.circuit)
+		local s = state()
+		local from = s.maintainers[src.unit_number]
+		apply_settings(dst, from and settings_of(from) or { amount = 0, circuit = false })
 		N.update_screen(dst)                    -- issue #254: the pasted condition
 	elseif src.name == CIRCUIT then
 		local from = M.get_circuit(src)
@@ -678,7 +824,7 @@ local function tag_blueprint(bp, mapping)
 		if entity.valid then
 			if entity.name == MAINTAINER and s.maintainers then
 				local rec = s.maintainers[entity.unit_number]
-				if rec then bp.set_blueprint_entity_tag(index, MAINT_TAG, { key = rec.key, amount = rec.amount, circuit = rec.circuit }) end
+				if rec then bp.set_blueprint_entity_tag(index, MAINT_TAG, settings_of(rec)) end
 			elseif entity.name == CIRCUIT and s.circuits then
 				local rec = s.circuits[entity.unit_number]
 				if rec then bp.set_blueprint_entity_tag(index, CIRCUIT_TAG, { filters = { table.unpack(rec.filters) } }) end
@@ -706,6 +852,20 @@ function M.on_configuration_changed()
 					rec.amount = clamp_amount(rec.key, old.amount)
 					rec.circuit = old.circuit and true or false
 					rec.job = old.job
+					--- issue #351: the rows (row 1 is the fields above) and their jobs
+					rec.rows = nil
+					local rows = rows_of(rec)
+					for i, r in ipairs(old.rows or {}) do
+						if i > 1 and i <= MAX_ROWS then
+							local k = valid_key(r.key, true)
+							rows[i] = { key = k, amount = clamp_amount(k, r.amount), circuit = r.circuit and true or false,
+								batch = r.batch, job = r.job }
+						elseif i == 1 then
+							rows[1].batch = r.batch
+							rows[1].job = r.job or rows[1].job
+						end
+					end
+					rec.circuit_all, rec.crows = old.circuit_all, old.crows
 				end
 			else
 				local rec = circuit_record(s, e)
@@ -735,9 +895,15 @@ remote.add_interface("gregtorio-me-circuit", {
 		return { due = (due and due > 0) and due or nil, probing = rec.sq == true and not rec.park, parked = rec.park, front = due == Sched.FRONT,
 			backlog = due == Sched.BACKLOG, status = rec.status }
 	end,
-	--- key (false clears it), amount, circuit (take the amount from the circuit signal); nil keeps a value
-	set_maintainer = function(entity, key, amount, circuit) return M.set_maintainer(entity, key, amount, circuit) end,
-	--- { key, amount, circuit, status, job, stock, target, missing } (stock and target of the last check)
+	--- key (false clears it), amount, circuit (take the amount from the circuit signal); nil keeps a value; issue #351: the
+	--- row (1 to 5, default 1) and its batch
+	set_maintainer = function(entity, key, amount, circuit, row, batch)
+		return M.set_maintainer(entity, key, amount, circuit, row, batch)
+	end,
+	--- issue #351: "craft what the circuit asks"
+	set_circuit_all = function(entity, on) return M.set_circuit_all(entity, on) end,
+	--- { key, amount, circuit, status, job, stock, target, missing } (stock and target of the last check), issue #351: rows,
+	--- circuit_all, crows (the rows of the signals)
 	get_maintainer = function(entity) return M.get_maintainer(entity) end,
 	--- list of keys, empty for everything; writes the signals at once
 	set_circuit_filters = function(entity, keys) return M.set_circuit_filters(entity, keys) end,

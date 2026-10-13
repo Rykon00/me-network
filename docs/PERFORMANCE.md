@@ -3142,6 +3142,30 @@ makes no garbage). A first measurement while the maintainer's game ran on the ma
 usual script time) had flagged "ticks over 5 ms: 48 -> 89" at size 1000; the runs above, without the game, show no
 difference.
 
+## The level maintainer's rows (issue #351)
+
+What runs: a maintainer's check loops over its rows with a resource (at most 5; with "craft what the circuit asks" over the
+signals on its wires, at most 20, read once per check) instead of one resource; each row is the old check (stock read, job
+look-up, a start within the same budget of one start per tick). A stocked maintainer registers one wake per row and parks
+as before; one with a circuit-bound row or "craft what the circuit asks" is probed every 5 s as a circuit-bound maintainer
+was before. The bench scenes keep one row per maintainer, so this measures the cost of the loop and the row tables.
+
+Measured in turns against `main` (`fded898`), three rounds each, on an idle machine (`bench --check fded898`, the default
+sizes):
+
+| | size 1000, main | with the rows | size 5000, main | with the rows |
+|---|---|---|---|---|
+| script average ms/tick | 0.3285 ±0.0051 | 0.3254 ±0.0012 | 0.8861 ±0.0063 | 0.8866 ±0.0147 |
+| script 99th percentile ms | 1.891 ±0.032 | 1.869 ±0.006 | 2.639 ±0.023 | 2.645 ±0.079 |
+| ticks over 5 ms | 2 ±1 | 2 ±0.5 | 5 ±1 | 3 ±0.5 |
+| maintainer latency max s | 0.0833 | 0.0833 | 0.0833 | 0.0833 |
+| Lua alloc KB per tick | 24.32 | 24.34 | 33.04 | 33.05 |
+| mod heap kB | 28 510 | 28 640 | 73 660 | 74 180 |
+| burst build / remove ms | 317.9 / 80.1 | 316.9 / 79.2 | 1508 / 96.0 | 1479 / 95.7 |
+
+`regressions beyond the noise: 0`; throughput per kind of endpoint identical. The heap grows by the row table of each
+maintainer (500 at size 5000: about 1 kB each).
+
 ## Void cells and the Group Filter Card (issue #354)
 
 A void cell is a cell of no bytes whose spec says `void`: it takes the Overflow Destruction Card's path (`cell.void`,

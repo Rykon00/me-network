@@ -984,7 +984,13 @@ group).
   fluid taken from storage. 100 electronic circuits need 932 bytes, 50 processing units from plates, plastic and acid
   12 189 bytes (a 16k crafting storage).
 * **One job per CPU.** A job starts only when a CPU of the network is free and big enough; it takes the smallest one
-  that fits. Otherwise the Craft button tells why ("needs N bytes, the biggest CPU has M", or "every CPU that can take
+  that fits, or the one chosen in the Crafting tab's **CPU** drop-down (issue #350, AE2-Unofficial's CPU choice in the
+  confirm screen: "Automatic", or one of the CPUs that can take the job now).
+* **The CPU's mode** (issue #350, AE2-Unofficial's CraftingAllow), set in the CPU window: **Every request** (as before),
+  **Players only** (the terminal's Craft button) or **Automation only** (level maintainers and the circuit interface).
+  A CPU that does not take a request is skipped as if it were busy; a job waiting for a CPU takes only one whose mode
+  allows it; when only such CPUs are free, the Craft button says so. The mode belongs to the whole CPU: a block added
+  keeps it, the parts of a split CPU keep it, and it survives a mod update. Otherwise the Craft button tells why ("needs N bytes, the biggest CPU has M", or "every CPU that can take
   it is busy") and starts nothing; a level maintainer waits and tries again.
 * **Speed:** every co-processing unit lets the CPU hand one more batch to the pattern machines per step: a CPU with n
   co-processors is 1 + n times as fast (at most 16 count). It matters when a job has many machines for the same
@@ -996,7 +1002,7 @@ group).
   that can take it now, those big enough but busy, those too small (each with its number, size, bytes and
   co-processors). The Craft button is off when no CPU can take it now.
 * **The CPU window** (click any block of the CPU): status, size, crafting storage used by its job and total,
-  co-processors and speed, monitors, and the job with its progress and **Cancel**.
+  co-processors and speed, monitors, the mode (**Requests**, issue #350), and the job with its progress and **Cancel**.
 * **ME Crafting Monitor:** shows the item or fluid the CPU is crafting and the amount still to make on its face: it
   counts down as the job's machines finish crafts (several monitors all show it).
 * **Changing a running CPU:** remove a block and the job **pauses** with everything it holds (nothing is lost: its
@@ -1013,6 +1019,22 @@ one is **paused** with everything it holds (nothing is lost) and goes on as soon
 free and big enough (**Cancel** gives everything back). Each of them in an inventory or a chest becomes a **1k
 crafting storage** (`migrations/me-network-legacy-cpus.json`). Build a multiblock CPU where they stood.
 
+## Monitors: ME Storage, Conversion and Throughput Monitor
+
+Tech `me-network` (issue #353, AE2-Unofficial's monitors, `appeng/parts/reporting/`). Three 1x1 blocks, members of the
+network like the terminals (the controller draws their power, 2 kW each; they can be walked over). Click one to choose
+the item (with its quality) or fluid it shows; its face then shows that resource's icon and what the network holds of
+it, refreshed about once a second (at most 4 monitors a tick, each at most every second).
+
+| Monitor | Shows | Also |
+|---|---|---|
+| ME Storage Monitor | the resource and its amount | |
+| ME Conversion Monitor | the same | while its window is open, a stack shift-clicked in your inventory goes into the network (AE2: shift right click); when it is **locked**, **Take a stack** gives you a stack of its item (AE2: a click on the locked monitor) |
+| ME Throughput Monitor | the amount and how fast it changes (measured over the last ten seconds) | the unit of the rate: per tick, second, minute or hour (AE2: shift click cycles it) |
+
+**Lock:** a locked monitor keeps its resource (AE2 locks with a wrench; Factorio has none, the window has a box).
+Settings paste, blueprints and clones carry the resource, the lock and the unit.
+
 ## Keeping items in stock: ME Level Maintainer
 
 Tech `me-automation` (EV, needs `me-autocrafting` and Circuit network). The **ME Level Maintainer** is
@@ -1021,14 +1043,18 @@ when its network does.
 
 1. Connect it to the network. Autocrafting must work for the resource: a pattern
    (an encoded pattern in a provider next to a machine) and a Crafting CPU big enough for the difference.
-2. Click it: its ME window opens. Choose the item or fluid in the signal button and type the amount to
-   keep (items, or fluid units).
+2. Click it: its ME window opens. It has **five rows** (issue #351, as GT New Horizons' level maintainer): in each,
+   choose the item or fluid in the signal button and type the amount to keep (items, or fluid units) and, if you
+   like, a **batch**: at most this much per crafting job (0: the whole difference at once). Each row works on its
+   own: its own job, stock and status (the column on the right).
 3. When the network holds less than that amount, the maintainer starts a crafting job for the
    difference, the way the Craft button does. It checks about once a second (several maintainers take
    turns, see **Design**).
-4. While that job runs, it starts no other one; nor does it while any other job of the network crafts
+4. While that job runs, it starts no other one for that row; nor does it while any other job of the network crafts
    the same resource (for example one you started in the terminal). When the job is done and the stock
-   is reached again, it waits until the stock drops.
+   is reached again, it waits until the stock drops. A row with a batch starts the next batch when its job is done
+   and the stock is still below the amount. The maintainer starts at most one job per check, so its rows start one
+   after the other; the status line shows the most urgent row.
 
 What the window says:
 
@@ -1050,11 +1076,15 @@ What the window says:
 * **On/off:** tick "Switch on and off by the circuit condition" in the window and set the condition
   (signal, comparator, number; it is the lamp's circuit condition). While the condition is false it
   starts nothing; a running job goes on.
-* **Amount from the circuit:** tick the box in the window. The signal of the chosen item or fluid on
+* **Amount from the circuit:** tick a row's box in the window. The signal of that row's item or fluid on
   the wires (red plus green) is then the amount to keep, instead of the number field. No signal means
   0 (keep nothing).
+* **Craft what the circuit asks** (issue #351): with this box ticked the rows are not used; every item and fluid
+  signal on the maintainer's wires (red plus green, normal quality, the 20 largest) is an amount to keep, each with
+  its own job. A constant combinator (or a whole circuit) wired to the maintainer asks for several resources at once.
 
-**Copying:** shift right click and shift left click copy the resource, amount and circuit option to
+**Copying:** shift right click and shift left click copy the rows (resource, amount, batch, circuit option) and
+"craft what the circuit asks" to
 another maintainer (the game copies the circuit condition). Blueprints, copy and paste (ctrl+C, ctrl+V)
 and cloning keep them.
 
@@ -1645,11 +1675,10 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
 * The ME Interface Terminal (issue #336): its window is tested headless through its data and a stand-in of its page; the
   window itself is checked in the game (#342). It has no wireless mode (AE2-Unofficial's Wireless Interface Terminal), an
   interface cannot be renamed (only a provider), and the texture mod has no AE2 picture for it yet (#343).
-* Crafting CPUs (issue #6): no choice of the CPU in the terminal (the smallest free one that fits is taken), no
-  "requests from players only / automation only" mode. The level maintainer
-  keeps one resource per block;
-  a circuit signal sets its amount or switches it, but there is no "craft what the circuit asks for"
-  request of several resources at once. Settings paste by hand and the upgrade planner on CPUs are untested in
+* Crafting CPUs (issue #6): a job does not join a busy CPU that crafts the same item (AE2-Unofficial merges such
+  standalone jobs). The CPU drop-down of the Crafting tab and the mode in the CPU window (#350) are tested headless
+  through their data and functions; the clicks are checked in the game. The level maintainer
+  keeps five rows (#351); "craft what the circuit asks" takes at most 20 signals. Settings paste by hand and the upgrade planner on CPUs are untested in
   the real game (the headless test calls the same functions).
 * A machine whose only input is shared with a belt, inserter or pipe will fight with the network.
 * Recipe paste (issue #12) is tested headless through its handler: the shift clicks themselves, the game raising the

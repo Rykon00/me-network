@@ -644,6 +644,8 @@ data:extend({ {
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
 			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
+			storage_monitor = "me-storage-monitor", conversion_monitor = "me-conversion-monitor",   -- (issue #353)
+			throughput_monitor = "me-throughput-monitor",
 		},
 		--- issue #229: the ME Chest's hidden parts and what it draws on its own
 		chest = { power = CHEST_POWER, fluid = CHEST_FLUID, watts = CHEST_WATTS },
@@ -706,9 +708,61 @@ ME.crafting_block_tech = ME.crafting_block_tech or {}
 ME.crafting_block_tech["me-void-storage-cell"] = "me-network"
 ME.crafting_block_tech["me-void-fluid-storage-cell"] = "me-fluid-storage"
 
---- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k
+--------------------------------------------------------------------------------
+--- MONITORS (issue #353, AE2-Unofficial's ME Storage, Conversion and Throughput Monitor, appeng/parts/reporting/): 1x1 blocks
+--- like the ME Interface Terminal (power through the controller, walkable, the dark and the lit picture as graphics variations
+--- 1 and 2); the resource's icon and amount are drawn on them by scripts/fork-me-monitor.lua. Standalone recipes (AE2: an
+--- illuminated panel and a level emitter; the conversion monitor adds a formation and an annihilation core, here an ME
+--- Interface; the throughput monitor a level emitter more); Gregtorio gives them GTNH's.
+--------------------------------------------------------------------------------
+
+local MONITOR_POWER = 2000               -- W drawn through the ME Controller
+local MONITOR_RECIPES = {
+	["me-storage-monitor"] = { "me-terminal", 1, "advanced-circuit", 1 },
+	["me-conversion-monitor"] = { "me-storage-monitor", 1, "me-interface", 1 },
+	["me-throughput-monitor"] = { "me-storage-monitor", 1, "advanced-circuit", 1 },
+}
+for i, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor" }) do
+	local r = MONITOR_RECIPES[name]
+	ME.add_item{ name = name, icon = HD_ICON .. name .. ".png", icon_size = 64, subgroup = "fork-me-network", order = "c" .. i,
+		stack_size = 50, place_result = name,
+		recipe = { energy_required = 2, ingredients = { { type = "item", name = r[1], amount = r[2] }, { type = "item", name = r[3], amount = r[4] } } } }
+	data:extend({ {
+		type = "simple-entity-with-force",
+		name = name,
+		icon = HD_ICON .. name .. ".png",
+		icon_size = 64,
+		flags = { "placeable-neutral", "player-creation" },
+		minable = { mining_time = 0.2, result = name },
+		placeable_by = { item = name, count = 1 },
+		max_health = 200,
+		is_military_target = false,
+		corpse = "small-remnants",
+		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+		selection_priority = 60,
+		collision_mask = WALKABLE,
+		render_layer = "lower-object",
+		random_variation_on_create = false,
+		pictures = {
+			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
+			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
+		},
+		localised_description = { "entity-description." .. name, tostring(MONITOR_POWER / 1000) },
+	} })
+	data.raw["mod-data"]["fork-me-network"].data.member_power[name:gsub("^me%-", "")] = MONITOR_POWER
+end
+--- (a mod that replaces the recipe list of `me-network`, as Gregtorio does, has not heard of them: data-final-fixes.lua puts their
+--- recipes back on the technology, unless a technology of that mod unlocks them, as for the pattern terminal of issue #130)
+ME.crafting_block_tech = ME.crafting_block_tech or {}
+for _, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor" }) do
+	ME.crafting_block_tech[name] = "me-network"
+end
+
+--- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k; the monitors (issue #353)
 ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "lamp", "fast-inserter" }, unit = ME.unit(2, 300), recipes = {
 	"fluix-cable", "me-controller", "me-chest", "me-drive", "me-interface", "me-terminal", "basic-storage-housing",
+	"me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor",
 	"me-void-storage-cell",
 	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
