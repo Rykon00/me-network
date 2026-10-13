@@ -127,6 +127,12 @@ return {
 		["__me-network__/graphics/icons/hd/me-pattern-terminal.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
 	},
 	["item/me-pattern-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
+	--- the ME Interface Terminal (issue #343): AE2's interface terminal panel, the same two variations
+	["simple-entity-with-force/me-interface-terminal"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-interface-terminal.png"] = "__me-network-ae2-textures__/graphics/blocks/me-interface-terminal.png",
+		["__me-network__/graphics/icons/hd/me-interface-terminal.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-interface-terminal.png", icon_size = 64 },
+	},
+	["item/me-interface-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-interface-terminal.png", icon_size = 64 },
 	--- the buses (issue #282): AE2's front of each, the same block in every direction (AE2's front shows none: ME Network's
 	--- marker layer stays and shows it); only the first layer of each direction is replaced
 	["simple-entity-with-force/me-import-bus"] = {
