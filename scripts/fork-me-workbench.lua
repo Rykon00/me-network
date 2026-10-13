@@ -460,6 +460,18 @@ function M.clear(entity)
 	return true
 end
 
+--- issue #354: the Group Filter Card's text of the cell in the workbench ("" or nil clears it; kept without the card, as
+--- AE2-U keeps it in the cell). Returns false without a cell.
+function M.set_gtext(entity, text)
+	local rec = rec_of(entity)
+	if not rec then return false end
+	local stack, cell = cell_of(rec)
+	if not stack then return false end
+	cell.gtext = N.GF.clean(text)
+	write(rec, stack, cell)
+	return true
+end
+
 --- the copy mode: keep the partition when the cell is taken out (AE2's KEEP_ON_REMOVE)
 function M.set_keep(entity, keep)
 	local rec = rec_of(entity)
@@ -548,7 +560,8 @@ function M.info(entity)
 		out.cell = { name = cell.name, fluid = spec.kind == "fluid", items = items, bytes = cell.bytes, bytes_total = spec.bytes,
 			types = cell.types, types_total = spec.types, partition = N.cell_keys(cell), cards = cards,
 			slots = rules_of(spec).slots, inverted = N.has_card(cell, "inverter"), fuzzy = N.has_card(cell, "fuzzy"),
-			equal = cell.eq, void = cell.void == true, sticky = cell.sticky == true }
+			equal = cell.eq, void = cell.void == true, sticky = cell.sticky == true, voidcell = spec.void,
+			gfilter = N.has_card(cell, "gfilter"), gtext = cell.gtext }
 	end
 	return out
 end
@@ -633,6 +646,7 @@ remote.add_interface("gregtorio-me-workbench", {
 	from_contents = function(entity) return M.from_contents(entity) end,
 	clear = function(entity) return M.clear(entity) end,
 	set_keep = function(entity, keep) return M.set_keep(entity, keep) end,
+	set_gtext = function(entity, text) return M.set_gtext(entity, text) end,
 	--- issue #28: the inventory the window shows, and what a change by a player does (`back`: a LuaInventory standing
 	--- for the player's inventory; `places`: LuaItemStacks and LuaInventories where a cell that left is looked for)
 	inventory = function(entity) return M.inventory(entity) end,

@@ -644,6 +644,8 @@ data:extend({ {
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
 			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
+			storage_monitor = "me-storage-monitor", conversion_monitor = "me-conversion-monitor",   -- (issue #353)
+			throughput_monitor = "me-throughput-monitor",
 		},
 		--- issue #229: the ME Chest's hidden parts and what it draws on its own
 		chest = { power = CHEST_POWER, fluid = CHEST_FLUID, watts = CHEST_WATTS },
@@ -668,9 +670,100 @@ data:extend({ {
 --- TECHNOLOGIES (standalone: vanilla science; Gregtorio puts them on its tiers through ME_NETWORK.set_technology)
 --------------------------------------------------------------------------------
 
---- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k
+--------------------------------------------------------------------------------
+--- VOID CELLS (issue #354, AE2-Unofficial's Void ME Storage Cell: appeng/items/storage/ItemVoidStorageCell.java,
+--- appeng/me/storage/VoidCellInventory.java): a cell that takes and destroys whatever its filter lets in (partition, fuzzy,
+--- inverter in the Cell Workbench) and holds nothing. In the storage engine a cell of no bytes whose spec says `void`: the
+--- Overflow Destruction Card's path (cell.void). One for items and one for fluids (a cell here has one kind). Icons: the 1k
+--- cells in another colour until the texture mod has AE2's. Standalone recipe: AE2-U's (network/cells/storage.recipe: 2 quartz
+--- glass, 3 redstone, an ender pearl, 3 iron) with the stand-ins; the fluid one the fluid cell housing's 3 copper instead of the
+--- iron. Gregtorio gives them GTNH's.
+--------------------------------------------------------------------------------
+
+local VOID_CELLS = {
+	{ "me-void-storage-cell", "item", "me-1k-storage-cell", MAX_TYPES,
+		{ "plastic-bar", 2, "copper-cable", 3, "electronic-circuit", 1, "iron-plate", 3 } },
+	{ "me-void-fluid-storage-cell", "fluid", "me-1k-fluid-storage-cell", 18,
+		{ "plastic-bar", 2, "copper-cable", 3, "electronic-circuit", 1, "copper-plate", 3 } },
+}
+for i, v in ipairs(VOID_CELLS) do
+	local ing = {}
+	for j = 1, #v[5], 2 do ing[#ing + 1] = { type = "item", name = v[5][j], amount = v[5][j + 1] } end
+	local item = ME.add_item{
+		type = "item-with-tags",
+		name = v[1],
+		icon = HD_ICON .. v[3] .. ".png",
+		icon_size = 64,
+		subgroup = v[2] == "fluid" and "fork-me-fluid-cells" or "fork-me-cells",
+		order = "z" .. i,
+		stack_size = 1,
+		recipe = { energy_required = 5, auto_recycle = false, ingredients = ing },
+	}
+	item.icons = { { icon = HD_ICON .. v[3] .. ".png", icon_size = 64, tint = { 0.55, 0.3, 0.75 } } }   -- (add_item takes one icon)
+	item.localised_description = { "item-description.fork-me-void-cell", tostring(v[4]) }
+	cell_data[v[1]] = { tier = "void", kind = v[2] == "fluid" and "fluid" or nil, bytes = 0, per_type = 0, types = v[4],
+		void = true }
+end
+ME.crafting_block_tech = ME.crafting_block_tech or {}
+ME.crafting_block_tech["me-void-storage-cell"] = "me-network"
+ME.crafting_block_tech["me-void-fluid-storage-cell"] = "me-fluid-storage"
+
+--------------------------------------------------------------------------------
+--- MONITORS (issue #353, AE2-Unofficial's ME Storage, Conversion and Throughput Monitor, appeng/parts/reporting/): 1x1 blocks
+--- like the ME Interface Terminal (power through the controller, walkable, the dark and the lit picture as graphics variations
+--- 1 and 2); the resource's icon and amount are drawn on them by scripts/fork-me-monitor.lua. Standalone recipes (AE2: an
+--- illuminated panel and a level emitter; the conversion monitor adds a formation and an annihilation core, here an ME
+--- Interface; the throughput monitor a level emitter more); Gregtorio gives them GTNH's.
+--------------------------------------------------------------------------------
+
+local MONITOR_POWER = 2000               -- W drawn through the ME Controller
+local MONITOR_RECIPES = {
+	["me-storage-monitor"] = { "me-terminal", 1, "advanced-circuit", 1 },
+	["me-conversion-monitor"] = { "me-storage-monitor", 1, "me-interface", 1 },
+	["me-throughput-monitor"] = { "me-storage-monitor", 1, "advanced-circuit", 1 },
+}
+for i, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor" }) do
+	local r = MONITOR_RECIPES[name]
+	ME.add_item{ name = name, icon = HD_ICON .. name .. ".png", icon_size = 64, subgroup = "fork-me-network", order = "c" .. i,
+		stack_size = 50, place_result = name,
+		recipe = { energy_required = 2, ingredients = { { type = "item", name = r[1], amount = r[2] }, { type = "item", name = r[3], amount = r[4] } } } }
+	data:extend({ {
+		type = "simple-entity-with-force",
+		name = name,
+		icon = HD_ICON .. name .. ".png",
+		icon_size = 64,
+		flags = { "placeable-neutral", "player-creation" },
+		minable = { mining_time = 0.2, result = name },
+		placeable_by = { item = name, count = 1 },
+		max_health = 200,
+		is_military_target = false,
+		corpse = "small-remnants",
+		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+		selection_priority = 60,
+		collision_mask = WALKABLE,
+		render_layer = "lower-object",
+		random_variation_on_create = false,
+		pictures = {
+			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
+			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
+		},
+		localised_description = { "entity-description." .. name, tostring(MONITOR_POWER / 1000) },
+	} })
+	data.raw["mod-data"]["fork-me-network"].data.member_power[name:gsub("^me%-", "")] = MONITOR_POWER
+end
+--- (a mod that replaces the recipe list of `me-network`, as Gregtorio does, has not heard of them: data-final-fixes.lua puts their
+--- recipes back on the technology, unless a technology of that mod unlocks them, as for the pattern terminal of issue #130)
+ME.crafting_block_tech = ME.crafting_block_tech or {}
+for _, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor" }) do
+	ME.crafting_block_tech[name] = "me-network"
+end
+
+--- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k; the monitors (issue #353)
 ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "lamp", "fast-inserter" }, unit = ME.unit(2, 300), recipes = {
 	"fluix-cable", "me-controller", "me-chest", "me-drive", "me-interface", "me-terminal", "basic-storage-housing",
+	"me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor",
+	"me-void-storage-cell",
 	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
 } }

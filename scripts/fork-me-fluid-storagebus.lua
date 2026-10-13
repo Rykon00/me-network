@@ -95,7 +95,7 @@ end
 --- may the network put `key` in? (the filters: a whitelist, or a blacklist with an Inverter Card; issue #17; a fluid
 --- filter without a temperature takes every temperature, issue #159)
 local function allowed(rec, key)
-	if rec.partition or rec.deny then return N.accepts(rec, key) end
+	if rec.partition or rec.deny or rec.gf then return N.accepts(rec, key) end   -- (issue #354: a group filter)
 	return true
 end
 --- may the network see and take `key`? (the same, unless the bus filters only what goes in)

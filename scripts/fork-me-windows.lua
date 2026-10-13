@@ -363,7 +363,7 @@ end
 --- sentences are N.cell_mode_text's, which the item tooltip of the cell (issue #64) puts on lines of their own.
 function M.cell_mode_caption(c)
 	local parts = { "" }
-	for _, kind in ipairs({ "inverted", "fuzzy", "equal", "void", "sticky" }) do
+	for _, kind in ipairs({ "inverted", "fuzzy", "equal", "void", "sticky", "gfilter" }) do
 		local text = N.cell_mode_text(kind, c)
 		if text then
 			if #parts > 1 then parts[#parts + 1] = " " end
@@ -441,6 +441,7 @@ local function open_workbench(player, entity)
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.workbench-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_wb_cards", direction = "horizontal" }
+	M.gfilter_row(content, "fork_me_wb_gtext", "wb_gtext")
 	content.add{ type = "checkbox", name = "fork_me_wb_keep", state = false, caption = { "fork-me-gui.workbench-keep" },
 		tooltip = { "fork-me-gui.workbench-keep-tooltip" }, tags = G.act("wb_keep") }
 	M.refresh_workbench(player, G.window_of(player))
@@ -543,6 +544,7 @@ function M.refresh_workbench(player, frame)
 		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or (c and "fork-me-gui.card-slot-empty" or "fork-me-gui.workbench-card-no-cell") }
 	end)
 	G.find(frame, "fork_me_wb_keep").state = d.keep
+	M.gfilter_refresh(frame, "fork_me_wb_gtext", c and c.gfilter, c and c.gtext)
 	return true
 end
 
@@ -604,6 +606,32 @@ G.on("wb_contents", function(event, player)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if entity then bench.from_contents(entity) G.refresh_one(player) end
+end)
+
+--- issue #354: the Group Filter Card's text field (a row of the workbench and the storage bus window): written as typed,
+--- enabled while the card is in
+function M.gfilter_row(parent, name, act)
+	local row = G.row(parent)
+	row.add{ type = "label", caption = { "fork-me-gui.gfilter" }, tooltip = { "fork-me-gui.gfilter-tooltip" } }
+	local field = row.add{ type = "textfield", name = name, text = "", tags = G.act(act), tooltip = { "fork-me-gui.gfilter-tooltip" } }
+	field.style.width = 300
+	return field
+end
+
+--- the field shows the stored text (only set when it differs: the player may be typing) and is enabled with the card
+function M.gfilter_refresh(frame, name, enabled, text)
+	local field = G.find(frame, name)
+	if not field then return end
+	text = text or ""
+	if field.text ~= text then field.text = text end
+	field.enabled = enabled == true
+end
+
+G.on("wb_gtext", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then bench.set_gtext(entity, el.text) end
+	if event.name == defines.events.on_gui_confirmed then G.refresh_one(player) end
 end)
 
 G.on("wb_keep", function(event, player, el)
@@ -932,6 +960,13 @@ end
 --- the value labels of the facts table, by name
 local CCPU_FACTS = { "size", "storage", "coprocessors", "monitors" }
 
+--- Issue #350: the CPU modes in the order of the window's drop-down, and the index of a mode
+M.CCPU_MODES = { "all", "player", "automation" }
+function M.ccpu_mode_index(mode)
+	for i, m in ipairs(M.CCPU_MODES) do if m == (mode or "all") then return i end end
+	return 1
+end
+
 local function open_crafting_cpu(player, entity)
 	local d = M.crafting_cpu_data(entity)
 	local _, content = G.open_window(player, "crafting-cpu", M.crafting_cpu_title(d), { unit = entity.unit_number })
@@ -947,6 +982,12 @@ local function open_crafting_cpu(player, entity)
 		v.style.horizontally_stretchable = true
 		v.style.horizontal_align = "right"
 	end
+	--- issue #350 (AE2-Unofficial's CraftingAllow): which requests the CPU takes
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.ccpu-mode" }, tooltip = { "fork-me-gui.ccpu-mode-tooltip" } }
+	row.add{ type = "drop-down", name = "fork_me_ccpu_mode", tags = G.act("ccpu_mode"), tooltip = { "fork-me-gui.ccpu-mode-tooltip" },
+		items = { { "fork-me-gui.ccpu-mode-all" }, { "fork-me-gui.ccpu-mode-player" }, { "fork-me-gui.ccpu-mode-automation" } },
+		selected_index = M.ccpu_mode_index(d and d.mode) }
 	local bar = content.add{ type = "progressbar", name = "fork_me_ccpu_bar", value = 0 }
 	bar.style.horizontally_stretchable = true
 	content.add{ type = "flow", name = "fork_me_ccpu_parts", direction = "horizontal" }
@@ -983,6 +1024,12 @@ function M.refresh_crafting_cpu(player, frame)
 	G.find(frame, "fork_me_ccpu_storage").caption = { "fork-me-gui.ccpu-storage-value", G.fmt(d.used), G.fmt(d.bytes) }
 	G.find(frame, "fork_me_ccpu_coprocessors").caption = { "fork-me-gui.ccpu-coprocessors-value", d.coprocessors, d.speed }
 	G.find(frame, "fork_me_ccpu_monitors").caption = tostring(d.monitors)
+	local mode = G.find(frame, "fork_me_ccpu_mode")
+	if mode then
+		mode.enabled = d.status == "ok"
+		local i = M.ccpu_mode_index(d.mode)
+		if mode.selected_index ~= i then mode.selected_index = i end
+	end
 	--- the blocks of the CPU by type as icons with their counts (rebuilt only when the counts change)
 	local pf = G.find(frame, "fork_me_ccpu_parts")
 	local psig = {}
@@ -1017,6 +1064,13 @@ end
 
 G.window("crafting-cpu", storing({ open = open_crafting_cpu, refresh = M.refresh_crafting_cpu, entities = { "crafting" } }))
 
+G.on("ccpu_mode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = G.entity_of(player, G.window_of(player))
+	if entity then autocraft.set_cpu_mode(entity, M.CCPU_MODES[el.selected_index]) end
+	G.refresh_one(player)
+end)
+
 --------------------------------------------------------------------------------
 --- ME Level Maintainer
 --------------------------------------------------------------------------------
@@ -1029,21 +1083,36 @@ function M.maintainer_data(entity)
 	return d
 end
 
---- the target button: a key (an item or a fluid), nil clears it
-function M.set_maintainer_target(entity, key)
-	return circuit.set_maintainer(entity, key or false)
+--- the target button of row `row` (issue #351; default 1): a key (an item or a fluid), nil clears it
+function M.set_maintainer_target(entity, key, row)
+	return circuit.set_maintainer(entity, key or false, nil, nil, row or 1)
 end
+
+local MAINT_ROWS = 5                    -- (issue #351: the rows of fork-me-circuit.lua's MAX_ROWS)
 
 local function open_maintainer(player, entity)
 	local d = M.maintainer_data(entity)
 	local _, content = G.open_window(player, "maintainer", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-circuit.maintainer-help" }, WIDTH)
-	local row = G.row(content)
-	row.add{ type = "label", caption = { "fork-me-circuit.maintainer-keep" } }
-	row.add{ type = "flow", name = "fork_me_maint_target" }
-	G.number_field(row, d.amount, G.act("maint_amount"), 100)
-	content.add{ type = "checkbox", state = d.circuit or false, caption = { "fork-me-circuit.maintainer-circuit" },
-		tooltip = { "fork-me-circuit.maintainer-circuit-tooltip" }, tags = G.act("maint_circuit") }
+	--- issue #351: the rows (GTNH's level maintainer: 5 slots), each a resource, the amount to keep, a batch (at most this
+	--- much per job, 0 the whole difference), the amount from the circuit, and its stock and status
+	local t = content.add{ type = "table", name = "fork_me_maint_rows", column_count = 5 }
+	for _, h in ipairs({ "row-resource", "maintainer-keep", "row-batch", "row-circuit", "row-status" }) do
+		t.add{ type = "label", caption = { "fork-me-circuit." .. h }, style = "caption_label",
+			tooltip = { "fork-me-circuit." .. h .. "-tooltip" } }
+	end
+	for i = 1, MAINT_ROWS do
+		local r = d.rows and d.rows[i] or {}
+		t.add{ type = "flow", name = "fork_me_maint_target_" .. i }
+		G.number_field(t, r.amount or 0, G.act("maint_amount", { row = i }), 90)
+		G.number_field(t, r.batch or 0, G.act("maint_batch", { row = i }), 70)
+		t.add{ type = "checkbox", state = r.circuit or false, tooltip = { "fork-me-circuit.maintainer-circuit-tooltip" },
+			tags = G.act("maint_circuit", { row = i }) }
+		t.add{ type = "label", name = "fork_me_maint_row_" .. i }
+	end
+	content.add{ type = "checkbox", name = "fork_me_maint_all", state = d.circuit_all or false,
+		caption = { "fork-me-circuit.maintainer-circuit-all" }, tooltip = { "fork-me-circuit.maintainer-circuit-all-tooltip" },
+		tags = G.act("maint_circuit_all") }
 	content.add{ type = "line" }
 	local c = d.condition
 	content.add{ type = "checkbox", state = c.enabled or false, caption = { "fork-me-gui.condition-enabled" },
@@ -1066,12 +1135,30 @@ function M.refresh_maintainer(player, frame)
 	local entity = G.entity_of(player, frame)
 	if not entity then return false end
 	local d = M.maintainer_data(entity)
-	rebuild(frame, "fork_me_maint_target", d.key or "-", function(box)
-		G.key_button(box, d.key, G.act("maint_target"), { "fork-me-circuit.maintainer-target-tooltip" }).style.size = 40
-	end)
+	for i = 1, MAINT_ROWS do
+		local r = d.rows and d.rows[i] or {}
+		rebuild(frame, "fork_me_maint_target_" .. i, r.key or "-", function(box)
+			G.key_button(box, r.key, G.act("maint_target", { row = i }), { "fork-me-circuit.maintainer-target-tooltip" }).style.size = 40
+		end)
+		local rl = G.find(frame, "fork_me_maint_row_" .. i)
+		if rl then
+			rl.caption = r.key and { "", G.fmt(r.stock or 0), " / ", G.fmt(r.target or r.amount or 0), "  ", circuit.row_status(r) } or ""
+		end
+	end
 	local stock = G.find(frame, "fork_me_maint_stock")
-	local desc = d.key and autocraft.describe(d.key)
-	stock.caption = desc and { "fork-me-circuit.maintainer-stock", G.fmt(d.stock or 0), G.fmt(d.target or d.amount or 0), desc.localised_name } or ""
+	if d.circuit_all then
+		--- the rows of the signals: their resources and stock
+		local parts = { "" }
+		for i, r in ipairs(d.crows or {}) do
+			if i > 8 then parts[#parts + 1] = " ..." break end
+			local desc = autocraft.describe(r.key)
+			parts[#parts + 1] = { "", i > 1 and ", " or "", desc and desc.localised_name or r.key, " ", G.fmt(r.stock or 0), "/",
+				G.fmt(r.target or 0) }
+		end
+		stock.caption = #parts > 1 and { "fork-me-circuit.maintainer-circuit-rows", parts } or ""
+	else
+		stock.caption = ""
+	end
 	G.find(frame, "fork_me_maint_status").caption = circuit.maintainer_status(entity)
 	return true
 end
@@ -1082,12 +1169,14 @@ G.on("maint_target", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if not entity then return end
+	local row = el.tags.row or 1
 	if right_click(event) then
-		M.set_maintainer_target(entity, nil)
+		M.set_maintainer_target(entity, nil, row)
 		G.refresh_one(player)
 		return
 	end
-	key_picker(player, "maint_target", { unit = entity.unit_number }, M.maintainer_data(entity).key, false)
+	local r = (M.maintainer_data(entity).rows or {})[row] or {}
+	key_picker(player, "maint_target", { unit = entity.unit_number, row = row }, r.key, false)
 end)
 
 --- issue #70: the target is an item or a fluid, without a quality
@@ -1095,20 +1184,34 @@ picker.on_confirm("maint_target", function(player, data, choice)
 	local entity = window_entity(player)
 	if not (entity and entity.unit_number == data.unit) then return end
 	local key = picker.key_of(choice, false)
-	if key then M.set_maintainer_target(entity, key) else refused_choice(player) end
+	if key then M.set_maintainer_target(entity, key, data.row) else refused_choice(player) end
 	G.refresh_one(player)
 end)
 
 G.on("maint_amount", function(event, player, el)
 	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
 	local entity = window_entity(player)
-	if entity then circuit.set_maintainer(entity, nil, tonumber(el.text) or 0) end
+	if entity then circuit.set_maintainer(entity, nil, tonumber(el.text) or 0, nil, el.tags.row or 1) end
+end)
+
+--- issue #351: a row's batch
+G.on("maint_batch", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then circuit.set_maintainer(entity, nil, nil, nil, el.tags.row or 1, tonumber(el.text) or 0) end
 end)
 
 G.on("maint_circuit", function(event, player, el)
 	if event.name ~= defines.events.on_gui_checked_state_changed then return end
 	local entity = window_entity(player)
-	if entity then circuit.set_maintainer(entity, nil, nil, el.state) G.refresh_one(player) end
+	if entity then circuit.set_maintainer(entity, nil, nil, el.state, el.tags.row or 1) G.refresh_one(player) end
+end)
+
+--- issue #351: craft what the circuit asks
+G.on("maint_circuit_all", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then circuit.set_circuit_all(entity, el.state) G.refresh_one(player) end
 end)
 
 G.on("maint_cond_on", function(event, player, el)
@@ -1634,6 +1737,7 @@ local function open_storage_bus(player, entity)
 	row.add{ type = "drop-down", name = "fork_me_sbus_filtermode", items = {}, tags = G.act("sbus_filtermode"),
 		tooltip = { "fork-me-gui.storage-bus-filtermode-tooltip" } }
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_fuzzy")
+	M.gfilter_row(content, "fork_me_sbus_gtext", "sbus_gtext")
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.storage-bus-priority-tooltip" } }
 	G.number_field(row, d.priority, G.act("sbus_priority"), 70, true).tooltip = { "fork-me-gui.storage-bus-priority-tooltip" }
@@ -1686,6 +1790,7 @@ function M.refresh_storage_bus(player, frame)
 	end
 	fm.selected_index = (carded or d.blacklist) and 2 or 1
 	fm.enabled = not carded
+	M.gfilter_refresh(frame, "fork_me_sbus_gtext", d.gfilter, d.gtext)
 	G.find(frame, "fork_me_sbus_fuzzy").caption = d.side == "fluid" and ""
 		or { d.fuzzy and "fork-me-gui.storage-bus-fuzzy-on" or "fork-me-gui.storage-bus-fuzzy-off" }
 	G.find(frame, "fork_me_sbus_filters_caption").caption = { "fork-me-gui.storage-bus-filters" .. ((d.inverted or d.blacklist) and "-blacklist" or ""),
@@ -1748,6 +1853,13 @@ picker.on_confirm("sbus_filter", function(player, data, choice)
 	local key = picker.key_of(choice, true)
 	if key then sbus.set_filter(entity, data.index, key) else refused_choice(player) end
 	G.refresh_one(player)
+end)
+
+G.on("sbus_gtext", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then sbus.set_settings(entity, { gtext = el.text }) end
+	if event.name == defines.events.on_gui_confirmed then G.refresh_one(player) end
 end)
 
 G.on("sbus_extract", function(event, player, el)

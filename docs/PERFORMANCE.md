@@ -3142,6 +3142,53 @@ makes no garbage). A first measurement while the maintainer's game ran on the ma
 usual script time) had flagged "ticks over 5 ms: 48 -> 89" at size 1000; the runs above, without the game, show no
 difference.
 
+## The level maintainer's rows (issue #351)
+
+What runs: a maintainer's check loops over its rows with a resource (at most 5; with "craft what the circuit asks" over the
+signals on its wires, at most 20, read once per check) instead of one resource; each row is the old check (stock read, job
+look-up, a start within the same budget of one start per tick). A stocked maintainer registers one wake per row and parks
+as before; one with a circuit-bound row or "craft what the circuit asks" is probed every 5 s as a circuit-bound maintainer
+was before. The bench scenes keep one row per maintainer, so this measures the cost of the loop and the row tables.
+
+Measured in turns against `main` (`fded898`), three rounds each, on an idle machine (`bench --check fded898`, the default
+sizes):
+
+| | size 1000, main | with the rows | size 5000, main | with the rows |
+|---|---|---|---|---|
+| script average ms/tick | 0.3285 ±0.0051 | 0.3254 ±0.0012 | 0.8861 ±0.0063 | 0.8866 ±0.0147 |
+| script 99th percentile ms | 1.891 ±0.032 | 1.869 ±0.006 | 2.639 ±0.023 | 2.645 ±0.079 |
+| ticks over 5 ms | 2 ±1 | 2 ±0.5 | 5 ±1 | 3 ±0.5 |
+| maintainer latency max s | 0.0833 | 0.0833 | 0.0833 | 0.0833 |
+| Lua alloc KB per tick | 24.32 | 24.34 | 33.04 | 33.05 |
+| mod heap kB | 28 510 | 28 640 | 73 660 | 74 180 |
+| burst build / remove ms | 317.9 / 80.1 | 316.9 / 79.2 | 1508 / 96.0 | 1479 / 95.7 |
+
+`regressions beyond the noise: 0`; throughput per kind of endpoint identical. The heap grows by the row table of each
+maintainer (500 at size 5000: about 1 kB each).
+
+## Void cells and the Group Filter Card (issue #354)
+
+A void cell is a cell of no bytes whose spec says `void`: it takes the Overflow Destruction Card's path (`cell.void`,
+`voids`), `open_cell` says yes at once and `cell_state` says "room". The Group Filter Card adds one field test to
+`accepts` and `cell_room` (`cell.gf`), and to the storage bus's `allowed`. The match itself (scripts/fork-me-groupfilter.lua)
+is a table lookup per text and key after its first time; the parsed terms and the results are kept per load, outside
+storage, and dropped all at once past 64 texts (a text typed letter by letter).
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have neither):
+
+| | origin/main | with the void cells and the card |
+|---|---|---|
+| 100: script average / p99 ms | 0.1858 / 1.742 | 0.1861 / 1.758 |
+| 1000: script average / p99 ms | 0.3282 / 1.877 | 0.3302 / 1.877 |
+| Lua alloc KB per tick (100 / 1000) | 26.67 / 24.32 | 26.67 / 24.32 |
+
+`regressions beyond the noise: 0`.
+
+The filter's cost per visit, measured once in the runtime test's world (a storage bus on a chest with 32 item types,
+2000 visits through the remote interface, three rounds; not part of the committed test): about 44 µs a visit with the card
+and an empty text (no filter), about 52 µs with the text `iron-*|*-plate&!copper-plate|raw-resource`, so about 0.25 µs per
+item type and visit. A new text costs its parse and one match of name, subgroup and group per key the first time.
+
 ## Toggle buses and the level emitter (issue #355)
 
 Both are checked by a step hook of the autocrafting step (issue #5's rule, no tick handler of their own), in the order of
