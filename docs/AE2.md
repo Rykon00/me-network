@@ -976,6 +976,22 @@ one is **paused** with everything it holds (nothing is lost) and goes on as soon
 free and big enough (**Cancel** gives everything back). Each of them in an inventory or a chest becomes a **1k
 crafting storage** (`migrations/me-network-legacy-cpus.json`). Build a multiblock CPU where they stood.
 
+## Monitors: ME Storage, Conversion and Throughput Monitor
+
+Tech `me-network` (issue #353, AE2-Unofficial's monitors, `appeng/parts/reporting/`). Three 1x1 blocks, members of the
+network like the terminals (the controller draws their power, 2 kW each; they can be walked over). Click one to choose
+the item (with its quality) or fluid it shows; its face then shows that resource's icon and what the network holds of
+it, refreshed about once a second (at most 4 monitors a tick, each at most every second).
+
+| Monitor | Shows | Also |
+|---|---|---|
+| ME Storage Monitor | the resource and its amount | |
+| ME Conversion Monitor | the same | while its window is open, a stack shift-clicked in your inventory goes into the network (AE2: shift right click); when it is **locked**, **Take a stack** gives you a stack of its item (AE2: a click on the locked monitor) |
+| ME Throughput Monitor | the amount and how fast it changes (measured over the last ten seconds) | the unit of the rate: per tick, second, minute or hour (AE2: shift click cycles it) |
+
+**Lock:** a locked monitor keeps its resource (AE2 locks with a wrench; Factorio has none, the window has a box).
+Settings paste, blueprints and clones carry the resource, the lock and the unit.
+
 ## Keeping items in stock: ME Level Maintainer
 
 Tech `me-automation` (EV, needs `me-autocrafting` and Circuit network). The **ME Level Maintainer** is

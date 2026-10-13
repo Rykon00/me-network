@@ -452,7 +452,7 @@ ME.add_technology{ name = "me-quantum-crafting", prerequisites = { "me-co-proces
 
 --- issue #6: data-final-fixes.lua puts a crafting block recipe that no technology unlocks (another mod replaced the
 --- technology's recipe list) back on its technology
-ME.crafting_block_tech = {}
+ME.crafting_block_tech = ME.crafting_block_tech or {}   -- (network.lua registers the monitors first, issue #353)
 for tech, names in pairs(block_tech) do
 	for _, name in ipairs(names) do ME.crafting_block_tech[name] = tech end
 end

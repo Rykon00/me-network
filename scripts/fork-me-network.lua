@@ -80,6 +80,9 @@ local function kinds()
 		k[n.terminal] = "terminal"
 		if n.pattern_terminal then k[n.pattern_terminal] = "pattern-terminal" end      -- issue #130
 		if n.interface_terminal then k[n.interface_terminal] = "interface-terminal" end   -- issue #336
+		for _, m in pairs({ "storage", "conversion", "throughput" }) do                     -- issue #353: the monitors
+			if n[m .. "_monitor"] then k[n[m .. "_monitor"]] = m .. "-monitor" end
+		end
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
@@ -1840,9 +1843,11 @@ local SCREENS = {
 	terminal = { "me-terminal-screen-on", "me-terminal-screen-off", SCREEN_LIGHT },
 	maintainer = { "me-level-maintainer-screen-on", "me-level-maintainer-screen-off" },
 }
---- (a screen that is a graphics variation, 1 dark and 2 lit: the ME Pattern Terminal and the ME Interface Terminal of issue #336; no
---- local for it: the main chunk is at Lua's limit of 200)
-function has_screen(kind) return SCREENS[kind] ~= nil or kind == "pattern-terminal" or kind == "interface-terminal" end
+--- (a screen that is a graphics variation, 1 dark and 2 lit: the ME Pattern Terminal, the ME Interface Terminal of issue #336 and
+--- the monitors of issue #353; no local for it: the main chunk is at Lua's limit of 200)
+M.VARIATION_SCREENS = { ["pattern-terminal"] = true, ["interface-terminal"] = true, ["storage-monitor"] = true,
+	["conversion-monitor"] = true, ["throughput-monitor"] = true }
+function has_screen(kind) return SCREENS[kind] ~= nil or M.VARIATION_SCREENS[kind] == true end
 --- issue #254: the benchmark's scenes have a level maintainer per ten buses (2000 at 20 000), so the slow step must not
 --- look at every screen every second, and must not sort them (#43: about 7 µs an element). `s.screen_list` holds the
 --- units of `s.screens` in the order they came (a screen that goes is replaced by the last one, each record keeps its
@@ -1879,7 +1884,7 @@ end
 local function set_screen(s, unit, entity, on, kind)
 	local list = s.screens
 	local sc = list[unit]
-	if kind == "pattern-terminal" or kind == "interface-terminal" or (sc and sc.variation) then
+	if M.VARIATION_SCREENS[kind] or (sc and sc.variation) then
 		if not (sc and sc.on == on and entity.graphics_variation == (on and 2 or 1)) then
 			entity.graphics_variation = on and 2 or 1
 			list[unit] = { variation = true, on = on, li = screen_place(s, sc, unit) }

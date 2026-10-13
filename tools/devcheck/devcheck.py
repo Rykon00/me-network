@@ -820,6 +820,7 @@ RUNTIME_TESTS = (
     ("LOCK", "ME Pattern Provider lock until the result is back (issue #346)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
+    ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),
     ("IFACECAP", "ME Interface Capacity Card (issue #196)"),
     ("WIRELESS", "ME wireless terminal (issues #205 to #210)"),
     ("STICKY", "ME Sticky Card (issue #193)"),
