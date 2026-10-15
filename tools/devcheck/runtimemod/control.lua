@@ -889,6 +889,8 @@ bulk382 = require("bulkexport")({ me_place = me_place, power = power, me_report 
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #383: the settings of every configurable block through the copy-paste tool (copypaste.lua)
 copypaste383 = require("copypaste")({ me_place = me_place, me_report = me_report })
+--- me-network issue #387: an empty cell taken apart in the ME Cell Workbench (disassembly.lua)
+disassembly387 = require("disassembly")({ me_place = me_place, me_report = me_report })
 --- me-network issue #84: damaged items on the by-count paths (damaged.lua)
 damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
 --- me-network issue #85: an import bus with only refused stacks (refused.lua)
@@ -1041,6 +1043,7 @@ local function tests_running()
 	lab86.running(check)
 	bulk382.running(check)
 	copypaste383.running(check)
+	disassembly387.running(check)
 	refill67.running(check)
 	stats38.running(check)
 	margin51.running(check)
@@ -1978,6 +1981,7 @@ script.on_nth_tick(10, function()
 	lab86.tick()
 	bulk382.tick()
 	copypaste383.tick()
+	disassembly387.tick()
 	refill67.tick()
 	plans50.tick()
 	scan50.tick()
@@ -4844,6 +4848,7 @@ script.on_init(function()
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(disassembly387.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refill67.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end

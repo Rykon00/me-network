@@ -438,6 +438,8 @@ local function open_workbench(player, entity)
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("wb_clear") }
 	buttons.add{ type = "button", name = "fork_me_wb_contents", caption = { "fork-me-gui.partition-contents" },
 		tooltip = { "fork-me-gui.partition-contents-tooltip" }, tags = G.act("wb_contents") }
+	buttons.add{ type = "button", name = "fork_me_wb_disassemble", caption = { "fork-me-gui.workbench-disassemble" },
+		tags = G.act("wb_disassemble") }                                         -- (issue #387)
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.workbench-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_wb_cards", direction = "horizontal" }
@@ -536,6 +538,12 @@ function M.refresh_workbench(player, frame)
 	end)
 	local contents = G.find(frame, "fork_me_wb_contents")
 	if contents then contents.enabled = c ~= nil end
+	local dis = G.find(frame, "fork_me_wb_disassemble")
+	if dis then
+		local why = c and c.disassemble or "no-cell"
+		dis.enabled = why == true
+		dis.tooltip = { "fork-me-gui.workbench-disassemble-" .. (why == true and "tooltip" or why) }
+	end
 	local inv = bench.inventory(entity)
 	block_slots(frame, "fork_me_wb_cell", inv, 1, 1, function(_, st)
 		return { st.valid_for_read and "fork-me-gui.workbench-cell-tooltip" or "fork-me-gui.workbench-cell-empty" }
@@ -600,6 +608,18 @@ G.on("wb_clear", function(event, player)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if entity then bench.clear(entity) G.refresh_one(player) end
+end)
+
+--- issue #387: the empty cell taken apart, its parts into the player's inventory
+G.on("wb_disassemble", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local ok, why = bench.disassemble(entity, player)
+	if not ok then
+		player.create_local_flying_text{ text = { "fork-me-gui.workbench-disassemble-" .. tostring(why) }, create_at_cursor = true }
+	end
+	G.refresh_one(player)
 end)
 
 G.on("wb_contents", function(event, player)
