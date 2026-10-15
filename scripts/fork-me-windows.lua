@@ -38,6 +38,7 @@ local circuit = require("scripts.fork-me-circuit")
 local io = require("scripts.fork-me-io")
 local sbus = require("scripts.fork-me-storagebus")
 local bench = require("scripts.fork-me-workbench")
+local ioport = require("scripts.fork-me-ioport")          -- (issue #386)
 local picker = require("scripts.fork-me-picker")
 local Names = require("scripts.fork-me-names")
 local terminal = require("scripts.fork-me-terminal")
@@ -67,14 +68,14 @@ end
 
 --- Issue #28: the slots `first` .. `last` of a block's inventory `inv` as slot buttons (block_slot: the window's
 --- click), rebuilt when a stack changed; `tip(slot, stack)` gives a button's tooltip
-local function block_slots(frame, name, inv, first, last, tip)
+local function block_slots(frame, name, inv, first, last, tip, offset)
 	local sig = { tostring(first), tostring(last) }
 	for i = first, last do
 		local st = inv[i]
 		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name .. G.stack_ident(st)) or "-"
 	end
 	rebuild(frame, name, table.concat(sig, ","), function(box)
-		for i = first, last do G.stack_button(box, inv[i], G.act("block_slot", { slot = i }), tip and tip(i, inv[i]) or nil) end
+		for i = first, last do G.stack_button(box, inv[i], G.act("block_slot", { slot = i + (offset or 0) }), tip and tip(i, inv[i]) or nil) end
 	end)
 end
 
@@ -557,6 +558,64 @@ function M.refresh_workbench(player, frame)
 end
 
 --- issue #28: shift + click in the inventory pane, and a click on the cell slot (slot 1) or a card slot (2 to 5)
+--------------------------------------------------------------------------------
+--- issue #386: the ME IO Port (scripts/fork-me-ioport.lua): its input and output cell slot, its mode, what it does, its speed
+--- and its card slots (the window's slots 1 and 2 are the cells, 3 to 6 the cards)
+--------------------------------------------------------------------------------
+
+local function open_io_port(player, entity)
+	if not ioport.cells(entity) then return end
+	local _, content = G.open_window(player, "io-port", caption_of(entity), { unit = entity.unit_number }, true)
+	G.label(content, { "fork-me-gui.io-port-help" }, WIDTH)
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.io-port-in" } }
+	row.add{ type = "flow", name = "fork_me_iop_in", direction = "horizontal" }
+	row.add{ type = "label", caption = { "fork-me-gui.io-port-out" } }
+	row.add{ type = "flow", name = "fork_me_iop_out", direction = "horizontal" }
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.io-port-mode" } }
+	row.add{ type = "drop-down", name = "fork_me_iop_mode", selected_index = 1, tags = G.act("iop_mode"),
+		items = { { "fork-me-gui.io-port-mode-empty" }, { "fork-me-gui.io-port-mode-fill" } } }
+	G.label(content, "", WIDTH, nil, "fork_me_iop_status")
+	G.label(content, "", WIDTH, nil, "fork_me_iop_speed")
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.io-port-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_iop_cards", direction = "horizontal" }
+	M.refresh_io_port(player, G.window_of(player))
+end
+
+function M.refresh_io_port(player, frame)
+	local entity = G.entity_of(player, frame)
+	local d = entity and ioport.info(entity)
+	if not d then return false end
+	local inv = ioport.cells(entity)
+	block_slots(frame, "fork_me_iop_in", inv, 1, 1, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.io-port-in-tooltip" or "fork-me-gui.io-port-in-empty" }
+	end)
+	block_slots(frame, "fork_me_iop_out", inv, 2, 2, function() return { "fork-me-gui.io-port-out-tooltip" } end)
+	local cinv = ioport.card_inventory(entity)
+	block_slots(frame, "fork_me_iop_cards", cinv, 1, #cinv, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end, 2)
+	G.find(frame, "fork_me_iop_mode").selected_index = d.mode == "fill" and 2 or 1
+	G.find(frame, "fork_me_iop_status").caption = { "fork-me-gui.io-port-status-" .. d.status }
+	G.find(frame, "fork_me_iop_speed").caption = { "fork-me-gui.io-port-speed", G.fmt(d.items), G.fmt(d.fluid), G.fmt(d.accel) }
+	return true
+end
+
+G.window("io-port", { open = open_io_port, refresh = M.refresh_io_port, entities = { ioport.NAME },
+	shift = function(entity, stack) return ioport.shift_in(entity, stack) end,
+	click = function(entity, slot, cursor, inv, shift)
+		if slot <= 2 then return ioport.cell_click(entity, slot, cursor, inv, shift) end
+		return ioport.cards.card_click(entity, slot - 2, cursor, inv, shift)
+	end })
+
+G.on("iop_mode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = window_entity(player)
+	if entity then ioport.set_mode(entity, el.selected_index == 2 and "fill" or "empty") G.refresh_one(player) end
+end)
+
 G.window("workbench", { open = open_workbench, refresh = M.refresh_workbench, entities = { bench.NAME },
 	shift = function(entity, stack, inv) return bench.shift_in(entity, stack, inv) end,
 	click = function(entity, slot, cursor, inv, shift)

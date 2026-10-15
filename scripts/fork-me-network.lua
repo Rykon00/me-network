@@ -92,6 +92,7 @@ local function kinds()
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
 		if n.charger then k[n.charger] = "charger" end                -- issue #208
 		if n.chest then k[n.chest] = "chest" end                      -- issue #229
+		if n.io_port then k[n.io_port] = "io-port" end                -- issue #386
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -3116,6 +3117,43 @@ function M.can_insert_fluid_key(net, key, amount)
 	if not M.usable(net) then return 0 end
 	return math.min(amount, room_for(net, key, amount) + awaited(net, key))
 end
+
+--- Issue #386 (the ME IO Port, scripts/fork-me-ioport.lua): a cell record that lies in no drive (`cell`, from
+--- M.cell_from_stack) and the network. Up to `count` of `key` from the cell into the network (with its data, as a stored
+--- item of a cell keeps it); returns what went, which the cell no longer holds.
+function M.cell_to_network(net, cell, key, count)
+	local have = cell.items[key] or 0
+	if count > have then count = have end
+	if not is_fluid_key(key) then count = math.floor(count) end
+	if count <= 0 or not M.usable(net) then return 0 end
+	local claimed = arrive(net, key, count)
+	local n = claimed + insert_key(net, key, count - claimed, cell.data and cell.data[key])
+	if n > 0 then cell_add(cell, cell_spec(cell.name), key, -n) end
+	return n
+end
+
+--- Up to `count` of `key` from the network into the cell record: what its room and partition (its cards) let in. Returns
+--- what went.
+function M.network_to_cell(net, cell, key, count)
+	if not M.usable(net) then return 0 end
+	local spec = cell_spec(cell.name)
+	local n = math.min(count, cell_room(cell, spec, key), net.items[key] or 0)
+	if not is_fluid_key(key) then n = math.floor(n) end
+	if n <= 0 then return 0 end
+	local data = key:find("#", 1, true) and data_of(net, key) or nil
+	local got = extract_key(net, key, n)
+	if got > 0 then
+		cell_add(cell, spec, key, got)
+		if data then
+			cell.data = cell.data or {}
+			cell.data[key] = data
+		end
+	end
+	return got
+end
+
+--- what of `key` the cell record can still take (issue #386: the IO port asks before it goes through the network's keys)
+function M.cell_room(cell, key) return cell_room(cell, cell_spec(cell.name), key) end
 
 --- what the network holds of fluid `name` at every temperature, or of those a filter key takes
 function M.fluid_total(net, name, filter)

@@ -526,6 +526,7 @@ The recipes that follow:
 | Void ME Fluid Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 copper plates | (AE2-U's void cell takes fluids too; this one has the fluid cell housing's copper) |
 | ME Import / Export Bus | an electronic circuit, 2 iron plates, a fast inserter | an annihilation (import) or formation core (export), 2 iron, a piston |
 | ME Storage Bus | an ME Interface, 2 fast inserters | an interface, 2 pistons |
+| ME IO Port | an ME Drive, 2 fluix cables, 2 iron plates, an advanced circuit (no stand-in for the glass: the plastic bar is not made with Gregtorio Continued, which gives the block its own recipe) | 3 glass, 2 fluix crystals, a drive, 2 iron, an engineering processor |
 | ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
 | ME Pattern Terminal | an ME Terminal, an assembling machine 1, an advanced circuit, a processing unit | a crafting terminal (terminal, crafting table, calculation processor), an engineering processor |
 | ME Interface Terminal | an ME Terminal, an ME Interface, a processing unit | an illuminated panel, an interface, an engineering processor (GTNH: an ME Terminal, an ME Interface, an engineering processor) |
@@ -563,9 +564,9 @@ card is made from a component card and one item:
 | Sticky Card | basic card + iron chest (AE2-Unofficial: a slimeball, which has no stand-in) | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
 | Group Filter Card | advanced card + constant combinator (AE2-Unofficial's Ore Dictionary Filter Card: an advanced card and a book) | storage bus, item cells, ME Import and Export Bus (issue #363), 1 | a text filter over the item's name, subgroup and group takes the place of the filters (see below) |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
-| Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
-| Super Speed Card | Acceleration Card + 16k storage component (AE2-Unofficial's) | ME Import Bus and Export Bus, up to 4 | adds 16, 128, 1024, 8192 times the bus speed (issue #356) |
-| Superluminal Speed Card | Super Speed Card + 4 256k storage components (AE2-Unofficial: a 1024k component, which ME Network does not have) | ME Import Bus and Export Bus, up to 4 | adds 131 072, 1 048 576, 8 388 608, 67 108 864 times the bus speed (issue #356) |
+| Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
+| Super Speed Card | Acceleration Card + 16k storage component (AE2-Unofficial's) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4 | adds 16, 128, 1024, 8192 times the bus speed (issue #356) |
+| Superluminal Speed Card | Super Speed Card + 4 256k storage components (AE2-Unofficial: a 1024k component, which ME Network does not have) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4 | adds 131 072, 1 048 576, 8 388 608, 67 108 864 times the bus speed (issue #356) |
 
 On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
 like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards
@@ -718,6 +719,31 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
 * Mined, the workbench gives its cell back (with the cards of its slots in it); destroyed, it drops it.
 * Two players at one workbench or storage bus see the same slots; what one of them puts in or takes out the other sees
   at once.
+
+## ME IO Port
+
+The **ME IO Port** (issue #386, AE2's ME IO Port; ME Network technology) moves the whole contents of a storage cell between
+the cell and its ME network in one go: no filters, no stack by stack. It is a 1x1 block of the network (5 kW through the
+ME Controller) with two cell slots:
+
+* **Input**: put a storage cell in (shift + click it in your inventory, or click the slot with it in hand). An item cell
+  or a fluid cell; a void cell is refused (filled, it would destroy what it takes).
+* **Mode**: *Empty the cell into the network* (everything it holds goes into the network, by the network's priorities and
+  partitions, like any other storage) or *Fill the cell from the network* (the cell takes what the network holds and its
+  partition, cards and room let in: a cell partitioned for copper plates takes only those).
+* **Output**: a cell that is done goes here: emptied, or filled as far as it goes (the network has nothing more the cell
+  takes, or the cell is full). Take it from there; while the output slot holds a cell, the next one waits in the input.
+* **Speed**: the map setting "Bus speed" (256 items and 4000 fluid per second) times the factor of its speed cards, as on the
+  import and export bus (4 card slots: Acceleration, Super Speed, Superluminal Speed Card; AE2's port speeds fluid cells
+  as well, so does this one). The window shows the speed and what the port does.
+* **Waiting**: without a cell, with a done cell in a full output slot, without network or power, or when the network has
+  no room for what the cell holds, the port is not visited (it is woken when that changes: a cell put in, the output
+  taken, the power back, a new cell in a drive). Its visits have a budget of their own (map settings "ME IO Port visits per
+  tick, at least / at most"; `/me-stats` lists them).
+* The mode and the cards go with blueprints, settings paste, clones and copy/paste; the cells are items and stay with the
+  port: mined, they go into your inventory, destroyed, onto the ground.
+* AE2's port has six input and six output slots, a redstone mode and a "move when empty / full / half" setting; this one is
+  the simple form the issue asked for.
 
 ## Old saves
 
@@ -1191,6 +1217,7 @@ connects whatever touches it, like the cable, but only while it is **joined**:
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
 | ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
+| ME IO Port | the mode, which speed cards it has | yes (the cards from your inventory, then the network) | yes (the cards from the network); its cells are items, not settings |
 
 **The copy-paste tool and blueprints pasted over blocks** (issue #383): the copy of Ctrl+C / Ctrl+X is a blueprint, so
 every block of the table above (and the monitors, the level emitter and the toggle buses) keeps its settings when the copy is

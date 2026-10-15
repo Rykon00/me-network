@@ -891,6 +891,9 @@ bulk382 = require("bulkexport")({ me_place = me_place, power = power, me_report 
 copypaste383 = require("copypaste")({ me_place = me_place, me_report = me_report })
 --- me-network issue #387: an empty cell taken apart in the ME Cell Workbench (disassembly.lua)
 disassembly387 = require("disassembly")({ me_place = me_place, me_report = me_report })
+--- me-network issue #386: the ME IO Port (ioport.lua)
+ioport386 = require("ioport")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #84: damaged items on the by-count paths (damaged.lua)
 damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
 --- me-network issue #85: an import bus with only refused stacks (refused.lua)
@@ -1044,6 +1047,7 @@ local function tests_running()
 	bulk382.running(check)
 	copypaste383.running(check)
 	disassembly387.running(check)
+	ioport386.running(check)
 	refill67.running(check)
 	stats38.running(check)
 	margin51.running(check)
@@ -1930,6 +1934,9 @@ local function schedule_digest()
 	for _, e in pairs(s.find_entities_filtered{ name = { "me-level-maintainer", "me-circuit-interface" } }) do
 		put("m", e, remote.call(CIRC_REMOTE, "schedule", e))
 	end
+	for _, e in pairs(s.find_entities_filtered{ name = "me-io-port" }) do                -- (issue #386)
+		put("iop", e, remote.call("gregtorio-me-ioport", "schedule", e))
+	end
 	table.sort(parts)
 	local bl = remote.call(IO, "backlogs")
 	local keys = {}
@@ -1982,6 +1989,7 @@ script.on_nth_tick(10, function()
 	bulk382.tick()
 	copypaste383.tick()
 	disassembly387.tick()
+	ioport386.tick()
 	refill67.tick()
 	plans50.tick()
 	scan50.tick()
@@ -4849,6 +4857,7 @@ script.on_init(function()
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(disassembly387.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(ioport386.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refill67.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end

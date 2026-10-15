@@ -102,6 +102,8 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	--- Cards too, in the same 4 slots; `superspeed` and `superluminal`: by the number of each, what they add to that factor
 	--- (AE2-U: PartExportBus.calculateAmountToSend, the kinds add up)
 	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1 } },   -- (issue #363: the Group Filter Card)
+	--- issue #386: the ME IO Port takes the speed cards of the buses (AE2's IO port: speed cards), with the same factors
+	io_port = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4 } },
 	superspeed = { 16, 128, 1024, 8192 },
 	superluminal = { 131072, 1048576, 8388608, 67108864 },
 	--- issue #156: the ME Pattern Provider takes up to 3 Pattern Capacity Cards (AE2-U: Registration.java, `blocks.iface()`, 3);
