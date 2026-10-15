@@ -94,6 +94,7 @@ local function kinds()
 		if n.chest then k[n.chest] = "chest" end                      -- issue #229
 		if n.io_port then k[n.io_port] = "io-port" end                -- issue #386
 		if n.quantum_bridge then k[n.quantum_bridge] = "quantum-bridge" end   -- issue #385
+		if n.wireless_link then k[n.wireless_link] = "wireless-link" end      -- issue #384
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -115,7 +116,7 @@ end
 --- kinds with a power connection of their own (or none at all: the cable): the controller draws nothing for them. Issue #128:
 --- the terminal and the level maintainer are not among them any more; issue #145: the legacy CPUs are gone
 local POWERED_SELF = { cable = true, underground = true, controller = true,
-	["quantum-bridge"] = true }                        -- (issue #385: it draws from the power grid itself)
+	["quantum-bridge"] = true, ["wireless-link"] = true }   -- (issues #385, #384: they draw from the power grid themselves)
 
 --- Issue #128: the power (W) a kind draws through the controller where it is not the default (mod-data "fork-me-network",
 --- member_power: terminal, level maintainer, pattern and interface terminal), read once per load like the rest of the mod-data

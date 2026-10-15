@@ -850,6 +850,49 @@ data.raw["mod-data"]["fork-me-network"].data.quantum_bridge = { watts = QBRIDGE_
 ME.add_technology{ name = "me-quantum-bridge", prerequisites = { "me-storage-256k", "utility-science-pack" },
 	unit = ME.unit(5, 1500), recipes = { QBRIDGE } }
 
+--------------------------------------------------------------------------------
+--- ME WIRELESS LINK (issue #384, option 2; AE2 Stuff's Wireless Connector): a 1x1 block; two with the same frequency join their
+--- networks into one, on the same surface and within WLINK.range tiles (scripts/fork-me-qbridge.lua, the bridge's pairing).
+--- Each end draws WLINK.base W from the power grid at its place, and WLINK.per_chunk W more for every started 32 tiles
+--- between the two while they are a pair (at the range: 16 chunks, 810 kW each). Recipe in the stand-ins (AE2 Stuff is not
+--- AE2: a wireless receiver is a radar, as for the access point), unlocked with ME Wireless Link after ME Wireless.
+--------------------------------------------------------------------------------
+
+local WLINK_NAME, WLINK = "me-wireless-link", { base = 10000, per_chunk = 50000, range = 512 }
+ME.add_item{ name = WLINK_NAME, icon = HD_ICON .. "me-wireless-link.png", icon_size = 64, subgroup = "fork-me-network", order = "f",
+	stack_size = 50, place_result = WLINK_NAME,
+	recipe = { energy_required = 5, ingredients = I{ "radar", 1, "advanced-circuit", 2, "fluix-cable", 4, "iron-plate", 4 } } }
+data:extend({ {
+	type = "electric-energy-interface",
+	name = WLINK_NAME,
+	icon = HD_ICON .. "me-wireless-link.png",
+	icon_size = 64,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = WLINK_NAME },
+	placeable_by = { item = WLINK_NAME, count = 1 },
+	max_health = 200,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = ME.solid_box(),
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	gui_mode = "none",
+	energy_source = {
+		type = "electric",
+		usage_priority = "secondary-input",
+		buffer_capacity = tostring(WLINK.base * 2) .. "J",           -- (two seconds of its drain; the runtime sets it with the drain)
+		input_flow_limit = tostring(WLINK.base + WLINK.per_chunk * (WLINK.range / 32) * 2) .. "W",
+		output_flow_limit = "0W",
+	},
+	energy_production = "0W",
+	energy_usage = tostring(WLINK.base) .. "W",
+	picture = { filename = HD_ENTITY .. "me-wireless-link.png", priority = "high", width = 64, height = 64, scale = 0.5 },
+	localised_description = { "entity-description.me-wireless-link", tostring(WLINK.range), tostring(WLINK.base / 1000),
+		tostring(WLINK.per_chunk / 1000) },
+} })
+data.raw["mod-data"]["fork-me-network"].data.names.wireless_link = WLINK_NAME
+data.raw["mod-data"]["fork-me-network"].data.wireless_link = WLINK
+ME.add_technology{ name = "me-wireless-link", prerequisites = { "me-wireless" }, unit = ME.unit(3, 400), recipes = { WLINK_NAME } }
+
 --- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k; the monitors (issue #353); the
 --- ME IO Port (issue #386)
 ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "lamp", "fast-inserter" }, unit = ME.unit(2, 300), recipes = {

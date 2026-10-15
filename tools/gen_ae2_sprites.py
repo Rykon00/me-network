@@ -37,6 +37,7 @@ Sources:
                                                   # their sheet docs/graphics-review/issue-381.png
     python tools/gen_ae2_sprites.py --io-port     # only the ME IO Port (issue #386), from the drive's 32 px face
     python tools/gen_ae2_sprites.py --quantum-bridge  # only the ME Quantum Bridge (issue #385), 3 x 3, drawn here
+    python tools/gen_ae2_sprites.py --wireless-link   # only the ME Wireless Link (issue #384)
     python tools/gen_ae2_sprites.py --thumbnail   # only thumbnail.png, from the drive and terminal PNGs (issue #20)
     python tools/gen_ae2_sprites.py --crafting-cpu C:/00_Repositories/GT5-Unofficial   # only the crafting blocks of
                                                   # the multiblock crafting CPUs (me-network issue #6): GT casings and
@@ -1992,6 +1993,27 @@ def quantum_bridge():
     return written
 
 
+def wireless_link():
+    """issue #384: the ME Wireless Link: the access point's casing and dark panel, an antenna in the light fluix colour and a
+    two-headed arrow below it (a link both ways); its 64 px picture, icon cube and technology icon"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    OUT_TECH_HD.mkdir(parents=True, exist_ok=True)
+    face = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(face)
+    d.rectangle((6, 19, 25, 27), fill=(30, 30, 38, 255), outline=(85, 85, 100, 255))
+    antenna(d, 16, 4, 19, 2, FLUIX_LIGHT)
+    d.line((10, 23, 21, 23), fill=(235, 235, 245, 255), width=1)
+    d.polygon([(8, 23), (11, 21), (11, 25)], fill=FLUIX + (255,))
+    d.polygon([(23, 23), (20, 21), (20, 25)], fill=FLUIX + (255,))
+    written = [HD_ENTITY / "me-wireless-link.png", HD_ICON / "me-wireless-link.png", OUT_TECH_HD / "me-wireless-link.png"]
+    hd_block(face).save(written[0])
+    icon = hd_cube(face)
+    icon.save(written[1])
+    upscale(icon).save(written[2])
+    return written
+
+
 def io_port_face():
     """issue #386: the ME IO Port's 32 px face: the drive's casing, one cell bay on the left and two arrows on the right,
     into the network (fluix purple, up) and out of it (blue, down)"""
@@ -2464,6 +2486,8 @@ def main():
     ap.add_argument("--wireless", action="store_true",
                     help="only the wireless parts (me-network issues #205 to #211): access point, booster, terminal item, "
                          "charger, module and their technology, drawn from this mod's own PNGs")
+    ap.add_argument("--wireless-link", action="store_true",
+                    help="only the ME Wireless Link (me-network issue #384): its picture, icon and technology icon")
     ap.add_argument("--quantum-bridge", action="store_true",
                     help="only the ME Quantum Bridge (me-network issue #385): its 3 x 3 picture and icon, drawn here")
     ap.add_argument("--io-port", action="store_true",
@@ -2517,7 +2541,7 @@ def main():
     if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
             or a.sheet_assembler or a.pattern_terminal or a.interface_terminal or a.monitors or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
-            or a.own_icons or a.light or a.bus_markers or a.toggle_emitter or a.io_port or a.quantum_bridge):
+            or a.own_icons or a.light or a.bus_markers or a.toggle_emitter or a.io_port or a.quantum_bridge or a.wireless_link):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --interface-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
@@ -2597,6 +2621,8 @@ def main():
         print("ME IO Port (issue #386):", len(io_port()))
     if a.gt or a.hd or a.quantum_bridge:                               # (drawn here, the drive's casing colour)
         print("ME Quantum Bridge (issue #385):", len(quantum_bridge()))
+    if a.gt or a.hd or a.wireless_link:                                # (from the interface's casing)
+        print("ME Wireless Link (issue #384):", len(wireless_link()))
     if not (a.gt or a.hd) and a.own_icons:      # the 3D-style cells and cable are made from the 32 px icons
         written = hd_batch1()
         hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")
