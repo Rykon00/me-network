@@ -1967,6 +1967,16 @@ remote.add_interface("gregtorio-me-gui", {
 	workbench_qualities = function() return picker.qualities() end,
 	--- issue #291: how many quality buttons the picker puts in a row (`n` qualities, with or without the temperature field)
 	picker_quality_columns = function(n, temperature) return picker.quality_columns(n, temperature) end,
+	--- issue #380: the picker's quality row built into a stand-in of its frame for `n` qualities (the game's, then made-up
+	--- names: the harness cannot add quality prototypes), then a click on `chosen` (picker.quality_view)
+	picker_quality_view = function(n, temperature, chosen)
+		local names = picker.qualities()
+		for i = #names + 1, n do names[i] = "zz-devcheck-quality-" .. i end
+		while #names > n do names[#names] = nil end
+		local frame = stand_in_element{ type = "frame", tags = { quality = "normal", kind = "item" } }
+		local bottom = frame.add{ type = "flow", name = "bottom" }
+		return picker.quality_view(frame, bottom, names, temperature, chosen)
+	end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
 	--- issue #70: the key of the picker's choice (`with_quality`: an item keeps its quality), a row from a choice
 	key_of_choice = function(choice, with_quality) return picker.key_of(choice, with_quality) end,

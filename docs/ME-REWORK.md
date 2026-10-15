@@ -1895,7 +1895,8 @@ not what was wanted: the check belongs in the picker (#94). So the picker is the
 `Picker.open(player, spec)` builds a frame in `player.gui.screen` (`fork_me_picker`): a search field, the groups as tabs
 (`filter_group_button_tab_slightly_larger`, `item-group/<name>` sprites; only groups that list an allowed element), a
 scroll pane with the group's subgroups as tables of 10 `slot_button`s (the game's order: group, subgroup, `order`, name),
-and a bottom row of quality buttons (`quality/<name>`, items only, only with the quality mod) and the green check
+and a bottom row of quality buttons (`quality/<name>`, items only, only with the quality mod; a table of up to 10 columns,
+issue #291, in a `naked_scroll_pane` two rows high and one column narrower when it needs more rows, issue #380) and the green check
 (`item_and_count_select_confirm`). The catalog (`catalog_of`) is made from the item and fluid prototypes (not hidden, not
 parameters) on first use and kept outside `storage` (derived from prototypes only, made again after a load). A search
 text is matched against the prototype name like the terminal's search (lower case, spaces as dashes); the display is

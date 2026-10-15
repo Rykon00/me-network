@@ -75,9 +75,40 @@ end
 --- them ran past the picker and the screen. As many columns as fit in the bottom row at the picker's width (COLUMNS
 --- entries: 424 px) next to the label and the check (10 tool buttons of 30 px), or next to the temperature field as well
 --- (5); the game's five qualities stay one row either way.
+--- Issue #380: the rows had no limit, so a mod with a hundred qualities still made the picker taller than the screen. More
+--- than QUALITY_ROWS rows go into a scroll pane of that height (the picker keeps its size, every quality is a scroll
+--- away); one column fewer leaves room for its scroll bar.
 local QUALITY_COLUMNS, QUALITY_COLUMNS_WITH_TEMPERATURE = 10, 5
+local QUALITY_ROWS = 2
+local QUALITY_BUTTON, QUALITY_SPACING = 28, 2          -- (the game's tool_button is 28 px high)
 function M.quality_columns(n, temperature)
-	return math.max(1, math.min(n, temperature and QUALITY_COLUMNS_WITH_TEMPERATURE or QUALITY_COLUMNS))
+	local c = temperature and QUALITY_COLUMNS_WITH_TEMPERATURE or QUALITY_COLUMNS
+	if n > c * QUALITY_ROWS then c = c - 1 end
+	return math.max(1, math.min(n, c))
+end
+
+--- Issue #380: the quality row of the picker into `parent` (its bottom row): the label and the buttons of `qualities` (names,
+--- lowest first) in a table, in a scroll pane of QUALITY_ROWS rows when they need more. Returns the table and the pane (nil
+--- without one).
+function M.add_quality_row(parent, qualities, with_temperature)
+	parent.add{ type = "label", caption = { "fork-me-picker.quality" } }
+	local columns = M.quality_columns(#qualities, with_temperature)
+	local holder, pane = parent, nil
+	if #qualities > columns * QUALITY_ROWS then
+		pane = parent.add{ type = "scroll-pane", name = "fork_me_pk_q_pane", style = "naked_scroll_pane",
+			horizontal_scroll_policy = "never", vertical_scroll_policy = "auto-and-reserve-space" }
+		pane.style.maximal_height = QUALITY_ROWS * (QUALITY_BUTTON + QUALITY_SPACING) - QUALITY_SPACING
+		holder = pane
+	end
+	local q = holder.add{ type = "table", name = "fork_me_pk_q", column_count = columns }   -- (issue #291: rows, not one long line)
+	q.style.horizontal_spacing = QUALITY_SPACING
+	q.style.vertical_spacing = QUALITY_SPACING
+	for _, name in ipairs(qualities) do
+		local proto = prototypes.quality[name]
+		q.add{ type = "sprite-button", style = "tool_button", sprite = "quality/" .. name,
+			tooltip = proto and proto.localised_name or name, tags = G.act("pk_quality", { quality = name }) }
+	end
+	return q, pane
 end
 
 --------------------------------------------------------------------------------
@@ -323,16 +354,9 @@ function M.open(player, spec)
 	local bottom = G.row(content)
 	local qualities = M.qualities()
 	local with_temperature = spec.temperature ~= false and kinds.fluid
+	local qpane
 	if #qualities > 1 and not t.plain then
-		bottom.add{ type = "label", caption = { "fork-me-picker.quality" } }
-		local q = bottom.add{ type = "table", name = "fork_me_pk_q",
-			column_count = M.quality_columns(#qualities, with_temperature) }        -- (issue #291: rows, not one long line)
-		q.style.horizontal_spacing = 2
-		q.style.vertical_spacing = 2
-		for _, name in ipairs(qualities) do
-			q.add{ type = "sprite-button", style = "tool_button", sprite = "quality/" .. name,
-				tooltip = prototypes.quality[name].localised_name, tags = G.act("pk_quality", { quality = name }) }
-		end
+		_, qpane = M.add_quality_row(bottom, qualities, with_temperature)
 	end
 	if with_temperature then                                      -- issue #159: a fluid's temperature (optional)
 		local row = bottom.add{ type = "flow", name = "fork_me_pk_temp_row", direction = "horizontal" }
@@ -351,7 +375,32 @@ function M.open(player, spec)
 	frame.auto_center = true
 	fill(frame)
 	sync(frame)
+	--- issue #380: the chosen quality in view when the row scrolls
+	if qpane then
+		for _, b in pairs(G.find(qpane, "fork_me_pk_q").children) do
+			if b.toggled then qpane.scroll_to_element(b, "top-third") break end
+		end
+	end
 	return true
+end
+
+--- Issue #380 (tests: the harness has no player): the quality row built into `frame`, a stand-in of the picker's frame made
+--- by the caller (its tags as M.open sets them, a flow `bottom` in it), then a click on quality `chosen` as the button's
+--- handler takes it. Returns { columns, buttons (names in order), pane = the pane's maximal height or nil, toggled (names) }.
+function M.quality_view(frame, bottom, qualities, with_temperature, chosen)
+	local q, pane = M.add_quality_row(bottom, qualities, with_temperature)
+	sync(frame)
+	if chosen then
+		set_tags(frame, { quality = chosen })
+		sync(frame)
+	end
+	local out = { columns = M.quality_columns(#qualities, with_temperature), buttons = {}, toggled = {}, pane = pane and pane.style.maximal_height,
+		parent = pane and "pane" or "row" }
+	for _, b in ipairs(q.children) do
+		out.buttons[#out.buttons + 1] = b.tags.quality
+		if b.toggled then out.toggled[#out.toggled + 1] = b.tags.quality end
+	end
+	return out
 end
 
 function M.close(player)
