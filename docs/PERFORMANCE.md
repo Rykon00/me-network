@@ -3264,3 +3264,28 @@ changes.
 | Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
 
 `regressions beyond the noise: 0`.
+
+## An export bus fills a machine to two crafts (issue #382)
+
+An export bus still tops a machine's slot up to a stack of the item. Only when the machine holds a stack already does
+the visit (and the probe of a blocked bus) read the machine's recipe (`get_recipe`, once a visit: an engine call that
+makes two objects) and what one craft of it uses of the item (`need_of`, a table per recipe, cached per load); the
+slot is then filled to two crafts when that is more than the stack. A machine whose slots stay below a stack, a chest
+and a lab never make the call.
+
+A first version asked for the recipe whenever the bus could move more than the slot's room to a stack (nearly every
+visit of a busy bus): `bench --sizes 100,1000 --runs 3 --check origin/main` reported the gc time at 100 beyond the
+noise (0.02741 against 0.03029 ms; Lua alloc 26.68 against 26.70 KB per tick). A second one asked only for items that
+some recipe needs more than half a stack of, found once per item and load through `get_recipe_filtered` (a scan that a
+game with many recipes pays in one tick); its runs were clean on the allocation but reported a tick over 5 ms more at
+100 once. The version kept, three rounds in turns:
+
+| | origin/main | two crafts |
+|---|---|---|
+| 100: script average / p99 ms | 0.2121 / 1.921 | 0.2216 / 1.986 |
+| 1000: script average / p99 ms | 0.3837 / 2.121 | 0.3842 / 2.121 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0` (the 100 rounds of both versions varied by up to 0.012 ms; the scenes' recipes need
+less than a stack, so their machines are never filled past one).

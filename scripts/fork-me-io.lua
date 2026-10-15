@@ -26,8 +26,9 @@
 ---     target is resolved, and kept with it (scripts/fork-me-targets.lua): an inventory of the bus's kind, fluid
 ---     boxes, or both (a machine with a fluid recipe). The import bus pulls items from the entity's output
 ---     (assembler, furnace result, chest) and fluid from its output boxes (a tank: every box); the export bus
----     puts its filtered items into the entity's input (machine: up to one stack each; chest: as far as it has
----     room) and its filtered fluids into the input boxes or the tank. Up to MAX_FILTERS filters, items and
+---     puts its filtered items into the entity's input (machine: up to one stack each, a crafting machine up to two
+---     crafts of its recipe when that is more, issue #382; chest: as far as it has room) and its filtered fluids into
+---     the input boxes or the tank. Up to MAX_FILTERS filters, items and
 ---     fluids mixed (keys: item name, "fluid/<name>", "fluid/<name>@<degrees>"), split into an item and a fluid set when they are set
 ---     (import: none = everything, items and fluids; export: none = nothing). Kept in blueprints (tag
 ---     fork_me_bus), settings paste and clones. The windows are in scripts/fork-me-windows.lua.
@@ -170,6 +171,38 @@ local function stack_of(name)
 		stack_cache[name] = v
 	end
 	return v
+end
+
+--- issue #382: what one craft of recipe `recipe` uses of item `name` (0: none), cached per load by recipe and item
+local need_cache = {}
+local function need_of(recipe, name)
+	local byr = need_cache[recipe]
+	if not byr then
+		byr = {}
+		local proto = prototypes.recipe[recipe]
+		for _, ing in pairs(proto and proto.ingredients or {}) do
+			if ing.type == "item" then byr[ing.name] = (byr[ing.name] or 0) + ing.amount end
+		end
+		need_cache[recipe] = byr
+	end
+	return byr[name] or 0
+end
+
+--- Issue #382: what an export bus tops item `name` up to in machine `t` (T.SLOTTED): a stack of it, or two crafts of the
+--- machine's recipe when that is more (as an inserter does), so a recipe that needs more than a stack of an item starts.
+--- `recipe`: the recipe's name, false for none (a lab, an idle machine), nil when not looked up yet (one engine call that
+--- makes two objects: the callers ask only when the machine holds a stack already). Returns the level and the recipe.
+local function machine_level(t, name, recipe)
+	local level = stack_of(name)
+	if recipe == nil then
+		local r = t.type ~= "lab" and t.get_recipe()
+		recipe = r and r.name or false
+	end
+	if recipe then
+		local n = 2 * need_of(recipe, name)
+		if n > level then level = n end
+	end
+	return level, recipe
 end
 
 --- Scratch tables (issue #38, lever 4): the API copies the arguments of a call, so one table serves every call of its
@@ -1300,6 +1333,7 @@ local function export_items(rec, net, t, cap, info)
 	local inv = T.inventory(t, rec.t_inv)
 	if not inv then return 0 end
 	local machine = T.SLOTTED[t.type]
+	local recipe                                          -- (issue #382: the machine's, looked up once a visit when needed)
 	local moved = 0
 	local tgt = rec.tgt
 	if not tgt then
@@ -1335,7 +1369,17 @@ local function export_items(rec, net, t, cap, info)
 			if prev and prev > 0 and have == 0 then info.starved = true end
 			local used = prev and prev - have or 0
 			local want = cap - moved
-			if machine then want = math.min(want, stack_of(name) - have) end
+			if machine then
+				--- a stack, and once it holds a stack, two crafts of its recipe when that is more (issue #382); every bus
+				--- counts what the machine holds, so several buses on one machine never fill it past that
+				local room = stack_of(name) - have
+				if room <= 0 and recipe ~= false then
+					local level
+					level, recipe = machine_level(t, name, recipe)
+					room = level - have
+				end
+				want = math.min(want, room)
+			end
 			local got = 0
 			if want > 0 then
 				got = N.extract_to(net, inv, key, want)          -- (a plain name: normal quality)
@@ -1845,6 +1889,7 @@ local function probe_work(rec)
 		if inv then
 			local machine = T.SLOTTED[t.type]
 			local lab = t.type == "lab"
+			local recipe
 			for _, key in ipairs(rec.filters) do
 				local name, q = filter_item(key)
 				if prototypes.item[name] then
@@ -1855,7 +1900,14 @@ local function probe_work(rec)
 					end
 					if machine then
 						--- (a lab takes only the packs it uses: a filter it refuses is no work, however empty its slot)
-						if inv.get_item_count(item) < stack_of(name) and (not lab or inv.can_insert(item)) then return true end
+						local c = inv.get_item_count(item)
+						if c < stack_of(name) then
+							if not lab or inv.can_insert(item) then return true end
+						elseif recipe ~= false then
+							local level
+							level, recipe = machine_level(t, name, recipe)   -- (issue #382: two crafts of its recipe)
+							if c < level then return true end
+						end
 					elseif inv.can_insert(item) then
 						return true
 					end
