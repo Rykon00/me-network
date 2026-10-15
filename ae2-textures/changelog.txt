@@ -1,6 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.1
   Graphics:
+    - The ME Import, Export and Storage Bus icons (ME Network issue #381): this mod replaces only the block of the icon, so ME Network's badge with the bus's direction (into the network, out of it, both ways) stays over the AE2 cube, and the three buses no longer look like the ME Interface in the inventory and the hotbar. Needs ME Network with that badge (0.5.4); with an older one the icons are as before.
     - The Void ME Storage Cell and the Void ME Fluid Storage Cell (ME Network issue #364) have AE2-Unofficial's void cell icon (AE2-Unofficial has one void cell for items and fluids, so both show it), and the Group Filter Card has AE2-Unofficial's Ore Dictionary Filter Card icon.
     - The Super Speed Card and the Superluminal Speed Card (ME Network issue #356) have AE2-Unofficial's icons.
     - The ME Interface Terminal (ME Network issues #336, #343): AE2-Unofficial's interface terminal panel like the other terminals, dark while its network does not work and with AE2's screen in its Fluix colours while it does; its icon is the lit panel.

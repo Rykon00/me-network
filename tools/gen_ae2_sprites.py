@@ -33,7 +33,8 @@ Sources:
     python tools/gen_ae2_sprites.py --own-icons C:/00_Repositories/GT5-Unofficial   # only the 17 icons of graphics/icons/
                                                   # (issue #238) and what is made from them (cells, old drive items, fluid
                                                   # variants, technologies, 3D-style cells and cable), with their contact
-                                                  # sheet docs/graphics-review/own-icons-238.png
+                                                  # sheet docs/graphics-review/own-icons-238.png; the buses' direction badges (issue #381) and
+                                                  # their sheet docs/graphics-review/issue-381.png
     python tools/gen_ae2_sprites.py --io-port     # only the ME IO Port (issue #386), from the drive's 32 px face
     python tools/gen_ae2_sprites.py --thumbnail   # only thumbnail.png, from the drive and terminal PNGs (issue #20)
     python tools/gen_ae2_sprites.py --crafting-cpu C:/00_Repositories/GT5-Unofficial   # only the crafting blocks of
@@ -1900,6 +1901,60 @@ def emitter_sprite():
     return img
 
 
+BADGES = {"me-import-bus": (IMPORT_ACCENT, "in"), "me-export-bus": (EXPORT_ACCENT, "out"),
+          "me-storage-bus": (STORAGE_ACCENT, "both")}
+
+
+def bus_badge(accent, way):
+    """issue #381: a bus's direction as a badge in the lower right corner of its 64 px icon, alone (a layer of its own over
+    the block's icon, so the texture mod, which replaces the block's icon, keeps it): a dark rounded square with a
+    diagonal arrow in the bus's colour, into the block (import: towards its middle), out of it (export) or both ways
+    (storage bus). Drawn at 32 px, then doubled like the other HD icons."""
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((16, 16, 31, 31), radius=3, fill=(20, 20, 26, 255), outline=accent + (255,))
+    d.line((20, 20, 27, 27), fill=(235, 235, 245, 255), width=2)            # the shaft, upper left to lower right
+    tip_in = [(18, 18), (24, 18), (18, 24)]                                     # head at the upper left: into the block
+    tip_out = [(29, 29), (23, 29), (29, 23)]                                    # head at the lower right: out of it
+    if way in ("in", "both"):
+        d.polygon(tip_in, fill=accent + (255,))
+    if way in ("out", "both"):
+        d.polygon(tip_out, fill=accent + (255,))
+    return hd_up(img)
+
+
+def bus_badges():
+    """issue #381: the badges of the three buses (graphics/icons/hd/<bus>-badge.png), prototypes/network.lua's second icon layer"""
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+    for bus, (accent, way) in BADGES.items():
+        path = HD_ICON / f"{bus}-badge.png"
+        bus_badge(accent, way).save(path)
+        written.append(path)
+    return written
+
+
+def bus_icon_sheet(path):
+    """issue #381: the ME Interface and the three buses' icons with their badges, at 32 px (as the inventory shows them) and
+    64 px, on a light and a dark ground"""
+    names = ("me-interface", "me-import-bus", "me-export-bus", "me-storage-bus")
+    sheet = Image.new("RGBA", (4 * 80 + 16, 2 * (64 + 32 + 24) + 8), (60, 60, 60, 255))
+    for row, ground in enumerate(((60, 60, 60, 255), (170, 170, 170, 255))):
+        y0 = 8 + row * (64 + 32 + 24)
+        ImageDraw.Draw(sheet).rectangle((0, y0 - 4, sheet.width, y0 + 64 + 32 + 16), fill=ground)
+        for i, name in enumerate(names):
+            icon = load(HD_ICON / f"{name}.png").copy()
+            badge = HD_ICON / f"{name}-badge.png"
+            if badge.exists():
+                icon.alpha_composite(load(badge))
+            x = 8 + i * 80
+            sheet.alpha_composite(icon, (x, y0))
+            sheet.alpha_composite(icon.resize((32, 32), Image.LANCZOS), (x + 16, y0 + 72))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(path)
+    return path
+
+
 def io_port_face():
     """issue #386: the ME IO Port's 32 px face: the drive's casing, one cell bay on the left and two arrows on the right,
     into the network (fluix purple, up) and out of it (blue, down)"""
@@ -2505,6 +2560,9 @@ def main():
         written = hd_batch1()
         hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")
         print("ME 3D pictures (batch 1):", len(written))
+    if a.gt or a.own_icons:                     # issue #381: the buses' direction badges (a layer of their own)
+        print("bus badges (issue #381):", len(bus_badges()))
+        print("contact sheet:", bus_icon_sheet(ROOT / "docs/graphics-review/issue-381.png"))
     if a.gt or a.own_icons:
         print("contact sheet:", own_icons_sheet(ROOT / "docs/graphics-review/own-icons-238.png"))
     if a.gt or a.thumbnail:
