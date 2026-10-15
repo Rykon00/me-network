@@ -776,6 +776,23 @@ one 3x3 block.
 * There is no item limit per second: AE2 limits a quantum bridge by its channels, which ME Network does not have; the
   balance is the late technology, the cost and the power.
 
+## ME Wireless Link
+
+The **ME Wireless Link** (issue #384, AE2 Stuff's Wireless Connector; technology ME Wireless Link, after ME Wireless) joins two
+ME networks into one **without a cable**, on the **same surface**: a cable link for a far mine or outpost without kilometres
+of cable. It works like the ME Quantum Bridge (above), on a smaller scale:
+
+* **Frequency** in its window; exactly two links with the same frequency are a pair (a link never pairs with a bridge). A third
+  link of a frequency links nothing.
+* **Range: 512 tiles** between the two links. A pair on two surfaces or further apart does not link; the window says why.
+* **Power from the grid where each link stands, growing with the distance:** 10 kW, and 50 kW more for every started 32 tiles
+  (a chunk) between the two: 60 kW at up to 32 tiles, 210 kW at 100 tiles, 810 kW at 512. Both ends pay it while they are
+  a pair; an end without a partner in reach draws 10 kW. The link holds while both ends have power.
+* As with the bridge: while linked it is one network with one ME Controller (build the far side without one); when the link
+  goes, the network splits as for a removed cable; blueprints, settings paste and clones carry the frequency.
+* Recipe (standalone): a radar (AE2's wireless receiver), 2 advanced circuits, 4 fluix cables, 4 iron plates.
+
+## Old saves
 
 **Since 0.5.1 (issue #146) a save is converted only from ME Network 0.5.0 on.** A save made with an older version (ME
 Network 0.1.0 to 0.3.x, or Gregtorio Continued 0.4.x and older, which still contained this network) is refused when it

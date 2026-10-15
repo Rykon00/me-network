@@ -15,7 +15,7 @@
   `prototypes/120-fork-me-network-compat.lua`. A new item or recipe is added with `ME_NETWORK.add_item` /
   `add_recipe` so it is listed in `ME_NETWORK.recipes`; tell Gregtorio's maintainer (its compat file gives it the GT
   recipe). Numbers reach the runtime through the mod-data `fork-me-network`, `fork-me-autocraft`, `fork-me-fluids`.
-- Since issue #385 a network can span surfaces: an ME Quantum Bridge link is a graph edge between two members anywhere
+- Since issue #385 a network can span surfaces: an ME Quantum Bridge link (and since #384 an ME Wireless Link's, on one surface) is a graph edge between two members anywhere
   (`N.set_qlink`, `s.qlink`); code that looks for members by position (the cable router, the wireless range, a grid of
   tiles) must keep to one surface, code that walks a network's members must not assume one.
 - Runtime: `control.lua` registers the build, clone, settings paste, blueprint (also `on_pre_build`: a blueprint pasted

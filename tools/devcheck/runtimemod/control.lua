@@ -895,6 +895,8 @@ disassembly387 = require("disassembly")({ me_place = me_place, me_report = me_re
 ioport386 = require("ioport")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #394: a cell item keeps its quality (cellquality.lua)
+wlink384 = require("wlink")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 qbridge385 = require("qbridge")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 cellquality394 = require("cellquality")({ me_place = me_place, power = power, me_report = me_report,
@@ -1055,6 +1057,7 @@ local function tests_running()
 	ioport386.running(check)
 	cellquality394.running(check)
 	qbridge385.running(check)
+	wlink384.running(check)
 	refill67.running(check)
 	stats38.running(check)
 	margin51.running(check)
@@ -1999,6 +2002,7 @@ script.on_nth_tick(10, function()
 	ioport386.tick()
 	cellquality394.tick()
 	qbridge385.tick()
+	wlink384.tick()
 	refill67.tick()
 	plans50.tick()
 	scan50.tick()
@@ -4869,6 +4873,7 @@ script.on_init(function()
 	for _, f in pairs(ioport386.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cellquality394.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(qbridge385.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(wlink384.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refill67.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end

@@ -605,14 +605,15 @@ function M.refresh_io_port(player, frame)
 end
 
 --------------------------------------------------------------------------------
---- issue #385: the ME Quantum Bridge (scripts/fork-me-qbridge.lua): its frequency, the link and its power. A shift + click of
---- the inventory stores the stack in the network, as the windows of the other blocks without slots do.
+--- issue #385: the ME Quantum Bridge, and issue #384 the ME Wireless Link (scripts/fork-me-qbridge.lua): the frequency, the
+--- link and its power (the link: the distance and its range). A shift + click of the inventory stores the stack in the
+--- network, as the windows of the other blocks without slots do.
 --------------------------------------------------------------------------------
 
 local function open_qbridge(player, entity)
 	if not qbridge.info(entity) then return end
 	local _, content = G.open_window(player, "quantum-bridge", caption_of(entity), { unit = entity.unit_number }, true)
-	G.label(content, { "fork-me-gui.qbridge-help" }, WIDTH)
+	G.label(content, { entity.name == qbridge.LINK and "fork-me-gui.wlink-help" or "fork-me-gui.qbridge-help" }, WIDTH)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.qbridge-frequency" }, tooltip = { "fork-me-gui.qbridge-frequency-tooltip" } }
 	local f = row.add{ type = "textfield", name = "fork_me_qb_freq", numeric = true, allow_decimal = false, allow_negative = false,
@@ -620,6 +621,7 @@ local function open_qbridge(player, entity)
 	f.style.width = 120
 	G.label(content, "", WIDTH, nil, "fork_me_qb_status")
 	G.label(content, "", WIDTH, nil, "fork_me_qb_power")
+	if entity.name == qbridge.LINK then G.label(content, "", WIDTH, nil, "fork_me_qb_range") end   -- (issue #384)
 	M.refresh_qbridge(player, G.window_of(player), true)
 end
 
@@ -630,14 +632,24 @@ function M.refresh_qbridge(player, frame, first)
 	local f = G.find(frame, "fork_me_qb_freq")
 	if f and (first or not f.focused) then f.text = d.freq > 0 and tostring(d.freq) or "" end
 	local p = d.partner
-	G.find(frame, "fork_me_qb_status").caption = p and { "fork-me-gui.qbridge-status-linked", p.surface,
-		string.format("%.0f", p.x), string.format("%.0f", p.y) } or { "fork-me-gui.qbridge-status-" .. d.status }
+	local caption = { "fork-me-gui.qbridge-status-" .. d.status }
+	if d.status == "linked" and p then
+		caption = { "fork-me-gui.qbridge-status-linked", p.surface, string.format("%.0f", p.x), string.format("%.0f", p.y) }
+	elseif d.status == "other-surface" and p then
+		caption = { "fork-me-gui.qbridge-status-other-surface", p.surface }
+	end
+	G.find(frame, "fork_me_qb_status").caption = caption
 	G.find(frame, "fork_me_qb_power").caption = { "fork-me-gui.qbridge-power", G.fmt(d.watts / 1000),
 		string.format("%.0f", 100 * (d.buffer > 0 and d.energy / d.buffer or 0)) }
+	local r = G.find(frame, "fork_me_qb_range")
+	if r then
+		r.caption = d.distance and { "fork-me-gui.wlink-range", string.format("%.0f", d.distance), tostring(d.range) }
+			or { "fork-me-gui.wlink-range-none", tostring(d.range) }
+	end
 	return true
 end
 
-G.window("quantum-bridge", { open = open_qbridge, refresh = M.refresh_qbridge, entities = { qbridge.NAME },
+G.window("quantum-bridge", { open = open_qbridge, refresh = M.refresh_qbridge, entities = { qbridge.NAME, qbridge.LINK },
 	shift = M.store_shift, control = M.store_all, message = G.net_message, hint = { "fork-me-gui.store-help" } })
 
 --- the frequency: set when the field is confirmed or left (a number, empty: 0, none)

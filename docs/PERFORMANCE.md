@@ -3330,3 +3330,19 @@ registers and removes 1000 members through `add_node` and the removal):
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## The ME Wireless Link (issue #384)
+
+The link uses the bridge's graph edge and its pairing in the network's slow step (one energy read per block, a distance
+and, for a pair, the drain written once when it changes). Nothing per tick, nothing new in the graph code.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no link):
+
+| | origin/main | with the link |
+|---|---|---|
+| 100: script average / p99 ms | 0.2196 / 1.965 | 0.2200 / 2.009 |
+| 1000: script average / p99 ms | 0.3943 / 2.250 | 0.3996 / 2.293 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.

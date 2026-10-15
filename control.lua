@@ -137,7 +137,7 @@ pasteover.apply = function(entity, tags)
 	if tags.fork_me_monitor then fork_monitor.on_built(entity, tags) end
 	if tags.fork_me_emitter then fork_emitter.on_built(entity, tags) end
 	if tags.fork_me_io_port then fork_ioport.on_built(entity, tags) end
-	if tags.fork_me_qbridge then fork_qbridge.on_built(entity, tags) end
+	if tags.fork_me_qbridge or tags.fork_me_wireless_link then fork_qbridge.on_built(entity, tags) end
 end
 script.on_event(defines.events.on_pre_build, function(event) pasteover.on_pre_build(event) end)
 

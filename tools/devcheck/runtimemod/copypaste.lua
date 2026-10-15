@@ -56,6 +56,7 @@ local BLOCKS = {
 	{ "me-chest", function(e) remote.call(NET, "set_priority", e, -2) end },
 	{ "me-io-port", function(e) remote.call("gregtorio-me-ioport", "set_mode", e, "fill") end },       -- (issue #386)
 	{ "me-quantum-bridge", function(e) remote.call("gregtorio-me-qbridge", "set_frequency", e, 1234) end },   -- (issue #385, 3x3)
+	{ "me-wireless-link", function(e) remote.call("gregtorio-me-qbridge", "set_frequency", e, 4321) end },   -- (issue #384)
 }
 
 --- the centre of block `i` in a row (by the size of its prototype)
@@ -82,11 +83,14 @@ local function area_of(e)
 end
 
 --- the level maintainer writes its five rows once it has been rebuilt from tags (empty ones and batch 0 included):
---- the same settings, another spelling
+--- the same settings, another spelling; an electric energy interface's buffer and power use (the wireless link's, issue
+--- #384) are set by the runtime from the distance to its partner, no setting
+local RUNTIME_STATE = { buffer_size = true, power_usage = true, power_production = true }
 local function normal(t)
 	if type(t) ~= "table" then return t end
 	local out = {}
 	for k, v in pairs(t) do
+		if RUNTIME_STATE[k] then goto skip end
 		if k == "rows" and type(v) == "table" then
 			local rows = {}
 			for _, r in ipairs(v) do
@@ -100,6 +104,7 @@ local function normal(t)
 		else
 			out[k] = normal(v)
 		end
+		::skip::
 	end
 	return out
 end
