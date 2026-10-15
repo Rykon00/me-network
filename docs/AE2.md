@@ -89,6 +89,10 @@ A storage cell holds items virtually; its capacity is AE2's:
 Every item type in a cell costs its bytes per type, and every 8 items of it one byte. Another quality of an
 item is another type. A network fills cells that already hold an item first, then cells with a free type.
 
+A cell item of another quality than normal (crafted with quality modules) holds as much as a normal one: bytes, types and
+card slots are the same in every quality. It keeps its quality wherever the mod writes it again (issue #394): in a drive
+and taken out, in the ME Cell Workbench, in the ME IO Port, in a mined drive; until 0.5.4 it came out as a normal cell.
+
 * **Putting a cell in:** open the ME Drive (click it) and click a slot with the cell in hand, or click the
   drive itself with a cell in hand (first free slot). Only storage cells go into a drive (10 slots).
 * **Taking it out:** click a filled slot (the cell goes into your hand; shift click: into your inventory). The

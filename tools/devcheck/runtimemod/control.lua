@@ -894,6 +894,9 @@ disassembly387 = require("disassembly")({ me_place = me_place, me_report = me_re
 --- me-network issue #386: the ME IO Port (ioport.lua)
 ioport386 = require("ioport")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #394: a cell item keeps its quality (cellquality.lua)
+cellquality394 = require("cellquality")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #84: damaged items on the by-count paths (damaged.lua)
 damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
 --- me-network issue #85: an import bus with only refused stacks (refused.lua)
@@ -1048,6 +1051,7 @@ local function tests_running()
 	copypaste383.running(check)
 	disassembly387.running(check)
 	ioport386.running(check)
+	cellquality394.running(check)
 	refill67.running(check)
 	stats38.running(check)
 	margin51.running(check)
@@ -1990,6 +1994,7 @@ script.on_nth_tick(10, function()
 	copypaste383.tick()
 	disassembly387.tick()
 	ioport386.tick()
+	cellquality394.tick()
 	refill67.tick()
 	plans50.tick()
 	scan50.tick()
@@ -4858,6 +4863,7 @@ script.on_init(function()
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(disassembly387.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ioport386.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(cellquality394.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refill67.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end
