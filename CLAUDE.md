@@ -15,7 +15,8 @@
   `prototypes/120-fork-me-network-compat.lua`. A new item or recipe is added with `ME_NETWORK.add_item` /
   `add_recipe` so it is listed in `ME_NETWORK.recipes`; tell Gregtorio's maintainer (its compat file gives it the GT
   recipe). Numbers reach the runtime through the mod-data `fork-me-network`, `fork-me-autocraft`, `fork-me-fluids`.
-- Runtime: `control.lua` registers the build, clone, settings paste, blueprint, removal (with an event filter) and
+- Runtime: `control.lua` registers the build, clone, settings paste, blueprint (also `on_pre_build`: a blueprint pasted
+  over blocks that stand there, `scripts/fork-me-pasteover.lua`, issue #383), removal (with an event filter) and
   rotation events of all modules (the graph first on build, last on removal), `on_init` (first the hand-over of a
   Gregtorio save, `scripts/fork-me-handover.lua`, then the terminal's init: state and graph) and
   `on_configuration_changed` (technology effects reset when this mod changed, the graph rebuild, the migrations of

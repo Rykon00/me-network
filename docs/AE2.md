@@ -1183,6 +1183,17 @@ connects whatever touches it, like the cable, but only while it is **joined**:
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
 | ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
 
+**The copy-paste tool and blueprints pasted over blocks** (issue #383): the copy of Ctrl+C / Ctrl+X is a blueprint, so
+every block of the table above (and the monitors, the level emitter and the toggle buses) keeps its settings when the copy is
+built on free ground (by you or by robots), when ghosts that are not built yet are copied again, and after a cut. Pasted
+**over a block of the same kind that stands there already** (a blank bus where the configured one's copy goes) the game
+makes no ghost and tells no mod about it (Factorio 2.0), so before 0.5.4 the block stayed as it was; now ME Network reads
+the blueprint in your hand as you place it and gives each such block the settings the copy carries, as a block built from
+the copy gets them (cards come from the network, as for a built copy). A block of the copy that carries no settings
+changes nothing (a blank bus pasted over a configured one keeps its filters). Not for blueprints with rails or with
+absolute grid snapping (they are placed by other rules); the toggle buses' condition is the game's own and was always
+pasted.
+
 ### A machine's recipe onto an ME block
 
 Like a requester chest: **shift + right click** a crafting machine (an assembling machine, a furnace, a rocket silo,

@@ -44,6 +44,8 @@ local sched = require("scripts.fork-me-schedule")
 local names = require("scripts.fork-me-names")
 --- the command /me-stats (issue #38, part 3)
 require("scripts.fork-me-stats")
+--- issue #383: a blueprint pasted over ME blocks that stand there already
+local pasteover = require("scripts.fork-me-pasteover")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -109,6 +111,21 @@ end)
 script.on_event(defines.events.on_player_setup_blueprint, function(event)
 	fork_ae2.on_player_setup_blueprint(event)
 end)
+
+--- issue #383: a blueprint (or the copy-paste tool's copy) pasted over ME blocks of the same kind makes no ghost and raises
+--- no event in Factorio 2.0, so the settings in its tags are given to those blocks before the paste, as the build handlers
+--- give them to a block built from a ghost (only the module whose tag the blueprint entity carries)
+pasteover.apply = function(entity, tags)
+	if type(tags.fork_me_drive) == "table" then fork_net.apply_drive_settings(entity, tags.fork_me_drive) end
+	if tags.fork_me_interface or tags.fork_me_bus then fork_io.on_built(entity, tags) end
+	if tags.fork_me_storage_bus or tags.fork_me_fluid_storage_bus then fork_sbus.on_built(entity, tags) end
+	if tags.fork_me_provider then fork_ae2.on_built(entity, tags) end
+	if tags.fork_me_maintainer or tags.fork_me_circuit then fork_circuit.on_built(entity, tags) end
+	if tags.fork_me_access_point then fork_wl.on_built(entity, tags) end
+	if tags.fork_me_monitor then fork_monitor.on_built(entity, tags) end
+	if tags.fork_me_emitter then fork_emitter.on_built(entity, tags) end
+end
+script.on_event(defines.events.on_pre_build, function(event) pasteover.on_pre_build(event) end)
 
 --- removed ME members. Mined: an ME Drive's cells (with their items and fluids), an ME Pattern Provider's encoded
 --- patterns, an ME Storage Bus's cards and the cell in an ME Cell Workbench go into the mined buffer, the fluid in an
