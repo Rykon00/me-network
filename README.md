@@ -46,6 +46,7 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second mo
 | `scripts/fork-me-workbench.lua` | the ME Cell Workbench (issue #17, part 3): one storage cell, its partition and its card slots in a script inventory, the copy mode; no network member; `gregtorio-me-workbench` |
 | `scripts/fork-me-cardslots.lua` | the card slots of a block (a script inventory the window shows, the clicks, blueprints, mining): the storage bus's and, since issue #110, the import and export bus's |
 | `scripts/fork-me-storagebus.lua`, `scripts/fork-me-fluid-storagebus.lua` | the storage bus: its item side (a chest, logistic chest or cargo wagon) and its fluid side (a tank's fluid segment) as network storage; `gregtorio-me-storagebus`, `gregtorio-me-fluid-storagebus` (the old remote, on the storage bus) |
+| `scripts/fork-me-pasteover.lua` | a blueprint or copy pasted over ME blocks that stand there already: they take the settings of its tags before the paste (`on_pre_build`, issue #383); `gregtorio-me-pasteover` |
 | `scripts/fork-me-recipe-paste.lua` | a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12); `gregtorio-me-recipe-paste` |
 | `scripts/fork-me-terminal.lua`, `fork-me-gui.lua`, `fork-me-windows.lua` | the terminal (hub window), the shared GUI and the windows of every block; `gregtorio-me-terminal`, `gregtorio-me-gui` |
 | `scripts/fork-me-patternterm.lua` | the ME Pattern Terminal (issue #130): the pattern editor window and the block's blank and output slots; `gregtorio-me-pattern-terminal` |
