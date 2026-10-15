@@ -46,12 +46,15 @@ local names = require("scripts.fork-me-names")
 require("scripts.fork-me-stats")
 --- issue #383: a blueprint pasted over ME blocks that stand there already
 local pasteover = require("scripts.fork-me-pasteover")
+--- issue #386: the ME IO Port (a cell emptied into the network or filled from it; its own queue)
+local fork_ioport = require("scripts.fork-me-ioport")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_net.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_sbus.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_wl.tag_blueprint
+fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_ioport.tag_blueprint
 
 local function on_built(entity, tags, event)
 	fork_net.on_built(entity, event)
@@ -66,6 +69,7 @@ local function on_built(entity, tags, event)
 	fork_monitor.on_built(entity, tags)
 	fork_toggle.on_built(entity)                              -- (after the storage engine registered it, or not)
 	fork_emitter.on_built(entity, tags)
+	fork_ioport.on_built(entity, tags)                        -- (after the graph registered it)
 end
 
 --- built by players and robots, by other scripts and on space platforms
@@ -90,6 +94,7 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 	fork_monitor.on_built(event.destination, nil, event.source)
 	fork_toggle.on_built(event.destination)                    -- (the game cloned its lamp condition)
 	fork_emitter.on_built(event.destination, nil, event.source)
+	fork_ioport.on_built(event.destination, nil, event.source)   -- (a cloned port is empty: its cells are items)
 end)
 
 --- the priority of an ME Pattern Provider (its patterns travel in blueprints, see fork-me-autocraft.lua) and the
@@ -106,6 +111,7 @@ script.on_event(defines.events.on_entity_settings_pasted, function(event)
 	fork_wl.on_entity_settings_pasted(event)
 	fork_monitor.on_entity_settings_pasted(event)
 	fork_emitter.on_entity_settings_pasted(event)             -- (a toggle bus: the game pastes its lamp condition)
+	fork_ioport.on_entity_settings_pasted(event)
 end)
 
 script.on_event(defines.events.on_player_setup_blueprint, function(event)
@@ -124,6 +130,7 @@ pasteover.apply = function(entity, tags)
 	if tags.fork_me_access_point then fork_wl.on_built(entity, tags) end
 	if tags.fork_me_monitor then fork_monitor.on_built(entity, tags) end
 	if tags.fork_me_emitter then fork_emitter.on_built(entity, tags) end
+	if tags.fork_me_io_port then fork_ioport.on_built(entity, tags) end
 end
 script.on_event(defines.events.on_pre_build, function(event) pasteover.on_pre_build(event) end)
 
@@ -148,6 +155,7 @@ local function on_mined(event)
 	fork_bench.on_removed(event.entity, event.buffer)
 	fork_pt.on_removed(event.entity, event.buffer)          -- (issue #130: its two slots come along)
 	fork_wl.on_removed(event.entity, event.buffer)          -- (an access point's boosters, a charger's terminal)
+	fork_ioport.on_removed(event.entity, event.buffer)      -- (issue #386: its cells and cards)
 	fork_net.on_removed(event.entity, event.buffer)
 end
 for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
@@ -160,18 +168,21 @@ local function on_destroyed(event)
 	fork_bench.on_removed(event.entity, nil)
 	fork_pt.on_removed(event.entity, nil)                   -- (spilled where it stood)
 	fork_wl.on_removed(event.entity, nil)
+	fork_ioport.on_removed(event.entity, nil)
 	fork_net.on_removed(event.entity, nil)
 end
 script.on_event(defines.events.on_entity_died, on_destroyed, REMOVED_FILTER)
 script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILTER)
 
 --- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
---- interfaces and buses, storage buses, crafting jobs, provider rescans, level maintainers and circuit interfaces.
+--- interfaces and buses, storage buses, ME IO Ports (issue #386), crafting jobs, provider rescans, level maintainers and
+--- circuit interfaces.
 --- The terminal's 60 tick step stays (windows, drive lights, the sweep).
 local function on_tick(tick)
 	sched.mark(tick)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
+	fork_ioport.on_tick(tick)
 	fork_ae2.on_tick(tick)
 	fork_me.on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
@@ -250,5 +261,6 @@ script.on_configuration_changed(function(data)
 	fork_monitor.on_configuration_changed()
 	fork_toggle.on_configuration_changed()
 	fork_emitter.on_configuration_changed()
+	fork_ioport.on_configuration_changed()
 	names.on_configuration_changed()
 end)

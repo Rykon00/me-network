@@ -3289,3 +3289,24 @@ game with many recipes pays in one tick); its runs were clean on the allocation 
 
 `regressions beyond the noise: 0` (the 100 rounds of both versions varied by up to 0.012 ms; the scenes' recipes need
 less than a stack, so their machines are never filled past one).
+
+## The ME IO Port (issue #386)
+
+A queue of its own (`io_port`) in the one `on_tick` handler, with a budget of its own (map settings, 2 / 8 visits per
+tick). With no port on the map the handler reads one table and returns. A port with a cell to move is visited every 15
+ticks while it moves all its speed allows (30 when it moves less); a visit reads the cell from its stack, moves at most 16
+keys (the fill mode looks at most at 256 of the network's keys, from a sorted list made once per pass) and writes the cell
+back. A port without work is parked: no cell, a full output slot, no power, or a network without room (woken by
+`N.wait_room`); it costs nothing then but the scheduler's slow fallback visit.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the working copy has #382 to #387 as well;
+the scenes have no port):
+
+| | origin/main | with the port |
+|---|---|---|
+| 100: script average / p99 ms | 0.1922 / 1.779 | 0.1894 / 1.744 |
+| 1000: script average / p99 ms | 0.3311 / 1.904 | 0.3309 / 1.863 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.32 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.

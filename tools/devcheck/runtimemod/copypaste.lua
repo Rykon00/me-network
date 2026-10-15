@@ -54,6 +54,7 @@ local BLOCKS = {
 	end },
 	{ "me-drive", function(e) remote.call(NET, "set_priority", e, 5) end },
 	{ "me-chest", function(e) remote.call(NET, "set_priority", e, -2) end },
+	{ "me-io-port", function(e) remote.call("gregtorio-me-ioport", "set_mode", e, "fill") end },       -- (issue #386)
 }
 
 --- the centre of block `i` in a row (by the size of its prototype)

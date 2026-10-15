@@ -25,9 +25,9 @@
   network. Ticks: `on_nth_tick` 60 (terminal step: the network's slow step, drive lights, sweep, the refresh of open
   windows) and one `on_tick` handler in control.lua (issue #5, `scripts/fork-me-schedule.lua`): every interface and
   bus, storage bus (item and fluid side), level maintainer and circuit interface is due at a tick of its own (a queue
-  per kind, `rec.due`, a backlog for what does not fit), crafting jobs are stepped one per tick (each at most every 20
+  per kind, `rec.due`, a backlog for what does not fit; the ME IO Port has a queue of its own, issue #386), crafting jobs are stepped one per tick (each at most every 20
   ticks), one provider rescan every 2 ticks. The budgets and the bus speed are runtime-global map settings
-  (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side,
+  (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side, IO ports 2,
   maintainers 4), circuit interface updates per second (10), crafting jobs per tick (1), bus speed (256 items, 4000
   fluid per second, times the ticks since the last visit), idle limits (300 and 120 ticks). Never base anything on
   measured time; a new periodic task gets a queue and a budget, not a step of its own. The command `/me-stats` (`scripts/fork-me-stats.lua`,

@@ -759,10 +759,44 @@ for _, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throu
 	ME.crafting_block_tech[name] = "me-network"
 end
 
---- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k; the monitors (issue #353)
+--------------------------------------------------------------------------------
+--- ME IO PORT (issue #386, AE2's ME IO Port, AE2-Unofficial's name): a 1x1 block of the network with a cell slot in and
+--- one out (a script inventory, scripts/fork-me-ioport.lua). In the mode "empty" it moves everything of the cell in
+--- into the network, in the mode "fill" what the network has and the cell takes (its partition) into it; a cell that is
+--- done goes into the out slot. Speed cards as on the buses. AE2's recipe: 3 glass, 2 fluix crystals, an ME Drive,
+--- 2 iron, an engineering processor; here fluix cables for the crystals, an advanced circuit, and no glass: its stand-in,
+--- the plastic bar, is made in no game of Gregtorio Continued, whose compat file gives the block its GT recipe later.
+--------------------------------------------------------------------------------
+
+local IO_PORT, IO_PORT_POWER = "me-io-port", 5000     -- W drawn through the ME Controller
+ME.add_item{ name = IO_PORT, icon = HD_ICON .. "me-io-port.png", icon_size = 64, subgroup = "fork-me-drives", order = "c",
+	stack_size = 10, place_result = IO_PORT,
+	recipe = { energy_required = 5, ingredients = I{ "me-drive", 1, "fluix-cable", 2, "iron-plate", 2, "advanced-circuit", 1 } } }
+data:extend({ {
+	type = "simple-entity-with-force",
+	name = IO_PORT,
+	icon = HD_ICON .. "me-io-port.png",
+	icon_size = 64,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = IO_PORT },
+	placeable_by = { item = IO_PORT, count = 1 },
+	max_health = 300,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = ME.solid_box(),                   -- (issue #268)
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	picture = { filename = HD_ENTITY .. "me-io-port.png", priority = "high", width = 64, height = 64, scale = 0.5 },
+	localised_description = { "entity-description.me-io-port", tostring(IO_PORT_POWER / 1000) },
+} })
+data.raw["mod-data"]["fork-me-network"].data.names.io_port = IO_PORT
+data.raw["mod-data"]["fork-me-network"].data.member_power["io-port"] = IO_PORT_POWER
+ME.crafting_block_tech[IO_PORT] = "me-network"
+
+--- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k; the monitors (issue #353); the
+--- ME IO Port (issue #386)
 ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "lamp", "fast-inserter" }, unit = ME.unit(2, 300), recipes = {
 	"fluix-cable", "me-controller", "me-chest", "me-drive", "me-interface", "me-terminal", "basic-storage-housing",
-	"me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor",
+	"me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor", IO_PORT,
 	"me-void-storage-cell",
 	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
