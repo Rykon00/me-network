@@ -21,7 +21,7 @@ local M = {}
 --- the tags of the mod's modules (a blueprint entity of an ME block has at most one of them, with the cards of a block)
 M.TAGS = { "fork_me_interface", "fork_me_bus", "fork_me_storage_bus", "fork_me_provider", "fork_me_maintainer",
 	"fork_me_circuit", "fork_me_drive", "fork_me_monitor", "fork_me_emitter", "fork_me_access_point",
-	"fork_me_fluid_storage_bus", "fork_me_io_port" }
+	"fork_me_fluid_storage_bus", "fork_me_io_port", "fork_me_qbridge" }
 
 --- function(entity, tags) per entity name: the settings of `tags` onto an existing block (control.lua fills it)
 M.appliers = {}

@@ -277,7 +277,8 @@ same lamp condition, so blueprints and settings paste of the game keep it).
 * **ME Wireless Access Point**: a 1x1 member of the network (no pole, the controller draws its power). A Wireless ME Terminal
   reaches the network while you are within the range of one of its access points: **32 tiles**, more with **Wireless Boosters**
   in its 4 card slots (open it; shift + click a booster in your inventory): 32, 56, 99, 156, 224 tiles with 0 to 4 boosters, at
-  20, 30, 45, 66, 90 kW. Only on the same surface; the nearest access point in range is used. Mined, the boosters come with it;
+  20, 30, 45, 66, 90 kW. Only on the same surface; the nearest access point in range is used (a network joined across surfaces by an ME
+  Quantum Bridge reaches you through an access point on your surface). Mined, the boosters come with it;
   blueprints, settings paste and clones want them (from your inventory, then the network).
 * **Wireless ME Terminal** (an item, one per stack): press the **wireless terminal key** (Ctrl + Shift + T by default, in the
   controls) while it is in your inventory: the ME Terminal of its network opens, as if you stood at a terminal (the drive and
@@ -749,7 +750,32 @@ ME Controller) with two cell slots:
 * AE2's port has six input and six output slots, a redstone mode and a "move when empty / full / half" setting; this one is
   the simple form the issue asked for.
 
-## Old saves
+## ME Quantum Bridge
+
+The **ME Quantum Bridge** (issue #385, AE2's Quantum Network Bridge; technology ME Quantum Bridge, after ME 256k Storage
+and utility science) joins two ME networks into **one**, at any distance and **across surfaces**: another planet, a space
+platform, a factory floor of another mod. AE2 builds it from eight quantum rings around a quantum link chamber; here it is
+one 3x3 block.
+
+* **Frequency:** open the bridge and type a whole number (Enter sets it; 0 or empty: none). Exactly two bridges with the
+  same frequency are a pair. A third bridge of a frequency links nothing ("taken") until one of them goes or changes its
+  frequency, so keep each frequency for one pair.
+* **Power:** each bridge draws **1 MW** from the power grid where it stands (it has a connection of its own, the ME network
+  does not pay for it). The link forms when both ends have power (half their buffer) and goes when one of them runs dry;
+  the window shows the state, the other end's surface and position, and the buffer.
+* **One network:** while linked, everything is one network, as if a cable ran between the two bridges: the storage, the
+  crafting CPUs and pattern providers, the level maintainers, interfaces and buses on both sides. As in AE2, a network has
+  one ME Controller: **build the far side without a controller**; two networks with a controller each, linked, are in
+  conflict and do not work (the controller's rule). The far side's blocks take their power through the one controller.
+* When the link goes (power, a bridge mined, a frequency changed), the network splits again, as for a removed cable;
+  crafting jobs whose machine is on the other side wait.
+* Blueprints, settings paste and clones carry the frequency (a copy pasted next to a pair makes a third bridge: change it).
+* Recipe (standalone, AE2's eight rings and a chamber in the stand-ins): 32 iron plates, 20 electronic circuits, 8
+  processing units, 8 batteries, 32 fluix cables; AE2's quartz glass is left out (its stand-in, the plastic bar, is made in
+  no game of Gregtorio Continued, whose compat file gives the block its own recipe and tier).
+* There is no item limit per second: AE2 limits a quantum bridge by its channels, which ME Network does not have; the
+  balance is the late technology, the cost and the power.
+
 
 **Since 0.5.1 (issue #146) a save is converted only from ME Network 0.5.0 on.** A save made with an older version (ME
 Network 0.1.0 to 0.3.x, or Gregtorio Continued 0.4.x and older, which still contained this network) is refused when it

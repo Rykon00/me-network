@@ -93,6 +93,7 @@ local function kinds()
 		if n.charger then k[n.charger] = "charger" end                -- issue #208
 		if n.chest then k[n.chest] = "chest" end                      -- issue #229
 		if n.io_port then k[n.io_port] = "io-port" end                -- issue #386
+		if n.quantum_bridge then k[n.quantum_bridge] = "quantum-bridge" end   -- issue #385
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -113,7 +114,8 @@ end
 
 --- kinds with a power connection of their own (or none at all: the cable): the controller draws nothing for them. Issue #128:
 --- the terminal and the level maintainer are not among them any more; issue #145: the legacy CPUs are gone
-local POWERED_SELF = { cable = true, underground = true, controller = true }
+local POWERED_SELF = { cable = true, underground = true, controller = true,
+	["quantum-bridge"] = true }                        -- (issue #385: it draws from the power grid itself)
 
 --- Issue #128: the power (W) a kind draws through the controller where it is not the default (mod-data "fork-me-network",
 --- member_power: terminal, level maintainer, pattern and interface terminal), read once per load like the rest of the mod-data
@@ -514,6 +516,17 @@ local function add_node(s, entity, kind)
 			end
 		end
 	end
+	--- issue #385: a linked ME Quantum Bridge has its partner (any distance, any surface) as a neighbour
+	local qu = s.qlink and s.qlink[unit]
+	local qn = qu and s.nodes[qu]
+	if qn and qn.entity.valid then
+		node.adj[qu] = true
+		qn.adj[unit] = true
+		if not nets[qn.net] then
+			nets[qn.net] = true
+			order[#order + 1] = qn.net
+		end
+	end
 	local net
 	if #order == 0 then
 		net = new_net(s, node.surface, node.force)
@@ -674,6 +687,11 @@ local function remove_node(s, unit)
 	local node = s.nodes[unit]
 	local pu = node and node.partner
 	clear_link(node)
+	local qu = s.qlink and s.qlink[unit]                 -- (issue #385: a removed quantum bridge's link is gone)
+	if qu then
+		s.qlink[unit] = nil
+		if s.qlink[qu] == unit then s.qlink[qu] = nil end
+	end
 	if pu and s.nodes[pu] then
 		s.nodes[pu].partner = nil
 		s.nodes[pu].link = nil
@@ -4515,6 +4533,49 @@ function M.set_toggle(entity, joined)
 	return true
 end
 
+--- Issue #385: link the ME Quantum Bridges `a` and `b` (entities; `b` nil: unlink `a` from its partner). A link is a graph edge
+--- like a cable between the two, on any surface and at any distance: the networks on both sides become one (a split when it
+--- goes, as for a removed cable). The links are state (`s.qlink`, unit -> partner unit, both ways); scripts/fork-me-qbridge.lua
+--- decides them. Returns true when the graph changed.
+function M.set_qlink(a, b)
+	local s = state()
+	if not (a and a.valid) then return false end
+	local au = a.unit_number
+	s.qlink = s.qlink or {}
+	local old = s.qlink[au]
+	local bu = b and b.valid and b.unit_number or nil
+	if old == bu then return false end
+	local function again(unit)                          -- (registered again: its edges as the links say now)
+		local node = s.nodes[unit]
+		if node and node.entity.valid then
+			remove_node_graph(s, unit)
+			add_node(s, node.entity, node.kind)
+		end
+	end
+	if old then
+		s.qlink[au] = nil
+		if s.qlink[old] == au then s.qlink[old] = nil end
+		again(au)
+	end
+	if bu then
+		local prev = s.qlink[bu]
+		if prev then
+			s.qlink[bu] = nil
+			if s.qlink[prev] == bu then s.qlink[prev] = nil end
+			again(prev)
+		end
+		s.qlink[au], s.qlink[bu] = bu, au
+		again(au)
+	end
+	return true
+end
+
+--- the unit of the bridge `entity` is linked to (nil: none)
+function M.qlink_of(entity)
+	local s = storage.fork_me_net
+	return s and s.qlink and entity and entity.valid and s.qlink[entity.unit_number] or nil
+end
+
 --- issue #355: the energy the network's controllers hold now (J; the level emitter's "stored energy")
 function M.stored_energy(net)
 	local s = storage.fork_me_net
@@ -4849,6 +4910,14 @@ function M.rebuild()
 		if node.kind == "underground" and not node.partner then
 			local partner = find_partner(s, node)
 			if partner then link_pair(node, partner) end
+		end
+	end
+	--- issue #385: the linked ME Quantum Bridges (their links are state: s.qlink, kept by scripts/fork-me-qbridge.lua)
+	for unit, qu in pairs(s.qlink or {}) do
+		local a, b = s.nodes[unit], s.nodes[qu]
+		if a and b then
+			a.adj[qu] = true
+			b.adj[unit] = true
 		end
 	end
 	local seen = {}
