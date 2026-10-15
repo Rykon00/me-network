@@ -1,13 +1,13 @@
 {
   "name": "me-network-ae2-textures",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "title": "ME Network - AE2 Textures",
   "author": "rykon_",
   "homepage": "https://github.com/Rykon00/me-network",
   "factorio_version": "2.0",
   "dependencies": [
     "base >= 2.0",
-    "me-network >= 0.5.3"
+    "me-network >= 0.5.4"
   ],
   "description": "The graphics of ME Network: textures of Applied Energistics 2 in place of ME Network's own sprites. The textures are by AlgorithmX2 et al. (and, in today's AE2, Ridanisaurus Rid) under CC BY-NC-SA 3.0, and so is everything in this mod: no commercial use, changed versions under the same license. ME Network requires this mod, and it depends on ME Network. It replaces the icons of the storage cells, components and housing, the upgrade cards and the patterns, and the ME Controller, Drive, Chest, Interface, Pattern Provider, Molecular Assembler, Cell Workbench and Charger with AE2's blocks, the ME Terminal and Pattern Terminal with AE2's panels, the ME Import, Export and Storage Bus with AE2's bus fronts, the cable with AE2's Fluix glass cable, the blocks of a Crafting CPU with AE2's crafting blocks, the wireless access point, terminal, module and booster with AE2's, and gives ME Network's technologies AE2 icons. Source: https://github.com/Rykon00/me-network (folder ae2-textures)"
 }

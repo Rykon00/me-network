@@ -525,6 +525,17 @@ block{
 		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 
+--- Issue #381: the buses' icons (item and entity; the recipes show the item's) carry a badge with their direction: into
+--- the network (import), out of it (export), both ways (storage bus), as a layer of its own over the block's icon
+--- (tools/gen_ae2_sprites.py --own-icons), so a graphics mod that replaces the block's icon (the texture mod's AE2 cubes,
+--- which all look alike) keeps it. The badge's file names are kept stable for that.
+for _, bus in pairs({ IMPORT_BUS, EXPORT_BUS, STORAGE_BUS }) do
+	local icons = { { icon = HD_ICON .. bus .. ".png", icon_size = 64 }, { icon = HD_ICON .. bus .. "-badge.png", icon_size = 64 } }
+	for _, proto in pairs({ data.raw.item[bus], data.raw["simple-entity-with-force"][bus] }) do
+		proto.icon, proto.icon_size, proto.icons = nil, nil, table.deepcopy(icons)
+	end
+end
+
 
 
 --------------------------------------------------------------------------------
@@ -643,7 +654,9 @@ data:extend({ {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
-			chest = CHEST,
+			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
+			storage_monitor = "me-storage-monitor", conversion_monitor = "me-conversion-monitor",   -- (issue #353)
+			throughput_monitor = "me-throughput-monitor",
 		},
 		--- issue #229: the ME Chest's hidden parts and what it draws on its own
 		chest = { power = CHEST_POWER, fluid = CHEST_FLUID, watts = CHEST_WATTS },
@@ -668,9 +681,224 @@ data:extend({ {
 --- TECHNOLOGIES (standalone: vanilla science; Gregtorio puts them on its tiers through ME_NETWORK.set_technology)
 --------------------------------------------------------------------------------
 
---- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k
+--------------------------------------------------------------------------------
+--- VOID CELLS (issue #354, AE2-Unofficial's Void ME Storage Cell: appeng/items/storage/ItemVoidStorageCell.java,
+--- appeng/me/storage/VoidCellInventory.java): a cell that takes and destroys whatever its filter lets in (partition, fuzzy,
+--- inverter in the Cell Workbench) and holds nothing. In the storage engine a cell of no bytes whose spec says `void`: the
+--- Overflow Destruction Card's path (cell.void). One for items and one for fluids (a cell here has one kind). Icons: the 1k
+--- cells in another colour until the texture mod has AE2's. Standalone recipe: AE2-U's (network/cells/storage.recipe: 2 quartz
+--- glass, 3 redstone, an ender pearl, 3 iron) with the stand-ins; the fluid one the fluid cell housing's 3 copper instead of the
+--- iron. Gregtorio gives them GTNH's.
+--------------------------------------------------------------------------------
+
+local VOID_CELLS = {
+	{ "me-void-storage-cell", "item", "me-1k-storage-cell", MAX_TYPES,
+		{ "plastic-bar", 2, "copper-cable", 3, "electronic-circuit", 1, "iron-plate", 3 } },
+	{ "me-void-fluid-storage-cell", "fluid", "me-1k-fluid-storage-cell", 18,
+		{ "plastic-bar", 2, "copper-cable", 3, "electronic-circuit", 1, "copper-plate", 3 } },
+}
+for i, v in ipairs(VOID_CELLS) do
+	local ing = {}
+	for j = 1, #v[5], 2 do ing[#ing + 1] = { type = "item", name = v[5][j], amount = v[5][j + 1] } end
+	local item = ME.add_item{
+		type = "item-with-tags",
+		name = v[1],
+		icon = HD_ICON .. v[3] .. ".png",
+		icon_size = 64,
+		subgroup = v[2] == "fluid" and "fork-me-fluid-cells" or "fork-me-cells",
+		order = "z" .. i,
+		stack_size = 1,
+		recipe = { energy_required = 5, auto_recycle = false, ingredients = ing },
+	}
+	item.icons = { { icon = HD_ICON .. v[3] .. ".png", icon_size = 64, tint = { 0.55, 0.3, 0.75 } } }   -- (add_item takes one icon)
+	item.localised_description = { "item-description.fork-me-void-cell", tostring(v[4]) }
+	cell_data[v[1]] = { tier = "void", kind = v[2] == "fluid" and "fluid" or nil, bytes = 0, per_type = 0, types = v[4],
+		void = true }
+end
+ME.crafting_block_tech = ME.crafting_block_tech or {}
+ME.crafting_block_tech["me-void-storage-cell"] = "me-network"
+ME.crafting_block_tech["me-void-fluid-storage-cell"] = "me-fluid-storage"
+
+--------------------------------------------------------------------------------
+--- MONITORS (issue #353, AE2-Unofficial's ME Storage, Conversion and Throughput Monitor, appeng/parts/reporting/): 1x1 blocks
+--- like the ME Interface Terminal (power through the controller, walkable, the dark and the lit picture as graphics variations
+--- 1 and 2); the resource's icon and amount are drawn on them by scripts/fork-me-monitor.lua. Standalone recipes (AE2: an
+--- illuminated panel and a level emitter; the conversion monitor adds a formation and an annihilation core, here an ME
+--- Interface; the throughput monitor a level emitter more); Gregtorio gives them GTNH's.
+--------------------------------------------------------------------------------
+
+local MONITOR_POWER = 2000               -- W drawn through the ME Controller
+local MONITOR_RECIPES = {
+	["me-storage-monitor"] = { "me-terminal", 1, "advanced-circuit", 1 },
+	["me-conversion-monitor"] = { "me-storage-monitor", 1, "me-interface", 1 },
+	["me-throughput-monitor"] = { "me-storage-monitor", 1, "advanced-circuit", 1 },
+}
+for i, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor" }) do
+	local r = MONITOR_RECIPES[name]
+	ME.add_item{ name = name, icon = HD_ICON .. name .. ".png", icon_size = 64, subgroup = "fork-me-network", order = "c" .. i,
+		stack_size = 50, place_result = name,
+		recipe = { energy_required = 2, ingredients = { { type = "item", name = r[1], amount = r[2] }, { type = "item", name = r[3], amount = r[4] } } } }
+	data:extend({ {
+		type = "simple-entity-with-force",
+		name = name,
+		icon = HD_ICON .. name .. ".png",
+		icon_size = 64,
+		flags = { "placeable-neutral", "player-creation" },
+		minable = { mining_time = 0.2, result = name },
+		placeable_by = { item = name, count = 1 },
+		max_health = 200,
+		is_military_target = false,
+		corpse = "small-remnants",
+		collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+		selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+		selection_priority = 60,
+		collision_mask = WALKABLE,
+		render_layer = "lower-object",
+		random_variation_on_create = false,
+		pictures = {
+			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 0, scale = 0.5 },
+			{ filename = ME.hd_entity_path .. name .. ".png", priority = "high", width = 64, height = 64, x = 64, scale = 0.5 },
+		},
+		localised_description = { "entity-description." .. name, tostring(MONITOR_POWER / 1000) },
+	} })
+	data.raw["mod-data"]["fork-me-network"].data.member_power[name:gsub("^me%-", "")] = MONITOR_POWER
+end
+--- (a mod that replaces the recipe list of `me-network`, as Gregtorio does, has not heard of them: data-final-fixes.lua puts their
+--- recipes back on the technology, unless a technology of that mod unlocks them, as for the pattern terminal of issue #130)
+ME.crafting_block_tech = ME.crafting_block_tech or {}
+for _, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor" }) do
+	ME.crafting_block_tech[name] = "me-network"
+end
+
+--------------------------------------------------------------------------------
+--- ME IO PORT (issue #386, AE2's ME IO Port, AE2-Unofficial's name): a 1x1 block of the network with a cell slot in and
+--- one out (a script inventory, scripts/fork-me-ioport.lua). In the mode "empty" it moves everything of the cell in
+--- into the network, in the mode "fill" what the network has and the cell takes (its partition) into it; a cell that is
+--- done goes into the out slot. Speed cards as on the buses. AE2's recipe: 3 glass, 2 fluix crystals, an ME Drive,
+--- 2 iron, an engineering processor; here fluix cables for the crystals, an advanced circuit, and no glass: its stand-in,
+--- the plastic bar, is made in no game of Gregtorio Continued, whose compat file gives the block its GT recipe later.
+--------------------------------------------------------------------------------
+
+local IO_PORT, IO_PORT_POWER = "me-io-port", 5000     -- W drawn through the ME Controller
+ME.add_item{ name = IO_PORT, icon = HD_ICON .. "me-io-port.png", icon_size = 64, subgroup = "fork-me-drives", order = "c",
+	stack_size = 10, place_result = IO_PORT,
+	recipe = { energy_required = 5, ingredients = I{ "me-drive", 1, "fluix-cable", 2, "iron-plate", 2, "advanced-circuit", 1 } } }
+data:extend({ {
+	type = "simple-entity-with-force",
+	name = IO_PORT,
+	icon = HD_ICON .. "me-io-port.png",
+	icon_size = 64,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = IO_PORT },
+	placeable_by = { item = IO_PORT, count = 1 },
+	max_health = 300,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = ME.solid_box(),                   -- (issue #268)
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	picture = { filename = HD_ENTITY .. "me-io-port.png", priority = "high", width = 64, height = 64, scale = 0.5 },
+	localised_description = { "entity-description.me-io-port", tostring(IO_PORT_POWER / 1000) },
+} })
+data.raw["mod-data"]["fork-me-network"].data.names.io_port = IO_PORT
+data.raw["mod-data"]["fork-me-network"].data.member_power["io-port"] = IO_PORT_POWER
+ME.crafting_block_tech[IO_PORT] = "me-network"
+
+--------------------------------------------------------------------------------
+--- ME QUANTUM BRIDGE (issue #385, AE2's Quantum Network Bridge: eight quantum rings around a quantum link chamber; one 3x3
+--- block here): two bridges with the same frequency (set in the window, scripts/fork-me-qbridge.lua) join their networks
+--- into one, at any distance and across surfaces (planets, space platforms, factory floors). Balanced by its cost and by
+--- its power: each end draws QBRIDGE_WATTS from the power grid at its place (an electric energy interface, like the ME
+--- Chest's power), and the link holds only while both ends have power. AE2's recipes: a ring is 4 iron, 2 logic processors,
+--- an engineering processor, an energy cell and a dense cable; the chamber 4 quartz glass and 4 fluix pearls. Here eight
+--- rings and a chamber in the stand-ins (no glass: its stand-in, the plastic bar, is made in no game of Gregtorio Continued,
+--- whose compat file gives the block its GT recipe), unlocked late (utility science).
+--------------------------------------------------------------------------------
+
+local QBRIDGE, QBRIDGE_WATTS = "me-quantum-bridge", 1000000
+ME.add_item{ name = QBRIDGE, icon = HD_ICON .. "me-quantum-bridge.png", icon_size = 64, subgroup = "fork-me-network", order = "e",
+	stack_size = 10, place_result = QBRIDGE,
+	recipe = { energy_required = 30, ingredients = I{ "iron-plate", 32, "electronic-circuit", 20, "processing-unit", 8,
+		"battery", 8, "fluix-cable", 32 } } }
+data:extend({ {
+	type = "electric-energy-interface",
+	name = QBRIDGE,
+	icon = HD_ICON .. "me-quantum-bridge.png",
+	icon_size = 64,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 1, result = QBRIDGE },
+	placeable_by = { item = QBRIDGE, count = 1 },
+	max_health = 800,
+	is_military_target = false,
+	corpse = "medium-remnants",
+	collision_box = { { -1.4, -1.4 }, { 1.4, 1.4 } },
+	selection_box = { { -1.5, -1.5 }, { 1.5, 1.5 } },
+	gui_mode = "none",
+	energy_source = {
+		type = "electric",
+		usage_priority = "secondary-input",
+		buffer_capacity = tostring(QBRIDGE_WATTS * 2) .. "J",     -- (two seconds of its drain)
+		input_flow_limit = tostring(QBRIDGE_WATTS * 2) .. "W",
+		output_flow_limit = "0W",
+	},
+	energy_production = "0W",
+	energy_usage = tostring(QBRIDGE_WATTS) .. "W",
+	picture = { filename = HD_ENTITY .. "me-quantum-bridge.png", priority = "high", width = 192, height = 192, scale = 0.5 },
+	localised_description = { "entity-description.me-quantum-bridge", tostring(QBRIDGE_WATTS / 1000000) },
+} })
+data.raw["mod-data"]["fork-me-network"].data.names.quantum_bridge = QBRIDGE
+data.raw["mod-data"]["fork-me-network"].data.quantum_bridge = { watts = QBRIDGE_WATTS }
+ME.add_technology{ name = "me-quantum-bridge", prerequisites = { "me-storage-256k", "utility-science-pack" },
+	unit = ME.unit(5, 1500), recipes = { QBRIDGE } }
+
+--------------------------------------------------------------------------------
+--- ME WIRELESS LINK (issue #384, option 2; AE2 Stuff's Wireless Connector): a 1x1 block; two with the same frequency join their
+--- networks into one, on the same surface and within WLINK.range tiles (scripts/fork-me-qbridge.lua, the bridge's pairing).
+--- Each end draws WLINK.base W from the power grid at its place, and WLINK.per_chunk W more for every started 32 tiles
+--- between the two while they are a pair (at the range: 16 chunks, 810 kW each). Recipe in the stand-ins (AE2 Stuff is not
+--- AE2: a wireless receiver is a radar, as for the access point), unlocked with ME Wireless Link after ME Wireless.
+--------------------------------------------------------------------------------
+
+local WLINK_NAME, WLINK = "me-wireless-link", { base = 10000, per_chunk = 50000, range = 512 }
+ME.add_item{ name = WLINK_NAME, icon = HD_ICON .. "me-wireless-link.png", icon_size = 64, subgroup = "fork-me-network", order = "f",
+	stack_size = 50, place_result = WLINK_NAME,
+	recipe = { energy_required = 5, ingredients = I{ "radar", 1, "advanced-circuit", 2, "fluix-cable", 4, "iron-plate", 4 } } }
+data:extend({ {
+	type = "electric-energy-interface",
+	name = WLINK_NAME,
+	icon = HD_ICON .. "me-wireless-link.png",
+	icon_size = 64,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = WLINK_NAME },
+	placeable_by = { item = WLINK_NAME, count = 1 },
+	max_health = 200,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = ME.solid_box(),
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	gui_mode = "none",
+	energy_source = {
+		type = "electric",
+		usage_priority = "secondary-input",
+		buffer_capacity = tostring(WLINK.base * 2) .. "J",           -- (two seconds of its drain; the runtime sets it with the drain)
+		input_flow_limit = tostring(WLINK.base + WLINK.per_chunk * (WLINK.range / 32) * 2) .. "W",
+		output_flow_limit = "0W",
+	},
+	energy_production = "0W",
+	energy_usage = tostring(WLINK.base) .. "W",
+	picture = { filename = HD_ENTITY .. "me-wireless-link.png", priority = "high", width = 64, height = 64, scale = 0.5 },
+	localised_description = { "entity-description.me-wireless-link", tostring(WLINK.range), tostring(WLINK.base / 1000),
+		tostring(WLINK.per_chunk / 1000) },
+} })
+data.raw["mod-data"]["fork-me-network"].data.names.wireless_link = WLINK_NAME
+data.raw["mod-data"]["fork-me-network"].data.wireless_link = WLINK
+ME.add_technology{ name = "me-wireless-link", prerequisites = { "me-wireless" }, unit = ME.unit(3, 400), recipes = { WLINK_NAME } }
+
+--- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k; the monitors (issue #353); the
+--- ME IO Port (issue #386)
 ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "lamp", "fast-inserter" }, unit = ME.unit(2, 300), recipes = {
 	"fluix-cable", "me-controller", "me-chest", "me-drive", "me-interface", "me-terminal", "basic-storage-housing",
+	"me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor", IO_PORT,
+	"me-void-storage-cell",
 	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
 } }

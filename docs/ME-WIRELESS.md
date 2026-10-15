@@ -1,14 +1,23 @@
 # Wireless ME Terminal: design note (issue #153)
 
-Status: **built** (issues #205 to #211). How it was built differs in one point from the plan below: the "terminal handle" is
-the **access point entity** itself (a member of the network, so `N.network_of` and every terminal function work unchanged); the
-reach test becomes the wireless check (`G.reachable`, `G.remote_reach`), and the energy is paid at the existing refresh
-(`G.refresh_hooks`). The charger charges in the network's existing slow step (`N.slow_hooks`, once a second, a loop over the
-chargers). Issue #209's first step: a script that lowers `LuaEquipment.energy` of a battery piece is kept by the engine (the
-runtime test logs it).
+Status: **built** (issues #205 to #211). The player's guide is `docs/AE2.md`, "Wireless: the Wireless ME Terminal"; the code
+is `scripts/fork-me-wireless.lua` and `prototypes/wireless.lua`.
 
-The text below is the design as written before: The decisions of 2026-10-06 and the confirmation of 2026-10-08 are fixed; the work is split
-into the issues named in the last section.
+## As built
+
+- **The terminal handle is the access point entity** itself, not a new handle as planned below: it is a member of the network,
+  so `N.network_of` and every function of the terminal and the pattern terminal work unchanged with it as the window's entity.
+- **The reach test is the wireless check**: `G.reachable` asks `G.remote_reach`, which lets the window through while the
+  player's linked terminal has energy and an access point of its network has the player in range (the nearest one in range on
+  the same surface).
+- **The energy is paid at the refresh** that every open ME window has anyway (`G.refresh_hooks`, once a second); out of range,
+  empty or unlinked closes the window. No tick of its own.
+- **The ME Charger charges in the network's slow step** (`N.slow_hooks`, once a second, a loop over the chargers).
+- Issue #209's first step: a script that lowers `LuaEquipment.energy` of a battery piece is kept by the engine (the runtime
+  test logs it), so the module drains like the item.
+
+Everything below is the **design as written before** it was built (the decisions of 2026-10-06 and the confirmation of
+2026-10-08); the cost table and the issue split at the end are history, not a list of work to do.
 
 ## Fixed by the maintainer
 
@@ -100,7 +109,7 @@ wireless window needs no special case; it uses `open_window` like every other.
 **Multiplayer.** Two players on one network: each has their own link and window; the network is one object, the windows are
 local. Nothing is exclusive (the terminal block already works so).
 
-## Costs, by piece
+## Costs, by piece (history: the plan before it was built)
 
 | Piece | New | Changed |
 |---|---|---|
@@ -112,7 +121,7 @@ local. Nothing is exclusive (the terminal block already works so).
 | Wireless pattern mode | mode switch in the window, encode into the inventory | pattern terminal module (editor reuse) |
 | Gregtorio | nothing in this mod | its compat file: recipes of the item, the module, the access point, the booster |
 
-## Split into issues
+## Split into issues (history: all of them are done)
 
 - #205 the Wireless Access Point and the Wireless Boosters (with the range query)
 - #206 the terminal handle and the wireless window path

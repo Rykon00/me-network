@@ -41,6 +41,8 @@ local SETTINGS = {
 	io_max = "me-network-io-visits-per-tick-max",
 	storage_bus = "me-network-storage-bus-visits-per-tick",
 	storage_bus_max = "me-network-storage-bus-visits-per-tick-max",
+	io_port = "me-network-io-port-visits-per-tick",               -- issue #386
+	io_port_max = "me-network-io-port-visits-per-tick-max",
 	maintainer = "me-network-maintainer-checks-per-tick",
 	maintainer_max = "me-network-maintainer-checks-per-tick-max",
 	circuit = "me-network-circuit-updates-per-second",
@@ -51,7 +53,7 @@ local SETTINGS = {
 	idle = "me-network-idle-limit",
 	storage_bus_idle = "me-network-storage-bus-idle-limit",
 }
-M.DEFAULTS = { io = 16, io_max = 32, storage_bus = 8, storage_bus_max = 24, maintainer = 4, maintainer_max = 12,
+M.DEFAULTS = { io = 16, io_max = 32, storage_bus = 8, storage_bus_max = 24, io_port = 2, io_port_max = 8, maintainer = 4, maintainer_max = 12,
 	circuit = 10, jobs = 1, jobs_max = 2, bus_items = 256, bus_fluid = 4000, idle = 300, storage_bus_idle = 120 }
 local values
 

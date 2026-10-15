@@ -26,8 +26,9 @@
 ---     target is resolved, and kept with it (scripts/fork-me-targets.lua): an inventory of the bus's kind, fluid
 ---     boxes, or both (a machine with a fluid recipe). The import bus pulls items from the entity's output
 ---     (assembler, furnace result, chest) and fluid from its output boxes (a tank: every box); the export bus
----     puts its filtered items into the entity's input (machine: up to one stack each; chest: as far as it has
----     room) and its filtered fluids into the input boxes or the tank. Up to MAX_FILTERS filters, items and
+---     puts its filtered items into the entity's input (machine: up to one stack each, a crafting machine up to two
+---     crafts of its recipe when that is more, issue #382; chest: as far as it has room) and its filtered fluids into
+---     the input boxes or the tank. Up to MAX_FILTERS filters, items and
 ---     fluids mixed (keys: item name, "fluid/<name>", "fluid/<name>@<degrees>"), split into an item and a fluid set when they are set
 ---     (import: none = everything, items and fluids; export: none = nothing). Kept in blueprints (tag
 ---     fork_me_bus), settings paste and clones. The windows are in scripts/fork-me-windows.lua.
@@ -66,6 +67,7 @@ local STEP_TICKS = 15                -- the ticks a visit of the remote `step` s
 local MIN_INTERVAL = 15              -- ticks between two visits of a block that moved all it was allowed to
 local ACTIVE_INTERVAL = 60           -- ... of a block that moves something but less
 local MAX_CATCH_UP = 600             -- ticks of speed a visit may catch up at most
+local MAX_ICAP = 2 ^ 31 - 1          -- items a bus visit may move at most (issue #356: an engine count is 32 bit)
 local IFACE_SLOTS_PER_VISIT = 8      -- item slots an interface handles per STEP_TICKS since its last visit
 local MAX_FILTERS = 9
 local CONFIG_SLOTS = 9               -- the config rows of an interface without cards
@@ -169,6 +171,38 @@ local function stack_of(name)
 		stack_cache[name] = v
 	end
 	return v
+end
+
+--- issue #382: what one craft of recipe `recipe` uses of item `name` (0: none), cached per load by recipe and item
+local need_cache = {}
+local function need_of(recipe, name)
+	local byr = need_cache[recipe]
+	if not byr then
+		byr = {}
+		local proto = prototypes.recipe[recipe]
+		for _, ing in pairs(proto and proto.ingredients or {}) do
+			if ing.type == "item" then byr[ing.name] = (byr[ing.name] or 0) + ing.amount end
+		end
+		need_cache[recipe] = byr
+	end
+	return byr[name] or 0
+end
+
+--- Issue #382: what an export bus tops item `name` up to in machine `t` (T.SLOTTED): a stack of it, or two crafts of the
+--- machine's recipe when that is more (as an inserter does), so a recipe that needs more than a stack of an item starts.
+--- `recipe`: the recipe's name, false for none (a lab, an idle machine), nil when not looked up yet (one engine call that
+--- makes two objects: the callers ask only when the machine holds a stack already). Returns the level and the recipe.
+local function machine_level(t, name, recipe)
+	local level = stack_of(name)
+	if recipe == nil then
+		local r = t.type ~= "lab" and t.get_recipe()
+		recipe = r and r.name or false
+	end
+	if recipe then
+		local n = 2 * need_of(recipe, name)
+		if n > level then level = n end
+	end
+	return level, recipe
 end
 
 --- Scratch tables (issue #38, lever 4): the API copies the arguments of a call, so one table serves every call of its
@@ -1128,7 +1162,8 @@ local BUSES = { ["import-bus"] = true, ["export-bus"] = true, ["fluid-import-bus
 local IMPORTS = { ["import-bus"] = true, ["fluid-import-bus"] = true }   -- (the old fluid kinds until they are replaced)
 
 --- Issue #110: the card slots of an import and an export bus (scripts/fork-me-cardslots.lua; the cards of a block are the
---- items of a script inventory its window shows). Only the Acceleration Card fits: AE2's speed card, 4 of them, which
+--- items of a script inventory its window shows). Only the Acceleration Card fits (issue #356: and the Super Speed and Superluminal
+--- Speed Cards, whose amounts add to the factor): AE2's speed card, 4 of them, which
 --- multiply the items a bus moves per second (the map setting "bus speed") by 1, 8, 32, 64 and 96 (0 to 4 cards:
 --- `N.card_rules().speed`; AE2: PartImportBus and PartExportBus, 1, 8, 32, 64, 96 items per operation). Fluids are not
 --- sped up (AE2's cards act on items). `rec.accel` is that factor (nil: 1), made from the cards when they change.
@@ -1142,8 +1177,14 @@ cards = CS.new{
 	title = function(rec) return rec.entity and rec.entity.valid and rec.entity.localised_name or { "entity-name.me-import-bus" } end,
 	rec_of = bus_rec,
 	on_cards = function(rec, light)
-		local n = cards.counts(rec).speed or 0
-		rec.accel = n > 0 and N.card_rules().speed[n + 1] or nil
+		local counts, r = cards.counts(rec), N.card_rules()
+		rec.gcard = counts.gfilter and true or nil            -- issue #363: a Group Filter Card
+		M.bus_gf(rec)
+		local f = r.speed[(counts.speed or 0) + 1]
+		--- issue #356: the Super Speed and Superluminal Speed Cards add to the factor (AE2-U: the kinds add up)
+		if counts.superspeed then f = f + r.superspeed[counts.superspeed] end
+		if counts.superluminal then f = f + r.superluminal[counts.superluminal] end
+		rec.accel = f > 1 and f or nil
 		if not light and rec.entity and rec.entity.valid then wake(rec.entity.unit_number) end
 	end,
 }
@@ -1226,12 +1267,13 @@ end
 local function import_items(rec, net, t, cap, info)
 	local inv = T.inventory(t, rec.t_inv)
 	if not inv then return 0 end
-	local all, set = rec.all, rec.iset
+	local all, set, gf = rec.all, rec.iset, rec.gf             -- (issue #363: a group filter's text in place of the item filters)
 	local unit = rec.entity.unit_number
 	local moved, stacks, held, main, mainc = 0, false, 0, nil, 0
 	local B = N.bound(inv)                                    -- (its methods: issue #115)
 	for _, c in pairs(B.get_contents()) do
-		if all or import_takes(rec, set, c.name, c.quality) then
+		if all or (gf and N.GF.match(gf, N.key_of(c.name, c.quality or "normal")))
+			or (not gf and import_takes(rec, set, c.name, c.quality)) then
 			held = held + c.count
 			if c.count > mainc then main, mainc = c.name, c.count end
 			if moved < cap then
@@ -1261,7 +1303,8 @@ local function import_items(rec, net, t, cap, info)
 		for i = 1, #inv do
 			if moved >= cap then break end
 			local stack = inv[i]
-			if stack.valid_for_read and (all or import_takes(rec, set, stack.name, stack.quality.name))
+			if stack.valid_for_read and (all or (gf and N.GF.match(gf, N.key_of(stack.name, stack.quality.name)))
+				or (not gf and import_takes(rec, set, stack.name, stack.quality.name)))
 				and not by_count(stack.name, stack.quality.name) then
 				local n, why = N.insert_partial(net, stack, cap - moved)
 				if n then moved = moved + n
@@ -1290,6 +1333,7 @@ local function export_items(rec, net, t, cap, info)
 	local inv = T.inventory(t, rec.t_inv)
 	if not inv then return 0 end
 	local machine = T.SLOTTED[t.type]
+	local recipe                                          -- (issue #382: the machine's, looked up once a visit when needed)
 	local moved = 0
 	local tgt = rec.tgt
 	if not tgt then
@@ -1297,7 +1341,22 @@ local function export_items(rec, net, t, cap, info)
 		rec.tgt = tgt
 	end
 	local dt = info.dt or STEP_TICKS
-	for _, key in ipairs(rec.filters) do
+	--- the keys: the filters, or (issue #363) the group filter's keys in turn from where the last visit stopped, at most as many
+	--- as the filters (the visit's cost stays a filter list's); a key of that list registers no wait of its own
+	local gf = rec.gf
+	local list, i, count
+	if gf then
+		list = M.gf_list(rec, net)
+		i, count = rec.gcur or 1, math.min(#list, MAX_FILTERS)
+	else
+		list, i, count = rec.filters, 1, #rec.filters
+	end
+	local n = #list
+	for _ = 1, count do
+		if gf and moved >= cap then break end
+		if i > n then i = 1 end
+		local key = list[i]
+		i = i + 1
 		local name, q = filter_item(key)                      -- (issue #291: a filter may name a quality)
 		if item_known(name) then
 			local have
@@ -1310,14 +1369,26 @@ local function export_items(rec, net, t, cap, info)
 			if prev and prev > 0 and have == 0 then info.starved = true end
 			local used = prev and prev - have or 0
 			local want = cap - moved
-			if machine then want = math.min(want, stack_of(name) - have) end
+			if machine then
+				--- a stack, and once it holds a stack, two crafts of its recipe when that is more (issue #382); every bus
+				--- counts what the machine holds, so several buses on one machine never fill it past that
+				local room = stack_of(name) - have
+				if room <= 0 and recipe ~= false then
+					local level
+					level, recipe = machine_level(t, name, recipe)
+					room = level - have
+				end
+				want = math.min(want, room)
+			end
 			local got = 0
 			if want > 0 then
 				got = N.extract_to(net, inv, key, want)          -- (a plain name: normal quality)
 				if got <= 0 then
 					if N.count_key(net, key) <= 0 then
-						N.wait_for(net, key, "io", rec.entity.unit_number, true)
-						info.nokey = true
+						if not gf then
+							N.wait_for(net, key, "io", rec.entity.unit_number, true)
+							info.nokey = true
+						end
 					else
 						info.blocked = true                      -- the target takes nothing: full
 					end
@@ -1333,6 +1404,10 @@ local function export_items(rec, net, t, cap, info)
 				info.time = MIN_INTERVAL                         -- (the rate is unknown yet: look again soon)
 			end
 		end
+	end
+	if gf then
+		rec.gcur = i
+		if moved <= 0 and not info.blocked then info.nokey = true end   -- (nothing that matches: probed, see probe_work)
 	end
 	return moved
 end
@@ -1523,7 +1598,8 @@ function M.bus_step(rec, dt, u)
 	if not rec.iset then M.set_bus_filters(e, rec.filters) end          -- a record of a save before issue #3
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
 	if rec.want then cards.fill_cards(rec) end                         -- issue #110: the cards a blueprint or a paste asked for
-	local icap = math.max(1, math.floor(Sched.setting("bus_items") * (rec.accel or 1) * ticks / 60))
+	--- (issue #356: at most MAX_ICAP, what an engine call takes as a count; four Superluminal Speed Cards ask for billions)
+	local icap = math.max(1, math.min(MAX_ICAP, math.floor(Sched.setting("bus_items") * (rec.accel or 1) * ticks / 60)))
 	local fcap = Sched.setting("bus_fluid") * ticks / 60
 	local import = IMPORTS[rec.kind]
 	local items, fluid = 0, 0
@@ -1531,7 +1607,7 @@ function M.bus_step(rec, dt, u)
 	info.time, info.dt = math.huge, ticks
 	info.held, info.main, info.slots, info.netfull, info.nokey, info.blocked, info.starved = nil, nil, nil, nil, nil, nil, nil
 	info.temperature = nil
-	local has_items = rec.t_inv and (rec.all or #rec.filters > 0)
+	local has_items = rec.t_inv and (rec.all or #rec.filters > 0 or rec.gf ~= nil)
 	local has_fluid = rec.t_fluid and (rec.all or #rec.ffilters > 0)
 	if has_items then
 		items = import and import_items(rec, net, t, icap, info) or export_items(rec, net, t, icap, info)
@@ -1611,9 +1687,44 @@ function M.set_bus_filters(entity, filters)
 	rec.keys, rec.filters, rec.ffilters, rec.iset, rec.fset = keys, items, fl, iset, fset
 	rec.iq = iq or nil
 	rec.fkeys = temps and fkeys or nil                    -- (the filter keys of rec.ffilters, only with a temperature)
-	rec.all = IMPORTS[k] and #keys == 0 or nil
+	M.bus_gf(rec)
 	wake(entity.unit_number)
 	return true
+end
+
+--- Issue #363: the Group Filter Card on an import or export bus (AE2-Unofficial: PartBaseImportBus.java:132,
+--- PartBaseExportBus.java:95). With the card, the text (rec.gtext, a setting kept when the card goes) takes the place of the
+--- item filters (the fluid filters stay): `rec.gf` is the text while the card is in. The import bus takes what matches from
+--- its target; without a text it takes everything (AE2-U: an empty filter is none). The export bus goes through the network's
+--- item keys that match, in turn (rec.glist, rebuilt when the network got new keys: net.kgen), at most MAX_FILTERS per visit
+--- (MAX_FILTERS, the filters' count), each visit moving what its speed allows; without a text it exports nothing.
+function M.bus_gf(rec)
+	rec.gf = rec.gcard and rec.gtext or nil
+	rec.all = IMPORTS[rec.kind] and ((rec.gcard and not rec.gtext) or (not rec.gcard and #(rec.keys or rec.filters or {}) == 0)) or nil
+	rec.glist, rec.gkgen = nil, nil
+end
+
+--- the bus's group filter text ("" or nil clears it); the bus is visited again
+function M.set_bus_gtext(entity, text)
+	if not BUSES[kind(entity)] then return false end
+	local rec = register(state(), entity)
+	rec.gtext = N.GF.clean(text)
+	M.bus_gf(rec)
+	wake(entity.unit_number)
+	return true
+end
+
+--- the network's item keys that match the export bus's text (sorted; rebuilt when the network got new keys)
+function M.gf_list(rec, net)
+	if rec.glist and rec.gkgen == (net.kgen or 0) and rec.gknet == net.id then return rec.glist end
+	local list, gf = {}, rec.gf
+	for key in pairs(net.items) do
+		if not N.is_fluid_key(key) and not key:find("#", 1, true) and N.GF.match(gf, key) then list[#list + 1] = key end
+	end
+	table.sort(list)
+	rec.glist, rec.gkgen, rec.gknet = list, net.kgen or 0, net.id
+	if (rec.gcur or 1) > #list then rec.gcur = 1 end
+	return list
 end
 
 --- { filters = keys, status, target }
@@ -1622,7 +1733,8 @@ function M.get_bus(entity)
 	local rec = s and entity and entity.valid and s.recs[entity.unit_number]
 	if not rec then return nil end
 	local t = rec.target
-	return { filters = { table.unpack(rec.keys or rec.filters) }, status = rec.status, target = t and t.valid and t.name or nil }
+	return { filters = { table.unpack(rec.keys or rec.filters) }, status = rec.status, target = t and t.valid and t.name or nil,
+		gtext = rec.gtext }
 end
 
 --- one filter of a bus (the window's filter buttons): `key` nil clears it; the list stays packed
@@ -1679,6 +1791,7 @@ function M.bus_info(entity)
 	b.cards = {}
 	for slot, name in pairs(rec.cards or {}) do b.cards[slot] = name end
 	b.want = rec.want and cards.missing_cards(rec, rec.want) or nil
+	b.gfilter = rec.gcard == true                          -- issue #363
 	return b
 end
 
@@ -1763,6 +1876,11 @@ local function probe_work(rec)
 		return held and game.tick - (rec.last or 0) >= tick_limit
 	end
 	if b == "empty" then return probe_mark(rec) ~= rec.seen end
+	--- issue #363: an export bus with a group filter waits for no key of its own: a key new in the network, or the idle limit
+	if rec.gf and not IMPORTS[rec.kind] then
+		local net = N.network_of(rec.entity)
+		return (net ~= nil and (net.kgen or 0) ~= rec.gkgen) or game.tick - (rec.last or 0) >= tick_limit
+	end
 	--- "full": does the export target take something again?
 	local t = rec.target
 	if not (t and t.valid) then return true end
@@ -1771,6 +1889,7 @@ local function probe_work(rec)
 		if inv then
 			local machine = T.SLOTTED[t.type]
 			local lab = t.type == "lab"
+			local recipe
 			for _, key in ipairs(rec.filters) do
 				local name, q = filter_item(key)
 				if prototypes.item[name] then
@@ -1781,7 +1900,14 @@ local function probe_work(rec)
 					end
 					if machine then
 						--- (a lab takes only the packs it uses: a filter it refuses is no work, however empty its slot)
-						if inv.get_item_count(item) < stack_of(name) and (not lab or inv.can_insert(item)) then return true end
+						local c = inv.get_item_count(item)
+						if c < stack_of(name) then
+							if not lab or inv.can_insert(item) then return true end
+						elseif recipe ~= false then
+							local level
+							level, recipe = machine_level(t, name, recipe)   -- (issue #382: two crafts of its recipe)
+							if c < level then return true end
+						end
 					elseif inv.can_insert(item) then
 						return true
 					end
@@ -1954,10 +2080,12 @@ function M.on_built(entity, tags, source)
 		local t = type(tags) == "table" and tags[BUS_TAG] or nil
 		if type(t) == "table" then
 			M.set_bus_filters(entity, t.filters)
+			if t.gtext then M.set_bus_gtext(entity, t.gtext) end               -- (issue #363)
 			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, nil) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)
 			M.set_bus_filters(entity, from and from.filters or {})
+			if from and from.gtext then M.set_bus_gtext(entity, from.gtext) end
 			local from_rec = bus_rec(source)
 			local list = from_rec and cards.card_list(from_rec)
 			if list then cards.want_cards(entity, list, nil) end
@@ -2047,6 +2175,7 @@ function M.on_entity_settings_pasted(event)
 	elseif BUSES[k] then
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
+		M.set_bus_gtext(dst, from and from.gtext or "")                    -- (issue #363)
 		--- issue #110: the source's cards are what the destination is to have (from the player's inventory, then the network)
 		local from_rec, dst_rec = bus_rec(src), bus_rec(dst)
 		if from_rec and dst_rec then
@@ -2072,7 +2201,9 @@ function M.tag_blueprint(bp, mapping)
 			local b = M.get_bus(entity)
 			local rec = bus_rec(entity)
 			local list = rec and (rec.want and { table.unpack(rec.want) } or cards.card_list(rec))
-			if b and (#b.filters > 0 or list) then bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list }) end
+			if b and (#b.filters > 0 or list or b.gtext) then
+				bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list, gtext = b.gtext })
+			end
 		end
 	end
 end
@@ -2098,6 +2229,7 @@ function M.on_configuration_changed()
 			if BUSES[rec.kind] then
 				M.set_bus_filters(e, o and (o.keys or o.filters) or {})
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.accel = o.inv, o.cards, o.want, o.where, o.accel end   -- issue #110
+				if o then rec.gtext, rec.gcard = o.gtext, o.gcard M.bus_gf(rec) end                                       -- issue #363
 			end
 			if rec.kind == "interface" then
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.nrows = o.inv, o.cards, o.want, o.where, o.nrows end   -- issue #196
@@ -2228,6 +2360,8 @@ remote.add_interface("gregtorio-me-io", {
 	interface_tanks = function(entity) return M.tanks_of(entity) end,
 	idle_limit = function() return storage.fork_me_io and idle_limit(storage.fork_me_io) or nil end,   -- (issue #313 tests)
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,
+	--- issue #363: the Group Filter Card's text ("" clears it)
+	set_bus_gtext = function(entity, text) return M.set_bus_gtext(entity, text) end,
 	--- issue #110: the card slots of a bus (what the window's clicks do; `want`: a list of names)
 	bus_inventory = function(entity) local rec = bus_rec(entity) return rec and cards.inv_of(rec) or nil end,
 	--- issue #196: the card slots of an interface (the window's functions and the tests')

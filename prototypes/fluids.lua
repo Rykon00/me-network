@@ -168,7 +168,7 @@ data:extend({ {
 --- fluid cells up to 64k (issue #3: the ME Interface and the buses move fluids from the start, like AE2's)
 ME.add_technology{ name = "me-fluid-storage", prerequisites = { "me-storage-64k", "fluid-handling" }, unit = ME.unit(3, 400),
 	recipes = { "me-1k-fluid-storage-cell", "me-4k-fluid-storage-cell", "me-16k-fluid-storage-cell",
-		"me-64k-fluid-storage-cell" } }
+		"me-64k-fluid-storage-cell", "me-void-fluid-storage-cell" } }      -- (the void cell of issue #354: network.lua)
 
 --- issue #3: the old fluid blocks have no recipe (issue #146: no prototype either); a mod that makes one for them itself
 --- (Gregtorio Continued 0.5.0) loses it in data-final-fixes.lua

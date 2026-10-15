@@ -229,7 +229,7 @@ central window of the network:
 
 * **Status line:** network state (working, no controller, controller conflict, no power), bytes used of
   total, types used of total, drives and cells, the controller's power draw.
-* **Storage tab:** a search field (matches the internal item name: a script cannot read localised names), a
+* **Storage tab:** a search field (the internal item name; since issue #295 also the name the player's client shows), a
   sort switch (by amount or by name) and the item grid. Left click on an item: a stack into the cursor
   (with something in the cursor: that is stored instead, like AE2). Right click: one item into the cursor
   (more of the same item: one more). Shift click: a stack into the inventory. Below the grid the fluids of the
@@ -273,6 +273,97 @@ emptied.
 other test through `encode_def` (the same function on a two-slot inventory that stands in for a block). The window itself
 needs a player: it was run once with a mock of the GUI elements (the module's own code: opening, refreshing, the actions);
 the real look is the in-game check.
+
+## Blocking mode of the pattern provider (issue #335)
+
+AE2-Unofficial's Blocking and Smart Blocking (`appeng/helpers/DualityInterface.java`: the push loop skips a target that
+`containsItems()` unless smart blocking and `lastInputHash` equal the pattern; read, not ported). The maintainer decided the
+scope: **chests only**. A machine already gets work only when it is idle and no job leases it (`find_crafter`,
+`find_pusher`, `machine_idle`, `s.busy`), so the issue's premise (a provider overfills a machine and mixes recipes) does not
+hold for machines; only `push_chest` filled a chest as long as it had room.
+
+*State:* `p.blocking` ("blocking", "smart" or nil) and `p.last_pid` (the pattern id the provider pushed last into a chest,
+kept only in smart blocking) in the provider record; in the blueprint tag `fork_me_provider` as `blocking`; copied by settings
+paste and clones (`M.set_blocking`, which rescans the provider). A chest's target entry names its provider (`t.prov`, set by
+`scan_provider`); entries are made new by every scan and the pattern lists rebuilt on `changed`, so a mode set later is found.
+Absent in older saves: off, no migration.
+
+*Where it runs:* in the job step's hand-over, the visit that pushes anyway. `find_pusher` asks `EXT.chest_open` (no mode: yes;
+smart and the same pattern: yes; else the chest's inventory `is_empty()`), passes a closed chest by and tries the pattern's
+other targets; when only closed chests were found the job waits with `wait = "blocking"`. After a push `EXT.pushed`
+remembers the pattern. No queue and no tick of its own; a provider without a mode costs one table lookup per chest
+hand-over (`bench --check origin/main`, docs/PERFORMANCE.md). One hand-over is a batch (up to `MAX_BATCH` runs of one
+pattern), not a single run as in AE2: the inputs in the chest are one pattern's either way, which is what the mode is for.
+
+*Locking:* see the next section (issue #346): only "until the result is back"; the locks by a signal need a circuit
+connection the provider does not have.
+
+## Lock until the result is back (issue #346)
+
+AE2-Unofficial's `LockCraftingMode.LOCK_UNTIL_RESULT` (`DualityInterface.java`: after a push `unlockStacks` holds the
+pattern's outputs, a storage interceptor of the network counts every inserted stack down, the interface is busy until
+the list is empty; a change of the setting resets it). The maintainer chose this level only (no circuit connection).
+
+*Here:* `p.lock` = "result" or nil (setting; blueprint tag `lock`, settings paste, clones). `EXT.pushed`, after a hand-over
+into one of the provider's chests, sets `p.locked = { [key] = runs x amount of the first output row }` (AE2's enum says
+"the primary pattern result", its code takes every output; the first row, so a byproduct at a chance cannot lock a
+provider for good) and `s.locked[unit] = true`. `N.on_arrival` (every item or fluid the network's public insert
+functions take in, before a job claims it) calls `EXT.arrived` when `s.locked` is not nil: each locked provider of that
+network counts the key down (fluids by name, every temperature); at zero `p.locked` and its `s.locked` entry go, and
+`s.locked` is nil again when none is left, so with no lock an arrival costs one nil check. `EXT.chest_open` closes the
+chests of a locked provider (`wait = "locked"`), before the blocking mode is looked at. Released also by `M.unlock` (the
+window's button), by `M.set_lock` with another value, and when the provider is removed or vanishes. Machines are not
+locked: their next lease starts only when they are idle and their products are collected.
+
+*Test:* `tools/devcheck/runtimemod/lock.lua` (one batch of 20 runs handed over, the rest held with room in the chest, 10
+and 6 arrivals count it down, the last 4 runs go in, Unlock, switching off, the settings). With the lock check removed
+from `chest_open` it fails.
+
+*Test:* `tools/devcheck/runtimemod/blocking.lua` (three providers with a chest each, four CPUs: blocking holds the second
+batch of the same pattern and the other pattern, one kind at a time; smart lets the same pattern through, not the other;
+off fills both; the settings in data, blueprint, tag, paste and clone). With `chest_open` always true it fails ("both kinds
+in the chest").
+
+## ME Interface Terminal (issue #336)
+
+AE2's Interface Terminal (AE2-Unofficial: `appeng/parts/reporting/PartInterfaceTerminal.java`, `GuiInterfaceTerminal.java`,
+read for what it offers; no code of it is ported). `me-interface-terminal` is a 1x1 `simple-entity-with-force` like the
+ME Pattern Terminal: kind `interface-terminal` (mod-data `names.interface_terminal`, `member_power` 8 kW), walkable, its
+screen a graphics variation set by the slow step (`has_screen`/`set_screen` take it with the pattern terminal; the main
+chunk of `scripts/fork-me-network.lua` is at Lua's 200 locals, so the two kinds are named inline). Unlocked by
+`me-autocrafting` (and put back there by `data-final-fixes.lua` through `ME.crafting_block_tech`, as the pattern terminal).
+
+*What it lists:* the providers whose graph node is in the terminal's network (`autocraft.provider_records(net)`: the
+records of `storage.fork_ae2.providers` by `N.network_of_unit`, not by their last scan, so a provider that just joined is
+listed at once) and the `interface` nodes of `net.nodes` (sorted by unit: the set has no order of its own). It shows a
+provider's slots from its last scan (`autocraft.record_slot`: no rescan, which would call the engine for the neighbours).
+
+*New state:* a provider record has `label` (the name, at most 60 characters; in the blueprint tag `fork_me_provider` as
+`label`, copied by a clone, not by a settings paste) and `near` (the entity names on its four sides at its last scan with a
+network: the machine filter's data; written only when they changed, so the rescan of one provider every two ticks makes no
+table when nothing changed). Both are absent in older saves and come with the first rename or rescan: no migration. The
+window's settings of a player are `storage.fork_me_iterm_ui[player_index] = { search, filter, free, page, edit }` (dropped
+in `on_player_removed`). The main chunk of `scripts/fork-me-autocraft.lua` was at 199 locals: the new helpers are in one
+table `EXT`, where later ones belong too.
+
+*Cost:* no tick, no queue. The window's refresh is the one of every ME window (the terminal's 60 tick step, open windows
+only, `REFRESH_MAX`); it walks the provider records and the interface nodes (table reads; the interfaces' config rows only
+while a search is typed), filters, sorts and keeps the page; it rebuilds the page's elements only when the page's signature
+changed (the providers' pattern ids and states, the interfaces' rows, the names and the neighbours of the visible entries),
+the filter's drop-down only when the machines changed. A page holds six blocks, so at most 216 slot buttons are made.
+
+*The actions* (`it_*`): a slot click is `autocraft.provider_click` on the listed provider (after checking that it is still a
+member of the terminal's network), as the provider window's; the pane's shift + click puts an encoded pattern into the first
+free slot of the first provider of the player's filtered list (the pane's inventory gives the player: `player_owner`);
+**Open** is `G.open("provider" | "interface", player, entity, { via = terminal })`: the two windows take `opts.via` and show
+the Back button, and `G.entity_of` checks the reach of the terminal. **Locate** is a `highlight-box` for the player (600
+ticks) and a `[gps]` line in their chat.
+
+*Tests:* `tools/devcheck/runtimemod/ifaceterm.lua` (the list, its order, filters, search by product, translated name,
+interface row and name, pages, one entry's data, a page built into the stand-in GUI elements of `scripts/fork-me-windows.lua`,
+take and put by the window's click, the pane's shift + click, a provider of another network refused, rename, blueprint tag,
+clone and paste, the neighbours after a chest is removed, the screen and the power row). The window itself needs a player:
+the maintainer's test in the game.
 
 ## Import and export
 
@@ -1120,7 +1211,7 @@ The question of the issue: how does a job know its outputs arrived?
   `insert_partial`, `insert_fluid`: import bus, ME Interface, fluid import bus, fluid interface, terminal) offer what
   comes in to `N.on_arrival(net, key, count)` before storing it. A running job with processing steps that still owe
   `key` (issued runs times the amount, minus what was received) takes it into its pool, at most what it owes, in job
-  order; the rest is stored. Normal quality plain keys only. `can_insert` and `can_insert_fluid` add what jobs wait
+  order; the rest is stored. Plain keys only (issue #352: in every quality; no items with tags). `can_insert` and `can_insert_fluid` add what jobs wait
   for (an import bus may import outputs even when the cells are full). Outputs collected from the machine's output
   when a lease ends count the same way. A storage bus does not insert (it sees a chest change), so outputs that only
   appear in a chest behind a storage bus do not count (AE2 behaves the same).
@@ -1804,7 +1895,8 @@ not what was wanted: the check belongs in the picker (#94). So the picker is the
 `Picker.open(player, spec)` builds a frame in `player.gui.screen` (`fork_me_picker`): a search field, the groups as tabs
 (`filter_group_button_tab_slightly_larger`, `item-group/<name>` sprites; only groups that list an allowed element), a
 scroll pane with the group's subgroups as tables of 10 `slot_button`s (the game's order: group, subgroup, `order`, name),
-and a bottom row of quality buttons (`quality/<name>`, items only, only with the quality mod) and the green check
+and a bottom row of quality buttons (`quality/<name>`, items only, only with the quality mod; a table of up to 10 columns,
+issue #291, in a `naked_scroll_pane` two rows high and one column narrower when it needs more rows, issue #380) and the green check
 (`item_and_count_select_confirm`). The catalog (`catalog_of`) is made from the item and fluid prototypes (not hidden, not
 parameters) on first use and kept outside `storage` (derived from prototypes only, made again after a load). A search
 text is matched against the prototype name like the terminal's search (lower case, spaces as dashes); the display is
@@ -2346,21 +2438,21 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 
 ## Open points
 
-* Patterns (issue #80, left open on purpose; the data model keeps room for them): upgrade cards on providers
-  (e.g. a blocking mode: push into a chest only when it is empty), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's ingredient lookup are the
-  places to change), a 36 slot provider tier (`SLOTS` is one constant; it needs a second prototype and window layout),
-  clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
+* Patterns (issue #80, left open on purpose; the data model keeps room for them): AE2's locks of a provider by a redstone
+  signal (no circuit connection; the blocking mode and the lock until the result for chests are built, issues #335 and
+  #346), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's
+  ingredient lookup are the places to change), clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
   bus.
-* A level maintainer with several resources; cards on the import and export bus and the ME Interface (capacity,
-  speed, fuzzy, inverter, redstone, crafting card: the follow-up of issue #17; the card items and `N.card_rules()` are
-  there, the buses need slots, limits from AE2's `InitUpgrades` and the speed setting replaced per bus).
+* A level maintainer with several resources. (The cards of the buses and the provider are built: the import and export
+  bus take Acceleration Cards, issue #110, the provider Pattern Capacity Cards, issue #156, the ME Interface Interface
+  Capacity Cards, issue #196; `N.card_rules()` holds their slots and limits. AE2's capacity, fuzzy and inverter cards on the
+  buses and its redstone and crafting cards are not built.)
 * Issue #3: an ME Interface keeps four fluids at most (one per side) and takes no surplus back from an export side; a
   fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
   library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block
   keep their old step (their patterns are converted).
 * Fluid wagons on the fluid storage bus. Issue #17 left: the card icons and the workbench sprite are placeholders;
   a storage bus with an Overflow Destruction Card facing nothing destroys nothing (AE2 would).
-* Terminal search by localised name (a script cannot read localised names).
 * The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
 

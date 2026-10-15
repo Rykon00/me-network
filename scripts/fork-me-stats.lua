@@ -24,7 +24,7 @@ local PER_LINE = 7                   -- kinds per line of the member list
 
 --- the kinds of members in the order they are listed (a kind not named here comes last, by name)
 local KIND_ORDER = { "controller", "cable", "underground", "drive", "terminal", "interface", "import-bus", "export-bus",
-	"storage-bus", "fluid-interface", "fluid-import-bus", "fluid-export-bus", "fluid-storage-bus", "provider", "pattern-terminal", "maintainer",
+	"storage-bus", "fluid-interface", "fluid-import-bus", "fluid-export-bus", "fluid-storage-bus", "provider", "pattern-terminal", "interface-terminal", "maintainer",
 	"circuit", "crafting" }
 local KNOWN = {}
 for i, k in ipairs(KIND_ORDER) do KNOWN[k] = i end
@@ -38,6 +38,7 @@ local QUEUES = {
 	{ name = "io", floor = "io", ceiling = "io_max", probe = "io_probe" },
 	{ name = "storage_bus", floor = "storage_bus", ceiling = "storage_bus_max", probe = "storage_bus_probe" },
 	{ name = "fluid_storage_bus", floor = "storage_bus", ceiling = "storage_bus_max", probe = "fluid_storage_bus_probe" },
+	{ name = "io_port", floor = "io_port", ceiling = "io_port_max", probe = "io_port_probe" },       -- issue #386
 	{ name = "maintainer", floor = "maintainer", ceiling = "maintainer_max", probe = "maintainer_probe" },
 	{ name = "circuit", rate = "circuit" },
 	{ name = "jobs", floor = "jobs", ceiling = "jobs_max" },

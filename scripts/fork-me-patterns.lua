@@ -1,7 +1,8 @@
 --------------------------------------------------------------------------------
 --- FORK AE2: ENCODED PATTERNS (issue #80; docs/AE2.md "Patterns", docs/ME-REWORK.md "Encoded patterns")
----   * A pattern is plain data: { kind = "crafting" | "processing", recipe (crafting), inputs, outputs }, inputs and
----     outputs are lists of { key, amount } (resource keys of autocrafting: the item name, "fluid/<name>").
+---   * A pattern is plain data: { kind = "crafting" | "processing", recipe (crafting), quality (crafting, issue #352: the
+---     recipe's quality, nil for normal), inputs, outputs }, inputs and outputs are lists of { key, amount } (resource keys
+---     of autocrafting: the item name, "name@quality" for another quality than normal (issue #352), "fluid/<name>").
 ---     A crafting pattern names a recipe: its inputs and outputs are the recipe's (read again from the recipe when
 ---     it is used, so a changed recipe is followed). A processing pattern has free inputs and outputs.
 ---   * The blank pattern (me-blank-pattern) is a plain item. The encoded pattern (me-encoded-pattern) is an item
@@ -31,24 +32,40 @@ local function is_fluid(key) return key:sub(1, #FLUID_PREFIX) == FLUID_PREFIX en
 local function fluid_name(key) return N.fluid_name(key) end
 M.is_fluid = is_fluid
 
---- item keys of a pattern are plain items (no items with tags: their data cannot be moved by name and count)
+--- a quality name a pattern may use (issue #352): a known quality, other than normal only with the quality feature
+local function valid_quality(q)
+	return type(q) == "string" and prototypes.quality[q] ~= nil and (q == "normal" or script.feature_flags.quality)
+end
+M.valid_quality = valid_quality
+
+--- item keys of a pattern are plain items (no items with tags: their data cannot be moved by name and count), in a
+--- quality the game has (issue #352: "name@quality")
 local function valid_key(key)
 	if type(key) ~= "string" or key == "" then return false end
 	if is_fluid(key) then return prototypes.fluid[fluid_name(key)] ~= nil end
-	key = N.alias(key) or key                         -- a replaced item (issue #3)
-	local proto = prototypes.item[key]
-	return proto ~= nil and proto.type ~= "item-with-tags"
+	local name, q = N.parse_key(key)
+	name = N.alias(name) or name                      -- a replaced item (issue #3)
+	local proto = prototypes.item[name]
+	return proto ~= nil and proto.type ~= "item-with-tags" and valid_quality(q)
 end
 M.valid_key = valid_key
 
+--- the key of an item key with a replaced item's name changed to its replacement (issue #3), its quality kept
+local function aliased(key)
+	local name, q = N.parse_key(key)
+	local new = N.alias(name)
+	return new and N.key_of(new, q) or key
+end
+
 --- issue #159: a fluid ingredient with a temperature is that temperature's filter key (else every temperature), a
---- fluid product the storage key of its temperature
-local function key_of(entry, product)
+--- fluid product the storage key of its temperature; issue #352: an item of a recipe in quality `q` is the key of that
+--- quality (fluids have none)
+local function key_of(entry, product, q)
 	if entry.type == "fluid" then
 		if product then return N.fluid_key(entry.name, entry.temperature) end
 		return N.fluid_filter_key(entry.name, entry.temperature)
 	end
-	return entry.name
+	return N.key_of(entry.name, q or "normal")
 end
 
 --- expected amount per craft of a recipe product (probability and range)
@@ -61,12 +78,12 @@ end
 --- pattern data
 --------------------------------------------------------------------------------
 
---- the inputs and outputs of a recipe as { key, amount } lists (amounts summed per key)
-local function recipe_lists(proto)
+--- the inputs and outputs of a recipe in quality `q` (nil: normal) as { key, amount } lists (amounts summed per key)
+local function recipe_lists(proto, q)
 	local function list(entries, amount_of, product)
 		local out, at = {}, {}
 		for _, e in pairs(entries) do
-			local key = key_of(e, product)
+			local key = key_of(e, product, q)
 			local n = amount_of(e)
 			if n > 0 then
 				if at[key] then out[at[key]].amount = out[at[key]].amount + n
@@ -90,7 +107,7 @@ local function clean_list(list, max, outputs)
 	local out, at = {}, {}
 	for _, row in ipairs(list) do
 		if type(row) ~= "table" or not valid_key(row.key) then return nil end
-		local key = is_fluid(row.key) and N.clean_fluid_filter(row.key) or (N.alias(row.key) or row.key)   -- a replaced item (issue #3)
+		local key = is_fluid(row.key) and N.clean_fluid_filter(row.key) or aliased(row.key)   -- a replaced item (issue #3)
 		if outputs and is_fluid(key) then key = N.fluid_storage_key(key) end
 		local amount = tonumber(row.amount)
 		if not amount or amount <= 0 or amount ~= amount then return nil end
@@ -120,33 +137,39 @@ function M.normalize(def)
 		local proto = type(recipe) == "string" and prototypes.recipe[recipe]
 		if not proto then return nil, "no-recipe" end
 		if proto.hidden then return nil, "hidden" end
-		local inputs, outputs = recipe_lists(proto)
+		--- issue #352: the recipe's quality (nil for normal; a quality the game does not have: invalid)
+		local q = def.quality
+		if q ~= nil and not valid_quality(q) then return nil, "invalid" end
+		if q == "normal" then q = nil end
+		local inputs, outputs = recipe_lists(proto, q)
 		if #outputs == 0 then return nil, "invalid" end
-		return { kind = "crafting", recipe = proto.name, inputs = inputs, outputs = outputs }
+		return { kind = "crafting", recipe = proto.name, quality = q, inputs = inputs, outputs = outputs }
 	elseif def.kind == "processing" then
 		local inputs = clean_list(def.inputs, M.MAX_INPUTS)
 		local outputs = clean_list(def.outputs, M.MAX_OUTPUTS, true)
 		if not (inputs and outputs) then return nil, "invalid" end
 		local out = { kind = "processing", inputs = inputs, outputs = outputs }
 		if type(def.recipe) == "string" and prototypes.recipe[def.recipe] then out.recipe = def.recipe end   -- where it came from
+		if out.recipe and def.quality ~= "normal" and valid_quality(def.quality) then out.quality = def.quality end   -- (#352)
 		return out
 	end
 	return nil, "invalid"
 end
 
---- A crafting pattern of a recipe the force has unlocked. Returns the pattern, or nil and the reason
---- ("no-recipe", "not-researched", "hidden").
-function M.crafting(force, recipe)
+--- A crafting pattern of a recipe the force has unlocked, in quality `quality` (nil: normal; issue #352). Returns the
+--- pattern, or nil and the reason ("no-recipe", "not-researched", "hidden", "invalid").
+function M.crafting(force, recipe, quality)
 	local proto = type(recipe) == "string" and prototypes.recipe[recipe]
 	if not proto then return nil, "no-recipe" end
 	local r = force and force.recipes[recipe]
 	if not (r and r.enabled) then return nil, "not-researched" end
-	return M.normalize{ kind = "crafting", recipe = recipe }
+	return M.normalize{ kind = "crafting", recipe = recipe, quality = quality }
 end
 
 --- A processing pattern: `inputs` and `outputs` are lists of { key, amount }; empty rows (nil key) are skipped.
---- `recipe`: the recipe it was filled from (only remembered). Returns the pattern, or nil and "invalid".
-function M.processing(inputs, outputs, recipe)
+--- `recipe`: the recipe it was filled from (a machine is switched to it), `quality` its quality (issue #352, nil: normal).
+--- Returns the pattern, or nil and "invalid".
+function M.processing(inputs, outputs, recipe, quality)
 	local function packed(list)
 		local out = {}
 		for _, row in pairs(list or {}) do
@@ -154,7 +177,7 @@ function M.processing(inputs, outputs, recipe)
 		end
 		return out
 	end
-	return M.normalize{ kind = "processing", inputs = packed(inputs), outputs = packed(outputs), recipe = recipe }
+	return M.normalize{ kind = "processing", inputs = packed(inputs), outputs = packed(outputs), recipe = recipe, quality = quality }
 end
 
 --- Issue #261: the engine keeps fluid amounts on a grid of 2^-24 (FIXED, fork-me-autocraft.lua fixed_up; Gregtorio rounds
@@ -181,13 +204,14 @@ end
 --- products with a chance (a byproduct at 5 %, a range) stay out of the rows, as a GT New Horizons player leaves the
 --- chance outputs out of a processing pattern; they still go into the network when they come. A recipe whose every
 --- product has a chance keeps them, at least 1 of an item (their expected amount would round down to nothing).
-function M.recipe_rows(recipe)
+function M.recipe_rows(recipe, quality)
 	local proto = prototypes.recipe[recipe]
 	if not proto then return nil end
-	local inputs, outputs = recipe_lists(proto)
+	local q = quality ~= "normal" and quality or nil                 -- (issue #352: the rows in the recipe's quality)
+	local inputs, outputs = recipe_lists(proto, q)
 	local certain = {}
 	for _, p in pairs(proto.products) do
-		if p.amount and (p.probability or 1) >= 1 then certain[key_of(p, true)] = true end
+		if p.amount and (p.probability or 1) >= 1 then certain[key_of(p, true, q)] = true end
 	end
 	if next(certain) then
 		local kept = {}
@@ -217,7 +241,7 @@ end
 --- The identity of a pattern: two equal patterns (in two providers) are one pattern of the network, their
 --- machines are pooled.
 function M.id_of(def)
-	if def.kind == "crafting" then return "c/" .. def.recipe end
+	if def.kind == "crafting" then return "c/" .. def.recipe .. (def.quality and ("@" .. def.quality) or "") end   -- (#352)
 	local function part(list)
 		local rows = {}
 		for _, r in ipairs(list) do rows[#rows + 1] = r.key .. "*" .. num(r.amount) end
@@ -227,12 +251,22 @@ function M.id_of(def)
 	return "p/" .. part(def.inputs) .. ">" .. part(def.outputs)
 end
 
---- What the planner and the jobs use: ingredients and products as { type, name, amount, ... } like a recipe's.
---- A crafting pattern reads its recipe (probabilities and ranges included), a processing pattern its rows.
+--- issue #352: the item entries of a recipe's list in the pattern's quality (`quality` on each, as the planner reads it)
+local function with_quality(list, q)
+	if not q then return list end
+	for _, e in pairs(list) do
+		if e.type ~= "fluid" then e.quality = q end
+	end
+	return list
+end
+
+--- What the planner and the jobs use: ingredients and products as { type, name, amount, quality, ... } like a recipe's
+--- (issue #352: `quality` on items of another quality than normal). A crafting pattern reads its recipe (probabilities and
+--- ranges included) in its quality, a processing pattern its rows.
 function M.ingredients(def)
 	if def.kind == "crafting" then
 		local proto = prototypes.recipe[def.recipe]
-		return proto and proto.ingredients or {}
+		return proto and with_quality(proto.ingredients, def.quality) or {}
 	end
 	local out = {}
 	for _, r in ipairs(def.inputs) do
@@ -240,7 +274,8 @@ function M.ingredients(def)
 			local name, deg = N.split_fluid_key(r.key)
 			out[#out + 1] = { type = "fluid", name = name, amount = r.amount, temperature = deg }
 		else
-			out[#out + 1] = { type = "item", name = r.key, amount = r.amount }
+			local name, q = N.parse_key(r.key)
+			out[#out + 1] = { type = "item", name = name, amount = r.amount, quality = q ~= "normal" and q or nil }
 		end
 	end
 	return out
@@ -249,7 +284,7 @@ end
 function M.products(def)
 	if def.kind == "crafting" then
 		local proto = prototypes.recipe[def.recipe]
-		return proto and proto.products or {}
+		return proto and with_quality(proto.products, def.quality) or {}
 	end
 	local out = {}
 	for _, r in ipairs(def.outputs) do
@@ -257,7 +292,8 @@ function M.products(def)
 			local name, deg = N.split_fluid_key(r.key)
 			out[#out + 1] = { type = "fluid", name = name, amount = r.amount, temperature = deg }
 		else
-			out[#out + 1] = { type = "item", name = r.key, amount = r.amount }
+			local name, q = N.parse_key(r.key)
+			out[#out + 1] = { type = "item", name = name, amount = r.amount, quality = q ~= "normal" and q or nil }
 		end
 	end
 	return out
@@ -296,8 +332,11 @@ local function row_text(r)
 		return { "", "\n  [fluid=" .. fluid_name(r.key) .. "] " .. num(r.amount) .. " ", proto and proto.localised_name or r.key,
 			deg and (" (" .. deg .. " °C)") or "" }
 	end
-	local proto = prototypes.item[r.key]
-	return { "", "\n  [item=" .. r.key .. "] " .. num(r.amount) .. "x ", proto and proto.localised_name or r.key }
+	local name, q = N.parse_key(r.key)
+	local proto = prototypes.item[name]
+	local qp = q ~= "normal" and prototypes.quality[q]
+	return { "", "\n  [item=" .. name .. (qp and (",quality=" .. q) or "") .. "] " .. num(r.amount) .. "x ",
+		proto and proto.localised_name or r.key, qp and { "", " (", qp.localised_name, ")" } or "" }
 end
 
 --- The tooltip of an encoded pattern: kind (and recipe), the inputs and the outputs
@@ -305,7 +344,9 @@ function M.description(def)
 	local parts = {}
 	if def.kind == "crafting" then
 		local proto = prototypes.recipe[def.recipe]
-		parts[#parts + 1] = { "fork-me-pattern.tip-crafting", "[recipe=" .. def.recipe .. "]", proto and proto.localised_name or def.recipe }
+		local qp = def.quality and prototypes.quality[def.quality]
+		parts[#parts + 1] = { "fork-me-pattern.tip-crafting", "[recipe=" .. def.recipe .. (qp and (",quality=" .. def.quality) or "") .. "]",
+			qp and { "", proto and proto.localised_name or def.recipe, " (", qp.localised_name, ")" } or (proto and proto.localised_name or def.recipe) }
 	else
 		parts[#parts + 1] = { "fork-me-pattern.tip-processing" }
 	end
@@ -340,7 +381,8 @@ function M.info(stack)
 	local raw = M.read(stack)
 	if not raw then return nil end
 	local def, why = M.normalize(raw)
-	local out = { kind = raw.kind, recipe = raw.recipe, inputs = raw.inputs, outputs = raw.outputs, valid = def ~= nil, reason = why }
+	local out = { kind = raw.kind, recipe = raw.recipe, quality = raw.quality, inputs = raw.inputs, outputs = raw.outputs,
+		valid = def ~= nil, reason = why }
 	if def then out.id = M.id_of(def) out.description = M.description(def) end
 	return out
 end

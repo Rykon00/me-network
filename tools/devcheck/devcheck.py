@@ -585,15 +585,23 @@ def check_map(a, mapfile, textures=None):
     techs = [f"{t}: cannot be researched" for t in own_techs if t not in m.researched]
     print(f"technologies of me-network: {len(own_techs) - len(techs)} of {len(own_techs)} researchable")
     report("technologies of me-network that cannot be researched", techs)
-    recipes = []
+    # Rykon00/Gregtorio#215: a recipe Gregtorio keeps locked on purpose (its FORK_RECIPES_LOCKED) is not unlocked there
+    locked = {row[0]: row[1] if len(row) > 1 else "" for row in sec.get("GREGTORIOLOCKED", [])}
+    recipes, kept = [], []
     for r in own_recipes:
         if r not in m.R:
             recipes.append(f"{r}: does not exist")
         elif r not in m.unlocked:
-            recipes.append(f"{r}: not unlocked by a researchable technology")
+            if r in locked:
+                kept.append(f"{r}: {locked[r]}")
+            else:
+                recipes.append(f"{r}: not unlocked by a researchable technology")
+        elif r in locked:
+            recipes.append(f"{r}: in Gregtorio's FORK_RECIPES_LOCKED but unlocked")
         elif m.why_not(r):
             recipes.append(f"{r}: {m.why_not(r)}")
-    print(f"recipes of me-network: {len(own_recipes) - len(recipes)} of {len(own_recipes)} unlocked and craftable")
+    print(f"recipes of me-network: {len(own_recipes) - len(recipes) - len(kept)} of {len(own_recipes)} unlocked and craftable")
+    report("recipes of me-network kept locked by Gregtorio (its FORK_RECIPES_LOCKED, information)", kept)
     report("recipes of me-network not unlocked or not craftable", recipes)
     uncraft = [f"{r}: {why}" for r, why in m.uncraftable()]
     print(f"\nunlocked recipes of the game: {len(m.unlocked)}")
@@ -788,7 +796,7 @@ RUNTIME_TESTS = (
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
-    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("REFILL", "ME storage bus refill test"),
+    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("BULK", "ME export bus into a recipe of more than a stack test"), ("COPYPASTE", "ME settings through the copy-paste tool test"), ("DISASSEMBLY", "ME cell disassembly test"), ("IOPORT", "ME IO Port test"), ("CELLQUALITY", "ME cell item quality test"), ("QBRIDGE", "ME Quantum Bridge test"), ("WLINK", "ME Wireless Link test"), ("REFILL", "ME storage bus refill test"),
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"),
@@ -807,6 +815,16 @@ RUNTIME_TESTS = (
     ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
     ("BUFFER", "ME terminal buffer (issue #150, experiment)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
+    ("IFACETERM", "ME Interface Terminal (issue #336)"),
+    ("BLOCKING", "ME Pattern Provider blocking mode (issue #335)"),
+    ("LOCK", "ME Pattern Provider lock until the result is back (issue #346)"),
+    ("QUALITYCRAFT", "Autocrafting in every quality (issue #352)"),
+    ("GROUPBUS", "Group Filter Card on the import and export bus (issue #363)"),
+    ("MAINTROWS", "ME level maintainer rows (issue #351)"),
+    ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
+    ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),
+    ("VOIDCELL", "Void ME Storage Cells (issue #354)"),
+    ("TOGGLE", "ME Toggle Bus and Level Emitter (issue #355)"),
     ("IFACECAP", "ME Interface Capacity Card (issue #196)"),
     ("WIRELESS", "ME wireless terminal (issues #205 to #210)"),
     ("STICKY", "ME Sticky Card (issue #193)"),

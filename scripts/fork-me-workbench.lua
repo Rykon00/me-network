@@ -18,6 +18,8 @@
 ---     fluid keys (kept_list: the items, then the fluids); a cell that arrives without a partition takes the keys of its
 ---     kind, also without the copy mode (set by hand for it), and a cell in the workbench shows and changes the keys of
 ---     its kind only (remember), the other kind's stay. Without the copy mode all of it is forgotten when a cell leaves.
+---   * Issue #387: an empty cell is taken apart ("Disassemble", AE2's disassembly of an empty cell): the item ingredients
+---     of its recipe (housing and component) go to the player, its cards stay in the card slots (M.disassemble).
 ---   * Mined: the cards into the cell's tags, the cell into the buffer; destroyed or removed by a script: spilled; a
 ---     workbench removed without an event: the sweep (from the network's slow step) spills it at the position kept in
 ---     the record.
@@ -460,6 +462,18 @@ function M.clear(entity)
 	return true
 end
 
+--- issue #354: the Group Filter Card's text of the cell in the workbench ("" or nil clears it; kept without the card, as
+--- AE2-U keeps it in the cell). Returns false without a cell.
+function M.set_gtext(entity, text)
+	local rec = rec_of(entity)
+	if not rec then return false end
+	local stack, cell = cell_of(rec)
+	if not stack then return false end
+	cell.gtext = N.GF.clean(text)
+	write(rec, stack, cell)
+	return true
+end
+
 --- the copy mode: keep the partition when the cell is taken out (AE2's KEEP_ON_REMOVE)
 function M.set_keep(entity, keep)
 	local rec = rec_of(entity)
@@ -530,6 +544,68 @@ end
 --- { names: the card slots' cards }, slots, inverted, fuzzy, equal, void } or nil, keep, config (the workbench's
 --- partition: its item keys, then its fluid keys), config_items (how many of them are items), limits = { items,
 --- fluids } (the most kinds of each) }
+--- Issue #387 (AE2's ItemBasicStorageCell.disassembleDrive: an empty cell gives back its housing and its component): what
+--- a cell is taken apart into. The item ingredients of the cell's own recipe (the recipe named like the cell, which this mod
+--- adds and another mod may replace, as Gregtorio's GT recipe), so that crafting them again gives the cell back and nothing
+--- is gained; its fluid ingredients are not given back. A list of { name, count }, or nil and the reason: "void" (a void
+--- cell has no storage component), "no-recipe" (no recipe of that name makes exactly this one cell from items).
+function M.parts_of(name)
+	local spec = N.cell_spec(name)
+	if not spec then return nil, "no-cell" end
+	if spec.void then return nil, "void" end
+	local r = prototypes.recipe[name]
+	local res = r and r.products
+	local one = res and #res == 1 and res[1]
+	if not (one and one.type == "item" and one.name == name and one.amount == 1 and (one.probability or 1) == 1) then
+		return nil, "no-recipe"
+	end
+	local out = {}
+	for _, ing in pairs(r.ingredients) do
+		if ing.type == "item" then out[#out + 1] = { name = ing.name, count = ing.amount } end
+	end
+	if #out == 0 then return nil, "no-recipe" end
+	return out
+end
+
+--- why the cell in the workbench cannot be taken apart now (nil: it can): "no-cell", "not-empty", or a reason of parts_of
+local function disassemble_why(stack, cell)
+	if not stack then return "no-cell" end
+	if next(cell.items) then return "not-empty" end
+	local _, why = M.parts_of(cell.name)
+	return why
+end
+
+--- Issue #387: the empty cell in the workbench taken apart: the cell goes, its parts (parts_of, in the cell's quality) go to
+--- `back` (a player, a LuaInventory; what finds no room goes onto the ground at the workbench, G.give_back). Its upgrade
+--- cards lie in the card slots already and stay there; its partition and Group Filter text go with it, as when the cell is
+--- taken out (the copy mode keeps the partition in the workbench). Returns true, or false and the reason (disassemble_why).
+function M.disassemble(entity, back)
+	local rec = rec_of(entity)
+	local stack, cell
+	if rec then stack, cell = cell_of(rec) end
+	local why = disassemble_why(stack, cell)
+	if why then return false, why end
+	local parts = M.parts_of(cell.name)
+	local quality = stack.quality.name
+	remember(rec, cell)
+	stack.clear()
+	taken(rec)
+	local tmp = game.create_inventory(1)
+	for _, part in ipairs(parts) do
+		local left = part.count
+		local size = prototypes.item[part.name].stack_size
+		while left > 0 do
+			local n = math.min(left, size)
+			tmp[1].set_stack{ name = part.name, count = n, quality = quality }
+			G.give_back(back, tmp[1], entity)
+			tmp[1].clear()
+			left = left - n
+		end
+	end
+	tmp.destroy()
+	return true
+end
+
 function M.info(entity)
 	local rec = rec_of(entity)
 	if not rec then return nil end
@@ -548,7 +624,9 @@ function M.info(entity)
 		out.cell = { name = cell.name, fluid = spec.kind == "fluid", items = items, bytes = cell.bytes, bytes_total = spec.bytes,
 			types = cell.types, types_total = spec.types, partition = N.cell_keys(cell), cards = cards,
 			slots = rules_of(spec).slots, inverted = N.has_card(cell, "inverter"), fuzzy = N.has_card(cell, "fuzzy"),
-			equal = cell.eq, void = cell.void == true, sticky = cell.sticky == true }
+			equal = cell.eq, void = cell.void == true, sticky = cell.sticky == true, voidcell = spec.void,
+			gfilter = N.has_card(cell, "gfilter"), gtext = cell.gtext, disassemble = disassemble_why(stack, cell) or true,
+			parts = M.parts_of(cell.name) }
 	end
 	return out
 end
@@ -633,6 +711,10 @@ remote.add_interface("gregtorio-me-workbench", {
 	from_contents = function(entity) return M.from_contents(entity) end,
 	clear = function(entity) return M.clear(entity) end,
 	set_keep = function(entity, keep) return M.set_keep(entity, keep) end,
+	set_gtext = function(entity, text) return M.set_gtext(entity, text) end,
+	--- issue #387: the empty cell taken apart, its parts to `back` (a LuaInventory standing for the player's)
+	disassemble = function(entity, back) return M.disassemble(entity, back) end,
+	parts_of = function(name) return M.parts_of(name) end,
 	--- issue #28: the inventory the window shows, and what a change by a player does (`back`: a LuaInventory standing
 	--- for the player's inventory; `places`: LuaItemStacks and LuaInventories where a cell that left is looked for)
 	inventory = function(entity) return M.inventory(entity) end,

@@ -33,7 +33,7 @@ name: Build & Release
 # from https://factorio.com/profile with the "ModPortal: Upload Mods" permission, account-wide, so
 # one key serves both mods). Without it, or when the portal already has that version, an upload is skipped.
 # After a release the job "announce" posts a digest of the version's changelog.txt section to the
-# Discord channel #me-network-releases, and a second one of ae2-textures/changelog.txt when the texture
+# Discord channel #me-network-releases, and a second one of ae2-textures/changelog.txt to #ae2-textures-releases when the texture
 # version is new (secret DISCORD_BOT_TOKEN; without it the job only warns). It is a job
 # of its own, so a problem with Discord never touches the release, and it can be re-run alone:
 # announcing a version twice does nothing. The tool is https://github.com/Rykon00/gregtorio-me-network_discord-bot.
@@ -257,7 +257,7 @@ jobs:
           if [ "$TEXTURES_NEW" = true ]; then
             python tool/discord_announce.py \
               --guild-config tool/server.yml \
-              --channel me-network-releases --title "$TEXTURES_TITLE" --version "$TEXTURES_VERSION" \
+              --channel ae2-textures-releases --title "$TEXTURES_TITLE" --version "$TEXTURES_VERSION" \
               --changelog mod/ae2-textures/changelog.txt \
               --link "Full changelog=https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" \
               --link "Mod portal=https://mods.factorio.com/mod/$TEXTURES_MOD" \

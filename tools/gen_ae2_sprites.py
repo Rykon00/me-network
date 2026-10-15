@@ -33,7 +33,11 @@ Sources:
     python tools/gen_ae2_sprites.py --own-icons C:/00_Repositories/GT5-Unofficial   # only the 17 icons of graphics/icons/
                                                   # (issue #238) and what is made from them (cells, old drive items, fluid
                                                   # variants, technologies, 3D-style cells and cable), with their contact
-                                                  # sheet docs/graphics-review/own-icons-238.png
+                                                  # sheet docs/graphics-review/own-icons-238.png; the buses' direction badges (issue #381) and
+                                                  # their sheet docs/graphics-review/issue-381.png
+    python tools/gen_ae2_sprites.py --io-port     # only the ME IO Port (issue #386), from the drive's 32 px face
+    python tools/gen_ae2_sprites.py --quantum-bridge  # only the ME Quantum Bridge (issue #385), 3 x 3, drawn here
+    python tools/gen_ae2_sprites.py --wireless-link   # only the ME Wireless Link (issue #384)
     python tools/gen_ae2_sprites.py --thumbnail   # only thumbnail.png, from the drive and terminal PNGs (issue #20)
     python tools/gen_ae2_sprites.py --crafting-cpu C:/00_Repositories/GT5-Unofficial   # only the crafting blocks of
                                                   # the multiblock crafting CPUs (me-network issue #6): GT casings and
@@ -42,6 +46,10 @@ Sources:
                                                   # (me-network issue #130): the dark and the lit picture, the icon
     python tools/gen_ae2_sprites.py --sheet-pattern-terminal docs/graphics-review/issue-130.png   # contact sheet of it
                                                   # at game size (and 4x) next to the ME Terminal
+    python tools/gen_ae2_sprites.py --interface-terminal C:/00_Repositories/GT5-Unofficial   # only the ME Interface
+                                                  # Terminal (me-network issue #336): dark and lit, the icon, 64 px
+    python tools/gen_ae2_sprites.py --monitors C:/00_Repositories/GT5-Unofficial   # only the ME Storage, Conversion and
+                                                  # Throughput Monitor (me-network issue #353): dark and lit, icons, 64 px
     python tools/gen_ae2_sprites.py --assembler C:/00_Repositories/GT5-Unofficial   # only the ME Molecular Assembler
                                                   # (1x1, me-network issue #131): idle, working strip, icons
     python tools/gen_ae2_sprites.py --sheet-assembler docs/graphics-review/issue-131.png   # contact sheet of the
@@ -294,6 +302,115 @@ def pattern_terminal(gt):
     lit.save(OUT_ICON / "me-pattern-terminal.png")
 
 
+def interface_terminal_sprites(gt):
+    """The ME Interface Terminal (me-network issue #336), 1x1: the ME Terminal's MV casing around a dark screen that shows a list,
+    four rows of a small block (a provider) and a line, the second row picked out: teal when lit (its network works),
+    dim when dark. Returns (dark, lit), 32 px."""
+    base = up(hull(gt, "MV"))
+
+    def face(lit):
+        img = base.copy()
+        d = ImageDraw.Draw(img)
+        d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+        col = PT_LIT if lit else (45, 72, 72)
+        mark = FLUIX_LIGHT if lit else (50, 56, 84)
+        for row in range(4):
+            y = 7 + row * 5
+            d.rectangle((7, y, 9, y + 2), fill=(mark if row == 1 else col) + (255,))
+            d.rectangle((12, y + 1, 24 - 3 * (row % 2), y + 1), fill=col + (255,))
+        return img
+
+    return face(False), face(True)
+
+
+def interface_terminal(gt):
+    """Entity sheet (dark at x = 0, lit at x = 32, the two variations of the entity) and the item icon (the lit picture), and
+    their 64 px pictures (as hd_batch1 makes the pattern terminal's)."""
+    dark, lit = interface_terminal_sprites(gt)
+    sheet = Image.new("RGBA", (2 * TILE, TILE))
+    sheet.paste(dark, (0, 0))
+    sheet.paste(lit, (TILE, 0))
+    sheet.save(OUT_ENTITY / "me-interface-terminal.png")
+    lit.save(OUT_ICON / "me-interface-terminal.png")
+    hd_interface_terminal()
+
+
+def hd_interface_terminal():
+    """the 64 px entity sheet and item icon of the ME Interface Terminal from its 32 px sheet"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    it = load(OUT_ENTITY / "me-interface-terminal.png")            # dark | lit
+    sheet = Image.new("RGBA", (2 * HD, HD))
+    for i in range(2):
+        sheet.alpha_composite(hd_block(it.crop((i * TILE, 0, (i + 1) * TILE, TILE))), (i * HD, 0))
+    sheet.save(HD_ENTITY / "me-interface-terminal.png")
+    hd_cube(it.crop((TILE, 0, 2 * TILE, TILE))).save(HD_ICON / "me-interface-terminal.png")
+    return [HD_ENTITY / "me-interface-terminal.png", HD_ICON / "me-interface-terminal.png"]
+
+
+MONITORS = ("me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor")
+
+
+def monitor_sprites(gt, name):
+    """The ME Storage, Conversion and Throughput Monitor (me-network issue #353), 1x1: the ME Terminal's MV casing around a
+    dark screen with an empty square in its upper part (the runtime draws the resource's icon there and its amount under
+    it) and a mark of the kind at the bottom: a bar (storage), two arrows (conversion) or a rising line (throughput),
+    teal when lit (its network works), dim when dark. Returns (dark, lit), 32 px."""
+    base = up(hull(gt, "MV"))
+
+    def face(lit):
+        img = base.copy()
+        d = ImageDraw.Draw(img)
+        d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+        col = PT_LIT if lit else (45, 72, 72)
+        frame = FLUIX_LIGHT if lit else (50, 56, 84)
+        d.rectangle((11, 7, 20, 16), outline=frame + (255,))
+        if name == "me-storage-monitor":
+            d.rectangle((9, 22, 22, 23), fill=col + (255,))
+        elif name == "me-conversion-monitor":
+            d.line((9, 22, 14, 22), fill=col + (255,))
+            d.line((12, 20, 14, 22), fill=col + (255,))
+            d.line((12, 24, 14, 22), fill=col + (255,))
+            d.line((17, 24, 22, 24), fill=col + (255,))
+            d.line((17, 24, 19, 22), fill=col + (255,))
+            d.line((17, 24, 19, 26), fill=col + (255,))
+        else:
+            d.line((9, 25, 13, 22), fill=col + (255,))
+            d.line((13, 22, 16, 23), fill=col + (255,))
+            d.line((16, 23, 22, 19), fill=col + (255,))
+        return img
+
+    return face(False), face(True)
+
+
+def monitors(gt):
+    """Entity sheets (dark at x = 0, lit at x = 32, the two variations of the entity), item icons (the lit picture) and their 64
+    px pictures, for the three monitors of issue #353"""
+    written = []
+    for name in MONITORS:
+        dark, lit = monitor_sprites(gt, name)
+        sheet = Image.new("RGBA", (2 * TILE, TILE))
+        sheet.paste(dark, (0, 0))
+        sheet.paste(lit, (TILE, 0))
+        sheet.save(OUT_ENTITY / f"{name}.png")
+        lit.save(OUT_ICON / f"{name}.png")
+        written.extend(hd_monitor(name))
+    return written
+
+
+def hd_monitor(name):
+    """the 64 px entity sheet and item icon of a monitor from its 32 px sheet"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    it = load(OUT_ENTITY / f"{name}.png")            # dark | lit
+    sheet = Image.new("RGBA", (2 * HD, HD))
+    for i in range(2):
+        sheet.alpha_composite(hd_block(it.crop((i * TILE, 0, (i + 1) * TILE, TILE))), (i * HD, 0))
+    sheet.save(HD_ENTITY / f"{name}.png")
+    hd_cube(it.crop((TILE, 0, 2 * TILE, TILE))).save(HD_ICON / f"{name}.png")
+    return [HD_ENTITY / f"{name}.png", HD_ICON / f"{name}.png"]
+
+
 def cpu_sprites(gt):
     """2x2: EV casing ring around a dark screen with a chip grid. off = base, on = lit chips only."""
     tile = up(hull(gt, "EV"))
@@ -334,6 +451,8 @@ def autocrafting(gt):
     provider_sprite(gt).save(OUT_ENTITY / "me-pattern-provider.png")
     provider_sprite(gt).save(OUT_ICON / "me-pattern-provider.png")
     pattern_terminal(gt)
+    interface_terminal(gt)
+    monitors(gt)                                         # (issue #353)
     assembler(gt)
     off, lit = cpu_sprites(gt)
     off.save(OUT_ENTITY / "me-crafting-cpu-off.png")
@@ -965,8 +1084,11 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-interface-capacity-card": ("basic", "gui/overlay_button/plus_large", (240, 150, 50)),   # issue #196: an orange plus on the gray body
     "me-inverter-card": ("advanced", "gui/overlay_button/disable", (245, 120, 30)),
     "me-sticky-card": ("advanced", "gui/overlay_button/lock", (250, 215, 60)),   # issue #193: a lock (yellow)
+    "me-group-filter-card": ("advanced", "gui/overlay_button/gate_or", (120, 205, 255)),   # issue #354: an OR gate (light blue)
     "me-equal-distribution-card": ("advanced", "gui/overlay_button/cyclic", (60, 225, 210)),
     "me-acceleration-card": ("advanced", "gui/overlay_button/x2", (185, 240, 70)),   # issue #110: the "x2" sign (lime)
+    "me-super-speed-card": ("advanced", "gui/overlay_button/x2", (255, 150, 40)),    # issue #356: the "x2" sign (orange)
+    "me-superluminal-speed-card": ("advanced", "gui/overlay_button/x2", (240, 70, 230)),   # issue #356: the "x2" sign (magenta)
 }
 CARD_SIGN_MAX = 20            # px; larger GT signs (the 24 px ring of "disable") are scaled down to it
 
@@ -1516,6 +1638,11 @@ def hd_batch1():
     # icons
     save(hd_cube(load(OUT_ENTITY / "me-terminal-lit.png")), HD_ICON / "me-terminal.png")
     save(hd_cube(pt.crop((TILE, 0, 2 * TILE, TILE))), HD_ICON / "me-pattern-terminal.png")
+    if (OUT_ENTITY / "me-interface-terminal.png").exists():          # (issue #336)
+        written.extend(hd_interface_terminal())
+    for name in MONITORS:                                             # (issue #353)
+        if (OUT_ENTITY / f"{name}.png").exists():
+            written.extend(hd_monitor(name))
     ctrl = load(OUT_ENTITY / "me-network-controller.png").resize((TILE, TILE), Image.LANCZOS)
     save(hd_cube(ctrl), HD_ICON / "me-controller.png")
     save(hd_cube(load(OUT_ENTITY / "me-drive.png")), HD_ICON / "me-drive.png")
@@ -1642,7 +1769,7 @@ def hd_batch3():
 
 
 # --- issue #221 (batch 4 of #154): the upgrade cards, patterns, storage components, housing, wireless items -------------
-CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'inverter', 'equal-distribution', 'acceleration')
+CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'group-filter', 'inverter', 'equal-distribution', 'acceleration', 'super-speed', 'superluminal-speed')
 
 
 def hd_plate(icon, depth=5):
@@ -1740,6 +1867,189 @@ TECH_ICONS = {
     "me-quantum-crafting": "me-256k-crafting-storage",
     "me-wireless": "me-wireless-access-point",
 }
+
+
+# --- me-network issue #355: the ME Toggle Bus, the ME Inverted Toggle Bus and the ME Level Emitter --------------------------
+# Drawn from this mod's own 64 px pictures, no AE2 textures. A toggle bus is a cable piece: the cable's four-arm picture with a
+# switch box in the middle (its lever open, as AE2's toggle bus without a signal); the inverted one has a red bar across the
+# box (the inverter card's colour). The level emitter is the circuit interface's casing with a level gauge on its screen: three
+# bars and a red threshold line (AE2's level emitter is a redstone torch on a cable).
+TOGGLE_BOX = (18, 18, 45, 45)
+
+
+def toggle_sprite(inverted):
+    cable = load(HD_ENTITY / "me-cable.png")
+    img = cable.crop((15 * TILE * 2, 0, 16 * TILE * 2, TILE * 2)).copy()       # graphics variation 16: all four arms
+    d = ImageDraw.Draw(img)
+    x1, y1, x2, y2 = TOGGLE_BOX
+    d.rectangle((x1, y1, x2, y2), fill=(28, 28, 36, 255), outline=(70, 70, 86, 255))
+    d.rectangle((x1 + 1, y1 + 1, x2 - 1, y1 + 2), fill=FLUIX + (255,))          # fluix rim at the top
+    d.rectangle((x1 + 4, y2 - 8, x1 + 8, y2 - 4), fill=FLUIX_LIGHT + (255,))     # the two contacts
+    d.rectangle((x2 - 8, y2 - 8, x2 - 4, y2 - 4), fill=FLUIX_LIGHT + (255,))
+    d.line((x1 + 6, y2 - 6, x2 - 7, y1 + 7), fill=(220, 220, 230, 255), width=3)   # the lever, open
+    if inverted:
+        d.rectangle((x1 + 2, y1 + 5, x2 - 2, y1 + 7), fill=(245, 120, 30, 255))
+    return img
+
+
+def emitter_sprite():
+    img = load(HD_ENTITY / "me-circuit-interface.png").copy()
+    d = ImageDraw.Draw(img)
+    d.rectangle((18, 18, 45, 45), fill=(12, 12, 16, 255))                        # the screen, cleared
+    for i, h in enumerate((8, 14, 20)):                                           # a level gauge
+        x = 23 + i * 7
+        d.rectangle((x, 42 - h, x + 4, 42), fill=FLUIX_LIGHT + (255,))
+    d.rectangle((20, 28, 43, 29), fill=(235, 50, 40, 255))                        # the threshold
+    return img
+
+
+BADGES = {"me-import-bus": (IMPORT_ACCENT, "in"), "me-export-bus": (EXPORT_ACCENT, "out"),
+          "me-storage-bus": (STORAGE_ACCENT, "both")}
+
+
+def bus_badge(accent, way):
+    """issue #381: a bus's direction as a badge in the lower left corner of its 64 px icon (the game draws a stack's count
+    in the lower right one), alone (a layer of its own over the block's icon, so the texture mod, which replaces the
+    block's icon, keeps it): a dark rounded square with a diagonal arrow in the bus's colour, into the block (import:
+    towards its middle, up and right), out of it (export) or both ways (storage bus). Drawn at 32 px, then doubled like the
+    other HD icons."""
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((0, 16, 15, 31), radius=3, fill=(20, 20, 26, 255), outline=accent + (255,))
+    d.line((11, 20, 4, 27), fill=(235, 235, 245, 255), width=2)             # the shaft, upper right to lower left
+    tip_in = [(13, 18), (7, 18), (13, 24)]                                      # head at the upper right: into the block
+    tip_out = [(2, 29), (8, 29), (2, 23)]                                       # head at the lower left: out of it
+    if way in ("in", "both"):
+        d.polygon(tip_in, fill=accent + (255,))
+    if way in ("out", "both"):
+        d.polygon(tip_out, fill=accent + (255,))
+    return hd_up(img)
+
+
+def bus_badges():
+    """issue #381: the badges of the three buses (graphics/icons/hd/<bus>-badge.png), prototypes/network.lua's second icon layer"""
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+    for bus, (accent, way) in BADGES.items():
+        path = HD_ICON / f"{bus}-badge.png"
+        bus_badge(accent, way).save(path)
+        written.append(path)
+    return written
+
+
+def bus_icon_sheet(path):
+    """issue #381: the ME Interface and the three buses' icons with their badges, at 32 px (as the inventory shows them) and
+    64 px, on a light and a dark ground"""
+    names = ("me-interface", "me-import-bus", "me-export-bus", "me-storage-bus")
+    sheet = Image.new("RGBA", (4 * 80 + 16, 2 * (64 + 32 + 24) + 8), (60, 60, 60, 255))
+    for row, ground in enumerate(((60, 60, 60, 255), (170, 170, 170, 255))):
+        y0 = 8 + row * (64 + 32 + 24)
+        ImageDraw.Draw(sheet).rectangle((0, y0 - 4, sheet.width, y0 + 64 + 32 + 16), fill=ground)
+        for i, name in enumerate(names):
+            icon = load(HD_ICON / f"{name}.png").copy()
+            badge = HD_ICON / f"{name}-badge.png"
+            if badge.exists():
+                icon.alpha_composite(load(badge))
+            x = 8 + i * 80
+            sheet.alpha_composite(icon, (x, y0))
+            sheet.alpha_composite(icon.resize((32, 32), Image.LANCZOS), (x + 16, y0 + 72))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(path)
+    return path
+
+
+def quantum_bridge_face():
+    """issue #385: the ME Quantum Bridge's 96 px face (3 x 3 tiles, AE2's eight quantum rings around the link chamber, drawn
+    here): the drive's casing colours, eight ring blocks with a fluix line each, the chamber in the middle with a glowing core"""
+    casing = load(OUT_ENTITY / "me-drive.png").getpixel((1, 1))
+    face = Image.new("RGBA", (3 * TILE, 3 * TILE), casing)
+    d = ImageDraw.Draw(face)
+    for i in range(3):
+        for j in range(3):
+            x0, y0 = i * TILE, j * TILE
+            d.rectangle((x0 + 2, y0 + 2, x0 + TILE - 3, y0 + TILE - 3), fill=(46, 48, 58, 255), outline=(92, 96, 110, 255))
+            if (i, j) == (1, 1):                                           # the link chamber
+                d.rectangle((x0 + 5, y0 + 5, x0 + TILE - 6, y0 + TILE - 6), fill=(20, 18, 30, 255), outline=FLUIX_LIGHT + (255,))
+                d.ellipse((x0 + 9, y0 + 9, x0 + TILE - 10, y0 + TILE - 10), fill=FLUIX + (255,), outline=(215, 187, 236, 255))
+                d.ellipse((x0 + 13, y0 + 13, x0 + TILE - 14, y0 + TILE - 14), fill=(235, 220, 255, 255))
+            else:                                                          # a ring block: a fluix line towards the chamber
+                d.rectangle((x0 + 6, y0 + 6, x0 + TILE - 7, y0 + TILE - 7), fill=(30, 30, 38, 255))
+                cx, cy = x0 + TILE // 2, y0 + TILE // 2
+                d.line((cx, cy, cx + (1 - i) * 12, cy + (1 - j) * 12), fill=FLUIX + (255,), width=3)
+                d.rectangle((cx - 2, cy - 2, cx + 1, cy + 1), fill=FLUIX_LIGHT + (255,))
+    return face
+
+
+def quantum_bridge():
+    """issue #385: the ME Quantum Bridge's 192 px picture (3 x 3 tiles), its 64 px icon cube and its technology icon"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    OUT_TECH_HD.mkdir(parents=True, exist_ok=True)
+    face = quantum_bridge_face()
+    written = [HD_ENTITY / "me-quantum-bridge.png", HD_ICON / "me-quantum-bridge.png", OUT_TECH_HD / "me-quantum-bridge.png"]
+    hd_block(face, tiles=3).save(written[0])
+    icon = hd_cube(face.resize((TILE, TILE), Image.LANCZOS))
+    icon.save(written[1])
+    upscale(icon).save(written[2])                                         # (its technology, as hd_batch5's)
+    return written
+
+
+def wireless_link():
+    """issue #384: the ME Wireless Link: the access point's casing and dark panel, an antenna in the light fluix colour and a
+    two-headed arrow below it (a link both ways); its 64 px picture, icon cube and technology icon"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    OUT_TECH_HD.mkdir(parents=True, exist_ok=True)
+    face = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    d = ImageDraw.Draw(face)
+    d.rectangle((6, 19, 25, 27), fill=(30, 30, 38, 255), outline=(85, 85, 100, 255))
+    antenna(d, 16, 4, 19, 2, FLUIX_LIGHT)
+    d.line((10, 23, 21, 23), fill=(235, 235, 245, 255), width=1)
+    d.polygon([(8, 23), (11, 21), (11, 25)], fill=FLUIX + (255,))
+    d.polygon([(23, 23), (20, 21), (20, 25)], fill=FLUIX + (255,))
+    written = [HD_ENTITY / "me-wireless-link.png", HD_ICON / "me-wireless-link.png", OUT_TECH_HD / "me-wireless-link.png"]
+    hd_block(face).save(written[0])
+    icon = hd_cube(face)
+    icon.save(written[1])
+    upscale(icon).save(written[2])
+    return written
+
+
+def io_port_face():
+    """issue #386: the ME IO Port's 32 px face: the drive's casing, one cell bay on the left and two arrows on the right,
+    into the network (fluix purple, up) and out of it (blue, down)"""
+    face = load(OUT_ENTITY / "me-drive.png").copy()
+    d = ImageDraw.Draw(face)
+    d.rectangle((3, 3, 28, 28), fill=BAY + (255,))
+    d.rectangle((5, 6, 14, 25), fill=(58, 60, 70, 255), outline=(92, 96, 110, 255))      # the bay
+    d.rectangle((7, 8, 12, 23), fill=(24, 24, 30, 255))                                  # its slot
+    d.rectangle((9, 21, 10, 22), fill=FLUIX + (255,))                                    # its light
+    d.polygon([(21, 5), (26, 10), (23, 10), (23, 14), (19, 14), (19, 10), (16, 10)], fill=FLUIX + (255,))
+    d.polygon([(21, 26), (26, 21), (23, 21), (23, 17), (19, 17), (19, 21), (16, 21)], fill=FLUIX_LIGHT + (255,))
+    return face
+
+
+def io_port():
+    """issue #386: the ME IO Port's 64 px picture and its icon cube, from io_port_face"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    face = io_port_face()
+    written = [HD_ENTITY / "me-io-port.png", HD_ICON / "me-io-port.png"]
+    hd_block(face).save(written[0])
+    hd_cube(face).save(written[1])
+    return written
+
+
+def toggle_emitter():
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name, img in (("me-toggle-bus", toggle_sprite(False)), ("me-inverted-toggle-bus", toggle_sprite(True)),
+                      ("me-level-emitter", emitter_sprite())):
+        for path in (HD_ENTITY / f"{name}.png", HD_ICON / f"{name}.png"):
+            img.save(path)
+            written.append(path)
+    return written
 
 
 def hd_batch5():
@@ -2177,6 +2487,15 @@ def main():
     ap.add_argument("--wireless", action="store_true",
                     help="only the wireless parts (me-network issues #205 to #211): access point, booster, terminal item, "
                          "charger, module and their technology, drawn from this mod's own PNGs")
+    ap.add_argument("--wireless-link", action="store_true",
+                    help="only the ME Wireless Link (me-network issue #384): its picture, icon and technology icon")
+    ap.add_argument("--quantum-bridge", action="store_true",
+                    help="only the ME Quantum Bridge (me-network issue #385): its 3 x 3 picture and icon, drawn here")
+    ap.add_argument("--io-port", action="store_true",
+                    help="only the ME IO Port (me-network issue #386): its 64 px picture and icon, from the drive's 32 px face")
+    ap.add_argument("--toggle-emitter", action="store_true",
+                    help="only the ME Toggle Bus, the ME Inverted Toggle Bus and the ME Level Emitter (me-network issue #355), "
+                         "64 px pictures and icons from the cable and the circuit interface")
     ap.add_argument("--hd", action="store_true",
                     help="the 64 px pictures of the 3D style (me-network issues #154, #218: batch 1) from the 32 px ones, into "
                          "graphics/entity/fork/ae2/hd/ and graphics/icons/hd/, and their contact sheet")
@@ -2206,6 +2525,12 @@ def main():
                     help="only the ME Interface with its pipe sides (me-network issue #3), from the R1 PNGs")
     ap.add_argument("--pattern-terminal", type=Path, metavar="GT",
                     help="only the ME Pattern Terminal (me-network issue #130), from the casings of the GT5-Unofficial checkout GT")
+    ap.add_argument("--interface-terminal", type=Path, metavar="GT",
+                    help="only the ME Interface Terminal (me-network issue #336) and its 64 px pictures, from the casings of the "
+                         "GT5-Unofficial checkout GT")
+    ap.add_argument("--monitors", type=Path, metavar="GT",
+                    help="only the ME Storage, Conversion and Throughput Monitor (me-network issue #353) and their 64 px "
+                         "pictures, from the casings of the GT5-Unofficial checkout GT")
     ap.add_argument("--sheet-pattern-terminal", type=Path, metavar="PNG",
                     help="writes a contact sheet of the ME Pattern Terminal (issue #130) to PNG")
     ap.add_argument("--assembler", type=Path, metavar="GT",
@@ -2216,10 +2541,10 @@ def main():
     a = ap.parse_args()
     if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
-            or a.sheet_assembler or a.pattern_terminal or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
-            or a.own_icons or a.light or a.bus_markers):
+            or a.sheet_assembler or a.pattern_terminal or a.interface_terminal or a.monitors or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
+            or a.own_icons or a.light or a.bus_markers or a.toggle_emitter or a.io_port or a.quantum_bridge or a.wireless_link):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --fluid-storage-bus,"
-                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --own-icons,"
+                 " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --interface-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
     for d in (OUT_ENTITY, OUT_ICON, OUT_TECH):
@@ -2291,10 +2616,21 @@ def main():
         written = hd_batch5()
         hd_sheet_batch5(ROOT / "docs/graphics-review/graphics-batch5-222.png")
         print("ME 3D technology icons (batch 5):", len(written))
-    elif a.own_icons:                           # the 3D-style cells and cable are made from the 32 px icons
+    if a.gt or a.hd or a.toggle_emitter:                                # (from the 64 px cable and circuit interface)
+        print("ME toggle buses and level emitter (issue #355):", len(toggle_emitter()))
+    if a.gt or a.hd or a.io_port:                                      # (from the drive's 32 px face)
+        print("ME IO Port (issue #386):", len(io_port()))
+    if a.gt or a.hd or a.quantum_bridge:                               # (drawn here, the drive's casing colour)
+        print("ME Quantum Bridge (issue #385):", len(quantum_bridge()))
+    if a.gt or a.hd or a.wireless_link:                                # (from the interface's casing)
+        print("ME Wireless Link (issue #384):", len(wireless_link()))
+    if not (a.gt or a.hd) and a.own_icons:      # the 3D-style cells and cable are made from the 32 px icons
         written = hd_batch1()
         hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")
         print("ME 3D pictures (batch 1):", len(written))
+    if a.gt or a.own_icons:                     # issue #381: the buses' direction badges (a layer of their own)
+        print("bus badges (issue #381):", len(bus_badges()))
+        print("contact sheet:", bus_icon_sheet(ROOT / "docs/graphics-review/issue-381.png"))
     if a.gt or a.own_icons:
         print("contact sheet:", own_icons_sheet(ROOT / "docs/graphics-review/own-icons-238.png"))
     if a.gt or a.thumbnail:
@@ -2308,6 +2644,12 @@ def main():
     if a.terminal_lit:
         terminal_lit()
         print("me-terminal-lit.png")
+    if a.interface_terminal:
+        interface_terminal(a.interface_terminal)
+        print("ME Interface Terminal sprites")
+    if a.monitors:
+        monitors(a.monitors)
+        print("ME monitor sprites")
     if a.pattern_terminal:
         pattern_terminal(a.pattern_terminal)
         print("ME Pattern Terminal sprites")

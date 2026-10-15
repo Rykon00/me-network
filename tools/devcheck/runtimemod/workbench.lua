@@ -571,10 +571,30 @@ return function(H)
 		expect(type(qs) == "table" and (q == nil and #qs == 0 or qs[1] == "normal" and #qs >= 2), "the picker's qualities " .. line(qs))
 		--- issue #291: the quality buttons wrap: the game's five in one row, 30 (Infinite Quality Tiers) in rows of 10, or of 5
 		--- next to the temperature field, so the picker keeps its width
+		--- (issue #380: more than two rows scroll, and give a column to the scroll bar: 30 next to the temperature field, 200)
 		local function cols(n, temp) return remote.call(GUI, "picker_quality_columns", n, temp) end
-		expect(cols(5, false) == 5 and cols(5, true) == 5 and cols(2, true) == 2 and cols(30, false) == 10 and cols(30, true) == 5
-			and cols(200, false) == 10, "the picker's quality columns: " .. line({ cols(5, false), cols(5, true), cols(2, true),
-			cols(30, false), cols(30, true), cols(200, false) }))
+		expect(cols(5, false) == 5 and cols(5, true) == 5 and cols(2, true) == 2 and cols(20, false) == 10 and cols(30, false) == 9
+			and cols(10, true) == 5 and cols(30, true) == 4 and cols(200, false) == 9, "the picker's quality columns: "
+			.. line({ cols(5, false), cols(5, true), cols(2, true), cols(20, false), cols(30, false), cols(10, true), cols(30, true),
+			cols(200, false) }))
+		--- issue #380: the row itself. The game's five: one row, no scroll pane, as before. 120 (Infinite Quality Tiers): a scroll
+		--- pane two rows high, so the picker keeps its size, with every quality in it in order; a click marks that one alone.
+		local function view(n, temp, chosen) return remote.call(GUI, "picker_quality_view", n, temp, chosen) or {} end
+		if q then
+			local v5 = view(#qs, false, qs[#qs])
+			expect(v5.parent == "row" and v5.pane == nil and v5.columns == #qs and #v5.buttons == #qs
+				and line(v5.toggled) == line({ qs[#qs] }), "the game's qualities in the picker " .. line(v5))
+		end
+		for _, temp in ipairs({ false, true }) do
+			local n = 120
+			local v = view(n, temp, "zz-devcheck-quality-117")
+			local ordered = #v.buttons == n and v.buttons[1] == (qs[1] or "zz-devcheck-quality-1")
+				and v.buttons[n] == "zz-devcheck-quality-" .. n
+			expect(v.parent == "pane" and v.pane and v.pane <= 2 * 30 and v.columns == (temp and 4 or 9) and ordered
+				and line(v.toggled) == line({ "zz-devcheck-quality-117" }),
+				"120 qualities" .. (temp and " next to the temperature field" or "") .. ": " .. line({ v.parent, v.pane, v.columns,
+				#(v.buttons or {}), v.toggled }))
+		end
 
 		--- an empty workbench: one free slot, both kinds offered
 		local sl = slots()

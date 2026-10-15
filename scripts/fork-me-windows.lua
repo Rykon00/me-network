@@ -38,6 +38,8 @@ local circuit = require("scripts.fork-me-circuit")
 local io = require("scripts.fork-me-io")
 local sbus = require("scripts.fork-me-storagebus")
 local bench = require("scripts.fork-me-workbench")
+local ioport = require("scripts.fork-me-ioport")          -- (issue #386)
+local qbridge = require("scripts.fork-me-qbridge")        -- (issue #385)
 local picker = require("scripts.fork-me-picker")
 local Names = require("scripts.fork-me-names")
 local terminal = require("scripts.fork-me-terminal")
@@ -67,14 +69,14 @@ end
 
 --- Issue #28: the slots `first` .. `last` of a block's inventory `inv` as slot buttons (block_slot: the window's
 --- click), rebuilt when a stack changed; `tip(slot, stack)` gives a button's tooltip
-local function block_slots(frame, name, inv, first, last, tip)
+local function block_slots(frame, name, inv, first, last, tip, offset)
 	local sig = { tostring(first), tostring(last) }
 	for i = first, last do
 		local st = inv[i]
 		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name .. G.stack_ident(st)) or "-"
 	end
 	rebuild(frame, name, table.concat(sig, ","), function(box)
-		for i = first, last do G.stack_button(box, inv[i], G.act("block_slot", { slot = i }), tip and tip(i, inv[i]) or nil) end
+		for i = first, last do G.stack_button(box, inv[i], G.act("block_slot", { slot = i + (offset or 0) }), tip and tip(i, inv[i]) or nil) end
 	end)
 end
 
@@ -142,8 +144,8 @@ M.key_of_elem = key_of_elem
 
 --- Issue #70: the picker (scripts/fork-me-picker.lua) for a key slot button: `act` names the callback of the choice,
 --- `data` (plain data: the block's unit number, the slot's index) comes back with it, `key` is what the slot holds (the
---- picker opens on it), `with_quality` false for a place that takes no quality (buses, the maintainer's target, the
---- circuit interface's filters, the pattern editor's rows)
+--- picker opens on it), `with_quality` false for a place that takes no quality (buses, the circuit interface's filters;
+--- issue #352: the maintainer's target and the pattern editor's rows take one)
 local function key_picker(player, act, data, key, with_quality)
 	picker.open(player, { callback = act, data = data, kinds = { item = true, fluid = true }, preset = picker.preset_of(key),
 		quality = with_quality and true or false })
@@ -363,7 +365,7 @@ end
 --- sentences are N.cell_mode_text's, which the item tooltip of the cell (issue #64) puts on lines of their own.
 function M.cell_mode_caption(c)
 	local parts = { "" }
-	for _, kind in ipairs({ "inverted", "fuzzy", "equal", "void", "sticky" }) do
+	for _, kind in ipairs({ "inverted", "fuzzy", "equal", "void", "sticky", "gfilter" }) do
 		local text = N.cell_mode_text(kind, c)
 		if text then
 			if #parts > 1 then parts[#parts + 1] = " " end
@@ -438,9 +440,12 @@ local function open_workbench(player, entity)
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("wb_clear") }
 	buttons.add{ type = "button", name = "fork_me_wb_contents", caption = { "fork-me-gui.partition-contents" },
 		tooltip = { "fork-me-gui.partition-contents-tooltip" }, tags = G.act("wb_contents") }
+	buttons.add{ type = "button", name = "fork_me_wb_disassemble", caption = { "fork-me-gui.workbench-disassemble" },
+		tags = G.act("wb_disassemble") }                                         -- (issue #387)
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.workbench-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_wb_cards", direction = "horizontal" }
+	M.gfilter_row(content, "fork_me_wb_gtext", "wb_gtext")
 	content.add{ type = "checkbox", name = "fork_me_wb_keep", state = false, caption = { "fork-me-gui.workbench-keep" },
 		tooltip = { "fork-me-gui.workbench-keep-tooltip" }, tags = G.act("wb_keep") }
 	M.refresh_workbench(player, G.window_of(player))
@@ -535,6 +540,12 @@ function M.refresh_workbench(player, frame)
 	end)
 	local contents = G.find(frame, "fork_me_wb_contents")
 	if contents then contents.enabled = c ~= nil end
+	local dis = G.find(frame, "fork_me_wb_disassemble")
+	if dis then
+		local why = c and c.disassemble or "no-cell"
+		dis.enabled = why == true
+		dis.tooltip = { "fork-me-gui.workbench-disassemble-" .. (why == true and "tooltip" or why) }
+	end
 	local inv = bench.inventory(entity)
 	block_slots(frame, "fork_me_wb_cell", inv, 1, 1, function(_, st)
 		return { st.valid_for_read and "fork-me-gui.workbench-cell-tooltip" or "fork-me-gui.workbench-cell-empty" }
@@ -543,10 +554,128 @@ function M.refresh_workbench(player, frame)
 		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or (c and "fork-me-gui.card-slot-empty" or "fork-me-gui.workbench-card-no-cell") }
 	end)
 	G.find(frame, "fork_me_wb_keep").state = d.keep
+	M.gfilter_refresh(frame, "fork_me_wb_gtext", c and c.gfilter, c and c.gtext)
 	return true
 end
 
 --- issue #28: shift + click in the inventory pane, and a click on the cell slot (slot 1) or a card slot (2 to 5)
+--------------------------------------------------------------------------------
+--- issue #386: the ME IO Port (scripts/fork-me-ioport.lua): its input and output cell slot, its mode, what it does, its speed
+--- and its card slots (the window's slots 1 and 2 are the cells, 3 to 6 the cards)
+--------------------------------------------------------------------------------
+
+local function open_io_port(player, entity)
+	if not ioport.cells(entity) then return end
+	local _, content = G.open_window(player, "io-port", caption_of(entity), { unit = entity.unit_number }, true)
+	G.label(content, { "fork-me-gui.io-port-help" }, WIDTH)
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.io-port-in" } }
+	row.add{ type = "flow", name = "fork_me_iop_in", direction = "horizontal" }
+	row.add{ type = "label", caption = { "fork-me-gui.io-port-out" } }
+	row.add{ type = "flow", name = "fork_me_iop_out", direction = "horizontal" }
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.io-port-mode" } }
+	row.add{ type = "drop-down", name = "fork_me_iop_mode", selected_index = 1, tags = G.act("iop_mode"),
+		items = { { "fork-me-gui.io-port-mode-empty" }, { "fork-me-gui.io-port-mode-fill" } } }
+	G.label(content, "", WIDTH, nil, "fork_me_iop_status")
+	G.label(content, "", WIDTH, nil, "fork_me_iop_speed")
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.io-port-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_iop_cards", direction = "horizontal" }
+	M.refresh_io_port(player, G.window_of(player))
+end
+
+function M.refresh_io_port(player, frame)
+	local entity = G.entity_of(player, frame)
+	local d = entity and ioport.info(entity)
+	if not d then return false end
+	local inv = ioport.cells(entity)
+	block_slots(frame, "fork_me_iop_in", inv, 1, 1, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.io-port-in-tooltip" or "fork-me-gui.io-port-in-empty" }
+	end)
+	block_slots(frame, "fork_me_iop_out", inv, 2, 2, function() return { "fork-me-gui.io-port-out-tooltip" } end)
+	local cinv = ioport.card_inventory(entity)
+	block_slots(frame, "fork_me_iop_cards", cinv, 1, #cinv, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end, 2)
+	G.find(frame, "fork_me_iop_mode").selected_index = d.mode == "fill" and 2 or 1
+	G.find(frame, "fork_me_iop_status").caption = { "fork-me-gui.io-port-status-" .. d.status }
+	G.find(frame, "fork_me_iop_speed").caption = { "fork-me-gui.io-port-speed", G.fmt(d.items), G.fmt(d.fluid), G.fmt(d.accel) }
+	return true
+end
+
+--------------------------------------------------------------------------------
+--- issue #385: the ME Quantum Bridge, and issue #384 the ME Wireless Link (scripts/fork-me-qbridge.lua): the frequency, the
+--- link and its power (the link: the distance and its range). A shift + click of the inventory stores the stack in the
+--- network, as the windows of the other blocks without slots do.
+--------------------------------------------------------------------------------
+
+local function open_qbridge(player, entity)
+	if not qbridge.info(entity) then return end
+	local _, content = G.open_window(player, "quantum-bridge", caption_of(entity), { unit = entity.unit_number }, true)
+	G.label(content, { entity.name == qbridge.LINK and "fork-me-gui.wlink-help" or "fork-me-gui.qbridge-help" }, WIDTH)
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.qbridge-frequency" }, tooltip = { "fork-me-gui.qbridge-frequency-tooltip" } }
+	local f = row.add{ type = "textfield", name = "fork_me_qb_freq", numeric = true, allow_decimal = false, allow_negative = false,
+		lose_focus_on_confirm = true, tooltip = { "fork-me-gui.qbridge-frequency-tooltip" }, tags = G.act("qb_freq") }
+	f.style.width = 120
+	G.label(content, "", WIDTH, nil, "fork_me_qb_status")
+	G.label(content, "", WIDTH, nil, "fork_me_qb_power")
+	if entity.name == qbridge.LINK then G.label(content, "", WIDTH, nil, "fork_me_qb_range") end   -- (issue #384)
+	M.refresh_qbridge(player, G.window_of(player), true)
+end
+
+function M.refresh_qbridge(player, frame, first)
+	local entity = G.entity_of(player, frame)
+	local d = entity and qbridge.info(entity)
+	if not d then return false end
+	local f = G.find(frame, "fork_me_qb_freq")
+	if f and (first or not f.focused) then f.text = d.freq > 0 and tostring(d.freq) or "" end
+	local p = d.partner
+	local caption = { "fork-me-gui.qbridge-status-" .. d.status }
+	if d.status == "linked" and p then
+		caption = { "fork-me-gui.qbridge-status-linked", p.surface, string.format("%.0f", p.x), string.format("%.0f", p.y) }
+	elseif d.status == "other-surface" and p then
+		caption = { "fork-me-gui.qbridge-status-other-surface", p.surface }
+	end
+	G.find(frame, "fork_me_qb_status").caption = caption
+	G.find(frame, "fork_me_qb_power").caption = { "fork-me-gui.qbridge-power", G.fmt(d.watts / 1000),
+		string.format("%.0f", 100 * (d.buffer > 0 and d.energy / d.buffer or 0)) }
+	local r = G.find(frame, "fork_me_qb_range")
+	if r then
+		r.caption = d.distance and { "fork-me-gui.wlink-range", string.format("%.0f", d.distance), tostring(d.range) }
+			or { "fork-me-gui.wlink-range-none", tostring(d.range) }
+	end
+	return true
+end
+
+G.window("quantum-bridge", { open = open_qbridge, refresh = M.refresh_qbridge, entities = { qbridge.NAME, qbridge.LINK },
+	shift = M.store_shift, control = M.store_all, message = G.net_message, hint = { "fork-me-gui.store-help" } })
+
+--- the frequency: set when the field is confirmed or left (a number, empty: 0, none)
+G.on("qb_freq", function(event, player, el)
+	if event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	if not qbridge.set_frequency(entity, el.text == "" and 0 or tonumber(el.text)) then
+		player.create_local_flying_text{ text = { "fork-me-gui.qbridge-frequency-refused" }, create_at_cursor = true }
+	end
+	G.refresh_one(player)
+end)
+
+G.window("io-port", { open = open_io_port, refresh = M.refresh_io_port, entities = { ioport.NAME },
+	shift = function(entity, stack) return ioport.shift_in(entity, stack) end,
+	click = function(entity, slot, cursor, inv, shift)
+		if slot <= 2 then return ioport.cell_click(entity, slot, cursor, inv, shift) end
+		return ioport.cards.card_click(entity, slot - 2, cursor, inv, shift)
+	end })
+
+G.on("iop_mode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = window_entity(player)
+	if entity then ioport.set_mode(entity, el.selected_index == 2 and "fill" or "empty") G.refresh_one(player) end
+end)
+
 G.window("workbench", { open = open_workbench, refresh = M.refresh_workbench, entities = { bench.NAME },
 	shift = function(entity, stack, inv) return bench.shift_in(entity, stack, inv) end,
 	click = function(entity, slot, cursor, inv, shift)
@@ -600,10 +729,48 @@ G.on("wb_clear", function(event, player)
 	if entity then bench.clear(entity) G.refresh_one(player) end
 end)
 
+--- issue #387: the empty cell taken apart, its parts into the player's inventory
+G.on("wb_disassemble", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local ok, why = bench.disassemble(entity, player)
+	if not ok then
+		player.create_local_flying_text{ text = { "fork-me-gui.workbench-disassemble-" .. tostring(why) }, create_at_cursor = true }
+	end
+	G.refresh_one(player)
+end)
+
 G.on("wb_contents", function(event, player)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if entity then bench.from_contents(entity) G.refresh_one(player) end
+end)
+
+--- issue #354: the Group Filter Card's text field (a row of the workbench and the storage bus window): written as typed,
+--- enabled while the card is in
+function M.gfilter_row(parent, name, act)
+	local row = G.row(parent)
+	row.add{ type = "label", caption = { "fork-me-gui.gfilter" }, tooltip = { "fork-me-gui.gfilter-tooltip" } }
+	local field = row.add{ type = "textfield", name = name, text = "", tags = G.act(act), tooltip = { "fork-me-gui.gfilter-tooltip" } }
+	field.style.width = 300
+	return field
+end
+
+--- the field shows the stored text (only set when it differs: the player may be typing) and is enabled with the card
+function M.gfilter_refresh(frame, name, enabled, text)
+	local field = G.find(frame, name)
+	if not field then return end
+	text = text or ""
+	if field.text ~= text then field.text = text end
+	field.enabled = enabled == true
+end
+
+G.on("wb_gtext", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then bench.set_gtext(entity, el.text) end
+	if event.name == defines.events.on_gui_confirmed then G.refresh_one(player) end
 end)
 
 G.on("wb_keep", function(event, player, el)
@@ -688,8 +855,8 @@ local function pattern_sprite(d)
 		if key:sub(1, 6) == "fluid/" then
 			local name = N.fluid_name(key)
 			if prototypes.fluid[name] then return "fluid/" .. name end
-		elseif prototypes.item[key] then
-			return "item/" .. key
+		elseif prototypes.item[(N.parse_key(key))] then
+			return "item/" .. N.parse_key(key)                  -- (issue #352: a key with a quality)
 		end
 	end
 	return "item/" .. patterns.ENCODED
@@ -710,6 +877,7 @@ local function slot_tooltip(d)
 	local text = def and patterns.description(def) or { "fork-me-pattern.status-invalid" }
 	return { "", text, "\n\n", { d.pending and "fork-me-gui.provider-pending-tooltip" or "fork-me-gui.provider-slot-tooltip" } }
 end
+M.slot_tooltip = slot_tooltip
 
 local function build_provider_slots(box, entity)
 	local info = M.provider_data(entity)
@@ -772,12 +940,39 @@ local function provider_sig(entity)
 	return table.concat(sig, ","), table.concat(machines, ",")
 end
 
-local function open_provider(player, entity)
-	local _, content = G.open_window(player, "provider", caption_of(entity), { unit = entity.unit_number })
+--- `opts.via`: the unit number of the ME Interface Terminal the window was opened from (issue #336: its reach counts, and a
+--- Back button leads to it)
+--- Issue #335: the blocking modes in the order of the provider window's drop-down, and the index of a mode
+local BLOCKING_MODES = { "off", "blocking", "smart" }
+function M.blocking_index(mode)
+	for i, m in ipairs(BLOCKING_MODES) do if m == (mode or "off") then return i end end
+	return 1
+end
+
+local function open_provider(player, entity, opts)
+	local via = opts and opts.via
+	local _, content = G.open_window(player, "provider", autocraft.get_label(entity) or caption_of(entity),
+		{ unit = entity.unit_number, via = via })
+	G.back_button(content, via)
 	G.label(content, { "fork-me-gui.provider-help" }, WIDTH)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.provider-priority-tooltip" } }
 	G.number_field(row, autocraft.get_priority(entity), G.act("prov_priority"), 70, true).tooltip = { "fork-me-gui.provider-priority-tooltip" }
+	--- issue #335: the blocking mode (it acts on the chests next to the provider only)
+	row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.provider-blocking" }, tooltip = { "fork-me-gui.provider-blocking-tooltip" } }
+	row.add{ type = "drop-down", name = "fork_me_prov_blocking", tags = G.act("prov_blocking"),
+		tooltip = { "fork-me-gui.provider-blocking-tooltip" },
+		items = { { "fork-me-gui.provider-blocking-off" }, { "fork-me-gui.provider-blocking-blocking" }, { "fork-me-gui.provider-blocking-smart" } },
+		selected_index = M.blocking_index(autocraft.get_blocking(entity)) }
+	--- issue #346: the lock until the result is back, what a locked provider still waits for, and Unlock
+	row = G.row(content)
+	row.add{ type = "checkbox", name = "fork_me_prov_lock", state = autocraft.get_lock(entity) == "result",
+		caption = { "fork-me-gui.provider-lock" }, tooltip = { "fork-me-gui.provider-lock-tooltip" }, tags = G.act("prov_lock") }
+	row = G.row(content, "fork_me_prov_locked_row")
+	G.label(row, "", WIDTH - 90, nil, "fork_me_prov_locked")
+	row.add{ type = "button", name = "fork_me_prov_unlock", caption = { "fork-me-gui.provider-unlock" },
+		tooltip = { "fork-me-gui.provider-unlock-tooltip" }, tags = G.act("prov_unlock") }
 	--- issue #156: the card slots (only the Pattern Capacity Card fits), then the patterns: "n of m", a list that scrolls
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.provider-cards-tooltip" } }
@@ -806,6 +1001,16 @@ function M.refresh_provider(player, frame)
 	for _, name in ipairs(pinfo.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_prov_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_provider_count").caption = { "fork-me-gui.provider-count", pinfo.filled, pinfo.slot_count }
+	local dd = G.find(frame, "fork_me_prov_blocking")          -- (issue #335: set elsewhere, by a paste or another player)
+	local index = M.blocking_index(pinfo.blocking)
+	if dd and dd.selected_index ~= index then dd.selected_index = index end
+	local lock = G.find(frame, "fork_me_prov_lock")            -- (issue #346)
+	if lock and lock.state ~= (pinfo.lock == "result") then lock.state = pinfo.lock == "result" end
+	local locked_row = G.find(frame, "fork_me_prov_locked_row")
+	if locked_row then
+		locked_row.visible = pinfo.locked ~= nil
+		G.find(frame, "fork_me_prov_locked").caption = pinfo.locked and M.locked_text(pinfo.locked) or ""
+	end
 	rebuild(frame, "fork_me_provider_slots", slots_sig, function(box) build_provider_slots(box, entity) end)
 	rebuild(frame, "fork_me_provider_machines", machines_sig, function(box) build_provider_machines(box, entity) end)
 	local info = M.provider_data(entity)
@@ -838,6 +1043,40 @@ G.on("prov_slot", function(event, player, el)
 	G.refresh_one(player)
 end)
 
+--- Issue #346: what a locked provider still waits for: "Locked until these are back: 12 [item=pipe]"
+function M.locked_text(locked)
+	local keys = {}
+	for key in pairs(locked) do keys[#keys + 1] = key end
+	table.sort(keys)
+	local parts = {}
+	for _, key in ipairs(keys) do
+		local icon = key:sub(1, 6) == "fluid/" and ("[fluid=" .. key:sub(7) .. "]") or ("[item=" .. key .. "]")
+		parts[#parts + 1] = G.fmt(locked[key]) .. " " .. icon
+	end
+	return { "fork-me-gui.provider-locked", table.concat(parts, ", ") }
+end
+
+G.on("prov_lock", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then autocraft.set_lock(entity, el.state and "result" or nil) end
+	G.refresh_one(player)
+end)
+
+G.on("prov_unlock", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if entity then autocraft.unlock(entity) end
+	G.refresh_one(player)
+end)
+
+G.on("prov_blocking", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = window_entity(player)
+	if entity then autocraft.set_blocking(entity, BLOCKING_MODES[el.selected_index]) end
+	G.refresh_one(player)
+end)
+
 G.on("prov_priority", function(event, player, el)
 	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
 	local entity = window_entity(player)
@@ -860,6 +1099,13 @@ end
 --- the value labels of the facts table, by name
 local CCPU_FACTS = { "size", "storage", "coprocessors", "monitors" }
 
+--- Issue #350: the CPU modes in the order of the window's drop-down, and the index of a mode
+M.CCPU_MODES = { "all", "player", "automation" }
+function M.ccpu_mode_index(mode)
+	for i, m in ipairs(M.CCPU_MODES) do if m == (mode or "all") then return i end end
+	return 1
+end
+
 local function open_crafting_cpu(player, entity)
 	local d = M.crafting_cpu_data(entity)
 	local _, content = G.open_window(player, "crafting-cpu", M.crafting_cpu_title(d), { unit = entity.unit_number })
@@ -875,6 +1121,12 @@ local function open_crafting_cpu(player, entity)
 		v.style.horizontally_stretchable = true
 		v.style.horizontal_align = "right"
 	end
+	--- issue #350 (AE2-Unofficial's CraftingAllow): which requests the CPU takes
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.ccpu-mode" }, tooltip = { "fork-me-gui.ccpu-mode-tooltip" } }
+	row.add{ type = "drop-down", name = "fork_me_ccpu_mode", tags = G.act("ccpu_mode"), tooltip = { "fork-me-gui.ccpu-mode-tooltip" },
+		items = { { "fork-me-gui.ccpu-mode-all" }, { "fork-me-gui.ccpu-mode-player" }, { "fork-me-gui.ccpu-mode-automation" } },
+		selected_index = M.ccpu_mode_index(d and d.mode) }
 	local bar = content.add{ type = "progressbar", name = "fork_me_ccpu_bar", value = 0 }
 	bar.style.horizontally_stretchable = true
 	content.add{ type = "flow", name = "fork_me_ccpu_parts", direction = "horizontal" }
@@ -911,6 +1163,12 @@ function M.refresh_crafting_cpu(player, frame)
 	G.find(frame, "fork_me_ccpu_storage").caption = { "fork-me-gui.ccpu-storage-value", G.fmt(d.used), G.fmt(d.bytes) }
 	G.find(frame, "fork_me_ccpu_coprocessors").caption = { "fork-me-gui.ccpu-coprocessors-value", d.coprocessors, d.speed }
 	G.find(frame, "fork_me_ccpu_monitors").caption = tostring(d.monitors)
+	local mode = G.find(frame, "fork_me_ccpu_mode")
+	if mode then
+		mode.enabled = d.status == "ok"
+		local i = M.ccpu_mode_index(d.mode)
+		if mode.selected_index ~= i then mode.selected_index = i end
+	end
 	--- the blocks of the CPU by type as icons with their counts (rebuilt only when the counts change)
 	local pf = G.find(frame, "fork_me_ccpu_parts")
 	local psig = {}
@@ -945,6 +1203,13 @@ end
 
 G.window("crafting-cpu", storing({ open = open_crafting_cpu, refresh = M.refresh_crafting_cpu, entities = { "crafting" } }))
 
+G.on("ccpu_mode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = G.entity_of(player, G.window_of(player))
+	if entity then autocraft.set_cpu_mode(entity, M.CCPU_MODES[el.selected_index]) end
+	G.refresh_one(player)
+end)
+
 --------------------------------------------------------------------------------
 --- ME Level Maintainer
 --------------------------------------------------------------------------------
@@ -957,21 +1222,36 @@ function M.maintainer_data(entity)
 	return d
 end
 
---- the target button: a key (an item or a fluid), nil clears it
-function M.set_maintainer_target(entity, key)
-	return circuit.set_maintainer(entity, key or false)
+--- the target button of row `row` (issue #351; default 1): a key (an item or a fluid), nil clears it
+function M.set_maintainer_target(entity, key, row)
+	return circuit.set_maintainer(entity, key or false, nil, nil, row or 1)
 end
+
+local MAINT_ROWS = 5                    -- (issue #351: the rows of fork-me-circuit.lua's MAX_ROWS)
 
 local function open_maintainer(player, entity)
 	local d = M.maintainer_data(entity)
 	local _, content = G.open_window(player, "maintainer", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-circuit.maintainer-help" }, WIDTH)
-	local row = G.row(content)
-	row.add{ type = "label", caption = { "fork-me-circuit.maintainer-keep" } }
-	row.add{ type = "flow", name = "fork_me_maint_target" }
-	G.number_field(row, d.amount, G.act("maint_amount"), 100)
-	content.add{ type = "checkbox", state = d.circuit or false, caption = { "fork-me-circuit.maintainer-circuit" },
-		tooltip = { "fork-me-circuit.maintainer-circuit-tooltip" }, tags = G.act("maint_circuit") }
+	--- issue #351: the rows (GTNH's level maintainer: 5 slots), each a resource, the amount to keep, a batch (at most this
+	--- much per job, 0 the whole difference), the amount from the circuit, and its stock and status
+	local t = content.add{ type = "table", name = "fork_me_maint_rows", column_count = 5 }
+	for _, h in ipairs({ "row-resource", "maintainer-keep", "row-batch", "row-circuit", "row-status" }) do
+		t.add{ type = "label", caption = { "fork-me-circuit." .. h }, style = "caption_label",
+			tooltip = { "fork-me-circuit." .. h .. "-tooltip" } }
+	end
+	for i = 1, MAINT_ROWS do
+		local r = d.rows and d.rows[i] or {}
+		t.add{ type = "flow", name = "fork_me_maint_target_" .. i }
+		G.number_field(t, r.amount or 0, G.act("maint_amount", { row = i }), 90)
+		G.number_field(t, r.batch or 0, G.act("maint_batch", { row = i }), 70)
+		t.add{ type = "checkbox", state = r.circuit or false, tooltip = { "fork-me-circuit.maintainer-circuit-tooltip" },
+			tags = G.act("maint_circuit", { row = i }) }
+		t.add{ type = "label", name = "fork_me_maint_row_" .. i }
+	end
+	content.add{ type = "checkbox", name = "fork_me_maint_all", state = d.circuit_all or false,
+		caption = { "fork-me-circuit.maintainer-circuit-all" }, tooltip = { "fork-me-circuit.maintainer-circuit-all-tooltip" },
+		tags = G.act("maint_circuit_all") }
 	content.add{ type = "line" }
 	local c = d.condition
 	content.add{ type = "checkbox", state = c.enabled or false, caption = { "fork-me-gui.condition-enabled" },
@@ -994,12 +1274,30 @@ function M.refresh_maintainer(player, frame)
 	local entity = G.entity_of(player, frame)
 	if not entity then return false end
 	local d = M.maintainer_data(entity)
-	rebuild(frame, "fork_me_maint_target", d.key or "-", function(box)
-		G.key_button(box, d.key, G.act("maint_target"), { "fork-me-circuit.maintainer-target-tooltip" }).style.size = 40
-	end)
+	for i = 1, MAINT_ROWS do
+		local r = d.rows and d.rows[i] or {}
+		rebuild(frame, "fork_me_maint_target_" .. i, r.key or "-", function(box)
+			G.key_button(box, r.key, G.act("maint_target", { row = i }), { "fork-me-circuit.maintainer-target-tooltip" }).style.size = 40
+		end)
+		local rl = G.find(frame, "fork_me_maint_row_" .. i)
+		if rl then
+			rl.caption = r.key and { "", G.fmt(r.stock or 0), " / ", G.fmt(r.target or r.amount or 0), "  ", circuit.row_status(r) } or ""
+		end
+	end
 	local stock = G.find(frame, "fork_me_maint_stock")
-	local desc = d.key and autocraft.describe(d.key)
-	stock.caption = desc and { "fork-me-circuit.maintainer-stock", G.fmt(d.stock or 0), G.fmt(d.target or d.amount or 0), desc.localised_name } or ""
+	if d.circuit_all then
+		--- the rows of the signals: their resources and stock
+		local parts = { "" }
+		for i, r in ipairs(d.crows or {}) do
+			if i > 8 then parts[#parts + 1] = " ..." break end
+			local desc = autocraft.describe(r.key)
+			parts[#parts + 1] = { "", i > 1 and ", " or "", desc and desc.localised_name or r.key, " ", G.fmt(r.stock or 0), "/",
+				G.fmt(r.target or 0) }
+		end
+		stock.caption = #parts > 1 and { "fork-me-circuit.maintainer-circuit-rows", parts } or ""
+	else
+		stock.caption = ""
+	end
 	G.find(frame, "fork_me_maint_status").caption = circuit.maintainer_status(entity)
 	return true
 end
@@ -1010,33 +1308,49 @@ G.on("maint_target", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if not entity then return end
+	local row = el.tags.row or 1
 	if right_click(event) then
-		M.set_maintainer_target(entity, nil)
+		M.set_maintainer_target(entity, nil, row)
 		G.refresh_one(player)
 		return
 	end
-	key_picker(player, "maint_target", { unit = entity.unit_number }, M.maintainer_data(entity).key, false)
+	local r = (M.maintainer_data(entity).rows or {})[row] or {}
+	key_picker(player, "maint_target", { unit = entity.unit_number, row = row }, r.key, true)   -- (issue #352: with its quality)
 end)
 
---- issue #70: the target is an item or a fluid, without a quality
+--- issue #70: the target is an item or a fluid; issue #352: an item with its quality
 picker.on_confirm("maint_target", function(player, data, choice)
 	local entity = window_entity(player)
 	if not (entity and entity.unit_number == data.unit) then return end
-	local key = picker.key_of(choice, false)
-	if key then M.set_maintainer_target(entity, key) else refused_choice(player) end
+	local key = picker.key_of(choice, true)
+	if key then M.set_maintainer_target(entity, key, data.row) else refused_choice(player) end
 	G.refresh_one(player)
 end)
 
 G.on("maint_amount", function(event, player, el)
 	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
 	local entity = window_entity(player)
-	if entity then circuit.set_maintainer(entity, nil, tonumber(el.text) or 0) end
+	if entity then circuit.set_maintainer(entity, nil, tonumber(el.text) or 0, nil, el.tags.row or 1) end
+end)
+
+--- issue #351: a row's batch
+G.on("maint_batch", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then circuit.set_maintainer(entity, nil, nil, nil, el.tags.row or 1, tonumber(el.text) or 0) end
 end)
 
 G.on("maint_circuit", function(event, player, el)
 	if event.name ~= defines.events.on_gui_checked_state_changed then return end
 	local entity = window_entity(player)
-	if entity then circuit.set_maintainer(entity, nil, nil, el.state) G.refresh_one(player) end
+	if entity then circuit.set_maintainer(entity, nil, nil, el.state, el.tags.row or 1) G.refresh_one(player) end
+end)
+
+--- issue #351: craft what the circuit asks
+G.on("maint_circuit_all", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then circuit.set_circuit_all(entity, el.state) G.refresh_one(player) end
 end)
 
 G.on("maint_cond_on", function(event, player, el)
@@ -1176,8 +1490,10 @@ function M.mix_status(status, fmix)
 	return { "", status, "\n", { "fork-me-gui.fluid-mixed", "[fluid=" .. fmix[1] .. "]", tostring(fmix[2]) } }
 end
 
-local function open_interface(player, entity)
-	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number })
+local function open_interface(player, entity, opts)
+	local via = opts and opts.via                   -- (issue #336: opened from an ME Interface Terminal)
+	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number, via = via })
+	G.back_button(content, via)
 	G.label(content, { "fork-me-gui.interface-help" }, WIDTH)
 	local row = G.row(content)                        -- issue #17: the interface's priority
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.interface-priority-tooltip" } }
@@ -1445,6 +1761,7 @@ local function open_bus(player, entity)
 	local row = G.row(content)                       -- issue #110: the Acceleration Card slots
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.bus-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_bus_cards", direction = "horizontal" }
+	M.gfilter_row(content, "fork_me_bus_gtext", "bus_gtext")    -- issue #363: the Group Filter Card's text
 	G.label(content, "", WIDTH, nil, "fork_me_bus_want")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_speed")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_target")
@@ -1475,6 +1792,7 @@ function M.refresh_bus(player, frame)
 	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_bus_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_bus_speed").caption = d.items and { "fork-me-gui.bus-speed", d.accel, G.fmt(d.rate) } or ""
+	M.gfilter_refresh(frame, "fork_me_bus_gtext", d.gfilter, d.gtext)
 	local target = d.target and prototypes.entity[d.target]
 	local what = d.items and d.fluids and "both" or d.fluids and "fluids" or "items"
 	G.find(frame, "fork_me_bus_target").caption = target
@@ -1560,6 +1878,7 @@ local function open_storage_bus(player, entity)
 	row.add{ type = "drop-down", name = "fork_me_sbus_filtermode", items = {}, tags = G.act("sbus_filtermode"),
 		tooltip = { "fork-me-gui.storage-bus-filtermode-tooltip" } }
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_fuzzy")
+	M.gfilter_row(content, "fork_me_sbus_gtext", "sbus_gtext")
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.priority" }, tooltip = { "fork-me-gui.storage-bus-priority-tooltip" } }
 	G.number_field(row, d.priority, G.act("sbus_priority"), 70, true).tooltip = { "fork-me-gui.storage-bus-priority-tooltip" }
@@ -1612,6 +1931,7 @@ function M.refresh_storage_bus(player, frame)
 	end
 	fm.selected_index = (carded or d.blacklist) and 2 or 1
 	fm.enabled = not carded
+	M.gfilter_refresh(frame, "fork_me_sbus_gtext", d.gfilter, d.gtext)
 	G.find(frame, "fork_me_sbus_fuzzy").caption = d.side == "fluid" and ""
 		or { d.fuzzy and "fork-me-gui.storage-bus-fuzzy-on" or "fork-me-gui.storage-bus-fuzzy-off" }
 	G.find(frame, "fork_me_sbus_filters_caption").caption = { "fork-me-gui.storage-bus-filters" .. ((d.inverted or d.blacklist) and "-blacklist" or ""),
@@ -1676,6 +1996,20 @@ picker.on_confirm("sbus_filter", function(player, data, choice)
 	G.refresh_one(player)
 end)
 
+G.on("bus_gtext", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then io.set_bus_gtext(entity, el.text) end
+	if event.name == defines.events.on_gui_confirmed then G.refresh_one(player) end
+end)
+
+G.on("sbus_gtext", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then sbus.set_settings(entity, { gtext = el.text }) end
+	if event.name == defines.events.on_gui_confirmed then G.refresh_one(player) end
+end)
+
 G.on("sbus_extract", function(event, player, el)
 	if event.name ~= defines.events.on_gui_checked_state_changed then return end
 	local entity = window_entity(player)
@@ -1706,7 +2040,7 @@ local stand_in_frames = {}      -- name -> a table standing for a window's frame
 local function stand_in_element(def)
 	local el = { type = def.type, name = def.name, caption = def.caption, sprite = def.sprite, number = def.number,
 		tooltip = def.tooltip, elem_tooltip = def.elem_tooltip, value = def.value, tags = def.tags or {}, style = {},
-		children = {} }
+		style_name = def.style, text = def.text, children = {} }
 	el.add = function(d)
 		local c = stand_in_element(d)
 		el.children[#el.children + 1] = c
@@ -1715,6 +2049,7 @@ local function stand_in_element(def)
 	el.clear = function() el.children = {} end
 	return el
 end
+M.stand_in_element = stand_in_element                 -- (issue #336: the ME Interface Terminal's page in its test)
 remote.add_interface("gregtorio-me-gui", {
 	fmt = function(n) return G.fmt(n) end,
 	--- issue #150 (tests): the hand-over buffer of a relative window: its stacks into the block of window `name` (what it
@@ -1739,6 +2074,10 @@ remote.add_interface("gregtorio-me-gui", {
 	controller_data = function(entity) return M.controller_data(entity) end,
 	controller_power_text = function(entity) return M.power_text(M.controller_data(entity)) end,    -- (issue #149)
 	provider_data = function(entity) return M.provider_data(entity) end,
+	--- issue #335: the provider window's drop-down index of a blocking mode
+	blocking_index = function(mode) return M.blocking_index(mode) end,
+	--- issue #346: the line of a locked provider in its window
+	locked_text = function(locked) return M.locked_text(locked) end,
 	crafting_cpu_data = function(entity) return M.crafting_cpu_data(entity) end,
 	crafting_cpu_title = function(entity) return M.crafting_cpu_title(M.crafting_cpu_data(entity)) end,    -- (issue #151)
 	maintainer_data = function(entity) return M.maintainer_data(entity) end,
@@ -1767,6 +2106,16 @@ remote.add_interface("gregtorio-me-gui", {
 	workbench_qualities = function() return picker.qualities() end,
 	--- issue #291: how many quality buttons the picker puts in a row (`n` qualities, with or without the temperature field)
 	picker_quality_columns = function(n, temperature) return picker.quality_columns(n, temperature) end,
+	--- issue #380: the picker's quality row built into a stand-in of its frame for `n` qualities (the game's, then made-up
+	--- names: the harness cannot add quality prototypes), then a click on `chosen` (picker.quality_view)
+	picker_quality_view = function(n, temperature, chosen)
+		local names = picker.qualities()
+		for i = #names + 1, n do names[i] = "zz-devcheck-quality-" .. i end
+		while #names > n do names[#names] = nil end
+		local frame = stand_in_element{ type = "frame", tags = { quality = "normal", kind = "item" } }
+		local bottom = frame.add{ type = "flow", name = "bottom" }
+		return picker.quality_view(frame, bottom, names, temperature, chosen)
+	end,
 	key_of_elem = function(elem_type, value) return key_of_elem(elem_type, value) end,
 	--- issue #70: the key of the picker's choice (`with_quality`: an item keeps its quality), a row from a choice
 	key_of_choice = function(choice, with_quality) return picker.key_of(choice, with_quality) end,

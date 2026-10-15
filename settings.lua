@@ -14,6 +14,8 @@ data:extend({
 	int("me-network-io-visits-per-tick-max", "a2", 32, 1, 1000),
 	int("me-network-storage-bus-visits-per-tick", "b1", 8, 1, 1000),
 	int("me-network-storage-bus-visits-per-tick-max", "b2", 24, 1, 1000),
+	int("me-network-io-port-visits-per-tick", "b3", 2, 1, 1000),         -- issue #386: the ME IO Port
+	int("me-network-io-port-visits-per-tick-max", "b4", 8, 1, 1000),
 	int("me-network-maintainer-checks-per-tick", "c1", 4, 1, 1000),
 	int("me-network-maintainer-checks-per-tick-max", "c2", 12, 1, 1000),
 	int("me-network-circuit-updates-per-second", "d", 10, 1, 6000),

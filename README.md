@@ -15,7 +15,7 @@ and puts it on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lu
 numbers in the code and in `docs/` before 0.1.0 are Gregtorio's.
 
 The player guide is `docs/AE2.md`, the design record `docs/ME-REWORK.md`, the data-stage API for other mods
-`docs/API.md`, the measured cost at megabase size `docs/PERFORMANCE.md`. The licenses of every part: `docs/LICENSES.md`. The design note of the wireless terminal (issue #153, not built yet) is `docs/ME-WIRELESS.md`.
+`docs/API.md`, the measured cost at megabase size `docs/PERFORMANCE.md`. The licenses of every part: `docs/LICENSES.md`. The design note of the wireless terminal (issue #153, built by issues #205 to #211) is `docs/ME-WIRELESS.md`.
 
 **Old saves:** since 0.5.1 a save is converted only from ME Network 0.5.0 on (issue #146). A save of an older version
 (ME Network 0.1.0 to 0.3.x, or Gregtorio Continued 0.4.x and older) is refused with a message when it loads; load it
@@ -31,8 +31,8 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second mo
 |---|---|
 | `data.lua` | refuses to load next to Gregtorio Continued before 0.5.0 (which contains this network itself), then loads the prototypes |
 | `prototypes/api.lua` | the data-stage API `ME_NETWORK` (`docs/API.md`): items, recipes and technologies of this mod, replacing and removing recipes, setting technologies, the molecular assembler |
-| `prototypes/network.lua` | cable and underground cable, controller, drive, storage components and cells (items with tags), housing, ME chest (issue #229: one cell, its own terminal and power), interface, import, export and storage bus, terminal, the hidden old drive items, mod-data `fork-me-network`, technologies `me-network`, `me-storage-64k`, `me-storage-256k` |
-| `prototypes/autocrafting.lua` | pattern provider, pattern terminal, blank and encoded pattern, molecular assembler, the crafting blocks of the multiblock crafting CPUs (issue #6), level maintainer, circuit interface, mod-data `fork-me-autocraft`, technologies `me-autocrafting`, `me-automation`, `me-co-processing`, `me-quantum-crafting` |
+| `prototypes/network.lua` | cable and underground cable, controller, drive, storage components and cells (items with tags), housing, ME chest (issue #229: one cell, its own terminal and power), ME IO Port (issue #386), ME Quantum Bridge (issue #385: an electric energy interface of its own, technology `me-quantum-bridge`), ME Wireless Link (issue #384, technology `me-wireless-link`), interface, import, export and storage bus, terminal, the hidden old drive items, mod-data `fork-me-network`, technologies `me-network`, `me-storage-64k`, `me-storage-256k` |
+| `prototypes/autocrafting.lua` | pattern provider, pattern terminal, interface terminal (issue #336), blank and encoded pattern, molecular assembler, the crafting blocks of the multiblock crafting CPUs (issue #6), level maintainer, circuit interface, toggle buses and level emitter (issue #355), mod-data `fork-me-autocraft`, technologies `me-autocrafting`, `me-automation`, `me-co-processing`, `me-quantum-crafting` |
 | `prototypes/fluids.lua` | fluid cells, the ME Interface's fluid sides, the hidden old fluid drive items, mod-data `fork-me-fluids`, technologies `me-fluid-storage`, `me-fluid-storage-256k` |
 | `data-final-fixes.lua` | removes the recipes (also another mod's) that make an item this mod no longer makes (`ME_NETWORK.removed`); unlocks a crafting block recipe that no technology unlocks any more (issue #6); lets every crafting machine paste its settings onto the ME Interface, the import, export and storage bus (`additional_pastable_entities`) |
 | `settings.lua` | the map settings: the scheduler's budgets, the bus speed and the idle limits (issue #5, `docs/PERFORMANCE.md`) |
@@ -42,16 +42,25 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second mo
 | `scripts/fork-me-stats.lua` | the command `/me-stats`: members, block states, the scheduler's counters of the last minute (issue #38, part 3) |
 | `scripts/fork-me-io.lua` | ME Interface (items, and fluids through its four sides) and import/export buses (items and fluids), their scheduled visits; `gregtorio-me-io` |
 | `scripts/fork-me-targets.lua` | what a bus works with: the entity types and inventories of the import, export and storage bus, the tile in front, fluid boxes |
+| `prototypes/cards.lua` | the upgrade cards (issue #17) and where they go (mod-data `fork-me-network` `cards`: the card slots and limits of each block, `N.card_rules()`), the ME Cell Workbench, technology `me-upgrade-cards` |
+| `scripts/fork-me-workbench.lua` | the ME Cell Workbench (issue #17, part 3): one storage cell, its partition and its card slots in a script inventory, the copy mode; no network member; `gregtorio-me-workbench` |
 | `scripts/fork-me-cardslots.lua` | the card slots of a block (a script inventory the window shows, the clicks, blueprints, mining): the storage bus's and, since issue #110, the import and export bus's |
 | `scripts/fork-me-storagebus.lua`, `scripts/fork-me-fluid-storagebus.lua` | the storage bus: its item side (a chest, logistic chest or cargo wagon) and its fluid side (a tank's fluid segment) as network storage; `gregtorio-me-storagebus`, `gregtorio-me-fluid-storagebus` (the old remote, on the storage bus) |
+| `scripts/fork-me-qbridge.lua` | the ME Quantum Bridge (issue #385) and the ME Wireless Link (issue #384: same surface, a range, a drain growing with the distance): frequencies, the pairs and their power (checked in the network's slow step); a link is a graph edge of `scripts/fork-me-network.lua` (`set_qlink`, `storage.fork_me_net.qlink`) between two members on any surface; `gregtorio-me-qbridge` |
+| `scripts/fork-me-ioport.lua` | the ME IO Port (issue #386): a cell emptied into the network or filled from it, its cell and card slots, its queue and budget in the scheduler; `gregtorio-me-ioport` |
+| `scripts/fork-me-pasteover.lua` | a blueprint or copy pasted over ME blocks that stand there already: they take the settings of its tags before the paste (`on_pre_build`, issue #383); `gregtorio-me-pasteover` |
 | `scripts/fork-me-recipe-paste.lua` | a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12); `gregtorio-me-recipe-paste` |
 | `scripts/fork-me-terminal.lua`, `fork-me-gui.lua`, `fork-me-windows.lua` | the terminal (hub window), the shared GUI and the windows of every block; `gregtorio-me-terminal`, `gregtorio-me-gui` |
 | `scripts/fork-me-patternterm.lua` | the ME Pattern Terminal (issue #130): the pattern editor window and the block's blank and output slots; `gregtorio-me-pattern-terminal` |
+| `scripts/fork-me-monitor.lua` | the ME Storage, Conversion and Throughput Monitor (issue #353): the resource and amount drawn on their face (a queue with a budget in the autocrafting step), their window, the conversion monitor's store and take, the throughput rate |
+| `scripts/fork-me-ifaceterm.lua` | the ME Interface Terminal (issue #336): the window that lists the network's pattern providers and ME Interfaces (search, machine filter, pages; patterns in and out, rename, locate, open a block's window through it); `gregtorio-me-interface-terminal` |
 | `prototypes/wireless.lua`, `scripts/fork-me-wireless.lua` | the wireless terminal (issues #153, #205 to #211): ME Wireless Access Point and Wireless Boosters, the Wireless ME Terminal item and its hotkey, the ME Charger, the equipment module; the wireless window is the terminal's (or the pattern terminal's) with the access point as its entity; mod-data `fork-me-network` `wireless`, technology `me-wireless`; `gregtorio-me-wireless` |
 | `scripts/fork-me-picker.lua` | the mod's own item and fluid picker (groups, search, qualities, green check; issue #94), used by the ME Cell Workbench |
 | `scripts/fork-me-names.lua` | the names of items and fluids in each player's language (requested from the client a few per tick), so the search of the picker and the terminal finds an item by the name it shows (issue #295) |
 | `scripts/fork-me-autocraft.lua`, `fork-me-patterns.lua` | providers with encoded patterns, planner (with the bytes of a job), jobs, the multiblock CPUs (groups of crafting blocks kept up to date on build and removal), the pattern items; `gregtorio-me-autocraft` |
 | `scripts/fork-me-circuit.lua` | level maintainer and circuit interface; `gregtorio-me-circuit` |
+| `scripts/fork-me-toggle.lua` | ME Toggle Bus and ME Inverted Toggle Bus: the checks of their condition (issue #355); `gregtorio-me-toggle` |
+| `scripts/fork-me-emitter.lua` | ME Level Emitter, its window (issue #355); `gregtorio-me-emitter` |
 | `scripts/fork-me-fluids.lua` | the fluid calls of the other modules; `gregtorio-me-fluids` |
 | `scripts/fork-me-handover.lua` | takes the ME state of a Gregtorio Continued save once (Gregtorio issue #83) |
 | `graphics/` | sprites, icons and technology icons (`tools/gen_ae2_sprites.py`), GPLv3/LGPL-3.0 |
@@ -61,7 +70,7 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second mo
 | `tools/build.py` | builds `dist/me-network_<version>.zip` (without `ae2-textures/`) and `dist/me-network-ae2-textures_<version>.zip` (`ae2-textures/` alone) and fails when a zip breaks the license split (`--portal` for the mod portal, `--install` into the mods folder) |
 | `tools/release_textures.py`, `tools/portal_upload.sh` | the release workflow's texture mod version check (is `ae2-textures/` new since the last release tag, and its version unused; a texture-only release under the tag `me-network-ae2-textures-vX.Y.Z`, issue #245) and its mod portal upload of each zip to its own page (issue #243) |
 | `.discord/server.yml` | this mod's category on the Discord server (channels, forum tags), applied by `.github/workflows/discord.yml` with the tool of https://github.com/Rykon00/gregtorio-me-network_discord-bot; a pull request that only changes `.discord/` is merged and applied automatically |
-| `tools/dev_link.py` | links the repository into the Factorio mods folder, and `ae2-textures/` as `me-network-ae2-textures_<version>` (`--no-textures` leaves it out) |
+| `tools/dev_link.py` | links the repository into the Factorio mods folder, and `ae2-textures/` as `me-network-ae2-textures`, both without a version in the link name so a version bump keeps them valid (issue #328; an old `me-network-ae2-textures_<version>` link is replaced; `--no-textures` leaves it out) |
 | `tools/check_syntax.py` | Lua syntax check (`--loaded`: only the files the mod loads) |
 | `tools/gen_ae2_sprites.py` | the sprites and icons (GT5-Unofficial casings, screens, circuit boards, memory chips and GUI signs + Pillow) |
 | `tools/upstream_icons.py`, `tools/upstream-icon-hashes.tsv` | the hashes of the 17 icons taken over from Gregtorio 0.1.9 until 0.5.2 and the guard that `devcheck check` runs: no file under `graphics/` and not `thumbnail.png` may have one (issue #238) |

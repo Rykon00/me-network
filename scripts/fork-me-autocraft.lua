@@ -68,7 +68,7 @@ local MAX_DEPTH = 40
 local MAX_AMOUNT = 100000       -- items per job
 local MAX_FLUID_AMOUNT = 10000000 -- fluid units per job
 M.MAX_AMOUNT, M.MAX_FLUID_AMOUNT = MAX_AMOUNT, MAX_FLUID_AMOUNT
-local QUALITY = "normal"        -- only normal quality items are planned and crafted
+--- (issue #352: every quality is planned and crafted; an item key carries its quality, "name@rare", normal the plain name)
 local FLUID_MARGIN = 0.01       -- extra fluid reserved per job and fluid (fixed point rounding)
 local FLUID_EPS = 1e-6
 local FIXED = 16777216          -- fluid amounts are fixed point with 24 fractional bits
@@ -114,7 +114,8 @@ local function cpu_names()
 end
 
 --------------------------------------------------------------------------------
---- resource keys: item name, or the storage key of a fluid ("fluid/<name>", "fluid/<name>@<degrees>": issue #159)
+--- resource keys: item name ("name@quality" for another quality than normal: issue #352), or the storage key of a fluid
+--- ("fluid/<name>", "fluid/<name>@<degrees>": issue #159)
 --------------------------------------------------------------------------------
 
 local FLUID_PREFIX = "fluid/"
@@ -132,7 +133,7 @@ local function key_of(ing)
 		end
 		return N.fluid_key(ing.name, t)
 	end
-	return ing.name
+	return N.key_of(ing.name, ing.quality or "normal")   -- (issue #352: a pattern's items carry its quality)
 end
 
 --- Issue #159: may a fluid ingredient take other temperatures than its key's? true and the range (nil: open) for a fluid
@@ -169,7 +170,8 @@ end
 --- the prototype behind a key (LuaItemPrototype or LuaFluidPrototype), nil if none
 local function proto_of(key)
 	if is_fluid(key) then return prototypes.fluid[fluid_name(key)] end
-	return prototypes.item[key]
+	local name, q = N.parse_key(key)
+	return prototypes.quality[q] and prototypes.item[name] or nil
 end
 
 M.key_of, M.is_fluid, M.fluid_name = key_of, is_fluid, fluid_name
@@ -655,7 +657,7 @@ local function target_for(v, def)
 	if facts.switch and etype == "assembling-machine" then
 		local why = switch_problem(v, def, facts, true)
 		if why then return nil, why end
-		return { entity = v.entity, unit = v.unit, mode = "push", recipe = def.recipe }
+		return { entity = v.entity, unit = v.unit, mode = "push", recipe = def.recipe, quality = def.quality }
 	end
 	if def.kind == "crafting" then
 		if etype == "furnace" then return nil, "furnace" end
@@ -720,6 +722,9 @@ local function new_provider(entity)
 		status = {},         -- [slot] = { ok, reason, machines } (scan)
 		net = nil,           -- network id of the last scan
 		scanned_priority = nil }   -- priority of the last scan (before issue #50: `sig`, a signature string of the scan)
+		--- (issue #336, set later: `label`, the name given in the ME Interface Terminal; `near`, the entity names around it at the
+		--- last scan with a network; issue #335: `blocking` ("blocking", "smart" or nil) and `last_pid`, the pattern it pushed
+		--- last into a chest while in smart blocking; issue #346: `lock` ("result" or nil) and `locked`, what it waits for)
 end
 
 --- blueprint patterns waiting for a blank pattern: encoded from the network's blanks (never out of nothing)
@@ -767,6 +772,103 @@ local function same_scan(old, id, why, targets)
 	return true
 end
 
+--- The functions of later issues live in this one table: the main chunk is at Lua's limit of 200 locals (add new helpers here).
+local EXT = {}
+
+--- Issue #336: the entity names of the machines and chests next to a provider (`around`: their views), kept in its record for the
+--- ME Interface Terminal's filter by machine; written only when they changed (a provider is rescanned every few seconds), so a
+--- rescan that finds the same neighbours makes no table
+function EXT.note_near(p, around)
+	local near = p.near
+	local same = near ~= nil and #near == #around
+	if same then
+		for i, v in ipairs(around) do
+			if near[i] ~= v.entity.name then same = false break end
+		end
+	end
+	if same then return end
+	near = {}
+	for i, v in ipairs(around) do near[i] = v.entity.name end
+	p.near = near
+end
+
+--- Issue #335: the blocking mode of a provider (AE2-Unofficial's Blocking and Smart Blocking, read in
+--- src/main/java/appeng/helpers/DualityInterface.java and written anew: no code of it is ported). It acts on the chests next to
+--- the provider only: a machine gets work only when it is idle and leased by no job, which blocks it already.
+---   "blocking": nothing is pushed into a chest while it holds any item (AE2: the target's `containsItems()`);
+---   "smart": the same, but the pattern this provider pushed last may push again into a chest that is not empty (AE2:
+---   `lastInputHash`, one per provider: `p.last_pid`);
+---   nil: off (a chest is filled as long as it has room).
+--- The check runs in the job step's hand-over (find_pusher), the visit that pushes anyway: no task of its own. The chest's
+--- target entry names its provider (`prov`, set by the scan); a chest next to two providers with one pattern is listed once,
+--- under the first of them in the pattern order (priority), and follows that provider's mode.
+EXT.BLOCKING = { blocking = true, smart = true }
+
+--- Issue #346: the lock "until the result is back" (AE2-Unofficial's LockCraftingMode.LOCK_UNTIL_RESULT, read in
+--- DualityInterface.java and written anew). After a hand-over into one of its chests a provider with `p.lock = "result"`
+--- pushes nothing more into its chests until the main product of what it handed over (the pattern's first output row
+--- times the runs; AE2: "the primary pattern result") has come into the provider's network, from anywhere: every item or
+--- fluid the network's insert functions offer to `N.on_arrival`, whether a job takes it or it is stored (AE2: a storage
+--- interceptor of the network). Machines are not locked: a machine gets work only when it is idle and its products are
+--- collected. State: `p.locked` = { [key] = amount still to come } while locked (fluids by name, any temperature),
+--- `s.locked` = { [unit] = true } of the locked providers, nil when none, so an arrival costs one nil check then.
+function EXT.lock_key(key)
+	if key:sub(1, #FLUID_PREFIX) == FLUID_PREFIX then return FLUID_PREFIX .. N.fluid_name(key) end
+	return key
+end
+
+function EXT.unlock(s, p)
+	if not p then return end
+	p.locked = nil
+	if s.locked then
+		s.locked[p.unit] = nil
+		if next(s.locked) == nil then s.locked = nil end
+	end
+end
+
+--- `count` of `key` came into network `net`: the locks waiting for it count it
+function EXT.arrived(s, net, key, count)
+	local k = EXT.lock_key(key)
+	for unit in pairs(s.locked) do
+		local p = s.providers[unit]
+		if not (p and p.locked) then
+			s.locked[unit] = nil
+		elseif p.locked[k] and N.network_of_unit(unit) == net then
+			local left = p.locked[k] - count
+			if left <= FLUID_EPS then p.locked[k] = nil else p.locked[k] = left end
+			if next(p.locked) == nil then p.locked = nil s.locked[unit] = nil end
+		end
+	end
+	if next(s.locked) == nil then s.locked = nil end
+end
+
+--- may pattern `pid` be pushed into the chest of target entry `t` now? true, or false and why ("locked", "blocking")
+function EXT.chest_open(s, t, pid)
+	local p = t.prov and s.providers[t.prov]
+	if not p then return true end
+	if p.locked then return false, "locked" end
+	local mode = p.blocking
+	if not mode then return true end
+	if mode == "smart" and p.last_pid == pid then return true end
+	local inv = input_inventory(t.entity)
+	if inv ~= nil and N.bound(inv).is_empty() then return true end
+	return false, "blocking"
+end
+
+--- `runs` of pattern `pid` (`def`) were pushed into the chest of target entry `t`: smart blocking remembers the pattern, the
+--- lock waits for its main product
+function EXT.pushed(s, t, pid, def, runs)
+	local p = t.prov and s.providers[t.prov]
+	if not p then return end
+	if p.blocking == "smart" then p.last_pid = pid end
+	local out = p.lock == "result" and def.outputs and def.outputs[1]
+	if out and out.key and (out.amount or 0) > 0 then
+		p.locked = { [EXT.lock_key(out.key)] = out.amount * runs }
+		s.locked = s.locked or {}
+		s.locked[p.unit] = true
+	end
+end
+
 --- Scan a provider: the pattern in each slot, the machines next to it that can do it. The network's patterns are made
 --- again (dirty) when the scan found something else than the last one: the network, the priority, a slot's pattern, its
 --- reason or its machines. Issue #50, lever 6: compared with the last scan's records instead of a signature string
@@ -782,6 +884,7 @@ local function scan_provider(p)
 	local around = {}
 	if net then
 		for i, m in ipairs(neighbors_of(e)) do around[i] = machine_view(m) end
+		EXT.note_near(p, around)
 	end
 	for slot = 1, slots_of(p) do
 		local raw = p.slots[slot]
@@ -803,6 +906,7 @@ local function scan_provider(p)
 				local targets, reason = {}, nil
 				for _, v in ipairs(around) do
 					local t, r = target_for(v, def)
+					if t and t.mode == "chest" then t.prov = p.unit end          -- (issue #335: its blocking mode)
 					if t then targets[#targets + 1] = t else reason = reason or r end
 				end
 				patterns[slot] = { id = id, def = def, targets = targets, why = reason }
@@ -848,6 +952,7 @@ end
 local function drop_provider(s, unit)
 	local p = s.providers[unit]
 	if p and not (p.entity and p.entity.valid) then vanish_provider(s, p) end
+	if p then EXT.unlock(s, p) end                   -- (issue #346)
 	s.providers[unit] = nil
 	remove_value(s.plist, unit)
 	s.dirty = true
@@ -972,12 +1077,12 @@ local function plain_item(name)
 end
 
 --- What the plan finds of `key` in storage (issue #50: read when the plan first asks, not the whole stock per plan): the
---- plain items (not with data, no quality) and the fluids of a usable network, as stock_of of 0.3.0 had them.
+--- plain items (not with data; issue #352: in every quality) and the fluids of a usable network, as stock_of of 0.3.0 had them.
 local storable = {}                               -- key -> true when the plan may take it from storage (per load)
 local function base_count(net, key)
 	local ok = storable[key]
 	if ok == nil then
-		ok = is_fluid(key) or (not key:find("[@#]") and plain_item(key))
+		ok = is_fluid(key) or (not key:find("#", 1, true) and plain_item((N.parse_key(key))))
 		storable[key] = ok
 	end
 	return ok and net.items[key] or 0
@@ -1554,6 +1659,7 @@ local function remove_block(s, unit)
 		g.blocks = sizes[1].p                              -- the largest part keeps the group (and its job, if it fits)
 		for i = 2, #sizes do
 			local part = new_group(s, g.surface)
+			part.mode = g.mode                              -- (issue #350: the parts keep the CPU's mode)
 			part.blocks = sizes[i].p
 			for u in pairs(part.blocks) do s.cblocks[u].group = part.id end
 			recount_group(s, part)
@@ -1606,27 +1712,46 @@ end
 --- The CPU a job of `bytes` gets now in `net`: a free multiblock CPU that is big enough (issue #145: the legacy CPUs are
 --- gone). Returns the group (and its kind), or nil and why: "no-cpu" (none at all), "cpu-too-small" (no CPU of the
 --- network is big enough; also the biggest one's bytes), "no-free-cpu".
-local function pick_cpu(s, net, bytes)
-	local biggest, any = 0, false
+--- Issue #350: `owner` (a level maintainer's unit, nil for a player) must be allowed by the CPU's mode (M.cpu_allows);
+--- `want` is the id of the CPU the player chose in the terminal (nil: the first that fits); "cpu-not-allowed": the CPUs
+--- that are free and big enough take only the other kind of requests, "cpu-gone": the chosen CPU is no CPU any more.
+local function pick_cpu(s, net, bytes, owner, want)
+	local biggest, any, barred = 0, false, false
 	for _, g in ipairs(groups_in(s, net)) do
-		any = true
-		if g.bytes > biggest then biggest = g.bytes end
-		if g.bytes >= bytes and not g.job and group_network(g) then return g, "group" end
+		if not want or g.id == want then
+			any = true
+			if g.bytes > biggest then biggest = g.bytes end
+			if g.bytes >= bytes and not g.job and group_network(g) then
+				if M.cpu_allows(g, owner) then return g, "group" end
+				barred = true
+			end
+		end
 	end
-	if not any then return nil, "no-cpu" end
+	if not any then return nil, want and "cpu-gone" or "no-cpu" end
 	if biggest < bytes then return nil, "cpu-too-small", biggest end
+	if barred then return nil, "cpu-not-allowed", biggest end
 	return nil, "no-free-cpu", biggest
 end
 
+--- Issue #350, AE2-Unofficial's CraftingAllow (appeng/api/config/CraftingAllow.java; CraftingGridCache.java:654-707):
+--- a CPU's mode, nil (every request), "player" (only players' requests) or "automation" (only those of level maintainers
+--- and the circuit interface: a job with an owner). A setting of the whole CPU, kept in its group (storage).
+function M.cpu_allows(g, owner)
+	if g.mode == "player" then return owner == nil end
+	if g.mode == "automation" then return owner ~= nil end
+	return true
+end
+
 --- The CPUs of a network for the plan preview (issue #6), in the order a job takes them: { kind = "group", id, bytes,
---- coprocessors, speed, width, height, free, fits } (`bytes`: the job's; fits = big enough, free = can take a job now)
-function M.cpu_list(net, bytes)
+--- coprocessors, speed, width, height, free, fits, mode, allowed } (`bytes`: the job's; fits = big enough, free = can take
+--- a job now, allowed = its mode takes a request of `owner`, issue #350; nil: a player's)
+function M.cpu_list(net, bytes, owner)
 	local s = state()
 	local out = {}
 	for _, g in ipairs(groups_in(s, net)) do
 		out[#out + 1] = { kind = "group", id = g.id, bytes = g.bytes, coprocessors = g.coprocessors, speed = group_speed(g),
 			width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1, free = not g.job and group_network(g) ~= nil,
-			fits = g.bytes >= (bytes or 0) }
+			fits = g.bytes >= (bytes or 0), mode = g.mode, allowed = M.cpu_allows(g, owner) }
 	end
 	return out
 end
@@ -1642,7 +1767,8 @@ end
 --------------------------------------------------------------------------------
 
 --- the working network of a job: that of its CPU, else of the entity it was started at, else of the ME member at
---- its position (jobs of older saves)
+--- its position (jobs of older saves), else of the nearest ME member within 2 tiles of it (issue #332: the position of a
+--- removed legacy CPU, whose job's entity a conversion of issue #68 replaced; the cables to the CPU are next to it)
 local function job_network(job)
 	local s = state()
 	local g = job.group and s.groups and s.groups[job.group]
@@ -1655,6 +1781,17 @@ local function job_network(job)
 			job.anchor = e
 			return N.active_of(e)
 		end
+	end
+	local best, best_d
+	for _, e in pairs(surface.find_entities_filtered{ position = job.pos, radius = 2, name = N.node_names() }) do
+		if N.network_of(e) then
+			local dx, dy = e.position.x - job.pos.x, e.position.y - job.pos.y
+			if not best or dx * dx + dy * dy < best_d then best, best_d = e, dx * dx + dy * dy end
+		end
+	end
+	if best then
+		job.anchor = best
+		return N.active_of(best)
 	end
 	return nil
 end
@@ -1752,8 +1889,8 @@ end
 
 --- what the pool holds for an ingredient (a fluid without a temperature: every temperature in its range)
 local function ing_pool(job, ing)
-	if ing.type ~= "fluid" then return job.pool[ing.name] or 0 end
 	local key = key_of(ing)
+	if ing.type ~= "fluid" then return job.pool[key] or 0 end
 	local total = job.pool[key] or 0
 	local flex, lo, hi = ing_flex(ing)
 	if flex then
@@ -1772,7 +1909,8 @@ local function flush_pool(job, net)
 			if is_fluid(key) then
 				inserted = store_fluid(net, key, count)
 			else
-				inserted = store_item(net, key, QUALITY, count)
+				local name, q = N.parse_key(key)
+				inserted = store_item(net, name, q, count)
 			end
 		end
 		if inserted >= count - FLUID_EPS then job.pool[key] = nil else job.pool[key] = count - inserted end
@@ -1791,16 +1929,7 @@ local function collect_output(job, net, machine, map, step)
 	if out then
 		for _, c in pairs(N.bound(out).get_contents()) do
 			local removed = out.remove{ name = c.name, count = c.count, quality = c.quality }
-			if removed > 0 then
-				if (c.quality or QUALITY) == QUALITY then
-					got(c.name, removed)
-				else
-					local inserted = net and store_item(net, c.name, c.quality, removed) or 0
-					if inserted < removed then      -- no room: put it back, the machine keeps it
-						out.insert{ name = c.name, count = removed - inserted, quality = c.quality }
-					end
-				end
-			end
+			if removed > 0 then got(N.key_of(c.name, c.quality), removed) end   -- (issue #352: every quality is a key)
 		end
 	end
 	if map and #map.outputs > 0 then
@@ -1823,12 +1952,13 @@ local function take_back_input(job, machine, ingredients, map)
 	local inp = input_inventory(machine)
 	if inp then
 		for _, ing in pairs(ingredients) do
-			if ing.type == "item" and not back[ing.name] then
-				QI.name, QI.quality, QI.count = ing.name, QUALITY, nil
+			local key = ing.type == "item" and key_of(ing)
+			if key and not back[key] then
+				QI.name, QI.quality, QI.count = ing.name, ing.quality or "normal", nil
 				local held = N.bound(inp).get_item_count(QI)
 				QI.count = held
 				local removed = held > 0 and N.bound(inp).remove(QI) or 0
-				if removed > 0 then pool_add(job, ing.name, removed) back[ing.name] = removed end
+				if removed > 0 then pool_add(job, key, removed) back[key] = removed end
 			end
 		end
 	end
@@ -1920,7 +2050,7 @@ local function assign_cpus(s)
 				local bytes = job_bytes(job)
 				local given = false
 				for _, g in ipairs(groups_in(s, net)) do
-					if not g.job and g.bytes >= bytes then
+					if not g.job and g.bytes >= bytes and M.cpu_allows(g, job.owner) then
 						give_group(g, job)
 						given = true
 						break
@@ -1949,7 +2079,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 			if g.fluid then
 				machine.fluidbox[g.index] = nil
 			elseif g.got > 0 then
-				inp.remove{ name = g.name, count = g.got, quality = QUALITY }
+				inp.remove{ name = g.name, count = g.got, quality = g.quality }
 			end
 			pool_add(job, g.key, g.got)
 		end
@@ -1957,9 +2087,10 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	for _, ing in pairs(ingredients) do
 		if ing.type == "item" then
 			local count = ing.amount * batch
-			local inserted = inp.insert{ name = ing.name, count = count, quality = QUALITY }
-			pool_add(job, ing.name, -inserted)
-			given[#given + 1] = { key = ing.name, name = ing.name, got = inserted }
+			local key, q = key_of(ing), ing.quality or "normal"
+			local inserted = inp.insert{ name = ing.name, count = count, quality = q }
+			pool_add(job, key, -inserted)
+			given[#given + 1] = { key = key, name = ing.name, quality = q, got = inserted }
 			if inserted < count then undo() return false end
 		end
 	end
@@ -2002,7 +2133,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	end
 	step.issued = step.issued + batch
 	local lease = { machine = machine, unit = machine.unit_number, step = step_index, pid = step.pid, kind = step.kind,
-		recipe = step.recipe, runs = batch, fluid = map }
+		recipe = step.recipe, quality = step.quality, runs = batch, fluid = map }
 	if step.kind == "crafting" then
 		lease.finished0 = machine.products_finished
 	else
@@ -2026,19 +2157,21 @@ local function push_chest(s, job, step_index, chest, batch)
 	if not inv then return false end
 	local put = {}
 	local function undo()
-		for name, n in pairs(put) do
-			inv.remove{ name = name, count = n, quality = QUALITY }
-			pool_add(job, name, n)
+		for key, n in pairs(put) do
+			local name, q = N.parse_key(key)
+			inv.remove{ name = name, count = n, quality = q }
+			pool_add(job, key, n)
 		end
 	end
 	for _, ing in pairs(step_ingredients(step)) do
 		if ing.type ~= "item" then undo() return false end
 		local count = ing.amount * batch
-		if (job.pool[ing.name] or 0) < count then undo() return false end
-		local n = inv.insert{ name = ing.name, count = count, quality = QUALITY }
+		local key = key_of(ing)
+		if (job.pool[key] or 0) < count then undo() return false end
+		local n = inv.insert{ name = ing.name, count = count, quality = ing.quality or "normal" }
 		if n > 0 then
-			pool_add(job, ing.name, -n)
-			put[ing.name] = (put[ing.name] or 0) + n
+			pool_add(job, key, -n)
+			put[key] = (put[key] or 0) + n
 		end
 		if n < count then undo() return false end
 	end
@@ -2059,14 +2192,14 @@ end
 
 --- Switch an idle machine to `recipe` (crafting patterns). What is left in it goes into the network first (items
 --- of its input and output, its fluid boxes); when the network cannot take it all, the machine is not switched
---- (it is tried again later). Returns true when the machine has the recipe now.
-local function switch_recipe(net, machine, recipe)
+--- (it is tried again later). Returns true when the machine has the recipe now (issue #352: in `quality`, nil for normal).
+local function switch_recipe(net, machine, recipe, quality)
 	if machine.crafting_progress > 0 then return false end
 	local inp, out = input_inventory(machine), output_inventory(machine)
 	local items = {}
 	for _, inv in pairs({ inp, out }) do
 		if inv then
-			for _, c in pairs(inv.get_contents()) do items[#items + 1] = { inv = inv, name = c.name, quality = c.quality or QUALITY, count = c.count } end
+			for _, c in pairs(inv.get_contents()) do items[#items + 1] = { inv = inv, name = c.name, quality = c.quality or "normal", count = c.count } end
 		end
 	end
 	local fb = machine.fluidbox
@@ -2093,14 +2226,19 @@ local function switch_recipe(net, machine, recipe)
 		N.insert_fluid(net, f.name, f.amount)
 		fb[f.index] = nil
 	end
-	local ok, returned = pcall(machine.set_recipe, recipe)
+	local ok, returned = pcall(machine.set_recipe, recipe, quality or "normal")
 	for _, it in pairs(ok and returned or {}) do              -- nothing should be left: never lose it anyway
-		local stored = N.insert(net, it.name, it.quality or QUALITY, it.count)
+		local stored = N.insert(net, it.name, it.quality or "normal", it.count)
 		if stored < it.count then spill(machine, { name = it.name, quality = it.quality, count = it.count - stored }) end
 	end
 	N.no_arrival = false
-	local now = machine.get_recipe()
-	return ok and now ~= nil and now.name == recipe
+	return ok and M.has_recipe(machine, recipe, quality)
+end
+
+--- issue #352: does the machine have `recipe` in `quality` (nil: normal)?
+function M.has_recipe(machine, recipe, quality)
+	local r, q = N.bound(machine).get_recipe()
+	return r ~= nil and r.name == recipe and (q and q.name or "normal") == (quality or "normal")
 end
 
 --- A machine for a crafting step: one that has the recipe and is idle, else an idle one that is switched to it.
@@ -2115,8 +2253,7 @@ local function find_crafter(s, net, job, step, targets)
 	for _, t in pairs(targets) do
 		local e = t.entity
 		if t.mode == "craft" and not busy[t.unit] and e.valid and not e.disabled_by_script and not rejected(job, t.unit, step.pid) then
-			local current = N.bound(e).get_recipe()
-			if current ~= nil and current.name == step.recipe then
+			if M.has_recipe(e, step.recipe, step.quality) then
 				local map, why = fluid_map(e, ingredients, products)
 				if not map then reject(job, t.unit, step.pid) job.problem = why
 				elseif machine_idle(e, ingredients, map) then return e, map end
@@ -2129,7 +2266,7 @@ local function find_crafter(s, net, job, step, targets)
 	if not others then return nil end
 	for _, t in ipairs(others) do
 		local e = t.entity
-		if e.crafting_progress == 0 and switch_recipe(net, e, step.recipe) then
+		if e.crafting_progress == 0 and switch_recipe(net, e, step.recipe, step.quality) then
 			local map, why = fluid_map(e, ingredients, products)
 			if map then return e, map end
 			reject(job, t.unit, step.pid)
@@ -2143,17 +2280,21 @@ end
 --- the fluid map. Issue #158: a target with a `recipe` (a processing pattern that names its recipe, at an assembling
 --- machine) is used when it has that recipe and is idle; else, after the other targets, an idle one is switched to it
 --- (switch_recipe: what is left in it goes into the network first), as find_crafter does for crafting steps.
+--- Issue #335: a chest of a provider in blocking mode (or locked, issue #346) that may not be pushed into now is passed by; the
+--- fourth value is the chest's target entry (a chest found) or, when such a chest was passed by and nothing else was found,
+--- why ("blocking" or "locked").
 local function find_pusher(s, net, job, step, targets)
 	local ingredients, products = step_ingredients(step), step_products(step)
-	local others
+	local others, blocked
 	for _, t in pairs(targets) do
 		local e = t.entity
 		if e.valid and not s.busy[t.unit] and not rejected(job, t.unit, step.pid) then
 			if t.mode == "chest" then
-				return e, "chest", EMPTY_MAP
+				local open, why = EXT.chest_open(s, t, step.pid)
+				if open then return e, "chest", EMPTY_MAP, t end
+				blocked = blocked or why
 			elseif t.mode == "push" and not e.disabled_by_script then
-				local current = t.recipe and N.bound(e).get_recipe()
-				if t.recipe and not (current ~= nil and current.name == t.recipe) then
+				if t.recipe and not M.has_recipe(e, t.recipe, t.quality) then
 					others = others or {}
 					others[#others + 1] = t
 				else
@@ -2164,17 +2305,17 @@ local function find_pusher(s, net, job, step, targets)
 			end
 		end
 	end
-	if not (others and net) then return nil end
+	if not (others and net) then return nil, nil, nil, blocked end
 	for _, t in ipairs(others) do
 		local e = t.entity
-		if e.crafting_progress == 0 and switch_recipe(net, e, t.recipe) then
+		if e.crafting_progress == 0 and switch_recipe(net, e, t.recipe, t.quality) then
 			local map, why = fluid_map(e, ingredients, products, true)
 			if map then return e, "push", map end
 			reject(job, t.unit, step.pid)
 			job.problem = why
 		end
 	end
-	return nil
+	return nil, nil, nil, blocked
 end
 
 --- crafts per hand-over that fit into the machine's fluid boxes
@@ -2286,8 +2427,7 @@ local function job_step(s, job, work)
 				end
 			else
 				local step = job.steps[real.step]
-				local current = N.bound(m).get_recipe()
-				local recipe_changed = real.kind == "crafting" and not (current and current.name == real.recipe)
+				local recipe_changed = real.kind == "crafting" and not M.has_recipe(m, real.recipe, real.quality)
 				if recipe_changed and not job.closing then
 					take_back_input(job, m, step_ingredients(step), real.fluid)
 					collect_output(job, net, m, real.fluid)
@@ -2337,14 +2477,14 @@ local function job_step(s, job, work)
 				end
 			end
 			if batch <= 0 then waiting = waiting or "ingredients" break end
-			local machine, mode, map
+			local machine, mode, map, chest
 			if step.kind == "crafting" then
 				machine, map = find_crafter(s, net, job, step, targets)
 				mode = "craft"
 			else
-				machine, mode, map = find_pusher(s, net, job, step, targets)
+				machine, mode, map, chest = find_pusher(s, net, job, step, targets)
 			end
-			if not machine then waiting = waiting or "machine" break end
+			if not machine then waiting = waiting or chest or "machine" break end
 			if mode ~= "chest" then
 				for _, p in pairs(products) do        -- the products must fit into the output slot
 					if p.type == "item" then
@@ -2358,7 +2498,13 @@ local function job_step(s, job, work)
 			end
 			local ok
 			if mode == "chest" then                        -- a full chest (the line is backed up): one run, else wait
-				ok = push_chest(s, job, i, machine, batch) or (batch > 1 and push_chest(s, job, i, machine, 1))
+				local runs = batch
+				ok = push_chest(s, job, i, machine, batch)
+				if not ok and batch > 1 then
+					runs = 1
+					ok = push_chest(s, job, i, machine, 1)
+				end
+				if ok then EXT.pushed(s, chest, step.pid, step.def, runs) end   -- (issues #335, #346: smart blocking, the lock)
 			else
 				collect_output(job, net, machine, map)
 				ok = start_lease(s, job, i, machine, batch, map)
@@ -2419,7 +2565,7 @@ local function job_step(s, job, work)
 						else
 							local short = ing.amount - (job.pool[key] or 0)
 							if short > 0 then
-								local got = N.extract(net, ing.name, QUALITY, short)
+								local got = N.extract(net, ing.name, ing.quality or "normal", short)
 								if got > 0 then pool_add(job, key, got) job.idle = 0 end
 							end
 						end
@@ -2545,6 +2691,7 @@ end
 local function on_arrival(net, key, count)
 	local s = storage.fork_ae2
 	if not s then return 0 end
+	if s.locked then EXT.arrived(s, net, key, count) end       -- (issue #346: the locks see every arrival)
 	local keys = await_index(s)[net.id]
 	local ids = keys and keys[key]
 	if not ids then return 0 end
@@ -2593,7 +2740,10 @@ function M.describe(key)
 		return { key = key, name = fluid_name(key), fluid = true, sprite = "fluid/" .. fluid_name(key), localised_name = fluids.key_name(key),
 			temperature = deg }
 	end
-	return { key = key, name = key, fluid = false, sprite = "item/" .. key, localised_name = proto.localised_name }
+	local name, q = N.parse_key(key)                           -- (issue #352: with its quality)
+	local qp = q ~= "normal" and prototypes.quality[q] or nil
+	return { key = key, name = name, quality = q, fluid = false, sprite = "item/" .. name,
+		localised_name = qp and { "", proto.localised_name, " (", qp.localised_name, ")" } or proto.localised_name }
 end
 
 --- Crafting CPUs of the network: CPUs, free job slots, powered CPUs, job slots (a multiblock CPU has one; it is
@@ -2668,7 +2818,8 @@ end
 
 --- the job step of a planned step
 local function job_step_of(st)
-	local step = { pid = st.pid, def = st.def, kind = st.def.kind, recipe = st.def.recipe, runs = st.runs, issued = 0, done = 0 }
+	local step = { pid = st.pid, def = st.def, kind = st.def.kind, recipe = st.def.recipe, quality = st.def.quality, runs = st.runs,
+		issued = 0, done = 0 }
 	if step.kind == "processing" then
 		step.received = {}
 		step.keys = st.keys and copy_map(st.keys) or nil       -- issue #171: the outputs the job waits for
@@ -2679,8 +2830,9 @@ end
 --- Start a job for `amount` of `key` in the network of `entity` (a network member such as the
 --- terminal). `owner`: unit number of the level maintainer that asked for it (nil for a player).
 --- Returns the job id, or nil, a reason key and the plan. Issue #6: the job needs a CPU now (a free multiblock CPU
---- with plan.bytes): else "cpu-too-small" (plan.biggest: the biggest CPU's bytes) or "no-free-cpu".
-function M.start(entity, key, amount, owner)
+--- with plan.bytes): else "cpu-too-small" (plan.biggest: the biggest CPU's bytes) or "no-free-cpu". Issue #350: `want`,
+--- the CPU the player chose (nil: the first that fits and takes the request), and the CPU's mode (pick_cpu).
+function M.start(entity, key, amount, owner, want)
 	local s = state()
 	local net = network_of(entity)
 	if not net then return nil, "no-network" end
@@ -2693,7 +2845,7 @@ function M.start(entity, key, amount, owner)
 	if rescan_plan(s, net, plan) then plan = make_plan(s, net, key, amount) end
 	if plan.no_pattern then return nil, "no-pattern", plan end
 	if not plan.ok then return nil, "missing", plan end
-	local cpu, kind, biggest = pick_cpu(s, net, plan.bytes)
+	local cpu, kind, biggest = pick_cpu(s, net, plan.bytes, owner, want)
 	if not cpu then
 		plan.biggest = biggest
 		return nil, kind, plan
@@ -2702,7 +2854,10 @@ function M.start(entity, key, amount, owner)
 	local pool, taken = {}, {}
 	local function undo()
 		for _, k in pairs(taken) do
-			if is_fluid(k) then store_fluid(net, k, pool[k]) else store_item(net, k, QUALITY, pool[k]) end
+			if is_fluid(k) then store_fluid(net, k, pool[k]) else
+				local name, q = N.parse_key(k)
+				store_item(net, name, q, pool[k])
+			end
 		end
 	end
 	for k, count in pairs(plan.reserve) do
@@ -2710,7 +2865,8 @@ function M.start(entity, key, amount, owner)
 		if is_fluid(k) then
 			removed = fluids.remove_key(net, k, count + FLUID_MARGIN)   -- a little extra covers fixed point rounding
 		else
-			removed = N.extract(net, k, QUALITY, count)
+			local name, q = N.parse_key(k)
+			removed = N.extract(net, name, q, count)
 		end
 		if removed > 0 then pool[k] = removed taken[#taken + 1] = k end
 		if removed + FLUID_EPS < count then                     -- storage changed under us: undo
@@ -3032,6 +3188,119 @@ function M.set_priority(entity, priority)
 	return true
 end
 
+--- Issue #335: the blocking mode of a provider for the chests next to it: "blocking", "smart" (smart blocking) or nil (off);
+--- kept by blueprints, settings paste and clones like the priority
+function M.get_blocking(entity)
+	local p = provider_record(entity)
+	return p and p.blocking or nil
+end
+
+function M.set_blocking(entity, mode)
+	local p = provider_record(entity)
+	if not p then return false end
+	p.blocking = EXT.BLOCKING[mode] and mode or nil
+	if p.blocking ~= "smart" then p.last_pid = nil end
+	changed(p)                                      -- (the chests' target entries name the provider from this scan on)
+	return true
+end
+
+--- Issue #346: the lock of a provider ("result": until the result is back, nil: off), kept by blueprints, settings paste and
+--- clones; a change of it releases a lock in effect (as AE2's setting does), and so does `M.unlock` (the window's button)
+function M.get_lock(entity)
+	local p = provider_record(entity)
+	return p and p.lock or nil
+end
+
+function M.set_lock(entity, mode)
+	local p = provider_record(entity)
+	if not p then return false end
+	local new = mode == "result" and "result" or nil
+	if new ~= p.lock then EXT.unlock(state(), p) end
+	p.lock = new
+	return true
+end
+
+function M.unlock(entity)
+	local p = provider_record(entity)
+	if not p then return false end
+	EXT.unlock(state(), p)
+	return true
+end
+
+--- Issue #336: a provider's name, given in the ME Interface Terminal (nil: none). It is kept by blueprints and clones, not by a
+--- settings paste (two providers with one name would be no help). At most MAX_LABEL characters; an empty one clears it.
+EXT.MAX_LABEL = 60
+function EXT.clean_label(text)
+	if type(text) ~= "string" then return nil end
+	text = (text:gsub("^%s+", ""):gsub("%s+$", ""))
+	if text == "" then return nil end
+	return text:sub(1, EXT.MAX_LABEL)
+end
+
+function M.get_label(entity)
+	local p = provider_record(entity)
+	return p and p.label or nil
+end
+
+function M.set_label(entity, text)
+	local p = provider_record(entity)
+	if not p then return false end
+	p.label = EXT.clean_label(text)
+	return true
+end
+
+--- Issue #336, the ME Interface Terminal's list: the records of the providers that are members of network `net` (by the graph,
+--- not by their last scan), in the order they were built. Read only; no engine call but `valid`.
+function M.provider_records(net)
+	local s = state()
+	local out = {}
+	for _, unit in ipairs(s.plist) do
+		local p = s.providers[unit]
+		if p and N.network_of_unit(unit) == net and p.entity.valid then out[#out + 1] = p end
+	end
+	return out
+end
+
+--- the number of pattern slots of a provider record (9 to 36), and how many hold a pattern
+function M.record_size(p)
+	local n = 0
+	local size = slots_of(p)
+	for slot = 1, size do if p.slots[slot] then n = n + 1 end end
+	return size, n
+end
+
+--- slot `slot` of a provider record as the windows show it, from the last scan: { kind, recipe, inputs, outputs, id, ok, reason,
+--- machines }, { pending = true, kind, recipe, inputs, outputs } (a blueprint's pattern waiting for a blank), or nil (empty)
+function M.record_slot(p, slot)
+	local raw = p.slots[slot]
+	if raw then
+		local def, _, id = normalized(raw)
+		local st = p.status[slot]
+		return { kind = raw.kind, recipe = raw.recipe, inputs = def and def.inputs or raw.inputs,
+			outputs = def and def.outputs or raw.outputs, id = id, ok = st and st.ok or false,
+			reason = st and st.reason or nil, machines = st and st.machines or 0 }
+	end
+	local def = p.pending and p.pending[slot]
+	if def then return { pending = true, kind = def.kind, recipe = def.recipe, inputs = def.inputs, outputs = def.outputs } end
+	return nil
+end
+
+--- calls fn(key) for the key of every output of every pattern of a provider record (and of the patterns waiting for a blank),
+--- without a table: the search of the ME Interface Terminal. Stops at the first call that returns true and returns true then.
+function M.any_output(p, fn)
+	for slot = 1, slots_of(p) do
+		local raw = p.slots[slot]
+		local def = raw and normalized(raw) or (p.pending and p.pending[slot])
+		local outputs = def and def.outputs or (type(raw) == "table" and raw.outputs)
+		if type(outputs) == "table" then
+			for _, o in ipairs(outputs) do
+				if type(o) == "table" and type(o.key) == "string" and fn(o.key) then return true end
+			end
+		end
+	end
+	return false
+end
+
 --- The pattern provider window's data: the slots (pattern, kind, recipe, inputs, outputs, status), the patterns
 --- waiting for a blank (blueprint), the machines and chests next to it, the priority.
 function M.provider_info(entity)
@@ -3062,6 +3331,8 @@ function M.provider_info(entity)
 	local filled = 0
 	for slot = 1, slots_of(p) do if p.slots[slot] then filled = filled + 1 end end
 	local out = { slots = slots, slot_count = slots_of(p), filled = filled, machines = machines, priority = p.priority or 0,
+		blocking = p.blocking,                                                      -- (issue #335)
+		lock = p.lock, locked = p.locked and shallow_map(p.locked) or nil,          -- (issue #346)
 		network = p.net ~= nil, card_slots = N.card_rules().provider.slots }
 	out.want = p.want and cards.missing_cards(p, p.want) or nil
 	return out
@@ -3072,6 +3343,8 @@ function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
 	if not (src and src.valid and dst and dst.valid and src.name == PROVIDER and dst.name == PROVIDER) then return end
 	M.set_priority(dst, M.get_priority(src))
+	M.set_blocking(dst, M.get_blocking(src))         -- (issue #335)
+	M.set_lock(dst, M.get_lock(src))                 -- (issue #346)
 	local from = provider_record(src)                -- issue #156: the Pattern Capacity Cards it has are wanted (from the player, then the network)
 	if from then
 		local player = event.player_index and game.get_player(event.player_index) or nil
@@ -3090,7 +3363,10 @@ function M.provider_settings(entity)
 		if def then patterns[tostring(slot)] = def end
 	end
 	return { priority = p.priority or 0, patterns = patterns,
-		cards = p.want and { table.unpack(p.want) } or cards.card_list(p) }       -- (issue #156)
+		cards = p.want and { table.unpack(p.want) } or cards.card_list(p),        -- (issue #156)
+		label = p.label,                                                           -- (issue #336)
+		blocking = p.blocking,                                                     -- (issue #335)
+		lock = p.lock }                                                            -- (issue #346)
 end
 
 --- Apply blueprint settings to a provider: the priority, and the patterns as "pending" (each costs a blank
@@ -3101,6 +3377,11 @@ function M.apply_settings(entity, settings, old_recipe)
 	if not p then return false end
 	if type(settings) == "table" then
 		p.priority = math.max(-1000, math.min(1000, math.floor(tonumber(settings.priority) or 0)))
+		if settings.label ~= nil then p.label = EXT.clean_label(settings.label) end   -- (issue #336)
+		if settings.blocking ~= nil then                                             -- (issue #335)
+			p.blocking = EXT.BLOCKING[settings.blocking] and settings.blocking or nil
+		end
+		if settings.lock ~= nil then p.lock = settings.lock == "result" and "result" or nil end   -- (issue #346)
 		for key, raw in pairs(type(settings.patterns) == "table" and settings.patterns or {}) do
 			local slot = tonumber(key)
 			local def = P.normalize(raw)
@@ -3135,7 +3416,7 @@ function M.tag_blueprint(bp, mapping)
 	for index, entity in pairs(mapping) do
 		if entity.valid and entity.name == PROVIDER then
 			local settings = M.provider_settings(entity)
-			if settings and (settings.priority ~= 0 or next(settings.patterns) or settings.cards) then
+			if settings and (settings.priority ~= 0 or next(settings.patterns) or settings.cards or settings.label or settings.blocking or settings.lock) then
 				bp.set_blueprint_entity_tag(index, BP_TAG, settings)
 			end
 		end
@@ -3172,6 +3453,9 @@ function M.on_built(entity, tags, source)
 	elseif source and source.valid and source.name == PROVIDER then
 		M.set_priority(entity, M.get_priority(source))
 		local from = provider_record(source)
+		if from and from.label then M.set_label(entity, from.label) end            -- (issue #336)
+		M.set_blocking(entity, M.get_blocking(source))                              -- (issue #335)
+		M.set_lock(entity, M.get_lock(source))                                      -- (issue #346)
 		local list = from and (from.want and { table.unpack(from.want) } or cards.card_list(from))
 		if list then cards.want_cards(entity, list, nil) end
 	end
@@ -3200,6 +3484,7 @@ function M.on_removed(entity, buffer)
 	end
 	if buffer and buffer.valid then cards.give_cards(p, buffer) else cards.spill_cards(p) end   -- issue #156
 	cards.detach(p)
+	EXT.unlock(s, p)                                 -- (issue #346)
 	s.providers[entity.unit_number] = nil
 	remove_value(s.plist, entity.unit_number)
 	s.dirty = true
@@ -3288,7 +3573,7 @@ local function draw_monitors(g)
 	s.monitors = s.monitors or {}
 	local live = s.groups[g.id] == g and g.n > 0
 	local job = live and g.status == "ok" and g.job and s.jobs[g.job]
-	local sprite = job and (is_fluid(job.item) and ("fluid/" .. fluid_name(job.item)) or ("item/" .. job.item))
+	local sprite = job and (is_fluid(job.item) and ("fluid/" .. fluid_name(job.item)) or ("item/" .. (N.parse_key(job.item))))
 	if sprite and not helpers.is_valid_sprite_path(sprite) then sprite = nil end
 	for unit in pairs(g.monitors) do
 		local b = s.cblocks[unit]
@@ -3337,7 +3622,20 @@ function M.group_info(entity)
 	local job = g.job and M.job(g.job)
 	return { id = g.id, status = g.status, blocks = g.n, width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1,
 		bytes = g.bytes, used = job and job.bytes or 0, coprocessors = g.coprocessors, speed = group_speed(g),
-		monitors = monitors, parts = parts, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job }
+		monitors = monitors, parts = parts, network = group_network_any(g) ~= nil, working = group_network(g) ~= nil, job = job,
+		mode = g.mode }
+end
+
+--- Issue #350: set the mode of the Crafting CPU of a crafting block: "all" (or nil), "player" or "automation"
+function M.set_cpu_mode(entity, mode)
+	if not (entity and entity.valid and block_spec(entity.name)) then return false end
+	local s = cstate(state())
+	if not s.cblocks[entity.unit_number] then add_block(s, entity) end
+	local g = s.groups[s.cblocks[entity.unit_number].group]
+	if not g then return false end
+	g.mode = (mode == "player" or mode == "automation") and mode or nil
+	s.await = nil                                         -- (a queued job may take the CPU now)
+	return true
 end
 --- Rebuild the registries from the world, drop stale references, and repair the job books.
 --- Jobs and their pools are kept; provider slots, blueprint patterns and priorities are kept by unit number.
@@ -3348,6 +3646,10 @@ function M.on_configuration_changed()
 	for unit, p in pairs(s.providers) do kept[unit] = p end
 	s.providers, s.plist, s.pcursor, s.patterns, s.dirty, s.await = {}, {}, 1, {}, true, nil
 	s.cpus = nil                                          -- issue #145: the legacy CPUs are gone
+	local modes = {}                                      -- issue #350: the CPUs' modes, by block, for the new groups
+	for _, g in pairs(s.groups or {}) do
+		if g.mode then for u in pairs(g.blocks) do modes[u] = g.mode end end
+	end
 	s.cblocks, s.cgrid, s.groups = {}, {}, {}             -- issue #6: the groups are built again from the blocks
 	s.next_group = s.next_group or 1
 	local names = cpu_names()
@@ -3368,6 +3670,11 @@ function M.on_configuration_changed()
 			kept[e.unit_number] = nil
 		end
 		register(s, e)
+	end
+	for _, g in pairs(s.groups) do
+		for u in pairs(g.blocks) do
+			if modes[u] then g.mode = modes[u] break end
+		end
 	end
 	--- providers whose entity is gone without an event: their patterns are dropped where they stood
 	for _, k in pairs(kept) do
@@ -3438,18 +3745,21 @@ remote.add_interface("gregtorio-me-autocraft", {
 	end,
 	--- issue #50: the kept plans' { hits, misses } since the load
 	kept_plan_stats = function() return M.kept_plan_stats() end,
-	start = function(entity, key, amount)
-		local id, why, p = M.start(entity, key, amount)
+	--- (issue #350: `owner`, a unit number for a request of automation, and `want`, the CPU chosen)
+	start = function(entity, key, amount, owner, want)
+		local id, why, p = M.start(entity, key, amount, owner, want)
 		return id, why, p and p.missing, p and p.bytes, p and p.biggest
 	end,
+	--- issue #350: the mode of the CPU of a crafting block ("all", "player", "automation")
+	set_cpu_mode = function(block, mode) return M.set_cpu_mode(block, mode) end,
 	cancel = function(id) return M.cancel(id) end,
 	--- issue #6: the CPU (group) of a crafting block: { id, status, blocks, width, height, bytes, used, coprocessors,
 	--- speed, monitors, network, working, job }
 	group_info = function(block) return M.group_info(block) end,
 	--- the CPUs of the network of `entity` for a job of `bytes` (the plan preview)
-	cpu_list = function(entity, bytes)
+	cpu_list = function(entity, bytes, owner)
 		local net = N.network_of(entity)
-		return net and M.cpu_list(net, bytes) or {}
+		return net and M.cpu_list(net, bytes, owner) or {}
 	end,
 	--- the render objects of a crafting monitor: { icon = sprite path, text } or nil
 	monitor = function(block)
@@ -3497,6 +3807,20 @@ remote.add_interface("gregtorio-me-autocraft", {
 	provider_sync = function(provider, back) local p = provider_record(provider) return p ~= nil and cards.sync(p, back) end,
 	get_priority = function(provider) return M.get_priority(provider) end,
 	set_priority = function(provider, priority) return M.set_priority(provider, priority) end,
+	--- issue #335: the blocking mode ("blocking", "smart", nil) and the pattern smart blocking remembers
+	get_blocking = function(provider) return M.get_blocking(provider) end,
+	set_blocking = function(provider, mode) return M.set_blocking(provider, mode) end,
+	last_pid = function(provider) local p = provider_record(provider) return p and p.last_pid or nil end,
+	--- issue #346: the lock ("result" or nil), what a locked provider still waits for, the window's Unlock, the locked units
+	get_lock = function(provider) return M.get_lock(provider) end,
+	set_lock = function(provider, mode) return M.set_lock(provider, mode) end,
+	unlock = function(provider) return M.unlock(provider) end,
+	locked = function(provider) local p = provider_record(provider) return p and p.locked or nil end,
+	locked_units = function() local s = storage.fork_ae2 return s and s.locked or nil end,
+	--- issue #336: the provider's name (the ME Interface Terminal), and the names of the machines and chests next to it (last scan)
+	get_label = function(provider) return M.get_label(provider) end,
+	set_label = function(provider, text) return M.set_label(provider, text) end,
+	provider_near = function(provider) local p = provider_record(provider) return p and p.near or nil end,
 	provider_settings = function(provider) return M.provider_settings(provider) end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,

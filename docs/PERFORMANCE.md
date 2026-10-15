@@ -3064,3 +3064,285 @@ with `bench --check origin/main --sizes 5000` (three rounds in turns each) and `
 | throughput (items/s, fluid/s), latencies, io counters | | identical |
 
 `regressions beyond the noise: 0`.
+
+## The ME Interface Terminal (issue #336)
+
+The terminal adds no tick work: its window is refreshed by the refresh of open ME windows (once a second, only while one is
+open) and builds the buttons of its visible page only when the page's signature changed. What runs without a window is one
+change in the provider rescan (`scan_provider`, one provider every 2 ticks round robin): the entity names of the machines and
+chests next to the provider are compared with the ones kept in its record (`p.near`, one `name` read per neighbour, at most
+four) and written as a new list only when they changed. The windows' list reads those records and the network's interface
+nodes (table reads, no engine call but `valid`).
+
+Measured in turns against origin/main (three rounds each; `bench --planner-only --sizes 100 --runs 3 --check origin/main`, the
+planner scene with a provider and a chest per pattern, and `bench --sizes 1000 --runs 3 --check origin/main`):
+
+| | planner scene, origin/main | with the terminal | size 1000, origin/main | with the terminal |
+|---|---|---|---|---|
+| script average ms/tick | 0.2032 ±0.0032 | 0.2030 ±0.0031 | 0.3779 ±0.0092 | 0.3670 ±0.0131 |
+| script 99th percentile ms | 1.850 ±0.034 | 1.828 ±0.010 | 2.069 ±0.047 | 2.059 ±0.047 |
+| ticks over 5 ms | 2 ±0.5 | 1 ±1 | 3 ±1 | 3 ±1 |
+| Lua alloc KB per tick | 26.67 | 26.67 | 24.32 | 24.32 |
+| mod heap kB | 13 890 | 13 960 | 28 420 | 28 490 |
+| burst build / remove ms | 141.8 / 77.7 | 143.7 / 74.9 | 408.5 / 87.7 | 378.2 / 84.6 |
+| load first tick ms | 1.63 | 1.69 | 3.02 | 3.10 |
+
+`regressions beyond the noise: 0` in both; throughput, crafts and latencies identical. The heap grows by about 70 kB: the
+neighbour lists of the providers (written once, then only compared). The allocation per tick is the same, so a rescan that
+finds the same neighbours makes no table. The window's own cost is not measured (it needs a player); it is bounded by the
+network's providers and interfaces per refresh and six blocks of buttons per page.
+
+## The pattern provider's blocking mode (issue #335)
+
+The mode is checked where a job hands a processing pattern's inputs to a chest anyway (`find_pusher`, the job step): for a
+chest target one table lookup of its provider's mode, and with a mode set one `is_empty()` of the chest's inventory per
+hand-over attempt. A closed chest is passed by; nothing is queued or polled, the job tries again at its next step (at most
+every 20 ticks), as it does for a busy machine. A provider without a mode does what it did.
+
+Measured in turns against the branch it is built on (`origin/docs-drift-340`: main with the ME Interface Terminal, whose
+own numbers are above), three rounds each; the planner scene has a provider and a chest per pattern, none with a mode:
+
+| | planner scene, before | with the mode | size 1000, before | with the mode |
+|---|---|---|---|---|
+| script average ms/tick | 0.2070 ±0.0038 | 0.2047 ±0.0016 | 0.3677 ±0.0024 | 0.3629 ±0.0013 |
+| script 99th percentile ms | 1.868 ±0.020 | 1.869 ±0.034 | 2.056 ±0.028 | 2.024 ±0.014 |
+| ticks over 5 ms | 2 ±0.5 | 1 ±0 | 3 ±1 | 3 ±1.5 |
+| Lua alloc KB per tick | 26.67 | 26.67 | 24.32 | 24.32 |
+| mod heap kB | 13 950 | 13 960 | 28 490 | 28 500 |
+| burst build / remove ms | 141.6 / 73.6 | 140.6 / 74.7 | 369.9 / 83.4 | 364.0 / 83.7 |
+| load first tick ms | 1.63 | 1.66 | 2.95 | 2.90 |
+
+`regressions beyond the noise: 0` in both; throughput and crafts identical. The cost of a chest that stays blocked is one
+`is_empty()` per job step of the waiting job; the scenes have no provider in blocking mode, so this is reasoned, not
+measured.
+
+## The pattern provider's lock until the result is back (issue #346)
+
+What runs: in `N.on_arrival` (every item or fluid the network's public insert functions take in, the hot path of the import
+buses and interfaces) one read of `s.locked`, which is nil while no provider is locked; with locked providers a loop over
+them (few: only providers with the lock and a result still to come). In the chest hand-over one more field read
+(`p.locked`). No queue, no tick of its own.
+
+Measured in turns against the branch it is built on (`origin/provider-blocking-335`), three rounds each, on an idle machine
+(`bench --planner-only --sizes 100 --runs 3 --check origin/provider-blocking-335` and `bench --sizes 1000 --runs 3 --check
+origin/provider-blocking-335`):
+
+| | planner scene, before | with the lock | size 1000, before | with the lock |
+|---|---|---|---|---|
+| script average ms/tick | 0.2106 ±0.0033 | 0.2108 ±0.0022 | 0.3726 ±0.0049 | 0.3691 ±0.0022 |
+| script 99th percentile ms | 1.872 ±0.045 | 1.892 ±0.017 | 2.079 ±0.067 | 2.044 ±0.012 |
+| ticks over 5 ms | 1 ±0.5 | 2 ±1 | 3 ±0.5 | 3 ±0.5 |
+| Lua alloc KB per tick | 26.67 | 26.67 | 24.32 | 24.32 |
+| mod heap kB | 13 960 | 13 970 | 28 500 | 28 510 |
+| burst build / remove ms | 147.8 / 74.7 | 146.6 / 74.7 | 378.5 / 84.5 | 389.7 / 83.5 |
+| load first tick ms | 1.67 | 1.74 | 3.63 | 3.40 |
+
+`regressions beyond the noise: 0` in both; throughput and crafts identical, the allocation per tick the same (the nil check
+makes no garbage). A first measurement while the maintainer's game ran on the machine (both versions at about twice their
+usual script time) had flagged "ticks over 5 ms: 48 -> 89" at size 1000; the runs above, without the game, show no
+difference.
+
+## The level maintainer's rows (issue #351)
+
+What runs: a maintainer's check loops over its rows with a resource (at most 5; with "craft what the circuit asks" over the
+signals on its wires, at most 20, read once per check) instead of one resource; each row is the old check (stock read, job
+look-up, a start within the same budget of one start per tick). A stocked maintainer registers one wake per row and parks
+as before; one with a circuit-bound row or "craft what the circuit asks" is probed every 5 s as a circuit-bound maintainer
+was before. The bench scenes keep one row per maintainer, so this measures the cost of the loop and the row tables.
+
+Measured in turns against `main` (`fded898`), three rounds each, on an idle machine (`bench --check fded898`, the default
+sizes):
+
+| | size 1000, main | with the rows | size 5000, main | with the rows |
+|---|---|---|---|---|
+| script average ms/tick | 0.3285 ±0.0051 | 0.3254 ±0.0012 | 0.8861 ±0.0063 | 0.8866 ±0.0147 |
+| script 99th percentile ms | 1.891 ±0.032 | 1.869 ±0.006 | 2.639 ±0.023 | 2.645 ±0.079 |
+| ticks over 5 ms | 2 ±1 | 2 ±0.5 | 5 ±1 | 3 ±0.5 |
+| maintainer latency max s | 0.0833 | 0.0833 | 0.0833 | 0.0833 |
+| Lua alloc KB per tick | 24.32 | 24.34 | 33.04 | 33.05 |
+| mod heap kB | 28 510 | 28 640 | 73 660 | 74 180 |
+| burst build / remove ms | 317.9 / 80.1 | 316.9 / 79.2 | 1508 / 96.0 | 1479 / 95.7 |
+
+`regressions beyond the noise: 0`; throughput per kind of endpoint identical. The heap grows by the row table of each
+maintainer (500 at size 5000: about 1 kB each).
+
+## Void cells and the Group Filter Card (issue #354)
+
+A void cell is a cell of no bytes whose spec says `void`: it takes the Overflow Destruction Card's path (`cell.void`,
+`voids`), `open_cell` says yes at once and `cell_state` says "room". The Group Filter Card adds one field test to
+`accepts` and `cell_room` (`cell.gf`), and to the storage bus's `allowed`. The match itself (scripts/fork-me-groupfilter.lua)
+is a table lookup per text and key after its first time; the parsed terms and the results are kept per load, outside
+storage, and dropped all at once past 64 texts (a text typed letter by letter).
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have neither):
+
+| | origin/main | with the void cells and the card |
+|---|---|---|
+| 100: script average / p99 ms | 0.1858 / 1.742 | 0.1861 / 1.758 |
+| 1000: script average / p99 ms | 0.3282 / 1.877 | 0.3302 / 1.877 |
+| Lua alloc KB per tick (100 / 1000) | 26.67 / 24.32 | 26.67 / 24.32 |
+
+`regressions beyond the noise: 0`.
+
+The filter's cost per visit, measured once in the runtime test's world (a storage bus on a chest with 32 item types,
+2000 visits through the remote interface, three rounds; not part of the committed test): about 44 µs a visit with the card
+and an empty text (no filter), about 52 µs with the text `iron-*|*-plate&!copper-plate|raw-resource`, so about 0.25 µs per
+item type and visit. A new text costs its parse and one match of name, subgroup and group per key the first time.
+
+## Toggle buses and the level emitter (issue #355)
+
+Both are checked by a step hook of the autocrafting step (issue #5's rule, no tick handler of their own), in the order of
+their lists, each at most every 10 ticks and at most 8 of each per tick: a toggle bus check reads its lamp's control
+behaviour (and its two wire connectors while the condition is switched on), a level emitter visit one count (or the
+controllers' energy) and writes its section only when the output changed. A map without them pays two empty list tests per
+tick. A toggle bus that switches is unregistered or registered like a removed or built cable (`remove_node_graph`,
+`add_node`): its cost is that of a cable removal or placement, the split search of issue #38 (lever 5) included, which the
+bench's burst build and burst remove measure.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have neither):
+
+| | origin/main | with the toggle buses and the level emitter |
+|---|---|---|
+| 100: script average / p99 ms | 0.1895 / 1.733 | 0.1875 / 1.714 |
+| 1000: script average / p99 ms | 0.3288 / 1.879 | 0.3286 / 1.907 |
+| Lua alloc KB per tick (100 / 1000) | 26.67 / 24.32 | 26.67 / 24.32 |
+
+`regressions beyond the noise: 0`.
+
+## Super Speed and Superluminal Speed Cards (issue #356)
+
+The cards change only the bus's factor, made when its cards change (`on_cards`); a visit computes its item cap as before,
+now with a `math.min` against 2 147 483 647 (an engine count is 32 bit). What a visit moves is still bounded by its target and
+the network: an export bus with four Superluminal Speed Cards fills a chest in one visit, as one with four Acceleration Cards
+does once the chest is smaller than its cap. No new allocation per visit.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no such cards), run twice:
+
+| | origin/main | with the cards |
+|---|---|---|
+| 100: script average / p99 ms (second run) | 0.1844 / 1.741 | 0.1852 / 1.724 |
+| 1000: script average / p99 ms (second run) | 0.3256 / 1.866 | 0.3256 / 1.888 |
+| Lua alloc KB per tick (100 / 1000) | 26.67 / 24.32 | 26.67 / 24.32 |
+
+The first run reported one metric beyond the noise, the gc time at 1000 (0.0308 against 0.0329 ms, with the same Lua
+allocation per tick); the second run: `regressions beyond the noise: 0` (gc 0.0325 against 0.0334 ms).
+
+## Autocrafting in every quality (issue #352)
+
+The planner, the jobs and the hand-over read an item's quality from its key (`N.key_of` and `N.parse_key` of the storage
+engine); a normal quality item keeps the plain name as its key, so `key_of` returns the name as before and makes no string for
+it. A crafting pattern of another quality writes `quality` onto its recipe's item entries once per pattern definition (the
+ingredient cache of #43). A machine's recipe test reads its recipe and quality in one call (`has_recipe`).
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes' patterns are normal quality):
+
+| | origin/main | quality-aware autocrafting |
+|---|---|---|
+| 100: script average / p99 ms | 0.1850 / 1.738 | 0.1885 / 1.741 |
+| 1000: script average / p99 ms | 0.3295 / 1.886 | 0.3268 / 1.877 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| provider crafts per second | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## The Group Filter Card on the import and export bus (issue #363)
+
+An import bus with the card asks the group filter for each item of its source (a table lookup per text and key after the
+first time, #354). An export bus with the card exports from a list of the network's matching item keys: made from
+`net.items` once and kept on the bus, made again only when the network got a key it did not have (`net.kgen`, counted in
+`idx_add` when a key's holder set is made: one addition on that path, nothing on the others). A visit tries at most as many
+keys of the list as a filter list has (9), from where the last visit stopped, so its cost stays that of a full filter list;
+it registers no wait per key: blocked, it is probed (a new key in the network, or the idle limit). Without the card nothing
+changes.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no such card):
+
+| | origin/main | with the card on the buses |
+|---|---|---|
+| 100: script average / p99 ms | 0.1840 / 1.730 | 0.1836 / 1.728 |
+| 1000: script average / p99 ms | 0.3283 / 1.870 | 0.3289 / 1.852 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+
+`regressions beyond the noise: 0`.
+
+## An export bus fills a machine to two crafts (issue #382)
+
+An export bus still tops a machine's slot up to a stack of the item. Only when the machine holds a stack already does
+the visit (and the probe of a blocked bus) read the machine's recipe (`get_recipe`, once a visit: an engine call that
+makes two objects) and what one craft of it uses of the item (`need_of`, a table per recipe, cached per load); the
+slot is then filled to two crafts when that is more than the stack. A machine whose slots stay below a stack, a chest
+and a lab never make the call.
+
+A first version asked for the recipe whenever the bus could move more than the slot's room to a stack (nearly every
+visit of a busy bus): `bench --sizes 100,1000 --runs 3 --check origin/main` reported the gc time at 100 beyond the
+noise (0.02741 against 0.03029 ms; Lua alloc 26.68 against 26.70 KB per tick). A second one asked only for items that
+some recipe needs more than half a stack of, found once per item and load through `get_recipe_filtered` (a scan that a
+game with many recipes pays in one tick); its runs were clean on the allocation but reported a tick over 5 ms more at
+100 once. The version kept, three rounds in turns:
+
+| | origin/main | two crafts |
+|---|---|---|
+| 100: script average / p99 ms | 0.2121 / 1.921 | 0.2216 / 1.986 |
+| 1000: script average / p99 ms | 0.3837 / 2.121 | 0.3842 / 2.121 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0` (the 100 rounds of both versions varied by up to 0.012 ms; the scenes' recipes need
+less than a stack, so their machines are never filled past one).
+
+## The ME IO Port (issue #386)
+
+A queue of its own (`io_port`) in the one `on_tick` handler, with a budget of its own (map settings, 2 / 8 visits per
+tick). With no port on the map the handler reads one table and returns. A port with a cell to move is visited every 15
+ticks while it moves all its speed allows (30 when it moves less); a visit reads the cell from its stack, moves at most 16
+keys (the fill mode looks at most at 256 of the network's keys, from a sorted list made once per pass) and writes the cell
+back. A port without work is parked: no cell, a full output slot, no power, or a network without room (woken by
+`N.wait_room`); it costs nothing then but the scheduler's slow fallback visit.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the working copy has #382 to #387 as well;
+the scenes have no port):
+
+| | origin/main | with the port |
+|---|---|---|
+| 100: script average / p99 ms | 0.1922 / 1.779 | 0.1894 / 1.744 |
+| 1000: script average / p99 ms | 0.3311 / 1.904 | 0.3309 / 1.863 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.32 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## The ME Quantum Bridge (issue #385)
+
+A link is one more graph edge: `add_node` looks up the member's link (`s.qlink`, nil for every member but a linked
+bridge), `rebuild` adds the linked pairs after the underground cables, a removed member forgets its link. Joining and
+opening register the bridge again (a merge, or a split search of the smaller part, as for a removed cable). The pairs are
+checked once a second in the network's slow step: one energy read per bridge. Nothing per tick.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no bridge, the build burst
+registers and removes 1000 members through `add_node` and the removal):
+
+| | origin/main | with the bridge |
+|---|---|---|
+| 100: script average / p99 ms | 0.2171 / 1.915 | 0.2152 / 1.932 |
+| 1000: script average / p99 ms | 0.3884 / 2.155 | 0.3831 / 2.129 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| burst build / remove ms (1000) | 403.6 / 87.63 | 404.7 / 86.99 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## The ME Wireless Link (issue #384)
+
+The link uses the bridge's graph edge and its pairing in the network's slow step (one energy read per block, a distance
+and, for a pair, the drain written once when it changes). Nothing per tick, nothing new in the graph code.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no link):
+
+| | origin/main | with the link |
+|---|---|---|
+| 100: script average / p99 ms | 0.2196 / 1.965 | 0.2200 / 2.009 |
+| 1000: script average / p99 ms | 0.3943 / 2.250 | 0.3996 / 2.293 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.

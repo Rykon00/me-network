@@ -15,7 +15,11 @@
   `prototypes/120-fork-me-network-compat.lua`. A new item or recipe is added with `ME_NETWORK.add_item` /
   `add_recipe` so it is listed in `ME_NETWORK.recipes`; tell Gregtorio's maintainer (its compat file gives it the GT
   recipe). Numbers reach the runtime through the mod-data `fork-me-network`, `fork-me-autocraft`, `fork-me-fluids`.
-- Runtime: `control.lua` registers the build, clone, settings paste, blueprint, removal (with an event filter) and
+- Since issue #385 a network can span surfaces: an ME Quantum Bridge link (and since #384 an ME Wireless Link's, on one surface) is a graph edge between two members anywhere
+  (`N.set_qlink`, `s.qlink`); code that looks for members by position (the cable router, the wireless range, a grid of
+  tiles) must keep to one surface, code that walks a network's members must not assume one.
+- Runtime: `control.lua` registers the build, clone, settings paste, blueprint (also `on_pre_build`: a blueprint pasted
+  over blocks that stand there, `scripts/fork-me-pasteover.lua`, issue #383), removal (with an event filter) and
   rotation events of all modules (the graph first on build, last on removal), `on_init` (first the hand-over of a
   Gregtorio save, `scripts/fork-me-handover.lua`, then the terminal's init: state and graph) and
   `on_configuration_changed` (technology effects reset when this mod changed, the graph rebuild, the migrations of
@@ -24,9 +28,9 @@
   network. Ticks: `on_nth_tick` 60 (terminal step: the network's slow step, drive lights, sweep, the refresh of open
   windows) and one `on_tick` handler in control.lua (issue #5, `scripts/fork-me-schedule.lua`): every interface and
   bus, storage bus (item and fluid side), level maintainer and circuit interface is due at a tick of its own (a queue
-  per kind, `rec.due`, a backlog for what does not fit), crafting jobs are stepped one per tick (each at most every 20
+  per kind, `rec.due`, a backlog for what does not fit; the ME IO Port has a queue of its own, issue #386), crafting jobs are stepped one per tick (each at most every 20
   ticks), one provider rescan every 2 ticks. The budgets and the bus speed are runtime-global map settings
-  (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side,
+  (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side, IO ports 2,
   maintainers 4), circuit interface updates per second (10), crafting jobs per tick (1), bus speed (256 items, 4000
   fluid per second, times the ticks since the last visit), idle limits (300 and 120 ticks). Never base anything on
   measured time; a new periodic task gets a queue and a budget, not a step of its own. The command `/me-stats` (`scripts/fork-me-stats.lua`,

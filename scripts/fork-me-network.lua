@@ -24,6 +24,7 @@
 local G = require("scripts.fork-me-gui")        -- (a leaf: only its number format is used, for the cards' tooltip lines)
 
 local M = {}
+M.GF = require("scripts.fork-me-groupfilter")    -- issue #354: the Group Filter Card's text (a field: no main-chunk local)
 
 --- functions(net) called when a network's members changed (autocrafting drops its pattern cache)
 M.change_hooks = {}
@@ -79,11 +80,21 @@ local function kinds()
 		k[n.export_bus] = "export-bus"
 		k[n.terminal] = "terminal"
 		if n.pattern_terminal then k[n.pattern_terminal] = "pattern-terminal" end      -- issue #130
+		if n.interface_terminal then k[n.interface_terminal] = "interface-terminal" end   -- issue #336
+		for _, m in pairs({ "storage", "conversion", "throughput" }) do                     -- issue #353: the monitors
+			if n[m .. "_monitor"] then k[n[m .. "_monitor"]] = m .. "-monitor" end
+		end
+		if n.toggle_bus then k[n.toggle_bus] = "toggle" end                             -- issue #355
+		if n.inverted_toggle_bus then k[n.inverted_toggle_bus] = "toggle" end
+		if n.level_emitter then k[n.level_emitter] = "level-emitter" end
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
 		if n.charger then k[n.charger] = "charger" end                -- issue #208
 		if n.chest then k[n.chest] = "chest" end                      -- issue #229
+		if n.io_port then k[n.io_port] = "io-port" end                -- issue #386
+		if n.quantum_bridge then k[n.quantum_bridge] = "quantum-bridge" end   -- issue #385
+		if n.wireless_link then k[n.wireless_link] = "wireless-link" end      -- issue #384
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -104,10 +115,11 @@ end
 
 --- kinds with a power connection of their own (or none at all: the cable): the controller draws nothing for them. Issue #128:
 --- the terminal and the level maintainer are not among them any more; issue #145: the legacy CPUs are gone
-local POWERED_SELF = { cable = true, underground = true, controller = true }
+local POWERED_SELF = { cable = true, underground = true, controller = true,
+	["quantum-bridge"] = true, ["wireless-link"] = true }   -- (issues #385, #384: they draw from the power grid themselves)
 
 --- Issue #128: the power (W) a kind draws through the controller where it is not the default (mod-data "fork-me-network",
---- member_power: terminal, level maintainer, pattern terminal), read once per load like the rest of the mod-data
+--- member_power: terminal, level maintainer, pattern and interface terminal), read once per load like the rest of the mod-data
 local kind_power_cache
 local function kind_power(kind)
 	if not kind_power_cache then kind_power_cache = mod_data().member_power or {} end
@@ -505,6 +517,17 @@ local function add_node(s, entity, kind)
 			end
 		end
 	end
+	--- issue #385: a linked ME Quantum Bridge has its partner (any distance, any surface) as a neighbour
+	local qu = s.qlink and s.qlink[unit]
+	local qn = qu and s.nodes[qu]
+	if qn and qn.entity.valid then
+		node.adj[qu] = true
+		qn.adj[unit] = true
+		if not nets[qn.net] then
+			nets[qn.net] = true
+			order[#order + 1] = qn.net
+		end
+	end
 	local net
 	if #order == 0 then
 		net = new_net(s, node.surface, node.force)
@@ -665,6 +688,11 @@ local function remove_node(s, unit)
 	local node = s.nodes[unit]
 	local pu = node and node.partner
 	clear_link(node)
+	local qu = s.qlink and s.qlink[unit]                 -- (issue #385: a removed quantum bridge's link is gone)
+	if qu then
+		s.qlink[unit] = nil
+		if s.qlink[qu] == unit then s.qlink[qu] = nil end
+	end
 	if pu and s.nodes[pu] then
 		s.nodes[pu].partner = nil
 		s.nodes[pu].link = nil
@@ -882,6 +910,11 @@ function M.listed(set, key) return listed(set, nil, key) end
 --- Does the filter of a cell (a drive cell or a storage bus) let `key` in? `partition` is a whitelist (R3), `deny` a
 --- blacklist (issue #17, an Inverter Card), `fnames` makes either match every quality (a Fuzzy Card).
 local function accepts(cell, key)
+	local gf = cell.gf                                        -- issue #354: a Group Filter Card's text replaces the list
+	if gf then
+		if cell.ginv then return not M.GF.match(gf, key) end
+		return M.GF.match(gf, key)
+	end
 	local p = cell.partition
 	if p and next(p) then return listed(p, cell.fnames, key) end
 	local d = cell.deny
@@ -894,7 +927,9 @@ M.accepts = accepts
 local function cell_room(cell, spec, key)
 	if fluid_cell(spec) ~= is_fluid_key(key) then return 0 end
 	local p = cell.partition                                  -- partitioned (R3); a fuzzy list or a blacklist (#17)
-	if p then
+	if cell.gf then                                           -- a group filter (issue #354)
+		if not accepts(cell, key) then return 0 end
+	elseif p then
 		if next(p) and not listed(p, cell.fnames, key) then return 0 end
 	elseif cell.deny and not accepts(cell, key) then
 		return 0
@@ -961,7 +996,10 @@ local function cell_from_tags(name, tags)
 	local cell = new_cell(name)
 	local spec = cell_spec(name)
 	local stored = type(tags) == "table" and tags[CELL_TAG] or nil
-	if type(stored) ~= "table" or not spec then return cell end
+	if type(stored) ~= "table" or not spec then
+		if spec and spec.void then M.apply_cell_cards(cell) end   -- (issue #354: a new void cell)
+		return cell
+	end
 	local keys = {}
 	local counts, data = {}, {}
 	for key, count in pairs(stored.items or {}) do
@@ -983,15 +1021,21 @@ local function cell_from_tags(name, tags)
 		end
 	end
 	cell.partition = M.clean_partition(spec, stored.partition)
+	cell.gtext = M.GF.clean(stored.gtext)                       -- issue #354: the Group Filter Card's text
 	cell.cards = M.clean_cards(spec, stored.cards)              -- issue #17: the cell's upgrade cards
-	if cell.cards then M.apply_cell_cards(cell) end
+	if cell.cards or spec.void then M.apply_cell_cards(cell) end      -- (issue #354: a void cell's `void` comes from its spec)
 	return cell
 end
 M.cell_from_tags = cell_from_tags
 
---- the cell record of a cell item stack (its contents, partition and cards from the tags)
+--- the cell record of a cell item stack (its contents, partition and cards from the tags). Issue #394: the item's quality
+--- goes with it (`cell.quality`, nil for normal; a drive's record keeps it), so the stack written back keeps it. It changes
+--- nothing in the cell: bytes, types and cards are the same in every quality.
 function M.cell_from_stack(stack)
-	return cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
+	local cell = cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
+	local q = stack.quality.name
+	if q ~= "normal" then cell.quality = q end
+	return cell
 end
 
 --- A partition ({ key -> true } or a list of keys) checked against the cell's kind and the prototypes; nil
@@ -1062,15 +1106,21 @@ function M.apply_cell_cards(cell)
 	room_gen = room_gen + 1
 	local spec = cell_spec(cell.name)
 	if not spec then return end
-	local keys = cell.partition or cell.deny
+	local keys = cell.partition or cell.deny or cell.gkeys
 	local kinds = {}
 	for _, name in ipairs(cell.cards or {}) do
 		local k = M.card_kind(name)
 		if k then kinds[k] = true end
 	end
-	if kinds.inverter then cell.partition, cell.deny = nil, keys else cell.partition, cell.deny = keys, nil end
+	--- issue #354: with a Group Filter Card its text (cell.gtext) is the filter and the list waits in `gkeys` (AE2-U's
+	--- CellInventoryHandler: the ore filter replaces the partition; an empty text lets everything in)
+	cell.gf, cell.ginv, cell.gkeys = nil, nil, nil
+	if kinds.gfilter then
+		cell.partition, cell.deny, cell.gkeys = nil, nil, keys
+		cell.gf, cell.ginv = cell.gtext, cell.gtext and kinds.inverter or nil
+	elseif kinds.inverter then cell.partition, cell.deny = nil, keys else cell.partition, cell.deny = keys, nil end
 	local names
-	if kinds.fuzzy and keys then
+	if kinds.fuzzy and keys and not kinds.gfilter then
 		for key in pairs(keys) do
 			local n = name_of_key(key)
 			if n then
@@ -1080,7 +1130,7 @@ function M.apply_cell_cards(cell)
 		end
 	end
 	cell.fnames = names
-	cell.void = kinds.void or nil
+	cell.void = kinds.void or spec.void or nil          -- issue #354: a void cell voids without a card
 	cell.sticky = kinds.sticky or nil                  -- issue #193
 	cell.eq = nil
 	if kinds.equal then cell.eq = equal_share(cell, spec) end
@@ -1090,7 +1140,7 @@ end
 --- the configured list of a cell (its whitelist, or its blacklist with an Inverter Card), sorted
 function M.cell_keys(cell)
 	local out = {}
-	for key in pairs(cell.partition or cell.deny or {}) do out[#out + 1] = key end
+	for key in pairs(cell.partition or cell.deny or cell.gkeys or {}) do out[#out + 1] = key end
 	table.sort(out)
 	return out
 end
@@ -1098,7 +1148,7 @@ end
 --- set the configured list of a cell (cleaned; the cards decide whether it is a whitelist or a blacklist)
 function M.set_cell_keys(cell, keys)
 	cell.partition = M.clean_partition(cell_spec(cell.name), keys or {})
-	cell.deny = nil
+	cell.deny, cell.gkeys = nil, nil
 	M.apply_cell_cards(cell)
 end
 
@@ -1160,17 +1210,23 @@ end
 --- "fuzzy", "equal", "void"; `c`: the fields of drive_info or cell_flags): one localised sentence, or nil. The
 --- window joins them into one line (cell_mode_caption), the tooltip puts them on lines of their own.
 function M.cell_mode_text(kind, c)
-	if kind == "inverted" then return c.inverted and { "fork-me-gui.cell-mode-blacklist" } or nil end
+	if kind == "inverted" then return c.inverted and not c.gfilter and { "fork-me-gui.cell-mode-blacklist" } or nil end   -- (#354: the text's line says it)
 	if kind == "fuzzy" then return c.fuzzy and { "fork-me-gui.cell-mode-fuzzy" } or nil end
 	if kind == "equal" then return c.equal and { "fork-me-gui.cell-mode-equal", G.fmt(c.equal) } or nil end
-	if kind == "void" then return c.void and { "fork-me-gui.cell-mode-void" } or nil end
+	if kind == "void" then return c.void and { "fork-me-gui.cell-mode-void" .. (c.voidcell and "cell" or "") } or nil end
 	if kind == "sticky" then return c.sticky and { "fork-me-gui.cell-mode-sticky" } or nil end
+	if kind == "gfilter" then                                  -- issue #354
+		if not c.gfilter then return nil end
+		return c.gtext and { "fork-me-gui.cell-mode-gfilter" .. (c.inverted and "-blacklist" or ""), c.gtext }
+			or { "fork-me-gui.cell-mode-gfilter-empty" }
+	end
 end
 
 --- the same fields as drive_info's for a cell record (drive_info keeps its own copy: it is the hot one)
 local function cell_flags(cell)
 	return { inverted = cell.deny ~= nil or M.has_card(cell, "inverter"), fuzzy = cell.fnames ~= nil or M.has_card(cell, "fuzzy"),
-		equal = cell.eq, void = cell.void == true, sticky = cell.sticky == true }
+		equal = cell.eq, void = cell.void == true, sticky = cell.sticky == true,
+		voidcell = cell_spec(cell.name) and cell_spec(cell.name).void or nil, gfilter = M.has_card(cell, "gfilter"), gtext = cell.gtext }
 end
 
 --- Issue #64: the tooltip of a cell that is not a fresh one, the same lines in the same order for every cell, so two
@@ -1178,7 +1234,8 @@ end
 ---   1. what it holds, as before; an empty cell says its size instead
 ---   2. the partition as icons (at most TIP_KEYS, then "+N more")
 ---   3. whitelist or blacklist, in the words of the windows
----   4. the cards as icons, then what they do (fuzzy, equal distribution, overflow destruction), in the words of the windows
+---   4. the cards as icons, then what they do (fuzzy, equal distribution, overflow destruction), in the words of the windows;
+---      a void cell without cards gets its warning here (issue #376)
 --- One concatenation of at most 13 parts (a localised string takes 20), the icon lists plain strings. Cells written
 --- by an earlier version keep their old description until they pass through a drive or the workbench; its keys stay.
 local function cell_description(cell, spec, plist, cards, keys, list)
@@ -1205,25 +1262,30 @@ local function cell_description(cell, spec, plist, cards, keys, list)
 			line({ "fork-me-net.cell-tip-partition", table.concat(icons, " ") })
 		end
 	end
-	if flags.inverted then line(M.cell_mode_text("inverted", flags))
-	elseif plist then line({ "fork-me-gui.cell-mode-whitelist" }) end
+	if flags.inverted and not flags.gfilter then line(M.cell_mode_text("inverted", flags))
+	elseif plist and not flags.gfilter then line({ "fork-me-gui.cell-mode-whitelist" }) end
 	if cards then
 		local icons = {}
 		for i, name in ipairs(cards) do icons[i] = "[item=" .. name .. "]" end
 		line({ "fork-me-net.cell-tip-cards", table.concat(icons, " ") })
-		for _, kind in ipairs({ "fuzzy", "equal", "void", "sticky" }) do
+		for _, kind in ipairs({ "fuzzy", "equal", "void", "sticky", "gfilter" }) do
 			local text = M.cell_mode_text(kind, flags)
 			if text then line(text) end
 		end
+	elseif flags.void then
+		line(M.cell_mode_text("void", flags))   -- issue #376: a void cell is void without a card
 	end
 	return desc
 end
 
---- the item stack definition of a cell (tags and a description when it holds something, is partitioned or has cards)
+--- the item stack definition of a cell (tags and a description when it holds something, is partitioned or has cards; issue
+--- #394: in the quality of the cell item it was made from, `cell.quality`, nil for normal)
 local function cell_stack(cell)
-	local plist = cell.partition or cell.deny                 -- issue #17: a blacklist is kept as the partition
+	local plist = cell.partition or cell.deny or cell.gkeys   -- issue #17: a blacklist is kept as the partition
 	local cards = cell.cards and #cell.cards > 0 and { table.unpack(cell.cards) } or nil
-	if next(cell.items) == nil and not plist and not cards then return { name = cell.name, count = 1 } end
+	if next(cell.items) == nil and not plist and not cards and not cell.gtext then
+		return { name = cell.name, count = 1, quality = cell.quality }
+	end
 	local items, data = {}, {}
 	local keys = {}
 	for key, count in pairs(cell.items) do
@@ -1245,8 +1307,8 @@ local function cell_stack(cell)
 		end
 	end
 	return {
-		name = cell.name, count = 1,
-		tags = { [CELL_TAG] = { items = items, data = data, partition = plist, cards = cards } },
+		name = cell.name, count = 1, quality = cell.quality,
+		tags = { [CELL_TAG] = { items = items, data = data, partition = plist, cards = cards, gtext = cell.gtext } },
 		custom_description = cell_description(cell, cell_spec(cell.name), plist, cards, keys, list),
 	}
 end
@@ -1281,7 +1343,7 @@ function M.drive_cell_tooltip(drive, slot)
 			G.fmt(spec.bytes) },
 		{ "fork-me-gui.cell-fill", G.fmt(cell.bytes), G.fmt(spec.bytes), cell.types, spec.types },
 	}
-	local plist = cell.partition or cell.deny
+	local plist = cell.partition or cell.deny or cell.gkeys
 	local flags = cell_flags(cell)
 	if plist then
 		local sorted = M.cell_keys(cell)
@@ -1293,16 +1355,18 @@ function M.drive_cell_tooltip(drive, slot)
 		if #mode > 1 then mode[#mode + 1] = "\n" end
 		mode[#mode + 1] = text
 	end
-	if flags.inverted then add(M.cell_mode_text("inverted", flags))
-	elseif plist then add({ "fork-me-gui.cell-mode-whitelist" }) end
+	if flags.inverted and not flags.gfilter then add(M.cell_mode_text("inverted", flags))
+	elseif plist and not flags.gfilter then add({ "fork-me-gui.cell-mode-whitelist" }) end
 	if cell.cards and #cell.cards > 0 then
 		local icons = {}
 		for i, name in ipairs(cell.cards) do icons[i] = "[item=" .. name .. "]" end
 		add({ "fork-me-net.cell-tip-cards", table.concat(icons, " ") })
-		for _, kind in ipairs({ "fuzzy", "equal", "void", "sticky" }) do
+		for _, kind in ipairs({ "fuzzy", "equal", "void", "sticky", "gfilter" }) do
 			local text = M.cell_mode_text(kind, flags)
 			if text then add(text) end
 		end
+	elseif flags.void then
+		add(M.cell_mode_text("void", flags))   -- issue #376: a void cell is void without a card
 	end
 	if #mode > 1 then lines[#lines + 1] = mode end
 	local keys = {}
@@ -1338,6 +1402,7 @@ end
 local function cell_state(cell)
 	local spec = cell_spec(cell.name)
 	if not spec then return "full" end
+	if spec.void then return "room" end                 -- (issue #354: a void cell is never full)
 	if cell.types >= spec.types or spec.bytes - cell.bytes < 1 or (cell.types == 0 and spec.bytes - cell.bytes <= spec.per_type) then return "full" end
 	if cell.bytes > spec.bytes * 0.75 then return "high" end
 	return "room"
@@ -1647,6 +1712,7 @@ local function idx_add(net, key, cid)
 	if not idx then
 		idx = {}
 		net.index[key] = idx
+		net.kgen = (net.kgen or 0) + 1                   -- (issue #363: a key new in the network)
 		if is_fluid_key(key) then
 			local fs = fluid_sets[net]
 			if fs then note_fluid(fs, key) end
@@ -1825,7 +1891,7 @@ end
 --- the slow step (once a second, with the look at the network's power it makes anyway) sets every screen to its network's
 --- state, and a terminal that joins a network is set at once. Setting a screen that is right already costs one comparison.
 --- The ME Pattern Terminal (issue #130) is an entity with two pictures (graphics variation 1 dark, 2 lit, like the crafting
---- blocks): its record is `{ variation = true, on }` and it is set the same way.
+--- blocks): its record is `{ variation = true, on }` and it is set the same way; so is the ME Interface Terminal (issue #336).
 --- The ME Level Maintainer (issue #254) is a lamp with a void energy source too, so the game drew it lit all the time: its
 --- whole picture is a screen of the same kind without a light (`{ spr, on }`), lit while its network works and its circuit
 --- condition lets it run, dark otherwise.
@@ -1839,7 +1905,11 @@ local SCREENS = {
 	terminal = { "me-terminal-screen-on", "me-terminal-screen-off", SCREEN_LIGHT },
 	maintainer = { "me-level-maintainer-screen-on", "me-level-maintainer-screen-off" },
 }
-function has_screen(kind) return SCREENS[kind] ~= nil or kind == "pattern-terminal" end
+--- (a screen that is a graphics variation, 1 dark and 2 lit: the ME Pattern Terminal, the ME Interface Terminal of issue #336 and
+--- the monitors of issue #353; no local for it: the main chunk is at Lua's limit of 200)
+M.VARIATION_SCREENS = { ["pattern-terminal"] = true, ["interface-terminal"] = true, ["storage-monitor"] = true,
+	["conversion-monitor"] = true, ["throughput-monitor"] = true }
+function has_screen(kind) return SCREENS[kind] ~= nil or M.VARIATION_SCREENS[kind] == true end
 --- issue #254: the benchmark's scenes have a level maintainer per ten buses (2000 at 20 000), so the slow step must not
 --- look at every screen every second, and must not sort them (#43: about 7 µs an element). `s.screen_list` holds the
 --- units of `s.screens` in the order they came (a screen that goes is replaced by the last one, each record keeps its
@@ -1876,7 +1946,7 @@ end
 local function set_screen(s, unit, entity, on, kind)
 	local list = s.screens
 	local sc = list[unit]
-	if kind == "pattern-terminal" or (sc and sc.variation) then
+	if M.VARIATION_SCREENS[kind] or (sc and sc.variation) then
 		if not (sc and sc.on == on and entity.graphics_variation == (on and 2 or 1)) then
 			entity.graphics_variation = on and 2 or 1
 			list[unit] = { variation = true, on = on, li = screen_place(s, sc, unit) }
@@ -2293,6 +2363,7 @@ M.ordered = ordered
 
 --- can the cell take a key it does not hold yet? (types and bytes; its kind and partition are the caller's)
 local function open_cell(cell, spec)
+	if spec.void then return true end                   -- (issue #354: a void cell takes every new type)
 	return cell.types < spec.types and spec.bytes - cell.bytes - spec.per_type > 0
 end
 
@@ -2308,7 +2379,8 @@ local function voids(cell, key, data)
 	end
 	local spec = cell_spec(cell.name)
 	if not spec or fluid_cell(spec) ~= is_fluid_key(key) or not accepts(cell, key) then return false end
-	if cell.partition or cell.deny then return true end
+	if spec.void then return true end                   -- issue #354: a void cell voids whatever its filter lets in
+	if cell.partition or cell.deny or cell.gf then return true end
 	return cell.items[key] ~= nil or open_cell(cell, spec)
 end
 
@@ -3073,6 +3145,43 @@ function M.can_insert_fluid_key(net, key, amount)
 	return math.min(amount, room_for(net, key, amount) + awaited(net, key))
 end
 
+--- Issue #386 (the ME IO Port, scripts/fork-me-ioport.lua): a cell record that lies in no drive (`cell`, from
+--- M.cell_from_stack) and the network. Up to `count` of `key` from the cell into the network (with its data, as a stored
+--- item of a cell keeps it); returns what went, which the cell no longer holds.
+function M.cell_to_network(net, cell, key, count)
+	local have = cell.items[key] or 0
+	if count > have then count = have end
+	if not is_fluid_key(key) then count = math.floor(count) end
+	if count <= 0 or not M.usable(net) then return 0 end
+	local claimed = arrive(net, key, count)
+	local n = claimed + insert_key(net, key, count - claimed, cell.data and cell.data[key])
+	if n > 0 then cell_add(cell, cell_spec(cell.name), key, -n) end
+	return n
+end
+
+--- Up to `count` of `key` from the network into the cell record: what its room and partition (its cards) let in. Returns
+--- what went.
+function M.network_to_cell(net, cell, key, count)
+	if not M.usable(net) then return 0 end
+	local spec = cell_spec(cell.name)
+	local n = math.min(count, cell_room(cell, spec, key), net.items[key] or 0)
+	if not is_fluid_key(key) then n = math.floor(n) end
+	if n <= 0 then return 0 end
+	local data = key:find("#", 1, true) and data_of(net, key) or nil
+	local got = extract_key(net, key, n)
+	if got > 0 then
+		cell_add(cell, spec, key, got)
+		if data then
+			cell.data = cell.data or {}
+			cell.data[key] = data
+		end
+	end
+	return got
+end
+
+--- what of `key` the cell record can still take (issue #386: the IO port asks before it goes through the network's keys)
+function M.cell_room(cell, key) return cell_room(cell, cell_spec(cell.name), key) end
+
 --- what the network holds of fluid `name` at every temperature, or of those a filter key takes
 function M.fluid_total(net, name, filter)
 	if not M.usable(net) then return 0 end
@@ -3397,7 +3506,7 @@ end
 local function place_cell(s, d, slot, cell)
 	d.slots[slot] = cell
 	local template = d.slot_partition and d.slot_partition[slot]
-	if template and not (cell.partition or cell.deny) then
+	if template and not (cell.partition or cell.deny or cell.gkeys) then
 		M.set_cell_keys(cell, template)                       -- (a cell with an Inverter Card: a blacklist)
 		d.slot_partition[slot] = nil
 	end
@@ -3432,7 +3541,7 @@ function M.insert_cell(drive, stack, slot)
 	end
 	if slot > slots_of(drive) then return nil, "drive-full" end
 	if d.slots[slot] then return nil, "slot-taken" end
-	local cell = cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
+	local cell = M.cell_from_stack(stack)                   -- (issue #394: with its quality)
 	if stack.count > 1 then stack.count = stack.count - 1 else stack.clear() end
 	place_cell(s, d, slot, cell)
 	return slot
@@ -4027,7 +4136,7 @@ function M.drive_info(drive, light)
 				--- issue #17: the cell's cards (from the Cell Workbench)
 				cards = not light and { table.unpack(cell.cards or {}) } or nil, inverted = cell.deny ~= nil or M.has_card(cell, "inverter"),
 				fuzzy = cell.fnames ~= nil or M.has_card(cell, "fuzzy"), equal = cell.eq, void = cell.void == true,
-				sticky = cell.sticky == true,
+				sticky = cell.sticky == true, voidcell = spec.void, gfilter = M.has_card(cell, "gfilter"), gtext = cell.gtext,
 				voided = cell.voided or 0 }
 		end
 	end
@@ -4309,6 +4418,11 @@ function M.on_built(entity, event)
 	local kind = kinds()[entity.name]
 	if not kind then return end
 	local s = state()
+	if kind == "toggle" and not M.toggle_wants(entity) then         -- issue #355: an open toggle bus is no member
+		s.toggle_off = s.toggle_off or {}
+		s.toggle_off[entity.unit_number] = true
+		return
+	end
 	if kind == "drive" then
 		local d = drive_record(s, entity)
 		local old, tags = legacy_item(event)
@@ -4373,11 +4487,114 @@ function M.tag_blueprint(bp, mapping)
 	end
 end
 
+--------------------------------------------------------------------------------
+--- issue #355: the ME Toggle Bus and the ME Inverted Toggle Bus (prototypes/autocrafting.lua; their checks:
+--- scripts/fork-me-toggle.lua). A toggle bus is a member only while it joins: an open one is unregistered like a removed
+--- cable (the network splits as for a removal), a closing one registered like a built one (the networks it touches merge).
+--- `s.toggle_off` holds the open ones (rebuild skips them).
+--------------------------------------------------------------------------------
+
+M.TOGGLE_WIRES = { defines.wire_connector_id.circuit_red, defines.wire_connector_id.circuit_green }   -- (a field: no main-chunk local)
+
+--- does the toggle bus want to join? Its lamp's circuit condition, switched on and on a circuit network, holds (AE2's
+--- redstone signal); the inverted one wants the opposite, so it joins without a wire
+function M.toggle_wants(entity)
+	local cb = entity.get_control_behavior()
+	local holds = false
+	if cb and cb.circuit_enable_disable and not cb.disabled then
+		for _, w in pairs(M.TOGGLE_WIRES) do
+			if entity.get_circuit_network(w) then holds = true break end
+		end
+	end
+	if entity.name == mod_data().names.inverted_toggle_bus then return not holds end
+	return holds
+end
+
+--- is the toggle bus a member now (it joins)?
+function M.toggle_joined(entity)
+	local s = storage.fork_me_net
+	return s ~= nil and entity.valid and s.nodes[entity.unit_number] ~= nil
+end
+
+--- the toggle bus joins (`joined` true) or opens; returns true when that changed the graph
+function M.set_toggle(entity, joined)
+	if not (entity and entity.valid and kinds()[entity.name] == "toggle") then return false end
+	local s = state()
+	local unit = entity.unit_number
+	s.toggle_off = s.toggle_off or {}
+	if joined then
+		s.toggle_off[unit] = nil
+		if s.nodes[unit] then return false end
+		add_node(s, entity, "toggle")
+	else
+		s.toggle_off[unit] = true
+		if not s.nodes[unit] then return false end
+		remove_node_graph(s, unit)
+	end
+	return true
+end
+
+--- Issue #385: link the ME Quantum Bridges `a` and `b` (entities; `b` nil: unlink `a` from its partner). A link is a graph edge
+--- like a cable between the two, on any surface and at any distance: the networks on both sides become one (a split when it
+--- goes, as for a removed cable). The links are state (`s.qlink`, unit -> partner unit, both ways); scripts/fork-me-qbridge.lua
+--- decides them. Returns true when the graph changed.
+function M.set_qlink(a, b)
+	local s = state()
+	if not (a and a.valid) then return false end
+	local au = a.unit_number
+	s.qlink = s.qlink or {}
+	local old = s.qlink[au]
+	local bu = b and b.valid and b.unit_number or nil
+	if old == bu then return false end
+	local function again(unit)                          -- (registered again: its edges as the links say now)
+		local node = s.nodes[unit]
+		if node and node.entity.valid then
+			remove_node_graph(s, unit)
+			add_node(s, node.entity, node.kind)
+		end
+	end
+	if old then
+		s.qlink[au] = nil
+		if s.qlink[old] == au then s.qlink[old] = nil end
+		again(au)
+	end
+	if bu then
+		local prev = s.qlink[bu]
+		if prev then
+			s.qlink[bu] = nil
+			if s.qlink[prev] == bu then s.qlink[prev] = nil end
+			again(prev)
+		end
+		s.qlink[au], s.qlink[bu] = bu, au
+		again(au)
+	end
+	return true
+end
+
+--- the unit of the bridge `entity` is linked to (nil: none)
+function M.qlink_of(entity)
+	local s = storage.fork_me_net
+	return s and s.qlink and entity and entity.valid and s.qlink[entity.unit_number] or nil
+end
+
+--- issue #355: the energy the network's controllers hold now (J; the level emitter's "stored energy")
+function M.stored_energy(net)
+	local s = storage.fork_me_net
+	local n = 0
+	for unit in pairs(net and net.controllers or {}) do
+		local node = s and s.nodes[unit]
+		local e = node and node.entity
+		if e and e.valid then n = n + e.energy end
+	end
+	return n
+end
+
 --- A member is mined (its cells go into `buffer`), destroyed (`died`: its cells are spilled) or removed by a
 --- script. Call before the entity is gone.
 function M.on_removed(entity, buffer)
 	if not (entity and entity.valid and entity.unit_number) then return end
 	local s = storage.fork_me_net
+	if s and s.toggle_off then s.toggle_off[entity.unit_number] = nil end   -- (issue #355)
 	if not (s and s.nodes[entity.unit_number]) then return end
 	local d = s.drives[entity.unit_number]
 	if d then
@@ -4559,9 +4776,11 @@ function M.rebuild()
 		local index = surface.index
 		for _, e in pairs(surface.find_entities_filtered{ name = names }) do
 			local unit = e.unit_number
-			units[#units + 1] = unit
-			ents[unit] = e
-			surface_of[unit] = index
+			if not (s.toggle_off and s.toggle_off[unit]) then          -- (issue #355: an open toggle bus is no member)
+				units[#units + 1] = unit
+				ents[unit] = e
+				surface_of[unit] = index
+			end
 		end
 	end
 	table.sort(units)
@@ -4692,6 +4911,14 @@ function M.rebuild()
 		if node.kind == "underground" and not node.partner then
 			local partner = find_partner(s, node)
 			if partner then link_pair(node, partner) end
+		end
+	end
+	--- issue #385: the linked ME Quantum Bridges (their links are state: s.qlink, kept by scripts/fork-me-qbridge.lua)
+	for unit, qu in pairs(s.qlink or {}) do
+		local a, b = s.nodes[unit], s.nodes[qu]
+		if a and b then
+			a.adj[qu] = true
+			b.adj[unit] = true
 		end
 	end
 	local seen = {}

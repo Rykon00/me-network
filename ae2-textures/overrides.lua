@@ -31,6 +31,10 @@ return {
 	["item-with-tags/me-1k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-1k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-4k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-16k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16k-storage-cell.png", icon_size = 64 },
+	--- ME Network issue #364: AE2-Unofficial's void cell for both void cells (its one void cell takes items and fluids); ME
+	--- Network tints its own icon violet in `icons`: the tint is set to none here, so the AE2 picture keeps its colours
+	["item-with-tags/me-void-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-void-storage-cell.png", icon_size = 64, tint = { 1, 1, 1, 1 } },
+	["item-with-tags/me-void-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-void-fluid-storage-cell.png", icon_size = 64, tint = { 1, 1, 1, 1 } },
 	["item-with-tags/me-64k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-64k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-256k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-256k-storage-cell.png", icon_size = 64 },
 	--- fluid storage cells (64 px, issue #250): AE2-Unofficial has none, so its item cell of the tier, frame and body blue
@@ -53,9 +57,14 @@ return {
 	["item/me-fuzzy-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-fuzzy-card.png", icon_size = 32 },
 	["item/me-pattern-capacity-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-pattern-capacity-card.png", icon_size = 32 },
 	["item/me-sticky-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-sticky-card.png", icon_size = 32 },
+	--- ME Network issue #364: AE2-Unofficial's Ore Dictionary Filter Card for the Group Filter Card
+	["item/me-group-filter-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-group-filter-card.png", icon_size = 32 },
 	["item/me-inverter-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-inverter-card.png", icon_size = 32 },
 	["item/me-equal-distribution-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-equal-distribution-card.png", icon_size = 32 },
 	["module/me-acceleration-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-acceleration-card.png", icon_size = 32 },
+	--- ME Network issue #356: AE2-Unofficial's Super Speed and Superluminal Speed Cards
+	["item/me-super-speed-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-super-speed-card.png", icon_size = 32 },
+	["item/me-superluminal-speed-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-superluminal-speed-card.png", icon_size = 32 },
 	--- issues #251, #294: no AE2 counterpart, so the Capacity Card with its capacity sign in orange (not the Pattern
 	--- Capacity Card's look: a dark sign and a turquoise stripe)
 	["item/me-interface-capacity-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-interface-capacity-card.png", icon_size = 32 },
@@ -74,6 +83,19 @@ return {
 		["__me-network__/graphics/icons/hd/me-chest.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-chest.png", icon_size = 64 },
 	},
 	["item/me-chest"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-chest.png", icon_size = 64 },
+	--- ME Network issue #397: the ME IO Port (ME Network #386), AE2-Unofficial's IO port side (its two cell slots) as the block
+	["simple-entity-with-force/me-io-port"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-io-port.png"] = "__me-network-ae2-textures__/graphics/blocks/me-io-port.png",
+		["__me-network__/graphics/icons/hd/me-io-port.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-io-port.png", icon_size = 64 },
+	},
+	["item/me-io-port"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-io-port.png", icon_size = 64 },
+	--- ME Network issue #406: the ME Quantum Bridge (ME Network #385, 3 x 3): AE2-Unofficial's eight quantum rings around its link
+	--- chamber, the blocks before they are formed; the icons are the ring
+	["electric-energy-interface/me-quantum-bridge"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-quantum-bridge.png"] = "__me-network-ae2-textures__/graphics/blocks/me-quantum-bridge.png",
+		["__me-network__/graphics/icons/hd/me-quantum-bridge.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-quantum-bridge.png", icon_size = 64 },
+	},
+	["item/me-quantum-bridge"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-quantum-bridge.png", icon_size = 64 },
 	["container/me-network-interface"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-interface-unified.png"] = "__me-network-ae2-textures__/graphics/blocks/me-interface.png",
 		["__me-network__/graphics/icons/hd/me-interface.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-interface.png", icon_size = 64 },
@@ -127,6 +149,12 @@ return {
 		["__me-network__/graphics/icons/hd/me-pattern-terminal.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
 	},
 	["item/me-pattern-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
+	--- the ME Interface Terminal (issue #343): AE2's interface terminal panel, the same two variations
+	["simple-entity-with-force/me-interface-terminal"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-interface-terminal.png"] = "__me-network-ae2-textures__/graphics/blocks/me-interface-terminal.png",
+		["__me-network__/graphics/icons/hd/me-interface-terminal.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-interface-terminal.png", icon_size = 64 },
+	},
+	["item/me-interface-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-interface-terminal.png", icon_size = 64 },
 	--- the buses (issue #282): AE2's front of each, the same block in every direction (AE2's front shows none: ME Network's
 	--- marker layer stays and shows it); only the first layer of each direction is replaced
 	["simple-entity-with-force/me-import-bus"] = {
@@ -136,7 +164,11 @@ return {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-import-bus-west.png"] = "__me-network-ae2-textures__/graphics/blocks/me-import-bus.png",
 		["__me-network__/graphics/icons/hd/me-import-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-import-bus.png", icon_size = 64 },
 	},
-	["item/me-import-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-import-bus.png", icon_size = 64 },
+	--- (ME Network issue #381: the buses' icons have a second layer, ME Network's direction badge, which stays: only the
+	--- block's layer is replaced)
+	["item/me-import-bus"] = {
+		["__me-network__/graphics/icons/hd/me-import-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-import-bus.png", icon_size = 64 },
+	},
 	["simple-entity-with-force/me-export-bus"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
@@ -144,7 +176,9 @@ return {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-west.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
 		["__me-network__/graphics/icons/hd/me-export-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-export-bus.png", icon_size = 64 },
 	},
-	["item/me-export-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-export-bus.png", icon_size = 64 },
+	["item/me-export-bus"] = {
+		["__me-network__/graphics/icons/hd/me-export-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-export-bus.png", icon_size = 64 },
+	},
 	["simple-entity-with-force/me-storage-bus"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
@@ -152,7 +186,9 @@ return {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-west.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
 		["__me-network__/graphics/icons/hd/me-storage-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
 	},
-	["item/me-storage-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
+	["item/me-storage-bus"] = {
+		["__me-network__/graphics/icons/hd/me-storage-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
+	},
 	--- the cable (issue #283): the sheet of its 16 variations, in ME Network's layout; the item and the entity show the crossing
 	["simple-entity-with-force/me-cable"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-cable.png"] = "__me-network-ae2-textures__/graphics/blocks/me-cable.png",
@@ -225,5 +261,6 @@ return {
 	["technology/me-automation"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-automation.png", icon_size = 256 },
 	["technology/me-co-processing"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-co-processing.png", icon_size = 256 },
 	["technology/me-quantum-crafting"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-quantum-crafting.png", icon_size = 256 },
+	["technology/me-quantum-bridge"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-quantum-bridge.png", icon_size = 256 },   -- (issue #406)
 	["technology/me-wireless"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-wireless.png", icon_size = 256 },
 }

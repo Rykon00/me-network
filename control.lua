@@ -20,8 +20,16 @@ local fork_fluids = require("scripts.fork-me-fluids")
 local fork_circuit = require("scripts.fork-me-circuit")
 --- the ME Pattern Terminal: the encoding window and its two slots (issue #130)
 local fork_pt = require("scripts.fork-me-patternterm")
+--- the ME Toggle Bus and ME Inverted Toggle Bus (issue #355: their checks join and split networks)
+local fork_toggle = require("scripts.fork-me-toggle")
 --- the windows of the ME blocks (after the modules whose functions they call)
 require("scripts.fork-me-windows")
+--- the ME Interface Terminal: the list of the network's providers and interfaces (issue #336; it uses the windows above)
+require("scripts.fork-me-ifaceterm")
+--- the ME Storage, Conversion and Throughput Monitor (issue #353; it uses the windows above)
+local fork_monitor = require("scripts.fork-me-monitor")
+--- the ME Level Emitter (issue #355: a circuit signal by a resource's amount; its window comes with it)
+local fork_emitter = require("scripts.fork-me-emitter")
 --- issues #205 to #210: the access point, the wireless terminal and its hotkey, the charger, the equipment module
 local fork_wl = require("scripts.fork-me-wireless")
 --- a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12)
@@ -36,12 +44,20 @@ local sched = require("scripts.fork-me-schedule")
 local names = require("scripts.fork-me-names")
 --- the command /me-stats (issue #38, part 3)
 require("scripts.fork-me-stats")
+--- issue #383: a blueprint pasted over ME blocks that stand there already
+local pasteover = require("scripts.fork-me-pasteover")
+--- issue #386: the ME IO Port (a cell emptied into the network or filled from it; its own queue)
+local fork_ioport = require("scripts.fork-me-ioport")
+--- issue #385: the ME Quantum Bridge (two networks joined at any distance and across surfaces)
+local fork_qbridge = require("scripts.fork-me-qbridge")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_net.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_sbus.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_wl.tag_blueprint
+fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_ioport.tag_blueprint
+fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_qbridge.tag_blueprint
 
 local function on_built(entity, tags, event)
 	fork_net.on_built(entity, event)
@@ -53,6 +69,11 @@ local function on_built(entity, tags, event)
 	fork_bench.on_built(entity)
 	fork_pt.on_built(entity)
 	fork_wl.on_built(entity, tags)
+	fork_monitor.on_built(entity, tags)
+	fork_toggle.on_built(entity)                              -- (after the storage engine registered it, or not)
+	fork_emitter.on_built(entity, tags)
+	fork_ioport.on_built(entity, tags)                        -- (after the graph registered it)
+	fork_qbridge.on_built(entity, tags)
 end
 
 --- built by players and robots, by other scripts and on space platforms
@@ -74,6 +95,11 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 	fork_bench.on_built(event.destination)                     -- (a cloned workbench is empty: its cell is an item)
 	fork_pt.on_built(event.destination)                        -- (a cloned pattern terminal has empty slots)
 	fork_wl.on_built(event.destination, nil, event.source)     -- (an access point wants its boosters, a charger is empty)
+	fork_monitor.on_built(event.destination, nil, event.source)
+	fork_toggle.on_built(event.destination)                    -- (the game cloned its lamp condition)
+	fork_emitter.on_built(event.destination, nil, event.source)
+	fork_ioport.on_built(event.destination, nil, event.source)   -- (a cloned port is empty: its cells are items)
+	fork_qbridge.on_built(event.destination, nil, event.source)
 end)
 
 --- the priority of an ME Pattern Provider (its patterns travel in blueprints, see fork-me-autocraft.lua) and the
@@ -88,11 +114,32 @@ script.on_event(defines.events.on_entity_settings_pasted, function(event)
 	fork_circuit.on_entity_settings_pasted(event)
 	fork_paste.on_entity_settings_pasted(event)
 	fork_wl.on_entity_settings_pasted(event)
+	fork_monitor.on_entity_settings_pasted(event)
+	fork_emitter.on_entity_settings_pasted(event)             -- (a toggle bus: the game pastes its lamp condition)
+	fork_ioport.on_entity_settings_pasted(event)
+	fork_qbridge.on_entity_settings_pasted(event)
 end)
 
 script.on_event(defines.events.on_player_setup_blueprint, function(event)
 	fork_ae2.on_player_setup_blueprint(event)
 end)
+
+--- issue #383: a blueprint (or the copy-paste tool's copy) pasted over ME blocks of the same kind makes no ghost and raises
+--- no event in Factorio 2.0, so the settings in its tags are given to those blocks before the paste, as the build handlers
+--- give them to a block built from a ghost (only the module whose tag the blueprint entity carries)
+pasteover.apply = function(entity, tags)
+	if type(tags.fork_me_drive) == "table" then fork_net.apply_drive_settings(entity, tags.fork_me_drive) end
+	if tags.fork_me_interface or tags.fork_me_bus then fork_io.on_built(entity, tags) end
+	if tags.fork_me_storage_bus or tags.fork_me_fluid_storage_bus then fork_sbus.on_built(entity, tags) end
+	if tags.fork_me_provider then fork_ae2.on_built(entity, tags) end
+	if tags.fork_me_maintainer or tags.fork_me_circuit then fork_circuit.on_built(entity, tags) end
+	if tags.fork_me_access_point then fork_wl.on_built(entity, tags) end
+	if tags.fork_me_monitor then fork_monitor.on_built(entity, tags) end
+	if tags.fork_me_emitter then fork_emitter.on_built(entity, tags) end
+	if tags.fork_me_io_port then fork_ioport.on_built(entity, tags) end
+	if tags.fork_me_qbridge or tags.fork_me_wireless_link then fork_qbridge.on_built(entity, tags) end
+end
+script.on_event(defines.events.on_pre_build, function(event) pasteover.on_pre_build(event) end)
 
 --- removed ME members. Mined: an ME Drive's cells (with their items and fluids), an ME Pattern Provider's encoded
 --- patterns, an ME Storage Bus's cards and the cell in an ME Cell Workbench go into the mined buffer, the fluid in an
@@ -115,6 +162,8 @@ local function on_mined(event)
 	fork_bench.on_removed(event.entity, event.buffer)
 	fork_pt.on_removed(event.entity, event.buffer)          -- (issue #130: its two slots come along)
 	fork_wl.on_removed(event.entity, event.buffer)          -- (an access point's boosters, a charger's terminal)
+	fork_ioport.on_removed(event.entity, event.buffer)      -- (issue #386: its cells and cards)
+	fork_qbridge.on_removed(event.entity)
 	fork_net.on_removed(event.entity, event.buffer)
 end
 for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
@@ -127,18 +176,22 @@ local function on_destroyed(event)
 	fork_bench.on_removed(event.entity, nil)
 	fork_pt.on_removed(event.entity, nil)                   -- (spilled where it stood)
 	fork_wl.on_removed(event.entity, nil)
+	fork_ioport.on_removed(event.entity, nil)
+	fork_qbridge.on_removed(event.entity)
 	fork_net.on_removed(event.entity, nil)
 end
 script.on_event(defines.events.on_entity_died, on_destroyed, REMOVED_FILTER)
 script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILTER)
 
 --- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
---- interfaces and buses, storage buses, crafting jobs, provider rescans, level maintainers and circuit interfaces.
+--- interfaces and buses, storage buses, ME IO Ports (issue #386), crafting jobs, provider rescans, level maintainers and
+--- circuit interfaces.
 --- The terminal's 60 tick step stays (windows, drive lights, the sweep).
 local function on_tick(tick)
 	sched.mark(tick)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
+	fork_ioport.on_tick(tick)
 	fork_ae2.on_tick(tick)
 	fork_me.on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
@@ -214,5 +267,10 @@ script.on_configuration_changed(function(data)
 	fork_sbus.on_configuration_changed()
 	fork_bench.on_configuration_changed()
 	fork_wl.on_configuration_changed()
+	fork_monitor.on_configuration_changed()
+	fork_toggle.on_configuration_changed()
+	fork_emitter.on_configuration_changed()
+	fork_ioport.on_configuration_changed()
+	fork_qbridge.on_configuration_changed()
 	names.on_configuration_changed()
 end)
