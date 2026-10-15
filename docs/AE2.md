@@ -333,6 +333,13 @@ side). Open one to set up to 9 filters, items and fluids mixed (the window also 
 whether the bus uses its items, its fluids or both). On a machine with an inventory and fluid boxes (an assembling
 machine with a fluid recipe, a chemical plant) one bus does both; on a chest only items, on a tank only fluids.
 
+**How far an ME Export Bus fills** (issue #382): a chest as far as it has room; a machine (an assembling machine, a furnace,
+a lab) gets a stack of each filtered item in its input, topped up again as it uses them. When the machine's recipe needs
+more than that, the bus fills it to **two crafts** of the recipe, as an inserter does: a recipe that takes 200 of an item
+that stacks to 100 gets 400, so it starts and the next craft is ready. A machine without a recipe takes nothing. Several
+export buses on one machine count what it holds already, so together they never fill it past that level; they only fill
+it faster.
+
 The filter buttons of the buses open the same picker (items with their quality, and fluids), right click empties a
 filter. Since issue #291 an item filter can name a quality: the import bus then takes only that quality of the item, the
 export bus exports that quality. A filter in normal quality (the plain item, as every filter of older saves and
@@ -582,7 +589,7 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
   Cards plus 131 072 ... 67 108 864 for 1 to 4 Superluminal ones (one Super Speed Card alone: 1 + 16 = 17; with an
   Acceleration Card: 8 + 16 = 24). A visit moves at most 2 147 483 647 items (an engine count is 32 bit), far more than any
   chest holds. A bus still moves what its machine, chest or the network can take: an export bus fills a machine to a stack of each
-  item, a chest as far as it has room, so a faster bus mostly matters for a chest or a drive with a lot to move. Putting
+  item (two crafts of its recipe when that is more, issue #382), a chest as far as it has room, so a faster bus mostly matters for a chest or a drive with a lot to move. Putting
   cards in, taking them out, mining (the cards go into your inventory), destruction (they drop) and blueprints, copy/paste,
   settings paste and clones work as for the storage bus (see below).
 * **Putting a card in:** open the storage bus (your inventory is on the left of its window) and shift + click the card

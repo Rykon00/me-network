@@ -884,6 +884,9 @@ margin51 = require("margin")({ me_place = me_place, me_report = me_report })
 refill67 = require("refill")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #86: an ME Export Bus into a lab (lab.lua)
 lab86 = require("lab")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #382: an ME Export Bus into a recipe of more than a stack (bulkexport.lua)
+bulk382 = require("bulkexport")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #84: damaged items on the by-count paths (damaged.lua)
 damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
 --- me-network issue #85: an import bus with only refused stacks (refused.lua)
@@ -1034,6 +1037,7 @@ local function tests_running()
 	damaged84.running(check)
 	refused85.running(check)
 	lab86.running(check)
+	bulk382.running(check)
 	refill67.running(check)
 	stats38.running(check)
 	margin51.running(check)
@@ -1969,6 +1973,7 @@ script.on_nth_tick(10, function()
 	damaged84.tick()
 	refused85.tick()
 	lab86.tick()
+	bulk382.tick()
 	refill67.tick()
 	plans50.tick()
 	scan50.tick()
@@ -4833,6 +4838,7 @@ script.on_init(function()
 	for _, f in pairs(damaged84.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refused85.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refill67.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end

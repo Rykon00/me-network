@@ -100,6 +100,29 @@ do
 	data:extend({ { type = "recipe-category", name = "zz-devcheck-fixed" }, m, r("zz-devcheck-fixed"), r("zz-devcheck-unfixed") })
 end
 
+--- me-network issue #382 (bulkexport.lua): a recipe that needs two stacks of an item per craft (200 parts that stack to
+--- 100) and one that needs 10, in a machine of their own category without power needs; with Gregtorio too
+do
+	local m = table.deepcopy(data.raw["assembling-machine"]["assembling-machine-2"])
+	m.name = "zz-devcheck-bulk-machine"
+	m.crafting_categories = { "zz-devcheck-bulk" }
+	m.energy_source = { type = "void" }
+	m.minable = nil
+	m.next_upgrade = nil
+	m.fast_replaceable_group = nil
+	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	data:extend({ { type = "recipe-category", name = "zz-devcheck-bulk" }, m,
+		{ type = "item", name = "zz-devcheck-bulk-part", icon = icon, stack_size = 100, subgroup = "intermediate-product" },
+		{ type = "recipe", name = "zz-devcheck-bulk", category = "zz-devcheck-bulk", energy_required = 0.5, enabled = true,
+			icon = icon, subgroup = "intermediate-product", ingredients = { { type = "item", name = "zz-devcheck-bulk-part", amount = 200 } },
+			results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } } },
+		--- (a recipe that needs less than a stack, and an item the test's network lacks, so it never starts)
+		{ type = "recipe", name = "zz-devcheck-bulk-small", category = "zz-devcheck-bulk", energy_required = 0.5, enabled = true,
+			icon = icon, subgroup = "intermediate-product", ingredients = { { type = "item", name = "zz-devcheck-bulk-part", amount = 10 },
+				{ type = "item", name = "zz-devcheck-renamed-item", amount = 1 } },
+			results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } } } })
+end
+
 --- me-network issue #295: an item whose name the player sees differs from its prototype name (as Gregtorio's renamed
 --- items), for the search of the terminal and the picker (control.lua, the terminal test); with Gregtorio too
 data:extend({ { type = "item", name = "zz-devcheck-renamed-item", localised_name = { "", "Fancy Gadget" },
