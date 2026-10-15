@@ -83,6 +83,12 @@ return {
 		["__me-network__/graphics/icons/hd/me-chest.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-chest.png", icon_size = 64 },
 	},
 	["item/me-chest"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-chest.png", icon_size = 64 },
+	--- ME Network issue #397: the ME IO Port (ME Network #386), AE2-Unofficial's IO port side (its two cell slots) as the block
+	["simple-entity-with-force/me-io-port"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-io-port.png"] = "__me-network-ae2-textures__/graphics/blocks/me-io-port.png",
+		["__me-network__/graphics/icons/hd/me-io-port.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-io-port.png", icon_size = 64 },
+	},
+	["item/me-io-port"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-io-port.png", icon_size = 64 },
 	["container/me-network-interface"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-interface-unified.png"] = "__me-network-ae2-textures__/graphics/blocks/me-interface.png",
 		["__me-network__/graphics/icons/hd/me-interface.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-interface.png", icon_size = 64 },
