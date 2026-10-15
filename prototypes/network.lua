@@ -803,6 +803,53 @@ data.raw["mod-data"]["fork-me-network"].data.names.io_port = IO_PORT
 data.raw["mod-data"]["fork-me-network"].data.member_power["io-port"] = IO_PORT_POWER
 ME.crafting_block_tech[IO_PORT] = "me-network"
 
+--------------------------------------------------------------------------------
+--- ME QUANTUM BRIDGE (issue #385, AE2's Quantum Network Bridge: eight quantum rings around a quantum link chamber; one 3x3
+--- block here): two bridges with the same frequency (set in the window, scripts/fork-me-qbridge.lua) join their networks
+--- into one, at any distance and across surfaces (planets, space platforms, factory floors). Balanced by its cost and by
+--- its power: each end draws QBRIDGE_WATTS from the power grid at its place (an electric energy interface, like the ME
+--- Chest's power), and the link holds only while both ends have power. AE2's recipes: a ring is 4 iron, 2 logic processors,
+--- an engineering processor, an energy cell and a dense cable; the chamber 4 quartz glass and 4 fluix pearls. Here eight
+--- rings and a chamber in the stand-ins (no glass: its stand-in, the plastic bar, is made in no game of Gregtorio Continued,
+--- whose compat file gives the block its GT recipe), unlocked late (utility science).
+--------------------------------------------------------------------------------
+
+local QBRIDGE, QBRIDGE_WATTS = "me-quantum-bridge", 1000000
+ME.add_item{ name = QBRIDGE, icon = HD_ICON .. "me-quantum-bridge.png", icon_size = 64, subgroup = "fork-me-network", order = "e",
+	stack_size = 10, place_result = QBRIDGE,
+	recipe = { energy_required = 30, ingredients = I{ "iron-plate", 32, "electronic-circuit", 20, "processing-unit", 8,
+		"battery", 8, "fluix-cable", 32 } } }
+data:extend({ {
+	type = "electric-energy-interface",
+	name = QBRIDGE,
+	icon = HD_ICON .. "me-quantum-bridge.png",
+	icon_size = 64,
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 1, result = QBRIDGE },
+	placeable_by = { item = QBRIDGE, count = 1 },
+	max_health = 800,
+	is_military_target = false,
+	corpse = "medium-remnants",
+	collision_box = { { -1.4, -1.4 }, { 1.4, 1.4 } },
+	selection_box = { { -1.5, -1.5 }, { 1.5, 1.5 } },
+	gui_mode = "none",
+	energy_source = {
+		type = "electric",
+		usage_priority = "secondary-input",
+		buffer_capacity = tostring(QBRIDGE_WATTS * 2) .. "J",     -- (two seconds of its drain)
+		input_flow_limit = tostring(QBRIDGE_WATTS * 2) .. "W",
+		output_flow_limit = "0W",
+	},
+	energy_production = "0W",
+	energy_usage = tostring(QBRIDGE_WATTS) .. "W",
+	picture = { filename = HD_ENTITY .. "me-quantum-bridge.png", priority = "high", width = 192, height = 192, scale = 0.5 },
+	localised_description = { "entity-description.me-quantum-bridge", tostring(QBRIDGE_WATTS / 1000000) },
+} })
+data.raw["mod-data"]["fork-me-network"].data.names.quantum_bridge = QBRIDGE
+data.raw["mod-data"]["fork-me-network"].data.quantum_bridge = { watts = QBRIDGE_WATTS }
+ME.add_technology{ name = "me-quantum-bridge", prerequisites = { "me-storage-256k", "utility-science-pack" },
+	unit = ME.unit(5, 1500), recipes = { QBRIDGE } }
+
 --- the cable, the controller, the drive, interface, terminal, buses and the cells up to 16k; the monitors (issue #353); the
 --- ME IO Port (issue #386)
 ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "lamp", "fast-inserter" }, unit = ME.unit(2, 300), recipes = {

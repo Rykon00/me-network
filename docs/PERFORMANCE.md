@@ -3310,3 +3310,23 @@ the scenes have no port):
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## The ME Quantum Bridge (issue #385)
+
+A link is one more graph edge: `add_node` looks up the member's link (`s.qlink`, nil for every member but a linked
+bridge), `rebuild` adds the linked pairs after the underground cables, a removed member forgets its link. Joining and
+opening register the bridge again (a merge, or a split search of the smaller part, as for a removed cable). The pairs are
+checked once a second in the network's slow step: one energy read per bridge. Nothing per tick.
+
+`bench --sizes 100,1000 --runs 3 --check origin/main` (three rounds in turns; the scenes have no bridge, the build burst
+registers and removes 1000 members through `add_node` and the removal):
+
+| | origin/main | with the bridge |
+|---|---|---|
+| 100: script average / p99 ms | 0.2171 / 1.915 | 0.2152 / 1.932 |
+| 1000: script average / p99 ms | 0.3884 / 2.155 | 0.3831 / 2.129 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| burst build / remove ms (1000) | 403.6 / 87.63 | 404.7 / 86.99 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.

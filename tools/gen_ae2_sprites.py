@@ -36,6 +36,7 @@ Sources:
                                                   # sheet docs/graphics-review/own-icons-238.png; the buses' direction badges (issue #381) and
                                                   # their sheet docs/graphics-review/issue-381.png
     python tools/gen_ae2_sprites.py --io-port     # only the ME IO Port (issue #386), from the drive's 32 px face
+    python tools/gen_ae2_sprites.py --quantum-bridge  # only the ME Quantum Bridge (issue #385), 3 x 3, drawn here
     python tools/gen_ae2_sprites.py --thumbnail   # only thumbnail.png, from the drive and terminal PNGs (issue #20)
     python tools/gen_ae2_sprites.py --crafting-cpu C:/00_Repositories/GT5-Unofficial   # only the crafting blocks of
                                                   # the multiblock crafting CPUs (me-network issue #6): GT casings and
@@ -1955,6 +1956,42 @@ def bus_icon_sheet(path):
     return path
 
 
+def quantum_bridge_face():
+    """issue #385: the ME Quantum Bridge's 96 px face (3 x 3 tiles, AE2's eight quantum rings around the link chamber, drawn
+    here): the drive's casing colours, eight ring blocks with a fluix line each, the chamber in the middle with a glowing core"""
+    casing = load(OUT_ENTITY / "me-drive.png").getpixel((1, 1))
+    face = Image.new("RGBA", (3 * TILE, 3 * TILE), casing)
+    d = ImageDraw.Draw(face)
+    for i in range(3):
+        for j in range(3):
+            x0, y0 = i * TILE, j * TILE
+            d.rectangle((x0 + 2, y0 + 2, x0 + TILE - 3, y0 + TILE - 3), fill=(46, 48, 58, 255), outline=(92, 96, 110, 255))
+            if (i, j) == (1, 1):                                           # the link chamber
+                d.rectangle((x0 + 5, y0 + 5, x0 + TILE - 6, y0 + TILE - 6), fill=(20, 18, 30, 255), outline=FLUIX_LIGHT + (255,))
+                d.ellipse((x0 + 9, y0 + 9, x0 + TILE - 10, y0 + TILE - 10), fill=FLUIX + (255,), outline=(215, 187, 236, 255))
+                d.ellipse((x0 + 13, y0 + 13, x0 + TILE - 14, y0 + TILE - 14), fill=(235, 220, 255, 255))
+            else:                                                          # a ring block: a fluix line towards the chamber
+                d.rectangle((x0 + 6, y0 + 6, x0 + TILE - 7, y0 + TILE - 7), fill=(30, 30, 38, 255))
+                cx, cy = x0 + TILE // 2, y0 + TILE // 2
+                d.line((cx, cy, cx + (1 - i) * 12, cy + (1 - j) * 12), fill=FLUIX + (255,), width=3)
+                d.rectangle((cx - 2, cy - 2, cx + 1, cy + 1), fill=FLUIX_LIGHT + (255,))
+    return face
+
+
+def quantum_bridge():
+    """issue #385: the ME Quantum Bridge's 192 px picture (3 x 3 tiles), its 64 px icon cube and its technology icon"""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    OUT_TECH_HD.mkdir(parents=True, exist_ok=True)
+    face = quantum_bridge_face()
+    written = [HD_ENTITY / "me-quantum-bridge.png", HD_ICON / "me-quantum-bridge.png", OUT_TECH_HD / "me-quantum-bridge.png"]
+    hd_block(face, tiles=3).save(written[0])
+    icon = hd_cube(face.resize((TILE, TILE), Image.LANCZOS))
+    icon.save(written[1])
+    upscale(icon).save(written[2])                                         # (its technology, as hd_batch5's)
+    return written
+
+
 def io_port_face():
     """issue #386: the ME IO Port's 32 px face: the drive's casing, one cell bay on the left and two arrows on the right,
     into the network (fluix purple, up) and out of it (blue, down)"""
@@ -2427,6 +2464,8 @@ def main():
     ap.add_argument("--wireless", action="store_true",
                     help="only the wireless parts (me-network issues #205 to #211): access point, booster, terminal item, "
                          "charger, module and their technology, drawn from this mod's own PNGs")
+    ap.add_argument("--quantum-bridge", action="store_true",
+                    help="only the ME Quantum Bridge (me-network issue #385): its 3 x 3 picture and icon, drawn here")
     ap.add_argument("--io-port", action="store_true",
                     help="only the ME IO Port (me-network issue #386): its 64 px picture and icon, from the drive's 32 px face")
     ap.add_argument("--toggle-emitter", action="store_true",
@@ -2478,7 +2517,7 @@ def main():
     if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
             or a.sheet_assembler or a.pattern_terminal or a.interface_terminal or a.monitors or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
-            or a.own_icons or a.light or a.bus_markers or a.toggle_emitter or a.io_port):
+            or a.own_icons or a.light or a.bus_markers or a.toggle_emitter or a.io_port or a.quantum_bridge):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --interface-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
@@ -2556,6 +2595,8 @@ def main():
         print("ME toggle buses and level emitter (issue #355):", len(toggle_emitter()))
     if a.gt or a.hd or a.io_port:                                      # (from the drive's 32 px face)
         print("ME IO Port (issue #386):", len(io_port()))
+    if a.gt or a.hd or a.quantum_bridge:                               # (drawn here, the drive's casing colour)
+        print("ME Quantum Bridge (issue #385):", len(quantum_bridge()))
     if not (a.gt or a.hd) and a.own_icons:      # the 3D-style cells and cable are made from the 32 px icons
         written = hd_batch1()
         hd_sheet_batch1(ROOT / "docs/graphics-review/graphics-batch1-218.png")

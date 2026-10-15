@@ -39,6 +39,7 @@ local io = require("scripts.fork-me-io")
 local sbus = require("scripts.fork-me-storagebus")
 local bench = require("scripts.fork-me-workbench")
 local ioport = require("scripts.fork-me-ioport")          -- (issue #386)
+local qbridge = require("scripts.fork-me-qbridge")        -- (issue #385)
 local picker = require("scripts.fork-me-picker")
 local Names = require("scripts.fork-me-names")
 local terminal = require("scripts.fork-me-terminal")
@@ -602,6 +603,53 @@ function M.refresh_io_port(player, frame)
 	G.find(frame, "fork_me_iop_speed").caption = { "fork-me-gui.io-port-speed", G.fmt(d.items), G.fmt(d.fluid), G.fmt(d.accel) }
 	return true
 end
+
+--------------------------------------------------------------------------------
+--- issue #385: the ME Quantum Bridge (scripts/fork-me-qbridge.lua): its frequency, the link and its power. A shift + click of
+--- the inventory stores the stack in the network, as the windows of the other blocks without slots do.
+--------------------------------------------------------------------------------
+
+local function open_qbridge(player, entity)
+	if not qbridge.info(entity) then return end
+	local _, content = G.open_window(player, "quantum-bridge", caption_of(entity), { unit = entity.unit_number }, true)
+	G.label(content, { "fork-me-gui.qbridge-help" }, WIDTH)
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.qbridge-frequency" }, tooltip = { "fork-me-gui.qbridge-frequency-tooltip" } }
+	local f = row.add{ type = "textfield", name = "fork_me_qb_freq", numeric = true, allow_decimal = false, allow_negative = false,
+		lose_focus_on_confirm = true, tooltip = { "fork-me-gui.qbridge-frequency-tooltip" }, tags = G.act("qb_freq") }
+	f.style.width = 120
+	G.label(content, "", WIDTH, nil, "fork_me_qb_status")
+	G.label(content, "", WIDTH, nil, "fork_me_qb_power")
+	M.refresh_qbridge(player, G.window_of(player), true)
+end
+
+function M.refresh_qbridge(player, frame, first)
+	local entity = G.entity_of(player, frame)
+	local d = entity and qbridge.info(entity)
+	if not d then return false end
+	local f = G.find(frame, "fork_me_qb_freq")
+	if f and (first or not f.focused) then f.text = d.freq > 0 and tostring(d.freq) or "" end
+	local p = d.partner
+	G.find(frame, "fork_me_qb_status").caption = p and { "fork-me-gui.qbridge-status-linked", p.surface,
+		string.format("%.0f", p.x), string.format("%.0f", p.y) } or { "fork-me-gui.qbridge-status-" .. d.status }
+	G.find(frame, "fork_me_qb_power").caption = { "fork-me-gui.qbridge-power", G.fmt(d.watts / 1000),
+		string.format("%.0f", 100 * (d.buffer > 0 and d.energy / d.buffer or 0)) }
+	return true
+end
+
+G.window("quantum-bridge", { open = open_qbridge, refresh = M.refresh_qbridge, entities = { qbridge.NAME },
+	shift = M.store_shift, control = M.store_all, message = G.net_message, hint = { "fork-me-gui.store-help" } })
+
+--- the frequency: set when the field is confirmed or left (a number, empty: 0, none)
+G.on("qb_freq", function(event, player, el)
+	if event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	if not qbridge.set_frequency(entity, el.text == "" and 0 or tonumber(el.text)) then
+		player.create_local_flying_text{ text = { "fork-me-gui.qbridge-frequency-refused" }, create_at_cursor = true }
+	end
+	G.refresh_one(player)
+end)
 
 G.window("io-port", { open = open_io_port, refresh = M.refresh_io_port, entities = { ioport.NAME },
 	shift = function(entity, stack) return ioport.shift_in(entity, stack) end,
