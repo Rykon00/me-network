@@ -1908,16 +1908,17 @@ BADGES = {"me-import-bus": (IMPORT_ACCENT, "in"), "me-export-bus": (EXPORT_ACCEN
 
 
 def bus_badge(accent, way):
-    """issue #381: a bus's direction as a badge in the lower right corner of its 64 px icon, alone (a layer of its own over
-    the block's icon, so the texture mod, which replaces the block's icon, keeps it): a dark rounded square with a
-    diagonal arrow in the bus's colour, into the block (import: towards its middle), out of it (export) or both ways
-    (storage bus). Drawn at 32 px, then doubled like the other HD icons."""
+    """issue #381: a bus's direction as a badge in the lower left corner of its 64 px icon (the game draws a stack's count
+    in the lower right one), alone (a layer of its own over the block's icon, so the texture mod, which replaces the
+    block's icon, keeps it): a dark rounded square with a diagonal arrow in the bus's colour, into the block (import:
+    towards its middle, up and right), out of it (export) or both ways (storage bus). Drawn at 32 px, then doubled like the
+    other HD icons."""
     img = Image.new("RGBA", (TILE, TILE))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle((16, 16, 31, 31), radius=3, fill=(20, 20, 26, 255), outline=accent + (255,))
-    d.line((20, 20, 27, 27), fill=(235, 235, 245, 255), width=2)            # the shaft, upper left to lower right
-    tip_in = [(18, 18), (24, 18), (18, 24)]                                     # head at the upper left: into the block
-    tip_out = [(29, 29), (23, 29), (29, 23)]                                    # head at the lower right: out of it
+    d.rounded_rectangle((0, 16, 15, 31), radius=3, fill=(20, 20, 26, 255), outline=accent + (255,))
+    d.line((11, 20, 4, 27), fill=(235, 235, 245, 255), width=2)             # the shaft, upper right to lower left
+    tip_in = [(13, 18), (7, 18), (13, 24)]                                      # head at the upper right: into the block
+    tip_out = [(2, 29), (8, 29), (2, 23)]                                       # head at the lower left: out of it
     if way in ("in", "both"):
         d.polygon(tip_in, fill=accent + (255,))
     if way in ("out", "both"):
