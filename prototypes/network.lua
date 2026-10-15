@@ -525,6 +525,17 @@ block{
 		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 
+--- Issue #381: the buses' icons (item and entity; the recipes show the item's) carry a badge with their direction: into
+--- the network (import), out of it (export), both ways (storage bus), as a layer of its own over the block's icon
+--- (tools/gen_ae2_sprites.py --own-icons), so a graphics mod that replaces the block's icon (the texture mod's AE2 cubes,
+--- which all look alike) keeps it. The badge's file names are kept stable for that.
+for _, bus in pairs({ IMPORT_BUS, EXPORT_BUS, STORAGE_BUS }) do
+	local icons = { { icon = HD_ICON .. bus .. ".png", icon_size = 64 }, { icon = HD_ICON .. bus .. "-badge.png", icon_size = 64 } }
+	for _, proto in pairs({ data.raw.item[bus], data.raw["simple-entity-with-force"][bus] }) do
+		proto.icon, proto.icon_size, proto.icons = nil, nil, table.deepcopy(icons)
+	end
+end
+
 
 
 --------------------------------------------------------------------------------

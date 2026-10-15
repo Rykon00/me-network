@@ -151,7 +151,11 @@ return {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-import-bus-west.png"] = "__me-network-ae2-textures__/graphics/blocks/me-import-bus.png",
 		["__me-network__/graphics/icons/hd/me-import-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-import-bus.png", icon_size = 64 },
 	},
-	["item/me-import-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-import-bus.png", icon_size = 64 },
+	--- (ME Network issue #381: the buses' icons have a second layer, ME Network's direction badge, which stays: only the
+	--- block's layer is replaced)
+	["item/me-import-bus"] = {
+		["__me-network__/graphics/icons/hd/me-import-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-import-bus.png", icon_size = 64 },
+	},
 	["simple-entity-with-force/me-export-bus"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
@@ -159,7 +163,9 @@ return {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-export-bus-west.png"] = "__me-network-ae2-textures__/graphics/blocks/me-export-bus.png",
 		["__me-network__/graphics/icons/hd/me-export-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-export-bus.png", icon_size = 64 },
 	},
-	["item/me-export-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-export-bus.png", icon_size = 64 },
+	["item/me-export-bus"] = {
+		["__me-network__/graphics/icons/hd/me-export-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-export-bus.png", icon_size = 64 },
+	},
 	["simple-entity-with-force/me-storage-bus"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-north.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
 		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-east.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
@@ -167,7 +173,9 @@ return {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-bus-west.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
 		["__me-network__/graphics/icons/hd/me-storage-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
 	},
-	["item/me-storage-bus"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
+	["item/me-storage-bus"] = {
+		["__me-network__/graphics/icons/hd/me-storage-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
+	},
 	--- the cable (issue #283): the sheet of its 16 variations, in ME Network's layout; the item and the entity show the crossing
 	["simple-entity-with-force/me-cable"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-cable.png"] = "__me-network-ae2-textures__/graphics/blocks/me-cable.png",
