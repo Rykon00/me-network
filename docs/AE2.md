@@ -695,6 +695,14 @@ circuits). It needs **neither the network nor power** (AE2's does not either): p
 * **Group filter** (issue #354): with a **Group Filter Card** in an item cell's card slots, the text field under the cards
   holds the cell's filter text (see **Upgrade cards**, the Group Filter Card); it is written into the cell as you type and
   stays in the cell when the card is taken out. Without the card the field is greyed out.
+* **Disassemble** (issue #387, AE2's disassembly of an empty cell): an **empty** cell in the workbench is taken apart into
+  the items of its recipe, the storage housing and the storage component of its tier (a fluid cell's recipe items too; with
+  Gregtorio Continued its GT recipe's items, the pump of a fluid cell among them), in the cell's quality, into your
+  inventory. Crafting them again gives the cell back, so nothing is gained. Its cards are items in the card slots already
+  and stay there for you to take; its partition and group filter text go with it, as when the cell is taken out (the copy
+  mode keeps the partition in the workbench). Refused, with the reason in the button's tooltip: a cell that holds
+  anything (store or take it out first, for example in a drive), a void cell (it has no storage component) and a cell
+  without a recipe that makes it from items.
 * **Keep the partition when the cell is taken out** (AE2's copy mode): the partition stays in the workbench and goes
   onto the next cell put in whose partition is empty; a cell put in with a partition shows its own.
 * **Without a cell** the partition slots are there too: they show and set the workbench's own partition, the one the
