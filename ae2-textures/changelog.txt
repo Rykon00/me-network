@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.1
+Date: 2026-10-15
   Graphics:
     - The ME Quantum Bridge (ME Network issues #385, #406): AE2-Unofficial's eight quantum rings around its quantum link chamber, as the blocks look before AE2 forms them, in the world; its item and technology icons are the quantum ring. Needs ME Network with the bridge; with an older one nothing changes.
     - The ME IO Port (ME Network issues #386, #397): AE2-Unofficial's IO port block, its side with the two cell slots in front, in the world and as a cube icon. Needs ME Network 0.5.4 (the block); with an older one nothing changes.
