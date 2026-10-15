@@ -10,6 +10,10 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
   from the top left as in the 3D style of #154), a contour, the block at (3, 3) of the tile;
 * a working strip: the same block once per frame of a light animation (a second texture, imported as its own file and
   added to the strip's row with --add-source), the lights between the hole filling and the face;
+* a 3 x 3 block (issue #406, the ME Quantum Bridge): a grid of faces, AE2's eight quantum rings around its link chamber
+  (a second texture, imported as its own file and added to the picture's row with --add-source), each x3 as above, depth
+  strips of 27 px, the block at (9, 9) of 192 x 192: AE2's blocks before they are formed (the formed model of shrunken
+  pieces and lights is not drawn);
 * a 2 x 2 block (issue #278, the ME Controller: 128 x 128, a picture or a strip): four copies of the face side by side,
   each x3 as above, depth strips of 18 px, the block at (6, 6): a block of the first kind at twice the size, with
   AE2's pixels at the size of the others (a 2 x 2 cluster of AE2 controllers, none of them a column or inside block);
@@ -72,7 +76,7 @@ BLOCKS = ("me-drive", "me-chest", "me-interface", "me-molecular-assembler-idle",
           "me-io-port")                                                                   # (issue #397: AE2's IO port side)
 ICONS = ("me-drive", "me-chest", "me-interface", "me-molecular-assembler", "me-cell-workbench", "me-charger",
          "me-pattern-provider", "me-import-bus", "me-export-bus", "me-storage-bus", "me-wireless-access-point",
-         "me-io-port")
+         "me-io-port", "me-quantum-bridge")
 # issue #264: the pieces of MEStorageCellTextures.png (16 x 16: bands of 4 rows for item, fluid, essentia and no cell, two
 # copies side by side) that AE2-Unofficial draws in a bay: RenderDrive.java (u 1..6, v 1..3 of a band: 5 x 2 px),
 # RenderMEChest.java (u 9..15, v 0..3: 6 x 3 px); both mirrored on the front, so the transparent pixel is where the light is
@@ -136,7 +140,10 @@ MAKE = {
     "blocks/me-cable.png": ("cable-sheet",),
     "icons/blocks/me-cable.png": ("cable-icon",),
     # issue #304: the technology icons of blocks (ME Network's technologies, AE2 has none)
-    **{f"technology/{t}.png": ("tech-cube",) for t in ("me-network", "me-automation", "me-co-processing", "me-quantum-crafting")},
+    **{f"technology/{t}.png": ("tech-cube",) for t in ("me-network", "me-automation", "me-co-processing", "me-quantum-crafting",
+                                                        "me-quantum-bridge")},                  # (issue #406)
+    # issue #406: the ME Quantum Bridge (3 x 3): AE2's quantum rings around its link chamber
+    "blocks/me-quantum-bridge.png": ("grid", "blocks/lights/quantum-link-chamber.png"),
     # issue #302: the crafting blocks and their icons (AE2 cubes of the face without a CPU)
     **{f"blocks/crafting/{b}.png": ("crafting-sheet", b) for b in CRAFTING},
     **{f"icons/blocks/{b}.png": ("icon",) for b in CRAFTING},
@@ -196,15 +203,15 @@ def contour(img):
     return out
 
 
-def block(face, n=1):
+def block(face, n=1, grid=None):
     """a 64 x 64 block picture from an opaque 16 x 16 face; with n = 2 one of 128 x 128 (2 x 2 tiles) from four copies of
-    it, the depth and the place doubled"""
+    it, the depth and the place doubled; `grid` (issue #406): n rows of n faces in place of the copies"""
     one = FACE * K
     size, depth = one * n, DEPTH * n
     f = Image.new("RGBA", (size, size))
     for y in range(n):
         for x in range(n):
-            f.alpha_composite(face.resize((one, one), Image.NEAREST), (one * x, one * y))
+            f.alpha_composite((grid[y][x] if grid else face).resize((one, one), Image.NEAREST), (one * x, one * y))
     img = Image.new("RGBA", (size + depth, size + depth))
     edge_e = f.crop((size - depth, 0, size, size))
     edge_s = f.crop((0, size - depth, size, size))
@@ -426,6 +433,16 @@ def make(name, how):
     face = Image.open(path).convert("RGBA")
     if face.size != (FACE, FACE):
         return None, None
+    if how[0] == "grid":                          # issue #406: the ME Quantum Bridge, eight rings around a chamber
+        middle = Image.open(GRAPHICS / how[1]).convert("RGBA")
+        if middle.size != (FACE, FACE):
+            sys.exit(f"ae2_blocks: ae2-textures/graphics/{how[1]} is {middle.size[0]} x {middle.size[1]}, expected {FACE} x {FACE}")
+        ring, chamber = filled(face), filled(middle)
+        grid = [[chamber if (x, y) == (1, 1) else ring for x in range(3)] for y in range(3)]
+        return block(None, 3, grid), ("3 x 3 block picture: the face (holes filled with its darkest colour) eight times "
+                                      "around the second source (the same), each x3, with depth strips of their last nine "
+                                      "columns and rows (shaded 0.72 / 0.5) and a contour, 192 x 192 (AE2's blocks before "
+                                      "they are formed)")
     if how[0] == "block" and len(how) > 1:
         return block(filled(face), how[1]), "2 x 2 block picture: four copies of the face side by side, each x3, with " \
             "depth strips of their last six columns and rows (shaded 0.72 / 0.5) and a contour, 128 x 128"

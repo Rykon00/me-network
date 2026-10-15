@@ -1,6 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.1
   Graphics:
+    - The ME Quantum Bridge (ME Network issues #385, #406): AE2-Unofficial's eight quantum rings around its quantum link chamber, as the blocks look before AE2 forms them, in the world; its item and technology icons are the quantum ring. Needs ME Network with the bridge; with an older one nothing changes.
     - The ME IO Port (ME Network issues #386, #397): AE2-Unofficial's IO port block, its side with the two cell slots in front, in the world and as a cube icon. Needs ME Network 0.5.4 (the block); with an older one nothing changes.
     - The ME Import, Export and Storage Bus icons (ME Network issue #381): this mod replaces only the block of the icon, so ME Network's badge with the bus's direction (into the network, out of it, both ways) stays over the AE2 cube, and the three buses no longer look like the ME Interface in the inventory and the hotbar. Needs ME Network with that badge (0.5.4); with an older one the icons are as before.
     - The Void ME Storage Cell and the Void ME Fluid Storage Cell (ME Network issue #364) have AE2-Unofficial's void cell icon (AE2-Unofficial has one void cell for items and fluids, so both show it), and the Group Filter Card has AE2-Unofficial's Ore Dictionary Filter Card icon.

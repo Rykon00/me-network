@@ -89,6 +89,13 @@ return {
 		["__me-network__/graphics/icons/hd/me-io-port.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-io-port.png", icon_size = 64 },
 	},
 	["item/me-io-port"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-io-port.png", icon_size = 64 },
+	--- ME Network issue #406: the ME Quantum Bridge (ME Network #385, 3 x 3): AE2-Unofficial's eight quantum rings around its link
+	--- chamber, the blocks before they are formed; the icons are the ring
+	["electric-energy-interface/me-quantum-bridge"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-quantum-bridge.png"] = "__me-network-ae2-textures__/graphics/blocks/me-quantum-bridge.png",
+		["__me-network__/graphics/icons/hd/me-quantum-bridge.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-quantum-bridge.png", icon_size = 64 },
+	},
+	["item/me-quantum-bridge"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-quantum-bridge.png", icon_size = 64 },
 	["container/me-network-interface"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-interface-unified.png"] = "__me-network-ae2-textures__/graphics/blocks/me-interface.png",
 		["__me-network__/graphics/icons/hd/me-interface.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-interface.png", icon_size = 64 },
@@ -254,5 +261,6 @@ return {
 	["technology/me-automation"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-automation.png", icon_size = 256 },
 	["technology/me-co-processing"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-co-processing.png", icon_size = 256 },
 	["technology/me-quantum-crafting"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-quantum-crafting.png", icon_size = 256 },
+	["technology/me-quantum-bridge"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-quantum-bridge.png", icon_size = 256 },   -- (issue #406)
 	["technology/me-wireless"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-wireless.png", icon_size = 256 },
 }
