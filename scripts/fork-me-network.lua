@@ -1009,9 +1009,14 @@ local function cell_from_tags(name, tags)
 end
 M.cell_from_tags = cell_from_tags
 
---- the cell record of a cell item stack (its contents, partition and cards from the tags)
+--- the cell record of a cell item stack (its contents, partition and cards from the tags). Issue #394: the item's quality
+--- goes with it (`cell.quality`, nil for normal; a drive's record keeps it), so the stack written back keeps it. It changes
+--- nothing in the cell: bytes, types and cards are the same in every quality.
 function M.cell_from_stack(stack)
-	return cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
+	local cell = cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
+	local q = stack.quality.name
+	if q ~= "normal" then cell.quality = q end
+	return cell
 end
 
 --- A partition ({ key -> true } or a list of keys) checked against the cell's kind and the prototypes; nil
@@ -1254,11 +1259,14 @@ local function cell_description(cell, spec, plist, cards, keys, list)
 	return desc
 end
 
---- the item stack definition of a cell (tags and a description when it holds something, is partitioned or has cards)
+--- the item stack definition of a cell (tags and a description when it holds something, is partitioned or has cards; issue
+--- #394: in the quality of the cell item it was made from, `cell.quality`, nil for normal)
 local function cell_stack(cell)
 	local plist = cell.partition or cell.deny or cell.gkeys   -- issue #17: a blacklist is kept as the partition
 	local cards = cell.cards and #cell.cards > 0 and { table.unpack(cell.cards) } or nil
-	if next(cell.items) == nil and not plist and not cards and not cell.gtext then return { name = cell.name, count = 1 } end
+	if next(cell.items) == nil and not plist and not cards and not cell.gtext then
+		return { name = cell.name, count = 1, quality = cell.quality }
+	end
 	local items, data = {}, {}
 	local keys = {}
 	for key, count in pairs(cell.items) do
@@ -1280,7 +1288,7 @@ local function cell_stack(cell)
 		end
 	end
 	return {
-		name = cell.name, count = 1,
+		name = cell.name, count = 1, quality = cell.quality,
 		tags = { [CELL_TAG] = { items = items, data = data, partition = plist, cards = cards, gtext = cell.gtext } },
 		custom_description = cell_description(cell, cell_spec(cell.name), plist, cards, keys, list),
 	}
@@ -3514,7 +3522,7 @@ function M.insert_cell(drive, stack, slot)
 	end
 	if slot > slots_of(drive) then return nil, "drive-full" end
 	if d.slots[slot] then return nil, "slot-taken" end
-	local cell = cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
+	local cell = M.cell_from_stack(stack)                   -- (issue #394: with its quality)
 	if stack.count > 1 then stack.count = stack.count - 1 else stack.clear() end
 	place_cell(s, d, slot, cell)
 	return slot
