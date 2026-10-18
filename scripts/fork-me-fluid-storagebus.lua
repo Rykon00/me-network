@@ -329,8 +329,14 @@ end
 
 function M.list(rec)
 	local s = state()
-	for _, u in ipairs(s.list) do if u == rec.unit then return end end
+	if not s.lpos then                                   -- (issue #420: the places in the list, not a walk over it per bus)
+		s.lpos = {}
+		for i, u in ipairs(s.list) do s.lpos[u] = i end
+	end
+	local i = s.lpos[rec.unit]
+	if i and s.list[i] == rec.unit then return end
 	s.list[#s.list + 1] = rec.unit
+	s.lpos[rec.unit] = #s.list
 	rec.siv = nil
 	Sched.at(queue(s), rec, rec.unit, game.tick + 1)
 end
@@ -346,7 +352,8 @@ end
 function M.unlist(rec)
 	local s = storage.fork_me_fsbus
 	if not s then return end
-	for i = #s.list, 1, -1 do if s.list[i] == rec.unit then table.remove(s.list, i) end end
+	s.lpos = s.lpos or {}                                -- (issue #420: by its place, not a walk over the list)
+	Sched.list_remove(s.list, s.lpos, rec.unit)
 	s.urgent[rec.unit] = nil
 	Sched.forget(queue(s), rec)
 end
@@ -448,7 +455,8 @@ end
 local function visit_due(rec, unit)
 	local s = storage.fork_me_fsbus
 	if not rec.entity.valid then
-		for i = #s.list, 1, -1 do if s.list[i] == unit then table.remove(s.list, i) end end
+		s.lpos = s.lpos or {}                            -- (issue #420)
+		Sched.list_remove(s.list, s.lpos, unit)
 		Sched.forget(queue(s), rec)
 		N.ext_detach(unit)
 		return
@@ -517,7 +525,7 @@ end
 --- after the graph rebuild (the storage bus module lists its fluid side buses again, in unit order)
 function M.reset()
 	local s = state()
-	s.list, s.cursor, s.claims, s.urgent, s.q = {}, 1, {}, {}, Sched.new("fsbus")
+	s.list, s.cursor, s.claims, s.urgent, s.q, s.lpos = {}, 1, {}, {}, Sched.new("fsbus"), nil
 end
 
 return M
