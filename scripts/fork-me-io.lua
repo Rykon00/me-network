@@ -62,6 +62,12 @@ local Sched = require("scripts.fork-me-schedule")
 local CS = require("scripts.fork-me-cardslots")
 local AC = require("scripts.fork-me-autocraft")
 local Conn = require("scripts.fork-me-connector")
+--- issue #412: the connector module puts a block's off state into its record (the visit reads `rec.coff` only)
+N.off_setters.io = function(unit, off)
+	local s = storage.fork_me_io
+	local rec = s and s.recs[unit]
+	if rec then rec.coff = off or nil end
+end
 
 local M = {}
 
@@ -875,7 +881,7 @@ function M.interface_step(rec, dt, u)
 	local config = config_of(rec)
 	if rec.cnext and game.tick >= rec.cnext then rec.cnext = nil end     -- (issue #411: a retry is due now)
 	--- issue #412: its circuit connector's condition, the rows from the circuit
-	if Conn.is_off(e.unit_number) then
+	if rec.coff then
 		rec.status = "circuit-off"
 		return 0, false, nil, "circuit", false, nil
 	end
@@ -1708,8 +1714,7 @@ end
 function M.bus_step(rec, dt, u)
 	local e = rec.entity
 	--- issue #412: its circuit connector's condition and, for an export bus in pulse mode, one visit per rise of the condition
-	local unit = e.unit_number
-	if Conn.is_off(unit) or (rec.pulse and not Conn.take_pulse(unit)) then
+	if rec.coff or (rec.pulse and not Conn.take_pulse(u or e.unit_number)) then
 		rec.status = "circuit-off"
 		return 0, false, nil, "circuit", false, nil
 	end

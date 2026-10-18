@@ -1302,9 +1302,10 @@ disable** and the condition.
   interface's sides tied to a row follow the row's number.
 * A block follows its condition within about 10 ticks (up to 16 connectors are checked per tick); a block without a
   condition, pulse or rows from the circuit costs nothing for it.
+* A block gets its connector the first time you point at it (or open its window): only blocks someone looked at have one,
+  which keeps a big network free of thousands of unused connectors.
 * Blueprints, copy/paste and clones hold the connector with its wires and condition, and the pulse and rows settings; a
-  settings paste from block to block copies the condition too. The connector of a mined block goes with it; blocks of an
-  older save get their connector when the save is loaded.
+  settings paste from block to block copies the condition too. The connector of a mined block goes with it.
 * The pattern provider's lock by a signal (AE2-Unofficial's Lock Crafting Card) is issue #429.
 
 ## Circuit network: ME Circuit Interface
