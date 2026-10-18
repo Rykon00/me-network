@@ -3346,3 +3346,23 @@ and, for a pair, the drain written once when it changes). Nothing per tick, noth
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)
+
+The filter sets are made when the filters or the cards change, never in a visit: a Capacity Card only makes the set longer
+(at most 27 keys, a table lookup per item as before), a Fuzzy Card puts the item names into the import bus's set (one lookup
+per item, no quality key) and gives the export bus the rotating key list of the Group Filter Card (made from `net.items` when
+the network got a key it did not have, `net.kgen`). An import visit asks one more function per item of its source
+(`import_hit`: the filter or text match, turned round by an Inverter Card). Without the cards a bus has the sets of 0.5.4.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the scenes have no such card; the machine was busy
+during the 100 rounds of both versions, their spread is large):
+
+| | v0.5.4 | with the cards |
+|---|---|---|
+| 100: script average / p99 ms | 0.4424 / 5.775 | 0.4580 / 5.821 |
+| 1000: script average / p99 ms | 0.4157 / 2.282 | 0.3916 / 2.129 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.32 | 26.68 / 24.34 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
