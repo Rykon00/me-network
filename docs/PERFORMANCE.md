@@ -3454,3 +3454,20 @@ well):
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## The ME Pattern Terminal Ex (issue #416)
+
+A new block of the pattern terminal's kind and a bigger cap on a processing pattern's rows (32 of each). A job's step goes
+through a pattern's rows as before; a pattern with more rows costs its rows. Nothing per tick.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413, #411, #412, #414 and #415
+as well; the scenes have no such pattern):
+
+| | v0.5.4 | with the Ex |
+|---|---|---|
+| 100: script average / p99 ms | 0.1899 / 1.766 | 0.1899 / 1.770 |
+| 1000: script average / p99 ms | 0.3379 / 1.883 | 0.3369 / 1.881 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.33 | 26.67 / 24.31 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
