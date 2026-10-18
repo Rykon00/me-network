@@ -198,9 +198,10 @@ end
 local function paste_bus(dst, recipe, quality, msgs, import)
 	local wanted = entries(import and recipe.products or recipe.ingredients)
 	if #wanted == 0 then return msg(msgs, import and "no-products" or "no-ingredients") end
-	local keys, left = keys_of(wanted, quality, io.MAX_FILTERS)
+	local max = io.bus_filter_count(dst)                  -- (issue #413: more with Capacity Cards)
+	local keys, left = keys_of(wanted, quality, max)
 	io.set_bus_filters(dst, keys)
-	if #left > 0 then msg(msgs, "filters-full", tostring(io.MAX_FILTERS), icons(left)) end
+	if #left > 0 then msg(msgs, "filters-full", tostring(max), icons(left)) end
 end
 
 local PASTE = {

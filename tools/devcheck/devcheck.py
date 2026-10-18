@@ -820,6 +820,7 @@ RUNTIME_TESTS = (
     ("LOCK", "ME Pattern Provider lock until the result is back (issue #346)"),
     ("QUALITYCRAFT", "Autocrafting in every quality (issue #352)"),
     ("GROUPBUS", "Group Filter Card on the import and export bus (issue #363)"),
+    ("BUSCARDS", "Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),

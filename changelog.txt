@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.5
+  Features:
+    - Capacity, Fuzzy and Inverter Cards on the ME Import Bus and ME Export Bus (issue #413, AE2-Unofficial's bus cards): up to 2 Capacity Cards give 9 more filters each (9, 18 or 27); a Fuzzy Card makes every filter take its item in every quality (the export bus exports each quality the network has, in turn); an Inverter Card, on the import bus only, makes its filters a blacklist: it takes everything else from its target, items and fluids. They share the bus's 4 card slots with the speed cards and the Group Filter Card. Filters beyond what the cards give room for are kept and work again when a card is put back; blueprints, settings paste and clones carry all of them and the cards. The recipe paste fills as many filters as the cards give.
+---------------------------------------------------------------------------------------------------
 Version: 0.5.4
 Date: 2026-10-15
   Features:

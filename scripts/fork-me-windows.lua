@@ -1762,6 +1762,7 @@ local function open_bus(player, entity)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.bus-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_bus_cards", direction = "horizontal" }
 	M.gfilter_row(content, "fork_me_bus_gtext", "bus_gtext")    -- issue #363: the Group Filter Card's text
+	G.label(content, "", WIDTH, nil, "fork_me_bus_mode")      -- issue #413: the Fuzzy and Inverter Card, kept filters
 	G.label(content, "", WIDTH, nil, "fork_me_bus_want")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_speed")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_target")
@@ -1773,16 +1774,20 @@ function M.refresh_bus(player, frame)
 	local entity = G.entity_of(player, frame)
 	if not entity then return false end
 	local d = M.bus_data(entity)
-	rebuild(frame, "fork_me_bus_filters", table.concat(d.filters, ","), function(box)
-		local t = box.add{ type = "table", column_count = d.max, style = "filter_slot_table" }
+	--- (issue #413: 9 filters a row, 9 to 27 with Capacity Cards)
+	rebuild(frame, "fork_me_bus_filters", d.max .. ":" .. tostring(d.fuzzy) .. ":" .. table.concat(d.filters, ","), function(box)
+		local t = box.add{ type = "table", column_count = 9, style = "filter_slot_table" }
 		for i = 1, d.max do
-			--- issue #291: what a filter without a quality takes (the import bus every quality, the export bus normal)
+			--- issue #291: what a filter without a quality takes (the import bus every quality, the export bus normal); issue #413:
+			--- with a Fuzzy Card every filter takes every quality of its item
 			local key = d.filters[i]
-			local plain = key and script.feature_flags.quality and prototypes.item[key] ~= nil
-			G.key_button(t, key, G.act("bus_filter", { index = i }), plain
-				and { "", { "fork-me-gui.bus-filter-" .. (d.import and "any" or "normal") .. "-quality" }, "\n",
-					{ "fork-me-gui.key-slot-tooltip" } }
-				or { "fork-me-gui.key-slot-tooltip" })
+			local tip = { "fork-me-gui.key-slot-tooltip" }
+			if key and d.fuzzy and not N.is_fluid_key(key) and prototypes.item[(N.parse_key(key))] then
+				tip = { "", { "fork-me-gui.bus-filter-fuzzy" }, "\n", tip }
+			elseif key and script.feature_flags.quality and prototypes.item[key] ~= nil then
+				tip = { "", { "fork-me-gui.bus-filter-" .. (d.import and "any" or "normal") .. "-quality" }, "\n", tip }
+			end
+			G.key_button(t, key, G.act("bus_filter", { index = i }), tip)
 		end
 	end)
 	block_slots(frame, "fork_me_bus_cards", io.bus_inventory(entity), 1, d.slots, function(_, st)
@@ -1791,6 +1796,17 @@ function M.refresh_bus(player, frame)
 	local want = {}
 	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_bus_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
+	--- issue #413: what the Inverter and Fuzzy Card do, and filters kept beyond the Capacity Cards' room
+	local mode = { "" }
+	local lines = { d.inverted and "bus-blacklist", d.fuzzy and "bus-fuzzy", d.kept and "bus-filters-kept" }
+	for i = 1, 3 do
+		local on = lines[i]
+		if on then
+			if #mode > 1 then mode[#mode + 1] = " " end
+			mode[#mode + 1] = { "fork-me-gui." .. on }
+		end
+	end
+	G.find(frame, "fork_me_bus_mode").caption = mode
 	G.find(frame, "fork_me_bus_speed").caption = d.items and { "fork-me-gui.bus-speed", d.accel, G.fmt(d.rate) } or ""
 	M.gfilter_refresh(frame, "fork_me_bus_gtext", d.gfilter, d.gtext)
 	local target = d.target and prototypes.entity[d.target]

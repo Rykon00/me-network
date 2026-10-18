@@ -7,7 +7,8 @@
 ---   inventory, then the network). The clicks refuse a wrong card before anything moves; the cards are given back when the
 ---   block is mined, spilled when it is destroyed or vanishes.
 ---   `CS.new(def)` makes the functions of one kind of block; `def`:
----     rules()        the block's card rules: { slots, limits = { kind -> how many } } (N.card_rules().<block>)
+---     rules(rec)     the block's card rules: { slots, limits = { kind -> how many } } (N.card_rules().<block>; issue #413: by
+---                    the record, the import bus takes more than the export bus)
 ---     title(rec)     the localised name of the block's inventory (shown in the game's inventory lists)
 ---     rec_of(entity) the block's record, or nil
 ---     on_cards(rec)  the cards changed: the fields the block's code reads are made from them (and the block is visited)
@@ -48,7 +49,7 @@ function M.new(def)
 	function C.inv_of(rec)
 		local inv = rec.inv
 		if inv and inv.valid then return inv end
-		inv = game.create_inventory(def.rules().slots, def.title(rec))
+		inv = game.create_inventory(def.rules(rec).slots, def.title(rec))
 		for slot, name in pairs(rec.cards or {}) do
 			if type(slot) == "number" and slot <= #inv and type(name) == "string" and prototypes.item[name] then
 				inv[slot].set_stack{ name = name, count = 1 }
@@ -99,7 +100,7 @@ function M.new(def)
 	--- can the block take one more card `name`? (a card of a kind it takes, below that kind's limit, an empty slot)
 	function C.card_fits(rec, name)
 		local kind = N.card_kind(name)
-		local rules = def.rules()
+		local rules = def.rules(rec)
 		local limit = kind and rules.limits[kind]
 		if not limit then return false, "not-here" end
 		if (C.counts(rec)[kind] or 0) >= limit then return false, "limit" end
@@ -125,7 +126,7 @@ function M.new(def)
 	--- the cards of a block as a list of names (slot order); nil when it has none
 	function C.card_list(rec)
 		local out
-		for slot = 1, def.rules().slots do
+		for slot = 1, def.rules(rec).slots do
 			local name = rec.cards and rec.cards[slot]
 			if name then
 				out = out or {}
@@ -143,7 +144,7 @@ function M.new(def)
 	--- waiting for blueprint cards (the player decides now). Returns true when the slots or the cards changed.
 	function C.sync(rec, back)
 		local inv = inv_of(rec)
-		local r = def.rules()
+		local r = def.rules(rec)
 		local old = rec.cards or {}
 		local counts, kept, moved = {}, {}, false
 		local function take(name)
@@ -210,7 +211,7 @@ function M.new(def)
 		if cursor and cursor.valid_for_read then
 			local free, why = card_fits(rec, cursor.name)
 			if not free then return why end
-			if slot >= 1 and slot <= def.rules().slots and not inv[slot].valid_for_read then free = slot end
+			if slot >= 1 and slot <= def.rules(rec).slots and not inv[slot].valid_for_read then free = slot end
 			install(rec, free, nil, cursor)
 		else
 			local stack = slot >= 1 and slot <= #inv and inv[slot]
@@ -294,7 +295,7 @@ function M.new(def)
 		local rec = def.rec_of(entity)
 		if not rec then return false end
 		local inv = inv_of(rec)
-		local rules = def.rules()
+		local rules = def.rules(rec)
 		local list = {}
 		for _, name in ipairs(type(want) == "table" and want or {}) do
 			if type(name) == "string" and N.card_kind(name) and #list < rules.slots then list[#list + 1] = name end
