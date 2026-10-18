@@ -1827,8 +1827,8 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
 * Autocrafting plans and crafts every quality (issue #352), but no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
 * Network storage (issue #68): no channels, no fluid wagons on the storage bus. The cards are where **Upgrade cards** lists
-  them: the import and export bus take speed cards (up to 4, issues #110, #356) and the Group Filter Card (issue #363; no
-  capacity, fuzzy or inverter card),
+  them: the import and export bus take speed cards (up to 4, issues #110, #356), the Group Filter Card (issue #363), up to 2
+  Capacity Cards and a Fuzzy Card, the import bus also an Inverter Card (issue #413),
   the ME Interface only Interface Capacity Cards (up to 3, issue #196); there is no redstone and no crafting card; the
   search of the terminal and the picker matches the shown names (issue #295) only once your client has
   translated them, a few ticks after the first terminal or picker opens (before that, and for a name your language
