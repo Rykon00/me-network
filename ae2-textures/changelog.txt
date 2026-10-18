@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.2
+  Graphics:
+    - The ME Storage, Conversion and Throughput Monitor (ME Network issues #353, #421): AE2-Unofficial's monitor panels like the terminals, dark while their network does not work and with AE2's screen in its Fluix colours while it does; ME Network still draws the resource and its amount on the screen. Their icons are the lit panels. The ME Level Emitter, the toggle buses and the ME Level Maintainer keep ME Network's pictures (AE2 has no front for them), the ME Wireless Link and the ME Circuit Interface too (their only matching pictures are AE2 Stuff's or a coloured interface skin).
+---------------------------------------------------------------------------------------------------
 Version: 0.2.1
 Date: 2026-10-15
   Graphics:

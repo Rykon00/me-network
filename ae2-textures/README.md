@@ -14,7 +14,8 @@ cubes as icons (issue #260), the ME Pattern Provider its purple interface skin (
 Network's drive view). The ME Controller is four AE2-Unofficial controllers, dark without power, with AE2's running
 lights while its network works and red in a conflict (issue #278, through ME Network's controller view). The ME
 Terminal, the ME Pattern Terminal and the ME Interface Terminal are AE2's terminal panels, dark or with their screen lit
-(issues #281, #343). The ME IO Port is AE2-Unofficial's IO port with its two cell slots in front (issue #397). The ME Quantum Bridge is
+(issues #281, #343); the ME Storage, Conversion and Throughput Monitor are AE2's monitor panels the same way (issue #421).
+The ME IO Port is AE2-Unofficial's IO port with its two cell slots in front (issue #397). The ME Quantum Bridge is
 AE2-Unofficial's eight quantum rings around its link chamber, as the blocks look before they are formed, its icons a ring
 (issue #406). The ME Import, Export and Storage Bus are AE2's bus fronts with ME Network's plate and arrows on them (issue #282, through ME
 Network's bus view). The cable is AE2's Fluix glass cable (issue #283). The blocks of a Crafting CPU are AE2's crafting

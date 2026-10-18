@@ -19,7 +19,8 @@ from AE2-Unofficial faces imported into ae2-textures/graphics/, in place:
   AE2's pixels at the size of the others (a 2 x 2 cluster of AE2 controllers, none of them a column or inside block);
 * an icon (64 x 64): an isometric cube, the face in front, the face's frame (its inside in the frame's colour) on the
   top and the right side, shaded;
-* a panel (issue #281, the ME Terminal and the ME Pattern Terminal; issue #343, the ME Interface Terminal): AE2 draws
+* a panel (issue #281, the ME Terminal and the ME Pattern Terminal; issue #343, the ME Interface Terminal; issue #421, the
+  ME Storage, Conversion and Throughput Monitor): AE2 draws
   a terminal as a 12 x 12 plate on the cable (AbstractPartDisplay: bounds 2..14), so the plate of its 16 px front x3 (36 px) with depth strips of 6 px (the
   plate is two AE2 pixels thick), centred in the 64 px tile; dark (the frame, its inside on the frame's darkest colour) or
   lit (AE2's three screen layers over it, tinted in the Fluix colours of AEColor.Transparent: Bright with the white
@@ -94,6 +95,9 @@ SCREENS = {
     "pattern-terminal": tuple(f"blocks/lights/me-pattern-terminal-screen-{n}.png" for n in ("bright", "dark", "colored")),
     # issue #343: the ME Interface Terminal (PartInterfaceTerm_*)
     "interface-terminal": tuple(f"blocks/lights/me-interface-terminal-screen-{n}.png" for n in ("bright", "dark", "colored")),
+    # issue #421: the ME Storage, Conversion and Throughput Monitor (Part*Monitor_*)
+    **{f"{m}-monitor": tuple(f"blocks/lights/me-{m}-monitor-screen-{n}.png" for n in ("bright", "dark", "colored"))
+       for m in ("storage", "conversion", "throughput")},
 }
 PLATE = (2, 2, 14, 14)      # the plate of a part's 16 px front
 PANEL_DEPTH = 6
@@ -136,6 +140,9 @@ MAKE = {
     # issue #343: the interface terminal's two variations and icon, as the pattern terminal's
     "blocks/me-interface-terminal.png": ("panel-sheet", "interface-terminal"),
     "icons/blocks/me-interface-terminal.png": ("panel-icon", "interface-terminal"),
+    # issue #421: the monitors' two variations (dark, lit) and icons, as the interface terminal's
+    **{f"blocks/me-{m}-monitor.png": ("panel-sheet", f"{m}-monitor") for m in ("storage", "conversion", "throughput")},
+    **{f"icons/blocks/me-{m}-monitor.png": ("panel-icon", f"{m}-monitor") for m in ("storage", "conversion", "throughput")},
     # issue #283: the cable (me-cable.png's 16 variations) and its icon (the crossing)
     "blocks/me-cable.png": ("cable-sheet",),
     "icons/blocks/me-cable.png": ("cable-icon",),
