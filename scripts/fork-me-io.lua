@@ -60,6 +60,7 @@ local N = require("scripts.fork-me-network")
 local T = require("scripts.fork-me-targets")
 local Sched = require("scripts.fork-me-schedule")
 local CS = require("scripts.fork-me-cardslots")
+local AC = require("scripts.fork-me-autocraft")
 
 local M = {}
 
@@ -69,11 +70,65 @@ local ACTIVE_INTERVAL = 60           -- ... of a block that moves something but 
 local MAX_CATCH_UP = 600             -- ticks of speed a visit may catch up at most
 local MAX_ICAP = 2 ^ 31 - 1          -- items a bus visit may move at most (issue #356: an engine count is 32 bit)
 local IFACE_SLOTS_PER_VISIT = 8      -- item slots an interface handles per STEP_TICKS since its last visit
+--- Issue #411: the Crafting Card. An export bus whose filtered item the network lacks, or an ME Interface whose item row it
+--- cannot fill, starts a crafting job for what is missing (the bus: what the visit would move, at most a stack; the row: its
+--- amount less what it holds), through the level maintainer's path (AC.start with the block as the owner, a request of
+--- automation for the CPU modes). One job per block and key at a time (`rec.cjobs[key]`, AE2-U's MultiCraftingTracker keeps a
+--- link per slot), none while another job crafts the key, none without a free CPU. A start that fails waits CRAFT_RETRY ticks
+--- (CRAFT_RETRY_NONE when no pattern makes the key) before that key is tried again (`rec.cretry[key]`; the block is probed
+--- until the earliest of them, `rec.cnext`); a job's end wakes the block (the waker "io"), the product's arrival wakes it as
+--- any key does. CRAFT_STARTS: the starts of buses and interfaces per tick (a plan has its cost), the others wait a tick.
+local CRAFT_RETRY, CRAFT_RETRY_NONE, CRAFT_STARTS = 300, 1200, 1
+local craft_tick, craft_starts = -1, 0
 local MAX_FILTERS = 9                -- the filters of a bus without a Capacity Card
 local KEPT_FILTERS = 27              -- the filters a bus keeps: with two Capacity Cards (issue #413: 9 more each)
 --- the filters that apply (issue #413): 9 and 9 more per Capacity Card (`rec.nf`, made from its cards; nil: 9). Filters beyond
 --- them are kept in `rec.keys` and apply again when a card gives them room.
 local function filters_of(rec) return rec.nf or MAX_FILTERS end
+
+--- issue #411: a crafting job of `amount` of `key` for the block `rec` (its Crafting Card), when none runs for it. Returns
+--- "crafting" (its job runs), "wait" (a start that failed waits for its retry; `rec.cnext`) or nil (nothing started this tick,
+--- tried again at the next visit). `rec.cstat`: what the window says (the job, or why none started).
+local function craft(rec, net, key, amount)
+	local jobs = rec.cjobs
+	local id = jobs and jobs[key]
+	if id then
+		if AC.job_running(id) then rec.cstat = "crafting" return "crafting" end
+		jobs[key] = nil
+	end
+	local now = game.tick
+	local retry = rec.cretry and rec.cretry[key]
+	if retry then
+		if now < retry then
+			if not rec.cnext or retry < rec.cnext then rec.cnext = retry end
+			return "wait"
+		end
+		rec.cretry[key] = nil
+		if not next(rec.cretry) then rec.cretry = nil end
+	end
+	if AC.active_job_for(net, key) then rec.cstat = "other-job" return "crafting" end
+	if now ~= craft_tick then craft_tick, craft_starts = now, 0 end
+	if craft_starts >= CRAFT_STARTS then return nil end
+	local why
+	if not AC.free_slot(net) then why = "no-free-cpu"
+	else
+		craft_starts = craft_starts + 1
+		local nid
+		nid, why = AC.start(rec.entity, key, math.max(1, math.floor(amount)), rec.entity.unit_number, nil, "io")
+		if nid then
+			rec.cjobs = jobs or {}
+			rec.cjobs[key] = nid
+			rec.cstat = "crafting"
+			return "crafting"
+		end
+	end
+	rec.cstat = why or "failed"
+	local at = now + (why == "no-pattern" and CRAFT_RETRY_NONE or CRAFT_RETRY)
+	rec.cretry = rec.cretry or {}
+	rec.cretry[key] = at
+	if not rec.cnext or at < rec.cnext then rec.cnext = at end
+	return "wait"
+end
 local CONFIG_SLOTS = 9              -- the config rows of an interface without cards
 local MAX_ROWS = 36                  -- with three Interface Capacity Cards (issue #196: 9 more rows each)
 
@@ -793,6 +848,7 @@ function M.interface_step(rec, dt, u)
 	local e = rec.entity
 	if rec.want then icards.fill_cards(rec) end                       -- issue #196: the cards a blueprint or a paste asked for
 	local config = config_of(rec)
+	if rec.cnext and game.tick >= rec.cnext then rec.cnext = nil end     -- (issue #411: a retry is due now)
 	local net = u and N.active_of_unit(u) or not u and N.active_of(e) or nil   -- (`u`: the unit of a visit, issue #115)
 	if not net then
 		local n0 = u and N.network_of_unit(u) or not u and N.network_of(e) or nil
@@ -840,7 +896,11 @@ function M.interface_step(rec, dt, u)
 				local got = want > 0 and N.extract_to(net, inv, key, want) or 0
 				if have == 0 and got > 0 then starved = true end        -- (a row that had run empty)
 				if got > 0 then moved = moved + got ops = ops + 1
-				elseif N.count_key(net, key) <= 0 or short then N.wait_for(net, key, "io", unit, true) end
+				elseif N.count_key(net, key) <= 0 or short then
+					N.wait_for(net, key, "io", unit, true)
+					--- issue #411: the Crafting Card asks for what the row lacks
+					if rec.ccard and N.count_key(net, key) <= 0 then craft(rec, net, key, c.amount - have) end
+				end
 				if short and have + got < c.amount then short[key] = c.amount - have - got end
 				local after = have + got                              -- the row is taken at (amount - have) per dt
 				final = after
@@ -1154,7 +1214,8 @@ function M.get_interface(entity)
 	return { config = M.get_interface_config(entity), sides = sides, status = rec.status, contents = contents,
 		fluids = fl, slots = rows_of(rec), volume = volume(), priority = rec.priority or 0, short = short,
 		fmix = rec.fmix and { rec.fmix[1], rec.fmix[2] } or nil, card_slots = N.card_rules().interface.slots,
-		want = rec.want and icards.missing_cards(rec, rec.want) or nil, kept = rec.extra and next(rec.extra) ~= nil or nil }
+		want = rec.want and icards.missing_cards(rec, rec.want) or nil, kept = rec.extra and next(rec.extra) ~= nil or nil,
+		craft = rec.ccard and (rec.cstat or "idle") or nil }       -- (issue #411: the Crafting Card's last request)
 end
 M.CONFIG_SLOTS = CONFIG_SLOTS
 
@@ -1203,6 +1264,7 @@ cards = CS.new{
 		rec.nf = nf ~= MAX_FILTERS and nf or nil
 		rec.fz = counts.fuzzy and true or nil
 		rec.binv = counts.inverter and IMPORTS[rec.kind] and true or nil
+		rec.ccard = counts.crafting and not IMPORTS[rec.kind] and true or nil   -- issue #411: a Crafting Card (export bus)
 		M.bus_split(rec)                                      -- (the filters that apply, and the group filter: M.bus_gf)
 		local f = r.speed[(counts.speed or 0) + 1]
 		--- issue #356: the Super Speed and Superluminal Speed Cards add to the factor (AE2-U: the kinds add up)
@@ -1238,7 +1300,10 @@ icards = CS.new{
 	rules = function() return N.card_rules().interface end,
 	title = function(rec) return rec.entity and rec.entity.valid and rec.entity.localised_name or { "entity-name.me-interface" } end,
 	rec_of = iface_rec,
-	on_cards = function(rec) resize_rows(rec) end,
+	on_cards = function(rec)
+		resize_rows(rec)
+		rec.ccard = icards.counts(rec).crafting and true or nil     -- issue #411: a Crafting Card
+	end,
 }
 
 --- The entity in front of a bus that has an inventory of the bus's kind or fluid boxes; what it has is kept with it
@@ -1411,6 +1476,8 @@ local function export_items(rec, net, t, cap, info)
 						if not gf then
 							N.wait_for(net, key, "io", rec.entity.unit_number, true)
 							info.nokey = true
+							--- issue #411: the Crafting Card asks for what this visit would move, at most a stack
+							if rec.ccard and craft(rec, net, key, math.min(want, stack_of(name))) == "wait" then info.cwait = true end
 						end
 					else
 						info.blocked = true                      -- the target takes nothing: full
@@ -1630,7 +1697,8 @@ function M.bus_step(rec, dt, u)
 	local info = INFO
 	info.time, info.dt = math.huge, ticks
 	info.held, info.main, info.slots, info.netfull, info.nokey, info.blocked, info.starved = nil, nil, nil, nil, nil, nil, nil
-	info.temperature = nil
+	info.temperature, info.cwait = nil, nil
+	if rec.cnext and game.tick >= rec.cnext then rec.cnext = nil end     -- (issue #411: a retry is due now)
 	--- (issue #413: an import bus with an Inverter Card takes everything its filters do not name, items and fluids)
 	local has_items = rec.t_inv and (rec.all or rec.binv or #rec.filters > 0 or rec.gf ~= nil)
 	local has_fluid = rec.t_fluid and (rec.all or rec.binv or #rec.ffilters > 0)
@@ -1650,6 +1718,8 @@ function M.bus_step(rec, dt, u)
 		end
 		if info.temperature then rec.status, rec.tstat = "temperature", info.temperature end   -- (issue #159)
 		if info.blocked or not info.nokey then return 0, false, nil, "full", false, net end
+		--- issue #411: a crafting start waits for its retry: probed until then (a parked block would wait for its key only)
+		if info.cwait then return 0, false, nil, "crafting", false, net end
 		return 0, false, nil, "no-key", false, net
 	end
 	if import and has_items then
@@ -1852,6 +1922,7 @@ function M.bus_info(entity)
 	for slot, name in pairs(rec.cards or {}) do b.cards[slot] = name end
 	b.want = rec.want and cards.missing_cards(rec, rec.want) or nil
 	b.gfilter = rec.gcard == true                          -- issue #363
+	b.craft = rec.ccard and (rec.cstat or "idle") or nil   -- issue #411: the Crafting Card's last request
 	return b
 end
 
@@ -1917,6 +1988,9 @@ end
 --- the cheap check of a probed block: did its other side change? (true: visit it now)
 local function probe_work(rec)
 	local b = rec.block
+	--- issue #411: a crafting start that waited for its retry is tried again when it is due
+	if rec.cnext and game.tick >= rec.cnext then return true end
+	if b == "crafting" then return false end
 	if b == "no-target" then return target_of(rec) ~= nil end
 	if rec.kind == "interface" then
 		local mark, held = probe_mark(rec)

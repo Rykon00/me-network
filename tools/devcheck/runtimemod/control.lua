@@ -989,6 +989,9 @@ groupbus363 = require("groupbus")({ me_place = me_place, cable_row = cable_row, 
 --- me-network issue #413: the Capacity, Fuzzy and Inverter Card on the import and export bus (buscards.lua)
 buscards413 = require("buscards")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #411: the Crafting Card on the export bus and the interface (craftcard.lua)
+craftcard411 = require("craftcard")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #196: the ME Interface Capacity Card (ifacecap.lua)
 ifacecap196 = require("ifacecap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1089,6 +1092,7 @@ local function tests_running()
 	qualitycraft352.running(check)
 	groupbus363.running(check)
 	buscards413.running(check)
+	craftcard411.running(check)
 	maintrows351.running(check)
 	cpumode350.running(check)
 	monitors353.running(check)
@@ -2033,6 +2037,7 @@ script.on_nth_tick(10, function()
 	qualitycraft352.tick()
 	groupbus363.tick()
 	buscards413.tick()
+	craftcard411.tick()
 	maintrows351.tick()
 	cpumode350.tick()
 	monitors353.tick()
@@ -4905,6 +4910,7 @@ script.on_init(function()
 	for _, f in pairs(qualitycraft352.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(groupbus363.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(buscards413.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(craftcard411.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpumode350.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(monitors353.setup(s)) do fails[#fails + 1] = f end

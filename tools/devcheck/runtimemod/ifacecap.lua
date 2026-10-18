@@ -55,7 +55,8 @@ return function(H)
 
 		--- no cards (an old save): 9 rows, 3 empty card slots; a tenth row is refused
 		local d0 = data(a)
-		expect(d0.slots == 9 and d0.card_slots == 3 and not d0.kept, "no cards: " .. serpent.line({ d0.slots, d0.card_slots }))
+		expect(d0.slots == 9 and d0.card_slots == 4 and not d0.kept,   -- (issue #411: a fourth slot for the Crafting Card)
+			"no cards: " .. serpent.line({ d0.slots, d0.card_slots }))
 		local plates = { "iron-plate", "copper-plate", "stone", "coal", "iron-gear-wheel", "copper-cable", "steel-plate", "wood", "iron-stick",
 			"stone-brick", "pipe", "electronic-circuit", "iron-chest", "firearm-magazine", "small-electric-pole", "landfill", "sulfur", "plastic-bar" }
 		for i = 1, 9 do expect(remote.call(IO, "set_interface_slot", a, i, plates[i], "normal", 5), "row " .. i) end

@@ -2019,7 +2019,9 @@ local function finish(s, job, status, reason)
 	remove_value(s.active, job.id)
 	s.finished[#s.finished + 1] = job.id
 	s.await = nil
-	if job.owner and N.wakers.maint then N.wakers.maint(job.owner) end     -- its level maintainer checks again
+	--- its level maintainer checks again (issue #411: a bus or an interface with a Crafting Card names its own waker, "io")
+	local waker = job.owner and N.wakers[job.waker or "maint"]
+	if waker then waker(job.owner) end
 end
 
 --- Cancel or fail: stop handing out work, take unused inputs back, keep waiting for machines that
@@ -2768,6 +2770,12 @@ function M.free_slot(net)
 	return false
 end
 
+--- issue #411: is job `id` still under way (queued, running or handing its products over)? (no copy of the job, as M.job makes)
+function M.job_running(id)
+	local job = id and state().jobs[id]
+	return job ~= nil and (job.status == "queued" or job.status == "running")
+end
+
 --- the id of an active job of the network that crafts `key`, nil if there is none
 function M.active_job_for(net, key)
 	local s = state()
@@ -2831,8 +2839,9 @@ end
 --- terminal). `owner`: unit number of the level maintainer that asked for it (nil for a player).
 --- Returns the job id, or nil, a reason key and the plan. Issue #6: the job needs a CPU now (a free multiblock CPU
 --- with plan.bytes): else "cpu-too-small" (plan.biggest: the biggest CPU's bytes) or "no-free-cpu". Issue #350: `want`,
---- the CPU the player chose (nil: the first that fits and takes the request), and the CPU's mode (pick_cpu).
-function M.start(entity, key, amount, owner, want)
+--- the CPU the player chose (nil: the first that fits and takes the request), and the CPU's mode (pick_cpu). Issue #411:
+--- `waker`, the name of the N.wakers function that the job's end calls with `owner` (nil: the level maintainer's).
+function M.start(entity, key, amount, owner, want, waker)
 	local s = state()
 	local net = network_of(entity)
 	if not net then return nil, "no-network" end
@@ -2886,6 +2895,7 @@ function M.start(entity, key, amount, owner, want)
 		total_runs = total, done_runs = 0, idle = 0, tick = game.tick,
 		surface = entity.surface.index, force = entity.force.index,
 		pos = { x = entity.position.x, y = entity.position.y }, owner = owner, anchor = entity, bytes = plan.bytes,
+		waker = waker,
 	}
 	s.active[#s.active + 1] = id
 	local job = s.jobs[id]

@@ -48,7 +48,12 @@ function M.new(def)
 	--- first).
 	function C.inv_of(rec)
 		local inv = rec.inv
-		if inv and inv.valid then return inv end
+		if inv and inv.valid then
+			--- issue #411: a block that has more slots than when its inventory was made (the ME Interface: 3, then 4)
+			local slots = def.rules(rec).slots
+			if #inv < slots then inv.resize(slots) end
+			return inv
+		end
 		inv = game.create_inventory(def.rules(rec).slots, def.title(rec))
 		for slot, name in pairs(rec.cards or {}) do
 			if type(slot) == "number" and slot <= #inv and type(name) == "string" and prototypes.item[name] then
