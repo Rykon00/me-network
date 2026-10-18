@@ -50,6 +50,11 @@ local Sched = require("scripts.fork-me-schedule")
 local G = require("scripts.fork-me-gui")
 local CS = require("scripts.fork-me-cardslots")
 local Conn = require("scripts.fork-me-connector")
+--- issue #412: the connector module puts a bus's off state into its record (resolve reads `rec.coff` only)
+N.off_setters.sbus = function(unit, off)
+	local rec = N.ext_get(unit)
+	if rec then rec.coff = off or nil end
+end
 
 local M = {}
 
@@ -319,7 +324,7 @@ local function resolve(s, rec)
 	local e = rec.entity
 	--- issue #412: switched off by its circuit connector's condition: it faces nothing (its storage leaves the network) until
 	--- the condition holds again (fork-me-connector.lua wakes it, M.wake drops the cached target)
-	if Conn.is_off(rec.unit) then
+	if rec.coff then
 		release(s, rec)
 		F.drop(rec)
 		if rec.side ~= nil then

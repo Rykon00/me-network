@@ -3389,30 +3389,33 @@ no Crafting Card; the machine was busier than for #413, both versions alike):
 
 ## The circuit connector of the buses and the ME Interface (issue #412)
 
-A bus or interface visit reads one table entry more (`off[unit]` of the connector module); an export bus in pulse mode one
-more. A block without a condition, pulse mode or rows from the circuit is in no list and costs nothing else. The blocks that
-have them are checked in a list of their own, at most 16 per tick, each at most every 10 ticks: a control behavior read and
-the wire check (and, for rows from the circuit, the signals of both wires). A built bus or interface asks for its connector;
-the connectors are made in on_tick, at most 4 per tick (one `find_entities_filtered` and one `create_entity` each); removing a
-block destroys its connector.
+A bus or interface visit reads one field more (`rec.coff`, which the connector module writes into the block's record when
+its condition switches it); an export bus in pulse mode one more. A block without a condition, pulse mode or rows from the
+circuit is in no list and costs nothing else. The blocks that have them are checked in a list of their own, at most 16 per
+tick, each at most every 10 ticks: a control behavior read and the wire check (and, for rows from the circuit, the signals of
+both wires). A block gets its connector when a player first points at it (`on_selected_entity_changed`) or opens its window;
+removing a block destroys its connector.
 
-Tried, not kept (the stack of #414 measured it): making the connector at once in the build handler cost the build burst
-of 100 blocks 8 to 12 % (141 -> 152, 138 -> 155 ms); making it at a block's first visit as well (for blocks built without an
-event) put the connectors of the bench scene, which raises no events, into the first ticks after its load (1.55 -> 1.89 ms
-at 100), at any rate per tick. Blocks of older saves get theirs in `on_configuration_changed` instead, a block a script built
-without an event when its window is opened.
+Tried, not kept: making the connector at once in the build handler cost the build burst of 100 blocks 8 to 12 % (141 -> 152,
+138 -> 155 ms); making it in on_tick, 4 per tick, for every built block cost the 5000 scene 5 % of its script time (0.918 ->
+0.978 ms: its blocks are built with events, and their 5000 connectors were still being made in the measured window), and
+made at a block's first visit, the first ticks after a load (1.55 -> 1.89 ms at 100). A visit that asked the module
+(`Conn.is_off(e.unit_number)`, a function call and an engine read per visit) cost nothing measurable at 5000 against the
+field read, which is kept anyway. The one-run measurements at 5000 per stacked branch (v0.5.4 0.918, #413 0.921, #411 0.934,
+#412 0.988 ms) found it; with the connectors made on demand #412 is 0.919.
 
-`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 and #411 as well; the
+`bench --sizes 100,1000,5000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 and #411 as well; the
 scenes have no condition):
 
 | | v0.5.4 | with the connector |
 |---|---|---|
-| 100: script average / p99 ms | 0.1902 / 1.763 | 0.1924 / 1.749 |
-| 1000: script average / p99 ms | 0.3318 / 1.875 | 0.3315 / 1.882 |
-| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.67 / 24.31 |
-| burst build / remove ms (100) | 144.3 / 73.31 | 142.3 / 74.19 |
-| burst build / remove ms (1000) | 330.2 / 81.04 | 328.5 / 81.86 |
-| load first tick ms (100 / 1000) | 1.573 / 2.905 | 1.681 / 3.085 |
+| 100: script average / p99 ms | 0.2089 / 1.888 | 0.2140 / 1.895 |
+| 1000: script average / p99 ms | 0.3715 / 2.025 | 0.3747 / 2.059 |
+| 5000: script average / p99 ms | 0.9899 / 2.947 | 0.9840 / 2.844 |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 26.68 / 24.34 / 33.05 | 26.68 / 24.32 / 33.07 |
+| burst build / remove ms (100) | 152.2 / 75.40 | 155.4 / 77.71 |
+| burst build / remove ms (1000) | 415.8 / 85.84 | 400.6 / 85.87 |
+| load first tick ms (100 / 1000 / 5000) | 1.642 / 2.975 / 5.406 | 1.749 / 3.000 / 5.426 |
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
