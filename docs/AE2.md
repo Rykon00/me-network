@@ -865,6 +865,7 @@ Tech `me-autocrafting` (needs `me-storage-64k`, Automation 2 and Circuit network
 | Thing | What it does |
 |---|---|
 | **ME Pattern Terminal** | 1x1 block that encodes patterns (it was the Patterns tab of the ME Terminal); recipe in **Recipes (standalone)** |
+| **ME Pattern Terminal Ex** | the same block for processing patterns of up to 32 inputs and 8 outputs or 8 inputs and 32 outputs (issue #416, [below](#the-me-pattern-terminal-ex)); an ME Pattern Terminal, an advanced, a processing unit and an electronic circuit |
 | **ME Interface Terminal** | 1x1 block that lists every pattern provider and ME Interface of the network: take patterns out and put them in from one place, find a provider by what its patterns make or by the machine next to it ([below](#the-me-interface-terminal)) |
 | **ME Blank Pattern** | cheap item (2 per craft, recipe in **Recipes (standalone)**). Encoded in an **ME Pattern Terminal** |
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
@@ -932,7 +933,23 @@ Terminal: it draws its power (8 kW) through the controller, so it needs no pole,
   from the network refuse; the slots can still be emptied. The screen of the block is lit while the network works.
 
 Where the Patterns tab was: a player who looks for it in the ME Terminal now builds an ME Pattern Terminal. Showing
-the network's storage inside it (AE2's does) and a separate processing pattern terminal are not part of it.
+the network's storage inside it (AE2's does) is not part of it.
+
+### The ME Pattern Terminal Ex
+
+AE2-Unofficial's **Pattern Terminal Ex** (issue #416, `PartPatternTerminalEx`; tech ME Autocrafting; an ME Pattern Terminal, an
+advanced circuit, a processing unit and an electronic circuit, AE2-U's calculation, engineering and logic processor) is the
+ME Pattern Terminal for big **processing patterns only** (GT recipes with many inputs or outputs). A switch chooses between
+**32 inputs and 8 outputs** and **8 inputs and 32 outputs**; AE2-U shows the 32 rows on two pages, here they are one grid.
+Everything else (the two slots, Encode, Load, Clear, fill from a recipe) is the ME Pattern Terminal's.
+
+* Each player has an editor for each kind of terminal, so the plain terminal never cuts the rows of a big pattern. Rows that
+  the other layout does not show stay in the editor but are not encoded.
+* "Fill from a recipe" switches to 32 outputs when the recipe has more than 8 products and at most 8 ingredients; a recipe
+  with more rows than either layout is refused.
+* Load pattern takes processing patterns (a crafting pattern is refused) and picks the layout that fits.
+* The patterns are ordinary encoded patterns: a provider, the planner and the jobs take them with any number of rows, and
+  the plain terminal loads one with its first 9 inputs and 6 outputs (encoding it there would cut it).
 
 Encoded patterns can be stored in the network like any item (they keep their pattern; equal patterns stack in the
 network), but the planner never uses them as ingredients.

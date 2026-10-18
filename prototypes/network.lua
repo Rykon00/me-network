@@ -686,6 +686,7 @@ data:extend({ {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
+			pattern_terminal_ex = "me-pattern-terminal-ex",                     -- (issue #416)
 			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
 			storage_monitor = "me-storage-monitor", conversion_monitor = "me-conversion-monitor",   -- (issue #353)
 			throughput_monitor = "me-throughput-monitor",

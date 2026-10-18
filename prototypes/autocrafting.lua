@@ -59,6 +59,21 @@ ME.add_item{
 	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "assembling-machine-1", 1, "advanced-circuit", 1, "processing-unit", 1 } },
 }
 
+--- issue #416: AE2-Unofficial's ME Pattern Terminal Ex (parts/reporting/PartPatternTerminalEx.java): processing patterns of 32
+--- inputs and 8 outputs or 8 and 32. Its recipe (network/parts/terminals.recipe): a pattern terminal, a calculation, an engineering
+--- and a logic processor (the stand-ins of issue #233)
+ME.add_item{
+	name = "me-pattern-terminal-ex",
+	icon = ME.hd_icons .. "me-pattern-terminal-ex.png",
+	icon_size = 64,
+	subgroup = "fork-me-network",
+	order = "e0b",
+	stack_size = 50,
+	place_result = "me-pattern-terminal-ex",
+	recipe = { energy_required = 2, ingredients = I{ "me-pattern-terminal", 1, "advanced-circuit", 1, "processing-unit", 1,
+		"electronic-circuit", 1 } },
+}
+
 --- issue #336: the ME Interface Terminal lists the providers and interfaces of its network. AE2-Unofficial's recipe: an
 --- illuminated panel, an interface and an engineering processor (GTNH: an ME Terminal, an ME Interface, an engineering processor)
 ME.add_item{
@@ -171,6 +186,16 @@ data:extend({ {
 	},
 	localised_description = { "entity-description.me-pattern-terminal", tostring(PATTERN_TERMINAL_POWER / 1000) },
 } })
+--- issue #416: the ME Pattern Terminal Ex, the same block (its kind is the pattern terminal's: power, screen, walkable) with a
+--- picture of its own (tools/gen_ae2_sprites.py --pattern-terminal: the screen's frame in amber)
+local pt_ex = table.deepcopy(data.raw["simple-entity-with-force"]["me-pattern-terminal"])
+pt_ex.name = "me-pattern-terminal-ex"
+pt_ex.icon = ME.hd_icons .. "me-pattern-terminal-ex.png"
+pt_ex.minable = { mining_time = 0.2, result = "me-pattern-terminal-ex" }
+pt_ex.placeable_by = { item = "me-pattern-terminal-ex", count = 1 }
+for i, p in ipairs(pt_ex.pictures) do p.filename = ME.hd_entity_path .. "me-pattern-terminal-ex.png" end
+pt_ex.localised_description = { "entity-description.me-pattern-terminal-ex", tostring(PATTERN_TERMINAL_POWER / 1000) }
+data:extend({ pt_ex })
 
 --------------------------------------------------------------------------------
 --- INTERFACE TERMINAL (issue #336): a 1x1 block like the pattern terminal (power through the controller, walkable, the dark and
@@ -545,7 +570,7 @@ local function with_blocks(tech, recipes)
 end
 
 ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2", "circuit-network" }, unit = ME.unit(3, 500),
-	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-interface-terminal", "me-blank-pattern",
+	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-pattern-terminal-ex", "me-interface-terminal", "me-blank-pattern",
 		"me-molecular-assembler" }) }
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs
@@ -580,6 +605,7 @@ end
 --- issue #130: the ME Pattern Terminal is unlocked the same way (a mod that replaced the recipe list of `me-autocrafting` has not
 --- heard of it: data-final-fixes.lua puts its recipe back on the technology, unless a technology of that mod unlocks it)
 ME.crafting_block_tech["me-pattern-terminal"] = "me-autocrafting"
+ME.crafting_block_tech["me-pattern-terminal-ex"] = "me-autocrafting"         -- (issue #416, the same way)
 ME.crafting_block_tech["me-interface-terminal"] = "me-autocrafting"            -- (issue #336, the same way)
 for _, name in ipairs({ "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter" }) do   -- (issue #355, the same way)
 	ME.crafting_block_tech[name] = "me-automation"
