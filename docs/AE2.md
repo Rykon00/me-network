@@ -21,12 +21,12 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Controller | 2x2, needs power; exactly one per network runs it (two are a conflict) |
 | ME Drive | 1x1, holds up to 10 storage cells; has a priority |
 | ME Chest | 1x1, one storage cell and a terminal of its own that sees that cell only; works without a controller on power from the grid (4 kW), in a working network its cell is network storage at the chest's priority; inserters and pipes put items and fluids in, nothing comes out (issue #229) |
-| Storage cell (1k ... 256k) | holds the items (AE2 bytes and types); keeps them when taken out of the drive; can be partitioned |
+| Storage cell (1k ... 16384k, Singularity) | holds the items (AE2 bytes and types); keeps them when taken out of the drive; can be partitioned |
 | ME Terminal | the hub: storage, **crafting**, jobs, the drives and cells of the network; no pole needed (the controller draws its 8 kW), its screen is dark while the network does not work; can be walked over |
 | ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount; 36 with Interface Capacity Cards): keeps those in stock in it, imports everything else (this page, **Import and export**) |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face; can be walked over |
 | ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
-| Fluid storage cell (1k ... 256k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
+| Fluid storage cell (1k ... 16384k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | ME Wireless Access Point, ME Charger | 1x1 members, power through the controller: the range of the Wireless ME Terminal (with Wireless Boosters) and its charging (this page, **Wireless**) |
 | Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns (up to 36 with Pattern Capacity Cards); the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
@@ -38,9 +38,10 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 
 Techs (standalone, vanilla science packs; `prototypes/`): `me-network` (red and green: fluix cable, ME Controller,
 ME Chest, ME Drive, ME Interface, ME Terminal, the monitors, the ME IO Port, 1k/4k/16k cells, import, export and
-storage bus, underground cable), `me-storage-64k` (red to blue), `me-storage-256k` (red to purple),
+storage bus, underground cable), `me-storage-64k` (red to blue), `me-storage-256k` (red to purple), `me-storage-1024k`,
+`me-storage-4096k`, `me-storage-16384k` and `me-storage-singularity` (red to yellow, issue #414),
 `me-autocrafting` (red to blue), `me-upgrade-cards` (red to blue), `me-fluid-storage` (red to blue),
-`me-fluid-storage-256k` (red to purple), `me-automation` (red to blue), `me-wireless` and `me-wireless-link` (red to
+`me-fluid-storage-256k` (red to purple), `me-fluid-storage-1024k` to `-16384k` (red to yellow, issue #414), `me-automation` (red to blue), `me-wireless` and `me-wireless-link` (red to
 blue), `me-co-processing` (red to purple), `me-quantum-crafting` and `me-quantum-bridge` (red to yellow). Their
 prerequisites and recipes are in **Recipes (standalone)**. Gregtorio Continued replaces the recipes and puts the
 technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.lua`).
@@ -88,6 +89,16 @@ A storage cell holds items virtually; its capacity is AE2's:
 | 16k | 16 384 | 128 | 63 | 130 048 |
 | 64k | 65 536 | 512 | 63 | 520 192 |
 | 256k | 262 144 | 2 048 | 63 | 2 080 768 |
+| 1024k | 1 048 576 | 8 192 | 63 | 8 323 072 |
+| 4096k | 4 194 304 | 32 768 | 63 | 33 292 288 |
+| 16384k | 16 777 216 | 131 072 | 63 | 133 169 152 |
+| Singularity | 2^50 | 4 096 | 1 | 9 007 199 254 708 224 |
+
+Issue #414: the 1024k, 4096k and 16384k cells and the Singularity cell are AE2-Unofficial's (`ItemAdvancedStorageCell`,
+`ItemExtremeStorageCell`), each tier after the one below (technologies ME 1024k Storage ... ME Singularity Storage). AE2-U's
+Singularity cell has Long.MAX_VALUE / 16 bytes; here 2^50, so that its one type holds at most 2^53 - 32 768 items: the largest
+count a Lua number holds exactly (the storage engine's counts are numbers). AE2-U's idle drain of the cells is not built (no
+cell draws power here).
 
 Every item type in a cell costs its bytes per type, and every 8 items of it one byte. Another quality of an
 item is another type. A network fills cells that already hold an item first, then cells with a free type.
@@ -527,6 +538,8 @@ The recipes that follow:
 | 1k storage component | 4 copper cables, 4 stone, an electronic circuit | 4 redstone, 4 certus quartz, a logic processor |
 | 4k / 16k / 64k component | 3 of the tier below, an advanced circuit, a plastic bar, 4 copper cables | 3 of the tier below, a calculation processor, a quartz glass, 4 redstone (4k) or glowstone |
 | 256k component | 3 64k components, an advanced circuit, a plastic bar, 4 stone bricks | ... 4 sky stone dust |
+| 1024k / 4096k / 16384k component (issue #414) | 3 of the tier below, an advanced circuit, a plastic bar, 4 stone bricks | 3 of the tier below, an engineering and a logic processor, 4 glowstone (AE2-Unofficial) |
+| ME Singularity Storage Cell (issue #414) | 8 16384k components, 4 ME Quantum Bridges, 4 accumulators, a storage housing | 8 Quantum cells (each 4 16384k components, 4 quantum rings, a dense energy cell) around a matter condenser (AE2-Unofficial) |
 | Storage cell | a component and a housing | the same |
 | Fluid storage cell | a component, 2 plastic bars, 3 copper cables, 3 copper plates | a component in a fluid cell housing (2 quartz glass, 3 redstone, 3 copper) |
 | Void ME Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 iron plates | 2 quartz glass, 3 redstone, an ender pearl, 3 iron (AE2-Unofficial) |
@@ -574,7 +587,7 @@ card is made from a component card and one item:
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
 | Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
 | Super Speed Card | Acceleration Card + 16k storage component (AE2-Unofficial's) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4 | adds 16, 128, 1024, 8192 times the bus speed (issue #356) |
-| Superluminal Speed Card | Super Speed Card + 4 256k storage components (AE2-Unofficial: a 1024k component, which ME Network does not have) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4 | adds 131 072, 1 048 576, 8 388 608, 67 108 864 times the bus speed (issue #356) |
+| Superluminal Speed Card | Super Speed Card + a 1024k storage component (AE2-Unofficial's; until issue #414 4 256k components) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4 | adds 131 072, 1 048 576, 8 388 608, 67 108 864 times the bus speed (issue #356) |
 
 **Capacity, Fuzzy and Inverter Card on the ME Import and Export Bus** (issue #413, AE2-Unofficial's bus cards): they go into
 the bus's 4 card slots with the speed cards and the Group Filter Card.
@@ -1375,7 +1388,7 @@ the ME Fluid Import, Export and Storage Bus did that and came with this technolo
 
 | Thing | What it is |
 |---|---|
-| **Fluid storage cell** (1k ... 256k) | storage housing + storage component of the tier + a pump. Goes into an ME Drive slot like an item cell; a drive may hold item and fluid cells in any mix |
+| **Fluid storage cell** (1k ... 16384k) | storage housing + storage component of the tier + a pump. Goes into an ME Drive slot like an item cell; a drive may hold item and fluid cells in any mix |
 | **ME Interface** | its four sides (a tank of 5000 units each) are the import/export point for pipes |
 | **ME Import Bus / Export Bus** | 1x1, rotatable: takes fluid out of / puts fluid into the machine or tank it faces |
 
@@ -1389,6 +1402,9 @@ Gregtorio's choice):
 | 16k | 16 384 | 128 | 18 | 130 048 |
 | 64k | 65 536 | 512 | 18 | 520 192 |
 | 256k | 262 144 | 2 048 | 18 | 2 080 768 |
+| 1024k | 1 048 576 | 8 192 | 18 | 8 323 072 |
+| 4096k | 4 194 304 | 32 768 | 18 | 33 292 288 |
+| 16384k | 16 777 216 | 131 072 | 18 | 133 169 152 |
 
 Every 8 units of a fluid cost one byte. One fluid cell holds a little more than the old fluid drive held per
 cell (8 000 units per "1k"). An item cell takes no fluid and a fluid cell no items.

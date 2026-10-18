@@ -36,6 +36,11 @@ local CELLS = {
 	{ tier = "16k",  k = 16 },
 	{ tier = "64k",  k = 64 },
 	{ tier = "256k", k = 256, extra = { name = "acceleration-card", count = 1 } },
+	--- issue #414: AE2-Unofficial's 1024k, 4096k and 16384k cells (core/api/definitions/ApiItems.java, ItemAdvancedStorageCell:
+	--- 63 types, k * 1024 bytes, k * 8 bytes per type); no old drive item of their tier (`new`)
+	{ tier = "1024k", k = 1024, new = true },
+	{ tier = "4096k", k = 4096, new = true },
+	{ tier = "16384k", k = 16384, new = true },
 }
 local OLD_CELLS_PER_DRIVE = 4
 local DRIVE_SLOTS = 10              -- AE2's ME Drive
@@ -123,6 +128,11 @@ local COMPONENTS = {
 	{ "16k",  I{ "me-4k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "copper-cable", 4 } },
 	{ "64k",  I{ "me-16k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "copper-cable", 4 } },
 	{ "256k", I{ "me-64k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
+	--- issue #414: AE2-Unofficial's recipe of every tier from 256k on (network/cells/storage-components.recipe: three of the
+	--- tier below, an engineering and a logic processor, 4 glowstone): the 256k's stand-ins
+	{ "1024k", I{ "me-256k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
+	{ "4096k", I{ "me-1024k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
+	{ "16384k", I{ "me-4096k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
 }
 for i, c in ipairs(COMPONENTS) do
 	ME.add_item{ name = "me-" .. c[1] .. "-storage-component", icon = HD_ICON .. "me-" .. c[1] .. "-storage-component.png",
@@ -161,24 +171,46 @@ for i, c in ipairs(CELLS) do
 	cell_data[cell] = { tier = c.tier, bytes = bytes, per_type = per_type, types = MAX_TYPES }
 	item.localised_description = { "item-description.fork-me-storage-cell", c.tier, tostring(bytes),
 		tostring(MAX_TYPES), tostring((bytes - per_type) * 8) }
-
-	--- the old drive item (chassis + four cells, before issue #68): no recipe any more, hidden; placing one
-	--- builds an ME Drive with its four (empty) cells (issue #146: kept, 0.5.0 left them in inventories as they were)
-	local old = "me-drive-" .. c.tier
-	data:extend({ {
-		type = "item",
-		name = old,
-		icon = ICON_FORK .. old .. ".png",
-		icon_size = 32,
-		subgroup = "fork-me-drives",
-		order = "z" .. order,
-		stack_size = 10,
-		place_result = DRIVE,
-		hidden = true,
-		localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
-	} })
-	legacy_drives[old] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra }
+	if not c.new then                                 -- (issue #414: no old drive item of the new tiers)
+		--- the old drive item (chassis + four cells, before issue #68): no recipe any more, hidden; placing one
+		--- builds an ME Drive with its four (empty) cells (issue #146: kept, 0.5.0 left them in inventories as they were)
+		local old = "me-drive-" .. c.tier
+		data:extend({ {
+			type = "item",
+			name = old,
+			icon = ICON_FORK .. old .. ".png",
+			icon_size = 32,
+			subgroup = "fork-me-drives",
+			order = "z" .. order,
+			stack_size = 10,
+			place_result = DRIVE,
+			hidden = true,
+			localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
+		} })
+		legacy_drives[old] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra }
+	end
 end
+
+--- Issue #414: AE2-Unofficial's Singularity cell (ItemExtremeStorageCell "Singularity": one type, Long.MAX_VALUE / 16 bytes,
+--- 4096 bytes per type). Here 2^50 bytes: its one type holds up to 2^53 - 32768 items, the integers a Lua number counts
+--- exactly (the storage engine's counts are numbers). AE2-U's recipe (network/cells/storage.recipe) is 8 Quantum cells (each
+--- 4 16384k components, 4 quantum rings and a dense energy cell) around a matter condenser; here 8 16384k components, 4 ME
+--- Quantum Bridges for the rings, 4 accumulators for the energy cells and a storage housing.
+local SINGULARITY = "me-singularity-storage-cell"
+local s_item = ME.add_item{
+	type = "item-with-tags",
+	name = SINGULARITY,
+	icon = HD_ICON .. SINGULARITY .. ".png",
+	icon_size = 64,
+	subgroup = "fork-me-cells",
+	order = "09",
+	stack_size = 1,
+	recipe = { energy_required = 30, auto_recycle = false, ingredients = I{ "me-16384k-storage-component", 8,
+		"me-quantum-bridge", 4, "accumulator", 4, "basic-storage-housing", 1 } },
+}
+local S_BYTES, S_PER_TYPE = 2 ^ 50, 4096
+cell_data[SINGULARITY] = { tier = "singularity", bytes = S_BYTES, per_type = S_PER_TYPE, types = 1 }
+s_item.localised_description = { "item-description.fork-me-singularity-cell", string.format("%.0f", (S_BYTES - S_PER_TYPE) * 8) }
 
 
 
@@ -908,3 +940,13 @@ ME.add_technology{ name = "me-storage-64k", prerequisites = { "me-network", "pro
 
 ME.add_technology{ name = "me-storage-256k", prerequisites = { "me-storage-64k", "production-science-pack" },
 	unit = ME.unit(4, 600), recipes = { "me-256k-storage-component", "me-256k-storage-cell" } }
+
+--- issue #414: the cells of AE2-Unofficial above 256k, one technology per tier, and the Singularity cell
+ME.add_technology{ name = "me-storage-1024k", prerequisites = { "me-storage-256k", "utility-science-pack" },
+	unit = ME.unit(5, 800), recipes = { "me-1024k-storage-component", "me-1024k-storage-cell" } }
+ME.add_technology{ name = "me-storage-4096k", prerequisites = { "me-storage-1024k" },
+	unit = ME.unit(5, 1200), recipes = { "me-4096k-storage-component", "me-4096k-storage-cell" } }
+ME.add_technology{ name = "me-storage-16384k", prerequisites = { "me-storage-4096k" },
+	unit = ME.unit(5, 1600), recipes = { "me-16384k-storage-component", "me-16384k-storage-cell" } }
+ME.add_technology{ name = "me-storage-singularity", prerequisites = { "me-storage-16384k", "me-quantum-bridge" },
+	unit = ME.unit(5, 2500), recipes = { SINGULARITY } }

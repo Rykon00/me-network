@@ -121,7 +121,12 @@ CELLS = {
     "16k": ((95, 225, 95), "MV"),
     "64k": ((70, 205, 245), "EV"),
     "256k": ((225, 95, 245), "IV"),
+    # issue #414: AE2-Unofficial's cells above 256k (no old drive item: their drive icons are made but not used)
+    "1024k": ((255, 90, 90), "IV"),
+    "4096k": ((255, 160, 50), "IV"),
+    "16384k": ((255, 235, 110), "IV"),
 }
+SINGULARITY_LED = (190, 70, 255)   # issue #414: the Singularity cell's LED, a dark core in its window
 FLUIX = (150, 95, 225)
 FLUIX_LIGHT = (120, 175, 255)
 BAY = (32, 32, 38)
@@ -217,6 +222,20 @@ def cell_icon(cell):
     for i in range(2):
         d.line((x0 + 2 + i, y0 + 6, x0 + 5 + i, y0 + 3), fill=glint)
     d.rectangle((HOUSING_LED[0] + 1, HOUSING_LED[1] + 1, HOUSING_LED[2] - 1, HOUSING_LED[3] - 1), fill=led + (255,))
+    return img
+
+
+def singularity_icon():
+    """issue #414: the Singularity cell: the cell icon with a violet LED and a dark core with a violet rim in its window"""
+    CELLS["singularity"] = (SINGULARITY_LED, "IV")
+    img = cell_icon("singularity")
+    del CELLS["singularity"]
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = HOUSING_WINDOW
+    cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+    d.rectangle(HOUSING_WINDOW, fill=(10, 8, 18, 255))
+    d.ellipse((cx - 4, cy - 4, cx + 4, cy + 4), outline=SINGULARITY_LED + (255,))
+    d.ellipse((cx - 2, cy - 2, cx + 2, cy + 2), fill=(0, 0, 0, 255), outline=(120, 40, 170, 255))
     return img
 
 
@@ -1310,7 +1329,10 @@ COMPONENT_TIERS = (                 # tier -> (stripe and pip colour, pips); the
     ("64k", (70, 205, 245), 4), ("256k", (225, 95, 245), 5),
     ("1m", (235, 235, 235), 1), ("4m", (245, 215, 70), 2), ("16m", (95, 225, 95), 3),
     ("64m", (70, 205, 245), 4), ("256m", (225, 95, 245), 5),
+    # issue #414: the components of AE2-Unofficial's 1024k to 16384k cells, the red board of 1m to 16m (their colours, pips)
+    ("1024k", (235, 235, 235), 1), ("4096k", (245, 215, 70), 2), ("16384k", (95, 225, 95), 3),
 )
+BIG_COMPONENTS = ("1024k", "4096k", "16384k")   # (the red board: MODULE_BOARD["m"])
 MODULE_BOARD = {"k": ("items/gt.metaitem.03/5", "items/gt.metaitem.03/39"),     # board, chip: green board, RAM chip
                 "m": ("items/gt.metaitem.03/8", "items/gt.metaitem.03/41")}     # red board, NAND chip
 MODULE_BOX = (3, 6, TILE - 4, 25)       # the module's board: 26 x 20 px
@@ -1368,7 +1390,7 @@ def housing_icon(gt):
 def component_icon(gt, tier):
     """a storage component: a memory module (board, chips, edge connector, the tier's stripe and pips)"""
     colour, pips = next((c, p) for t, c, p in COMPONENT_TIERS if t == tier)
-    board, chip = MODULE_BOARD[tier[-1]]
+    board, chip = MODULE_BOARD["m" if tier in BIG_COMPONENTS else tier[-1]]
     tex = gt_texture(gt, board).crop((1, 1, GT_PX - 1, GT_PX - 1))
     img = tiled(tex, MODULE_BOX)
     d = ImageDraw.Draw(img)
@@ -1650,9 +1672,10 @@ def hd_batch1():
     save(hd_flat(load(OUT_ICON / "me-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "me-cable.png")
     save(hd_flat(load(ROOT / "graphics/icons/fluix-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "fluix-cable.png")
     save(hd_flat(load(OUT_ICON / "me-underground-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "me-underground-cable.png")
-    for k in ("1k", "4k", "16k", "64k", "256k"):
+    for k in ("1k", "4k", "16k", "64k", "256k", "1024k", "4096k", "16384k"):   # (issue #414: from 1024k on)
         for kind in ("storage-cell", "fluid-storage-cell"):
             save(hd_cell(load(OUT_ICON / f"me-{k}-{kind}.png")), HD_ICON / f"me-{k}-{kind}.png")
+    save(hd_cell(singularity_icon()), HD_ICON / "me-singularity-storage-cell.png")              # (issue #414)
     return written
 
 
@@ -1862,6 +1885,11 @@ TECH_ICONS = {
     "me-storage-256k": "me-256k-storage-cell",
     "me-fluid-storage": "me-16k-fluid-storage-cell",
     "me-fluid-storage-256k": "me-256k-fluid-storage-cell",
+    # issue #414
+    "me-storage-1024k": "me-1024k-storage-cell", "me-storage-4096k": "me-4096k-storage-cell",
+    "me-storage-16384k": "me-16384k-storage-cell", "me-storage-singularity": "me-singularity-storage-cell",
+    "me-fluid-storage-1024k": "me-1024k-fluid-storage-cell", "me-fluid-storage-4096k": "me-4096k-fluid-storage-cell",
+    "me-fluid-storage-16384k": "me-16384k-fluid-storage-cell",
     "me-autocrafting": "me-molecular-assembler",
     "me-automation": "me-level-maintainer",
     "me-co-processing": "me-crafting-co-processing-unit",
