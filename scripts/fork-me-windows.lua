@@ -1709,7 +1709,9 @@ end
 
 local function hover(player)
 	local e = player.selected
-	if e and e.valid and N.kind_of(e.name) == "interface" then e.custom_status = M.interface_hover_status(e) end
+	if not (e and e.valid) then return end
+	if Conn.HOSTS[e.name] then Conn.ensure(e) end              -- (issue #412: its circuit connector, when a player points at it)
+	if N.kind_of(e.name) == "interface" then e.custom_status = M.interface_hover_status(e) end
 end
 G.player_hooks[#G.player_hooks + 1] = hover
 script.on_event(defines.events.on_selected_entity_changed, function(event)
