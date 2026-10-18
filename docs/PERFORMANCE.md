@@ -2219,7 +2219,8 @@ signals; the engine probe: 908 µs for 1000), and `network_signals` (the shared 
 (about 0.7 µs per signal). A probe of lighter filter forms (353 item and fluid signals, 50 writes each): with `quality` and
 `comparator` 0.250 ms, without `comparator` 0.237 ms (the same section read back), without `quality` 0.221 ms but a different
 section (no quality on the signal). So nothing exact makes the write cheaper; its total is bounded by the setting "circuit
-interface updates per second" by design. Not built.
+interface updates per second" by design. Not built. (Built in issue #420 as "write only what changed": see "The performance
+levers of issue #420" below.)
 
 #### Lever 10, the interfaces' side tanks
 
@@ -2238,7 +2239,8 @@ the tank holds fluid (the scene's fluid I/O unchanged: 1 200 401 fluid per secon
 About 5000 unconnected tanks cost the engine 0.06 to 0.07 ms per tick: some 13 ns per tank and tick. The maintainer's base (189
 interfaces and buses) would save under 0.01 ms. Tanks only where needed would need a tank at the moment a pipe, pump or tank is
 built at a side (the build events), and a migration that removes the empty unconnected tanks of saves; a pipe that another mod
-builds by script without an event would no longer connect. Not built (the maintainer's decision, 2026-10-05).
+builds by script without an event would no longer connect. Not built (the maintainer's decision, 2026-10-05). (Built in issue
+#420 with a fallback for what comes without an event: "The performance levers of issue #420" below.)
 
 #### The long window at 20 000 on this machine
 
@@ -2785,6 +2787,8 @@ measurement cannot tell from the noise is no reason for a cache that has to be k
 * **The remaining engine method calls** (`start_lease` inserts, `probe_work`, `switch_recipe`, an export bus into a lab):
   each under 1 µs per tick at 20 000.
 * **The big edits** (graph rebuild 3.1 s, burst remove of 1000 blocks 174 ms at 20 000): single events, not a cost per tick.
+
+(The folded nodes and the big edits were built in issue #420: "The performance levers of issue #420" below.)
 
 
 ## The pane's slot signature (issue #75)
@@ -3516,3 +3520,93 @@ with #412's connectors made on demand):
 `regressions beyond the noise: 0`. (A first run of this branch flagged the first tick after the load at 100, 1.553 -> 1.813 ms,
 noise 0.208; the run again was clean. The planner scene is not measured: `--planner-only` with `--check` measured the plain
 scenes, among them 5000, which found the connector's cost of #412.)
+
+## The performance levers of issue #420
+
+The open points of round seven (issue #122, "Not built, and why" above): lever 10 (side tanks), lever 7 (circuit interface
+writes), the folded nodes and the big edits, built as the maintainer chose ("built with a fallback", "write only what
+changed", "spread the graph rebuild, bundle mass removal, folded nodes"). Measuring them found one more: the burst build.
+
+* **The burst build** (not one of the levers; found while measuring): each block that joins a network marked the
+  controller's power dirty, and the first look at the network (`usable`) walked every member to count it again. In the
+  bench's burst every storage bus looks at its network when it is built (its first visit): 158 walks of 80 000 members at
+  20 000, 7.3 s for 1000 blocks. Now a member that joins or leaves one network without a split adds or takes its own draw
+  (`M.power_add`, the same rows as `update_power`; a kind whose draw depends on its state, a crafting block, a split or a
+  controller still make the walk). The runtime test compares the kept draw with the walk after builds, removals and a
+  rebuild.
+* **Lever 10:** a side has its tank only where it is needed (connected, tied to a fluid row, holding fluid). A fluid entity
+  built, rotated, pasted onto or set up in its window beside an interface gets the side a tank, kept when it connects; one
+  interface every 8 ticks looks at its sides again (`check_tanks`, its place `s.tcur` in storage): the fallback for a pipe a
+  script built without an event or a machine whose recipe gave it a fluid box. That look is one `find_entities_filtered` of
+  the tile per side without a tank (2 µs), and a tank made and destroyed again where a fluid entity stands that does not
+  connect. Older saves lose their empty unconnected tanks in `on_configuration_changed` (`devcheck migrate --from-ref v0.5.4
+  --bump`: the fluid before and after the update the same).
+* **Lever 7:** a network's new signal list equal to the last one keeps the last one's version (`n`): no interface writes. A
+  list that differs in at most `DIFF_MAX` = 3 amounts (the same signals in the same order) names those slots, and an
+  interface that wrote the list before writes them with `set_slot`. Measured in the runtime world (20 writes each): a
+  `set_slot` costs about 0.16 µs per signal of the section (10 µs in a section of 50 signals, 70 µs in one of 425), the whole
+  section 0.6 to 1.2 µs per signal (29 µs and 315 to 510 µs), so one by one pays up to about four slots whatever the size; a
+  first version allowed an eighth of the list (112 slots of 900: some 15 ms) and cost ticks over 5 ms. A filtered interface
+  writes nothing while its signals are the ones it wrote (`rec.vsig`, a short string: at most 20 filters).
+* **Folded nodes:** a node is its own tile box (fields 1 to 4), without the box table and the position table nobody read.
+* **The graph rebuild of `on_configuration_changed`:** it keeps the graph the events kept when it was made with the same rules
+  and member prototypes (`s.graph_sig`), patching up to 64 (or a sixteenth of the members) that changed without an event
+  (`vanish` for those gone, `M.on_built` for those that came); otherwise, and for a save of an older version, the rebuild
+  from the map as before. Measured where it went at 20 000 (80 104 members, the phases of one plain run): the map scan 358 ms,
+  the nodes 482 ms, the grid and neighbours 1123 ms, the components 339 ms, the networks computed again 97 ms, the cables'
+  pictures 116 ms, the screens 50 ms. The kept graph does the scan by count (`count_entities_filtered`), the networks and
+  the screens.
+* **Mass removal:** at 20 000 the burst removal spent 79 of 170 ms taking the leaving storage buses' cells out of the
+  network's cell list, one walk over all cells each; the list now keeps their entries until its next use (`M.cell_ids`: one
+  pass for all of them, the order the same as before). The storage bus lists (item and fluid side) remove a bus by its
+  place (`Sched.list_remove`, as the I/O list) instead of a walk; the fluid side's "is it listed" by its place too.
+
+`bench --check origin/job-merge-418 --sizes 5000,20000 --runs 3` (three rounds in turns; 20 000 with 10 800 ticks):
+
+| | 5000, before | 5000, #420 | 20 000, before | 20 000, #420 |
+|---|---|---|---|---|
+| script average ms | 0.9616 ±0.032 | 0.9694 ±0.031 | 2.160 ±0.014 | 2.105 ±0.009 |
+| script p99 ms | 2.863 | 2.913 | 4.273 | 4.207 |
+| ticks over 5 ms | 3 ±1.5 | 7 ±1 | 49 ±6.5 | 36 ±2 |
+| mod heap alive after a collection (MB) | 74.5 | 57.1 | 281.0 | 213.2 |
+| burst build ms (1000 blocks) | 1880 | 83.8 | 7271 | 112.9 |
+| burst remove ms | 104.0 | 80.6 | 183.6 | 93.8 |
+| throughput per kind of endpoint | identical | identical | identical | identical |
+
+The ticks over 5 ms at 5000 were flagged (3 -> 7, noise 3) in that run; with `DIFF_MAX` 3 the run again was clean (4 -> 7,
+`regressions beyond the noise: 0`), and once more with the tank fallback switched off for a test: 6 and 6, the reference
+itself 3, 4 and 6 in the three checks. So that number is within its noise at 5000; at 20 000 it went down.
+
+One run each of `bench --sizes 5000,20000 --idle --long 10` for the base and the branch (the whole update is the script and
+the engine; the engine's part is where lever 10 shows):
+
+| one run | base | #420 |
+|---|---|---|
+| 5000: script / engine / whole ms | 1.013 / 0.714 / 1.727 | 1.011 / 0.607 / 1.618 |
+| 5000 idle: script / engine / whole ms | 0.540 / 0.312 / 0.852 | 0.503 / 0.271 / 0.774 |
+| 20 000: script / engine / whole ms | 2.440 / 2.518 / 4.957 | 2.272 / 1.756 / 4.028 |
+| 20 000 idle: script / engine / whole ms | 1.048 / 1.141 / 2.189 | 0.982 / 0.576 / 1.558 |
+| 20 000, 10 minutes: script avg / p99 / ticks over 5 ms | 1.862 / 4.22 / 156 | 1.779 / 4.22 / 169 |
+| 20 000: save MB | 7.4 | 6.6 |
+| 20 000: load s | 1.52 | 0.39 |
+| 20 000: burst build / remove ms | 8089 / 198 | 113 / 99 |
+
+The graph rebuild probe (one profile run at 20 000, the bench's instrumented copy): before 2.81 s; with #420 0.37 s (the
+kept graph, what an update does) and 2.16 s (`rebuild(true)`, from the map: what a change of the graph's rules or the
+member prototypes does, now also measured by the bench as "graph rebuild from the map").
+
+`bench --check v0.5.4 --sizes 100,1000,5000 --runs 3` (the last release): 1000 and 5000 green; 100 flagged the script average
+(0.2068 -> 0.2400, noise 0.03: rounds of 0.215 to 0.244 against 0.202 to 0.232). `--sizes 100 --runs 5` again: 0.2099
+±0.012 -> 0.2157 ±0.009, `regressions beyond the noise: 0`.
+
+| v0.5.4 against #420 (`--runs 3`) | v0.5.4 | #420 |
+|---|---|---|
+| 1000: script average / p99 ms | 0.3502 / 1.974 | 0.3492 / 1.979 |
+| 5000: script average / p99 ms | 0.9451 / 2.837 | 0.9299 / 2.794 |
+| mod heap alive kB (100 / 1000 / 5000) | 14 240 / 28 940 / 74 450 | 13 810 / 25 410 / 57 100 |
+| burst build ms (100 / 1000 / 5000) | 169.4 / 375.8 / 1973 | 72.4 / 76.3 / 87.7 |
+| burst remove ms (100 / 1000 / 5000) | 76.3 / 85.2 / 98.2 | 74.6 / 79.8 / 81.7 |
+
+What is left of the issue's list: the full rebuild from the map is still one pass in one tick (2.2 s at 20 000), now only after
+a change of the graph's rules or of the members' prototypes; the remaining fluid-side reads (`fluidbox[i]`, round five) were
+not part of the choice.

@@ -24,8 +24,8 @@
 --- no event); its job's end wakes it. A circuit interface is updated every CIRCUIT_INTERVAL ticks and writes only
 --- when the network's contents changed; the sorted signals of a network are made once per CIRCUIT_INTERVAL and
 --- shared by its interfaces (net.sigs). Issue #420 (lever 7): a list equal to the last one keeps its version (nothing is
---- written); a list that differs from the last one only in some amounts names those slots (net.sigs.diff), and an
---- interface that wrote the last list writes only them; a filtered interface writes nothing while its signals are the ones
+--- written); a list that differs from the last one only in a few amounts (DIFF_MAX) names those slots (net.sigs.diff), and
+--- an interface that wrote the last list writes only them; a filtered interface writes nothing while its signals are the ones
 --- it wrote (rec.vsig).
 --- State: storage.fork_ae2.maintainers, mlist, mq, circuits, clist, cq (created lazily, so older saves need
 --- nothing). GUI state lives in the GUI elements (tags).
@@ -49,7 +49,10 @@ local MAX_FILTERS = 20
 local MAX_ROWS = 5                  -- issue #351: a maintainer's rows (GTNH's level maintainer: 5 slots)
 local MAX_CIRCUIT_ROWS = 20         -- issue #351: the signals "craft what the circuit asks" takes, the largest first
 local SIGNAL_MAX = 2147483647       -- signals are 32 bit
-local DIFF_SHARE = 8                -- issue #420: slots written one by one up to 1/DIFF_SHARE of the list (else the whole section)
+--- issue #420: at most this many changed slots are written one by one (else the whole section). A `set_slot` costs about
+--- 0.16 us per signal of the section (10 us in one of 50, 70 us in one of 425), the whole section about 0.6 to 1.2 us per
+--- signal: one by one is cheaper up to about 4 slots, whatever the section's size.
+local DIFF_MAX = 3
 --- issue #420 (tests): unit -> what its last write wrote ("section", a number of slots, "none"); never read by the mod, not state
 M.writes = {}
 local MAINT_TAG, CIRCUIT_TAG = "fork_me_maintainer", "fork_me_circuit"
@@ -531,7 +534,7 @@ end
 --- and they are few (nil: the whole section; a list of more than MAX_SIGNALS writes its largest, which may change with them)
 local function slot_diff(a, b)
 	if #a ~= #b or #b > MAX_SIGNALS then return nil end
-	local out, most = {}, math.floor(#b / DIFF_SHARE)
+	local out, most = {}, DIFF_MAX
 	for i = 1, #b do
 		local x, y = a[i], b[i]
 		if x.order ~= y.order then return nil end
