@@ -3386,3 +3386,26 @@ no Crafting Card; the machine was busier than for #413, both versions alike):
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## The circuit connector of the buses and the ME Interface (issue #412)
+
+A bus or interface visit reads two fields more (`rec.cn`, whether its connector exists, and `off[unit]` of the connector
+module, a table lookup); an export bus in pulse mode one more. A block without a condition, pulse mode or rows from the
+circuit is in no list and costs nothing else. The blocks that have them are checked in a list of their own, at most 16 per
+tick, each at most every 10 ticks: a control behavior read and the wire check (and, for rows from the circuit, the signals of
+both wires). Building a bus or an interface builds its connector too (one `create_entity`); removing one destroys it.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 and #411 as well; the
+scenes have no condition):
+
+| | v0.5.4 | with the connector |
+|---|---|---|
+| 100: script average / p99 ms | 0.1933 / 1.804 | 0.1926 / 1.758 |
+| 1000: script average / p99 ms | 0.3338 / 1.897 | 0.3374 / 1.902 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.33 |
+| burst build / remove ms (100) | 141.4 / 72.46 | 152.1 / 75.28 |
+| burst build / remove ms (1000) | 336.8 / 81.74 | 337.9 / 83.75 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`. The build burst of 100 is 8 % slower (the connectors of its buses and interfaces); at
+1000 the difference is within the noise.
