@@ -822,6 +822,7 @@ RUNTIME_TESTS = (
     ("GROUPBUS", "Group Filter Card on the import and export bus (issue #363)"),
     ("BUSCARDS", "Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)"),
     ("CRAFTCARD", "Crafting Card on the export bus and the interface (issue #411)"),
+    ("CIRCUITBUS", "Circuit connector of the buses and the interface (issue #412)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),

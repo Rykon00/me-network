@@ -61,6 +61,7 @@ local T = require("scripts.fork-me-targets")
 local Sched = require("scripts.fork-me-schedule")
 local CS = require("scripts.fork-me-cardslots")
 local AC = require("scripts.fork-me-autocraft")
+local Conn = require("scripts.fork-me-connector")
 
 local M = {}
 
@@ -562,6 +563,30 @@ local function config_of(rec)
 	return rec.config
 end
 
+--- Issue #412: the rows of an interface whose rows come from the circuit (`rec.ccfg`): every item and fluid signal on its
+--- connector's wires with a positive count is a row of that amount, in the order of their keys, as many as the interface has
+--- rows; a fluid row is at most a side's volume. The rows set by hand stay (`rec.config`) and work again without the option.
+local function circuit_config(rec)
+	local sig = Conn.signals(rec.entity.unit_number)
+	local keys = {}
+	for key, count in pairs(sig) do
+		if count > 0 then keys[#keys + 1] = key end
+	end
+	table.sort(keys)
+	local rows = {}
+	for i = 1, math.min(#keys, rows_of(rec)) do
+		local key = keys[i]
+		if N.is_fluid_key(key) then
+			local name = N.split_fluid_key(key)
+			rows[i] = { type = "fluid", name = name, amount = sig[key] }
+		else
+			local name, q = N.parse_key(key)
+			rows[i] = { name = name, quality = q, amount = sig[key] }
+		end
+	end
+	return clean_config(rows)
+end
+
 --------------------------------------------------------------------------------
 --- interface: the side tanks
 --------------------------------------------------------------------------------
@@ -849,6 +874,13 @@ function M.interface_step(rec, dt, u)
 	if rec.want then icards.fill_cards(rec) end                       -- issue #196: the cards a blueprint or a paste asked for
 	local config = config_of(rec)
 	if rec.cnext and game.tick >= rec.cnext then rec.cnext = nil end     -- (issue #411: a retry is due now)
+	--- issue #412: its circuit connector (made at the first visit of a block of an older save), its condition, the rows
+	if not rec.cn then rec.cn = Conn.ensure(e) ~= nil or nil end
+	if Conn.is_off(e.unit_number) then
+		rec.status = "circuit-off"
+		return 0, false, nil, "circuit", false, nil
+	end
+	if rec.ccfg then config = circuit_config(rec) end
 	local net = u and N.active_of_unit(u) or not u and N.active_of(e) or nil   -- (`u`: the unit of a visit, issue #115)
 	if not net then
 		local n0 = u and N.network_of_unit(u) or not u and N.network_of(e) or nil
@@ -1168,9 +1200,9 @@ end
 
 --- the interface's tag (blueprints): { config, sides, priority (issue #17, only when not 0), cards (issue #196: the Interface
 --- Capacity Cards it has, only when there are any) }
-function M.interface_tag(config, sides, priority, cards)
+function M.interface_tag(config, sides, priority, cards, circuit)
 	return { config = config_tag(clean_config(config)), sides = sides_tag(sides),
-		priority = priority and priority ~= 0 and priority or nil, cards = cards }
+		priority = priority and priority ~= 0 and priority or nil, cards = cards, circuit = circuit or nil }   -- (issue #412)
 end
 
 --- the interface's state for its window: { config, sides, status, contents = { { key, count } }, fluids = { [1..4] =
@@ -1215,7 +1247,9 @@ function M.get_interface(entity)
 		fluids = fl, slots = rows_of(rec), volume = volume(), priority = rec.priority or 0, short = short,
 		fmix = rec.fmix and { rec.fmix[1], rec.fmix[2] } or nil, card_slots = N.card_rules().interface.slots,
 		want = rec.want and icards.missing_cards(rec, rec.want) or nil, kept = rec.extra and next(rec.extra) ~= nil or nil,
-		craft = rec.ccard and (rec.cstat or "idle") or nil }       -- (issue #411: the Crafting Card's last request)
+		craft = rec.ccard and (rec.cstat or "idle") or nil,        -- (issue #411: the Crafting Card's last request)
+		circuit = rec.ccfg == true, circuit_rows = rec.ccfg and circuit_config(rec) or nil,   -- (issue #412)
+		off = Conn.is_off(entity.unit_number) or nil }
 end
 M.CONFIG_SLOTS = CONFIG_SLOTS
 
@@ -1674,6 +1708,14 @@ end
 --- runs out at the rate this visit saw (math.huge: unknown).
 function M.bus_step(rec, dt, u)
 	local e = rec.entity
+	--- issue #412: its circuit connector (made at the first visit of a bus of an older save), its condition and, for an
+	--- export bus in pulse mode, one visit per rise of the condition
+	if not rec.cn then rec.cn = Conn.ensure(e) ~= nil or nil end
+	local unit = e.unit_number
+	if Conn.is_off(unit) or (rec.pulse and not Conn.take_pulse(unit)) then
+		rec.status = "circuit-off"
+		return 0, false, nil, "circuit", false, nil
+	end
 	local net = u and N.active_of_unit(u) or not u and N.active_of(e) or nil   -- (`u`: the unit of a visit, issue #115)
 	if not net then
 		local n0 = u and N.network_of_unit(u) or not u and N.network_of(e) or nil
@@ -1848,6 +1890,28 @@ function M.gf_list(rec, net)
 	return list
 end
 
+--- Issue #412: an export bus in pulse mode works once per rise of its connector's condition (AE2's "once per pulse")
+function M.set_bus_pulse(entity, on)
+	if kind(entity) ~= "export-bus" then return false end
+	local rec = register(state(), entity)
+	rec.pulse = on and true or nil
+	Conn.ensure(entity)
+	Conn.set_mode(entity.unit_number, rec.pulse, false)
+	wake(entity.unit_number)
+	return true
+end
+
+--- Issue #412: the interface takes its rows from the circuit (`on`), or its own rows again
+function M.set_interface_circuit(entity, on)
+	if kind(entity) ~= "interface" then return false end
+	local rec = register(state(), entity)
+	rec.ccfg = on and true or nil
+	Conn.ensure(entity)
+	Conn.set_mode(entity.unit_number, false, rec.ccfg)
+	wake(entity.unit_number)
+	return true
+end
+
 --- { filters = keys, status, target }
 function M.get_bus(entity)
 	local s = storage.fork_me_io
@@ -1855,7 +1919,7 @@ function M.get_bus(entity)
 	if not rec then return nil end
 	local t = rec.target
 	return { filters = { table.unpack(rec.keys or rec.filters) }, status = rec.status, target = t and t.valid and t.name or nil,
-		gtext = rec.gtext }
+		gtext = rec.gtext, pulse = rec.pulse }
 end
 
 --- one filter of a bus (the window's filter buttons): `key` nil clears it; the list stays packed
@@ -1923,6 +1987,7 @@ function M.bus_info(entity)
 	b.want = rec.want and cards.missing_cards(rec, rec.want) or nil
 	b.gfilter = rec.gcard == true                          -- issue #363
 	b.craft = rec.ccard and (rec.cstat or "idle") or nil   -- issue #411: the Crafting Card's last request
+	b.pulse, b.off = rec.pulse == true, Conn.is_off(entity.unit_number) or nil   -- issue #412
 	return b
 end
 
@@ -1936,7 +2001,9 @@ local function rec_of(unit)
 end
 
 --- blocked on the network's side: parked, woken by the network (the step registered N.wait_for; the rest here)
-local NET_SIDE = { ["no-key"] = true, ["net-full"] = true, ["no-network"] = true, ["no-power"] = true, unset = true }
+--- (issue #412: "circuit", switched off by its connector's condition: woken by fork-me-connector.lua's check)
+local NET_SIDE = { ["no-key"] = true, ["net-full"] = true, ["no-network"] = true, ["no-power"] = true, unset = true,
+	circuit = true }
 
 --- what the probe of a blocked block compares against: the items the source or the interface holds (one engine
 --- call), plus the fluid of an interface's sides (not of one that does not look at them, `rec.sidle`: probe_work looks
@@ -2203,12 +2270,14 @@ function M.on_built(entity, tags, source)
 		if config then
 			M.set_interface_config(entity, config, sides or {})
 			if type(t) == "table" and t.priority then M.set_interface_priority(entity, t.priority) end
+			if type(t) == "table" and t.circuit then M.set_interface_circuit(entity, true) end     -- (issue #412)
 		elseif source and source.valid and kind(source) == "interface" then
 			local from_rec = iface_rec(source)
 			local list = from_rec and icards.card_list(from_rec)
 			if list then icards.want_cards(entity, list, nil) end
 			M.set_interface_config(entity, M.get_interface_config(source), M.get_interface_sides(source))
 			M.set_interface_priority(entity, M.get_interface_priority(source))
+			if from_rec and from_rec.ccfg then M.set_interface_circuit(entity, true) end              -- (issue #412)
 		end
 		clear_filters(entity.get_inventory(defines.inventory.chest))      -- a blueprint before R3 may carry slot filters
 	else
@@ -2216,11 +2285,13 @@ function M.on_built(entity, tags, source)
 		if type(t) == "table" then
 			M.set_bus_filters(entity, t.filters)
 			if t.gtext then M.set_bus_gtext(entity, t.gtext) end               -- (issue #363)
+			if t.pulse then M.set_bus_pulse(entity, true) end                  -- (issue #412)
 			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, nil) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)
 			M.set_bus_filters(entity, from and from.filters or {})
 			if from and from.gtext then M.set_bus_gtext(entity, from.gtext) end
+			if from and from.pulse then M.set_bus_pulse(entity, true) end      -- (issue #412)
 			local from_rec = bus_rec(source)
 			local list = from_rec and cards.card_list(from_rec)
 			if list then cards.want_cards(entity, list, nil) end
@@ -2307,10 +2378,12 @@ function M.on_entity_settings_pasted(event)
 		end
 		M.set_interface_config(dst, M.get_interface_config(src), M.get_interface_sides(src))
 		M.set_interface_priority(dst, M.get_interface_priority(src))
+		M.set_interface_circuit(dst, from_rec and from_rec.ccfg)                            -- (issue #412)
 	elseif BUSES[k] then
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
 		M.set_bus_gtext(dst, from and from.gtext or "")                    -- (issue #363)
+		if k == "export-bus" then M.set_bus_pulse(dst, from and from.pulse) end   -- (issue #412)
 		--- issue #110: the source's cards are what the destination is to have (from the player's inventory, then the network)
 		local from_rec, dst_rec = bus_rec(src), bus_rec(dst)
 		if from_rec and dst_rec then
@@ -2329,15 +2402,15 @@ function M.tag_blueprint(bp, mapping)
 			local p = M.get_interface_priority(entity)
 			local rec = iface_rec(entity)
 			local list = rec and (rec.want and { table.unpack(rec.want) } or icards.card_list(rec))
-			if next(config) or next(sides) or p ~= 0 or list then
-				bp.set_blueprint_entity_tag(index, IFACE_TAG, M.interface_tag(config, sides, p, list))
+			if next(config) or next(sides) or p ~= 0 or list or (rec and rec.ccfg) then
+				bp.set_blueprint_entity_tag(index, IFACE_TAG, M.interface_tag(config, sides, p, list, rec and rec.ccfg))
 			end
 		elseif BUSES[k] then
 			local b = M.get_bus(entity)
 			local rec = bus_rec(entity)
 			local list = rec and (rec.want and { table.unpack(rec.want) } or cards.card_list(rec))
-			if b and (#b.filters > 0 or list or b.gtext) then
-				bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list, gtext = b.gtext })
+			if b and (#b.filters > 0 or list or b.gtext or b.pulse) then
+				bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list, gtext = b.gtext, pulse = b.pulse })
 			end
 		end
 	end
@@ -2495,6 +2568,9 @@ remote.add_interface("gregtorio-me-io", {
 	interface_tanks = function(entity) return M.tanks_of(entity) end,
 	idle_limit = function() return storage.fork_me_io and idle_limit(storage.fork_me_io) or nil end,   -- (issue #313 tests)
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,
+	--- issue #412: the export bus's pulse mode, the interface's rows from the circuit
+	set_bus_pulse = function(entity, on) return M.set_bus_pulse(entity, on) end,
+	set_interface_circuit = function(entity, on) return M.set_interface_circuit(entity, on) end,
 	--- issue #363: the Group Filter Card's text ("" clears it)
 	set_bus_gtext = function(entity, text) return M.set_bus_gtext(entity, text) end,
 	--- issue #110: the card slots of a bus (what the window's clicks do; `want`: a list of names)
