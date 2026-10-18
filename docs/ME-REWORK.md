@@ -2014,7 +2014,7 @@ buttons, the copy mode, mined and destroyed with a cell) and every card on a cel
 ## Crafting CPUs as multiblocks (me-network issue #6)
 
 Issue #6 makes the crafting CPU an AE2 multiblock. **Decided by the maintainer** (AE2 guide, "Crafting CPU
-multiblock"): a CPU is a **solid rectangle** of crafting blocks with no gaps and **at least one crafting storage**, no
+multiblock"; AE2's CPU is a cuboid, Factorio's map is flat, so here it is a rectangle): a CPU is a **solid rectangle** of crafting blocks with no gaps and **at least one crafting storage**, no
 core block; a group that is not a rectangle forms no CPU and shows a status. Blocks: crafting storage 1k to 256k
 (required), crafting unit (filler), crafting co-processing unit (speed), crafting monitor (shows the job). **One job per
 CPU**, any number of CPUs per network; touching crafting blocks are one group. A CPU is in the network when one of its
@@ -2440,19 +2440,20 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 
 * Patterns (issue #80, left open on purpose; the data model keeps room for them): AE2's locks of a provider by a redstone
   signal (no circuit connection; the blocking mode and the lock until the result for chests are built, issues #335 and
-  #346), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's
-  ingredient lookup are the places to change), clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
-  bus.
-* A level maintainer with several resources. (The cards of the buses and the provider are built: the import and export
-  bus take Acceleration Cards, issue #110, the provider Pattern Capacity Cards, issue #156, the ME Interface Interface
-  Capacity Cards, issue #196; `N.card_rules()` holds their slots and limits. AE2's capacity, fuzzy and inverter cards on the
-  buses and its redstone and crafting cards are not built.)
+  #346), clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a
+  storage bus. Substitutions and fuzzy patterns are decided: issue #352 made autocrafting quality-aware instead (Factorio's
+  "same item, other variant" is the quality; `docs/AE2.md`, "Every quality").
+* The cards of the buses and the provider are built: the import and export bus take Acceleration Cards, issue #110, the
+  provider Pattern Capacity Cards, issue #156, the ME Interface Interface Capacity Cards, issue #196; `N.card_rules()`
+  holds their slots and limits. AE2's capacity, fuzzy and inverter cards on the buses and its redstone and crafting cards
+  are not built. (A level maintainer with several resources is built: five rows, issue #351.)
 * Issue #3: an ME Interface keeps four fluids at most (one per side) and takes no surplus back from an export side; a
   fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
   library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block
   keep their old step (their patterns are converted).
-* Fluid wagons on the fluid storage bus. Issue #17 left: the card icons and the workbench sprite are placeholders;
-  a storage bus with an Overflow Destruction Card facing nothing destroys nothing (AE2 would).
+* Fluid wagons on the fluid storage bus. Issue #17 left: a storage bus with an Overflow Destruction Card facing nothing
+  destroys nothing (AE2 would). (The card icons are drawn, issue #221, and the texture mod gives them and the workbench
+  AE2's pictures.)
 * The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
 
