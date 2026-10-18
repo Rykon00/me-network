@@ -942,7 +942,9 @@ temperature). A segment can hold its fluid at any temperature. Decision: **read 
 * A machine's fluid box has no segment: a bus on a machine stores in that one box (`fluidbox` read and write); on a
   machine with several boxes the box whose pipe connection points at the bus is used (else the first). Rarely useful;
   tanks are the intended target.
-* Fluid wagons are not supported (no fluid box segment; `create_entity` needs a rail, so untested).
+* Fluid wagons (issue #417): a wagon has no fluid box in Factorio 2.0; the fluid side takes it as storage "w<unit>" through the
+  entity's own fluid functions (get_fluid, insert_fluid, remove_fluid, the prototype's fluid_capacity) while it covers the tile
+  in front of the bus (checked at every use, as the item side does for cargo wagons); the runtime test builds a track.
 * The engine may reuse a segment id after the segment is gone; a claim is checked against the owner's live id, so a
   reused id never lets two buses own one segment.
 * The fluid import bus emptying a tank of a bus's segment, or a fluid export bus filling one, moves fluid in a
@@ -1042,7 +1044,7 @@ R2 had stored fluids by name ("One temperature per fluid stays", above); issue #
 
 ### What stays open
 
-* A fluid wagon is no storage (no change).
+* A fluid wagon is storage since issue #417 (at its temperature, as a tank).
 
 ### Follow-up (issue #161)
 
@@ -2453,7 +2455,7 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
   fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
   library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block
   keep their old step (their patterns are converted).
-* Fluid wagons on the fluid storage bus. Issue #17 left: a storage bus with an Overflow Destruction Card facing nothing
+* Issue #17 left: a storage bus with an Overflow Destruction Card facing nothing
   destroys nothing (AE2 would). (The card icons are drawn, issue #221, and the texture mod gives them and the workbench
   AE2's pictures.)
 * The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.

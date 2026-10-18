@@ -334,7 +334,7 @@ local function resolve(s, rec)
 	local t = rec.target
 	if t and t.valid and rec.dir == e.direction then
 		if rec.side == "fluid" then
-			if rec.box then return t end
+			if rec.box and not (rec.wagon and not F.wagon_here(rec)) then return t end   -- (issue #417: a wagon must still be there)
 		elseif t.type ~= "cargo-wagon" or inventory_of(rec) then
 			rec.status = "ok"
 			return t

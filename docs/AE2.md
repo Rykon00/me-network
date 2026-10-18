@@ -494,7 +494,12 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
 * Removing the bus or its tank takes the fluid out of the network at once; nothing is lost, the fluid stays in the
   tank.
 * A bus facing an ME block (an ME Interface's sides too) does nothing. A machine's fluid box works as a small storage
-  of its own (machines are not part of segments); fluid wagons are not supported.
+  of its own (machines are not part of segments).
+* **A fluid wagon** (issue #417) in front of the bus is its fluid storage while it stands there, like a cargo wagon on the
+  item side: the network sees its fluid (at its temperature), puts fluid into it (only the fluid it holds, at that
+  temperature, up to its capacity) and takes it out. When the train leaves, its fluid leaves the network; the next wagon
+  that stops in front of the bus is read at the bus's next visit (within about two seconds). One wagon is one storage: a
+  second bus on the same wagon is "shared".
 * Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
 
 ## Recipes (standalone)
@@ -1913,7 +1918,7 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   Circuit Interface (issue #38).
 * Autocrafting plans and crafts every quality (issue #352), but no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
-* Network storage (issue #68): no channels, no fluid wagons on the storage bus. The cards are where **Upgrade cards** lists
+* Network storage (issue #68): no channels (fluid wagons on the storage bus since issue #417). The cards are where **Upgrade cards** lists
   them: the import and export bus take speed cards (up to 4, issues #110, #356), the Group Filter Card (issue #363), up to 2
   Capacity Cards and a Fuzzy Card, the import bus also an Inverter Card (issue #413),
   the ME Interface Interface Capacity Cards (up to 3, issue #196) and the Crafting Card, which the export bus takes too
