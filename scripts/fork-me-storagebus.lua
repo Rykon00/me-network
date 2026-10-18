@@ -319,7 +319,6 @@ local function resolve(s, rec)
 	local e = rec.entity
 	--- issue #412: switched off by its circuit connector's condition: it faces nothing (its storage leaves the network) until
 	--- the condition holds again (fork-me-connector.lua wakes it, M.wake drops the cached target)
-	if not rec.cn then rec.cn = Conn.ensure(e) ~= nil or nil end
 	if Conn.is_off(rec.unit) then
 		release(s, rec)
 		F.drop(rec)

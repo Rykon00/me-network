@@ -43,6 +43,7 @@ local qbridge = require("scripts.fork-me-qbridge")        -- (issue #385)
 local picker = require("scripts.fork-me-picker")
 local Names = require("scripts.fork-me-names")
 local terminal = require("scripts.fork-me-terminal")
+local Conn = require("scripts.fork-me-connector")         -- (issue #412)
 
 local M = {}
 
@@ -1491,6 +1492,7 @@ function M.mix_status(status, fmix)
 end
 
 local function open_interface(player, entity, opts)
+	Conn.ensure(entity)                              -- (issue #412: a block a script built without an event has none yet)
 	local via = opts and opts.via                   -- (issue #336: opened from an ME Interface Terminal)
 	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number, via = via })
 	G.back_button(content, via)
@@ -1770,6 +1772,7 @@ end)
 function M.bus_data(entity) return io.bus_info(entity) end
 
 local function open_bus(player, entity)
+	Conn.ensure(entity)                              -- (issue #412: a block a script built without an event has none yet)
 	local d = M.bus_data(entity)
 	local _, content = G.open_window(player, "bus", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-net." .. d.kind .. "-help" }, WIDTH)
@@ -1913,6 +1916,7 @@ local SBUS_MODES = { "readwrite", "read", "write" }
 function M.storage_bus_data(entity) return sbus.info(entity) end
 
 local function open_storage_bus(player, entity)
+	Conn.ensure(entity)                              -- (issue #412: a block a script built without an event has none yet)
 	local d = M.storage_bus_data(entity)
 	if not d then return end
 	--- issue #28: the player's inventory on the left, the card slots in the window

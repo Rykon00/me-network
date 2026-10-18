@@ -16,10 +16,15 @@
 ---     in `list` follows then (M.update).
 ---   * Blueprints and copies hold the connector (a hidden item places it) with its wires and condition; its ghost is revived at
 ---     once, and the block built there takes it. The connector of a removed block goes with it; a connector with neither a
----     block nor a block's ghost at its place is removed. Blocks of older saves get theirs in on_configuration_changed, and at
----     their first visit (M.ensure) when the version number did not change.
+---     block nor a block's ghost at its place is removed. Blocks of older saves get theirs in on_configuration_changed (a mod
+---     update); a block a script builds without raising an event gets its connector there too, or with a setting.
+---   * A built block asks for its connector (M.request): it is made in on_tick, at most MAKES_PER_TICK per tick (a burst of
+---     1000 built blocks costs no 1000 entities in one tick: the bench's build burst). A setting, a paste or a clone makes it
+---     at once (M.ensure). (Made at a block's first visit, the connectors of the bench scene, which raises no events, cost
+---     the ticks after its load: issue #414's bench.)
 --- State: storage.fork_me_conn = { hosts = { [unit] = { host, conn, kind, cc, pulse, read, last, sig, due } },
---- by_conn = { [connector unit] = host unit }, off = { [unit] = true }, edge = { [unit] = true }, list = { units }, cursor }
+--- by_conn = { [connector unit] = host unit }, off = { [unit] = true }, edge = { [unit] = true }, list = { units }, cursor,
+--- pending = { blocks waiting for their connector }, waiting = { [unit] = true } }
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -32,6 +37,7 @@ M.NAME = NAME
 local HOSTS = { ["me-import-bus"] = "io", ["me-export-bus"] = "io", ["me-network-interface"] = "io", ["me-storage-bus"] = "sbus" }
 M.HOSTS = HOSTS
 local CHECKS_PER_TICK = 16
+local MAKES_PER_TICK = 4           -- connectors made per tick for the blocks that asked for one (a burst of 1000: 4 s)
 local INTERVAL = 10                -- ticks: how late a block follows its condition at most, while the budget holds
 local WIRES = { defines.wire_connector_id.circuit_red, defines.wire_connector_id.circuit_green }
 
@@ -203,6 +209,19 @@ function M.ensure(e)
 	return c
 end
 
+--- the block asks for its connector: made in on_tick (MAKES_PER_TICK per tick), unless it has one
+function M.request(e)
+	if not (e and e.valid and HOSTS[e.name] and e.unit_number) then return end
+	local s = state()
+	local h = s.hosts[e.unit_number]
+	if h and h.conn and h.conn.valid then return end
+	s.pending = s.pending or {}
+	s.waiting = s.waiting or {}
+	if s.waiting[e.unit_number] then return end
+	s.waiting[e.unit_number] = true
+	s.pending[#s.pending + 1] = e
+end
+
 --- the connector of block `unit` (tests, the windows)
 function M.connector_of(unit)
 	local s = storage.fork_me_conn
@@ -253,8 +272,12 @@ function M.on_built(entity, source)
 		return
 	end
 	if not HOSTS[entity.name] then return end
+	if not (source and source.valid and HOSTS[source.name]) then
+		M.request(entity)                                          -- (made within a few ticks: on_tick)
+		return
+	end
 	M.ensure(entity)
-	if source and source.valid and HOSTS[source.name] then
+	do
 		--- a clone: a connector cloned with it took its place already (its wires came along); else the original's condition
 		local s2 = state()
 		local h = s2.hosts[entity.unit_number]
@@ -314,6 +337,20 @@ end
 function M.on_tick(tick)
 	local s = storage.fork_me_conn
 	if not s then return end
+	local pending = s.pending
+	if pending and #pending > 0 then
+		local n = math.min(MAKES_PER_TICK, #pending)
+		for i = 1, n do
+			local e = pending[i]
+			if e.valid then
+				s.waiting[e.unit_number] = nil
+				M.ensure(e)
+			end
+		end
+		for i = 1, #pending - n do pending[i] = pending[i + n] end
+		for i = #pending, #pending - n + 1, -1 do pending[i] = nil end
+		if #pending == 0 then s.pending, s.waiting = nil, nil end
+	end
 	local list = s.list
 	local n = #list
 	if n == 0 then return end

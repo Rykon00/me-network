@@ -874,8 +874,7 @@ function M.interface_step(rec, dt, u)
 	if rec.want then icards.fill_cards(rec) end                       -- issue #196: the cards a blueprint or a paste asked for
 	local config = config_of(rec)
 	if rec.cnext and game.tick >= rec.cnext then rec.cnext = nil end     -- (issue #411: a retry is due now)
-	--- issue #412: its circuit connector (made at the first visit of a block of an older save), its condition, the rows
-	if not rec.cn then rec.cn = Conn.ensure(e) ~= nil or nil end
+	--- issue #412: its circuit connector's condition, the rows from the circuit
 	if Conn.is_off(e.unit_number) then
 		rec.status = "circuit-off"
 		return 0, false, nil, "circuit", false, nil
@@ -1708,9 +1707,7 @@ end
 --- runs out at the rate this visit saw (math.huge: unknown).
 function M.bus_step(rec, dt, u)
 	local e = rec.entity
-	--- issue #412: its circuit connector (made at the first visit of a bus of an older save), its condition and, for an
-	--- export bus in pulse mode, one visit per rise of the condition
-	if not rec.cn then rec.cn = Conn.ensure(e) ~= nil or nil end
+	--- issue #412: its circuit connector's condition and, for an export bus in pulse mode, one visit per rise of the condition
 	local unit = e.unit_number
 	if Conn.is_off(unit) or (rec.pulse and not Conn.take_pulse(unit)) then
 		rec.status = "circuit-off"

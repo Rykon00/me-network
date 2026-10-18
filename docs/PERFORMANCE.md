@@ -3389,23 +3389,30 @@ no Crafting Card; the machine was busier than for #413, both versions alike):
 
 ## The circuit connector of the buses and the ME Interface (issue #412)
 
-A bus or interface visit reads two fields more (`rec.cn`, whether its connector exists, and `off[unit]` of the connector
-module, a table lookup); an export bus in pulse mode one more. A block without a condition, pulse mode or rows from the
-circuit is in no list and costs nothing else. The blocks that have them are checked in a list of their own, at most 16 per
-tick, each at most every 10 ticks: a control behavior read and the wire check (and, for rows from the circuit, the signals of
-both wires). Building a bus or an interface builds its connector too (one `create_entity`); removing one destroys it.
+A bus or interface visit reads one table entry more (`off[unit]` of the connector module); an export bus in pulse mode one
+more. A block without a condition, pulse mode or rows from the circuit is in no list and costs nothing else. The blocks that
+have them are checked in a list of their own, at most 16 per tick, each at most every 10 ticks: a control behavior read and
+the wire check (and, for rows from the circuit, the signals of both wires). A built bus or interface asks for its connector;
+the connectors are made in on_tick, at most 4 per tick (one `find_entities_filtered` and one `create_entity` each); removing a
+block destroys its connector.
+
+Tried, not kept (the stack of #414 measured it): making the connector at once in the build handler cost the build burst
+of 100 blocks 8 to 12 % (141 -> 152, 138 -> 155 ms); making it at a block's first visit as well (for blocks built without an
+event) put the connectors of the bench scene, which raises no events, into the first ticks after its load (1.55 -> 1.89 ms
+at 100), at any rate per tick. Blocks of older saves get theirs in `on_configuration_changed` instead, a block a script built
+without an event when its window is opened.
 
 `bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 and #411 as well; the
 scenes have no condition):
 
 | | v0.5.4 | with the connector |
 |---|---|---|
-| 100: script average / p99 ms | 0.1933 / 1.804 | 0.1926 / 1.758 |
-| 1000: script average / p99 ms | 0.3338 / 1.897 | 0.3374 / 1.902 |
-| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.33 |
-| burst build / remove ms (100) | 141.4 / 72.46 | 152.1 / 75.28 |
-| burst build / remove ms (1000) | 336.8 / 81.74 | 337.9 / 83.75 |
+| 100: script average / p99 ms | 0.1902 / 1.763 | 0.1924 / 1.749 |
+| 1000: script average / p99 ms | 0.3318 / 1.875 | 0.3315 / 1.882 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.67 / 24.31 |
+| burst build / remove ms (100) | 144.3 / 73.31 | 142.3 / 74.19 |
+| burst build / remove ms (1000) | 330.2 / 81.04 | 328.5 / 81.86 |
+| load first tick ms (100 / 1000) | 1.573 / 2.905 | 1.681 / 3.085 |
 | throughput per kind of endpoint | identical | identical |
 
-`regressions beyond the noise: 0`. The build burst of 100 is 8 % slower (the connectors of its buses and interfaces); at
-1000 the difference is within the noise.
+`regressions beyond the noise: 0`.
