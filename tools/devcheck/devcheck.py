@@ -827,6 +827,7 @@ RUNTIME_TESTS = (
     ("BIGCPUS", "Crafting storage above 256k and the crafting accelerators (issue #415)"),
     ("PTERMEX", "ME Pattern Terminal Ex (issue #416)"),
     ("FLUIDWAGON", "Fluid wagon on the ME Storage Bus (issue #417)"),
+    ("MERGEJOB", "Crafting job merging (issue #418)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),

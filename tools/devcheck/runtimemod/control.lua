@@ -1007,6 +1007,9 @@ ptermex416 = require("ptermex")({ me_place = me_place, cable_row = cable_row, po
 --- me-network issue #417: a fluid wagon on the storage bus (fluidwagon.lua)
 fluidwagon417 = require("fluidwagon")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #418: job merging (mergejob.lua)
+mergejob418 = require("mergejob")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #196: the ME Interface Capacity Card (ifacecap.lua)
 ifacecap196 = require("ifacecap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1113,6 +1116,7 @@ local function tests_running()
 	bigcpus415.running(check)
 	ptermex416.running(check)
 	fluidwagon417.running(check)
+	mergejob418.running(check)
 	maintrows351.running(check)
 	cpumode350.running(check)
 	monitors353.running(check)
@@ -1239,9 +1243,10 @@ local function autocraft_test()
 			"job 2 missing " .. serpent.line(missing) .. ", expected plates " .. want_plates .. " sticks " .. want_sticks)
 		expect(count("iron-plate") == plates_before and count("iron-stick") == sticks_before, "job 2 took items although it did not start")
 
-		--- job 3: one CPU only and it is busy: the start is refused (issue #6: a job needs a free CPU) and takes nothing
+		--- job 3: one CPU only and it is busy: the start is refused (issue #6: a job needs a free CPU) and takes nothing (issue
+		--- #418: a request of automation, which never joins the player's job 1 of the same item)
 		local plates3, sticks3 = count("iron-plate"), count("iron-stick")
-		local id3, why3 = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, per_run)
+		local id3, why3 = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, per_run, terminal.unit_number)
 		expect(id3 == nil and why3 == "no-free-cpu", "job 3 must be refused while the CPU is busy (" .. tostring(id3) .. ", " .. tostring(why3) .. ")")
 		expect(count("iron-plate") == plates3 and count("iron-stick") == sticks3, "the refused job 3 took items")
 		if id3 then remote.call("gregtorio-me-autocraft", "cancel", id3) end
@@ -2063,6 +2068,7 @@ script.on_nth_tick(10, function()
 	bigcpus415.tick()
 	ptermex416.tick()
 	fluidwagon417.tick()
+	mergejob418.tick()
 	maintrows351.tick()
 	cpumode350.tick()
 	monitors353.tick()
@@ -4942,6 +4948,7 @@ script.on_init(function()
 	for _, f in pairs(bigcpus415.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ptermex416.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(fluidwagon417.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(mergejob418.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpumode350.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(monitors353.setup(s)) do fails[#fails + 1] = f end
