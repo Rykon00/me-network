@@ -1686,7 +1686,7 @@ local function group_network_any(g)
 	return g.anchor and g.anchor.valid and N.network_of(g.anchor) or nil
 end
 
---- speed of a group: 1 + its co-processors (at most max_coprocessors count)
+--- speed of a group: 1 + its co-processors (at most max_coprocessors count; issue #415: practically no cap)
 local function group_speed(g)
 	block_specs()
 	return 1 + math.min(g.coprocessors, max_coprocessors)
@@ -2338,10 +2338,12 @@ local function set_wait(job, wait)
 	job.wait = wait
 end
 
---- machine interactions a job may use in this step: STEP_OPS times the speed of its CPU (its co-processors)
+--- machine interactions a job may use in this step: STEP_OPS times the speed of its CPU (its co-processors), at most the map
+--- setting "crafting operations per step" (issue #415: the accelerators of AE2-Unofficial reach 4096 co-processors; a step only
+--- spends what it hands over, so the cap matters for a job with that many machines free at once)
 local function job_ops(s, job)
 	local g = job.group and s.groups and s.groups[job.group]
-	if g then return STEP_OPS * group_speed(g) end
+	if g then return math.min(STEP_OPS * group_speed(g), Sched.setting("job_ops")) end
 	return STEP_OPS
 end
 

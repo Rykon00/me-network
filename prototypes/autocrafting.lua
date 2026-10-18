@@ -249,8 +249,34 @@ local BLOCKS = {
 	{ name = "me-16k-crafting-storage", bytes = 16384, power = 16000, order = "h3", component = "me-16k-storage-component", tech = "me-co-processing" },
 	{ name = "me-64k-crafting-storage", bytes = 65536, power = 32000, order = "h4", component = "me-64k-storage-component", tech = "me-co-processing" },
 	{ name = "me-256k-crafting-storage", bytes = 262144, power = 64000, order = "h5", component = "me-256k-storage-component", tech = "me-quantum-crafting" },
+	--- issue #415: AE2-Unofficial's crafting storage above 256k (tile/crafting/TileCraftingStorageTile.java: the advanced block
+	--- holds 256 times the bytes of the basic one; the Singularity block Long.MAX_VALUE, here 2^53, the counts a Lua number
+	--- holds exactly) and its recipes (network/crafting/cpu.recipe: a crafting unit and the component; the Singularity block a
+	--- crafting unit and 8 Singularity storage cells)
+	{ name = "me-1024k-crafting-storage", bytes = 1048576, power = 128000, order = "h5b", component = "me-1024k-storage-component",
+	  tech = "me-crafting-storage-1024k" },
+	{ name = "me-4096k-crafting-storage", bytes = 4194304, power = 256000, order = "h5c", component = "me-4096k-storage-component",
+	  tech = "me-crafting-storage-4096k" },
+	{ name = "me-16384k-crafting-storage", bytes = 16777216, power = 512000, order = "h5d", component = "me-16384k-storage-component",
+	  tech = "me-crafting-storage-16384k" },
+	{ name = "me-singularity-crafting-storage", bytes = 2 ^ 53, power = 1000000, order = "h5e",
+	  ingredients = I{ "me-crafting-unit", 1, "me-singularity-storage-cell", 8 }, tech = "me-crafting-storage-singularity" },
 	{ name = "me-crafting-co-processing-unit", bytes = 0, coprocessors = 1, power = 32000, order = "h6",
 	  ingredients = I{ "me-crafting-unit", 1, "processing-unit", 1 }, tech = "me-co-processing" },
+	--- issue #415: AE2-Unofficial's crafting accelerators (TileCraftingTile.acceleratorValue: 4^(n-1), the co-processing unit is its
+	--- 1x; network/crafting/cpu.recipe: each from four of the one below), co-processors of 4 to 4096; the power doubles per tier
+	{ name = "me-crafting-accelerator-4x", bytes = 0, coprocessors = 4, power = 64000, order = "h6a",
+	  ingredients = I{ "me-crafting-co-processing-unit", 4 }, tech = "me-crafting-accelerators" },
+	{ name = "me-crafting-accelerator-16x", bytes = 0, coprocessors = 16, power = 128000, order = "h6b",
+	  ingredients = I{ "me-crafting-accelerator-4x", 4 }, tech = "me-crafting-accelerators" },
+	{ name = "me-crafting-accelerator-64x", bytes = 0, coprocessors = 64, power = 256000, order = "h6c",
+	  ingredients = I{ "me-crafting-accelerator-16x", 4 }, tech = "me-crafting-accelerators" },
+	{ name = "me-crafting-accelerator-256x", bytes = 0, coprocessors = 256, power = 512000, order = "h6d",
+	  ingredients = I{ "me-crafting-accelerator-64x", 4 }, tech = "me-crafting-accelerators-2" },
+	{ name = "me-crafting-accelerator-1024x", bytes = 0, coprocessors = 1024, power = 1000000, order = "h6e",
+	  ingredients = I{ "me-crafting-accelerator-256x", 4 }, tech = "me-crafting-accelerators-2" },
+	{ name = "me-crafting-accelerator-4096x", bytes = 0, coprocessors = 4096, power = 2000000, order = "h6f",
+	  ingredients = I{ "me-crafting-accelerator-1024x", 4 }, tech = "me-crafting-accelerators-2" },
 	{ name = "me-crafting-monitor", bytes = 0, monitor = true, power = 4000, order = "h7",
 	  --- AE2: a crafting unit and a storage monitor (a level emitter: a redstone torch and a calculation processor; an illuminated panel)
 	  ingredients = I{ "me-crafting-unit", 1, "decider-combinator", 1, "advanced-circuit", 1, "small-lamp", 1 }, tech = "me-autocrafting" },
@@ -272,7 +298,8 @@ end
 local block_data, block_tech = {}, {}
 for _, b in ipairs(BLOCKS) do
 	local ingredients = b.ingredients or I{ "me-crafting-unit", 1, b.component, 1 }
-	local description = b.bytes > 0 and { "entity-description.fork-me-crafting-storage", tostring(b.bytes) }
+	local description = b.bytes > 0 and { "entity-description.fork-me-crafting-storage", string.format("%.0f", b.bytes) }
+		or (b.coprocessors or 0) > 1 and { "entity-description.fork-me-crafting-accelerator", tostring(b.coprocessors) }   -- (#415)
 		or { "entity-description." .. b.name }
 	ME.add_item{
 		name = b.name,
@@ -499,7 +526,9 @@ data:extend({ {
 	name = "fork-me-autocraft",
 	--- issue #6: the crafting blocks; a fluid ingredient costs 1 byte per this many units (items 1 byte each); at most
 	--- this many co-processors of a CPU count
-	data = { blocks = block_data, fluid_units_per_byte = 10, max_coprocessors = 16 },
+	--- issue #415: the co-processors a CPU counts are no longer capped at 16 (AE2-Unofficial's accelerators reach 4096); the
+	--- machine hand-overs of a job step are capped by the map setting "me-network-crafting-ops-per-step" instead
+	data = { blocks = block_data, fluid_units_per_byte = 10, max_coprocessors = 1048576 },
 } })
 
 
@@ -526,6 +555,20 @@ ME.add_technology{ name = "me-co-processing", prerequisites = { "me-autocrafting
 	unit = ME.unit(4, 800), recipes = with_blocks("me-co-processing", {}) }
 ME.add_technology{ name = "me-quantum-crafting", prerequisites = { "me-co-processing", "utility-science-pack" },
 	unit = ME.unit(5, 1000), recipes = with_blocks("me-quantum-crafting", {}) }
+
+--- issue #415: the crafting storage above 256k after the storage cells of its tier, the accelerators after co-processing
+ME.add_technology{ name = "me-crafting-storage-1024k", prerequisites = { "me-quantum-crafting", "me-storage-1024k" },
+	unit = ME.unit(5, 1200), recipes = with_blocks("me-crafting-storage-1024k", {}) }
+ME.add_technology{ name = "me-crafting-storage-4096k", prerequisites = { "me-crafting-storage-1024k", "me-storage-4096k" },
+	unit = ME.unit(5, 1600), recipes = with_blocks("me-crafting-storage-4096k", {}) }
+ME.add_technology{ name = "me-crafting-storage-16384k", prerequisites = { "me-crafting-storage-4096k", "me-storage-16384k" },
+	unit = ME.unit(5, 2000), recipes = with_blocks("me-crafting-storage-16384k", {}) }
+ME.add_technology{ name = "me-crafting-storage-singularity", prerequisites = { "me-crafting-storage-16384k", "me-storage-singularity" },
+	unit = ME.unit(5, 3000), recipes = with_blocks("me-crafting-storage-singularity", {}) }
+ME.add_technology{ name = "me-crafting-accelerators", prerequisites = { "me-co-processing", "utility-science-pack" },
+	unit = ME.unit(5, 1000), recipes = with_blocks("me-crafting-accelerators", {}) }
+ME.add_technology{ name = "me-crafting-accelerators-2", prerequisites = { "me-crafting-accelerators" },
+	unit = ME.unit(5, 2500), recipes = with_blocks("me-crafting-accelerators-2", {}) }
 
 --- issue #6: data-final-fixes.lua puts a crafting block recipe that no technology unlocks (another mod replaced the
 --- technology's recipe list) back on its technology

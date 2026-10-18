@@ -486,7 +486,13 @@ def autocrafting(gt):
 # (dark: the face's colours dimmed, no light) and of a CPU (lit) side by side, 64x32. The item icon is the lit block.
 # AE2's crafting block textures are not used: they are CC BY-NC-SA 3.0 (docs/LICENSES.md).
 CRAFTING_STORAGE = {"1k": CELLS["1k"][0], "4k": CELLS["4k"][0], "16k": CELLS["16k"][0], "64k": CELLS["64k"][0],
-                    "256k": CELLS["256k"][0]}
+                    "256k": CELLS["256k"][0],
+                    # issue #415: AE2-Unofficial's crafting storage above 256k, in the cells' colours
+                    "1024k": CELLS["1024k"][0], "4096k": CELLS["4096k"][0], "16384k": CELLS["16384k"][0],
+                    "singularity": SINGULARITY_LED}
+# issue #415: AE2-Unofficial's crafting accelerators 4x to 4096x: the co-processor's face with its core in the tier's colour
+ACCELERATORS = {"4x": (95, 225, 245), "16x": (95, 225, 95), "64x": (245, 215, 70), "256x": (255, 160, 50),
+                "1024x": (255, 90, 90), "4096x": (225, 95, 245)}
 
 
 def dim(rgb, f=0.35):
@@ -539,16 +545,17 @@ def crafting_face(gt, kind, state, colour=None, mask=0):
             for y in (5, 7, 9):
                 d.point((x, y), fill=(150, 150, 160, 255))
     elif kind == "coprocessor":
+        core = colour or FLUIX                                # (issue #415: an accelerator's core in its tier's colour)
         for bx0, by0, bx1, by1 in ((3, 7, 5, 8), (10, 7, 12, 8), (7, 3, 8, 5), (7, 10, 8, 12)):
-            d.rectangle((bx0, by0, bx1, by1), fill=c(FLUIX))
-        d.rectangle((5, 5, 10, 10), fill=c(FLUIX), outline=c(FLUIX_LIGHT))
+            d.rectangle((bx0, by0, bx1, by1), fill=c(core))
+        d.rectangle((5, 5, 10, 10), fill=c(core), outline=c(FLUIX_LIGHT))
         d.rectangle((7, 7, 8, 8), fill=detail((235, 225, 255)))
     return img
 
 
 CRAFTING_BLOCKS = [("me-crafting-unit", "unit", None), ("me-crafting-co-processing-unit", "coprocessor", None),
                    ("me-crafting-monitor", "monitor", None)] + \
-                  [(f"me-{k}-crafting-storage", "storage", rgb) for k, rgb in CRAFTING_STORAGE.items()]
+                  [(f"me-{k}-crafting-storage", "storage", rgb) for k, rgb in CRAFTING_STORAGE.items()] +                   [(f"me-crafting-accelerator-{k}", "coprocessor", rgb) for k, rgb in ACCELERATORS.items()]
 
 
 def crafting_cpu(gt):
@@ -1894,6 +1901,11 @@ TECH_ICONS = {
     "me-automation": "me-level-maintainer",
     "me-co-processing": "me-crafting-co-processing-unit",
     "me-quantum-crafting": "me-256k-crafting-storage",
+    # issue #415
+    "me-crafting-storage-1024k": "me-1024k-crafting-storage", "me-crafting-storage-4096k": "me-4096k-crafting-storage",
+    "me-crafting-storage-16384k": "me-16384k-crafting-storage",
+    "me-crafting-storage-singularity": "me-singularity-crafting-storage",
+    "me-crafting-accelerators": "me-crafting-accelerator-16x", "me-crafting-accelerators-2": "me-crafting-accelerator-4096x",
     "me-wireless": "me-wireless-access-point",
 }
 
