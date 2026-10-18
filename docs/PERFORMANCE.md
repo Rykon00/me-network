@@ -3407,7 +3407,16 @@ field read, which is kept anyway. The one-run measurements at 5000 per stacked b
 `bench --sizes 100,1000,5000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 and #411 as well; the
 scenes have no condition):
 
-BENCH_TABLE
+| | v0.5.4 | with the connector |
+|---|---|---|
+| 100: script average / p99 ms | 0.2089 / 1.888 | 0.2140 / 1.895 |
+| 1000: script average / p99 ms | 0.3715 / 2.025 | 0.3747 / 2.059 |
+| 5000: script average / p99 ms | 0.9899 / 2.947 | 0.9840 / 2.844 |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 26.68 / 24.34 / 33.05 | 26.68 / 24.32 / 33.07 |
+| burst build / remove ms (100) | 152.2 / 75.40 | 155.4 / 77.71 |
+| burst build / remove ms (1000) | 415.8 / 85.84 | 400.6 / 85.87 |
+| load first tick ms (100 / 1000 / 5000) | 1.642 / 2.975 / 5.406 | 1.749 / 3.000 / 5.426 |
+| throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
 
