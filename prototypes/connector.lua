@@ -38,9 +38,9 @@ c.corpse = nil
 c.dying_explosion = nil
 c.collision_box = { { -0.05, -0.05 }, { 0.05, 0.05 } }
 c.collision_mask = { layers = {} }
---- the south-east corner of the block's tile, over the block (whose selection priority is the default, 50)
+--- the south-east corner of the block's tile, over the block
 c.selection_box = { { 0.14, 0.14 }, { 0.48, 0.48 } }
-c.selection_priority = 60
+c.selection_priority = 70                         -- (the ME blocks have 60, prototypes/network.lua block())
 c.energy_source = { type = "void" }
 c.energy_usage_per_tick = "1W"
 c.always_on = true
