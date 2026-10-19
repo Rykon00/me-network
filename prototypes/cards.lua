@@ -47,6 +47,11 @@ local CARDS = {
 	--- and export bus (AE2-U: no ore filter on fluid cells). The book's stand-in: a constant combinator (a list written down).
 	{ name = "me-group-filter-card", order = "e5", kind = "gfilter",
 	  ingredients = I{ "me-advanced-card", 1, "constant-combinator", 1 } },
+	--- issue #411: AE2's Crafting Card (Upgrades.CRAFTING; recipe: a basic card and a crafting table, materials/cards.recipe): an
+	--- export bus whose filtered item the network lacks, or an ME Interface whose row it cannot fill, starts a crafting job for
+	--- it. The crafting table's stand-in: an assembling machine 1.
+	{ name = "me-crafting-card", order = "e6", kind = "crafting",
+	  ingredients = I{ "me-basic-card", 1, "assembling-machine-1", 1 } },
 	{ name = "me-inverter-card", order = "f", kind = "inverter",
 	  ingredients = I{ "me-advanced-card", 1, "decider-combinator", 1 } },
 	{ name = "me-equal-distribution-card", order = "g", kind = "equal",
@@ -105,8 +110,9 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	--- Fuzzy Card (1); `filters` filters and `per_capacity` more with each Capacity Card (9 / 18 / 27; AE2-U: 1 / 5 / 9, but
 	--- the buses here had 9 from the start). `import_bus`: the import bus's rules, the same and one Inverter Card (AE2-U has
 	--- no inverter on the buses: an addition of this mod, its filters become a blacklist)
-	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1, capacity = 2, fuzzy = 1 },
-		filters = 9, per_capacity = 9 },
+	--- (issue #411: the Crafting Card, 1, on the export bus only, AE2-U: `parts.exportBus()`)
+	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1, capacity = 2, fuzzy = 1,
+		crafting = 1 }, filters = 9, per_capacity = 9 },
 	import_bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1, capacity = 2, fuzzy = 1,
 		inverter = 1 }, filters = 9, per_capacity = 9 },
 	--- issue #386: the ME IO Port takes the speed cards of the buses (AE2's IO port: speed cards), with the same factors
@@ -117,7 +123,9 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	--- it has `patterns` pattern slots and `per_capacity` more with each card (9 / 18 / 27 / 36)
 	provider = { slots = 3, limits = { pattern_capacity = 3 }, patterns = 9, per_capacity = 9 },
 	--- issue #196: the ME Interface takes up to 3 Interface Capacity Cards: `rows` config rows and `per_capacity` more with each
-	interface = { slots = 3, limits = { interface_capacity = 3 }, rows = 9, per_capacity = 9 },
+	--- issue #411: and the Crafting Card (1) in a fourth slot (AE2-U's interface: 4 upgrade slots, DualityInterface; a script
+	--- inventory of 3 slots of an older save is made bigger when it is first read, scripts/fork-me-cardslots.lua)
+	interface = { slots = 4, limits = { interface_capacity = 3, crafting = 1 }, rows = 9, per_capacity = 9 },
 	speed = { 1, 8, 32, 64, 96 },
 }
 

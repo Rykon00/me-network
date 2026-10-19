@@ -2446,8 +2446,8 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 * The cards of the buses and the provider are built: the import and export bus take Acceleration Cards, issue #110, the
   provider Pattern Capacity Cards, issue #156, the ME Interface Interface Capacity Cards, issue #196; `N.card_rules()`
   holds their slots and limits. Issue #413 added the Capacity Card (up to 2), the Fuzzy Card and, on the import bus only
-  (an addition: AE2-Unofficial has none on the buses), the Inverter Card to the import and export bus. AE2's redstone and
-  crafting cards are not built. (A level maintainer with several resources is built: five rows, issue #351.)
+  (an addition: AE2-Unofficial has none on the buses), the Inverter Card to the import and export bus. Issue #411 added the
+  Crafting Card (export bus, ME Interface; items only, issue #426). AE2's redstone card is not built. (A level maintainer with several resources is built: five rows, issue #351.)
 * Issue #3: an ME Interface keeps four fluids at most (one per side) and takes no surplus back from an export side; a
   fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
   library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block

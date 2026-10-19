@@ -1504,6 +1504,7 @@ local function open_interface(player, entity, opts)
 	row.add{ type = "flow", name = "fork_me_if_cards", direction = "horizontal" }
 	G.label(content, "", WIDTH, nil, "fork_me_if_want")
 	G.label(content, "", WIDTH, nil, "fork_me_if_kept")
+	G.label(content, "", WIDTH, nil, "fork_me_if_craft")      -- issue #411: the Crafting Card
 	local scroll = content.add{ type = "scroll-pane", name = "fork_me_if_scroll", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = 300
 	scroll.add{ type = "flow", name = "fork_me_if_config", direction = "vertical" }
@@ -1612,6 +1613,7 @@ function M.refresh_interface(player, frame)
 	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_if_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_if_kept").caption = d.kept and { "fork-me-gui.interface-rows-kept" } or ""
+	G.find(frame, "fork_me_if_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
 	rebuild(frame, "fork_me_if_config", config_sig(d.config, d.slots), function(box)
 		local t = box.add{ type = "table", column_count = 6 }
 		for i = 1, d.slots do
@@ -1763,6 +1765,7 @@ local function open_bus(player, entity)
 	row.add{ type = "flow", name = "fork_me_bus_cards", direction = "horizontal" }
 	M.gfilter_row(content, "fork_me_bus_gtext", "bus_gtext")    -- issue #363: the Group Filter Card's text
 	G.label(content, "", WIDTH, nil, "fork_me_bus_mode")      -- issue #413: the Fuzzy and Inverter Card, kept filters
+	G.label(content, "", WIDTH, nil, "fork_me_bus_craft")     -- issue #411: the Crafting Card
 	G.label(content, "", WIDTH, nil, "fork_me_bus_want")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_speed")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_target")
@@ -1807,6 +1810,7 @@ function M.refresh_bus(player, frame)
 		end
 	end
 	G.find(frame, "fork_me_bus_mode").caption = mode
+	G.find(frame, "fork_me_bus_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
 	G.find(frame, "fork_me_bus_speed").caption = d.items and { "fork-me-gui.bus-speed", d.accel, G.fmt(d.rate) } or ""
 	M.gfilter_refresh(frame, "fork_me_bus_gtext", d.gfilter, d.gtext)
 	local target = d.target and prototypes.entity[d.target]

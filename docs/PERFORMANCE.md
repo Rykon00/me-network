@@ -3366,3 +3366,23 @@ during the 100 rounds of both versions, their spread is large):
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## The Crafting Card (issue #411)
+
+A block without the card pays one field read (`rec.ccard`) on the paths where a key is missing (an export filter the network
+lacks, an interface row it cannot fill), plus one comparison per visit (`rec.cnext`). With the card such a visit asks the
+block's last job (a table read, `autocraft.job_running`), then the active jobs of the map for the key and the free CPUs, and
+starts at most one job per tick among all buses and interfaces (a plan); a failed start waits 300 ticks (1200 without a
+pattern) before that key is tried again.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 as well; the scenes have
+no Crafting Card; the machine was busier than for #413, both versions alike):
+
+| | v0.5.4 | with the card |
+|---|---|---|
+| 100: script average / p99 ms | 0.3553 / 4.755 | 0.3631 / 4.808 |
+| 1000: script average / p99 ms | 0.6349 / 4.929 | 0.6482 / 5.096 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
