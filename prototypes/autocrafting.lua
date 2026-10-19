@@ -540,6 +540,30 @@ emitter.localised_description = { "entity-description.me-level-emitter" }
 data:extend({ emitter })
 data.raw["mod-data"]["fork-me-network"].data.names.level_emitter = "me-level-emitter"
 
+--- issue #443: AE2-Unofficial's Advanced Level Emitter (parts/automation/PartAdvancedLevelEmitter.java): the level emitter with
+--- six rows joined by OR or AND (scripts/fork-me-emitter.lua). Its recipe in GT New Horizons (NewHorizonsCoreMod,
+--- ScriptAppliedEnergistics2: the assembler, an EV circuit and a level emitter; AE2-Unofficial has none of its own): a level
+--- emitter and a processing unit (the EV circuit's stand-in)
+ME.add_item{
+	name = "me-advanced-level-emitter",
+	icon = ME.hd_icons .. "me-advanced-level-emitter.png",
+	icon_size = 64,
+	subgroup = "fork-me-network",
+	order = "g8",
+	stack_size = 50,
+	place_result = "me-advanced-level-emitter",
+	recipe = { energy_required = 2, ingredients = I{ "me-level-emitter", 1, "processing-unit", 1 } },
+}
+local adv_emitter = table.deepcopy(emitter)
+adv_emitter.name = "me-advanced-level-emitter"
+adv_emitter.icon = ME.hd_icons .. "me-advanced-level-emitter.png"
+adv_emitter.minable = { mining_time = 0.2, result = "me-advanced-level-emitter" }
+adv_emitter.sprites = { filename = ME.hd_entity_path .. "me-advanced-level-emitter.png", priority = "high", width = 64, height = 64,
+	scale = 0.5 }
+adv_emitter.localised_description = { "entity-description.me-advanced-level-emitter" }
+data:extend({ adv_emitter })
+data.raw["mod-data"]["fork-me-network"].data.names.advanced_level_emitter = "me-advanced-level-emitter"
+
 
 
 --------------------------------------------------------------------------------
@@ -575,7 +599,8 @@ ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k",
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs
 ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "circuit-network" }, unit = ME.unit(3, 500),
-	recipes = { "me-level-maintainer", "me-circuit-interface", "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter" } }   -- (#355)
+	recipes = { "me-level-maintainer", "me-circuit-interface", "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter",   -- (#355)
+		"me-advanced-level-emitter" } }                                                                                         -- (#443)
 ME.add_technology{ name = "me-co-processing", prerequisites = { "me-autocrafting", "me-storage-256k" },
 	unit = ME.unit(4, 800), recipes = with_blocks("me-co-processing", {}) }
 ME.add_technology{ name = "me-quantum-crafting", prerequisites = { "me-co-processing", "utility-science-pack" },

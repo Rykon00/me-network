@@ -830,6 +830,7 @@ RUNTIME_TESTS = (
     ("MERGEJOB", "Crafting job merging (issue #418)"),
     ("PERF420", "Performance levers (issue #420)"),
     ("CIRCUITLOCK", "ME Pattern Provider lock by the circuit condition (issue #429)"),
+    ("ADVEMITTER", "ME Advanced Level Emitter (issue #443)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),

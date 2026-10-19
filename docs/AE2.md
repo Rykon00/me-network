@@ -1373,6 +1373,24 @@ mode and output signal are copied by settings paste, blueprints and clones. AE2'
 crafted) is the level maintainer's job here; the Fuzzy Card is not taken over (an item filter names one quality).
 Standalone recipe (AE2's: a calculation processor and a redstone torch): an advanced circuit and a decider combinator.
 
+### ME Advanced Level Emitter
+
+Tech `me-automation` (issue #443, AE2-Unofficial's Advanced Level Emitter, `PartAdvancedLevelEmitter`). The level emitter with
+**six rows**, each an item or fluid with its own **threshold**, **Active** or not, **Inverted** or not, and one output signal
+(value 1, the green check unless another is set):
+
+* a row holds while the network has at least its threshold of the resource; inverted, while it has less;
+* only active rows with a resource count (a row is active once it gets a resource; AE2-Unofficial starts its rows inactive);
+* the rows are joined by **OR** (any active row holds, AE2-Unofficial's default) or **AND** (every active row holds), as in
+  AE2-Unofficial (its setting `ADVANCED_LEVEL_EMITTER_LOGIC`; the joining is ported from its `isLevelEmitterOn`);
+* without an active row, or without a working network, it gives nothing. No stored-energy row (AE2-Unofficial's has none).
+
+The window shows each row's amount in the network now. It is checked by the level emitters' queue and budget (8 emitters per
+tick, each at most every 10 ticks; a visit reads up to six amounts) and writes its signal only when it changes. Rows, logic and
+signal are copied by settings paste (from another advanced emitter), blueprints and clones. Standalone recipe (GT New
+Horizons': an EV circuit and a level emitter in the assembler; AE2-Unofficial has none of its own): an ME Level Emitter and a
+processing unit.
+
 ### ME Toggle Bus and ME Inverted Toggle Bus
 
 Tech `me-automation` (issue #355, AE2-Unofficial's `PartToggleBus` and `PartInvertedToggleBus`). A **cable piece** that
@@ -1408,7 +1426,7 @@ connects whatever touches it, like the cable, but only while it is **joined**:
 | ME IO Port | the mode, which speed cards it has | yes (the cards from your inventory, then the network) | yes (the cards from the network); its cells are items, not settings |
 
 **The copy-paste tool and blueprints pasted over blocks** (issue #383): the copy of Ctrl+C / Ctrl+X is a blueprint, so
-every block of the table above (and the monitors, the level emitter and the toggle buses) keeps its settings when the copy is
+every block of the table above (and the monitors, the level emitter, the advanced level emitter and the toggle buses) keeps its settings when the copy is
 built on free ground (by you or by robots), when ghosts that are not built yet are copied again, and after a cut. Pasted
 **over a block of the same kind that stands there already** (a blank bus where the configured one's copy goes) the game
 makes no ghost and tells no mod about it (Factorio 2.0), so before 0.5.4 the block stayed as it was; now ME Network reads

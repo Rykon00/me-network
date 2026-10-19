@@ -142,4 +142,7 @@ by Damien Reave and look like Applied Energistics 2's art; issue #238 replaced t
 
 The network follows the design of [Applied Energistics 2](https://github.com/AppliedEnergistics/Applied-Energistics-2)
 (code LGPL-3.0, © 2013 - 2020 AlgorithmX2 et al.). Its rules and ideas are written anew here for Factorio; where a
-function is a port of AE2's code, a comment at the function names the source. Files with ported code: none so far.
+function is a port of AE2's code, a comment at the function names the source. Files with ported code:
+`scripts/fork-me-emitter.lua` (issue #443: how the advanced level emitter joins its rows, from GTNewHorizons'
+[Applied-Energistics-2-Unofficial](https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial),
+`src/main/java/appeng/parts/automation/PartAdvancedLevelEmitter.java`, LGPL-3.0, © 2013 - 2015 AlgorithmX2 et al.).
