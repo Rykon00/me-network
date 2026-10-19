@@ -1918,10 +1918,19 @@ local function ing_pool(job, ing)
 	return total
 end
 
---- move everything from the pool into the network; what does not fit stays in the pool
+--- move everything from the pool into the network; what does not fit stays in the pool. Issue #426: a job that is done hands
+--- its product, up to its amount, to the block that asked for it first (a Crafting Card's block: N.deliverers of its waker,
+--- AE2-U's injectCraftedItems), once; what that block does not take is stored as the rest.
 local function flush_pool(job, net)
+	local deliver = job.closing == "done" and job.owner and not job.handed and N.deliverers[job.waker or ""]
+	if deliver then job.handed = true end
 	for key, count in pairs(shallow_map(job.pool)) do
 		local inserted = 0
+		if deliver and key == job.item and count > 0 then
+			inserted = math.min(count, deliver(job.owner, key, math.min(count, job.amount)) or 0)
+			count = count - inserted
+			job.pool[key] = count
+		end
 		if count > 0 then
 			if is_fluid(key) then
 				inserted = store_fluid(net, key, count)

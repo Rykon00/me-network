@@ -276,7 +276,7 @@ click uses the tool and opens no window, as on a chest.
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 4 card slots (up to 3 Interface Capacity Cards: 9 more config rows each; a Crafting Card, issue #411, with a line for its last request), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount, temperature, a fill bar and what its pipes hold too), status, **Open inventory** (the container's own window, once) |
-| ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, a line for the Crafting Card's last request (export bus, issue #411), the entity it faces and whether the bus uses its items, fluids or both, status |
+| ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, a line for the Crafting Card's last request (export bus, issue #411) and its **Craft only** checkbox (issue #426, shown while the card is in), the entity it faces and whether the bus uses its items, fluids or both, status |
 | ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
@@ -585,7 +585,7 @@ card is made from a component card and one item:
 | Pattern Capacity Card | advanced card, 2 16k storage components, an ME Interface (AE2-Unofficial's) | ME Pattern Provider, up to 3 | 9 more pattern slots each (9 + 9 per card, up to 36); fits nowhere else, and the Capacity Card does not fit the provider (AE2-Unofficial's Pattern Capacity Card) |
 | Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
 | Fuzzy Card | advanced card + copper cable | storage bus, ME Import and Export Bus (issue #413), 1 | the filters match every quality of their item |
-| Crafting Card | basic card + assembling machine 1 (AE2: a crafting table) | ME Export Bus, ME Interface (issue #411), 1 | what the network lacks is crafted: an export bus's filtered item, an interface's row |
+| Crafting Card | basic card + assembling machine 1 (AE2: a crafting table) | ME Export Bus, ME Interface (issue #411), 1 | what the network lacks is crafted: an export bus's filtered item or fluid, an interface's row (issue #426: fluids, products straight into the block, the export bus's "craft only") |
 | Inverter Card | advanced card + decider combinator | storage bus, ME Import Bus (issue #413), 1 | the filters are a blacklist |
 | Sticky Card | basic card + iron chest (AE2-Unofficial: a slimeball, which has no stand-in) | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
 | Group Filter Card | advanced card + constant combinator (AE2-Unofficial's Ore Dictionary Filter Card: an advanced card and a book) | storage bus, item cells, ME Import and Export Bus (issue #363), 1 | a text filter over the item's name, subgroup and group takes the place of the filters (see below) |
@@ -615,14 +615,24 @@ into the ME Export Bus (not the import bus) and into the fourth card slot of the
 
 * An **export bus** whose filtered item the network does not have starts a crafting job for it: what the visit would move
   (the bus's speed, a machine's room), at most a stack. An **interface** whose item row the network cannot fill starts one
-  for what the row lacks. The products go into the network, and the block takes them from there when they arrive.
+  for what the row lacks. Fluids too (issue #426): a fluid filter of the export bus (what the visit would move, at most what
+  its target has room for) and a fluid row of the interface (what its side lacks), at the filter's or row's temperature or
+  the fluid's default one.
+* The products go to the block that asked for them (issue #426, AE2-Unofficial's `injectCraftedItems` of
+  `PartBaseExportBus` and `DualityInterface`): when the job is done, its product, up to the amount it was asked for, goes
+  into the export bus's target, or into the interface (items into its inventory, fluid into the tank of a side tied to a row
+  of that fluid); what the block does not take, and what the job made beyond the amount, goes into the network.
+* **Craft only** (issue #426, AE2-Unofficial's `Settings.CRAFT_ONLY`, a checkbox in the export bus's window while it has the
+  card): the bus takes nothing from the network's storage. For each filter whose item its target can take (a machine: up to
+  its level) or whose fluid it has room for, it starts a job for what the visit would move, and the job's products go
+  straight into the target, while what the network holds stays there. The bus waits for its job; when the job is done (and
+  the target has taken its products) it looks again. Without the card the setting does nothing and the bus exports as
+  usual. Blueprints, settings paste and clones keep it.
 * At most one job per block and item at a time, none while another job (a level maintainer's, a player's) crafts the
   item, none without a free Crafting CPU; the job is a request of automation for the CPU modes (issue #350). A start that
   fails (no pattern, missing ingredients, no free CPU) is tried again after 5 seconds (20 without a pattern). Buses and
   interfaces start one job per tick together (a plan has its cost).
 * The window says what the card did last: a job runs, another job crafts the item, why none started.
-* Items only: fluid filters and fluid rows are not crafted, and there is no "craft only" mode (AE2-Unofficial's export bus
-  can craft without exporting from storage; issue #426).
 
 On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
 like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards
@@ -1933,7 +1943,7 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   them: the import and export bus take speed cards (up to 4, issues #110, #356), the Group Filter Card (issue #363), up to 2
   Capacity Cards and a Fuzzy Card, the import bus also an Inverter Card (issue #413),
   the ME Interface Interface Capacity Cards (up to 3, issue #196) and the Crafting Card, which the export bus takes too
-  (issue #411; items only, no "craft only" mode, issue #426); in place of the redstone card the buses and the interface
+  (issue #411; fluids and "craft only" since issue #426); in place of the redstone card the buses and the interface
   have a circuit connector (issue #412: a second, small selection box in the block's corner); the
   search of the terminal and the picker matches the shown names (issue #295) only once your client has
   translated them, a few ticks after the first terminal or picker opens (before that, and for a name your language
