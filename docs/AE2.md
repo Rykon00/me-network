@@ -131,6 +131,14 @@ and taken out, in the ME Cell Workbench, in the ME IO Port, in a mined drive; un
 * **Old drive items** (ME Drive 1k ... 256k from before the rework) cannot be crafted any more; placing one
   builds an ME Drive with its four (empty) cells, the 256k one also gives its acceleration card back.
 
+### The Creative Energy Cell
+
+AE2's **Creative Energy Cell** (issue #442, AE2-Unofficial's `BlockCreativeEnergyCell`), for testing and creative maps: **no
+recipe**, the map editor and cheat mode give it. A 1x1 member of the network: a network with one **never lacks power**, its
+ME Controller works without a pole and the blocks that draw through it work; an ME Level Emitter on stored energy sees the
+controller's buffer full. It needs no power itself and draws none. It is no controller: a network still needs its ME
+Controller (AE2's networks without a controller do not exist here).
+
 ### The Creative ME Storage Cell
 
 AE2's **Creative ME Storage Cell** (issue #441, AE2-Unofficial's `ItemCreativeStorageCell`), for testing and creative maps:

@@ -1013,6 +1013,9 @@ mergejob418 = require("mergejob")({ me_place = me_place, cable_row = cable_row, 
 --- me-network issue #420: the performance levers (perf420.lua)
 perf420 = require("perf420")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #442: the Creative Energy Cell (creativeenergy.lua)
+creativeenergy442 = require("creativeenergy")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #441: the Creative ME Storage Cell (creativecell.lua)
 creativecell441 = require("creativecell")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1137,6 +1140,7 @@ local function tests_running()
 	advemitter443.running(check)
 	viewcell440.running(check)
 	creativecell441.running(check)
+	creativeenergy442.running(check)
 	maintrows351.running(check)
 	cpumode350.running(check)
 	monitors353.running(check)
@@ -2094,6 +2098,7 @@ script.on_nth_tick(10, function()
 	advemitter443.tick()
 	viewcell440.tick()
 	creativecell441.tick()
+	creativeenergy442.tick()
 	maintrows351.tick()
 	cpumode350.tick()
 	monitors353.tick()
@@ -4979,6 +4984,7 @@ script.on_init(function()
 	for _, f in pairs(advemitter443.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(viewcell440.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(creativecell441.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(creativeenergy442.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpumode350.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(monitors353.setup(s)) do fails[#fails + 1] = f end

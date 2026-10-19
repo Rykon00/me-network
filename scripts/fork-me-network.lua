@@ -97,6 +97,7 @@ local function kinds()
 		if n.io_port then k[n.io_port] = "io-port" end                -- issue #386
 		if n.quantum_bridge then k[n.quantum_bridge] = "quantum-bridge" end   -- issue #385
 		if n.wireless_link then k[n.wireless_link] = "wireless-link" end      -- issue #384
+		if n.creative_energy then k[n.creative_energy] = "creative-energy" end   -- issue #442
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -117,7 +118,7 @@ end
 
 --- kinds with a power connection of their own (or none at all: the cable): the controller draws nothing for them. Issue #128:
 --- the terminal and the level maintainer are not among them any more; issue #145: the legacy CPUs are gone
-local POWERED_SELF = { cable = true, underground = true, controller = true,
+local POWERED_SELF = { cable = true, underground = true, controller = true, ["creative-energy"] = true,   -- (issue #442)
 	["quantum-bridge"] = true, ["wireless-link"] = true }   -- (issues #385, #384: they draw from the power grid themselves)
 
 --- Issue #128: the power (W) a kind draws through the controller where it is not the default (mod-data "fork-me-network",
@@ -464,6 +465,11 @@ local function split_parts(s, starts, total)
 	return out
 end
 
+--- Issue #442: the kinds whose joining or leaving changes a network's status and power: the controller and the Creative Energy
+--- Cell (recompute counts them)
+M.STATUS_KINDS = { controller = true, ["creative-energy"] = true }
+M.NONE = {}                                           -- (an empty table to walk; never written)
+
 local function changed(s, net)
 	s.version = s.version + 1
 	recompute(s, net)
@@ -561,7 +567,7 @@ local function add_node(s, entity, kind)
 	if has_screen(kind) then screen_made(s, unit, entity, kind) end
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
-	if #order == 1 and kind ~= "controller" then
+	if #order == 1 and not M.STATUS_KINDS[kind] then                  -- (issue #442: the creative energy cell too)
 		--- issue #5: a member that joins one network changes no totals of it, except a drive (its cells) and a storage
 		--- bus already registered (its external cell): no recompute, no rescan of every provider
 		s.version = s.version + 1
@@ -632,7 +638,7 @@ function remove_node_graph(s, unit)
 	--- a member with one neighbour (a bus, an interface, a drive at the end of a cable) cannot split the network
 	local parts = #neighbours <= 1 and {} or split_parts(s, neighbours, net.n)
 	if #parts == 0 then
-		if node.kind == "controller" then
+		if M.STATUS_KINDS[node.kind] then                   -- (issue #442: the creative energy cell too)
 			changed(s, net)
 		else
 			--- issue #5: no recompute; whatever storage the member still had in the network leaves it
@@ -646,7 +652,7 @@ function remove_node_graph(s, unit)
 	local moved
 	--- (light: no controller leaves; the drives and storage buses that leave, the member removed among them, take their cells out
 	--- of the rest's index one by one instead of the rest being computed again)
-	local light = node.kind ~= "controller"
+	local light = not M.STATUS_KINDS[node.kind]
 	local leaving = { unit }
 	for i = 1, #parts do
 		local part = new_net(s, net.surface, net.force)
@@ -657,7 +663,7 @@ function remove_node_graph(s, unit)
 			part.n = part.n + 1
 			local pnode = s.nodes[u]
 			pnode.net = part.id
-			if pnode.kind == "controller" then light = false end
+			if M.STATUS_KINDS[pnode.kind] then light = false end
 			if CELL_KINDS[pnode.kind] or (s.ext and s.ext[u]) then leaving[#leaving + 1] = u end
 			local kind = net.wunits and net.wunits[u]
 			if kind then                               -- (issue #38: a waiting endpoint that moved registers again on its new network)
@@ -1898,10 +1904,12 @@ end
 function recompute(s, net)
 	net.controllers, net.drives = {}, {}
 	local nc = 0
+	net.creative = nil                                    -- (issue #442: a Creative Energy Cell among the members)
 	for unit in pairs(net.nodes) do
 		local node = s.nodes[unit]
 		if node then
 			if node.kind == "controller" then net.controllers[unit] = true nc = nc + 1 end
+			if node.kind == "creative-energy" then net.creative = true end
 			if CELL_KINDS[node.kind] then net.drives[unit] = true end
 		end
 	end
@@ -1935,7 +1943,9 @@ function M.usable(net)
 	if net.usable_tick == game.tick then return net.usable, net.why end
 	local s = state()
 	local ok, why = false, "no-controller"
-	for unit in pairs(net.controllers) do
+	--- issue #442: a network with a Creative Energy Cell never lacks power (AE2-Unofficial: its energy grid's creative flag)
+	if net.creative then ok, why = true, nil end
+	for unit in pairs(net.creative and M.NONE or net.controllers) do
 		local node = s.nodes[unit]
 		local e = node and node.entity
 		if e and e.valid then
@@ -4675,7 +4685,8 @@ function M.stored_energy(net)
 	for unit in pairs(net and net.controllers or {}) do
 		local node = s and s.nodes[unit]
 		local e = node and node.entity
-		if e and e.valid then n = n + e.energy end
+		--- (issue #442: a network with a Creative Energy Cell is full)
+		if e and e.valid then n = n + (net.creative and e.electric_buffer_size or e.energy) end
 	end
 	return n
 end
