@@ -2478,6 +2478,8 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 
 ## Open points
 
+* View Cells (issue #440) are built: `scripts/fork-me-viewcells.lua`, below in "View Cells".
+
 * Patterns (issue #80, left open on purpose; the data model keeps room for them): AE2's locks of a provider by a redstone
   signal are built since issue #429 (by the circuit connector of issue #412; the blocking mode and the lock until the result for chests: issues #335 and
   #346); open: clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a
@@ -2801,3 +2803,23 @@ a processing unit stands in for the EV circuit).
 *Test:* `tools/devcheck/runtimemod/advemitter.lua` (rows on, off, inverted, inactive, OR and AND, a fluid row, the step
 switching it without a visit of the test, the signal, no network, blueprint, paste and clone); `copypaste.lua` carries one
 through every copy path.
+
+## View Cells (issue #440)
+
+AE2-Unofficial's `ItemViewCell` (`items/storage/ItemViewCell.java`: a config inventory and 2 upgrade slots, Fuzzy, Inverter
+and Ore Filter; `createFilter` puts each cell's list into a `MergedPriorityList`, whitelists positive, inverted ones negative;
+`isListed`: any negative list naming the key hides it, else a positive list must name it when there is one). The joining is
+ported (`M.allows`), the rest written anew.
+
+*Here:* the item `me-view-cell` (item-with-tags, stack 1) has its spec in mod-data `view_cells` (`{ view = true, types = 63 }`),
+never in `cells`, so `N.cell_spec` (drives, chests, the IO port) does not know it; the cell helpers a workbench uses
+(`cell_from_tags`, `clean_partition`: items and fluids, `clean_cards`: `cards.view_cell` = 2 slots, fuzzy and inverter,
+`apply_cell_cards`, `set_cell_keys`, the description) also take `N.view_spec`. The workbench's `spec_of` and `rules_of` treat
+it as a cell. The terminal's slots: `storage.fork_me_view.terms[unit]` (a 5-slot script inventory, given back when mined,
+spilled when destroyed or vanished), and for a wireless window (the access point as the window's block)
+`storage.fork_me_view.players[index]` (the player found through the inventory's `player_owner`; spilled at the origin of the
+first surface when the player is removed). The filter is derived from the stacks (a cache by inventory, keyed by the stacks'
+item numbers) and handed to `M.entries`, whose kept lists carry its signature in their id; the list is filtered only when
+it is made anew. No Group Filter Card on a view cell (AE2-Unofficial's Ore Filter): left out.
+
+*Test:* `tools/devcheck/runtimemod/viewcell.lua`.

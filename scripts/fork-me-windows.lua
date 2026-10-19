@@ -474,6 +474,7 @@ function M.workbench_kinds(d, index)
 	if c then
 		local out = { item = false, fluid = false }
 		out[c.fluid and "fluid" or "item"] = key ~= nil or #list < c.types_total
+		if c.view then out.fluid = out.item end                       -- (issue #440: a view cell lists both)
 		return out
 	end
 	local fluid_key = key ~= nil and N.is_fluid_key(key)
@@ -520,8 +521,9 @@ function M.refresh_workbench(player, frame)
 	local d = entity and M.workbench_data(entity)
 	if not d then return false end
 	local c = d.cell
-	G.find(frame, "fork_me_wb_fill").caption = c and { "fork-me-gui.cell-fill", G.fmt(c.bytes), G.fmt(c.bytes_total), c.types,
-		c.types_total } or { "fork-me-gui.workbench-no-cell" }
+	G.find(frame, "fork_me_wb_fill").caption = c and c.view and { "fork-me-gui.view-cell-fill", #c.partition, c.types_total }   -- (#440)
+		or c and { "fork-me-gui.cell-fill", G.fmt(c.bytes), G.fmt(c.bytes_total), c.types, c.types_total }
+		or { "fork-me-gui.workbench-no-cell" }
 	G.find(frame, "fork_me_wb_mode").caption = c and M.cell_mode_caption(c) or ""
 	local part = c and c.partition or d.config
 	rebuild(frame, "fork_me_wb_part", (c and c.name or "-") .. ":" .. table.concat(part, ","), function(box)

@@ -265,7 +265,7 @@ click uses the tool and opens no window, as on a chest.
 
 | Block | Window |
 |---|---|
-| ME Terminal | the hub above; shift + click in your inventory stores |
+| ME Terminal | the hub above; shift + click in your inventory stores (a View Cell: into its view cell slots, issue #440) |
 | ME Pattern Terminal | the pattern editor, the blank pattern slot, **Encode**, the output slot, **Load pattern**, **Clear pattern**; shift + click in your inventory: blank patterns into the blank slot, an encoded pattern into the output slot |
 | ME Interface Terminal | the network's providers and interfaces, six to a page: search, machine filter, "only with free slots"; per block its name, position, the machines next to it, its pattern slots (a click works as in the provider's window) or config rows, **Rename** (providers), **Locate**, **Open**; shift + click an encoded pattern in your inventory: into the first free slot of the first provider listed |
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
@@ -565,11 +565,28 @@ The recipes that follow:
 | Wireless Booster (2) | a copper cable, a stone, an electronic circuit, 3 iron plates | a fluix dust, a certus quartz, an ender dust, 3 iron -> 2 |
 | Wireless ME Terminal | a radar, an ME Terminal, 4 batteries | a wireless receiver, a terminal, a dense energy cell |
 | ME Charger | 5 iron plates, 2 copper plates | 5 iron, 2 copper |
+| View Cell (issue #440) | a storage housing, a stone | a certus quartz crystal, a storage housing (AE2-Unofficial, shapeless) |
 
 The cards are in **Upgrade cards**. Not in AE2, kept as they were (with the stand-ins): the underground cable (8 fluix
 cables, 2 iron plates -> 2), the level maintainer, the circuit interface, the Interface Capacity Card and the wireless
 module. The technologies need what their recipes take: ME Network also needs Lamp and Fast inserter, ME Autocrafting and
 ME Upgrade Cards need Circuit network.
+
+### View Cells
+
+AE2's **View Cell** (issue #440, AE2-Unofficial's `ItemViewCell`; technology ME Upgrade Cards, next to the workbench): a list
+for the ME Terminal's storage tab. Put it into the **ME Cell Workbench** like a storage cell: up to 63 entries, items and
+fluids, and two card slots (a **Fuzzy Card**: every quality of a listed item; an **Inverter Card**: the list is a
+blacklist). It stores nothing, and no drive, chest or IO port takes it.
+
+The ME Terminal's storage tab has **five view cell slots** (click with a View Cell in hand, or shift + click one in your
+inventory; click a cell to take it). The list then shows only what the cells allow, as AE2-Unofficial's `createFilter` and
+`MergedPriorityList` do (the joining is ported): a key a blacklist cell names is never shown; with whitelist cells a key is
+shown when any of them names it (OR); without a whitelist cell everything else is shown; a cell with an empty list does
+nothing. The search and the kind button work on top of it. The cells belong to the terminal: mined, it gives them back,
+destroyed, they are spilled. In the **Wireless ME Terminal**'s window (the terminal's window through an access point) the
+five slots are the player's own, the same for every access point (AE2 keeps them in the wireless terminal item). The ME
+Chest's window has none. The list is filtered when it is made anew (the network's contents changed), not per tick.
 
 ## Upgrade cards
 
