@@ -301,8 +301,7 @@ remembers the pattern. No queue and no tick of its own; a provider without a mod
 hand-over (`bench --check origin/main`, docs/PERFORMANCE.md). One hand-over is a batch (up to `MAX_BATCH` runs of one
 pattern), not a single run as in AE2: the inputs in the chest are one pattern's either way, which is what the mode is for.
 
-*Locking:* see the next section (issue #346): only "until the result is back"; the locks by a signal need a circuit
-connection the provider does not have.
+*Locking:* see the next section (issue #346): "until the result is back"; the locks by a signal: issue #429, after it.
 
 ## Lock until the result is back (issue #346)
 
@@ -324,6 +323,30 @@ locked: their next lease starts only when they are idle and their products are c
 *Test:* `tools/devcheck/runtimemod/lock.lua` (one batch of 20 runs handed over, the rest held with room in the chest, 10
 and 6 arrivals count it down, the last 4 runs go in, Unlock, switching off, the settings). With the lock check removed
 from `chest_open` it fails.
+
+## Lock by the circuit condition (issue #429)
+
+AE2-Unofficial's Lock Crafting Card (`Upgrades.LOCK_CRAFTING`, `Settings.LOCK_CRAFTING_MODE`; `DualityInterface.getCraftingLockedReason`:
+LOCK_WHILE_LOW / LOCK_WHILE_HIGH read the redstone state, LOCK_UNTIL_PULSE sets `unlockEvent = PULSE` at a push and a rising
+redstone signal clears it), read and written anew. The maintainer chose the circuit connector of issue #412 over a card.
+
+*Here:* the provider is a host of `scripts/fork-me-connector.lua` (`HOSTS["me-pattern-provider"] = "provider"`). The
+connector's setter now also passes the condition's level (true, false, nil when it does nothing), which
+`N.off_setters.provider` keeps as `p.clevel` in the provider's record (storage: the checks decide when work is handed out).
+`p.lock` takes "low", "high", "pulse" besides "result". `EXT.circuit_locked(p)`: low locks at `clevel == false`, high at
+`true`, pulse while `p.plock` and no rise came; a rise (the connector's edge in pulse mode, `Conn.set_mode(unit, true)`) is
+taken there and releases it. `EXT.handed(s, t)` sets `p.plock` after every hand-over (a chest's in `EXT.pushed`, a
+machine's or assembler's after its lease starts) and first takes an older rise. The scan names the provider of every target
+(`t.prov`, before only chests'); `find_crafter` and `find_pusher` pass by the targets of a provider that `EXT.open` says
+is locked and report "locked", `EXT.chest_open` checks it before the blocking mode. `M.set_lock` makes the connector for
+a circuit mode and sets its pulse mode; `apply_settings` goes through it (a blueprint's mode gets its connector).
+`provider_info.clocked` (looked at, not taken: `Conn.has_pulse`) for the window's line. No tick of its own: the
+connector's checks (16 per tick, each at most every 10 ticks) only for providers with the condition on; a target costs one
+table read (`s.providers[t.prov]`) and a field read per hand-over attempt.
+
+*Test:* `tools/devcheck/runtimemod/circuitlock.lua` (a provider in blocking mode, a constant combinator on its connector:
+high, low and pulse lock and release by the condition, the window's data, the settings in data, blueprint, tag, paste and
+clone, an unknown mode off).
 
 *Test:* `tools/devcheck/runtimemod/blocking.lua` (three providers with a chest each, four CPUs: blocking holds the second
 batch of the same pattern and the other pattern, one kind at a time; smart lets the same pattern through, not the other;
@@ -2456,8 +2479,8 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 ## Open points
 
 * Patterns (issue #80, left open on purpose; the data model keeps room for them): AE2's locks of a provider by a redstone
-  signal (issue #429; the circuit connector of issue #412 could carry it; the blocking mode and the lock until the result for chests are built, issues #335 and
-  #346), clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a
+  signal are built since issue #429 (by the circuit connector of issue #412; the blocking mode and the lock until the result for chests: issues #335 and
+  #346); open: clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a
   storage bus. Substitutions and fuzzy patterns are decided: issue #352 made autocrafting quality-aware instead (Factorio's
   "same item, other variant" is the quality; `docs/AE2.md`, "Every quality").
 * The cards of the buses and the provider are built: the import and export bus take Acceleration Cards, issue #110, the
@@ -2466,7 +2489,8 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
   (an addition: AE2-Unofficial has none on the buses), the Inverter Card to the import and export bus. Issue #411 added the
   Crafting Card (export bus, ME Interface); issue #426 gave it fluids, the hand-over of its jobs' products to the block
   (`N.deliverers`, AE2's `injectCraftedItems`) and the export bus's "craft only". AE2's redstone card is the circuit connector of issue
-  #412 (`scripts/fork-me-connector.lua`: a hidden lamp per bus and interface, since their prototype type cannot change). (A level maintainer with several resources is built: five rows, issue #351.)
+  #412 (`scripts/fork-me-connector.lua`: a hidden lamp per bus and interface, since their prototype type cannot change; issue #429:
+  the pattern provider's too, for its lock modes). (A level maintainer with several resources is built: five rows, issue #351.)
 * Issue #3: an ME Interface keeps four fluids at most (one per side) and takes no surplus back from an export side; a
   fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
   library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block

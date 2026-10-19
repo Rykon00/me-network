@@ -271,7 +271,7 @@ click uses the tool and opens no window, as on a chest.
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, the power in W, kW or MW and where it goes (issue #149: a line per kind of block with the number of blocks, the power in all and of one, biggest first, the controller's base draw as the first line; the lines add up to the total), and a line when the controller's power buffer is not full (its electric network delivers less than the network asks for) |
-| ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), **Lock until the result is back** with what a locked provider waits for and **Unlock** (issue #346), 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
+| ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), **Lock crafting** (a drop-down: off, until the result is back (issue #346), and by its circuit condition: while it does not hold, while it holds, until it turns true (issue #429)) with what a locked provider waits for and **Unlock**, the hint to its circuit connector, 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
@@ -1057,7 +1057,7 @@ are not affected: a machine next to a provider gets work only when it is idle an
 A chest next to two providers that hold the same pattern follows the mode of the first of them in the pattern order.
 The mode goes with blueprints, settings paste and clones.
 
-**Lock until the result is back** (issue #346, AE2-Unofficial's Locking "until the result"; the check box in the provider
+**Lock until the result is back** (issue #346, AE2-Unofficial's Locking "until the result"; "Lock crafting" in the provider
 window), also for the chests next to the provider, with or without a blocking mode: after a hand-over into one of its
 chests the provider puts **nothing more into its chests** until the **main product** of what it handed over (the
 pattern's first output row times the runs: 16 runs of "stone -> pipe" wait for 16 pipes) has come into the network,
@@ -1066,8 +1066,24 @@ must finish one batch before the next starts. The window shows what a locked pro
 these are back: 6 pipes") and an **Unlock** button (when the result will not come, for example after a cancelled job);
 switching the lock off releases it too. A job that waits for it shows "Waiting for the result of the last hand-over of a
 locked provider". Machines are not locked: a machine gets its next batch only when it is idle and its products are
-collected. The setting goes with blueprints, settings paste and clones (a lock in effect does not). AE2's locks by a
-redstone signal are not built: the provider has no circuit connection.
+collected. The setting goes with blueprints, settings paste and clones (a lock in effect does not).
+
+**Locks by the circuit condition** (issue #429, AE2-Unofficial's Lock Crafting Card and its `LockCraftingMode`, here without a
+card: the maintainer's choice). The provider has the circuit connector of the buses (issue #412): a small connector in the
+block's south-east corner that takes wires and a condition (the game's lamp window). "Lock crafting" in the provider window:
+
+* **While the condition does not hold** (AE2: "lock while low"): nothing is handed over while the condition is false.
+* **While the condition holds** (AE2: "lock while high"): nothing is handed over while it is true.
+* **Until the condition turns true** (AE2: "lock until pulse"): after each hand-over nothing more is handed over until the
+  condition becomes true again (a rise; a condition that stays true does not release it).
+
+These lock every hand-over of the provider, into its chests and into its machines and assemblers (AE2's interface pushes
+nothing while locked). Without a wire, or with the condition switched off, they lock nothing (as an inserter's condition).
+The window says when the provider is locked by the condition; a job that waits for it shows the locked provider's wait. The
+connector reads the condition of each provider whose condition is on at most every 10 ticks (16 blocks per tick, the
+budget of issue #412); a provider without a lock mode pays nothing. Unlock and changing the mode release a lock until the
+condition turns true. The mode goes with blueprints, settings paste and clones, the connector with its wires and condition
+with blueprints and clones as on the buses.
 
 **Outputs** come back in two ways, and both count:
 
@@ -1322,7 +1338,6 @@ disable** and the condition.
   which keeps a big network free of thousands of unused connectors.
 * Blueprints, copy/paste and clones hold the connector with its wires and condition, and the pulse and rows settings; a
   settings paste from block to block copies the condition too. The connector of a mined block goes with it.
-* The pattern provider's lock by a signal (AE2-Unofficial's Lock Crafting Card) is issue #429.
 
 ## Circuit network: ME Circuit Interface
 
@@ -1960,8 +1975,8 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   smelted into the wrong product; the job then waits for its outputs and fails after 5 minutes.
 * Encoded patterns (issue #80): the provider's only card is the Pattern Capacity Card (9, 18, 27 or 36 slots, issue #156); no
   substitutions or fuzzy patterns: issue #352 decided quality-aware autocrafting instead (a pattern names its recipe or rows
-  with a quality, see **Every quality** under Autocrafting); the blocking mode (issue #335) and the lock (issue #346) act on chests only, and there is no
-  lock by a circuit signal (issue #429). Clearing a pattern needs the
+  with a quality, see **Every quality** under Autocrafting); the blocking mode (issue #335) and the lock until the result (issue #346) act on chests only; the locks
+  by the circuit condition (issue #429) on every hand-over, without a Lock Crafting Card. Clearing a pattern needs the
   ME Pattern Terminal's button (an inventory click cannot be caught).
   A provider mined by another mod's script (not a player or robot) drops its patterns instead of giving them to
   that script's inventory.
