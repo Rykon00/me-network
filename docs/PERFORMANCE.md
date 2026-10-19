@@ -3635,3 +3635,25 @@ in turns; the scenes have no Crafting Card):
 -> 0.0348), as #420 saw at 100; `--sizes 100 --runs 5 --check v0.5.4` again: 0.1886 ±0.003 -> 0.1909 ±0.004, gc 0.0234 ->
 0.0232, `regressions beyond the noise: 0`. The Lua allocation of 27.14 KB per tick at 100 (v0.5.4: 26.68) is `main`'s
 already, the same with and without #426.
+
+## The pattern provider's lock by the circuit condition (issue #429)
+
+A hand-over attempt now reads the target's provider (`s.providers[t.prov]`, every target since the scan names it) and its lock
+mode: a field read when the provider has no circuit lock. A provider with a circuit mode and its condition on is one more block
+in the connector's check list of issue #412 (16 checks per tick, each block at most every 10 ticks); its level is kept in its
+record by the check, so the hand-over reads a field. The scenes' providers have no lock.
+
+`bench --sizes 100,1000 --runs 3 --check craft-only-426` (#429 against its base, #426; three rounds in turns; the machine was
+busier during this run than during the others, both versions alike, see the 1000 row):
+
+| | #426 | #429 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2848 / 2.904 | 0.2235 / 1.947 |
+| 1000: script average / p99 ms | 0.5155 / 3.666 | 0.5119 / 3.634 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| provider crafts per second (100 / 1000) | 1.233 / 17.32 | 1.233 / 17.32 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.2315 ->
+0.2413 ms (p99 2.005 -> 2.064), 1000: 0.3683 -> 0.3566 ms (p99 2.048 -> 1.980), `regressions beyond the noise: 0` (the
+allocation 26.68 -> 27.14 and 24.34 -> 24.85 KB per tick is `main`'s, see issue #426).
