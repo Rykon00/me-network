@@ -28,7 +28,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
 | Fluid storage cell (1k ... 16384k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | ME Wireless Access Point, ME Charger | 1x1 members, power through the controller: the range of the Wireless ME Terminal (with Wireless Boosters) and its charging (this page, **Wireless**) |
-| Crafting blocks: crafting unit, 1k ... 256k crafting storage, co-processing unit, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
+| Crafting blocks: crafting unit, 1k ... 16384k and Singularity crafting storage, co-processing unit, 4x ... 4096x crafting accelerators, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns (up to 36 with Pattern Capacity Cards); the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
 | ME Pattern Terminal | 1x1, no pole needed (the controller draws its 8 kW), can be walked over: encodes patterns (this page, **Patterns: encoding and clearing**); two slots, one for blank patterns and one for the encoded pattern |
 | ME Interface Terminal | 1x1, no pole needed (the controller draws its 8 kW), can be walked over: lists every pattern provider and ME Interface of the network with their patterns and config rows (this page, **The ME Interface Terminal**) |
@@ -1131,7 +1131,13 @@ group).
 | ME 16k Crafting Storage | 16 384 bytes | | 16 kW | crafting unit + 16k storage component | `me-co-processing` |
 | ME 64k Crafting Storage | 65 536 bytes | | 32 kW | crafting unit + 64k storage component | `me-co-processing` |
 | ME 256k Crafting Storage | 262 144 bytes | | 64 kW | crafting unit + 256k storage component | `me-quantum-crafting` |
+| ME 1024k Crafting Storage (issue #415) | 1 048 576 bytes | | 128 kW | crafting unit + 1024k storage component | `me-crafting-storage-1024k` |
+| ME 4096k Crafting Storage | 4 194 304 bytes | | 256 kW | crafting unit + 4096k storage component | `me-crafting-storage-4096k` |
+| ME 16384k Crafting Storage | 16 777 216 bytes | | 512 kW | crafting unit + 16384k storage component | `me-crafting-storage-16384k` |
+| ME Singularity Crafting Storage | 2^53 bytes (AE2-Unofficial: Long.MAX_VALUE) | | 1 MW | crafting unit + 8 Singularity storage cells | `me-crafting-storage-singularity` |
 | ME Crafting Co-Processing Unit | | the CPU hands work to the machines once more per step | 32 kW | crafting unit + processing unit | `me-co-processing` |
+| ME 4x / 16x / 64x Crafting Accelerator (issue #415) | | counts as 4 / 16 / 64 co-processors | 64 / 128 / 256 kW | 4 of the one below (the 4x: 4 co-processing units) | `me-crafting-accelerators` |
+| ME 256x / 1024x / 4096x Crafting Accelerator | | counts as 256 / 1024 / 4096 co-processors | 512 kW / 1 MW / 2 MW | 4 of the one below | `me-crafting-accelerators-2` |
 | ME Crafting Monitor | | shows the job | 4 kW | crafting unit + small lamp + electronic circuit | `me-autocrafting` |
 
 * **The smallest CPU** is a single 1k crafting storage touching a cable: it runs a job of 100 electronic circuits from
@@ -1151,8 +1157,15 @@ group).
   keeps it, the parts of a split CPU keep it, and it survives a mod update. Otherwise the Craft button tells why ("needs N bytes, the biggest CPU has M", or "every CPU that can take
   it is busy") and starts nothing; a level maintainer waits and tries again.
 * **Speed:** every co-processing unit lets the CPU hand one more batch to the pattern machines per step: a CPU with n
-  co-processors is 1 + n times as fast (at most 16 count). It matters when a job has many machines for the same
+  co-processors is 1 + n times as fast. It matters when a job has many machines for the same
   pattern; the machines still craft at their own speed. Three co-processors make a CPU as fast as the old Quantum CPU.
+  Issue #415: AE2-Unofficial's **crafting accelerators** count as 4 to 4096 co-processors (each made from four of the one
+  below); until 0.5.5 at most 16 co-processors counted. A step hands over 6 times 1 + the co-processors at most, and never
+  more than the map setting **Crafting job operations per step** (1024; AE2-Unofficial has no such cap): a CPU above about
+  170 co-processors is only faster with a higher setting, which makes a step of a job with that many free machines cost
+  more time in one tick. A step only spends what it hands over: a job with few machines costs the same on any CPU.
+* **Crafting storage above 256k** (issue #415, AE2-Unofficial's): 1024k, 4096k, 16384k and Singularity crafting storage,
+  each after the storage cells of its tier. The Singularity block's 2^53 bytes are practically no limit.
 * **Not a CPU:** a group with a gap or a corner missing, or one without crafting storage, is no CPU: its blocks stay
   dark (the blocks of a CPU are lit) and its window says why ("its 7 blocks do not fill their 3 x 3 area", "it has
   no crafting storage").

@@ -3436,3 +3436,24 @@ scenes have no such cell):
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## Crafting storage above 256k and the crafting accelerators (issue #415)
+
+New crafting blocks with bytes or co-processors (a group's sums, as for the others). A job step now hands over at most
+6 x (1 + co-processors), capped by the new map setting "Crafting job operations per step" (1024) instead of 16 co-processors:
+the loop of a step spends an operation only on a hand-over (it stops at the first step without a free machine), so a job's
+step costs what it hands over, on any CPU; the cap bounds a step of a job with more than 1024 free machines. The scenes'
+crafting jobs run on CPUs without co-processors: unchanged.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413, #411, #412 and #414 as
+well):
+
+| | v0.5.4 | with the blocks |
+|---|---|---|
+| 100: script average / p99 ms | 0.1921 / 1.782 | 0.1922 / 1.749 |
+| 1000: script average / p99 ms | 0.3352 / 1.882 | 0.3333 / 1.878 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.67 / 24.31 |
+| provider crafts per second (100 / 1000) | 1.233 / 17.32 | 1.233 / 17.32 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.

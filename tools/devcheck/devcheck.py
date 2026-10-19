@@ -824,6 +824,7 @@ RUNTIME_TESTS = (
     ("CRAFTCARD", "Crafting Card on the export bus and the interface (issue #411)"),
     ("CIRCUITBUS", "Circuit connector of the buses and the interface (issue #412)"),
     ("BIGCELLS", "Storage cells above 256k and the Singularity cell (issue #414)"),
+    ("BIGCPUS", "Crafting storage above 256k and the crafting accelerators (issue #415)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),
