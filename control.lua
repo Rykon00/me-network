@@ -155,7 +155,7 @@ local REMOVED_FILTER = {}
 --- (logistic chests, infinity chests and cargo wagons: the inventory of a storage bus leaves the network at once; pipes,
 --- underground pipes and pumps: a removed one may split the fluid segment of a storage bus on fluid)
 for _, t in pairs({ "simple-entity-with-force", "storage-tank", "lamp", "electric-energy-interface", "container",
-	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-wagon", "pipe", "pipe-to-ground",
+	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-wagon", "fluid-wagon", "pipe", "pipe-to-ground",
 	"pump" }) do
 	REMOVED_FILTER[#REMOVED_FILTER + 1] = { filter = "type", type = t }
 end

@@ -1004,6 +1004,9 @@ bigcpus415 = require("bigcpus")({ me_place = me_place, cable_row = cable_row, po
 --- me-network issue #416: the ME Pattern Terminal Ex (ptermex.lua)
 ptermex416 = require("ptermex")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #417: a fluid wagon on the storage bus (fluidwagon.lua)
+fluidwagon417 = require("fluidwagon")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #196: the ME Interface Capacity Card (ifacecap.lua)
 ifacecap196 = require("ifacecap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1109,6 +1112,7 @@ local function tests_running()
 	bigcells414.running(check)
 	bigcpus415.running(check)
 	ptermex416.running(check)
+	fluidwagon417.running(check)
 	maintrows351.running(check)
 	cpumode350.running(check)
 	monitors353.running(check)
@@ -2058,6 +2062,7 @@ script.on_nth_tick(10, function()
 	bigcells414.tick()
 	bigcpus415.tick()
 	ptermex416.tick()
+	fluidwagon417.tick()
 	maintrows351.tick()
 	cpumode350.tick()
 	monitors353.tick()
@@ -4936,6 +4941,7 @@ script.on_init(function()
 	for _, f in pairs(bigcells414.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bigcpus415.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ptermex416.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(fluidwagon417.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpumode350.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(monitors353.setup(s)) do fails[#fails + 1] = f end

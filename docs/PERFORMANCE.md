@@ -3474,3 +3474,23 @@ as well; the scenes have no such pattern):
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## Fluid wagons on the storage bus (issue #417)
+
+Only a bus on a fluid wagon pays for it: every use of its storage (the visit, the network's count, insert and extract, the
+room) checks with one `find_entities_filtered` on the tile in front that the wagon still stands there (as the item side does
+for a cargo wagon), and reads the wagon with `get_fluid`. A bus on a tank or a chest takes one field read more (`rec.wagon`).
+The scenes have no wagons (the bench builds no track), so the issue's "50 such buses" is not measured; a bus on a wagon costs
+about what a bus on a cargo wagon costs.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 to #416 as well):
+
+| | v0.5.4 | with the wagons |
+|---|---|---|
+| 100: script average / p99 ms | 0.1918 / 1.754 | 0.1926 / 1.775 |
+| 1000: script average / p99 ms | 0.3371 / 1.890 | 0.3363 / 1.912 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.67 / 24.31 |
+| fluid per second (100 / 1000) | 32 650 / 241 000 | 32 650 / 241 000 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
