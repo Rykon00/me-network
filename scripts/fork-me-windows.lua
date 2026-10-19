@@ -949,6 +949,13 @@ function M.blocking_index(mode)
 	for i, m in ipairs(BLOCKING_MODES) do if m == (mode or "off") then return i end end
 	return 1
 end
+--- Issue #429: the lock modes in the order of the drop-down (AE2-Unofficial's LockCraftingMode: none, until the result, while
+--- low, while high, until a pulse), and the index of a mode
+local LOCK_MODES = { "off", "result", "low", "high", "pulse" }
+function M.lock_index(mode)
+	for i, m in ipairs(LOCK_MODES) do if m == (mode or "off") then return i end end
+	return 1
+end
 
 local function open_provider(player, entity, opts)
 	local via = opts and opts.via
@@ -966,10 +973,14 @@ local function open_provider(player, entity, opts)
 		tooltip = { "fork-me-gui.provider-blocking-tooltip" },
 		items = { { "fork-me-gui.provider-blocking-off" }, { "fork-me-gui.provider-blocking-blocking" }, { "fork-me-gui.provider-blocking-smart" } },
 		selected_index = M.blocking_index(autocraft.get_blocking(entity)) }
-	--- issue #346: the lock until the result is back, what a locked provider still waits for, and Unlock
+	--- issue #346: the lock until the result is back, what a locked provider still waits for, and Unlock; issue #429: the lock by
+	--- the circuit condition of its connector (the modes of a drop-down)
 	row = G.row(content)
-	row.add{ type = "checkbox", name = "fork_me_prov_lock", state = autocraft.get_lock(entity) == "result",
-		caption = { "fork-me-gui.provider-lock" }, tooltip = { "fork-me-gui.provider-lock-tooltip" }, tags = G.act("prov_lock") }
+	row.add{ type = "label", caption = { "fork-me-gui.provider-lock" }, tooltip = { "fork-me-gui.provider-lock-tooltip" } }
+	local items = {}
+	for i, m in ipairs(LOCK_MODES) do items[i] = { "fork-me-gui.provider-lock-" .. m } end
+	row.add{ type = "drop-down", name = "fork_me_prov_lock", tags = G.act("prov_lock"), tooltip = { "fork-me-gui.provider-lock-tooltip" },
+		items = items, selected_index = M.lock_index(autocraft.get_lock(entity)) }
 	row = G.row(content, "fork_me_prov_locked_row")
 	G.label(row, "", WIDTH - 90, nil, "fork_me_prov_locked")
 	row.add{ type = "button", name = "fork_me_prov_unlock", caption = { "fork-me-gui.provider-unlock" },
@@ -979,6 +990,7 @@ local function open_provider(player, entity, opts)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.provider-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_prov_cards", direction = "horizontal" }
 	G.label(content, "", WIDTH, nil, "fork_me_prov_want")
+	G.label(content, { "fork-me-gui.connector-hint-provider" }, WIDTH)   -- (issue #429: its circuit connector)
 	G.label(content, "", WIDTH, "caption_label", "fork_me_provider_count")
 	local scroll = content.add{ type = "scroll-pane", name = "fork_me_provider_scroll", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = 380
@@ -1005,12 +1017,14 @@ function M.refresh_provider(player, frame)
 	local dd = G.find(frame, "fork_me_prov_blocking")          -- (issue #335: set elsewhere, by a paste or another player)
 	local index = M.blocking_index(pinfo.blocking)
 	if dd and dd.selected_index ~= index then dd.selected_index = index end
-	local lock = G.find(frame, "fork_me_prov_lock")            -- (issue #346)
-	if lock and lock.state ~= (pinfo.lock == "result") then lock.state = pinfo.lock == "result" end
+	local lock = G.find(frame, "fork_me_prov_lock")            -- (issues #346, #429)
+	local li = M.lock_index(pinfo.lock)
+	if lock and lock.selected_index ~= li then lock.selected_index = li end
 	local locked_row = G.find(frame, "fork_me_prov_locked_row")
 	if locked_row then
-		locked_row.visible = pinfo.locked ~= nil
-		G.find(frame, "fork_me_prov_locked").caption = pinfo.locked and M.locked_text(pinfo.locked) or ""
+		locked_row.visible = pinfo.locked ~= nil or pinfo.clocked == true
+		G.find(frame, "fork_me_prov_locked").caption = pinfo.locked and M.locked_text(pinfo.locked)
+			or pinfo.clocked and { "fork-me-gui.provider-locked-" .. pinfo.lock } or ""
 	end
 	rebuild(frame, "fork_me_provider_slots", slots_sig, function(box) build_provider_slots(box, entity) end)
 	rebuild(frame, "fork_me_provider_machines", machines_sig, function(box) build_provider_machines(box, entity) end)
@@ -1058,9 +1072,10 @@ function M.locked_text(locked)
 end
 
 G.on("prov_lock", function(event, player, el)
-	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
 	local entity = window_entity(player)
-	if entity then autocraft.set_lock(entity, el.state and "result" or nil) end
+	local mode = LOCK_MODES[el.selected_index]
+	if entity then autocraft.set_lock(entity, mode ~= "off" and mode or nil) end
 	G.refresh_one(player)
 end)
 

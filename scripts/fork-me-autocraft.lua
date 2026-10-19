@@ -817,8 +817,59 @@ function EXT.lock_key(key)
 	return key
 end
 
+--- Issue #429: the lock by the provider's circuit connector (issue #412's, scripts/fork-me-connector.lua), AE2-Unofficial's
+--- LockCraftingMode of the Lock Crafting Card (DualityInterface.getCraftingLockedReason, read and written anew) without the card
+--- (the maintainer's choice): "low" locks while the condition does not hold (AE2: no redstone signal), "high" while it holds,
+--- "pulse" after a hand-over until the condition rises (AE2: a redstone pulse); a condition that does nothing (off, no wire)
+--- locks nothing. Unlike the lock of #346 they lock every hand-over of the provider, into its chests and its machines (AE2's
+--- interface pushes nothing at all while locked). State: `p.clevel`, the condition's level, set by the connector's checks
+--- (N.off_setters.provider); `p.plock` while a pulse lock waits for its rise (the rise itself: the connector's edge).
+EXT.conn = require("scripts.fork-me-connector")
+EXT.LOCKS = { result = true, low = true, high = true, pulse = true }
+EXT.CIRCUIT_LOCKS = { low = true, high = true, pulse = true }
+N.off_setters = N.off_setters or {}
+N.off_setters.provider = function(unit, _, level)
+	local s = storage.fork_ae2
+	local p = s and s.providers and s.providers[unit]
+	if p then p.clevel = level end
+end
+
+--- is provider `p` locked by its circuit condition now? A rise of the condition releases a pulse lock (taken; `peek`: only
+--- looked at, the window's line)
+function EXT.circuit_locked(p, peek)
+	local mode = p.lock
+	if mode == "low" then return p.clevel == false end
+	if mode == "high" then return p.clevel == true end
+	if mode == "pulse" and p.plock then
+		if peek then return not EXT.conn.has_pulse(p.unit) end
+		if EXT.conn.take_pulse(p.unit) then
+			p.plock = nil
+			return false
+		end
+		return true
+	end
+	return false
+end
+
+--- may provider unit `prov` (a target's) hand over now? (issue #429: its circuit lock)
+function EXT.open(s, prov)
+	local p = prov and s.providers[prov]
+	return not (p and p.lock and EXT.CIRCUIT_LOCKS[p.lock] and EXT.circuit_locked(p))
+end
+
+--- a hand-over into a machine or a chest of target entry `t`: a pulse lock waits for the next rise (an older rise is taken
+--- first: AE2 locks at the push and unlocks at a pulse after it)
+function EXT.handed(s, t)
+	local p = t and t.prov and s.providers[t.prov]
+	if p and p.lock == "pulse" then
+		EXT.conn.take_pulse(p.unit)
+		p.plock = true
+	end
+end
+
 function EXT.unlock(s, p)
 	if not p then return end
+	p.plock = nil                                    -- (issue #429)
 	p.locked = nil
 	if s.locked then
 		s.locked[p.unit] = nil
@@ -847,6 +898,7 @@ function EXT.chest_open(s, t, pid)
 	local p = t.prov and s.providers[t.prov]
 	if not p then return true end
 	if p.locked then return false, "locked" end
+	if p.lock and EXT.CIRCUIT_LOCKS[p.lock] and EXT.circuit_locked(p) then return false, "locked" end   -- (issue #429)
 	local mode = p.blocking
 	if not mode then return true end
 	if mode == "smart" and p.last_pid == pid then return true end
@@ -861,6 +913,7 @@ function EXT.pushed(s, t, pid, def, runs)
 	local p = t.prov and s.providers[t.prov]
 	if not p then return end
 	if p.blocking == "smart" then p.last_pid = pid end
+	if p.lock == "pulse" then EXT.handed(s, t) end         -- (issue #429)
 	local out = p.lock == "result" and def.outputs and def.outputs[1]
 	if out and out.key and (out.amount or 0) > 0 then
 		p.locked = { [EXT.lock_key(out.key)] = out.amount * runs }
@@ -906,7 +959,7 @@ local function scan_provider(p)
 				local targets, reason = {}, nil
 				for _, v in ipairs(around) do
 					local t, r = target_for(v, def)
-					if t and t.mode == "chest" then t.prov = p.unit end          -- (issue #335: its blocking mode)
+					if t then t.prov = p.unit end          -- (issue #335: a chest's blocking mode; #429: every target's circuit lock)
 					if t then targets[#targets + 1] = t else reason = reason or r end
 				end
 				patterns[slot] = { id = id, def = def, targets = targets, why = reason }
@@ -2277,31 +2330,32 @@ local function find_crafter(s, net, job, step, targets)
 	--- time), the busy test before the engine's, and the second pass only over the machines the first one found free with
 	--- another recipe (in their order: nothing the first pass does changes them)
 	local ingredients, products = step_ingredients(step), step_products(step)
-	local busy, others = s.busy, nil
+	local busy, others, locked = s.busy, nil, nil
 	for _, t in pairs(targets) do
 		local e = t.entity
 		if t.mode == "craft" and not busy[t.unit] and e.valid and not e.disabled_by_script and not rejected(job, t.unit, step.pid) then
-			if M.has_recipe(e, step.recipe, step.quality) then
+			if not EXT.open(s, t.prov) then locked = true                -- (issue #429: its provider's circuit lock)
+			elseif M.has_recipe(e, step.recipe, step.quality) then
 				local map, why = fluid_map(e, ingredients, products)
 				if not map then reject(job, t.unit, step.pid) job.problem = why
-				elseif machine_idle(e, ingredients, map) then return e, map end
+				elseif machine_idle(e, ingredients, map) then return e, map, t end
 			else
 				others = others or {}
 				others[#others + 1] = t
 			end
 		end
 	end
-	if not others then return nil end
+	if not others then return nil, nil, locked and "locked" end
 	for _, t in ipairs(others) do
 		local e = t.entity
 		if e.crafting_progress == 0 and switch_recipe(net, e, step.recipe, step.quality) then
 			local map, why = fluid_map(e, ingredients, products)
-			if map then return e, map end
+			if map then return e, map, t end
 			reject(job, t.unit, step.pid)
 			job.problem = why
 		end
 	end
-	return nil
+	return nil, nil, locked and "locked"
 end
 
 --- A target for a processing step: an idle machine ("push") or a chest ("chest"). Returns the entity, its mode and
@@ -2322,13 +2376,14 @@ local function find_pusher(s, net, job, step, targets)
 				if open then return e, "chest", EMPTY_MAP, t end
 				blocked = blocked or why
 			elseif t.mode == "push" and not e.disabled_by_script then
-				if t.recipe and not M.has_recipe(e, t.recipe, t.quality) then
+				if not EXT.open(s, t.prov) then blocked = blocked or "locked"    -- (issue #429: its provider's circuit lock)
+				elseif t.recipe and not M.has_recipe(e, t.recipe, t.quality) then
 					others = others or {}
 					others[#others + 1] = t
 				else
 					local map, why = fluid_map(e, ingredients, products, true)
 					if not map then reject(job, t.unit, step.pid) job.problem = why
-					elseif machine_idle(e, ingredients, map) then return e, "push", map end
+					elseif machine_idle(e, ingredients, map) then return e, "push", map, t end
 				end
 			end
 		end
@@ -2338,7 +2393,7 @@ local function find_pusher(s, net, job, step, targets)
 		local e = t.entity
 		if e.crafting_progress == 0 and switch_recipe(net, e, t.recipe, t.quality) then
 			local map, why = fluid_map(e, ingredients, products, true)
-			if map then return e, "push", map end
+			if map then return e, "push", map, t end
 			reject(job, t.unit, step.pid)
 			job.problem = why
 		end
@@ -2509,7 +2564,7 @@ local function job_step(s, job, work)
 			if batch <= 0 then waiting = waiting or "ingredients" break end
 			local machine, mode, map, chest
 			if step.kind == "crafting" then
-				machine, map = find_crafter(s, net, job, step, targets)
+				machine, map, chest = find_crafter(s, net, job, step, targets)   -- (issue #429: its target entry, or "locked")
 				mode = "craft"
 			else
 				machine, mode, map, chest = find_pusher(s, net, job, step, targets)
@@ -2539,6 +2594,7 @@ local function job_step(s, job, work)
 				collect_output(job, net, machine, map)
 				ok = start_lease(s, job, i, machine, batch, map)
 				if not ok and step.kind == "processing" then reject(job, machine.unit_number, step.pid) end
+				if ok then EXT.handed(s, chest) end              -- (issue #429: a pulse lock after a hand-over into a machine)
 			end
 			if not ok then waiting = waiting or "machine" break end
 			work.ops = work.ops - 1
@@ -3304,8 +3360,9 @@ function M.set_blocking(entity, mode)
 	return true
 end
 
---- Issue #346: the lock of a provider ("result": until the result is back, nil: off), kept by blueprints, settings paste and
---- clones; a change of it releases a lock in effect (as AE2's setting does), and so does `M.unlock` (the window's button)
+--- Issue #346: the lock of a provider ("result": until the result is back, nil: off; issue #429: "low", "high", "pulse" by its
+--- circuit condition), kept by blueprints, settings paste and clones; a change of it releases a lock in effect (as AE2's
+--- setting does), and so does `M.unlock` (the window's button)
 function M.get_lock(entity)
 	local p = provider_record(entity)
 	return p and p.lock or nil
@@ -3314,9 +3371,12 @@ end
 function M.set_lock(entity, mode)
 	local p = provider_record(entity)
 	if not p then return false end
-	local new = mode == "result" and "result" or nil
+	local new = EXT.LOCKS[mode] and mode or nil                 -- (issue #429: "low", "high", "pulse" too)
 	if new ~= p.lock then EXT.unlock(state(), p) end
 	p.lock = new
+	--- issue #429: a circuit lock needs the connector (its level, its rises); the connector's pulse mode watches the rises
+	if EXT.CIRCUIT_LOCKS[new] then EXT.conn.ensure(entity) end
+	EXT.conn.set_mode(entity.unit_number, new == "pulse", false)
 	return true
 end
 
@@ -3433,6 +3493,8 @@ function M.provider_info(entity)
 	local out = { slots = slots, slot_count = slots_of(p), filled = filled, machines = machines, priority = p.priority or 0,
 		blocking = p.blocking,                                                      -- (issue #335)
 		lock = p.lock, locked = p.locked and shallow_map(p.locked) or nil,          -- (issue #346)
+		--- issue #429: locked by its circuit condition now (looked at, not taken)
+		clocked = p.lock and EXT.CIRCUIT_LOCKS[p.lock] and EXT.circuit_locked(p, true) or nil,
 		network = p.net ~= nil, card_slots = N.card_rules().provider.slots }
 	out.want = p.want and cards.missing_cards(p, p.want) or nil
 	return out
@@ -3481,7 +3543,7 @@ function M.apply_settings(entity, settings, old_recipe)
 		if settings.blocking ~= nil then                                             -- (issue #335)
 			p.blocking = EXT.BLOCKING[settings.blocking] and settings.blocking or nil
 		end
-		if settings.lock ~= nil then p.lock = settings.lock == "result" and "result" or nil end   -- (issue #346)
+		if settings.lock ~= nil then M.set_lock(entity, settings.lock) end   -- (issues #346, #429)
 		for key, raw in pairs(type(settings.patterns) == "table" and settings.patterns or {}) do
 			local slot = tonumber(key)
 			local def = P.normalize(raw)
