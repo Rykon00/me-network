@@ -17,6 +17,7 @@
 --- ME Network issue #447 the items of ME Network #411-#416: the cells above 256k and the Singularity cell, their
 --- components and technologies, the crafting storage above 256k, the crafting accelerators, the Crafting Card and the
 --- Pattern Terminal Ex, made the same ways.
+--- ME Network issue #459 the View Cell, the Creative ME Storage Cell and the Creative Energy Cell of ME Network #440-#442.
 ---
 --- A key is "<prototype type>/<prototype name>" of ME Network (it never renames a prototype). A value is either
 ---   a file of this mod, when the prototype uses exactly one file of ME Network (an item's icon):
@@ -45,6 +46,10 @@ return {
 	["item-with-tags/me-4096k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4096k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-16384k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16384k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-singularity-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-singularity-storage-cell.png", icon_size = 64 },
+	--- ME Network issue #459: the View Cell (#440) and the Creative ME Storage Cell (#441). ME Network tints another item's icon
+	--- for them (the storage housing blue, the 1k cell violet): the tint is set to none here, as for the void cells
+	["item-with-tags/me-view-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-view-cell.png", icon_size = 64, tint = { 1, 1, 1, 1 } },
+	["item-with-tags/me-creative-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-creative-storage-cell.png", icon_size = 64, tint = { 1, 1, 1, 1 } },
 	--- fluid storage cells (64 px, issue #250): AE2-Unofficial has none, so its item cell of the tier, frame and body blue
 	["item-with-tags/me-1k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-1k-fluid-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-4k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4k-fluid-storage-cell.png", icon_size = 64 },
@@ -106,6 +111,13 @@ return {
 		["__me-network__/graphics/icons/hd/me-io-port.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-io-port.png", icon_size = 64 },
 	},
 	["item/me-io-port"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-io-port.png", icon_size = 64 },
+	--- ME Network issue #459: the Creative Energy Cell (#442), AE2-Unofficial's creative energy cell as a block; ME Network tints
+	--- the ME Charger's picture and icon for it: the tint is set to none here
+	["simple-entity-with-force/me-creative-energy-cell"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-charger.png"] = { filename = "__me-network-ae2-textures__/graphics/blocks/me-creative-energy-cell.png", tint = { 1, 1, 1, 1 } },
+		["__me-network__/graphics/icons/hd/me-charger.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-creative-energy-cell.png", icon_size = 64, tint = { 1, 1, 1, 1 } },
+	},
+	["item/me-creative-energy-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-creative-energy-cell.png", icon_size = 64, tint = { 1, 1, 1, 1 } },
 	--- ME Network issue #406: the ME Quantum Bridge (ME Network #385, 3 x 3): AE2-Unofficial's eight quantum rings around its link
 	--- chamber, the blocks before they are formed; the icons are the ring
 	["electric-energy-interface/me-quantum-bridge"] = {
