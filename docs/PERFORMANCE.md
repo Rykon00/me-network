@@ -3695,3 +3695,23 @@ check per key of a rebuilt list; nothing runs per tick. The scenes have no open 
 `regressions beyond the noise: 0` (both versions slower than in the runs before: the machine was busier). Against the last
 release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.2286 -> 0.2338 ms (p99 2.093 -> 2.130), 1000: 0.4097 ->
 0.4076 ms (p99 2.288 -> 2.238), `regressions beyond the noise: 0`.
+
+## The Creative ME Storage Cell (issue #441)
+
+An extraction reads one field more per cell it takes from (`cell.creative`); the chest's take path the same; the insertion
+walk and the room look at the spec once more (`spec.creative`) for cells they ask. Nothing per tick. The scenes have no
+creative cell.
+
+`bench --sizes 100,1000 --runs 3 --check view-cells-440` (#441 against its base, #440; three rounds in turns):
+
+| | #440 | #441 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2104 / 1.869 | 0.2076 / 1.871 |
+| 1000: script average / p99 ms | 0.3562 / 1.968 | 0.3645 / 2.008 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| throughput per kind of endpoint | identical | identical |
+
+That run flagged the script average at 1000 (noise 0.0073: the reference's three rounds were unusually close). Again with five
+rounds, `bench --sizes 1000 --runs 5 --check view-cells-440`: 0.3592 ±0.006 -> 0.3582 ±0.002 ms (p99 2.002 -> 1.981),
+`regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.2009 ->
+0.2047 ms, 1000: 0.3622 -> 0.3622 ms, `regressions beyond the noise: 0`.
