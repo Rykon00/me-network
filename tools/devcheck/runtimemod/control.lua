@@ -992,6 +992,9 @@ buscards413 = require("buscards")({ me_place = me_place, cable_row = cable_row, 
 --- me-network issue #411: the Crafting Card on the export bus and the interface (craftcard.lua)
 craftcard411 = require("craftcard")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #412: the circuit connector of the buses and the interface (circuitbus.lua)
+circuitbus412 = require("circuitbus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #196: the ME Interface Capacity Card (ifacecap.lua)
 ifacecap196 = require("ifacecap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1093,6 +1096,7 @@ local function tests_running()
 	groupbus363.running(check)
 	buscards413.running(check)
 	craftcard411.running(check)
+	circuitbus412.running(check)
 	maintrows351.running(check)
 	cpumode350.running(check)
 	monitors353.running(check)
@@ -2038,6 +2042,7 @@ script.on_nth_tick(10, function()
 	groupbus363.tick()
 	buscards413.tick()
 	craftcard411.tick()
+	circuitbus412.tick()
 	maintrows351.tick()
 	cpumode350.tick()
 	monitors353.tick()
@@ -4187,6 +4192,7 @@ function settings_test()
 	expect(tc and serpent.line(tc.filters) == serpent.line(C_SET), "circuit interface tag " .. serpent.line(tc))
 	expect(tf and tf.config and #tf.config == 2 and tf.sides and #tf.sides == 2, "ME Interface tag " .. serpent.line(tf))
 	built["me-cable"] = nil                         -- the cables that connected the originals are in the blueprint too
+	built["me-circuit-connector"] = nil             -- (issue #412: the interface's circuit connector comes with it)
 	expect(table_size(built) == 3, "revived from the blueprint: " .. table_size(built) .. " of 3")
 	local cfails = {}
 	connect38(SC_Y, { built["me-level-maintainer"], built["me-circuit-interface"], built["me-network-interface"] }, cfails)
@@ -4911,6 +4917,7 @@ script.on_init(function()
 	for _, f in pairs(groupbus363.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(buscards413.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(craftcard411.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(circuitbus412.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpumode350.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(monitors353.setup(s)) do fails[#fails + 1] = f end

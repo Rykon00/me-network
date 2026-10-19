@@ -1233,6 +1233,33 @@ What the window says:
 another maintainer (the game copies the circuit condition). Blueprints, copy and paste (ctrl+C, ctrl+V)
 and cloning keep them.
 
+## Circuit condition of the buses and the ME Interface (issue #412)
+
+AE2's **Redstone Card** (AE2-Unofficial: the import and export bus's redstone modes) is Factorio's circuit condition here, on
+the **ME Import Bus, ME Export Bus, ME Storage Bus and ME Interface**, without a card. Those blocks take no wires themselves,
+so each has a small **ME Circuit Connector** in the south-east corner of its tile (where the game draws the wire connector):
+hover over the corner to attach red or green wires and click it to open its window, the game's lamp window, with **Enable /
+disable** and the condition.
+
+* While the condition is on, a wire is connected and the condition does not hold, the block is **off**: a bus moves nothing,
+  a storage bus's chest, wagon or tank is no storage of the network (the terminal no longer shows what is in it), an
+  interface neither fills its rows nor imports. Its window says "Off". Without a wire the condition does nothing, as on an
+  inserter. AE2-Unofficial has the Redstone Card on the import and export bus only; the storage bus and the interface are
+  an addition (the maintainer's choice).
+* **Pulse** (ME Export Bus, a checkbox in its window, AE2's "once per pulse"): the bus moves what one visit allows each time
+  the condition turns true, and nothing in between.
+* **Rows from the circuit** (ME Interface, a checkbox in its window): every item and fluid signal on the connector's wires
+  with a positive value is a row of that amount, in the order of the names, as many as the interface has rows (a fluid row at
+  most a side's volume). The window lists them. The rows set by hand stay and work again when the option is off. The
+  interface's sides tied to a row follow the row's number.
+* A block follows its condition within about 10 ticks (up to 16 connectors are checked per tick); a block without a
+  condition, pulse or rows from the circuit costs nothing for it.
+* A block gets its connector the first time you point at it (or open its window): only blocks someone looked at have one,
+  which keeps a big network free of thousands of unused connectors.
+* Blueprints, copy/paste and clones hold the connector with its wires and condition, and the pulse and rows settings; a
+  settings paste from block to block copies the condition too. The connector of a mined block goes with it.
+* The pattern provider's lock by a signal (AE2-Unofficial's Lock Crafting Card) is issue #429.
+
 ## Circuit network: ME Circuit Interface
 
 Tech `me-automation`. The **ME Circuit Interface** is a constant combinator (no power) connected to the
@@ -1845,7 +1872,8 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   them: the import and export bus take speed cards (up to 4, issues #110, #356), the Group Filter Card (issue #363), up to 2
   Capacity Cards and a Fuzzy Card, the import bus also an Inverter Card (issue #413),
   the ME Interface Interface Capacity Cards (up to 3, issue #196) and the Crafting Card, which the export bus takes too
-  (issue #411; items only, no "craft only" mode, issue #426); there is no redstone card; the
+  (issue #411; items only, no "craft only" mode, issue #426); in place of the redstone card the buses and the interface
+  have a circuit connector (issue #412: a second, small selection box in the block's corner); the
   search of the terminal and the picker matches the shown names (issue #295) only once your client has
   translated them, a few ticks after the first terminal or picker opens (before that, and for a name your language
   lacks, the internal name; upper and lower case are told apart in ASCII letters only); spoiling items, items with an inventory and damaged items cannot be stored. Old
@@ -1862,7 +1890,7 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
 * Encoded patterns (issue #80): the provider's only card is the Pattern Capacity Card (9, 18, 27 or 36 slots, issue #156); no
   substitutions or fuzzy patterns: issue #352 decided quality-aware autocrafting instead (a pattern names its recipe or rows
   with a quality, see **Every quality** under Autocrafting); the blocking mode (issue #335) and the lock (issue #346) act on chests only, and there is no
-  lock by a circuit signal. Clearing a pattern needs the
+  lock by a circuit signal (issue #429). Clearing a pattern needs the
   ME Pattern Terminal's button (an inventory click cannot be caught).
   A provider mined by another mod's script (not a player or robot) drops its patterns instead of giving them to
   that script's inventory.

@@ -49,6 +49,12 @@ local F = require("scripts.fork-me-fluid-storagebus")
 local Sched = require("scripts.fork-me-schedule")
 local G = require("scripts.fork-me-gui")
 local CS = require("scripts.fork-me-cardslots")
+local Conn = require("scripts.fork-me-connector")
+--- issue #412: the connector module puts a bus's off state into its record (resolve reads `rec.coff` only)
+N.off_setters.sbus = function(unit, off)
+	local rec = N.ext_get(unit)
+	if rec then rec.coff = off or nil end
+end
 
 local M = {}
 
@@ -316,6 +322,20 @@ end
 --- target is kept.
 local function resolve(s, rec)
 	local e = rec.entity
+	--- issue #412: switched off by its circuit connector's condition: it faces nothing (its storage leaves the network) until
+	--- the condition holds again (fork-me-connector.lua wakes it, M.wake drops the cached target)
+	if rec.coff then
+		release(s, rec)
+		F.drop(rec)
+		if rec.side ~= nil then
+			rec.side, rec.handler = nil, nil
+			N.ext_sync(rec.unit, {})
+			N.ext_touch(rec.unit)
+		end
+		list_side(s, rec)
+		rec.status = "circuit-off"
+		return nil
+	end
 	local t = rec.target
 	if t and t.valid and rec.dir == e.direction then
 		if rec.side == "fluid" then
@@ -512,6 +532,8 @@ function M.wake(unit)
 		end
 	end
 end
+
+N.wakers.sbus = M.wake                    -- (issue #412: the circuit connector wakes a storage bus that is on again)
 
 local bus_names
 --- an entity was built: the storage buses facing it read it at the next tick

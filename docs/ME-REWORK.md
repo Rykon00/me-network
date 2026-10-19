@@ -2439,7 +2439,7 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 ## Open points
 
 * Patterns (issue #80, left open on purpose; the data model keeps room for them): AE2's locks of a provider by a redstone
-  signal (no circuit connection; the blocking mode and the lock until the result for chests are built, issues #335 and
+  signal (issue #429; the circuit connector of issue #412 could carry it; the blocking mode and the lock until the result for chests are built, issues #335 and
   #346), clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a
   storage bus. Substitutions and fuzzy patterns are decided: issue #352 made autocrafting quality-aware instead (Factorio's
   "same item, other variant" is the quality; `docs/AE2.md`, "Every quality").
@@ -2447,7 +2447,8 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
   provider Pattern Capacity Cards, issue #156, the ME Interface Interface Capacity Cards, issue #196; `N.card_rules()`
   holds their slots and limits. Issue #413 added the Capacity Card (up to 2), the Fuzzy Card and, on the import bus only
   (an addition: AE2-Unofficial has none on the buses), the Inverter Card to the import and export bus. Issue #411 added the
-  Crafting Card (export bus, ME Interface; items only, issue #426). AE2's redstone card is not built. (A level maintainer with several resources is built: five rows, issue #351.)
+  Crafting Card (export bus, ME Interface; items only, issue #426). AE2's redstone card is the circuit connector of issue
+  #412 (`scripts/fork-me-connector.lua`: a hidden lamp per bus and interface, since their prototype type cannot change). (A level maintainer with several resources is built: five rows, issue #351.)
 * Issue #3: an ME Interface keeps four fluids at most (one per side) and takes no surplus back from an export side; a
   fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
   library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block

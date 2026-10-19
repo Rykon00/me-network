@@ -43,6 +43,7 @@ local qbridge = require("scripts.fork-me-qbridge")        -- (issue #385)
 local picker = require("scripts.fork-me-picker")
 local Names = require("scripts.fork-me-names")
 local terminal = require("scripts.fork-me-terminal")
+local Conn = require("scripts.fork-me-connector")         -- (issue #412)
 
 local M = {}
 
@@ -1491,6 +1492,7 @@ function M.mix_status(status, fmix)
 end
 
 local function open_interface(player, entity, opts)
+	Conn.ensure(entity)                              -- (issue #412: a block a script built without an event has none yet)
 	local via = opts and opts.via                   -- (issue #336: opened from an ME Interface Terminal)
 	local _, content = G.open_window(player, "interface", caption_of(entity), { unit = entity.unit_number, via = via })
 	G.back_button(content, via)
@@ -1505,6 +1507,11 @@ local function open_interface(player, entity, opts)
 	G.label(content, "", WIDTH, nil, "fork_me_if_want")
 	G.label(content, "", WIDTH, nil, "fork_me_if_kept")
 	G.label(content, "", WIDTH, nil, "fork_me_if_craft")      -- issue #411: the Crafting Card
+	--- issue #412: the rows from the circuit (the connector in the block's corner), what they are now
+	content.add{ type = "checkbox", name = "fork_me_if_circuit", state = false, caption = { "fork-me-gui.interface-circuit" },
+		tooltip = { "fork-me-gui.interface-circuit-tooltip" }, tags = G.act("if_circuit") }
+	G.label(content, "", WIDTH, nil, "fork_me_if_circuit_rows")
+	G.label(content, { "fork-me-gui.connector-hint" }, WIDTH)
 	local scroll = content.add{ type = "scroll-pane", name = "fork_me_if_scroll", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = 300
 	scroll.add{ type = "flow", name = "fork_me_if_config", direction = "vertical" }
@@ -1614,6 +1621,15 @@ function M.refresh_interface(player, frame)
 	G.find(frame, "fork_me_if_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_if_kept").caption = d.kept and { "fork-me-gui.interface-rows-kept" } or ""
 	G.find(frame, "fork_me_if_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	G.find(frame, "fork_me_if_circuit").state = d.circuit or false
+	local rows = {}
+	for i = 1, d.slots do
+		local c = d.circuit_rows and d.circuit_rows[i]
+		if c then rows[#rows + 1] = (c.type == "fluid" and "[fluid=" .. c.name .. "]" or "[item=" .. c.name .. "]") .. G.fmt(c.amount) end
+	end
+	G.find(frame, "fork_me_if_circuit_rows").caption = d.circuit
+		and (#rows > 0 and { "fork-me-gui.interface-circuit-rows", table.concat(rows, " ") } or { "fork-me-gui.interface-circuit-none" })
+		or ""
 	rebuild(frame, "fork_me_if_config", config_sig(d.config, d.slots), function(box)
 		local t = box.add{ type = "table", column_count = 6 }
 		for i = 1, d.slots do
@@ -1693,7 +1709,9 @@ end
 
 local function hover(player)
 	local e = player.selected
-	if e and e.valid and N.kind_of(e.name) == "interface" then e.custom_status = M.interface_hover_status(e) end
+	if not (e and e.valid) then return end
+	if Conn.HOSTS[e.name] then Conn.ensure(e) end              -- (issue #412: its circuit connector, when a player points at it)
+	if N.kind_of(e.name) == "interface" then e.custom_status = M.interface_hover_status(e) end
 end
 G.player_hooks[#G.player_hooks + 1] = hover
 script.on_event(defines.events.on_selected_entity_changed, function(event)
@@ -1756,6 +1774,7 @@ end)
 function M.bus_data(entity) return io.bus_info(entity) end
 
 local function open_bus(player, entity)
+	Conn.ensure(entity)                              -- (issue #412: a block a script built without an event has none yet)
 	local d = M.bus_data(entity)
 	local _, content = G.open_window(player, "bus", caption_of(entity), { unit = entity.unit_number })
 	G.label(content, { "fork-me-net." .. d.kind .. "-help" }, WIDTH)
@@ -1766,6 +1785,12 @@ local function open_bus(player, entity)
 	M.gfilter_row(content, "fork_me_bus_gtext", "bus_gtext")    -- issue #363: the Group Filter Card's text
 	G.label(content, "", WIDTH, nil, "fork_me_bus_mode")      -- issue #413: the Fuzzy and Inverter Card, kept filters
 	G.label(content, "", WIDTH, nil, "fork_me_bus_craft")     -- issue #411: the Crafting Card
+	--- issue #412: the export bus's pulse mode; the circuit connector in the block's corner
+	if d.kind == "export-bus" then
+		content.add{ type = "checkbox", name = "fork_me_bus_pulse", state = d.pulse or false, caption = { "fork-me-gui.bus-pulse" },
+			tooltip = { "fork-me-gui.bus-pulse-tooltip" }, tags = G.act("bus_pulse") }
+	end
+	G.label(content, { "fork-me-gui.connector-hint" }, WIDTH)
 	G.label(content, "", WIDTH, nil, "fork_me_bus_want")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_speed")
 	G.label(content, "", WIDTH, nil, "fork_me_bus_target")
@@ -1811,6 +1836,8 @@ function M.refresh_bus(player, frame)
 	end
 	G.find(frame, "fork_me_bus_mode").caption = mode
 	G.find(frame, "fork_me_bus_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	local pulse = G.find(frame, "fork_me_bus_pulse")
+	if pulse then pulse.state = d.pulse or false end
 	G.find(frame, "fork_me_bus_speed").caption = d.items and { "fork-me-gui.bus-speed", d.accel, G.fmt(d.rate) } or ""
 	M.gfilter_refresh(frame, "fork_me_bus_gtext", d.gfilter, d.gtext)
 	local target = d.target and prototypes.entity[d.target]
@@ -1861,6 +1888,18 @@ G.on("bus_filter", function(event, player, el)
 	key_picker(player, "bus_filter", { unit = entity.unit_number, index = index }, key, true)
 end)
 
+--- issue #412: the export bus's pulse mode, the interface's rows from the circuit
+G.on("bus_pulse", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then io.set_bus_pulse(entity, el.state) G.refresh_one(player) end
+end)
+G.on("if_circuit", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then io.set_interface_circuit(entity, el.state) G.refresh_one(player) end
+end)
+
 --- issue #70: a bus filter is an item or a fluid; issue #291: an item with its quality (normal: the plain name)
 picker.on_confirm("bus_filter", function(player, data, choice)
 	local entity = window_entity(player)
@@ -1879,6 +1918,7 @@ local SBUS_MODES = { "readwrite", "read", "write" }
 function M.storage_bus_data(entity) return sbus.info(entity) end
 
 local function open_storage_bus(player, entity)
+	Conn.ensure(entity)                              -- (issue #412: a block a script built without an event has none yet)
 	local d = M.storage_bus_data(entity)
 	if not d then return end
 	--- issue #28: the player's inventory on the left, the card slots in the window
@@ -1919,6 +1959,7 @@ local function open_storage_bus(player, entity)
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-contents" }, tooltip = { "fork-me-gui.storage-bus-contents-tooltip" },
 		tags = G.act("sbus_contents") }
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("sbus_clear") }
+	G.label(content, { "fork-me-gui.connector-hint" }, WIDTH)   -- (issue #412)
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_holds")
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_target")
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_status")
