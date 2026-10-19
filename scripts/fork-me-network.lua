@@ -5209,6 +5209,8 @@ remote.add_interface("gregtorio-me-network", {
 	built = function(entity, stack) M.on_built(entity, { stack = stack }) end,
 	extract_to = function(entity, target, key, count) return M.extract_to(M.network_of(entity), target, key, count) end,
 	insert_cell = function(drive, stack, slot) return M.insert_cell(drive, stack, slot) end,
+	--- tests (issue #414): every storage cell's spec by item name
+	cell_specs = function() return M.cell_specs() end,
 	take_cell = function(drive, slot, target) return M.take_cell(drive, slot, target) end,
 	drive = function(drive) return M.drive_info(drive) end,
 	--- drive priority and cell partitions (R3)

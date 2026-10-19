@@ -3420,3 +3420,19 @@ scenes have no condition):
 
 `regressions beyond the noise: 0`.
 
+## Storage cells above 256k and the Singularity cell (issue #414)
+
+New items and recipes only: a cell's spec is read as for every other cell (the mod-data `cells`), the storage engine's counts
+are the same numbers. Nothing per tick.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413, #411 and #412 as well; the
+scenes have no such cell):
+
+| | v0.5.4 | with the cells |
+|---|---|---|
+| 100: script average / p99 ms | 0.1890 / 1.781 | 0.1902 / 1.753 |
+| 1000: script average / p99 ms | 0.3346 / 1.901 | 0.3343 / 1.873 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.31 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.

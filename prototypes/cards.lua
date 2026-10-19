@@ -66,12 +66,12 @@ local CARDS = {
 	--- issue #356: AE2-Unofficial's Super Speed Card and Superluminal Speed Card (Upgrades.SUPERSPEED, SUPERLUMINALSPEED;
 	--- MaterialType CardSuperSpeed, CardSuperluminalSpeed): the import and export bus take up to 4 of each, mixed with
 	--- Acceleration Cards in their 4 slots, and the items per operation add up (`bus` below). AE2-U's recipes
-	--- (materials/cards.recipe): an Acceleration Card and a 16k storage component; a Super Speed Card and a 1024k component,
-	--- which ME Network does not have: 4 256k components (the same bytes)
+	--- (materials/cards.recipe): an Acceleration Card and a 16k storage component; a Super Speed Card and a 1024k component
+	--- (issue #414: ME Network has it now; before, 4 256k components, the same bytes)
 	{ name = "me-super-speed-card", order = "h2", kind = "superspeed",
 	  ingredients = I{ "me-acceleration-card", 1, "me-16k-storage-component", 1 } },
 	{ name = "me-superluminal-speed-card", order = "h3", kind = "superluminal",
-	  ingredients = I{ "me-super-speed-card", 1, "me-256k-storage-component", 4 } },
+	  ingredients = I{ "me-super-speed-card", 1, "me-1024k-storage-component", 1 } },
 }
 
 local kinds = {}
