@@ -80,6 +80,7 @@ local function kinds()
 		k[n.export_bus] = "export-bus"
 		k[n.terminal] = "terminal"
 		if n.pattern_terminal then k[n.pattern_terminal] = "pattern-terminal" end      -- issue #130
+		if n.pattern_terminal_ex then k[n.pattern_terminal_ex] = "pattern-terminal" end   -- issue #416: the Ex, the same kind
 		if n.interface_terminal then k[n.interface_terminal] = "interface-terminal" end   -- issue #336
 		for _, m in pairs({ "storage", "conversion", "throughput" }) do                     -- issue #353: the monitors
 			if n[m .. "_monitor"] then k[n[m .. "_monitor"]] = m .. "-monitor" end

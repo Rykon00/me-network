@@ -288,21 +288,27 @@ def assembler_sprite(gt, phase=0):
 PT_LIT = (110, 235, 210)
 
 
-def pattern_terminal_sprites(gt):
+PT_EX = (255, 180, 60)             # issue #416: the Pattern Terminal Ex's screen frame (amber)
+
+
+def pattern_terminal_sprites(gt, ex=False):
     """The ME Pattern Terminal (me-network issue #130), 1x1: the ME Terminal's MV casing around a dark screen that shows a crafting
-    grid, an arrow and a result slot (a pattern): teal when lit (its network works), dim when dark. Returns (dark, lit), 32 px."""
+    grid, an arrow and a result slot (a pattern): teal when lit (its network works), dim when dark. Returns (dark, lit), 32 px.
+    Issue #416, `ex`: the Pattern Terminal Ex, a 4 x 4 grid of smaller slots and the screen's frame in amber."""
     base = up(hull(gt, "MV"))
 
     def face(lit):
         img = base.copy()
         d = ImageDraw.Draw(img)
-        d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+        frame = (PT_EX if lit else dim(PT_EX)) if ex else (60, 60, 72)
+        d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=frame + (255,))
         col = PT_LIT if lit else (45, 72, 72)
         res = FLUIX_LIGHT if lit else (50, 56, 84)
-        for gx in range(3):
-            for gy in range(3):
-                x, y = 7 + gx * 4, 9 + gy * 4
-                d.rectangle((x, y, x + 2, y + 2), fill=col + (255,))
+        n, step, size, y0 = (4, 3, 1, 8) if ex else (3, 4, 2, 9)
+        for gx in range(n):
+            for gy in range(n):
+                x, y = 7 + gx * step, y0 + gy * step
+                d.rectangle((x, y, x + size, y + size), fill=col + (255,))
         d.line((19, 14, 22, 14), fill=col + (255,))
         d.line((21, 13, 21, 15), fill=col + (255,))
         d.rectangle((24, 12, 26, 16), fill=res + (255,))
@@ -312,13 +318,21 @@ def pattern_terminal_sprites(gt):
 
 
 def pattern_terminal(gt):
-    """Entity sheet (dark at x = 0, lit at x = 32: the two variations of the entity) and the item icon (the lit picture)."""
-    dark, lit = pattern_terminal_sprites(gt)
-    sheet = Image.new("RGBA", (2 * TILE, TILE))
-    sheet.paste(dark, (0, 0))
-    sheet.paste(lit, (TILE, 0))
-    sheet.save(OUT_ENTITY / "me-pattern-terminal.png")
-    lit.save(OUT_ICON / "me-pattern-terminal.png")
+    """Entity sheet (dark at x = 0, lit at x = 32: the two variations of the entity) and the item icon (the lit picture); issue
+    #416: the same for the Pattern Terminal Ex, and the 3D-style sheet and icon of the Ex (hd_batch1 makes the plain one's)"""
+    for name, ex in (("me-pattern-terminal", False), ("me-pattern-terminal-ex", True)):
+        dark, lit = pattern_terminal_sprites(gt, ex)
+        sheet = Image.new("RGBA", (2 * TILE, TILE))
+        sheet.paste(dark, (0, 0))
+        sheet.paste(lit, (TILE, 0))
+        sheet.save(OUT_ENTITY / f"{name}.png")
+        lit.save(OUT_ICON / f"{name}.png")
+    pt = load(OUT_ENTITY / "me-pattern-terminal-ex.png")
+    hd = Image.new("RGBA", (2 * HD, HD))
+    for i in range(2):
+        hd.alpha_composite(hd_block(pt.crop((i * TILE, 0, (i + 1) * TILE, TILE))), (i * HD, 0))
+    hd.save(HD_ENTITY / "me-pattern-terminal-ex.png")
+    hd_cube(pt.crop((TILE, 0, 2 * TILE, TILE))).save(HD_ICON / "me-pattern-terminal-ex.png")
 
 
 def interface_terminal_sprites(gt):

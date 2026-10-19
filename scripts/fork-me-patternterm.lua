@@ -15,6 +15,9 @@
 ---     one becomes a blank pattern in the blank slot).
 ---   * What lies in the slots stays when the window closes, is saved, comes out when the block is mined (into the mined buffer)
 ---     and is spilled when it is destroyed or vanishes; blueprints, copies and clones start with empty slots.
+---   * Issue #416: the ME Pattern Terminal Ex (AE2-Unofficial's PartPatternTerminalEx) is the same block for processing patterns
+---     only, with 32 inputs and 8 outputs or (its switch) 8 inputs and 32 outputs, in one grid each (AE2-U: two pages). The
+---     player has an editor of each kind (`pat` and `patx`), so a plain terminal never cuts a big pattern's rows.
 --- The pattern data and the encoding itself are in scripts/fork-me-patterns.lua (`encode_slots`).
 --- State: storage.fork_me_pterm[unit] = { entity, inv, where }; storage.fork_me_pterm_ui[player_index] = { pat = editor, shown }
 --- (the editor is the player's, kept while the window is closed).
@@ -28,7 +31,9 @@ local picker = require("scripts.fork-me-picker")
 
 local M = {}
 
-local NAME = "me-pattern-terminal"
+local NAME, NAME_EX = "me-pattern-terminal", "me-pattern-terminal-ex"
+local NAMES = { [NAME] = true, [NAME_EX] = true }
+local function is_ex(entity) return entity ~= nil and entity.valid and entity.name == NAME_EX end
 local BLANK_SLOT, OUTPUT_SLOT = 1, 2
 local COLUMNS = 10
 local WIDTH = 40 * COLUMNS + 12
@@ -59,14 +64,14 @@ end
 
 --- the record of a pattern terminal (made when it is first asked for), or nil for any other entity
 local function rec_of(entity)
-	if not (entity and entity.valid and entity.name == NAME) then return nil end
+	if not (entity and entity.valid and NAMES[entity.name]) then return nil end
 	local unit = entity.unit_number
 	local rec = records()[unit]
 	if not rec then
 		rec = { entity = entity }
 		records()[unit] = rec
 	end
-	if not (rec.inv and rec.inv.valid) then rec.inv = game.create_inventory(2, { "entity-name." .. NAME }) end
+	if not (rec.inv and rec.inv.valid) then rec.inv = game.create_inventory(2, { "entity-name." .. entity.name }) end
 	rec.entity = entity
 	remember_place(rec)
 	return rec
@@ -124,7 +129,7 @@ end
 --- The block is mined (`buffer`: the event's mined buffer) or destroyed (nil: its slots are spilled where it stood): the
 --- record and its inventory go. Called before the entity is gone.
 function M.on_removed(entity, buffer)
-	if not (entity and entity.valid and entity.name == NAME) then return end
+	if not (entity and entity.valid and NAMES[entity.name]) then return end
 	local rec = records()[entity.unit_number]
 	if not rec then return end
 	if rec.inv and rec.inv.valid then
@@ -159,13 +164,27 @@ local function new_editor()
 	return { mode = "crafting", recipe = nil, quality = nil, inputs = {}, outputs = {} }
 end
 M.new_editor = new_editor
+--- issue #416: the editor of the Pattern Terminal Ex: processing only, `ex` "inputs" (32 inputs, 8 outputs) or "outputs"
+local function new_editor_ex()
+	return { mode = "processing", ex = "inputs", recipe = nil, quality = nil, inputs = {}, outputs = {} }
+end
+M.new_editor_ex = new_editor_ex
+
+--- the rows an editor has: the plain terminal's 9 and 6, the Ex's 32 and 8 or 8 and 32 (issue #416)
+local function limits(ed)
+	if ed.ex == "outputs" then return P.EX_FEW, P.EX_MANY end
+	if ed.ex then return P.EX_MANY, P.EX_FEW end
+	return P.MAX_INPUTS, P.MAX_OUTPUTS
+end
+M.limits = limits
 
 --- The pattern the editor describes, or nil and the reason ("no-recipe", "not-researched", "invalid", ...)
 function M.pattern_of(force, ed)
 	if ed.mode == "crafting" then return P.crafting(force, ed.recipe, ed.quality) end
 	local inputs, outputs = {}, {}
-	for i = 1, P.MAX_INPUTS do local r = ed.inputs[i] if r and r.key then inputs[#inputs + 1] = r end end
-	for i = 1, P.MAX_OUTPUTS do local r = ed.outputs[i] if r and r.key then outputs[#outputs + 1] = r end end
+	local max_in, max_out = limits(ed)
+	for i = 1, max_in do local r = ed.inputs[i] if r and r.key then inputs[#inputs + 1] = r end end
+	for i = 1, max_out do local r = ed.outputs[i] if r and r.key then outputs[#outputs + 1] = r end end
 	local recipe = ed.recipe and force.recipes[ed.recipe] and force.recipes[ed.recipe].enabled and ed.recipe or nil
 	return P.processing(inputs, outputs, recipe, recipe and ed.quality or nil)
 end
@@ -184,7 +203,10 @@ function M.set_editor_recipe(force, ed, recipe, quality)
 	ed.recipe, ed.quality = recipe, quality
 	if ed.mode == "processing" then
 		local inputs, outputs = P.recipe_rows(recipe, quality)
-		if #inputs > P.MAX_INPUTS or #outputs > P.MAX_OUTPUTS then return nil, "too-many-rows" end
+		local max_in, max_out = limits(ed)
+		if ed.ex and #outputs > max_out and #outputs <= P.EX_MANY and #inputs <= P.EX_FEW then ed.ex = "outputs" end   -- (#416)
+		max_in, max_out = limits(ed)
+		if #inputs > max_in or #outputs > max_out then return nil, "too-many-rows" end
 		ed.inputs, ed.outputs = inputs, outputs
 	end
 	return true
@@ -193,7 +215,8 @@ end
 --- a row of the processing editor: `which` "inputs" or "outputs", `key` (nil clears the row), `amount` (nil keeps it)
 function M.set_editor_row(ed, which, index, key, amount)
 	local rows = ed[which]
-	local max = which == "inputs" and P.MAX_INPUTS or P.MAX_OUTPUTS
+	local max_in, max_out = limits(ed)
+	local max = which == "inputs" and max_in or max_out
 	if not rows or index < 1 or index > max then return false end
 	if key == false then rows[index] = nil return true end
 	local row = rows[index] or { amount = 1 }
@@ -221,10 +244,17 @@ function M.load_pattern(entity, cursor, ed)
 	local raw = stack and P.read(stack)
 	local def = raw and P.normalize(raw)
 	if not def then return nil, "no-pattern-in-hand" end
-	ed.mode, ed.recipe, ed.quality = def.kind, def.recipe, def.quality
+	if ed.ex then                                     -- (issue #416: the Ex takes processing patterns, in the mode that fits)
+		if def.kind ~= "processing" then return nil, "ex-processing-only" end
+		ed.ex = (#def.outputs > P.EX_FEW and #def.inputs <= P.EX_FEW) and "outputs" or "inputs"
+	else
+		ed.mode = def.kind
+	end
+	ed.recipe, ed.quality = def.recipe, def.quality
 	ed.inputs, ed.outputs = {}, {}
-	for i, r in ipairs(def.inputs) do if i <= P.MAX_INPUTS then ed.inputs[i] = { key = r.key, amount = r.amount } end end
-	for i, r in ipairs(def.outputs) do if i <= P.MAX_OUTPUTS then ed.outputs[i] = { key = r.key, amount = r.amount } end end
+	local max_in, max_out = limits(ed)
+	for i, r in ipairs(def.inputs) do if i <= max_in then ed.inputs[i] = { key = r.key, amount = r.amount } end end
+	for i, r in ipairs(def.outputs) do if i <= max_out then ed.outputs[i] = { key = r.key, amount = r.amount } end end
 	return true, where
 end
 
@@ -412,10 +442,17 @@ end
 
 local function build_pattern_box(box, player, ed)
 	local mode = G.row(box)
-	mode.add{ type = "switch", switch_state = ed.mode == "processing" and "right" or "left",
-		left_label_caption = { "fork-me-pattern.kind-crafting" }, left_label_tooltip = { "fork-me-gui.patterns-crafting-tooltip" },
-		right_label_caption = { "fork-me-pattern.kind-processing" }, right_label_tooltip = { "fork-me-gui.patterns-processing-tooltip" },
-		tags = G.act("pat_mode") }
+	if ed.ex then                                     -- (issue #416: the Ex's two layouts, processing patterns only)
+		mode.add{ type = "switch", switch_state = ed.ex == "outputs" and "right" or "left",
+			left_label_caption = { "fork-me-pattern-terminal.ex-inputs" }, right_label_caption = { "fork-me-pattern-terminal.ex-outputs" },
+			left_label_tooltip = { "fork-me-pattern-terminal.ex-tooltip" }, right_label_tooltip = { "fork-me-pattern-terminal.ex-tooltip" },
+			tags = G.act("pat_exmode") }
+	else
+		mode.add{ type = "switch", switch_state = ed.mode == "processing" and "right" or "left",
+			left_label_caption = { "fork-me-pattern.kind-crafting" }, left_label_tooltip = { "fork-me-gui.patterns-crafting-tooltip" },
+			right_label_caption = { "fork-me-pattern.kind-processing" }, right_label_tooltip = { "fork-me-gui.patterns-processing-tooltip" },
+			tags = G.act("pat_mode") }
+	end
 	local row = G.row(box)
 	row.add{ type = "label", caption = { ed.mode == "crafting" and "fork-me-gui.patterns-recipe" or "fork-me-gui.patterns-from-recipe" } }
 	--- (issue #352: the recipe with its quality)
@@ -434,10 +471,11 @@ local function build_pattern_box(box, player, ed)
 		for _, r in ipairs(def.outputs) do G.slot(t, r.key, r.amount) end
 		return
 	end
+	local max_in, max_out = limits(ed)
 	G.heading(box, { "fork-me-gui.patterns-inputs" })
-	editor_rows(box, ed, "inputs", P.MAX_INPUTS)
+	editor_rows(box, ed, "inputs", max_in)
 	G.heading(box, { "fork-me-gui.patterns-outputs" })
-	editor_rows(box, ed, "outputs", P.MAX_OUTPUTS)
+	editor_rows(box, ed, "outputs", max_out)
 end
 
 local function slot_column(parent, caption, name, slot, tooltip)
@@ -447,17 +485,28 @@ local function slot_column(parent, caption, name, slot, tooltip)
 	col.add{ type = "sprite-button", name = name, style = "slot_button", tags = G.act("block_slot", { slot = slot }), tooltip = tooltip }
 end
 
-local function open(player, entity)
-	if not (entity and entity.valid and (entity.name == NAME or wireless(entity))) then return end
-	local remote_view = wireless(entity)
-	if not remote_view then rec_of(entity) end
-	local _, content = G.open_window(player, "pattern-terminal", { "fork-me-pattern-terminal.title" }, { unit = entity.unit_number })
-	local u = ui()[player.index]
-	if not u then
-		u = { pat = new_editor() }
-		ui()[player.index] = u
+--- the editor of a player for the block `entity` (issue #416: the Ex has its own), made when it has none
+local function editor_for(u, entity)
+	if is_ex(entity) then
+		u.patx = u.patx or new_editor_ex()
+		return u.patx
 	end
 	u.pat = u.pat or new_editor()
+	return u.pat
+end
+
+local function open(player, entity)
+	if not (entity and entity.valid and (NAMES[entity.name] or wireless(entity))) then return end
+	local remote_view = wireless(entity)
+	if not remote_view then rec_of(entity) end
+	local _, content = G.open_window(player, "pattern-terminal", { is_ex(entity) and "fork-me-pattern-terminal.title-ex"
+		or "fork-me-pattern-terminal.title" }, { unit = entity.unit_number })
+	local u = ui()[player.index]
+	if not u then
+		u = {}
+		ui()[player.index] = u
+	end
+	editor_for(u, entity)
 	u.shown = nil
 	G.label(content, "", WIDTH, nil, "fork_me_net_line")
 	if remote_view and G.wireless_mode_button then G.wireless_mode_button(content, entity, "terminal") end   -- (issue #210)
@@ -496,12 +545,12 @@ function M.refresh(player, frame)
 	if not (net_line and box) then return false end                           -- built by another version
 	local net, why = network(entity)
 	net_line.caption = net and { "fork-me-net.status-ok" } or { "fork-me-net.status-" .. why }
-	local ed = u.pat or new_editor()
-	u.pat = ed
+	local ed = editor_for(u, entity)
 	--- the box is rebuilt when the mode, the recipe or a row's item changes (not the amounts: their fields keep the focus)
-	local sig = { ed.mode, tostring(ed.recipe), tostring(ed.quality) }
-	for i = 1, P.MAX_INPUTS do sig[#sig + 1] = ed.inputs[i] and ed.inputs[i].key or "-" end
-	for i = 1, P.MAX_OUTPUTS do sig[#sig + 1] = ed.outputs[i] and ed.outputs[i].key or "-" end
+	local sig = { ed.mode, tostring(ed.ex), tostring(ed.recipe), tostring(ed.quality) }
+	local max_in, max_out = limits(ed)
+	for i = 1, max_in do sig[#sig + 1] = ed.inputs[i] and ed.inputs[i].key or "-" end
+	for i = 1, max_out do sig[#sig + 1] = ed.outputs[i] and ed.outputs[i].key or "-" end
 	sig = table.concat(sig, ",")
 	if u.shown ~= sig then
 		u.shown = sig
@@ -525,7 +574,7 @@ end
 
 --- the inventory pane: shift + click sends blank patterns to the blank slot and an encoded pattern to the output slot
 G.window("pattern-terminal", { open = open, refresh = function(player, frame) return M.refresh(player, frame) end,
-	entities = { NAME }, hint = { "fork-me-pattern-terminal.store-help" },
+	entities = { NAME, NAME_EX }, hint = { "fork-me-pattern-terminal.store-help" },
 	shift = function(entity, stack, inventory) return M.shift_in(entity, stack, inventory) end,
 	click = function(entity, slot, cursor, inventory, shift) return M.click(entity, slot, cursor, inventory, shift) end,
 	message = G.net_message })
@@ -536,23 +585,41 @@ G.window("pattern-terminal", { open = open, refresh = function(player, frame) re
 
 local function ui_of(player) return ui()[player.index] end
 
+local function window_entity(player)
+	local frame = G.window_of(player)
+	return frame and G.entity_of(player, frame)
+end
+
+--- the editor of the window a player has open (issue #416: the Ex's or the plain one's), and the player's ui
+local function editor_of(player)
+	local u = ui_of(player)
+	if not u then return nil end
+	return editor_for(u, window_entity(player)), u
+end
+
+G.on("pat_exmode", function(event, player, el)
+	if event.name ~= defines.events.on_gui_switch_state_changed then return end
+	local ed = editor_of(player)
+	if not (ed and ed.ex) then return end
+	ed.ex = el.switch_state == "right" and "outputs" or "inputs"
+	M.refresh(player)
+end)
+
 G.on("pat_mode", function(event, player, el)
 	if event.name ~= defines.events.on_gui_switch_state_changed then return end
-	local u = ui_of(player)
-	if not u then return end
-	u.pat = u.pat or new_editor()
-	u.pat.mode = el.switch_state == "right" and "processing" or "crafting"
+	local ed = editor_of(player)
+	if not ed or ed.ex then return end
+	ed.mode = el.switch_state == "right" and "processing" or "crafting"
 	M.refresh(player)
 end)
 
 G.on("pat_recipe", function(event, player, el)
 	if event.name ~= defines.events.on_gui_elem_changed then return end
-	local u = ui_of(player)
-	if not u then return end
-	u.pat = u.pat or new_editor()
-	local ok, why = M.set_editor_recipe(player.force, u.pat, el.elem_value)
+	local ed, u = editor_of(player)
+	if not ed then return end
+	local ok, why = M.set_editor_recipe(player.force, ed, el.elem_value)
 	if not ok then
-		el.elem_value = u.pat.recipe and { name = u.pat.recipe, quality = u.pat.quality or "normal" } or nil
+		el.elem_value = ed.recipe and { name = ed.recipe, quality = ed.quality or "normal" } or nil
 		report(player, why)
 	end
 	u.shown = nil
@@ -563,13 +630,12 @@ end)
 --- click empties the row
 G.on("pat_row", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
-	local u = ui_of(player)
-	if not u then return end
-	u.pat = u.pat or new_editor()
+	local ed = editor_of(player)
+	if not ed then return end
 	local which, index = el.tags.which, el.tags.index
-	local row = u.pat[which][index]
+	local row = ed[which][index]
 	if event.button == defines.mouse_button_type.right then
-		if row then M.set_editor_row(u.pat, which, index, false) M.refresh(player) end
+		if row then M.set_editor_row(ed, which, index, false) M.refresh(player) end
 		return
 	end
 	picker.open(player, { callback = "pat_row", data = { which = which, index = index }, kinds = { item = true, fluid = true },
@@ -578,31 +644,26 @@ end)
 
 --- (a key a pattern cannot name, an item with tags, empties the row, with the message, as before)
 picker.on_confirm("pat_row", function(player, data, choice)
-	local u = ui_of(player)
-	if not (u and u.pat) then return end
+	local ed = editor_of(player)
+	if not ed then return end
 	local key = picker.key_of(choice, true)
 	if key and not P.valid_key(key) then key = nil end
 	if not key then report(player, "not-a-pattern-row") end
-	M.set_editor_row(u.pat, data.which, data.index, key or false)
+	M.set_editor_row(ed, data.which, data.index, key or false)
 	M.refresh(player)
 end)
 
 G.on("pat_amount", function(event, player, el)
 	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
-	local u = ui_of(player)
-	if not (u and u.pat) then return end
-	M.set_editor_row(u.pat, el.tags.which, el.tags.index, nil, tonumber(el.text) or 0)
+	local ed = editor_of(player)
+	if not ed then return end
+	M.set_editor_row(ed, el.tags.which, el.tags.index, nil, tonumber(el.text) or 0)
 end)
 
-local function window_entity(player)
-	local frame = G.window_of(player)
-	return frame and G.entity_of(player, frame)
-end
-
 G.on("pat_encode", function(event, player)
-	local u, entity = ui_of(player), window_entity(player)
-	if not (u and u.pat and entity) then return end
-	local where, why = M.encode(entity, player.force, u.pat, (event.shift or wireless(entity)) and G.player_inventory(player) or nil)
+	local ed, entity = editor_of(player), window_entity(player)
+	if not (ed and entity) then return end
+	local where, why = M.encode(entity, player.force, ed, (event.shift or wireless(entity)) and G.player_inventory(player) or nil)
 	if where then
 		player.create_local_flying_text{ text = { "fork-me-pattern-terminal.encoded-" .. where }, create_at_cursor = true }
 	else
@@ -620,10 +681,10 @@ G.on("pat_clear", function(event, player)
 end)
 
 G.on("pat_load", function(event, player)
-	local u, entity = ui_of(player), window_entity(player)
-	if not (u and entity) then return end
-	u.pat = u.pat or new_editor()
-	local _, why = M.load_pattern(entity, (G.hand(player)), u.pat)
+	local ed, u = editor_of(player)
+	local entity = window_entity(player)
+	if not (ed and entity) then return end
+	local _, why = M.load_pattern(entity, (G.hand(player)), ed)
 	report(player, why)
 	u.shown = nil
 	G.refresh_one(player)
@@ -635,6 +696,7 @@ end)
 
 remote.add_interface("gregtorio-me-pattern-terminal", {
 	new_editor = function() return new_editor() end,
+	new_editor_ex = function() return new_editor_ex() end,                     -- (issue #416)
 	pattern_of = function(force, ed) return M.pattern_of(force, ed) end,
 	set_editor_recipe = function(force, ed, recipe, quality)
 		local ok, why = M.set_editor_recipe(force, ed, recipe, quality)
