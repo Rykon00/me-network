@@ -155,6 +155,23 @@ return {
 		["__me-network__/graphics/icons/hd/me-interface-terminal.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-interface-terminal.png", icon_size = 64 },
 	},
 	["item/me-interface-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-interface-terminal.png", icon_size = 64 },
+	--- the ME Storage, Conversion and Throughput Monitor (issue #421): AE2-Unofficial's monitor panels, the same two variations (the
+	--- resource and its amount stay ME Network's, drawn over the screen)
+	["simple-entity-with-force/me-storage-monitor"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-storage-monitor.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-monitor.png",
+		["__me-network__/graphics/icons/hd/me-storage-monitor.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-monitor.png", icon_size = 64 },
+	},
+	["item/me-storage-monitor"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-monitor.png", icon_size = 64 },
+	["simple-entity-with-force/me-conversion-monitor"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-conversion-monitor.png"] = "__me-network-ae2-textures__/graphics/blocks/me-conversion-monitor.png",
+		["__me-network__/graphics/icons/hd/me-conversion-monitor.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-conversion-monitor.png", icon_size = 64 },
+	},
+	["item/me-conversion-monitor"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-conversion-monitor.png", icon_size = 64 },
+	["simple-entity-with-force/me-throughput-monitor"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-throughput-monitor.png"] = "__me-network-ae2-textures__/graphics/blocks/me-throughput-monitor.png",
+		["__me-network__/graphics/icons/hd/me-throughput-monitor.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-throughput-monitor.png", icon_size = 64 },
+	},
+	["item/me-throughput-monitor"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-throughput-monitor.png", icon_size = 64 },
 	--- the buses (issue #282): AE2's front of each, the same block in every direction (AE2's front shows none: ME Network's
 	--- marker layer stays and shows it); only the first layer of each direction is replaced
 	["simple-entity-with-force/me-import-bus"] = {
