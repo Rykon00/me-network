@@ -382,7 +382,7 @@ function me_graph_test()
 			--- the graph rebuild (on_configuration_changed) keeps the underground pairs and their side rule
 			local u = st.underground
 			if u then
-				remote.call(NET, "rebuild")
+				remote.call(NET, "rebuild", true)                  -- (issue #420: from the map, not the kept graph)
 				expect(same(u.ud1, u.ud2) and remote.call(NET, "underground_partner", u.u1) == u.u2.unit_number,
 					"the underground pair is lost after the graph rebuild")
 				expect(not same(u.over, u.ud1) and not same(u.beside, u.ud1), "the graph rebuild joined cables over or beside the run")
@@ -1010,6 +1010,9 @@ fluidwagon417 = require("fluidwagon")({ me_place = me_place, cable_row = cable_r
 --- me-network issue #418: job merging (mergejob.lua)
 mergejob418 = require("mergejob")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #420: the performance levers (perf420.lua)
+perf420 = require("perf420")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #196: the ME Interface Capacity Card (ifacecap.lua)
 ifacecap196 = require("ifacecap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1117,6 +1120,7 @@ local function tests_running()
 	ptermex416.running(check)
 	fluidwagon417.running(check)
 	mergejob418.running(check)
+	perf420.running(check)
 	maintrows351.running(check)
 	cpumode350.running(check)
 	monitors353.running(check)
@@ -2069,6 +2073,7 @@ script.on_nth_tick(10, function()
 	ptermex416.tick()
 	fluidwagon417.tick()
 	mergejob418.tick()
+	perf420.tick()
 	maintrows351.tick()
 	cpumode350.tick()
 	monitors353.tick()
@@ -4949,6 +4954,7 @@ script.on_init(function()
 	for _, f in pairs(ptermex416.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(fluidwagon417.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(mergejob418.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(perf420.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpumode350.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(monitors353.setup(s)) do fails[#fails + 1] = f end

@@ -1327,7 +1327,9 @@ network. Connect red or green wires to it: they carry
 The signals are refreshed about once a second, and only when the network's contents changed (all circuit interfaces
 of the map together at most 10 times per second, setting "Circuit interface updates per second": with many
 interfaces each one less often). The signals are listed by type and name (the 1000 largest amounts when there are
-more). The network writes the combinator's signal list: entries added by hand are replaced, extra sections are removed; the combinator's on/off switch still turns the
+more). Since issue #420 a refresh writes nothing when the amounts are the ones it wrote (contents that moved but came
+back to the same totals), and only the signals whose amounts changed when they are at most three (the same signals in the same order; writing one
+signal costs the game about a fifth of writing the whole list); else the whole list as before. The network writes the combinator's signal list: entries added by hand are replaced, extra sections are removed; the combinator's on/off switch still turns the
 output off (also in the ME window). Filters are copied by settings paste and kept in blueprints, copy and
 paste, and clones. Since
 issue #68 the ME Controller has no circuit connection (it was a roboport): the Circuit Interface is the way to
@@ -1648,8 +1650,10 @@ The network keeps item and fluid bytes and types apart (`bytes`/`types` and `fby
 keeps the calls the other modules used (`totals`, `count`, `insert`, `remove`, `capacity` in units = fluid bytes
 times 8) on top of them.
 
-The **ME Interface's sides** (issue #3 of ME Network) are four hidden 1x1 storage tanks of 5000 units on its tile,
-one pipe connection each. The interface is visited by the scheduler (`scripts/fork-me-io.lua`, issue #5); after its
+The **ME Interface's sides** (issue #3 of ME Network) are hidden 1x1 storage tanks of 5000 units on its tile,
+one pipe connection each; since issue #420 a side has its tank only while something is connected to it, it is tied to a
+fluid row or its tank holds fluid (a fluid entity built beside it makes one; one interface every 8 ticks looks at its
+sides again for what came without an event). The interface is visited by the scheduler (`scripts/fork-me-io.lua`, issue #5); after its
 items it looks at its sides. Import side: the tank's fluid is removed
 with `remove_fluid`, limited to what the network can take (`can_insert_fluid`); this takes the whole fluid segment.
 Export side: `want = amount - held`, `insert_fluid` of `min(want, stored)` of one storage key at its temperature

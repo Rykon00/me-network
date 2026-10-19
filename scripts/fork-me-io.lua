@@ -14,7 +14,12 @@
 ---     fluids at most at once. Sides whose segment is that of an export side of the same interface import
 ---     nothing (a pipe loop). Mined: the sides' fluid goes into the network; destroyed: it is lost like a tank's.
 ---     An interface that moved nothing is visited less and less often (issue #5); building a fluid entity next to
----     one wakes it.
+---     one wakes it. Issue #420 (lever 10): a side has its tank only where it is needed (an unconnected tank cost the
+---     engine some 13 ns per tick): something is connected to it, it is tied to a fluid row, or its tank holds fluid. A
+---     tank is made when an entity with fluid boxes is built, rotated or set up (settings paste, its window closed) beside
+---     a side and kept when it connects; one interface every TANK_CHECK_TICKS looks at its sides again (a pipe that a
+---     script built without an event, a machine whose recipe gave it a fluid box): a tank no longer needed goes, a
+---     side with a fluid entity beside it gets one. Older saves lose their empty unconnected tanks on the update.
 ---   * The config and the sides are kept in script (rec.config, rec.sides), in blueprints (tag
 ---     fork_me_interface = { config, sides, priority }), settings paste and clones.
 ---   * Priority (me-network issue #17, -1000 ... 1000, rec.priority): when the network has less of an item or fluid
@@ -597,6 +602,10 @@ end
 --- interface: the side tanks
 --------------------------------------------------------------------------------
 
+--- issue #420: the tile beside each side (north, east, south, west)
+local NEAR = { { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
+local TANK_CHECK_TICKS = 8          -- issue #420: one interface looks at its sides again every so many ticks (the fallback)
+
 --- rec.fconn: is anything connected to a side? (an idle interface without connections looks at its sides rarely)
 local function refresh_connections(rec)
 	rec.sidle = nil
@@ -607,47 +616,130 @@ local function refresh_connections(rec)
 	rec.fconn = any or nil
 end
 
---- The four side tanks of an interface (found on its tile, created where missing). `fresh`: an interface of a save
---- made before its tanks existed: a side that a pipe, pump or tank already points at is set to "off", so a
---- pipeline that ran past the interface is not drained into the network. Returns the tanks (nil without the
---- prototype).
+--- the tank of side `d`, made on the interface's tile (it collides with nothing)
+local function make_tank(rec, d)
+	local e = rec.entity
+	local t = e.surface.create_entity{ name = T.SIDE, position = e.position, direction = SIDES[d], force = e.force,
+		create_build_effect_smoke = false }
+	if t then t.destructible = false end
+	return t
+end
+
+--- issue #420: does an entity with fluid boxes stand on the tile beside side `d` (a pipe, pump, tank or machine that
+--- could connect there)? One engine query of that tile.
+local function fluid_near(rec, d)
+	local e = rec.entity
+	local p = e.position
+	local x, y = p.x + NEAR[d][1], p.y + NEAR[d][2]
+	for _, o in pairs(e.surface.find_entities_filtered{ area = { { x - 0.4, y - 0.4 }, { x + 0.4, y + 0.4 } } }) do
+		if o.valid and T.has_fluid_boxes(o) then return true end
+	end
+	return false
+end
+
+--- issue #420: is the tank of side `d` needed (tied to a row, holding fluid, or connected)?
+local function tank_needed(rec, d, t)
+	if type((rec.sides or {})[d]) == "number" then return true end
+	local f = T.fluidbox(t)[1]
+	if f and f.amount > 0 then return true end
+	return #t.fluidbox.get_connections(1) > 0
+end
+
+--- Issue #420: side `d` gets its tank where it needs one: a side tied to a row always, else when an entity with fluid
+--- boxes stands beside it and the new tank connects to it (else the tank goes again). `fresh`: an interface of a save made
+--- before its tanks existed: a side that a pipe, pump or tank already points at is set to "off", so a pipeline that ran
+--- past the interface is not drained into the network. Returns the tank (nil: none needed).
+local function fit_side(rec, d, fresh)
+	local tanks = rec.tanks
+	local t = tanks[d]
+	if t and t.valid then return t end
+	tanks[d] = nil
+	local tied = type((rec.sides or {})[d]) == "number"
+	if not (tied or fluid_near(rec, d)) then return nil end
+	t = make_tank(rec, d)
+	if not t then return nil end
+	if not tied and #t.fluidbox.get_connections(1) == 0 then
+		t.destroy()
+		return nil
+	end
+	tanks[d] = t
+	if fresh and not tied then
+		local e = rec.entity
+		rec.sides = rec.sides or {}
+		rec.sides[d] = "off"
+		log("FORK-ME-IO: ME Interface " .. e.unit_number .. " at " .. e.position.x .. "," .. e.position.y
+			.. ": side " .. d .. " is connected to an existing pipe: off (switch it to import in its window)")
+	end
+	return t
+end
+
+--- The side tanks of an interface: rec.tanks = { [side] = tank }, issue #420: only the sides that need one (fit_side). The
+--- first call finds the tanks on its tile (a save or a clone that has them; an older save had four), keeps those that are
+--- needed and fits the other sides; later calls drop the tanks that are gone. Returns the tanks (nil without the prototype).
 local function ensure_tanks(rec, fresh)
 	local tanks = rec.tanks
-	if tanks and tanks[1] and tanks[1].valid and tanks[2] and tanks[2].valid and tanks[3] and tanks[3].valid
-		and tanks[4] and tanks[4].valid then return tanks end
+	if tanks then
+		for d, t in pairs(tanks) do if not t.valid then tanks[d] = nil end end
+		return tanks
+	end
 	if not prototypes.entity[T.SIDE] then return nil end
 	local e = rec.entity
-	local found = {}
+	tanks = {}
 	for _, t in pairs(e.surface.find_entities_filtered{ name = T.SIDE, position = e.position }) do
 		local d = SIDE_OF[t.direction]
-		if d and not found[d] then found[d] = t else t.destroy() end
+		if d and not tanks[d] then tanks[d] = t else t.destroy() end
 	end
+	rec.tanks = tanks
 	for d = 1, #SIDES do
-		if not found[d] then
-			local t = e.surface.create_entity{ name = T.SIDE, position = e.position, direction = SIDES[d], force = e.force,
-				create_build_effect_smoke = false }
-			if t then
-				t.destructible = false
-				found[d] = t
-				if fresh and #t.fluidbox.get_connections(1) > 0 then
-					rec.sides = rec.sides or {}
-					rec.sides[d] = "off"
-					log("FORK-ME-IO: ME Interface " .. e.unit_number .. " at " .. e.position.x .. "," .. e.position.y
-						.. ": side " .. d .. " is connected to an existing pipe: off (switch it to import in its window)")
-				end
+		local t = tanks[d]
+		if t then
+			if not tank_needed(rec, d, t) then
+				t.destroy()
+				tanks[d] = nil
 			end
+		else
+			fit_side(rec, d, fresh)
 		end
 	end
-	rec.tanks = found
 	refresh_connections(rec)
-	return found
+	return tanks
 end
 M.ensure_tanks = ensure_tanks
 
---- the four side tanks of an interface (north, east, south, west), created where missing
+--- Issue #420: the sides of an interface looked at again (the fallback for what came without an event): a tank no longer
+--- needed goes, a side with a fluid entity beside it gets one. True when something changed.
+local function refit_tanks(rec)
+	local tanks = ensure_tanks(rec)
+	if not tanks then return false end
+	local changed = false
+	for d = 1, #SIDES do
+		local t = tanks[d]
+		if t then
+			if not tank_needed(rec, d, t) then
+				t.destroy()
+				tanks[d] = nil
+				changed = true
+			end
+		elseif fit_side(rec, d) then
+			changed = true
+		end
+	end
+	if changed then refresh_connections(rec) end
+	return changed
+end
+
+--- the four side tanks of an interface (north, east, south, west), created where missing (for tests; issue #420: the
+--- fallback look at its sides removes those that stay empty and unconnected again)
 function M.tanks_of(entity)
 	if kind(entity) ~= "interface" then return nil end
-	return ensure_tanks(register(state(), entity))
+	local rec = register(state(), entity)
+	local tanks = ensure_tanks(rec)
+	if not tanks then return nil end
+	for d = 1, #SIDES do
+		if not (tanks[d] and tanks[d].valid) then tanks[d] = make_tank(rec, d) end
+	end
+	refresh_connections(rec)
+	return tanks
 end
 
 local function destroy_tanks(rec)
@@ -812,12 +904,14 @@ local function interface_sides(rec, net, config, short, dt)
 	for d = 1, #SIDES do
 		local t = tanks[d]
 		local setting = sides[d]
-		local held = T.fluidbox(t)[1]
+		local tied = type(setting) == "number" and is_fluid_row(config[setting])
+		if tied and not t then t = fit_side(rec, d) end              -- (issue #420: a side tied to a row gets its tank)
+		local held = t and T.fluidbox(t)[1]
 		if held and held.amount <= EPS then held = nil end
 		if held then anyheld = true end
 		if setting == "off" then
 			fstatus[d] = "off"
-		elseif type(setting) == "number" and is_fluid_row(config[setting]) then
+		elseif tied and t then
 			if not held then sstarved = true end                      -- the side's tank had run out
 			local why, n, lack, key = export_side(t, held, config[setting], net, short and (rec.priority or 0))
 			fstatus[d] = why
@@ -836,7 +930,7 @@ local function interface_sides(rec, net, config, short, dt)
 			if rec.exporting and not exports then
 				exports = {}
 				for e = 1, #SIDES do
-					if type(sides[e]) == "number" then
+					if type(sides[e]) == "number" and tanks[e] then
 						local id = N.bound(T.fluidbox(tanks[e])).get_fluid_segment_id(1)
 						if id then exports[id] = true end
 					end
@@ -1104,7 +1198,7 @@ local function free_side(rec)
 	for d = 1, #SIDES do
 		if sides[d] == nil then
 			first = first or d
-			if tanks and #tanks[d].fluidbox.get_connections(1) > 0 then return d, true end
+			if tanks and tanks[d] and #tanks[d].fluidbox.get_connections(1) > 0 then return d, true end
 		end
 	end
 	return first, false
@@ -2227,12 +2321,31 @@ local function probe(rec, unit)
 	return 0
 end
 
+--- Issue #420: the fallback of lever 10: the next interface of the list (s.tcur, in storage) looks at its sides again; a
+--- tank that was made or removed wakes it
+local function check_tanks(s)
+	local list = s.list
+	local n = #list
+	for _ = 1, math.min(n, 16) do                        -- (the buses in the list are skipped, 16 entries at most)
+		local i = s.tcur or 1
+		if i > n then i = 1 end
+		s.tcur = i + 1
+		local unit = list[i]
+		local rec = s.recs[unit]
+		if rec and rec.kind == "interface" and rec.tanks and rec.entity.valid then
+			if refit_tanks(rec) then wake(unit) end
+			return
+		end
+	end
+end
+
 --- every tick (control.lua): the probes that are due, then the interfaces and buses that are due, between the
 --- settings "at least" and "at most"
 function M.on_tick(tick)
 	local s = storage.fork_me_io
 	if not s then return end
 	tick_limit = idle_limit(s)
+	if tick % TANK_CHECK_TICKS == 0 then check_tanks(s) end
 	if s.nonet then                                      -- (a save of the version that kept a list of blocks without a network)
 		local units = {}
 		for unit in pairs(s.nonet) do units[#units + 1] = unit end
@@ -2322,7 +2435,17 @@ function M.wake_near(entity)
 		local rec = s.recs[i.unit_number]
 		if rec then
 			if rec.kind == "interface" then
-				if rec.tanks then refresh_connections(rec) wake(i.unit_number) end
+				if rec.tanks then
+					--- issue #420: a side that the entity stands beside gets its tank (kept when it connects)
+					local p = i.position
+					for d = 1, #SIDES do
+						local x, y = p.x + NEAR[d][1], p.y + NEAR[d][2]
+						if not rec.tanks[d] and x > b.left_top.x and x < b.right_bottom.x and y > b.left_top.y
+							and y < b.right_bottom.y then fit_side(rec, d) end
+					end
+					refresh_connections(rec)
+					wake(i.unit_number)
+				end
 			else
 				local f = T.front(i)
 				if f[1] > b.left_top.x and f[1] < b.right_bottom.x and f[2] > b.left_top.y and f[2] < b.right_bottom.y then
@@ -2364,11 +2487,23 @@ function M.on_rotated(entity)
 	if rec then
 		rec.target = nil
 		wake(entity.unit_number)
+	elseif s and entity and entity.valid and T.has_fluid_boxes(entity) then
+		M.wake_near(entity)                                  -- (issue #420: a rotated pump may face an interface's side now)
+	end
+end
+
+--- issue #420: a machine set up in its window or by a paste may have a fluid box beside an interface's side now (a recipe
+--- with a fluid); its interfaces look at that side
+function M.fluid_entity_changed(entity)
+	if storage.fork_me_io and entity and entity.valid and not kind(entity) and entity.name ~= T.SIDE
+		and T.has_fluid_boxes(entity) then
+		M.wake_near(entity)
 	end
 end
 
 function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
+	M.fluid_entity_changed(dst)                              -- (issue #420: a recipe pasted onto a machine)
 	if not (src and src.valid and dst and dst.valid and src.name == dst.name) then return end
 	local k = kind(src)
 	if k == "interface" then
@@ -2454,7 +2589,8 @@ function M.on_configuration_changed()
 					s.prio[e.unit_number] = o.priority
 				end
 				rec.sides = clean_sides(o and o.sides or {}, rec.config or {})
-				rec.tanks = o and o.tanks
+				--- (issue #420: the tanks are found on the tile again, those that are not needed go: an older save had four)
+				rec.tanks = nil
 				local fresh = not (o and o.tanks) and #surface.find_entities_filtered{ name = T.SIDE, position = e.position } == 0
 				ensure_tanks(rec, fresh)
 				refresh_connections(rec)
@@ -2467,6 +2603,11 @@ function M.on_configuration_changed()
 end
 
 remote.add_interface("gregtorio-me-io", {
+	--- issue #420 (tests): the interface looks at its sides now (the fallback's look); true when a tank was made or removed
+	refit_tanks = function(entity)
+		if kind(entity) ~= "interface" then return nil end
+		return refit_tanks(register(state(), entity))
+	end,
 	--- one visit of an interface or bus now (what the step does); returns the items moved
 	step = function(entity)
 		local k = kind(entity)

@@ -187,7 +187,7 @@ local function state()
 	local s = storage.fork_me_net
 	if not s then
 		s = {
-			nodes = {},       -- unit -> { entity, kind, net, adj = { unit -> true }, box, surface, force, position }
+			nodes = {},       -- unit -> { x1, y1, x2, y2 (its tile box), entity, kind, net, adj = { unit -> true }, surface, force }
 			nets = {},        -- id -> network (see new_net)
 			next_net = 1,
 			version = 0,      -- counts graph changes
@@ -249,6 +249,10 @@ M.parse_key = parse_key
 
 --------------------------------------------------------------------------------
 --- graph
+--- Issue #420: a node is its own tile box (fields 1 to 4: left, top, right, bottom, the node's array part), not a table of
+--- its own, and keeps no position (nothing read it): two tables less per member (about 250 bytes; at 20 000 endpoints and
+--- their 80 000 members some 20 MB of the heap). The nodes of older saves are made anew by M.rebuild (they have no
+--- s.graph_sig).
 --------------------------------------------------------------------------------
 
 local function tile_box(entity)
@@ -289,8 +293,8 @@ local DIR_VEC = { [defines.direction.north] = { 0, -1 }, [defines.direction.east
 
 --- may `a` and `b` (adjacent boxes) connect above ground?
 local function connects(a, b)
-	if a.kind == "underground" and side_of(a.box, b.box) ~= BACK_BIT[DIR_BIT[a.dir]] then return false end
-	if b.kind == "underground" and side_of(b.box, a.box) ~= BACK_BIT[DIR_BIT[b.dir]] then return false end
+	if a.kind == "underground" and side_of(a, b) ~= BACK_BIT[DIR_BIT[a.dir]] then return false end
+	if b.kind == "underground" and side_of(b, a) ~= BACK_BIT[DIR_BIT[b.dir]] then return false end
 	return true
 end
 
@@ -339,11 +343,11 @@ end
 --- cable picture: 1 + N + 2E + 4S + 8W
 local function update_cable(s, node)
 	if node.kind ~= "cable" or not node.entity.valid then return end
-	local b, mask = node.box, 0
+	local b, mask = node, 0
 	for unit in pairs(node.adj) do
 		local o = s.nodes[unit]
 		if o then
-			local ob = o.box
+			local ob = o
 			if ob[4] == b[2] then mask = mask + 1
 			elseif ob[1] == b[3] then mask = mask + 2
 			elseif ob[2] == b[4] then mask = mask + 4
@@ -484,8 +488,9 @@ local function add_node(s, entity, kind)
 			if old.entity.valid then add_node(s, old.entity, old.kind) end
 		end
 	end
-	node = { entity = entity, kind = kind, adj = {}, box = tile_box(entity), surface = entity.surface.index,
-		force = entity.force.name, position = { x = entity.position.x, y = entity.position.y } }
+	local tb = tile_box(entity)
+	node = { tb[1], tb[2], tb[3], tb[4], entity = entity, kind = kind, adj = {}, surface = entity.surface.index,
+		force = entity.force.name }
 	if kind == "underground" then node.dir = entity.direction end
 	s.nodes[unit] = node
 	local nl = s.nlist
@@ -493,13 +498,13 @@ local function add_node(s, entity, kind)
 		nl[#nl + 1] = unit
 		node.li = #nl
 	end
-	local b = node.box
+	local b = node
 	local found = entity.surface.find_entities_filtered{
 		area = { { b[1] - 0.5, b[2] - 0.5 }, { b[3] + 0.5, b[4] + 0.5 } }, name = M.node_names(), force = entity.force }
 	local nets, order = {}, {}
 	for _, e in pairs(found) do
 		local other = e.valid and e.unit_number ~= unit and s.nodes[e.unit_number]
-		if other and other.entity == e and adjacent(b, other.box) and connects(node, other) then
+		if other and other.entity == e and adjacent(b, other) and connects(node, other) then
 			node.adj[e.unit_number] = true
 			other.adj[unit] = true
 			if not nets[other.net] then
@@ -559,7 +564,7 @@ local function add_node(s, entity, kind)
 		--- issue #5: a member that joins one network changes no totals of it, except a drive (its cells) and a storage
 		--- bus already registered (its external cell): no recompute, no rescan of every provider
 		s.version = s.version + 1
-		net.power_dirty = true
+		M.power_add(s, net, node, 1)                         -- (issue #420: not the walk over every member)
 		if CELL_KINDS[kind] then
 			net.drives[unit] = true
 			local d = s.drives[unit]
@@ -631,7 +636,7 @@ function remove_node_graph(s, unit)
 		else
 			--- issue #5: no recompute; whatever storage the member still had in the network leaves it
 			s.version = s.version + 1
-			net.power_dirty = true
+			M.power_add(s, net, node, -1)                    -- (issue #420: not the walk over every member)
 			release_cells(net, unit)
 		end
 		return
@@ -1743,10 +1748,10 @@ function net_cell(net, cid, cell, sign)
 		net.cells[cid] = cell
 		net.cell_list[#net.cell_list + 1] = cid
 	else
+		--- issue #420: the list keeps the cell's entry until its next use (M.cell_ids): the cells that leave in one burst are
+		--- taken out in one pass, not one walk over the network's cells each (158 storage buses at 20 000: 79 ms)
 		net.cells[cid] = nil
-		for i = #net.cell_list, 1, -1 do
-			if net.cell_list[i] == cid then table.remove(net.cell_list, i) end
-		end
+		net.cell_gone = true
 	end
 	if spec then                                      -- an external cell (storage bus) has no bytes or types
 		local p = fluid_cell(spec) and "f" or ""      -- item cells count in bytes/types, fluid cells in fbytes/ftypes
@@ -1830,6 +1835,41 @@ local function update_power(s, net)
 	end
 end
 
+--- Issue #420: a member that joined (`sign` 1) or left (-1) a network without a split changes its controller's draw by its
+--- own power, as update_power would count it, instead of the walk over every member at the network's next use (a burst of
+--- 1000 built blocks with 158 storage buses, each looking at its network at once, walked 20 000 members 158 times: 7.6 s). A
+--- kind whose power depends on its state (M.power_hooks) or a crafting block (counted by its entity name, which a removed
+--- block no longer has) makes the walk instead, as does a network whose breakdown is not up to date. (A field: no main-chunk
+--- local, the chunk is at Lua's limit of 200.)
+function M.power_add(s, net, node, sign)
+	if POWERED_SELF[node.kind] then return end
+	if net.power_dirty or not net.power_by or M.power_hooks[node.kind] or node.kind == "crafting" then
+		net.power_dirty = true
+		return
+	end
+	local w = member_power(node)
+	local row = net.power_by[node.kind]
+	if sign > 0 then
+		if not row then
+			row = { n = 0, w = 0 }
+			net.power_by[node.kind] = row
+		end
+		row.n, row.w = row.n + 1, row.w + w
+	else
+		if not (row and row.n > 0) then
+			net.power_dirty = true
+			return
+		end
+		row.n, row.w = row.n - 1, row.w - w
+		if row.n == 0 then net.power_by[node.kind] = nil end
+	end
+	net.power = net.power + sign * w
+	for unit in pairs(net.controllers) do
+		local c = s.nodes[unit]
+		if c and c.entity.valid then c.entity.power_usage = net.power / 60 end
+	end
+end
+
 --- controllers, status, drives, storage totals and power of a network, from its members
 function recompute(s, net)
 	net.controllers, net.drives = {}, {}
@@ -1849,7 +1889,7 @@ function recompute(s, net)
 				and { diode = defines.entity_status_diode.red, label = { "fork-me-net.status-conflict" } } or nil
 		end
 	end
-	net.items, net.index, net.cells, net.cell_list, net.order_dirty = {}, {}, {}, {}, true
+	net.items, net.index, net.cells, net.cell_list, net.order_dirty, net.cell_gone = {}, {}, {}, {}, true, nil
 	fluid_sets[net] = nil
 	net.bytes, net.bytes_total, net.types, net.types_total = 0, 0, 0, 0
 	net.fbytes, net.fbytes_total, net.ftypes, net.ftypes_total = 0, 0, 0, 0
@@ -2340,7 +2380,7 @@ local function ordered(s, net)
 	if net.order and not net.order_dirty then return net.order, net.uniform end
 	local list = {}
 	local prios, parts = {}, false
-	for i, cid in ipairs(net.cell_list) do
+	for i, cid in ipairs(M.cell_ids(net)) do
 		local p = cell_priority(s, net, cid)
 		prios[p] = true
 		local cell = net.cells[cid]
@@ -2361,6 +2401,26 @@ local function ordered(s, net)
 	return order, net.uniform
 end
 M.ordered = ordered
+
+--- Issue #420: the network's cell ids in the order they joined (net.cell_list), the entries of the cells that left since its
+--- last use taken out (net.cell_gone): a cell that left and joined again keeps its last entry, as when every removal took
+--- its entry out at once. (A field: no main-chunk local.)
+function M.cell_ids(net)
+	if not net.cell_gone then return net.cell_list end
+	local list, cells = net.cell_list, net.cells
+	local seen, keep = {}, {}
+	for i = #list, 1, -1 do
+		local cid = list[i]
+		if cells[cid] and not seen[cid] then
+			seen[cid] = true
+			keep[#keep + 1] = cid
+		end
+	end
+	local out = {}
+	for i = #keep, 1, -1 do out[#out + 1] = keep[i] end
+	net.cell_list, net.cell_gone = out, nil
+	return out
+end
 
 --- can the cell take a key it does not hold yet? (types and bytes; its kind and partition are the caller's)
 local function open_cell(cell, spec)
@@ -3236,7 +3296,7 @@ function M.stats(net)
 	local ok, why = M.usable(net)
 	local drives, cells, fcells, buses, fbuses = 0, 0, 0, 0, 0
 	for _ in pairs(net.drives) do drives = drives + 1 end
-	for _, cid in ipairs(net.cell_list) do
+	for _, cid in ipairs(M.cell_ids(net)) do
 		local cell = net.cells[cid]
 		local spec = not cell.ext and cell_spec(cell.name)
 		if cell.side == "fluid" or cell.ext == "fluid-storage-bus" then fbuses = fbuses + 1   -- a storage bus on fluid
@@ -4755,9 +4815,113 @@ end
 --- rebuild (on_init, on_configuration_changed): the only map scan
 --------------------------------------------------------------------------------
 
-function M.rebuild()
+--- Issue #420: what the graph is made of: the rules (GRAPH_RULES below: raised when who connects to whom changes) and per
+--- member name its kind and tile size. A save whose graph was made with the same is taken over by M.rebuild (M.keep_graph).
+function M.graph_sig()
+	local GRAPH_RULES = 1
+	local k = kinds()
+	local list = {}
+	for name in pairs(k) do list[#list + 1] = name end
+	table.sort(list)
+	local parts = { "rules " .. GRAPH_RULES }
+	for _, name in ipairs(list) do
+		local p = prototypes.entity[name]
+		parts[#parts + 1] = name .. "=" .. k[name] .. ":" .. (p.tile_width or 1) .. "x" .. (p.tile_height or 1)
+	end
+	return table.concat(parts, ";")
+end
+
+--- Issue #420: the graph the build and removal events kept is taken over when it still matches the world: made with the same
+--- rules and prototypes (s.graph_sig), and with few members that changed without an event: those that vanished are taken out
+--- as the sweep takes them out (vanish), member entities that came without an event (the count of the map's member
+--- entities says so) are put in as a build puts them in (M.on_built), in the order of their unit numbers; more than
+--- KEEP_CHANGES or a sixteenth of the members make the whole rebuild. The rebuild's other work is done as before: the waits
+--- fire, the drives' cells are checked against the cell prototypes and drawn again, the external cells checked, every
+--- network computed again (its cells, totals, power), the screens. What it saves at 20 000 endpoints (80 000 members) is the
+--- map scan, the nodes, the neighbour search and the components: about 1.8 of 2.2 s. (A save of a version before has no
+--- s.graph_sig: its nodes, a box table and a position each, are made anew by the whole rebuild.) Returns true when the graph
+--- was kept.
+function M.keep_graph(s)
+	local KEEP_CHANGES = 64
+	local sig = M.graph_sig()
+	if s.graph_sig ~= sig or not next(s.nodes) then return false end
+	local members, gone = 0, {}
+	for unit, node in pairs(s.nodes) do
+		if node.entity.valid then members = members + 1 else gone[#gone + 1] = unit end
+	end
+	local off = 0
+	for _ in pairs(s.toggle_off or {}) do off = off + 1 end
+	local names, on_map = M.node_names(), 0
+	for _, surface in pairs(game.surfaces) do on_map = on_map + surface.count_entities_filtered{ name = names } end
+	local new = on_map - members - off                      -- (members that came without an event; < 0: a stale open toggle)
+	if #gone + math.abs(new) > math.max(KEEP_CHANGES, members / 16) then return false end
+	for _, node in pairs(s.nodes) do clear_link(node) end
+	table.sort(gone)
+	for _, unit in ipairs(gone) do vanish(s, unit) end
+	if new > 0 then
+		local found = {}
+		for _, surface in pairs(game.surfaces) do
+			for _, e in pairs(surface.find_entities_filtered{ name = names }) do
+				local unit = e.unit_number
+				if not s.nodes[unit] and not (s.toggle_off and s.toggle_off[unit]) then found[#found + 1] = e end
+			end
+		end
+		table.sort(found, function(a, b) return a.unit_number < b.unit_number end)
+		for _, e in ipairs(found) do M.on_built(e) end
+	end
+	for unit, c in pairs(s.chests or {}) do               -- (issue #229: the hidden parts of chests that are gone)
+		if not (c.entity and c.entity.valid) then CH.gone(s, unit) end
+	end
+	local ids = {}
+	for id in pairs(s.nets) do ids[#ids + 1] = id end
+	table.sort(ids)
+	for _, id in ipairs(ids) do fire_all_waits(s.nets[id]) end   -- (issue #38: no parked endpoint loses its wake)
+	s.version = s.version + 1
+	--- the drives keep their cells; a cell whose prototype is gone, or in a slot the drive no longer has, is spilled
+	for unit, d in pairs(s.drives) do
+		if d.entity.valid then
+			d.leds = d.leds or {}
+			d.chest = kinds()[d.entity.name] == "chest" or nil
+			clear_leds(d)
+			for slot in pairs(d.slots) do
+				if slot > slots_of(d.entity) or not cell_spec(d.slots[slot].name) then
+					spill(d.entity.surface, d.position, cell_stack(d.slots[slot]))
+					d.slots[slot] = nil
+				end
+			end
+			s.dirty[unit] = true
+		end
+	end
+	local old_ext = s.ext
+	s.ext = {}
+	for unit, cell in pairs(old_ext) do
+		if cell.entity and cell.entity.valid and kinds()[cell.entity.name] == cell.ext then
+			s.ext[unit] = cell
+		else
+			local h = M.ext_handlers[cell.ext]
+			if h and h.detached then h.detached(cell) end
+		end
+	end
+	for _, id in ipairs(ids) do recompute(s, s.nets[id]) end
+	if s.screens then
+		local units = {}
+		for unit in pairs(s.nodes) do units[#units + 1] = unit end
+		table.sort(units)
+		for _, unit in ipairs(units) do
+			local node = s.nodes[unit]
+			if has_screen(node.kind) and not s.screens[unit] then screen_made(s, unit, node.entity, node.kind) end
+		end
+	end
+	for _, hook in pairs(M.change_hooks) do hook(nil) end
+	return true
+end
+
+--- `full`: rebuild the graph from the map even when the kept one matches it (issue #420)
+function M.rebuild(full)
 	names_cache, names_list = nil, nil
 	local s = state()
+	if not full and M.keep_graph(s) then return true end
+	s.graph_sig = M.graph_sig()
 	local old_drives = s.drives
 	for unit, c in pairs(s.chests or {}) do               -- (issue #229: the hidden parts of chests that are gone)
 		if not (c.entity and c.entity.valid) then CH.gone(s, unit) end
@@ -4840,10 +5004,9 @@ function M.rebuild()
 		local w, h = size[1], size[2]
 		if (dir == defines.direction.east or dir == defines.direction.west) and w ~= h then w, h = h, w end
 		local kind = kinds()[name]
-		local node = { entity = e, kind = kind, adj = {}, surface = surface_of[unit], force = fname,
-			box = { math.floor(pos.x - w / 2 + 0.5), math.floor(pos.y - h / 2 + 0.5),
-				math.floor(pos.x + w / 2 + 0.5), math.floor(pos.y + h / 2 + 0.5) },
-			position = { x = pos.x, y = pos.y }, li = #s.nlist + 1 }
+		local node = { math.floor(pos.x - w / 2 + 0.5), math.floor(pos.y - h / 2 + 0.5),
+			math.floor(pos.x + w / 2 + 0.5), math.floor(pos.y + h / 2 + 0.5),
+			entity = e, kind = kind, adj = {}, surface = surface_of[unit], force = fname, li = #s.nlist + 1 }
 		s.nodes[unit] = node
 		s.nlist[#s.nlist + 1] = unit                       -- (`units` is sorted)
 		if kind == "underground" then node.dir = dir end
@@ -4862,7 +5025,7 @@ function M.rebuild()
 			g = {}
 			grids[node.surface] = g
 		end
-		local b = node.box
+		local b = node
 		for tx = b[1], b[3] - 1 do
 			for ty = b[2], b[4] - 1 do
 				local key = (tx + OFF) * MUL + (ty + OFF)
@@ -4877,21 +5040,21 @@ function M.rebuild()
 		if type(c) == "number" then
 			if c ~= unit then
 				local other = s.nodes[c]
-				if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[c] = true end
+				if other.force == node.force and adjacent(b, other) and connects(node, other) then node.adj[c] = true end
 			end
 		else
 			for i = 1, #c do
 				local ou = c[i]
 				if ou ~= unit then
 					local other = s.nodes[ou]
-					if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[ou] = true end
+					if other.force == node.force and adjacent(b, other) and connects(node, other) then node.adj[ou] = true end
 				end
 			end
 		end
 	end
 	for _, unit in ipairs(units) do
 		local node = s.nodes[unit]
-		local b, g = node.box, grids[node.surface]
+		local b, g = node, grids[node.surface]
 		local x1, y1, x2, y2 = b[1], b[2], b[3], b[4]
 		for ty = y1, y2 - 1 do                              -- the tiles beside the west and east edges
 			local c = g[(x1 - 1 + OFF) * MUL + (ty + OFF)]
@@ -4994,7 +5157,7 @@ function M.connect(members, margin)
 	local tiles = {}                                  -- "x,y" -> node of the area
 	local surface_index = surface.index
 	for _, node in pairs(s.nodes) do
-		local bx = node.box
+		local bx = node
 		if node.surface == surface_index and bx[3] > l - 1 and bx[1] < r + 1 and bx[4] > t - 1 and bx[2] < b + 1 then
 			for x = bx[1], bx[3] - 1 do
 				for y = bx[2], bx[4] - 1 do tiles[x .. "," .. y] = node end
@@ -5044,7 +5207,7 @@ function M.connect(members, margin)
 		end
 		table.sort(units)
 		for _, unit in ipairs(units) do
-			local bx = s.nodes[unit].box
+			local bx = s.nodes[unit]
 			local edge = {}
 			for x = bx[1], bx[3] - 1 do edge[#edge + 1] = { x, bx[2] - 1 } edge[#edge + 1] = { x, bx[4] } end
 			for y = bx[2], bx[4] - 1 do edge[#edge + 1] = { bx[1] - 1, y } edge[#edge + 1] = { bx[3], y } end
@@ -5136,6 +5299,35 @@ remote.add_interface("gregtorio-me-network", {
 	end,
 	--- issue #59 (tests): the kept holder lists and cursors against lists sorted anew: lists, differing, the first problem
 	check_holder_lists = function() return M.check_holder_lists() end,
+	--- issue #420 (tests): the controller's draw as the joins and removals kept it, and as the walk over every member counts it
+	power_recount = function(entity)
+		local net = M.network_of(entity)
+		if not net then return nil end
+		if net.power_dirty then return { dirty = true } end
+		local kept, by = net.power, {}
+		for k, row in pairs(net.power_by or {}) do by[k] = row.n .. "/" .. row.w end
+		update_power(state(), net)
+		local walked = {}
+		for k, row in pairs(net.power_by) do walked[k] = row.n .. "/" .. row.w end
+		return { kept = kept, walked = net.power, kept_by = by, walked_by = walked }
+	end,
+	--- issue #420 (tests): a member's node: its folded tile box, and whether it still has the fields of before
+	node_fold = function(entity)
+		local s = storage.fork_me_net
+		local node = s and entity and entity.valid and s.nodes[entity.unit_number]
+		if not node then return nil end
+		return { node[1], node[2], node[3], node[4], box = node.box ~= nil, position = node.position ~= nil }
+	end,
+	--- issue #420 (tests): the network's cell ids in their order, and how many cells it has
+	cell_ids = function(entity)
+		local net = M.network_of(entity)
+		if not net then return nil end
+		local n = 0
+		for _ in pairs(net.cells) do n = n + 1 end
+		local ids = {}
+		for i, cid in ipairs(M.cell_ids(net)) do ids[i] = cid end
+		return { ids = ids, cells = n }
+	end,
 	--- tests: is the sweep list the members, each once, each node at its place? (true, or false and what is wrong)
 	sweep_list_ok = function()
 		local s = storage.fork_me_net
@@ -5270,7 +5462,7 @@ remote.add_interface("gregtorio-me-network", {
 	--- what the rotation event does (entity.rotate raises none)
 	rotated = function(entity) M.on_rotated(entity) end,
 	--- what on_configuration_changed does with the graph (the whole map)
-	rebuild = function() M.rebuild() end,
+	rebuild = function(full) return M.rebuild(full) == true end,      -- (issue #420: true when the kept graph was taken over)
 	--- tests (issue #38): forget every wait of the entity's network, as if all its wakes had been missed
 	drop_waits = function(entity)
 		local net = M.network_of(entity)

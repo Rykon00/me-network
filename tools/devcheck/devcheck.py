@@ -828,6 +828,7 @@ RUNTIME_TESTS = (
     ("PTERMEX", "ME Pattern Terminal Ex (issue #416)"),
     ("FLUIDWAGON", "Fluid wagon on the ME Storage Bus (issue #417)"),
     ("MERGEJOB", "Crafting job merging (issue #418)"),
+    ("PERF420", "Performance levers (issue #420)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),

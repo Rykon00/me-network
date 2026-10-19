@@ -204,7 +204,7 @@ return function(Hh)
 				end
 				st.splits = splits
 				--- the graph built again from the entities (on_configuration_changed, issue #43) gives the same networks
-				remote.call(NET, "rebuild")
+				remote.call(NET, "rebuild", true)              -- (issue #420: from the map, not the kept graph)
 				for k in pairs(present) do ids[k] = nil end
 				if check(REMOVALS + 1, nil, "rebuild") then
 					local list_ok, why = remote.call(NET, "sweep_list_ok")

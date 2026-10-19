@@ -31,6 +31,7 @@ local autocraft = require("scripts.fork-me-autocraft")
 local Sched = require("scripts.fork-me-schedule")
 local Names = require("scripts.fork-me-names")
 local Conn = require("scripts.fork-me-connector")
+local IO = require("scripts.fork-me-io")
 
 local M = {}
 
@@ -1174,6 +1175,7 @@ end)
 script.on_event(defines.events.on_gui_closed, function(event)
 	G.on_closed(event)
 	Conn.on_gui_closed(event)                                -- (issue #412: a circuit connector's lamp window)
+	IO.fluid_entity_changed(event.entity)                    -- (issue #420: a machine's recipe may give it a fluid box)
 end)
 
 --- issue #28: the inventory pane of an open ME window follows the player's main inventory and cursor

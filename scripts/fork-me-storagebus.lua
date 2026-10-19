@@ -124,8 +124,11 @@ local function listed(s, unit)
 	return s.member[unit] == true
 end
 
-local function unlist(list, unit)
-	for i = #list, 1, -1 do if list[i] == unit then table.remove(list, i) end end
+--- issue #420: a bus leaves the visit list by its place (s.lpos, made when missing: Sched.list_remove), not by a walk over the
+--- list (a burst of removals walked it once per bus)
+local function unlist(s, unit)
+	s.lpos = s.lpos or {}
+	Sched.list_remove(s.list, s.lpos, unit)
 end
 
 --------------------------------------------------------------------------------
@@ -301,7 +304,7 @@ end
 local function list_side(s, rec)
 	if rec.side == "fluid" then
 		if listed(s, rec.unit) then
-			unlist(s.list, rec.unit)
+			unlist(s, rec.unit)
 			s.member[rec.unit] = nil
 			Sched.forget(queue(s), rec)
 		end
@@ -310,6 +313,7 @@ local function list_side(s, rec)
 		F.unlist(rec)
 		if not listed(s, rec.unit) then
 			s.list[#s.list + 1] = rec.unit
+			if s.lpos then s.lpos[rec.unit] = #s.list end
 			s.member[rec.unit] = true
 			rec.siv = nil
 			Sched.at(queue(s), rec, rec.unit, game.tick + 1)
@@ -471,7 +475,7 @@ end
 local function visit_due(rec, unit)
 	local s = storage.fork_me_sbus
 	if not rec.entity.valid then
-		unlist(s.list, unit)
+		unlist(s, unit)
 		if s.member then s.member[unit] = nil end
 		Sched.forget(queue(s), rec)
 		N.ext_detach(unit)
@@ -841,7 +845,7 @@ function M.on_removed(entity, buffer)
 		give_cards(rec, buffer)
 		if s then
 			release(s, rec)
-			unlist(s.list, unit)
+			unlist(s, unit)
 			Sched.forget(queue(s), rec)
 			if s.member then s.member[unit] = nil end
 		end
@@ -894,7 +898,7 @@ end
 --- again (the fluid side claims its segments in unit order)
 function M.on_configuration_changed()
 	local s = state()
-	s.list, s.cursor, s.claims, s.member, s.q = {}, 1, {}, {}, Sched.new("sbus")
+	s.list, s.cursor, s.claims, s.member, s.q, s.lpos = {}, 1, {}, {}, Sched.new("sbus"), nil
 	F.reset()
 	plain_cache, bus_names = {}, nil
 	local names = {}
@@ -918,6 +922,18 @@ function M.on_configuration_changed()
 end
 
 remote.add_interface("gregtorio-me-storagebus", {
+	--- issue #420 (tests): is the visit list of each side its buses, each once, at their places? (true, or false and why)
+	lists_ok = function()
+		for _, s in ipairs({ storage.fork_me_sbus or {}, storage.fork_me_fsbus or {} }) do
+			local seen = {}
+			for i, u in ipairs(s.list or {}) do
+				if seen[u] then return false, "bus " .. u .. " is in a list twice" end
+				seen[u] = true
+				if s.lpos and s.lpos[u] and s.lpos[u] ~= i then return false, "bus " .. u .. " is not at its place" end
+			end
+		end
+		return true
+	end,
 	--- issue #38 (tests): when the bus reads next: { due, interval, probing, front, backlog, side }
 	schedule = function(entity)
 		local rec = rec_of(entity)

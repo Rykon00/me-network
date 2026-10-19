@@ -84,8 +84,14 @@ that joins is set at once. Found on 2.0.77: a lamp's `active` does nothing, a ci
 * The derived data of a network (controllers, status, drives, storage totals, item index, power) is
   recomputed only for the networks a change touched, and only when the change can alter it (a cable
   joining one network changes nothing but the member count; since issue #5 any member but a controller joining or
-  leaving one network without splitting it adds or removes only what it holds).
-* `on_configuration_changed` (and `on_init`) rebuild the graph once from the world, the only scan.
+  leaving one network without splitting it adds or removes only what it holds; since issue #420 the controller's power
+  too, by that member's own draw, instead of a walk over every member at the network's next use).
+* `on_configuration_changed` (and `on_init`) rebuild the graph once from the world, the only scan. Issue #420: a save
+  whose graph was made with the same rules and member prototypes (`s.graph_sig`: a rules number in `M.graph_sig` and per
+  member name its kind and tile size) keeps its graph; the members that vanished without an event are taken out as the
+  sweep does, member entities that came without an event (the count of the map's member entities says so) are put in as
+  a build does, and only more than 64 such changes (or a sixteenth of the members) rebuild it from the map. The networks
+  are computed again either way (cells, totals, power). A node is its own tile box (fields 1 to 4) and keeps no position.
 
 Network ids stay the same across most changes (merge keeps the larger id, split keeps the id on the
 larger part), but other code must not store them for long: autocrafting keys its pattern cache by network
@@ -1305,10 +1311,15 @@ becomes the unified block when a save is loaded.
 ### ME Interface: container plus four side tanks
 
 * **Compound:** the container `me-network-interface` stays the block (selection, window, item config, blueprints).
-  When it is built, the script creates four hidden storage tanks `me-network-interface-side` on its tile, one per side
-  (not selectable, not minable, not blueprintable, not destructible, empty collision mask, no graphics). Pipes, pumps
-  and tanks connect to a side like to any tank. The tanks are found again by position (clones, saves) and destroyed
-  with the container.
+  The script puts hidden storage tanks `me-network-interface-side` on its tile, one per side (not selectable, not
+  minable, not blueprintable, not destructible, empty collision mask, no graphics). Pipes, pumps and tanks connect to a
+  side like to any tank. The tanks are found again by position (clones, saves) and destroyed with the container.
+  Issue #420 (lever 10): a side has its tank only while it needs one: something is connected to it, it is tied to a
+  fluid row, or its tank holds fluid. An entity with fluid boxes built, rotated or set up (settings paste, its window
+  closed) beside a side gets that side a tank, which stays when it connects; one interface every 8 ticks looks at its
+  sides again, in the order of the I/O list (a pipe a script built without an event, a machine whose recipe gave it a
+  fluid box): a tank no longer needed goes, a side with a fluid entity beside it gets one. Older saves lose their empty
+  unconnected tanks on the update (no fluid is lost: a tank that holds fluid stays).
 * **Config rows:** the 9 rows take an item (with quality) or a fluid, mixed, as in AE2 (`{ name, quality, amount }` or
   `{ type = "fluid", name, amount }`). Items work as before.
 * **How a side is tied to a fluid:** every side has a setting: *import* (the default), *off*, or a fluid row. A side
@@ -1693,8 +1704,12 @@ after the load, the fluid is the same) and Gregtorio's `migrate --from-ref v0.4.
   in which a circuit interface without a filter writes about 900 signals (about 1 ms in the engine, 1.5 ms with the
   Lua around it) on top of the ordinary work, and long steps of the Lua garbage collector (10 to 25 ms in a few
   ticks per minute, also in 0.2.0). A combinator section cannot be changed in part cheaply; fewer updates per second
-  (the setting) or filters on the interfaces are the levers. See `docs/PERFORMANCE.md` for the numbers.
+  (the setting) or filters on the interfaces are the levers. See `docs/PERFORMANCE.md` for the numbers. (Issue #420,
+  lever 7: an update writes nothing while the amounts are the ones it wrote, and only the changed slots, one
+  `set_slot` each, when at most three changed: a `set_slot` costs about a fifth of the whole section's write.)
 * `on_configuration_changed` still rebuilds the graph from the map: 0.8 s at 5000 endpoints (once per mod update).
+  (Issue #420: it keeps the graph the events kept when it matches the map; the whole rebuild only after a change of the
+  graph's rules or the member prototypes, or many members that changed without an event.)
 * Removing a cable whose network splits still searches the network (a breadth first search) and recomputes both
   parts; removing an endpoint does not.
 * The planner copied the stock for each alternative pattern of a key (`snapshot`). Since issue #50 (lever 11) it reads

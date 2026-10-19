@@ -23,7 +23,10 @@
 --- key is taken from the network (N.wait_for) or MAINTAINER_IDLE ticks passed (circuit targets and conditions have
 --- no event); its job's end wakes it. A circuit interface is updated every CIRCUIT_INTERVAL ticks and writes only
 --- when the network's contents changed; the sorted signals of a network are made once per CIRCUIT_INTERVAL and
---- shared by its interfaces (net.sigs).
+--- shared by its interfaces (net.sigs). Issue #420 (lever 7): a list equal to the last one keeps its version (nothing is
+--- written); a list that differs from the last one only in a few amounts (DIFF_MAX) names those slots (net.sigs.diff), and
+--- an interface that wrote the last list writes only them; a filtered interface writes nothing while its signals are the ones
+--- it wrote (rec.vsig).
 --- State: storage.fork_ae2.maintainers, mlist, mq, circuits, clist, cq (created lazily, so older saves need
 --- nothing). GUI state lives in the GUI elements (tags).
 --------------------------------------------------------------------------------
@@ -46,6 +49,12 @@ local MAX_FILTERS = 20
 local MAX_ROWS = 5                  -- issue #351: a maintainer's rows (GTNH's level maintainer: 5 slots)
 local MAX_CIRCUIT_ROWS = 20         -- issue #351: the signals "craft what the circuit asks" takes, the largest first
 local SIGNAL_MAX = 2147483647       -- signals are 32 bit
+--- issue #420: at most this many changed slots are written one by one (else the whole section). A `set_slot` costs about
+--- 0.16 us per signal of the section (10 us in one of 50, 70 us in one of 425), the whole section about 0.6 to 1.2 us per
+--- signal: one by one is cheaper up to about 4 slots, whatever the section's size.
+local DIFF_MAX = 3
+--- issue #420 (tests): unit -> what its last write wrote ("section", a number of slots, "none"); never read by the mod, not state
+M.writes = {}
 local MAINT_TAG, CIRCUIT_TAG = "fork_me_maintainer", "fork_me_circuit"
 local WIRES = { defines.wire_connector_id.circuit_red, defines.wire_connector_id.circuit_green }
 
@@ -504,9 +513,51 @@ local function stale(net)
 	return not (c and (c.cver == net.cver or game.tick - c.tick < CIRCUIT_INTERVAL))
 end
 
+--- the written amount of a signal
+local function amount(sig) return math.min(sig.count, SIGNAL_MAX) end
+
+--- issue #420: are two lists the same signals with the same amounts (a fluid's amounts per temperature too)?
+local function same_signals(a, b)
+	if #a ~= #b then return false end
+	for i = 1, #a do
+		local x, y = a[i], b[i]
+		if x.order ~= y.order or x.count ~= y.count then return false end
+		if x.keys then
+			for k, n in pairs(x.keys) do if y.keys[k] ~= n then return false end end
+			for k in pairs(y.keys) do if x.keys[k] == nil then return false end end
+		end
+	end
+	return true
+end
+
+--- issue #420: the slots of an unfiltered interface's section that differ from list `a` to list `b` when only amounts differ
+--- and they are few (nil: the whole section; a list of more than MAX_SIGNALS writes its largest, which may change with them)
+local function slot_diff(a, b)
+	if #a ~= #b or #b > MAX_SIGNALS then return nil end
+	local out, most = {}, DIFF_MAX
+	for i = 1, #b do
+		local x, y = a[i], b[i]
+		if x.order ~= y.order then return nil end
+		if amount(x) ~= amount(y) then
+			if #out >= most then return nil end
+			out[#out + 1] = i
+		end
+	end
+	return out
+end
+
+--- The network's list now. `n` counts the lists that differ (the version an interface wrote); a new list equal to the last
+--- one keeps it and its `n`; `diff` names the slots that changed since list `n - 1` (issue #420).
 local function signals_of(net)
 	if not stale(net) then return net.sigs end
-	local c = { cver = net.cver, tick = game.tick, list = network_signals(net) }
+	local old = net.sigs
+	local list = network_signals(net)
+	if old and old.n and same_signals(old.list, list) then
+		old.cver, old.tick = net.cver, game.tick
+		return old
+	end
+	local c = { cver = net.cver, tick = game.tick, list = list, n = (old and old.n or 0) + 1 }
+	if old and old.n then c.diff = slot_diff(old.list, list) end
 	net.sigs = c
 	return c
 end
@@ -551,12 +602,8 @@ local function circuit_step(rec, force)
 	local e = rec.entity
 	local net = network_of(e)
 	local sigs = net and signals_of(net)
-	local version = sigs and (net.id .. ":" .. sigs.tick .. ":" .. tostring(sigs.cver)) or "-"
+	local version = sigs and (net.id .. ":" .. sigs.n) or "-"
 	if not force and rec.version == version then return end
-	local cb = e.get_or_create_control_behavior()
-	for i = cb.sections_count, 2, -1 do cb.remove_section(i) end
-	local section = cb.get_section(1) or cb.add_section()
-	if not section then return end
 	local filter
 	if #rec.filters > 0 then
 		filter = {}
@@ -567,14 +614,43 @@ local function circuit_step(rec, force)
 		filters = {}
 		for i, sig in ipairs(sigs and view(sigs.list, filter) or {}) do
 			filters[i] = { value = { type = sig.type, name = sig.name, quality = sig.quality or "normal", comparator = "=" },
-				min = math.min(sig.count, SIGNAL_MAX) }
+				min = amount(sig) }
 		end
 		if not filter and sigs then built[sigs.list] = filters end
 	end
+	local cb = e.get_or_create_control_behavior()
+	--- issue #420: an unfiltered interface that wrote the last list writes the slots that changed; a filtered one nothing while
+	--- its signals are the ones it wrote
+	local vsig
+	if filter then
+		local parts = {}
+		for i, f in ipairs(filters) do parts[i] = f.value.type .. "/" .. f.value.name .. "/" .. f.value.quality .. "=" .. f.min end
+		vsig = table.concat(parts, ",")
+	end
+	if not force and cb.sections_count == 1 then
+		if filter and net and rec.vsig == vsig and rec.net == net.id then
+			rec.version = version
+			M.writes[e.unit_number] = "none"
+			return
+		end
+		local diff = not filter and sigs and sigs.diff
+		if diff and rec.version == net.id .. ":" .. (sigs.n - 1) and rec.signals == #filters then
+			local section = cb.get_section(1)
+			for _, i in ipairs(diff) do section.set_slot(i, filters[i]) end
+			rec.version = version
+			M.writes[e.unit_number] = #diff
+			return true
+		end
+	end
+	for i = cb.sections_count, 2, -1 do cb.remove_section(i) end
+	local section = cb.get_section(1) or cb.add_section()
+	if not section then return end
 	section.filters = filters
+	M.writes[e.unit_number] = "section"
 	rec.signals = #filters
 	rec.net = net and net.id or nil
 	rec.version = version
+	rec.vsig = vsig
 	return true
 end
 
@@ -890,6 +966,21 @@ end
 --- Other mods and the devcheck runtime test use the same code paths. Keys are item names or
 --- "fluid/<name>".
 remote.add_interface("gregtorio-me-circuit", {
+	--- issue #420 (tests): what the last write of a circuit interface wrote ("section", a number of slots, "none"; nil: nothing
+	--- since `clear`)
+	last_write = function(entity, clear)
+		local unit = entity and entity.valid and entity.unit_number
+		if not unit then return nil end
+		local w = M.writes[unit]
+		if clear then M.writes[unit] = nil end
+		return w
+	end,
+	--- issue #420 (tests): a circuit interface's update now, as its visit makes it (the network's list made anew when it is due)
+	update = function(entity)
+		local rec = entity and entity.valid and storage.fork_ae2 and storage.fork_ae2.circuits
+			and storage.fork_ae2.circuits[entity.unit_number]
+		if rec then circuit_step(rec) end
+	end,
 	--- issue #38 (tests): when a level maintainer or circuit interface is visited next
 	schedule = function(entity)
 		local s = storage.fork_ae2
