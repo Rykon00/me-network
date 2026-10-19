@@ -1172,6 +1172,12 @@ group).
 * **One job per CPU.** A job starts only when a CPU of the network is free and big enough; it takes the smallest one
   that fits, or the one chosen in the Crafting tab's **CPU** drop-down (issue #350, AE2-Unofficial's CPU choice in the
   confirm screen: "Automatic", or one of the CPUs that can take the job now).
+* **Merging** (issue #418, AE2-Unofficial's `mergeJob`): a player's request for an item that a player's job crafts already
+  joins that job when its CPU has room for both plans' bytes: the button says **Merge**, the drop-down lists that CPU as
+  "(merge into its job)", and "Automatic" prefers it to a free CPU (as AE2-Unofficial does). The ingredients of the new plan
+  are taken at once, its steps add their runs to the job's, and the job's amount grows; the job crafts both. A request of
+  automation (a level maintainer, a Crafting Card, the circuit interface) never merges and is never merged into: it needs a
+  free CPU, as before. Cancelling the job cancels both.
 * **The CPU's mode** (issue #350, AE2-Unofficial's CraftingAllow), set in the CPU window: **Every request** (as before),
   **Players only** (the terminal's Craft button) or **Automation only** (level maintainers and the circuit interface).
   A CPU that does not take a request is skipped as if it were busy; a job waiting for a CPU takes only one whose mode
@@ -1948,8 +1954,8 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
 * The ME Interface Terminal (issue #336): its window is tested headless through its data and a stand-in of its page; the
   window itself is checked in the game (#342). It has no wireless mode (AE2-Unofficial's Wireless Interface Terminal), an
   interface cannot be renamed (only a provider). The texture mod has its AE2 picture since its 0.2.1 (#343).
-* Crafting CPUs (issue #6): a job does not join a busy CPU that crafts the same item (AE2-Unofficial merges such
-  standalone jobs). The CPU drop-down of the Crafting tab and the mode in the CPU window (#350) are tested headless
+* Crafting CPUs (issue #6): a request of automation (a level maintainer, a Crafting Card, the circuit interface) never
+  joins a running job (as in AE2-Unofficial; a player's request does, issue #418). The CPU drop-down of the Crafting tab and the mode in the CPU window (#350) are tested headless
   through their data and functions; the clicks are checked in the game. The level maintainer
   keeps five rows (#351); "craft what the circuit asks" takes at most 20 signals. Settings paste and a crafting storage fast-replaced by a
   bigger one (the CPU grows in place) are checked headless (#341); the upgrade planner's own window is not checked in the game.

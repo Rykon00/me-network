@@ -102,7 +102,7 @@ return function(H)
 			remote.call(NET, "insert", ctrl, "iron-plate", 85)
 			case("iron 15 -> 100", "miss")
 			st.free_before = preview().reason
-			local id = remote.call(AC, "start", ctrl, KEY, 1)
+			local id = remote.call(AC, "start", ctrl, KEY, 1, ctrl.unit_number)   -- (issue #418: automation's, never merged into)
 			if not id then problems[#problems + 1] = "the job that keeps the CPU busy did not start" end
 			st.job = id
 			case("the CPU became busy (the job took 4 iron and 1 steel)", "hit")

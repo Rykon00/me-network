@@ -3494,3 +3494,25 @@ about what a bus on a cargo wagon costs.
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## Crafting job merging (issue #418)
+
+A player's request asks each CPU of its network whether its job would take it (`merge_into`: a few field reads per CPU) before
+it looks for a free CPU; the terminal's preview does the same for its CPU list. A merge takes the new plan's ingredients and adds
+its steps to the job's. Nothing per tick; requests of automation are unchanged.
+
+`bench --sizes 100,1000,5000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy is the whole stack #413 to #418,
+with #412's connectors made on demand):
+
+| | v0.5.4 | the stack |
+|---|---|---|
+| 100: script average / p99 ms | 0.1914 / 1.769 | 0.1917 / 1.768 |
+| 1000: script average / p99 ms | 0.3362 / 1.886 | 0.3384 / 1.895 |
+| 5000: script average / p99 ms | 0.9103 / 2.688 | 0.9146 / 2.700 |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 26.68 / 24.34 / 33.05 | 26.68 / 24.32 / 33.07 |
+| load first tick ms (100 / 1000 / 5000) | 1.614 / 2.936 / 5.208 | 1.634 / 2.912 / 5.341 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`. (A first run of this branch flagged the first tick after the load at 100, 1.553 -> 1.813 ms,
+noise 0.208; the run again was clean. The planner scene is not measured: `--planner-only` with `--check` measured the plain
+scenes, among them 5000, which found the connector's cost of #412.)

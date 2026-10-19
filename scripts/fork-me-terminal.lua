@@ -237,11 +237,12 @@ function M.craft_preview(terminal, key, amount)
 	if not plan then out.reason = "bad-amount" return out end
 	out.reserve, out.missing, out.loops = plan.reserve or {}, plan.missing or {}, plan.loops or {}
 	out.runs, out.steps = plan.runs or 0, #(plan.steps or {})
-	out.bytes, out.cpu_list = plan.bytes, plan.bytes and autocraft.cpu_list(net, plan.bytes) or {}
+	out.bytes, out.cpu_list = plan.bytes, plan.bytes and autocraft.cpu_list(net, plan.bytes, nil, key) or {}
 	local fits, free, barred, biggest = false, false, false, 0
 	for _, c in ipairs(out.cpu_list) do
 		if c.fits then fits = true end
 		if c.fits and c.free and c.allowed then free = true end
+		if c.merge then free, fits, out.merge = true, true, true end           -- (issue #418: it joins that CPU's job)
 		if c.fits and c.free and not c.allowed then barred = true end
 		if c.bytes and c.bytes > biggest then biggest = c.bytes end
 	end
@@ -641,10 +642,20 @@ local function refresh_crafting(st, frame, net, index)
 	name.caption = d.localised_name
 	local p = M.craft_preview(st.entity, st.pick, st.amount)
 	button.enabled = p.ok
+	--- issue #418 (AE2-Unofficial's "Merge"): the request joins a running job, automatically or on the CPU chosen
+	local merges = false
+	for _, c in ipairs(p.cpu_list or {}) do
+		if c.merge and (st.cpu == nil or st.cpu == c.id) then merges = true end
+	end
+	if st.cpu and merges then
+		for _, c in ipairs(p.cpu_list or {}) do if c.id == st.cpu and not c.merge then merges = false end end
+	end
+	button.caption = { merges and "fork-me-craft.merge" or "fork-me-craft.craft" }
 	M.cpu_pick(G.find(frame, "fork_me_cpu_pick"), st, p)
 	local psig = { tostring(p.ok), tostring(p.reason), p.runs, p.steps, tostring(p.bytes) }
 	for _, c in ipairs(p.cpu_list or {}) do
 		psig[#psig + 1] = c.kind .. c.id .. tostring(c.free) .. tostring(c.fits) .. tostring(c.allowed) .. (c.bytes or "")
+			.. tostring(c.merge)
 	end
 	for k, n in pairs(p.reserve) do psig[#psig + 1] = "r" .. k .. "=" .. n end
 	for k, n in pairs(p.missing) do psig[#psig + 1] = "m" .. k .. "=" .. n end
@@ -660,6 +671,8 @@ local function refresh_crafting(st, frame, net, index)
 		local text = { "", { "fork-me-gui.plan-missing" } }
 		if next(p.loops) then text[#text + 1] = { "fork-me-craft.plan-loop", autocraft.item_list(p.loops, 4) } end
 		plan_label.caption = text
+	elseif p.merge then plan_label.caption = { "", { "fork-me-gui.plan-ok", p.runs, p.steps }, " ",
+		{ "fork-me-craft.plan-merge" } }                           -- (issue #418)
 	else plan_label.caption = { "fork-me-gui.plan-ok", p.runs, p.steps } end
 	M.plan_cpus(G.find(frame, "fork_me_plan_cpus"), p)
 	plan_grid.clear()
@@ -683,9 +696,10 @@ function M.cpu_pick(dd, st, p)
 	local ids, items = {}, { { "fork-me-craft.cpu-auto" } }
 	if p.ok then
 		for _, c in ipairs(p.cpu_list or {}) do
-			if c.fits and c.free and c.allowed then
+			if (c.fits and c.free and c.allowed) or c.merge then
 				ids[#ids + 1] = c.id
-				items[#items + 1] = M.cpu_name(c)
+				--- (issue #418: a busy CPU whose job crafts the item: the request joins its job)
+				items[#items + 1] = c.merge and { "fork-me-craft.cpu-merge", M.cpu_name(c) } or M.cpu_name(c)
 			end
 		end
 	end

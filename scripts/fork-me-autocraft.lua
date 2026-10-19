@@ -1745,15 +1745,32 @@ end
 --- The CPUs of a network for the plan preview (issue #6), in the order a job takes them: { kind = "group", id, bytes,
 --- coprocessors, speed, width, height, free, fits, mode, allowed } (`bytes`: the job's; fits = big enough, free = can take
 --- a job now, allowed = its mode takes a request of `owner`, issue #350; nil: a player's)
-function M.cpu_list(net, bytes, owner)
+function M.cpu_list(net, bytes, owner, key)
 	local s = state()
 	local out = {}
 	for _, g in ipairs(groups_in(s, net)) do
+		--- issue #418: `key` given (a player's request), a CPU whose player job crafts it and has room merges the request
+		local merge = key ~= nil and owner == nil and M.merge_into(s, g, key, bytes) ~= nil or nil
 		out[#out + 1] = { kind = "group", id = g.id, bytes = g.bytes, coprocessors = g.coprocessors, speed = group_speed(g),
 			width = g.x2 - g.x1 + 1, height = g.y2 - g.y1 + 1, free = not g.job and group_network(g) ~= nil,
-			fits = g.bytes >= (bytes or 0), mode = g.mode, allowed = M.cpu_allows(g, owner) }
+			fits = g.bytes >= (bytes or 0), mode = g.mode, allowed = M.cpu_allows(g, owner), merge = merge }
 	end
 	return out
+end
+
+--- Issue #418: AE2-Unofficial's job merging (me/cluster/implementations/CraftingCPUCluster.java submitJob and mergeJob;
+--- me/cache/CraftingGridCache.java submitJob): a player's request for an item that a player's job crafts already on a CPU
+--- that has room for both plans' bytes joins that job (the maintainer's choice A: only a player into a player's job; a
+--- request of automation, a level maintainer, a Crafting Card, the circuit interface, never merges and is never merged into).
+--- Returns the job of group `g` that a request of `bytes` for `key` would join, or nil.
+function M.merge_into(s, g, key, bytes)
+	local id = g.job
+	local job = id and s.jobs[id]
+	if not (job and job.item == key and job.owner == nil and not job.closing) then return nil end
+	if not (job.status == "queued" or job.status == "running") then return nil end
+	if not (group_network(g) and M.cpu_allows(g, nil)) then return nil end
+	if g.bytes < job_bytes(job) + (bytes or 0) then return nil end
+	return job
 end
 
 local function give_group(g, job)
@@ -2856,6 +2873,16 @@ function M.start(entity, key, amount, owner, want, waker)
 	if rescan_plan(s, net, plan) then plan = make_plan(s, net, key, amount) end
 	if plan.no_pattern then return nil, "no-pattern", plan end
 	if not plan.ok then return nil, "missing", plan end
+	--- issue #418: a player's request joins a player's job for the item that has room (AE2-U's automatic choice puts the busy
+	--- CPU that can merge first; a chosen CPU merges when its job crafts the item)
+	if owner == nil then
+		for _, g in ipairs(groups_in(s, net)) do
+			if not want or g.id == want then
+				local job = M.merge_into(s, g, key, plan.bytes)
+				if job then return M.merge(s, net, job, amount, plan) end
+			end
+		end
+	end
 	local cpu, kind, biggest = pick_cpu(s, net, plan.bytes, owner, want)
 	if not cpu then
 		plan.biggest = biggest
@@ -2903,6 +2930,58 @@ function M.start(entity, key, amount, owner, want, waker)
 	local job = s.jobs[id]
 	give_group(cpu, job)
 	return id, nil, plan
+end
+
+--- Issue #418: the plan of `amount` more joins `job`: its ingredients are taken out of the network into the job's pool, each
+--- step adds its runs to the job's step of the same pattern (or comes after the job's steps), the job's amount, runs and
+--- bytes grow. Returns the job's id, nil and the plan (as M.start does), and true (merged).
+function M.merge(s, net, job, amount, plan)
+	local pool, taken = job.pool, {}
+	for k, count in pairs(plan.reserve) do
+		local removed
+		if is_fluid(k) then removed = fluids.remove_key(net, k, count + FLUID_MARGIN)
+		else
+			local name, q = N.parse_key(k)
+			removed = N.extract(net, name, q, count)
+		end
+		if removed > 0 then taken[k] = removed end
+		if removed + FLUID_EPS < count then                     -- storage changed under us: give back what was taken
+			for tk, n in pairs(taken) do
+				if is_fluid(tk) then store_fluid(net, tk, n) else
+					local name, q = N.parse_key(tk)
+					store_item(net, name, q, n)
+				end
+			end
+			return nil, "stock-changed", plan
+		end
+	end
+	for k, n in pairs(taken) do pool[k] = (pool[k] or 0) + n end
+	local runs = 0
+	for _, st in pairs(plan.steps) do
+		local found
+		for _, step in ipairs(job.steps) do
+			if step.pid == st.pid and step.kind == st.def.kind and step.recipe == st.def.recipe and step.quality == st.def.quality then
+				found = step
+				break
+			end
+		end
+		if found then
+			found.runs = found.runs + st.runs
+			if st.keys then
+				found.keys = found.keys or {}
+				for k in pairs(st.keys) do found.keys[k] = true end
+			end
+		else
+			job.steps[#job.steps + 1] = job_step_of(st)
+		end
+		runs = runs + st.runs
+	end
+	job.amount = job.amount + amount
+	job.total_runs = job.total_runs + runs
+	job.bytes = job_bytes(job) + (plan.bytes or 0)
+	job.merged = (job.merged or 0) + 1
+	s.await = nil
+	return job.id, nil, plan, true
 end
 
 function M.cancel(id)
@@ -3769,9 +3848,9 @@ remote.add_interface("gregtorio-me-autocraft", {
 	--- speed, monitors, network, working, job }
 	group_info = function(block) return M.group_info(block) end,
 	--- the CPUs of the network of `entity` for a job of `bytes` (the plan preview)
-	cpu_list = function(entity, bytes, owner)
+	cpu_list = function(entity, bytes, owner, key)
 		local net = N.network_of(entity)
-		return net and M.cpu_list(net, bytes, owner) or {}
+		return net and M.cpu_list(net, bytes, owner, key) or {}
 	end,
 	--- the render objects of a crafting monitor: { icon = sprite path, text } or nil
 	monitor = function(block)
