@@ -28,7 +28,7 @@
 ---     (assembler, furnace result, chest) and fluid from its output boxes (a tank: every box); the export bus
 ---     puts its filtered items into the entity's input (machine: up to one stack each, a crafting machine up to two
 ---     crafts of its recipe when that is more, issue #382; chest: as far as it has room) and its filtered fluids into
----     the input boxes or the tank. Up to MAX_FILTERS filters, items and
+---     the input boxes or the tank. Up to MAX_FILTERS filters (issue #413: 9 more per Capacity Card), items and
 ---     fluids mixed (keys: item name, "fluid/<name>", "fluid/<name>@<degrees>"), split into an item and a fluid set when they are set
 ---     (import: none = everything, items and fluids; export: none = nothing). Kept in blueprints (tag
 ---     fork_me_bus), settings paste and clones. The windows are in scripts/fork-me-windows.lua.
@@ -69,8 +69,12 @@ local ACTIVE_INTERVAL = 60           -- ... of a block that moves something but 
 local MAX_CATCH_UP = 600             -- ticks of speed a visit may catch up at most
 local MAX_ICAP = 2 ^ 31 - 1          -- items a bus visit may move at most (issue #356: an engine count is 32 bit)
 local IFACE_SLOTS_PER_VISIT = 8      -- item slots an interface handles per STEP_TICKS since its last visit
-local MAX_FILTERS = 9
-local CONFIG_SLOTS = 9               -- the config rows of an interface without cards
+local MAX_FILTERS = 9                -- the filters of a bus without a Capacity Card
+local KEPT_FILTERS = 27              -- the filters a bus keeps: with two Capacity Cards (issue #413: 9 more each)
+--- the filters that apply (issue #413): 9 and 9 more per Capacity Card (`rec.nf`, made from its cards; nil: 9). Filters beyond
+--- them are kept in `rec.keys` and apply again when a card gives them room.
+local function filters_of(rec) return rec.nf or MAX_FILTERS end
+local CONFIG_SLOTS = 9              -- the config rows of an interface without cards
 local MAX_ROWS = 36                  -- with three Interface Capacity Cards (issue #196: 9 more rows each)
 
 --- the config rows of an interface (issue #196): 9 and 9 more per Interface Capacity Card (`rec.nrows`, made from its cards by
@@ -358,6 +362,15 @@ end
 local function import_takes(rec, set, name, q)
 	if set[name] then return true end
 	return rec.iq and q ~= nil and q ~= "normal" and set[N.key_of(name, q)] or false
+end
+--- does an import bus take `name` of quality `q`: everything (`all`), else its group filter's text (issue #363) or its item filters,
+--- turned into a blacklist by an Inverter Card (issue #413, `rec.binv`)
+local function import_hit(rec, all, gf, set, name, q)
+	if all then return true end
+	local hit
+	if gf then hit = N.GF.match(gf, N.key_of(name, q or "normal")) and true or false
+	else hit = import_takes(rec, set, name, q) and true or false end
+	return hit ~= (rec.binv or false)
 end
 
 --------------------------------------------------------------------------------
@@ -1172,14 +1185,25 @@ local function bus_rec(entity)
 	return s and entity and entity.valid and entity.unit_number and BUSES[kind(entity)] and s.recs[entity.unit_number] or nil
 end
 local cards
+--- Issue #413: the Capacity Card (9 more filters each, up to 2: `rec.nf`), the Fuzzy Card (a filter takes every quality of its
+--- item: `rec.fz`) and, on the import bus only, the Inverter Card (the filters are a blacklist: `rec.binv`).
+local function bus_rules(rec)
+	local r = N.card_rules()
+	return rec and IMPORTS[rec.kind] and r.import_bus or r.bus
+end
 cards = CS.new{
-	rules = function() return N.card_rules().bus end,
+	rules = bus_rules,
 	title = function(rec) return rec.entity and rec.entity.valid and rec.entity.localised_name or { "entity-name.me-import-bus" } end,
 	rec_of = bus_rec,
 	on_cards = function(rec, light)
 		local counts, r = cards.counts(rec), N.card_rules()
 		rec.gcard = counts.gfilter and true or nil            -- issue #363: a Group Filter Card
-		M.bus_gf(rec)
+		local br = bus_rules(rec)
+		local nf = br.filters + br.per_capacity * math.min(counts.capacity or 0, br.limits.capacity)
+		rec.nf = nf ~= MAX_FILTERS and nf or nil
+		rec.fz = counts.fuzzy and true or nil
+		rec.binv = counts.inverter and IMPORTS[rec.kind] and true or nil
+		M.bus_split(rec)                                      -- (the filters that apply, and the group filter: M.bus_gf)
 		local f = r.speed[(counts.speed or 0) + 1]
 		--- issue #356: the Super Speed and Superluminal Speed Cards add to the factor (AE2-U: the kinds add up)
 		if counts.superspeed then f = f + r.superspeed[counts.superspeed] end
@@ -1272,8 +1296,7 @@ local function import_items(rec, net, t, cap, info)
 	local moved, stacks, held, main, mainc = 0, false, 0, nil, 0
 	local B = N.bound(inv)                                    -- (its methods: issue #115)
 	for _, c in pairs(B.get_contents()) do
-		if all or (gf and N.GF.match(gf, N.key_of(c.name, c.quality or "normal")))
-			or (not gf and import_takes(rec, set, c.name, c.quality)) then
+		if import_hit(rec, all, gf, set, c.name, c.quality) then
 			held = held + c.count
 			if c.count > mainc then main, mainc = c.name, c.count end
 			if moved < cap then
@@ -1303,8 +1326,7 @@ local function import_items(rec, net, t, cap, info)
 		for i = 1, #inv do
 			if moved >= cap then break end
 			local stack = inv[i]
-			if stack.valid_for_read and (all or (gf and N.GF.match(gf, N.key_of(stack.name, stack.quality.name)))
-				or (not gf and import_takes(rec, set, stack.name, stack.quality.name)))
+			if stack.valid_for_read and import_hit(rec, all, gf, set, stack.name, stack.quality.name)
 				and not by_count(stack.name, stack.quality.name) then
 				local n, why = N.insert_partial(net, stack, cap - moved)
 				if n then moved = moved + n
@@ -1342,12 +1364,13 @@ local function export_items(rec, net, t, cap, info)
 	end
 	local dt = info.dt or STEP_TICKS
 	--- the keys: the filters, or (issue #363) the group filter's keys in turn from where the last visit stopped, at most as many
-	--- as the filters (the visit's cost stays a filter list's); a key of that list registers no wait of its own
-	local gf = rec.gf
+	--- as the filters (the visit's cost stays a filter list's); a key of that list registers no wait of its own. Issue #413: with
+	--- a Fuzzy Card the network's keys of the filters' items in every quality, in turn the same way.
+	local gf = rec.gf or rec.fz
 	local list, i, count
 	if gf then
 		list = M.gf_list(rec, net)
-		i, count = rec.gcur or 1, math.min(#list, MAX_FILTERS)
+		i, count = rec.gcur or 1, math.min(#list, filters_of(rec))
 	else
 		list, i, count = rec.filters, 1, #rec.filters
 	end
@@ -1484,6 +1507,7 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 				for _, fk in ipairs(v) do if N.fluid_matches(fk, key) then ok = true break end end
 				v = ok
 			end
+			if rec.binv and not all and f and f.amount > EPS then v = not v end   -- issue #413: an Inverter Card, a blacklist
 			if v then
 				local p = N.bound(fb).get_prototype(i)
 				if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
@@ -1607,8 +1631,9 @@ function M.bus_step(rec, dt, u)
 	info.time, info.dt = math.huge, ticks
 	info.held, info.main, info.slots, info.netfull, info.nokey, info.blocked, info.starved = nil, nil, nil, nil, nil, nil, nil
 	info.temperature = nil
-	local has_items = rec.t_inv and (rec.all or #rec.filters > 0 or rec.gf ~= nil)
-	local has_fluid = rec.t_fluid and (rec.all or #rec.ffilters > 0)
+	--- (issue #413: an import bus with an Inverter Card takes everything its filters do not name, items and fluids)
+	local has_items = rec.t_inv and (rec.all or rec.binv or #rec.filters > 0 or rec.gf ~= nil)
+	local has_fluid = rec.t_fluid and (rec.all or rec.binv or #rec.ffilters > 0)
 	if has_items then
 		items = import and import_items(rec, net, t, icap, info) or export_items(rec, net, t, icap, info)
 	end
@@ -1653,19 +1678,36 @@ function M.bus_step(rec, dt, u)
 end
 
 --- Set the filters: a list of keys (item name, "name@quality" (issue #291), "fluid/<name>"; a plain name that is no
---- item but a fluid is that fluid), at most MAX_FILTERS. Split into rec.filters (item keys) and rec.ffilters (fluid
---- names) and their sets; rec.iq: a filter names a quality.
+--- item but a fluid is that fluid), at most KEPT_FILTERS (issue #413: those beyond the Capacity Cards' room are kept in
+--- rec.keys and do nothing), split by M.bus_split.
 function M.set_bus_filters(entity, filters)
 	local k = kind(entity)
 	if not BUSES[k] then return false end
 	local rec = register(state(), entity)
-	local keys, items, fl, iset, fset, seen = {}, {}, {}, {}, {}, {}
-	local fkeys, temps, iq = {}, false, false
+	local keys, seen = {}, {}
 	for _, f in pairs(filters or {}) do
 		local key = filter_key(f)
-		if key and not seen[key] and #keys < MAX_FILTERS then
+		if key and not seen[key] and #keys < KEPT_FILTERS then
 			seen[key] = true
 			keys[#keys + 1] = key
+		end
+	end
+	rec.keys = keys
+	M.bus_split(rec)
+	wake(entity.unit_number)
+	return true
+end
+
+--- The filters that apply (the first filters_of(rec) of rec.keys, issue #413) split into rec.filters (item keys) and
+--- rec.ffilters (fluid names) and their sets; rec.iq: a filter names a quality. With a Fuzzy Card (rec.fz) the item set holds
+--- the items' names, so a filter takes every quality of its item, and rec.fznames is that set for the export (M.gf_list).
+function M.bus_split(rec)
+	local items, fl, iset, fset = {}, {}, {}, {}
+	local fkeys, temps, iq = {}, false, false
+	local fz, n = rec.fz, filters_of(rec)
+	for i, key in ipairs(rec.keys or rec.filters or {}) do
+		if i > n then break end
+		do
 			if N.is_fluid_key(key) then
 				local name, deg = N.split_fluid_key(key)
 				fl[#fl + 1] = name
@@ -1679,17 +1721,20 @@ function M.set_bus_filters(entity, filters)
 				if deg then temps = true end
 			else
 				items[#items + 1] = key
-				iset[key] = true
-				if key:find("@", 1, true) then iq = true end
+				if fz then iset[(filter_item(key))] = true
+				else
+					iset[key] = true
+					if key:find("@", 1, true) then iq = true end
+				end
 			end
 		end
 	end
-	rec.keys, rec.filters, rec.ffilters, rec.iset, rec.fset = keys, items, fl, iset, fset
+	if not rec.keys then rec.keys = { table.unpack(rec.filters or {}) } end   -- (a record of a save before issue #3)
+	rec.filters, rec.ffilters, rec.iset, rec.fset = items, fl, iset, fset
+	rec.fznames = fz and iset or nil
 	rec.iq = iq or nil
 	rec.fkeys = temps and fkeys or nil                    -- (the filter keys of rec.ffilters, only with a temperature)
 	M.bus_gf(rec)
-	wake(entity.unit_number)
-	return true
 end
 
 --- Issue #363: the Group Filter Card on an import or export bus (AE2-Unofficial: PartBaseImportBus.java:132,
@@ -1700,7 +1745,8 @@ end
 --- (MAX_FILTERS, the filters' count), each visit moving what its speed allows; without a text it exports nothing.
 function M.bus_gf(rec)
 	rec.gf = rec.gcard and rec.gtext or nil
-	rec.all = IMPORTS[rec.kind] and ((rec.gcard and not rec.gtext) or (not rec.gcard and #(rec.keys or rec.filters or {}) == 0)) or nil
+	rec.all = IMPORTS[rec.kind] and ((rec.gcard and not rec.gtext)
+		or (not rec.gcard and #(rec.filters or {}) + #(rec.ffilters or {}) == 0)) or nil
 	rec.glist, rec.gkgen = nil, nil
 end
 
@@ -1714,12 +1760,17 @@ function M.set_bus_gtext(entity, text)
 	return true
 end
 
---- the network's item keys that match the export bus's text (sorted; rebuilt when the network got new keys)
+--- the network's item keys that match the export bus's text (sorted; rebuilt when the network got new keys); issue #413: with a
+--- Fuzzy Card and no text, the keys of the filters' items in every quality
 function M.gf_list(rec, net)
 	if rec.glist and rec.gkgen == (net.kgen or 0) and rec.gknet == net.id then return rec.glist end
-	local list, gf = {}, rec.gf
+	local list, gf, names = {}, rec.gf, rec.fznames or {}
 	for key in pairs(net.items) do
-		if not N.is_fluid_key(key) and not key:find("#", 1, true) and N.GF.match(gf, key) then list[#list + 1] = key end
+		if not N.is_fluid_key(key) and not key:find("#", 1, true) then
+			local hit
+			if gf then hit = N.GF.match(gf, key) else hit = names[(filter_item(key))] end
+			if hit then list[#list + 1] = key end
+		end
 	end
 	table.sort(list)
 	rec.glist, rec.gkgen, rec.gknet = list, net.kgen or 0, net.id
@@ -1744,12 +1795,18 @@ function M.set_bus_filter(entity, index, key)
 	local rec = register(s, entity)
 	local current = rec.keys or rec.filters
 	local list = {}
-	for i = 1, MAX_FILTERS do
+	for i = 1, KEPT_FILTERS do                                     -- (issue #413: the kept ones too)
 		local v
 		if i == index then v = key else v = current[i] end
 		if v then list[#list + 1] = v end
 	end
 	return M.set_bus_filters(entity, list)
+end
+
+--- issue #413: the filters that apply to the bus now (9, more with Capacity Cards; the recipe paste)
+function M.bus_filter_count(entity)
+	local rec = bus_rec(entity)
+	return rec and filters_of(rec) or MAX_FILTERS
 end
 
 --- issue #110: the card slots of a bus for its window (the inventory whose slots it shows, the clicks on them)
@@ -1781,12 +1838,15 @@ function M.bus_info(entity)
 	if not BUSES[k] then return nil end
 	local rec = register(state(), entity)
 	local b = M.get_bus(entity)
-	b.kind, b.import, b.max = k, IMPORTS[k] == true, MAX_FILTERS
+	--- issue #413: the filters that apply (more with Capacity Cards), whether some are kept beyond them, the Fuzzy and Inverter Card
+	b.kind, b.import, b.max = k, IMPORTS[k] == true, filters_of(rec)
+	b.kept = #(rec.keys or {}) > b.max or nil
+	b.fuzzy, b.inverted = rec.fz == true, rec.binv == true
 	b.items, b.fluids = rec.t_inv ~= nil, rec.t_fluid == true
 	b.tstat = rec.status == "temperature" and rec.tstat or nil      -- issue #159: { fluid, the network has, the target takes }
 	b.fmix = rec.fmix and { rec.fmix[1], rec.fmix[2] } or nil       -- issue #161: { fluid, its temperatures in the network }
 	--- issue #110: the card slots (the window shows them), the factor of the cards, the cards it waits for
-	b.slots, b.accel = N.card_rules().bus.slots, rec.accel or 1
+	b.slots, b.accel = bus_rules(rec).slots, rec.accel or 1
 	b.rate = Sched.setting("bus_items") * b.accel          -- items per second at most
 	b.cards = {}
 	for slot, name in pairs(rec.cards or {}) do b.cards[slot] = name end
@@ -1877,7 +1937,8 @@ local function probe_work(rec)
 	end
 	if b == "empty" then return probe_mark(rec) ~= rec.seen end
 	--- issue #363: an export bus with a group filter waits for no key of its own: a key new in the network, or the idle limit
-	if rec.gf and not IMPORTS[rec.kind] then
+	--- (issue #413: the same with a Fuzzy Card)
+	if (rec.gf or rec.fz) and not IMPORTS[rec.kind] then
 		local net = N.network_of(rec.entity)
 		return (net ~= nil and (net.kgen or 0) ~= rec.gkgen) or game.tick - (rec.last or 0) >= tick_limit
 	end

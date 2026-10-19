@@ -265,7 +265,7 @@ click uses the tool and opens no window, as on a chest.
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 3 card slots (Interface Capacity Cards only: 9 more config rows each), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount, temperature, a fill bar and what its pipes hold too), status, **Open inventory** (the container's own window, once) |
-| ME Import/Export Bus | 9 filters (items and fluids), the entity it faces and whether the bus uses its items, fluids or both, status |
+| ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, the entity it faces and whether the bus uses its items, fluids or both, status |
 | ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
@@ -562,18 +562,34 @@ card is made from a component card and one item:
 |---|---|---|---|
 | Basic Card (2 per craft) | 2 copper plates, 3 iron plates, a copper cable, an advanced circuit (AE2: 2 gold, 3 iron, a redstone, a calculation processor) | | component |
 | Advanced Card (2 per craft) | 2 processing units, 3 iron plates, a copper cable, an advanced circuit (AE2: 2 diamonds instead of the gold) | | component |
-| Capacity Card | basic card + stone (AE2: certus quartz) | storage bus, up to 5 | 9 more filters each (18 + 9 per card, up to 63) |
+| Capacity Card | basic card + stone (AE2: certus quartz) | storage bus, up to 5; ME Import and Export Bus, up to 2 (issue #413) | 9 more filters each (storage bus: 18 + 9 per card, up to 63; import and export bus: 9 + 9 per card, up to 27) |
 | Interface Capacity Card | advanced card + capacity card | ME Interface, up to 3 | 9 more config rows each (9 + 9 per card, up to 36); fits nowhere else (issue #196; AE2's interface has no such card: its pattern slots are the Pattern Provider's here) |
 | Pattern Capacity Card | advanced card, 2 16k storage components, an ME Interface (AE2-Unofficial's) | ME Pattern Provider, up to 3 | 9 more pattern slots each (9 + 9 per card, up to 36); fits nowhere else, and the Capacity Card does not fit the provider (AE2-Unofficial's Pattern Capacity Card) |
 | Overflow Destruction Card | basic card + advanced circuit | storage bus, 1 | **destroys** what the network stores into the bus and does not fit |
-| Fuzzy Card | advanced card + copper cable | storage bus, 1 | the filters match every quality of their item |
-| Inverter Card | advanced card + decider combinator | storage bus, 1 | the filters are a blacklist |
+| Fuzzy Card | advanced card + copper cable | storage bus, ME Import and Export Bus (issue #413), 1 | the filters match every quality of their item |
+| Inverter Card | advanced card + decider combinator | storage bus, ME Import Bus (issue #413), 1 | the filters are a blacklist |
 | Sticky Card | basic card + iron chest (AE2-Unofficial: a slimeball, which has no stand-in) | storage bus, item and fluid cells, 1 | what the storage holds or is partitioned for goes into it before every other storage, whatever the priorities (see **Partitions and priorities**, rule 0) |
 | Group Filter Card | advanced card + constant combinator (AE2-Unofficial's Ore Dictionary Filter Card: an advanced card and a book) | storage bus, item cells, ME Import and Export Bus (issue #363), 1 | a text filter over the item's name, subgroup and group takes the place of the filters (see below) |
 | Equal Distribution Card | advanced card + advanced circuit | storage cells, 1 | every kind gets the same share of the cell |
 | Acceleration Card | advanced card + copper cable (AE2: a fluix crystal) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4; ME Molecular Assembler (module slots), up to 5 | a bus moves 8, 32, 64, 96 times the items per second; an assembler +80 % crafting speed and +80 % power use each |
 | Super Speed Card | Acceleration Card + 16k storage component (AE2-Unofficial's) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4 | adds 16, 128, 1024, 8192 times the bus speed (issue #356) |
 | Superluminal Speed Card | Super Speed Card + 4 256k storage components (AE2-Unofficial: a 1024k component, which ME Network does not have) | ME Import Bus and Export Bus, up to 4; ME IO Port (issue #386), up to 4 | adds 131 072, 1 048 576, 8 388 608, 67 108 864 times the bus speed (issue #356) |
+
+**Capacity, Fuzzy and Inverter Card on the ME Import and Export Bus** (issue #413, AE2-Unofficial's bus cards): they go into
+the bus's 4 card slots with the speed cards and the Group Filter Card.
+
+* **Capacity Card**, up to 2: 9 more filters each, so 9, 18 or 27 (the window shows them in rows of 9). AE2-Unofficial's buses
+  also take 2, but have 1, 5 or 9 filters; the buses here had 9 from the start, so each card adds 9. Filters beyond what the
+  cards give room for (a card taken out, a blueprint whose cards have not come yet) are kept, shown nowhere and do nothing
+  (the window says so); they work again when a card gives them room.
+* **Fuzzy Card**, 1: a filter takes every quality of its item, also a filter that names a quality. The import bus takes the
+  item in any quality; the export bus exports the network's items of its filters in every quality, in turn, each visit as
+  many keys as it has filters (the way the Group Filter Card's list goes). Fluids have no quality: their filters are as
+  before.
+* **Inverter Card**, 1, **import bus only**: its filters are a blacklist, the bus takes everything from its target except
+  them, items and fluids (with the Group Filter Card: everything its text does not match). AE2-Unofficial has no Inverter
+  Card on the buses: this is an addition of ME Network. The export bus refuses it (a blacklist of an export would export
+  the whole network).
 
 On storage cells (in the ME Cell Workbench) the Inverter, Fuzzy (item cells only) and Overflow Destruction Card work
 like on the bus. The numbers are AE2's (its source: a storage bus has 5 card slots and takes up to 5 Capacity Cards
@@ -1261,7 +1277,7 @@ connects whatever touches it, like the cable, but only while it is **joined**:
 |---|---|---|---|
 | ME Pattern Provider | priority; its blocking mode (issue #335) and lock (issue #346); its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network); its name (issue #336) | yes (priority, blocking mode, lock, cards) | yes (patterns pending a blank pattern, blocking mode, lock, cards, name); clone: priority, blocking mode, lock, cards, name |
 | ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority, its Interface Capacity Cards (the copy wants them from the player, then the network) | yes | yes (old blueprints with slot filters are converted); the cards first, so the rows they give room for are there |
-| ME Import Bus, ME Export Bus | filters (items and fluids); which Acceleration Cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
+| ME Import Bus, ME Export Bus | filters (items and fluids, also the ones kept beyond its Capacity Cards, issue #413); which cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
 | ME Drive | priority, the partition of each slot | yes (every slot) | yes; the cells are items, not settings: a drive from a blueprint is empty, a slot keeps its partition for the next cell |
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
@@ -1289,8 +1305,8 @@ The block is set up for the machine's recipe; what it had is replaced:
 |---|---|---|---|
 | ME Interface | config rows = the ingredients in the recipe's order, each with **one craft** of the recipe (issue #157 of ME Network; before: a full stack of each item and a side's volume of each fluid): the ingredient's amount per craft, a fluid's rounded up to whole units | sides that are off; a side tied to a fluid that is in the recipe again | 9 rows, 4 fluids; a row at most what it holds (a fluid a side's volume, 5000: the flying text says so) |
 | ME Storage Bus | filters = the ingredients: on a chest or cargo wagon the items, on a tank the fluids, facing nothing yet both | mode, priority, filter on extract, the cards | 18 filters (9 more per Capacity Card) |
-| ME Export Bus | filters = the ingredients, items and fluids | | 9 filters |
-| ME Import Bus | filters = the **products**, items and fluids | | 9 filters |
+| ME Export Bus | filters = the ingredients, items and fluids | | 9 filters (9 more per Capacity Card, issue #413) |
+| ME Import Bus | filters = the **products**, items and fluids | | 9 filters (9 more per Capacity Card, issue #413) |
 
 * The recipe's quality is the quality of the interface's item rows and of the storage bus's item filters, and since
   issue #291 of the import and export bus's item filters too (a normal quality recipe gives plain filters, which the import
@@ -1811,8 +1827,8 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
 * Autocrafting plans and crafts every quality (issue #352), but no items with own data (armor, tools, cells with
   contents) and no spoilage handling in the pool. Network storage takes every quality, and items with tags.
 * Network storage (issue #68): no channels, no fluid wagons on the storage bus. The cards are where **Upgrade cards** lists
-  them: the import and export bus take speed cards (up to 4, issues #110, #356) and the Group Filter Card (issue #363; no
-  capacity, fuzzy or inverter card),
+  them: the import and export bus take speed cards (up to 4, issues #110, #356), the Group Filter Card (issue #363), up to 2
+  Capacity Cards and a Fuzzy Card, the import bus also an Inverter Card (issue #413),
   the ME Interface only Interface Capacity Cards (up to 3, issue #196); there is no redstone and no crafting card; the
   search of the terminal and the picker matches the shown names (issue #295) only once your client has
   translated them, a few ticks after the first terminal or picker opens (before that, and for a name your language

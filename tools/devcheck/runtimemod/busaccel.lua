@@ -99,7 +99,8 @@ return function(H)
 
 		--- the slots and what they take
 		expect(info(E).slots == 4 and info(E).accel == 1, "an export bus: " .. serpent.line({ info(E).slots, info(E).accel }))
-		expect(put(E, "me-capacity-card") == "not-here" and put(E, "me-fuzzy-card") == "not-here" and put(E, "iron-plate") == "not-here",
+		--- (issue #413: the export bus takes Capacity and Fuzzy Cards now, but no Inverter Card)
+		expect(put(E, "me-inverter-card") == "not-here" and put(E, "me-pattern-capacity-card") == "not-here" and put(E, "iron-plate") == "not-here",
 			"a card the bus does not take was not refused as not-here")
 		for n = 1, 4 do
 			expect(put(E, CARD) == nil, "card " .. n .. " was refused")

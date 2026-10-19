@@ -101,7 +101,14 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation). Issue #356: up to 4 Super Speed and 4 Superluminal Speed
 	--- Cards too, in the same 4 slots; `superspeed` and `superluminal`: by the number of each, what they add to that factor
 	--- (AE2-U: PartExportBus.calculateAmountToSend, the kinds add up)
-	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1 } },   -- (issue #363: the Group Filter Card)
+	--- Issue #413: the Capacity Card (up to 2, AE2-U: Registration.java, `parts.importBus()` / `parts.exportBus()`) and the
+	--- Fuzzy Card (1); `filters` filters and `per_capacity` more with each Capacity Card (9 / 18 / 27; AE2-U: 1 / 5 / 9, but
+	--- the buses here had 9 from the start). `import_bus`: the import bus's rules, the same and one Inverter Card (AE2-U has
+	--- no inverter on the buses: an addition of this mod, its filters become a blacklist)
+	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1, capacity = 2, fuzzy = 1 },
+		filters = 9, per_capacity = 9 },
+	import_bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1, capacity = 2, fuzzy = 1,
+		inverter = 1 }, filters = 9, per_capacity = 9 },
 	--- issue #386: the ME IO Port takes the speed cards of the buses (AE2's IO port: speed cards), with the same factors
 	io_port = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4 } },
 	superspeed = { 16, 128, 1024, 8192 },
