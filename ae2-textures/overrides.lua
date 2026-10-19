@@ -14,6 +14,9 @@
 --- CPU, in ME Network's sheet.
 --- Issue #303 the wireless group: the access point as a block, the terminal, its module and the booster as AE2's icons.
 --- Issue #304 the technology icons: AE2 has none, so each is one of these icons scaled up.
+--- ME Network issue #447 the items of ME Network #411-#416: the cells above 256k and the Singularity cell, their
+--- components and technologies, the crafting storage above 256k, the crafting accelerators, the Crafting Card and the
+--- Pattern Terminal Ex, made the same ways.
 ---
 --- A key is "<prototype type>/<prototype name>" of ME Network (it never renames a prototype). A value is either
 ---   a file of this mod, when the prototype uses exactly one file of ME Network (an item's icon):
@@ -37,17 +40,29 @@ return {
 	["item-with-tags/me-void-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-void-fluid-storage-cell.png", icon_size = 64, tint = { 1, 1, 1, 1 } },
 	["item-with-tags/me-64k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-64k-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-256k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-256k-storage-cell.png", icon_size = 64 },
+	--- ME Network issue #447: the cells above 256k (ME Network #414) and AE2-Unofficial's Singularity cell
+	["item-with-tags/me-1024k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-1024k-storage-cell.png", icon_size = 64 },
+	["item-with-tags/me-4096k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4096k-storage-cell.png", icon_size = 64 },
+	["item-with-tags/me-16384k-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16384k-storage-cell.png", icon_size = 64 },
+	["item-with-tags/me-singularity-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-singularity-storage-cell.png", icon_size = 64 },
 	--- fluid storage cells (64 px, issue #250): AE2-Unofficial has none, so its item cell of the tier, frame and body blue
 	["item-with-tags/me-1k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-1k-fluid-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-4k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4k-fluid-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-16k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16k-fluid-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-64k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-64k-fluid-storage-cell.png", icon_size = 64 },
 	["item-with-tags/me-256k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-256k-fluid-storage-cell.png", icon_size = 64 },
+	--- (issue #447: the tiers above 256k; their lighter bodies each grey at about its brightness, tools/scale_ae2_icons.py)
+	["item-with-tags/me-1024k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-1024k-fluid-storage-cell.png", icon_size = 64 },
+	["item-with-tags/me-4096k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4096k-fluid-storage-cell.png", icon_size = 64 },
+	["item-with-tags/me-16384k-fluid-storage-cell"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16384k-fluid-storage-cell.png", icon_size = 64 },
 	["item/me-1k-storage-component"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-1k-storage-component.png", icon_size = 32 },
 	["item/me-4k-storage-component"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4k-storage-component.png", icon_size = 32 },
 	["item/me-16k-storage-component"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16k-storage-component.png", icon_size = 32 },
 	["item/me-64k-storage-component"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-64k-storage-component.png", icon_size = 32 },
 	["item/me-256k-storage-component"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-256k-storage-component.png", icon_size = 32 },
+	["item/me-1024k-storage-component"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-1024k-storage-component.png", icon_size = 32 },   -- (issue #447)
+	["item/me-4096k-storage-component"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-4096k-storage-component.png", icon_size = 32 },   -- (issue #447)
+	["item/me-16384k-storage-component"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/me-16384k-storage-component.png", icon_size = 32 },   -- (issue #447)
 	["item/basic-storage-housing"] = { filename = "__me-network-ae2-textures__/graphics/icons/cells/basic-storage-housing.png", icon_size = 32 },
 	--- upgrade cards (32 px)
 	["item/me-basic-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-basic-card.png", icon_size = 32 },
@@ -65,6 +80,8 @@ return {
 	--- ME Network issue #356: AE2-Unofficial's Super Speed and Superluminal Speed Cards
 	["item/me-super-speed-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-super-speed-card.png", icon_size = 32 },
 	["item/me-superluminal-speed-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-superluminal-speed-card.png", icon_size = 32 },
+	--- ME Network issue #447: AE2-Unofficial's Crafting Card (ME Network #411)
+	["item/me-crafting-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-crafting-card.png", icon_size = 32 },
 	--- issues #251, #294: no AE2 counterpart, so the Capacity Card with its capacity sign in orange (not the Pattern
 	--- Capacity Card's look: a dark sign and a turquoise stripe)
 	["item/me-interface-capacity-card"] = { filename = "__me-network-ae2-textures__/graphics/icons/cards/me-interface-capacity-card.png", icon_size = 32 },
@@ -149,6 +166,12 @@ return {
 		["__me-network__/graphics/icons/hd/me-pattern-terminal.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
 	},
 	["item/me-pattern-terminal"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal.png", icon_size = 64 },
+	--- ME Network issue #447: the ME Pattern Terminal Ex (ME Network #416): its own AE2 front, the pattern terminal's screen
+	["simple-entity-with-force/me-pattern-terminal-ex"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-pattern-terminal-ex.png"] = "__me-network-ae2-textures__/graphics/blocks/me-pattern-terminal-ex.png",
+		["__me-network__/graphics/icons/hd/me-pattern-terminal-ex.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal-ex.png", icon_size = 64 },
+	},
+	["item/me-pattern-terminal-ex"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-pattern-terminal-ex.png", icon_size = 64 },
 	--- the ME Interface Terminal (issue #343): AE2's interface terminal panel, the same two variations
 	["simple-entity-with-force/me-interface-terminal"] = {
 		["__me-network__/graphics/entity/fork/ae2/hd/me-interface-terminal.png"] = "__me-network-ae2-textures__/graphics/blocks/me-interface-terminal.png",
@@ -254,6 +277,57 @@ return {
 		["__me-network__/graphics/icons/hd/me-crafting-monitor.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-monitor.png", icon_size = 64 },
 	},
 	["item/me-crafting-monitor"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-monitor.png", icon_size = 64 },
+	--- ME Network issue #447: the crafting storage above 256k and the crafting accelerators (ME Network #415), in the same sheet
+	["simple-entity-with-force/me-1024k-crafting-storage"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-1024k-crafting-storage.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-1024k-crafting-storage.png",
+		["__me-network__/graphics/icons/hd/me-1024k-crafting-storage.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-1024k-crafting-storage.png", icon_size = 64 },
+	},
+	["item/me-1024k-crafting-storage"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-1024k-crafting-storage.png", icon_size = 64 },
+	["simple-entity-with-force/me-4096k-crafting-storage"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-4096k-crafting-storage.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-4096k-crafting-storage.png",
+		["__me-network__/graphics/icons/hd/me-4096k-crafting-storage.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-4096k-crafting-storage.png", icon_size = 64 },
+	},
+	["item/me-4096k-crafting-storage"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-4096k-crafting-storage.png", icon_size = 64 },
+	["simple-entity-with-force/me-16384k-crafting-storage"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-16384k-crafting-storage.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-16384k-crafting-storage.png",
+		["__me-network__/graphics/icons/hd/me-16384k-crafting-storage.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-16384k-crafting-storage.png", icon_size = 64 },
+	},
+	["item/me-16384k-crafting-storage"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-16384k-crafting-storage.png", icon_size = 64 },
+	["simple-entity-with-force/me-singularity-crafting-storage"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-singularity-crafting-storage.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-singularity-crafting-storage.png",
+		["__me-network__/graphics/icons/hd/me-singularity-crafting-storage.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-singularity-crafting-storage.png", icon_size = 64 },
+	},
+	["item/me-singularity-crafting-storage"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-singularity-crafting-storage.png", icon_size = 64 },
+	["simple-entity-with-force/me-crafting-accelerator-4x"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-accelerator-4x.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-accelerator-4x.png",
+		["__me-network__/graphics/icons/hd/me-crafting-accelerator-4x.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-4x.png", icon_size = 64 },
+	},
+	["item/me-crafting-accelerator-4x"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-4x.png", icon_size = 64 },
+	["simple-entity-with-force/me-crafting-accelerator-16x"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-accelerator-16x.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-accelerator-16x.png",
+		["__me-network__/graphics/icons/hd/me-crafting-accelerator-16x.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-16x.png", icon_size = 64 },
+	},
+	["item/me-crafting-accelerator-16x"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-16x.png", icon_size = 64 },
+	["simple-entity-with-force/me-crafting-accelerator-64x"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-accelerator-64x.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-accelerator-64x.png",
+		["__me-network__/graphics/icons/hd/me-crafting-accelerator-64x.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-64x.png", icon_size = 64 },
+	},
+	["item/me-crafting-accelerator-64x"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-64x.png", icon_size = 64 },
+	["simple-entity-with-force/me-crafting-accelerator-256x"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-accelerator-256x.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-accelerator-256x.png",
+		["__me-network__/graphics/icons/hd/me-crafting-accelerator-256x.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-256x.png", icon_size = 64 },
+	},
+	["item/me-crafting-accelerator-256x"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-256x.png", icon_size = 64 },
+	["simple-entity-with-force/me-crafting-accelerator-1024x"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-accelerator-1024x.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-accelerator-1024x.png",
+		["__me-network__/graphics/icons/hd/me-crafting-accelerator-1024x.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-1024x.png", icon_size = 64 },
+	},
+	["item/me-crafting-accelerator-1024x"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-1024x.png", icon_size = 64 },
+	["simple-entity-with-force/me-crafting-accelerator-4096x"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-crafting-accelerator-4096x.png"] = "__me-network-ae2-textures__/graphics/blocks/crafting/me-crafting-accelerator-4096x.png",
+		["__me-network__/graphics/icons/hd/me-crafting-accelerator-4096x.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-4096x.png", icon_size = 64 },
+	},
+	["item/me-crafting-accelerator-4096x"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-crafting-accelerator-4096x.png", icon_size = 64 },
 	--- the wireless group (issue #303): the access point an AE2 cube of its inside face (AE2's own model is an antenna); the
 	--- terminal, its module (AE2 has none: the terminal's icon, also the equipment's sprite) and the booster AE2's icons
 	["simple-entity-with-force/me-wireless-access-point"] = {
@@ -280,4 +354,18 @@ return {
 	["technology/me-quantum-crafting"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-quantum-crafting.png", icon_size = 256 },
 	["technology/me-quantum-bridge"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-quantum-bridge.png", icon_size = 256 },   -- (issue #406)
 	["technology/me-wireless"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-wireless.png", icon_size = 256 },
+	--- (issue #447: the technologies of ME Network #414 and #415, their cells and blocks as ME Network's own icons show them)
+	["technology/me-storage-1024k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-storage-1024k.png", icon_size = 256 },
+	["technology/me-storage-4096k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-storage-4096k.png", icon_size = 256 },
+	["technology/me-storage-16384k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-storage-16384k.png", icon_size = 256 },
+	["technology/me-storage-singularity"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-storage-singularity.png", icon_size = 256 },
+	["technology/me-fluid-storage-1024k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-fluid-storage-1024k.png", icon_size = 256 },
+	["technology/me-fluid-storage-4096k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-fluid-storage-4096k.png", icon_size = 256 },
+	["technology/me-fluid-storage-16384k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-fluid-storage-16384k.png", icon_size = 256 },
+	["technology/me-crafting-storage-1024k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-crafting-storage-1024k.png", icon_size = 256 },
+	["technology/me-crafting-storage-4096k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-crafting-storage-4096k.png", icon_size = 256 },
+	["technology/me-crafting-storage-16384k"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-crafting-storage-16384k.png", icon_size = 256 },
+	["technology/me-crafting-storage-singularity"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-crafting-storage-singularity.png", icon_size = 256 },
+	["technology/me-crafting-accelerators"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-crafting-accelerators.png", icon_size = 256 },
+	["technology/me-crafting-accelerators-2"] = { filename = "__me-network-ae2-textures__/graphics/technology/me-crafting-accelerators-2.png", icon_size = 256 },
 }

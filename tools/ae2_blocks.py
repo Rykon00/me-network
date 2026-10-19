@@ -109,7 +109,10 @@ CRAFTING = {
     "me-crafting-unit": [(CPU_FIT, None)],
     "me-crafting-co-processing-unit": [(FIT_SOLID, None), ("blocks/lights/crafting-accelerator-fit.png", None)],
     **{f"me-{t}-crafting-storage": [(FIT_SOLID, None), (f"blocks/lights/crafting-storage-{t}-fit.png", None)]
-       for t in ("1k", "4k", "16k", "64k", "256k")},
+       for t in ("1k", "4k", "16k", "64k", "256k", "1024k", "4096k", "16384k", "singularity")},   # (issue #447: #415's)
+    # issue #447: the crafting accelerators of #415, each with the overlay of its tier
+    **{f"me-crafting-accelerator-{a}": [(FIT_SOLID, None), (f"blocks/lights/crafting-accelerator-{a}-fit.png", None)]
+       for a in ("4x", "16x", "64x", "256x", "1024x", "4096x")},
     "me-crafting-monitor": [("blocks/lights/crafting-monitor-outer.png", None),
                             ("blocks/lights/crafting-monitor-fit-light.png", SCREEN_TINTS[0]),
                             ("blocks/lights/crafting-monitor-fit-medium.png", SCREEN_TINTS[1]),
@@ -143,12 +146,20 @@ MAKE = {
     # issue #421: the monitors' two variations (dark, lit) and icons, as the interface terminal's
     **{f"blocks/me-{m}-monitor.png": ("panel-sheet", f"{m}-monitor") for m in ("storage", "conversion", "throughput")},
     **{f"icons/blocks/me-{m}-monitor.png": ("panel-icon", f"{m}-monitor") for m in ("storage", "conversion", "throughput")},
+    # issue #447: the ME Pattern Terminal Ex (#416): its own front, the pattern terminal's screen layers (AE2-Unofficial's
+    # PartPatternTerminalEx extends PartPatternTerminal and draws the same PartPatternTerm_*)
+    "blocks/me-pattern-terminal-ex.png": ("panel-sheet", "pattern-terminal"),
+    "icons/blocks/me-pattern-terminal-ex.png": ("panel-icon", "pattern-terminal"),
     # issue #283: the cable (me-cable.png's 16 variations) and its icon (the crossing)
     "blocks/me-cable.png": ("cable-sheet",),
     "icons/blocks/me-cable.png": ("cable-icon",),
     # issue #304: the technology icons of blocks (ME Network's technologies, AE2 has none)
     **{f"technology/{t}.png": ("tech-cube",) for t in ("me-network", "me-automation", "me-co-processing", "me-quantum-crafting",
-                                                        "me-quantum-bridge")},                  # (issue #406)
+                                                        "me-quantum-bridge",                    # (issue #406)
+                                                        # issue #447: #415's technologies (the blocks ME Network's own icons show)
+                                                        "me-crafting-storage-1024k", "me-crafting-storage-4096k",
+                                                        "me-crafting-storage-16384k", "me-crafting-storage-singularity",
+                                                        "me-crafting-accelerators", "me-crafting-accelerators-2")},
     # issue #406: the ME Quantum Bridge (3 x 3): AE2's quantum rings around its link chamber
     "blocks/me-quantum-bridge.png": ("grid", "blocks/lights/quantum-link-chamber.png"),
     # issue #302: the crafting blocks and their icons (AE2 cubes of the face without a CPU)

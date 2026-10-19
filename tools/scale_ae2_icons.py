@@ -25,7 +25,7 @@ from ae2_manifest import read_manifest
 ROOT = Path(__file__).resolve().parent.parent
 GRAPHICS = ROOT / "ae2-textures" / "graphics"
 SOURCE = 16                 # AE2's item icons
-TIERS = ("1k", "4k", "16k", "64k", "256k")
+TIERS = ("1k", "4k", "16k", "64k", "256k", "1024k", "4096k", "16384k")      # (issue #447: the last three, #414)
 
 # file inside ae2-textures/graphics/ -> the icon size of the me-network icon it replaces
 SIZES = {
@@ -35,10 +35,12 @@ SIZES = {
     "icons/cells/basic-storage-housing.png": 32,
     "icons/cells/me-void-storage-cell.png": 64,          # issue #364: AE2-Unofficial's void cell, for both void cells
     "icons/cells/me-void-fluid-storage-cell.png": 64,
+    "icons/cells/me-singularity-storage-cell.png": 64,   # issue #447: AE2-Unofficial's Singularity cell (#414)
     **{f"icons/cards/me-{c}-card.png": 32 for c in ("basic", "advanced", "capacity", "overflow-destruction", "fuzzy",
                                                      "pattern-capacity", "sticky", "inverter", "equal-distribution",
                                                      "acceleration", "interface-capacity",
-                                                     "super-speed", "superluminal-speed", "group-filter")},   # (issue #356: the last two)
+                                                     "super-speed", "superluminal-speed", "group-filter",
+                                                     "crafting")},   # (issue #356: super speed, superluminal; #447: crafting)
     "icons/patterns/me-blank-pattern.png": 32,
     # issue #303: the wireless items (the module, which AE2 does not have, takes the terminal's icon)
     "icons/wireless/me-wireless-terminal.png": 32,
@@ -53,6 +55,9 @@ SIZES = {
     "technology/me-autocrafting.png": 256,
     "technology/me-wireless.png": 256,
     "icons/patterns/me-encoded-pattern.png": 32,
+    # issue #447: the storage technologies of #414 (their cells, the fluid ones the blue fluid cells)
+    **{f"technology/me-storage-{t}.png": 256 for t in ("1024k", "4096k", "16384k", "singularity")},
+    **{f"technology/me-fluid-storage-{t}.png": 256 for t in ("1024k", "4096k", "16384k")},
 }
 
 # file -> (what it is, {colour of the source: colour it becomes}[, (x0, y0, x1, y1): only in this box of the 16 px
@@ -67,6 +72,21 @@ BODY_BLUE = {
     "64k": {(191, 191, 191): (139, 178, 246)},
     "256k": {(216, 216, 216): (158, 201, 255)},
 }
+
+
+def body_blue(*greys):
+    """issue #447: each grey of a body turned blue at about its brightness, as the older tiers' (r x0.73, g x0.93, b x1.3
+    up to 255)"""
+    return {(g, g, g): (round(0.73 * g), round(0.93 * g), min(255, round(1.3 * g))) for g in greys}
+
+
+# issue #447: the tiers above 256k (#414) have lighter bodies: the 1024k two greys, the 4096k white, the 16384k a gradient
+# of 211 to 255; every grey of 200 and above is the body, the rings and the middle (182 and darker) stay as they are, as the
+# older tiers' dark outline does
+BODY_BLUE["1024k"] = body_blue(232, 246)
+BODY_BLUE["4096k"] = body_blue(255)
+BODY_BLUE["16384k"] = body_blue(211, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 234, 235, 236, 237, 239,
+                                241, 243, 244, 245, 246, 247, 248, 250, 252, 253, 254, 255)
 # issue #294 (it replaced #251's turquoise stripe, which made it look like the Pattern Capacity Card): the interface
 # capacity card is AE2-Unofficial's Capacity Card (ItemMaterial.CardCapacity, the basic card's yellow stripe) with its
 # capacity sign in orange, as ME Network's own icon has an orange plus. The sign is the card's darkest colour, which
@@ -82,6 +102,8 @@ RECOLOUR = {
     "technology/me-fluid-storage.png": ("the frame and the body in blue (the 64k fluid cell)", {**FRAME_BLUE, **BODY_BLUE["64k"]}),
     "technology/me-fluid-storage-256k.png": ("the frame and the body in blue (the 256k fluid cell)",
                                              {**FRAME_BLUE, **BODY_BLUE["256k"]}),
+    **{f"technology/me-fluid-storage-{t}.png": (f"the frame and the body in blue (the {t} fluid cell)",
+                                                {**FRAME_BLUE, **BODY_BLUE[t]}) for t in ("1024k", "4096k", "16384k")},
 }
 
 
