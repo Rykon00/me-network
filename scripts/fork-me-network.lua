@@ -932,7 +932,7 @@ M.accepts = accepts
 
 --- items (fluid units) of `key` the cell can still take; item cells take items, fluid cells fluids
 local function cell_room(cell, spec, key)
-	if fluid_cell(spec) ~= is_fluid_key(key) then return 0 end
+	if fluid_cell(spec) ~= is_fluid_key(key) or spec.creative then return 0 end   -- (issue #441: a creative cell only voids)
 	local p = cell.partition                                  -- partitioned (R3); a fuzzy list or a blacklist (#17)
 	if cell.gf then                                           -- a group filter (issue #354)
 		if not accepts(cell, key) then return 0 end
@@ -1021,7 +1021,7 @@ local function cell_from_tags(name, tags)
 	for _, key in ipairs(keys) do
 		if is_fluid_key(key) then
 			if fluid_cell(spec) and prototypes.fluid[(split_fluid_key(key))] then cell_add(cell, spec, key, counts[key]) end
-		elseif not fluid_cell(spec) and prototypes.item[(parse_key(key))] then
+		elseif not fluid_cell(spec) and not spec.creative and prototypes.item[(parse_key(key))] then   -- (#441: below)
 			cell_add(cell, spec, key, math.floor(counts[key]))
 			local d = data[key]
 			if type(d) == "table" then cell.data[key] = d end
@@ -1031,6 +1031,10 @@ local function cell_from_tags(name, tags)
 	cell.gtext = M.GF.clean(stored.gtext)                       -- issue #354: the Group Filter Card's text
 	cell.cards = M.clean_cards(spec, stored.cards)              -- issue #17: the cell's upgrade cards
 	if cell.cards or spec.void then M.apply_cell_cards(cell) end      -- (issue #354: a void cell's `void` comes from its spec)
+	--- issue #441: a creative cell holds M.CREATIVE of every key its partition lists (no bytes: nothing is written into it)
+	if spec.creative then
+		for key in pairs(cell.partition or {}) do cell.items[key] = M.CREATIVE end
+	end
 	return cell
 end
 M.cell_from_tags = cell_from_tags
@@ -1079,7 +1083,7 @@ end
 --- inverter, equal distribution, overflow destruction; fluid cell: no fuzzy), at most each kind's limit and the slots.
 --- nil when none.
 function M.clean_cards(spec, list)
-	if type(list) ~= "table" or not spec then return nil end
+	if type(list) ~= "table" or not spec or spec.creative then return nil end      -- (issue #441: a creative cell takes none)
 	local r = M.card_rules()
 	r = spec.view and r.view_cell or spec.kind == "fluid" and r.fluid_cell or r.item_cell   -- (issue #440: a view cell)
 	local out, n = {}, {}
@@ -1145,6 +1149,7 @@ function M.apply_cell_cards(cell)
 	end
 	cell.fnames = names
 	cell.void = kinds.void or spec.void or nil          -- issue #354: a void cell voids without a card
+	cell.creative = spec.creative or nil               -- issue #441
 	cell.sticky = kinds.sticky or nil                  -- issue #193
 	cell.eq = nil
 	if kinds.equal then cell.eq = equal_share(cell, spec) end
@@ -1261,6 +1266,8 @@ local function cell_description(cell, spec, plist, cards, keys, list)
 	end
 	if spec and spec.view then
 		line({ "fork-me-net.view-cell-tip" })                    -- (issue #440: a view cell holds nothing)
+	elseif spec and spec.creative then
+		line({ "fork-me-net.creative-cell-tip" })                -- (issue #441: what it lists, without end)
 	elseif #keys == 0 then
 		line({ fluid and "fork-me-net.cell-tip-empty-fluid" or "fork-me-net.cell-tip-empty", spec and spec.bytes or 0, spec and spec.types or 0 })
 	else
@@ -1452,6 +1459,9 @@ end
 --- the key, net.wait_out[key] when it loses some (one wake per registration). In storage, because they decide when
 --- an endpoint is visited. M.wakers[kind](unit) is set by the module of that kind at load time.
 M.wakers = {}
+--- Issue #441: the amount of each listed key a creative cell holds (the totals, the terminal, the planner): 2^50, far below the
+--- 2^53 of exact integers, so the totals stay exact with it
+M.CREATIVE = 2 ^ 50
 --- Issue #426: M.deliverers[waker](unit, key, count) hands the products of a job that block `unit` asked for (its Crafting
 --- Card) to that block (AE2's ICraftingRequester.injectCraftedItems) and returns what the block took; the rest is stored. Set
 --- by the module of that waker at load time.
@@ -2454,6 +2464,7 @@ local function voids(cell, key, data)
 	end
 	local spec = cell_spec(cell.name)
 	if not spec or fluid_cell(spec) ~= is_fluid_key(key) or not accepts(cell, key) then return false end
+	if spec.creative then return cell.partition ~= nil end   -- issue #441: only what it lists (without a list: nothing)
 	if spec.void then return true end                   -- issue #354: a void cell voids whatever its filter lets in
 	if cell.partition or cell.deny or cell.gf then return true end
 	return cell.items[key] ~= nil or open_cell(cell, spec)
@@ -3030,10 +3041,14 @@ local function extract_key(net, key, count)
 	--- extraction is the reverse of insertion: lower drive priority first, storage buses before cells of the same
 	--- priority, unpartitioned before partitioned
 	local c = lookups(s, net)
+	local kept = 0                                     -- (issue #441: what creative cells gave; their counts stay)
 	for _, cid in ipairs(extract_order(s, net, c, key)) do
 		if left <= 0 then break end
 		local cell = net.cells[cid]
-		if cell.ext then                               -- external cell: the real storage first (staleness)
+		if cell.creative then                          -- issue #441: a creative cell gives the rest without end
+			kept = kept + left
+			left = 0
+		elseif cell.ext then                           -- external cell: the real storage first (staleness)
 			local handler = M.ext_handlers[cell.handler or cell.ext]
 			local real = handler.count(cell, key)
 			if real ~= (cell.items[key] or 0) then ext_set(net, cid, cell, key, real) end
@@ -3064,7 +3079,7 @@ local function extract_key(net, key, count)
 			end
 		end
 	end
-	local now = (net.items[key] or 0) - (count - left)
+	local now = (net.items[key] or 0) - (count - left) + kept
 	net.items[key] = now > ZERO and now or nil
 	if net.index[key] and next(net.index[key]) == nil then net.index[key] = nil end
 	if left < count then
@@ -3827,6 +3842,7 @@ function CH.take_from_drive(s, d, unit, key, amount)
 		if left <= 0 then break end
 		local cell = d.slots[slot]
 		local n = cell and math.min(left, cell.items[key] or 0) or 0
+		if n > 0 and cell.creative then left, n = 0, 0 end     -- (issue #441: a creative cell gives without end, its count kept)
 		if n > 0 then
 			local spec = cell_spec(cell.name)
 			local had_room = not cell.eq and spec.bytes - cell.bytes > 0
