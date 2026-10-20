@@ -3657,3 +3657,21 @@ busier during this run than during the others, both versions alike, see the 1000
 `regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.2315 ->
 0.2413 ms (p99 2.005 -> 2.064), 1000: 0.3683 -> 0.3566 ms (p99 2.048 -> 1.980), `regressions beyond the noise: 0` (the
 allocation 26.68 -> 27.14 and 24.34 -> 24.85 KB per tick is `main`'s, see issue #426).
+
+## The ME Advanced Level Emitter (issue #443)
+
+The advanced emitters are records of the level emitters' list and visited by the same step hook and budget (8 per tick, each
+at most every 10 ticks); a visit reads one amount per row that has a resource (at most 6) and writes the combinator's section
+only when the output changed. A level emitter's visit pays one field read more (`rec.adv`). The scenes have no emitters.
+
+`bench --sizes 100,1000 --runs 3 --check circuit-lock-429` (#443 against its base, #429; three rounds in turns):
+
+| | #429 | #443 |
+|---|---|---|
+| 100: script average / p99 ms | 0.1907 / 1.744 | 0.1954 / 1.801 |
+| 1000: script average / p99 ms | 0.3295 / 1.871 | 0.3348 / 1.910 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.1867 ->
+0.1904 ms (p99 1.732 -> 1.753), 1000: 0.3691 -> 0.3314 ms (p99 2.026 -> 1.869), `regressions beyond the noise: 0`.

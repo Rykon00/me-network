@@ -88,6 +88,7 @@ local function kinds()
 		if n.toggle_bus then k[n.toggle_bus] = "toggle" end                             -- issue #355
 		if n.inverted_toggle_bus then k[n.inverted_toggle_bus] = "toggle" end
 		if n.level_emitter then k[n.level_emitter] = "level-emitter" end
+		if n.advanced_level_emitter then k[n.advanced_level_emitter] = "level-emitter" end   -- issue #443: the same kind
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205

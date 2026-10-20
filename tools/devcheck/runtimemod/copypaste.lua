@@ -48,6 +48,10 @@ local BLOCKS = {
 	{ "me-conversion-monitor", function(e) remote.call(MON, "set", e, "copper-plate", true) end },
 	{ "me-throughput-monitor", function(e) remote.call(MON, "set", e, "iron-plate", true, "hour") end },
 	{ "me-level-emitter", function(e) remote.call(EM, "set", e, { key = "iron-plate", amount = 1000, mode = "low" }) end },
+	{ "me-advanced-level-emitter", function(e)                                                                  -- (issue #443)
+		remote.call(EM, "set", e, { rows = { { key = "iron-plate", amount = 10 }, false, { key = "fluid/water", amount = 99, inverted = true } },
+			logic = "and" })
+	end },
 	{ "me-pattern-provider", function(e)
 		remote.call(AC, "set_priority", e, 7)
 		remote.call(AC, "set_blocking", e, "blocking")
@@ -94,7 +98,7 @@ local function normal(t)
 		if k == "rows" and type(v) == "table" then
 			local rows = {}
 			for _, r in ipairs(v) do
-				if r.key then
+				if type(r) == "table" and r.key then      -- (issue #443: an empty row of the advanced emitter is false)
 					local c = normal(r)
 					if c.batch == 0 then c.batch = nil end
 					rows[#rows + 1] = c

@@ -1947,10 +1947,21 @@ def toggle_sprite(inverted):
     return img
 
 
-def emitter_sprite():
+ADVANCED_EMITTER = (255, 4, 211)     # (issue #443: AE2-Unofficial's advanced level emitter colour, PartAdvancedLevelEmitter RED/GREEN/BLUE)
+
+
+def emitter_sprite(advanced=False):
+    """the level emitter; `advanced` (issue #443): six thinner bars, the threshold and a frame in the advanced emitter's colour"""
     img = load(HD_ENTITY / "me-circuit-interface.png").copy()
     d = ImageDraw.Draw(img)
     d.rectangle((18, 18, 45, 45), fill=(12, 12, 16, 255))                        # the screen, cleared
+    if advanced:
+        d.rectangle((18, 18, 45, 45), outline=ADVANCED_EMITTER + (255,))
+        for i, h in enumerate((6, 16, 10, 20, 8, 14)):                            # six gauges, one per row
+            x = 21 + i * 4
+            d.rectangle((x, 42 - h, x + 2, 42), fill=FLUIX_LIGHT + (255,))
+        d.rectangle((20, 30, 43, 31), fill=ADVANCED_EMITTER + (255,))            # the threshold
+        return img
     for i, h in enumerate((8, 14, 20)):                                           # a level gauge
         x = 23 + i * 7
         d.rectangle((x, 42 - h, x + 4, 42), fill=FLUIX_LIGHT + (255,))
@@ -2100,7 +2111,8 @@ def toggle_emitter():
     HD_ICON.mkdir(parents=True, exist_ok=True)
     written = []
     for name, img in (("me-toggle-bus", toggle_sprite(False)), ("me-inverted-toggle-bus", toggle_sprite(True)),
-                      ("me-level-emitter", emitter_sprite())):
+                      ("me-level-emitter", emitter_sprite()),
+                      ("me-advanced-level-emitter", emitter_sprite(True))):      # (issue #443)
         for path in (HD_ENTITY / f"{name}.png", HD_ICON / f"{name}.png"):
             img.save(path)
             written.append(path)

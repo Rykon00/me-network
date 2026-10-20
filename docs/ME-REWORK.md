@@ -2779,3 +2779,25 @@ the hand-over (`gregtorio-me-handover.pending`), so `on_init` (and `on_configura
 save with nothing in it and must be refused with the message (the helper `migratemod` lost the 0.1.0 scenario, the jobs
 on legacy CPUs of 0.2.0 and the 3x3 assemblers of issue #131). Gregtorio's own `devcheck.py migrate` from old Gregtorio
 versions needs the intermediate load with me-network 0.5.0 (a Gregtorio follow-up).
+
+## The Advanced Level Emitter (issue #443)
+
+AE2-Unofficial's `PartAdvancedLevelEmitter` (`api/parts/IAdvancedLevelEmitter.java`: 6 slots; per slot a stack, an amount,
+active and inverted; `Settings.ADVANCED_LEVEL_EMITTER_LOGIC`, a `BooleanOperation`, OR by default). Its `isLevelEmitterOn`
+starts with true for AND and false for OR, skips inactive or empty slots, takes `stored >= amount` (inverted: `<`) per slot
+and joins them; no slot counted: off. That loop is ported (`emits_adv` in `scripts/fork-me-emitter.lua`, with the
+attribution comment; README "License").
+
+*Here:* a second entity `me-advanced-level-emitter` (a copy of the level emitter's constant combinator, its own picture of
+`tools/gen_ae2_sprites.py --toggle-emitter`: six gauges and a frame in AE2-Unofficial's emitter colour), the same network
+kind (`level-emitter`) and the same module: its records (`rec.adv`, `rec.rows[1..6]` = { key, amount, active, inverted },
+`rec.logic`) are in `storage.fork_me_emitters.list` and visited by the same step hook and budget (8 per tick, each at most
+every 10 ticks); a visit reads up to six amounts and writes the section only when the output changes. A row is active when
+it gets a resource (AE2-Unofficial starts them inactive; here a row that was given a resource does what the player expects).
+Settings: `M.set` with `rows`, `row` (one row), `logic`, `signal`; the blueprint tag `fork_me_emitter` holds `rows` (an empty
+row `false`), paste only between two advanced emitters. The recipe is GT New Horizons' (an EV circuit and a level emitter;
+a processing unit stands in for the EV circuit).
+
+*Test:* `tools/devcheck/runtimemod/advemitter.lua` (rows on, off, inverted, inactive, OR and AND, a fluid row, the step
+switching it without a visit of the test, the signal, no network, blueprint, paste and clone); `copypaste.lua` carries one
+through every copy path.
