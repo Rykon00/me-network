@@ -2839,3 +2839,17 @@ to `net.items` (`kept`); the chest's `CH.take_from_drive` does the same. A creat
 the terminal shows the number (no marker of its own).
 
 *Test:* `tools/devcheck/runtimemod/creativecell.lua`.
+
+## The Creative Energy Cell (issue #442)
+
+AE2-Unofficial's `BlockCreativeEnergyCell` (its tile reports itself as an infinite energy source; the grid's energy is never
+short). Written anew.
+
+*Here:* a 1x1 member `me-creative-energy-cell` of kind `creative-energy` (mod-data name `creative_energy`), drawing nothing
+through the controller (`POWERED_SELF`). Like the controller it changes the network's status, so `M.STATUS_KINDS` makes its
+joining and leaving recompute the network (the paths that skipped the recompute for any member but a controller, issues #5,
+#43, #420); `recompute` sets `net.creative`. `M.usable` takes a network with `net.creative` as powered without looking at
+the controllers' energy; `M.stored_energy` reports the controllers' buffers full. The controller's own electric energy
+interface stays as it is (its draw, its status without a pole).
+
+*Test:* `tools/devcheck/runtimemod/creativeenergy.lua`.

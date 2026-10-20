@@ -833,6 +833,7 @@ RUNTIME_TESTS = (
     ("ADVEMITTER", "ME Advanced Level Emitter (issue #443)"),
     ("VIEWCELL", "View Cells (issue #440)"),
     ("CREATIVECELL", "Creative ME Storage Cell (issue #441)"),
+    ("CREATIVEENERGY", "Creative Energy Cell (issue #442)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),

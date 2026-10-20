@@ -230,6 +230,38 @@ ME.add_item{
 }
 cell_data[CREATIVE_CELL] = { tier = "creative", bytes = 0, per_type = 0, types = 63, void = true, creative = true }
 
+--- Issue #442: AE2's Creative Energy Cell (AE2-Unofficial: block/networking/BlockCreativeEnergyCell.java): a network with one
+--- never lacks power (scripts/fork-me-network.lua: M.usable). A 1x1 member, no recipe (the map editor and cheat mode give it);
+--- the ME Charger's picture in violet (no picture of its own).
+local CREATIVE_ENERGY = "me-creative-energy-cell"
+local VIOLET = { 1, 0.45, 1, 1 }
+ME.add_item{
+	name = CREATIVE_ENERGY,
+	icon = HD_ICON .. "me-charger.png",
+	icon_size = 64,
+	fields = { icons = { { icon = HD_ICON .. "me-charger.png", icon_size = 64, tint = VIOLET } } },
+	subgroup = "fork-me-network",
+	order = "a1",
+	stack_size = 50,
+	place_result = CREATIVE_ENERGY,
+	recipe = false,
+}
+data:extend({ {
+	type = "simple-entity-with-force",
+	name = CREATIVE_ENERGY,
+	icons = { { icon = HD_ICON .. "me-charger.png", icon_size = 64, tint = VIOLET } },
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = CREATIVE_ENERGY },
+	placeable_by = { item = CREATIVE_ENERGY, count = 1 },
+	max_health = 200,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = ME.solid_box(),
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	picture = { filename = HD_ENTITY .. "me-charger.png", priority = "high", width = 64, height = 64, scale = 0.5, tint = VIOLET },
+	localised_description = { "entity-description." .. CREATIVE_ENERGY },
+} })
+
 
 
 --------------------------------------------------------------------------------
@@ -704,6 +736,7 @@ data:extend({ {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
+			creative_energy = CREATIVE_ENERGY,                                    -- (issue #442)
 			pattern_terminal_ex = "me-pattern-terminal-ex",                     -- (issue #416)
 			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
 			storage_monitor = "me-storage-monitor", conversion_monitor = "me-conversion-monitor",   -- (issue #353)
