@@ -114,7 +114,8 @@ and taken out, in the ME Cell Workbench, in the ME IO Port, in a mined drive; un
   network and the items are there again. **Right click** a cell in the drive window: its cell window
   (contents, bytes, types, partition).
 * **Fill lights:** each cell in a drive shows a light on the drive: green while it has room, orange above 75 %
-  of its bytes, red when it is full (bytes or types). The drive window shows a fill bar, bytes and types per slot.
+  of its bytes or when it takes no new item type but still has bytes left (as AE2: issue #468), red when it is
+  full (no bytes left). The drive window shows a fill bar, bytes and types per slot.
 * **Mining a drive** gives the drive and its cells with their items. **A destroyed drive** drops its cells
   (with their items) on the ground. Blueprints and copies of a drive come without cells, but with the drive's
   priority and the partition of each slot (the next cell put into that slot gets it).

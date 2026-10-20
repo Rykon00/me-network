@@ -213,8 +213,8 @@ window in which a cell exists twice or not at all. With the script GUI every mov
 function that writes the tags first.
 
 **Fill state per slot:** ten small rectangles on the drive (`rendering.draw_rectangle`, no sprites):
-none for an empty slot, green while the cell has room, orange above 75 % of its bytes, red when it is full
-(bytes or types). The GUI shows the same per slot as a bar with "bytes used / total, types used / 63".
+none for an empty slot, green while the cell has room, orange above 75 % of its bytes or when it takes no new type
+but has bytes left (issue #468, AE2-Unofficial's status 3), red when it is full (no bytes left). The GUI shows the same per slot as a bar with "bytes used / total, types used / 63".
 Updated in the terminal step (every 60 ticks) for drives whose cells changed.
 
 **Removing a drive:** mining it puts its cells (with their tags) into the mined buffer, so the player or
