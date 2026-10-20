@@ -1442,6 +1442,10 @@ end
 --- the key, net.wait_out[key] when it loses some (one wake per registration). In storage, because they decide when
 --- an endpoint is visited. M.wakers[kind](unit) is set by the module of that kind at load time.
 M.wakers = {}
+--- Issue #426: M.deliverers[waker](unit, key, count) hands the products of a job that block `unit` asked for (its Crafting
+--- Card) to that block (AE2's ICraftingRequester.injectCraftedItems) and returns what the block took; the rest is stored. Set
+--- by the module of that waker at load time.
+M.deliverers = {}
 
 --- does `unit` still belong to `net`? (a unit that moved to another network registers there at its next visit)
 local function stays(nodes, net, unit)

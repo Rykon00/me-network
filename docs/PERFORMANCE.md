@@ -3610,3 +3610,28 @@ member prototypes does, now also measured by the bench as "graph rebuild from th
 What is left of the issue's list: the full rebuild from the map is still one pass in one tick (2.2 s at 20 000), now only after
 a change of the graph's rules or of the members' prototypes; the remaining fluid-side reads (`fluidbox[i]`, round five) were
 not part of the choice.
+
+## The Crafting Card's fluids, hand-over and craft only (issue #426)
+
+A block without the card pays nothing new: the fluid paths read `rec.ccard` where a key is missing (as the item paths did),
+an export bus's visit one field more (`rec.conly`). A job that is done asks for a hand-over only when it has an owner and a
+waker with a deliverer (`N.deliverers`, the Crafting Card's jobs): one table read per finished job. With the card, a fluid
+filter or row that the network lacks reads the target's boxes (`fluid_room`: capacity, filter, contents per box) before it
+asks for a job; craft only skips the extraction and asks for a job per filter whose target has room.
+
+`bench --sizes 100,1000 --runs 3 --check ae2-textures-447` (#426 against its base, `main` with #447's textures; three rounds
+in turns; the scenes have no Crafting Card):
+
+| | base | #426 |
+|---|---|---|
+| 100: script average / p99 ms | 0.1925 / 1.769 | 0.1932 / 1.792 |
+| 1000: script average / p99 ms | 0.3351 / 1.919 | 0.3390 / 1.910 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| load first tick ms (100 / 1000) | 1.625 / 3.092 | 1.643 / 2.955 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 3 --check v0.5.4`: 1000 green;
+100 flagged the script average (0.2135 -> 0.2473, noise 0.031, rounds of 0.212 to 0.249) and the garbage collector (0.0313
+-> 0.0348), as #420 saw at 100; `--sizes 100 --runs 5 --check v0.5.4` again: 0.1886 ±0.003 -> 0.1909 ±0.004, gc 0.0234 ->
+0.0232, `regressions beyond the noise: 0`. The Lua allocation of 27.14 KB per tick at 100 (v0.5.4: 26.68) is `main`'s
+already, the same with and without #426.

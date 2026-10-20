@@ -1789,6 +1789,9 @@ local function open_bus(player, entity)
 	if d.kind == "export-bus" then
 		content.add{ type = "checkbox", name = "fork_me_bus_pulse", state = d.pulse or false, caption = { "fork-me-gui.bus-pulse" },
 			tooltip = { "fork-me-gui.bus-pulse-tooltip" }, tags = G.act("bus_pulse") }
+		--- issue #426: craft only (shown while the bus has its Crafting Card)
+		content.add{ type = "checkbox", name = "fork_me_bus_conly", state = d.conly or false, caption = { "fork-me-gui.bus-craft-only" },
+			tooltip = { "fork-me-gui.bus-craft-only-tooltip" }, tags = G.act("bus_conly"), visible = d.craft ~= nil }
 	end
 	G.label(content, { "fork-me-gui.connector-hint" }, WIDTH)
 	G.label(content, "", WIDTH, nil, "fork_me_bus_want")
@@ -1838,6 +1841,8 @@ function M.refresh_bus(player, frame)
 	G.find(frame, "fork_me_bus_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
 	local pulse = G.find(frame, "fork_me_bus_pulse")
 	if pulse then pulse.state = d.pulse or false end
+	local conly = G.find(frame, "fork_me_bus_conly")              -- (issue #426)
+	if conly then conly.state, conly.visible = d.conly or false, d.craft ~= nil end
 	G.find(frame, "fork_me_bus_speed").caption = d.items and { "fork-me-gui.bus-speed", d.accel, G.fmt(d.rate) } or ""
 	M.gfilter_refresh(frame, "fork_me_bus_gtext", d.gfilter, d.gtext)
 	local target = d.target and prototypes.entity[d.target]
@@ -1893,6 +1898,12 @@ G.on("bus_pulse", function(event, player, el)
 	if event.name ~= defines.events.on_gui_checked_state_changed then return end
 	local entity = window_entity(player)
 	if entity then io.set_bus_pulse(entity, el.state) G.refresh_one(player) end
+end)
+--- issue #426: the export bus's craft only
+G.on("bus_conly", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then io.set_bus_craft_only(entity, el.state) G.refresh_one(player) end
 end)
 G.on("if_circuit", function(event, player, el)
 	if event.name ~= defines.events.on_gui_checked_state_changed then return end

@@ -141,7 +141,18 @@ local function craft(rec, net, key, amount)
 	if not rec.cnext or at < rec.cnext then rec.cnext = at end
 	return "wait"
 end
-local CONFIG_SLOTS = 9              -- the config rows of an interface without cards
+
+--- Issue #426: the request of an export bus in craft only (AE2-U's `Settings.CRAFT_ONLY`: it never exports from storage, it
+--- crafts what its target can take and the job hands the products to the target, N.deliverers). The visit says "crafting"
+--- (probed, woken by its job's end); a start that the tick's budget left is tried at the next tick, and one that waits for
+--- another block's job of the key after CRAFT_RETRY ticks (that job's end wakes its own block only), through rec.cnext.
+local function craft_only(rec, net, key, amount, info)
+	local r = craft(rec, net, key, amount)
+	local at = r == nil and game.tick + 1 or r == "crafting" and rec.cstat == "other-job" and game.tick + CRAFT_RETRY or nil
+	if at and not (rec.cnext and rec.cnext <= at) then rec.cnext = at end
+	info.nokey, info.cwait = true, true
+end
+local CONFIG_SLOTS = 9             -- the config rows of an interface without cards
 local MAX_ROWS = 36                  -- with three Interface Capacity Cards (issue #196: 9 more rows each)
 
 --- the config rows of an interface (issue #196): 9 and 9 more per Interface Capacity Card (`rec.nrows`, made from its cards by
@@ -919,6 +930,11 @@ local function interface_sides(rec, net, config, short, dt)
 			if why == "empty-network" or why == "reserved" or why == "temperature" then
 				--- (a row of every temperature waits for "fluid/<name>": any temperature of it wakes it, issue #159)
 				N.wait_for(net, why == "reserved" and key or row_key(config[setting]), "io", rec.entity.unit_number, true)
+				--- issue #426: the Crafting Card asks for what the side lacks of a fluid the network does not have (the row's
+				--- temperature, or the fluid's default one)
+				if why == "empty-network" and rec.ccard and lack > EPS then
+					craft(rec, net, N.fluid_storage_key(row_key(config[setting])), lack)
+				end
 			end
 			key = key or row_key(config[setting])
 			if short and lack > EPS then short[key] = (short[key] or 0) + lack end
@@ -1459,6 +1475,47 @@ local function target_of(rec)
 	return nil
 end
 
+--- Issue #426: a job of a block's Crafting Card hands its products to the block (AE2-U's injectCraftedItems of the export bus
+--- and of DualityInterface): an export bus puts them into its target, an interface items into its own inventory (a surplus over
+--- its row goes back at its next visit) and fluid into the tank of a side tied to a row of that fluid. Returns what was taken.
+N.deliverers.io = function(unit, key, count)
+	local s = storage.fork_me_io
+	local rec = s and s.recs[unit]
+	local e = rec and rec.entity
+	if not (e and e.valid) then return 0 end
+	local fluid = N.fluid_name(key)
+	local taken = 0
+	if rec.kind == "interface" then
+		if fluid then
+			local tanks, config, sides = rec.tanks or {}, config_of(rec), rec.sides or {}
+			for d = 1, #SIDES do
+				local row = type(sides[d]) == "number" and config[sides[d]] or nil
+				local t = tanks[d]
+				if row and is_fluid_row(row) and t and t.valid and N.fluid_matches(row_key(row), key) then
+					taken = taken + t.insert_fluid{ name = fluid, amount = count - taken, temperature = N.fluid_temperature(key) }
+					if taken >= count - EPS then break end
+				end
+			end
+		else
+			local name, q = N.parse_key(key)
+			local inv = T.inventory(e, defines.inventory.chest)
+			taken = inv and inv.insert{ name = name, count = count, quality = q } or 0
+		end
+	elseif rec.kind == "export-bus" then
+		local t = target_of(rec)
+		if not t then return 0 end
+		if fluid then
+			if rec.t_fluid then taken = t.insert_fluid{ name = fluid, amount = count, temperature = N.fluid_temperature(key) } end
+		else
+			local name, q = N.parse_key(key)
+			local inv = rec.t_inv and T.inventory(t, rec.t_inv)
+			taken = inv and inv.insert{ name = name, count = count, quality = q } or 0
+		end
+	end
+	if taken > 0 then wake(unit) end
+	return taken
+end
+
 local by_count_cache = {}
 --- Items the import bus moves by count (issue #5): plain items that cannot be damaged, spoil or carry data, so
 --- every stack of them is the same and the network takes them by name (one check per item type, not per stack).
@@ -1602,7 +1659,21 @@ local function export_items(rec, net, t, cap, info)
 				want = math.min(want, room)
 			end
 			local got = 0
-			if want > 0 then
+			if want > 0 and rec.conly and rec.ccard then
+				--- issue #426: craft only (with the Crafting Card): nothing from storage, a job for what the target can take
+				if not gf then
+					local item = name
+					if q ~= "normal" then
+						Q_COUNT.name, Q_COUNT.quality = name, q
+						item = Q_COUNT
+					end
+					if machine or N.bound(inv).can_insert(item) then
+						craft_only(rec, net, key, math.min(want, stack_of(name)), info)
+					else
+						info.blocked = true                          -- the target takes nothing: full
+					end
+				end
+			elseif want > 0 then
 				got = N.extract_to(net, inv, key, want)          -- (a plain name: normal quality)
 				if got <= 0 then
 					if N.count_key(net, key) <= 0 then
@@ -1683,6 +1754,25 @@ local function export_range(fb, name, machine)
 	return lo, hi, temp
 end
 
+--- Issue #426: the room for fluid `name` in the boxes `fb`: empty boxes and boxes of that fluid, whose filter (if any) is the
+--- fluid; a machine's output boxes take nothing
+local function fluid_room(fb, name)
+	local B = N.bound(fb)
+	local room = 0
+	for i = 1, #fb do
+		local f = fb[i]
+		if not f or f.name == name then
+			local p = B.get_prototype(i)
+			if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
+			local flt = B.get_filter(i)
+			if not (p and p.production_type == "output") and (not flt or flt.name == name) then
+				room = room + B.get_capacity(i) - (f and f.amount or 0)
+			end
+		end
+	end
+	return room
+end
+
 --- The fluid part of a visit: the import bus empties the output boxes of a machine (any box of a tank) into the
 --- network, at the temperature they have (issue #159), the export bus fills its filtered fluids into the entity
 --- (insert_fluid: the machine's input boxes, a tank), at the temperature of the key it takes (export_keys). Up to `cap` units (by default what one visit moved before issue #5).
@@ -1750,10 +1840,19 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 	else
 		local fkeys = rec.fkeys
 		local machine = CRAFTER[t.type]
+		local conly = rec.conly and rec.ccard                   -- issue #426: craft only, with the Crafting Card
 		for fi, name in ipairs(rec.ffilters) do
 			local fk = fkeys and fkeys[fi] or N.fluid_key(name)
 			local key, total, tblock
-			if cap - moved > EPS then
+			if conly then
+				--- issue #426: nothing from storage; a job of the filter's fluid for what this visit would move, while the
+				--- target has room for it
+				if cap - moved > EPS then
+					local room = fluid_room(fb, name)
+					if room > EPS then craft_only(rec, net, N.fluid_storage_key(fk), math.min(cap - moved, room), info)
+					else info.blocked = true end
+				end
+			elseif cap - moved > EPS then
 				local lo, hi, temp = export_range(fb, name, machine)
 				local keys, n = export_keys(net, name, fk, lo, hi, temp)
 				for k = 1, n do                                 -- issue #159: one temperature per filter and visit
@@ -1767,9 +1866,17 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 					info.blocked, tblock = true, true
 				end
 			end
-			if not key and cap - moved > EPS and not tblock then
+			if not key and cap - moved > EPS and not tblock and not conly then
 				N.wait_for(net, fk, "io", unit, true)            -- (any temperature of a filter without one wakes it)
 				info.nokey = true
+				--- issue #426: the Crafting Card asks for the filter's fluid too (its default temperature, or the filter's), what
+				--- this visit would move and the target can take
+				if rec.ccard then
+					local room = fluid_room(fb, name)
+					if room > EPS and craft(rec, net, N.fluid_storage_key(fk), math.min(cap - moved, room)) == "wait" then
+						info.cwait = true
+					end
+				end
 			elseif key then
 				local want = math.min(total, cap - moved)
 				local inserted = N.bound(t).insert_fluid{ name = name, amount = want, temperature = N.fluid_temperature(key) }
@@ -1997,6 +2104,16 @@ function M.set_bus_pulse(entity, on)
 	return true
 end
 
+--- Issue #426: an export bus in craft only (AE2-U's `Settings.CRAFT_ONLY`) exports nothing from storage: with its Crafting Card
+--- it crafts what its target can take, and the jobs hand the products to the target (without the card it exports as before)
+function M.set_bus_craft_only(entity, on)
+	if kind(entity) ~= "export-bus" then return false end
+	local rec = register(state(), entity)
+	rec.conly = on and true or nil
+	wake(entity.unit_number)
+	return true
+end
+
 --- Issue #412: the interface takes its rows from the circuit (`on`), or its own rows again
 function M.set_interface_circuit(entity, on)
 	if kind(entity) ~= "interface" then return false end
@@ -2015,7 +2132,7 @@ function M.get_bus(entity)
 	if not rec then return nil end
 	local t = rec.target
 	return { filters = { table.unpack(rec.keys or rec.filters) }, status = rec.status, target = t and t.valid and t.name or nil,
-		gtext = rec.gtext, pulse = rec.pulse }
+		gtext = rec.gtext, pulse = rec.pulse, conly = rec.conly }
 end
 
 --- one filter of a bus (the window's filter buttons): `key` nil clears it; the list stays packed
@@ -2084,6 +2201,7 @@ function M.bus_info(entity)
 	b.gfilter = rec.gcard == true                          -- issue #363
 	b.craft = rec.ccard and (rec.cstat or "idle") or nil   -- issue #411: the Crafting Card's last request
 	b.pulse, b.off = rec.pulse == true, Conn.is_off(entity.unit_number) or nil   -- issue #412
+	b.conly = rec.conly == true                            -- issue #426: craft only
 	return b
 end
 
@@ -2401,12 +2519,14 @@ function M.on_built(entity, tags, source)
 			M.set_bus_filters(entity, t.filters)
 			if t.gtext then M.set_bus_gtext(entity, t.gtext) end               -- (issue #363)
 			if t.pulse then M.set_bus_pulse(entity, true) end                  -- (issue #412)
+			if t.conly then M.set_bus_craft_only(entity, true) end             -- (issue #426)
 			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, nil) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)
 			M.set_bus_filters(entity, from and from.filters or {})
 			if from and from.gtext then M.set_bus_gtext(entity, from.gtext) end
 			if from and from.pulse then M.set_bus_pulse(entity, true) end      -- (issue #412)
+			if from and from.conly then M.set_bus_craft_only(entity, true) end -- (issue #426)
 			local from_rec = bus_rec(source)
 			local list = from_rec and cards.card_list(from_rec)
 			if list then cards.want_cards(entity, list, nil) end
@@ -2520,7 +2640,10 @@ function M.on_entity_settings_pasted(event)
 		local from = M.get_bus(src)
 		M.set_bus_filters(dst, from and from.filters or {})
 		M.set_bus_gtext(dst, from and from.gtext or "")                    -- (issue #363)
-		if k == "export-bus" then M.set_bus_pulse(dst, from and from.pulse) end   -- (issue #412)
+		if k == "export-bus" then
+			M.set_bus_pulse(dst, from and from.pulse)                                -- (issue #412)
+			M.set_bus_craft_only(dst, from and from.conly)                           -- (issue #426)
+		end
 		--- issue #110: the source's cards are what the destination is to have (from the player's inventory, then the network)
 		local from_rec, dst_rec = bus_rec(src), bus_rec(dst)
 		if from_rec and dst_rec then
@@ -2546,8 +2669,9 @@ function M.tag_blueprint(bp, mapping)
 			local b = M.get_bus(entity)
 			local rec = bus_rec(entity)
 			local list = rec and (rec.want and { table.unpack(rec.want) } or cards.card_list(rec))
-			if b and (#b.filters > 0 or list or b.gtext or b.pulse) then
-				bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list, gtext = b.gtext, pulse = b.pulse })
+			if b and (#b.filters > 0 or list or b.gtext or b.pulse or b.conly) then
+				bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list, gtext = b.gtext, pulse = b.pulse,
+					conly = b.conly })                                             -- (issue #426: craft only)
 			end
 		end
 	end
@@ -2713,6 +2837,8 @@ remote.add_interface("gregtorio-me-io", {
 	set_bus_filters = function(entity, filters) return M.set_bus_filters(entity, filters) end,
 	--- issue #412: the export bus's pulse mode, the interface's rows from the circuit
 	set_bus_pulse = function(entity, on) return M.set_bus_pulse(entity, on) end,
+	--- issue #426: the export bus's craft only
+	set_bus_craft_only = function(entity, on) return M.set_bus_craft_only(entity, on) end,
 	set_interface_circuit = function(entity, on) return M.set_interface_circuit(entity, on) end,
 	--- issue #363: the Group Filter Card's text ("" clears it)
 	set_bus_gtext = function(entity, text) return M.set_bus_gtext(entity, text) end,
