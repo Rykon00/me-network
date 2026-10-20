@@ -1427,13 +1427,18 @@ function M.drive_cell_sig(drive, slot)
 	return table.concat(parts, ":")
 end
 
---- the fill state of a cell: "room", "high" (above 75 % of the bytes), "full" (bytes or types)
+--- the fill state of a cell: "room", "high" (above 75 % of the bytes, or no new type but bytes left), "full" (no bytes left,
+--- or empty without room for a type). Issue #468: a cell that takes no new type but more of what it holds is orange, as
+--- AE2-Unofficial's status 3 (appeng/me/storage/CellInventory.java, getStatusForCell), not red: a one-type Singularity cell
+--- was red as soon as it held anything.
 local function cell_state(cell)
 	local spec = cell_spec(cell.name)
 	if not spec then return "full" end
 	if spec.void then return "room" end                 -- (issue #354: a void cell is never full)
-	if cell.types >= spec.types or spec.bytes - cell.bytes < 1 or (cell.types == 0 and spec.bytes - cell.bytes <= spec.per_type) then return "full" end
-	if cell.bytes > spec.bytes * 0.75 then return "high" end
+	local left = spec.bytes - cell.bytes
+	local new_type = cell.types < spec.types and left - spec.per_type > 0   -- (as open_cell below)
+	if left < 1 or (cell.types == 0 and not new_type) then return "full" end
+	if not new_type or cell.bytes > spec.bytes * 0.75 then return "high" end
 	return "room"
 end
 

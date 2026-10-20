@@ -834,6 +834,7 @@ RUNTIME_TESTS = (
     ("VIEWCELL", "View Cells (issue #440)"),
     ("CREATIVECELL", "Creative ME Storage Cell (issue #441)"),
     ("CREATIVEENERGY", "Creative Energy Cell (issue #442)"),
+    ("CELLLIGHT", "Cell light with all types used (issue #468)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),
