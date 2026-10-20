@@ -5,22 +5,24 @@ The graphics mod of [ME Network](https://github.com/Rykon00/me-network): it puts
 [Applied-Energistics-2-Unofficial](https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial), the same
 authors' work under the same license) in place of ME Network's own sprites. ME Network requires this mod (ME Network
 issue #325) and this mod depends on ME Network: the mod portal installs both. It
-replaces the item icons of the item and fluid storage cells (1k to 256k), the storage components and the housing, the
-upgrade cards and the blank and encoded pattern (issues #247, #250, #251). AE2-Unofficial has no fluid cell and no
+replaces the item icons of the item and fluid storage cells (1k to 16384k, issue #447 the tiers above 256k), the
+Singularity storage cell, the storage components and the housing, the upgrade cards (issue #447 the Crafting Card) and
+the blank and encoded pattern (issues #247, #250, #251). AE2-Unofficial has no fluid cell and no
 interface capacity card: the fluid cells show its item cell of their tier with a blue frame and body, the ME
 Interface Capacity Card its Capacity Card with the capacity sign in orange (issue #294). The ME Drive, ME Chest, ME
 Interface, ME Molecular Assembler, ME Cell Workbench and ME Charger are AE2-Unofficial's blocks in the world and AE2
 cubes as icons (issue #260), the ME Pattern Provider its purple interface skin (issue #269, AE2-Unofficial has no provider); a cell in the drive or the chest is drawn as AE2 draws it (issue #264, through ME
 Network's drive view). The ME Controller is four AE2-Unofficial controllers, dark without power, with AE2's running
 lights while its network works and red in a conflict (issue #278, through ME Network's controller view). The ME
-Terminal, the ME Pattern Terminal and the ME Interface Terminal are AE2's terminal panels, dark or with their screen lit
-(issues #281, #343); the ME Storage, Conversion and Throughput Monitor are AE2's monitor panels the same way (issue #421).
+Terminal, the ME Pattern Terminal, the ME Pattern Terminal Ex and the ME Interface Terminal are AE2's terminal panels,
+dark or with their screen lit (issues #281, #343, #447); the ME Storage, Conversion and Throughput Monitor are AE2's
+monitor panels the same way (issue #421).
 The ME IO Port is AE2-Unofficial's IO port with its two cell slots in front (issue #397). The ME Quantum Bridge is
 AE2-Unofficial's eight quantum rings around its link chamber, as the blocks look before they are formed, its icons a ring
 (issue #406). The ME Import, Export and Storage Bus are AE2's bus fronts with ME Network's plate and arrows on them (issue #282, through ME
 Network's bus view). The cable is AE2's Fluix glass cable (issue #283). The blocks of a Crafting CPU are AE2's crafting
 blocks, a cube each without a CPU, and in a CPU one big block in AE2's formed look with its ring around the outside
-(issues #302, #306). The ME Wireless Access Point is an AE2 cube of its inside, the
+(issues #302, #306; issue #447 the crafting storage above 256k and the crafting accelerators). The ME Wireless Access Point is an AE2 cube of its inside, the
 Wireless ME Terminal, its module and the booster have AE2's icons (issue #303). The technologies show these icons scaled
 up (issue #304). The other blocks and the ME Underground Cable
 look as without this mod.
@@ -32,7 +34,8 @@ in the repository.
 
 - **Source:** every image so far comes from GTNewHorizons'
   [Applied-Energistics-2-Unofficial](https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial), commit
-  `ab15e3a7259cbd9a7088138fade46e5f6f02ad18`, folders `src/main/resources/assets/appliedenergistics2/textures/items/`
+  `ab15e3a7259cbd9a7088138fade46e5f6f02ad18` (those of issue #447: `bad045fcbc5515215cc80911a075869eb916d563`, whose textures of the older files are
+  the same), folders `src/main/resources/assets/appliedenergistics2/textures/items/`
   and `.../textures/blocks/` (the look GT New Horizons plays); `MANIFEST.tsv` names each file's source(s). The item
   icons are scaled from 16 x 16 to the size of the icon they replace (32 or 64 px, nearest neighbour, no new pixels)
   by `tools/scale_ae2_icons.py` of the repository, which first swaps some colours of the fluid cells and the
