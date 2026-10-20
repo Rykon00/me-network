@@ -1,13 +1,15 @@
 --------------------------------------------------------------------------------
 --- ME NETWORK: THE CIRCUIT CONNECTOR OF THE BUSES AND THE ME INTERFACE (issue #412; prototypes/connector.lua)
 --- AE2's Redstone Card (AE2-Unofficial: Upgrades.REDSTONE, the RedstoneMode of PartSharedItemBus) as Factorio's circuit
---- condition, on the ME Import, Export and Storage Bus and the ME Interface, without a card (the maintainer's choice). The
+--- condition, on the ME Import, Export and Storage Bus and the ME Interface, without a card (the maintainer's choice); issue
+--- #429: on the ME Pattern Provider too, whose lock modes read it (AE2-Unofficial's Lock Crafting Card without the card). The
 --- blocks take no wires and their prototype type cannot change, so each has a hidden lamp at its position, its connector:
 --- the game's lamp window sets the condition, the wires go to it.
 ---   * A block whose connector has the condition on, a wire, and does not hold the condition is off: `off[unit]`, and the
 ---     block's own record gets `coff` through its module's setter (N.off_setters; the visits of fork-me-io.lua and
 ---     fork-me-storagebus.lua read only that field: the bench at 5000 showed a function call and the unit number per visit),
----     parked until it is on again. Without a wire the condition does nothing, as on an inserter.
+---     parked until it is on again. Without a wire the condition does nothing, as on an inserter. The setter also gets the
+---     condition's level (true: it holds, false: it does not, nil: it does nothing), which the provider's locks read (#429).
 ---   * The blocks whose connector has the condition on, or that read the circuit (the export bus's pulse mode, the interface's
 ---     rows from the circuit), are in `list`; CHECKS_PER_TICK of them are checked per tick, each at most every INTERVAL ticks
 ---     (issue #5's rule: a list and a budget; a block without them costs nothing). A check reads the condition: a block that
@@ -35,18 +37,20 @@ local M = {}
 local NAME = "me-circuit-connector"
 M.NAME = NAME
 --- the blocks that have a connector, and which module visits them (the waker's name, N.wakers)
-local HOSTS = { ["me-import-bus"] = "io", ["me-export-bus"] = "io", ["me-network-interface"] = "io", ["me-storage-bus"] = "sbus" }
+local HOSTS = { ["me-import-bus"] = "io", ["me-export-bus"] = "io", ["me-network-interface"] = "io", ["me-storage-bus"] = "sbus",
+	["me-pattern-provider"] = "provider" }                     -- (issue #429: the provider's lock by the condition)
 M.HOSTS = HOSTS
 local CHECKS_PER_TICK = 16
 local INTERVAL = 10                -- ticks: how late a block follows its condition at most, while the budget holds
 local WIRES = { defines.wire_connector_id.circuit_red, defines.wire_connector_id.circuit_green }
 
---- the modules that visit the blocks put the off state into their records (`rec.coff`): N.off_setters[kind](unit, off)
+--- the modules that visit the blocks put the off state into their records (`rec.coff`): N.off_setters[kind](unit, off, level),
+--- `level` the condition's (issue #429: true, false, or nil when it does nothing)
 N.off_setters = N.off_setters or {}
-local function set_off(s, kind, unit, off)
+local function set_off(s, kind, unit, off, level)
 	s.off[unit] = off or nil
 	local f = N.off_setters[kind]
-	if f then f(unit, off) end
+	if f then f(unit, off, level) end
 end
 
 local function state()
@@ -62,6 +66,12 @@ end
 function M.is_off(unit)
 	local s = storage.fork_me_conn
 	return s ~= nil and s.off[unit] == true
+end
+
+--- issue #429: has the condition risen since the last take? (not taken: the windows)
+function M.has_pulse(unit)
+	local s = storage.fork_me_conn
+	return s ~= nil and s.edge[unit] == true
 end
 
 --- pulse mode: has the condition risen since the last visit? (taken: true once per rise)
@@ -81,13 +91,13 @@ local function wired(c)
 	return false
 end
 
---- the condition holds (or does nothing: off, no wire)
-local function holds(h)
+--- the condition's level: true (it holds), false (it does not), nil (it does nothing: off, no wire)
+local function level(h)
 	local c = h.conn
-	if not (c and c.valid) then return true end
+	if not (c and c.valid) then return nil end
 	local cb = c.get_control_behavior()
-	if not (cb and cb.circuit_enable_disable) then return true end
-	if not wired(c) then return true end
+	if not (cb and cb.circuit_enable_disable) then return nil end
+	if not wired(c) then return nil end
 	return not cb.disabled
 end
 
@@ -148,9 +158,10 @@ function M.update(unit)
 	h.cc = (cb and cb.circuit_enable_disable) and true or nil
 	if h.cc or h.pulse or h.read then
 		if not listed(s, unit) then s.list[#s.list + 1] = unit end
-		local on = holds(h)
+		local lv = level(h)
+		local on = lv ~= false
 		local was = not s.off[unit]
-		set_off(s, h.kind, unit, not on)
+		set_off(s, h.kind, unit, not on, lv)
 		if h.pulse then h.last = on end
 		if h.read then h.sig = signature(unit) end
 		if on ~= was or h.read then wake(h, unit) end
@@ -365,9 +376,10 @@ function M.on_tick(tick)
 			if (h.due or 0) <= tick then
 				h.due = tick + INTERVAL
 				if not (h.conn and h.conn.valid) then M.ensure(h.host) end
-				local on = holds(h)
+				local lv = level(h)
+				local on = lv ~= false
 				local was = not s.off[unit]
-				set_off(s, h.kind, unit, not on)            -- (every check: the record's field follows even a record made anew)
+				set_off(s, h.kind, unit, not on, lv)        -- (every check: the record's field follows even a record made anew)
 				if on ~= was and on then wake(h, unit) end
 				if h.pulse then
 					if on and not h.last then
