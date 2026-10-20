@@ -25,6 +25,8 @@ Version: 0.5.5
     - A Crafting CPU counts all its co-processors (issue #415): until now at most 16 counted. A job step hands over at most the new map setting "Crafting job operations per step" (1024), so a CPU with more than 16 co-processing units is faster than before.
   Balancing:
     - The Superluminal Speed Card is made from a Super Speed Card and a 1024k storage component, as in AE2-Unofficial (issue #414; before, 4 256k components).
+  Bugfixes:
+    - The window of the ME Pattern Terminal Ex fits the screen (issue #469): its input and output rows scroll, so the slots, Encode, Load pattern, Clear pattern and the status line stay visible (they were below the screen's edge at 1920 x 1080). The inventory pane next to the block windows is never taller than the screen leaves either (a large UI scale).
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.4
 Date: 2026-10-15

@@ -2141,6 +2141,10 @@ end
 M.stand_in_element = stand_in_element                 -- (issue #336: the ME Interface Terminal's page in its test)
 remote.add_interface("gregtorio-me-gui", {
 	fmt = function(n) return G.fmt(n) end,
+	--- issue #469 (tests): the height a part of a window may take on a screen of `height` pixels at UI scale `scale`
+	fit_height = function(height, scale, reserve, max, min)
+		return G.fit_height({ display_resolution = { width = 1920, height = height }, display_scale = scale }, reserve, max, min)
+	end,
 	--- issue #150 (tests): the hand-over buffer of a relative window: its stacks into the block of window `name` (what it
 	--- refuses stays), and what is left back to `to` (a player or an inventory)
 	buffer_absorb = function(inv, name, entity, seen) return G.buffer_absorb(inv, G.def_named(name), entity, seen) end,
