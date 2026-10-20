@@ -36,6 +36,8 @@ SIZES = {
     "icons/cells/me-void-storage-cell.png": 64,          # issue #364: AE2-Unofficial's void cell, for both void cells
     "icons/cells/me-void-fluid-storage-cell.png": 64,
     "icons/cells/me-singularity-storage-cell.png": 64,   # issue #447: AE2-Unofficial's Singularity cell (#414)
+    "icons/cells/me-view-cell.png": 64,                  # issue #459: the View Cell (#440) and the creative cell (#441)
+    "icons/cells/me-creative-storage-cell.png": 64,
     **{f"icons/cards/me-{c}-card.png": 32 for c in ("basic", "advanced", "capacity", "overflow-destruction", "fuzzy",
                                                      "pattern-capacity", "sticky", "inverter", "equal-distribution",
                                                      "acceleration", "interface-capacity",

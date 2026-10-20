@@ -6,7 +6,7 @@ The graphics mod of [ME Network](https://github.com/Rykon00/me-network): it puts
 authors' work under the same license) in place of ME Network's own sprites. ME Network requires this mod (ME Network
 issue #325) and this mod depends on ME Network: the mod portal installs both. It
 replaces the item icons of the item and fluid storage cells (1k to 16384k, issue #447 the tiers above 256k), the
-Singularity storage cell, the storage components and the housing, the upgrade cards (issue #447 the Crafting Card) and
+Singularity storage cell, the View Cell and the Creative ME Storage Cell (issue #459), the storage components and the housing, the upgrade cards (issue #447 the Crafting Card) and
 the blank and encoded pattern (issues #247, #250, #251). AE2-Unofficial has no fluid cell and no
 interface capacity card: the fluid cells show its item cell of their tier with a blue frame and body, the ME
 Interface Capacity Card its Capacity Card with the capacity sign in orange (issue #294). The ME Drive, ME Chest, ME
@@ -17,7 +17,7 @@ lights while its network works and red in a conflict (issue #278, through ME Net
 Terminal, the ME Pattern Terminal, the ME Pattern Terminal Ex and the ME Interface Terminal are AE2's terminal panels,
 dark or with their screen lit (issues #281, #343, #447); the ME Storage, Conversion and Throughput Monitor are AE2's
 monitor panels the same way (issue #421).
-The ME IO Port is AE2-Unofficial's IO port with its two cell slots in front (issue #397). The ME Quantum Bridge is
+The ME IO Port is AE2-Unofficial's IO port with its two cell slots in front (issue #397), the Creative Energy Cell its creative energy cell (issue #459). The ME Quantum Bridge is
 AE2-Unofficial's eight quantum rings around its link chamber, as the blocks look before they are formed, its icons a ring
 (issue #406). The ME Import, Export and Storage Bus are AE2's bus fronts with ME Network's plate and arrows on them (issue #282, through ME
 Network's bus view). The cable is AE2's Fluix glass cable (issue #283). The blocks of a Crafting CPU are AE2's crafting
