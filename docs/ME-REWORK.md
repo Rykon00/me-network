@@ -2823,3 +2823,19 @@ item numbers) and handed to `M.entries`, whose kept lists carry its signature in
 it is made anew. No Group Filter Card on a view cell (AE2-Unofficial's Ore Filter): left out.
 
 *Test:* `tools/devcheck/runtimemod/viewcell.lua`.
+
+## The Creative ME Storage Cell (issue #441)
+
+AE2-Unofficial's `ItemCreativeStorageCell` (`CreativeCellInventory`: its config's stacks with `Integer.MAX_VALUE` each,
+extraction gives what is asked, injection takes what is configured). Written anew.
+
+*Here:* a cell spec `{ tier = "creative", bytes = 0, types = 63, void = true, creative = true }` in `cells` (drives, the
+chest and the workbench take it; the IO port refuses it as a void cell). `cell_from_tags` gives it `M.CREATIVE` (2^50, far
+below 2^53, so the totals stay exact) of every key its partition lists and never reads contents from its tags;
+`clean_cards` gives it no cards; `apply_cell_cards` sets `cell.creative`. Insertion: `cell_room` is 0 and `voids` is true for
+a listed key (an unlisted cell voids nothing), so the walk of the void cells (issue #354) destroys what reaches it.
+Extraction: `extract_key` hands the rest of a request to a creative cell without touching it and adds what it gave back
+to `net.items` (`kept`); the chest's `CH.take_from_drive` does the same. A creative cell's count therefore never changes;
+the terminal shows the number (no marker of its own).
+
+*Test:* `tools/devcheck/runtimemod/creativecell.lua`.

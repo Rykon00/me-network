@@ -212,6 +212,24 @@ local S_BYTES, S_PER_TYPE = 2 ^ 50, 4096
 cell_data[SINGULARITY] = { tier = "singularity", bytes = S_BYTES, per_type = S_PER_TYPE, types = 1 }
 s_item.localised_description = { "item-description.fork-me-singularity-cell", string.format("%.0f", (S_BYTES - S_PER_TYPE) * 8) }
 
+--- Issue #441: AE2's Creative ME Storage Cell (AE2-Unofficial: items/storage/ItemCreativeStorageCell.java): what its partition
+--- lists is always there without end, and it takes any amount of it and destroys it (scripts/fork-me-network.lua: `creative`
+--- with `void`). No recipe, as in AE2: the map editor and cheat mode give it. Items only (AE2-Unofficial's is an item cell).
+local CREATIVE_CELL = "me-creative-storage-cell"
+ME.add_item{
+	type = "item-with-tags",
+	name = CREATIVE_CELL,
+	icon = HD_ICON .. "me-1k-storage-cell.png",
+	icon_size = 64,
+	--- (the 1k cell in violet: no picture of its own; the texture mod could give it AE2-Unofficial's)
+	fields = { icons = { { icon = HD_ICON .. "me-1k-storage-cell.png", icon_size = 64, tint = { 1, 0.45, 1, 1 } } } },
+	subgroup = "fork-me-cells",
+	order = "0z",
+	stack_size = 1,
+	recipe = false,
+}
+cell_data[CREATIVE_CELL] = { tier = "creative", bytes = 0, per_type = 0, types = 63, void = true, creative = true }
+
 
 
 --------------------------------------------------------------------------------

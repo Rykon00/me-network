@@ -832,6 +832,7 @@ RUNTIME_TESTS = (
     ("CIRCUITLOCK", "ME Pattern Provider lock by the circuit condition (issue #429)"),
     ("ADVEMITTER", "ME Advanced Level Emitter (issue #443)"),
     ("VIEWCELL", "View Cells (issue #440)"),
+    ("CREATIVECELL", "Creative ME Storage Cell (issue #441)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
     ("MONITORS", "ME Storage, Conversion and Throughput Monitor (issue #353)"),

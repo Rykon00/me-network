@@ -131,6 +131,15 @@ and taken out, in the ME Cell Workbench, in the ME IO Port, in a mined drive; un
 * **Old drive items** (ME Drive 1k ... 256k from before the rework) cannot be crafted any more; placing one
   builds an ME Drive with its four (empty) cells, the 256k one also gives its acceleration card back.
 
+### The Creative ME Storage Cell
+
+AE2's **Creative ME Storage Cell** (issue #441, AE2-Unofficial's `ItemCreativeStorageCell`), for testing and creative maps:
+**no recipe**, the map editor and cheat mode give it. Partition it in the ME Cell Workbench (up to 63 items; no fluids, no
+upgrade cards). In an ME Drive (or the ME Chest) its network has every listed item **without end**: it counts 2^50 of each
+(about 1.1 quadrillion; the terminal shows that number), whatever is taken out leaves the count as it was, and whatever of
+those items is stored into it is taken and destroyed. It takes nothing it does not list; without a list it does nothing.
+The planner sees the count, so a plan never misses those items. The ME IO Port refuses it (as a void cell).
+
 ### Void cells
 
 The **Void ME Storage Cell** and the **Void ME Fluid Storage Cell** (issue #354, AE2-Unofficial's Void ME Storage Cell,
