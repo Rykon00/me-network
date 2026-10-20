@@ -990,7 +990,9 @@ the network's storage inside it (AE2's does) is not part of it.
 AE2-Unofficial's **Pattern Terminal Ex** (issue #416, `PartPatternTerminalEx`; tech ME Autocrafting; an ME Pattern Terminal, an
 advanced circuit, a processing unit and an electronic circuit, AE2-U's calculation, engineering and logic processor) is the
 ME Pattern Terminal for big **processing patterns only** (GT recipes with many inputs or outputs). A switch chooses between
-**32 inputs and 8 outputs** and **8 inputs and 32 outputs**; AE2-U shows the 32 rows on two pages, here they are one grid.
+**32 inputs and 8 outputs** and **8 inputs and 32 outputs**; AE2-U shows the 32 rows on two pages, here they are one grid
+that scrolls when the window would not fit the screen (issue #469: the slots, Encode, Load, Clear and the status line
+stay below it).
 Everything else (the two slots, Encode, Load, Clear, fill from a recipe) is the ME Pattern Terminal's.
 
 * Each player has an editor for each kind of terminal, so the plain terminal never cuts the rows of a big pattern. Rows that

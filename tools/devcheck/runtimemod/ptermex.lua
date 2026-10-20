@@ -111,6 +111,12 @@ return function(H)
 			expect(remote.call(PT, "set_editor_row", plain, "inputs", 9, items[1], 1) == true
 				and remote.call(PT, "set_editor_row", plain, "inputs", 10, items[2], 1) == false
 				and remote.call(PT, "set_editor_row", plain, "outputs", 7, items[3], 1) == false, "the plain terminal's 9 and 6")
+			--- issue #469: the window's pattern box scrolls in what the screen leaves (1080p at 100 % and 150 %, a tiny screen)
+			local fit = { remote.call("gregtorio-me-gui", "fit_height", 1080, 1, 380, nil, 160),
+				remote.call("gregtorio-me-gui", "fit_height", 1080, 1.5, 380, nil, 160),
+				remote.call("gregtorio-me-gui", "fit_height", 480, 1, 380, nil, 160),
+				remote.call("gregtorio-me-gui", "fit_height", 1080, 1.5, 220, 600, 200) }
+			expect(fit[1] == 700 and fit[2] == 340 and fit[3] == 160 and fit[4] == 500, "the heights that fit the screen: " .. line(fit))
 			--- a processing pattern of 12 inputs on the provider, a job of it
 			local inputs = {}
 			for i = 1, 12 do inputs[i] = { key = items[i], amount = 1 } end

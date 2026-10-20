@@ -113,6 +113,17 @@ end
 
 local PANE_COLUMNS = 10
 local PANE_HEIGHT = 600
+
+--- Issue #469: the height in GUI pixels that a part of a window may take on the player's screen: the screen's height at its
+--- UI scale (display_resolution over display_scale) less `reserve` for the rest of the window, at most `max` (nil: no limit)
+--- and at least `min`
+function M.fit_height(player, reserve, max, min)
+	local ok, h = pcall(function() return player.display_resolution.height / player.display_scale end)
+	h = (ok and type(h) == "number") and math.floor(h - reserve) or max or min
+	if max and h > max then h = max end
+	if h < min then h = min end
+	return h
+end
 --- LuaItemStacks of the main inventory's slots per player: only a cache for reading (indexing a slot makes a new
 --- object each time; the values are always read from the game), so it is no game state and is not saved
 local slot_cache = {}
@@ -412,7 +423,9 @@ local function build_pane(parent, hint, player)
 		if not inv then return end                     -- (no table: there is nothing to show)
 	end
 	local scroll = box.add{ type = "scroll-pane", name = "fork_me_inv_scroll", horizontal_scroll_policy = "never" }
-	scroll.style.maximal_height = PANE_HEIGHT
+	--- (issue #469: at most what the screen leaves below the title bar, the caption and the hint: a 1080p screen at 150 % UI
+	--- scale has 720 GUI pixels)
+	scroll.style.maximal_height = M.fit_height(player, 220, PANE_HEIGHT, 200)
 	scroll.add{ type = "table", name = "fork_me_inv", column_count = PANE_COLUMNS, style = "filter_slot_table" }
 end
 

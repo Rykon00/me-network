@@ -511,7 +511,11 @@ local function open(player, entity)
 	G.label(content, "", WIDTH, nil, "fork_me_net_line")
 	if remote_view and G.wireless_mode_button then G.wireless_mode_button(content, entity, "terminal") end   -- (issue #210)
 	G.label(content, { remote_view and "fork-me-wireless.patterns-help" or "fork-me-gui.patterns-help" }, WIDTH)
-	content.add{ type = "flow", name = "fork_me_pat_box", direction = "vertical" }
+	--- issue #469: the pattern box scrolls, so the slots, Encode, Load, Clear and the status line below it stay on the screen
+	--- (the Ex's 32 rows run off a 1080p screen); the rest of the window takes about 380 GUI pixels
+	local scroll = content.add{ type = "scroll-pane", name = "fork_me_pat_scroll", horizontal_scroll_policy = "never" }
+	scroll.style.maximal_height = G.fit_height(player, 380, nil, 160)
+	scroll.add{ type = "flow", name = "fork_me_pat_box", direction = "vertical" }
 	content.add{ type = "line" }
 	local row = G.row(content)
 	if not remote_view then
