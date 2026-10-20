@@ -3675,3 +3675,23 @@ only when the output changed. A level emitter's visit pays one field read more (
 
 `regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.1867 ->
 0.1904 ms (p99 1.732 -> 1.753), 1000: 0.3691 -> 0.3314 ms (p99 2.026 -> 1.869), `regressions beyond the noise: 0`.
+
+## View Cells (issue #440)
+
+The terminal's storage list is filtered only when it is made anew (the network's contents changed, at most once per refresh
+of an open window): a key pays the view filter's test (a few table reads per cell) next to the search. The filter is derived
+from the slots' stacks once and kept until they change (by their item numbers). A terminal without view cells pays one nil
+check per key of a rebuilt list; nothing runs per tick. The scenes have no open terminals.
+
+`bench --sizes 100,1000 --runs 3 --check adv-emitter-443` (#440 against its base, #443; three rounds in turns):
+
+| | #443 | #440 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2349 / 2.082 | 0.2392 / 2.070 |
+| 1000: script average / p99 ms | 0.4335 / 2.421 | 0.4072 / 2.316 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0` (both versions slower than in the runs before: the machine was busier). Against the last
+release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.2286 -> 0.2338 ms (p99 2.093 -> 2.130), 1000: 0.4097 ->
+0.4076 ms (p99 2.288 -> 2.238), `regressions beyond the noise: 0`.

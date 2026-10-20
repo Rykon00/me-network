@@ -1001,7 +1001,7 @@ M.alias_key = alias_key
 --- the cell's contents as a fresh record (from the tags of a cell item); unknown items are dropped
 local function cell_from_tags(name, tags)
 	local cell = new_cell(name)
-	local spec = cell_spec(name)
+	local spec = cell_spec(name) or M.view_spec(name)        -- (issue #440: a view cell's list and cards, no contents)
 	local stored = type(tags) == "table" and tags[CELL_TAG] or nil
 	if type(stored) ~= "table" or not spec then
 		if spec and spec.void then M.apply_cell_cards(cell) end   -- (issue #354: a new void cell)
@@ -1038,6 +1038,13 @@ M.cell_from_tags = cell_from_tags
 --- the cell record of a cell item stack (its contents, partition and cards from the tags). Issue #394: the item's quality
 --- goes with it (`cell.quality`, nil for normal; a drive's record keeps it), so the stack written back keeps it. It changes
 --- nothing in the cell: bytes, types and cards are the same in every quality.
+--- Issue #440: the spec of a view cell (mod-data `view_cells`: { view = true, types }), nil for anything else. Kept apart from
+--- `cells` (cell_spec): a view cell is partitioned like a cell but stores nothing, so no drive or chest takes it.
+function M.view_spec(name)
+	local v = mod_data().view_cells
+	return v and v[name] or nil
+end
+
 function M.cell_from_stack(stack)
 	local cell = cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
 	local q = stack.quality.name
@@ -1058,7 +1065,7 @@ function M.clean_partition(spec, partition)
 	local out, n = {}, 0
 	for _, key in ipairs(keys) do
 		local ok
-		if is_fluid_key(key) then ok = fluid_cell(spec) and prototypes.fluid[(split_fluid_key(key))] ~= nil
+		if is_fluid_key(key) then ok = (fluid_cell(spec) or spec.view) and prototypes.fluid[(split_fluid_key(key))] ~= nil   -- (#440)
 		else ok = not fluid_cell(spec) and not key:find("#") and prototypes.item[(parse_key(key))] ~= nil end
 		if ok and not out[key] and n < spec.types then
 			out[key] = true
@@ -1074,7 +1081,7 @@ end
 function M.clean_cards(spec, list)
 	if type(list) ~= "table" or not spec then return nil end
 	local r = M.card_rules()
-	r = spec.kind == "fluid" and r.fluid_cell or r.item_cell
+	r = spec.view and r.view_cell or spec.kind == "fluid" and r.fluid_cell or r.item_cell   -- (issue #440: a view cell)
 	local out, n = {}, {}
 	for _, name in ipairs(list) do
 		local kind = type(name) == "string" and prototypes.item[name] and M.card_kind(name)
@@ -1111,7 +1118,7 @@ end
 --- Distribution Card: the share of one key). A cell without cards keeps exactly the fields of 0.3.0.
 function M.apply_cell_cards(cell)
 	room_gen = room_gen + 1
-	local spec = cell_spec(cell.name)
+	local spec = cell_spec(cell.name) or M.view_spec(cell.name)   -- (issue #440)
 	if not spec then return end
 	local keys = cell.partition or cell.deny or cell.gkeys
 	local kinds = {}
@@ -1154,7 +1161,7 @@ end
 
 --- set the configured list of a cell (cleaned; the cards decide whether it is a whitelist or a blacklist)
 function M.set_cell_keys(cell, keys)
-	cell.partition = M.clean_partition(cell_spec(cell.name), keys or {})
+	cell.partition = M.clean_partition(cell_spec(cell.name) or M.view_spec(cell.name), keys or {})   -- (issue #440)
 	cell.deny, cell.gkeys = nil, nil
 	M.apply_cell_cards(cell)
 end
@@ -1252,7 +1259,9 @@ local function cell_description(cell, spec, plist, cards, keys, list)
 		if #desc > 1 then desc[#desc + 1] = "\n" end
 		desc[#desc + 1] = text
 	end
-	if #keys == 0 then
+	if spec and spec.view then
+		line({ "fork-me-net.view-cell-tip" })                    -- (issue #440: a view cell holds nothing)
+	elseif #keys == 0 then
 		line({ fluid and "fork-me-net.cell-tip-empty-fluid" or "fork-me-net.cell-tip-empty", spec and spec.bytes or 0, spec and spec.types or 0 })
 	else
 		line({ fluid and "fork-me-net.fluid-cell-holds" or "fork-me-net.cell-holds",
@@ -1316,7 +1325,7 @@ local function cell_stack(cell)
 	return {
 		name = cell.name, count = 1, quality = cell.quality,
 		tags = { [CELL_TAG] = { items = items, data = data, partition = plist, cards = cards, gtext = cell.gtext } },
-		custom_description = cell_description(cell, cell_spec(cell.name), plist, cards, keys, list),
+		custom_description = cell_description(cell, cell_spec(cell.name) or M.view_spec(cell.name), plist, cards, keys, list),
 	}
 end
 M.cell_stack = cell_stack

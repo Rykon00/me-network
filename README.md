@@ -145,4 +145,6 @@ The network follows the design of [Applied Energistics 2](https://github.com/App
 function is a port of AE2's code, a comment at the function names the source. Files with ported code:
 `scripts/fork-me-emitter.lua` (issue #443: how the advanced level emitter joins its rows, from GTNewHorizons'
 [Applied-Energistics-2-Unofficial](https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial),
-`src/main/java/appeng/parts/automation/PartAdvancedLevelEmitter.java`, LGPL-3.0, © 2013 - 2015 AlgorithmX2 et al.).
+`src/main/java/appeng/parts/automation/PartAdvancedLevelEmitter.java`, LGPL-3.0, © 2013 - 2015 AlgorithmX2 et al.);
+`scripts/fork-me-viewcells.lua` (issue #440: how the view cells' lists are joined, from the same checkout's
+`src/main/java/appeng/util/prioitylist/MergedPriorityList.java`, LGPL-3.0, © 2013 - 2015 AlgorithmX2 et al.).

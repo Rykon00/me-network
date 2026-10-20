@@ -101,6 +101,9 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	storage_bus = { slots = 5, limits = { capacity = 5, fuzzy = 1, inverter = 1, void = 1, sticky = 1, gfilter = 1 }, filters = 18, per_capacity = 9 },
 	item_cell = { slots = 4, limits = { fuzzy = 1, inverter = 1, equal = 1, void = 1, sticky = 1, gfilter = 1 } },
 	fluid_cell = { slots = 3, limits = { inverter = 1, equal = 1, void = 1, sticky = 1 } },
+	--- issue #440: a view cell takes 2 cards (AE2-Unofficial: ItemViewCell.getUpgradesInventory, CellUpgrades(is, 2)): a Fuzzy
+	--- and an Inverter Card
+	view_cell = { slots = 2, limits = { fuzzy = 1, inverter = 1 } },
 	--- issue #110: the ME Import Bus and Export Bus take up to 4 Acceleration Cards (AE2's upgrade slots of the buses: its speed
 	--- cards, PartImportBus / PartExportBus); `speed`: by the number of cards, the factor on the items per second of the map
 	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation). Issue #356: up to 4 Super Speed and 4 Superluminal Speed
@@ -166,6 +169,25 @@ data:extend({ {
 	localised_description = { "entity-description.me-cell-workbench" },
 } })
 recipes[#recipes + 1] = "me-cell-workbench"
+
+--- Issue #440: AE2's View Cell (AE2-Unofficial: items/storage/ItemViewCell.java; scripts/fork-me-viewcells.lua): a list of
+--- items and fluids for the ME Terminal's storage list, partitioned in the workbench. AE2-Unofficial's recipe
+--- (network/cells/view.recipe, shapeless): a certus quartz crystal and a storage housing; the stand-ins of issue #233 (certus
+--- quartz = stone). Its spec is in `view_cells`, never in `cells`: it stores nothing.
+ME.add_item{
+	type = "item-with-tags",
+	name = "me-view-cell",
+	icon = ME.hd_icons .. "basic-storage-housing.png",
+	icon_size = 64,
+	--- (the storage housing in blue: no picture of its own; the texture mod could give it AE2-Unofficial's ItemViewCell)
+	fields = { icons = { { icon = ME.hd_icons .. "basic-storage-housing.png", icon_size = 64, tint = { 0.55, 0.85, 1, 1 } } } },
+	subgroup = "fork-me-cards",
+	order = "y",
+	stack_size = 1,
+	recipe = { energy_required = 1, ingredients = I{ "basic-storage-housing", 1, "stone", 1 } },
+}
+data.raw["mod-data"]["fork-me-network"].data.view_cells = { ["me-view-cell"] = { view = true, kind = "view", types = 63, bytes = 0 } }
+recipes[#recipes + 1] = "me-view-cell"
 
 --- after ME 64k Storage (the advanced card needs a processing unit); its cost follows that technology in
 --- data-final-fixes.lua unless another mod sets it (ME_NETWORK.set_technology)

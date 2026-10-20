@@ -50,10 +50,14 @@ local function is_bench(entity) return entity and entity.valid and entity.name =
 --- the card rules of a cell (item or fluid cell)
 local function rules_of(spec)
 	local r = N.card_rules()
+	if spec.view then return r.view_cell end                       -- (issue #440)
 	return spec.kind == "fluid" and r.fluid_cell or r.item_cell
 end
 
-local function is_cell(stack) return stack and stack.valid_for_read and N.cell_spec(stack.name) ~= nil end
+--- the spec of a cell, or (issue #440) of a view cell: both are partitioned here
+local function spec_of(name) return N.cell_spec(name) or N.view_spec(name) end
+
+local function is_cell(stack) return stack and stack.valid_for_read and spec_of(stack.name) ~= nil end
 
 --- issue #37: the most kinds an item cell and a fluid cell take (the slots of the workbench's partition without a
 --- cell), as the two stand-in specs N.clean_partition checks a list against
@@ -98,7 +102,11 @@ end
 --- the workbench's partition after the partition of the cell in it changed: the cell's keys, and the kept keys of
 --- the other kind (an item cell does not touch the fluids kept for a fluid cell)
 local function remember(rec, cell)
-	local fluid = N.cell_spec(cell.name).kind == "fluid"
+	if spec_of(cell.name).view then                                 -- (issue #440: a view cell's list has both kinds)
+		rec.config = clean_kept(N.cell_keys(cell))
+		return
+	end
+	local fluid = spec_of(cell.name).kind == "fluid"
 	local out = N.cell_keys(cell)
 	for _, key in ipairs(rec.config or {}) do
 		if N.is_fluid_key(key) ~= fluid then out[#out + 1] = key end
@@ -154,7 +162,7 @@ end
 --- within the limits and its slots; those slots are emptied. A card the cell cannot take stays.
 local function pack_cards(inv, stack)
 	local cell = N.cell_from_stack(stack)
-	local r = rules_of(N.cell_spec(cell.name))
+	local r = rules_of(spec_of(cell.name))
 	local list, n = {}, {}
 	for slot = 2, #inv do
 		local s = inv[slot]
@@ -228,7 +236,7 @@ local function arrived(rec, inv, back)
 	local cell = N.cell_from_stack(stack)
 	if #N.cell_keys(cell) > 0 then
 		remember(rec, cell)
-	elseif rec.config and N.clean_partition(N.cell_spec(cell.name), rec.config) then
+	elseif rec.config and N.clean_partition(spec_of(cell.name), rec.config) then
 		N.set_cell_keys(cell, rec.config)
 		write(rec, stack, cell)
 	end
@@ -302,7 +310,7 @@ function M.sync(rec, back, places)
 	if is_cell(inv[1]) and inv[1].item_number ~= rec.cell then arrived(rec, inv, back) end
 	--- the card slots
 	local stack = inv[1]
-	local spec = is_cell(stack) and N.cell_spec(stack.name)
+	local spec = is_cell(stack) and spec_of(stack.name)
 	local r = spec and rules_of(spec)
 	local counts, kept = {}, {}
 	local function take(name)
@@ -365,7 +373,7 @@ function M.cell_click(entity, cursor, inventory, shift)
 	local inv = inv_of(rec)
 	local slot = inv[1]
 	if cursor and cursor.valid_for_read then
-		if not N.cell_spec(cursor.name) then return "not-a-cell" end
+		if not spec_of(cursor.name) then return "not-a-cell" end
 		if slot.valid_for_read then
 			release(rec, inv)
 			local held = game.create_inventory(1)
@@ -493,7 +501,7 @@ function M.card_click(entity, slot, cursor, inventory, shift)
 	if rec then stack, cell = cell_of(rec) end
 	if not stack then return "no-cell" end
 	local inv = inv_of(rec)
-	local r = rules_of(N.cell_spec(cell.name))
+	local r = rules_of(spec_of(cell.name))
 	local out
 	if cursor and cursor.valid_for_read then
 		local kind = N.card_kind(cursor.name)
@@ -550,7 +558,7 @@ end
 --- is gained; its fluid ingredients are not given back. A list of { name, count }, or nil and the reason: "void" (a void
 --- cell has no storage component), "no-recipe" (no recipe of that name makes exactly this one cell from items).
 function M.parts_of(name)
-	local spec = N.cell_spec(name)
+	local spec = spec_of(name)
 	if not spec then return nil, "no-cell" end
 	if spec.void then return nil, "void" end
 	local r = prototypes.recipe[name]
@@ -614,14 +622,14 @@ function M.info(entity)
 	local out = { keep = rec.keep, config = config, config_items = n, limits = { items = lim.item.types, fluids = lim.fluid.types } }
 	local stack, cell = cell_of(rec)
 	if stack then
-		local spec = N.cell_spec(cell.name)
-		local items = {}
+		local spec = spec_of(cell.name)
+		local items = {}                                          -- (issue #440: `view` below, a view cell)
 		for k, v in pairs(cell.items) do items[k] = v end
 		--- the cards are the card slots' items while the cell lies here: the fields as they will be in the tags
 		cell.cards = N.clean_cards(spec, slot_cards(inv_of(rec)))
 		N.apply_cell_cards(cell)
 		local cards = { table.unpack(cell.cards or {}) }
-		out.cell = { name = cell.name, fluid = spec.kind == "fluid", items = items, bytes = cell.bytes, bytes_total = spec.bytes,
+		out.cell = { name = cell.name, fluid = spec.kind == "fluid", view = spec.view, items = items, bytes = cell.bytes, bytes_total = spec.bytes,
 			types = cell.types, types_total = spec.types, partition = N.cell_keys(cell), cards = cards,
 			slots = rules_of(spec).slots, inverted = N.has_card(cell, "inverter"), fuzzy = N.has_card(cell, "fuzzy"),
 			equal = cell.eq, void = cell.void == true, sticky = cell.sticky == true, voidcell = spec.void,
