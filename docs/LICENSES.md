@@ -3,10 +3,12 @@
 This repository holds **two mods with two licenses** (issue #239):
 
 - **ME Network** (`me-network`, the repository root): GPLv3 (`LICENSE`), its GT5-Unofficial graphics LGPL-3.0. It
-  runs complete on its own and has no dependency on the second mod.
+  requires the second mod (issue #325: `~ me-network-ae2-textures` in its `info.json`, a dependency without a load
+  order), but its code never names it.
 - **ME Network - AE2 Textures** (`me-network-ae2-textures`, the folder `ae2-textures/`): graphics of Applied
   Energistics 2 under CC BY-NC-SA 3.0, with its own `info.json`, license text, manifest, changelog and version. It
-  depends on `me-network` and replaces sprites of it when a player installs both.
+  depends on `me-network`, replaces sprites of it and comes with it: a player who installs me-network gets both. It is
+  a mod of its own only because of its license (issue #476).
 
 The repository is a collection with a license per folder, as AE2 is itself; the rule that matters is the **package
 rule**: no zip contains both licenses. `tools/build.py` builds `me-network_<version>.zip` without `ae2-textures/` and

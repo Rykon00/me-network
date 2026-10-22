@@ -207,16 +207,18 @@ def main():
           f"attribution in README.md, MANIFEST.tsv)")
     # release notes = topmost section of each changelog.txt (the texture mod's only when the release attaches it), or the
     # texture mod's alone in a texture-only release (issue #245)
+    # (me-network requires the texture mod since issue #325; it is a mod of its own only for its license, issue #476)
     tex_info = info_of(ROOT / M.MOD_FOLDER)
     tex_notes = "```\n" + topmost_section(ROOT / M.MOD_FOLDER / "changelog.txt") + "\n```\n"
+    required = f"CC BY-NC-SA 3.0, required by {info_of(ROOT)['title']}"
     if a.texture_notes_only:
         needs = next((d for d in tex_info.get("dependencies", []) if d.split()[0] == info_of(ROOT)["name"]), "")
-        notes = (f"{tex_info['title']} {tex_info['version']} alone ({tex.name}, CC BY-NC-SA 3.0, optional"
+        notes = (f"{tex_info['title']} {tex_info['version']} alone ({tex.name}, {required}"
                  + (f"; needs {needs}" if needs else "") + "):\n\n" + tex_notes)
     else:
         notes = "```\n" + topmost_section(ROOT / "changelog.txt") + "\n```\n"
         if not a.no_texture_notes:
-            notes += f"\n{tex_info['title']} {tex_info['version']} ({tex.name}, CC BY-NC-SA 3.0, optional):\n\n" + tex_notes
+            notes += f"\n{tex_info['title']} {tex_info['version']} ({tex.name}, {required}):\n\n" + tex_notes
     (dist / "release-notes.md").write_text(notes, encoding="utf-8")
     for out in (me, tex):
         print(f"built: {out} ({out.stat().st_size/1e6:.1f} MB)")

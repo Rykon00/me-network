@@ -1,7 +1,8 @@
 # devcheck: headless test harness
 
-Loads ME Network (`me-network`) in headless Factorio (`check` a second time with its optional texture mod
-`me-network-ae2-textures`, `ae2-textures/`) and checks what the game only notices late or never: missing
+Loads ME Network (`me-network`) in headless Factorio (`check` a second time with the real texture mod
+`me-network-ae2-textures`, `ae2-textures/`, which me-network requires since issue #325; the other loads take an empty
+stand-in of it) and checks what the game only notices late or never: missing
 graphics files, recipes and technologies that cannot be reached, and the network's runtime behaviour. On vanilla
 (with Space Age and quality, or `--base-only`) and with Gregtorio Continued (`--with-gregtorio DIR`), which puts the
 network on its GregTech tiers.

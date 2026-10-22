@@ -2245,8 +2245,9 @@ screen) from GT5-Unofficial's casings and Pillow shapes, each in a dark (no CPU)
 icons and the three technology icons stay. **Not from AE2's own crafting block textures:** they are licensed CC BY-NC-SA
 3.0 (AE2's README: "Textures and Models"), which is not compatible with this mod's GPLv3 and with the mod portal
 (non-commercial, share-alike under another license); `README.md` says so for every graphic of this mod. (Since issues
-#235 and #239 AE2 graphics can come in, but only into the separate, optional texture mod `ae2-textures/` under
-CC BY-NC-SA 3.0, never mixed into these GT-based sprites: `docs/LICENSES.md`.)
+#235 and #239 AE2 graphics can come in, but only into the separate texture mod `ae2-textures/` under
+CC BY-NC-SA 3.0, never mixed into these GT-based sprites: `docs/LICENSES.md`. It was optional at first; since issue
+#325 me-network requires it, and it is a mod of its own only for its license.)
 
 ### Saves
 

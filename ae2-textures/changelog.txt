@@ -7,6 +7,8 @@ Version: 0.2.2
     - The crafting storage above 256k and the crafting accelerators (ME Network issues #415, #447): the 1024k, 4096k, 16384k and Singularity crafting storage and the 4x to 4096x crafting accelerators are AE2-Unofficial's crafting blocks like the smaller ones, a cube each without a CPU and AE2's formed look in a CPU; their icons are AE2 cubes, their technologies' icons too.
     - The Crafting Card (ME Network issues #411, #447) has AE2-Unofficial's icon.
     - The ME Pattern Terminal Ex (ME Network issues #416, #447): AE2-Unofficial's Pattern Terminal Ex panel like the other terminals, dark while its network does not work and with AE2's screen in its Fluix colours while it does; its icon is the lit panel.
+  Locale:
+    - The mod's description no longer calls it optional (ME Network issue #476): ME Network requires this mod since ME Network 0.5.3 and comes with it; it is a mod of its own only because of its license (CC BY-NC-SA 3.0). The description also lists what the mod replaces today.
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.1
 Date: 2026-10-15
