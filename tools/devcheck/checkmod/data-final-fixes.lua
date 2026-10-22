@@ -151,6 +151,9 @@ end
 for t, _ in pairs(defines.prototypes.entity) do
 	for n, p in pairs(data.raw[t] or {}) do if own(p) and p.minable and not p.hidden then loc[#loc + 1] = "entity-name	" .. n end end
 end
+for n, p in pairs(data.raw["item-group"]) do                -- (issue #474: the tab "ME Network")
+	if own(p) then loc[#loc + 1] = "item-group-name	" .. n end
+end
 section("LOCALE", loc)
 
 --- The recipes and technologies of me-network (ME_NETWORK, prototypes/api.lua)
@@ -158,6 +161,32 @@ local own_rows = {}
 for _, n in pairs(ME_NETWORK and ME_NETWORK.recipes or {}) do own_rows[#own_rows + 1] = "recipe	" .. n end
 for _, n in pairs(ME_NETWORK and ME_NETWORK.technologies or {}) do own_rows[#own_rows + 1] = "technology	" .. n end
 section("OWN", own_rows)
+
+--- issue #474: the items of me-network (ME_NETWORK.items) with their subgroup, its item group (the inventory tab),
+--- whether they are hidden and their order; "stray" rows: an item with an icon of this mod that is not in
+--- ME_NETWORK.items (made without add_item); and every subgroup with its group and order
+local function item_proto(n)
+	for t, _ in pairs(defines.prototypes.item) do
+		if data.raw[t] and data.raw[t][n] then return data.raw[t][n] end
+	end
+end
+local tab_rows, listed = {}, {}
+for _, n in pairs(ME_NETWORK and ME_NETWORK.items or {}) do
+	listed[n] = true
+	local p = item_proto(n)
+	local sg = p and p.subgroup or "other"
+	local g = data.raw["item-subgroup"][sg] and data.raw["item-subgroup"][sg].group or "other"
+	tab_rows[#tab_rows + 1] = table.concat({ "item", n, sg, g, tostring(p ~= nil and p.hidden == true), p and p.order or "" }, "\t")
+end
+for t, _ in pairs(defines.prototypes.item) do
+	for n, p in pairs(data.raw[t] or {}) do
+		if not listed[n] and mine(p.icon) then tab_rows[#tab_rows + 1] = "stray\t" .. n end
+	end
+end
+for n, sg in pairs(data.raw["item-subgroup"]) do
+	tab_rows[#tab_rows + 1] = table.concat({ "subgroup", n, sg.group or "", sg.order or "" }, "\t")
+end
+section("TAB", tab_rows)
 
 --- Rykon00/Gregtorio#215: the recipes of this mod that Gregtorio keeps locked on purpose (its FORK_RECIPES_LOCKED, name
 --- -> reason; absent without Gregtorio)

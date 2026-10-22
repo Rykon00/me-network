@@ -6,6 +6,8 @@
 --- Every prototype name of this mod is fixed: saves find entities and items by name.
 ---
 ---   ME_NETWORK.recipes, ME_NETWORK.technologies   names of the recipes and technologies this mod made
+---   ME_NETWORK.items                              names of the items this mod made (add_item; issue #474: each sits in
+---                                                 a subgroup of the item group ME_NETWORK.GROUP, the "ME Network" tab)
 ---   ME_NETWORK.replace_recipe(def)                replace a recipe by a full definition (same name); the
 ---                                                 technologies that unlock it keep unlocking it
 ---   ME_NETWORK.remove_recipe(name)                delete a recipe and every unlock of it
@@ -40,6 +42,8 @@ M.WALKABLE = { layers = { item = true, meltable = true, object = true, water_til
 --- blocks, and it leaves 0.29.) A new table each time, so no prototype shares it.
 function M.solid_box() return { { -0.29, -0.29 }, { 0.29, 0.29 } } end
 M.recipes = M.recipes or {}
+M.items = M.items or {}
+M.GROUP = "me-network"      -- issue #474: the item group (inventory and crafting tab) of every item of this mod
 M.technologies = M.technologies or {}
 M.removed = M.removed or {}
 M.customized = M.customized or {}     -- technologies another mod changed with set_technology (data-final-fixes.lua)
@@ -85,6 +89,7 @@ function M.add_item(def)
 	}
 	for k, v in pairs(def.fields or {}) do item[k] = v end      -- (the fields of another item type: a module's category, tier, effect)
 	data:extend({ item })
+	remember(M.items, def.name)
 	if def.recipe ~= false then
 		local r = def.recipe or {}
 		r.name = r.name or def.name

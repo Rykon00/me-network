@@ -63,7 +63,7 @@ The repository root is the mod itself. The folder `ae2-textures/` is a second mo
 | `scripts/fork-me-emitter.lua` | ME Level Emitter, its window (issue #355); `gregtorio-me-emitter` |
 | `scripts/fork-me-fluids.lua` | the fluid calls of the other modules; `gregtorio-me-fluids` |
 | `scripts/fork-me-handover.lua` | takes the ME state of a Gregtorio Continued save once (Gregtorio issue #83) |
-| `graphics/` | sprites, icons and technology icons (`tools/gen_ae2_sprites.py`), GPLv3/LGPL-3.0 |
+| `graphics/` | sprites, icons and technology icons (`tools/gen_ae2_sprites.py`), GPLv3/LGPL-3.0; `graphics/item-group/me-network.png` is the icon of the tab "ME Network" (issue #474: a copy of the ME Controller's icon until a drawn one replaces it, #475) |
 | `ae2-textures/` | the second mod, `me-network-ae2-textures` (issue #239), CC BY-NC-SA 3.0, nothing of it is GPL: its `info.json` (depends on `me-network`), `overrides.lua` (which sprites of this mod it replaces, by prototype name) and `data-final-fixes.lua` (sets them, one file or layer at a time), locale, changelog, license file, `README.md`, `MANIFEST.tsv` and in `graphics/` the AE2-derived images; never in the me-network zip (`ae2-textures/README.md`, `docs/LICENSES.md`) |
 | `locale/en/me-network.cfg` | English names and texts |
 | `tools/devcheck/` | headless test harness: static checks and the runtime tests, on vanilla and with Gregtorio, and the benchmark (`bench`, `docs/PERFORMANCE.md`) (`tools/devcheck/README.md`) |
