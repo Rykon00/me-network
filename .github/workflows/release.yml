@@ -1,8 +1,8 @@
 name: Build & Release
 
 # Every push and pull request: Lua syntax check and the build of both zips (issue #239): me-network (GPLv3,
-# the repository without ae2-textures/) and the optional texture mod me-network-ae2-textures (CC BY-NC-SA 3.0,
-# ae2-textures/ alone); tools/build.py fails when a zip breaks that split. Pull requests into main that change
+# the repository without ae2-textures/) and the texture mod me-network-ae2-textures that it requires (CC BY-NC-SA 3.0,
+# ae2-textures/ alone, a mod of its own only for its license, issues #325, #476); tools/build.py fails when a zip breaks that split. Pull requests into main that change
 # the game must also change changelog.txt, and those that change the texture mod ae2-textures/changelog.txt
 # (label "no changelog" to skip).
 # Branches: main is development; upstream/release is the published state. A release pull request
