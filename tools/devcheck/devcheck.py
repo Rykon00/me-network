@@ -483,6 +483,55 @@ def check_locale(sec):
     return sorted({f"{kind} {name}" for kind, name in sec.get("LOCALE", []) if name not in have.get(kind, set())})
 
 
+# issue #474: every item of me-network (ME_NETWORK.items) sits in a subgroup of the item group "me-network" (the tab "ME
+# Network", prototypes/network.lua), and so does every recipe of ME_NETWORK.recipes. TAB_ALLOW: the items that may sit
+# elsewhere, item -> reason (none so far).
+TAB_GROUP = "me-network"
+TAB_ALLOW = {}
+# Rykon00/Gregtorio#519: the ME items that Gregtorio's prototypes/120-fork-me-network-compat.lua puts into its own machine
+# rows (upstream_item: the storage housing and the storage components of its upstream file 13, the components above 256k
+# the same way). A run with --with-gregtorio lists them as information and fails on any other ME item outside the tab;
+# an entry that is back in the tab is listed to be removed here.
+TAB_GREGTORIO = {"basic-storage-housing", "me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
+                 "me-64k-storage-component", "me-256k-storage-component", "me-1024k-storage-component",
+                 "me-4096k-storage-component", "me-16384k-storage-component"}
+
+
+def check_tab(sec, gregtorio=None):
+    """issue #474: (problems, information) of the tab "ME Network" from the TAB section of the check mod and the recipe
+    rows of the dump"""
+    rows = sec.get("TAB", [])
+    items = {r[1]: r for r in rows if r[0] == "item"}
+    sub = {r[1]: r for r in rows if r[0] == "subgroup"}
+    problems = [f"{r[1]}: an item with an icon of me-network that is not in ME_NETWORK.items (made without add_item)"
+                for r in rows if r[0] == "stray"]
+    info = []
+    if TAB_GROUP not in {r[2] for r in sub.values()}:
+        problems.append(f"no subgroup of the item group {TAB_GROUP}")
+    outside = {n: f"{n}: subgroup {r[2]}, group {r[3]}" for n, r in items.items() if r[3] != TAB_GROUP}
+    for n, line in sorted(outside.items()):
+        if n in TAB_ALLOW:
+            info.append(f"{line} (allowed: {TAB_ALLOW[n]})")
+        elif gregtorio and n in TAB_GREGTORIO:
+            info.append(f"{line} (Gregtorio's compat file, Rykon00/Gregtorio#519)")
+        else:
+            problems.append(f"{line}: not in the tab ME Network")
+    problems += [f"{n}: in TAB_ALLOW but in the tab (remove the entry)" for n in TAB_ALLOW if n in items and n not in outside]
+    problems += [f"{n}: in TAB_ALLOW but not an item of ME_NETWORK.items" for n in TAB_ALLOW if n not in items]
+    if gregtorio:
+        info += [f"{n}: in TAB_GREGTORIO but in the tab (Gregtorio#519 done? remove the entry)"
+                 for n in sorted(TAB_GREGTORIO) if n in items and n not in outside]
+    own_recipes = {n for k, n in sec.get("OWN", []) if k == "recipe"}
+    for r in sec.get("DUMP", []):
+        if r[0] == "R" and r[1] in own_recipes and r[9] != TAB_GROUP:
+            line = f"recipe {r[1]}: subgroup {r[8]}, group {r[9]}"
+            # with Gregtorio the recipes are its own (ME_NETWORK.replace_recipe), with its rows
+            (info if gregtorio else problems).append(line + (" (Gregtorio's recipe)" if gregtorio else ": not in the tab ME Network"))
+    print(f"\nitems of me-network in the tab ME Network: {len(items) - len(outside)} of {len(items)}"
+          f" ({len({r[2] for r in items.values() if r[3] == TAB_GROUP})} rows)")
+    return problems, info
+
+
 def report(title, items, limit=40):
     print(f"\n{title}: {len(items)}")
     for i in items[:limit]:
@@ -620,8 +669,11 @@ def check_map(a, mapfile, textures=None):
     report("sprite sheets too small", sprites)
     report("icons whose image does not fit their icon_size", icons)
     report("names missing in locale/en", locale)
+    tab, tab_info = check_tab(sec, getattr(a, "with_gregtorio", None))
+    report("ME items and recipes outside the tab ME Network (information)", tab_info)
+    report("ME items and recipes outside the tab ME Network (issue #474)", tab)
     ok = not (validate or files or [s for s in sprites + icons if not s.startswith("(")] or techs or recipes or uncraft
-              or locale)
+              or locale or tab)
     return ok, sec, log
 
 

@@ -38,7 +38,7 @@ ME.add_item{
 	name = "me-pattern-provider",
 	icon = ME.hd_icons .. "me-pattern-provider.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "e",
 	stack_size = 50,
 	place_result = "me-pattern-provider",
@@ -52,7 +52,7 @@ ME.add_item{
 	name = "me-pattern-terminal",
 	icon = ME.hd_icons .. "me-pattern-terminal.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "e0",
 	stack_size = 50,
 	place_result = "me-pattern-terminal",
@@ -66,7 +66,7 @@ ME.add_item{
 	name = "me-pattern-terminal-ex",
 	icon = ME.hd_icons .. "me-pattern-terminal-ex.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "e0b",
 	stack_size = 50,
 	place_result = "me-pattern-terminal-ex",
@@ -80,8 +80,8 @@ ME.add_item{
 	name = "me-interface-terminal",
 	icon = ME.hd_icons .. "me-interface-terminal.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
-	order = "e0a",
+	subgroup = "fork-me-terminals",
+	order = "b",
 	stack_size = 50,
 	place_result = "me-interface-terminal",
 	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "me-interface", 1, "processing-unit", 1 } },
@@ -92,7 +92,7 @@ ME.add_item{
 	name = "me-blank-pattern",
 	icon = ME.hd_icons .. "me-blank-pattern.png",     -- (issue #221)
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "e1",
 	stack_size = 64,
 	--- AE2 (issue #233): 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2
@@ -101,22 +101,23 @@ ME.add_item{
 }
 
 --- the encoded pattern: no recipe, made from a blank pattern in the ME Pattern Terminal (its tag fork_me_pattern holds it)
-data:extend({ {
+ME.add_item{
 	type = "item-with-tags",
 	name = "me-encoded-pattern",
 	icon = ME.hd_icons .. "me-encoded-pattern.png",   -- (issue #221)
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "e2",
 	stack_size = 1,
 	localised_description = { "item-description.me-encoded-pattern" },
-} })
+	recipe = false,
+}
 
 ME.add_item{
 	name = "me-molecular-assembler",
 	icon = ME.hd_icons .. "me-molecular-assembler.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "f",
 	stack_size = 10,
 	place_result = "me-molecular-assembler",
@@ -307,8 +308,6 @@ local BLOCKS = {
 	  ingredients = I{ "me-crafting-unit", 1, "decider-combinator", 1, "advanced-circuit", 1, "small-lamp", 1 }, tech = "me-autocrafting" },
 }
 
-data:extend({ { type = "item-subgroup", name = "fork-me-crafting-cpu", group = data.raw["item-subgroup"]["fork-me-network"].group,
-	order = "b-me-c" } })
 
 --- the 48 pictures of a crafting block's sheet (see the entity below; issue #220: 64 px, the 3D style)
 local function crafting_pictures(name)
@@ -330,7 +329,7 @@ for _, b in ipairs(BLOCKS) do
 		name = b.name,
 		icon = ME.hd_icons .. b.name .. ".png",
 		icon_size = 64,
-		subgroup = "fork-me-crafting-cpu",
+		subgroup = b.bytes > 0 and "fork-me-crafting-storage" or "fork-me-crafting-cpu",   -- (issue #474: two rows)
 		order = b.order,
 		stack_size = 50,
 		place_result = b.name,
@@ -382,7 +381,7 @@ ME.add_item{
 	name = "me-level-maintainer",
 	icon = ME.hd_icons .. "me-level-maintainer.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-automation",
 	order = "g4",
 	stack_size = 50,
 	place_result = "me-level-maintainer",
@@ -437,7 +436,7 @@ ME.add_item{
 	name = "me-circuit-interface",
 	icon = ME.hd_icons .. "me-circuit-interface.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-automation",
 	order = "g5",
 	stack_size = 50,
 	place_result = "me-circuit-interface",
@@ -488,7 +487,7 @@ for i, def in ipairs({
 	{ "me-inverted-toggle-bus", I{ "me-toggle-bus", 1 } },
 }) do
 	local name = def[1]
-	ME.add_item{ name = name, icon = ME.hd_icons .. name .. ".png", icon_size = 64, subgroup = "fork-me-network",
+	ME.add_item{ name = name, icon = ME.hd_icons .. name .. ".png", icon_size = 64, subgroup = "fork-me-buses",
 		order = "g6" .. i, stack_size = 50, place_result = name, recipe = { energy_required = 1, ingredients = def[2] } }
 	local bus = table.deepcopy(data.raw.lamp["small-lamp"])
 	bus.name = name
@@ -525,7 +524,7 @@ ME.add_item{
 	name = "me-level-emitter",
 	icon = ME.hd_icons .. "me-level-emitter.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-automation",
 	order = "g7",
 	stack_size = 50,
 	place_result = "me-level-emitter",
@@ -548,7 +547,7 @@ ME.add_item{
 	name = "me-advanced-level-emitter",
 	icon = ME.hd_icons .. "me-advanced-level-emitter.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-automation",
 	order = "g8",
 	stack_size = 50,
 	place_result = "me-advanced-level-emitter",

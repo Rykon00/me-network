@@ -13,8 +13,6 @@ local ICON_FORK = ME.icons .. "fork/"
 
 local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = "item", name = list[i], amount = list[i + 1] } end return t end
 
-data:extend({ { type = "item-subgroup", name = "fork-me-cards", group = data.raw["item-subgroup"]["fork-me-network"].group,
-	order = "b-me-d" } })
 data:extend({ { type = "module-category", name = ME.ACCELERATION } })      -- issue #110
 
 --- name, order, recipe; `kind`: what the card does at runtime (nil: a component)
@@ -74,6 +72,9 @@ local CARDS = {
 	  ingredients = I{ "me-super-speed-card", 1, "me-1024k-storage-component", 1 } },
 }
 
+--- issue #474: the capacity and speed cards have a row of their own in the tab (the cards were more than one row)
+local CAPACITY_SPEED = { capacity = true, pattern_capacity = true, interface_capacity = true, speed = true, superspeed = true,
+	superluminal = true }
 local kinds = {}
 local recipes = {}
 for _, c in ipairs(CARDS) do
@@ -83,7 +84,7 @@ for _, c in ipairs(CARDS) do
 		name = c.name,
 		icon = ME.hd_icons .. c.name .. ".png",          -- (issue #221: the 3D style, 64 px)
 		icon_size = 64,
-		subgroup = "fork-me-cards",
+		subgroup = CAPACITY_SPEED[c.kind] and "fork-me-capacity-speed-cards" or "fork-me-cards",   -- (issue #474: two rows)
 		order = c.order,
 		stack_size = 64,
 		localised_description = { "item-description." .. c.name },
@@ -140,8 +141,8 @@ ME.add_item{
 	name = "me-cell-workbench",
 	icon = ME.hd_icons .. "me-cell-workbench.png",
 	icon_size = 64,
-	subgroup = "fork-me-cards",
-	order = "z",
+	subgroup = "fork-me-drives",
+	order = "d",
 	stack_size = 10,
 	place_result = "me-cell-workbench",
 	recipe = { energy_required = 2, ingredients = I{ "copper-cable", 2, "advanced-circuit", 1, "iron-plate", 5, "wooden-chest", 1 } },
@@ -181,8 +182,8 @@ ME.add_item{
 	icon_size = 64,
 	--- (the storage housing in blue: no picture of its own; the texture mod could give it AE2-Unofficial's ItemViewCell)
 	fields = { icons = { { icon = ME.hd_icons .. "basic-storage-housing.png", icon_size = 64, tint = { 0.55, 0.85, 1, 1 } } } },
-	subgroup = "fork-me-cards",
-	order = "y",
+	subgroup = "fork-me-special-cells",
+	order = "a",
 	stack_size = 1,
 	recipe = { energy_required = 1, ingredients = I{ "basic-storage-housing", 1, "stone", 1 } },
 }

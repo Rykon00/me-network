@@ -11,7 +11,8 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
 ## What this mod owns
 
 - `ME_NETWORK.recipes`: the names of its recipes, `ME_NETWORK.technologies`: the names of its technologies (in the
-  order they were made). `replace_recipe` adds to the list, `remove_recipe` takes from it.
+  order they were made). `replace_recipe` adds to the list, `remove_recipe` takes from it. `ME_NETWORK.items` (issue
+  #474): the names of its items, hidden ones included.
 - Items: `fluix-cable` (places the ME cable), `me-controller`, `me-interface`, `me-terminal`, `me-chest`, `me-drive`,
   `basic-storage-housing`, `me-1k`...`me-256k-storage-component`, `me-1k`...`me-256k-storage-cell`,
   `me-1k`...`me-256k-fluid-storage-cell`, `me-underground-cable`, `me-import-bus`, `me-export-bus`,
@@ -40,8 +41,14 @@ technologies that still unlock a removed recipe, and the molecular assembler, wh
   technology unlocks after every mod's changes (a mod replaced the recipe list with `set_technology`) gets its unlock
   on that technology again in `data-final-fixes.lua`; give the recipe to a technology of your own to move it.
 - `ME_NETWORK.customized`: { technology name -> true } for every technology changed with `set_technology` (0.3.0).
-- Item subgroups: `fork-me-network`, `fork-me-drives`, `fork-me-cells`, `fork-me-fluid-cells`, `fork-me-fluid-drives`,
-  `fork-me-cards` (0.3.0), `fork-me-crafting-cpu` (0.3.0).
+- The item group `me-network` (`ME_NETWORK.GROUP`, issue #474): the tab "ME Network" after Logistics, with every item of
+  this mod; its icon is `__me-network__/graphics/item-group/me-network.png`. Its item subgroups, the rows of the tab
+  from top to bottom (all defined in `prototypes/network.lua`): `fork-me-network`, `fork-me-terminals`,
+  `fork-me-drives`, `fork-me-cells`, `fork-me-fluid-cells`, `fork-me-special-cells`, `fork-me-buses`,
+  `fork-me-automation`, `fork-me-autocrafting`, `fork-me-crafting-cpu`, `fork-me-crafting-storage`, `fork-me-cards`,
+  `fork-me-capacity-speed-cards`, `fork-me-wireless`, `fork-me-components`, `fork-me-fluid-drives` (hidden items only).
+  Until issue #474 they were rows of the Logistics tab, fewer and longer. A mod that moves an ME item or gives its
+  recipe a subgroup should use one of these (or the item's own `subgroup`), so the item stays in the tab.
 
 ## Functions
 

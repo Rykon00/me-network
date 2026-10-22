@@ -53,11 +53,7 @@ local UNIFIED_ITEM = { ["me-fluid-interface"] = "me-interface", ["me-fluid-impor
 --- ITEM SUBGROUPS
 --------------------------------------------------------------------------------
 
-local group = data.raw["item-group"]["logistics"] and "logistics" or "processing-machine-recipes"
-data:extend({
-	{ type = "item-subgroup", name = "fork-me-fluid-cells", group = group, order = "b-me-d" },
-	{ type = "item-subgroup", name = "fork-me-fluid-drives", group = group, order = "b-me-e" },
-})
+--- (issue #474: fork-me-fluid-cells and fork-me-fluid-drives are defined with the other rows in prototypes/network.lua)
 
 
 
@@ -99,7 +95,7 @@ for i, c in ipairs(CELLS) do
 	if not c.new then                                 -- (issue #414: no old fluid drive item of the new tiers)
 		--- the old fluid drive item (chassis + four cells, fluid in its tags): no recipe any more, hidden; placing
 		--- one builds an ME Drive with its four fluid cells holding its fluid (issue #146: kept, 0.5.0 left them as they were)
-		data:extend({ {
+		ME.add_item{
 			type = "item-with-tags",
 			name = drive,
 			icon = ICON_FORK .. drive .. ".png",
@@ -110,7 +106,8 @@ for i, c in ipairs(CELLS) do
 			place_result = "me-drive",
 			hidden = true,
 			localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
-		} })
+			recipe = false,
+		}
 		net_data.legacy_drives[drive] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra, fluid = true,
 			fluid_tag = "fork_me_fluids" }
 	end
