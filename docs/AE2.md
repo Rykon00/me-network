@@ -126,9 +126,12 @@ and taken out, in the ME Cell Workbench, in the ME IO Port, in a mined drive; un
   terminal as "Damaged: 50% health", and comes out damaged. Two damaged stacks of different health that you put into one
   inventory merge into one of averaged health, as in the game. A damaged item with tags (a turret of Quality Turrets
   Reworked mined while damaged, issue #481) keeps its tags and its own description too; the terminal shows the
-  description with the health below it.
+  description with the health below it. **Items with a label** (issue #485: a turret of Quality Turrets Reworked mined with
+  kills is labelled "gun-turret (12 Kills)" when its setting "Preserve kill counter" is on) keep their label: each label is
+  an entry of its own, the terminal shows the label as the first line of the tooltip, and the stack comes out with its
+  label, tags, description and health (placed again, the turret has its kills).
 * **Not storable:** items with an inventory or equipment grid (armor), blueprints and blueprint books, planners and
-  selection tools, the spidertron remote, vehicles and other items with entity data, items with a label, items that
+  selection tools, the spidertron remote, vehicles and other items with entity data, items that
   spoil (the network would stop their decay), and partly used tools, ammunition and repair packs (a used science pack,
   repair pack or magazine; a stack whose top item is used is refused as a whole). Each refusal says what was refused.
 * **Old drive items** (ME Drive 1k ... 256k from before the rework) cannot be crafted any more; placing one
@@ -223,8 +226,8 @@ tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
 * **Storage:** sort (by amount or by name) and **Show: all / items / fluids**. **Left click** an item: a stack into
   your hand; with something in hand, the click stores that instead. **Right click**: one item into your hand (one
-  more of the same item). **Shift click**: a stack into your inventory. Items with tags (loaded cells) have a
-  yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).
+  more of the same item). **Shift click**: a stack into your inventory. Items with tags (loaded cells), a label or damage
+  have a yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).
   **Storing:** your inventory is on the left of the window (issue #28): **shift + click** a stack there to store it
   in the network, **control + click** to store every stack of that item (a stack the network refuses stays, the others
   go in); what the network cannot take (a blueprint, an item that spoils, a partly used one, no room) stays

@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.8
+  Bugfixes:
+    - Items with a label are stored with their label (issue #485): a turret of Quality Turrets Reworked mined with kills (with its setting "Preserve kill counter" on) goes into the network through the ME Terminal, the ME Import Bus, the ME Interface and a cell in an ME IO Port, damaged or not, and comes out with its label, its kills and its description; placed again, it has its kills. Turrets that differ only in their label are kept apart, and the terminal shows the label as the first line of the tooltip. Before, every item with a label was refused. The ME Storage Bus still leaves such items in its chest.
+    - A right click in the ME Terminal for one more item into a hand that holds an item with tags, a label or damage (a turret with kills, a damaged wall) no longer loses that item: the game ignored the higher count of such a stack.
+---------------------------------------------------------------------------------------------------
 Version: 0.5.7
 Date: 2026-10-23
   Bugfixes:

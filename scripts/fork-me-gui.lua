@@ -653,7 +653,7 @@ end
 
 --- Issue #79: the key of an item with tags (a storage cell, an encoded pattern) kept in the network is
 --- "name@quality#<json>", the json being { tags, description } as `N.storable` made it from the stack (a damaged item's
---- has its health too, issues #102 and #481). The description is
+--- has its health too, issues #102 and #481; a labelled item's its label, issue #485). The description is
 --- therefore a function of the key (a stack written anew is another key), and the grid's buttons, which are made again
 --- when their key changes, never show an old one. Read from the json once per key, cached for this load only (never
 --- saved; emptied when it grows large). Returns the description (a localised string) or nil.
@@ -673,6 +673,13 @@ function M.key_description(key)
 		if type(h) == "number" and not (type(d) == "table" and d[1] == "fork-me-net.damaged-item") then
 			local damage = { "fork-me-net.damaged-item", math.floor(h * 100 + 0.5) }
 			d = d and { "", d, "\n", damage } or damage
+		end
+		--- issue #485: a label (Quality Turrets Reworked's "<name> (N Kills)") is the first line, so that stacks of one item that
+		--- differ in their label can be told apart
+		local label = type(data) == "table" and data.label
+		if type(label) == "string" and label ~= "" then
+			local line = { "fork-me-net.item-label", label }
+			d = d and { "", line, "\n", d } or line
 		end
 		if description_count >= 2000 then description_cache, description_count = {}, 0 end
 		description_cache[key] = d

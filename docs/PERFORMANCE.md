@@ -3801,3 +3801,32 @@ identical.
   the providers in that order; Factorio 2.1 replaced the recipe `wood-processing` by `tree-seed` (the same recipe), so the
   recipes after it moved by one place and other providers got the slower ones. The number of pattern recipes (97) and
   their crafting times are the same in both versions.
+
+## Items with a label (issue #485)
+
+`N.storable` read `stack.label` of an item with tags before (to refuse it) and reads it now to keep it; `label_color` is read
+only when there is a label. `N.extract_to` asks `data.label` of a key with data (one table field; plain keys have no data) and
+takes the new path (`N.put_labelled`: a slot walk of the target) only for a key with a label. The scenes have no item with
+tags, so neither new path is taken there.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns; origin/main 0.5.7): **regressions beyond the noise: 0**,
+throughput per kind of endpoint identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| 1000: script avg per round (ms) | 0.719, 0.552, 0.423 | 0.550, 0.417, 0.422 |
+| 1000: script avg / p99 (ms) | 0.552 / 4.121 | 0.422 / 2.945 |
+| 1000: ticks over 5 ms | 23 (noise ±12.5) | 4 |
+| 1000: Lua alloc KB per tick | 25.9 | 25.9 |
+| 1000: burst build / remove (ms) | 120.5 / 103.6 | 99.3 / 106.2 |
+| 5000: script avg per round (ms) | 1.098, 1.089, 1.092 | 1.124, 1.139, 1.092 |
+| 5000: script avg / p99 (ms) | 1.092 / 3.858 | 1.124 / 3.947 (noise ±0.023 / ±0.11) |
+| 5000: ticks over 5 ms | 10 | 6 |
+| 5000: Lua alloc KB per tick | 34.26 | 34.26 |
+| 5000: mod heap alive (MB) | 57.73 | 57.74 |
+| 5000: provider crafts per second | 322.1 | 322.1 |
+| 5000: burst build / remove (ms) | 111.2 / 98.0 | 105.9 / 103.3 |
+
+At 1000 the first rounds were slow on both sides (the machine was busy; the medians differ by the reference's
+slower second round), the third rounds are equal (0.42 ms); at 5000 the third rounds are equal (1.092 ms) and the
+difference of the first two lies within the noise. The allocation and the heap are the same, as the code taken per tick is.
