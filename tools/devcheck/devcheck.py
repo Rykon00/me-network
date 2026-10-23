@@ -537,13 +537,12 @@ def check_locale(sec):
 # elsewhere, item -> reason (none so far).
 TAB_GROUP = "me-network"
 TAB_ALLOW = {}
-# Rykon00/Gregtorio#519: the ME items that Gregtorio's prototypes/120-fork-me-network-compat.lua puts into its own machine
-# rows (upstream_item: the storage housing and the storage components of its upstream file 13, the components above 256k
-# the same way). A run with --with-gregtorio lists them as information and fails on any other ME item outside the tab;
-# an entry that is back in the tab is listed to be removed here.
-TAB_GREGTORIO = {"basic-storage-housing", "me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
-                 "me-64k-storage-component", "me-256k-storage-component", "me-1024k-storage-component",
-                 "me-4096k-storage-component", "me-16384k-storage-component"}
+# The ME items that Gregtorio Continued puts outside the tab on purpose: a run with --with-gregtorio lists them as
+# information and fails on any other ME item outside the tab; an entry that is back in the tab is listed to be removed
+# here. Empty since Rykon00/Gregtorio#519 (its PR Rykon00/Gregtorio#554): Gregtorio's compat file keeps every ME item in
+# the tab (the storage housing and the storage components were in its machine rows before), and its own devcheck fails
+# for an ME item outside the tab.
+TAB_GREGTORIO = set()
 
 
 def check_tab(sec, gregtorio=None):
@@ -562,13 +561,13 @@ def check_tab(sec, gregtorio=None):
         if n in TAB_ALLOW:
             info.append(f"{line} (allowed: {TAB_ALLOW[n]})")
         elif gregtorio and n in TAB_GREGTORIO:
-            info.append(f"{line} (Gregtorio's compat file, Rykon00/Gregtorio#519)")
+            info.append(f"{line} (Gregtorio Continued, TAB_GREGTORIO)")
         else:
             problems.append(f"{line}: not in the tab ME Network")
     problems += [f"{n}: in TAB_ALLOW but in the tab (remove the entry)" for n in TAB_ALLOW if n in items and n not in outside]
     problems += [f"{n}: in TAB_ALLOW but not an item of ME_NETWORK.items" for n in TAB_ALLOW if n not in items]
     if gregtorio:
-        info += [f"{n}: in TAB_GREGTORIO but in the tab (Gregtorio#519 done? remove the entry)"
+        info += [f"{n}: in TAB_GREGTORIO but in the tab (remove the entry)"
                  for n in sorted(TAB_GREGTORIO) if n in items and n not in outside]
     own_recipes = {n for k, n in sec.get("OWN", []) if k == "recipe"}
     for r in sec.get("DUMP", []):
