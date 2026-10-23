@@ -322,7 +322,9 @@ end
 
 block{
 	name = CABLE, item = "fluix-cable", icon = HD_ICON .. "me-cable.png", icon_size = 64, health = 50, mining_time = 0.1,
-	selection_priority = 40,
+	--- Gregtorio#541: base's ground_entity (45), like belts and the underground cable; below the blocks (60), above
+	--- ore (resource, 40): at 40 the ore under a cable was selected (tooltip, mining, pipette) instead of the cable
+	selection_priority = 45,
 	description = { "entity-description.me-cable" },
 	extra = {
 		pictures = { sheet = {

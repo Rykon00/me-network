@@ -11,6 +11,8 @@
 --- Issue #268: two of every solid one-tile block on neighbouring tiles (side by side and one above the other) leave a gap
 --- a character fits through (its box -0.2 .. 0.2 placed on the line between them), also a drive next to a chest; two
 --- blocks of a Crafting CPU (one slab, #152) do not; the solid blocks' collision box is -0.29 .. 0.29.
+--- Gregtorio#541: every entity of this mod that a player builds has a selection priority above every resource's, so the
+--- cursor on a cable over ore selects the cable, not the ore (the cable had 40, the same as a resource).
 
 local BX, BY = -350, -250
 local CHECK = 40
@@ -143,6 +145,20 @@ return function(H)
 			expect(fits == pr[3], "a character " .. (fits and "fits" or "does not fit") .. " between " .. label)
 			if fits then pass_n = pass_n + 1 end
 		end
+		--- Gregtorio#541: every block a player builds is selected before the ore under it (a resource's selection priority,
+		--- 40 in base; the highest of the loaded resources), so the cursor on a cable over a vein picks the cable
+		local ore, ore_name = 0, nil
+		for name, p in pairs(prototypes.get_entity_filtered{ { filter = "type", type = "resource" } }) do
+			if p.selection_priority > ore then ore, ore_name = p.selection_priority, name end
+		end
+		local built_n = 0
+		for name, p in pairs(prototypes.entity) do
+			if p.flags and p.flags["player-creation"] and prototypes.get_history(p.type, name).created == "me-network" then
+				built_n = built_n + 1
+				expect(p.selection_priority > ore, name .. ": selection priority " .. p.selection_priority .. " is not above the ore's ("
+					.. tostring(ore_name) .. ", " .. ore .. "): the ore under it is selected instead")
+			end
+		end
 		for _, name in ipairs(SOLID) do
 			local cb = prototypes.entity[name].collision_box
 			local function near(a, b) return math.abs(a - b) < 0.005 end      -- (boxes are kept in 1/256 tiles)
@@ -150,7 +166,8 @@ return function(H)
 				name .. ": the collision box of a solid block " .. serpent.line(cb))
 		end
 		me_report("WALKABLE", "ME walkable blocks", problems, walkable_n .. " blocks a character stands on and nothing else can be built on, "
-			.. solid_n .. " that stay solid; a character walks between " .. pass_n .. " pairs of solid blocks, not between two crafting blocks (issue #268)")
+			.. solid_n .. " that stay solid; a character walks between " .. pass_n .. " pairs of solid blocks, not between two crafting blocks (issue #268); "
+			.. built_n .. " blocks selected before the ore under them (Gregtorio#541)")
 	end
 
 	function T.running(check) check(storage.walkable129 and storage.walkable129.done, "ME walkable blocks") end
