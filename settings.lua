@@ -21,6 +21,8 @@ data:extend({
 	int("me-network-circuit-updates-per-second", "d", 10, 1, 6000),
 	int("me-network-crafting-jobs-per-tick", "e1", 1, 1, 100),
 	int("me-network-crafting-jobs-per-tick-max", "e2", 2, 1, 100),
+	--- issue #415: the machine hand-overs of one job step at most (a CPU hands over 6 per step times 1 + its co-processors)
+	int("me-network-crafting-ops-per-step", "e3", 1024, 6, 1000000),
 	int("me-network-bus-items-per-second", "f", 256, 1, 100000),
 	int("me-network-bus-fluid-per-second", "g", 4000, 1, 10000000),
 	int("me-network-idle-limit", "h", 300, 15, 3600),

@@ -80,6 +80,7 @@ local function kinds()
 		k[n.export_bus] = "export-bus"
 		k[n.terminal] = "terminal"
 		if n.pattern_terminal then k[n.pattern_terminal] = "pattern-terminal" end      -- issue #130
+		if n.pattern_terminal_ex then k[n.pattern_terminal_ex] = "pattern-terminal" end   -- issue #416: the Ex, the same kind
 		if n.interface_terminal then k[n.interface_terminal] = "interface-terminal" end   -- issue #336
 		for _, m in pairs({ "storage", "conversion", "throughput" }) do                     -- issue #353: the monitors
 			if n[m .. "_monitor"] then k[n[m .. "_monitor"]] = m .. "-monitor" end
@@ -87,6 +88,7 @@ local function kinds()
 		if n.toggle_bus then k[n.toggle_bus] = "toggle" end                             -- issue #355
 		if n.inverted_toggle_bus then k[n.inverted_toggle_bus] = "toggle" end
 		if n.level_emitter then k[n.level_emitter] = "level-emitter" end
+		if n.advanced_level_emitter then k[n.advanced_level_emitter] = "level-emitter" end   -- issue #443: the same kind
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
@@ -95,6 +97,7 @@ local function kinds()
 		if n.io_port then k[n.io_port] = "io-port" end                -- issue #386
 		if n.quantum_bridge then k[n.quantum_bridge] = "quantum-bridge" end   -- issue #385
 		if n.wireless_link then k[n.wireless_link] = "wireless-link" end      -- issue #384
+		if n.creative_energy then k[n.creative_energy] = "creative-energy" end   -- issue #442
 	end
 	k["me-pattern-provider"] = "provider"
 	k["me-level-maintainer"] = "maintainer"
@@ -115,7 +118,7 @@ end
 
 --- kinds with a power connection of their own (or none at all: the cable): the controller draws nothing for them. Issue #128:
 --- the terminal and the level maintainer are not among them any more; issue #145: the legacy CPUs are gone
-local POWERED_SELF = { cable = true, underground = true, controller = true,
+local POWERED_SELF = { cable = true, underground = true, controller = true, ["creative-energy"] = true,   -- (issue #442)
 	["quantum-bridge"] = true, ["wireless-link"] = true }   -- (issues #385, #384: they draw from the power grid themselves)
 
 --- Issue #128: the power (W) a kind draws through the controller where it is not the default (mod-data "fork-me-network",
@@ -186,7 +189,7 @@ local function state()
 	local s = storage.fork_me_net
 	if not s then
 		s = {
-			nodes = {},       -- unit -> { entity, kind, net, adj = { unit -> true }, box, surface, force, position }
+			nodes = {},       -- unit -> { x1, y1, x2, y2 (its tile box), entity, kind, net, adj = { unit -> true }, surface, force }
 			nets = {},        -- id -> network (see new_net)
 			next_net = 1,
 			version = 0,      -- counts graph changes
@@ -248,6 +251,10 @@ M.parse_key = parse_key
 
 --------------------------------------------------------------------------------
 --- graph
+--- Issue #420: a node is its own tile box (fields 1 to 4: left, top, right, bottom, the node's array part), not a table of
+--- its own, and keeps no position (nothing read it): two tables less per member (about 250 bytes; at 20 000 endpoints and
+--- their 80 000 members some 20 MB of the heap). The nodes of older saves are made anew by M.rebuild (they have no
+--- s.graph_sig).
 --------------------------------------------------------------------------------
 
 local function tile_box(entity)
@@ -288,8 +295,8 @@ local DIR_VEC = { [defines.direction.north] = { 0, -1 }, [defines.direction.east
 
 --- may `a` and `b` (adjacent boxes) connect above ground?
 local function connects(a, b)
-	if a.kind == "underground" and side_of(a.box, b.box) ~= BACK_BIT[DIR_BIT[a.dir]] then return false end
-	if b.kind == "underground" and side_of(b.box, a.box) ~= BACK_BIT[DIR_BIT[b.dir]] then return false end
+	if a.kind == "underground" and side_of(a, b) ~= BACK_BIT[DIR_BIT[a.dir]] then return false end
+	if b.kind == "underground" and side_of(b, a) ~= BACK_BIT[DIR_BIT[b.dir]] then return false end
 	return true
 end
 
@@ -338,11 +345,11 @@ end
 --- cable picture: 1 + N + 2E + 4S + 8W
 local function update_cable(s, node)
 	if node.kind ~= "cable" or not node.entity.valid then return end
-	local b, mask = node.box, 0
+	local b, mask = node, 0
 	for unit in pairs(node.adj) do
 		local o = s.nodes[unit]
 		if o then
-			local ob = o.box
+			local ob = o
 			if ob[4] == b[2] then mask = mask + 1
 			elseif ob[1] == b[3] then mask = mask + 2
 			elseif ob[2] == b[4] then mask = mask + 4
@@ -458,6 +465,11 @@ local function split_parts(s, starts, total)
 	return out
 end
 
+--- Issue #442: the kinds whose joining or leaving changes a network's status and power: the controller and the Creative Energy
+--- Cell (recompute counts them)
+M.STATUS_KINDS = { controller = true, ["creative-energy"] = true }
+M.NONE = {}                                           -- (an empty table to walk; never written)
+
 local function changed(s, net)
 	s.version = s.version + 1
 	recompute(s, net)
@@ -483,8 +495,9 @@ local function add_node(s, entity, kind)
 			if old.entity.valid then add_node(s, old.entity, old.kind) end
 		end
 	end
-	node = { entity = entity, kind = kind, adj = {}, box = tile_box(entity), surface = entity.surface.index,
-		force = entity.force.name, position = { x = entity.position.x, y = entity.position.y } }
+	local tb = tile_box(entity)
+	node = { tb[1], tb[2], tb[3], tb[4], entity = entity, kind = kind, adj = {}, surface = entity.surface.index,
+		force = entity.force.name }
 	if kind == "underground" then node.dir = entity.direction end
 	s.nodes[unit] = node
 	local nl = s.nlist
@@ -492,13 +505,13 @@ local function add_node(s, entity, kind)
 		nl[#nl + 1] = unit
 		node.li = #nl
 	end
-	local b = node.box
+	local b = node
 	local found = entity.surface.find_entities_filtered{
 		area = { { b[1] - 0.5, b[2] - 0.5 }, { b[3] + 0.5, b[4] + 0.5 } }, name = M.node_names(), force = entity.force }
 	local nets, order = {}, {}
 	for _, e in pairs(found) do
 		local other = e.valid and e.unit_number ~= unit and s.nodes[e.unit_number]
-		if other and other.entity == e and adjacent(b, other.box) and connects(node, other) then
+		if other and other.entity == e and adjacent(b, other) and connects(node, other) then
 			node.adj[e.unit_number] = true
 			other.adj[unit] = true
 			if not nets[other.net] then
@@ -554,11 +567,11 @@ local function add_node(s, entity, kind)
 	if has_screen(kind) then screen_made(s, unit, entity, kind) end
 	update_cable(s, node)
 	for u in pairs(node.adj) do update_cable(s, s.nodes[u]) end
-	if #order == 1 and kind ~= "controller" then
+	if #order == 1 and not M.STATUS_KINDS[kind] then                  -- (issue #442: the creative energy cell too)
 		--- issue #5: a member that joins one network changes no totals of it, except a drive (its cells) and a storage
 		--- bus already registered (its external cell): no recompute, no rescan of every provider
 		s.version = s.version + 1
-		net.power_dirty = true
+		M.power_add(s, net, node, 1)                         -- (issue #420: not the walk over every member)
 		if CELL_KINDS[kind] then
 			net.drives[unit] = true
 			local d = s.drives[unit]
@@ -625,12 +638,12 @@ function remove_node_graph(s, unit)
 	--- a member with one neighbour (a bus, an interface, a drive at the end of a cable) cannot split the network
 	local parts = #neighbours <= 1 and {} or split_parts(s, neighbours, net.n)
 	if #parts == 0 then
-		if node.kind == "controller" then
+		if M.STATUS_KINDS[node.kind] then                   -- (issue #442: the creative energy cell too)
 			changed(s, net)
 		else
 			--- issue #5: no recompute; whatever storage the member still had in the network leaves it
 			s.version = s.version + 1
-			net.power_dirty = true
+			M.power_add(s, net, node, -1)                    -- (issue #420: not the walk over every member)
 			release_cells(net, unit)
 		end
 		return
@@ -639,7 +652,7 @@ function remove_node_graph(s, unit)
 	local moved
 	--- (light: no controller leaves; the drives and storage buses that leave, the member removed among them, take their cells out
 	--- of the rest's index one by one instead of the rest being computed again)
-	local light = node.kind ~= "controller"
+	local light = not M.STATUS_KINDS[node.kind]
 	local leaving = { unit }
 	for i = 1, #parts do
 		local part = new_net(s, net.surface, net.force)
@@ -650,7 +663,7 @@ function remove_node_graph(s, unit)
 			part.n = part.n + 1
 			local pnode = s.nodes[u]
 			pnode.net = part.id
-			if pnode.kind == "controller" then light = false end
+			if M.STATUS_KINDS[pnode.kind] then light = false end
 			if CELL_KINDS[pnode.kind] or (s.ext and s.ext[u]) then leaving[#leaving + 1] = u end
 			local kind = net.wunits and net.wunits[u]
 			if kind then                               -- (issue #38: a waiting endpoint that moved registers again on its new network)
@@ -925,7 +938,7 @@ M.accepts = accepts
 
 --- items (fluid units) of `key` the cell can still take; item cells take items, fluid cells fluids
 local function cell_room(cell, spec, key)
-	if fluid_cell(spec) ~= is_fluid_key(key) then return 0 end
+	if fluid_cell(spec) ~= is_fluid_key(key) or spec.creative then return 0 end   -- (issue #441: a creative cell only voids)
 	local p = cell.partition                                  -- partitioned (R3); a fuzzy list or a blacklist (#17)
 	if cell.gf then                                           -- a group filter (issue #354)
 		if not accepts(cell, key) then return 0 end
@@ -994,7 +1007,7 @@ M.alias_key = alias_key
 --- the cell's contents as a fresh record (from the tags of a cell item); unknown items are dropped
 local function cell_from_tags(name, tags)
 	local cell = new_cell(name)
-	local spec = cell_spec(name)
+	local spec = cell_spec(name) or M.view_spec(name)        -- (issue #440: a view cell's list and cards, no contents)
 	local stored = type(tags) == "table" and tags[CELL_TAG] or nil
 	if type(stored) ~= "table" or not spec then
 		if spec and spec.void then M.apply_cell_cards(cell) end   -- (issue #354: a new void cell)
@@ -1014,7 +1027,7 @@ local function cell_from_tags(name, tags)
 	for _, key in ipairs(keys) do
 		if is_fluid_key(key) then
 			if fluid_cell(spec) and prototypes.fluid[(split_fluid_key(key))] then cell_add(cell, spec, key, counts[key]) end
-		elseif not fluid_cell(spec) and prototypes.item[(parse_key(key))] then
+		elseif not fluid_cell(spec) and not spec.creative and prototypes.item[(parse_key(key))] then   -- (#441: below)
 			cell_add(cell, spec, key, math.floor(counts[key]))
 			local d = data[key]
 			if type(d) == "table" then cell.data[key] = d end
@@ -1024,6 +1037,10 @@ local function cell_from_tags(name, tags)
 	cell.gtext = M.GF.clean(stored.gtext)                       -- issue #354: the Group Filter Card's text
 	cell.cards = M.clean_cards(spec, stored.cards)              -- issue #17: the cell's upgrade cards
 	if cell.cards or spec.void then M.apply_cell_cards(cell) end      -- (issue #354: a void cell's `void` comes from its spec)
+	--- issue #441: a creative cell holds M.CREATIVE of every key its partition lists (no bytes: nothing is written into it)
+	if spec.creative then
+		for key in pairs(cell.partition or {}) do cell.items[key] = M.CREATIVE end
+	end
 	return cell
 end
 M.cell_from_tags = cell_from_tags
@@ -1031,6 +1048,13 @@ M.cell_from_tags = cell_from_tags
 --- the cell record of a cell item stack (its contents, partition and cards from the tags). Issue #394: the item's quality
 --- goes with it (`cell.quality`, nil for normal; a drive's record keeps it), so the stack written back keeps it. It changes
 --- nothing in the cell: bytes, types and cards are the same in every quality.
+--- Issue #440: the spec of a view cell (mod-data `view_cells`: { view = true, types }), nil for anything else. Kept apart from
+--- `cells` (cell_spec): a view cell is partitioned like a cell but stores nothing, so no drive or chest takes it.
+function M.view_spec(name)
+	local v = mod_data().view_cells
+	return v and v[name] or nil
+end
+
 function M.cell_from_stack(stack)
 	local cell = cell_from_tags(stack.name, stack.is_item_with_tags and stack.tags or nil)
 	local q = stack.quality.name
@@ -1051,7 +1075,7 @@ function M.clean_partition(spec, partition)
 	local out, n = {}, 0
 	for _, key in ipairs(keys) do
 		local ok
-		if is_fluid_key(key) then ok = fluid_cell(spec) and prototypes.fluid[(split_fluid_key(key))] ~= nil
+		if is_fluid_key(key) then ok = (fluid_cell(spec) or spec.view) and prototypes.fluid[(split_fluid_key(key))] ~= nil   -- (#440)
 		else ok = not fluid_cell(spec) and not key:find("#") and prototypes.item[(parse_key(key))] ~= nil end
 		if ok and not out[key] and n < spec.types then
 			out[key] = true
@@ -1065,9 +1089,9 @@ end
 --- inverter, equal distribution, overflow destruction; fluid cell: no fuzzy), at most each kind's limit and the slots.
 --- nil when none.
 function M.clean_cards(spec, list)
-	if type(list) ~= "table" or not spec then return nil end
+	if type(list) ~= "table" or not spec or spec.creative then return nil end      -- (issue #441: a creative cell takes none)
 	local r = M.card_rules()
-	r = spec.kind == "fluid" and r.fluid_cell or r.item_cell
+	r = spec.view and r.view_cell or spec.kind == "fluid" and r.fluid_cell or r.item_cell   -- (issue #440: a view cell)
 	local out, n = {}, {}
 	for _, name in ipairs(list) do
 		local kind = type(name) == "string" and prototypes.item[name] and M.card_kind(name)
@@ -1104,7 +1128,7 @@ end
 --- Distribution Card: the share of one key). A cell without cards keeps exactly the fields of 0.3.0.
 function M.apply_cell_cards(cell)
 	room_gen = room_gen + 1
-	local spec = cell_spec(cell.name)
+	local spec = cell_spec(cell.name) or M.view_spec(cell.name)   -- (issue #440)
 	if not spec then return end
 	local keys = cell.partition or cell.deny or cell.gkeys
 	local kinds = {}
@@ -1131,6 +1155,7 @@ function M.apply_cell_cards(cell)
 	end
 	cell.fnames = names
 	cell.void = kinds.void or spec.void or nil          -- issue #354: a void cell voids without a card
+	cell.creative = spec.creative or nil               -- issue #441
 	cell.sticky = kinds.sticky or nil                  -- issue #193
 	cell.eq = nil
 	if kinds.equal then cell.eq = equal_share(cell, spec) end
@@ -1147,7 +1172,7 @@ end
 
 --- set the configured list of a cell (cleaned; the cards decide whether it is a whitelist or a blacklist)
 function M.set_cell_keys(cell, keys)
-	cell.partition = M.clean_partition(cell_spec(cell.name), keys or {})
+	cell.partition = M.clean_partition(cell_spec(cell.name) or M.view_spec(cell.name), keys or {})   -- (issue #440)
 	cell.deny, cell.gkeys = nil, nil
 	M.apply_cell_cards(cell)
 end
@@ -1245,7 +1270,11 @@ local function cell_description(cell, spec, plist, cards, keys, list)
 		if #desc > 1 then desc[#desc + 1] = "\n" end
 		desc[#desc + 1] = text
 	end
-	if #keys == 0 then
+	if spec and spec.view then
+		line({ "fork-me-net.view-cell-tip" })                    -- (issue #440: a view cell holds nothing)
+	elseif spec and spec.creative then
+		line({ "fork-me-net.creative-cell-tip" })                -- (issue #441: what it lists, without end)
+	elseif #keys == 0 then
 		line({ fluid and "fork-me-net.cell-tip-empty-fluid" or "fork-me-net.cell-tip-empty", spec and spec.bytes or 0, spec and spec.types or 0 })
 	else
 		line({ fluid and "fork-me-net.fluid-cell-holds" or "fork-me-net.cell-holds",
@@ -1309,7 +1338,7 @@ local function cell_stack(cell)
 	return {
 		name = cell.name, count = 1, quality = cell.quality,
 		tags = { [CELL_TAG] = { items = items, data = data, partition = plist, cards = cards, gtext = cell.gtext } },
-		custom_description = cell_description(cell, cell_spec(cell.name), plist, cards, keys, list),
+		custom_description = cell_description(cell, cell_spec(cell.name) or M.view_spec(cell.name), plist, cards, keys, list),
 	}
 end
 M.cell_stack = cell_stack
@@ -1398,13 +1427,18 @@ function M.drive_cell_sig(drive, slot)
 	return table.concat(parts, ":")
 end
 
---- the fill state of a cell: "room", "high" (above 75 % of the bytes), "full" (bytes or types)
+--- the fill state of a cell: "room", "high" (above 75 % of the bytes, or no new type but bytes left), "full" (no bytes left,
+--- or empty without room for a type). Issue #468: a cell that takes no new type but more of what it holds is orange, as
+--- AE2-Unofficial's status 3 (appeng/me/storage/CellInventory.java, getStatusForCell), not red: a one-type Singularity cell
+--- was red as soon as it held anything.
 local function cell_state(cell)
 	local spec = cell_spec(cell.name)
 	if not spec then return "full" end
 	if spec.void then return "room" end                 -- (issue #354: a void cell is never full)
-	if cell.types >= spec.types or spec.bytes - cell.bytes < 1 or (cell.types == 0 and spec.bytes - cell.bytes <= spec.per_type) then return "full" end
-	if cell.bytes > spec.bytes * 0.75 then return "high" end
+	local left = spec.bytes - cell.bytes
+	local new_type = cell.types < spec.types and left - spec.per_type > 0   -- (as open_cell below)
+	if left < 1 or (cell.types == 0 and not new_type) then return "full" end
+	if not new_type or cell.bytes > spec.bytes * 0.75 then return "high" end
 	return "room"
 end
 
@@ -1436,6 +1470,13 @@ end
 --- the key, net.wait_out[key] when it loses some (one wake per registration). In storage, because they decide when
 --- an endpoint is visited. M.wakers[kind](unit) is set by the module of that kind at load time.
 M.wakers = {}
+--- Issue #441: the amount of each listed key a creative cell holds (the totals, the terminal, the planner): 2^50, far below the
+--- 2^53 of exact integers, so the totals stay exact with it
+M.CREATIVE = 2 ^ 50
+--- Issue #426: M.deliverers[waker](unit, key, count) hands the products of a job that block `unit` asked for (its Crafting
+--- Card) to that block (AE2's ICraftingRequester.injectCraftedItems) and returns what the block took; the rest is stored. Set
+--- by the module of that waker at load time.
+M.deliverers = {}
 
 --- does `unit` still belong to `net`? (a unit that moved to another network registers there at its next visit)
 local function stays(nodes, net, unit)
@@ -1742,10 +1783,10 @@ function net_cell(net, cid, cell, sign)
 		net.cells[cid] = cell
 		net.cell_list[#net.cell_list + 1] = cid
 	else
+		--- issue #420: the list keeps the cell's entry until its next use (M.cell_ids): the cells that leave in one burst are
+		--- taken out in one pass, not one walk over the network's cells each (158 storage buses at 20 000: 79 ms)
 		net.cells[cid] = nil
-		for i = #net.cell_list, 1, -1 do
-			if net.cell_list[i] == cid then table.remove(net.cell_list, i) end
-		end
+		net.cell_gone = true
 	end
 	if spec then                                      -- an external cell (storage bus) has no bytes or types
 		local p = fluid_cell(spec) and "f" or ""      -- item cells count in bytes/types, fluid cells in fbytes/ftypes
@@ -1829,14 +1870,51 @@ local function update_power(s, net)
 	end
 end
 
+--- Issue #420: a member that joined (`sign` 1) or left (-1) a network without a split changes its controller's draw by its
+--- own power, as update_power would count it, instead of the walk over every member at the network's next use (a burst of
+--- 1000 built blocks with 158 storage buses, each looking at its network at once, walked 20 000 members 158 times: 7.6 s). A
+--- kind whose power depends on its state (M.power_hooks) or a crafting block (counted by its entity name, which a removed
+--- block no longer has) makes the walk instead, as does a network whose breakdown is not up to date. (A field: no main-chunk
+--- local, the chunk is at Lua's limit of 200.)
+function M.power_add(s, net, node, sign)
+	if POWERED_SELF[node.kind] then return end
+	if net.power_dirty or not net.power_by or M.power_hooks[node.kind] or node.kind == "crafting" then
+		net.power_dirty = true
+		return
+	end
+	local w = member_power(node)
+	local row = net.power_by[node.kind]
+	if sign > 0 then
+		if not row then
+			row = { n = 0, w = 0 }
+			net.power_by[node.kind] = row
+		end
+		row.n, row.w = row.n + 1, row.w + w
+	else
+		if not (row and row.n > 0) then
+			net.power_dirty = true
+			return
+		end
+		row.n, row.w = row.n - 1, row.w - w
+		if row.n == 0 then net.power_by[node.kind] = nil end
+	end
+	net.power = net.power + sign * w
+	for unit in pairs(net.controllers) do
+		local c = s.nodes[unit]
+		if c and c.entity.valid then c.entity.power_usage = net.power / 60 end
+	end
+end
+
 --- controllers, status, drives, storage totals and power of a network, from its members
 function recompute(s, net)
 	net.controllers, net.drives = {}, {}
 	local nc = 0
+	net.creative = nil                                    -- (issue #442: a Creative Energy Cell among the members)
 	for unit in pairs(net.nodes) do
 		local node = s.nodes[unit]
 		if node then
 			if node.kind == "controller" then net.controllers[unit] = true nc = nc + 1 end
+			if node.kind == "creative-energy" then net.creative = true end
 			if CELL_KINDS[node.kind] then net.drives[unit] = true end
 		end
 	end
@@ -1848,7 +1926,7 @@ function recompute(s, net)
 				and { diode = defines.entity_status_diode.red, label = { "fork-me-net.status-conflict" } } or nil
 		end
 	end
-	net.items, net.index, net.cells, net.cell_list, net.order_dirty = {}, {}, {}, {}, true
+	net.items, net.index, net.cells, net.cell_list, net.order_dirty, net.cell_gone = {}, {}, {}, {}, true, nil
 	fluid_sets[net] = nil
 	net.bytes, net.bytes_total, net.types, net.types_total = 0, 0, 0, 0
 	net.fbytes, net.fbytes_total, net.ftypes, net.ftypes_total = 0, 0, 0, 0
@@ -1870,7 +1948,9 @@ function M.usable(net)
 	if net.usable_tick == game.tick then return net.usable, net.why end
 	local s = state()
 	local ok, why = false, "no-controller"
-	for unit in pairs(net.controllers) do
+	--- issue #442: a network with a Creative Energy Cell never lacks power (AE2-Unofficial: its energy grid's creative flag)
+	if net.creative then ok, why = true, nil end
+	for unit in pairs(net.creative and M.NONE or net.controllers) do
 		local node = s.nodes[unit]
 		local e = node and node.entity
 		if e and e.valid then
@@ -2339,7 +2419,7 @@ local function ordered(s, net)
 	if net.order and not net.order_dirty then return net.order, net.uniform end
 	local list = {}
 	local prios, parts = {}, false
-	for i, cid in ipairs(net.cell_list) do
+	for i, cid in ipairs(M.cell_ids(net)) do
 		local p = cell_priority(s, net, cid)
 		prios[p] = true
 		local cell = net.cells[cid]
@@ -2361,6 +2441,26 @@ local function ordered(s, net)
 end
 M.ordered = ordered
 
+--- Issue #420: the network's cell ids in the order they joined (net.cell_list), the entries of the cells that left since its
+--- last use taken out (net.cell_gone): a cell that left and joined again keeps its last entry, as when every removal took
+--- its entry out at once. (A field: no main-chunk local.)
+function M.cell_ids(net)
+	if not net.cell_gone then return net.cell_list end
+	local list, cells = net.cell_list, net.cells
+	local seen, keep = {}, {}
+	for i = #list, 1, -1 do
+		local cid = list[i]
+		if cells[cid] and not seen[cid] then
+			seen[cid] = true
+			keep[#keep + 1] = cid
+		end
+	end
+	local out = {}
+	for i = #keep, 1, -1 do out[#out + 1] = keep[i] end
+	net.cell_list, net.cell_gone = out, nil
+	return out
+end
+
 --- can the cell take a key it does not hold yet? (types and bytes; its kind and partition are the caller's)
 local function open_cell(cell, spec)
 	if spec.void then return true end                   -- (issue #354: a void cell takes every new type)
@@ -2379,6 +2479,7 @@ local function voids(cell, key, data)
 	end
 	local spec = cell_spec(cell.name)
 	if not spec or fluid_cell(spec) ~= is_fluid_key(key) or not accepts(cell, key) then return false end
+	if spec.creative then return cell.partition ~= nil end   -- issue #441: only what it lists (without a list: nothing)
 	if spec.void then return true end                   -- issue #354: a void cell voids whatever its filter lets in
 	if cell.partition or cell.deny or cell.gf then return true end
 	return cell.items[key] ~= nil or open_cell(cell, spec)
@@ -2924,6 +3025,46 @@ local function insert_key(net, key, count, data)
 	return count - left
 end
 
+--- Issue #479: can no storage of the network ever take `key`, whatever room it had? `data`: the key is an item with data (tags,
+--- a description, a health), which only cells take (put). A storage may take the key by its kind, filter and mode: a cell of the
+--- key's kind (item or fluid) whose partition, blacklist or group filter lets it in (a creative cell only what it lists), a
+--- storage bus that is not read only, whose filter lets it in and whose handler can hold such a key (its `takes`, when it has
+--- one). Room, the sticky pass and the ME Chest (its own cell) are not looked at: false there. The answer is kept per key in the
+--- network's lookups, which are made again when a storage, a priority, a partition or a mode changes (never saved).
+function M.never_stores(net, key, data)
+	if net.chest or not M.usable(net) then return false end
+	local c = lookups(state(), net)
+	local never = c.never
+	if not never then
+		never = {}
+		c.never = never
+	end
+	local v = never[key]
+	if v ~= nil then return v end
+	v = true
+	local fluid = is_fluid_key(key)
+	local cells = net.cells
+	for _, o in ipairs(c.order) do
+		local cell = cells[o.cid]
+		if cell then
+			if cell.ext then
+				if not data and cell.mode ~= "read" and accepts(cell, key) then
+					local h = M.ext_handlers[cell.handler or cell.ext]
+					if not (h and h.takes) or h.takes(cell, key) then v = false break end
+				end
+			else
+				local spec = cell_spec(cell.name)
+				if spec and fluid_cell(spec) == fluid and accepts(cell, key) and not (spec.creative and not cell.partition) then
+					v = false
+					break
+				end
+			end
+		end
+	end
+	never[key] = v
+	return v
+end
+
 --- the extraction order of `key`: lower priority first, storage buses before cells of the same priority,
 --- unpartitioned before partitioned, then by cell id
 local function extract_order(s, net, c, key)
@@ -2955,10 +3096,14 @@ local function extract_key(net, key, count)
 	--- extraction is the reverse of insertion: lower drive priority first, storage buses before cells of the same
 	--- priority, unpartitioned before partitioned
 	local c = lookups(s, net)
+	local kept = 0                                     -- (issue #441: what creative cells gave; their counts stay)
 	for _, cid in ipairs(extract_order(s, net, c, key)) do
 		if left <= 0 then break end
 		local cell = net.cells[cid]
-		if cell.ext then                               -- external cell: the real storage first (staleness)
+		if cell.creative then                          -- issue #441: a creative cell gives the rest without end
+			kept = kept + left
+			left = 0
+		elseif cell.ext then                           -- external cell: the real storage first (staleness)
 			local handler = M.ext_handlers[cell.handler or cell.ext]
 			local real = handler.count(cell, key)
 			if real ~= (cell.items[key] or 0) then ext_set(net, cid, cell, key, real) end
@@ -2989,7 +3134,7 @@ local function extract_key(net, key, count)
 			end
 		end
 	end
-	local now = (net.items[key] or 0) - (count - left)
+	local now = (net.items[key] or 0) - (count - left) + kept
 	net.items[key] = now > ZERO and now or nil
 	if net.index[key] and next(net.index[key]) == nil then net.index[key] = nil end
 	if left < count then
@@ -3235,7 +3380,7 @@ function M.stats(net)
 	local ok, why = M.usable(net)
 	local drives, cells, fcells, buses, fbuses = 0, 0, 0, 0, 0
 	for _ in pairs(net.drives) do drives = drives + 1 end
-	for _, cid in ipairs(net.cell_list) do
+	for _, cid in ipairs(M.cell_ids(net)) do
 		local cell = net.cells[cid]
 		local spec = not cell.ext and cell_spec(cell.name)
 		if cell.side == "fluid" or cell.ext == "fluid-storage-bus" then fbuses = fbuses + 1   -- a storage bus on fluid
@@ -3297,12 +3442,33 @@ local function is_used(stack, proto)
 	return false
 end
 
---- the items of `name` and `quality` in whole stacks of an inventory (a worn type: the stacks whose top item is not used)
+--- Issue #479: does this stack stand for the plain key of its item (the key N.storable gives it)? Not when its top item is used
+--- or damaged, nor when an item with tags or a label carries a label, tags or a description of its own: N.storable keys those
+--- apart, and a count or a removal by count cannot tell them from the plain ones. Read per stack, since the prototype type does
+--- not decide it (Quality Turrets Reworked makes every turret an item with tags, and only the mined veterans carry tags).
+--- (A field, not a local: the main chunk is at the limit of 200 locals.)
+function M.plain_stack(stack, proto)
+	if is_used(stack, proto) then return false end
+	local class = ITEM_CLASS[proto.type]
+	if class == "tags" then
+		if stack.label then return false end
+		local tags = stack.tags
+		if tags and next(tags) then return false end
+		local desc = stack.custom_description
+		return desc == nil or desc == ""
+	elseif class == "label" then
+		return stack.label == nil
+	end
+	return true
+end
+
+--- the items of `name` and `quality` in whole stacks of an inventory (a worn type: the stacks whose top item is not used; an
+--- item with tags or a label, issue #479: the stacks that carry nothing, M.plain_stack)
 function M.count_whole(inv, name, quality)
 	local n = 0
 	for i = 1, #inv do
 		local stack = inv[i]
-		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and not is_used(stack, stack.prototype) then
+		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and M.plain_stack(stack, stack.prototype) then
 			n = n + stack.count
 		end
 	end
@@ -3319,13 +3485,14 @@ function M.has_used(inv, name, quality)
 end
 
 --- Take up to `count` items of `name` and `quality` out of the whole stacks of an inventory, never out of a used one: a
---- removal by count (LuaInventory.remove) takes the used item first and would hand it on as a full one. Returns the count.
+--- removal by count (LuaInventory.remove) takes the used item first and would hand it on as a full one. Nor out of a stack
+--- with tags, a label or a description (issue #479, M.plain_stack): it would leave as a plain item. Returns the count.
 function M.remove_whole(inv, name, quality, count)
 	local left = count
 	for i = 1, #inv do
 		if left <= 0 then break end
 		local stack = inv[i]
-		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and not is_used(stack, stack.prototype) then
+		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and M.plain_stack(stack, stack.prototype) then
 			local take = math.min(left, stack.count)
 			if take >= stack.count then stack.clear() else stack.count = stack.count - take end
 			left = left - take
@@ -3334,15 +3501,17 @@ function M.remove_whole(inv, name, quality, count)
 	return count - left
 end
 
---- { key -> count } of the items of a worn type, and of the items that can be damaged (issue #84), in the whole stacks of an
---- inventory (one pass; a stack whose top item is used or damaged counts as none)
+--- { key -> count } of the items of a worn type, of the items that can be damaged (issue #84) and of the items with tags or a
+--- label (issue #479), in the stacks of an inventory that stand for their plain key (one pass; M.plain_stack: a stack whose top
+--- item is used or damaged, or that carries tags, a label or a description, counts as none)
 function M.whole_counts(inv)
 	local out = {}
 	for i = 1, #inv do
 		local stack = inv[i]
 		if stack.valid_for_read then
 			local proto = stack.prototype
-			if (ITEM_CLASS[proto.type] == "worn" or M.can_be_damaged(proto)) and not is_used(stack, proto) then
+			local class = ITEM_CLASS[proto.type]
+			if (class == "worn" or class == "tags" or class == "label" or M.can_be_damaged(proto)) and M.plain_stack(stack, proto) then
 				local key = key_of(stack.name, stack.quality.name)
 				out[key] = (out[key] or 0) + stack.count
 			end
@@ -3752,6 +3921,7 @@ function CH.take_from_drive(s, d, unit, key, amount)
 		if left <= 0 then break end
 		local cell = d.slots[slot]
 		local n = cell and math.min(left, cell.items[key] or 0) or 0
+		if n > 0 and cell.creative then left, n = 0, 0 end     -- (issue #441: a creative cell gives without end, its count kept)
 		if n > 0 then
 			local spec = cell_spec(cell.name)
 			local had_room = not cell.eq and spec.bytes - cell.bytes > 0
@@ -4584,7 +4754,8 @@ function M.stored_energy(net)
 	for unit in pairs(net and net.controllers or {}) do
 		local node = s and s.nodes[unit]
 		local e = node and node.entity
-		if e and e.valid then n = n + e.energy end
+		--- (issue #442: a network with a Creative Energy Cell is full)
+		if e and e.valid then n = n + (net.creative and e.electric_buffer_size or e.energy) end
 	end
 	return n
 end
@@ -4754,9 +4925,113 @@ end
 --- rebuild (on_init, on_configuration_changed): the only map scan
 --------------------------------------------------------------------------------
 
-function M.rebuild()
+--- Issue #420: what the graph is made of: the rules (GRAPH_RULES below: raised when who connects to whom changes) and per
+--- member name its kind and tile size. A save whose graph was made with the same is taken over by M.rebuild (M.keep_graph).
+function M.graph_sig()
+	local GRAPH_RULES = 1
+	local k = kinds()
+	local list = {}
+	for name in pairs(k) do list[#list + 1] = name end
+	table.sort(list)
+	local parts = { "rules " .. GRAPH_RULES }
+	for _, name in ipairs(list) do
+		local p = prototypes.entity[name]
+		parts[#parts + 1] = name .. "=" .. k[name] .. ":" .. (p.tile_width or 1) .. "x" .. (p.tile_height or 1)
+	end
+	return table.concat(parts, ";")
+end
+
+--- Issue #420: the graph the build and removal events kept is taken over when it still matches the world: made with the same
+--- rules and prototypes (s.graph_sig), and with few members that changed without an event: those that vanished are taken out
+--- as the sweep takes them out (vanish), member entities that came without an event (the count of the map's member
+--- entities says so) are put in as a build puts them in (M.on_built), in the order of their unit numbers; more than
+--- KEEP_CHANGES or a sixteenth of the members make the whole rebuild. The rebuild's other work is done as before: the waits
+--- fire, the drives' cells are checked against the cell prototypes and drawn again, the external cells checked, every
+--- network computed again (its cells, totals, power), the screens. What it saves at 20 000 endpoints (80 000 members) is the
+--- map scan, the nodes, the neighbour search and the components: about 1.8 of 2.2 s. (A save of a version before has no
+--- s.graph_sig: its nodes, a box table and a position each, are made anew by the whole rebuild.) Returns true when the graph
+--- was kept.
+function M.keep_graph(s)
+	local KEEP_CHANGES = 64
+	local sig = M.graph_sig()
+	if s.graph_sig ~= sig or not next(s.nodes) then return false end
+	local members, gone = 0, {}
+	for unit, node in pairs(s.nodes) do
+		if node.entity.valid then members = members + 1 else gone[#gone + 1] = unit end
+	end
+	local off = 0
+	for _ in pairs(s.toggle_off or {}) do off = off + 1 end
+	local names, on_map = M.node_names(), 0
+	for _, surface in pairs(game.surfaces) do on_map = on_map + surface.count_entities_filtered{ name = names } end
+	local new = on_map - members - off                      -- (members that came without an event; < 0: a stale open toggle)
+	if #gone + math.abs(new) > math.max(KEEP_CHANGES, members / 16) then return false end
+	for _, node in pairs(s.nodes) do clear_link(node) end
+	table.sort(gone)
+	for _, unit in ipairs(gone) do vanish(s, unit) end
+	if new > 0 then
+		local found = {}
+		for _, surface in pairs(game.surfaces) do
+			for _, e in pairs(surface.find_entities_filtered{ name = names }) do
+				local unit = e.unit_number
+				if not s.nodes[unit] and not (s.toggle_off and s.toggle_off[unit]) then found[#found + 1] = e end
+			end
+		end
+		table.sort(found, function(a, b) return a.unit_number < b.unit_number end)
+		for _, e in ipairs(found) do M.on_built(e) end
+	end
+	for unit, c in pairs(s.chests or {}) do               -- (issue #229: the hidden parts of chests that are gone)
+		if not (c.entity and c.entity.valid) then CH.gone(s, unit) end
+	end
+	local ids = {}
+	for id in pairs(s.nets) do ids[#ids + 1] = id end
+	table.sort(ids)
+	for _, id in ipairs(ids) do fire_all_waits(s.nets[id]) end   -- (issue #38: no parked endpoint loses its wake)
+	s.version = s.version + 1
+	--- the drives keep their cells; a cell whose prototype is gone, or in a slot the drive no longer has, is spilled
+	for unit, d in pairs(s.drives) do
+		if d.entity.valid then
+			d.leds = d.leds or {}
+			d.chest = kinds()[d.entity.name] == "chest" or nil
+			clear_leds(d)
+			for slot in pairs(d.slots) do
+				if slot > slots_of(d.entity) or not cell_spec(d.slots[slot].name) then
+					spill(d.entity.surface, d.position, cell_stack(d.slots[slot]))
+					d.slots[slot] = nil
+				end
+			end
+			s.dirty[unit] = true
+		end
+	end
+	local old_ext = s.ext
+	s.ext = {}
+	for unit, cell in pairs(old_ext) do
+		if cell.entity and cell.entity.valid and kinds()[cell.entity.name] == cell.ext then
+			s.ext[unit] = cell
+		else
+			local h = M.ext_handlers[cell.ext]
+			if h and h.detached then h.detached(cell) end
+		end
+	end
+	for _, id in ipairs(ids) do recompute(s, s.nets[id]) end
+	if s.screens then
+		local units = {}
+		for unit in pairs(s.nodes) do units[#units + 1] = unit end
+		table.sort(units)
+		for _, unit in ipairs(units) do
+			local node = s.nodes[unit]
+			if has_screen(node.kind) and not s.screens[unit] then screen_made(s, unit, node.entity, node.kind) end
+		end
+	end
+	for _, hook in pairs(M.change_hooks) do hook(nil) end
+	return true
+end
+
+--- `full`: rebuild the graph from the map even when the kept one matches it (issue #420)
+function M.rebuild(full)
 	names_cache, names_list = nil, nil
 	local s = state()
+	if not full and M.keep_graph(s) then return true end
+	s.graph_sig = M.graph_sig()
 	local old_drives = s.drives
 	for unit, c in pairs(s.chests or {}) do               -- (issue #229: the hidden parts of chests that are gone)
 		if not (c.entity and c.entity.valid) then CH.gone(s, unit) end
@@ -4839,10 +5114,9 @@ function M.rebuild()
 		local w, h = size[1], size[2]
 		if (dir == defines.direction.east or dir == defines.direction.west) and w ~= h then w, h = h, w end
 		local kind = kinds()[name]
-		local node = { entity = e, kind = kind, adj = {}, surface = surface_of[unit], force = fname,
-			box = { math.floor(pos.x - w / 2 + 0.5), math.floor(pos.y - h / 2 + 0.5),
-				math.floor(pos.x + w / 2 + 0.5), math.floor(pos.y + h / 2 + 0.5) },
-			position = { x = pos.x, y = pos.y }, li = #s.nlist + 1 }
+		local node = { math.floor(pos.x - w / 2 + 0.5), math.floor(pos.y - h / 2 + 0.5),
+			math.floor(pos.x + w / 2 + 0.5), math.floor(pos.y + h / 2 + 0.5),
+			entity = e, kind = kind, adj = {}, surface = surface_of[unit], force = fname, li = #s.nlist + 1 }
 		s.nodes[unit] = node
 		s.nlist[#s.nlist + 1] = unit                       -- (`units` is sorted)
 		if kind == "underground" then node.dir = dir end
@@ -4861,7 +5135,7 @@ function M.rebuild()
 			g = {}
 			grids[node.surface] = g
 		end
-		local b = node.box
+		local b = node
 		for tx = b[1], b[3] - 1 do
 			for ty = b[2], b[4] - 1 do
 				local key = (tx + OFF) * MUL + (ty + OFF)
@@ -4876,21 +5150,21 @@ function M.rebuild()
 		if type(c) == "number" then
 			if c ~= unit then
 				local other = s.nodes[c]
-				if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[c] = true end
+				if other.force == node.force and adjacent(b, other) and connects(node, other) then node.adj[c] = true end
 			end
 		else
 			for i = 1, #c do
 				local ou = c[i]
 				if ou ~= unit then
 					local other = s.nodes[ou]
-					if other.force == node.force and adjacent(b, other.box) and connects(node, other) then node.adj[ou] = true end
+					if other.force == node.force and adjacent(b, other) and connects(node, other) then node.adj[ou] = true end
 				end
 			end
 		end
 	end
 	for _, unit in ipairs(units) do
 		local node = s.nodes[unit]
-		local b, g = node.box, grids[node.surface]
+		local b, g = node, grids[node.surface]
 		local x1, y1, x2, y2 = b[1], b[2], b[3], b[4]
 		for ty = y1, y2 - 1 do                              -- the tiles beside the west and east edges
 			local c = g[(x1 - 1 + OFF) * MUL + (ty + OFF)]
@@ -4993,7 +5267,7 @@ function M.connect(members, margin)
 	local tiles = {}                                  -- "x,y" -> node of the area
 	local surface_index = surface.index
 	for _, node in pairs(s.nodes) do
-		local bx = node.box
+		local bx = node
 		if node.surface == surface_index and bx[3] > l - 1 and bx[1] < r + 1 and bx[4] > t - 1 and bx[2] < b + 1 then
 			for x = bx[1], bx[3] - 1 do
 				for y = bx[2], bx[4] - 1 do tiles[x .. "," .. y] = node end
@@ -5043,7 +5317,7 @@ function M.connect(members, margin)
 		end
 		table.sort(units)
 		for _, unit in ipairs(units) do
-			local bx = s.nodes[unit].box
+			local bx = s.nodes[unit]
 			local edge = {}
 			for x = bx[1], bx[3] - 1 do edge[#edge + 1] = { x, bx[2] - 1 } edge[#edge + 1] = { x, bx[4] } end
 			for y = bx[2], bx[4] - 1 do edge[#edge + 1] = { bx[1] - 1, y } edge[#edge + 1] = { bx[3], y } end
@@ -5135,6 +5409,35 @@ remote.add_interface("gregtorio-me-network", {
 	end,
 	--- issue #59 (tests): the kept holder lists and cursors against lists sorted anew: lists, differing, the first problem
 	check_holder_lists = function() return M.check_holder_lists() end,
+	--- issue #420 (tests): the controller's draw as the joins and removals kept it, and as the walk over every member counts it
+	power_recount = function(entity)
+		local net = M.network_of(entity)
+		if not net then return nil end
+		if net.power_dirty then return { dirty = true } end
+		local kept, by = net.power, {}
+		for k, row in pairs(net.power_by or {}) do by[k] = row.n .. "/" .. row.w end
+		update_power(state(), net)
+		local walked = {}
+		for k, row in pairs(net.power_by) do walked[k] = row.n .. "/" .. row.w end
+		return { kept = kept, walked = net.power, kept_by = by, walked_by = walked }
+	end,
+	--- issue #420 (tests): a member's node: its folded tile box, and whether it still has the fields of before
+	node_fold = function(entity)
+		local s = storage.fork_me_net
+		local node = s and entity and entity.valid and s.nodes[entity.unit_number]
+		if not node then return nil end
+		return { node[1], node[2], node[3], node[4], box = node.box ~= nil, position = node.position ~= nil }
+	end,
+	--- issue #420 (tests): the network's cell ids in their order, and how many cells it has
+	cell_ids = function(entity)
+		local net = M.network_of(entity)
+		if not net then return nil end
+		local n = 0
+		for _ in pairs(net.cells) do n = n + 1 end
+		local ids = {}
+		for i, cid in ipairs(M.cell_ids(net)) do ids[i] = cid end
+		return { ids = ids, cells = n }
+	end,
 	--- tests: is the sweep list the members, each once, each node at its place? (true, or false and what is wrong)
 	sweep_list_ok = function()
 		local s = storage.fork_me_net
@@ -5209,6 +5512,8 @@ remote.add_interface("gregtorio-me-network", {
 	built = function(entity, stack) M.on_built(entity, { stack = stack }) end,
 	extract_to = function(entity, target, key, count) return M.extract_to(M.network_of(entity), target, key, count) end,
 	insert_cell = function(drive, stack, slot) return M.insert_cell(drive, stack, slot) end,
+	--- tests (issue #414): every storage cell's spec by item name
+	cell_specs = function() return M.cell_specs() end,
 	take_cell = function(drive, slot, target) return M.take_cell(drive, slot, target) end,
 	drive = function(drive) return M.drive_info(drive) end,
 	--- drive priority and cell partitions (R3)
@@ -5267,7 +5572,7 @@ remote.add_interface("gregtorio-me-network", {
 	--- what the rotation event does (entity.rotate raises none)
 	rotated = function(entity) M.on_rotated(entity) end,
 	--- what on_configuration_changed does with the graph (the whole map)
-	rebuild = function() M.rebuild() end,
+	rebuild = function(full) return M.rebuild(full) == true end,      -- (issue #420: true when the kept graph was taken over)
 	--- tests (issue #38): forget every wait of the entity's network, as if all its wakes had been missed
 	drop_waits = function(entity)
 		local net = M.network_of(entity)

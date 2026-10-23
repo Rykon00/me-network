@@ -24,6 +24,11 @@ M.ENCODED = "me-encoded-pattern"
 M.TAG = "fork_me_pattern"
 M.MAX_INPUTS = 9           -- processing pattern: input rows of the encoding window
 M.MAX_OUTPUTS = 6          -- processing pattern: output rows
+--- issue #416: the ME Pattern Terminal Ex (AE2-Unofficial's PartPatternTerminalEx) encodes processing patterns of 32 inputs and
+--- 8 outputs or 8 inputs and 32 outputs: a pattern's rows are at most MAX_ROWS of each (the plain terminal's 9 and 6 are its
+--- window's)
+M.MAX_ROWS = 32
+M.EX_MANY, M.EX_FEW = 32, 8
 M.MAX_AMOUNT = 1000000     -- per row
 
 local FLUID_PREFIX = "fluid/"
@@ -145,8 +150,8 @@ function M.normalize(def)
 		if #outputs == 0 then return nil, "invalid" end
 		return { kind = "crafting", recipe = proto.name, quality = q, inputs = inputs, outputs = outputs }
 	elseif def.kind == "processing" then
-		local inputs = clean_list(def.inputs, M.MAX_INPUTS)
-		local outputs = clean_list(def.outputs, M.MAX_OUTPUTS, true)
+		local inputs = clean_list(def.inputs, M.MAX_ROWS)                  -- (issue #416: up to 32 of each)
+		local outputs = clean_list(def.outputs, M.MAX_ROWS, true)
 		if not (inputs and outputs) then return nil, "invalid" end
 		local out = { kind = "processing", inputs = inputs, outputs = outputs }
 		if type(def.recipe) == "string" and prototypes.recipe[def.recipe] then out.recipe = def.recipe end   -- where it came from

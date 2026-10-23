@@ -35,8 +35,6 @@ cards.access_point = { slots = 4, limits = { booster = 4 } }
 local names = data.raw["mod-data"]["fork-me-network"].data.names
 names.access_point, names.charger = "me-wireless-access-point", "me-charger"
 
-data:extend({ { type = "item-subgroup", name = "fork-me-wireless", group = data.raw["item-subgroup"]["fork-me-network"].group,
-	order = "b-me-e" } })
 
 local recipes = {}
 

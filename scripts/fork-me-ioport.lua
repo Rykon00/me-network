@@ -17,7 +17,8 @@
 ---     no cell, or a done cell and a full output slot ("no-cell", "out-full": its window and blueprints wake it), no network
 ---     or no power ("no-network", "no-power": N.wait_usable), a network without room for what the cell holds
 ---     ("net-full": N.wait_room); a parked port gets the scheduler's slow fallback visit.
----   * A visit reads the cell from its stack (N.cell_from_stack), moves at most MAX_KEYS keys of it, and writes it back
+---   * A visit reads the cell from its stack (N.cell_from_stack), moves at most MAX_KEYS keys of it (a key that cannot go
+---     takes no turn, issue #479), and writes it back
 ---     (N.cell_stack): the stack always holds the cell's contents, also when the port is mined or the cell taken out.
 ---     The fill mode goes through the network's keys in a list made at the start of a pass (`rec.fkeys`, `rec.fpos`):
 ---     the keys the cell takes then, or only the ones it holds once its types are used up.
@@ -151,25 +152,33 @@ local function caps(rec, dt)
 end
 
 --- the empty mode: up to MAX_KEYS keys of the cell into the network. Returns what moved, whether all the speed allowed
---- went, and whether the network refused some (full).
+--- went, and whether the network refused some (full). Issue #479: a key the network has no room for, or that no storage of
+--- it can ever take (N.never_stores: an item with tags in a network of storage buses), takes no turn of the MAX_KEYS (the
+--- keys after it in the cell's order were never reached while it stayed): it counts as refused, so a port that moved
+--- nothing waits for room (a new cell or storage bus wakes it); at most MAX_SCAN keys are looked at.
 local function empty_cell(net, cell, icap, fcap)
 	local keys = {}
 	for key in pairs(cell.items) do keys[#keys + 1] = key end
 	table.sort(keys)
 	local moved, full, refused = 0, false, false
-	local n = 0
+	local n, scanned = 0, 0
 	for _, key in ipairs(keys) do
-		if n >= MAX_KEYS then break end
+		if n >= MAX_KEYS or scanned >= MAX_SCAN then break end
 		local fluid = N.is_fluid_key(key)
 		local cap = fluid and fcap or icap
 		if cap > 0 then
-			n = n + 1
-			local want = math.min(cell.items[key], cap)
-			local got = N.cell_to_network(net, cell, key, want)
-			if fluid then fcap = fcap - got else icap = icap - got end
-			moved = moved + got
-			if got < want - 1e-6 then
-				if (fluid and fcap > 0) or (not fluid and icap > 0) then refused = true end
+			scanned = scanned + 1
+			if N.never_stores(net, key, cell.data and cell.data[key]) then
+				refused = true
+			else
+				local want = math.min(cell.items[key], cap)
+				local got = N.cell_to_network(net, cell, key, want)
+				if got > 0 then n = n + 1 end
+				if fluid then fcap = fcap - got else icap = icap - got end
+				moved = moved + got
+				if got < want - 1e-6 then
+					if (fluid and fcap > 0) or (not fluid and icap > 0) then refused = true end
+				end
 			end
 		end
 	end

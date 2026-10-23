@@ -121,7 +121,12 @@ CELLS = {
     "16k": ((95, 225, 95), "MV"),
     "64k": ((70, 205, 245), "EV"),
     "256k": ((225, 95, 245), "IV"),
+    # issue #414: AE2-Unofficial's cells above 256k (no old drive item: their drive icons are made but not used)
+    "1024k": ((255, 90, 90), "IV"),
+    "4096k": ((255, 160, 50), "IV"),
+    "16384k": ((255, 235, 110), "IV"),
 }
+SINGULARITY_LED = (190, 70, 255)   # issue #414: the Singularity cell's LED, a dark core in its window
 FLUIX = (150, 95, 225)
 FLUIX_LIGHT = (120, 175, 255)
 BAY = (32, 32, 38)
@@ -220,6 +225,20 @@ def cell_icon(cell):
     return img
 
 
+def singularity_icon():
+    """issue #414: the Singularity cell: the cell icon with a violet LED and a dark core with a violet rim in its window"""
+    CELLS["singularity"] = (SINGULARITY_LED, "IV")
+    img = cell_icon("singularity")
+    del CELLS["singularity"]
+    d = ImageDraw.Draw(img)
+    x0, y0, x1, y1 = HOUSING_WINDOW
+    cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+    d.rectangle(HOUSING_WINDOW, fill=(10, 8, 18, 255))
+    d.ellipse((cx - 4, cy - 4, cx + 4, cy + 4), outline=SINGULARITY_LED + (255,))
+    d.ellipse((cx - 2, cy - 2, cx + 2, cy + 2), fill=(0, 0, 0, 255), outline=(120, 40, 170, 255))
+    return img
+
+
 def drive_icon(cell):
     img = load(ICONS / "me-drive.png")
     badge = cell_icon(cell).resize((20, 20), Image.NEAREST)
@@ -269,21 +288,27 @@ def assembler_sprite(gt, phase=0):
 PT_LIT = (110, 235, 210)
 
 
-def pattern_terminal_sprites(gt):
+PT_EX = (255, 180, 60)             # issue #416: the Pattern Terminal Ex's screen frame (amber)
+
+
+def pattern_terminal_sprites(gt, ex=False):
     """The ME Pattern Terminal (me-network issue #130), 1x1: the ME Terminal's MV casing around a dark screen that shows a crafting
-    grid, an arrow and a result slot (a pattern): teal when lit (its network works), dim when dark. Returns (dark, lit), 32 px."""
+    grid, an arrow and a result slot (a pattern): teal when lit (its network works), dim when dark. Returns (dark, lit), 32 px.
+    Issue #416, `ex`: the Pattern Terminal Ex, a 4 x 4 grid of smaller slots and the screen's frame in amber."""
     base = up(hull(gt, "MV"))
 
     def face(lit):
         img = base.copy()
         d = ImageDraw.Draw(img)
-        d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=(60, 60, 72, 255))
+        frame = (PT_EX if lit else dim(PT_EX)) if ex else (60, 60, 72)
+        d.rectangle((4, 4, TILE - 5, TILE - 5), fill=(20, 20, 26, 255), outline=frame + (255,))
         col = PT_LIT if lit else (45, 72, 72)
         res = FLUIX_LIGHT if lit else (50, 56, 84)
-        for gx in range(3):
-            for gy in range(3):
-                x, y = 7 + gx * 4, 9 + gy * 4
-                d.rectangle((x, y, x + 2, y + 2), fill=col + (255,))
+        n, step, size, y0 = (4, 3, 1, 8) if ex else (3, 4, 2, 9)
+        for gx in range(n):
+            for gy in range(n):
+                x, y = 7 + gx * step, y0 + gy * step
+                d.rectangle((x, y, x + size, y + size), fill=col + (255,))
         d.line((19, 14, 22, 14), fill=col + (255,))
         d.line((21, 13, 21, 15), fill=col + (255,))
         d.rectangle((24, 12, 26, 16), fill=res + (255,))
@@ -293,13 +318,21 @@ def pattern_terminal_sprites(gt):
 
 
 def pattern_terminal(gt):
-    """Entity sheet (dark at x = 0, lit at x = 32: the two variations of the entity) and the item icon (the lit picture)."""
-    dark, lit = pattern_terminal_sprites(gt)
-    sheet = Image.new("RGBA", (2 * TILE, TILE))
-    sheet.paste(dark, (0, 0))
-    sheet.paste(lit, (TILE, 0))
-    sheet.save(OUT_ENTITY / "me-pattern-terminal.png")
-    lit.save(OUT_ICON / "me-pattern-terminal.png")
+    """Entity sheet (dark at x = 0, lit at x = 32: the two variations of the entity) and the item icon (the lit picture); issue
+    #416: the same for the Pattern Terminal Ex, and the 3D-style sheet and icon of the Ex (hd_batch1 makes the plain one's)"""
+    for name, ex in (("me-pattern-terminal", False), ("me-pattern-terminal-ex", True)):
+        dark, lit = pattern_terminal_sprites(gt, ex)
+        sheet = Image.new("RGBA", (2 * TILE, TILE))
+        sheet.paste(dark, (0, 0))
+        sheet.paste(lit, (TILE, 0))
+        sheet.save(OUT_ENTITY / f"{name}.png")
+        lit.save(OUT_ICON / f"{name}.png")
+    pt = load(OUT_ENTITY / "me-pattern-terminal-ex.png")
+    hd = Image.new("RGBA", (2 * HD, HD))
+    for i in range(2):
+        hd.alpha_composite(hd_block(pt.crop((i * TILE, 0, (i + 1) * TILE, TILE))), (i * HD, 0))
+    hd.save(HD_ENTITY / "me-pattern-terminal-ex.png")
+    hd_cube(pt.crop((TILE, 0, 2 * TILE, TILE))).save(HD_ICON / "me-pattern-terminal-ex.png")
 
 
 def interface_terminal_sprites(gt):
@@ -467,7 +500,13 @@ def autocrafting(gt):
 # (dark: the face's colours dimmed, no light) and of a CPU (lit) side by side, 64x32. The item icon is the lit block.
 # AE2's crafting block textures are not used: they are CC BY-NC-SA 3.0 (docs/LICENSES.md).
 CRAFTING_STORAGE = {"1k": CELLS["1k"][0], "4k": CELLS["4k"][0], "16k": CELLS["16k"][0], "64k": CELLS["64k"][0],
-                    "256k": CELLS["256k"][0]}
+                    "256k": CELLS["256k"][0],
+                    # issue #415: AE2-Unofficial's crafting storage above 256k, in the cells' colours
+                    "1024k": CELLS["1024k"][0], "4096k": CELLS["4096k"][0], "16384k": CELLS["16384k"][0],
+                    "singularity": SINGULARITY_LED}
+# issue #415: AE2-Unofficial's crafting accelerators 4x to 4096x: the co-processor's face with its core in the tier's colour
+ACCELERATORS = {"4x": (95, 225, 245), "16x": (95, 225, 95), "64x": (245, 215, 70), "256x": (255, 160, 50),
+                "1024x": (255, 90, 90), "4096x": (225, 95, 245)}
 
 
 def dim(rgb, f=0.35):
@@ -520,16 +559,17 @@ def crafting_face(gt, kind, state, colour=None, mask=0):
             for y in (5, 7, 9):
                 d.point((x, y), fill=(150, 150, 160, 255))
     elif kind == "coprocessor":
+        core = colour or FLUIX                                # (issue #415: an accelerator's core in its tier's colour)
         for bx0, by0, bx1, by1 in ((3, 7, 5, 8), (10, 7, 12, 8), (7, 3, 8, 5), (7, 10, 8, 12)):
-            d.rectangle((bx0, by0, bx1, by1), fill=c(FLUIX))
-        d.rectangle((5, 5, 10, 10), fill=c(FLUIX), outline=c(FLUIX_LIGHT))
+            d.rectangle((bx0, by0, bx1, by1), fill=c(core))
+        d.rectangle((5, 5, 10, 10), fill=c(core), outline=c(FLUIX_LIGHT))
         d.rectangle((7, 7, 8, 8), fill=detail((235, 225, 255)))
     return img
 
 
 CRAFTING_BLOCKS = [("me-crafting-unit", "unit", None), ("me-crafting-co-processing-unit", "coprocessor", None),
                    ("me-crafting-monitor", "monitor", None)] + \
-                  [(f"me-{k}-crafting-storage", "storage", rgb) for k, rgb in CRAFTING_STORAGE.items()]
+                  [(f"me-{k}-crafting-storage", "storage", rgb) for k, rgb in CRAFTING_STORAGE.items()] +                   [(f"me-crafting-accelerator-{k}", "coprocessor", rgb) for k, rgb in ACCELERATORS.items()]
 
 
 def crafting_cpu(gt):
@@ -1089,6 +1129,7 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-acceleration-card": ("advanced", "gui/overlay_button/x2", (185, 240, 70)),   # issue #110: the "x2" sign (lime)
     "me-super-speed-card": ("advanced", "gui/overlay_button/x2", (255, 150, 40)),    # issue #356: the "x2" sign (orange)
     "me-superluminal-speed-card": ("advanced", "gui/overlay_button/x2", (240, 70, 230)),   # issue #356: the "x2" sign (magenta)
+    "me-crafting-card": ("basic", "gui/overlay_button/pattern_optimize", (235, 160, 60)),   # issue #411: a hammer (amber)
 }
 CARD_SIGN_MAX = 20            # px; larger GT signs (the 24 px ring of "disable") are scaled down to it
 
@@ -1309,7 +1350,10 @@ COMPONENT_TIERS = (                 # tier -> (stripe and pip colour, pips); the
     ("64k", (70, 205, 245), 4), ("256k", (225, 95, 245), 5),
     ("1m", (235, 235, 235), 1), ("4m", (245, 215, 70), 2), ("16m", (95, 225, 95), 3),
     ("64m", (70, 205, 245), 4), ("256m", (225, 95, 245), 5),
+    # issue #414: the components of AE2-Unofficial's 1024k to 16384k cells, the red board of 1m to 16m (their colours, pips)
+    ("1024k", (235, 235, 235), 1), ("4096k", (245, 215, 70), 2), ("16384k", (95, 225, 95), 3),
 )
+BIG_COMPONENTS = ("1024k", "4096k", "16384k")   # (the red board: MODULE_BOARD["m"])
 MODULE_BOARD = {"k": ("items/gt.metaitem.03/5", "items/gt.metaitem.03/39"),     # board, chip: green board, RAM chip
                 "m": ("items/gt.metaitem.03/8", "items/gt.metaitem.03/41")}     # red board, NAND chip
 MODULE_BOX = (3, 6, TILE - 4, 25)       # the module's board: 26 x 20 px
@@ -1367,7 +1411,7 @@ def housing_icon(gt):
 def component_icon(gt, tier):
     """a storage component: a memory module (board, chips, edge connector, the tier's stripe and pips)"""
     colour, pips = next((c, p) for t, c, p in COMPONENT_TIERS if t == tier)
-    board, chip = MODULE_BOARD[tier[-1]]
+    board, chip = MODULE_BOARD["m" if tier in BIG_COMPONENTS else tier[-1]]
     tex = gt_texture(gt, board).crop((1, 1, GT_PX - 1, GT_PX - 1))
     img = tiled(tex, MODULE_BOX)
     d = ImageDraw.Draw(img)
@@ -1649,9 +1693,10 @@ def hd_batch1():
     save(hd_flat(load(OUT_ICON / "me-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "me-cable.png")
     save(hd_flat(load(ROOT / "graphics/icons/fluix-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "fluix-cable.png")
     save(hd_flat(load(OUT_ICON / "me-underground-cable.png")).resize((HD, HD), Image.NEAREST), HD_ICON / "me-underground-cable.png")
-    for k in ("1k", "4k", "16k", "64k", "256k"):
+    for k in ("1k", "4k", "16k", "64k", "256k", "1024k", "4096k", "16384k"):   # (issue #414: from 1024k on)
         for kind in ("storage-cell", "fluid-storage-cell"):
             save(hd_cell(load(OUT_ICON / f"me-{k}-{kind}.png")), HD_ICON / f"me-{k}-{kind}.png")
+    save(hd_cell(singularity_icon()), HD_ICON / "me-singularity-storage-cell.png")              # (issue #414)
     return written
 
 
@@ -1769,7 +1814,7 @@ def hd_batch3():
 
 
 # --- issue #221 (batch 4 of #154): the upgrade cards, patterns, storage components, housing, wireless items -------------
-CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'group-filter', 'inverter', 'equal-distribution', 'acceleration', 'super-speed', 'superluminal-speed')
+HD_CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'group-filter', 'inverter', 'equal-distribution', 'acceleration', 'super-speed', 'superluminal-speed', 'crafting')
 
 
 def hd_plate(icon, depth=5):
@@ -1832,7 +1877,7 @@ def hd_batch4():
         img.save(path)
         written.append(path)
 
-    for c in CARDS:
+    for c in HD_CARDS:
         save(hd_plate(load(OUT_ICON / f"me-{c}-card.png")), HD_ICON / f"me-{c}-card.png")
     for name in ("me-blank-pattern", "me-encoded-pattern", "me-wireless-booster"):
         save(hd_bevel(load(OUT_ICON / f"{name}.png")), HD_ICON / f"{name}.png")
@@ -1861,10 +1906,20 @@ TECH_ICONS = {
     "me-storage-256k": "me-256k-storage-cell",
     "me-fluid-storage": "me-16k-fluid-storage-cell",
     "me-fluid-storage-256k": "me-256k-fluid-storage-cell",
+    # issue #414
+    "me-storage-1024k": "me-1024k-storage-cell", "me-storage-4096k": "me-4096k-storage-cell",
+    "me-storage-16384k": "me-16384k-storage-cell", "me-storage-singularity": "me-singularity-storage-cell",
+    "me-fluid-storage-1024k": "me-1024k-fluid-storage-cell", "me-fluid-storage-4096k": "me-4096k-fluid-storage-cell",
+    "me-fluid-storage-16384k": "me-16384k-fluid-storage-cell",
     "me-autocrafting": "me-molecular-assembler",
     "me-automation": "me-level-maintainer",
     "me-co-processing": "me-crafting-co-processing-unit",
     "me-quantum-crafting": "me-256k-crafting-storage",
+    # issue #415
+    "me-crafting-storage-1024k": "me-1024k-crafting-storage", "me-crafting-storage-4096k": "me-4096k-crafting-storage",
+    "me-crafting-storage-16384k": "me-16384k-crafting-storage",
+    "me-crafting-storage-singularity": "me-singularity-crafting-storage",
+    "me-crafting-accelerators": "me-crafting-accelerator-16x", "me-crafting-accelerators-2": "me-crafting-accelerator-4096x",
     "me-wireless": "me-wireless-access-point",
 }
 
@@ -1892,10 +1947,21 @@ def toggle_sprite(inverted):
     return img
 
 
-def emitter_sprite():
+ADVANCED_EMITTER = (255, 4, 211)     # (issue #443: AE2-Unofficial's advanced level emitter colour, PartAdvancedLevelEmitter RED/GREEN/BLUE)
+
+
+def emitter_sprite(advanced=False):
+    """the level emitter; `advanced` (issue #443): six thinner bars, the threshold and a frame in the advanced emitter's colour"""
     img = load(HD_ENTITY / "me-circuit-interface.png").copy()
     d = ImageDraw.Draw(img)
     d.rectangle((18, 18, 45, 45), fill=(12, 12, 16, 255))                        # the screen, cleared
+    if advanced:
+        d.rectangle((18, 18, 45, 45), outline=ADVANCED_EMITTER + (255,))
+        for i, h in enumerate((6, 16, 10, 20, 8, 14)):                            # six gauges, one per row
+            x = 21 + i * 4
+            d.rectangle((x, 42 - h, x + 2, 42), fill=FLUIX_LIGHT + (255,))
+        d.rectangle((20, 30, 43, 31), fill=ADVANCED_EMITTER + (255,))            # the threshold
+        return img
     for i, h in enumerate((8, 14, 20)):                                           # a level gauge
         x = 23 + i * 7
         d.rectangle((x, 42 - h, x + 4, 42), fill=FLUIX_LIGHT + (255,))
@@ -2045,7 +2111,8 @@ def toggle_emitter():
     HD_ICON.mkdir(parents=True, exist_ok=True)
     written = []
     for name, img in (("me-toggle-bus", toggle_sprite(False)), ("me-inverted-toggle-bus", toggle_sprite(True)),
-                      ("me-level-emitter", emitter_sprite())):
+                      ("me-level-emitter", emitter_sprite()),
+                      ("me-advanced-level-emitter", emitter_sprite(True))):      # (issue #443)
         for path in (HD_ENTITY / f"{name}.png", HD_ICON / f"{name}.png"):
             img.save(path)
             written.append(path)

@@ -1942,6 +1942,11 @@ local function engine_profile(b)
 	remote.call(NET, "rebuild")
 	p.stop()
 	log({ "", "DEVCHECK-BENCH-ENGINE graph rebuild (on_configuration_changed) 1 ", p })
+	--- issue #420: the rebuild above keeps the graph the events kept (it matches the map); the whole rebuild from the map
+	p.reset()
+	remote.call(NET, "rebuild", true)
+	p.stop()
+	log({ "", "DEVCHECK-BENCH-ENGINE graph rebuild from the map (a changed graph) 1 ", p })
 end
 
 --------------------------------------------------------------------------------
@@ -2015,9 +2020,15 @@ local function on_burst_tick()
 		end
 	elseif t == 10 then
 		local w0 = io_wakes()
+		local prof = C.profile and remote.interfaces["zz-me-bench-profile"]
+		if prof then remote.call("zz-me-bench-profile", "enable", false, C.exclusive) end
 		local p = game.create_profiler()
 		b.burst_made = burst_build(b, n)
 		p.stop()
+		if prof then
+			log("DEVCHECK-BENCH-PROF-BURST build")
+			remote.call("zz-me-bench-profile", "report")
+		end
 		log({ "", "DEVCHECK-BENCH-BURST build ", #b.burst_made, " ", game.tick, " ", p })
 		log("DEVCHECK-BENCH-BURST-WAKES build " .. (io_wakes() - w0))
 	elseif t == 70 then

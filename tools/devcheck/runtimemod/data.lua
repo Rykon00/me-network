@@ -19,6 +19,19 @@ data:extend({
 	{ type = "item-with-label", name = "zz-devcheck-label-item", icon = "__base__/graphics/icons/blueprint.png", stack_size = 1 },
 })
 
+--- issue #479 (tagitem.lua): a placeable item of the type item-with-tags, as Quality Turrets Reworked makes of every turret
+--- (it keeps a turret's kills in the tags of the mined item): a copy of the stone wall placed by it; with Gregtorio too
+do
+	local base = data.raw["wall"]["stone-wall"] or select(2, next(data.raw["wall"]))
+	local wall = table.deepcopy(base)
+	wall.name = "zz-devcheck-tagged-wall"
+	wall.minable = { mining_time = 0.1, result = "zz-devcheck-tagged-wall" }
+	wall.next_upgrade = nil
+	wall.fast_replaceable_group = nil
+	data:extend({ wall, { type = "item-with-tags", name = "zz-devcheck-tagged-wall", icon = "__base__/graphics/icons/wall.png",
+		stack_size = 50, place_result = "zz-devcheck-tagged-wall", subgroup = "intermediate-product" } })
+end
+
 --- the recipe paste test (issue #12): a 3x3 machine with six fluid inputs for a recipe with more ingredients than any
 --- ME block holds (data-final-fixes.lua); with Gregtorio too. Made here, so me-network's data-final-fixes.lua adds
 --- the ME blocks to its pastable entities like it does for every other crafting machine.

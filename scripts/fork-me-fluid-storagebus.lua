@@ -26,6 +26,11 @@
 ---     temperature (whole degrees): it never mixes temperatures in a tank. Before issue #159 the segment was read at
 ---     any temperature, counted as the default one, and inserts were refused away from the default (status
 ---     "temperature", gone).
+---   * Issue #417: a fluid wagon in front of the bus is its fluid storage too, while it stands there (as a cargo wagon on the
+---     item side): the key "w<unit>"; it has no fluid box in Factorio 2.0, so its contents, insert and remove are the
+---     entity's fluid functions (get_fluid_contents, insert_fluid, remove_fluid) and its capacity is its prototype's
+---     (`rec.wagon`). Every use checks that the wagon still covers the tile in front of the bus; a visit after it left looks
+---     at the tile again (another wagon there is taken). Its temperature is kept as a tank's.
 --- State: the records are the storage bus's (storage.fork_me_net.ext, external cells, side = "fluid"); this module
 --- keeps the fluid side's visit list and which bus owns which segment (storage.fork_me_fsbus).
 --------------------------------------------------------------------------------
@@ -108,9 +113,22 @@ local function shown(rec, key) return rec.inonly == true or N.accepts(rec, key) 
 --- the storage key of the faced box now ("s<segment id>", or "u<unit>:<box>" for a box without a segment), and
 --- whether it is a segment
 local seg_keys, seg_n = {}, 0                       -- segment id -> "s<id>" (issue #59: a number's string costs 1 µs)
+
+--- issue #417: does the bus's fluid wagon still cover the tile in front of the bus? (a train moves)
+local function wagon_here(rec)
+	local e, t = rec.entity, rec.target
+	if not (e.valid and t and t.valid) then return false end
+	return e.surface.find_entities_filtered{ position = T.front(e), type = "fluid-wagon", limit = 1 }[1] == t
+end
+M.wagon_here = wagon_here
+
 local function live_key(rec)
 	local t = rec.target
 	if not (t and t.valid and rec.box) then return nil end
+	if rec.wagon then                                -- (issue #417)
+		if not wagon_here(rec) then return nil end
+		return "w" .. t.unit_number, false
+	end
 	local id = N.bound(T.fluidbox(t)).get_fluid_segment_id(rec.box)
 	if id then
 		local key = seg_keys[id]
@@ -136,6 +154,11 @@ end
 --- caller knows that already from live_key)
 local function contents_of(rec, seg)
 	local t = rec.target
+	if rec.wagon then                                -- (issue #417: a fluid wagon's one fluid storage)
+		local f = t.get_fluid(1)
+		if f and f.amount > EPS then return { [f.name] = f.amount }, f.temperature, false end
+		return {}, nil, false
+	end
 	local fb = T.fluidbox(t)
 	local held = fb[rec.box]
 	local temp = held and held.temperature or nil
@@ -166,7 +189,7 @@ local function accepts(rec, key, name)
 	for other, amount in pairs(contents) do
 		if other ~= name and amount > EPS then return false end
 	end
-	local f = rec.target.fluidbox.get_filter(rec.box)
+	local f = not rec.wagon and rec.target.fluidbox.get_filter(rec.box) or nil   -- (issue #417: a wagon has no filter)
 	if f and f.name and f.name ~= name then return false end
 	local t = N.fluid_temperature(key)
 	if f and ((f.minimum_temperature and t < f.minimum_temperature - EPS) or (f.maximum_temperature and t > f.maximum_temperature + EPS)) then
@@ -196,7 +219,8 @@ M.handlers = {
 		if not (name and owns(rec)) then return 0 end
 		local ok, have = accepts(rec, key, name)
 		if not ok then return 0 end
-		return math.max(0, rec.target.fluidbox.get_capacity(rec.box) - have)
+		local cap = rec.wagon and rec.target.prototype.fluid_capacity or rec.target.fluidbox.get_capacity(rec.box)   -- (#417)
+		return math.max(0, cap - have)
 	end,
 	--- put up to `amount` in (at the key's temperature); returns the amount inserted
 	insert = function(rec, key, amount)
@@ -205,7 +229,7 @@ M.handlers = {
 		if not (name and owns(rec) and accepts(rec, key, name)) then return 0 end
 		local t = rec.target
 		local temp = N.fluid_temperature(key)
-		if t.fluidbox.get_fluid_segment_id(rec.box) then
+		if rec.wagon or t.fluidbox.get_fluid_segment_id(rec.box) then         -- (issue #417: a wagon's own insert)
 			return t.insert_fluid{ name = name, amount = amount, temperature = temp }
 		end
 		local fb = t.fluidbox
@@ -231,7 +255,7 @@ M.handlers = {
 		if not (name and owns(rec)) then return 0 end
 		--- (the engine asks `count` first, which is 0 while the segment is at another temperature: no second read here)
 		local t = rec.target
-		if t.fluidbox.get_fluid_segment_id(rec.box) then
+		if rec.wagon or t.fluidbox.get_fluid_segment_id(rec.box) then         -- (issue #417: a wagon's own remove)
 			return t.remove_fluid{ name = name, amount = amount }
 		end
 		local fb = t.fluidbox
@@ -242,6 +266,8 @@ M.handlers = {
 		fb[rec.box] = left > EPS and { name = name, amount = left, temperature = held.temperature } or nil
 		return n
 	end,
+	--- issue #479: can the bus ever hold `key`? (fluids only; the mode and the filter are the engine's, N.never_stores)
+	takes = function(rec, key) return fluid_of(key) ~= nil end,
 	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? Only while the bus owns the
 	--- segment and the segment could take the fluid at all (not while it holds another fluid or is at another
 	--- temperature: then the network puts nothing in, and destroys nothing either)
@@ -285,6 +311,11 @@ end
 --- the storage bus resolves its target: can `o` be its fluid storage? (then rec.target, target_unit and box are set)
 function M.take(rec, o)
 	if not (o.unit_number and o.type ~= "entity-ghost") then return false end
+	if o.type == "fluid-wagon" then                  -- issue #417: a fluid wagon (no fluid box: its own storage, box 1)
+		rec.target, rec.target_unit, rec.box, rec.wagon = o, o.unit_number, 1, true
+		return true
+	end
+	rec.wagon = nil
 	local ok, box = pcall(pick_box, o, rec.entity.position)
 	if not (ok and box) then return false end
 	rec.target, rec.target_unit, rec.box = o, o.unit_number, box
@@ -295,13 +326,19 @@ end
 function M.drop(rec)
 	local s = storage.fork_me_fsbus
 	if s then release(s, rec) end
-	rec.seg, rec.box, rec.temp, rec.fluid = nil, nil, nil, nil
+	rec.seg, rec.box, rec.temp, rec.fluid, rec.wagon = nil, nil, nil, nil, nil
 end
 
 function M.list(rec)
 	local s = state()
-	for _, u in ipairs(s.list) do if u == rec.unit then return end end
+	if not s.lpos then                                   -- (issue #420: the places in the list, not a walk over it per bus)
+		s.lpos = {}
+		for i, u in ipairs(s.list) do s.lpos[u] = i end
+	end
+	local i = s.lpos[rec.unit]
+	if i and s.list[i] == rec.unit then return end
 	s.list[#s.list + 1] = rec.unit
+	s.lpos[rec.unit] = #s.list
 	rec.siv = nil
 	Sched.at(queue(s), rec, rec.unit, game.tick + 1)
 end
@@ -317,7 +354,8 @@ end
 function M.unlist(rec)
 	local s = storage.fork_me_fsbus
 	if not s then return end
-	for i = #s.list, 1, -1 do if s.list[i] == rec.unit then table.remove(s.list, i) end end
+	s.lpos = s.lpos or {}                                -- (issue #420: by its place, not a walk over the list)
+	Sched.list_remove(s.list, s.lpos, rec.unit)
 	s.urgent[rec.unit] = nil
 	Sched.forget(queue(s), rec)
 end
@@ -373,7 +411,8 @@ function M.visit(rec, cascade)
 	local e = rec.entity
 	if not e.valid then return false end
 	local t = rec.target
-	if not (t and t.valid and rec.dir == e.direction and rec.box) then
+	--- (issue #417: a fluid wagon that left: the tile in front is looked at again)
+	if not (t and t.valid and rec.dir == e.direction and rec.box) or (rec.wagon and not wagon_here(rec)) then
 		if M.resolve_visit and rec.ext ~= OLD_KIND then return M.resolve_visit(rec, cascade) end
 		local changed = N.ext_sync(rec.unit, {})
 		rec.status = "no-target"
@@ -418,7 +457,8 @@ end
 local function visit_due(rec, unit)
 	local s = storage.fork_me_fsbus
 	if not rec.entity.valid then
-		for i = #s.list, 1, -1 do if s.list[i] == unit then table.remove(s.list, i) end end
+		s.lpos = s.lpos or {}                            -- (issue #420)
+		Sched.list_remove(s.list, s.lpos, unit)
 		Sched.forget(queue(s), rec)
 		N.ext_detach(unit)
 		return
@@ -460,7 +500,8 @@ function M.on_removed(entity)
 	if not (s and entity and entity.valid and entity.unit_number) then return end
 	local unit = entity.unit_number
 	local fb = entity.fluidbox
-	if not (fb and #fb > 0) then return end
+	local wagon = entity.type == "fluid-wagon"                    -- (issue #417: a wagon has no fluid box)
+	if not (wagon or (fb and #fb > 0)) then return end
 	local lost = {}
 	for _, bus in ipairs(s.list) do
 		local r = N.ext_get(bus)
@@ -476,7 +517,7 @@ function M.on_removed(entity)
 			M.lost(r)
 		end
 	end
-	for i = 1, #fb do
+	for i = 1, wagon and 0 or #fb do
 		local id = fb.get_fluid_segment_id(i)
 		local owner = id and s.claims["s" .. id]
 		if owner then s.urgent[owner] = true end
@@ -486,7 +527,7 @@ end
 --- after the graph rebuild (the storage bus module lists its fluid side buses again, in unit order)
 function M.reset()
 	local s = state()
-	s.list, s.cursor, s.claims, s.urgent, s.q = {}, 1, {}, {}, Sched.new("fsbus")
+	s.list, s.cursor, s.claims, s.urgent, s.q, s.lpos = {}, 1, {}, {}, Sched.new("fsbus"), nil
 end
 
 return M

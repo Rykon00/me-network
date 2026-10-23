@@ -38,7 +38,7 @@ ME.add_item{
 	name = "me-pattern-provider",
 	icon = ME.hd_icons .. "me-pattern-provider.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "e",
 	stack_size = 50,
 	place_result = "me-pattern-provider",
@@ -52,11 +52,26 @@ ME.add_item{
 	name = "me-pattern-terminal",
 	icon = ME.hd_icons .. "me-pattern-terminal.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "e0",
 	stack_size = 50,
 	place_result = "me-pattern-terminal",
 	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "assembling-machine-1", 1, "advanced-circuit", 1, "processing-unit", 1 } },
+}
+
+--- issue #416: AE2-Unofficial's ME Pattern Terminal Ex (parts/reporting/PartPatternTerminalEx.java): processing patterns of 32
+--- inputs and 8 outputs or 8 and 32. Its recipe (network/parts/terminals.recipe): a pattern terminal, a calculation, an engineering
+--- and a logic processor (the stand-ins of issue #233)
+ME.add_item{
+	name = "me-pattern-terminal-ex",
+	icon = ME.hd_icons .. "me-pattern-terminal-ex.png",
+	icon_size = 64,
+	subgroup = "fork-me-autocrafting",
+	order = "e0b",
+	stack_size = 50,
+	place_result = "me-pattern-terminal-ex",
+	recipe = { energy_required = 2, ingredients = I{ "me-pattern-terminal", 1, "advanced-circuit", 1, "processing-unit", 1,
+		"electronic-circuit", 1 } },
 }
 
 --- issue #336: the ME Interface Terminal lists the providers and interfaces of its network. AE2-Unofficial's recipe: an
@@ -65,8 +80,8 @@ ME.add_item{
 	name = "me-interface-terminal",
 	icon = ME.hd_icons .. "me-interface-terminal.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
-	order = "e0a",
+	subgroup = "fork-me-terminals",
+	order = "b",
 	stack_size = 50,
 	place_result = "me-interface-terminal",
 	recipe = { energy_required = 2, ingredients = I{ "me-terminal", 1, "me-interface", 1, "processing-unit", 1 } },
@@ -77,7 +92,7 @@ ME.add_item{
 	name = "me-blank-pattern",
 	icon = ME.hd_icons .. "me-blank-pattern.png",     -- (issue #221)
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "e1",
 	stack_size = 64,
 	--- AE2 (issue #233): 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2
@@ -86,22 +101,23 @@ ME.add_item{
 }
 
 --- the encoded pattern: no recipe, made from a blank pattern in the ME Pattern Terminal (its tag fork_me_pattern holds it)
-data:extend({ {
+ME.add_item{
 	type = "item-with-tags",
 	name = "me-encoded-pattern",
 	icon = ME.hd_icons .. "me-encoded-pattern.png",   -- (issue #221)
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "e2",
 	stack_size = 1,
 	localised_description = { "item-description.me-encoded-pattern" },
-} })
+	recipe = false,
+}
 
 ME.add_item{
 	name = "me-molecular-assembler",
 	icon = ME.hd_icons .. "me-molecular-assembler.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-autocrafting",
 	order = "f",
 	stack_size = 10,
 	place_result = "me-molecular-assembler",
@@ -171,6 +187,16 @@ data:extend({ {
 	},
 	localised_description = { "entity-description.me-pattern-terminal", tostring(PATTERN_TERMINAL_POWER / 1000) },
 } })
+--- issue #416: the ME Pattern Terminal Ex, the same block (its kind is the pattern terminal's: power, screen, walkable) with a
+--- picture of its own (tools/gen_ae2_sprites.py --pattern-terminal: the screen's frame in amber)
+local pt_ex = table.deepcopy(data.raw["simple-entity-with-force"]["me-pattern-terminal"])
+pt_ex.name = "me-pattern-terminal-ex"
+pt_ex.icon = ME.hd_icons .. "me-pattern-terminal-ex.png"
+pt_ex.minable = { mining_time = 0.2, result = "me-pattern-terminal-ex" }
+pt_ex.placeable_by = { item = "me-pattern-terminal-ex", count = 1 }
+for i, p in ipairs(pt_ex.pictures) do p.filename = ME.hd_entity_path .. "me-pattern-terminal-ex.png" end
+pt_ex.localised_description = { "entity-description.me-pattern-terminal-ex", tostring(PATTERN_TERMINAL_POWER / 1000) }
+data:extend({ pt_ex })
 
 --------------------------------------------------------------------------------
 --- INTERFACE TERMINAL (issue #336): a 1x1 block like the pattern terminal (power through the controller, walkable, the dark and
@@ -249,15 +275,39 @@ local BLOCKS = {
 	{ name = "me-16k-crafting-storage", bytes = 16384, power = 16000, order = "h3", component = "me-16k-storage-component", tech = "me-co-processing" },
 	{ name = "me-64k-crafting-storage", bytes = 65536, power = 32000, order = "h4", component = "me-64k-storage-component", tech = "me-co-processing" },
 	{ name = "me-256k-crafting-storage", bytes = 262144, power = 64000, order = "h5", component = "me-256k-storage-component", tech = "me-quantum-crafting" },
+	--- issue #415: AE2-Unofficial's crafting storage above 256k (tile/crafting/TileCraftingStorageTile.java: the advanced block
+	--- holds 256 times the bytes of the basic one; the Singularity block Long.MAX_VALUE, here 2^53, the counts a Lua number
+	--- holds exactly) and its recipes (network/crafting/cpu.recipe: a crafting unit and the component; the Singularity block a
+	--- crafting unit and 8 Singularity storage cells)
+	{ name = "me-1024k-crafting-storage", bytes = 1048576, power = 128000, order = "h5b", component = "me-1024k-storage-component",
+	  tech = "me-crafting-storage-1024k" },
+	{ name = "me-4096k-crafting-storage", bytes = 4194304, power = 256000, order = "h5c", component = "me-4096k-storage-component",
+	  tech = "me-crafting-storage-4096k" },
+	{ name = "me-16384k-crafting-storage", bytes = 16777216, power = 512000, order = "h5d", component = "me-16384k-storage-component",
+	  tech = "me-crafting-storage-16384k" },
+	{ name = "me-singularity-crafting-storage", bytes = 2 ^ 53, power = 1000000, order = "h5e",
+	  ingredients = I{ "me-crafting-unit", 1, "me-singularity-storage-cell", 8 }, tech = "me-crafting-storage-singularity" },
 	{ name = "me-crafting-co-processing-unit", bytes = 0, coprocessors = 1, power = 32000, order = "h6",
 	  ingredients = I{ "me-crafting-unit", 1, "processing-unit", 1 }, tech = "me-co-processing" },
+	--- issue #415: AE2-Unofficial's crafting accelerators (TileCraftingTile.acceleratorValue: 4^(n-1), the co-processing unit is its
+	--- 1x; network/crafting/cpu.recipe: each from four of the one below), co-processors of 4 to 4096; the power doubles per tier
+	{ name = "me-crafting-accelerator-4x", bytes = 0, coprocessors = 4, power = 64000, order = "h6a",
+	  ingredients = I{ "me-crafting-co-processing-unit", 4 }, tech = "me-crafting-accelerators" },
+	{ name = "me-crafting-accelerator-16x", bytes = 0, coprocessors = 16, power = 128000, order = "h6b",
+	  ingredients = I{ "me-crafting-accelerator-4x", 4 }, tech = "me-crafting-accelerators" },
+	{ name = "me-crafting-accelerator-64x", bytes = 0, coprocessors = 64, power = 256000, order = "h6c",
+	  ingredients = I{ "me-crafting-accelerator-16x", 4 }, tech = "me-crafting-accelerators" },
+	{ name = "me-crafting-accelerator-256x", bytes = 0, coprocessors = 256, power = 512000, order = "h6d",
+	  ingredients = I{ "me-crafting-accelerator-64x", 4 }, tech = "me-crafting-accelerators-2" },
+	{ name = "me-crafting-accelerator-1024x", bytes = 0, coprocessors = 1024, power = 1000000, order = "h6e",
+	  ingredients = I{ "me-crafting-accelerator-256x", 4 }, tech = "me-crafting-accelerators-2" },
+	{ name = "me-crafting-accelerator-4096x", bytes = 0, coprocessors = 4096, power = 2000000, order = "h6f",
+	  ingredients = I{ "me-crafting-accelerator-1024x", 4 }, tech = "me-crafting-accelerators-2" },
 	{ name = "me-crafting-monitor", bytes = 0, monitor = true, power = 4000, order = "h7",
 	  --- AE2: a crafting unit and a storage monitor (a level emitter: a redstone torch and a calculation processor; an illuminated panel)
 	  ingredients = I{ "me-crafting-unit", 1, "decider-combinator", 1, "advanced-circuit", 1, "small-lamp", 1 }, tech = "me-autocrafting" },
 }
 
-data:extend({ { type = "item-subgroup", name = "fork-me-crafting-cpu", group = data.raw["item-subgroup"]["fork-me-network"].group,
-	order = "b-me-c" } })
 
 --- the 48 pictures of a crafting block's sheet (see the entity below; issue #220: 64 px, the 3D style)
 local function crafting_pictures(name)
@@ -272,13 +322,14 @@ end
 local block_data, block_tech = {}, {}
 for _, b in ipairs(BLOCKS) do
 	local ingredients = b.ingredients or I{ "me-crafting-unit", 1, b.component, 1 }
-	local description = b.bytes > 0 and { "entity-description.fork-me-crafting-storage", tostring(b.bytes) }
+	local description = b.bytes > 0 and { "entity-description.fork-me-crafting-storage", string.format("%.0f", b.bytes) }
+		or (b.coprocessors or 0) > 1 and { "entity-description.fork-me-crafting-accelerator", tostring(b.coprocessors) }   -- (#415)
 		or { "entity-description." .. b.name }
 	ME.add_item{
 		name = b.name,
 		icon = ME.hd_icons .. b.name .. ".png",
 		icon_size = 64,
-		subgroup = "fork-me-crafting-cpu",
+		subgroup = b.bytes > 0 and "fork-me-crafting-storage" or "fork-me-crafting-cpu",   -- (issue #474: two rows)
 		order = b.order,
 		stack_size = 50,
 		place_result = b.name,
@@ -330,7 +381,7 @@ ME.add_item{
 	name = "me-level-maintainer",
 	icon = ME.hd_icons .. "me-level-maintainer.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-automation",
 	order = "g4",
 	stack_size = 50,
 	place_result = "me-level-maintainer",
@@ -385,7 +436,7 @@ ME.add_item{
 	name = "me-circuit-interface",
 	icon = ME.hd_icons .. "me-circuit-interface.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-automation",
 	order = "g5",
 	stack_size = 50,
 	place_result = "me-circuit-interface",
@@ -436,7 +487,7 @@ for i, def in ipairs({
 	{ "me-inverted-toggle-bus", I{ "me-toggle-bus", 1 } },
 }) do
 	local name = def[1]
-	ME.add_item{ name = name, icon = ME.hd_icons .. name .. ".png", icon_size = 64, subgroup = "fork-me-network",
+	ME.add_item{ name = name, icon = ME.hd_icons .. name .. ".png", icon_size = 64, subgroup = "fork-me-buses",
 		order = "g6" .. i, stack_size = 50, place_result = name, recipe = { energy_required = 1, ingredients = def[2] } }
 	local bus = table.deepcopy(data.raw.lamp["small-lamp"])
 	bus.name = name
@@ -473,7 +524,7 @@ ME.add_item{
 	name = "me-level-emitter",
 	icon = ME.hd_icons .. "me-level-emitter.png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-automation",
 	order = "g7",
 	stack_size = 50,
 	place_result = "me-level-emitter",
@@ -488,6 +539,30 @@ emitter.localised_description = { "entity-description.me-level-emitter" }
 data:extend({ emitter })
 data.raw["mod-data"]["fork-me-network"].data.names.level_emitter = "me-level-emitter"
 
+--- issue #443: AE2-Unofficial's Advanced Level Emitter (parts/automation/PartAdvancedLevelEmitter.java): the level emitter with
+--- six rows joined by OR or AND (scripts/fork-me-emitter.lua). Its recipe in GT New Horizons (NewHorizonsCoreMod,
+--- ScriptAppliedEnergistics2: the assembler, an EV circuit and a level emitter; AE2-Unofficial has none of its own): a level
+--- emitter and a processing unit (the EV circuit's stand-in)
+ME.add_item{
+	name = "me-advanced-level-emitter",
+	icon = ME.hd_icons .. "me-advanced-level-emitter.png",
+	icon_size = 64,
+	subgroup = "fork-me-automation",
+	order = "g8",
+	stack_size = 50,
+	place_result = "me-advanced-level-emitter",
+	recipe = { energy_required = 2, ingredients = I{ "me-level-emitter", 1, "processing-unit", 1 } },
+}
+local adv_emitter = table.deepcopy(emitter)
+adv_emitter.name = "me-advanced-level-emitter"
+adv_emitter.icon = ME.hd_icons .. "me-advanced-level-emitter.png"
+adv_emitter.minable = { mining_time = 0.2, result = "me-advanced-level-emitter" }
+adv_emitter.sprites = { filename = ME.hd_entity_path .. "me-advanced-level-emitter.png", priority = "high", width = 64, height = 64,
+	scale = 0.5 }
+adv_emitter.localised_description = { "entity-description.me-advanced-level-emitter" }
+data:extend({ adv_emitter })
+data.raw["mod-data"]["fork-me-network"].data.names.advanced_level_emitter = "me-advanced-level-emitter"
+
 
 
 --------------------------------------------------------------------------------
@@ -499,7 +574,9 @@ data:extend({ {
 	name = "fork-me-autocraft",
 	--- issue #6: the crafting blocks; a fluid ingredient costs 1 byte per this many units (items 1 byte each); at most
 	--- this many co-processors of a CPU count
-	data = { blocks = block_data, fluid_units_per_byte = 10, max_coprocessors = 16 },
+	--- issue #415: the co-processors a CPU counts are no longer capped at 16 (AE2-Unofficial's accelerators reach 4096); the
+	--- machine hand-overs of a job step are capped by the map setting "me-network-crafting-ops-per-step" instead
+	data = { blocks = block_data, fluid_units_per_byte = 10, max_coprocessors = 1048576 },
 } })
 
 
@@ -516,16 +593,31 @@ local function with_blocks(tech, recipes)
 end
 
 ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2", "circuit-network" }, unit = ME.unit(3, 500),
-	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-interface-terminal", "me-blank-pattern",
+	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-pattern-terminal-ex", "me-interface-terminal", "me-blank-pattern",
 		"me-molecular-assembler" }) }
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs
 ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "circuit-network" }, unit = ME.unit(3, 500),
-	recipes = { "me-level-maintainer", "me-circuit-interface", "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter" } }   -- (#355)
+	recipes = { "me-level-maintainer", "me-circuit-interface", "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter",   -- (#355)
+		"me-advanced-level-emitter" } }                                                                                         -- (#443)
 ME.add_technology{ name = "me-co-processing", prerequisites = { "me-autocrafting", "me-storage-256k" },
 	unit = ME.unit(4, 800), recipes = with_blocks("me-co-processing", {}) }
 ME.add_technology{ name = "me-quantum-crafting", prerequisites = { "me-co-processing", "utility-science-pack" },
 	unit = ME.unit(5, 1000), recipes = with_blocks("me-quantum-crafting", {}) }
+
+--- issue #415: the crafting storage above 256k after the storage cells of its tier, the accelerators after co-processing
+ME.add_technology{ name = "me-crafting-storage-1024k", prerequisites = { "me-quantum-crafting", "me-storage-1024k" },
+	unit = ME.unit(5, 1200), recipes = with_blocks("me-crafting-storage-1024k", {}) }
+ME.add_technology{ name = "me-crafting-storage-4096k", prerequisites = { "me-crafting-storage-1024k", "me-storage-4096k" },
+	unit = ME.unit(5, 1600), recipes = with_blocks("me-crafting-storage-4096k", {}) }
+ME.add_technology{ name = "me-crafting-storage-16384k", prerequisites = { "me-crafting-storage-4096k", "me-storage-16384k" },
+	unit = ME.unit(5, 2000), recipes = with_blocks("me-crafting-storage-16384k", {}) }
+ME.add_technology{ name = "me-crafting-storage-singularity", prerequisites = { "me-crafting-storage-16384k", "me-storage-singularity" },
+	unit = ME.unit(5, 3000), recipes = with_blocks("me-crafting-storage-singularity", {}) }
+ME.add_technology{ name = "me-crafting-accelerators", prerequisites = { "me-co-processing", "utility-science-pack" },
+	unit = ME.unit(5, 1000), recipes = with_blocks("me-crafting-accelerators", {}) }
+ME.add_technology{ name = "me-crafting-accelerators-2", prerequisites = { "me-crafting-accelerators" },
+	unit = ME.unit(5, 2500), recipes = with_blocks("me-crafting-accelerators-2", {}) }
 
 --- issue #6: data-final-fixes.lua puts a crafting block recipe that no technology unlocks (another mod replaced the
 --- technology's recipe list) back on its technology
@@ -537,6 +629,7 @@ end
 --- issue #130: the ME Pattern Terminal is unlocked the same way (a mod that replaced the recipe list of `me-autocrafting` has not
 --- heard of it: data-final-fixes.lua puts its recipe back on the technology, unless a technology of that mod unlocks it)
 ME.crafting_block_tech["me-pattern-terminal"] = "me-autocrafting"
+ME.crafting_block_tech["me-pattern-terminal-ex"] = "me-autocrafting"         -- (issue #416, the same way)
 ME.crafting_block_tech["me-interface-terminal"] = "me-autocrafting"            -- (issue #336, the same way)
 for _, name in ipairs({ "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter" }) do   -- (issue #355, the same way)
 	ME.crafting_block_tech[name] = "me-automation"

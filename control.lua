@@ -20,6 +20,7 @@ local fork_fluids = require("scripts.fork-me-fluids")
 local fork_circuit = require("scripts.fork-me-circuit")
 --- the ME Pattern Terminal: the encoding window and its two slots (issue #130)
 local fork_pt = require("scripts.fork-me-patternterm")
+local fork_vc = require("scripts.fork-me-viewcells")          -- (issue #440)
 --- the ME Toggle Bus and ME Inverted Toggle Bus (issue #355: their checks join and split networks)
 local fork_toggle = require("scripts.fork-me-toggle")
 --- the windows of the ME blocks (after the modules whose functions they call)
@@ -50,6 +51,8 @@ local pasteover = require("scripts.fork-me-pasteover")
 local fork_ioport = require("scripts.fork-me-ioport")
 --- issue #385: the ME Quantum Bridge (two networks joined at any distance and across surfaces)
 local fork_qbridge = require("scripts.fork-me-qbridge")
+--- issue #412: the circuit connector of the buses and the ME Interface
+local fork_conn = require("scripts.fork-me-connector")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -74,6 +77,7 @@ local function on_built(entity, tags, event)
 	fork_emitter.on_built(entity, tags)
 	fork_ioport.on_built(entity, tags)                        -- (after the graph registered it)
 	fork_qbridge.on_built(entity, tags)
+	fork_conn.on_built(entity)                                -- (issue #412: a block's connector; a connector's ghost revived)
 end
 
 --- built by players and robots, by other scripts and on space platforms
@@ -100,6 +104,7 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 	fork_emitter.on_built(event.destination, nil, event.source)
 	fork_ioport.on_built(event.destination, nil, event.source)   -- (a cloned port is empty: its cells are items)
 	fork_qbridge.on_built(event.destination, nil, event.source)
+	fork_conn.on_built(event.destination, event.source)
 end)
 
 --- the priority of an ME Pattern Provider (its patterns travel in blueprints, see fork-me-autocraft.lua) and the
@@ -118,6 +123,7 @@ script.on_event(defines.events.on_entity_settings_pasted, function(event)
 	fork_emitter.on_entity_settings_pasted(event)             -- (a toggle bus: the game pastes its lamp condition)
 	fork_ioport.on_entity_settings_pasted(event)
 	fork_qbridge.on_entity_settings_pasted(event)
+	fork_conn.on_entity_settings_pasted(event)                -- (issue #412: the connector's condition)
 end)
 
 script.on_event(defines.events.on_player_setup_blueprint, function(event)
@@ -150,7 +156,7 @@ local REMOVED_FILTER = {}
 --- (logistic chests, infinity chests and cargo wagons: the inventory of a storage bus leaves the network at once; pipes,
 --- underground pipes and pumps: a removed one may split the fluid segment of a storage bus on fluid)
 for _, t in pairs({ "simple-entity-with-force", "storage-tank", "lamp", "electric-energy-interface", "container",
-	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-wagon", "pipe", "pipe-to-ground",
+	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-wagon", "fluid-wagon", "pipe", "pipe-to-ground",
 	"pump" }) do
 	REMOVED_FILTER[#REMOVED_FILTER + 1] = { filter = "type", type = t }
 end
@@ -161,9 +167,11 @@ local function on_mined(event)
 	fork_ae2.on_removed(event.entity, event.buffer)
 	fork_bench.on_removed(event.entity, event.buffer)
 	fork_pt.on_removed(event.entity, event.buffer)          -- (issue #130: its two slots come along)
+	fork_vc.on_removed(event.entity, event.buffer)          -- (issue #440: a terminal's view cells)
 	fork_wl.on_removed(event.entity, event.buffer)          -- (an access point's boosters, a charger's terminal)
 	fork_ioport.on_removed(event.entity, event.buffer)      -- (issue #386: its cells and cards)
 	fork_qbridge.on_removed(event.entity)
+	fork_conn.on_removed(event.entity)
 	fork_net.on_removed(event.entity, event.buffer)
 end
 for _, name in pairs({ "on_player_mined_entity", "on_robot_mined_entity", "on_space_platform_mined_entity" }) do
@@ -175,9 +183,11 @@ local function on_destroyed(event)
 	fork_ae2.on_removed(event.entity, nil)
 	fork_bench.on_removed(event.entity, nil)
 	fork_pt.on_removed(event.entity, nil)                   -- (spilled where it stood)
+	fork_vc.on_removed(event.entity, nil)
 	fork_wl.on_removed(event.entity, nil)
 	fork_ioport.on_removed(event.entity, nil)
 	fork_qbridge.on_removed(event.entity)
+	fork_conn.on_removed(event.entity)
 	fork_net.on_removed(event.entity, nil)
 end
 script.on_event(defines.events.on_entity_died, on_destroyed, REMOVED_FILTER)
@@ -192,6 +202,7 @@ local function on_tick(tick)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ioport.on_tick(tick)
+	fork_conn.on_tick(tick)                                   -- (issue #412: the conditions of the circuit connectors)
 	fork_ae2.on_tick(tick)
 	fork_me.on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
@@ -272,5 +283,6 @@ script.on_configuration_changed(function(data)
 	fork_emitter.on_configuration_changed()
 	fork_ioport.on_configuration_changed()
 	fork_qbridge.on_configuration_changed()
+	fork_conn.on_configuration_changed()                      -- (issue #412: every bus and interface gets its connector)
 	names.on_configuration_changed()
 end)

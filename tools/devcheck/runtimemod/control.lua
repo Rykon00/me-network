@@ -382,7 +382,7 @@ function me_graph_test()
 			--- the graph rebuild (on_configuration_changed) keeps the underground pairs and their side rule
 			local u = st.underground
 			if u then
-				remote.call(NET, "rebuild")
+				remote.call(NET, "rebuild", true)                  -- (issue #420: from the map, not the kept graph)
 				expect(same(u.ud1, u.ud2) and remote.call(NET, "underground_partner", u.u1) == u.u2.unit_number,
 					"the underground pair is lost after the graph rebuild")
 				expect(not same(u.over, u.ud1) and not same(u.beside, u.ud1), "the graph rebuild joined cables over or beside the run")
@@ -905,6 +905,8 @@ cellquality394 = require("cellquality")({ me_place = me_place, power = power, me
 damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
 --- me-network issue #85: an import bus with only refused stacks (refused.lua)
 refused85 = require("refused")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #479: items with tags through storage buses, an import bus with a stack it cannot store (tagitem.lua)
+tagitem479 = require("tagitem")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #110: the Acceleration Card in the ME Molecular Assembler's module slots (accel.lua)
 accel110 = require("accel")({ me_place = me_place, me_report = me_report })
 --- me-network issue #110, part 2: the Acceleration Cards of the import and export bus (busaccel.lua)
@@ -986,6 +988,51 @@ qualitycraft352 = require("qualitycraft")({ me_place = me_place, cable_row = cab
 --- me-network issue #363: the Group Filter Card on the import and export bus (groupbus.lua)
 groupbus363 = require("groupbus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #413: the Capacity, Fuzzy and Inverter Card on the import and export bus (buscards.lua)
+buscards413 = require("buscards")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #411: the Crafting Card on the export bus and the interface (craftcard.lua)
+craftcard411 = require("craftcard")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #412: the circuit connector of the buses and the interface (circuitbus.lua)
+circuitbus412 = require("circuitbus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #414: the storage cells above 256k and the Singularity cell (bigcells.lua)
+bigcells414 = require("bigcells")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #415: the crafting storage above 256k and the accelerators (bigcpus.lua)
+bigcpus415 = require("bigcpus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #416: the ME Pattern Terminal Ex (ptermex.lua)
+ptermex416 = require("ptermex")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #417: a fluid wagon on the storage bus (fluidwagon.lua)
+fluidwagon417 = require("fluidwagon")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #418: job merging (mergejob.lua)
+mergejob418 = require("mergejob")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #420: the performance levers (perf420.lua)
+perf420 = require("perf420")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #468: the light of a cell with all its types used (celllight.lua)
+celllight468 = require("celllight")({ me_place = me_place, power = power, me_report = me_report,
+	me_connect = function(...) return me_connect(...) end })
+--- me-network issue #442: the Creative Energy Cell (creativeenergy.lua)
+creativeenergy442 = require("creativeenergy")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #441: the Creative ME Storage Cell (creativecell.lua)
+creativecell441 = require("creativecell")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #440: View Cells (viewcell.lua)
+viewcell440 = require("viewcell")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #443: the ME Advanced Level Emitter (advemitter.lua)
+advemitter443 = require("advemitter")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #429: the pattern provider's lock by its circuit connector (circuitlock.lua)
+circuitlock429 = require("circuitlock")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #196: the ME Interface Capacity Card (ifacecap.lua)
 ifacecap196 = require("ifacecap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1050,6 +1097,7 @@ local function tests_running()
 	accel110.running(check)
 	damaged84.running(check)
 	refused85.running(check)
+	tagitem479.running(check)
 	lab86.running(check)
 	bulk382.running(check)
 	copypaste383.running(check)
@@ -1085,6 +1133,21 @@ local function tests_running()
 	lock346.running(check)
 	qualitycraft352.running(check)
 	groupbus363.running(check)
+	buscards413.running(check)
+	craftcard411.running(check)
+	circuitbus412.running(check)
+	bigcells414.running(check)
+	bigcpus415.running(check)
+	ptermex416.running(check)
+	fluidwagon417.running(check)
+	mergejob418.running(check)
+	perf420.running(check)
+	circuitlock429.running(check)
+	advemitter443.running(check)
+	viewcell440.running(check)
+	creativecell441.running(check)
+	creativeenergy442.running(check)
+	celllight468.running(check)
 	maintrows351.running(check)
 	cpumode350.running(check)
 	monitors353.running(check)
@@ -1211,9 +1274,10 @@ local function autocraft_test()
 			"job 2 missing " .. serpent.line(missing) .. ", expected plates " .. want_plates .. " sticks " .. want_sticks)
 		expect(count("iron-plate") == plates_before and count("iron-stick") == sticks_before, "job 2 took items although it did not start")
 
-		--- job 3: one CPU only and it is busy: the start is refused (issue #6: a job needs a free CPU) and takes nothing
+		--- job 3: one CPU only and it is busy: the start is refused (issue #6: a job needs a free CPU) and takes nothing (issue
+		--- #418: a request of automation, which never joins the player's job 1 of the same item)
 		local plates3, sticks3 = count("iron-plate"), count("iron-stick")
-		local id3, why3 = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, per_run)
+		local id3, why3 = remote.call("gregtorio-me-autocraft", "start", terminal, AC_ITEM, per_run, terminal.unit_number)
 		expect(id3 == nil and why3 == "no-free-cpu", "job 3 must be refused while the CPU is busy (" .. tostring(id3) .. ", " .. tostring(why3) .. ")")
 		expect(count("iron-plate") == plates3 and count("iron-stick") == sticks3, "the refused job 3 took items")
 		if id3 then remote.call("gregtorio-me-autocraft", "cancel", id3) end
@@ -1995,6 +2059,7 @@ script.on_nth_tick(10, function()
 	accel110.tick()
 	damaged84.tick()
 	refused85.tick()
+	tagitem479.tick()
 	lab86.tick()
 	bulk382.tick()
 	copypaste383.tick()
@@ -2028,6 +2093,21 @@ script.on_nth_tick(10, function()
 	lock346.tick()
 	qualitycraft352.tick()
 	groupbus363.tick()
+	buscards413.tick()
+	craftcard411.tick()
+	circuitbus412.tick()
+	bigcells414.tick()
+	bigcpus415.tick()
+	ptermex416.tick()
+	fluidwagon417.tick()
+	mergejob418.tick()
+	perf420.tick()
+	circuitlock429.tick()
+	advemitter443.tick()
+	viewcell440.tick()
+	creativecell441.tick()
+	creativeenergy442.tick()
+	celllight468.tick()
 	maintrows351.tick()
 	cpumode350.tick()
 	monitors353.tick()
@@ -4177,6 +4257,7 @@ function settings_test()
 	expect(tc and serpent.line(tc.filters) == serpent.line(C_SET), "circuit interface tag " .. serpent.line(tc))
 	expect(tf and tf.config and #tf.config == 2 and tf.sides and #tf.sides == 2, "ME Interface tag " .. serpent.line(tf))
 	built["me-cable"] = nil                         -- the cables that connected the originals are in the blueprint too
+	built["me-circuit-connector"] = nil             -- (issue #412: the interface's circuit connector comes with it)
 	expect(table_size(built) == 3, "revived from the blueprint: " .. table_size(built) .. " of 3")
 	local cfails = {}
 	connect38(SC_Y, { built["me-level-maintainer"], built["me-circuit-interface"], built["me-network-interface"] }, cfails)
@@ -4866,6 +4947,7 @@ script.on_init(function()
 	for _, f in pairs(accel110.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(damaged84.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refused85.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(tagitem479.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end
@@ -4899,6 +4981,21 @@ script.on_init(function()
 	for _, f in pairs(lock346.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(qualitycraft352.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(groupbus363.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(buscards413.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(craftcard411.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(circuitbus412.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(bigcells414.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(bigcpus415.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(ptermex416.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(fluidwagon417.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(mergejob418.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(perf420.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(circuitlock429.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(advemitter443.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(viewcell440.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(creativecell441.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(creativeenergy442.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(celllight468.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpumode350.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(monitors353.setup(s)) do fails[#fails + 1] = f end

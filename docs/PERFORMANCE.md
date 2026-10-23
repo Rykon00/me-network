@@ -2219,7 +2219,8 @@ signals; the engine probe: 908 µs for 1000), and `network_signals` (the shared 
 (about 0.7 µs per signal). A probe of lighter filter forms (353 item and fluid signals, 50 writes each): with `quality` and
 `comparator` 0.250 ms, without `comparator` 0.237 ms (the same section read back), without `quality` 0.221 ms but a different
 section (no quality on the signal). So nothing exact makes the write cheaper; its total is bounded by the setting "circuit
-interface updates per second" by design. Not built.
+interface updates per second" by design. Not built. (Built in issue #420 as "write only what changed": see "The performance
+levers of issue #420" below.)
 
 #### Lever 10, the interfaces' side tanks
 
@@ -2238,7 +2239,8 @@ the tank holds fluid (the scene's fluid I/O unchanged: 1 200 401 fluid per secon
 About 5000 unconnected tanks cost the engine 0.06 to 0.07 ms per tick: some 13 ns per tank and tick. The maintainer's base (189
 interfaces and buses) would save under 0.01 ms. Tanks only where needed would need a tank at the moment a pipe, pump or tank is
 built at a side (the build events), and a migration that removes the empty unconnected tanks of saves; a pipe that another mod
-builds by script without an event would no longer connect. Not built (the maintainer's decision, 2026-10-05).
+builds by script without an event would no longer connect. Not built (the maintainer's decision, 2026-10-05). (Built in issue
+#420 with a fallback for what comes without an event: "The performance levers of issue #420" below.)
 
 #### The long window at 20 000 on this machine
 
@@ -2785,6 +2787,8 @@ measurement cannot tell from the noise is no reason for a cache that has to be k
 * **The remaining engine method calls** (`start_lease` inserts, `probe_work`, `switch_recipe`, an export bus into a lab):
   each under 1 µs per tick at 20 000.
 * **The big edits** (graph rebuild 3.1 s, burst remove of 1000 blocks 174 ms at 20 000): single events, not a cost per tick.
+
+(The folded nodes and the big edits were built in issue #420: "The performance levers of issue #420" below.)
 
 
 ## The pane's slot signature (issue #75)
@@ -3346,3 +3350,393 @@ and, for a pair, the drain written once when it changes). Nothing per tick, noth
 | throughput per kind of endpoint | identical | identical |
 
 `regressions beyond the noise: 0`.
+
+## Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)
+
+The filter sets are made when the filters or the cards change, never in a visit: a Capacity Card only makes the set longer
+(at most 27 keys, a table lookup per item as before), a Fuzzy Card puts the item names into the import bus's set (one lookup
+per item, no quality key) and gives the export bus the rotating key list of the Group Filter Card (made from `net.items` when
+the network got a key it did not have, `net.kgen`). An import visit asks one more function per item of its source
+(`import_hit`: the filter or text match, turned round by an Inverter Card). Without the cards a bus has the sets of 0.5.4.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the scenes have no such card; the machine was busy
+during the 100 rounds of both versions, their spread is large):
+
+| | v0.5.4 | with the cards |
+|---|---|---|
+| 100: script average / p99 ms | 0.4424 / 5.775 | 0.4580 / 5.821 |
+| 1000: script average / p99 ms | 0.4157 / 2.282 | 0.3916 / 2.129 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.32 | 26.68 / 24.34 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## The Crafting Card (issue #411)
+
+A block without the card pays one field read (`rec.ccard`) on the paths where a key is missing (an export filter the network
+lacks, an interface row it cannot fill), plus one comparison per visit (`rec.cnext`). With the card such a visit asks the
+block's last job (a table read, `autocraft.job_running`), then the active jobs of the map for the key and the free CPUs, and
+starts at most one job per tick among all buses and interfaces (a plan); a failed start waits 300 ticks (1200 without a
+pattern) before that key is tried again.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 as well; the scenes have
+no Crafting Card; the machine was busier than for #413, both versions alike):
+
+| | v0.5.4 | with the card |
+|---|---|---|
+| 100: script average / p99 ms | 0.3553 / 4.755 | 0.3631 / 4.808 |
+| 1000: script average / p99 ms | 0.6349 / 4.929 | 0.6482 / 5.096 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.34 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## The circuit connector of the buses and the ME Interface (issue #412)
+
+A bus or interface visit reads one field more (`rec.coff`, which the connector module writes into the block's record when
+its condition switches it); an export bus in pulse mode one more. A block without a condition, pulse mode or rows from the
+circuit is in no list and costs nothing else. The blocks that have them are checked in a list of their own, at most 16 per
+tick, each at most every 10 ticks: a control behavior read and the wire check (and, for rows from the circuit, the signals of
+both wires). A block gets its connector when a player first points at it (`on_selected_entity_changed`) or opens its window;
+removing a block destroys its connector.
+
+Tried, not kept: making the connector at once in the build handler cost the build burst of 100 blocks 8 to 12 % (141 -> 152,
+138 -> 155 ms); making it in on_tick, 4 per tick, for every built block cost the 5000 scene 5 % of its script time (0.918 ->
+0.978 ms: its blocks are built with events, and their 5000 connectors were still being made in the measured window), and
+made at a block's first visit, the first ticks after a load (1.55 -> 1.89 ms at 100). A visit that asked the module
+(`Conn.is_off(e.unit_number)`, a function call and an engine read per visit) cost nothing measurable at 5000 against the
+field read, which is kept anyway. The one-run measurements at 5000 per stacked branch (v0.5.4 0.918, #413 0.921, #411 0.934,
+#412 0.988 ms) found it; with the connectors made on demand #412 is 0.919.
+
+`bench --sizes 100,1000,5000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 and #411 as well; the
+scenes have no condition):
+
+| | v0.5.4 | with the connector |
+|---|---|---|
+| 100: script average / p99 ms | 0.2089 / 1.888 | 0.2140 / 1.895 |
+| 1000: script average / p99 ms | 0.3715 / 2.025 | 0.3747 / 2.059 |
+| 5000: script average / p99 ms | 0.9899 / 2.947 | 0.9840 / 2.844 |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 26.68 / 24.34 / 33.05 | 26.68 / 24.32 / 33.07 |
+| burst build / remove ms (100) | 152.2 / 75.40 | 155.4 / 77.71 |
+| burst build / remove ms (1000) | 415.8 / 85.84 | 400.6 / 85.87 |
+| load first tick ms (100 / 1000 / 5000) | 1.642 / 2.975 / 5.406 | 1.749 / 3.000 / 5.426 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## Storage cells above 256k and the Singularity cell (issue #414)
+
+New items and recipes only: a cell's spec is read as for every other cell (the mod-data `cells`), the storage engine's counts
+are the same numbers. Nothing per tick.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413, #411 and #412 as well; the
+scenes have no such cell):
+
+| | v0.5.4 | with the cells |
+|---|---|---|
+| 100: script average / p99 ms | 0.1890 / 1.781 | 0.1902 / 1.753 |
+| 1000: script average / p99 ms | 0.3346 / 1.901 | 0.3343 / 1.873 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.68 / 24.31 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## Crafting storage above 256k and the crafting accelerators (issue #415)
+
+New crafting blocks with bytes or co-processors (a group's sums, as for the others). A job step now hands over at most
+6 x (1 + co-processors), capped by the new map setting "Crafting job operations per step" (1024) instead of 16 co-processors:
+the loop of a step spends an operation only on a hand-over (it stops at the first step without a free machine), so a job's
+step costs what it hands over, on any CPU; the cap bounds a step of a job with more than 1024 free machines. The scenes'
+crafting jobs run on CPUs without co-processors: unchanged.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413, #411, #412 and #414 as
+well):
+
+| | v0.5.4 | with the blocks |
+|---|---|---|
+| 100: script average / p99 ms | 0.1921 / 1.782 | 0.1922 / 1.749 |
+| 1000: script average / p99 ms | 0.3352 / 1.882 | 0.3333 / 1.878 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.67 / 24.31 |
+| provider crafts per second (100 / 1000) | 1.233 / 17.32 | 1.233 / 17.32 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## The ME Pattern Terminal Ex (issue #416)
+
+A new block of the pattern terminal's kind and a bigger cap on a processing pattern's rows (32 of each). A job's step goes
+through a pattern's rows as before; a pattern with more rows costs its rows. Nothing per tick.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413, #411, #412, #414 and #415
+as well; the scenes have no such pattern):
+
+| | v0.5.4 | with the Ex |
+|---|---|---|
+| 100: script average / p99 ms | 0.1899 / 1.766 | 0.1899 / 1.770 |
+| 1000: script average / p99 ms | 0.3379 / 1.883 | 0.3369 / 1.881 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.33 | 26.67 / 24.31 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## Fluid wagons on the storage bus (issue #417)
+
+Only a bus on a fluid wagon pays for it: every use of its storage (the visit, the network's count, insert and extract, the
+room) checks with one `find_entities_filtered` on the tile in front that the wagon still stands there (as the item side does
+for a cargo wagon), and reads the wagon with `get_fluid`. A bus on a tank or a chest takes one field read more (`rec.wagon`).
+The scenes have no wagons (the bench builds no track), so the issue's "50 such buses" is not measured; a bus on a wagon costs
+about what a bus on a cargo wagon costs.
+
+`bench --sizes 100,1000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy has #413 to #416 as well):
+
+| | v0.5.4 | with the wagons |
+|---|---|---|
+| 100: script average / p99 ms | 0.1918 / 1.754 | 0.1926 / 1.775 |
+| 1000: script average / p99 ms | 0.3371 / 1.890 | 0.3363 / 1.912 |
+| Lua alloc KB per tick (100 / 1000) | 26.68 / 24.34 | 26.67 / 24.31 |
+| fluid per second (100 / 1000) | 32 650 / 241 000 | 32 650 / 241 000 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## Crafting job merging (issue #418)
+
+A player's request asks each CPU of its network whether its job would take it (`merge_into`: a few field reads per CPU) before
+it looks for a free CPU; the terminal's preview does the same for its CPU list. A merge takes the new plan's ingredients and adds
+its steps to the job's. Nothing per tick; requests of automation are unchanged.
+
+`bench --sizes 100,1000,5000 --runs 3 --check v0.5.4` (three rounds in turns; the working copy is the whole stack #413 to #418,
+with #412's connectors made on demand):
+
+| | v0.5.4 | the stack |
+|---|---|---|
+| 100: script average / p99 ms | 0.1914 / 1.769 | 0.1917 / 1.768 |
+| 1000: script average / p99 ms | 0.3362 / 1.886 | 0.3384 / 1.895 |
+| 5000: script average / p99 ms | 0.9103 / 2.688 | 0.9146 / 2.700 |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 26.68 / 24.34 / 33.05 | 26.68 / 24.32 / 33.07 |
+| load first tick ms (100 / 1000 / 5000) | 1.614 / 2.936 / 5.208 | 1.634 / 2.912 / 5.341 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`. (A first run of this branch flagged the first tick after the load at 100, 1.553 -> 1.813 ms,
+noise 0.208; the run again was clean. The planner scene is not measured: `--planner-only` with `--check` measured the plain
+scenes, among them 5000, which found the connector's cost of #412.)
+
+## The performance levers of issue #420
+
+The open points of round seven (issue #122, "Not built, and why" above): lever 10 (side tanks), lever 7 (circuit interface
+writes), the folded nodes and the big edits, built as the maintainer chose ("built with a fallback", "write only what
+changed", "spread the graph rebuild, bundle mass removal, folded nodes"). Measuring them found one more: the burst build.
+
+* **The burst build** (not one of the levers; found while measuring): each block that joins a network marked the
+  controller's power dirty, and the first look at the network (`usable`) walked every member to count it again. In the
+  bench's burst every storage bus looks at its network when it is built (its first visit): 158 walks of 80 000 members at
+  20 000, 7.3 s for 1000 blocks. Now a member that joins or leaves one network without a split adds or takes its own draw
+  (`M.power_add`, the same rows as `update_power`; a kind whose draw depends on its state, a crafting block, a split or a
+  controller still make the walk). The runtime test compares the kept draw with the walk after builds, removals and a
+  rebuild.
+* **Lever 10:** a side has its tank only where it is needed (connected, tied to a fluid row, holding fluid). A fluid entity
+  built, rotated, pasted onto or set up in its window beside an interface gets the side a tank, kept when it connects; one
+  interface every 8 ticks looks at its sides again (`check_tanks`, its place `s.tcur` in storage): the fallback for a pipe a
+  script built without an event or a machine whose recipe gave it a fluid box. That look is one `find_entities_filtered` of
+  the tile per side without a tank (2 µs), and a tank made and destroyed again where a fluid entity stands that does not
+  connect. Older saves lose their empty unconnected tanks in `on_configuration_changed` (`devcheck migrate --from-ref v0.5.4
+  --bump`: the fluid before and after the update the same).
+* **Lever 7:** a network's new signal list equal to the last one keeps the last one's version (`n`): no interface writes. A
+  list that differs in at most `DIFF_MAX` = 3 amounts (the same signals in the same order) names those slots, and an
+  interface that wrote the list before writes them with `set_slot`. Measured in the runtime world (20 writes each): a
+  `set_slot` costs about 0.16 µs per signal of the section (10 µs in a section of 50 signals, 70 µs in one of 425), the whole
+  section 0.6 to 1.2 µs per signal (29 µs and 315 to 510 µs), so one by one pays up to about four slots whatever the size; a
+  first version allowed an eighth of the list (112 slots of 900: some 15 ms) and cost ticks over 5 ms. A filtered interface
+  writes nothing while its signals are the ones it wrote (`rec.vsig`, a short string: at most 20 filters).
+* **Folded nodes:** a node is its own tile box (fields 1 to 4), without the box table and the position table nobody read.
+* **The graph rebuild of `on_configuration_changed`:** it keeps the graph the events kept when it was made with the same rules
+  and member prototypes (`s.graph_sig`), patching up to 64 (or a sixteenth of the members) that changed without an event
+  (`vanish` for those gone, `M.on_built` for those that came); otherwise, and for a save of an older version, the rebuild
+  from the map as before. Measured where it went at 20 000 (80 104 members, the phases of one plain run): the map scan 358 ms,
+  the nodes 482 ms, the grid and neighbours 1123 ms, the components 339 ms, the networks computed again 97 ms, the cables'
+  pictures 116 ms, the screens 50 ms. The kept graph does the scan by count (`count_entities_filtered`), the networks and
+  the screens.
+* **Mass removal:** at 20 000 the burst removal spent 79 of 170 ms taking the leaving storage buses' cells out of the
+  network's cell list, one walk over all cells each; the list now keeps their entries until its next use (`M.cell_ids`: one
+  pass for all of them, the order the same as before). The storage bus lists (item and fluid side) remove a bus by its
+  place (`Sched.list_remove`, as the I/O list) instead of a walk; the fluid side's "is it listed" by its place too.
+
+`bench --check origin/job-merge-418 --sizes 5000,20000 --runs 3` (three rounds in turns; 20 000 with 10 800 ticks):
+
+| | 5000, before | 5000, #420 | 20 000, before | 20 000, #420 |
+|---|---|---|---|---|
+| script average ms | 0.9616 ±0.032 | 0.9694 ±0.031 | 2.160 ±0.014 | 2.105 ±0.009 |
+| script p99 ms | 2.863 | 2.913 | 4.273 | 4.207 |
+| ticks over 5 ms | 3 ±1.5 | 7 ±1 | 49 ±6.5 | 36 ±2 |
+| mod heap alive after a collection (MB) | 74.5 | 57.1 | 281.0 | 213.2 |
+| burst build ms (1000 blocks) | 1880 | 83.8 | 7271 | 112.9 |
+| burst remove ms | 104.0 | 80.6 | 183.6 | 93.8 |
+| throughput per kind of endpoint | identical | identical | identical | identical |
+
+The ticks over 5 ms at 5000 were flagged (3 -> 7, noise 3) in that run; with `DIFF_MAX` 3 the run again was clean (4 -> 7,
+`regressions beyond the noise: 0`), and once more with the tank fallback switched off for a test: 6 and 6, the reference
+itself 3, 4 and 6 in the three checks. So that number is within its noise at 5000; at 20 000 it went down.
+
+One run each of `bench --sizes 5000,20000 --idle --long 10` for the base and the branch (the whole update is the script and
+the engine; the engine's part is where lever 10 shows):
+
+| one run | base | #420 |
+|---|---|---|
+| 5000: script / engine / whole ms | 1.013 / 0.714 / 1.727 | 1.011 / 0.607 / 1.618 |
+| 5000 idle: script / engine / whole ms | 0.540 / 0.312 / 0.852 | 0.503 / 0.271 / 0.774 |
+| 20 000: script / engine / whole ms | 2.440 / 2.518 / 4.957 | 2.272 / 1.756 / 4.028 |
+| 20 000 idle: script / engine / whole ms | 1.048 / 1.141 / 2.189 | 0.982 / 0.576 / 1.558 |
+| 20 000, 10 minutes: script avg / p99 / ticks over 5 ms | 1.862 / 4.22 / 156 | 1.779 / 4.22 / 169 |
+| 20 000: save MB | 7.4 | 6.6 |
+| 20 000: load s | 1.52 | 0.39 |
+| 20 000: burst build / remove ms | 8089 / 198 | 113 / 99 |
+
+The graph rebuild probe (one profile run at 20 000, the bench's instrumented copy): before 2.81 s; with #420 0.37 s (the
+kept graph, what an update does) and 2.16 s (`rebuild(true)`, from the map: what a change of the graph's rules or the
+member prototypes does, now also measured by the bench as "graph rebuild from the map").
+
+`bench --check v0.5.4 --sizes 100,1000,5000 --runs 3` (the last release): 1000 and 5000 green; 100 flagged the script average
+(0.2068 -> 0.2400, noise 0.03: rounds of 0.215 to 0.244 against 0.202 to 0.232). `--sizes 100 --runs 5` again: 0.2099
+±0.012 -> 0.2157 ±0.009, `regressions beyond the noise: 0`.
+
+| v0.5.4 against #420 (`--runs 3`) | v0.5.4 | #420 |
+|---|---|---|
+| 1000: script average / p99 ms | 0.3502 / 1.974 | 0.3492 / 1.979 |
+| 5000: script average / p99 ms | 0.9451 / 2.837 | 0.9299 / 2.794 |
+| mod heap alive kB (100 / 1000 / 5000) | 14 240 / 28 940 / 74 450 | 13 810 / 25 410 / 57 100 |
+| burst build ms (100 / 1000 / 5000) | 169.4 / 375.8 / 1973 | 72.4 / 76.3 / 87.7 |
+| burst remove ms (100 / 1000 / 5000) | 76.3 / 85.2 / 98.2 | 74.6 / 79.8 / 81.7 |
+
+What is left of the issue's list: the full rebuild from the map is still one pass in one tick (2.2 s at 20 000), now only after
+a change of the graph's rules or of the members' prototypes; the remaining fluid-side reads (`fluidbox[i]`, round five) were
+not part of the choice.
+
+## The Crafting Card's fluids, hand-over and craft only (issue #426)
+
+A block without the card pays nothing new: the fluid paths read `rec.ccard` where a key is missing (as the item paths did),
+an export bus's visit one field more (`rec.conly`). A job that is done asks for a hand-over only when it has an owner and a
+waker with a deliverer (`N.deliverers`, the Crafting Card's jobs): one table read per finished job. With the card, a fluid
+filter or row that the network lacks reads the target's boxes (`fluid_room`: capacity, filter, contents per box) before it
+asks for a job; craft only skips the extraction and asks for a job per filter whose target has room.
+
+`bench --sizes 100,1000 --runs 3 --check ae2-textures-447` (#426 against its base, `main` with #447's textures; three rounds
+in turns; the scenes have no Crafting Card):
+
+| | base | #426 |
+|---|---|---|
+| 100: script average / p99 ms | 0.1925 / 1.769 | 0.1932 / 1.792 |
+| 1000: script average / p99 ms | 0.3351 / 1.919 | 0.3390 / 1.910 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| load first tick ms (100 / 1000) | 1.625 / 3.092 | 1.643 / 2.955 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 3 --check v0.5.4`: 1000 green;
+100 flagged the script average (0.2135 -> 0.2473, noise 0.031, rounds of 0.212 to 0.249) and the garbage collector (0.0313
+-> 0.0348), as #420 saw at 100; `--sizes 100 --runs 5 --check v0.5.4` again: 0.1886 ±0.003 -> 0.1909 ±0.004, gc 0.0234 ->
+0.0232, `regressions beyond the noise: 0`. The Lua allocation of 27.14 KB per tick at 100 (v0.5.4: 26.68) is `main`'s
+already, the same with and without #426.
+
+## The pattern provider's lock by the circuit condition (issue #429)
+
+A hand-over attempt now reads the target's provider (`s.providers[t.prov]`, every target since the scan names it) and its lock
+mode: a field read when the provider has no circuit lock. A provider with a circuit mode and its condition on is one more block
+in the connector's check list of issue #412 (16 checks per tick, each block at most every 10 ticks); its level is kept in its
+record by the check, so the hand-over reads a field. The scenes' providers have no lock.
+
+`bench --sizes 100,1000 --runs 3 --check craft-only-426` (#429 against its base, #426; three rounds in turns; the machine was
+busier during this run than during the others, both versions alike, see the 1000 row):
+
+| | #426 | #429 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2848 / 2.904 | 0.2235 / 1.947 |
+| 1000: script average / p99 ms | 0.5155 / 3.666 | 0.5119 / 3.634 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| provider crafts per second (100 / 1000) | 1.233 / 17.32 | 1.233 / 17.32 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.2315 ->
+0.2413 ms (p99 2.005 -> 2.064), 1000: 0.3683 -> 0.3566 ms (p99 2.048 -> 1.980), `regressions beyond the noise: 0` (the
+allocation 26.68 -> 27.14 and 24.34 -> 24.85 KB per tick is `main`'s, see issue #426).
+
+## The ME Advanced Level Emitter (issue #443)
+
+The advanced emitters are records of the level emitters' list and visited by the same step hook and budget (8 per tick, each
+at most every 10 ticks); a visit reads one amount per row that has a resource (at most 6) and writes the combinator's section
+only when the output changed. A level emitter's visit pays one field read more (`rec.adv`). The scenes have no emitters.
+
+`bench --sizes 100,1000 --runs 3 --check circuit-lock-429` (#443 against its base, #429; three rounds in turns):
+
+| | #429 | #443 |
+|---|---|---|
+| 100: script average / p99 ms | 0.1907 / 1.744 | 0.1954 / 1.801 |
+| 1000: script average / p99 ms | 0.3295 / 1.871 | 0.3348 / 1.910 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.1867 ->
+0.1904 ms (p99 1.732 -> 1.753), 1000: 0.3691 -> 0.3314 ms (p99 2.026 -> 1.869), `regressions beyond the noise: 0`.
+
+## View Cells (issue #440)
+
+The terminal's storage list is filtered only when it is made anew (the network's contents changed, at most once per refresh
+of an open window): a key pays the view filter's test (a few table reads per cell) next to the search. The filter is derived
+from the slots' stacks once and kept until they change (by their item numbers). A terminal without view cells pays one nil
+check per key of a rebuilt list; nothing runs per tick. The scenes have no open terminals.
+
+`bench --sizes 100,1000 --runs 3 --check adv-emitter-443` (#440 against its base, #443; three rounds in turns):
+
+| | #443 | #440 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2349 / 2.082 | 0.2392 / 2.070 |
+| 1000: script average / p99 ms | 0.4335 / 2.421 | 0.4072 / 2.316 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0` (both versions slower than in the runs before: the machine was busier). Against the last
+release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.2286 -> 0.2338 ms (p99 2.093 -> 2.130), 1000: 0.4097 ->
+0.4076 ms (p99 2.288 -> 2.238), `regressions beyond the noise: 0`.
+
+## The Creative ME Storage Cell (issue #441)
+
+An extraction reads one field more per cell it takes from (`cell.creative`); the chest's take path the same; the insertion
+walk and the room look at the spec once more (`spec.creative`) for cells they ask. Nothing per tick. The scenes have no
+creative cell.
+
+`bench --sizes 100,1000 --runs 3 --check view-cells-440` (#441 against its base, #440; three rounds in turns):
+
+| | #440 | #441 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2104 / 1.869 | 0.2076 / 1.871 |
+| 1000: script average / p99 ms | 0.3562 / 1.968 | 0.3645 / 2.008 |
+| Lua alloc KB per tick (100 / 1000) | 27.14 / 24.85 | 27.14 / 24.85 |
+| throughput per kind of endpoint | identical | identical |
+
+That run flagged the script average at 1000 (noise 0.0073: the reference's three rounds were unusually close). Again with five
+rounds, `bench --sizes 1000 --runs 5 --check view-cells-440`: 0.3592 ±0.006 -> 0.3582 ±0.002 ms (p99 2.002 -> 1.981),
+`regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.2009 ->
+0.2047 ms, 1000: 0.3622 -> 0.3622 ms, `regressions beyond the noise: 0`.
+
+## Items with tags through storage buses and the import bus's wait for room (issue #479)
+
+The storage bus's visit asks `walked(name)` where it asked `worn(name)` (one cached lookup per item type, as before); its
+stack walk (`N.whole_counts`, now with `N.plain_stack`) runs only for chests that hold a tool, ammunition, a damaged item
+or an item with tags or a label. `N.never_stores` runs only when an insert of an import bus or an IO Port stored nothing,
+once per key until the network's lookups change. An import bus whose network has no room is probed on its source
+(one `get_item_count` per probe, at the growing interval up to the idle limit) instead of parked: in a base with many such
+buses that is a few engine calls per second more, against a bus that no longer waits up to a minute for an item it can store.
+The scenes have no item with tags and no full network, so these paths are not taken there.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns): **regressions beyond the noise: 0**, throughput per
+kind of endpoint identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.3651 / 2.024 | 0.3604 / 1.998 |
+| 1000: ticks over 5 ms | 1 | 1 |
+| 1000: Lua alloc KB per tick | 24.85 | 24.85 |
+| 1000: burst build / remove (ms) | 77.7 / 85.4 | 80.3 / 80.5 |
+| 5000: script avg / p99 (ms) | 0.9431 / 2.802 | 0.9507 / 2.799 |
+| 5000: ticks over 5 ms | 5 | 5 |
+| 5000: Lua alloc KB per tick | 33.57 | 33.57 |
+| 5000: storage bus latency max (s) | 1.733 | 1.733 |
+| 5000: burst build / remove (ms) | 83.8 / 82.4 | 82.3 / 82.7 |

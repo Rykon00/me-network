@@ -36,6 +36,11 @@ local CELLS = {
 	{ tier = "16k",  k = 16 },
 	{ tier = "64k",  k = 64 },
 	{ tier = "256k", k = 256, extra = { name = "acceleration-card", count = 1 } },
+	--- issue #414: AE2-Unofficial's 1024k, 4096k and 16384k cells (core/api/definitions/ApiItems.java, ItemAdvancedStorageCell:
+	--- 63 types, k * 1024 bytes, k * 8 bytes per type); no old drive item of their tier (`new`)
+	{ tier = "1024k", k = 1024, new = true },
+	{ tier = "4096k", k = 4096, new = true },
+	{ tier = "16384k", k = 16384, new = true },
 }
 local OLD_CELLS_PER_DRIVE = 4
 local DRIVE_SLOTS = 10              -- AE2's ME Drive
@@ -58,15 +63,40 @@ local WALKABLE = ME.WALKABLE
 
 
 --------------------------------------------------------------------------------
---- ITEM SUBGROUPS
+--- ITEM GROUP AND SUBGROUPS
 --------------------------------------------------------------------------------
 
-local group = data.raw["item-group"]["logistics"] and "logistics" or "processing-machine-recipes"
-data:extend({
-	{ type = "item-subgroup", name = "fork-me-network", group = group, order = "b-me-a" },
-	{ type = "item-subgroup", name = "fork-me-drives", group = group, order = "b-me-b" },
-	{ type = "item-subgroup", name = "fork-me-cells", group = group, order = "b-me-c" },
-})
+--- Issue #474: the item group "ME Network" (ME.GROUP), a tab of its own in the inventory and the crafting window, after
+--- Logistics (the base game's order "a"); every item of this mod sits in one of its rows (devcheck checks it). Its icon
+--- is a file of its own, a copy of the ME Controller's icon until a drawn one replaces it (issue #475); the texture mod
+--- can set another by the key "item-group/me-network" in its overrides.lua.
+data:extend({ { type = "item-group", name = ME.GROUP, order = "a-me", icon = ME.root .. "graphics/item-group/me-network.png",
+	icon_size = 64 } })
+
+--- the rows of the tab, top to bottom. Every subgroup of this mod is defined here; the names of the older ones stay
+--- (Gregtorio and the texture mod name them). A row holds at most 10 items, the width of the crafting window; a longer
+--- one is split into two.
+local ROWS = {
+	"fork-me-network",              -- the ME Controller, the cables, the quantum bridge, the wireless link, the creative energy cell
+	"fork-me-terminals",            -- the ME Terminal, the ME Interface Terminal, the monitors
+	"fork-me-drives",               -- the ME Drive, the ME Chest, the ME IO Port, the ME Cell Workbench
+	"fork-me-cells",                -- the item storage cells, 1k to Singularity
+	"fork-me-fluid-cells",          -- the fluid storage cells, 1k to 16384k
+	"fork-me-special-cells",        -- the View Cell, the void cells, the creative storage cell
+	"fork-me-buses",                -- the ME Interface, the import, export and storage bus, the toggle buses
+	"fork-me-automation",           -- the level maintainer, the circuit interface, the level emitters
+	"fork-me-autocrafting",         -- the pattern provider, the pattern terminals, the patterns, the molecular assembler
+	"fork-me-crafting-cpu",         -- the blocks of a Crafting CPU without storage: unit, co-processing unit, accelerators, monitor
+	"fork-me-crafting-storage",     -- the crafting storage blocks, 1k to Singularity
+	"fork-me-cards",                -- the upgrade cards that change what a block does
+	"fork-me-capacity-speed-cards", -- the capacity and speed cards
+	"fork-me-wireless",             -- the wireless access point, booster, terminal, module and the charger
+	"fork-me-components",           -- the storage housing and the storage components
+	"fork-me-fluid-drives",         -- (only the hidden old fluid drive items)
+}
+for i, name in ipairs(ROWS) do
+	data:extend({ { type = "item-subgroup", name = name, group = ME.GROUP, order = string.format("%02d", i) } })
+end
 
 
 
@@ -97,13 +127,13 @@ ME.add_item{ name = "fluix-cable", icon = HD_ICON .. "fluix-cable.png", icon_siz
 ME.add_item{ name = "me-controller", icon = HD_ICON .. "me-controller.png", icon_size = 64, subgroup = "fork-me-network", order = "a", stack_size = 10,
 	recipe = { ingredients = I{ "stone-brick", 4, "copper-cable", 4, "advanced-circuit", 1 }, energy_required = 5 } }
 --- interface: 4 iron, 2 glass, an annihilation core, a formation core
-ME.add_item{ name = "me-interface", icon = HD_ICON .. "me-interface.png", icon_size = 64, subgroup = "fork-me-network", order = "b", stack_size = 50,
+ME.add_item{ name = "me-interface", icon = HD_ICON .. "me-interface.png", icon_size = 64, subgroup = "fork-me-buses", order = "b", stack_size = 50,
 	recipe = { ingredients = I{ "iron-plate", 4, "plastic-bar", 2, "electronic-circuit", 2 }, energy_required = 2 } }
 --- terminal: a formation core, an annihilation core, a logic processor, an illuminated panel
-ME.add_item{ name = "me-terminal", icon = HD_ICON .. "me-terminal.png", icon_size = 64, subgroup = "fork-me-network", order = "c", stack_size = 50,
+ME.add_item{ name = "me-terminal", icon = HD_ICON .. "me-terminal.png", icon_size = 64, subgroup = "fork-me-terminals", order = "a", stack_size = 50,
 	recipe = { ingredients = I{ "electronic-circuit", 3, "small-lamp", 1 }, energy_required = 2 } }
 --- ME Chest (issue #229): 2 glass, a terminal, 2 fluix cables, 2 iron, a copper
-ME.add_item{ name = "me-chest", icon = HD_ICON .. "me-chest.png", icon_size = 64, subgroup = "fork-me-network", order = "d",
+ME.add_item{ name = "me-chest", icon = HD_ICON .. "me-chest.png", icon_size = 64, subgroup = "fork-me-drives", order = "b",
 	stack_size = 50,
 	recipe = { ingredients = I{ "plastic-bar", 2, "me-terminal", 1, "fluix-cable", 2, "iron-plate", 2, "copper-plate", 1 }, energy_required = 2 } }
 --- drive: 4 iron, 2 engineering processors (advanced circuits, see above), 2 fluix cables (no ME Chest: issue #231)
@@ -115,7 +145,7 @@ ME.add_item{ name = "me-drive", icon = HD_ICON .. "me-drive.png", icon_size = 64
 --- 256k three of the tier below, a calculation processor, a quartz glass and 4 redstone (4k), glowstone (16k, 64k) or sky stone
 --- dust (256k))
 ME.add_item{ name = "basic-storage-housing", icon = HD_ICON .. "basic-storage-housing.png", icon_size = 64,   -- (issue #221)
-	subgroup = "fork-me-cells", order = "a0",
+	subgroup = "fork-me-components", order = "a0",
 	recipe = { ingredients = I{ "plastic-bar", 2, "copper-cable", 3, "iron-plate", 2, "copper-plate", 1 }, energy_required = 2 } }
 local COMPONENTS = {
 	{ "1k",   I{ "copper-cable", 4, "stone", 4, "electronic-circuit", 1 } },
@@ -123,10 +153,15 @@ local COMPONENTS = {
 	{ "16k",  I{ "me-4k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "copper-cable", 4 } },
 	{ "64k",  I{ "me-16k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "copper-cable", 4 } },
 	{ "256k", I{ "me-64k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
+	--- issue #414: AE2-Unofficial's recipe of every tier from 256k on (network/cells/storage-components.recipe: three of the
+	--- tier below, an engineering and a logic processor, 4 glowstone): the 256k's stand-ins
+	{ "1024k", I{ "me-256k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
+	{ "4096k", I{ "me-1024k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
+	{ "16384k", I{ "me-4096k-storage-component", 3, "advanced-circuit", 1, "plastic-bar", 1, "stone-brick", 4 } },
 }
 for i, c in ipairs(COMPONENTS) do
 	ME.add_item{ name = "me-" .. c[1] .. "-storage-component", icon = HD_ICON .. "me-" .. c[1] .. "-storage-component.png",
-		icon_size = 64, subgroup = "fork-me-cells", order = "a" .. i,                              -- (issue #221)
+		icon_size = 64, subgroup = "fork-me-components", order = "a" .. i,                              -- (issue #221)
 		recipe = { ingredients = c[2], energy_required = 2 * i } }
 end
 
@@ -161,24 +196,97 @@ for i, c in ipairs(CELLS) do
 	cell_data[cell] = { tier = c.tier, bytes = bytes, per_type = per_type, types = MAX_TYPES }
 	item.localised_description = { "item-description.fork-me-storage-cell", c.tier, tostring(bytes),
 		tostring(MAX_TYPES), tostring((bytes - per_type) * 8) }
-
-	--- the old drive item (chassis + four cells, before issue #68): no recipe any more, hidden; placing one
-	--- builds an ME Drive with its four (empty) cells (issue #146: kept, 0.5.0 left them in inventories as they were)
-	local old = "me-drive-" .. c.tier
-	data:extend({ {
-		type = "item",
-		name = old,
-		icon = ICON_FORK .. old .. ".png",
-		icon_size = 32,
-		subgroup = "fork-me-drives",
-		order = "z" .. order,
-		stack_size = 10,
-		place_result = DRIVE,
-		hidden = true,
-		localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
-	} })
-	legacy_drives[old] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra }
+	if not c.new then                                 -- (issue #414: no old drive item of the new tiers)
+		--- the old drive item (chassis + four cells, before issue #68): no recipe any more, hidden; placing one
+		--- builds an ME Drive with its four (empty) cells (issue #146: kept, 0.5.0 left them in inventories as they were)
+		local old = "me-drive-" .. c.tier
+		ME.add_item{
+			type = "item",
+			name = old,
+			icon = ICON_FORK .. old .. ".png",
+			icon_size = 32,
+			subgroup = "fork-me-drives",
+			order = "z" .. order,
+			stack_size = 10,
+			place_result = DRIVE,
+			hidden = true,
+			localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
+			recipe = false,
+		}
+		legacy_drives[old] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra }
+	end
 end
+
+--- Issue #414: AE2-Unofficial's Singularity cell (ItemExtremeStorageCell "Singularity": one type, Long.MAX_VALUE / 16 bytes,
+--- 4096 bytes per type). Here 2^50 bytes: its one type holds up to 2^53 - 32768 items, the integers a Lua number counts
+--- exactly (the storage engine's counts are numbers). AE2-U's recipe (network/cells/storage.recipe) is 8 Quantum cells (each
+--- 4 16384k components, 4 quantum rings and a dense energy cell) around a matter condenser; here 8 16384k components, 4 ME
+--- Quantum Bridges for the rings, 4 accumulators for the energy cells and a storage housing.
+local SINGULARITY = "me-singularity-storage-cell"
+local s_item = ME.add_item{
+	type = "item-with-tags",
+	name = SINGULARITY,
+	icon = HD_ICON .. SINGULARITY .. ".png",
+	icon_size = 64,
+	subgroup = "fork-me-cells",
+	order = "09",
+	stack_size = 1,
+	recipe = { energy_required = 30, auto_recycle = false, ingredients = I{ "me-16384k-storage-component", 8,
+		"me-quantum-bridge", 4, "accumulator", 4, "basic-storage-housing", 1 } },
+}
+local S_BYTES, S_PER_TYPE = 2 ^ 50, 4096
+cell_data[SINGULARITY] = { tier = "singularity", bytes = S_BYTES, per_type = S_PER_TYPE, types = 1 }
+s_item.localised_description = { "item-description.fork-me-singularity-cell", string.format("%.0f", (S_BYTES - S_PER_TYPE) * 8) }
+
+--- Issue #441: AE2's Creative ME Storage Cell (AE2-Unofficial: items/storage/ItemCreativeStorageCell.java): what its partition
+--- lists is always there without end, and it takes any amount of it and destroys it (scripts/fork-me-network.lua: `creative`
+--- with `void`). No recipe, as in AE2: the map editor and cheat mode give it. Items only (AE2-Unofficial's is an item cell).
+local CREATIVE_CELL = "me-creative-storage-cell"
+ME.add_item{
+	type = "item-with-tags",
+	name = CREATIVE_CELL,
+	icon = HD_ICON .. "me-1k-storage-cell.png",
+	icon_size = 64,
+	--- (the 1k cell in violet: no picture of its own; the texture mod could give it AE2-Unofficial's)
+	fields = { icons = { { icon = HD_ICON .. "me-1k-storage-cell.png", icon_size = 64, tint = { 1, 0.45, 1, 1 } } } },
+	subgroup = "fork-me-special-cells",
+	order = "d",
+	stack_size = 1,
+	recipe = false,
+}
+cell_data[CREATIVE_CELL] = { tier = "creative", bytes = 0, per_type = 0, types = 63, void = true, creative = true }
+
+--- Issue #442: AE2's Creative Energy Cell (AE2-Unofficial: block/networking/BlockCreativeEnergyCell.java): a network with one
+--- never lacks power (scripts/fork-me-network.lua: M.usable). A 1x1 member, no recipe (the map editor and cheat mode give it);
+--- the ME Charger's picture in violet (no picture of its own).
+local CREATIVE_ENERGY = "me-creative-energy-cell"
+local VIOLET = { 1, 0.45, 1, 1 }
+ME.add_item{
+	name = CREATIVE_ENERGY,
+	icon = HD_ICON .. "me-charger.png",
+	icon_size = 64,
+	fields = { icons = { { icon = HD_ICON .. "me-charger.png", icon_size = 64, tint = VIOLET } } },
+	subgroup = "fork-me-network",
+	order = "z",
+	stack_size = 50,
+	place_result = CREATIVE_ENERGY,
+	recipe = false,
+}
+data:extend({ {
+	type = "simple-entity-with-force",
+	name = CREATIVE_ENERGY,
+	icons = { { icon = HD_ICON .. "me-charger.png", icon_size = 64, tint = VIOLET } },
+	flags = { "placeable-neutral", "player-creation" },
+	minable = { mining_time = 0.2, result = CREATIVE_ENERGY },
+	placeable_by = { item = CREATIVE_ENERGY, count = 1 },
+	max_health = 200,
+	is_military_target = false,
+	corpse = "small-remnants",
+	collision_box = ME.solid_box(),
+	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
+	picture = { filename = HD_ENTITY .. "me-charger.png", priority = "high", width = 64, height = 64, scale = 0.5, tint = VIOLET },
+	localised_description = { "entity-description." .. CREATIVE_ENERGY },
+} })
 
 
 
@@ -436,7 +544,7 @@ for _, bus in pairs({
 		name = bus.name,
 		icon = HD_ICON .. bus.name .. ".png",
 		icon_size = 64,
-		subgroup = "fork-me-network",
+		subgroup = "fork-me-buses",
 		order = bus.order,
 		stack_size = 50,
 		place_result = bus.name,
@@ -512,7 +620,7 @@ ME.add_item{
 	name = STORAGE_BUS,
 	icon = HD_ICON .. STORAGE_BUS .. ".png",
 	icon_size = 64,
-	subgroup = "fork-me-network",
+	subgroup = "fork-me-buses",
 	order = "b4",
 	stack_size = 50,
 	place_result = STORAGE_BUS,
@@ -654,6 +762,8 @@ data:extend({ {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
+			creative_energy = CREATIVE_ENERGY,                                    -- (issue #442)
+			pattern_terminal_ex = "me-pattern-terminal-ex",                     -- (issue #416)
 			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
 			storage_monitor = "me-storage-monitor", conversion_monitor = "me-conversion-monitor",   -- (issue #353)
 			throughput_monitor = "me-throughput-monitor",
@@ -705,8 +815,8 @@ for i, v in ipairs(VOID_CELLS) do
 		name = v[1],
 		icon = HD_ICON .. v[3] .. ".png",
 		icon_size = 64,
-		subgroup = v[2] == "fluid" and "fork-me-fluid-cells" or "fork-me-cells",
-		order = "z" .. i,
+		subgroup = "fork-me-special-cells",
+		order = "b" .. i,
 		stack_size = 1,
 		recipe = { energy_required = 5, auto_recycle = false, ingredients = ing },
 	}
@@ -735,7 +845,7 @@ local MONITOR_RECIPES = {
 }
 for i, name in ipairs({ "me-storage-monitor", "me-conversion-monitor", "me-throughput-monitor" }) do
 	local r = MONITOR_RECIPES[name]
-	ME.add_item{ name = name, icon = HD_ICON .. name .. ".png", icon_size = 64, subgroup = "fork-me-network", order = "c" .. i,
+	ME.add_item{ name = name, icon = HD_ICON .. name .. ".png", icon_size = 64, subgroup = "fork-me-terminals", order = "c" .. i,
 		stack_size = 50, place_result = name,
 		recipe = { energy_required = 2, ingredients = { { type = "item", name = r[1], amount = r[2] }, { type = "item", name = r[3], amount = r[4] } } } }
 	data:extend({ {
@@ -908,3 +1018,13 @@ ME.add_technology{ name = "me-storage-64k", prerequisites = { "me-network", "pro
 
 ME.add_technology{ name = "me-storage-256k", prerequisites = { "me-storage-64k", "production-science-pack" },
 	unit = ME.unit(4, 600), recipes = { "me-256k-storage-component", "me-256k-storage-cell" } }
+
+--- issue #414: the cells of AE2-Unofficial above 256k, one technology per tier, and the Singularity cell
+ME.add_technology{ name = "me-storage-1024k", prerequisites = { "me-storage-256k", "utility-science-pack" },
+	unit = ME.unit(5, 800), recipes = { "me-1024k-storage-component", "me-1024k-storage-cell" } }
+ME.add_technology{ name = "me-storage-4096k", prerequisites = { "me-storage-1024k" },
+	unit = ME.unit(5, 1200), recipes = { "me-4096k-storage-component", "me-4096k-storage-cell" } }
+ME.add_technology{ name = "me-storage-16384k", prerequisites = { "me-storage-4096k" },
+	unit = ME.unit(5, 1600), recipes = { "me-16384k-storage-component", "me-16384k-storage-cell" } }
+ME.add_technology{ name = "me-storage-singularity", prerequisites = { "me-storage-16384k", "me-quantum-bridge" },
+	unit = ME.unit(5, 2500), recipes = { SINGULARITY } }

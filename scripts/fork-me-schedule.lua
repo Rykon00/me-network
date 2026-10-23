@@ -48,13 +48,14 @@ local SETTINGS = {
 	circuit = "me-network-circuit-updates-per-second",
 	jobs = "me-network-crafting-jobs-per-tick",
 	jobs_max = "me-network-crafting-jobs-per-tick-max",
+	job_ops = "me-network-crafting-ops-per-step",                 -- issue #415
 	bus_items = "me-network-bus-items-per-second",
 	bus_fluid = "me-network-bus-fluid-per-second",
 	idle = "me-network-idle-limit",
 	storage_bus_idle = "me-network-storage-bus-idle-limit",
 }
 M.DEFAULTS = { io = 16, io_max = 32, storage_bus = 8, storage_bus_max = 24, io_port = 2, io_port_max = 8, maintainer = 4, maintainer_max = 12,
-	circuit = 10, jobs = 1, jobs_max = 2, bus_items = 256, bus_fluid = 4000, idle = 300, storage_bus_idle = 120 }
+	circuit = 10, jobs = 1, jobs_max = 2, job_ops = 1024, bus_items = 256, bus_fluid = 4000, idle = 300, storage_bus_idle = 120 }
 local values
 
 function M.setting(key)

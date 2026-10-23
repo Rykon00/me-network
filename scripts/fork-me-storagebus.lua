@@ -49,6 +49,12 @@ local F = require("scripts.fork-me-fluid-storagebus")
 local Sched = require("scripts.fork-me-schedule")
 local G = require("scripts.fork-me-gui")
 local CS = require("scripts.fork-me-cardslots")
+local Conn = require("scripts.fork-me-connector")
+--- issue #412: the connector module puts a bus's off state into its record (resolve reads `rec.coff` only)
+N.off_setters.sbus = function(unit, off)
+	local rec = N.ext_get(unit)
+	if rec then rec.coff = off or nil end
+end
 
 local M = {}
 
@@ -118,8 +124,11 @@ local function listed(s, unit)
 	return s.member[unit] == true
 end
 
-local function unlist(list, unit)
-	for i = #list, 1, -1 do if list[i] == unit then table.remove(list, i) end end
+--- issue #420: a bus leaves the visit list by its place (s.lpos, made when missing: Sched.list_remove), not by a walk over the
+--- list (a burst of removals walked it once per bus)
+local function unlist(s, unit)
+	s.lpos = s.lpos or {}
+	Sched.list_remove(s.list, s.lpos, unit)
 end
 
 --------------------------------------------------------------------------------
@@ -127,15 +136,17 @@ end
 --------------------------------------------------------------------------------
 
 local plain_cache = {}
---- can the network show and move this item through a storage bus? Plain items that do not spoil, and whole tools, ammo and
---- repair tools (the same classes as N.storable: N.item_class; issue #76). What carries data of its own is not shown.
+--- can the network show and move this item through a storage bus? Plain items that do not spoil, whole tools, ammo and
+--- repair tools (the same classes as N.storable: N.item_class; issue #76) and, issue #479, items with tags or a label (Quality
+--- Turrets Reworked makes every turret an item with tags): of those the stacks that carry nothing of their own, which
+--- N.storable keys as plain items (`walked`). What carries data of its own is not shown: a chest cannot keep it apart by count.
 local function plain(name, quality)
 	local k = name .. "@" .. quality
 	local v = plain_cache[k]
 	if v == nil then
 		local p = prototypes.item[name]
 		local class = p and N.item_class(p.type)
-		v = (class == "plain" or class == "worn") and p.get_spoil_ticks(quality) <= 0
+		v = (class == "plain" or class == "worn" or class == "tags" or class == "label") and p.get_spoil_ticks(quality) <= 0
 		plain_cache[k] = v
 	end
 	return v
@@ -151,6 +162,22 @@ local function worn(name)
 		local p = prototypes.item[name]
 		v = p ~= nil and N.item_class(p.type) == "worn"
 		worn_cache[name] = v
+	end
+	return v
+end
+
+local walked_cache = {}
+--- is its count in the chest one of stacks that the type alone does not decide? A tool, ammo or a repair tool (a used one is
+--- no part of it) and, issue #479, an item with tags or a label: the stacks that carry tags, a label or a description are kept
+--- apart (N.plain_stack, per stack), so the bus counts and takes the plain stacks only (N.whole_counts, N.count_whole,
+--- N.remove_whole). Per load, never saved.
+local function walked(name)
+	local v = walked_cache[name]
+	if v == nil then
+		local p = prototypes.item[name]
+		local class = p and N.item_class(p.type)
+		v = class == "worn" or class == "tags" or class == "label"
+		walked_cache[name] = v
 	end
 	return v
 end
@@ -231,7 +258,7 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
-		if worn(name) or (rec.dmg and rec.dmg[key]) then return N.count_whole(inv, name, q) end
+		if walked(name) or (rec.dmg and rec.dmg[key]) then return N.count_whole(inv, name, q) end
 		Q.name, Q.quality, Q.count = name, q, nil
 		return N.bound(inv).get_item_count(Q)
 	end,
@@ -241,7 +268,7 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
-		if worn(name) then return N.remove_whole(inv, name, q, count) end
+		if walked(name) then return N.remove_whole(inv, name, q, count) end
 		if placeable(name) then
 			--- issue #84: the whole stacks only; a damaged one stays. The bus then shows only the whole ones (`rec.dmg`, until
 			--- a visit finds no damaged stack of the key any more): the count of the engine cannot tell them apart and would
@@ -263,6 +290,8 @@ local ITEM = {
 		if rec.mode == "read" or not allowed(rec, key) then return false end
 		return item_of(key) ~= nil and rec.status == "ok" and inventory_of(rec) ~= nil
 	end,
+	--- issue #479: can the bus ever hold `key` (its kind of items; the mode and the filter are the engine's, N.never_stores)?
+	takes = function(rec, key) return item_of(key) ~= nil end,
 	--- the bus's record leaves the storage engine: a card still in it is spilled (a bus that vanished without an event)
 	detached = function(rec) M.detach(rec) end,
 	--- the network took the last of `key` out of the inventory (issue #67): read it again soon
@@ -295,7 +324,7 @@ end
 local function list_side(s, rec)
 	if rec.side == "fluid" then
 		if listed(s, rec.unit) then
-			unlist(s.list, rec.unit)
+			unlist(s, rec.unit)
 			s.member[rec.unit] = nil
 			Sched.forget(queue(s), rec)
 		end
@@ -304,6 +333,7 @@ local function list_side(s, rec)
 		F.unlist(rec)
 		if not listed(s, rec.unit) then
 			s.list[#s.list + 1] = rec.unit
+			if s.lpos then s.lpos[rec.unit] = #s.list end
 			s.member[rec.unit] = true
 			rec.siv = nil
 			Sched.at(queue(s), rec, rec.unit, game.tick + 1)
@@ -316,10 +346,24 @@ end
 --- target is kept.
 local function resolve(s, rec)
 	local e = rec.entity
+	--- issue #412: switched off by its circuit connector's condition: it faces nothing (its storage leaves the network) until
+	--- the condition holds again (fork-me-connector.lua wakes it, M.wake drops the cached target)
+	if rec.coff then
+		release(s, rec)
+		F.drop(rec)
+		if rec.side ~= nil then
+			rec.side, rec.handler = nil, nil
+			N.ext_sync(rec.unit, {})
+			N.ext_touch(rec.unit)
+		end
+		list_side(s, rec)
+		rec.status = "circuit-off"
+		return nil
+	end
 	local t = rec.target
 	if t and t.valid and rec.dir == e.direction then
 		if rec.side == "fluid" then
-			if rec.box then return t end
+			if rec.box and not (rec.wagon and not F.wagon_here(rec)) then return t end   -- (issue #417: a wagon must still be there)
 		elseif t.type ~= "cargo-wagon" or inventory_of(rec) then
 			rec.status = "ok"
 			return t
@@ -385,6 +429,7 @@ function M.visit(rec, cascade)
 	if inv and rec.mode ~= "write" then
 		local all = rec.inonly or not (rec.partition or rec.deny or rec.gf)   -- (no filter to check: the common case)
 		local whole                                                  -- the whole stacks' counts, read when a tool or ammo is there
+		                                                             -- (or an item with tags or a label, issue #479)
 		local dmg = rec.dmg                                          -- issue #84: keys with a damaged stack the bus found
 		for _, it in pairs(N.bound(inv).get_contents()) do
 			local q = it.quality or "normal"
@@ -392,7 +437,7 @@ function M.visit(rec, cascade)
 				local key = N.key_of(it.name, q)
 				if all or shown(rec, key) then
 					local n = it.count
-					if worn(it.name) then
+					if walked(it.name) then
 						whole = whole or N.whole_counts(inv)
 						n = whole[key] or 0
 					elseif dmg and dmg[key] then
@@ -451,7 +496,7 @@ end
 local function visit_due(rec, unit)
 	local s = storage.fork_me_sbus
 	if not rec.entity.valid then
-		unlist(s.list, unit)
+		unlist(s, unit)
 		if s.member then s.member[unit] = nil end
 		Sched.forget(queue(s), rec)
 		N.ext_detach(unit)
@@ -512,6 +557,8 @@ function M.wake(unit)
 		end
 	end
 end
+
+N.wakers.sbus = M.wake                    -- (issue #412: the circuit connector wakes a storage bus that is on again)
 
 local bus_names
 --- an entity was built: the storage buses facing it read it at the next tick
@@ -819,7 +866,7 @@ function M.on_removed(entity, buffer)
 		give_cards(rec, buffer)
 		if s then
 			release(s, rec)
-			unlist(s.list, unit)
+			unlist(s, unit)
 			Sched.forget(queue(s), rec)
 			if s.member then s.member[unit] = nil end
 		end
@@ -872,7 +919,7 @@ end
 --- again (the fluid side claims its segments in unit order)
 function M.on_configuration_changed()
 	local s = state()
-	s.list, s.cursor, s.claims, s.member, s.q = {}, 1, {}, {}, Sched.new("sbus")
+	s.list, s.cursor, s.claims, s.member, s.q, s.lpos = {}, 1, {}, {}, Sched.new("sbus"), nil
 	F.reset()
 	plain_cache, bus_names = {}, nil
 	local names = {}
@@ -896,6 +943,18 @@ function M.on_configuration_changed()
 end
 
 remote.add_interface("gregtorio-me-storagebus", {
+	--- issue #420 (tests): is the visit list of each side its buses, each once, at their places? (true, or false and why)
+	lists_ok = function()
+		for _, s in ipairs({ storage.fork_me_sbus or {}, storage.fork_me_fsbus or {} }) do
+			local seen = {}
+			for i, u in ipairs(s.list or {}) do
+				if seen[u] then return false, "bus " .. u .. " is in a list twice" end
+				seen[u] = true
+				if s.lpos and s.lpos[u] and s.lpos[u] ~= i then return false, "bus " .. u .. " is not at its place" end
+			end
+		end
+		return true
+	end,
 	--- issue #38 (tests): when the bus reads next: { due, interval, probing, front, backlog, side }
 	schedule = function(entity)
 		local rec = rec_of(entity)

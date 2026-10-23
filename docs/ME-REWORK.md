@@ -84,8 +84,14 @@ that joins is set at once. Found on 2.0.77: a lamp's `active` does nothing, a ci
 * The derived data of a network (controllers, status, drives, storage totals, item index, power) is
   recomputed only for the networks a change touched, and only when the change can alter it (a cable
   joining one network changes nothing but the member count; since issue #5 any member but a controller joining or
-  leaving one network without splitting it adds or removes only what it holds).
-* `on_configuration_changed` (and `on_init`) rebuild the graph once from the world, the only scan.
+  leaving one network without splitting it adds or removes only what it holds; since issue #420 the controller's power
+  too, by that member's own draw, instead of a walk over every member at the network's next use).
+* `on_configuration_changed` (and `on_init`) rebuild the graph once from the world, the only scan. Issue #420: a save
+  whose graph was made with the same rules and member prototypes (`s.graph_sig`: a rules number in `M.graph_sig` and per
+  member name its kind and tile size) keeps its graph; the members that vanished without an event are taken out as the
+  sweep does, member entities that came without an event (the count of the map's member entities says so) are put in as
+  a build does, and only more than 64 such changes (or a sixteenth of the members) rebuild it from the map. The networks
+  are computed again either way (cells, totals, power). A node is its own tile box (fields 1 to 4) and keeps no position.
 
 Network ids stay the same across most changes (merge keeps the larger id, split keeps the id on the
 larger part), but other code must not store them for long: autocrafting keys its pattern cache by network
@@ -207,8 +213,8 @@ window in which a cell exists twice or not at all. With the script GUI every mov
 function that writes the tags first.
 
 **Fill state per slot:** ten small rectangles on the drive (`rendering.draw_rectangle`, no sprites):
-none for an empty slot, green while the cell has room, orange above 75 % of its bytes, red when it is full
-(bytes or types). The GUI shows the same per slot as a bar with "bytes used / total, types used / 63".
+none for an empty slot, green while the cell has room, orange above 75 % of its bytes or when it takes no new type
+but has bytes left (issue #468, AE2-Unofficial's status 3), red when it is full (no bytes left). The GUI shows the same per slot as a bar with "bytes used / total, types used / 63".
 Updated in the terminal step (every 60 ticks) for drives whose cells changed.
 
 **Removing a drive:** mining it puts its cells (with their tags) into the mined buffer, so the player or
@@ -295,8 +301,7 @@ remembers the pattern. No queue and no tick of its own; a provider without a mod
 hand-over (`bench --check origin/main`, docs/PERFORMANCE.md). One hand-over is a batch (up to `MAX_BATCH` runs of one
 pattern), not a single run as in AE2: the inputs in the chest are one pattern's either way, which is what the mode is for.
 
-*Locking:* see the next section (issue #346): only "until the result is back"; the locks by a signal need a circuit
-connection the provider does not have.
+*Locking:* see the next section (issue #346): "until the result is back"; the locks by a signal: issue #429, after it.
 
 ## Lock until the result is back (issue #346)
 
@@ -318,6 +323,30 @@ locked: their next lease starts only when they are idle and their products are c
 *Test:* `tools/devcheck/runtimemod/lock.lua` (one batch of 20 runs handed over, the rest held with room in the chest, 10
 and 6 arrivals count it down, the last 4 runs go in, Unlock, switching off, the settings). With the lock check removed
 from `chest_open` it fails.
+
+## Lock by the circuit condition (issue #429)
+
+AE2-Unofficial's Lock Crafting Card (`Upgrades.LOCK_CRAFTING`, `Settings.LOCK_CRAFTING_MODE`; `DualityInterface.getCraftingLockedReason`:
+LOCK_WHILE_LOW / LOCK_WHILE_HIGH read the redstone state, LOCK_UNTIL_PULSE sets `unlockEvent = PULSE` at a push and a rising
+redstone signal clears it), read and written anew. The maintainer chose the circuit connector of issue #412 over a card.
+
+*Here:* the provider is a host of `scripts/fork-me-connector.lua` (`HOSTS["me-pattern-provider"] = "provider"`). The
+connector's setter now also passes the condition's level (true, false, nil when it does nothing), which
+`N.off_setters.provider` keeps as `p.clevel` in the provider's record (storage: the checks decide when work is handed out).
+`p.lock` takes "low", "high", "pulse" besides "result". `EXT.circuit_locked(p)`: low locks at `clevel == false`, high at
+`true`, pulse while `p.plock` and no rise came; a rise (the connector's edge in pulse mode, `Conn.set_mode(unit, true)`) is
+taken there and releases it. `EXT.handed(s, t)` sets `p.plock` after every hand-over (a chest's in `EXT.pushed`, a
+machine's or assembler's after its lease starts) and first takes an older rise. The scan names the provider of every target
+(`t.prov`, before only chests'); `find_crafter` and `find_pusher` pass by the targets of a provider that `EXT.open` says
+is locked and report "locked", `EXT.chest_open` checks it before the blocking mode. `M.set_lock` makes the connector for
+a circuit mode and sets its pulse mode; `apply_settings` goes through it (a blueprint's mode gets its connector).
+`provider_info.clocked` (looked at, not taken: `Conn.has_pulse`) for the window's line. No tick of its own: the
+connector's checks (16 per tick, each at most every 10 ticks) only for providers with the condition on; a target costs one
+table read (`s.providers[t.prov]`) and a field read per hand-over attempt.
+
+*Test:* `tools/devcheck/runtimemod/circuitlock.lua` (a provider in blocking mode, a constant combinator on its connector:
+high, low and pulse lock and release by the condition, the window's data, the settings in data, blueprint, tag, paste and
+clone, an unknown mode off).
 
 *Test:* `tools/devcheck/runtimemod/blocking.lua` (three providers with a chest each, four CPUs: blocking holds the second
 batch of the same pattern and the other pattern, one kind at a time; smart lets the same pattern through, not the other;
@@ -942,7 +971,9 @@ temperature). A segment can hold its fluid at any temperature. Decision: **read 
 * A machine's fluid box has no segment: a bus on a machine stores in that one box (`fluidbox` read and write); on a
   machine with several boxes the box whose pipe connection points at the bus is used (else the first). Rarely useful;
   tanks are the intended target.
-* Fluid wagons are not supported (no fluid box segment; `create_entity` needs a rail, so untested).
+* Fluid wagons (issue #417): a wagon has no fluid box in Factorio 2.0; the fluid side takes it as storage "w<unit>" through the
+  entity's own fluid functions (get_fluid, insert_fluid, remove_fluid, the prototype's fluid_capacity) while it covers the tile
+  in front of the bus (checked at every use, as the item side does for cargo wagons); the runtime test builds a track.
 * The engine may reuse a segment id after the segment is gone; a claim is checked against the owner's live id, so a
   reused id never lets two buses own one segment.
 * The fluid import bus emptying a tank of a bus's segment, or a fluid export bus filling one, moves fluid in a
@@ -1042,7 +1073,7 @@ R2 had stored fluids by name ("One temperature per fluid stays", above); issue #
 
 ### What stays open
 
-* A fluid wagon is no storage (no change).
+* A fluid wagon is storage since issue #417 (at its temperature, as a tank).
 
 ### Follow-up (issue #161)
 
@@ -1303,10 +1334,15 @@ becomes the unified block when a save is loaded.
 ### ME Interface: container plus four side tanks
 
 * **Compound:** the container `me-network-interface` stays the block (selection, window, item config, blueprints).
-  When it is built, the script creates four hidden storage tanks `me-network-interface-side` on its tile, one per side
-  (not selectable, not minable, not blueprintable, not destructible, empty collision mask, no graphics). Pipes, pumps
-  and tanks connect to a side like to any tank. The tanks are found again by position (clones, saves) and destroyed
-  with the container.
+  The script puts hidden storage tanks `me-network-interface-side` on its tile, one per side (not selectable, not
+  minable, not blueprintable, not destructible, empty collision mask, no graphics). Pipes, pumps and tanks connect to a
+  side like to any tank. The tanks are found again by position (clones, saves) and destroyed with the container.
+  Issue #420 (lever 10): a side has its tank only while it needs one: something is connected to it, it is tied to a
+  fluid row, or its tank holds fluid. An entity with fluid boxes built, rotated or set up (settings paste, its window
+  closed) beside a side gets that side a tank, which stays when it connects; one interface every 8 ticks looks at its
+  sides again, in the order of the I/O list (a pipe a script built without an event, a machine whose recipe gave it a
+  fluid box): a tank no longer needed goes, a side with a fluid entity beside it gets one. Older saves lose their empty
+  unconnected tanks on the update (no fluid is lost: a tank that holds fluid stays).
 * **Config rows:** the 9 rows take an item (with quality) or a fluid, mixed, as in AE2 (`{ name, quality, amount }` or
   `{ type = "fluid", name, amount }`). Items work as before.
 * **How a side is tied to a fluid:** every side has a setting: *import* (the default), *off*, or a fluid row. A side
@@ -1691,8 +1727,12 @@ after the load, the fluid is the same) and Gregtorio's `migrate --from-ref v0.4.
   in which a circuit interface without a filter writes about 900 signals (about 1 ms in the engine, 1.5 ms with the
   Lua around it) on top of the ordinary work, and long steps of the Lua garbage collector (10 to 25 ms in a few
   ticks per minute, also in 0.2.0). A combinator section cannot be changed in part cheaply; fewer updates per second
-  (the setting) or filters on the interfaces are the levers. See `docs/PERFORMANCE.md` for the numbers.
+  (the setting) or filters on the interfaces are the levers. See `docs/PERFORMANCE.md` for the numbers. (Issue #420,
+  lever 7: an update writes nothing while the amounts are the ones it wrote, and only the changed slots, one
+  `set_slot` each, when at most three changed: a `set_slot` costs about a fifth of the whole section's write.)
 * `on_configuration_changed` still rebuilds the graph from the map: 0.8 s at 5000 endpoints (once per mod update).
+  (Issue #420: it keeps the graph the events kept when it matches the map; the whole rebuild only after a change of the
+  graph's rules or the member prototypes, or many members that changed without an event.)
 * Removing a cable whose network splits still searches the network (a breadth first search) and recomputes both
   parts; removing an endpoint does not.
 * The planner copied the stock for each alternative pattern of a key (`snapshot`). Since issue #50 (lever 11) it reads
@@ -2014,7 +2054,7 @@ buttons, the copy mode, mined and destroyed with a cell) and every card on a cel
 ## Crafting CPUs as multiblocks (me-network issue #6)
 
 Issue #6 makes the crafting CPU an AE2 multiblock. **Decided by the maintainer** (AE2 guide, "Crafting CPU
-multiblock"): a CPU is a **solid rectangle** of crafting blocks with no gaps and **at least one crafting storage**, no
+multiblock"; AE2's CPU is a cuboid, Factorio's map is flat, so here it is a rectangle): a CPU is a **solid rectangle** of crafting blocks with no gaps and **at least one crafting storage**, no
 core block; a group that is not a rectangle forms no CPU and shows a status. Blocks: crafting storage 1k to 256k
 (required), crafting unit (filler), crafting co-processing unit (speed), crafting monitor (shows the job). **One job per
 CPU**, any number of CPUs per network; touching crafting blocks are one group. A CPU is in the network when one of its
@@ -2205,8 +2245,9 @@ screen) from GT5-Unofficial's casings and Pillow shapes, each in a dark (no CPU)
 icons and the three technology icons stay. **Not from AE2's own crafting block textures:** they are licensed CC BY-NC-SA
 3.0 (AE2's README: "Textures and Models"), which is not compatible with this mod's GPLv3 and with the mod portal
 (non-commercial, share-alike under another license); `README.md` says so for every graphic of this mod. (Since issues
-#235 and #239 AE2 graphics can come in, but only into the separate, optional texture mod `ae2-textures/` under
-CC BY-NC-SA 3.0, never mixed into these GT-based sprites: `docs/LICENSES.md`.)
+#235 and #239 AE2 graphics can come in, but only into the separate texture mod `ae2-textures/` under
+CC BY-NC-SA 3.0, never mixed into these GT-based sprites: `docs/LICENSES.md`. It was optional at first; since issue
+#325 me-network requires it, and it is a mod of its own only for its license.)
 
 ### Saves
 
@@ -2438,21 +2479,28 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
 
 ## Open points
 
+* View Cells (issue #440) are built: `scripts/fork-me-viewcells.lua`, below in "View Cells".
+
 * Patterns (issue #80, left open on purpose; the data model keeps room for them): AE2's locks of a provider by a redstone
-  signal (no circuit connection; the blocking mode and the lock until the result for chests are built, issues #335 and
-  #346), substitutions and fuzzy patterns (rows would get a flag; the identity and the planner's
-  ingredient lookup are the places to change), clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a storage
-  bus.
-* A level maintainer with several resources. (The cards of the buses and the provider are built: the import and export
-  bus take Acceleration Cards, issue #110, the provider Pattern Capacity Cards, issue #156, the ME Interface Interface
-  Capacity Cards, issue #196; `N.card_rules()` holds their slots and limits. AE2's capacity, fuzzy and inverter cards on the
-  buses and its redstone and crafting cards are not built.)
+  signal are built since issue #429 (by the circuit connector of issue #412; the blocking mode and the lock until the result for chests: issues #335 and
+  #346); open: clearing a pattern by a click in the inventory (not possible for a mod), outputs that only appear behind a
+  storage bus. Substitutions and fuzzy patterns are decided: issue #352 made autocrafting quality-aware instead (Factorio's
+  "same item, other variant" is the quality; `docs/AE2.md`, "Every quality").
+* The cards of the buses and the provider are built: the import and export bus take Acceleration Cards, issue #110, the
+  provider Pattern Capacity Cards, issue #156, the ME Interface Interface Capacity Cards, issue #196; `N.card_rules()`
+  holds their slots and limits. Issue #413 added the Capacity Card (up to 2), the Fuzzy Card and, on the import bus only
+  (an addition: AE2-Unofficial has none on the buses), the Inverter Card to the import and export bus. Issue #411 added the
+  Crafting Card (export bus, ME Interface); issue #426 gave it fluids, the hand-over of its jobs' products to the block
+  (`N.deliverers`, AE2's `injectCraftedItems`) and the export bus's "craft only". AE2's redstone card is the circuit connector of issue
+  #412 (`scripts/fork-me-connector.lua`: a hidden lamp per bus and interface, since their prototype type cannot change; issue #429:
+  the pattern provider's too, for its lock modes). (A level maintainer with several resources is built: five rows, issue #351.)
 * Issue #3: an ME Interface keeps four fluids at most (one per side) and takes no surplus back from an export side; a
   fluid that reaches an unconnected side only by script waits up to 32 visits; old blueprints in the blueprint
   library keep the old entities (they build the unified blocks); running crafting jobs that make an old fluid block
   keep their old step (their patterns are converted).
-* Fluid wagons on the fluid storage bus. Issue #17 left: the card icons and the workbench sprite are placeholders;
-  a storage bus with an Overflow Destruction Card facing nothing destroys nothing (AE2 would).
+* Issue #17 left: a storage bus with an Overflow Destruction Card facing nothing
+  destroys nothing (AE2 would). (The card icons are drawn, issue #221, and the texture mod gives them and the workbench
+  AE2's pictures.)
 * The windows are checked by hand only (see "Tests (R3)"), also the provider window and the Patterns tab.
 * Old fluid drive items stored inside ME cells are converted only when placed (see "Migration of fluids").
 
@@ -2578,6 +2626,71 @@ chest and are in the network within the idle limit; the chest of bus B holds pla
 go in at once, the refused stacks stay, and the bus is not visited again for them. On main both buses are parked ("net-full", the test fails
 on that); the plates reach the network only when something wakes the parked bus (here the slow step did after 120 ticks, at the
 latest the fallback visit after 3600).
+
+## Items with tags through storage buses, and an import bus that meets a stack it cannot store (issue #479)
+
+Reported on the mod portal: with Quality Turrets Reworked no turret moved through import or export buses unless there was
+an empty cell, and a bus that met one stayed stuck. That mod (`data-final-fixes.lua`) turns the item of every turret into an
+`item-with-tags` to keep a turret's kills when it is mined; a turret that never was has no tags, but its prototype type is
+`item-with-tags`. `N.storable` keys such an untagged stack as a plain key (only tags, a label or a description give a key of
+its own), so cells took them; the storage bus did not: its `plain()` let only the classes `plain` and `worn` through, so the
+item was invisible in a chest behind a storage bus and could not be stored there. In a network whose storage is chests behind
+storage buses an import bus that found turrets got "nothing stored" and was **parked** as `net-full`; plates that came into
+its chest later waited for room for the turrets (none ever came) or for the fallback visit (3600 ticks).
+
+* **Storage bus.** `plain()` takes the classes `tags` and `label` too; for them the type does not decide, a stack does:
+  `N.plain_stack(stack, proto)` is true for a stack that stands for the plain key (not used or damaged, and for an item with
+  tags or a label no tags, label or description). The bus counts and takes such an item by its stacks (`walked(name)`: the
+  worn types and these), with the helpers of #76 and #84, which now skip stacks with data as they skip used and damaged
+  ones: the visit's snapshot from `N.whole_counts`, `count` from `N.count_whole`, `extract` through `N.remove_whole`. So a
+  tagged stack is never shown, never handed out by count (it would leave as a plain item) and stays in the chest; the
+  network stores tagged items in cells only (`put` skips external cells for data, unchanged). Inserting plain items by name
+  into a chest that holds a tagged stack of the item does not merge into it (measured on 2.0.77 in the runtime test: the
+  tagged stack kept its count and tags). The decision per name is cached per load (`plain_cache`, `walked_cache`), never in
+  `storage`; the stack walk is paid only by chests that hold such an item. The same rule fixes the ME Interface's row
+  surplus, which took an item with tags as a plain one: a placeable one through `N.remove_whole`, which did not look at
+  tags (on main the test's turret with 5 kills went into the network as a plain item and the plain one stayed), any other
+  by count; it now goes through `N.remove_whole` for these classes, so only the plain stacks are surplus.
+* **`N.never_stores(net, key, data)`:** no storage of the network can ever take the key, whatever its room: no cell of the
+  key's kind whose filter lets it in and no storage bus that is not read only, lets it in and can hold such a key (the
+  handlers' new `takes`: items on the item side, fluids on the fluid side), and an item with data (tags) is taken by cells
+  only. Room, the sticky pass and the ME Chest are not looked at (false there). The answer is kept per key in the network's
+  lookups (`c.never`), which are built again whenever a storage, a priority, a partition or a mode changes (`net.order`), so
+  it is never stale and never saved.
+* **Import bus.** A stack whose key `never_stores` is left out like a refused stack of #85: it stays in the source, is no
+  part of `held` and sets no `netfull`; the bus registers `N.wait_room` (a cell or storage bus that joins the network fires
+  it, `net_cell`), so a new storage that can take it wakes the bus. A key with no room still sets `netfull`, but an import bus
+  that moved nothing for it is no longer parked: it waits for room (`N.wait_room`, `N.wait_for` the key) **and is probed like
+  an empty bus** (its probe compares the source's item count, `probe_mark`), so an item the network can take that arrives
+  behind the one it cannot is taken within the idle limit. Its probes are at the growing interval up to the idle limit (one
+  `get_item_count` each); as the safety net of a parked block it gets a full visit when it has not been visited for
+  `Sched.PARK_FALLBACK` ticks (counted as a missed wake when that visit moves something). Within one visit one key never
+  stopped the others (the loops go on), so only the parking changed. Everything that decides a visit stays in the record
+  (`rec.block`, `rec.seen`, `rec.iv`, the waits in `storage`), so a saved and loaded map schedules like the unbroken run.
+* **ME IO Port** (empty mode): a key `never_stores` is skipped and counts as refused (a port that moved nothing waits for
+  room, parked `net-full`), and a key that moved nothing takes no turn of the `MAX_KEYS` a visit moves (at most `MAX_SCAN`
+  keys are looked at): before, a cell whose first 16 keys in order found no room was parked although later keys could go.
+* **Checked, no change:** the export bus (a key that is missing or blocked never stops the other filters; with every key
+  missing it is parked for its keys, `no-key`); the ME Interface's rows and its slot walk (`insert_stack` per stack, every slot
+  of the walk is tried; the interface is probed, never parked for room); the level maintainer and the circuit interface
+  (they count and ask for plain keys by name; no class test); the storage bus's fluid side (fluids only). Left over:
+  autocrafting refuses every `item-with-tags` as a pattern input or output and as stock of the planner (`P.valid_key`,
+  `plain_item` in fork-me-autocraft.lua), so a turret of Quality Turrets Reworked cannot be crafted on request (#480); and a damaged
+  item with tags (a turret mined while damaged) is refused by `N.storable` (`cannot-store-damaged`) instead of being stored
+  with its health as #104 stores a damaged plain item (#481).
+
+**Test** (`runtimemod/tagitem.lua`, `ME items with tags through storage buses test`; the item `zz-devcheck-tagged-wall` of the
+test mod's `data.lua` is an `item-with-tags` that places a copy of the stone wall, so no other mod is needed). Network A has a
+storage bus on a chest and no cell: 5 untagged ones go through the import bus into the chest, the terminal counts 5 (a tagged
+and a damaged stack in that chest are not counted), 4 put into the chest by hand are seen, an export bus takes the 9 and
+leaves the tagged and the damaged stack (the tagged one keeps its kills). A tagged one and a labelled one in the import bus's
+chest stay there (the label: `cannot-store-label`), the bus is not parked, and iron plates put into that chest 300 ticks
+later are in the network within 400 ticks; an IO Port of A with a cell that holds a tagged one waits for room with the cell.
+Network B (cells and a storage bus of a higher priority) puts the untagged ones into the chest and the tagged one into a
+cell; its ME Interface with a row of 1 holds a tagged one and 2 untagged ones and gives the 2 untagged ones as surplus. Network C's storage bus chest has room for iron plates only: copper plates in the import bus's chest stay, the bus is
+not parked, iron plates that come later are taken within 400 ticks. On main the storage buses show and move none of the item
+and the import buses of A and C are parked (next visit about 3300 ticks later). `runtimemod/parking.lua`'s room cases now expect
+the import bus to wait for room as `net-full` without being parked; the room wakes are still what lets it go on.
 
 ## Damaged items are stored (issue #104)
 
@@ -2734,3 +2847,75 @@ the hand-over (`gregtorio-me-handover.pending`), so `on_init` (and `on_configura
 save with nothing in it and must be refused with the message (the helper `migratemod` lost the 0.1.0 scenario, the jobs
 on legacy CPUs of 0.2.0 and the 3x3 assemblers of issue #131). Gregtorio's own `devcheck.py migrate` from old Gregtorio
 versions needs the intermediate load with me-network 0.5.0 (a Gregtorio follow-up).
+
+## The Advanced Level Emitter (issue #443)
+
+AE2-Unofficial's `PartAdvancedLevelEmitter` (`api/parts/IAdvancedLevelEmitter.java`: 6 slots; per slot a stack, an amount,
+active and inverted; `Settings.ADVANCED_LEVEL_EMITTER_LOGIC`, a `BooleanOperation`, OR by default). Its `isLevelEmitterOn`
+starts with true for AND and false for OR, skips inactive or empty slots, takes `stored >= amount` (inverted: `<`) per slot
+and joins them; no slot counted: off. That loop is ported (`emits_adv` in `scripts/fork-me-emitter.lua`, with the
+attribution comment; README "License").
+
+*Here:* a second entity `me-advanced-level-emitter` (a copy of the level emitter's constant combinator, its own picture of
+`tools/gen_ae2_sprites.py --toggle-emitter`: six gauges and a frame in AE2-Unofficial's emitter colour), the same network
+kind (`level-emitter`) and the same module: its records (`rec.adv`, `rec.rows[1..6]` = { key, amount, active, inverted },
+`rec.logic`) are in `storage.fork_me_emitters.list` and visited by the same step hook and budget (8 per tick, each at most
+every 10 ticks); a visit reads up to six amounts and writes the section only when the output changes. A row is active when
+it gets a resource (AE2-Unofficial starts them inactive; here a row that was given a resource does what the player expects).
+Settings: `M.set` with `rows`, `row` (one row), `logic`, `signal`; the blueprint tag `fork_me_emitter` holds `rows` (an empty
+row `false`), paste only between two advanced emitters. The recipe is GT New Horizons' (an EV circuit and a level emitter;
+a processing unit stands in for the EV circuit).
+
+*Test:* `tools/devcheck/runtimemod/advemitter.lua` (rows on, off, inverted, inactive, OR and AND, a fluid row, the step
+switching it without a visit of the test, the signal, no network, blueprint, paste and clone); `copypaste.lua` carries one
+through every copy path.
+
+## View Cells (issue #440)
+
+AE2-Unofficial's `ItemViewCell` (`items/storage/ItemViewCell.java`: a config inventory and 2 upgrade slots, Fuzzy, Inverter
+and Ore Filter; `createFilter` puts each cell's list into a `MergedPriorityList`, whitelists positive, inverted ones negative;
+`isListed`: any negative list naming the key hides it, else a positive list must name it when there is one). The joining is
+ported (`M.allows`), the rest written anew.
+
+*Here:* the item `me-view-cell` (item-with-tags, stack 1) has its spec in mod-data `view_cells` (`{ view = true, types = 63 }`),
+never in `cells`, so `N.cell_spec` (drives, chests, the IO port) does not know it; the cell helpers a workbench uses
+(`cell_from_tags`, `clean_partition`: items and fluids, `clean_cards`: `cards.view_cell` = 2 slots, fuzzy and inverter,
+`apply_cell_cards`, `set_cell_keys`, the description) also take `N.view_spec`. The workbench's `spec_of` and `rules_of` treat
+it as a cell. The terminal's slots: `storage.fork_me_view.terms[unit]` (a 5-slot script inventory, given back when mined,
+spilled when destroyed or vanished), and for a wireless window (the access point as the window's block)
+`storage.fork_me_view.players[index]` (the player found through the inventory's `player_owner`; spilled at the origin of the
+first surface when the player is removed). The filter is derived from the stacks (a cache by inventory, keyed by the stacks'
+item numbers) and handed to `M.entries`, whose kept lists carry its signature in their id; the list is filtered only when
+it is made anew. No Group Filter Card on a view cell (AE2-Unofficial's Ore Filter): left out.
+
+*Test:* `tools/devcheck/runtimemod/viewcell.lua`.
+
+## The Creative ME Storage Cell (issue #441)
+
+AE2-Unofficial's `ItemCreativeStorageCell` (`CreativeCellInventory`: its config's stacks with `Integer.MAX_VALUE` each,
+extraction gives what is asked, injection takes what is configured). Written anew.
+
+*Here:* a cell spec `{ tier = "creative", bytes = 0, types = 63, void = true, creative = true }` in `cells` (drives, the
+chest and the workbench take it; the IO port refuses it as a void cell). `cell_from_tags` gives it `M.CREATIVE` (2^50, far
+below 2^53, so the totals stay exact) of every key its partition lists and never reads contents from its tags;
+`clean_cards` gives it no cards; `apply_cell_cards` sets `cell.creative`. Insertion: `cell_room` is 0 and `voids` is true for
+a listed key (an unlisted cell voids nothing), so the walk of the void cells (issue #354) destroys what reaches it.
+Extraction: `extract_key` hands the rest of a request to a creative cell without touching it and adds what it gave back
+to `net.items` (`kept`); the chest's `CH.take_from_drive` does the same. A creative cell's count therefore never changes;
+the terminal shows the number (no marker of its own).
+
+*Test:* `tools/devcheck/runtimemod/creativecell.lua`.
+
+## The Creative Energy Cell (issue #442)
+
+AE2-Unofficial's `BlockCreativeEnergyCell` (its tile reports itself as an infinite energy source; the grid's energy is never
+short). Written anew.
+
+*Here:* a 1x1 member `me-creative-energy-cell` of kind `creative-energy` (mod-data name `creative_energy`), drawing nothing
+through the controller (`POWERED_SELF`). Like the controller it changes the network's status, so `M.STATUS_KINDS` makes its
+joining and leaving recompute the network (the paths that skipped the recompute for any member but a controller, issues #5,
+#43, #420); `recompute` sets `net.creative`. `M.usable` takes a network with `net.creative` as powered without looking at
+the controllers' energy; `M.stored_energy` reports the controllers' buffers full. The controller's own electric energy
+interface stays as it is (its draw, its status without a pole).
+
+*Test:* `tools/devcheck/runtimemod/creativeenergy.lua`.

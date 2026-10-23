@@ -13,8 +13,6 @@ local ICON_FORK = ME.icons .. "fork/"
 
 local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = "item", name = list[i], amount = list[i + 1] } end return t end
 
-data:extend({ { type = "item-subgroup", name = "fork-me-cards", group = data.raw["item-subgroup"]["fork-me-network"].group,
-	order = "b-me-d" } })
 data:extend({ { type = "module-category", name = ME.ACCELERATION } })      -- issue #110
 
 --- name, order, recipe; `kind`: what the card does at runtime (nil: a component)
@@ -47,6 +45,11 @@ local CARDS = {
 	--- and export bus (AE2-U: no ore filter on fluid cells). The book's stand-in: a constant combinator (a list written down).
 	{ name = "me-group-filter-card", order = "e5", kind = "gfilter",
 	  ingredients = I{ "me-advanced-card", 1, "constant-combinator", 1 } },
+	--- issue #411: AE2's Crafting Card (Upgrades.CRAFTING; recipe: a basic card and a crafting table, materials/cards.recipe): an
+	--- export bus whose filtered item the network lacks, or an ME Interface whose row it cannot fill, starts a crafting job for
+	--- it. The crafting table's stand-in: an assembling machine 1.
+	{ name = "me-crafting-card", order = "e6", kind = "crafting",
+	  ingredients = I{ "me-basic-card", 1, "assembling-machine-1", 1 } },
 	{ name = "me-inverter-card", order = "f", kind = "inverter",
 	  ingredients = I{ "me-advanced-card", 1, "decider-combinator", 1 } },
 	{ name = "me-equal-distribution-card", order = "g", kind = "equal",
@@ -61,14 +64,17 @@ local CARDS = {
 	--- issue #356: AE2-Unofficial's Super Speed Card and Superluminal Speed Card (Upgrades.SUPERSPEED, SUPERLUMINALSPEED;
 	--- MaterialType CardSuperSpeed, CardSuperluminalSpeed): the import and export bus take up to 4 of each, mixed with
 	--- Acceleration Cards in their 4 slots, and the items per operation add up (`bus` below). AE2-U's recipes
-	--- (materials/cards.recipe): an Acceleration Card and a 16k storage component; a Super Speed Card and a 1024k component,
-	--- which ME Network does not have: 4 256k components (the same bytes)
+	--- (materials/cards.recipe): an Acceleration Card and a 16k storage component; a Super Speed Card and a 1024k component
+	--- (issue #414: ME Network has it now; before, 4 256k components, the same bytes)
 	{ name = "me-super-speed-card", order = "h2", kind = "superspeed",
 	  ingredients = I{ "me-acceleration-card", 1, "me-16k-storage-component", 1 } },
 	{ name = "me-superluminal-speed-card", order = "h3", kind = "superluminal",
-	  ingredients = I{ "me-super-speed-card", 1, "me-256k-storage-component", 4 } },
+	  ingredients = I{ "me-super-speed-card", 1, "me-1024k-storage-component", 1 } },
 }
 
+--- issue #474: the capacity and speed cards have a row of their own in the tab (the cards were more than one row)
+local CAPACITY_SPEED = { capacity = true, pattern_capacity = true, interface_capacity = true, speed = true, superspeed = true,
+	superluminal = true }
 local kinds = {}
 local recipes = {}
 for _, c in ipairs(CARDS) do
@@ -78,7 +84,7 @@ for _, c in ipairs(CARDS) do
 		name = c.name,
 		icon = ME.hd_icons .. c.name .. ".png",          -- (issue #221: the 3D style, 64 px)
 		icon_size = 64,
-		subgroup = "fork-me-cards",
+		subgroup = CAPACITY_SPEED[c.kind] and "fork-me-capacity-speed-cards" or "fork-me-cards",   -- (issue #474: two rows)
 		order = c.order,
 		stack_size = 64,
 		localised_description = { "item-description." .. c.name },
@@ -96,12 +102,23 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	storage_bus = { slots = 5, limits = { capacity = 5, fuzzy = 1, inverter = 1, void = 1, sticky = 1, gfilter = 1 }, filters = 18, per_capacity = 9 },
 	item_cell = { slots = 4, limits = { fuzzy = 1, inverter = 1, equal = 1, void = 1, sticky = 1, gfilter = 1 } },
 	fluid_cell = { slots = 3, limits = { inverter = 1, equal = 1, void = 1, sticky = 1 } },
+	--- issue #440: a view cell takes 2 cards (AE2-Unofficial: ItemViewCell.getUpgradesInventory, CellUpgrades(is, 2)): a Fuzzy
+	--- and an Inverter Card
+	view_cell = { slots = 2, limits = { fuzzy = 1, inverter = 1 } },
 	--- issue #110: the ME Import Bus and Export Bus take up to 4 Acceleration Cards (AE2's upgrade slots of the buses: its speed
 	--- cards, PartImportBus / PartExportBus); `speed`: by the number of cards, the factor on the items per second of the map
 	--- setting "bus speed" (AE2: 1, 8, 32, 64, 96 items per operation). Issue #356: up to 4 Super Speed and 4 Superluminal Speed
 	--- Cards too, in the same 4 slots; `superspeed` and `superluminal`: by the number of each, what they add to that factor
 	--- (AE2-U: PartExportBus.calculateAmountToSend, the kinds add up)
-	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1 } },   -- (issue #363: the Group Filter Card)
+	--- Issue #413: the Capacity Card (up to 2, AE2-U: Registration.java, `parts.importBus()` / `parts.exportBus()`) and the
+	--- Fuzzy Card (1); `filters` filters and `per_capacity` more with each Capacity Card (9 / 18 / 27; AE2-U: 1 / 5 / 9, but
+	--- the buses here had 9 from the start). `import_bus`: the import bus's rules, the same and one Inverter Card (AE2-U has
+	--- no inverter on the buses: an addition of this mod, its filters become a blacklist)
+	--- (issue #411: the Crafting Card, 1, on the export bus only, AE2-U: `parts.exportBus()`)
+	bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1, capacity = 2, fuzzy = 1,
+		crafting = 1 }, filters = 9, per_capacity = 9 },
+	import_bus = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4, gfilter = 1, capacity = 2, fuzzy = 1,
+		inverter = 1 }, filters = 9, per_capacity = 9 },
 	--- issue #386: the ME IO Port takes the speed cards of the buses (AE2's IO port: speed cards), with the same factors
 	io_port = { slots = 4, limits = { speed = 4, superspeed = 4, superluminal = 4 } },
 	superspeed = { 16, 128, 1024, 8192 },
@@ -110,7 +127,9 @@ data.raw["mod-data"]["fork-me-network"].data.cards = {
 	--- it has `patterns` pattern slots and `per_capacity` more with each card (9 / 18 / 27 / 36)
 	provider = { slots = 3, limits = { pattern_capacity = 3 }, patterns = 9, per_capacity = 9 },
 	--- issue #196: the ME Interface takes up to 3 Interface Capacity Cards: `rows` config rows and `per_capacity` more with each
-	interface = { slots = 3, limits = { interface_capacity = 3 }, rows = 9, per_capacity = 9 },
+	--- issue #411: and the Crafting Card (1) in a fourth slot (AE2-U's interface: 4 upgrade slots, DualityInterface; a script
+	--- inventory of 3 slots of an older save is made bigger when it is first read, scripts/fork-me-cardslots.lua)
+	interface = { slots = 4, limits = { interface_capacity = 3, crafting = 1 }, rows = 9, per_capacity = 9 },
 	speed = { 1, 8, 32, 64, 96 },
 }
 
@@ -122,8 +141,8 @@ ME.add_item{
 	name = "me-cell-workbench",
 	icon = ME.hd_icons .. "me-cell-workbench.png",
 	icon_size = 64,
-	subgroup = "fork-me-cards",
-	order = "z",
+	subgroup = "fork-me-drives",
+	order = "d",
 	stack_size = 10,
 	place_result = "me-cell-workbench",
 	recipe = { energy_required = 2, ingredients = I{ "copper-cable", 2, "advanced-circuit", 1, "iron-plate", 5, "wooden-chest", 1 } },
@@ -151,6 +170,25 @@ data:extend({ {
 	localised_description = { "entity-description.me-cell-workbench" },
 } })
 recipes[#recipes + 1] = "me-cell-workbench"
+
+--- Issue #440: AE2's View Cell (AE2-Unofficial: items/storage/ItemViewCell.java; scripts/fork-me-viewcells.lua): a list of
+--- items and fluids for the ME Terminal's storage list, partitioned in the workbench. AE2-Unofficial's recipe
+--- (network/cells/view.recipe, shapeless): a certus quartz crystal and a storage housing; the stand-ins of issue #233 (certus
+--- quartz = stone). Its spec is in `view_cells`, never in `cells`: it stores nothing.
+ME.add_item{
+	type = "item-with-tags",
+	name = "me-view-cell",
+	icon = ME.hd_icons .. "basic-storage-housing.png",
+	icon_size = 64,
+	--- (the storage housing in blue: no picture of its own; the texture mod could give it AE2-Unofficial's ItemViewCell)
+	fields = { icons = { { icon = ME.hd_icons .. "basic-storage-housing.png", icon_size = 64, tint = { 0.55, 0.85, 1, 1 } } } },
+	subgroup = "fork-me-special-cells",
+	order = "a",
+	stack_size = 1,
+	recipe = { energy_required = 1, ingredients = I{ "basic-storage-housing", 1, "stone", 1 } },
+}
+data.raw["mod-data"]["fork-me-network"].data.view_cells = { ["me-view-cell"] = { view = true, kind = "view", types = 63, bytes = 0 } }
+recipes[#recipes + 1] = "me-view-cell"
 
 --- after ME 64k Storage (the advanced card needs a processing unit); its cost follows that technology in
 --- data-final-fixes.lua unless another mod sets it (ME_NETWORK.set_technology)

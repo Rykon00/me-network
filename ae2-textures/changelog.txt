@@ -1,4 +1,16 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.2
+Date: 2026-10-23
+  Graphics:
+    - The View Cell, the Creative ME Storage Cell and the Creative Energy Cell (ME Network issues #440, #441, #442, #459) have AE2-Unofficial's pictures: the two cells its item icons, the energy cell its creative energy cell block in the world and as a cube icon (ME Network shows tinted pictures of other items for them).
+    - The ME Storage, Conversion and Throughput Monitor (ME Network issues #353, #421): AE2-Unofficial's monitor panels like the terminals, dark while their network does not work and with AE2's screen in its Fluix colours while it does; ME Network still draws the resource and its amount on the screen. Their icons are the lit panels. The ME Level Emitter, the toggle buses and the ME Level Maintainer keep ME Network's pictures (AE2 has no front for them), the ME Wireless Link and the ME Circuit Interface too (their only matching pictures are AE2 Stuff's or a coloured interface skin).
+    - The storage cells above 256k (ME Network issues #414, #447): the 1024k, 4096k and 16384k storage cells, their storage components and the Singularity storage cell have AE2-Unofficial's icons; the 1024k to 16384k fluid storage cells show its item cell of their tier with a blue frame and body, as the smaller fluid cells do. In the ME Drive and the ME Chest they are drawn as the other cells. Their technologies show these icons scaled up.
+    - The crafting storage above 256k and the crafting accelerators (ME Network issues #415, #447): the 1024k, 4096k, 16384k and Singularity crafting storage and the 4x to 4096x crafting accelerators are AE2-Unofficial's crafting blocks like the smaller ones, a cube each without a CPU and AE2's formed look in a CPU; their icons are AE2 cubes, their technologies' icons too.
+    - The Crafting Card (ME Network issues #411, #447) has AE2-Unofficial's icon.
+    - The ME Pattern Terminal Ex (ME Network issues #416, #447): AE2-Unofficial's Pattern Terminal Ex panel like the other terminals, dark while its network does not work and with AE2's screen in its Fluix colours while it does; its icon is the lit panel.
+  Locale:
+    - The mod's description no longer calls it optional (ME Network issue #476): ME Network requires this mod since ME Network 0.5.3 and comes with it; it is a mod of its own only because of its license (CC BY-NC-SA 3.0). The description also lists what the mod replaces today.
+---------------------------------------------------------------------------------------------------
 Version: 0.2.1
 Date: 2026-10-15
   Graphics:

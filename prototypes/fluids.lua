@@ -34,6 +34,10 @@ local CELLS = {
 	{ tier = "16k",  k = 16 },
 	{ tier = "64k",  k = 64 },
 	{ tier = "256k", k = 256, extra = { name = "acceleration-card", count = 1 } },
+	--- issue #414: the tiers above 256k (GT New Horizons' AE2 Fluid Crafting has them too), no old fluid drive item
+	{ tier = "1024k", k = 1024, new = true },
+	{ tier = "4096k", k = 4096, new = true },
+	{ tier = "16384k", k = 16384, new = true },
 }
 
 local INTERFACE_VOLUME = 5000                   -- each fluid side of the ME Interface (the old fluid interface's tank)
@@ -49,11 +53,7 @@ local UNIFIED_ITEM = { ["me-fluid-interface"] = "me-interface", ["me-fluid-impor
 --- ITEM SUBGROUPS
 --------------------------------------------------------------------------------
 
-local group = data.raw["item-group"]["logistics"] and "logistics" or "processing-machine-recipes"
-data:extend({
-	{ type = "item-subgroup", name = "fork-me-fluid-cells", group = group, order = "b-me-d" },
-	{ type = "item-subgroup", name = "fork-me-fluid-drives", group = group, order = "b-me-e" },
-})
+--- (issue #474: fork-me-fluid-cells and fork-me-fluid-drives are defined with the other rows in prototypes/network.lua)
 
 
 
@@ -92,23 +92,25 @@ for i, c in ipairs(CELLS) do
 		per_byte = UNITS_PER_BYTE }
 	item.localised_description = { "item-description.fork-me-fluid-storage-cell", c.tier, tostring(bytes),
 		tostring(FLUID_TYPES), tostring((bytes - per_type) * UNITS_PER_BYTE) }
-
-	--- the old fluid drive item (chassis + four cells, fluid in its tags): no recipe any more, hidden; placing
-	--- one builds an ME Drive with its four fluid cells holding its fluid (issue #146: kept, 0.5.0 left them as they were)
-	data:extend({ {
-		type = "item-with-tags",
-		name = drive,
-		icon = ICON_FORK .. drive .. ".png",
-		icon_size = 32,
-		subgroup = "fork-me-fluid-drives",
-		order = "z" .. order,
-		stack_size = 10,
-		place_result = "me-drive",
-		hidden = true,
-		localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
-	} })
-	net_data.legacy_drives[drive] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra, fluid = true,
-		fluid_tag = "fork_me_fluids" }
+	if not c.new then                                 -- (issue #414: no old fluid drive item of the new tiers)
+		--- the old fluid drive item (chassis + four cells, fluid in its tags): no recipe any more, hidden; placing
+		--- one builds an ME Drive with its four fluid cells holding its fluid (issue #146: kept, 0.5.0 left them as they were)
+		ME.add_item{
+			type = "item-with-tags",
+			name = drive,
+			icon = ICON_FORK .. drive .. ".png",
+			icon_size = 32,
+			subgroup = "fork-me-fluid-drives",
+			order = "z" .. order,
+			stack_size = 10,
+			place_result = "me-drive",
+			hidden = true,
+			localised_description = { "item-description.fork-me-legacy-drive", { "item-name." .. cell } },
+			recipe = false,
+		}
+		net_data.legacy_drives[drive] = { cell = cell, cells = OLD_CELLS_PER_DRIVE, extra = c.extra, fluid = true,
+			fluid_tag = "fork_me_fluids" }
+	end
 end
 
 
@@ -176,3 +178,11 @@ for old in pairs(UNIFIED_ITEM) do ME.removed[old] = UNIFIED_ITEM[old] end
 
 ME.add_technology{ name = "me-fluid-storage-256k", prerequisites = { "me-fluid-storage", "me-storage-256k" },
 	unit = ME.unit(4, 600), recipes = { "me-256k-fluid-storage-cell" } }
+
+--- issue #414: the fluid cells above 256k, after the item cell of their tier
+ME.add_technology{ name = "me-fluid-storage-1024k", prerequisites = { "me-fluid-storage-256k", "me-storage-1024k" },
+	unit = ME.unit(5, 800), recipes = { "me-1024k-fluid-storage-cell" } }
+ME.add_technology{ name = "me-fluid-storage-4096k", prerequisites = { "me-fluid-storage-1024k", "me-storage-4096k" },
+	unit = ME.unit(5, 1200), recipes = { "me-4096k-fluid-storage-cell" } }
+ME.add_technology{ name = "me-fluid-storage-16384k", prerequisites = { "me-fluid-storage-4096k", "me-storage-16384k" },
+	unit = ME.unit(5, 1600), recipes = { "me-16384k-fluid-storage-cell" } }

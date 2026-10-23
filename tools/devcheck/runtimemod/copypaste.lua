@@ -48,6 +48,10 @@ local BLOCKS = {
 	{ "me-conversion-monitor", function(e) remote.call(MON, "set", e, "copper-plate", true) end },
 	{ "me-throughput-monitor", function(e) remote.call(MON, "set", e, "iron-plate", true, "hour") end },
 	{ "me-level-emitter", function(e) remote.call(EM, "set", e, { key = "iron-plate", amount = 1000, mode = "low" }) end },
+	{ "me-advanced-level-emitter", function(e)                                                                  -- (issue #443)
+		remote.call(EM, "set", e, { rows = { { key = "iron-plate", amount = 10 }, false, { key = "fluid/water", amount = 99, inverted = true } },
+			logic = "and" })
+	end },
 	{ "me-pattern-provider", function(e)
 		remote.call(AC, "set_priority", e, 7)
 		remote.call(AC, "set_blocking", e, "blocking")
@@ -94,7 +98,7 @@ local function normal(t)
 		if k == "rows" and type(v) == "table" then
 			local rows = {}
 			for _, r in ipairs(v) do
-				if r.key then
+				if type(r) == "table" and r.key then      -- (issue #443: an empty row of the advanced emitter is false)
 					local c = normal(r)
 					if c.batch == 0 then c.batch = nil end
 					rows[#rows + 1] = c
@@ -150,8 +154,18 @@ local function landing(s, bp, at, d)
 	if #ghosts < table_size(want) then
 		problems[#problems + 1] = "landing at " .. serpent.line(at) .. " direction " .. d .. ": " .. #ghosts .. " ghosts of " .. table_size(want)
 	end
+	local at_ghost = {}                               -- (issue #412: where the blocks' ghosts stand)
 	for _, g in pairs(ghosts) do
-		if g.valid then
+		if g.valid and g.ghost_name ~= "me-circuit-connector" then at_ghost[g.position.x .. ":" .. g.position.y] = true end
+	end
+	for _, g in pairs(ghosts) do
+		if g.valid and g.ghost_name == "me-circuit-connector" then
+			--- issue #412: a circuit connector lands on its block (one per bus and interface, at the block's position)
+			if not at_ghost[g.position.x .. ":" .. g.position.y] then
+				problems[#problems + 1] = "the circuit connector at " .. serpent.line(g.position) .. " has no block's ghost there"
+			end
+			g.destroy()
+		elseif g.valid then
 			local p = want[g.ghost_name]
 			if not (p and math.abs(p.x - g.position.x) < 0.01 and math.abs(p.y - g.position.y) < 0.01) then
 				problems[#problems + 1] = "landing of " .. g.ghost_name .. " at " .. serpent.line(at) .. " direction " .. d

@@ -172,10 +172,11 @@ return function(H)
 			expect(m.status == "cpu-too-small" and not m.job, "the maintainer with a job too big: " .. line(m))
 			remote.call(C, "set_maintainer", st.maint, false)
 			conserved("after the maintainer")
-			--- two jobs at once: the small one takes A (the smallest CPU that fits), the next one B; a third is refused
-			local ja, why_a = remote.call(AC, "start", t, GEAR, 10)
-			local jb, why_b = remote.call(AC, "start", t, GEAR, 20)
-			local jc, why_c = remote.call(AC, "start", t, GEAR, 5)
+			--- two jobs at once: the small one takes A (the smallest CPU that fits), the next one B; a third is refused (issue #418:
+			--- requests of automation, which never join a running job of the same item)
+			local ja, why_a = remote.call(AC, "start", t, GEAR, 10, t.unit_number)
+			local jb, why_b = remote.call(AC, "start", t, GEAR, 20, t.unit_number)
+			local jc, why_c = remote.call(AC, "start", t, GEAR, 5, t.unit_number)
 			expect(ja and jb, "two jobs did not start: " .. tostring(why_a) .. " " .. tostring(why_b))
 			expect(jc == nil and why_c == "no-free-cpu", "a third job: " .. line({ jc, why_c }))
 			if not (ja and jb) then return finish() end

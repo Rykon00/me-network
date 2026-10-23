@@ -30,6 +30,9 @@ local G = require("scripts.fork-me-gui")
 local autocraft = require("scripts.fork-me-autocraft")
 local Sched = require("scripts.fork-me-schedule")
 local Names = require("scripts.fork-me-names")
+local Conn = require("scripts.fork-me-connector")
+local IO = require("scripts.fork-me-io")
+local VC = require("scripts.fork-me-viewcells")        -- (issue #440)
 
 local M = {}
 
@@ -168,7 +171,9 @@ local KEEP_LISTS = 16
 --- same table as the last call while the network's contents did not change (do not change it). `fresh` (tests, the
 --- benchmark): made from nothing, as at a first refresh, and not kept. Issue #295: `index` is the player whose
 --- translated names the search matches too (a kept list of a search is the player's, of the version of their names).
-function M.entries(net, filter, sort, kind, fresh, index)
+--- Issue #440: `view`, the filter of the window's view cells (scripts/fork-me-viewcells.lua) and `vsig` its signature: only the
+--- keys it allows (a kept list is the one of those cells).
+function M.entries(net, filter, sort, kind, fresh, index, view, vsig)
 	local lower
 	filter, lower = Names.search(filter)
 	local names = filter ~= "" and Names.names_of(index) or nil
@@ -180,6 +185,7 @@ function M.entries(net, filter, sort, kind, fresh, index)
 	end
 	local id = tostring(sort) .. "|" .. tostring(kind) .. "|" .. filter
 	if names then id = id .. "|" .. index .. "@" .. Names.version(index) end
+	if view then id = id .. "|v" .. vsig end                       -- (issue #440)
 	local last = not fresh and per.of[id] or nil
 	if last and last.cver == net.cver and last.usable == usable then
 		list_stats.kept = list_stats.kept + 1
@@ -194,7 +200,8 @@ function M.entries(net, filter, sort, kind, fresh, index)
 	if usable then
 		for key, count in pairs(net.items) do
 			local i = info_of(key)
-			if i.ok and Names.matches(names, i.fluid and "fluid" or "item", i.name, filter, lower) then
+			if i.ok and Names.matches(names, i.fluid and "fluid" or "item", i.name, filter, lower)
+				and (not view or VC.allows(view, key)) then           -- (issue #440: the view cells)
 				if i.fluid then
 					if kind ~= "items" then liquids[key] = { key = key, name = i.name, count = count, fluid = true } end
 				elseif kind ~= "fluids" then
@@ -236,11 +243,12 @@ function M.craft_preview(terminal, key, amount)
 	if not plan then out.reason = "bad-amount" return out end
 	out.reserve, out.missing, out.loops = plan.reserve or {}, plan.missing or {}, plan.loops or {}
 	out.runs, out.steps = plan.runs or 0, #(plan.steps or {})
-	out.bytes, out.cpu_list = plan.bytes, plan.bytes and autocraft.cpu_list(net, plan.bytes) or {}
+	out.bytes, out.cpu_list = plan.bytes, plan.bytes and autocraft.cpu_list(net, plan.bytes, nil, key) or {}
 	local fits, free, barred, biggest = false, false, false, 0
 	for _, c in ipairs(out.cpu_list) do
 		if c.fits then fits = true end
 		if c.fits and c.free and c.allowed then free = true end
+		if c.merge then free, fits, out.merge = true, true, true end           -- (issue #418: it joins that CPU's job)
 		if c.fits and c.free and not c.allowed then barred = true end
 		if c.bytes and c.bytes > biggest then biggest = c.bytes end
 	end
@@ -408,6 +416,7 @@ local function build_storage(tab)
 		tooltip = { "fork-me-gui.kind-tooltip" }, tags = G.act("term_kind") }
 	row.add{ type = "button", caption = { "fork-me-terminal.store-hand" }, tags = G.act("term_store") }
 	G.label(tab, { "fork-me-net.terminal-help" }, WIDTH)
+	tab.add{ type = "flow", name = "fork_me_view", direction = "horizontal" }   -- (issue #440: the view cell slots)
 	G.label(tab, "", WIDTH, nil, "fork_me_status").visible = false
 	scroll_table(tab, "fork_me_grid", COLUMNS, 9 * 40 + 8)
 end
@@ -539,7 +548,16 @@ M.open = open
 
 local function refresh_storage(player, st, frame, net)
 	local status, grid = G.find(frame, "fork_me_status"), G.find(frame, "fork_me_grid")
-	local items = M.entries(net, st.filter, st.sort, st.kind, nil, player.index)
+	--- issue #440: the view cells (none in the ME Chest's window)
+	local view, vsig
+	local vbox = G.find(frame, "fork_me_view")
+	if vbox and st.entity and st.entity.valid and not st.chest then
+		VC.draw(vbox, st.entity, player)
+		view, vsig = VC.filter(VC.inventory(st.entity, player))
+	elseif vbox then
+		vbox.visible = false
+	end
+	local items = M.entries(net, st.filter, st.sort, st.kind, nil, player.index, view, vsig)
 	local n = math.min(#items, MAX_BUTTONS)
 	local sort, kind = st.sort or "count", st.kind or "all"
 	--- What the grid shows is kept in storage (every peer sets the same buttons) and compared entry by entry. Issue #50,
@@ -640,10 +658,20 @@ local function refresh_crafting(st, frame, net, index)
 	name.caption = d.localised_name
 	local p = M.craft_preview(st.entity, st.pick, st.amount)
 	button.enabled = p.ok
+	--- issue #418 (AE2-Unofficial's "Merge"): the request joins a running job, automatically or on the CPU chosen
+	local merges = false
+	for _, c in ipairs(p.cpu_list or {}) do
+		if c.merge and (st.cpu == nil or st.cpu == c.id) then merges = true end
+	end
+	if st.cpu and merges then
+		for _, c in ipairs(p.cpu_list or {}) do if c.id == st.cpu and not c.merge then merges = false end end
+	end
+	button.caption = { merges and "fork-me-craft.merge" or "fork-me-craft.craft" }
 	M.cpu_pick(G.find(frame, "fork_me_cpu_pick"), st, p)
 	local psig = { tostring(p.ok), tostring(p.reason), p.runs, p.steps, tostring(p.bytes) }
 	for _, c in ipairs(p.cpu_list or {}) do
 		psig[#psig + 1] = c.kind .. c.id .. tostring(c.free) .. tostring(c.fits) .. tostring(c.allowed) .. (c.bytes or "")
+			.. tostring(c.merge)
 	end
 	for k, n in pairs(p.reserve) do psig[#psig + 1] = "r" .. k .. "=" .. n end
 	for k, n in pairs(p.missing) do psig[#psig + 1] = "m" .. k .. "=" .. n end
@@ -659,6 +687,8 @@ local function refresh_crafting(st, frame, net, index)
 		local text = { "", { "fork-me-gui.plan-missing" } }
 		if next(p.loops) then text[#text + 1] = { "fork-me-craft.plan-loop", autocraft.item_list(p.loops, 4) } end
 		plan_label.caption = text
+	elseif p.merge then plan_label.caption = { "", { "fork-me-gui.plan-ok", p.runs, p.steps }, " ",
+		{ "fork-me-craft.plan-merge" } }                           -- (issue #418)
 	else plan_label.caption = { "fork-me-gui.plan-ok", p.runs, p.steps } end
 	M.plan_cpus(G.find(frame, "fork_me_plan_cpus"), p)
 	plan_grid.clear()
@@ -682,9 +712,10 @@ function M.cpu_pick(dd, st, p)
 	local ids, items = {}, { { "fork-me-craft.cpu-auto" } }
 	if p.ok then
 		for _, c in ipairs(p.cpu_list or {}) do
-			if c.fits and c.free and c.allowed then
+			if (c.fits and c.free and c.allowed) or c.merge then
 				ids[#ids + 1] = c.id
-				items[#items + 1] = M.cpu_name(c)
+				--- (issue #418: a busy CPU whose job crafts the item: the request joins its job)
+				items[#items + 1] = c.merge and { "fork-me-craft.cpu-merge", M.cpu_name(c) } or M.cpu_name(c)
 			end
 		end
 	end
@@ -855,7 +886,10 @@ end
 --- issue #28: shift + click in the inventory pane stores the stack, control + click every stack of that item
 G.window("terminal", { open = open, refresh = function(player, frame) return M.refresh(player, frame) end,
 	entities = { "me-terminal", "chest" }, hint = { "fork-me-gui.store-help" },
-	shift = function(entity, stack)
+	shift = function(entity, stack, inv)
+		if stack.name == VC.NAME and VC.inventory(entity, inv and inv.valid and inv.player_owner or nil) then   -- (issue #440)
+			return VC.shift_in(entity, stack, inv)
+		end
 		local n, why = M.store_stack(entity, stack)
 		if not n then return why end
 		if n == 0 then return "no-storage" end
@@ -867,7 +901,12 @@ G.window("terminal", { open = open, refresh = function(player, frame) return M.r
 		if n == 0 then return "no-storage" end
 		return nil
 	end,
-	message = G.net_message })
+	--- issue #440: the view cell slots
+	click = function(entity, slot, cursor, inv, shift) return VC.click(entity, slot, cursor, inv, shift) end,
+	message = function(why)
+		if why == "not-here" or why == "full" or why == "inventory-full" then return { "fork-me-gui.refused-" .. why } end
+		return G.net_message(why)
+	end })
 
 --------------------------------------------------------------------------------
 --- actions
@@ -1066,9 +1105,12 @@ remote.add_interface("gregtorio-me-terminal", {
 	end,
 	--- the grid's entries for a search text, a sort ("count" or "name") and a kind ("all", "items", "fluids")
 	--- `fresh` (tests, the benchmark): made from nothing, as at a first refresh, and not kept
-	entries = function(terminal, filter, sort, kind, fresh, index)
+	--- (issue #440: `views`, the view cells of the window of `terminal` count, as the window's list; `player` for a wireless one)
+	entries = function(terminal, filter, sort, kind, fresh, index, views, player)
 		local net = network(terminal)
-		return net and M.entries(net, filter, sort, kind, fresh, index) or {}
+		local view, vsig
+		if views then view, vsig = VC.filter(VC.inventory(terminal, player)) end
+		return net and M.entries(net, filter, sort, kind, fresh, index, view, vsig) or {}
 	end,
 	--- issue #50, lever 8: { kept, resorted, sorted } since the load: lists given back unchanged, made from the last one, sorted
 	--- with table.sort after too many moves
@@ -1158,6 +1200,8 @@ end)
 
 script.on_event(defines.events.on_gui_closed, function(event)
 	G.on_closed(event)
+	Conn.on_gui_closed(event)                                -- (issue #412: a circuit connector's lamp window)
+	IO.fluid_entity_changed(event.entity)                    -- (issue #420: a machine's recipe may give it a fluid box)
 end)
 
 --- issue #28: the inventory pane of an open ME window follows the player's main inventory and cursor
@@ -1191,6 +1235,7 @@ script.on_event(defines.events.on_player_removed, function(event)
 	local w = storage.fork_me_wireless                                                           -- (the wireless link and mode)
 	if w and w.players then w.players[event.player_index] = nil end
 	Names.forget(event.player_index)                                                             -- (issue #295: the names)
+	VC.forget_player(event.player_index)                                                         -- (issue #440: wireless view cells)
 end)
 
 return M
