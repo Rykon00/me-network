@@ -49,6 +49,7 @@ local P = require("scripts.fork-me-patterns")
 local Sched = require("scripts.fork-me-schedule")
 
 local M = {}
+M.T = require("scripts.fork-me-targets")    -- issue #487: a machine's fluid boxes (M.T.boxes; a field: no main-chunk local)
 
 --- functions(s, tick) run every tick (fork-me-circuit.lua); registered at load time, nothing is stored
 M.step_hooks = {}
@@ -365,10 +366,10 @@ local function prototype_piped(entity, index)
 			local sx, sy = px + dx, py + dy                       -- the tile of the connection, in the machine
 			for _, o in pairs(surface.find_entities_filtered{ position = { sx + v[1], sy + v[2] } }) do
 				if o ~= entity and o.valid then
-					local ok, ofb = pcall(function() return o.fluidbox end)
-					if ok and ofb and #ofb > 0 then
-						for j = 1, #ofb do
-							for _, oc in pairs(ofb.get_pipe_connections(j)) do
+					local ok, n = pcall(function() return o.fluids_count end)
+					if ok and n and n > 0 then
+						for j = 1, n do
+							for _, oc in pairs(o.get_fluid_box_pipe_connections(j)) do
 								local t = oc.target_position
 								if t and math.abs(t.x - sx) < 0.5 and math.abs(t.y - sy) < 0.5 then return true end
 							end
@@ -409,7 +410,7 @@ local function fluid_map(machine, ingredients, products, outputs_optional)
 		if fluid_in or not outputs_optional then return nil, "fluid-box" end
 		return EMPTY_MAP                               -- a processing output that comes back elsewhere
 	end
-	local fb = machine.fluidbox
+	local fb = M.T.boxes_of(machine)
 	local in_boxes, out_boxes = {}, {}
 	for i = 1, #fb do
 		local p = fb.get_prototype(i)
@@ -478,7 +479,7 @@ end
 local function fluid_boxes_fit(machine, ingredients, products)
 	if not has_fluid(ingredients, products) then return nil end
 	if machine.type ~= "assembling-machine" then return "fluid-box" end
-	local fb = machine.fluidbox
+	local fb = M.T.boxes_of(machine)
 	local boxes = machine.facts.boxes
 	local live = #fb == #boxes                     -- the entity's boxes are the prototype's, by index
 	--- issue #164: with the boxes switched off, a pipe is found from the prototype's connections (once per box and scan)
@@ -507,7 +508,7 @@ local function fluid_boxes_fit(machine, ingredients, products)
 		for _, i in pairs(list) do
 			if live and connected(fb, i) then pipes = true
 			elseif not live and piped(i) then pipes = true                  -- (issue #164: the boxes are off)
-			elseif (live and fb.get_capacity(i) or boxes[i].volume) >= need then free = free + 1 end
+			elseif (live and fb.get_capacity(i) or boxes[i].get_volume()) >= need then free = free + 1 end
 		end
 		if free >= n then return nil end
 		return pipes and "fluid-pipes" or "fluid-box"
@@ -570,7 +571,7 @@ local function def_facts(def)
 		--- one) switches an assembling machine to it, as a crafting pattern does: its category too
 		local recipe = def.recipe and prototypes.recipe[def.recipe]
 		f = { stack = stack_problem(ingredients), items = items, fluid_in = fluid_in,
-			category = recipe and recipe.category or nil, switch = def.kind == "processing" and recipe ~= nil or nil }
+			categories = recipe and recipe.categories or nil, switch = def.kind == "processing" and recipe ~= nil or nil }
 		facts_cache[def] = f
 	end
 	return f
@@ -584,7 +585,8 @@ local function machine_facts(entity)
 	local m = machine_cache[name]
 	if not m then
 		local proto = entity.prototype
-		m = { categories = proto.crafting_categories or {}, fixed = proto.fixed_recipe, boxes = proto.fluidbox_prototypes }
+		local fixed = proto.fixed_recipe                     -- (issue #487: a LuaRecipePrototype since Factorio 2.1)
+		m = { categories = proto.crafting_categories or {}, fixed = fixed and fixed.name or nil, boxes = proto.fluidbox_prototypes }
 		machine_cache[name] = m
 	end
 	return m
@@ -631,7 +633,7 @@ local VIEW = {
 			x = inp and #inp or false
 		elseif k == "recipes" then x = e.force.recipes
 		elseif k == "facts" then x = machine_facts(e)
-		elseif k == "fluidbox" then x = fluidbox_view(e.fluidbox)
+		elseif k == "fluidbox" then x = fluidbox_view(M.T.boxes(e))
 		else return nil end
 		rawset(v, k, x)
 		return x
@@ -646,7 +648,7 @@ end
 --- (its outputs may come back elsewhere).
 local function switch_problem(v, def, facts, outputs_optional)
 	local machine = v.facts
-	if not machine.categories[facts.category] then return "category" end
+	if not N.makes(machine.categories, facts.categories) then return "category" end
 	local fixed = machine.fixed
 	if fixed and fixed ~= "" and fixed ~= def.recipe then return "fixed-recipe" end
 	local r = v.recipes[def.recipe]
@@ -679,7 +681,7 @@ local function target_for(v, def)
 		if etype == "furnace" then return nil, "furnace" end
 		if etype ~= "assembling-machine" then return nil, nil end
 		local machine = v.facts
-		if not machine.categories[facts.category] then return nil, "category" end
+		if not N.makes(machine.categories, facts.categories) then return nil, "category" end
 		local fixed = machine.fixed
 		if fixed and fixed ~= "" and fixed ~= def.recipe then return nil, "fixed-recipe" end
 		local r = v.recipes[def.recipe]
@@ -1159,7 +1161,7 @@ local function product_yield(products, key)
 	for _, p in pairs(products) do
 		if key_of(p) == key then
 			local amount = p.amount or ((p.amount_min + p.amount_max) / 2)
-			local probability = p.probability or 1
+			local probability = N.chance(p)
 			total = total + amount * probability
 			if p.amount == nil or probability ~= 1 then exact = false end
 		end
@@ -2026,7 +2028,7 @@ local function collect_output(job, net, machine, map, step)
 		end
 	end
 	if map and #map.outputs > 0 then
-		local fb = machine.fluidbox
+		local fb = M.T.boxes(machine)
 		for _, o in pairs(map.outputs) do
 			local f = o.index <= #fb and fb[o.index] or nil     -- a changed recipe may have fewer boxes
 			if f and f.amount > 0 then
@@ -2063,7 +2065,7 @@ local function take_back_input(job, machine, ingredients, map)
 		end
 	end
 	if map and #map.inputs > 0 then
-		local fb = machine.fluidbox
+		local fb = M.T.boxes(machine)
 		for _, i in pairs(map.inputs) do
 			local f = i.index <= #fb and fb[i.index] or nil
 			if f and f.amount > 0 then
@@ -2085,7 +2087,7 @@ local function machine_idle(machine, ingredients, map)
 		if ing.type == "item" and N.bound(inp).get_item_count(ing.name) > 0 then return false end
 	end
 	if map and #map.inputs > 0 then
-		local fb = machine.fluidbox
+		local fb = M.T.boxes(machine)
 		for _, i in pairs(map.inputs) do
 			local f = i.index <= #fb and fb[i.index] or nil
 			if f and f.amount >= i.amount then return false end
@@ -2179,7 +2181,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	local function undo()
 		for _, g in pairs(given) do
 			if g.fluid then
-				machine.fluidbox[g.index] = nil
+				M.T.set_fluid(machine, g.index, nil)
 			elseif g.got > 0 then
 				if with_data(g.name) then N.remove_whole(inp, g.name, g.quality, g.got)    -- (issue #480)
 				else inp.remove{ name = g.name, count = g.got, quality = g.quality } end
@@ -2197,7 +2199,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 			if inserted < count then undo() return false end
 		end
 	end
-	local fb = machine.fluidbox
+	local fb = M.T.boxes(machine)
 	for _, i in pairs(map.inputs) do
 		local leftover = fb[i.index]                        -- less than one craft: back into the pool first
 		if leftover and leftover.amount > 0 then
@@ -2318,7 +2320,7 @@ local function switch_recipe(net, machine, recipe, quality)
 			end
 		end
 	end
-	local fb = machine.fluidbox
+	local fb = M.T.boxes(machine)
 	local held = {}
 	for i = 1, #fb do
 		local f = fb[i]

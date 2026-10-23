@@ -314,10 +314,9 @@ end
 --- follows the engine: the partner is the end the underground pipe connection reaches (ahead in the direction).
 local function engine_partner(entity, dir)
 	local v = DIR_VEC[dir]
-	local fb = entity.fluidbox
-	if not (v and fb and #fb > 0) then return nil end
-	for _, other in pairs(fb.get_connections(1)) do
-		local o = other.owner
+	if not (v and entity.fluids_count > 0) then return nil end
+	for _, other in pairs(entity.get_fluid_box_neighbours(1)) do       -- (issue #487: records { entity, index } since 2.1)
+		local o = other.entity
 		if o and o.valid and o ~= entity and o.name == entity.name then
 			local dx, dy = o.position.x - entity.position.x, o.position.y - entity.position.y
 			if dx * v[1] + dy * v[2] > 0 then return o end
@@ -781,6 +780,23 @@ local function temps_of(name)
 end
 
 --- the default and the max temperature of a fluid (nil for no fluid; per load)
+--- Issue #487: the chance that a craft makes product `p` (a recipe prototype's product). Since Factorio 2.1 a product has
+--- `independent_probability` and `shared_probability` { min, max } (one roll per craft for all products; the product is made
+--- when it falls between them); a product kept from a 2.0 save has `probability`
+function M.chance(p)
+	local sp = p.shared_probability
+	return (p.independent_probability or p.probability or 1) * (sp and (sp.max - sp.min) or 1)
+end
+
+--- Issue #487: does a machine with the crafting categories `machine_cats` (a set) make a recipe of the categories `cats` (a
+--- list: Factorio 2.1's LuaRecipePrototype::categories; a recipe may have several)?
+function M.makes(machine_cats, cats)
+	for _, c in pairs(cats or {}) do
+		if machine_cats[c] then return true end
+	end
+	return false
+end
+
 function M.fluid_range(name)
 	local t = temps_of(name)
 	if not t then return nil end
@@ -2229,7 +2245,7 @@ end
 
 --- Issue #115: an engine object's methods, made once per object and load. `obj.method` makes a new bound method object at
 --- every read (88 bytes of garbage, most of the time of a cheap call: 0.28 µs against 0.04 µs for a kept one), so the hot
---- paths call the methods of the objects they keep (a record's entity, T.inventory, T.fluidbox) through this. Methods only:
+--- paths call the methods of the objects they keep (a record's entity, T.inventory) through this. Methods only:
 --- a property read here would be kept as it was. Weak keys: an object no longer kept leaves (the table it keys refers to it,
 --- an ephemeron). Nothing is saved.
 local bound_cache = setmetatable({}, { __mode = "k" })
@@ -3889,14 +3905,14 @@ function M.chest_tick(tick)
 			local spec = cell_spec(cell.name)
 			if spec and fluid_cell(spec) then
 				local tank = c.tank
-				local fb = tank and tank.valid and tank.fluidbox[1]
+				local fb = tank and tank.valid and tank.get_fluid(1)
 				if fb and CH.powered(s, unit) then
-					--- (the tank's share of its fluid segment: remove_fluid takes what was stored out of the segment; setting the
+					--- (the tank's share of its fluid segment: extract_fluid takes what was stored out of the segment; setting the
 					--- fluid box would empty the pipes connected to it as well)
 					local key = fluid_key(fb.name, fb.temperature)
 					local n = store_key_in_drive(s, d, unit, key, fb.amount)
 					if n > 0 then
-						local got = tank.remove_fluid{ name = fb.name, amount = n, temperature = fb.temperature }
+						local got = tank.extract_fluid{ name = fb.name, amount = n, temperature = fb.temperature }
 						if got < n - ZERO then CH.take_from_drive(s, d, unit, key, n - got) end   -- (never more than came out)
 					else
 						c.wait = tick + CH.RETRY
@@ -4045,7 +4061,7 @@ function M.chest_info(entity)
 	local st = inv and inv[1]
 	if st and st.valid_for_read then out.input = { name = st.name, quality = st.quality.name, count = st.count } end
 	local tank = c and c.tank
-	local fb = tank and tank.valid and tank.fluidbox[1]
+	local fb = tank and tank.valid and tank.get_fluid(1)
 	if fb then out.fluid = { name = fb.name, amount = fb.amount, temperature = fb.temperature } end
 	return out
 end

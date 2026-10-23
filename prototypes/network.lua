@@ -459,12 +459,11 @@ data:extend({ {
 	collision_mask = { layers = {} },
 	fluid_box = {
 		volume = CHEST_FLUID_VOLUME,
-		hide_connection_info = true,
-		pipe_connections = {
-			{ direction = defines.direction.north, position = { 0, 0 } },
-			{ direction = defines.direction.east, position = { 0, 0 } },
-			{ direction = defines.direction.south, position = { 0, 0 } },
-			{ direction = defines.direction.west, position = { 0, 0 } },
+		pipe_connections = {          -- (issue #487: hide_connection_info is a key of each connection since Factorio 2.1)
+			{ direction = defines.direction.north, position = { 0, 0 }, hide_connection_info = true },
+			{ direction = defines.direction.east, position = { 0, 0 }, hide_connection_info = true },
+			{ direction = defines.direction.south, position = { 0, 0 }, hide_connection_info = true },
+			{ direction = defines.direction.west, position = { 0, 0 }, hide_connection_info = true },
 		},
 	},
 	window_bounding_box = { { 0, 0 }, { 0, 0 } },
@@ -596,11 +595,10 @@ data:extend({ {
 	collision_mask = WALKABLE,
 	fluid_box = {
 		volume = 1,
-		hide_connection_info = true,
 		pipe_connections = {
-			{ direction = defines.direction.south, position = { 0, 0 }, connection_category = "me-cable" },
+			{ direction = defines.direction.south, position = { 0, 0 }, connection_category = "me-cable", hide_connection_info = true },
 			{ connection_type = "underground", direction = defines.direction.north, position = { 0, 0 },
-			  max_underground_distance = UNDERGROUND_REACH, connection_category = "me-cable" },
+			  max_underground_distance = UNDERGROUND_REACH, connection_category = "me-cable", hide_connection_info = true },
 		},
 	},
 	pictures = four_way(UNDERGROUND, true),
