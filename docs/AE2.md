@@ -407,7 +407,11 @@ target, no target) is only probed, with one cheap look at a growing interval (up
 wait of an idle interface or bus"), and visited at once when the look sees a change; one with nothing to do on the
 network's side (its item is not in the network, the network is full, no power, no network) costs nothing until the
 network wakes it: when its item comes in or room appears, the power is back or the network changes, and also when
-its settings change, it is rotated or something is built in front of it. The visits per tick are what is due,
+its settings change, it is rotated or something is built in front of it. An import bus whose network has no room for
+what its source holds also keeps probing its source (issue #479), so an item the network can take that comes in behind
+one it cannot is taken within that idle wait; a stack no storage of the network can ever take (an item with tags in a
+network without cells, an item every filter keeps out) stays in the source like a stack the network refuses, and the
+bus goes on with the rest. The visits per tick are what is due,
 between the map settings "Interface and bus visits per tick, at least" and "at most" (above the ceiling the
 earliest due come first: a big base pays at most the ceiling). Storage bus reads, level maintainer checks and
 crafting job steps follow the same rule with their own floor and ceiling settings; a stocked level maintainer waits
@@ -466,6 +470,11 @@ like any bus, and that inventory becomes storage of the network. Facing a **stor
   drive, a cable, ...) does nothing either ("Faces an ME block"): no loops.
 * Removing the bus or the chest takes the chest's items out of the network at once (a chest destroyed by another
   mod without an event: at the bus's next look); nothing is lost, the items stay in the chest.
+* **Items with tags or a label** (issue #479: storage cells, and the turrets of mods such as Quality Turrets Reworked, which
+  makes every turret an item with tags to keep its kills): the bus shows and moves the stacks that carry nothing of their
+  own (a new turret, an empty cell) like plain items. A stack with tags, a label or a description (a turret with kills, a
+  cell that holds items, an encoded pattern) is not shown, stays in the chest and is never taken out by count; the
+  network stores such an item only in a cell, where it is kept with its tags.
 * Not shown or moved: spoiling items, items with an inventory or own data (armor, blueprints, ...). AE2 can show
   items a bus cannot take as present; here they are not shown at all, because every plan, level maintainer and
   circuit signal counts on what the network shows. Items are taken out by count: a damaged item or a partly used tool
@@ -1627,7 +1636,8 @@ nothing while you do not use it.
   * **Members** by kind (controller, cables, drives, interfaces, buses, level maintainers, crafting blocks, ...).
   * **Interfaces and buses** by state: *busy* (they have work and are visited when their machine's buffer needs it),
     *probing* (they wait for something on the machine's side: `empty` source, `full` target, `no-target`, `idle`; one cheap
-    look now and then) and *parked* (they wait for the network: `no-key`, the item is not in the network, `net-full`,
+    look now and then; an import bus whose network is full, `net-full`, is probing too: it also looks at its source,
+    issue #479) and *parked* (they wait for the network: `no-key`, the item is not in the network, `net-full`,
     `no-network`, `no-power`; they cost nothing until the network wakes them, with one slow look a minute as a safety net).
     A network with many parked blocks and few busy ones is quiet; a network with all blocks busy and a high backlog is
     where a base starts to cost script time.

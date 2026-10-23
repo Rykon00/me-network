@@ -1063,8 +1063,10 @@ function M.interface_step(rec, dt, u)
 				local taken = 0
 				if can > 0 then
 					local proto = prototypes.item[c.name]
-					if proto and (N.item_class(proto.type) == "worn" or N.can_be_damaged(proto)) then
-						--- (a removal by count takes the used item first, issue #76; a damaged stack is no surplus either, issue #84)
+					local class = proto and N.item_class(proto.type)
+					if proto and (class == "worn" or class == "tags" or class == "label" or N.can_be_damaged(proto)) then
+						--- (a removal by count takes the used item first, issue #76; a damaged stack is no surplus either, issue #84;
+						--- nor a stack with tags, a label or a description, issue #479: it would go in as a plain item)
 						taken = N.remove_whole(inv, c.name, c.quality, can)
 					else
 						Q_REMOVE.name, Q_REMOVE.quality, Q_REMOVE.count = c.name, c.quality, can
@@ -1542,7 +1544,9 @@ end
 --- get_contents, one remove per item type), the others stack by stack (their data, damage or spoilage decides).
 --- `info` (issue #38): what the source held of the bus's items (`held`), its slots and its biggest item (the room),
 --- and whether the network took nothing (`netfull`). A stack the network refuses itself (N.refuses_stack) is neither: it
---- stays where it is and is left out of `held` (issue #85).
+--- stays where it is and is left out of `held` (issue #85). Issue #479: so is a key no storage of the network can ever take
+--- (N.never_stores: an item with tags in a network of storage buses, a key every filter keeps out); the bus waits for room
+--- for it (a new cell or storage bus wakes it), not as a full network. One key without room never stops the others.
 local function import_items(rec, net, t, cap, info)
 	local inv = T.inventory(t, rec.t_inv)
 	if not inv then return 0 end
@@ -1566,8 +1570,14 @@ local function import_items(rec, net, t, cap, info)
 							if back < removed - stored then
 								t.surface.spill_item_stack{ position = t.position, stack = { name = c.name, quality = q, count = removed - stored - back } }
 							end
-							info.netfull = true
-							N.wait_for(net, N.key_of(c.name, q), "io", unit, false)   -- (room appears when some is taken)
+							local key = N.key_of(c.name, q)
+							if stored <= 0 and N.never_stores(net, key) then
+								held = held - c.count             -- issue #479: no storage takes it (left out like a refused stack)
+								N.wait_room(net, "io", unit)
+							else
+								info.netfull = true
+								N.wait_for(net, key, "io", unit, false)   -- (room appears when some is taken)
+							end
 						end
 						moved = moved + stored
 					end
@@ -1591,8 +1601,16 @@ local function import_items(rec, net, t, cap, info)
 					--- bus does not count as something left to take
 					held = held - stack.count
 				else
-					info.netfull = true
-					N.wait_for(net, N.key_of(stack.name, stack.quality.name), "io", unit, false)
+					local _, key, data = N.storable(stack)
+					if key and N.never_stores(net, key, data) then
+						--- issue #479: no storage of the network can take this key (an item with tags and no cell): the same,
+						--- but a new cell or storage bus may take it (N.wait_room: it joins the network)
+						held = held - stack.count
+						N.wait_room(net, "io", unit)
+					else
+						info.netfull = true
+						N.wait_for(net, N.key_of(stack.name, stack.quality.name), "io", unit, false)
+					end
 				end
 			end
 		end
@@ -2291,6 +2309,12 @@ local function probe_work(rec)
 		return held and game.tick - (rec.last or 0) >= tick_limit
 	end
 	if b == "empty" then return probe_mark(rec) ~= rec.seen end
+	--- issue #479: an import bus that waits for room (woken by it) looks at its source like an empty one; a room wake that was
+	--- missed is found at the pace of a parked block's fallback visit, and counted as missed like one
+	if b == "net-full" then
+		if probe_mark(rec) ~= rec.seen then return true end
+		return game.tick - (rec.last or 0) >= Sched.PARK_FALLBACK and "fallback"
+	end
 	--- issue #363: an export bus with a group filter waits for no key of its own: a key new in the network, or the idle limit
 	--- (issue #413: the same with a Fuzzy Card)
 	if (rec.gf or rec.fz) and not IMPORTS[rec.kind] then
@@ -2384,7 +2408,11 @@ local function visit(rec, unit, fallback)
 	if block then
 		local was = rec.block
 		rec.block = block
-		if NET_SIDE[block] then
+		--- issue #479: an import bus whose network had no room for what its source held is woken by room, and probed like an
+		--- empty one: a stack the network can take that arrives in its source is taken within the idle limit (parked, it
+		--- waited for room for the stacks it could not store, up to the fallback visit)
+		local probed = block == "net-full" and IMPORTS[rec.kind]
+		if NET_SIDE[block] and not probed then
 			--- parked for its own network: no power or no network wake with the network (N.wait_usable: a change of the
 			--- graph or the slow step's look at the power), a full network wakes when room appears
 			if (block == "no-power" or block == "no-network") and net then N.wait_usable(net, "io", unit) end
@@ -2392,6 +2420,7 @@ local function visit(rec, unit, fallback)
 			Sched.park(s.q, rec, unit, block)
 			return 0
 		end
+		if probed and net then N.wait_room(net, "io", unit) end
 		local iv = (not was or not rec.iv or rec.iv < MIN_INTERVAL) and MIN_INTERVAL or rec.iv   -- (just blocked: from the shortest)
 		iv = iv * 2
 		if iv > tick_limit then iv = tick_limit end
@@ -2424,7 +2453,12 @@ local function probe(rec, unit)
 		rec.last, rec.left = nil, nil
 		return visit(rec, unit, true)
 	end
-	if probe_work(rec) then
+	local work = probe_work(rec)
+	if work == "fallback" then                                -- (issue #479: the fallback of an import bus waiting for room)
+		rec.last, rec.left = nil, nil
+		return visit(rec, unit, true)
+	end
+	if work then
 		rec.sidle = nil
 		rec.last, rec.left = math.max(rec.last or 0, game.tick - idle_limit(s)), nil   -- (as a sleeper of 0.3.0)
 		Sched.wake(s.q, rec, unit)

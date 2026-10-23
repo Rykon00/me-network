@@ -136,15 +136,17 @@ end
 --------------------------------------------------------------------------------
 
 local plain_cache = {}
---- can the network show and move this item through a storage bus? Plain items that do not spoil, and whole tools, ammo and
---- repair tools (the same classes as N.storable: N.item_class; issue #76). What carries data of its own is not shown.
+--- can the network show and move this item through a storage bus? Plain items that do not spoil, whole tools, ammo and
+--- repair tools (the same classes as N.storable: N.item_class; issue #76) and, issue #479, items with tags or a label (Quality
+--- Turrets Reworked makes every turret an item with tags): of those the stacks that carry nothing of their own, which
+--- N.storable keys as plain items (`walked`). What carries data of its own is not shown: a chest cannot keep it apart by count.
 local function plain(name, quality)
 	local k = name .. "@" .. quality
 	local v = plain_cache[k]
 	if v == nil then
 		local p = prototypes.item[name]
 		local class = p and N.item_class(p.type)
-		v = (class == "plain" or class == "worn") and p.get_spoil_ticks(quality) <= 0
+		v = (class == "plain" or class == "worn" or class == "tags" or class == "label") and p.get_spoil_ticks(quality) <= 0
 		plain_cache[k] = v
 	end
 	return v
@@ -160,6 +162,22 @@ local function worn(name)
 		local p = prototypes.item[name]
 		v = p ~= nil and N.item_class(p.type) == "worn"
 		worn_cache[name] = v
+	end
+	return v
+end
+
+local walked_cache = {}
+--- is its count in the chest one of stacks that the type alone does not decide? A tool, ammo or a repair tool (a used one is
+--- no part of it) and, issue #479, an item with tags or a label: the stacks that carry tags, a label or a description are kept
+--- apart (N.plain_stack, per stack), so the bus counts and takes the plain stacks only (N.whole_counts, N.count_whole,
+--- N.remove_whole). Per load, never saved.
+local function walked(name)
+	local v = walked_cache[name]
+	if v == nil then
+		local p = prototypes.item[name]
+		local class = p and N.item_class(p.type)
+		v = class == "worn" or class == "tags" or class == "label"
+		walked_cache[name] = v
 	end
 	return v
 end
@@ -240,7 +258,7 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
-		if worn(name) or (rec.dmg and rec.dmg[key]) then return N.count_whole(inv, name, q) end
+		if walked(name) or (rec.dmg and rec.dmg[key]) then return N.count_whole(inv, name, q) end
 		Q.name, Q.quality, Q.count = name, q, nil
 		return N.bound(inv).get_item_count(Q)
 	end,
@@ -250,7 +268,7 @@ local ITEM = {
 		local name, q = item_of(key)
 		local inv = name and inventory_of(rec)
 		if not inv then return 0 end
-		if worn(name) then return N.remove_whole(inv, name, q, count) end
+		if walked(name) then return N.remove_whole(inv, name, q, count) end
 		if placeable(name) then
 			--- issue #84: the whole stacks only; a damaged one stays. The bus then shows only the whole ones (`rec.dmg`, until
 			--- a visit finds no damaged stack of the key any more): the count of the engine cannot tell them apart and would
@@ -272,6 +290,8 @@ local ITEM = {
 		if rec.mode == "read" or not allowed(rec, key) then return false end
 		return item_of(key) ~= nil and rec.status == "ok" and inventory_of(rec) ~= nil
 	end,
+	--- issue #479: can the bus ever hold `key` (its kind of items; the mode and the filter are the engine's, N.never_stores)?
+	takes = function(rec, key) return item_of(key) ~= nil end,
 	--- the bus's record leaves the storage engine: a card still in it is spilled (a bus that vanished without an event)
 	detached = function(rec) M.detach(rec) end,
 	--- the network took the last of `key` out of the inventory (issue #67): read it again soon
@@ -409,6 +429,7 @@ function M.visit(rec, cascade)
 	if inv and rec.mode ~= "write" then
 		local all = rec.inonly or not (rec.partition or rec.deny or rec.gf)   -- (no filter to check: the common case)
 		local whole                                                  -- the whole stacks' counts, read when a tool or ammo is there
+		                                                             -- (or an item with tags or a label, issue #479)
 		local dmg = rec.dmg                                          -- issue #84: keys with a damaged stack the bus found
 		for _, it in pairs(N.bound(inv).get_contents()) do
 			local q = it.quality or "normal"
@@ -416,7 +437,7 @@ function M.visit(rec, cascade)
 				local key = N.key_of(it.name, q)
 				if all or shown(rec, key) then
 					local n = it.count
-					if worn(it.name) then
+					if walked(it.name) then
 						whole = whole or N.whole_counts(inv)
 						n = whole[key] or 0
 					elseif dmg and dmg[key] then
