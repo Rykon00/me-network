@@ -905,6 +905,8 @@ cellquality394 = require("cellquality")({ me_place = me_place, power = power, me
 damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
 --- me-network issue #85: an import bus with only refused stacks (refused.lua)
 refused85 = require("refused")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #479: items with tags through storage buses, an import bus with a stack it cannot store (tagitem.lua)
+tagitem479 = require("tagitem")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #110: the Acceleration Card in the ME Molecular Assembler's module slots (accel.lua)
 accel110 = require("accel")({ me_place = me_place, me_report = me_report })
 --- me-network issue #110, part 2: the Acceleration Cards of the import and export bus (busaccel.lua)
@@ -1095,6 +1097,7 @@ local function tests_running()
 	accel110.running(check)
 	damaged84.running(check)
 	refused85.running(check)
+	tagitem479.running(check)
 	lab86.running(check)
 	bulk382.running(check)
 	copypaste383.running(check)
@@ -2056,6 +2059,7 @@ script.on_nth_tick(10, function()
 	accel110.tick()
 	damaged84.tick()
 	refused85.tick()
+	tagitem479.tick()
 	lab86.tick()
 	bulk382.tick()
 	copypaste383.tick()
@@ -4943,6 +4947,7 @@ script.on_init(function()
 	for _, f in pairs(accel110.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(damaged84.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refused85.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(tagitem479.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end

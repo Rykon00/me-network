@@ -266,6 +266,8 @@ M.handlers = {
 		fb[rec.box] = left > EPS and { name = name, amount = left, temperature = held.temperature } or nil
 		return n
 	end,
+	--- issue #479: can the bus ever hold `key`? (fluids only; the mode and the filter are the engine's, N.never_stores)
+	takes = function(rec, key) return fluid_of(key) ~= nil end,
 	--- issue #17, an Overflow Destruction Card: is what does not fit of `key` destroyed? Only while the bus owns the
 	--- segment and the segment could take the fluid at all (not while it holds another fluid or is at another
 	--- temperature: then the network puts nothing in, and destroys nothing either)

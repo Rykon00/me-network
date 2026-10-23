@@ -3025,6 +3025,46 @@ local function insert_key(net, key, count, data)
 	return count - left
 end
 
+--- Issue #479: can no storage of the network ever take `key`, whatever room it had? `data`: the key is an item with data (tags,
+--- a description, a health), which only cells take (put). A storage may take the key by its kind, filter and mode: a cell of the
+--- key's kind (item or fluid) whose partition, blacklist or group filter lets it in (a creative cell only what it lists), a
+--- storage bus that is not read only, whose filter lets it in and whose handler can hold such a key (its `takes`, when it has
+--- one). Room, the sticky pass and the ME Chest (its own cell) are not looked at: false there. The answer is kept per key in the
+--- network's lookups, which are made again when a storage, a priority, a partition or a mode changes (never saved).
+function M.never_stores(net, key, data)
+	if net.chest or not M.usable(net) then return false end
+	local c = lookups(state(), net)
+	local never = c.never
+	if not never then
+		never = {}
+		c.never = never
+	end
+	local v = never[key]
+	if v ~= nil then return v end
+	v = true
+	local fluid = is_fluid_key(key)
+	local cells = net.cells
+	for _, o in ipairs(c.order) do
+		local cell = cells[o.cid]
+		if cell then
+			if cell.ext then
+				if not data and cell.mode ~= "read" and accepts(cell, key) then
+					local h = M.ext_handlers[cell.handler or cell.ext]
+					if not (h and h.takes) or h.takes(cell, key) then v = false break end
+				end
+			else
+				local spec = cell_spec(cell.name)
+				if spec and fluid_cell(spec) == fluid and accepts(cell, key) and not (spec.creative and not cell.partition) then
+					v = false
+					break
+				end
+			end
+		end
+	end
+	never[key] = v
+	return v
+end
+
 --- the extraction order of `key`: lower priority first, storage buses before cells of the same priority,
 --- unpartitioned before partitioned, then by cell id
 local function extract_order(s, net, c, key)
@@ -3402,12 +3442,33 @@ local function is_used(stack, proto)
 	return false
 end
 
---- the items of `name` and `quality` in whole stacks of an inventory (a worn type: the stacks whose top item is not used)
+--- Issue #479: does this stack stand for the plain key of its item (the key N.storable gives it)? Not when its top item is used
+--- or damaged, nor when an item with tags or a label carries a label, tags or a description of its own: N.storable keys those
+--- apart, and a count or a removal by count cannot tell them from the plain ones. Read per stack, since the prototype type does
+--- not decide it (Quality Turrets Reworked makes every turret an item with tags, and only the mined veterans carry tags).
+--- (A field, not a local: the main chunk is at the limit of 200 locals.)
+function M.plain_stack(stack, proto)
+	if is_used(stack, proto) then return false end
+	local class = ITEM_CLASS[proto.type]
+	if class == "tags" then
+		if stack.label then return false end
+		local tags = stack.tags
+		if tags and next(tags) then return false end
+		local desc = stack.custom_description
+		return desc == nil or desc == ""
+	elseif class == "label" then
+		return stack.label == nil
+	end
+	return true
+end
+
+--- the items of `name` and `quality` in whole stacks of an inventory (a worn type: the stacks whose top item is not used; an
+--- item with tags or a label, issue #479: the stacks that carry nothing, M.plain_stack)
 function M.count_whole(inv, name, quality)
 	local n = 0
 	for i = 1, #inv do
 		local stack = inv[i]
-		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and not is_used(stack, stack.prototype) then
+		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and M.plain_stack(stack, stack.prototype) then
 			n = n + stack.count
 		end
 	end
@@ -3424,13 +3485,14 @@ function M.has_used(inv, name, quality)
 end
 
 --- Take up to `count` items of `name` and `quality` out of the whole stacks of an inventory, never out of a used one: a
---- removal by count (LuaInventory.remove) takes the used item first and would hand it on as a full one. Returns the count.
+--- removal by count (LuaInventory.remove) takes the used item first and would hand it on as a full one. Nor out of a stack
+--- with tags, a label or a description (issue #479, M.plain_stack): it would leave as a plain item. Returns the count.
 function M.remove_whole(inv, name, quality, count)
 	local left = count
 	for i = 1, #inv do
 		if left <= 0 then break end
 		local stack = inv[i]
-		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and not is_used(stack, stack.prototype) then
+		if stack.valid_for_read and stack.name == name and stack.quality.name == quality and M.plain_stack(stack, stack.prototype) then
 			local take = math.min(left, stack.count)
 			if take >= stack.count then stack.clear() else stack.count = stack.count - take end
 			left = left - take
@@ -3439,15 +3501,17 @@ function M.remove_whole(inv, name, quality, count)
 	return count - left
 end
 
---- { key -> count } of the items of a worn type, and of the items that can be damaged (issue #84), in the whole stacks of an
---- inventory (one pass; a stack whose top item is used or damaged counts as none)
+--- { key -> count } of the items of a worn type, of the items that can be damaged (issue #84) and of the items with tags or a
+--- label (issue #479), in the stacks of an inventory that stand for their plain key (one pass; M.plain_stack: a stack whose top
+--- item is used or damaged, or that carries tags, a label or a description, counts as none)
 function M.whole_counts(inv)
 	local out = {}
 	for i = 1, #inv do
 		local stack = inv[i]
 		if stack.valid_for_read then
 			local proto = stack.prototype
-			if (ITEM_CLASS[proto.type] == "worn" or M.can_be_damaged(proto)) and not is_used(stack, proto) then
+			local class = ITEM_CLASS[proto.type]
+			if (class == "worn" or class == "tags" or class == "label" or M.can_be_damaged(proto)) and M.plain_stack(stack, proto) then
 				local key = key_of(stack.name, stack.quality.name)
 				out[key] = (out[key] or 0) + stack.count
 			end

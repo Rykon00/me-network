@@ -173,8 +173,10 @@ return function(H)
 				x.find("iron-chest", 2.5, -0.5).insert{ name = COPPER, count = 50 }
 				remote.call(IO, "set_bus_filters", x.find("me-import-bus", 2.5, 0.5), { COPPER })
 			end),
-			wait("the import bus is parked: the network is full", 100, function(c, x)
-				return c.problem or parked(x.find("me-import-bus", 2.5, 0.5)) == "net-full"
+			--- (issue #479: an import bus that waits for room is not parked: it also looks at its source, like an empty one)
+			wait("the import bus waits for room: the network is full", 100, function(c, x)
+				local r = sch(x.find("me-import-bus", 2.5, 0.5))
+				return c.problem or (r ~= nil and r.block == "net-full" and r.parked == nil)
 			end),
 			act("room appears: " .. trigger.what, trigger.fn),
 			wait("the import bus takes the copper", 250, function(c, x)
