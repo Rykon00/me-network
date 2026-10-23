@@ -909,6 +909,8 @@ refused85 = require("refused")({ me_place = me_place, power = power, me_report =
 tagitem479 = require("tagitem")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #481: damaged items with tags, stored with their health, tags and description (tagdamaged.lua)
 tagdamaged481 = require("tagdamaged")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #480: autocrafting of items with tags (tagcraft.lua)
+tagcraft480 = require("tagcraft")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #110: the Acceleration Card in the ME Molecular Assembler's module slots (accel.lua)
 accel110 = require("accel")({ me_place = me_place, me_report = me_report })
 --- me-network issue #110, part 2: the Acceleration Cards of the import and export bus (busaccel.lua)
@@ -1101,6 +1103,7 @@ local function tests_running()
 	refused85.running(check)
 	tagitem479.running(check)
 	tagdamaged481.running(check)
+	tagcraft480.running(check)
 	lab86.running(check)
 	bulk382.running(check)
 	copypaste383.running(check)
@@ -1938,7 +1941,7 @@ function pattern_line_test()
 		ok2, ed = remote.call(PT, "set_editor_row", ed, "outputs", 1, PL_OUT, PL_OUT_N)
 		expect(ok1 and ok2, "set_editor_row")
 		local ok3 = remote.call(PT, "set_editor_row", ed, "inputs", 2, "me-encoded-pattern", 1)
-		expect(not ok3, "an item with tags was accepted as a pattern input")
+		expect(not ok3, "an encoded pattern (it always carries its tags) was accepted as a pattern input")
 		local inv = game.create_inventory(2)
 		local own, in_net = remote.call(PT, "blanks", pterm)
 		expect(own == 0 and in_net == 2, "blanks " .. own .. "/" .. in_net)
@@ -2064,6 +2067,7 @@ script.on_nth_tick(10, function()
 	refused85.tick()
 	tagitem479.tick()
 	tagdamaged481.tick()
+	tagcraft480.tick()
 	lab86.tick()
 	bulk382.tick()
 	copypaste383.tick()
@@ -4953,6 +4957,7 @@ script.on_init(function()
 	for _, f in pairs(refused85.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(tagitem479.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(tagdamaged481.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(tagcraft480.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end
