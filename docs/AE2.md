@@ -124,7 +124,9 @@ and taken out, in the ME Cell Workbench, in the ME IO Port, in a mined drive; un
   (science packs, magazines and unused repair packs go in and come out with the count they went in with), and **damaged
   items** (a mined wall, belt or chest): a damaged stack is kept apart from the whole ones with its health, shown in the
   terminal as "Damaged: 50% health", and comes out damaged. Two damaged stacks of different health that you put into one
-  inventory merge into one of averaged health, as in the game.
+  inventory merge into one of averaged health, as in the game. A damaged item with tags (a turret of Quality Turrets
+  Reworked mined while damaged, issue #481) keeps its tags and its own description too; the terminal shows the
+  description with the health below it.
 * **Not storable:** items with an inventory or equipment grid (armor), blueprints and blueprint books, planners and
   selection tools, the spidertron remote, vehicles and other items with entity data, items with a label, items that
   spoil (the network would stop their decay), and partly used tools, ammunition and repair packs (a used science pack,

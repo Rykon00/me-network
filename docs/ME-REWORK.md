@@ -158,9 +158,9 @@ used one not) were never reached.
 
 | Class | Types | The network |
 |---|---|---|
-| plain | `item`, `gun`, `capsule`, `module`, `rail-planner`, `space-platform-starter-pack` | stored by key `name@quality`; a damaged one (`health` below 1) of an item that places an entity is stored with its health under a key of its own (issue #104), any other damaged item is refused |
+| plain | `item`, `gun`, `capsule`, `module`, `rail-planner`, `space-platform-starter-pack` | stored by key `name@quality`; a damaged one (`health` below 1) of an item that places an entity is stored with its health under a key of its own (issue #104), any other damaged item is refused (`cannot-store-damaged-item`, issue #481) |
 | worn | `tool`, `ammo`, `repair-tool` | stored when the top item of the stack is whole: `durability` equals `get_durability(quality)` (a quality scales it: a legendary science pack has 6, a legendary repair pack 1800), `ammo` equals `magazine_size`; a used one is refused as damaged |
-| tags | `item-with-tags` | stored with tags and description under its own key; refused with a label (a label cannot be put back with `set_stack`) |
+| tags | `item-with-tags` | stored with tags and description under its own key; refused with a label (a label cannot be put back with `set_stack`); a damaged one is stored with its health like a plain one (issue #481) |
 | label | `item-with-label` | stored plain when it has no label |
 | refused | `blueprint`, `blueprint-book`; `deconstruction-item`, `upgrade-item`, `selection-tool`, `copy-paste-tool`; `spidertron-remote`; `item-with-entity-data`; `armor`; `item-with-inventory` | `cannot-store-blueprint`, `-planner`, `-remote`, `-entity`, `-armor`, `-inventory` |
 | unknown type | anything else | `cannot-store`: a type of a later game version is refused rather than stored without what it carries |
@@ -2677,7 +2677,7 @@ its chest later waited for room for the turrets (none ever came) or for the fall
   autocrafting refuses every `item-with-tags` as a pattern input or output and as stock of the planner (`P.valid_key`,
   `plain_item` in fork-me-autocraft.lua), so a turret of Quality Turrets Reworked cannot be crafted on request (#480); and a damaged
   item with tags (a turret mined while damaged) is refused by `N.storable` (`cannot-store-damaged`) instead of being stored
-  with its health as #104 stores a damaged plain item (#481).
+  with its health as #104 stores a damaged plain item (#481, done: "Damaged items with tags (issue #481)").
 
 **Test** (`runtimemod/tagitem.lua`, `ME items with tags through storage buses test`; the item `zz-devcheck-tagged-wall` of the
 test mod's `data.lua` is an `item-with-tags` that places a copy of the stone wall, so no other mod is needed). Network A has a
@@ -2707,7 +2707,8 @@ decomposed.
   and control + click, `insert_stack`, the import bus's and the interface's stack path through `insert_partial`) stores it.
   The health is read once per plain stack, as before. Any other damaged item (the stack of an item that is no building) and
   every partly used tool, ammunition or repair pack stays refused (`cannot-store-damaged`, now worded "Partly used items
-  (tools, ammunition, repair packs) cannot be stored").
+  (tools, ammunition, repair packs) cannot be stored"; since #481 a damaged item that is no building has its own reason,
+  `cannot-store-damaged-item`).
 * **Out:** `stack_def` sets `health` from the key's data (and a description only for an item with tags, the one type that
   has one); `extract_to` builds the stack, so a damaged key comes out at the health it went in with, in the cursor, an
   inventory or a chest the export path fills. One inventory merges two damaged stacks it receives (averaging the health):
@@ -2728,6 +2729,47 @@ damaged stack of 2 (health 0.25) stores 5, 4 and 2: two keys with data (5 and 2)
 behind the storage bus is unchanged, each damaged key comes out at its health, the terminal's description reads "50"; the
 import bus takes a damaged stack of 7 stone walls (health 0.4) as a key of 7 and the whole 3 as 3. The #76 test lost its cases
 of damaged chests (a refusal no more).
+
+## Damaged items with tags (issue #481)
+
+#104 stored a damaged plain item that places an entity with its health; the class `tags` had no such path, so a stack of an
+`item-with-tags` with a `health` below 1 was refused as `cannot-store-damaged`, with the message about tools and ammunition.
+Quality Turrets Reworked makes every turret's item one with tags, so a turret mined while damaged could not go into the network
+at all (terminal, import bus, interface); without that mod the same turret was stored as a damaged item.
+
+* **`N.storable`:** for the classes `plain` and `tags` a damaged stack of an item that can be damaged (`N.can_be_damaged`) is
+  stored under a key of its own. An item with tags reads its label first (a label stays refused, `cannot-store-label`, damaged
+  or not), then its tags and its own description. Without tags or a description its data is a damaged plain item's,
+  `{ health, description = { "fork-me-net.damaged-item", N } }`, so the key is the one #104 gives the same item and health
+  (also when the item became an item with tags later, by a mod added to the save). With them the data is
+  `{ tags, description, health }`: `description` is the stack's own, never the damage text. A damaged item that cannot be
+  damaged by its prototype (one that places nothing) is refused with a reason of its own, `cannot-store-damaged-item`
+  ("Damaged items that place nothing cannot be stored"); `cannot-store-damaged` is left to partly used tools, ammunition and
+  repair packs.
+* **`stack_def`** puts back the tags, the health and the description, the description only for an item with tags and only
+  when it is not the damage text (a table whose first entry is `fork-me-net.damaged-item`): a damaged turret stored as a plain
+  item before Quality Turrets Reworked was added comes out without that text as its own description.
+* **The terminal** (`G.key_description`): a key with a health whose description is not the damage text shows the stack's own
+  description and the damage text below it, made from the health. #104's keys show what they showed.
+* **Old saves:** #104's keys keep their form and meaning (`description` is the damage text, no tags), and a damaged plain item
+  stored now gets the same key, so the stock of an old save and new items of the same health are one entry. Nothing is
+  migrated. `devcheck.py migrate --from-ref v0.5.5` (and `--bump`) stores 6 damaged stone walls in the old version; after the
+  load the key is there with 6, 2 more of the same health stored with the working copy join it (8), the terminal's text names
+  50 % and the 8 come out at health 0.5.
+* **Checked, no change:** the storage bus counts and moves plain stacks only (`N.plain_stack`, #479), so a damaged stack with
+  tags stays in its chest like any damaged stack (#84). The ME Interface's slot walk stores such a stack through
+  `insert_stack`; a row's surplus takes plain stacks only (`N.remove_whole`), so a damaged one in a row's item stays there as
+  for #84. The export bus exports by plain key and never hands out a key with data. The ME IO Port moves a cell's keys with
+  their data (`cell.data`) both ways like any key with data. The import bus's stack path goes through `insert_partial`.
+
+**Test** (`runtimemod/tagdamaged.lua`, `ME damaged items with tags test`, with the test mod's `zz-devcheck-tagged-wall`):
+network A's import bus takes a damaged untagged stack (4 at 0.3), a damaged stack with tags (1 at 0.6, kills 9) and a whole
+stack (2); its ME Interface without rows takes a damaged stack with tags (1 at 0.7, kills 11); the terminal's store takes a
+damaged untagged stack (3 at 0.5) and a damaged one with tags and the description "Veteran" (2 at 0.45, kills 4), and refuses a
+damaged one with a label as `cannot-store-label`. The export bus with the item as its filter moves the 2 whole ones only. A
+holds five keys with data; the untagged ones have a damaged plain item's data, and the terminal's text of each names its
+health (below "Veteran" for that one). A's cell goes into an ME IO Port of network B, which empties it; each key comes out of B
+with its count, health, tags and description. On main every damaged stack was refused (`cannot-store-damaged`) and stayed.
 
 ## The Acceleration Card, part 1: the module and the ME Molecular Assembler (issue #110)
 
