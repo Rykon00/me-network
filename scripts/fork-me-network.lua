@@ -3144,7 +3144,8 @@ local function extract_key(net, key, count)
 	return count - left
 end
 
---- data ({ tags, description }) of an item-with-tags key in the network
+--- data of a key with data in the network: an item with tags' { tags, description }, a damaged item's { health, description }
+--- (the damage text) or, issue #481, a damaged item with tags' { tags, description, health }
 local function data_of(net, key)
 	if net.chest then return CH.data(net, key) end
 	for cid in pairs(net.index[key] or {}) do
@@ -3549,28 +3550,34 @@ function M.storable(stack)
 	if facts.spoils then return "cannot-store-spoil" end
 	local class = facts.class
 	if class ~= "plain" and class ~= "worn" and class ~= "tags" and class ~= "label" then return class end
-	if class == "plain" then
+	local tags, desc, own
+	if class == "tags" then
+		if stack.label then return "cannot-store-label" end            -- (a label cannot be put back with the stack)
+		tags, desc = stack.tags, stack.custom_description
+		own = (tags and next(tags)) or (desc and desc ~= "")
+	end
+	if class == "plain" or class == "tags" then
 		local health = stack.health                                       -- (the one read a plain item needs)
 		if health < 1 then
-			if not facts.damageable then return "cannot-store-damaged" end
+			if not facts.damageable then return "cannot-store-damaged-item" end
 			--- issue #102: a damaged item (a mined wall, belt, chest) is stored with its health, as a key of its own like an item
 			--- with tags: its health is part of the key, the stack comes out with it. All items of a stack share one health, so
 			--- a count of such a key is exact. (A partly used tool, ammo or repair tool stays refused: its wear is that of the
 			--- top item only, and two stacks of the same wear would come out as one used item and the rest whole.)
-			local data = { health = health, description = { "fork-me-net.damaged-item", math.floor(health * 100 + 0.5) } }
+			--- Issue #481: so is a damaged item with tags (Quality Turrets Reworked makes every turret one). An untagged one gets
+			--- the key of a damaged plain item (`description` is the terminal's damage text); one with tags or a description of
+			--- its own keeps them beside its health, and the terminal makes the damage text from the health
+			--- (fork-me-gui.lua key_description); stack_def puts the description back only when it is not the damage text.
+			local data = own and { tags = tags or {}, description = desc, health = health }
+				or { health = health, description = { "fork-me-net.damaged-item", math.floor(health * 100 + 0.5) } }
+			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
+		end
+		if own then
+			local data = { tags = tags or {}, description = desc }
 			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
 		end
 	elseif is_used(stack, proto) then
 		return "cannot-store-damaged"
-	end
-	if class == "tags" then
-		if stack.label then return "cannot-store-label" end            -- (a label cannot be put back with the stack)
-		local tags = stack.tags
-		local desc = stack.custom_description
-		if (tags and next(tags)) or (desc and desc ~= "") then
-			local data = { tags = tags or {}, description = desc }
-			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
-		end
 	elseif class == "label" and stack.label then
 		return "cannot-store-label"
 	end
@@ -3612,8 +3619,12 @@ local function stack_def(net, key, count)
 	if data then
 		def.tags = data.tags
 		if data.health then def.health = data.health end                -- issue #102: a damaged item comes out as damaged
-		--- (only an item with tags has a description of its own; the terminal shows the one in the key for the others)
-		if data.description and prototypes.item[name].type == "item-with-tags" then def.custom_description = data.description end
+		--- (only an item with tags has a description of its own; the terminal shows the one in the key for the others. Issue
+		--- #481: the damage text of a damaged item's key is none of the stack's, also when the item became one with tags later)
+		local d = data.description
+		if d and not (type(d) == "table" and d[1] == "fork-me-net.damaged-item") and prototypes.item[name].type == "item-with-tags" then
+			def.custom_description = d
+		end
 	end
 	return def
 end

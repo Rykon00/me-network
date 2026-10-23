@@ -652,7 +652,8 @@ function M.row(parent, name)
 end
 
 --- Issue #79: the key of an item with tags (a storage cell, an encoded pattern) kept in the network is
---- "name@quality#<json>", the json being { tags, description } as `N.storable` made it from the stack. The description is
+--- "name@quality#<json>", the json being { tags, description } as `N.storable` made it from the stack (a damaged item's
+--- has its health too, issues #102 and #481). The description is
 --- therefore a function of the key (a stack written anew is another key), and the grid's buttons, which are made again
 --- when their key changes, never show an old one. Read from the json once per key, cached for this load only (never
 --- saved; emptied when it grows large). Returns the description (a localised string) or nil.
@@ -666,6 +667,13 @@ function M.key_description(key)
 		local data = helpers.json_to_table(key:sub(at + 1))
 		d = type(data) == "table" and data.description or false
 		if d == "" or (type(d) ~= "table" and type(d) ~= "string") then d = false end
+		--- issue #481: a damaged item with tags keeps its own description in the key; the damage text below it is made from its
+		--- health (a damaged item without tags has the damage text as its description, issue #102)
+		local h = type(data) == "table" and data.health
+		if type(h) == "number" and not (type(d) == "table" and d[1] == "fork-me-net.damaged-item") then
+			local damage = { "fork-me-net.damaged-item", math.floor(h * 100 + 0.5) }
+			d = d and { "", d, "\n", damage } or damage
+		end
 		if description_count >= 2000 then description_cache, description_count = {}, 0 end
 		description_cache[key] = d
 		description_count = description_count + 1
