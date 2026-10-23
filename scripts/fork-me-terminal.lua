@@ -337,9 +337,19 @@ function M.take_to(cursor, inv, terminal, key, mode)
 	end
 	if not cursor then return nil, "inventory-full" end
 	if mode == "one" and cursor.valid_for_read then
-		--- one more of the same plain item into the cursor
+		--- one more of the same item into the cursor
 		local bad, ckey = N.storable(cursor)
 		if bad or ckey ~= key or cursor.count >= proto.stack_size then return 0 end
+		if key:find("#", 1, true) then
+			--- issue #485: the engine ignores a raised count on a stack with tags, a label or damage (2.1.23); one of the key
+			--- comes out on its own (with its label) and is moved onto the cursor, which merges the same stack
+			local tmp = game.create_inventory(1)
+			local got = N.extract_to(net, tmp[1], key, 1)
+			if got > 0 and not cursor.transfer_stack(tmp[1]) then got = 0 end
+			if tmp[1].valid_for_read then N.insert_stack(net, tmp[1]) end
+			tmp.destroy()
+			return got
+		end
 		local got = N.extract_key(net, key, 1)
 		if got > 0 then cursor.count = cursor.count + got end
 		return got

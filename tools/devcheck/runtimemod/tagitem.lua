@@ -4,8 +4,8 @@
 --- * Network A has a storage bus on a chest and no cell. Untagged items of the type go through the import bus into the
 ---   chest, are counted by the terminal and taken out by an export bus; the ones put into the chest by hand are seen. A
 ---   damaged stack (issue #84) and a stack with tags in that chest are neither counted nor taken. A stack with tags (no label)
----   and one with a label in the import bus's chest stay there: no storage of this network can ever take the first, the
----   second is refused (`cannot-store-label`). The bus does not park for them as "net-full": iron plates put into the same
+---   and one with a label in the import bus's chest stay there: no storage of this network can ever take either (a label is
+---   kept in the key's data since issue #485, and a storage bus takes no key with data). The bus does not park for them as "net-full": iron plates put into the same
 ---   chest afterwards are in the network within LIMIT ticks. An ME IO Port of A empties a cell of B that holds the item with
 ---   tags: no storage of A can take it, so the port waits for room ("net-full") and the cell keeps it.
 --- * Network B has cells and a storage bus of a higher priority: the untagged items go into the bus's chest, the one with
@@ -194,12 +194,13 @@ return function(H)
 			ic[1].tags = { kills = 7 }
 			ic[2].set_stack{ name = ITEM, count = 1 }
 			ic[2].label = "veteran"
-			--- the label is refused as such
+			--- the label is no refusal (issue #485): A has no storage for it, as for the one with tags
 			local tmp = game.create_inventory(1)
 			tmp[1].set_stack{ name = ITEM, count = 1 }
 			tmp[1].label = "veteran"
-			local n2, why = remote.call(NET, "insert_stack", sc.ctrl_b, tmp[1])
-			expect(n2 == nil and why == "cannot-store-label", "an item with a label was not refused as cannot-store-label: " .. tostring(n2) .. ", " .. tostring(why))
+			local n2, why = remote.call(NET, "insert_stack", sc.ctrl, tmp[1])
+			expect(n2 == nil and why == "no-storage" and tmp[1].valid_for_read, "network A took an item with a label or refused it as such: "
+				.. tostring(n2) .. ", " .. tostring(why))
 			tmp.destroy()
 			return
 		end

@@ -3566,11 +3566,14 @@ function M.storable(stack)
 	if facts.spoils then return "cannot-store-spoil" end
 	local class = facts.class
 	if class ~= "plain" and class ~= "worn" and class ~= "tags" and class ~= "label" then return class end
-	local tags, desc, own
+	local tags, desc, own, label, color
 	if class == "tags" then
-		if stack.label then return "cannot-store-label" end            -- (a label cannot be put back with the stack)
+		--- issue #485: a label is kept in the key's data beside the tags (Quality Turrets Reworked labels a turret mined with
+		--- kills "<name> (N Kills)"); a stack definition cannot carry it, so M.extract_to sets it on the stack the key lands in
+		label = stack.label
+		if label then color = stack.label_color end
 		tags, desc = stack.tags, stack.custom_description
-		own = (tags and next(tags)) or (desc and desc ~= "")
+		own = label or (tags and next(tags)) or (desc and desc ~= "")
 	end
 	if class == "plain" or class == "tags" then
 		local health = stack.health                                       -- (the one read a plain item needs)
@@ -3584,18 +3587,22 @@ function M.storable(stack)
 			--- the key of a damaged plain item (`description` is the terminal's damage text); one with tags or a description of
 			--- its own keeps them beside its health, and the terminal makes the damage text from the health
 			--- (fork-me-gui.lua key_description); stack_def puts the description back only when it is not the damage text.
-			local data = own and { tags = tags or {}, description = desc, health = health }
+			local data = own and { tags = tags or {}, description = desc, health = health, label = label, label_color = color }
 				or { health = health, description = { "fork-me-net.damaged-item", math.floor(health * 100 + 0.5) } }
 			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
 		end
 		if own then
-			local data = { tags = tags or {}, description = desc }
+			local data = { tags = tags or {}, description = desc, label = label, label_color = color }
 			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
 		end
 	elseif is_used(stack, proto) then
 		return "cannot-store-damaged"
-	elseif class == "label" and stack.label then
-		return "cannot-store-label"
+	elseif class == "label" then
+		label = stack.label
+		if label then                                                   -- issue #485: kept like an item with tags' label
+			local data = { label = label, label_color = stack.label_color }
+			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
+		end
 	end
 	return nil, key_of(stack.name, stack.quality), nil
 end
@@ -3627,7 +3634,7 @@ function M.insert_partial(net, stack, max)
 	return n
 end
 
---- the stack definition for `count` of `key` (with the tags of an item with tags)
+--- the stack definition for `count` of `key` (with the tags of an item with tags), and the key's data (nil for a plain key)
 local function stack_def(net, key, count)
 	local name, q = parse_key(key)
 	local def = { name = name, quality = q, count = count }
@@ -3642,7 +3649,53 @@ local function stack_def(net, key, count)
 			def.custom_description = d
 		end
 	end
-	return def
+	return def, data or nil
+end
+
+--- Issue #485: put the label of a key's `data` on `stack` (set_stack of a stack definition cannot)
+function M.set_label(stack, data)
+	stack.label = data.label
+	if data.label_color then stack.label_color = data.label_color end
+end
+
+--- Issue #485: up to `def.count` of a key with a label into `target` (as M.extract_to), each stack written into an empty slot
+--- and labelled there. Never through insert: an inserted definition has no label, and an inserted stack merges into one of the
+--- same label and tags whatever its health (averaging it); nor on top of a stack of the same key (the engine ignores a raised
+--- count on a stack with tags, 2.1.23). Into an entity: its main inventory, else its first one (a chest's; can_set_stack keeps
+--- a turret out of a furnace's fuel or a filtered slot). Returns the amount moved and { stack, count } of what went where.
+function M.put_labelled(target, def, data)
+	local size = prototypes.item[def.name].stack_size
+	local placed = {}
+	if target.object_name == "LuaItemStack" then
+		if target.valid_for_read then return 0, placed end
+		def.count = math.min(def.count, size)
+		if not target.set_stack(def) then return 0, placed end
+		M.set_label(target, data)
+		placed[1] = { target, target.count }
+		return target.count, placed
+	end
+	local inv = target
+	if target.object_name ~= "LuaInventory" then
+		inv = target.get_main_inventory()
+		if not inv and target.object_name == "LuaEntity" then inv = target.get_inventory(defines.inventory.chest) end
+		if not inv then return 0, placed end
+	end
+	local last = #inv
+	if inv.supports_bar() then last = math.min(last, inv.get_bar() - 1) end      -- (set_stack does not stop at the bar)
+	local left, total = def.count, def.count
+	for i = 1, last do
+		if left <= 0 then break end
+		local st = inv[i]
+		if not st.valid_for_read then
+			def.count = math.min(left, size)
+			if st.can_set_stack(def) and st.set_stack(def) then
+				M.set_label(st, data)
+				placed[#placed + 1] = { st, def.count }
+				left = left - def.count
+			end
+		end
+	end
+	return total - left, placed
 end
 
 --- Move up to `count` of `key` into `target` (LuaPlayer, LuaEntity, LuaInventory: anything with insert, or an
@@ -3651,7 +3704,20 @@ function M.extract_to(net, target, key, count)
 	if not M.usable(net) then return 0 end
 	count = math.min(math.floor(count), net.items[key] or 0)
 	if count <= 0 or not key_item_exists(key) then return 0 end
-	local def = stack_def(net, key, count)
+	local def, data = stack_def(net, key, count)
+	if data and data.label then
+		local moved, placed = M.put_labelled(target, def, data)
+		if moved <= 0 then return 0 end
+		local got = extract_key(net, key, moved)
+		local surplus = moved - got                 -- (never duplicate, as below: taken back from the stacks it wrote)
+		for i = #placed, 1, -1 do
+			if surplus <= 0 then break end
+			local st, n = placed[i][1], placed[i][2]
+			if n <= surplus then st.clear() surplus = surplus - n
+			else st.count = n - surplus surplus = 0 end
+		end
+		return got
+	end
 	local moved
 	if target.object_name == "LuaItemStack" then
 		if target.valid_for_read then return 0 end

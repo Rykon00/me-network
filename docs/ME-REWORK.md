@@ -144,7 +144,7 @@ allows that too) because tagged items are stored with their tags.
 an item with tags is stored with its tags and description under its own key, one type per distinct tag set.
 Not storable (the interface leaves them in its slots, the terminal says so, each with a message that names
 the refusal): items with an inventory, armor (it can carry a grid), blueprints and books, planners and selection
-tools, the spidertron remote, vehicles and other items with entity data, items with a label, items that spoil
+tools, the spidertron remote, vehicles and other items with entity data, items that spoil
 (the network would stop their decay), and partly used tools, ammunition and repair packs (the network would
 repair them). A damaged item is stored with its health since issue #104. See "What the network stores (issue #76)"
 below.
@@ -160,8 +160,8 @@ used one not) were never reached.
 |---|---|---|
 | plain | `item`, `gun`, `capsule`, `module`, `rail-planner`, `space-platform-starter-pack` | stored by key `name@quality`; a damaged one (`health` below 1) of an item that places an entity is stored with its health under a key of its own (issue #104), any other damaged item is refused (`cannot-store-damaged-item`, issue #481) |
 | worn | `tool`, `ammo`, `repair-tool` | stored when the top item of the stack is whole: `durability` equals `get_durability(quality)` (a quality scales it: a legendary science pack has 6, a legendary repair pack 1800), `ammo` equals `magazine_size`; a used one is refused as damaged |
-| tags | `item-with-tags` | stored with tags and description under its own key; refused with a label (a label cannot be put back with `set_stack`); a damaged one is stored with its health like a plain one (issue #481) |
-| label | `item-with-label` | stored plain when it has no label |
+| tags | `item-with-tags` | stored with tags, description and label under its own key (the label since issue #485); a damaged one is stored with its health like a plain one (issue #481) |
+| label | `item-with-label` | stored plain when it has no label, else with its label under its own key (issue #485) |
 | refused | `blueprint`, `blueprint-book`; `deconstruction-item`, `upgrade-item`, `selection-tool`, `copy-paste-tool`; `spidertron-remote`; `item-with-entity-data`; `armor`; `item-with-inventory` | `cannot-store-blueprint`, `-planner`, `-remote`, `-entity`, `-armor`, `-inventory` |
 | unknown type | anything else | `cannot-store`: a type of a later game version is refused rather than stored without what it carries |
 
@@ -526,7 +526,7 @@ and the first fluid drive placed anywhere took it; the runtime test caught that.
 | ME graph | join (members, power draw, cable pictures), split (the larger part keeps the id), join again, a second controller (conflict, nothing stored, status on the controller), a cable removed without an event (sweep), the cable router, a network without power, with power, after the power is cut |
 | ME cells | cells into slots, only cells, AE2 bytes, the contents in the tags of a cell taken out and back in another drive, capacity of the network exactly, full cells, quality as its own type, a loaded cell stored in the network and taken out with its tags, the drive window's clicks (take, put, swap, shift), a destroyed drive spills its cells with their items, an old drive item gives its four cells and the card, robots mine a drive with loaded cells into a storage chest |
 | ME terminal | take a stack, one more, a click with something in the cursor stores it, take one, store the cursor, a stack into the inventory, the inventory row, search, sort by amount and name, a spoiling item and a blueprint refused |
-| ME storable items (issue #76, `storable.lua`) | science packs, magazines, repair packs (also legendary) and a gun in and out by the terminal's store, shift + click at the terminal and another block, control + click; an import bus on a chest (every tool of the game once), an interface (the stacks it imports, the surplus of a row with a used stack first), an export bus, a storage bus (whole stacks counted, the used one stays in the chest), the round trip export bus to import bus; a used pack, magazine and repair pack and a damaged chest refused as damaged and left as they were; a blueprint, book, planners, remote, vehicles, armor with equipment, an item with an inventory and items with a label refused each with its own reason; an item with tags back with its tags. Every result is logged (`DEVCHECK-RUNTIME-STORABLE-CENSUS`) |
+| ME storable items (issue #76, `storable.lua`) | science packs, magazines, repair packs (also legendary) and a gun in and out by the terminal's store, shift + click at the terminal and another block, control + click; an import bus on a chest (every tool of the game once), an interface (the stacks it imports, the surplus of a row with a used stack first), an export bus, a storage bus (whole stacks counted, the used one stays in the chest), the round trip export bus to import bus; a used pack, magazine and repair pack and a damaged chest refused as damaged and left as they were; a blueprint, book, planners, remote, vehicles, armor with equipment, an item with an inventory refused each with its own reason; an item with tags back with its tags, items with a label back with their label (issue #485). Every result is logged (`DEVCHECK-RUNTIME-STORABLE-CENSUS`) |
 | ME import/export | interface export slot filled and topped up, import slot emptied, a spoiling item stays, filters pasted; import bus 64 per visit, with a filter; export bus without filter idle, into a chest, into a machine; a rotated bus; bus filters pasted; blueprint tags of interface and bus |
 | autocrafting, furnace patterns, fluids, fluid recovery, level maintainer, CPU tiers, circuit interface, settings copy | the tests that existed, on cable networks laid by the router |
 
@@ -2813,6 +2813,65 @@ the 5 plain walls from storage and crafts 3 (3 iron plates used), never a wall w
 and a row of 2 walls gets 2 untagged ones crafted; a level maintainer row of 3 walls crafts them. Both walls with tags come out
 with their kills. On main the processing pattern is refused, the recipe switch stores the wall with kills 13 as a plain one (6
 plain walls), the job of 4 posts crafts all 8 walls (8 iron plates) and the maintainer has nothing to craft (8 problems).
+
+## Items with a label (issue #485)
+
+Quality Turrets Reworked (0.11.2, `OnEntityMined`) gives a turret mined with kills, when its runtime setting "Preserve kill
+counter" is on, the tag `kills`, the custom description `{ "", "Kills: ", N }` and a **label** `"<item name> (N Kills)"`.
+`N.storable` refused every stack with a label (`cannot-store-label`), because a stack definition (`set_stack`, `insert`)
+cannot carry one; so a veteran turret went into the network by no path.
+
+* **`N.storable`:** the label (and its `label_color`, when a script set one) is part of the key's data:
+  `{ tags, description, label }`, with `health` for a damaged one (#481); an `item-with-label` with a label gets
+  `{ label, label_color }`. So two stacks that differ in their label only are two keys. A key without a label keeps its
+  form (the fields are nil), so no key of an old save changes and nothing is migrated.
+* **`N.extract_to`** of a key whose data has a label (`N.put_labelled`): into an empty `LuaItemStack` it is `set_stack`,
+  then `label` (`N.set_label`); into a `LuaInventory`, a player's main inventory or an entity's (its main inventory, else
+  its first, a chest's) each stack is `set_stack` into an empty slot that `can_set_stack` (a filter, a fuel slot) and
+  below the bar (`set_stack` ignores the bar), then labelled. Never through `insert`: an inserted definition has no label,
+  and an inserted `LuaItemStack` merges into a stack of the same label and tags whatever its health. A storage bus's chest
+  that held less than its snapshot is answered by lowering or clearing the stacks it wrote.
+* **The terminal's "one more"** (right click with the same item in hand) raised `cursor.count`, which the engine ignores
+  for a stack with tags, a label or a health below 1: the item taken from the network was lost (also for #479's and #481's
+  keys). For a key with data it now takes one into a script stack (`extract_to`) and moves it onto the cursor with
+  `transfer_stack`, which merges the same stack.
+* **The terminal** (`G.key_description`): a key with a label has the label as the first line of its tooltip
+  (`[fork-me-net] item-label`, bold), above its description and its health; its button has the yellow frame of every key
+  with data.
+* **Unchanged:** the storage bus counts and moves plain stacks only (`N.plain_stack`), so a labelled stack stays in its
+  chest, and no storage bus stores a key with data (`N.never_stores`); the export bus (also with a Fuzzy Card, `gf_list`)
+  and the interface's rows hand out plain keys only, so a labelled key leaves through the terminal, `extract_to` of other
+  mods, a cell (its contents and data in the cell's tags, a table copied as it is) and the ME IO Port (`cell.data`).
+  Autocrafting moves plain keys only (#480). The refusal `cannot-store-label` and its locale line are gone; the other
+  refusals keep their text.
+
+**Engine facts (Factorio 2.1.23, probed headless):** `insert{...}` of a definition never merges into a labelled stack, nor
+into a stack of another label; `insert(LuaItemStack)` keeps label, tags and description and merges into a stack of the same
+label and tags, averaging the health; raising `count` on a stack with tags, a label or a health below 1 is ignored, lowering
+it works; `label = nil` is an error; `get_main_inventory()` is nil for a chest, a furnace and an assembler; `set_stack` into a
+slot beyond the bar succeeds, into a filtered slot or a fuel slot it fails (`can_set_stack` says so first).
+
+**Test** (`runtimemod/taglabel.lua`, `ME items with a label test`, with the test mod's `zz-devcheck-tagged-wall`): network
+A's terminal stores a stack with tags (kills 5), the label "Wall (5 Kills)" and the description "Kills: 5", and the same stack
+damaged (2 at 0.4); its import bus takes one that differs from the first in its label only, a damaged one of kills 7 and one
+with a label alone (2); its ME Interface without rows takes one of kills 9. A holds six keys, the terminal's text of each
+names its label; the terminal takes the first into the hand, the damaged one one at a time into the hand (2) and then as a
+stack into an inventory that holds an unlabelled stack of the same tags (that stack stays as it was, the 2 go into an empty
+slot), and stores them again. The export bus with the item as its filter moves the 3 plain ones only, which do not merge into
+the labelled stack in its chest. A's cell comes out of its drive (its tags hold the six labels) and goes back in (the six keys
+are A's again), then into an ME IO Port of network B; each key comes out of B into an inventory beside an unlabelled stack,
+an empty stack or a chest entity with its count, label, tags, description and health. On main every labelled stack is
+refused (`cannot-store-label`). `tagitem.lua` (a labelled stack in a network of storage buses only is not refused but finds
+no storage), `tagdamaged.lua` (its labelled case moved here) and `storable.lua` (an `item-with-label` and a storage cell
+with a label go in and come back with the label) follow.
+
+**With the real mod** (Quality Turrets Reworked 0.11.2, commit 4ce5bb1, `factorio_version` set to 2.1 in a local copy: it
+declares 2.0; "Preserve kill counter" on in `mod-settings.dat`): a robot deconstructs a gun turret with 12 kills into a
+storage chest; the mod gives the mined stack the label "gun-turret (12 Kills)", the tag and the description. On main the
+stack stays in the chest in front of an ME Import Bus; with this change the bus stores it under the key
+`gun-turret@normal#{"tags":{"kills":12},"description":["","Kills: ","12"],"label":"gun-turret (12 Kills)"}`, `extract_to`
+puts it into a passive provider chest with its label, tags and description, and a robot builds a ghost of the turret from
+it: the built turret has 12 kills.
 
 ## The Acceleration Card, part 1: the module and the ME Molecular Assembler (issue #110)
 

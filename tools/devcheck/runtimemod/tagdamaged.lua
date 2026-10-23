@@ -6,7 +6,7 @@
 ---   bus's chest holds a damaged untagged stack, a damaged stack with tags and a whole stack; the interface holds a damaged
 ---   stack with tags; the terminal stores a damaged untagged stack and a damaged stack with tags and a description of its
 ---   own. Each is a key of its own (the untagged one with the key a damaged plain item gets), the terminal's text names the
----   health below the stack's own description, and a damaged stack with a label is refused as `cannot-store-label`. The
+---   health below the stack's own description (a damaged stack with a label: taglabel.lua, issue #485). The
 ---   export bus with the item as its filter moves the whole ones only.
 --- * The cell of A goes into an ME IO Port of network B, which empties it: every damaged key comes out of B with its count,
 ---   its health, its tags and its description.
@@ -139,23 +139,17 @@ return function(H)
 			fi[1].set_stack{ name = ITEM, count = 1, health = 0.7 }
 			fi[1].tags = { kills = 11 }
 			--- the terminal's store (what a player's click with the stack in hand calls)
-			local tmp = game.create_inventory(3)
+			local tmp = game.create_inventory(2)
 			tmp[1].set_stack{ name = ITEM, count = 3, health = 0.5 }
 			tmp[2].set_stack{ name = ITEM, count = 2, health = 0.45 }
 			tmp[2].tags = { kills = 4 }
 			tmp[2].custom_description = "Veteran"
-			tmp[3].set_stack{ name = ITEM, count = 1, health = 0.5 }
-			tmp[3].label = "veteran"
 			local problems = st.problems
 			for i = 1, 2 do
 				local n, why = remote.call(TERM, "store_stack", sc.term, tmp[i])
 				if not (n == WANT[3 + i].n and not tmp[i].valid_for_read) then
 					problems[#problems + 1] = "the terminal did not store " .. WANT[3 + i].what .. ": " .. tostring(n) .. ", " .. tostring(why)
 				end
-			end
-			local n3, why3 = remote.call(TERM, "store_stack", sc.term, tmp[3])
-			if not (n3 == nil and why3 == "cannot-store-label" and tmp[3].valid_for_read and tmp[3].health == 0.5) then
-				problems[#problems + 1] = "a damaged item with a label was not refused as cannot-store-label: " .. tostring(n3) .. ", " .. tostring(why3)
 			end
 			tmp.destroy()
 			return
@@ -223,7 +217,7 @@ return function(H)
 		for i, w in ipairs(WANT) do expect(seen[i], w.what .. " did not come out with its count, health, tags and description") end
 		st.done = true
 		me_report("TAGDAMAGED", "ME damaged items with tags", problems, "damaged items with tags stored through the import bus, the interface and the "
-			.. "terminal, untagged ones as damaged plain items, a label refused, the export bus moves whole ones only, an IO Port moves the keys, "
+			.. "terminal, untagged ones as damaged plain items, the export bus moves whole ones only, an IO Port moves the keys, "
 			.. "everything comes out with its health, tags and description")
 	end
 

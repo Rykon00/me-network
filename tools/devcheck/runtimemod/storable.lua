@@ -209,19 +209,17 @@ return function(H)
 				{ "copy-paste-tool", "cannot-store-planner" }, { "zz-devcheck-selection-tool", "cannot-store-planner" },
 				{ "spidertron-remote", "cannot-store-remote" }, { "car", "cannot-store-entity" }, { "locomotive", "cannot-store-entity" },
 				{ "modular-armor", "cannot-store-armor" }, { "light-armor", "cannot-store-armor" },
-				{ "zz-devcheck-inventory-item", "cannot-store-inventory" }, { "zz-devcheck-label-item", "cannot-store-label", true },
-				{ "me-4k-storage-cell", "cannot-store-label", true },
+				{ "zz-devcheck-inventory-item", "cannot-store-inventory" },
 			}
 			for _, case in ipairs(OWN) do
-				local name, reason, labelled = case[1], case[2], case[3]
+				local name, reason = case[1], case[2]
 				if prototypes.item[name] then
 					reset()
 					pinv[1].set_stack{ name = name, count = 1 }
 					if name == "modular-armor" then pinv[1].grid.put{ name = "battery-equipment" } end
-					if labelled then pinv[1].label = "named by a player" end
 					local why = terminal_store()
 					local why2 = click(t, 1, "shift")
-					note("terminal store and shift + click", name .. (labelled and " with a label" or ""), "reason " .. tostring(why) .. " / " .. tostring(why2))
+					note("terminal store and shift + click", name, "reason " .. tostring(why) .. " / " .. tostring(why2))
 					expect(why == reason and why2 == reason and pinv[1].valid_for_read, name .. " was refused as " .. tostring(why) .. " / " .. tostring(why2) .. ", not " .. reason)
 				end
 			end
@@ -240,6 +238,27 @@ return function(H)
 				expect(hold[1].valid_for_read and hold[1].tags and hold[1].tags.fork_me_test == 7, "a cell with tags came back without them")
 				hold.clear()
 				remote.call(NET, "extract", t, found, 1)
+			end
+			--- issue #485: an item with a label (of the type item-with-label, and an item with tags) goes in under a key of its own
+			--- and comes back with its label
+			for _, name in ipairs({ "zz-devcheck-label-item", "me-4k-storage-cell" }) do
+				if prototypes.item[name] then
+					reset()
+					pinv[1].set_stack{ name = name, count = 1 }
+					pinv[1].label = "named by a player"
+					local why2 = terminal_store()
+					local key
+					for _, e in pairs(remote.call(TERM, "entries", t, "", "count", "items")) do
+						if e.name == name and e.key:find("#", 1, true) then key = e.key end
+					end
+					note("terminal store and take", name .. " with a label", "reason " .. tostring(why2) .. ", key " .. tostring(key ~= nil))
+					expect(why2 == nil and key and not pinv[1].valid_for_read, name .. " with a label was not stored: " .. tostring(why2) .. " " .. tostring(key))
+					if key then
+						remote.call(TERM, "take", hold[1], pinv, t, key, "stack")
+						expect(hold[1].valid_for_read and hold[1].label == "named by a player", name .. " with a label came back without it")
+						hold.clear()
+					end
+				end
 			end
 			reset()
 			pinv.destroy()
