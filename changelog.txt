@@ -1,5 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.5
+Date: 2026-10-23
   Features:
     - The Creative Energy Cell (issue #442, AE2's; no recipe: the map editor and cheat mode give it): an ME network with one never lacks power, also without a pole at its ME Controller. For testing and creative maps.
     - The Creative ME Storage Cell (issue #441, AE2's; no recipe: the map editor and cheat mode give it): partitioned in the ME Cell Workbench, it gives its network the listed items without end and destroys whatever of them is stored into it. For testing and creative maps.
