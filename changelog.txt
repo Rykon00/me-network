@@ -1,5 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.6
+  Changes:
+    - Autocrafting uses items with tags (issue #480): the turrets of Quality Turrets Reworked (and storage cells) can be rows of processing patterns, and a job that needs them takes the ones in storage instead of crafting them all anew (before, it ignored them, and without a pattern for them it could not start). Only the ones without kills, a label or a description are used; one with kills put into a machine of a pattern provider goes into the network with its kills when the machine switches recipes (before, it lost them).
   Bugfixes:
     - A damaged item with tags is stored with its health (issue #481): a turret of Quality Turrets Reworked mined while damaged goes into the network through the terminal, the ME Import Bus and the ME Interface like any other damaged building and comes out at its health, with its kills and its description; the terminal shows its health below its description. One with a label is still refused. A damaged item that places nothing is refused with a message that no longer speaks of tools and ammunition.
 ---------------------------------------------------------------------------------------------------

@@ -1137,7 +1137,8 @@ item, encode, clear), `scripts/fork-me-autocraft.lua` (provider slots, scan, pla
 
 * **Data:** `{ kind = "crafting" | "processing", recipe, inputs, outputs }`, rows `{ key, amount }` with the resource
   keys of autocrafting (item name, `fluid/<name>`). `normalize` validates (prototypes exist, amounts > 0, items whole,
-  each key once, at most 9 inputs and 6 outputs, no items with tags as rows: the planner never moves those) and
+  each key once, at most 9 inputs and 6 outputs, no key with data and no encoded pattern as rows; since issue #480 an
+  item with tags is a row by its plain key) and
   refreshes a crafting pattern's rows from its recipe. The planner and the jobs read a crafting pattern's recipe
   itself (probabilities and ranges), a processing pattern's rows (exact).
 * **Identity:** `c/<recipe>` or `p/<sorted inputs>><sorted outputs>`. Equal patterns in several providers are one
@@ -1145,7 +1146,7 @@ item, encode, clear), `scripts/fork-me-autocraft.lua` (provider slots, scan, pla
 * **Items:** `me-blank-pattern` (plain item, LV assembler recipe in `me-autocrafting`) and `me-encoded-pattern`
   (item with tags, stack size 1, no recipe). The tag `fork_me_pattern` is the data; the custom description is the
   tooltip (kind, recipe, inputs, outputs with rich text icons). Encoded patterns can be stored in the network (they
-  are items with tags: kept exactly, equal ones stack in a cell) and are never planning stock.
+  are items with tags: kept exactly, equal ones stack in a cell) and are never planning stock (their keys carry data).
 * **Encoding** (`P.encode(cursor, inventory, network, pattern)`): the blank comes from the hand, else the inventory,
   else the network; the encoded pattern replaces a single blank in the hand, or goes into an empty hand, else into
   the inventory (the blank is taken first so its slot can be the free one; with no room it goes back). Nothing is
@@ -2675,7 +2676,8 @@ its chest later waited for room for the turrets (none ever came) or for the fall
   of the walk is tried; the interface is probed, never parked for room); the level maintainer and the circuit interface
   (they count and ask for plain keys by name; no class test); the storage bus's fluid side (fluids only). Left over:
   autocrafting refuses every `item-with-tags` as a pattern input or output and as stock of the planner (`P.valid_key`,
-  `plain_item` in fork-me-autocraft.lua), so a turret of Quality Turrets Reworked cannot be crafted on request (#480); and a damaged
+  `plain_item` in fork-me-autocraft.lua), so a turret of Quality Turrets Reworked cannot be crafted on request (#480, done:
+  "Autocrafting of items with tags (issue #480)"); and a damaged
   item with tags (a turret mined while damaged) is refused by `N.storable` (`cannot-store-damaged`) instead of being stored
   with its health as #104 stores a damaged plain item (#481, done: "Damaged items with tags (issue #481)").
 
@@ -2770,6 +2772,47 @@ damaged one with a label as `cannot-store-label`. The export bus with the item a
 holds five keys with data; the untagged ones have a damaged plain item's data, and the terminal's text of each names its
 health (below "Veteran" for that one). A's cell goes into an ME IO Port of network B, which empties it; each key comes out of B
 with its count, health, tags and description. On main every damaged stack was refused (`cannot-store-damaged`) and stayed.
+
+## Autocrafting of items with tags (issue #480)
+
+Autocrafting refused every `item-with-tags` whatever its stack carried: `P.valid_key` kept it out of every row of a processing
+pattern (the Pattern Terminal refused it) and the planner's `plain_item` never counted it in storage. (A crafting pattern takes
+its rows from its recipe without `valid_key`, so on main a turret recipe could be encoded and crafted, and a level maintainer or a
+Crafting Card asked for it; but a job that needed turrets ignored the stored ones and crafted all of them, could not start
+without a turret pattern, and a recipe switch moved a turret with kills out of the machine as a plain one.) With Quality Turrets
+Reworked every turret is such an item; the same held for storage cells.
+
+Since #479 the plain key of such an item counts its stacks without tags, a label or a description only (`N.storable`), the
+storage buses move only those (`N.plain_stack`), and a stack with data has a key of its own (`name@q#json`). So the plain key
+can be moved by name and count without losing anything, as long as whatever takes it out of an inventory takes plain stacks
+only.
+
+* **`P.valid_key`** takes the plain key of any item (and of a fluid) in a quality the game has; a key with data (`#`) and
+  `me-encoded-pattern`, which always carries its tags (its plain key never holds one), stay out. Encoded patterns themselves
+  do not change: a row is still a key and an amount.
+* **The planner** (`base_count`) counts the plain key of every item; keys with data are never stock.
+* **Taking out of inventories** (`with_data(name)` in fork-me-autocraft.lua: an item of the class `tags` or `label`, cached per
+  name): the provider's hand-over takes back unused inputs (`take_back_input`), collects a machine's outputs
+  (`collect_output`) and undoes a hand-over that did not fit (`start_lease`, `push_chest`) through `N.count_whole` /
+  `N.remove_whole`, so a stack with tags that a player put into a machine or a chest is never moved as a plain item. A recipe
+  switch (`switch_recipe`) stores such a stack with its data (`N.insert_stack`) before the plain ones; one the network does not
+  take keeps the machine unswitched (`set_recipe` would hand it back without its tags).
+* **Checked, no change:** the hand-over inserts plain items by name (fresh, untagged); outputs caught through `N.on_arrival`
+  are credited only for plain keys (`insert_stack` offers no key with data to a job); the Crafting Card's deliverers
+  (`N.deliverers.io`) insert the job's plain items by name, and the interface's surplus takes plain stacks only
+  (`N.remove_whole`, #479); the level maintainer and the circuit interface count and ask for plain keys (their `valid_key`
+  already took items with tags); the ME Molecular Assembler is a machine of the provider like any other.
+
+**Test** (`runtimemod/tagcraft.lua`, `ME autocrafting of items with tags test`): the test mod's `data-final-fixes.lua` adds a
+recipe that makes `zz-devcheck-tagged-wall` from an iron plate and one that makes `zz-devcheck-tagged-post` from two walls, in
+the first category of the ME Molecular Assembler (so with Gregtorio too). The Pattern Terminal encodes both recipes and a
+processing pattern with the wall as its output. A provider with both crafting patterns and an ME Molecular Assembler set to the
+post recipe with a wall with tags (kills 13) in its input: a job of 5 walls switches the assembler, and the wall with tags goes
+into the network with its tags (the network holds 5 plain walls). With a wall with tags (kills 7) stored, a job of 4 posts takes
+the 5 plain walls from storage and crafts 3 (3 iron plates used), never a wall with tags. An ME Interface with a Crafting Card
+and a row of 2 walls gets 2 untagged ones crafted; a level maintainer row of 3 walls crafts them. Both walls with tags come out
+with their kills. On main the processing pattern is refused, the recipe switch stores the wall with kills 13 as a plain one (6
+plain walls), the job of 4 posts crafts all 8 walls (8 iron plates) and the maintainer has nothing to craft (8 problems).
 
 ## The Acceleration Card, part 1: the module and the ME Molecular Assembler (issue #110)
 

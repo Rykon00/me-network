@@ -43,15 +43,18 @@ local function valid_quality(q)
 end
 M.valid_quality = valid_quality
 
---- item keys of a pattern are plain items (no items with tags: their data cannot be moved by name and count), in a
---- quality the game has (issue #352: "name@quality")
+--- item keys of a pattern are plain keys, in a quality the game has (issue #352: "name@quality"). Issue #480: an item with
+--- tags too (Quality Turrets Reworked makes every turret one): its plain key stands for the stacks without tags, a label or a
+--- description only (N.storable, issue #479), which move by name and count without losing anything. A key with data ("#":
+--- a stack with tags, a damaged item) never names a row, nor does the encoded pattern, which always carries its tags (its
+--- plain key never holds one).
 local function valid_key(key)
 	if type(key) ~= "string" or key == "" then return false end
 	if is_fluid(key) then return prototypes.fluid[fluid_name(key)] ~= nil end
+	if key:find("#", 1, true) then return false end
 	local name, q = N.parse_key(key)
 	name = N.alias(name) or name                      -- a replaced item (issue #3)
-	local proto = prototypes.item[name]
-	return proto ~= nil and proto.type ~= "item-with-tags" and valid_quality(q)
+	return prototypes.item[name] ~= nil and name ~= M.ENCODED and valid_quality(q)
 end
 M.valid_key = valid_key
 
