@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "title": "ME Network devcheck runtime",
   "author": "rykon_",
-  "factorio_version": "2.0",
+  "factorio_version": "2.1",
   "description": "Test helper for tools/devcheck: builds ME networks on a new map and runs the runtime tests. Without Gregtorio Continued it adds stand-ins for the few machines and recipes the tests name. Not meant for normal play.",
   "dependencies": [
     "? me-network",

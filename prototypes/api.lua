@@ -9,7 +9,8 @@
 ---   ME_NETWORK.items                              names of the items this mod made (add_item; issue #474: each sits in
 ---                                                 a subgroup of the item group ME_NETWORK.GROUP, the "ME Network" tab)
 ---   ME_NETWORK.replace_recipe(def)                replace a recipe by a full definition (same name); the
----                                                 technologies that unlock it keep unlocking it
+---                                                 technologies that unlock it keep unlocking it (Factorio 2.1's
+---                                                 `categories`; 2.0's `category` is converted, issue #487)
 ---   ME_NETWORK.remove_recipe(name)                delete a recipe and every unlock of it
 ---   ME_NETWORK.set_technology(name, def)          replace prerequisites, unit and/or the unlocked recipes
 ---                                                 (def.recipes: names, in order) of a technology
@@ -53,13 +54,39 @@ local function remember(list, name)
 	list[#list + 1] = name
 end
 
+--- Issue #487 (Factorio 2.1): a recipe has `categories` (a list) instead of `category` and `additional_categories`,
+--- and a product `independent_probability` instead of `probability`, and 2.1 refuses a recipe with either old key: a
+--- definition in the 2.0 form that another mod gives the API is turned into the 2.1 form here; the 2.0 keys are removed.
+--- Returns def.
+function M.recipe_keys(def)
+	if def.category or def.additional_categories then
+		local cats, seen = {}, {}
+		for _, c in ipairs(def.categories or {}) do
+			if not seen[c] then cats[#cats + 1], seen[c] = c, true end
+		end
+		for _, c in ipairs({ def.category, table.unpack(def.additional_categories or {}) }) do
+			if not seen[c] then cats[#cats + 1], seen[c] = c, true end
+		end
+		def.categories, def.category, def.additional_categories = cats, nil, nil
+	end
+	for _, r in pairs(def.results or {}) do
+		if r.probability ~= nil then
+			if r.independent_probability == nil then r.independent_probability = r.probability end
+			r.probability = nil
+		end
+	end
+	return def
+end
+
 --- A recipe of this mod (standalone: vanilla items). def: name, ingredients, results (default: one of the item
---- `name`), category (default "crafting"), energy_required, subgroup, order, main_product, auto_recycle
+--- `name`), categories (default { "crafting" }; 2.0's `category` is taken too), energy_required, subgroup, order,
+--- main_product, auto_recycle
 function M.add_recipe(def)
+	M.recipe_keys(def)
 	data:extend({ {
 		type = "recipe",
 		name = def.name,
-		category = def.category or "crafting",
+		categories = def.categories or { "crafting" },
 		enabled = false,
 		energy_required = def.energy_required or 1,
 		ingredients = def.ingredients,
@@ -130,6 +157,7 @@ function M.replace_recipe(def)
 		return
 	end
 	def.type = "recipe"
+	M.recipe_keys(def)
 	data.raw.recipe[def.name] = nil
 	data:extend({ def })
 	remember(M.recipes, def.name)

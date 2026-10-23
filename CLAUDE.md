@@ -54,7 +54,11 @@
   decides when a block is visited must live in `storage`. Both must end with `RESULT: OK`; `check --base-only` checks
   without Space Age; `migrate --from-ref v0.1.0` (the old fluid blocks) or `--from-ref v0.2.0` (every kind of
   unified block, loaded without `on_configuration_changed` while the version number is the same) loads a save of an
-  older version with the working copy (for changes to saved state or to prototypes that saves hold). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
+  older version with the working copy (for changes to saved state or to prototypes that saves hold). Since issue #487
+  the mod is for Factorio 2.1 (`FACTORIO_VERSION` in `devcheck.py`): a version up to 0.5.5 is for 2.0, so its save is made
+  in an unpacked Factorio 2.0 (`migrate --from-ref v0.5.5 --old-factorio DIR`) and `bench --check <2.0 ref>` takes
+  `--ref-factorio DIR`; the helper mods run in both (`benchmod/compat.lua`). `check` fails for a prototype key Factorio
+  removed (`checkmod/removed-keys.lua`, `tools/devcheck/removed_keys.py`). The runtime tests (`tools/devcheck/runtimemod/control.lua`) name a few Gregtorio machines and
   recipes; without Gregtorio its `data.lua` adds stand-ins with the same names and numbers. See
   `tools/devcheck/README.md`. A change to the runtime's cost (the storage engine, the I/O, autocrafting, the step
   budgets) runs `devcheck.py bench` (script time per tick, throughput, latencies and the service quality of every kind of block

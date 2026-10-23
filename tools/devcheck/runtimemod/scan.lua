@@ -195,11 +195,11 @@ return function(H)
 			local r = m[2]
 			st.pipe = nil
 			if r and r.valid then
-				for i = 1, #r.fluidbox do
-					local proto = r.fluidbox.get_prototype(i)
+				for i = 1, r.fluids_count do
+					local proto = r.get_fluid_box_prototype(i)
 					if proto and proto.object_name ~= "LuaFluidBoxPrototype" then proto = proto[1] end   -- merged prototypes
 					if proto and proto.production_type == "input" then
-						local conn = r.fluidbox.get_pipe_connections(i)[1]
+						local conn = r.get_fluid_box_pipe_connections(i)[1]
 						if conn then
 							local pipe = s.create_entity{ name = "pipe", position = conn.target_position, force = "player" }
 							if pipe then st.pipe = pipe end

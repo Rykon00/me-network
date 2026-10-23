@@ -64,7 +64,7 @@ do
 	m.fast_replaceable_group = nil
 	local icon = "__base__/graphics/icons/signal/signal-info.png"
 	local function hot(name, ingredients, results)
-		return { type = "recipe", name = name, category = "zz-devcheck-hot", energy_required = 1, enabled = true, icon = icon,
+		return { type = "recipe", name = name, categories = { "zz-devcheck-hot" }, energy_required = 1, enabled = true, icon = icon,
 			subgroup = "intermediate-product", ingredients = ingredients, results = results }
 	end
 	data:extend({ { type = "recipe-category", name = "zz-devcheck-hot" }, m,
@@ -84,7 +84,7 @@ do
 	local function grid(a) return math.ceil(a * 16777216) / 16777216 end
 	local function g(name, amount)
 		return { { type = "item", name = "zz-devcheck-grid-token-" .. name, icon = icon, stack_size = 50, subgroup = "intermediate-product" },
-			{ type = "recipe", name = "zz-devcheck-grid-" .. name, category = "zz-devcheck-hot", energy_required = 0.5, enabled = true,
+			{ type = "recipe", name = "zz-devcheck-grid-" .. name, categories = { "zz-devcheck-hot" }, energy_required = 0.5, enabled = true,
 				icon = icon, subgroup = "intermediate-product", ingredients = { { type = "fluid", name = "water", amount = grid(amount) } },
 				results = { { type = "item", name = "zz-devcheck-grid-token-" .. name, amount = 1 } } } }
 	end
@@ -106,7 +106,7 @@ do
 	m.fast_replaceable_group = nil
 	local icon = "__base__/graphics/icons/signal/signal-info.png"
 	local function r(name)
-		return { type = "recipe", name = name, category = "zz-devcheck-fixed", energy_required = 1, enabled = true, icon = icon,
+		return { type = "recipe", name = name, categories = { "zz-devcheck-fixed" }, energy_required = 1, enabled = true, icon = icon,
 			subgroup = "intermediate-product", ingredients = { { type = "item", name = "iron-plate", amount = 1 } },
 			results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } } }
 	end
@@ -126,14 +126,21 @@ do
 	local icon = "__base__/graphics/icons/signal/signal-info.png"
 	data:extend({ { type = "recipe-category", name = "zz-devcheck-bulk" }, m,
 		{ type = "item", name = "zz-devcheck-bulk-part", icon = icon, stack_size = 100, subgroup = "intermediate-product" },
-		{ type = "recipe", name = "zz-devcheck-bulk", category = "zz-devcheck-bulk", energy_required = 0.5, enabled = true,
+		{ type = "recipe", name = "zz-devcheck-bulk", categories = { "zz-devcheck-bulk" }, energy_required = 0.5, enabled = true,
 			icon = icon, subgroup = "intermediate-product", ingredients = { { type = "item", name = "zz-devcheck-bulk-part", amount = 200 } },
 			results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } } },
 		--- (a recipe that needs less than a stack, and an item the test's network lacks, so it never starts)
-		{ type = "recipe", name = "zz-devcheck-bulk-small", category = "zz-devcheck-bulk", energy_required = 0.5, enabled = true,
+		{ type = "recipe", name = "zz-devcheck-bulk-small", categories = { "zz-devcheck-bulk" }, energy_required = 0.5, enabled = true,
 			icon = icon, subgroup = "intermediate-product", ingredients = { { type = "item", name = "zz-devcheck-bulk-part", amount = 10 },
 				{ type = "item", name = "zz-devcheck-renamed-item", amount = 1 } },
 			results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } } } })
+end
+
+--- me-network issue #487: tools with durability, as Gregtorio's science packs are (Factorio 2.1's science packs are plain
+--- items without durability), for the tests of used tools (storable.lua, refused.lua, buffer150.lua); with Gregtorio too
+for i, icon in ipairs({ "automation", "logistic", "chemical" }) do
+	data:extend({ { type = "tool", name = "zz-devcheck-tool-" .. i, icon = "__base__/graphics/icons/" .. icon .. "-science-pack.png",
+		stack_size = 200, durability = 1, subgroup = "science-pack", order = "zz-" .. i } })
 end
 
 --- me-network issue #295: an item whose name the player sees differs from its prototype name (as Gregtorio's renamed
@@ -178,7 +185,7 @@ end
 local function I(name, amount) return { type = "item", name = name, amount = amount } end
 local function F(name, amount) return { type = "fluid", name = name, amount = amount } end
 local function recipe(name, cat, time, ingredients, results)
-	data:extend({ { type = "recipe", name = name, category = cat, energy_required = time, enabled = false,
+	data:extend({ { type = "recipe", name = name, categories = { cat }, energy_required = time, enabled = false,
 		ingredients = ingredients, results = results, icon = ICON, subgroup = "intermediate-product" } })
 end
 local function machine(name, base_type, base, categories, speed)
@@ -204,7 +211,7 @@ recipe("iron-gear-crafting-table", "crafting", 1, { I("iron-plate", 1), I("iron-
 --- Gregtorio's macerator recipe of raw iron (since its issue #202 as GT New Horizons': nickel dust at 5 %; me-network
 --- issue #171: a byproduct at a chance)
 recipe("crushed-iron", "zz-macerator", 20, { I("raw-iron", 1) },
-	{ I("crushed-iron", 2), { type = "item", name = "nickel-dust", amount = 1, probability = 0.05 } })
+	{ I("crushed-iron", 2), { type = "item", name = "nickel-dust", amount = 1, independent_probability = 0.05 } })
 data.raw.recipe["crushed-iron"].main_product = "crushed-iron"
 recipe("iron-dust-smelter", "smelting", 10, { I("iron-dust", 1) }, { I("iron-ingot", 1) })
 recipe("silicon-tetrachloride", "zz-chemical-reactor", 3, { I("raw-silicon", 1), F("chlorine", 400) }, { F("silicon-tetrachloride", 100) })

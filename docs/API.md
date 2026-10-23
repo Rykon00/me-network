@@ -58,9 +58,17 @@ Replaces the recipe `def.name` by `def`, a full recipe prototype (`type = "recip
 unlock that name keep unlocking it. A name in `ME_NETWORK.removed` (an item this mod no longer makes) is ignored with
 one log line.
 
+**Factorio 2.1** (issue #487): a recipe has `categories`, a list (a recipe may have several), instead of `category` and
+`additional_categories`, and a product `independent_probability` instead of `probability`; 2.1 refuses a recipe with
+either old key. `replace_recipe` and `add_recipe` still take a
+definition in the 2.0 form and turn it into the 2.1 form (`category` and `additional_categories` into `categories`,
+`probability` into `independent_probability`; `ME_NETWORK.recipe_keys(def)` does it and returns `def`), so a mod that
+was written for 2.0 keeps working; new code gives the 2.1 keys. Everything else (`data.raw` edits of ME recipes) must use
+the 2.1 keys.
+
 ```lua
 ME_NETWORK.replace_recipe{
-	name = "me-controller", category = "advanced-crafting", energy_required = 10, enabled = false,
+	name = "me-controller", categories = { "advanced-crafting" }, energy_required = 10, enabled = false,
 	ingredients = { { type = "item", name = "processing-unit", amount = 4 }, { type = "item", name = "fluix-cable", amount = 8 } },
 	results = { { type = "item", name = "me-controller", amount = 1 } },
 }

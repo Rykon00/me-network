@@ -68,8 +68,8 @@ return function(H)
 		end
 		--- the fluid bus: every visit while the tank has room (a visit is a new `last`)
 		local f = remote.call(IO, "schedule", sc.fbus)
-		local held = sc.tank.fluidbox[1]
-		local room = sc.tank.fluidbox.get_capacity(1) - (held and held.amount or 0)
+		local held = sc.tank.get_fluid(1)
+		local room = sc.tank.get_fluid_segment_capacity(1) - (held and held.amount or 0)
 		if f and f.last and f.last ~= st.flast then
 			st.flast = f.last
 			if room > 5000 then

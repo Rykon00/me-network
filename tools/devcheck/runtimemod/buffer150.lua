@@ -10,7 +10,7 @@
 local NET, GUI = "gregtorio-me-network", "gregtorio-me-gui"
 local BX, BY = 10, -300
 local START = 120
-local PACK = "automation-science-pack"
+local PACK = "zz-devcheck-tool-1"          -- (a tool with durability, data.lua; issue #487)
 
 return function(H)
 	local me_place, me_report, power = H.me_place, H.me_report, H.power

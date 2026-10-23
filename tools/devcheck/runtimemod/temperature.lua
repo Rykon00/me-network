@@ -71,7 +71,7 @@ return function(H)
 		end
 		if hm3 then hm3.set_recipe("zz-devcheck-heat-steam") end
 		if tc then tc.insert_fluid{ name = "steam", amount = 500, temperature = 400 } end
-		if pipe then pipe.fluidbox[1] = { name = "steam", amount = 100, temperature = 250 } end
+		if pipe then pipe.set_fluid(1, { name = "steam", amount = 100, temperature = 250 }) end
 		H.me_connect(fails, what, { ctrl, drive, cpu, term, ci, iface, eb, sb, eb2, eb3, prov, ib, ib2 })
 		storage.temperature159_scene = { ctrl = ctrl, drive = drive, term = term, ci = ci, iface = iface, pipe = pipe, eb = eb, tb = tb,
 			sb = sb, tc = tc, eb2 = eb2, hm = hm, eb3 = eb3, wm = wm, prov = prov, hm2 = hm2, hm3 = hm3, ib = ib, ib2 = ib2, td = td }
@@ -110,14 +110,13 @@ return function(H)
 		local function count(name, temp) return remote.call(NET, "fluid_count", t, name, temp) end
 		local function keys() return remote.call(NET, "fluid_key_contents", t) end
 		local function step(e, n) for _ = 1, n or 1 do remote.call(IO, "step", e) end end
-		local function held(e, i) return e.fluidbox[i or 1] end
+		local function held(e, i) return e.get_fluid(i or 1) end
 		local function side(d) return (remote.call(IO, "interface_tanks", sc.iface) or {})[d] end
 		--- the input box of a machine with the hot recipe (the one whose filter is the fluid)
 		local function input_box(m, name)
-			local fb = m.fluidbox
-			for i = 1, #fb do
-				local f = fb.get_filter(i)
-				if f and f.name == name and fb.get_prototype(i).production_type == "input" then return fb[i], f end
+			for i = 1, m.fluids_count do
+				local f = m.get_fluid_filter(i)
+				if f and f.name == name and m.get_fluid_box_prototype(i).production_type == "input" then return m.get_fluid(i), f end
 			end
 			return nil
 		end
@@ -128,7 +127,7 @@ return function(H)
 			expect(key("steam") == "fluid/steam" and key("steam", 15) == "fluid/steam" and key("steam", 15.3) == "fluid/steam",
 				"the default key: " .. tostring(key("steam", 15.3)))
 			expect(key("steam", 249.6) == "fluid/steam@250" and key("steam", 250.2) == "fluid/steam@250", "rounded: " .. tostring(key("steam", 249.6)))
-			expect(key("water", 3) == "fluid/water" and key("steam", 1e7) == "fluid/steam@5000", "clamped: " .. tostring(key("water", 3))
+			expect(key("water", 3) == "fluid/water" and key("steam", 1e7) == "fluid/steam@" .. math.floor(prototypes.fluid.steam.max_temperature + 0.5), "clamped: " .. tostring(key("water", 3))
 				.. ", " .. tostring(key("steam", 1e7)))
 
 			--- the interface: south imports (the pipe of steam at 250), east keeps a row of 250 °C, west a row of every temperature
@@ -162,7 +161,7 @@ return function(H)
 			expect(types >= 3, "the cells hold " .. types .. " steam types")
 
 			--- the west side drained: refilled at 250 °C, though the default steam comes first now (nothing mixed)
-			side(4).remove_fluid{ name = "steam", amount = 20 }
+			side(4).extract_fluid{ name = "steam", amount = 20 }
 			step(sc.iface)
 			west = held(side(4))
 			expect(west and near(west.amount, 30) and near(west.temperature, 250), "west refilled: " .. serpent.line(west))
@@ -201,7 +200,7 @@ return function(H)
 			step(sc.eb3)
 			local bi = remote.call(IO, "bus_info", sc.eb3)
 			expect(input_box(sc.wm, "water") == nil and bi.status == "temperature" and bi.tstat and bi.tstat[1] == "water" and bi.tstat[2] == "15"
-				and bi.tstat[3] == "50-100", "water into the 50-100 °C machine: " .. serpent.line(input_box(sc.wm, "water")) .. ", " .. serpent.line(bi.tstat)
+				and bi.tstat[3] == "50-100", "water into the 50-100 °C machine: " .. serpent.line((input_box(sc.wm, "water"))) .. ", " .. serpent.line(bi.tstat)
 				.. " " .. tostring(bi.status))
 
 			--- the circuit interface: one signal per fluid (its temperatures added up), a filter of one temperature

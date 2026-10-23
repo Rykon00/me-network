@@ -14,8 +14,9 @@ local NET, TERM, IO, GUI = "gregtorio-me-network", "gregtorio-me-terminal", "gre
 local BX, BY = 500, -320
 local FILL, CHECK1, CHECK2, CHECK3 = 100, 400, 650, 900
 
-local PACK, PACK2, MAG, MAG2, REPAIR = "automation-science-pack", "logistic-science-pack", "firearm-magazine", "piercing-rounds-magazine", "repair-pack"
-local SPACK, SMAG = "chemical-science-pack", "shotgun-shell"        -- the storage bus's chest
+--- (issue #487: the test mod's tools, data.lua: Factorio 2.1's science packs have no durability)
+local PACK, PACK2, MAG, MAG2, REPAIR = "zz-devcheck-tool-1", "zz-devcheck-tool-2", "firearm-magazine", "piercing-rounds-magazine", "repair-pack"
+local SPACK, SMAG = "zz-devcheck-tool-3", "shotgun-shell"        -- the storage bus's chest
 
 return function(H)
 	local me_place, me_report = H.me_place, H.me_report

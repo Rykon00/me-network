@@ -148,7 +148,7 @@ return function(H)
 				for _, j in ipairs(JOBS) do
 					local job = remote.call(AC, "job", st.jobs[j[1]])
 					expect(over(job), "the job for token " .. j[1] .. " did not end in " .. TIMEOUT .. " ticks: " .. serpent.line(job)
-						.. "; the machine's water " .. serpent.line(sc["m" .. j[1]].fluidbox[1]))
+						.. "; the machine's water " .. serpent.line(sc["m" .. j[1]].get_fluid(1)))
 				end
 				return finish()
 			end

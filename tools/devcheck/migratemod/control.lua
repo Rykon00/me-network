@@ -19,23 +19,46 @@ local function place(s, fails, name, x, y, extra)
 	return e
 end
 
+--- issue #487: the old save is made in the Factorio of its version (2.0: LuaFluidBox) and loaded in 2.1 (the fluid methods
+--- of LuaEntity); this helper runs in both. The boxes of `e` as { count, segment id (nil: none), segment fluid
+--- { name -> amount }, box fluid }
+local major, minor = (script.active_mods.base or "2.0"):match("^(%d+)%.(%d+)")
+local V21 = tonumber(major) > 2 or tonumber(minor) >= 1
+local function boxes(e)
+	if V21 then
+		local ok, n = pcall(function() return e.fluids_count end)
+		if not (ok and n and n > 0) then return nil end
+		return {
+			n = n,
+			id = function(i) return e.has_fluid_segment(i) and e.get_fluid_segment_id(i) or nil end,
+			segment = function(i)
+				local f = e.get_fluid_segment_fluid(i)
+				return f and { [f.name] = f.amount } or {}
+			end,
+			get = function(i) return e.get_fluid(i) end,
+		}
+	end
+	local ok, fb = pcall(function() return e.fluidbox end)
+	if not (ok and fb and #fb > 0) then return nil end
+	return { n = #fb, id = function(i) return fb.get_fluid_segment_id(i) end,
+		segment = function(i) return fb.get_fluid_segment_contents(i) end, get = function(i) return fb[i] end }
+end
+
 --- fluid in the area (each segment once, boxes without a segment alone) plus in the cells of the drives
 local function fluid_totals(s)
 	local out, seen = {}, {}
 	local function add(name, n) out[name] = (out[name] or 0) + n end
 	for _, e in pairs(s.find_entities_filtered{ area = AREA }) do
-		local ok, fb = pcall(function() return e.fluidbox end)
-		if ok and fb and #fb > 0 then
-			for i = 1, #fb do
-				local id = fb.get_fluid_segment_id(i)
-				if id then
-					if not seen[id] then
-						seen[id] = true
-						for name, n in pairs(fb.get_fluid_segment_contents(i) or {}) do add(name, n) end
-					end
-				elseif fb[i] then
-					add(fb[i].name, fb[i].amount)
+		local b = boxes(e)
+		for i = 1, b and b.n or 0 do
+			local id = b.id(i)
+			if id then
+				if not seen[id] then
+					seen[id] = true
+					for name, n in pairs(b.segment(i) or {}) do add(name, n) end
 				end
+			elseif b.get(i) then
+				add(b.get(i).name, b.get(i).amount)
 			end
 		end
 	end

@@ -79,7 +79,7 @@ end
 --- expected amount per craft of a recipe product (probability and range)
 local function expected(p)
 	local amount = p.amount or ((p.amount_min + p.amount_max) / 2)
-	return amount * (p.probability or 1)
+	return amount * N.chance(p)
 end
 
 --------------------------------------------------------------------------------
@@ -219,7 +219,7 @@ function M.recipe_rows(recipe, quality)
 	local inputs, outputs = recipe_lists(proto, q)
 	local certain = {}
 	for _, p in pairs(proto.products) do
-		if p.amount and (p.probability or 1) >= 1 then certain[key_of(p, true, q)] = true end
+		if p.amount and N.chance(p) >= 1 then certain[key_of(p, true, q)] = true end
 	end
 	if next(certain) then
 		local kept = {}
