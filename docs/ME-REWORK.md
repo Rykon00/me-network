@@ -2627,6 +2627,71 @@ go in at once, the refused stacks stay, and the bus is not visited again for the
 on that); the plates reach the network only when something wakes the parked bus (here the slow step did after 120 ticks, at the
 latest the fallback visit after 3600).
 
+## Items with tags through storage buses, and an import bus that meets a stack it cannot store (issue #479)
+
+Reported on the mod portal: with Quality Turrets Reworked no turret moved through import or export buses unless there was
+an empty cell, and a bus that met one stayed stuck. That mod (`data-final-fixes.lua`) turns the item of every turret into an
+`item-with-tags` to keep a turret's kills when it is mined; a turret that never was has no tags, but its prototype type is
+`item-with-tags`. `N.storable` keys such an untagged stack as a plain key (only tags, a label or a description give a key of
+its own), so cells took them; the storage bus did not: its `plain()` let only the classes `plain` and `worn` through, so the
+item was invisible in a chest behind a storage bus and could not be stored there. In a network whose storage is chests behind
+storage buses an import bus that found turrets got "nothing stored" and was **parked** as `net-full`; plates that came into
+its chest later waited for room for the turrets (none ever came) or for the fallback visit (3600 ticks).
+
+* **Storage bus.** `plain()` takes the classes `tags` and `label` too; for them the type does not decide, a stack does:
+  `N.plain_stack(stack, proto)` is true for a stack that stands for the plain key (not used or damaged, and for an item with
+  tags or a label no tags, label or description). The bus counts and takes such an item by its stacks (`walked(name)`: the
+  worn types and these), with the helpers of #76 and #84, which now skip stacks with data as they skip used and damaged
+  ones: the visit's snapshot from `N.whole_counts`, `count` from `N.count_whole`, `extract` through `N.remove_whole`. So a
+  tagged stack is never shown, never handed out by count (it would leave as a plain item) and stays in the chest; the
+  network stores tagged items in cells only (`put` skips external cells for data, unchanged). Inserting plain items by name
+  into a chest that holds a tagged stack of the item does not merge into it (measured on 2.0.77 in the runtime test: the
+  tagged stack kept its count and tags). The decision per name is cached per load (`plain_cache`, `walked_cache`), never in
+  `storage`; the stack walk is paid only by chests that hold such an item. The same rule fixes the ME Interface's row
+  surplus, which took an item with tags as a plain one: a placeable one through `N.remove_whole`, which did not look at
+  tags (on main the test's turret with 5 kills went into the network as a plain item and the plain one stayed), any other
+  by count; it now goes through `N.remove_whole` for these classes, so only the plain stacks are surplus.
+* **`N.never_stores(net, key, data)`:** no storage of the network can ever take the key, whatever its room: no cell of the
+  key's kind whose filter lets it in and no storage bus that is not read only, lets it in and can hold such a key (the
+  handlers' new `takes`: items on the item side, fluids on the fluid side), and an item with data (tags) is taken by cells
+  only. Room, the sticky pass and the ME Chest are not looked at (false there). The answer is kept per key in the network's
+  lookups (`c.never`), which are built again whenever a storage, a priority, a partition or a mode changes (`net.order`), so
+  it is never stale and never saved.
+* **Import bus.** A stack whose key `never_stores` is left out like a refused stack of #85: it stays in the source, is no
+  part of `held` and sets no `netfull`; the bus registers `N.wait_room` (a cell or storage bus that joins the network fires
+  it, `net_cell`), so a new storage that can take it wakes the bus. A key with no room still sets `netfull`, but an import bus
+  that moved nothing for it is no longer parked: it waits for room (`N.wait_room`, `N.wait_for` the key) **and is probed like
+  an empty bus** (its probe compares the source's item count, `probe_mark`), so an item the network can take that arrives
+  behind the one it cannot is taken within the idle limit. Its probes are at the growing interval up to the idle limit (one
+  `get_item_count` each); as the safety net of a parked block it gets a full visit when it has not been visited for
+  `Sched.PARK_FALLBACK` ticks (counted as a missed wake when that visit moves something). Within one visit one key never
+  stopped the others (the loops go on), so only the parking changed. Everything that decides a visit stays in the record
+  (`rec.block`, `rec.seen`, `rec.iv`, the waits in `storage`), so a saved and loaded map schedules like the unbroken run.
+* **ME IO Port** (empty mode): a key `never_stores` is skipped and counts as refused (a port that moved nothing waits for
+  room, parked `net-full`), and a key that moved nothing takes no turn of the `MAX_KEYS` a visit moves (at most `MAX_SCAN`
+  keys are looked at): before, a cell whose first 16 keys in order found no room was parked although later keys could go.
+* **Checked, no change:** the export bus (a key that is missing or blocked never stops the other filters; with every key
+  missing it is parked for its keys, `no-key`); the ME Interface's rows and its slot walk (`insert_stack` per stack, every slot
+  of the walk is tried; the interface is probed, never parked for room); the level maintainer and the circuit interface
+  (they count and ask for plain keys by name; no class test); the storage bus's fluid side (fluids only). Left over:
+  autocrafting refuses every `item-with-tags` as a pattern input or output and as stock of the planner (`P.valid_key`,
+  `plain_item` in fork-me-autocraft.lua), so a turret of Quality Turrets Reworked cannot be crafted on request (#480); and a damaged
+  item with tags (a turret mined while damaged) is refused by `N.storable` (`cannot-store-damaged`) instead of being stored
+  with its health as #104 stores a damaged plain item (#481).
+
+**Test** (`runtimemod/tagitem.lua`, `ME items with tags through storage buses test`; the item `zz-devcheck-tagged-wall` of the
+test mod's `data.lua` is an `item-with-tags` that places a copy of the stone wall, so no other mod is needed). Network A has a
+storage bus on a chest and no cell: 5 untagged ones go through the import bus into the chest, the terminal counts 5 (a tagged
+and a damaged stack in that chest are not counted), 4 put into the chest by hand are seen, an export bus takes the 9 and
+leaves the tagged and the damaged stack (the tagged one keeps its kills). A tagged one and a labelled one in the import bus's
+chest stay there (the label: `cannot-store-label`), the bus is not parked, and iron plates put into that chest 300 ticks
+later are in the network within 400 ticks; an IO Port of A with a cell that holds a tagged one waits for room with the cell.
+Network B (cells and a storage bus of a higher priority) puts the untagged ones into the chest and the tagged one into a
+cell; its ME Interface with a row of 1 holds a tagged one and 2 untagged ones and gives the 2 untagged ones as surplus. Network C's storage bus chest has room for iron plates only: copper plates in the import bus's chest stay, the bus is
+not parked, iron plates that come later are taken within 400 ticks. On main the storage buses show and move none of the item
+and the import buses of A and C are parked (next visit about 3300 ticks later). `runtimemod/parking.lua`'s room cases now expect
+the import bus to wait for room as `net-full` without being parked; the room wakes are still what lets it go on.
+
 ## Damaged items are stored (issue #104)
 
 #76 refused every stack with a `health` below 1: the network keeps counts per key, and a count says nothing about health,

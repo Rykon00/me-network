@@ -27,6 +27,10 @@ Version: 0.5.5
   Balancing:
     - The Superluminal Speed Card is made from a Super Speed Card and a 1024k storage component, as in AE2-Unofficial (issue #414; before, 4 256k components).
   Bugfixes:
+    - Items with tags go through the ME Storage Bus (issue #479): Quality Turrets Reworked makes every turret such an item to keep its kills, so turrets were invisible in a chest behind a storage bus and could not be stored there, and import and export buses moved none unless a storage cell had room. A turret without kills now goes through storage buses like any other item; one with kills (tags, a label or a description) is stored in a storage cell only and never taken out of a chest as a plain one.
+    - An ME Import Bus no longer gets stuck on a stack the network cannot take (issue #479): a stack that no storage of the network can ever take (a turret with kills in a network of storage buses only) stays in the chest like a refused stack, and a bus whose network has no room for what its chest holds still sees new items arrive there and takes them within a few seconds, not up to a minute later.
+    - The surplus of an ME Interface row no longer takes an item with tags as a plain one (issue #479): a turret with kills went into the network without them.
+    - The ME IO Port empties the rest of a cell when the network cannot take some of its item types (issue #479): a cell whose first 16 types found no room, or no storage that takes them, left the port waiting with the rest.
     - The window of the ME Pattern Terminal Ex fits the screen (issue #469): its input and output rows scroll, so the slots, Encode, Load pattern, Clear pattern and the status line stay visible (they were below the screen's edge at 1920 x 1080). The inventory pane next to the block windows is never taller than the screen leaves either (a large UI scale).
 ---------------------------------------------------------------------------------------------------
 Version: 0.5.4

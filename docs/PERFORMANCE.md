@@ -3715,3 +3715,28 @@ That run flagged the script average at 1000 (noise 0.0073: the reference's three
 rounds, `bench --sizes 1000 --runs 5 --check view-cells-440`: 0.3592 ±0.006 -> 0.3582 ±0.002 ms (p99 2.002 -> 1.981),
 `regressions beyond the noise: 0`. Against the last release, `bench --sizes 100,1000 --runs 5 --check v0.5.4`: 100: 0.2009 ->
 0.2047 ms, 1000: 0.3622 -> 0.3622 ms, `regressions beyond the noise: 0`.
+
+## Items with tags through storage buses and the import bus's wait for room (issue #479)
+
+The storage bus's visit asks `walked(name)` where it asked `worn(name)` (one cached lookup per item type, as before); its
+stack walk (`N.whole_counts`, now with `N.plain_stack`) runs only for chests that hold a tool, ammunition, a damaged item
+or an item with tags or a label. `N.never_stores` runs only when an insert of an import bus or an IO Port stored nothing,
+once per key until the network's lookups change. An import bus whose network has no room is probed on its source
+(one `get_item_count` per probe, at the growing interval up to the idle limit) instead of parked: in a base with many such
+buses that is a few engine calls per second more, against a bus that no longer waits up to a minute for an item it can store.
+The scenes have no item with tags and no full network, so these paths are not taken there.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns): **regressions beyond the noise: 0**, throughput per
+kind of endpoint identical.
+
+| | origin/main | this pull request |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.3651 / 2.024 | 0.3604 / 1.998 |
+| 1000: ticks over 5 ms | 1 | 1 |
+| 1000: Lua alloc KB per tick | 24.85 | 24.85 |
+| 1000: burst build / remove (ms) | 77.7 / 85.4 | 80.3 / 80.5 |
+| 5000: script avg / p99 (ms) | 0.9431 / 2.802 | 0.9507 / 2.799 |
+| 5000: ticks over 5 ms | 5 | 5 |
+| 5000: Lua alloc KB per tick | 33.57 | 33.57 |
+| 5000: storage bus latency max (s) | 1.733 | 1.733 |
+| 5000: burst build / remove (ms) | 83.8 / 82.4 | 82.3 / 82.7 |
