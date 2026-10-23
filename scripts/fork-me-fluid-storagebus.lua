@@ -6,20 +6,20 @@
 ---     segment, so the segment, not the tank, is the unit of storage: two tanks of one segment hold one amount of
 ---     fluid and are counted once. The storage bus module decides the side when it resolves the target
 ---     (`take`) and hands the fluid side's visits to this module.
----   * Identity: the faced fluid box's segment id (LuaFluidBox.get_fluid_segment_id), "s<id>". A fluid box that
+---   * Identity: the faced fluid box's segment id (LuaEntity::get_fluid_segment_id), "s<id>". A fluid box that
 ---     belongs to no segment (a machine's box) is its own storage, "u<unit>:<box>". One bus per segment: a second
 ---     bus on the same segment, through any of its tanks, gets the status "shared-target" and takes over when the
 ---     first one goes. Building or removing pipes merges and splits segments and changes their ids; every visit
 ---     reads the id again, and two buses that end up on one segment are resolved in unit order (the lower unit
 ---     number keeps it, the other is cleared at once, so the segment is never counted twice).
----   * Contents: get_fluid_segment_contents, a snapshot per bus applied as a difference at its visits (issue #5:
+---   * Contents: get_fluid_segment_fluid, a snapshot per bus applied as a difference at its visits (issue #5:
 ---     its own queue, scripts/fork-me-schedule.lua, with the item side's budget and intervals; the buses marked by a
 ---     removal first). Every insert and extract through the bus works on the real segment: the engine asks `count` (the
 ---     segment's real amount, 0 when the bus no longer owns the segment) before it takes and corrects the snapshot.
----   * Extract and insert: the faced entity's remove_fluid / insert_fluid act on the whole segment (tested in
----     2.0.77); a box without a segment is changed through LuaFluidBox. Insert asks how much fits: the segment's
----     capacity (LuaFluidBox.get_capacity is the segment's) minus its contents, nothing if it holds another fluid
----     or its filter is another fluid.
+---   * Extract and insert: the faced entity's extract_fluid (remove_fluid before Factorio 2.1) / insert_fluid act on
+---     the whole segment (tested in 2.0.77 and 2.1.23); a box without a segment is changed through set_fluid. Insert
+---     asks how much fits: the segment's capacity (T.capacity) minus its contents, nothing if it holds another fluid or
+---     its filter is another fluid.
 ---   * Temperature (issue #159: the network keeps a fluid's temperature, a key per temperature): the segment's fluid
 ---     is storage under the key of its temperature ("fluid/steam@250" for hot steam), so the network takes it out at
 ---     that temperature. The network puts a key in only while the segment is empty or holds the fluid at that key's
@@ -27,8 +27,8 @@
 ---     any temperature, counted as the default one, and inserts were refused away from the default (status
 ---     "temperature", gone).
 ---   * Issue #417: a fluid wagon in front of the bus is its fluid storage too, while it stands there (as a cargo wagon on the
----     item side): the key "w<unit>"; it has no fluid box in Factorio 2.0, so its contents, insert and remove are the
----     entity's fluid functions (get_fluid_contents, insert_fluid, remove_fluid) and its capacity is its prototype's
+---     item side): the key "w<unit>"; it has no fluid box (a fluid storage of its own), so its contents, insert and remove are
+---     the entity's fluid functions (get_fluid, insert_fluid, extract_fluid) and its capacity is its prototype's
 ---     (`rec.wagon`). Every use checks that the wagon still covers the tile in front of the bus; a visit after it left looks
 ---     at the tile again (another wagon there is taken). Its temperature is kept as a tank's.
 --- State: the records are the storage bus's (storage.fork_me_net.ext, external cells, side = "fluid"); this module
@@ -129,7 +129,7 @@ local function live_key(rec)
 		if not wagon_here(rec) then return nil end
 		return "w" .. t.unit_number, false
 	end
-	local id = N.bound(T.fluidbox(t)).get_fluid_segment_id(rec.box)
+	local id = T.segment_id(t, rec.box)
 	if id then
 		local key = seg_keys[id]
 		if not key then
@@ -159,12 +159,11 @@ local function contents_of(rec, seg)
 		if f and f.amount > EPS then return { [f.name] = f.amount }, f.temperature, false end
 		return {}, nil, false
 	end
-	local fb = T.fluidbox(t)
-	local held = fb[rec.box]
+	local held = N.bound(t).get_fluid(rec.box)
 	local temp = held and held.temperature or nil
-	if seg == nil then seg = N.bound(fb).get_fluid_segment_id(rec.box) ~= nil end
+	if seg == nil then seg = N.bound(t).has_fluid_segment(rec.box) end
 	if seg then
-		return N.bound(fb).get_fluid_segment_contents(rec.box) or {}, temp, true
+		return T.segment_contents(t, rec.box) or {}, temp, true
 	end
 	if held and held.amount > EPS then return { [held.name] = held.amount }, temp, false end
 	return {}, temp, false
@@ -189,7 +188,7 @@ local function accepts(rec, key, name)
 	for other, amount in pairs(contents) do
 		if other ~= name and amount > EPS then return false end
 	end
-	local f = not rec.wagon and rec.target.fluidbox.get_filter(rec.box) or nil   -- (issue #417: a wagon has no filter)
+	local f = not rec.wagon and T.fluid_filter(rec.target, rec.box) or nil   -- (issue #417: a wagon has no filter)
 	if f and f.name and f.name ~= name then return false end
 	local t = N.fluid_temperature(key)
 	if f and ((f.minimum_temperature and t < f.minimum_temperature - EPS) or (f.maximum_temperature and t > f.maximum_temperature + EPS)) then
@@ -219,7 +218,7 @@ M.handlers = {
 		if not (name and owns(rec)) then return 0 end
 		local ok, have = accepts(rec, key, name)
 		if not ok then return 0 end
-		local cap = rec.wagon and rec.target.prototype.fluid_capacity or rec.target.fluidbox.get_capacity(rec.box)   -- (#417)
+		local cap = rec.wagon and rec.target.prototype.fluid_capacity or T.capacity(rec.target, rec.box)   -- (#417)
 		return math.max(0, cap - have)
 	end,
 	--- put up to `amount` in (at the key's temperature); returns the amount inserted
@@ -229,16 +228,15 @@ M.handlers = {
 		if not (name and owns(rec) and accepts(rec, key, name)) then return 0 end
 		local t = rec.target
 		local temp = N.fluid_temperature(key)
-		if rec.wagon or t.fluidbox.get_fluid_segment_id(rec.box) then         -- (issue #417: a wagon's own insert)
+		if rec.wagon or t.has_fluid_segment(rec.box) then         -- (issue #417: a wagon's own insert)
 			return t.insert_fluid{ name = name, amount = amount, temperature = temp }
 		end
-		local fb = t.fluidbox
-		local held = fb[rec.box]
+		local held = t.get_fluid(rec.box)
 		local have = held and held.amount or 0
-		local n = math.min(amount, fb.get_capacity(rec.box) - have)
+		local n = math.min(amount, t.get_fluid_capacity(rec.box) - have)
 		if n <= EPS then return 0 end
-		fb[rec.box] = { name = name, amount = have + n, temperature = held and held.temperature or temp }
-		local now = fb[rec.box]
+		t.set_fluid(rec.box, { name = name, amount = have + n, temperature = held and held.temperature or temp })
+		local now = t.get_fluid(rec.box)
 		return math.max(0, (now and now.name == name and now.amount or 0) - have)
 	end,
 	--- the real amount of `key` in the storage (0 when the bus cannot take from it)
@@ -255,15 +253,14 @@ M.handlers = {
 		if not (name and owns(rec)) then return 0 end
 		--- (the engine asks `count` first, which is 0 while the segment is at another temperature: no second read here)
 		local t = rec.target
-		if rec.wagon or t.fluidbox.get_fluid_segment_id(rec.box) then         -- (issue #417: a wagon's own remove)
-			return t.remove_fluid{ name = name, amount = amount }
+		if rec.wagon or t.has_fluid_segment(rec.box) then         -- (issue #417: a wagon's own remove)
+			return t.extract_fluid{ name = name, amount = amount }
 		end
-		local fb = t.fluidbox
-		local held = fb[rec.box]
+		local held = t.get_fluid(rec.box)
 		if not (held and held.name == name) then return 0 end
 		local n = math.min(amount, held.amount)
 		local left = held.amount - n
-		fb[rec.box] = left > EPS and { name = name, amount = left, temperature = held.temperature } or nil
+		T.set_fluid(t, rec.box, left > EPS and { name = name, amount = left, temperature = held.temperature } or nil)
 		return n
 	end,
 	--- issue #479: can the bus ever hold `key`? (fluids only; the mode and the filter are the engine's, N.never_stores)
@@ -293,17 +290,16 @@ end
 --- the fluid box of `o` the bus uses: the one with a pipe connection to the bus's tile, else the only one, else
 --- the first one in a segment, else the first
 local function pick_box(o, bus_pos)
-	local fb = o.fluidbox
-	local n = #fb
+	local n = o.fluids_count
 	if n == 0 then return nil end
 	if n == 1 then return 1 end
 	local first_seg
 	for i = 1, n do
-		for _, c in pairs(fb.get_pipe_connections(i)) do
+		for _, c in pairs(o.get_fluid_box_pipe_connections(i)) do
 			local tp = c.target_position
 			if tp and math.abs(tp.x - bus_pos.x) < 0.5 and math.abs(tp.y - bus_pos.y) < 0.5 then return i end
 		end
-		if not first_seg and fb.get_fluid_segment_id(i) then first_seg = i end
+		if not first_seg and o.has_fluid_segment(i) then first_seg = i end
 	end
 	return first_seg or 1
 end
@@ -499,9 +495,9 @@ function M.on_removed(entity)
 	local s = storage.fork_me_fsbus
 	if not (s and entity and entity.valid and entity.unit_number) then return end
 	local unit = entity.unit_number
-	local fb = entity.fluidbox
+	local n = entity.fluids_count
 	local wagon = entity.type == "fluid-wagon"                    -- (issue #417: a wagon has no fluid box)
-	if not (wagon or (fb and #fb > 0)) then return end
+	if not (wagon or n > 0) then return end
 	local lost = {}
 	for _, bus in ipairs(s.list) do
 		local r = N.ext_get(bus)
@@ -517,8 +513,8 @@ function M.on_removed(entity)
 			M.lost(r)
 		end
 	end
-	for i = 1, wagon and 0 or #fb do
-		local id = fb.get_fluid_segment_id(i)
+	for i = 1, wagon and 0 or n do
+		local id = T.segment_id(entity, i)
 		local owner = id and s.claims["s" .. id]
 		if owner then s.urgent[owner] = true end
 	end

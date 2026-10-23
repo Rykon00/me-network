@@ -218,7 +218,7 @@ return function(H)
 		remote.call(SB, "set_settings", b6, { filters = { "fluid/water" }, priority = 10 })
 		put(b6, CARD.void)
 		visit(b6)
-		local cap = tank.fluidbox.get_capacity(1)
+		local cap = tank.get_fluid_segment_capacity(1)
 		local wv0 = remote.call(NET, "voided")["fluid/water"] or 0
 		local gw = remote.call(NET, "insert_fluid", t, "water", cap + 500)
 		local wv = (remote.call(NET, "voided")["fluid/water"] or 0) - wv0

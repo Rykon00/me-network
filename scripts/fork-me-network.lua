@@ -314,10 +314,9 @@ end
 --- follows the engine: the partner is the end the underground pipe connection reaches (ahead in the direction).
 local function engine_partner(entity, dir)
 	local v = DIR_VEC[dir]
-	local fb = entity.fluidbox
-	if not (v and fb and #fb > 0) then return nil end
-	for _, other in pairs(fb.get_connections(1)) do
-		local o = other.owner
+	if not (v and entity.fluids_count > 0) then return nil end
+	for _, other in pairs(entity.get_fluid_box_neighbours(1)) do       -- (issue #487: records { entity, index } since 2.1)
+		local o = other.entity
 		if o and o.valid and o ~= entity and o.name == entity.name then
 			local dx, dy = o.position.x - entity.position.x, o.position.y - entity.position.y
 			if dx * v[1] + dy * v[2] > 0 then return o end
@@ -781,6 +780,23 @@ local function temps_of(name)
 end
 
 --- the default and the max temperature of a fluid (nil for no fluid; per load)
+--- Issue #487: the chance that a craft makes product `p` (a recipe prototype's product). Since Factorio 2.1 a product has
+--- `independent_probability` and `shared_probability` { min, max } (one roll per craft for all products; the product is made
+--- when it falls between them); a product kept from a 2.0 save has `probability`
+function M.chance(p)
+	local sp = p.shared_probability
+	return (p.independent_probability or p.probability or 1) * (sp and (sp.max - sp.min) or 1)
+end
+
+--- Issue #487: does a machine with the crafting categories `machine_cats` (a set) make a recipe of the categories `cats` (a
+--- list: Factorio 2.1's LuaRecipePrototype::categories; a recipe may have several)?
+function M.makes(machine_cats, cats)
+	for _, c in pairs(cats or {}) do
+		if machine_cats[c] then return true end
+	end
+	return false
+end
+
 function M.fluid_range(name)
 	local t = temps_of(name)
 	if not t then return nil end
@@ -2229,7 +2245,7 @@ end
 
 --- Issue #115: an engine object's methods, made once per object and load. `obj.method` makes a new bound method object at
 --- every read (88 bytes of garbage, most of the time of a cheap call: 0.28 µs against 0.04 µs for a kept one), so the hot
---- paths call the methods of the objects they keep (a record's entity, T.inventory, T.fluidbox) through this. Methods only:
+--- paths call the methods of the objects they keep (a record's entity, T.inventory) through this. Methods only:
 --- a property read here would be kept as it was. Weak keys: an object no longer kept leaves (the table it keys refers to it,
 --- an ephemeron). Nothing is saved.
 local bound_cache = setmetatable({}, { __mode = "k" })
@@ -3144,7 +3160,8 @@ local function extract_key(net, key, count)
 	return count - left
 end
 
---- data ({ tags, description }) of an item-with-tags key in the network
+--- data of a key with data in the network: an item with tags' { tags, description }, a damaged item's { health, description }
+--- (the damage text) or, issue #481, a damaged item with tags' { tags, description, health }
 local function data_of(net, key)
 	if net.chest then return CH.data(net, key) end
 	for cid in pairs(net.index[key] or {}) do
@@ -3549,28 +3566,34 @@ function M.storable(stack)
 	if facts.spoils then return "cannot-store-spoil" end
 	local class = facts.class
 	if class ~= "plain" and class ~= "worn" and class ~= "tags" and class ~= "label" then return class end
-	if class == "plain" then
+	local tags, desc, own
+	if class == "tags" then
+		if stack.label then return "cannot-store-label" end            -- (a label cannot be put back with the stack)
+		tags, desc = stack.tags, stack.custom_description
+		own = (tags and next(tags)) or (desc and desc ~= "")
+	end
+	if class == "plain" or class == "tags" then
 		local health = stack.health                                       -- (the one read a plain item needs)
 		if health < 1 then
-			if not facts.damageable then return "cannot-store-damaged" end
+			if not facts.damageable then return "cannot-store-damaged-item" end
 			--- issue #102: a damaged item (a mined wall, belt, chest) is stored with its health, as a key of its own like an item
 			--- with tags: its health is part of the key, the stack comes out with it. All items of a stack share one health, so
 			--- a count of such a key is exact. (A partly used tool, ammo or repair tool stays refused: its wear is that of the
 			--- top item only, and two stacks of the same wear would come out as one used item and the rest whole.)
-			local data = { health = health, description = { "fork-me-net.damaged-item", math.floor(health * 100 + 0.5) } }
+			--- Issue #481: so is a damaged item with tags (Quality Turrets Reworked makes every turret one). An untagged one gets
+			--- the key of a damaged plain item (`description` is the terminal's damage text); one with tags or a description of
+			--- its own keeps them beside its health, and the terminal makes the damage text from the health
+			--- (fork-me-gui.lua key_description); stack_def puts the description back only when it is not the damage text.
+			local data = own and { tags = tags or {}, description = desc, health = health }
+				or { health = health, description = { "fork-me-net.damaged-item", math.floor(health * 100 + 0.5) } }
+			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
+		end
+		if own then
+			local data = { tags = tags or {}, description = desc }
 			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
 		end
 	elseif is_used(stack, proto) then
 		return "cannot-store-damaged"
-	end
-	if class == "tags" then
-		if stack.label then return "cannot-store-label" end            -- (a label cannot be put back with the stack)
-		local tags = stack.tags
-		local desc = stack.custom_description
-		if (tags and next(tags)) or (desc and desc ~= "") then
-			local data = { tags = tags or {}, description = desc }
-			return nil, key_of(stack.name, stack.quality, helpers.table_to_json(data)), data
-		end
 	elseif class == "label" and stack.label then
 		return "cannot-store-label"
 	end
@@ -3612,8 +3635,12 @@ local function stack_def(net, key, count)
 	if data then
 		def.tags = data.tags
 		if data.health then def.health = data.health end                -- issue #102: a damaged item comes out as damaged
-		--- (only an item with tags has a description of its own; the terminal shows the one in the key for the others)
-		if data.description and prototypes.item[name].type == "item-with-tags" then def.custom_description = data.description end
+		--- (only an item with tags has a description of its own; the terminal shows the one in the key for the others. Issue
+		--- #481: the damage text of a damaged item's key is none of the stack's, also when the item became one with tags later)
+		local d = data.description
+		if d and not (type(d) == "table" and d[1] == "fork-me-net.damaged-item") and prototypes.item[name].type == "item-with-tags" then
+			def.custom_description = d
+		end
 	end
 	return def
 end
@@ -3878,14 +3905,14 @@ function M.chest_tick(tick)
 			local spec = cell_spec(cell.name)
 			if spec and fluid_cell(spec) then
 				local tank = c.tank
-				local fb = tank and tank.valid and tank.fluidbox[1]
+				local fb = tank and tank.valid and tank.get_fluid(1)
 				if fb and CH.powered(s, unit) then
-					--- (the tank's share of its fluid segment: remove_fluid takes what was stored out of the segment; setting the
+					--- (the tank's share of its fluid segment: extract_fluid takes what was stored out of the segment; setting the
 					--- fluid box would empty the pipes connected to it as well)
 					local key = fluid_key(fb.name, fb.temperature)
 					local n = store_key_in_drive(s, d, unit, key, fb.amount)
 					if n > 0 then
-						local got = tank.remove_fluid{ name = fb.name, amount = n, temperature = fb.temperature }
+						local got = tank.extract_fluid{ name = fb.name, amount = n, temperature = fb.temperature }
 						if got < n - ZERO then CH.take_from_drive(s, d, unit, key, n - got) end   -- (never more than came out)
 					else
 						c.wait = tick + CH.RETRY
@@ -4034,7 +4061,7 @@ function M.chest_info(entity)
 	local st = inv and inv[1]
 	if st and st.valid_for_read then out.input = { name = st.name, quality = st.quality.name, count = st.count } end
 	local tank = c and c.tank
-	local fb = tank and tank.valid and tank.fluidbox[1]
+	local fb = tank and tank.valid and tank.get_fluid(1)
 	if fb then out.fluid = { name = fb.name, amount = fb.amount, temperature = fb.temperature } end
 	return out
 end

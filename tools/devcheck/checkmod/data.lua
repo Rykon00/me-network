@@ -8,7 +8,9 @@ local function is_item(n)
 	return false
 end
 for n, r in pairs(data.raw.recipe) do
-	if not data.raw["recipe-category"][r.category or "crafting"] then L("BADCAT", n, tostring(r.category)) end
+	for _, c in pairs(r.categories or { "crafting" }) do    -- (issue #487: Factorio 2.1's list of categories)
+		if not data.raw["recipe-category"][c] then L("BADCAT", n, tostring(c)) end
+	end
 	for _, key in pairs({ "ingredients", "results" }) do
 		for _, i in pairs(r[key] or {}) do
 			local nm = i.name or i[1]
@@ -27,5 +29,19 @@ for n, t in pairs(data.raw.technology) do
 	for _, p in pairs(t.prerequisites or {}) do
 		if not data.raw.technology[p] then L("TECHPREREQ", n, p) end
 	end
+end
+--- issue #487: ME_NETWORK.recipe_keys turns a recipe in Factorio 2.0's form (another mod's call of add_recipe or
+--- replace_recipe) into 2.1's: `category` and `additional_categories` into `categories`, `probability` into
+--- `independent_probability`
+if ME_NETWORK and ME_NETWORK.recipe_keys then
+	local r = ME_NETWORK.recipe_keys({ category = "advanced-crafting", additional_categories = { "crafting", "advanced-crafting" },
+		results = { { type = "item", name = "x", amount = 1, probability = 0.5 }, { type = "item", name = "y", amount = 1 } } })
+	local cats = table.concat(r.categories or {}, ",")
+	if cats ~= "advanced-crafting,crafting" or r.category or r.additional_categories or r.results[1].probability
+			or r.results[1].independent_probability ~= 0.5 or r.results[2].independent_probability then
+		L("APIKEYS", "ME_NETWORK.recipe_keys", cats .. " " .. serpent.line(r))
+	end
+	local same = ME_NETWORK.recipe_keys({ categories = { "crafting" }, results = {} })
+	if table.concat(same.categories, ",") ~= "crafting" then L("APIKEYS", "ME_NETWORK.recipe_keys (2.1 form)", serpent.line(same)) end
 end
 log("DEVCHECK-VALIDATE-BEGIN\n" .. table.concat(out, "\n") .. "\nDEVCHECK-VALIDATE-END")

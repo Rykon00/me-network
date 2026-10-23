@@ -86,12 +86,11 @@ return function(H)
 					elseif m and c.pipe then
 						--- a pipe on the pipe connection of the recipe's first fluid input box (after the recipe is set, the boxes exist)
 						pcall(m.set_recipe, c.recipe)
-						local fb = m.fluidbox
-						for b = 1, #fb do
-							local pr = fb.get_prototype(b)
+						for b = 1, m.fluids_count do
+							local pr = m.get_fluid_box_prototype(b)
 							if pr and pr.production_type == nil and pr[1] then pr = pr[1] end
 							if pr and pr.production_type == "input" then
-								for _, pc in pairs(fb.get_pipe_connections(b)) do
+								for _, pc in pairs(m.get_fluid_box_pipe_connections(b)) do
 									if pc.target_position then
 										me_place(s, fails, what, "pipe", pc.target_position.x, pc.target_position.y)
 										break
@@ -153,7 +152,7 @@ return function(H)
 			local by_type, fixed, fluid = {}, 0, 0
 			for _, proto in pairs(prototypes.get_entity_filtered{ { filter = "crafting-machine" } }) do
 				by_type[proto.type] = (by_type[proto.type] or 0) + 1
-				if proto.fixed_recipe and proto.fixed_recipe ~= "" then fixed = fixed + 1 end
+				if proto.fixed_recipe then fixed = fixed + 1 end       -- (a LuaRecipePrototype since Factorio 2.1)
 				if #(proto.fluidbox_prototypes or {}) > 0 then fluid = fluid + 1 end
 			end
 			log("DEVCHECK-RUNTIME-PROVIDERS-CENSUS prototypes | " .. serpent.line(by_type) .. " | fixed recipe " .. fixed .. " | with fluid boxes " .. fluid)
@@ -267,7 +266,7 @@ return function(H)
 			ok, why, ed = remote.call(PT, "set_editor_recipe", force, ed, c.recipe)
 			local proto = prototypes.recipe[c.recipe]
 			local chance = 0
-			for _, p in pairs(proto.products) do if (p.probability or 1) < 1 then chance = chance + 1 end end
+			for _, p in pairs(proto.products) do if p.independent_probability < 1 then chance = chance + 1 end end
 			expect(ok and #ed.outputs == #proto.products - chance and ed.outputs[1] and ed.outputs[1].key == "crushed-iron",
 				"From recipe: " .. tostring(why) .. " " .. serpent.line(ed.outputs) .. " (" .. chance .. " chance products)")
 			expect(chance > 0, "the macerator's recipe has no chance byproduct (the stand-in of data.lua should)")

@@ -31,6 +31,7 @@
 --- Output: DEVCHECK-BENCH-<KEY> <json> lines in the log.
 
 local C = require("config")
+local V = require("compat")       -- issue #487: the calls that changed from Factorio 2.0 to 2.1
 
 local NET, IO, SB, AC, CIRC, TERM = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-storagebus",
 	"gregtorio-me-autocraft", "gregtorio-me-circuit", "gregtorio-me-terminal"
@@ -59,7 +60,7 @@ local function fit_lists()
 	local am = prototypes.entity["assembling-machine-2"]
 	local function fits(name)
 		local r = prototypes.recipe[name]
-		if not (r and not r.hidden and am and am.crafting_categories[r.category]) then return false end
+		if not (r and not r.hidden and am and V.makes(am.crafting_categories, r)) then return false end
 		if #r.ingredients ~= 1 or r.ingredients[1].type ~= "item" or #r.products ~= 1 or r.products[1].type ~= "item" then return false end
 		local fr = game.forces.player.recipes[name]
 		return fr ~= nil and fr.enabled
@@ -231,9 +232,9 @@ local function count_world()
 		inv_add(out, m.get_inventory(defines.inventory.crafter_input))
 		inv_add(out, m.get_inventory(defines.inventory.crafter_output))
 		in_progress(out, m)
-		local fb = m.fluidbox
-		for i = 1, #fb do
-			local f = fb[i]
+		local fb = V.boxes(m)
+		for i = 1, fb and fb.n or 0 do
+			local f = fb.get(i)
 			if f then add(out, "fluid/" .. f.name, f.amount) end
 		end
 	end
@@ -252,16 +253,16 @@ local function count_world()
 	end
 	local segs = {}
 	for _, e in pairs(s.find_entities_filtered{ type = { "storage-tank", "pipe", "pipe-to-ground", "pump" } }) do
-		local fb = e.fluidbox
-		for i = 1, #fb do
-			local id = fb.get_fluid_segment_id(i)
+		local fb = V.boxes(e)
+		for i = 1, fb and fb.n or 0 do
+			local id = fb.id(i)
 			if id then
 				if not segs[id] then
 					segs[id] = true
-					for name, amount in pairs(fb.get_fluid_segment_contents(i) or {}) do add(out, "fluid/" .. name, amount) end
+					for name, amount in pairs(fb.segment(i) or {}) do add(out, "fluid/" .. name, amount) end
 				end
-			elseif fb[i] then
-				add(out, "fluid/" .. fb[i].name, fb[i].amount)
+			elseif fb.get(i) then
+				add(out, "fluid/" .. fb.get(i).name, fb.get(i).amount)
 			end
 		end
 	end
@@ -330,10 +331,10 @@ end
 --------------------------------------------------------------------------------
 
 local function segment_amount(e)
-	local fb = e.fluidbox
-	if #fb == 0 then return 0 end
+	local fb = V.boxes(e)
+	if not fb then return 0 end
 	local n = 0
-	for _, a in pairs(fb.get_fluid_segment_contents(1) or {}) do n = n + a end
+	for _, a in pairs(fb.segment(1) or {}) do n = n + a end
 	return n
 end
 
@@ -355,9 +356,9 @@ local function pattern_recipes(force)
 	for _, r in pairs(RAW) do raw[r] = true end
 	local out = {}
 	for name, r in pairs(prototypes.recipe) do
-		local ok = cats[r.category] and not r.hidden and force.recipes[name] and force.recipes[name].enabled
+		local ok = V.makes(cats, r) and not r.hidden and force.recipes[name] and force.recipes[name].enabled
 			and #r.products == 1 and r.products[1].type == "item" and r.products[1].amount and r.products[1].amount > 0
-			and (r.products[1].probability or 1) == 1 and plain(r.products[1].name) and #r.ingredients > 0
+			and V.chance(r.products[1]) == 1 and plain(r.products[1].name) and #r.ingredients > 0
 			and r.products[1].name ~= PROBE_ITEM and not raw[r.products[1].name]
 		if ok then
 			for _, i in pairs(r.ingredients) do
@@ -857,7 +858,7 @@ local function build_me()
 		return
 	end
 	--- the graph in one pass (the map scan of on_configuration_changed), then every module registers its blocks
-	local prof = game.create_profiler()
+	local prof = helpers.create_profiler()
 	remote.call(NET, "rebuild")
 	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
 	prof.stop()
@@ -943,10 +944,10 @@ local function refill(b)
 			end
 			if rec.sink and rec.sink.valid then rec.sink.get_inventory(defines.inventory.chest).clear() end
 		elseif (k == "imp_tank" or k == "iface_fin" or k == "cap_fimp") and rec.tank and rec.tank.valid and rec.fluid then
-			rec.tank.insert_fluid{ name = rec.fluid, amount = rec.tank.fluidbox.get_capacity(1) }
+			rec.tank.insert_fluid{ name = rec.fluid, amount = V.boxes(rec.tank).capacity(1) }
 		elseif (k == "exp_tank" or k == "iface_fout" or k == "cap_fexp") and rec.tank and rec.tank.valid then
-			local held = rec.tank.fluidbox[1]
-			if held then rec.tank.remove_fluid{ name = held.name, amount = segment_amount(rec.tank) + 1 } end
+			local held = V.boxes(rec.tank).get(1)
+			if held then V.extract(rec.tank, { name = held.name, amount = segment_amount(rec.tank) + 1 }) end
 		end
 	end
 end
@@ -1205,7 +1206,7 @@ local function planner_recipes(force)
 	local R = {}
 	for name, r in pairs(prototypes.recipe) do
 		local fr = force.recipes[name]
-		if fr and fr.enabled and not r.hidden and r.category ~= "recycling" and not name:find("%-recycling$")
+		if fr and fr.enabled and not r.hidden and V.categories(r)[1] ~= "recycling" and not name:find("%-recycling$")
 			and #r.ingredients > 0 and #r.ingredients <= 9 and #r.products > 0 and #r.products <= 6 then
 			local ok, ins, outs, inset = true, {}, {}, {}
 			--- (items with own data, the cells and patterns, are never stored by name: no pattern names them)
@@ -1217,7 +1218,7 @@ local function planner_recipes(force)
 			end
 			for _, pr in pairs(r.products) do
 				local amt = pr.amount or ((pr.amount_min or 0) + (pr.amount_max or 0)) / 2
-				if (pr.probability or 1) < 1 or amt <= 0 or (pr.type == "item" and amt ~= math.floor(amt)) or inset[res_key(pr)] or tagged(pr) then ok = false end
+				if V.chance(pr) < 1 or amt <= 0 or (pr.type == "item" and amt ~= math.floor(amt)) or inset[res_key(pr)] or tagged(pr) then ok = false end
 				outs[#outs + 1] = { key = res_key(pr), amount = amt }
 			end
 			if ok then
@@ -1298,12 +1299,12 @@ local function machine_for(name)
 	for _, i in pairs(proto.ingredients) do if i.type == "fluid" then fin = fin + 1 end end
 	for _, pr in pairs(proto.products) do if pr.type == "fluid" then fout = fout + 1 end end
 	if fin + fout == 0 then return nil end
-	local key = proto.category .. ":" .. fin .. ":" .. fout
+	local key = table.concat(V.categories(proto), ",") .. ":" .. fin .. ":" .. fout
 	if machine_cache[key] ~= nil then return machine_cache[key] or nil end
 	local names = {}
 	for ename, m in pairs(prototypes.entity) do
-		if m.type == "assembling-machine" and not m.hidden and m.crafting_categories[proto.category]
-			and (not m.fixed_recipe or m.fixed_recipe == "" or m.fixed_recipe == name) then
+		if m.type == "assembling-machine" and not m.hidden and V.makes(m.crafting_categories, proto)
+			and (not V.fixed_recipe(m) or V.fixed_recipe(m) == name) then
 			names[#names + 1] = ename
 		end
 	end
@@ -1451,7 +1452,7 @@ local function build_planner()
 		end
 		y = y + row.pitch
 	end
-	local prof = game.create_profiler()
+	local prof = helpers.create_profiler()
 	remote.call(NET, "rebuild")
 	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
 	prof.stop()
@@ -1581,10 +1582,10 @@ end
 --- for a key and amount (nothing kept: a fresh plan) and the mean of five more (a refresh while nothing changed). Logged as
 --- DEVCHECK-BENCH-<tag> (the fresh one, with the plan) and DEVCHECK-BENCH-<tag>-KEPT.
 local function time_preview(b, tag, t, amount, extra)
-	local p = game.create_profiler()
+	local p = helpers.create_profiler()
 	local pre = remote.call(TERM, "craft_preview", b.terminal, t.key, amount)
 	p.stop()
-	local q = game.create_profiler()
+	local q = helpers.create_profiler()
 	for _ = 1, 5 do remote.call(TERM, "craft_preview", b.terminal, t.key, amount) end
 	q.stop()
 	q.divide(5)
@@ -1627,7 +1628,7 @@ local function planner_probe(b)
 			for _, amount in ipairs({ 1, 100 }) do time_preview(b, "PLAN-FAIL", t, amount, "without " .. gone) end
 			if got > 0 then remote.call(NET, "insert", b.anchor, gone, got) end
 		end
-		local p = game.create_profiler()
+		local p = helpers.create_profiler()
 		local id, why = remote.call(AC, "start", b.anchor, t.key, 10)
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-PLAN-START ", t.key, " ", id and "ok" or tostring(why), " ", p })
@@ -1733,7 +1734,7 @@ end
 --------------------------------------------------------------------------------
 
 local function time_it(name, n, f, out)
-	local p = game.create_profiler()
+	local p = helpers.create_profiler()
 	for i = 1, n do f(i) end
 	p.stop()
 	p.divide(n)
@@ -1779,15 +1780,15 @@ local function engine_profile(b)
 		end, out)
 	end
 	if sb_tank then
-		local fb = sb_tank.fluidbox
-		time_it("fluidbox[1] read", 2000, function() return fb[1] end, out)
-		time_it("get_fluid_segment_id", 2000, function() return fb.get_fluid_segment_id(1) end, out)
-		time_it("get_fluid_segment_contents", 2000, function() return fb.get_fluid_segment_contents(1) end, out)
-		time_it("fluidbox.get_capacity", 2000, function() return fb.get_capacity(1) end, out)
-		local f = fb[1] and fb[1].name or "water"
+		local fb = V.boxes(sb_tank)
+		time_it("fluidbox[1] read", 2000, function() return fb.get(1) end, out)
+		time_it("get_fluid_segment_id", 2000, function() return fb.id(1) end, out)
+		time_it("get_fluid_segment_contents", 2000, function() return fb.segment(1) end, out)
+		time_it("fluidbox.get_capacity", 2000, function() return fb.capacity(1) end, out)
+		local f = fb.get(1) and fb.get(1).name or "water"
 		time_it("insert_fluid+remove_fluid 100", 1000, function()
 			local k = sb_tank.insert_fluid{ name = f, amount = 100 }
-			if k > 0 then sb_tank.remove_fluid{ name = f, amount = k } end
+			if k > 0 then V.extract(sb_tank, { name = f, amount = k }) end
 		end, out)
 	end
 	--- a long fluid segment: a tank and 200 pipes (above the scene)
@@ -1798,11 +1799,11 @@ local function engine_profile(b)
 	for i = 0, 199 do place("pipe", p1(lx + 3 + i, ly + 2)) end
 	if tank then
 		tank.insert_fluid{ name = "water", amount = 20000 }
-		local fb = tank.fluidbox
-		time_it("long segment: get_fluid_segment_contents", 2000, function() return fb.get_fluid_segment_contents(1) end, out)
+		local fb = V.boxes(tank)
+		time_it("long segment: get_fluid_segment_contents", 2000, function() return fb.segment(1) end, out)
 		time_it("long segment: insert_fluid+remove_fluid 100", 1000, function()
 			local k = tank.insert_fluid{ name = "water", amount = 100 }
-			if k > 0 then tank.remove_fluid{ name = "water", amount = k } end
+			if k > 0 then V.extract(tank, { name = "water", amount = k }) end
 		end, out)
 	end
 	--- a big chest: 800 slots, 300 of them used
@@ -1926,7 +1927,7 @@ local function engine_profile(b)
 	--- what building and removing one block costs in this network (the graph recompute of a member)
 	if tank_bus and tank_bus.valid then
 		local x, y = X0 - 0.5, Y0 - 0.5                       -- above the spine's first cable
-		local p = game.create_profiler()
+		local p = helpers.create_profiler()
 		local e = surface().create_entity{ name = "me-import-bus", position = { x, y }, force = "player", raise_built = true,
 			direction = defines.direction.north }
 		p.stop()
@@ -1938,7 +1939,7 @@ local function engine_profile(b)
 			log({ "", "DEVCHECK-BENCH-ENGINE remove one import bus (raise_destroy) 1 ", p })
 		end
 	end
-	local p = game.create_profiler()
+	local p = helpers.create_profiler()
 	remote.call(NET, "rebuild")
 	p.stop()
 	log({ "", "DEVCHECK-BENCH-ENGINE graph rebuild (on_configuration_changed) 1 ", p })
@@ -2022,7 +2023,7 @@ local function on_burst_tick()
 		local w0 = io_wakes()
 		local prof = C.profile and remote.interfaces["zz-me-bench-profile"]
 		if prof then remote.call("zz-me-bench-profile", "enable", false, C.exclusive) end
-		local p = game.create_profiler()
+		local p = helpers.create_profiler()
 		b.burst_made = burst_build(b, n)
 		p.stop()
 		if prof then
@@ -2035,7 +2036,7 @@ local function on_burst_tick()
 		local w0 = io_wakes()
 		local prof = C.profile and remote.interfaces["zz-me-bench-profile"]
 		if prof then remote.call("zz-me-bench-profile", "enable", false, C.exclusive) end    -- (profile run: the functions of the removal alone)
-		local p = game.create_profiler()
+		local p = helpers.create_profiler()
 		local k = burst_remove(b.burst_made)
 		p.stop()
 		if prof then
@@ -2046,7 +2047,7 @@ local function on_burst_tick()
 		log("DEVCHECK-BENCH-BURST-WAKES remove " .. (io_wakes() - w0))
 		b.burst_made = nil
 	elseif t == 130 then
-		local p = game.create_profiler()
+		local p = helpers.create_profiler()
 		local made = {}
 		local col, row = burst_layout(n)
 		local k = 0
@@ -2062,7 +2063,7 @@ local function on_burst_tick()
 		b.burst_made = made
 		log({ "", "DEVCHECK-BENCH-BURST plain-build ", #made, " ", game.tick, " ", p })
 	elseif t == 190 then
-		local p = game.create_profiler()
+		local p = helpers.create_profiler()
 		local k = burst_remove(b.burst_made)
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-BURST plain-remove ", k, " ", game.tick, " ", p })

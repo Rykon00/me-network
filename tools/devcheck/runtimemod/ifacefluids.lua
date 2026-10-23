@@ -38,7 +38,7 @@ return function(H)
 		end
 		local pipes = {}
 		local tank = iface and (remote.call(IO, "interface_tanks", iface) or {})[EAST]
-		local conn = tank and tank.fluidbox.get_pipe_connections(1)[1]
+		local conn = tank and tank.get_fluid_box_pipe_connections(1)[1]
 		if conn then
 			local p = conn.target_position
 			local dx, dy = p.x - tank.position.x, p.y - tank.position.y      -- (away from the interface)
@@ -85,7 +85,7 @@ return function(H)
 			expect(n >= STEAM - 1e-6, "steam into the pipes at the east side: " .. n)
 			return
 		end
-		local north = tanks[NORTH] and tanks[NORTH].fluidbox[1]
+		local north = tanks[NORTH] and tanks[NORTH].get_fluid(1)
 		if not (north and north.amount >= WATER - 0.5) and tick < LAST then return end
 		expect(north and north.amount >= WATER - 0.5, "the network did not fill the north side: " .. serpent.line(north))
 
@@ -125,7 +125,7 @@ return function(H)
 			and r2.caption[4][1] == "fork-me-gui.interface-fluid-pipes", "the steam row (temperature, pipes) " .. serpent.line(r2))
 		v = remote.call(GUI, "interface_fluid_view", "if311", iface)
 		expect(not v.rebuilt and #v.rows == 2, "a refresh without a change built the section anew")
-		tanks[NORTH].remove_fluid{ name = "water", amount = 400 }
+		tanks[NORTH].extract_fluid{ name = "water", amount = 400 }
 		v = remote.call(GUI, "interface_fluid_view", "if311", iface)
 		r1 = v.rows[1] or {}
 		expect(not v.rebuilt and r1.number == WATER - 400 and math.abs((r1.value or 0) - (WATER - 400) / d.volume) < 0.01,

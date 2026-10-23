@@ -134,8 +134,7 @@ data:extend({ {
 	collision_mask = { layers = {} },                 -- shares the tile with the interface's container
 	fluid_box = {
 		volume = INTERFACE_VOLUME,
-		hide_connection_info = true,
-		pipe_connections = { { direction = defines.direction.north, position = { 0, 0 } } },
+		pipe_connections = { { direction = defines.direction.north, position = { 0, 0 }, hide_connection_info = true } },
 	},
 	window_bounding_box = { { 0, 0 }, { 0, 0 } },
 	flow_length_in_ticks = 360,

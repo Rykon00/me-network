@@ -22,14 +22,14 @@ local function recipe(name, n_items, n_fluids)
 	for i = 1, n_items do ingredients[#ingredients + 1] = { type = "item", name = items[i], amount = 1 } end
 	for i = 1, n_fluids do ingredients[#ingredients + 1] = { type = "fluid", name = fluids[i], amount = 1 } end
 	data:extend({ {
-		type = "recipe", name = name, category = "zz-devcheck-paste", energy_required = 1, enabled = false,
+		type = "recipe", name = name, categories = { "zz-devcheck-paste" }, energy_required = 1, enabled = false,
 		ingredients = ingredients, results = { { type = "item", name = items[1], amount = 1 } },
 		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
 	} })
 end
 recipe("zz-devcheck-paste-many", 20, 5)        -- more than the rows and filters of every block
 --- issue #157: one craft needs more of a fluid than an interface side holds (5000)
-data:extend({ { type = "recipe", name = "zz-devcheck-paste-big", category = "zz-devcheck-paste", energy_required = 1, enabled = false,
+data:extend({ { type = "recipe", name = "zz-devcheck-paste-big", categories = { "zz-devcheck-paste" }, energy_required = 1, enabled = false,
 	ingredients = { { type = "item", name = items[1], amount = 3 }, { type = "fluid", name = fluids[1], amount = 6000 } },
 	results = { { type = "item", name = items[1], amount = 1 } },
 	icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
@@ -40,7 +40,7 @@ recipe("zz-devcheck-paste-fluids", 2, 5)       -- more fluids than the interface
 do
 	local macerator = data.raw["assembling-machine"]["ev-macerator"]
 	data:extend({ {
-		type = "recipe", name = "zz-devcheck-scan", category = macerator and macerator.crafting_categories[1] or "crafting",
+		type = "recipe", name = "zz-devcheck-scan", categories = { macerator and macerator.crafting_categories[1] or "crafting" },
 		energy_required = 1, enabled = false,
 		ingredients = { { type = "item", name = "raw-iron", amount = 1 } }, results = { { type = "item", name = "crushed-iron", amount = 1 } },
 		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
@@ -53,7 +53,7 @@ do
 	local m = data.raw["assembling-machine"]["ev-macerator"]
 	local cat = m and m.crafting_categories and m.crafting_categories[1]
 	if cat then
-		data:extend({ { type = "recipe", name = "zz-devcheck-macerate-plate", category = cat, energy_required = 4, enabled = true,
+		data:extend({ { type = "recipe", name = "zz-devcheck-macerate-plate", categories = { cat }, energy_required = 4, enabled = true,
 			ingredients = { { type = "item", name = "iron-plate", amount = 1 } }, results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } },
 			icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
 	end
@@ -107,4 +107,22 @@ do
 		end
 	end
 	if #bad > 0 then error("devcheck (issue #282): the buses' marker layers: " .. table.concat(bad, "; ")) end
+end
+
+--- issue #480 (tagcraft.lua): autocrafting of the item with tags `zz-devcheck-tagged-wall` (data.lua): a recipe that makes it
+--- from an iron plate and one that makes a plain item of its own from two, in the first category of the ME Molecular
+--- Assembler as every mod has left it (vanilla: crafting; Gregtorio rebuilds the assembler with its own categories)
+do
+	local ma = data.raw["assembling-machine"]["me-molecular-assembler"]
+	local cat = ma and ma.crafting_categories and ma.crafting_categories[1] or "crafting"
+	local icon = "__base__/graphics/icons/wall.png"
+	data:extend({
+		{ type = "item", name = "zz-devcheck-tagged-post", icon = icon, stack_size = 50, subgroup = "intermediate-product" },
+		{ type = "recipe", name = "zz-devcheck-tagged-wall", categories = { cat }, energy_required = 0.5, enabled = true, icon = icon,
+			subgroup = "intermediate-product", ingredients = { { type = "item", name = "iron-plate", amount = 1 } },
+			results = { { type = "item", name = "zz-devcheck-tagged-wall", amount = 1 } } },
+		{ type = "recipe", name = "zz-devcheck-tagged-post", categories = { cat }, energy_required = 0.5, enabled = true, icon = icon,
+			subgroup = "intermediate-product", ingredients = { { type = "item", name = "zz-devcheck-tagged-wall", amount = 2 } },
+			results = { { type = "item", name = "zz-devcheck-tagged-post", amount = 1 } } },
+	})
 end

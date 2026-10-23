@@ -33,6 +33,15 @@
 --- Issue #38: the level maintainer (one job at a time, stops at N, circuit amount and condition), crafting
 --- CPU tiers (two jobs at once), the circuit interface (network contents on the wire) and the settings of
 --- maintainers, circuit and fluid interfaces in blueprints, settings paste and clones (setup_issue38_tests).
+
+--- me-network issue #487 (Factorio 2.1): what the fluid segment of box `i` of `e` holds, { [name] = amount } (2.0's
+--- LuaFluidBox.get_fluid_segment_contents), nil without a segment (a global: the test modules use it too)
+function fluid_segment(e, i)
+	if not e.has_fluid_segment(i) then return nil end
+	local f = e.get_fluid_segment_fluid(i)
+	return f and { [f.name] = f.amount } or {}
+end
+
 --- State of a robot job at `pos` for a timeout message: ghosts and blocking entities there, the tile,
 --- the chunk, and every construction network covering it (robots with position, energy and order).
 function robot_report(s, pos, name)
@@ -332,7 +341,7 @@ function me_graph_test()
 		expect(far1 and far2 and remote.call(NET, "underground_partner", far1) == nil, "ends 12 tiles apart paired")
 		--- it is an underground pipe of its own category: a pipe next to it does not connect
 		local pipe = put("pipe", 0, 3)
-		expect(pipe and #pipe.fluidbox.get_connections(1) == 0, "a pipe connected to an underground cable")
+		expect(pipe and #pipe.get_fluid_box_neighbours(1) == 0, "a pipe connected to an underground cable")
 		--- an end placed between a pair takes the near end (like underground pipes); removing it gives the pair back
 		local wd1, wd2 = put("me-drive", 0, 6), put("me-drive", 8, 6)
 		local w1 = put("me-underground-cable", 1, 6, defines.direction.east)
@@ -907,6 +916,10 @@ damaged84 = require("damaged")({ me_place = me_place, me_report = me_report })
 refused85 = require("refused")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #479: items with tags through storage buses, an import bus with a stack it cannot store (tagitem.lua)
 tagitem479 = require("tagitem")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #481: damaged items with tags, stored with their health, tags and description (tagdamaged.lua)
+tagdamaged481 = require("tagdamaged")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #480: autocrafting of items with tags (tagcraft.lua)
+tagcraft480 = require("tagcraft")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #110: the Acceleration Card in the ME Molecular Assembler's module slots (accel.lua)
 accel110 = require("accel")({ me_place = me_place, me_report = me_report })
 --- me-network issue #110, part 2: the Acceleration Cards of the import and export bus (busaccel.lua)
@@ -1098,6 +1111,8 @@ local function tests_running()
 	damaged84.running(check)
 	refused85.running(check)
 	tagitem479.running(check)
+	tagdamaged481.running(check)
+	tagcraft480.running(check)
 	lab86.running(check)
 	bulk382.running(check)
 	copypaste383.running(check)
@@ -1393,7 +1408,7 @@ local function autocraft_test()
 			local recipe = prototypes.recipe[AC_CRUSH]
 			local yield, per_run = 0, 0
 			for _, p in pairs(recipe.products) do
-				if p.name == AC_CRUSH then yield = p.amount * (p.probability or 1) end
+				if p.name == AC_CRUSH then yield = p.amount * p.independent_probability * (p.shared_probability.max - p.shared_probability.min) end
 			end
 			for _, i in pairs(recipe.ingredients) do if i.name == "raw-iron" then per_run = i.amount end end
 			st.crush_runs = math.ceil(AC_CRUSH_AMOUNT / yield)
@@ -1411,7 +1426,7 @@ local function autocraft_test()
 		if j.status == "done" or j.status == "failed" then
 			expect(j.status == "done", "macerator job ended as " .. j.status)
 			expect(count("raw-iron") == 20 - st.crush_runs * st.crush_raw, "raw iron left: " .. count("raw-iron"))
-			expect(count(AC_CRUSH) >= AC_CRUSH_AMOUNT or #prototypes.recipe[AC_CRUSH].products > 1 or prototypes.recipe[AC_CRUSH].products[1].probability,
+			expect(count(AC_CRUSH) >= AC_CRUSH_AMOUNT or #prototypes.recipe[AC_CRUSH].products > 1 or prototypes.recipe[AC_CRUSH].products[1].independent_probability < 1,
 				"crushed iron in the network: " .. count(AC_CRUSH))
 			expect(next(j.pool) == nil, "macerator job keeps items: " .. serpent.line(j.pool))
 			return finish_test("job 1 took " .. st.job1_ticks .. " ticks, whole test " .. (game.tick - st.started))
@@ -1578,8 +1593,8 @@ function furnace_test()
 		expect(count(FU_INPUT) == 10 - st.input, "dust left: " .. count(FU_INPUT) .. ", expected " .. (10 - st.input))
 		expect(next(j.pool) == nil, "furnace job keeps items: " .. serpent.line(j.pool))
 		expect(j.steps[1].kind == "processing" and (j.steps[1].received[FU_ITEM] or 0) == st.output, "processing step " .. serpent.line(j.steps[1]))
-		expect(furnace_a.get_inventory(defines.inventory.furnace_source).is_empty()
-			and furnace_a.get_inventory(defines.inventory.furnace_result).is_empty(), "furnace A is not empty after the job")
+		expect(furnace_a.get_inventory(defines.inventory.crafter_input).is_empty()
+			and furnace_a.get_inventory(defines.inventory.crafter_output).is_empty(), "furnace A is not empty after the job")
 		--- clearing: the crafting pattern of slot 1 into the hand, cleared to a blank
 		expect(remote.call(A, "provider_click", hand[1], inv, pa, 1, false) == nil and hand[1].valid_for_read and hand[1].name == ENCODED,
 			"taking the crafting pattern into the hand")
@@ -1935,7 +1950,7 @@ function pattern_line_test()
 		ok2, ed = remote.call(PT, "set_editor_row", ed, "outputs", 1, PL_OUT, PL_OUT_N)
 		expect(ok1 and ok2, "set_editor_row")
 		local ok3 = remote.call(PT, "set_editor_row", ed, "inputs", 2, "me-encoded-pattern", 1)
-		expect(not ok3, "an item with tags was accepted as a pattern input")
+		expect(not ok3, "an encoded pattern (it always carries its tags) was accepted as a pattern input")
 		local inv = game.create_inventory(2)
 		local own, in_net = remote.call(PT, "blanks", pterm)
 		expect(own == 0 and in_net == 2, "blanks " .. own .. "/" .. in_net)
@@ -2060,6 +2075,8 @@ script.on_nth_tick(10, function()
 	damaged84.tick()
 	refused85.tick()
 	tagitem479.tick()
+	tagdamaged481.tick()
+	tagcraft480.tick()
 	lab86.tick()
 	bulk382.tick()
 	copypaste383.tick()
@@ -2271,8 +2288,8 @@ function fluid_test()
 		expect(terminal and a and b and tank and drive, "entities missing")
 		if not (terminal and a and b and tank and drive) then return finish_test() end
 		expect(net and net.ok, "no working ME network at the terminal")
-		expect(tanks_of(a)[3] and #tanks_of(a)[3].fluidbox.get_connections(1) > 0, "interface A's south side is not connected to the tank")
-		expect(tanks_of(b)[1] and #tanks_of(b)[1].fluidbox.get_connections(1) == 0, "interface B must stand alone")
+		expect(tanks_of(a)[3] and #tanks_of(a)[3].get_fluid_box_neighbours(1) > 0, "interface A's south side is not connected to the tank")
+		expect(tanks_of(b)[1] and #tanks_of(b)[1].get_fluid_box_neighbours(1) == 0, "interface B must stand alone")
 		local capacity, used = remote.call(F, "capacity", terminal)   -- the import may have run already
 		expect(capacity == 4 * 1024 * 8 and used >= 0 and used <= (8 + math.ceil(FL_TANK_AMOUNT / 8)) * 8, "fluid capacity " .. tostring(capacity) .. "/" .. tostring(used))
 		expect(side(a, 3).setting == "import", "interface A's south side by default " .. serpent.line(side(a, 3)))
@@ -2444,7 +2461,7 @@ function fluid_test()
 			expect(ignored and ignored["fluid-pipes"] == 1, "ignored reasons " .. serpent.line(ignored))
 			local d = ent(FL.reactor_d)
 			local piped = false
-			for i = 1, #d.fluidbox do if #d.fluidbox.get_connections(i) > 0 then piped = true end end
+			for i = 1, d.fluids_count do if #d.get_fluid_box_neighbours(i) > 0 then piped = true end end
 			expect(piped, "test setup: the pipe is not connected to reactor D")
 			--- shortfall: 10000 units = 100 runs = 40000 chlorine and 100 raw silicon
 			local have = count(FL_FLUID)
@@ -2493,8 +2510,8 @@ function fluid_test()
 			--- the machines hold nothing of the jobs any more
 			for _, def in pairs({ FL.reactor_a, FL.extractor, FL.reactor_c }) do
 				local m = ent(def)
-				for i = 1, #m.fluidbox do
-					local f = m.fluidbox[i]
+				for i = 1, m.fluids_count do
+					local f = m.get_fluid(i)
 					expect(not f or f.amount < FL_EPS, def[1] .. " keeps " .. (f and (f.amount .. " " .. f.name) or ""))
 				end
 			end
@@ -2759,13 +2776,17 @@ function me_r3_test()
 	expect(settings and settings.priority == 7 and settings.partitions["1"] and settings.partitions["2"][1] == "copper-plate", "drive_settings " .. serpent.line(settings))
 	local bpi = game.create_inventory(1)
 	bpi.insert{ name = "blueprint" }
-	local mapping = bpi[1].create_blueprint{ surface = s, force = "player", area = { { RX + 8, RY - 1 }, { RX + 9, RY } } }
+	--- (issue #487: inside the drive's tile: an area also takes the entities that touch its edge, here the controller and the
+	--- drive beside it, and since Factorio 2.1 this drive is no longer the last of them in the mapping)
+	local mapping = bpi[1].create_blueprint{ surface = s, force = "player", area = { { RX + 8.1, RY - 0.9 }, { RX + 8.9, RY - 0.1 } } }
 	remote.call("gregtorio-me-autocraft", "tag_blueprint", bpi[1], mapping)
-	local tag
+	local tag, seen = nil, {}
 	for index, e in pairs(mapping or {}) do
+		seen[#seen + 1] = index .. ":" .. (e.valid and e.name or "?")
 		if e.name == "me-drive" then tag = bpi[1].get_blueprint_entity_tag(index, "fork_me_drive") end
 	end
-	expect(tag and tag.priority == 7 and tag.partitions and tag.partitions["2"] and tag.partitions["2"][1] == "copper-plate", "drive blueprint tag " .. serpent.line(tag))
+	expect(tag and tag.priority == 7 and tag.partitions and tag.partitions["2"] and tag.partitions["2"][1] == "copper-plate", "drive blueprint tag "
+		.. serpent.line(tag) .. " (blueprint of " .. table.concat(seen, ", ") .. ")")
 	local ghosts = bpi[1].build_blueprint{ surface = s, force = "player", position = { RX + 20.5, RY + 12.5 } }
 	local built
 	for _, g in pairs(ghosts or {}) do
@@ -3349,7 +3370,7 @@ function setup_unified_test(s)
 	me_place(s, fails, what, "me-network-interface", UX + 12.5, UY + 0.5)
 	me_place(s, fails, what, "pipe", UX + 13.5, UY + 0.5)
 	local steam = me_place(s, fails, what, "pipe", UX + 12.5, UY + 1.5)
-	if steam then steam.fluidbox[1] = { name = "steam", amount = 50, temperature = 165 } end
+	if steam then steam.set_fluid(1, { name = "steam", amount = 50, temperature = 165 }) end
 	--- interface L: one pipe loop from its east side round to its south side
 	me_place(s, fails, what, "me-network-interface", UX + 15.5, UY + 0.5)
 	me_place(s, fails, what, "pipe", UX + 16.5, UY + 0.5)
@@ -3410,18 +3431,18 @@ function unified_test()
 	step(i, 6)
 	local inv = i.get_inventory(defines.inventory.chest)
 	expect(inv.get_item_count("iron-plate") == 20, "item row: " .. inv.get_item_count("iron-plate") .. " plates")
-	local east = tanks(i)[2].fluidbox[1]
+	local east = tanks(i)[2].get_fluid(1)
 	expect(east and east.name == "water" and near(east.amount, 1000, 0.5), "fluid row: the east side holds " .. serpent.line(east))
-	local seg = tanks(i)[2].fluidbox.get_fluid_segment_contents(1) or {}
+	local seg = fluid_segment(tanks(i)[2], 1) or {}
 	expect(near(water0 - fluid("water"), seg.water or 0, 0.05), "water out of the network " .. (water0 - fluid("water"))
 		.. ", in the east segment " .. tostring(seg.water))
 	--- (issue #159: the steam keeps its 165 degrees)
-	expect(near(fluid("steam", 165), 50) and fluid("steam") == 0 and (steam_pipe.fluidbox[1] == nil or steam_pipe.fluidbox[1].amount < 1e-3),
-		"import side: steam " .. fluid("steam", 165) .. " at 165, " .. fluid("steam") .. " at 15, pipe " .. serpent.line(steam_pipe.fluidbox[1]))
+	expect(near(fluid("steam", 165), 50) and fluid("steam") == 0 and (steam_pipe.get_fluid(1) == nil or steam_pipe.get_fluid(1).amount < 1e-3),
+		"import side: steam " .. fluid("steam", 165) .. " at 165, " .. fluid("steam") .. " at 15, pipe " .. serpent.line(steam_pipe.get_fluid(1)))
 	expect(side(i, 3).status == "import" and side(i, 2).status == "ok", "side status " .. serpent.line(side(i, 2)) .. serpent.line(side(i, 3)))
 	--- a side switched off keeps what is piped in
 	remote.call(IO, "set_interface_side", i, 3, "off")
-	steam_pipe.fluidbox[1] = { name = "steam", amount = 20, temperature = 165 }
+	steam_pipe.set_fluid(1, { name = "steam", amount = 20, temperature = 165 })
 	step(i)
 	expect(near(fluid("steam", 165), 50) and side(i, 3).status == "off", "an off side imported: " .. fluid("steam", 165))
 	remote.call(IO, "set_interface_side", i, 3, "import")
@@ -3431,8 +3452,8 @@ function unified_test()
 	remote.call(IO, "set_interface_config", l, { [1] = { type = "fluid", name = "water", amount = 500 } }, { [2] = 1 })
 	local w1 = fluid("water")
 	step(l, 8)
-	local lseg = tanks(l)[2].fluidbox.get_fluid_segment_contents(1) or {}
-	expect(tanks(l)[2].fluidbox.get_fluid_segment_id(1) == tanks(l)[3].fluidbox.get_fluid_segment_id(1), "the loop is not one segment")
+	local lseg = fluid_segment(tanks(l)[2], 1) or {}
+	expect(tanks(l)[2].get_fluid_segment_id(1) == tanks(l)[3].get_fluid_segment_id(1), "the loop is not one segment")
 	expect(side(l, 3).status == "loop" and near(w1 - fluid("water"), lseg.water or 0, 0.05),
 		"loop: south side " .. serpent.line(side(l, 3)) .. ", out of the network " .. (w1 - fluid("water")) .. ", in the loop " .. tostring(lseg.water))
 	--- the blueprint tag of the interface: rows and sides
@@ -3450,7 +3471,7 @@ function unified_test()
 		and tag.sides[1].row == 2, "interface tag " .. serpent.line(tag))
 	--- mined: the fluid of the loop goes back into the network, the side tanks go
 	local w2 = fluid("water")
-	local in_loop = (tanks(l)[2].fluidbox.get_fluid_segment_contents(1) or {}).water or 0
+	local in_loop = (fluid_segment(tanks(l)[2], 1) or {}).water or 0
 	remote.call(IO, "removed", l, true)
 	local lpos = l.position
 	l.destroy()
@@ -3469,27 +3490,26 @@ function unified_test()
 		.. phenol .. " phenol, network phenol " .. fluid("phenol"))
 	--- the import bus on such a machine: the output inventory and an output box (the input box is left alone)
 	r2.get_inventory(defines.inventory.crafter_output).insert{ name = "phenolic-circuit-board", count = 10 }
-	local fb = r2.fluidbox
 	local in_box, out_box
-	for k = 1, #fb do
-		local pr = fb.get_prototype(k)
+	for k = 1, r2.fluids_count do
+		local pr = r2.get_fluid_box_prototype(k)
 		if pr and pr.production_type == nil and pr[1] then pr = pr[1] end
 		if pr and pr.production_type == "input" and not in_box then in_box = k end
 		if pr and pr.production_type == "output" and not out_box then out_box = k end
 	end
 	expect(in_box, "reactor boxes " .. tostring(in_box) .. "/" .. tostring(out_box))
 	if in_box then
-		fb[in_box] = { name = "phenol", amount = 7 }
-		local ok = out_box and pcall(function() fb[out_box] = { name = "phenol", amount = 30 } end)
-		local out_held = ok and fb[out_box] and fb[out_box].amount or 0
+		r2.set_fluid(in_box, { name = "phenol", amount = 7 })
+		local ok = out_box and pcall(function() r2.set_fluid(out_box, { name = "phenol", amount = 30 }) end)
+		local out_held = ok and r2.get_fluid(out_box) and r2.get_fluid(out_box).amount or 0
 		local pb0, pp0 = item("phenolic-circuit-board"), fluid("phenol")
 		step(ib)
 		expect(item("phenolic-circuit-board") == pb0 + 10, "import bus: boards " .. item("phenolic-circuit-board"))
-		expect(near(fluid("phenol"), pp0 + out_held) and near(fb[in_box] and fb[in_box].amount or 0, 7),
+		expect(near(fluid("phenol"), pp0 + out_held) and near(r2.get_fluid(in_box) and r2.get_fluid(in_box).amount or 0, 7),
 			"import bus: phenol " .. fluid("phenol") .. " (output box had " .. out_held .. "), input box "
-			.. serpent.line(fb[in_box]))
+			.. serpent.line(r2.get_fluid(in_box)))
 		--- only item filters: no fluid
-		if ok then fb[out_box] = { name = "phenol", amount = 30 } end
+		if ok then r2.set_fluid(out_box, { name = "phenol", amount = 30 }) end
 		remote.call(IO, "set_bus_filters", ib, { "phenolic-circuit-board" })
 		local pp1 = fluid("phenol")
 		step(ib)
@@ -3597,7 +3617,7 @@ function fluid_storage_bus_test()
 	local t, drive = find("me-terminal", 9.5, -0.5), find("me-drive", 8.5, -0.5)
 	local function fcount(name) return remote.call(NET, "fluid_count", t, name) end
 	local function near(a, b) return math.abs((a or 0) - (b or 0)) < 0.01 end
-	local function seg(tank) return tank.fluidbox.get_fluid_segment_contents(1) or {} end
+	local function seg(tank) return fluid_segment(tank, 1) or {} end
 	local function info(b) return remote.call(FSB, "info", b) or {} end
 	local cy = FS_CY - FSY
 	if st then
@@ -3662,7 +3682,7 @@ function fluid_storage_bus_test()
 	local net = remote.call(NET, "network", t)
 	--- B6 faces a cable: no target, no fluid side
 	expect(net and net.ok and net.fluid_storage_buses == 5 and net.storage_buses == 1, "network " .. serpent.line(net))
-	expect(t1.fluidbox.get_fluid_segment_id(1) == t2.fluidbox.get_fluid_segment_id(1), "T1 and T2 are not one segment")
+	expect(t1.get_fluid_segment_id(1) == t2.get_fluid_segment_id(1), "T1 and T2 are not one segment")
 	local function visit(b) remote.call(FSB, "visit", b) end
 	local function cells(name)
 		local n = 0
@@ -3685,12 +3705,12 @@ function fluid_storage_bus_test()
 		for _, p in ipairs(pairs_) do
 			if p[1].valid and p[2].valid then
 				local i = info(p[1])
-				local id = p[2].fluidbox.get_fluid_segment_id(1)
+				local id = p[2].get_fluid_segment_id(1)
 				if i.status == "ok" and i.mode ~= "write" and not done[id] then
 					done[id] = true
 					local allow = {}
 					for _, f in pairs(i.filters) do allow[f] = true end
-					local held = p[2].fluidbox[1]
+					local held = p[2].get_fluid(1)
 					for name, n in pairs(seg(p[2])) do
 						local key = remote.call(NET, "fluid_key", name, held and held.temperature)
 						if #i.filters == 0 or allow["fluid/" .. name] then want[key] = (want[key] or 0) + n end
@@ -3713,7 +3733,7 @@ function fluid_storage_bus_test()
 	visit(b2)
 	local i1, i2 = info(b1), info(b2)
 	expect(near(fcount("lubricant"), 1000), "two tanks of one segment: lubricant " .. fcount("lubricant"))
-	expect(i1.status == "ok" and i2.status == "shared-target" and i1.segment == "s" .. t1.fluidbox.get_fluid_segment_id(1)
+	expect(i1.status == "ok" and i2.status == "shared-target" and i1.segment == "s" .. t1.get_fluid_segment_id(1)
 		and i1.fluid == "lubricant" and near(i1.amount, 1000) and i1.target == "storage-tank",
 		"one segment: " .. serpent.line(i1) .. " / " .. serpent.line(i2))
 	consistent("one segment")
@@ -3732,7 +3752,7 @@ function fluid_storage_bus_test()
 	consistent("after the extract")
 	--- split: the pipe between T1 and T2 removed, B2 takes T2's part
 	pipe.destroy{ raise_destroy = true }
-	expect(t1.fluidbox.get_fluid_segment_id(1) ~= t2.fluidbox.get_fluid_segment_id(1), "the segment did not split")
+	expect(t1.get_fluid_segment_id(1) ~= t2.get_fluid_segment_id(1), "the segment did not split")
 	local part1, part2 = seg(t1).lubricant or 0, seg(t2).lubricant or 0
 	expect(near(part1 + part2, 700), "split parts " .. part1 .. " + " .. part2)
 	--- before any visit the engine never takes more than the bus really owns
@@ -3780,7 +3800,7 @@ function fluid_storage_bus_test()
 	expect(near(fcount("water"), 120), "read and write again: " .. fcount("water"))
 	consistent("after the modes")
 	--- stale snapshot: fluid taken out by hand is counted until the next visit, but an extract finds only the real fluid
-	t4.remove_fluid{ name = "water", amount = 100 }
+	t4.extract_fluid{ name = "water", amount = 100 }
 	expect(near(fcount("water"), 120), "water recounted without a visit")
 	expect(near(remote.call(NET, "extract_fluid", t, "water", 120), 20) and fcount("water") == 0 and (seg(t4).water or 0) < 1e-6,
 		"stale extract: network " .. fcount("water"))
@@ -3795,10 +3815,10 @@ function fluid_storage_bus_test()
 	expect(hot == "fluid/steam@500" and i4.status == "ok" and near(i4.temperature, 500) and near(fcount("steam"), 0) and near(hcount(), 100)
 		and near((i4.contents or {})[hot], 100), "hot steam: " .. serpent.line(i4))
 	expect(near(remote.call(NET, "insert_fluid", t, "steam", 50), 50) and near(seg(t4).steam, 100) and near(cells("steam"), 50)
-		and near(t4.fluidbox[1].temperature, 500), "cold steam inserted into the hot tank: T4 " .. tostring(seg(t4).steam))
+		and near(t4.get_fluid(1).temperature, 500), "cold steam inserted into the hot tank: T4 " .. tostring(seg(t4).steam))
 	remote.call(FSB, "set_settings", b4, { mode = "readwrite", priority = 10 })
-	expect(near(remote.call(NET, "insert_fluid", t, "steam", 30, 500), 30) and near(seg(t4).steam, 130) and near(t4.fluidbox[1].temperature, 500)
-		and near(hcount(), 130), "hot steam into the hot tank: T4 " .. tostring(seg(t4).steam) .. " at " .. t4.fluidbox[1].temperature)
+	expect(near(remote.call(NET, "insert_fluid", t, "steam", 30, 500), 30) and near(seg(t4).steam, 130) and near(t4.get_fluid(1).temperature, 500)
+		and near(hcount(), 130), "hot steam into the hot tank: T4 " .. tostring(seg(t4).steam) .. " at " .. t4.get_fluid(1).temperature)
 	expect(near(remote.call(NET, "extract_fluid", t, "steam", 120), 50) and near(seg(t4).steam, 130) and near(cells("steam"), 0),
 		"cold steam taken: T4 " .. tostring(seg(t4).steam) .. ", cells " .. cells("steam"))
 	expect(near(remote.call(NET, "extract_fluid", t, "steam", 130, 500), 130) and (seg(t4).steam or 0) < 1e-6 and near(hcount(), 0),
@@ -4622,7 +4642,7 @@ function setup_paste_test(s)
 	me_place(s, fails, what, "iron-chest", PAX + 26.5, PAY + 1.5)
 	me_place(s, fails, what, "iron-chest", PAX + 28.5, PAY + 1.5)
 	local water = me_place(s, fails, what, "pipe", PAX + 30.5, PAY + 1.5)
-	if water then water.fluidbox[1] = { name = "water", amount = 50 } end
+	if water then water.set_fluid(1, { name = "water", amount = 50 }) end
 	for _, x in pairs({ 26.5, 28.5, 30.5, 32.5 }) do me_place(s, fails, what, "me-storage-bus", PAX + x, PAY + 0.5, south) end
 	for _, x in pairs({ 34.5, 36.5, 38.5, 40.5 }) do me_place(s, fails, what, "me-export-bus", PAX + x, PAY + 0.5, south) end
 	for _, x in pairs({ 42.5, 44.5 }) do me_place(s, fails, what, "me-import-bus", PAX + x, PAY + 0.5, south) end
@@ -4647,7 +4667,7 @@ function setup_paste_test(s)
 	for _, x in pairs({ 38, 41 }) do
 		local f = me_place(s, fails, what, "iron-furnace", PAX + x, PAY + 7)
 		if f then f.get_inventory(defines.inventory.fuel).insert{ name = "coal", count = 5 } end
-		if f and x == 38 then f.get_inventory(defines.inventory.furnace_source).insert{ name = "iron-dust", count = 1 } end
+		if f and x == 38 then f.get_inventory(defines.inventory.crafter_input).insert{ name = "iron-dust", count = 1 } end
 	end
 	return fails
 end
@@ -4948,6 +4968,8 @@ script.on_init(function()
 	for _, f in pairs(damaged84.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(refused85.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(tagitem479.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(tagdamaged481.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(tagcraft480.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end

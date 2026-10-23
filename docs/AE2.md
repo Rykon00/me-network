@@ -124,7 +124,9 @@ and taken out, in the ME Cell Workbench, in the ME IO Port, in a mined drive; un
   (science packs, magazines and unused repair packs go in and come out with the count they went in with), and **damaged
   items** (a mined wall, belt or chest): a damaged stack is kept apart from the whole ones with its health, shown in the
   terminal as "Damaged: 50% health", and comes out damaged. Two damaged stacks of different health that you put into one
-  inventory merge into one of averaged health, as in the game.
+  inventory merge into one of averaged health, as in the game. A damaged item with tags (a turret of Quality Turrets
+  Reworked mined while damaged, issue #481) keeps its tags and its own description too; the terminal shows the
+  description with the health below it.
 * **Not storable:** items with an inventory or equipment grid (armor), blueprints and blueprint books, planners and
   selection tools, the spidertron remote, vehicles and other items with entity data, items with a label, items that
   spoil (the network would stop their decay), and partly used tools, ammunition and repair packs (a used science pack,
@@ -971,7 +973,9 @@ Terminal: it draws its power (8 kW) through the controller, so it needs no pole,
   per run. The recipe button fills the rows from a recipe ("Fill from a recipe"), which is the quick way to a
   furnace pattern. A product that comes only at a chance (a byproduct at 5 %) stays out of the rows (issue #171): a
   row is what every run gives; the byproduct still goes into the network when it comes. A recipe whose every product
-  comes at a chance keeps them (at least 1 of an item). Items with tags (cells, patterns) cannot be inputs or outputs.
+  comes at a chance keeps them (at least 1 of an item). An item with tags (a storage cell, a turret of Quality Turrets
+  Reworked) is a row as its plain item: the stacks that carry no tags, label or description (issue #480); an encoded
+  pattern, which always carries its tags, cannot be a row.
 * **The two slots** are the block's inventory (what lies in them stays when the window closes, is saved, comes out
   when the block is mined and is spilled when it is destroyed; blueprints, copies and clones start empty). The
   **blank pattern slot** takes only blank patterns (a stack): click with blanks in your hand, or shift + click a stack
@@ -2111,7 +2115,7 @@ pattern and a processing pattern on a second assembler with its own gear recipe;
 first wins, provider priority 10 makes the processing pattern first (a job runs it: pushed in, the gears taken out, the
 machine never switched), -10 the crafting one. A level maintainer keeps blank patterns in stock with the blank
 pattern's crafting pattern. The processing line test encodes a processing pattern with free rows (2 copper plates ->
-3 copper cables; an item with tags is refused as a row) from a blank of the network, pushes the inputs of a job into a
+3 copper cables; an encoded pattern is refused as a row) from a blank of the network, pushes the inputs of a job into a
 chest; the test script plays the line (plates out, cables into a second chest) and an ME Import Bus brings the cables
 back: the job takes them (it waited for exactly 9), ends done with an empty pool, and waits for nothing afterwards.
 Two mutations were checked to fail these tests: no arrivals (the line job times out waiting for its outputs) and a

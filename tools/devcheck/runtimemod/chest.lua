@@ -78,11 +78,11 @@ return function(H)
 			expect(remote.call(NET, "insert_cell", c, cell_stack(inv, 3, "me-1k-fluid-storage-cell"), 1) == 1, "a fluid cell into chest C")
 			local tank = s.find_entity("me-chest-fluid", c.position)
 			expect(tank ~= nil, "chest C has its fluid part")
-			if tank then tank.fluidbox[1] = { name = "water", amount = 100, temperature = 15 } end
+			if tank then tank.set_fluid(1, { name = "water", amount = 100, temperature = 15 }) end
 			local pipe = find("pipe", 8.5, 1.5)
 			local linked = false
-			for _, fb in pairs(pipe and pipe.fluidbox.get_connections(1) or {}) do
-				if fb.owner and fb.owner.name == "me-chest-fluid" then linked = true end
+			for _, fb in pairs(pipe and pipe.get_fluid_box_neighbours(1) or {}) do
+				if fb.entity and fb.entity.name == "me-chest-fluid" then linked = true end
 			end
 			expect(linked, "a pipe next to the chest connects to it")
 			st.step, st.at = 2, game.tick
@@ -94,9 +94,9 @@ return function(H)
 			local water = remote.call(NET, "fluid_key", "water", 15)
 			local in_cell = remote.call(NET, "chest_count", c, water)
 			local pipe = find("pipe", 8.5, 1.5)
-			local in_pipe = pipe and pipe.fluidbox[1] and pipe.fluidbox[1].amount or 0
+			local in_pipe = pipe and pipe.get_fluid(1) and pipe.get_fluid(1).amount or 0
 			local tank = s.find_entity("me-chest-fluid", c.position)
-			local in_tank = tank and tank.fluidbox[1] and tank.fluidbox[1].amount or 0
+			local in_tank = tank and tank.get_fluid(1) and tank.get_fluid(1).amount or 0
 			expect(in_cell > 80 and math.abs(in_cell + in_pipe + in_tank - 100) < 0.01,
 				"water from the pipe connection into the fluid cell, none lost: " .. in_cell .. " in the cell, " .. in_pipe
 				.. " in the pipe, " .. in_tank .. " in the tank")

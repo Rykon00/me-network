@@ -3740,3 +3740,64 @@ kind of endpoint identical.
 | 5000: Lua alloc KB per tick | 33.57 | 33.57 |
 | 5000: storage bus latency max (s) | 1.733 | 1.733 |
 | 5000: burst build / remove (ms) | 83.8 / 82.4 | 82.3 / 82.7 |
+
+## Autocrafting of items with tags (issue #480)
+
+`base_count` asks `prototypes.item[name]` where it asked `plain_item(name)` (once per key and load, as before). The paths
+that take items out of a machine or chest (`collect_output`, `take_back_input`, the undo of a hand-over, `switch_recipe`) ask
+`with_data(name)` first (one cached lookup per item name); only items with tags or a label then walk the stacks
+(`N.count_whole`, `N.remove_whole`), every other item is moved by count as before. The scenes have no item with tags, so the
+walk is not taken there.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns; origin/main 0.5.5, this pull request with #481 under
+it). Size 1000: **regressions beyond the noise: 0**, throughput per kind of endpoint identical. Size 5000 is incomplete: Steam
+updated the Factorio install to 2.1.23 during the last round, so the working copy has two rounds and the harness gave no
+verdict (the per-round script times are below); me-network does not load on 2.1 (`factorio_version` 2.0), so the size could
+not be measured again.
+
+| | origin/main | this pull request |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.4517 / 2.682 | 0.4509 / 2.567 |
+| 1000: ticks over 5 ms | 1 | 2 (noise ±1) |
+| 1000: Lua alloc KB per tick | 24.85 | 24.86 |
+| 1000: provider crafts per second | 17.32 | 17.32 |
+| 1000: burst build / remove (ms) | 90.1 / 96.9 | 90.5 / 92.5 |
+| 5000: script avg per round (ms) | 1.101, 1.107, 1.138 | 1.079, 1.125 |
+| 5000: script p99 per round (ms) | 3.54, 3.50, 3.55 | 3.35, 3.53 |
+
+## The port to Factorio 2.1 (issue #487)
+
+The fluid code no longer has `LuaFluidBox` (removed in 2.1): every box is read and written through its entity
+(`get_fluid`, `set_fluid`, `get_fluid_segment_fluid`, ..., called through `N.bound` like the other hot methods; the
+per-load cache of issue #59's lever 4 is gone, an entity's methods need none). A crafting machine's temperature range of
+an input comes from its recipe's ingredient instead of the box filter (2.1's filter is the fluid only). The rest of the
+port changes names, not work.
+
+`bench --check 0602109 --ref-factorio <Factorio 2.0.77> --sizes 1000,5000` (new in this pull request: the reference, the
+last 2.0 `main`, runs in Factorio 2.0.77, the working copy in 2.1.23, in turns, three rounds; the engine differs, so the
+check reports every difference and fails none): **no number beyond the noise**, throughput per kind of endpoint
+identical.
+
+| | 2.0.77, 0602109 | 2.1.23, this pull request |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.380 / 2.089 | 0.386 / 2.107 |
+| 1000: ticks over 5 ms | 2 | 3 (noise ±1) |
+| 1000: Lua alloc KB per tick | 24.85 | 25.90 |
+| 1000: provider crafts per second | 17.32 | 14.83 |
+| 1000: burst build / remove (ms) | 81.2 / 82.2 | 79.6 / 83.1 |
+| 5000: script avg / p99 (ms) | 1.003 / 2.948 | 1.022 / 2.966 |
+| 5000: ticks over 5 ms | 5 | 5 |
+| 5000: Lua alloc KB per tick | 33.59 | 34.26 |
+| 5000: mod heap alive (MB) | 57.2 | 57.7 |
+| 5000: provider crafts per second | 344.3 | 322.1 |
+| 5000: burst build / remove (ms) | 87.2 / 83.0 | 87.0 / 82.6 |
+
+* Script time: within the noise at both sizes (round by round 0.378 to 0.412 against 0.380, and 0.887 to 1.027 against
+  0.997 to 1.010 ms).
+* Lua allocation: about 1 KB more per tick (+4 % at 1000, +2 % at 5000), not profiled further: the fluid paths make two
+  engine calls where 2.0 made one in a few places (a segment's id after `has_fluid_segment`, the capacity of a box with
+  and without a segment), and the engine is another one.
+* Provider crafts per second: not a change of the network. The scene sorts its pattern recipes by name and gives them to
+  the providers in that order; Factorio 2.1 replaced the recipe `wood-processing` by `tree-seed` (the same recipe), so the
+  recipes after it moved by one place and other providers got the slower ones. The number of pattern recipes (97) and
+  their crafting times are the same in both versions.

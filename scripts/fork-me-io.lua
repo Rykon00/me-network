@@ -41,7 +41,7 @@
 --- A fluid filter or row without a temperature exports every temperature of the fluid: the default temperature first,
 --- then from the coldest to the hottest; with one only that temperature. An export never mixes: into a box or tank that
 --- holds the fluid already only the same temperature goes (TEMP_TOLERANCE), into a machine's box only what fits the
---- temperature range of its recipe (LuaFluidBox.get_filter); one temperature per side or box and visit. When the network
+--- temperature range of its recipe (T.fluid_filter); one temperature per side or box and visit. When the network
 --- has the fluid only at temperatures that cannot go, the status is "temperature".
 --- Visits (issue #5, issue #38; scripts/fork-me-schedule.lua): every interface and bus is due at a tick (s.q,
 --- rec.due); the on_tick handler of control.lua visits what is due, at most the setting "at most" per tick. When a
@@ -622,7 +622,7 @@ local function refresh_connections(rec)
 	rec.sidle = nil
 	local any = false
 	for _, t in pairs(rec.tanks or {}) do
-		if t.valid and #t.fluidbox.get_connections(1) > 0 then any = true break end
+		if t.valid and T.connected(t, 1) then any = true break end
 	end
 	rec.fconn = any or nil
 end
@@ -651,9 +651,9 @@ end
 --- issue #420: is the tank of side `d` needed (tied to a row, holding fluid, or connected)?
 local function tank_needed(rec, d, t)
 	if type((rec.sides or {})[d]) == "number" then return true end
-	local f = T.fluidbox(t)[1]
+	local f = N.bound(t).get_fluid(1)
 	if f and f.amount > 0 then return true end
-	return #t.fluidbox.get_connections(1) > 0
+	return T.connected(t, 1)
 end
 
 --- Issue #420: side `d` gets its tank where it needs one: a side tied to a row always, else when an entity with fluid
@@ -669,7 +669,7 @@ local function fit_side(rec, d, fresh)
 	if not (tied or fluid_near(rec, d)) then return nil end
 	t = make_tank(rec, d)
 	if not t then return nil end
-	if not tied and #t.fluidbox.get_connections(1) == 0 then
+	if not tied and not T.connected(t, 1) then
 		t.destroy()
 		return nil
 	end
@@ -763,12 +763,11 @@ end
 --- Move what a side tank holds into the network (the tank's whole fluid segment, as far as it fits); returns the
 --- amount moved and a status.
 local function tank_to_network(t, held, net)
-	local fb = T.fluidbox(t)
-	local segment = N.bound(fb).get_fluid_segment_contents(1)
+	local segment = T.segment_contents(t, 1)
 	local available = math.max(held.amount, (segment and segment[held.name] or 0) + 1)   -- segment counts are rounded
 	local room = N.can_insert_fluid(net, held.name, available, held.temperature)          -- (issue #159: its temperature)
 	if room <= EPS then return 0, "full" end
-	local removed = N.bound(t).remove_fluid{ name = held.name, amount = room }
+	local removed = N.bound(t).extract_fluid{ name = held.name, amount = room }
 	if removed <= 0 then return 0, "ok" end
 	local stored = N.insert_fluid(net, held.name, removed, held.temperature)
 	if stored < removed - EPS then          -- cannot happen (room was checked), but never lose fluid
@@ -840,7 +839,7 @@ local function export_side(t, held, row, net, p)
 	local fk = row_key(row)
 	if held and not holds_key(held, fk) then           -- another fluid (or a temperature the row does not take): into the network first
 		moved = tank_to_network(t, held, net)
-		held = T.fluidbox(t)[1]
+		held = N.bound(t).get_fluid(1)
 		if held and held.amount <= EPS then held = nil end
 		if held and not holds_key(held, fk) then return "blocked", moved, 0 end
 	end
@@ -865,7 +864,7 @@ local function export_side(t, held, row, net, p)
 	if inserted > 0 then
 		got = N.extract_fluid_key(net, key, inserted)
 		--- a storage bus's segment had less than its snapshot: never duplicate
-		if got < inserted - EPS then t.remove_fluid{ name = row.name, amount = inserted - got } end
+		if got < inserted - EPS then t.extract_fluid{ name = row.name, amount = inserted - got } end
 		moved = moved + got
 	end
 	return "ok", moved, math.max(0, want - got), key
@@ -879,7 +878,7 @@ local SIDLE_LOOK = 4
 local function tanks_hold(rec)
 	for _, t in pairs(rec.tanks or {}) do
 		if t.valid then
-			local f = T.fluidbox(t)[1]
+			local f = N.bound(t).get_fluid(1)
 			if f and f.amount > EPS then return true end
 		end
 	end
@@ -917,7 +916,7 @@ local function interface_sides(rec, net, config, short, dt)
 		local setting = sides[d]
 		local tied = type(setting) == "number" and is_fluid_row(config[setting])
 		if tied and not t then t = fit_side(rec, d) end              -- (issue #420: a side tied to a row gets its tank)
-		local held = t and T.fluidbox(t)[1]
+		local held = t and N.bound(t).get_fluid(1)
 		if held and held.amount <= EPS then held = nil end
 		if held then anyheld = true end
 		if setting == "off" then
@@ -947,12 +946,12 @@ local function interface_sides(rec, net, config, short, dt)
 				exports = {}
 				for e = 1, #SIDES do
 					if type(sides[e]) == "number" and tanks[e] then
-						local id = N.bound(T.fluidbox(tanks[e])).get_fluid_segment_id(1)
+						local id = T.segment_id(tanks[e], 1)
 						if id then exports[id] = true end
 					end
 				end
 			end
-			local id = exports and N.bound(T.fluidbox(t)).get_fluid_segment_id(1)
+			local id = exports and T.segment_id(t, 1)
 			if id and exports[id] then
 				fstatus[d] = "loop"
 			else
@@ -1216,7 +1215,7 @@ local function free_side(rec)
 	for d = 1, #SIDES do
 		if sides[d] == nil then
 			first = first or d
-			if tanks and tanks[d] and #tanks[d].fluidbox.get_connections(1) > 0 then return d, true end
+			if tanks and tanks[d] and T.connected(tanks[d], 1) then return d, true end
 		end
 	end
 	return first, false
@@ -1340,19 +1339,19 @@ function M.get_interface(entity)
 	local fl = {}
 	for d = 1, #SIDES do
 		local t = tanks and tanks[d]
-		local held = t and t.fluidbox[1]
+		local held = t and t.get_fluid(1)
 		local status = rec.fstatus and rec.fstatus[d] or nil
 		--- issue #313: the last pass found this import side empty; it holds fluid now: imported at the next visit
 		if status == "import" and held and held.amount > EPS then status = "waiting" end
 		local segment = 0
 		if held and held.amount > EPS then
-			local c = T.fluidbox(t).get_fluid_segment_contents(1)
+			local c = T.segment_contents(t, 1)
 			segment = math.max(held.amount, c and c[held.name] or 0)
 		end
 		fl[d] = { setting = sides[d] or "import", status = status,
 			name = held and held.amount > EPS and held.name or nil, amount = held and held.amount or 0,
 			temperature = held and held.amount > EPS and held.temperature or nil,
-			connected = t ~= nil and #t.fluidbox.get_connections(1) > 0, segment = segment }
+			connected = t ~= nil and T.connected(t, 1), segment = segment }
 	end
 	local short = {}
 	for key in pairs(rec.short or {}) do
@@ -1742,23 +1741,23 @@ local function temperature_why(net, name, fk, lo, hi, temp)
 	return { name, table.concat(has, ", "), want }
 end
 
---- Issue #159: what an export into the boxes `fb` may bring of fluid `name`: the temperature range of a box whose
---- filter is the fluid (a machine's recipe: get_filter has its minimum and maximum) and the temperature of a box that
+--- Issue #159: what an export into the boxes of `t` may bring of fluid `name`: the temperature range of a box whose
+--- filter is the fluid (a machine's recipe: T.fluid_filter has its minimum and maximum) and the temperature of a box that
 --- holds the fluid already (nothing is mixed into it). nil where open. A machine's output boxes are left out (their
 --- filter is the product's temperature, and nothing is inserted into them). Only a crafting machine (`machine`) has a
 --- recipe's filters: the box filters of anything else are not read.
 local CRAFTER = { ["assembling-machine"] = true, furnace = true, ["rocket-silo"] = true }
-local function export_range(fb, name, machine)
+local function export_range(t, name, machine)
 	local lo, hi, temp
-	local B = N.bound(fb)
-	for i = 1, #fb do
-		local f = fb[i]
+	local B = N.bound(t)
+	for i = 1, t.fluids_count do
+		local f = B.get_fluid(i)
 		local has = f and f.name == name and f.amount > EPS
-		local flt = machine and B.get_filter(i)
+		local flt = machine and T.fluid_filter(t, i, true)
 		if not machine then
 			if has then return nil, nil, f.temperature end
 		elseif has or (flt and flt.name == name) then
-			local p = B.get_prototype(i)
+			local p = B.get_fluid_box_prototype(i)
 			if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
 			if not (p and p.production_type == "output") then
 				if has then temp = temp or f.temperature end
@@ -1772,19 +1771,19 @@ local function export_range(fb, name, machine)
 	return lo, hi, temp
 end
 
---- Issue #426: the room for fluid `name` in the boxes `fb`: empty boxes and boxes of that fluid, whose filter (if any) is the
+--- Issue #426: the room for fluid `name` in the boxes of `t`: empty boxes and boxes of that fluid, whose filter (if any) is the
 --- fluid; a machine's output boxes take nothing
-local function fluid_room(fb, name)
-	local B = N.bound(fb)
+local function fluid_room(t, name)
+	local B = N.bound(t)
 	local room = 0
-	for i = 1, #fb do
-		local f = fb[i]
+	for i = 1, t.fluids_count do
+		local f = B.get_fluid(i)
 		if not f or f.name == name then
-			local p = B.get_prototype(i)
+			local p = B.get_fluid_box_prototype(i)
 			if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
-			local flt = B.get_filter(i)
+			local flt = B.get_fluid_filter(i)
 			if not (p and p.production_type == "output") and (not flt or flt.name == name) then
-				room = room + B.get_capacity(i) - (f and f.amount or 0)
+				room = room + T.capacity(t, i) - (f and f.amount or 0)
 			end
 		end
 	end
@@ -1801,14 +1800,14 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 	cap = cap or Sched.setting("bus_fluid") * STEP_TICKS / 60
 	info = info or { time = math.huge }
 	local dt = info.dt or STEP_TICKS
-	local fb = T.fluidbox(t)
+	local B = N.bound(t)
 	local moved = 0
 	local unit = rec.entity.unit_number
 	if IMPORTS[rec.kind] then
 		local all, set = rec.all, rec.fset
 		local fleft = rec.fleft or {}
-		for i = 1, #fb do
-			local f = fb[i]
+		for i = 1, t.fluids_count do
+			local f = B.get_fluid(i)
 			local v = f and f.amount > EPS and (all or set[f.name])
 			if v and v ~= true then                          -- issue #159: filters with a temperature
 				local key, ok = N.fluid_key(f.name, f.temperature), false
@@ -1817,10 +1816,10 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 			end
 			if rec.binv and not all and f and f.amount > EPS then v = not v end   -- issue #413: an Inverter Card, a blacklist
 			if v then
-				local p = N.bound(fb).get_prototype(i)
+				local p = B.get_fluid_box_prototype(i)
 				if p and p.production_type == nil and p[1] then p = p[1] end      -- merged prototypes: the first one
 				if not (p and p.production_type == "input") then
-					local capf = N.bound(fb).get_capacity(i)
+					local capf = T.capacity(t, i)
 					local arrived = f.amount - (fleft[i] or 0)
 					if f.amount >= capf - EPS then info.starved = true end           -- a full box: the machine waited
 					local left = f.amount
@@ -1828,7 +1827,7 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 						local take = N.can_insert_fluid(net, f.name, math.min(f.amount, cap - moved), f.temperature)
 						if take > EPS then
 							left = f.amount - take
-							fb[i] = left > EPS and { name = f.name, amount = left, temperature = f.temperature } or nil
+							T.set_fluid(t, i, left > EPS and { name = f.name, amount = left, temperature = f.temperature } or nil)
 							local stored = N.insert_fluid(net, f.name, take, f.temperature)
 							if stored > EPS then mix_check(rec, net, f.name) end
 							if stored < take - EPS then                 -- cannot happen (room was checked), but never lose fluid
@@ -1866,12 +1865,12 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 				--- issue #426: nothing from storage; a job of the filter's fluid for what this visit would move, while the
 				--- target has room for it
 				if cap - moved > EPS then
-					local room = fluid_room(fb, name)
+					local room = fluid_room(t, name)
 					if room > EPS then craft_only(rec, net, N.fluid_storage_key(fk), math.min(cap - moved, room), info)
 					else info.blocked = true end
 				end
 			elseif cap - moved > EPS then
-				local lo, hi, temp = export_range(fb, name, machine)
+				local lo, hi, temp = export_range(t, name, machine)
 				local keys, n = export_keys(net, name, fk, lo, hi, temp)
 				for k = 1, n do                                 -- issue #159: one temperature per filter and visit
 					key = keys[k]
@@ -1890,7 +1889,7 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 				--- issue #426: the Crafting Card asks for the filter's fluid too (its default temperature, or the filter's), what
 				--- this visit would move and the target can take
 				if rec.ccard then
-					local room = fluid_room(fb, name)
+					local room = fluid_room(t, name)
 					if room > EPS and craft(rec, net, N.fluid_storage_key(fk), math.min(cap - moved, room)) == "wait" then
 						info.cwait = true
 					end
@@ -1901,7 +1900,7 @@ function M.fluid_bus_step(rec, net, t, cap, info)
 				if inserted > 0 then
 					local got = N.extract_fluid_key(net, key, inserted)
 					--- a storage bus's segment had less than its snapshot: never duplicate
-					if got < inserted - EPS then t.remove_fluid{ name = name, amount = inserted - got } end
+					if got < inserted - EPS then t.extract_fluid{ name = name, amount = inserted - got } end
 					moved = moved + got
 					--- it had run dry when the target's room ended the insert and it took about the most it ever took that way
 					--- (`rec.froom`); an insert the bus's speed ended says nothing of the target (issue #51: it counted as a dry
@@ -2252,7 +2251,7 @@ local function probe_mark(rec)
 				local t = tanks[d]
 				local setting = sides[d]
 				if setting ~= "off" and t and t.valid then
-					local f = T.fluidbox(t)[1]
+					local f = N.bound(t).get_fluid(1)
 					if f then
 						n = n + math.floor(f.amount)
 						--- (the safety net: an import side that waits for room or was not looked at; not one that feeds an
@@ -2275,9 +2274,9 @@ local function probe_mark(rec)
 		if inv then n = N.bound(inv).get_item_count() end
 	end
 	if rec.t_fluid then
-		local fb = T.fluidbox(t)
-		for i = 1, #fb do
-			local f = fb[i]
+		local B = N.bound(t)
+		for i = 1, t.fluids_count do
+			local f = B.get_fluid(i)
 			if f then n = n + math.floor(f.amount) end
 		end
 	end
@@ -2356,10 +2355,10 @@ local function probe_work(rec)
 		end
 	end
 	if rec.t_fluid and #rec.ffilters > 0 then
-		local fb = T.fluidbox(t)
-		for i = 1, #fb do
-			local f = fb[i]
-			if not f or f.amount < fb.get_capacity(i) - EPS then return true end
+		local B = N.bound(t)
+		for i = 1, t.fluids_count do
+			local f = B.get_fluid(i)
+			if not f or f.amount < T.capacity(t, i) - EPS then return true end
 		end
 	end
 	return false
@@ -2620,7 +2619,7 @@ function M.on_removed(entity, mined)
 	if rec.kind == "interface" then
 		local net = mined and N.active_of(entity)
 		for _, t in pairs(net and rec.tanks or {}) do
-			local held = t.valid and t.fluidbox[1]
+			local held = t.valid and t.get_fluid(1)
 			if held and held.amount > EPS then tank_to_network(t, held, net) end
 		end
 		destroy_tanks(rec)

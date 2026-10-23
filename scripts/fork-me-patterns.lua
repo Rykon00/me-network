@@ -43,15 +43,18 @@ local function valid_quality(q)
 end
 M.valid_quality = valid_quality
 
---- item keys of a pattern are plain items (no items with tags: their data cannot be moved by name and count), in a
---- quality the game has (issue #352: "name@quality")
+--- item keys of a pattern are plain keys, in a quality the game has (issue #352: "name@quality"). Issue #480: an item with
+--- tags too (Quality Turrets Reworked makes every turret one): its plain key stands for the stacks without tags, a label or a
+--- description only (N.storable, issue #479), which move by name and count without losing anything. A key with data ("#":
+--- a stack with tags, a damaged item) never names a row, nor does the encoded pattern, which always carries its tags (its
+--- plain key never holds one).
 local function valid_key(key)
 	if type(key) ~= "string" or key == "" then return false end
 	if is_fluid(key) then return prototypes.fluid[fluid_name(key)] ~= nil end
+	if key:find("#", 1, true) then return false end
 	local name, q = N.parse_key(key)
 	name = N.alias(name) or name                      -- a replaced item (issue #3)
-	local proto = prototypes.item[name]
-	return proto ~= nil and proto.type ~= "item-with-tags" and valid_quality(q)
+	return prototypes.item[name] ~= nil and name ~= M.ENCODED and valid_quality(q)
 end
 M.valid_key = valid_key
 
@@ -76,7 +79,7 @@ end
 --- expected amount per craft of a recipe product (probability and range)
 local function expected(p)
 	local amount = p.amount or ((p.amount_min + p.amount_max) / 2)
-	return amount * (p.probability or 1)
+	return amount * N.chance(p)
 end
 
 --------------------------------------------------------------------------------
@@ -216,7 +219,7 @@ function M.recipe_rows(recipe, quality)
 	local inputs, outputs = recipe_lists(proto, q)
 	local certain = {}
 	for _, p in pairs(proto.products) do
-		if p.amount and (p.probability or 1) >= 1 then certain[key_of(p, true, q)] = true end
+		if p.amount and N.chance(p) >= 1 then certain[key_of(p, true, q)] = true end
 	end
 	if next(certain) then
 		local kept = {}

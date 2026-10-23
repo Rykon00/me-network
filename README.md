@@ -1,6 +1,6 @@
 # ME Network
 
-An ME storage network for Factorio 2.0, inspired by Applied Energistics 2: ME blocks joined by cables, storage cells
+An ME storage network for Factorio 2.1 (its releases up to 0.5.5 are for 2.0), inspired by Applied Energistics 2: ME blocks joined by cables, storage cells
 in drives that keep their contents, a terminal as the hub, interfaces and buses for items and fluids, storage buses on
 chests and tanks,
 autocrafting with encoded patterns and crafting CPUs, level maintainers, and fluids. On the mod portal:

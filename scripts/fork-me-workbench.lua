@@ -564,7 +564,7 @@ function M.parts_of(name)
 	local r = prototypes.recipe[name]
 	local res = r and r.products
 	local one = res and #res == 1 and res[1]
-	if not (one and one.type == "item" and one.name == name and one.amount == 1 and (one.probability or 1) == 1) then
+	if not (one and one.type == "item" and one.name == name and one.amount == 1 and N.chance(one) == 1) then
 		return nil, "no-recipe"
 	end
 	local out = {}

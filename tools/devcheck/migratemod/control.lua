@@ -19,23 +19,46 @@ local function place(s, fails, name, x, y, extra)
 	return e
 end
 
+--- issue #487: the old save is made in the Factorio of its version (2.0: LuaFluidBox) and loaded in 2.1 (the fluid methods
+--- of LuaEntity); this helper runs in both. The boxes of `e` as { count, segment id (nil: none), segment fluid
+--- { name -> amount }, box fluid }
+local major, minor = (script.active_mods.base or "2.0"):match("^(%d+)%.(%d+)")
+local V21 = tonumber(major) > 2 or tonumber(minor) >= 1
+local function boxes(e)
+	if V21 then
+		local ok, n = pcall(function() return e.fluids_count end)
+		if not (ok and n and n > 0) then return nil end
+		return {
+			n = n,
+			id = function(i) return e.has_fluid_segment(i) and e.get_fluid_segment_id(i) or nil end,
+			segment = function(i)
+				local f = e.get_fluid_segment_fluid(i)
+				return f and { [f.name] = f.amount } or {}
+			end,
+			get = function(i) return e.get_fluid(i) end,
+		}
+	end
+	local ok, fb = pcall(function() return e.fluidbox end)
+	if not (ok and fb and #fb > 0) then return nil end
+	return { n = #fb, id = function(i) return fb.get_fluid_segment_id(i) end,
+		segment = function(i) return fb.get_fluid_segment_contents(i) end, get = function(i) return fb[i] end }
+end
+
 --- fluid in the area (each segment once, boxes without a segment alone) plus in the cells of the drives
 local function fluid_totals(s)
 	local out, seen = {}, {}
 	local function add(name, n) out[name] = (out[name] or 0) + n end
 	for _, e in pairs(s.find_entities_filtered{ area = AREA }) do
-		local ok, fb = pcall(function() return e.fluidbox end)
-		if ok and fb and #fb > 0 then
-			for i = 1, #fb do
-				local id = fb.get_fluid_segment_id(i)
-				if id then
-					if not seen[id] then
-						seen[id] = true
-						for name, n in pairs(fb.get_fluid_segment_contents(i) or {}) do add(name, n) end
-					end
-				elseif fb[i] then
-					add(fb[i].name, fb[i].amount)
+		local b = boxes(e)
+		for i = 1, b and b.n or 0 do
+			local id = b.id(i)
+			if id then
+				if not seen[id] then
+					seen[id] = true
+					for name, n in pairs(b.segment(i) or {}) do add(name, n) end
 				end
+			elseif b.get(i) then
+				add(b.get(i).name, b.get(i).amount)
 			end
 		end
 	end
@@ -111,6 +134,16 @@ local function setup_unified(s)
 		remote.call(NET, "store_in_drive", di, "copper-plate", 500)
 	end
 	if df then remote.call(NET, "store_fluid_in_drive", df, "sulfuric-acid", 640) end
+	--- me-network issue #481: damaged stone walls stored by the old version (issue #102: a key of their own whose data holds the
+	--- health and the terminal's damage text as `description`)
+	local damaged
+	if ctrl and remote.interfaces[NET].insert_stack then
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = "stone-wall", count = 6, health = 0.5 }
+		damaged = remote.call(NET, "insert_stack", ctrl, inv[1]) == 6
+		if not damaged then fails[#fails + 1] = "damaged stone walls not stored: " .. serpent.line(inv[1].valid_for_read and inv[1].count) end
+		inv.destroy()
+	end
 	local south = { direction = defines.direction.south }
 	local ib = place(s, fails, "me-import-bus", 14.5, 2.5, south)
 	local c1 = place(s, fails, "iron-chest", 14.5, 3.5)
@@ -205,10 +238,12 @@ local function setup_unified(s)
 		end
 		inv.destroy()
 	end
-	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, cards = cards, legacy_chest = legacy_chest }
+	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, cards = cards, legacy_chest = legacy_chest,
+		damaged = damaged }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
-		.. (has_legacy and "; the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "") .. ")"
+		.. (has_legacy and "; the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "")
+		.. (damaged and "; damaged stone walls" or "") .. ")"
 		.. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
 end
 
@@ -310,10 +345,40 @@ local function check_unified(st)
 			and wi.cell and wi.cell.inverted and wi.cell.void and serpent.line(wi.cell.partition) == serpent.line({ "wood" }),
 			"workbench after the load: " .. serpent.line(winv and winv.get_contents()) .. " " .. serpent.line(wi and wi.cell))
 	end
+	--- me-network issue #481: the old save's damaged key loads as it was, a stack of the same health stored now joins it (the key
+	--- of a damaged plain item did not change), the terminal names its health and it comes out at its health
+	if st.damaged and t then
+		local function walls()
+			local out = {}
+			for key, n in pairs(remote.call(NET, "contents", t)) do
+				if key:find("stone-wall@normal#", 1, true) == 1 then out[#out + 1] = { key = key, n = n } end
+			end
+			return out
+		end
+		local old = walls()
+		local inv = game.create_inventory(2)
+		inv[1].set_stack{ name = "stone-wall", count = 2, health = 0.5 }
+		local n = remote.call(NET, "insert_stack", t, inv[1])
+		local now = walls()
+		expect(#old == 1 and old[1].n == 6, "the damaged stone walls of the old save: " .. serpent.line(old))
+		expect(n == 2 and #now == 1 and now[1].n == 8, "damaged stone walls of the same health stored now did not join the old key: "
+			.. tostring(n) .. " " .. serpent.line(now))
+		if now[1] then
+			local desc = remote.call("gregtorio-me-gui", "key_description", now[1].key)
+			expect(type(desc) == "table" and desc[1] == "fork-me-net.damaged-item" and desc[2] == 50, "the terminal's text of the old damaged key: "
+				.. serpent.line(desc))
+			local got = remote.call(NET, "extract_to", t, inv, now[1].key, 8)
+			local b = inv[1]
+			expect(got == 8 and b.valid_for_read and b.count == 8 and math.abs(b.health - 0.5) < 1e-3, "the old damaged key came out as "
+				.. tostring(got) .. " " .. serpent.line(b.valid_for_read and { b.count, b.health }))
+		end
+		inv.destroy()
+	end
 	for _, p in pairs(problems) do L("FAIL", p) end
 	L("UNIFIED", (#problems == 0 and "ok" or "failed") .. " (a save of unified blocks: buses, interfaces, storage buses, circuit "
 		.. "interface and maintainer work after the load" .. (st.legacy_chest and "; legacy CPU items became 1k crafting storages" or "")
-		.. (st.cards and "; the cards of a storage bus and a workbench's cell are items in their inventories" or "") .. ")")
+		.. (st.cards and "; the cards of a storage bus and a workbench's cell are items in their inventories" or "")
+		.. (st.damaged and "; the old damaged key loads, takes new damaged items of its health and comes out at it" or "") .. ")")
 end
 
 script.on_init(function()
