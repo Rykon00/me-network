@@ -349,8 +349,12 @@ return function(H)
 	--- has the mod: candidates sorted by name, the first the machine really takes)
 	local function two_recipes(m)
 		local names, cats = {}, m.prototype.crafting_categories
+		local function takes(r)                  -- (Factorio 2.1: a recipe may have several categories)
+			for _, c in pairs(r.categories) do if cats[c] then return true end end
+			return false
+		end
 		for name, r in pairs(prototypes.recipe) do
-			if cats[r.category] and not r.hidden and #r.ingredients >= 1 and #r.ingredients <= 2 then names[#names + 1] = name end
+			if takes(r) and not r.hidden and #r.ingredients >= 1 and #r.ingredients <= 2 then names[#names + 1] = name end
 		end
 		table.sort(names)
 		local with, without

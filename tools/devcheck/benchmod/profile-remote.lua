@@ -5,7 +5,7 @@ local BENCH_N = require("scripts.fork-me-network")
 remote.add_interface("zz-me-bench-profile", {
 	enable = function(alloc, exclusive)
 		for _, sec in pairs(__BENCH.sections) do
-			sec.total, sec.tmp, sec.n, sec.depth, sec.kb = game.create_profiler(true), game.create_profiler(true), 0, 0, 0
+			sec.total, sec.tmp, sec.n, sec.depth, sec.kb = helpers.create_profiler(true), helpers.create_profiler(true), 0, 0, 0
 			--- (the profilers' methods bound once: reading a method makes a new object, 88 bytes, issue #122)
 			sec.stop, sec.restart, sec.add = sec.total.stop, sec.total.restart, sec.total.add
 			sec.tstop, sec.treset = sec.tmp.stop, sec.tmp.reset
@@ -27,15 +27,15 @@ remote.add_interface("zz-me-bench-profile", {
 		local plain = function() end
 		local wrapped = __BENCH_WRAP("calibration", plain)
 		local sec = __BENCH.sections[#__BENCH.sections]
-		sec.total, sec.tmp = game.create_profiler(true), game.create_profiler(true)
+		sec.total, sec.tmp = helpers.create_profiler(true), helpers.create_profiler(true)
 		sec.stop, sec.restart, sec.add = sec.total.stop, sec.total.restart, sec.total.add
 		sec.tstop, sec.treset = sec.tmp.stop, sec.tmp.reset
 		sec.n, sec.depth, sec.kb = 0, 0, 0
 		__BENCH.on = true
-		local a = game.create_profiler()
+		local a = helpers.create_profiler()
 		for _ = 1, 20000 do wrapped() end
 		a.stop()
-		local b = game.create_profiler()
+		local b = helpers.create_profiler()
 		for _ = 1, 20000 do plain() end
 		b.stop()
 		__BENCH.on = false
@@ -50,7 +50,7 @@ remote.add_interface("zz-me-bench-profile", {
 		if not net then return end
 		local inv = chest.get_inventory(defines.inventory.chest)
 		local function time(name, n, f)
-			local p = game.create_profiler()
+			local p = helpers.create_profiler()
 			for i = 1, n do f(i) end
 			p.stop()
 			p.divide(n)

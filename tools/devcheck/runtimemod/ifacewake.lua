@@ -99,7 +99,7 @@ return function(H)
 				.. (st.b_at and ("was imported " .. (st.b_at - st.room) .. " ticks later") or "was never imported")
 				.. " (idle limit " .. limit .. ")")
 			local t = tank(a)
-			local f = t and t.fluidbox[1]
+			local f = t and t.get_fluid(1)
 			expect(not f or f.amount <= 1e-6, "interface A's tank still holds " .. tostring(f and f.amount))
 			return finish("water that appeared in an unconnected interface's tank imported " .. tostring(st.a_at and st.a_at - st.filled)
 				.. " ticks later; water a full network had no room for imported " .. tostring(st.b_at and st.b_at - st.room)

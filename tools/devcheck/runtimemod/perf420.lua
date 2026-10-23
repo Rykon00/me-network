@@ -147,7 +147,7 @@ return function(H)
 			local south = { BX + 14.5, BY - 1.5 }
 			local pipe = s.create_entity{ name = "pipe", position = south, force = "player", raise_built = true }
 			local t = tanks_at(s, iface)[defines.direction.south]
-			expect(t and #t.fluidbox.get_connections(1) > 0, "the pipe built south of it got no connected side tank")
+			expect(t and #t.get_fluid_box_neighbours(1) > 0, "the pipe built south of it got no connected side tank")
 			pipe.destroy{ raise_destroy = true }
 			expect(remote.call(IO, "refit_tanks", iface) == true and not tanks_at(s, iface)[defines.direction.south],
 				"the side tank of the removed pipe stayed")
@@ -156,7 +156,7 @@ return function(H)
 			expect(n == 0, "a pipe built without an event made a tank at once")
 			remote.call(IO, "refit_tanks", iface)
 			t = tanks_at(s, iface)[defines.direction.south]
-			expect(t and #t.fluidbox.get_connections(1) > 0, "the look at the sides gave the pipe built without an event no tank")
+			expect(t and #t.get_fluid_box_neighbours(1) > 0, "the look at the sides gave the pipe built without an event no tank")
 			remote.call(IO, "set_interface_config", iface, { { type = "fluid", name = "water", amount = 100 } }, { [2] = 1 })
 			remote.call(IO, "step", iface)
 			expect(tanks_at(s, iface)[defines.direction.east] ~= nil, "the side tied to a fluid row has no tank")

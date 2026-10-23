@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "title": "ME Network devcheck",
   "author": "rykon_",
-  "factorio_version": "2.0",
+  "factorio_version": "2.1",
   "description": "Test helper for tools/devcheck: validates and dumps the prototypes into the log. Not meant for normal play.",
   "dependencies": [
     "? me-network",

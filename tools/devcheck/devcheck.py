@@ -55,7 +55,17 @@ LOG = WORK / "last-run.log"
 DEFAULT_SEED = 3115102263
 # issue #146: saves of older versions are refused (control.lua); `migrate --from-ref` an older one checks that
 CUT_OFF = (0, 5, 0)
-BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails"}
+# (issue #487: Factorio 2.1 adds the built-in mod recycler, which space-age and quality depend on)
+BUILTIN = {"base", "core", "space-age", "quality", "elevated-rails", "recycler"}
+# the Factorio version the mods are written for (info.json factorio_version; the dependency mods are picked by it)
+FACTORIO_VERSION = "2.1"
+# issue #487: removed prototype keys of other mods (a leftover of a dependency of Gregtorio that neither mod can change:
+# Factorio ignores it), by the prototype's "<type>/<name>" -> the reason; reported as information, never a failure
+REMOVED_KEYS_OTHER_MODS = {
+    "pump/configurable-valve": "configurable-valves 2.0.2 (for Factorio 2.1) still sets hide_connection_info on its fluid box",
+    "storage-tank/configurable-valve-guage-input": "configurable-valves 2.0.2, as above",
+    "storage-tank/configurable-valve-guage-output": "configurable-valves 2.0.2, as above",
+}
 NAME = "me-network"
 TEXTURES = "me-network-ae2-textures"     # the texture mod in ae2-textures/ (issue #239), required since issue #325
 STAND_IN = "stand-in of the texture mod (devcheck, issue #325)"     # the title of its empty stand-in (texture_stand_in)
@@ -154,8 +164,8 @@ def setup(a):
     binary = FACTORIO / ("bin/x64/factorio.exe" if os.name == "nt" else "bin/x64/factorio")
     if a.factorio:
         if FACTORIO.exists() or FACTORIO.is_symlink():
-            FACTORIO.unlink() if FACTORIO.is_symlink() else shutil.rmtree(FACTORIO)
-        FACTORIO.symlink_to(Path(a.factorio).resolve(), target_is_directory=True)
+            remove_path(FACTORIO)                 # (a link or junction is removed, never what it points to)
+        link_dir(FACTORIO, Path(a.factorio).resolve())
     elif not binary.exists() and os.name == "nt":
         game = steam_factorio()
         if not game:
@@ -183,7 +193,10 @@ def setup(a):
         if not user or not token:
             sys.exit(f"need {name}: set FACTORIO_USERNAME/FACTORIO_TOKEN or pass --mods-from DIR")
         meta = json.load(urlopen(f"https://mods.factorio.com/api/mods/{urllib.parse.quote(name)}"))
-        rel = [r for r in meta["releases"] if r["info_json"].get("factorio_version") == "2.0"][-1]
+        rels = [r for r in meta["releases"] if r["info_json"].get("factorio_version") == FACTORIO_VERSION]
+        if not rels:
+            sys.exit(f"{name} has no release for Factorio {FACTORIO_VERSION} on the mod portal")
+        rel = rels[-1]
         q = urllib.parse.urlencode({"username": user, "token": token})
         download(f"https://mods.factorio.com{rel['download_url']}?{q}", MODS / rel["file_name"])
     print("setup done")
@@ -212,6 +225,39 @@ def remove_path(p):
         shutil.rmtree(p)
 
 
+def engine_version(fdir=None):
+    """issue #487: major.minor of the Factorio in `fdir` (default: .devcheck/factorio), from its data/base/info.json"""
+    try:
+        v = json.loads((Path(fdir or FACTORIO) / "data" / "base" / "info.json").read_text(encoding="utf-8"))["version"]
+    except (OSError, ValueError, KeyError):
+        return FACTORIO_VERSION
+    return ".".join(v.split(".")[:2])
+
+
+def fit_info(folder):
+    """issue #487: the info.json of a copied helper mod set to the Factorio in use (factorio_version and the base version)"""
+    f = Path(folder) / "info.json"
+    info = json.loads(f.read_text(encoding="utf-8"))
+    v = engine_version()
+    info["factorio_version"] = v
+    info["dependencies"] = [re.sub(r"^base >= [0-9.]+$", f"base >= {v}", d) for d in info.get("dependencies", [])]
+    f.write_text(json.dumps(info, indent=2), encoding="utf-8")
+
+
+def helper_dir(src):
+    """issue #487: a helper mod (checkmod/, runtimemod/, migratemod/) as it is when the Factorio in use is the one it is
+    written for (FACTORIO_VERSION), else a copy in the work folder whose info.json says that Factorio's version: the
+    helpers run in a 2.0 Factorio too (the old save of `migrate --old-factorio`, the 2.0 numbers of `bench`)"""
+    if engine_version() == FACTORIO_VERSION:
+        return src
+    dest = WORK / ("helper-" + engine_version()) / src.name
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest)
+    fit_info(dest)
+    return dest
+
+
 def texture_stand_in():
     """Issue #325: me-network requires the texture mod, so every load but the proof run's second one has an empty mod
     of its name in the mods folder: its info.json only (the version of ae2-textures/info.json), no override, no
@@ -219,9 +265,10 @@ def texture_stand_in():
     stub = MODS / TEXTURES
     stub.mkdir()
     real = json.loads((ROOT / "ae2-textures" / "info.json").read_text(encoding="utf-8"))
+    v = engine_version()                  # (issue #487: the Factorio in use, 2.0 for an old save)
     (stub / "info.json").write_text(json.dumps({"name": TEXTURES, "version": real["version"], "title": STAND_IN,
-                                                "author": "devcheck", "factorio_version": "2.0",
-                                                "dependencies": ["base >= 2.0"]}), encoding="utf-8")
+                                                "author": "devcheck", "factorio_version": v,
+                                                "dependencies": [f"base >= {v}"]}), encoding="utf-8")
     return stub
 
 
@@ -248,11 +295,13 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=No
         link_dir(MODS / "zz-me-network-devcheck-bench", bench_dir)
         enabled = ["base", NAME, "zz-me-network-devcheck-bench"]
     else:
-        link_dir(MODS / "zz-me-network-devcheck", HERE / "checkmod")
+        link_dir(MODS / "zz-me-network-devcheck", helper_dir(HERE / "checkmod"))
         enabled = ["base", NAME, "zz-me-network-devcheck"]
-    disabled = ["space-age", "quality", "elevated-rails"] if base_only else []
+    # the built-in mods of the Factorio in use (issue #487: 2.1 adds recycler; a 2.0 Factorio for an old save has none)
+    builtin = [n for n in ("space-age", "quality", "elevated-rails", "recycler") if (FACTORIO / "data" / n).is_dir()]
+    disabled = builtin if base_only else []
     if not base_only:
-        enabled += ["space-age", "quality", "elevated-rails"]
+        enabled += builtin
     zips = [z.name.rsplit("_", 1)[0] for z in MODS.glob("*.zip")]
     if gregtorio:
         link_dir(MODS / GREGTORIO, Path(gregtorio).resolve())
@@ -260,10 +309,10 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=No
     else:
         disabled += zips
     if with_runtime:
-        link_dir(MODS / "zz-me-network-devcheck-runtime", HERE / "runtimemod")
+        link_dir(MODS / "zz-me-network-devcheck-runtime", helper_dir(HERE / "runtimemod"))
         enabled.append("zz-me-network-devcheck-runtime")
     if with_migrate:
-        link_dir(MODS / "zz-me-network-devcheck-migrate", HERE / "migratemod")
+        link_dir(MODS / "zz-me-network-devcheck-migrate", helper_dir(HERE / "migratemod"))
         enabled.append("zz-me-network-devcheck-migrate")
     enabled.append(TEXTURES)
     (MODS / "mod-list.json").write_text(json.dumps({"mods": [{"name": n, "enabled": True} for n in enabled]
@@ -330,7 +379,7 @@ class Model:
         for p in rows:
             k = p[0]
             if k == "R":
-                self.R[p[1]] = dict(cat=p[2], en=p[3] == "true", ing=split(p[4]), res=split(p[5]),
+                self.R[p[1]] = dict(cat={c for c in p[2].split(",") if c}, en=p[3] == "true", ing=split(p[4]), res=split(p[5]),
                                     fin=kinds(p[4]).count("fluid"), fout=kinds(p[5]).count("fluid"))
             elif k == "C":
                 self.C[p[1]] = p[3].split(",") if p[3] else []
@@ -373,7 +422,7 @@ class Model:
             cats = {c for m in self.crafters for c in C.get(m, [])}
             for r in self.unlocked:
                 v = R[r]
-                if v["cat"] in cats and all(i in self.avail for i in v["ing"]):
+                if v["cat"] & cats and all(i in self.avail for i in v["ing"]):
                     for x in v["res"]:
                         if x not in self.avail:
                             self.avail.add(x)
@@ -392,10 +441,10 @@ class Model:
 
     def why_not(self, r):
         v = self.R[r]
-        machines = [m for m in self.crafters if v["cat"] in self.C.get(m, [])]
+        machines = [m for m in self.crafters if v["cat"] & set(self.C.get(m, []))]
         missing = [i for i in v["ing"] if i not in self.avail]
         if not machines:
-            return f"no machine for category {v['cat']}"
+            return f"no machine for category {', '.join(sorted(v['cat']))}"
         if missing:
             return "ingredients never obtainable: " + ", ".join(missing)
         if (v["fin"] or v["fout"]) and not any(
@@ -406,7 +455,7 @@ class Model:
     def uncraftable(self):
         out = []
         for r in sorted(self.unlocked):
-            if r.endswith("-recycling") or self.R[r]["cat"] in ("recycling", "parameters"):
+            if r.endswith("-recycling") or self.R[r]["cat"] & {"recycling", "parameters"}:
                 continue
             why = self.why_not(r)
             if why:
@@ -669,11 +718,20 @@ def check_map(a, mapfile, textures=None):
     report("sprite sheets too small", sprites)
     report("icons whose image does not fit their icon_size", icons)
     report("names missing in locale/en", locale)
+    # issue #487: a key Factorio removed (2.0 -> 2.1): 2.1 refuses a few with an error (a recipe's category, a product's
+    # probability, an item's fuel_category, a fluid box's temperatures) and ignores the others: those fail silently
+    rows = [r for r in sec.get("REMOVEDKEYS", []) if len(r) > 1]
+    other = [r for r in rows if re.split(r"[.\[]", r[0])[0] in REMOVED_KEYS_OTHER_MODS]
+    removed = [f"{r[0]}: {r[1]}" for r in rows if r not in other]
+    report("prototype keys that Factorio removed, of other mods (information: REMOVED_KEYS_OTHER_MODS)",
+           [f"{r[0]}: {r[1]} ({REMOVED_KEYS_OTHER_MODS[re.split(r'[.\[]', r[0])[0]]})" for r in other])
+    print(f"prototype keys removed by Factorio {FACTORIO_VERSION}: {len(removed)}")
+    report("prototype keys that Factorio removed (removed-keys.lua; ignored when loaded: they fail silently)", removed)
     tab, tab_info = check_tab(sec, getattr(a, "with_gregtorio", None))
     report("ME items and recipes outside the tab ME Network (information)", tab_info)
     report("ME items and recipes outside the tab ME Network (issue #474)", tab)
     ok = not (validate or files or [s for s in sprites + icons if not s.startswith("(")] or techs or recipes or uncraft
-              or locale or tab)
+              or locale or tab or removed)
     return ok, sec, log
 
 
@@ -1105,10 +1163,30 @@ def bumped_tree():
 
 
 def migrate(a):
+    global FACTORIO
     old = old_tree(a.from_ref)
+    # issue #487: a version of another Factorio (2.0) makes its save in that Factorio (--old-factorio), the working copy
+    # loads it in this one: a save of the last 2.0 version loaded in 2.1, as a player who updates sees it
+    old_fv = json.loads((old / "info.json").read_text(encoding="utf-8")).get("factorio_version")
+    new_factorio, settings, kept = FACTORIO, MODS / "mod-settings.dat", None
+    if old_fv and old_fv != engine_version():
+        if not a.old_factorio:
+            sys.exit(f"{a.from_ref} is for Factorio {old_fv}, this one is {engine_version()}: pass --old-factorio DIR "
+                     f"(an unpacked Factorio {old_fv} with bin/ and data/, see tools/devcheck/README.md)")
+        FACTORIO = Path(a.old_factorio).resolve()
+        if engine_version() != old_fv:
+            sys.exit(f"--old-factorio {a.old_factorio} is Factorio {engine_version()}, {a.from_ref} needs {old_fv}")
+        if settings.exists():             # (a newer Factorio's mod-settings.dat: the old one does not read it)
+            kept = settings.read_bytes()
+            settings.unlink()
     prepare_mods(mod_dir=old, with_migrate=True)
-    print(f"old version: {a.from_ref}")
-    log, err = create_map(WORK / "migrate-map.zip", *seed_args(a))
+    print(f"old version: {a.from_ref}" + (f" (Factorio {old_fv}: {FACTORIO})" if FACTORIO != new_factorio else ""))
+    try:
+        log, err = create_map(WORK / "migrate-map.zip", *seed_args(a))
+    finally:
+        FACTORIO = new_factorio
+        if kept is not None:
+            settings.write_bytes(kept)
     if err:
         print("could not create the map with the old version:\n" + err)
         return 1
@@ -1278,6 +1356,11 @@ def runtime_settings(values):
     f = MODS / "mod-settings.dat"
     version, root = _tree_read(f.read_bytes()) if f.exists() else ((2, 0, 0, 0), {})
     root = root or {}
+    try:                                  # (issue #487: in the version of the Factorio in use; an older one refuses a newer file)
+        full = json.loads((FACTORIO / "data" / "base" / "info.json").read_text(encoding="utf-8"))["version"]
+        version = tuple(int(x) for x in full.split(".")[:3]) + (0,)
+    except (OSError, ValueError, KeyError):
+        pass
     glob = {k: v for k, v in (root.get("runtime-global") or {}).items() if not k.startswith(NAME + "-")}
     for k, v in values.items():
         glob[k] = {"value": ("int", 6, int(v))}
@@ -1299,6 +1382,7 @@ def bench_mod_dir(cfg):
         return json.dumps(v) if isinstance(v, str) else str(v).lower()
     lines = ["return {"] + [f"  {k} = {lua(v)}," for k, v in cfg.items() if v is not None] + ["}"]
     (dest / "config.lua").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    fit_info(dest)                        # (issue #487: the 2.0 numbers come from a 2.0 Factorio)
     return dest
 
 
@@ -1514,6 +1598,9 @@ def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
 def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label=""):
     """one --benchmark run of a made map; returns the parsed run or None"""
     prepare_mods(mod_dir=mod_dir, bench_dir=bench_mod_dir(cfg), gregtorio=gregtorio)
+    # (issue #487: mod-settings.dat in the version of the Factorio of this run: the 2.0 reference of --ref-factorio does
+    # not read the file a 2.1 run wrote)
+    runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
     window = cfg["window"]
     ticks = BENCH_WARMUP + window + (LATENCY_TICKS if cfg["latency"] else 30) + (BURST_TICKS if cfg["burst"] else 0)
     log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(ticks), "--benchmark-verbose", "all")
@@ -1957,6 +2044,23 @@ CHECK_METRICS = [
 ]
 
 
+class engine:
+    """issue #487: `with engine(dir):` runs Factorio from `dir` (an unpacked Factorio, e.g. 2.0 for the numbers of the last
+    2.0 version) instead of .devcheck/factorio; `dir` None: no change"""
+    def __init__(self, fdir):
+        self.fdir = Path(fdir).resolve() if fdir else None
+
+    def __enter__(self):
+        global FACTORIO
+        self.kept = FACTORIO
+        if self.fdir:
+            FACTORIO = self.fdir
+
+    def __exit__(self, *exc):
+        global FACTORIO
+        FACTORIO = self.kept
+
+
 def bench_check(a):
     """`--check REF`: the maps of the reference and of the working copy are made once; then both are run in turns
     (ref, wc, ref, wc, ...: `--runs` rounds, at least three). For every metric the medians are compared; a metric of the working copy
@@ -1968,6 +2072,12 @@ def bench_check(a):
     ref_dir = old_tree(a.check)
     print(f"check: working copy against {a.check}, {runs} rounds in turns, sizes {sizes}")
     print((factorio("--version").splitlines() or ["?"])[0])
+    # issue #487: the reference in another Factorio (--ref-factorio: the last 2.0 version in 2.0): the engine differs, so
+    # the differences are reported, never failed
+    ref_engine = getattr(a, "ref_factorio", None)
+    if ref_engine:
+        with engine(ref_engine):
+            print("reference: " + (factorio("--version").splitlines() or ["?"])[0] + " (differences are reported, not failed)")
     failed, rows_out, problems = [], [], []
     results = {"check": a.check, "sizes": sizes, "rounds": runs, "per_size": []}
     for entry in sizes:
@@ -1981,7 +2091,8 @@ def bench_check(a):
         maps = {}
         for tag, mod_dir in (("ref", ref_dir), ("wc", None)):
             mapfile = WORK / f"bench-check-{tag}-{size}.zip"
-            out, err = bench_map(ca, cfg, mod_dir, mapfile, gregtorio=a.with_gregtorio)
+            with engine(ref_engine if tag == "ref" else None):
+                out, err = bench_map(ca, cfg, mod_dir, mapfile, gregtorio=a.with_gregtorio)
             if err:
                 print(f"  {tag} {size}: the map was not created\n{err}")
                 return 1
@@ -1989,7 +2100,8 @@ def bench_check(a):
         runs_of = {"ref": [], "wc": []}
         for r in range(runs):
             for tag, mod_dir in (("ref", ref_dir), ("wc", None)):
-                run = bench_run(ca, cfg, mod_dir, maps[tag][0], gregtorio=a.with_gregtorio, label=f"{tag} {size} round {r + 1}")
+                with engine(ref_engine if tag == "ref" else None):
+                    run = bench_run(ca, cfg, mod_dir, maps[tag][0], gregtorio=a.with_gregtorio, label=f"{tag} {size} round {r + 1}")
                 if not run:
                     return 1
                 runs_of[tag].append(run)
@@ -2007,7 +2119,7 @@ def bench_check(a):
             rm, wm = median(rv), median(wv)
             noise = max(max(rv) - min(rv), max(wv) - min(wv), abs(rm) * floor)
             worse = (wm - rm) if lower else (rm - wm)
-            verdict = ("FAIL" if fails else "reported") if worse > noise else "ok"
+            verdict = ("FAIL" if fails and not ref_engine else "reported") if worse > noise else "ok"
             if verdict == "FAIL":
                 failed.append(f"{size}: {name}: {rm:.4g} -> {wm:.4g} (noise {noise:.3g})")
             per["metrics"].append({"name": name, "ref": rv, "wc": wv, "ref_median": rm, "wc_median": wm, "noise": noise, "verdict": verdict})
@@ -2036,7 +2148,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("setup")
-    s.add_argument("--version", default="stable", help="Factorio version, e.g. 2.0.77 (default: stable)")
+    s.add_argument("--version", default="stable", help="Factorio version, e.g. 2.1.23 (default: stable; the mods need 2.1)")
     s.add_argument("--factorio", help="use an existing unpacked Factorio instead of downloading (or the Steam install on Windows)")
     s.add_argument("--with-gregtorio", metavar="DIR", help="also get the dependency mods of this Gregtorio checkout")
     s.add_argument("--mods-from", help="folder with the dependency mod zips instead of downloading them")
@@ -2058,6 +2170,8 @@ def main():
                         "same and the migrations of the mod do not run: issue #131 checks the old save both ways)")
     p.add_argument("--ticks", type=int, default=300)
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
+    p.add_argument("--old-factorio", metavar="DIR", help="issue #487: an unpacked Factorio of the old version's "
+                   "factorio_version (bin/ and data/), which makes the old save when it is not this one's (a 2.0 version)")
     p = sub.add_parser("bench")
     p.add_argument("--sizes", default="100,1000,5000", help="buses and interfaces of the ME scenes (default 100,1000,5000)")
     p.add_argument("--runs", type=int, default=3, help="benchmark runs per scene, the median is reported (default 3)")
@@ -2084,6 +2198,8 @@ def main():
     p.add_argument("--with-gregtorio", metavar="DIR", help="load this Gregtorio Continued checkout as well (the planner on its recipes)")
     p.add_argument("--check", metavar="REF", help="run the working copy and this git ref in turns and fail when a number is "
                    "worse by more than the measured noise (--runs rounds, at least 3)")
+    p.add_argument("--ref-factorio", metavar="DIR", help="issue #487: with --check, run the reference in this unpacked Factorio "
+                   "(bin/ and data/; e.g. 2.0 for the last 2.0 version): every difference is reported, none fails")
     a = ap.parse_args()
     if a.cmd == "bench":
         a.ticks_given = a.ticks is not None

@@ -11,7 +11,7 @@ local function names(list)
 	return table.concat(t, ",")
 end
 
---- R recipe category enabled ingredients results hidden hide_from_player_crafting subgroup group
+--- R recipe categories enabled ingredients results hidden hide_from_player_crafting subgroup group
 --- C crafter type categories fluid_in fluid_out
 --- I item type place_result | F fluid | T tech prereqs unlocks science trigger enabled
 --- M resource result results category | O offshore-pump fluid
@@ -35,7 +35,7 @@ end
 for n, r in pairs(data.raw.recipe) do
 	local sg = recipe_subgroup(r)
 	local g = data.raw["item-subgroup"][sg] and data.raw["item-subgroup"][sg].group or "other"
-	D("R", n, r.category or "crafting", tostring(r.enabled ~= false), names(r.ingredients), names(r.results),
+	D("R", n, table.concat(r.categories or { "crafting" }, ","), tostring(r.enabled ~= false), names(r.ingredients), names(r.results),
 		tostring(r.hidden == true), tostring(r.hide_from_player_crafting == true), sg, g)
 end
 for _, t in pairs({ "assembling-machine", "furnace", "rocket-silo", "character" }) do
@@ -196,3 +196,34 @@ for _, n in pairs(ME_NETWORK and ME_NETWORK.recipes or {}) do
 	if why then locked[#locked + 1] = n .. "	" .. why end
 end
 section("GREGTORIOLOCKED", locked)
+
+--- Issue #487 (the port to Factorio 2.1): every key a prototype still carries that Factorio removed (removed-keys.lua,
+--- written by tools/devcheck/removed_keys.py from the API of both versions). Factorio 2.1 refuses a few of them with an error
+--- (a recipe's `category`, a product's `probability`, an item's `fuel_category`, a fluid box's temperatures) and ignores the
+--- others (a crafting machine's `forced_symmetry`, a fluid box's `hide_connection_info`, a recipe's `always_show_products`,
+--- ...), which fail silently. One row per key: <data.raw type>/<name><path>, the key.
+local K = require("removed-keys")
+local found = {}
+local function walk(v, node, path, seen)
+	local spec = K.nodes[node]
+	if type(v) ~= "table" or not spec then return end
+	if spec.tag and type(v.type) == "string" and v.type ~= spec.tag then return end    -- (another option of a union)
+	seen[v] = seen[v] or {}
+	if seen[v][node] then return end
+	seen[v][node] = true
+	for i, x in ipairs(v) do walk(x, node, path .. "[" .. i .. "]", seen) end
+	for k, x in pairs(v) do
+		if type(k) == "string" then
+			if spec.removed[k] then found[#found + 1] = path .. "\t" .. k end
+			for _, n in ipairs(spec.fields[k] or {}) do walk(x, n, path .. "." .. k, seen) end
+		end
+	end
+end
+for t, list in pairs(data.raw) do
+	local node = K.prototypes[t]
+	if node then
+		for n, p in pairs(list) do walk(p, node, t .. "/" .. n, {}) end
+	end
+end
+table.sort(found)
+section("REMOVEDKEYS", found)

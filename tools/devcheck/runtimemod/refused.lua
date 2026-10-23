@@ -13,7 +13,7 @@ local NET, IO = "gregtorio-me-network", "gregtorio-me-io"
 local BX, BY = 500, -260
 local START, CHECK1, DEADLINE = 100, 400, 1300
 local LIMIT = 400           -- ticks: the idle limit of the import buses (300 by default) and a margin
-local PACK = "automation-science-pack"
+local PACK = "zz-devcheck-tool-1"          -- (a tool with durability, data.lua; issue #487)
 local PLATES = 40         -- iron plates per chest: one stack in every game (Gregtorio's plates stack to 64)
 
 return function(H)
