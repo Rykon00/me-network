@@ -3740,3 +3740,27 @@ kind of endpoint identical.
 | 5000: Lua alloc KB per tick | 33.57 | 33.57 |
 | 5000: storage bus latency max (s) | 1.733 | 1.733 |
 | 5000: burst build / remove (ms) | 83.8 / 82.4 | 82.3 / 82.7 |
+
+## Autocrafting of items with tags (issue #480)
+
+`base_count` asks `prototypes.item[name]` where it asked `plain_item(name)` (once per key and load, as before). The paths
+that take items out of a machine or chest (`collect_output`, `take_back_input`, the undo of a hand-over, `switch_recipe`) ask
+`with_data(name)` first (one cached lookup per item name); only items with tags or a label then walk the stacks
+(`N.count_whole`, `N.remove_whole`), every other item is moved by count as before. The scenes have no item with tags, so the
+walk is not taken there.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns; origin/main 0.5.5, this pull request with #481 under
+it). Size 1000: **regressions beyond the noise: 0**, throughput per kind of endpoint identical. Size 5000 is incomplete: Steam
+updated the Factorio install to 2.1.23 during the last round, so the working copy has two rounds and the harness gave no
+verdict (the per-round script times are below); me-network does not load on 2.1 (`factorio_version` 2.0), so the size could
+not be measured again.
+
+| | origin/main | this pull request |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.4517 / 2.682 | 0.4509 / 2.567 |
+| 1000: ticks over 5 ms | 1 | 2 (noise ±1) |
+| 1000: Lua alloc KB per tick | 24.85 | 24.86 |
+| 1000: provider crafts per second | 17.32 | 17.32 |
+| 1000: burst build / remove (ms) | 90.1 / 96.9 | 90.5 / 92.5 |
+| 5000: script avg per round (ms) | 1.101, 1.107, 1.138 | 1.079, 1.125 |
+| 5000: script p99 per round (ms) | 3.54, 3.50, 3.55 | 3.35, 3.53 |

@@ -247,6 +247,22 @@ local function spill(entity, def)
 	inv.destroy()
 end
 
+--- Issue #480: can a stack of this item carry data that a count does not see (an item with tags or a label: a turret of
+--- Quality Turrets Reworked with its kills, a storage cell)? Its plain key stands for the stacks without data only
+--- (N.plain_stack), so what autocrafting takes out of an inventory by name takes those only (N.count_whole, N.remove_whole),
+--- never a stack with tags. Per name, per load (never saved).
+local data_items = {}
+local function with_data(name)
+	local v = data_items[name]
+	if v == nil then
+		local p = prototypes.item[name]
+		local class = p and N.item_class(p.type)
+		v = class == "tags" or class == "label"
+		data_items[name] = v
+	end
+	return v
+end
+
 --------------------------------------------------------------------------------
 --- machines
 --------------------------------------------------------------------------------
@@ -1122,20 +1138,16 @@ end
 --- planning
 --------------------------------------------------------------------------------
 
---- items with own data (item-with-tags: a cell, an encoded pattern) are never taken from storage: moving them by
---- name and count would strip the data
-local function plain_item(name)
-	local proto = prototypes.item[name]
-	return proto ~= nil and proto.type ~= "item-with-tags"
-end
-
 --- What the plan finds of `key` in storage (issue #50: read when the plan first asks, not the whole stock per plan): the
 --- plain items (not with data; issue #352: in every quality) and the fluids of a usable network, as stock_of of 0.3.0 had them.
+--- Issue #480: an item with tags (a storage cell, a turret of Quality Turrets Reworked) by its plain key too, which counts its
+--- stacks without data only (N.storable, issue #479; the paths that take it out of an inventory take those only,
+--- N.remove_whole); a key with data (a cell that holds items, an encoded pattern, a turret with kills) never.
 local storable = {}                               -- key -> true when the plan may take it from storage (per load)
 local function base_count(net, key)
 	local ok = storable[key]
 	if ok == nil then
-		ok = is_fluid(key) or (not key:find("#", 1, true) and plain_item((N.parse_key(key))))
+		ok = is_fluid(key) or (not key:find("#", 1, true) and prototypes.item[(N.parse_key(key))] ~= nil)
 		storable[key] = ok
 	end
 	return ok and net.items[key] or 0
@@ -2007,7 +2019,9 @@ local function collect_output(job, net, machine, map, step)
 	local out = output_inventory(machine)
 	if out then
 		for _, c in pairs(N.bound(out).get_contents()) do
-			local removed = out.remove{ name = c.name, count = c.count, quality = c.quality }
+			local removed
+			if with_data(c.name) then removed = N.remove_whole(out, c.name, c.quality, c.count)   -- (issue #480)
+			else removed = out.remove{ name = c.name, count = c.count, quality = c.quality } end
 			if removed > 0 then got(N.key_of(c.name, c.quality), removed) end   -- (issue #352: every quality is a key)
 		end
 	end
@@ -2033,10 +2047,17 @@ local function take_back_input(job, machine, ingredients, map)
 		for _, ing in pairs(ingredients) do
 			local key = ing.type == "item" and key_of(ing)
 			if key and not back[key] then
-				QI.name, QI.quality, QI.count = ing.name, ing.quality or "normal", nil
-				local held = N.bound(inp).get_item_count(QI)
-				QI.count = held
-				local removed = held > 0 and N.bound(inp).remove(QI) or 0
+				local removed
+				if with_data(ing.name) then                     -- (issue #480: the stacks without tags only)
+					local q = ing.quality or "normal"
+					local held = N.count_whole(inp, ing.name, q)
+					removed = held > 0 and N.remove_whole(inp, ing.name, q, held) or 0
+				else
+					QI.name, QI.quality, QI.count = ing.name, ing.quality or "normal", nil
+					local held = N.bound(inp).get_item_count(QI)
+					QI.count = held
+					removed = held > 0 and N.bound(inp).remove(QI) or 0
+				end
 				if removed > 0 then pool_add(job, key, removed) back[key] = removed end
 			end
 		end
@@ -2160,7 +2181,8 @@ local function start_lease(s, job, step_index, machine, batch, map)
 			if g.fluid then
 				machine.fluidbox[g.index] = nil
 			elseif g.got > 0 then
-				inp.remove{ name = g.name, count = g.got, quality = g.quality }
+				if with_data(g.name) then N.remove_whole(inp, g.name, g.quality, g.got)    -- (issue #480)
+				else inp.remove{ name = g.name, count = g.got, quality = g.quality } end
 			end
 			pool_add(job, g.key, g.got)
 		end
@@ -2240,7 +2262,8 @@ local function push_chest(s, job, step_index, chest, batch)
 	local function undo()
 		for key, n in pairs(put) do
 			local name, q = N.parse_key(key)
-			inv.remove{ name = name, count = n, quality = q }
+			if with_data(name) then N.remove_whole(inv, name, q, n)    -- (issue #480: never a stack with tags of the chest)
+			else inv.remove{ name = name, count = n, quality = q } end
 			pool_add(job, key, n)
 		end
 	end
@@ -2277,10 +2300,22 @@ end
 local function switch_recipe(net, machine, recipe, quality)
 	if machine.crafting_progress > 0 then return false end
 	local inp, out = input_inventory(machine), output_inventory(machine)
-	local items = {}
+	local items, kept = {}, nil
 	for _, inv in pairs({ inp, out }) do
 		if inv then
-			for _, c in pairs(inv.get_contents()) do items[#items + 1] = { inv = inv, name = c.name, quality = c.quality or "normal", count = c.count } end
+			for _, c in pairs(inv.get_contents()) do
+				local q, n, data = c.quality or "normal", c.count, with_data(c.name)
+				if data then
+					--- issue #480: by count only the stacks without tags; the ones with tags go in one by one (below)
+					local whole = N.count_whole(inv, c.name, q)
+					if whole < n then
+						kept = kept or {}
+						kept[#kept + 1] = { inv = inv, name = c.name, quality = q }
+					end
+					n = whole
+				end
+				if n > 0 then items[#items + 1] = { inv = inv, name = c.name, quality = q, count = n, data = data } end
+			end
 		end
 	end
 	local fb = machine.fluidbox
@@ -2298,8 +2333,20 @@ local function switch_recipe(net, machine, recipe, quality)
 		if N.can_insert_fluid(net, f.name, f.amount) < f.amount - FLUID_EPS then fits = false end
 	end
 	if not fits then N.no_arrival = false return false end
+	--- issue #480: a stack with tags (a player put a turret with kills into the machine) goes in with them (N.insert_stack keys it
+	--- by its data); one the network does not take keeps the machine as it is (set_recipe would hand it back without its tags)
+	for _, k in pairs(kept or {}) do
+		for i = 1, #k.inv do
+			local stack = k.inv[i]
+			if stack.valid_for_read and stack.name == k.name and stack.quality.name == k.quality and not N.plain_stack(stack, stack.prototype) then
+				N.insert_stack(net, stack)
+				if stack.valid_for_read then N.no_arrival = false return false end
+			end
+		end
+	end
 	for _, it in pairs(items) do
-		local removed = it.inv.remove{ name = it.name, quality = it.quality, count = it.count }
+		local removed = it.data and N.remove_whole(it.inv, it.name, it.quality, it.count)
+			or it.inv.remove{ name = it.name, quality = it.quality, count = it.count }
 		local stored = removed > 0 and N.insert(net, it.name, it.quality, removed) or 0
 		if stored < removed then spill(machine, { name = it.name, quality = it.quality, count = removed - stored }) end
 	end
