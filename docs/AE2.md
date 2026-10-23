@@ -652,8 +652,10 @@ the bus's 4 card slots with the speed cards and the Group Filter Card.
   (the window says so); they work again when a card gives them room.
 * **Fuzzy Card**, 1: a filter takes every quality of its item, also a filter that names a quality. The import bus takes the
   item in any quality; the export bus exports the network's items of its filters in every quality, in turn, each visit as
-  many keys as it has filters (the way the Group Filter Card's list goes). Fluids have no quality: their filters are as
-  before.
+  many keys as it has filters (the way the Group Filter Card's list goes). Since issue #493 it also exports its filters'
+  items that carry something of their own, as AE2's fuzzy export does: a turret with kills (and its label), a damaged wall,
+  an item with tags; each comes out with its kills, label, description and health, as its own stack beside the plain ones.
+  Without the card an export bus exports the plain item only. Fluids have no quality: their filters are as before.
 * **Inverter Card**, 1, **import bus only**: its filters are a blacklist, the bus takes everything from its target except
   them, items and fluids (with the Group Filter Card: everything its text does not match). AE2-Unofficial has no Inverter
   Card on the buses: this is an addition of ME Network. The export bus refuses it (a blacklist of an export would export

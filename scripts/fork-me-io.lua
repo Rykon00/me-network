@@ -1660,7 +1660,11 @@ local function export_items(rec, net, t, cap, info)
 				Q_COUNT.name, Q_COUNT.quality = name, q
 				have = N.bound(inv).get_item_count(Q_COUNT)
 			end
-			local prev = tgt[key]
+			--- issue #493: a key with data (a Fuzzy Card's) keeps what the target held under its item's key: `have` counts the
+			--- item whatever its data, and rec.tgt (in storage) gets no row per turret's kills or wall's damage
+			local tkey = key
+			if gf and key:find("#", 1, true) then tkey = N.key_of(name, q) end
+			local prev = tgt[tkey]
 			if prev and prev > 0 and have == 0 then info.starved = true end
 			local used = prev and prev - have or 0
 			local want = cap - moved
@@ -1707,7 +1711,7 @@ local function export_items(rec, net, t, cap, info)
 				moved = moved + got
 			end
 			local after = have + got
-			tgt[key] = after
+			tgt[tkey] = after
 			if used > 0 and after > 0 then
 				local tt = after * dt / used
 				if tt < info.time then info.time = tt end
@@ -2093,14 +2097,15 @@ function M.set_bus_gtext(entity, text)
 end
 
 --- the network's item keys that match the export bus's text (sorted; rebuilt when the network got new keys); issue #413: with a
---- Fuzzy Card and no text, the keys of the filters' items in every quality
+--- Fuzzy Card and no text, the keys of the filters' items in every quality; issue #493: and with data (tags, a label, damage),
+--- as AE2's fuzzy export ignores the NBT and the damage (N.extract_to puts them back on the target). A text matches plain keys only.
 function M.gf_list(rec, net)
 	if rec.glist and rec.gkgen == (net.kgen or 0) and rec.gknet == net.id then return rec.glist end
 	local list, gf, names = {}, rec.gf, rec.fznames or {}
 	for key in pairs(net.items) do
-		if not N.is_fluid_key(key) and not key:find("#", 1, true) then
+		if not N.is_fluid_key(key) then
 			local hit
-			if gf then hit = N.GF.match(gf, key) else hit = names[(filter_item(key))] end
+			if gf then hit = not key:find("#", 1, true) and N.GF.match(gf, key) else hit = names[(filter_item(key))] end
 			if hit then list[#list + 1] = key end
 		end
 	end
