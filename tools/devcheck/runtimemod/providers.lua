@@ -23,7 +23,7 @@ local START, TIMEOUT = 150, 1000
 --- the cases: machine, recipe, the pattern kinds, and a pipe on the first used fluid input box
 local CASES = {
 	{ id = "assembler-item", machine = "me-molecular-assembler", recipe = "iron-gear-crafting-table" },
-	{ id = "machine-item", machine = "ev-macerator", recipe = "crushed-iron" },
+	{ id = "machine-item", machine = "zz-devcheck-macerator", recipe = "crushed-iron" },   -- (data-final-fixes.lua)
 	{ id = "machine-fluid", machine = "hv-chemical-reactor", recipe = "hydrochloric-acid" },
 	{ id = "machine-fluid-piped", machine = "hv-chemical-reactor", recipe = "hydrochloric-acid", pipe = true },
 	--- issue #164: the same machine turned east, and a pipe beside the machine on a tile without a connection
