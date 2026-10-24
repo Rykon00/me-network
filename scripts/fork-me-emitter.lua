@@ -84,6 +84,10 @@ local function write(rec, on, force)
 	local section = cb.get_section(1) or cb.add_section()
 	if not section then return end
 	local sig = rec.signal or DEFAULT_SIGNAL
+	--- (issue #503: a signal of an item or fluid the game no longer knows: the default one)
+	if sig.type == "fluid" and not prototypes.fluid[sig.name] or (sig.type or "item") == "item" and not N.item_exists(sig.name) then
+		sig = DEFAULT_SIGNAL
+	end
 	section.filters = on and { { value = { type = sig.type or "item", name = sig.name, quality = "normal", comparator = "=" },
 		min = 1 } } or {}
 	rec.on = on
@@ -167,6 +171,8 @@ local function clean_key(key)
 		k = k and N.fluid_storage_key(k)
 		return k and prototypes.fluid[N.fluid_name(k)] and k or nil
 	end
+	key = N.live_key(key)                         -- (issue #503: a replaced item's key is its replacement's, a removed one's nil)
+	if not key then return nil end
 	local name, quality = N.parse_key(key)
 	return prototypes.item[name] and prototypes.quality[quality] and key or nil
 end
@@ -175,8 +181,10 @@ local function clean_signal(sig)
 	if type(sig) ~= "table" or type(sig.name) ~= "string" then return nil end
 	local t = sig.type or "item"
 	local protos = ({ item = prototypes.item, fluid = prototypes.fluid, virtual = prototypes.virtual_signal })[t]
-	if not (protos and protos[sig.name]) then return nil end
-	return { type = t, name = sig.name }
+	local name = sig.name
+	if t == "item" and not prototypes.item[name] then name = N.live_key(name) end   -- (issue #503: a replaced item)
+	if not (protos and name and protos[name]) then return nil end
+	return { type = t, name = name }
 end
 
 --- Issue #443: one row of an advanced emitter from `t` (missing fields stay as they are in `r`): { key (false clears it),

@@ -10,6 +10,8 @@ local EPS = 0.5
 
 local AC = "gregtorio-me-autocraft"
 local function L(key, msg) log("DEVCHECK-MIGRATE-" .. key .. " " .. msg) end
+--- me-network issue #503: the stage of the helper's test items (settings.lua, data.lua)
+local ITEMS = settings.startup["zz-me-network-devcheck-migrate-items"].value
 
 local function place(s, fails, name, x, y, extra)
 	local def = { name = name, position = { x, y }, force = "player", raise_built = true }
@@ -238,8 +240,37 @@ local function setup_unified(s)
 		end
 		inv.destroy()
 	end
+	--- me-network issue #503 (`--removed-items`): the helper's items, which the load removes (devcheck-removed-item) or renames
+	--- through ME_NETWORK.replace_item (devcheck-renamed-item -> devcheck-new-item), in a cell (normal and uncommon), a partition,
+	--- an export bus's filter, an interface's row, two level maintainers and a circuit interface's filter
+	local items
+	if ITEMS == "old" and di then
+		items = true
+		remote.call(NET, "store_in_drive", di, "devcheck-renamed-item", 40)
+		remote.call(NET, "store_in_drive", di, "devcheck-new-item", 25)
+		remote.call(NET, "store_in_drive", di, "devcheck-removed-item", 30)
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = "devcheck-renamed-item", count = 5, quality = "uncommon" }
+		if not (ctrl and remote.call(NET, "insert_stack", ctrl, inv[1]) == 5) then fails[#fails + 1] = "uncommon renamed items not stored" end
+		inv.destroy()
+		remote.call(NET, "set_partition", di, 4, { "devcheck-renamed-item", "devcheck-removed-item", "iron-plate" })
+		local xb = place(s, fails, "me-export-bus", 52.5, 2.5, south)
+		place(s, fails, "iron-chest", 52.5, 3.5)
+		if xb then remote.call(IO, "set_bus_filters", xb, { "devcheck-renamed-item", "devcheck-removed-item" }) end
+		local xi = place(s, fails, "me-network-interface", 47.5, 2.5)
+		if xi then
+			remote.call(IO, "set_interface_config", xi, { [1] = { name = "devcheck-renamed-item", quality = "normal", amount = 5 },
+				[2] = { name = "devcheck-removed-item", quality = "normal", amount = 5 } })
+		end
+		local m1 = place(s, fails, "me-level-maintainer", 54.5, 2.5)
+		if m1 then remote.call("gregtorio-me-circuit", "set_maintainer", m1, "devcheck-renamed-item", 10) end
+		local m2 = place(s, fails, "me-level-maintainer", 55.5, 2.5)
+		if m2 then remote.call("gregtorio-me-circuit", "set_maintainer", m2, "devcheck-removed-item", 10) end
+		local c2 = place(s, fails, "me-circuit-interface", 56.5, 2.5)
+		if c2 then remote.call("gregtorio-me-circuit", "set_circuit_filters", c2, { "devcheck-renamed-item", "devcheck-removed-item" }) end
+	end
 	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, cards = cards, legacy_chest = legacy_chest,
-		damaged = damaged }
+		damaged = damaged, items = items }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
 		.. (has_legacy and "; the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "")
@@ -381,6 +412,64 @@ local function check_unified(st)
 		.. (st.damaged and "; the old damaged key loads, takes new damaged items of its health and comes out at it" or "") .. ")")
 end
 
+--- me-network issue #503: after the load the renamed item is the new one everywhere (counts added up, the uncommon ones uncommon),
+--- the removed one nowhere, and the circuit interfaces work (one built now too: the crash of the issue was its first write)
+local function check_items(st)
+	local s = game.surfaces[1]
+	local function at(name, x, y) return s.find_entity(name, { x, y }) end
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local t = at("me-terminal", 12.5, 0.5)
+	local contents = t and remote.call(NET, "contents", t) or {}
+	local old = {}
+	for key, n in pairs(contents) do
+		local name = key:match("^[^@#]*")
+		if name == "devcheck-renamed-item" or name == "devcheck-removed-item" then old[#old + 1] = key .. " " .. n end
+	end
+	expect(#old == 0, "the network still holds the old items: " .. table.concat(old, ", "))
+	local chest, xi = at("iron-chest", 52.5, 3.5), at("me-network-interface", 47.5, 2.5)
+	local net_n = contents["devcheck-new-item"] or 0
+	local chest_n = chest and chest.get_item_count("devcheck-new-item") or 0
+	local xi_n = xi and xi.get_item_count("devcheck-new-item") or 0
+	expect(net_n + chest_n + xi_n == 65, "the new item (25 + 40 renamed): network " .. net_n .. ", export bus chest " .. chest_n
+		.. ", interface " .. xi_n)
+	expect(chest_n > 0, "the export bus filtered on the renamed item exported nothing of the new one")
+	expect((contents["devcheck-new-item@uncommon"] or 0) == 5, "the uncommon renamed items: "
+		.. tostring(contents["devcheck-new-item@uncommon"]))
+	local d = at("me-drive", 10.5, 0.5)
+	local part = d and remote.call(NET, "get_partition", d, 4)
+	expect(part and serpent.line(part) == serpent.line({ "devcheck-new-item", "iron-plate" }), "the partition: " .. serpent.line(part))
+	local xb = at("me-export-bus", 52.5, 2.5)
+	local b = xb and remote.call(IO, "get_bus", xb)
+	expect(b and serpent.line(b.filters) == serpent.line({ "devcheck-new-item" }), "the export bus's filters: " .. serpent.line(b and b.filters))
+	local cfg = xi and remote.call(IO, "get_interface", xi).config
+	expect(cfg and cfg[1] and cfg[1].name == "devcheck-new-item" and cfg[1].amount == 5 and cfg[2] == nil,
+		"the interface's rows: " .. serpent.line(cfg))
+	expect(xi_n > 0, "the interface keeps none of the new item (the export bus takes from the same stock)")
+	local m1 = remote.call("gregtorio-me-circuit", "get_maintainer", at("me-level-maintainer", 54.5, 2.5))
+	expect(m1 and m1.key == "devcheck-new-item" and m1.amount == 10, "the level maintainer of the renamed item: " .. serpent.line(m1))
+	local m2 = remote.call("gregtorio-me-circuit", "get_maintainer", at("me-level-maintainer", 55.5, 2.5))
+	expect(m2 and m2.key == nil, "the level maintainer of the removed item: " .. serpent.line(m2))
+	local c2 = at("me-circuit-interface", 56.5, 2.5)
+	local ci = c2 and remote.call("gregtorio-me-circuit", "get_circuit", c2)
+	expect(ci and serpent.line(ci.filters) == serpent.line({ "devcheck-new-item" }), "the circuit interface's filters: " .. serpent.line(ci))
+	local fails = {}
+	local built = place(s, fails, "me-circuit-interface", 57.5, 2.5)
+	local cb = built and remote.call("gregtorio-me-circuit", "get_circuit", built)
+	expect(built and #fails == 0 and cb and cb.signals and cb.signals > 0, "a circuit interface built after the load: "
+		.. serpent.line(cb) .. " " .. table.concat(fails, "; "))
+	local sec = built and built.get_or_create_control_behavior().get_section(1)
+	local seen
+	for _, f in pairs(sec and sec.filters or {}) do
+		if f.value and f.value.name == "devcheck-new-item" and f.value.quality == "normal" then seen = f.min end
+	end
+	expect((seen or 0) == net_n, "its signal of the new item: " .. tostring(seen) .. " (network " .. net_n .. ")")
+	for _, p in pairs(problems) do L("FAIL", p) end
+	L("ITEMS", (#problems == 0 and "ok" or "failed") .. " (the renamed item under its new name with the counts added up and its "
+		.. "quality, in the partition, the export bus, the interface, the level maintainer and the circuit interface; the removed "
+		.. "one nowhere; a circuit interface built after the load writes its signals)")
+end
+
 script.on_init(function()
 	local s = game.surfaces[1]
 	s.always_day = true
@@ -410,6 +499,7 @@ script.on_nth_tick(10, function()
 		if st.ticked or game.tick < st.start + 150 then return end
 		st.ticked = true
 		check_unified(st)
+		if st.items and ITEMS == "new" then check_items(st) end
 		local after = fluid_totals(game.surfaces[1])
 		local ok, diff = same_totals(st.before, after)
 		if not ok then L("FAIL", "fluid differs: " .. diff) end

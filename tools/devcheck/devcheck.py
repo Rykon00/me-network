@@ -1162,9 +1162,21 @@ def bumped_tree():
     return dest
 
 
+ITEMS_SETTING = "zz-me-network-devcheck-migrate-items"     # (migratemod/settings.lua, issue #503)
+
+
 def migrate(a):
+    try:
+        return migrate_run(a)
+    finally:
+        if a.removed_items:
+            startup_setting(ITEMS_SETTING, None)
+
+
+def migrate_run(a):
     global FACTORIO
-    old = old_tree(a.from_ref)
+    # issue #503: `--from-ref working` makes the save with the working copy itself (the update is then only the helper's items)
+    old = ROOT if a.from_ref == "working" else old_tree(a.from_ref)
     # issue #487: a version of another Factorio (2.0) makes its save in that Factorio (--old-factorio), the working copy
     # loads it in this one: a save of the last 2.0 version loaded in 2.1, as a player who updates sees it
     old_fv = json.loads((old / "info.json").read_text(encoding="utf-8")).get("factorio_version")
@@ -1179,7 +1191,9 @@ def migrate(a):
         if settings.exists():             # (a newer Factorio's mod-settings.dat: the old one does not read it)
             kept = settings.read_bytes()
             settings.unlink()
-    prepare_mods(mod_dir=old, with_migrate=True)
+    prepare_mods(mod_dir=None if old == ROOT else old, with_migrate=True)
+    if a.removed_items:                   # issue #503: the save holds the helper's three test items (migratemod/data.lua)
+        startup_setting(ITEMS_SETTING, "old")
     print(f"old version: {a.from_ref}" + (f" (Factorio {old_fv}: {FACTORIO})" if FACTORIO != new_factorio else ""))
     try:
         log, err = create_map(WORK / "migrate-map.zip", *seed_args(a))
@@ -1193,6 +1207,8 @@ def migrate(a):
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
     print(f"old save (every kind of block): {setup.group(1) if setup else 'no result'}")
     prepare_mods(mod_dir=bumped_tree() if a.bump else None, with_migrate=True)
+    if a.removed_items:                   # one of them removed, one renamed through ME_NETWORK.replace_item
+        startup_setting(ITEMS_SETTING, "new")
     log = factorio("--benchmark", str(WORK / "migrate-map.zip"), "--benchmark-ticks", str(a.ticks))
     ran = re.search(r"Performed (\d+) updates", log)
     # issue #146: a save from before the cut-off must be refused when it loads, with the message that names 0.5.0
@@ -1218,6 +1234,17 @@ def migrate(a):
         print(load_errors(log) or "")
     ok = ran and setup and setup.group(1).startswith("ok") and unified and unified.group(1).startswith("ok") \
         and fluids and fluids.group(1).startswith("ok") and not fails
+    if a.removed_items:
+        # issue #503: after the update the network holds the renamed item under its new name (counts added up, quality kept), the
+        # removed one nowhere, and every circuit interface (one built after the load too) works; the log names each name once
+        items = re.search(r"DEVCHECK-MIGRATE-ITEMS (.*)", log)
+        print(f"removed and renamed items: {items.group(1) if items else 'no result'}")
+        want = {"devcheck-removed-item": "ME-REMOVED-ITEM devcheck-removed-item 30",
+                "devcheck-renamed-item": "ME-REPLACED-ITEM devcheck-renamed-item devcheck-new-item 45"}
+        lines = {n: re.findall(rf"ME-(?:REMOVED|REPLACED)-ITEM {n} [^\r\n]*", log) for n in want}
+        logged = all(lines[n] == [want[n]] for n in want)
+        print(f"the log lines of the update: {'ok' if logged else 'failed'} ({'; '.join(l for n in want for l in lines[n]) or 'none'})")
+        ok = ok and items and items.group(1).startswith("ok") and logged
     print("\nRESULT: " + ("OK" if ok else "PROBLEMS FOUND"))
     return 0 if ok else 1
 
@@ -1366,6 +1393,27 @@ def runtime_settings(values):
         glob[k] = {"value": ("int", 6, int(v))}
     root.setdefault("startup", {})
     root["runtime-global"] = glob
+    root.setdefault("runtime-per-user", {})
+    f.write_bytes(_tree_write(version, root))
+
+
+def startup_setting(name, value):
+    """issue #503: a startup setting of a helper mod in mod-settings.dat (`value` None: removed, the default again)"""
+    f = MODS / "mod-settings.dat"
+    version, root = _tree_read(f.read_bytes()) if f.exists() else ((2, 0, 0, 0), {})
+    root = root or {}
+    try:                                  # (in the version of the Factorio in use, as runtime_settings)
+        full = json.loads((FACTORIO / "data" / "base" / "info.json").read_text(encoding="utf-8"))["version"]
+        version = tuple(int(x) for x in full.split(".")[:3]) + (0,)
+    except (OSError, ValueError, KeyError):
+        pass
+    startup = root.get("startup") or {}
+    if value is None:
+        startup.pop(name, None)
+    else:
+        startup[name] = {"value": value}
+    root["startup"] = startup
+    root.setdefault("runtime-global", {})
     root.setdefault("runtime-per-user", {})
     f.write_bytes(_tree_write(version, root))
 
@@ -2168,6 +2216,10 @@ def main():
                    help="load the save with the working copy as a version one patch up (a copy in .devcheck/new-bumped): Factorio runs "
                         "on_configuration_changed, as it does when a player updates the mod (without it the version number is the "
                         "same and the migrations of the mod do not run: issue #131 checks the old save both ways)")
+    p.add_argument("--removed-items", action="store_true",
+                   help="issue #503: the save also holds items of the helper mod that the load removes or renames through "
+                        "ME_NETWORK.replace_item (a startup setting of the helper); `--from-ref working` makes the save with the "
+                        "working copy itself")
     p.add_argument("--ticks", type=int, default=300)
     p.add_argument("--seed", default=str(DEFAULT_SEED), help=f"map seed or `random` (default {DEFAULT_SEED})")
     p.add_argument("--old-factorio", metavar="DIR", help="issue #487: an unpacked Factorio of the old version's "

@@ -468,6 +468,9 @@ function M.on_configuration_changed()
 	for unit, rec in pairs(s.recs) do
 		if not (rec.entity and rec.entity.valid) then forget(s, unit, nil) end
 	end
+	--- issue #503: the fill pass starts again (its list of the network's keys may name an item that is gone; the cells are read
+	--- from their tags, which N.cell_from_tags cleans)
+	for _, rec in pairs(s.recs) do rec.fkeys, rec.fpos, rec.fmoved = nil, nil, nil end
 	for _, surface in pairs(game.surfaces) do
 		for _, e in pairs(surface.find_entities_filtered{ name = NAME }) do register(e) end
 	end

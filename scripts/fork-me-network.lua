@@ -999,24 +999,62 @@ local function new_cell(name)
 	return { name = name, items = {}, data = {}, bytes = 0, types = 0 }
 end
 
+--- Issue #115: is there an item of this name (of this key's name)? Per load: `prototypes.item[name]` makes a new object at
+--- every call. The key cache is bounded (keys of items with tags are many).
+local item_known, key_known, key_known_n = {}, {}, 0
+local function item_exists(name)
+	local v = item_known[name]
+	if v == nil then
+		v = prototypes.item[name] ~= nil
+		item_known[name] = v
+	end
+	return v
+end
+local function key_item_exists(key)
+	local v = key_known[key]
+	if v == nil then
+		if key_known_n >= 4096 then key_known, key_known_n = {}, 0 end
+		v = item_exists((parse_key(key)))
+		key_known[key], key_known_n = v, key_known_n + 1
+	end
+	return v
+end
+M.item_exists = item_exists
+M.key_item_exists = key_item_exists
+
 --- Issue #3: items that were replaced by another one (the old fluid blocks -> the unified blocks; mod-data
 --- "fork-me-fluids", unified.items). Keys of such items are read as the key of the new item wherever stored keys
 --- come back (cell tags, partitions, patterns, level maintainers, circuit filters).
-local alias_map
+--- Issue #503: items another mod removed or renamed (ME_NETWORK.replace_item, mod-data "fork-me-network", replaced_items)
+--- are read as their replacement only while the old item no longer exists: a mod's JSON migration may rename an item it
+--- keeps (Gregtorio's small lamp), and what the network stores of it keeps its name. A chain (a -> b in one update, b -> c
+--- in a later one) is followed to its first item that exists.
+local alias_map                       -- { unified = { old -> new }, replaced = { old -> new } } (a table: the main chunk's locals are few)
 function M.alias(name)
 	if not alias_map then
 		local md = prototypes.mod_data["fork-me-fluids"]
-		alias_map = md and md.data.unified and md.data.unified.items or {}
+		alias_map = { unified = md and md.data.unified and md.data.unified.items or {}, replaced = mod_data().replaced_items or {} }
 	end
-	return alias_map[name]
+	local new = alias_map.unified[name]
+	local replaced = alias_map.replaced
+	if new or not replaced[name] or item_exists(name) then return new end
+	new = replaced[name]
+	for _ = 1, 8 do
+		if item_exists(new) or not replaced[new] then break end
+		new = replaced[new]
+	end
+	return new
 end
 
---- the key of the replacing item for a key of a replaced one (items with tags keep their key)
+--- the key of the replacing item for a key of a replaced one (items with tags keep their key; issue #503: unless their item
+--- is gone, then they keep their quality and tags under the replacing item)
 local function alias_key(key)
-	if type(key) ~= "string" or is_fluid_key(key) or key:find("#", 1, true) then return key end
-	local name, q = parse_key(key)
+	if type(key) ~= "string" or is_fluid_key(key) then return key end
+	local tagged = key:find("#", 1, true)
+	if tagged and key_item_exists(key) then return key end
+	local name, q, json = parse_key(key)
 	local new = M.alias(name)
-	return new and key_of(new, q) or key
+	return new and key_of(new, q, json) or key
 end
 M.alias_key = alias_key
 
@@ -3183,27 +3221,6 @@ local function awaited(net, key)
 	return M.awaiting(net, key) or 0
 end
 
---- Issue #115: is there an item of this name (of this key's name)? Per load: `prototypes.item[name]` makes a new object at
---- every call. The key cache is bounded (keys of items with tags are many).
-local item_known, key_known, key_known_n = {}, {}, 0
-local function item_exists(name)
-	local v = item_known[name]
-	if v == nil then
-		v = prototypes.item[name] ~= nil
-		item_known[name] = v
-	end
-	return v
-end
-local function key_item_exists(key)
-	local v = key_known[key]
-	if v == nil then
-		if key_known_n >= 4096 then key_known, key_known_n = {}, 0 end
-		v = item_exists((parse_key(key)))
-		key_known[key], key_known_n = v, key_known_n + 1
-	end
-	return v
-end
-
 --- the public API: plain items by name and quality; nothing happens when the network does not work
 function M.insert(net, name, quality, count)
 	if not (M.usable(net) and item_exists(name)) then return 0 end
@@ -5032,6 +5049,166 @@ function M.graph_sig()
 		parts[#parts + 1] = name .. "=" .. k[name] .. ":" .. (p.tile_width or 1) .. "x" .. (p.tile_height or 1)
 	end
 	return table.concat(parts, ";")
+end
+
+--- Issue #503: the stored key of an item that no longer exists (a mod removed or renamed it; a JSON migration renames items
+--- in the engine's inventories only, never in `storage`) is the key of its replacement (M.alias: the same quality and tags),
+--- or nil when there is none: it is dropped, as the engine drops removed items. Other keys (fluids too) come back as they are.
+function M.live_key(key)
+	if type(key) ~= "string" or is_fluid_key(key) or key_item_exists(key) then return key end
+	local new = alias_key(key)
+	if new ~= key and key_item_exists(new) then return new end
+	return nil
+end
+
+--- Issue #503: a key set ({ key -> true }) with live keys only, nil when empty; `set` itself when nothing changed
+function M.live_set(set)
+	if type(set) ~= "table" then return set end
+	local dead
+	for key in pairs(set) do
+		if M.live_key(key) ~= key then dead = true break end
+	end
+	if not dead then return set end
+	local out = {}
+	for key in pairs(set) do
+		local k = M.live_key(key)
+		if k then out[k] = true end
+	end
+	return next(out) and out or nil
+end
+
+--- Issue #503: a list of keys (or item names) with live ones only, in their order, without doubles; `list` itself when
+--- nothing changed
+function M.live_list(list)
+	if type(list) ~= "table" then return list end
+	local dead
+	for _, key in ipairs(list) do
+		if M.live_key(key) ~= key then dead = true break end
+	end
+	if not dead then return list end
+	local out, seen = {}, {}
+	for _, key in ipairs(list) do
+		local k = M.live_key(key)
+		if k and not seen[k] then
+			seen[k] = true
+			out[#out + 1] = k
+		end
+	end
+	return out
+end
+
+--- Issue #503: the contents of a cell record (`items` and `data`) with live keys only: a replaced item's count added to its
+--- replacement's (its data kept unless the replacement has its own), a removed one's dropped. `note(old, count, new)` is told
+--- of each dead key. Returns the new items and data, or nil when the cell holds no dead key.
+function M.live_contents(items, data, note)
+	local dead
+	for key in pairs(items) do
+		if M.live_key(key) ~= key then dead = true break end
+	end
+	if not dead then return nil end
+	local keys = {}
+	for key in pairs(items) do keys[#keys + 1] = key end
+	table.sort(keys)
+	local out, odata = {}, {}
+	for _, key in ipairs(keys) do
+		local k = M.live_key(key)
+		if k then out[k] = (out[k] or 0) + items[key] end
+		if k ~= key then note(key, items[key], k) end
+	end
+	for _, key in ipairs(keys) do                     -- (the data of a live key first, a replaced key's only where none)
+		local d = data and data[key]
+		if d and M.live_key(key) == key then odata[key] = d end
+	end
+	for _, key in ipairs(keys) do
+		local k, d = M.live_key(key), data and data[key]
+		if d and k and k ~= key and odata[k] == nil and out[k] then odata[k] = d end
+	end
+	return out, odata
+end
+
+--- Issue #503: the dead keys met by the cleaning of on_configuration_changed (this module's and the other modules'), by item
+--- name: { count, new } (per load: logged by M.log_removed_items, once per name)
+M.dead_names = {}
+function M.note_removed_item(key, count, new)
+	local name = parse_key(key)
+	local r = M.dead_names[name]
+	if not r then
+		r = { 0, new and (parse_key(new)) or nil }
+		M.dead_names[name] = r
+	end
+	r[1] = r[1] + (count or 0)
+end
+--- `ME-REMOVED-ITEM <name> <count>` (dropped) or `ME-REPLACED-ITEM <name> <new> <count>` for each name noted, with the amount
+--- the cells held (0: only settings named it)
+function M.log_removed_items()
+	local names = {}
+	for name in pairs(M.dead_names) do names[#names + 1] = name end
+	table.sort(names)
+	for _, name in ipairs(names) do
+		local r = M.dead_names[name]
+		local n = r[1] == math.floor(r[1]) and string.format("%d", r[1]) or tostring(r[1])
+		log(r[2] and ("ME-REPLACED-ITEM " .. name .. " " .. r[2] .. " " .. n) or ("ME-REMOVED-ITEM " .. name .. " " .. n))
+	end
+	M.dead_names = {}
+	return #names
+end
+
+--- Issue #503: the cells in the drives and ME Chests and the snapshots of the storage buses with live keys only, before the
+--- graph rebuild of on_configuration_changed computes every network's totals and index from them: a cell's contents,
+--- partition (or blacklist) and cards; a creative cell holds its amount of every key of its list.
+function M.clean_removed_items()
+	local s = state()
+	local units = {}
+	for unit in pairs(s.drives) do units[#units + 1] = unit end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local d = s.drives[unit]
+		for slot = 1, drive_slots() do
+			local cell = d.slots[slot]
+			local spec = cell and cell_spec(cell.name)
+			if spec then
+				local changed
+				local items, data = M.live_contents(cell.items, cell.data, spec.creative and function() end or M.note_removed_item)
+				if items then
+					changed = true
+					cell.items, cell.data, cell.bytes, cell.types = {}, {}, 0, 0
+					local keys = {}
+					for key in pairs(items) do keys[#keys + 1] = key end
+					table.sort(keys)
+					for _, key in ipairs(keys) do
+						if not spec.creative then cell_add(cell, spec, key, items[key]) end
+						if data[key] then cell.data[key] = data[key] end
+					end
+				end
+				for _, field in ipairs({ "partition", "deny", "gkeys" }) do
+					local set = M.live_set(cell[field])
+					if set ~= cell[field] then
+						for key in pairs(cell[field]) do if M.live_key(key) ~= key then M.note_removed_item(key, 0, M.live_key(key)) end end
+						cell[field], changed = set, true
+					end
+				end
+				local cards = M.live_list(cell.cards)
+				if cards ~= cell.cards then cell.cards, changed = cards, true end
+				if changed then
+					if spec.creative then
+						cell.items = {}
+						for key in pairs(cell.partition or {}) do cell.items[key] = M.CREATIVE end
+					end
+					M.apply_cell_cards(cell)
+					s.dirty[unit] = true
+				end
+			end
+		end
+	end
+	units = {}
+	for unit in pairs(s.ext) do units[#units + 1] = unit end
+	table.sort(units)
+	for _, unit in ipairs(units) do
+		local cell = s.ext[unit]
+		local items, data = M.live_contents(cell.items or {}, cell.data, function() end)   -- (a snapshot: the storage holds the items)
+		if items then cell.items, cell.data, cell.full = items, data, nil end
+		cell.partition = M.live_set(cell.partition)
+	end
 end
 
 --- Issue #420: the graph the build and removal events kept is taken over when it still matches the world: made with the same

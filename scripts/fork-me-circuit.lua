@@ -135,10 +135,14 @@ local function valid_key(key, exact)
 		if k and exact then k = N.fluid_storage_key(k) end
 		return k
 	end
-	--- issue #352: an item in any quality the game has ("name@quality"); a replaced item: its replacement (issue #3)
+	--- issue #352: an item in any quality the game has ("name@quality"); a replaced item: its replacement (issue #3; issue #503:
+	--- also an item another mod removed with a replacement, ME_NETWORK.replace_item)
 	local name, q = N.parse_key(key)
-	if key:find("#", 1, true) or not (prototypes.item[name] and prototypes.quality[q]) then return nil end
-	return N.key_of(N.alias(name) or name, q)
+	if key:find("#", 1, true) or not prototypes.quality[q] then return nil end
+	local new = N.alias(name)
+	if new and prototypes.item[new] then return N.key_of(new, q) end
+	if not prototypes.item[name] then return nil end
+	return N.key_of(name, q)
 end
 
 --- SignalID of a key, and the key of a SignalID (items and fluids only)
@@ -164,6 +168,7 @@ end
 
 --- the sum of the key's signal on the red and green wire
 local function circuit_amount(entity, key)
+	if not (is_fluid(key) or N.key_item_exists(key)) then return 0 end   -- (issue #503: the engine refuses an unknown name)
 	local sig, n = signal_of(key), 0
 	for _, w in pairs(WIRES) do
 		local cn = entity.get_circuit_network(w)
@@ -438,18 +443,19 @@ local function drop_circuit(s, unit)
 	remove_value(s.clist, unit)
 end
 
---- the parts of a key for its signal: { type, name, quality, order } (`order`: type, name and quality as one string
---- for the tie-break of the sort); a pure memo, kept per load
+--- the parts of a key for its signal: { type, name, quality, order, gone } (`order`: type, name and quality as one string
+--- for the tie-break of the sort; `gone`: issue #503, no prototype of that name or quality, so no signal); a pure memo, kept
+--- per load
 local parsed = {}
 local function parts(key)
 	local p = parsed[key]
 	if p then return p end
 	if is_fluid(key) then
 		local name = fluid_name(key)
-		p = { "fluid", name, nil, "fluid\1" .. name .. "\1" }
+		p = { "fluid", name, nil, "fluid\1" .. name .. "\1", prototypes.fluid[name] == nil }
 	else
 		local name, q = N.parse_key(key)
-		p = { "item", name, q, "item\1" .. name .. "\1" .. q }
+		p = { "item", name, q, "item\1" .. name .. "\1" .. q, not N.item_exists(name) or prototypes.quality[q] == nil }
 	end
 	parsed[key] = p
 	return p
@@ -458,13 +464,15 @@ end
 --- the signals of a network: { { type, name, quality, count, order } } sorted by type, name and quality (`order`);
 --- `filter` (key -> true) limits them to those resources. Items with tags count under their item and quality; fluids
 --- from 1 unit, rounded down. Issue #5: straight from the network's totals, in a fixed order (the 1000 an interface
---- writes are chosen by amount in `view`).
+--- writes are chosen by amount in `view`). Issue #503: a key whose item or fluid no longer exists (on_configuration_changed
+--- maps or drops such keys; one it missed) makes no signal: the engine refuses an unknown name.
 local function network_signals(net, filter)
 	local out, by_item = {}, {}
 	if N.usable(net) then
 		for key, count in pairs(net.items) do
 			local p = parts(key)
-			if p[1] == "item" then
+			if p[5] then                                     -- (issue #503: no signal of a name the game does not know)
+			elseif p[1] == "item" then
 				if not filter or filter[p[2]] then
 					local sig = by_item[p[4]]
 					if sig then sig.count = sig.count + count
@@ -548,14 +556,31 @@ end
 
 --- The network's list now. `n` counts the lists that differ (the version an interface wrote); a new list equal to the last
 --- one keeps it and its `n`; `diff` names the slots that changed since list `n - 1` (issue #420).
+--- issue #503: a list kept in storage that names an item or fluid the game no longer knows (a save loaded without
+--- on_configuration_changed, which makes the lists again) is made again: checked once per list and load
+local live_lists = setmetatable({}, { __mode = "k" })
+local function live_list(list)
+	local v = live_lists[list]
+	if v == nil then
+		v = true
+		for _, sig in ipairs(list) do
+			if not (sig.type == "fluid" and prototypes.fluid[sig.name] or sig.type == "item" and N.item_exists(sig.name)
+				and prototypes.quality[sig.quality or "normal"]) then v = false break end
+		end
+		live_lists[list] = v
+	end
+	return v
+end
+
 local function signals_of(net)
-	if not stale(net) then return net.sigs end
+	if not stale(net) and live_list(net.sigs.list) then return net.sigs end
 	local old = net.sigs
 	local list = network_signals(net)
 	if old and old.n and same_signals(old.list, list) then
 		old.cver, old.tick = net.cver, game.tick
 		return old
 	end
+	live_lists[list] = true                              -- (network_signals makes no signal of an unknown name)
 	local c = { cver = net.cver, tick = game.tick, list = list, n = (old and old.n or 0) + 1 }
 	if old and old.n then c.diff = slot_diff(old.list, list) end
 	net.sigs = c
@@ -917,6 +942,16 @@ autocraft.blueprint_hooks[#autocraft.blueprint_hooks + 1] = tag_blueprint
 
 --- Rebuild the registries from the world; settings are kept by unit number, resources that no longer
 --- exist are dropped.
+--- Issue #503: before on_configuration_changed (control.lua) the networks' shared signal lists (net.sigs) are made again at
+--- their next use: a list may name an item that is gone, and the engine refuses it (the version numbers go on, so every
+--- interface writes the new list)
+function M.clean_removed_items()
+	local s = storage.fork_me_net
+	for _, net in pairs(s and s.nets or {}) do
+		if net.sigs then net.sigs.cver, net.sigs.tick, net.sigs.list, net.sigs.diff = nil, -CIRCUIT_INTERVAL - 1, {}, nil end
+	end
+end
+
 function M.on_configuration_changed()
 	local s = state()
 	local old_m, old_c = s.maintainers, s.circuits
@@ -946,14 +981,34 @@ function M.on_configuration_changed()
 							rows[1].job = r.job or rows[1].job
 						end
 					end
-					rec.circuit_all, rec.crows = old.circuit_all, old.crows
+					rec.circuit_all = old.circuit_all
+					--- issue #503: the circuit's rows by key, a replaced item's under its replacement, a removed one's dropped
+					if old.crows then
+						local keys = {}
+						for k in pairs(old.crows) do keys[#keys + 1] = k end
+						table.sort(keys)
+						rec.crows = {}
+						for _, k in ipairs(keys) do
+							local nk = valid_key(k, true)
+							if nk and not rec.crows[nk] then
+								local row = old.crows[k]
+								if type(row) == "table" then row.key = nk end
+								rec.crows[nk] = row
+							end
+						end
+					end
 				end
 			else
 				local rec = circuit_record(s, e)
 				local old = old_c[unit]
 				if old then
-					for _, k in pairs(old.filters or {}) do
-						if valid_key(k) and #rec.filters < MAX_FILTERS then rec.filters[#rec.filters + 1] = k end
+					local seen = {}
+					for _, k in pairs(old.filters or {}) do            -- (issue #503: a replaced item's key is its replacement's)
+						local nk = valid_key(k)
+						if nk and not seen[nk] and #rec.filters < MAX_FILTERS then
+							seen[nk] = true
+							rec.filters[#rec.filters + 1] = nk
+						end
 					end
 				end
 			end

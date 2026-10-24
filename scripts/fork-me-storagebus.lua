@@ -915,6 +915,39 @@ function M.tag_blueprint(bp, mapping)
 	end
 end
 
+--- Issue #503: before on_configuration_changed (control.lua) a filter of an item that no longer exists is its replacement's
+--- (ME_NETWORK.replace_item, quality kept) or dropped, and the fields the storage engine reads follow (the snapshot's keys:
+--- N.clean_removed_items); the damaged keys seen are forgotten with their item
+function M.clean_removed_items()
+	local s = N.state()
+	for _, rec in pairs(s.ext) do
+		if rec.ext == KIND then
+			local changed
+			if type(rec.filters) == "table" then
+				local out, seen = {}, {}
+				for _, key in ipairs(rec.filters) do
+					local k = key
+					--- (a plain name that is no item but a fluid stays: clean_filters)
+					if type(key) == "string" and not N.is_fluid_key(key) and not prototypes.fluid[key] then
+						k = N.live_key(key)
+						if k ~= key then
+							N.note_removed_item(key, 0, k)
+							changed = true
+						end
+					end
+					if k and not seen[k] then
+						seen[k] = true
+						out[#out + 1] = k
+					end
+				end
+				if changed then rec.filters = out end
+			end
+			if type(rec.dmg) == "table" then rec.dmg = N.live_set(rec.dmg) end
+			if changed then apply(rec) end
+		end
+	end
+end
+
 --- after the graph rebuild: every storage bus has a record and is in the visit list of its side, targets are found
 --- again (the fluid side claims its segments in unit order)
 function M.on_configuration_changed()

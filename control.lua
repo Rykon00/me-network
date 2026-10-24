@@ -266,6 +266,15 @@ script.on_configuration_changed(function(data)
 		end
 	end
 	handover.pull()
+	--- issue #503: the keys of items that no longer exist (a mod removed or renamed them; a JSON migration renames items in the
+	--- engine's inventories only), mapped onto their replacement (ME_NETWORK.replace_item) or dropped, before anything reads
+	--- them: the cells and storage bus snapshots (the graph rebuild computes the totals and the index from them), the jobs, the
+	--- signal lists, the rows and filters of the blocks (their modules' passes below drop what is still unknown)
+	fork_net.clean_removed_items()
+	fork_sbus.clean_removed_items()
+	fork_ae2.clean_removed_items()
+	fork_circuit.clean_removed_items()
+	fork_io.clean_removed_items()
 	--- the graph first (the only map scan), then the modules that read it
 	fork_net.rebuild()
 	--- issue #146: the reports of the conversions of old saves (0.5.0 and older) are gone with them
@@ -285,4 +294,5 @@ script.on_configuration_changed(function(data)
 	fork_qbridge.on_configuration_changed()
 	fork_conn.on_configuration_changed()                      -- (issue #412: every bus and interface gets its connector)
 	names.on_configuration_changed()
+	fork_net.log_removed_items()                              -- (issue #503: ME-REMOVED-ITEM / ME-REPLACED-ITEM, once per name)
 end)
