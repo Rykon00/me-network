@@ -18,7 +18,7 @@ No zip holds both licenses. The build fails and deletes both zips when the me-ne
 ae2-textures/, a file with the bytes of an image of ae2-textures/MANIFEST.tsv or of its AE2 source, the CC BY-NC-SA
 3.0 text, or a Lua file or info.json naming the texture mod (me-network never knows it), or lacks LICENSE; and when
 the texture zip holds anything but its own files (tools/ae2_manifest.py: MOD_FILES, DOCS, locale/<language>/*.cfg)
-and the images of its manifest with their bytes, or the GPL text.
+and the images of its manifest with their bytes (in graphics/ and its thumbnail.png, issue #500), or the GPL text.
 """
 import argparse, hashlib, json, os, re, shutil, sys, zipfile
 from pathlib import Path
@@ -156,6 +156,12 @@ def check_texture_zip(path, root=ROOT):
                 problems.append(f"{name}: {rel} has no row in {M.MOD_FOLDER}/MANIFEST.tsv")
             elif not src.is_file() or M.sha256(src) != h:
                 problems.append(f"{name}: {rel} is not the bytes of {M.FOLDER}/{f}")
+        elif rel == M.THUMBNAIL:
+            src = M.image_path(M.THUMBNAIL, root)
+            if M.THUMBNAIL not in files:
+                problems.append(f"{name}: {rel} has no row in {M.MOD_FOLDER}/MANIFEST.tsv")
+            elif not src.is_file() or M.sha256(src) != h:
+                problems.append(f"{name}: {rel} is not the bytes of {M.image_name(M.THUMBNAIL)}")
         if h == gpl or rel == "LICENSE":
             problems.append(f"{name}: {rel} is the GPLv3 text; the texture zip is CC BY-NC-SA 3.0 only")
     for d in M.DOCS + M.MOD_FILES:

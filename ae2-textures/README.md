@@ -36,7 +36,10 @@ in the repository.
   [Applied-Energistics-2-Unofficial](https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial), commit
   `ab15e3a7259cbd9a7088138fade46e5f6f02ad18` (those of issue #447: `bad045fcbc5515215cc80911a075869eb916d563`, whose textures of the older files are
   the same), folders `src/main/resources/assets/appliedenergistics2/textures/items/`
-  and `.../textures/blocks/` (the look GT New Horizons plays); `MANIFEST.tsv` names each file's source(s). The item
+  and `.../textures/blocks/` (the look GT New Horizons plays); `MANIFEST.tsv` names each file's source(s). The mod's
+  thumbnail `thumbnail.png` (ME Network issue #500) is AE2-Unofficial's own mod logo,
+  `src/main/resources/assets/appliedenergistics2/meta/logo.png` at commit `1ee52dfda9892f0a881249fccc0c20c828c53996`,
+  scaled from 640 x 640 to 144 x 144 by `tools/scale_ae2_icons.py`. The item
   icons are scaled from 16 x 16 to the size of the icon they replace (32 or 64 px, nearest neighbour, no new pixels)
   by `tools/scale_ae2_icons.py` of the repository, which first swaps some colours of the fluid cells and the
   interface capacity card. The blocks and their icons are made from a block face by `tools/ae2_blocks.py`: the face
@@ -69,6 +72,7 @@ What the license means for this mod, in short:
 | `data-final-fixes.lua` | sets those files on the prototypes by name (ME Network never renames a prototype); what it cannot apply it skips with a line in the log (`devcheck check` fails on it) |
 | `locale/en/` | the mod's name and description |
 | `changelog.txt` | this mod's own changelog |
+| `thumbnail.png` | the mod's picture on the mod portal and in the game's mod list: AE2-Unofficial's logo (ME Network issue #500), with its row in `MANIFEST.tsv` (file `thumbnail.png`) |
 | `graphics/` | the AE2-derived images, each with its row in `MANIFEST.tsv`: `icons/cells/`, `icons/cards/`, `icons/patterns/`, `icons/blocks/`, `blocks/` (with `blocks/lights/`: a texture the working molecular assembler is made with) |
 | `LICENSE-CC-BY-NC-SA-3.0.txt`, `README.md`, `MANIFEST.tsv` | the license, this text, the manifest |
 
@@ -78,7 +82,7 @@ What the license means for this mod, in short:
 
 | Column | Contents |
 |---|---|
-| `file` | the image's path inside `graphics/` |
+| `file` | the image's path inside `graphics/`, or `thumbnail.png` for the mod's thumbnail |
 | `repository` | the AE2 repository it was taken from |
 | `source` | its path in that repository; a picture made from several textures of the same checkout (a block and its lights) lists them all, separated by `;` |
 | `commit` | the commit of the checkout it was taken from |

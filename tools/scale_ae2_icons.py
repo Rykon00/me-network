@@ -4,13 +4,14 @@ replace: nearest neighbour by an integer factor, so every pixel becomes a block 
 value appears. Palette images are written as RGBA with the same colours and transparency. Before scaling, the files
 of RECOLOUR get some of their colours swapped for others (issues #250, #251, #294: me-network items that AE2-Unofficial
 has no icon for take the icon of a related AE2-Unofficial item in other colours), in the whole icon or in a box of
-it; every other pixel stays as it is.
+it; every other pixel stays as it is. The mod's thumbnail (issue #500, AE2-Unofficial's logo) is scaled down from
+640 x 640 to 144 x 144 (THUMBNAIL_SIZE).
 
     python tools/scale_ae2_icons.py            # recolour and scale what is still 16 x 16, record it with --mark-changed
     python tools/scale_ae2_icons.py --check    # only say which files are not at their size yet
 
 The files are CC BY-NC-SA 3.0 (ae2-textures/README.md): this script reads only from ae2-textures/graphics/ and
-writes only into it, and records each changed file with `tools/import_ae2_textures.py --mark-changed`. SIZES is the
+ae2-textures/thumbnail.png and writes only into them, and records each changed file with `tools/import_ae2_textures.py --mark-changed`. SIZES is the
 icon size of the me-network prototype each file stands in for (its `icon_size`; ae2-textures/overrides.lua names
 the prototype). A file imported again (`--replace`) is 16 x 16 again and is recoloured and scaled by the next run.
 """
@@ -20,7 +21,7 @@ from pathlib import Path
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ae2_manifest import read_manifest
+from ae2_manifest import THUMBNAIL, read_manifest
 
 ROOT = Path(__file__).resolve().parent.parent
 GRAPHICS = ROOT / "ae2-textures" / "graphics"
@@ -61,6 +62,13 @@ SIZES = {
     **{f"technology/me-storage-{t}.png": 256 for t in ("1024k", "4096k", "16384k", "singularity")},
     **{f"technology/me-fluid-storage-{t}.png": 256 for t in ("1024k", "4096k", "16384k")},
 }
+
+# issue #500: the mod's thumbnail (ae2-textures/thumbnail.png, manifest file "thumbnail.png") is AE2-Unofficial's mod
+# logo, 640 x 640, scaled down to the size the mod portal and the game's mod list show (144 x 144). 640 / 144 is no
+# whole number, so it is the one file here scaled with new pixel values (Lanczos) instead of nearest neighbour.
+THUMBNAIL_PATH = ROOT / "ae2-textures" / THUMBNAIL
+THUMBNAIL_SOURCE = 640
+THUMBNAIL_SIZE = 144
 
 # file -> (what it is, {colour of the source: colour it becomes}[, (x0, y0, x1, y1): only in this box of the 16 px
 # source, ends excluded]); each source colour must be in the file (in the box)
@@ -146,6 +154,17 @@ def scale(path, size, name):
     return out
 
 
+def scale_thumbnail(path):
+    """the thumbnail (issue #500) scaled to THUMBNAIL_SIZE, or None when it is at that size already"""
+    im = Image.open(path)
+    if im.size == (THUMBNAIL_SIZE, THUMBNAIL_SIZE):
+        return None
+    if im.size != (THUMBNAIL_SOURCE, THUMBNAIL_SOURCE):
+        sys.exit(f"scale_ae2_icons: {path.relative_to(ROOT)} is {im.size[0]} x {im.size[1]}, expected "
+                 f"{THUMBNAIL_SOURCE} x {THUMBNAIL_SOURCE} (AE2-Unofficial's logo) or {THUMBNAIL_SIZE} x {THUMBNAIL_SIZE}")
+    return im.convert("RGBA").resize((THUMBNAIL_SIZE, THUMBNAIL_SIZE), Image.LANCZOS)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="change nothing, list the files not at their size")
@@ -158,6 +177,11 @@ def main():
         out = scale(path, size, name)
         if out is not None:
             todo.append((name, size, path, out))
+    if not THUMBNAIL_PATH.is_file():
+        sys.exit(f"scale_ae2_icons: ae2-textures/{THUMBNAIL} is missing (import it first)")
+    out = scale_thumbnail(THUMBNAIL_PATH)
+    if out is not None:
+        todo.append((THUMBNAIL, THUMBNAIL_SIZE, THUMBNAIL_PATH, out))
     if a.check:
         for name, size, _, _ in todo:
             print(f"not scaled yet: {name} (to {size} x {size})")
@@ -165,15 +189,20 @@ def main():
     notes = {r["file"]: r["note"] for r in read_manifest()[0]}
     for name, size, path, out in todo:
         out.save(path)
-        k = size // SOURCE
-        mapping = RECOLOUR.get(name, (None, {}))[1]
-        swaps = ", ".join(f"{old} -> {new}" for old, new in mapping.items())
-        change = f"recoloured ({RECOLOUR[name][0]}: {swaps}), " if name in RECOLOUR else ""
-        note = (f"{notes.get(name, '').strip()}; {change}scaled from {SOURCE} x {SOURCE} to {size} x {size} (x{k}, "
-                "nearest neighbour, no new pixels; saved as RGBA) by tools/scale_ae2_icons.py").lstrip("; ")
+        if name == THUMBNAIL:
+            scaled = (f"scaled from {THUMBNAIL_SOURCE} x {THUMBNAIL_SOURCE} to {size} x {size} (Lanczos, the factor is "
+                      "no whole number; saved as RGBA) by tools/scale_ae2_icons.py")
+        else:
+            k = size // SOURCE
+            mapping = RECOLOUR.get(name, (None, {}))[1]
+            swaps = ", ".join(f"{old} -> {new}" for old, new in mapping.items())
+            change = f"recoloured ({RECOLOUR[name][0]}: {swaps}), " if name in RECOLOUR else ""
+            scaled = (f"{change}scaled from {SOURCE} x {SOURCE} to {size} x {size} (x{k}, nearest neighbour, no new "
+                      "pixels; saved as RGBA) by tools/scale_ae2_icons.py")
+        note = f"{notes.get(name, '').strip()}; {scaled}".lstrip("; ")
         subprocess.run([sys.executable, str(ROOT / "tools" / "import_ae2_textures.py"), "--mark-changed", name,
                         "--note", note], check=True)
-    print(f"changed: {len(todo)}, at their size already: {len(SIZES) - len(todo)}")
+    print(f"changed: {len(todo)}, at their size already: {len(SIZES) + 1 - len(todo)}")
 
 
 if __name__ == "__main__":
