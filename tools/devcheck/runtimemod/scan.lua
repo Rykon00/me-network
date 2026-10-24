@@ -25,7 +25,7 @@ local function craft(recipe) return { kind = "crafting", recipe = recipe } end
 
 --- the providers: the machine (above the provider), its recipe, the patterns and their reasons with nothing changed
 local CASES = {
-	{ machine = "ev-macerator", recipe = "crushed-iron",
+	{ machine = "zz-devcheck-macerator", recipe = "crushed-iron",               -- (data-final-fixes.lua)
 		patterns = { craft("crushed-iron"), pat({ ["raw-iron"] = 1 }, { ["crushed-iron"] = 2 }), craft(RESEARCH), craft("hydrochloric-acid") },
 		want = { "ok", "ok", "ok", "category" } },
 	{ machine = "hv-chemical-reactor", recipe = "hydrochloric-acid",

@@ -922,6 +922,8 @@ tagdamaged481 = require("tagdamaged")({ me_place = me_place, power = power, me_r
 tagcraft480 = require("tagcraft")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #485: items with tags and a label, stored with their label (taglabel.lua)
 taglabel485 = require("taglabel")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #493: an export bus with a Fuzzy Card exports the keys with data of its items (fuzzydata.lua)
+fuzzydata493 = require("fuzzydata")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #110: the Acceleration Card in the ME Molecular Assembler's module slots (accel.lua)
 accel110 = require("accel")({ me_place = me_place, me_report = me_report })
 --- me-network issue #110, part 2: the Acceleration Cards of the import and export bus (busaccel.lua)
@@ -1116,6 +1118,7 @@ local function tests_running()
 	tagdamaged481.running(check)
 	tagcraft480.running(check)
 	taglabel485.running(check)
+	fuzzydata493.running(check)
 	lab86.running(check)
 	bulk382.running(check)
 	copypaste383.running(check)
@@ -1225,7 +1228,7 @@ function setup_autocraft_test(s)
 	place("me-molecular-assembler", 33.5, AC_Y + 0.5, "splitter")
 	place("me-pattern-provider", 34.5, AC_Y + 0.5)
 	--- a GT machine as pattern machine: crushing raw iron (may have several or probabilistic products)
-	place("ev-macerator", 16.5, AC_Y + 4.5, AC_CRUSH)
+	place("zz-devcheck-macerator", 16.5, AC_Y + 4.5, AC_CRUSH)     -- (Gregtorio #560: its macerator is a furnace)
 	local p3 = place("me-pattern-provider", 18.5, AC_Y + 4.5)
 	me_connect(fails, "autocraft", { ctrl, term, cpu, drive, p1, p2, p3 })
 	--- issue #80: the providers hold crafting patterns of their machines' recipes
@@ -2081,6 +2084,7 @@ script.on_nth_tick(10, function()
 	tagdamaged481.tick()
 	tagcraft480.tick()
 	taglabel485.tick()
+	fuzzydata493.tick()
 	lab86.tick()
 	bulk382.tick()
 	copypaste383.tick()
@@ -4975,6 +4979,7 @@ script.on_init(function()
 	for _, f in pairs(tagdamaged481.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(tagcraft480.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(taglabel485.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(fuzzydata493.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end

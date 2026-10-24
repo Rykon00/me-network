@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.4
+Date: 2026-10-24
+  Graphics:
+    - The mod has a thumbnail on the mod portal and in the game's mod list (ME Network issue #500): the logo of Applied-Energistics-2-Unofficial, the lit ME Controller, scaled to 144 x 144.
+---------------------------------------------------------------------------------------------------
 Version: 0.2.3
 Date: 2026-10-23
   Info:

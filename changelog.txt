@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.9
+Date: 2026-10-24
+  Changes:
+    - An ME Export Bus with a Fuzzy Card also exports its filters' items that carry something of their own (issue #493), as in AE2: turrets of Quality Turrets Reworked with kills and their label, damaged walls and other damaged buildings, items with tags. Each comes out with its kills, label, description and health, as a stack of its own beside the plain ones. Before, such items left the network only through the ME Terminal, a cell or the ME IO Port. Without the card an export bus still exports the plain item only.
+---------------------------------------------------------------------------------------------------
 Version: 0.5.8
 Date: 2026-10-23
   Bugfixes:

@@ -2839,9 +2839,10 @@ cannot carry one; so a veteran turret went into the network by no path.
   (`[fork-me-net] item-label`, bold), above its description and its health; its button has the yellow frame of every key
   with data.
 * **Unchanged:** the storage bus counts and moves plain stacks only (`N.plain_stack`), so a labelled stack stays in its
-  chest, and no storage bus stores a key with data (`N.never_stores`); the export bus (also with a Fuzzy Card, `gf_list`)
-  and the interface's rows hand out plain keys only, so a labelled key leaves through the terminal, `extract_to` of other
-  mods, a cell (its contents and data in the cell's tags, a table copied as it is) and the ME IO Port (`cell.data`).
+  chest, and no storage bus stores a key with data (`N.never_stores`); the export bus (with a Fuzzy Card since issue #493,
+  see "The Fuzzy Card exports keys with data") and the interface's rows hand out plain keys only, so a labelled key leaves
+  through the terminal, `extract_to` of other mods, a cell (its contents and data in the cell's tags, a table copied as it
+  is) and the ME IO Port (`cell.data`).
   Autocrafting moves plain keys only (#480). The refusal `cannot-store-label` and its locale line are gone; the other
   refusals keep their text.
 
@@ -2872,6 +2873,31 @@ stack stays in the chest in front of an ME Import Bus; with this change the bus 
 `gun-turret@normal#{"tags":{"kills":12},"description":["","Kills: ","12"],"label":"gun-turret (12 Kills)"}`, `extract_to`
 puts it into a passive provider chest with its label, tags and description, and a robot builds a ghost of the turret from
 it: the built turret has 12 kills.
+
+## The Fuzzy Card exports keys with data (issue #493)
+
+Until #493 the ME Export Bus handed out plain keys only: `M.gf_list` (`scripts/fork-me-io.lua`) skipped every key with data
+(`#`), so a turret with kills, a damaged wall or a loaded cell left the network through the terminal, a cell, the ME IO Port
+or `extract_to` of other mods only. AE2's export bus with a Fuzzy Card exports any item of its filter's kind whatever its NBT
+or damage (`parts/automation/ExportBusPart.java`: every key of `findFuzzy(what, fzMode)` of the cached inventory); without
+the card it exports exactly the filtered item. The maintainer chose AE2's way:
+
+* **With a Fuzzy Card** (and no Group Filter text) `gf_list` takes every key of a filter's item, plain or with data (tags,
+  label, description, health), in every quality; the keys go in turn as before. `N.extract_to` puts the data back on the
+  target (a labelled key through `N.put_labelled` into an empty slot), so nothing is lost; a chest then holds turrets with
+  kills beside new ones, each its own stack (they never merge).
+* **What the target held** (`rec.tgt`, in `storage`, for the rate of issue #38): a key with data counts under its item's
+  plain key (`N.key_of(name, quality)`), since `get_item_count` counts the item whatever its data; so `rec.tgt` gets no row
+  per turret's kills or wall's damage. The plain path (no card, no text) does not look at the key at all.
+* **Unchanged:** a bus without the card exports the plain key of its filter only; a Group Filter Card's text matches plain
+  keys only (its text names an item, its subgroup or group, not the item's data); the ME Interface's rows are plain keys.
+
+**Test** (`runtimemod/fuzzydata.lua`, `ME fuzzy export of items with data test`): a network's terminal stores 3 plain
+`zz-devcheck-tagged-wall` and 4 plain stone walls, a stack with the label "Wall (5 Kills)" (kills 5, its description), the
+same damaged (2 at 0.4), one with kills alone (7), 2 damaged ones without tags (0.6) and 3 damaged stone walls (0.5). An export
+bus without a card, the two items as its filters, moves the 7 plain ones only, and the five keys with data stay. Then a second
+bus gets a Fuzzy Card and the two filters: its chest holds the five stacks, each with its count, health, tags, label and
+description, and the network holds none of the two items. On main the second bus moves nothing.
 
 ## The Acceleration Card, part 1: the module and the ME Molecular Assembler (issue #110)
 

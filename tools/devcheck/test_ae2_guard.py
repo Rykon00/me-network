@@ -19,6 +19,7 @@ import build as B
 PNG = M.PNG_MAGIC + b"\0\0\0\rIHDR an AE2 texture"
 SRC_SHA = M.hashlib.sha256(PNG).hexdigest()
 REPO = "https://github.com/AppliedEnergistics/Applied-Energistics-2"
+REPO_U = "https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial"
 ROW = dict(file="drive/bottom.png", repository=REPO, source=M.REPOSITORIES[REPO] + "block/drive/drive_bottom.png",
            commit="de2b845e9d1e5ac137e05018e5fa1dbd9e58d427", source_sha256=SRC_SHA,
            author="(c) 2020, Ridanisaurus Rid, (c) 2013 - 2020 AlgorithmX2 et al", license=M.LICENSE,
@@ -52,7 +53,7 @@ class Guard(unittest.TestCase):
     def add(self, **change):
         """one imported texture: its file and its row"""
         row = dict(ROW, **change)
-        p = self.root / M.FOLDER / row["file"]
+        p = M.image_path(row["file"], self.root)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(PNG)
         self.rows.append(row)
@@ -176,8 +177,44 @@ class Guard(unittest.TestCase):
         self.fails("ae2-textures/control.lua: not a file of the texture mod")
 
     def test_image_outside_graphics(self):
-        (self.root / M.MOD_FOLDER / "thumbnail.png").write_bytes(PNG)
-        self.fails("ae2-textures/thumbnail.png: not a file of the texture mod")
+        (self.root / M.MOD_FOLDER / "cover.png").write_bytes(PNG)
+        self.fails("ae2-textures/cover.png: not a file of the texture mod")
+
+    # issue #500: the mod's thumbnail, the one AE2-derived image outside graphics/, may come from the mod logo
+    LOGO_ROW = dict(file=M.THUMBNAIL, repository=REPO_U, source=M.LOGOS[REPO_U],
+                    author="(c) 2013 - 2015 AlgorithmX2 et al", note="the mod's thumbnail")
+
+    def test_thumbnail_passes(self):
+        self.add(file=M.THUMBNAIL)
+        self.assertEqual(self.guard(), (1, []))
+
+    def test_thumbnail_from_logo_passes(self):
+        self.add(**self.LOGO_ROW).write_bytes(PNG + b"scaled")
+        self.rows[-1].update(changed="yes", note="scaled")
+        M.write_manifest(self.rows, self.root)
+        self.assertEqual(self.guard(), (1, []))
+
+    def test_thumbnail_without_row(self):
+        (self.root / M.MOD_FOLDER / M.THUMBNAIL).write_bytes(PNG)
+        self.fails("ae2-textures/thumbnail.png: no row in MANIFEST.tsv")
+
+    def test_thumbnail_not_a_png(self):
+        self.add(file=M.THUMBNAIL).write_bytes(b"GIF89a")
+        self.fails("ae2-textures/thumbnail.png: not a PNG file")
+
+    def test_logo_only_for_thumbnail(self):
+        self.add(**dict(self.LOGO_ROW, file="drive/bottom.png"))
+        self.fails(f"source {M.LOGOS[REPO_U]!r} is not under {M.REPOSITORIES[REPO_U]}")
+
+    def test_thumbnail_name_in_graphics(self):
+        self.add()
+        (self.root / M.FOLDER / M.THUMBNAIL).write_bytes(PNG + b"other")
+        self.fails("ae2-textures/graphics/thumbnail.png: the name thumbnail.png at the top of ae2-textures/graphics/ is kept")
+
+    def test_copy_of_thumbnail_outside_folder(self):
+        self.add(file=M.THUMBNAIL)
+        (self.root / "thumbnail.png").write_bytes(PNG)
+        self.fails("thumbnail.png is byte-identical to ae2-textures/thumbnail.png")
 
     def test_mod_file_missing(self):
         (self.root / M.MOD_FOLDER / "info.json").unlink()
@@ -272,6 +309,18 @@ class Guard(unittest.TestCase):
     def test_foreign_file_in_texture_zip(self):
         (self.root / M.MOD_FOLDER / "control.lua").write_text("-- GPLv3 code\n", encoding="utf-8")
         self.package_fails("control.lua is not a file of the texture mod")
+
+    def test_thumbnail_in_texture_zip(self):
+        self.add(file=M.THUMBNAIL)
+        me, tex, problems = self.packages()
+        self.assertEqual(problems, [])
+        version = json.loads((self.root / M.MOD_FOLDER / "info.json").read_text(encoding="utf-8"))["version"]
+        with zipfile.ZipFile(tex) as z:
+            self.assertIn(f"me-network-ae2-textures_{version}/thumbnail.png", z.namelist())
+
+    def test_thumbnail_without_row_in_texture_zip(self):
+        (self.root / M.MOD_FOLDER / M.THUMBNAIL).write_bytes(PNG)
+        self.package_fails("thumbnail.png has no row in ae2-textures/MANIFEST.tsv")
 
     def test_gpl_text_in_texture_zip(self):
         shutil.copyfile(ROOT / "LICENSE", self.root / M.MOD_FOLDER / "LICENSE")

@@ -17,8 +17,13 @@ repository's textures folder (ae2_manifest.REPOSITORIES: AE2 or GTNewHorizons' A
 checkout's `origin`), tracked by git and unchanged against HEAD, because the manifest records `git rev-parse HEAD`
 as the commit it came from, with the SHA-256 of the source. The author is the copyright line of "Textures and
 Models" in the checkout's README.md, which must name CC BY-NC-SA 3.0. The target is a PNG path inside
-ae2-textures/graphics/;
-an existing target or row is refused unless --replace says so.
+ae2-textures/graphics/, or `thumbnail.png` for the mod's thumbnail ae2-textures/thumbnail.png (issue #500), whose
+source may also be the repository's mod logo (ae2_manifest.LOGOS):
+
+    python tools/import_ae2_textures.py --ae2 ../Applied-Energistics-2-Unofficial \\
+        src/main/resources/assets/appliedenergistics2/meta/logo.png thumbnail.png --note "the mod's thumbnail"
+
+An existing target or row is refused unless --replace says so.
 
 A file made from more than one texture (issue #260: a block and its lights, all of the same checkout and commit) is
 imported from the first and gets the others with --add-source; it must then be changed (it is made from them) and
@@ -26,7 +31,8 @@ recorded with --mark-changed.
 
 The copy is byte-identical (changed: no). A file changed afterwards (recoloured, cropped, scaled to the sprite grid,
 put into an animation strip) stays CC BY-NC-SA 3.0: record it with --mark-changed and a note of what was done. A
-script that transforms these files reads only from ae2-textures/graphics/ and writes only into it, never into another
+script that transforms these files reads only from ae2-textures/graphics/ (and the thumbnail) and writes only into
+it (and the thumbnail), never into another
 graphics folder and never from one; tools/gen_ae2_sprites.py (GPLv3/LGPL) never touches them. The texture mod puts
 a file in place of one file or layer of me-network (ae2-textures/overrides.lua); the layers of another origin around
 it stay separate files.
@@ -35,8 +41,8 @@ import argparse, re, shutil, subprocess, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ae2_manifest import (COLUMNS, FOLDER, IMAGE_SUFFIXES, LICENSE, PNG_MAGIC, REPOSITORIES, ROOT, SOURCE_SEP,
-                          read_manifest, sha256, write_manifest)
+from ae2_manifest import (COLUMNS, FOLDER, IMAGE_SUFFIXES, LICENSE, LOGOS, PNG_MAGIC, REPOSITORIES, ROOT,
+                          SOURCE_SEP, THUMBNAIL, image_name, image_path, read_manifest, sha256, write_manifest)
 
 
 def fail(msg):
@@ -75,13 +81,14 @@ def author_of(checkout):
 def target_path(name):
     name = name.replace("\\", "/")
     if name.startswith("/") or ".." in name.split("/") or not name.lower().endswith(IMAGE_SUFFIXES):
-        fail(f"target {name!r} must be a relative path inside {FOLDER}/ ending in " + ", ".join(IMAGE_SUFFIXES))
-    return name, ROOT / FOLDER / name
+        fail(f"target {name!r} must be a relative path inside {FOLDER}/ ending in " + ", ".join(IMAGE_SUFFIXES)
+             + f", or {THUMBNAIL}")
+    return name, image_path(name)
 
 
-def checked_source(a):
+def checked_source(a, logo_ok=False):
     """(checkout, repository, path relative to it, absolute path, commit) of the source given with --ae2, after the
-    checks an import makes"""
+    checks an import makes; logo_ok: the repository's mod logo is a source too (the thumbnail, issue #500)"""
     checkout = Path(a.ae2).resolve()
     repo = repository_of(checkout)
     src = Path(a.source)
@@ -91,8 +98,9 @@ def checked_source(a):
     except ValueError:
         fail(f"{src} is not inside the AE2 checkout {checkout}")
     prefix = REPOSITORIES[repo]
-    if not rel.startswith(prefix):
-        fail(f"{rel} is not under the textures folder {prefix} of {repo}")
+    if not (rel.startswith(prefix) or (logo_ok and rel == LOGOS.get(repo))):
+        fail(f"{rel} is not under the textures folder {prefix} of {repo}"
+             + (f" and not its logo {LOGOS[repo]}" if logo_ok and repo in LOGOS else ""))
     if not src.is_file() or not rel.lower().endswith(IMAGE_SUFFIXES):
         fail(f"{rel} is not an image file (" + ", ".join(IMAGE_SUFFIXES) + ")")
     if src.read_bytes()[:len(PNG_MAGIC)] != PNG_MAGIC:
@@ -105,44 +113,44 @@ def checked_source(a):
 
 
 def do_import(a):
-    checkout, repo, rel, src, commit = checked_source(a)
-    author = author_of(checkout)
     name, dest = target_path(a.target)
+    checkout, repo, rel, src, commit = checked_source(a, logo_ok=name == THUMBNAIL)
+    author = author_of(checkout)
     rows, bad = read_manifest()
     if bad:
         fail("fix MANIFEST.tsv first: " + "; ".join(bad))
     known = [r for r in rows if r["file"] == name]
     if (known or dest.exists()) and not a.replace:
-        fail(f"{FOLDER}/{name} exists already" + (" in MANIFEST.tsv" if known else "") + "; pass --replace to overwrite it")
+        fail(f"{image_name(name)} exists already" + (" in MANIFEST.tsv" if known else "") + "; pass --replace to overwrite it")
     note = (a.note or "copied unchanged").strip()
     row = dict(file=name, repository=repo, source=rel, commit=commit, source_sha256=sha256(src), author=author,
                license=LICENSE, changed="no", note=note)
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(src, dest)
     write_manifest([r for r in rows if r["file"] != name] + [row])
-    print(f"{'replaced' if known or a.replace else 'imported'}: {FOLDER}/{name}")
+    print(f"{'replaced' if known or a.replace else 'imported'}: {image_name(name)}")
     for c in COLUMNS:
         print(f"  {c}: {row[c]}")
 
 
 def do_add_source(a):
     name, dest = target_path(a.add_source)
-    checkout, repo, rel, src, commit = checked_source(a)
+    checkout, repo, rel, src, commit = checked_source(a, logo_ok=name == THUMBNAIL)
     rows, bad = read_manifest()
     if bad:
         fail("fix MANIFEST.tsv first: " + "; ".join(bad))
     row = next((r for r in rows if r["file"] == name), None)
     if row is None or not dest.is_file():
-        fail(f"{FOLDER}/{name} has no row or no file; import it from its first source first")
+        fail(f"{image_name(name)} has no row or no file; import it from its first source first")
     if row["repository"] != repo or row["commit"] != commit:
-        fail(f"{rel} is from {repo} at {commit}, {FOLDER}/{name} from {row['repository']} at {row['commit']}: "
+        fail(f"{rel} is from {repo} at {commit}, {image_name(name)} from {row['repository']} at {row['commit']}: "
              "all sources of a file come from one checkout and commit")
     if rel in row["source"].split(SOURCE_SEP):
-        fail(f"{rel} is a source of {FOLDER}/{name} already")
+        fail(f"{rel} is a source of {image_name(name)} already")
     row.update(source=row["source"] + SOURCE_SEP + rel,
                source_sha256=row["source_sha256"] + SOURCE_SEP + sha256(src))
     write_manifest(rows)
-    print(f"added source: {FOLDER}/{name}: {rel} (record the change with --mark-changed)")
+    print(f"added source: {image_name(name)}: {rel} (record the change with --mark-changed)")
 
 
 def do_mark_changed(a):
@@ -154,12 +162,12 @@ def do_mark_changed(a):
         fail("fix MANIFEST.tsv first: " + "; ".join(bad))
     row = next((r for r in rows if r["file"] == name), None)
     if row is None or not dest.is_file():
-        fail(f"{FOLDER}/{name} has no row or no file")
+        fail(f"{image_name(name)} has no row or no file")
     if sha256(dest) in row["source_sha256"].split(SOURCE_SEP):
-        fail(f"{FOLDER}/{name} is still a source's bytes; change the file first")
+        fail(f"{image_name(name)} is still a source's bytes; change the file first")
     row.update(changed="yes", note=a.note.strip())
     write_manifest(rows)
-    print(f"changed: {FOLDER}/{name}: {row['note']}")
+    print(f"changed: {image_name(name)}: {row['note']}")
 
 
 def do_remove(a):
@@ -169,22 +177,22 @@ def do_remove(a):
         fail("fix MANIFEST.tsv first: " + "; ".join(bad))
     keep = [r for r in rows if r["file"] != name]
     if len(keep) == len(rows) and not dest.exists():
-        fail(f"{FOLDER}/{name} has no row and no file")
+        fail(f"{image_name(name)} has no row and no file")
     if dest.exists():
         dest.unlink()
     d = dest.parent
-    while d != ROOT / FOLDER and d.is_dir() and not any(d.iterdir()):
+    while name != THUMBNAIL and d != ROOT / FOLDER and d.is_dir() and not any(d.iterdir()):
         d.rmdir()
         d = d.parent
     write_manifest(keep)
-    print(f"removed: {FOLDER}/{name}")
+    print(f"removed: {image_name(name)}")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ae2", metavar="CHECKOUT", help="the AE2 (or AE2-Unofficial) checkout to copy from")
     ap.add_argument("source", nargs="?", help="the texture's path in the checkout")
-    ap.add_argument("target", nargs="?", help=f"the file's path inside {FOLDER}/")
+    ap.add_argument("target", nargs="?", help=f"the file's path inside {FOLDER}/, or {THUMBNAIL} (the mod's thumbnail)")
     ap.add_argument("--note", help="one line: what the file is for (import) or what was changed (--mark-changed)")
     ap.add_argument("--replace", action="store_true", help="overwrite an existing file and its row")
     ap.add_argument("--add-source", metavar="TARGET", help="with --ae2 CHECKOUT SOURCE: one more texture a file is made "
