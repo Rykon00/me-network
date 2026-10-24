@@ -1228,7 +1228,7 @@ function setup_autocraft_test(s)
 	place("me-molecular-assembler", 33.5, AC_Y + 0.5, "splitter")
 	place("me-pattern-provider", 34.5, AC_Y + 0.5)
 	--- a GT machine as pattern machine: crushing raw iron (may have several or probabilistic products)
-	place("ev-macerator", 16.5, AC_Y + 4.5, AC_CRUSH)
+	place("zz-devcheck-macerator", 16.5, AC_Y + 4.5, AC_CRUSH)     -- (Gregtorio #560: its macerator is a furnace)
 	local p3 = place("me-pattern-provider", 18.5, AC_Y + 4.5)
 	me_connect(fails, "autocraft", { ctrl, term, cpu, drive, p1, p2, p3 })
 	--- issue #80: the providers hold crafting patterns of their machines' recipes

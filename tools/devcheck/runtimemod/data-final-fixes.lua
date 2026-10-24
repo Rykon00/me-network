@@ -35,10 +35,29 @@ data:extend({ { type = "recipe", name = "zz-devcheck-paste-big", categories = { 
 	icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
 recipe("zz-devcheck-paste-fluids", 2, 5)       -- more fluids than the interface's four sides
 
+--- Gregtorio issue #560: Gregtorio's ore machines are furnaces since its 0.5.9 (they pick the recipe from their input, none
+--- is set). The tests that need a GT machine whose recipe is set (the autocraft test, scan.lua, providers.lua) take
+--- `zz-devcheck-macerator`, an assembling machine with the EV macerator's categories, speed and graphics (Gregtorio's, or
+--- the stand-in of data.lua); the furnace cases keep the iron furnace.
+do
+	local src = data.raw["assembling-machine"]["ev-macerator"] or data.raw.furnace["ev-macerator"]
+	if src then
+		local m = table.deepcopy(src)
+		m.type, m.name = "assembling-machine", "zz-devcheck-macerator"
+		m.source_inventory_size, m.result_inventory_size, m.cant_insert_at_source_message_key = nil, nil, nil
+		m.minable = { mining_time = 0.2, result = "zz-devcheck-macerator" }
+		m.next_upgrade, m.fast_replaceable_group = nil, nil
+		m.localised_name = src.localised_name or { "entity-name.ev-macerator" }
+		data:extend({ m, { type = "item", name = "zz-devcheck-macerator", localised_name = m.localised_name,
+			icon = "__base__/graphics/icons/signal/signal-info.png", stack_size = 50, place_result = "zz-devcheck-macerator",
+			subgroup = "intermediate-product" } })
+	end
+end
+
 --- The provider scan test (me-network issue #50, lever 6, scan.lua): a recipe of the macerator's category whose research the
 --- test takes and gives back (no other test uses it)
 do
-	local macerator = data.raw["assembling-machine"]["ev-macerator"]
+	local macerator = data.raw["assembling-machine"]["zz-devcheck-macerator"]
 	data:extend({ {
 		type = "recipe", name = "zz-devcheck-scan", categories = { macerator and macerator.crafting_categories[1] or "crafting" },
 		energy_required = 1, enabled = false,
@@ -50,7 +69,7 @@ end
 --- issue #158 (providers.lua): a second recipe of the macerator's category (Gregtorio's or the stand-in of data.lua), so a
 --- test can keep the machine busy on another recipe
 do
-	local m = data.raw["assembling-machine"]["ev-macerator"]
+	local m = data.raw["assembling-machine"]["zz-devcheck-macerator"]
 	local cat = m and m.crafting_categories and m.crafting_categories[1]
 	if cat then
 		data:extend({ { type = "recipe", name = "zz-devcheck-macerate-plate", categories = { cat }, energy_required = 4, enabled = true,
