@@ -2047,7 +2047,7 @@ local function take_back_input(job, machine, ingredients, map)
 	local inp = input_inventory(machine)
 	if inp then
 		for _, ing in pairs(ingredients) do
-			local key = ing.type == "item" and key_of(ing)
+			local key = ing.type == "item" and N.item_exists(ing.name) and key_of(ing)   -- (issue #503: a removed item is gone)
 			if key and not back[key] then
 				local removed
 				if with_data(ing.name) then                     -- (issue #480: the stacks without tags only)
@@ -2084,7 +2084,7 @@ local function machine_idle(machine, ingredients, map)
 	local inp = input_inventory(machine)
 	if not inp then return false end
 	for _, ing in pairs(ingredients) do
-		if ing.type == "item" and N.bound(inp).get_item_count(ing.name) > 0 then return false end
+		if ing.type == "item" and N.item_exists(ing.name) and N.bound(inp).get_item_count(ing.name) > 0 then return false end
 	end
 	if map and #map.inputs > 0 then
 		local fb = M.T.boxes(machine)
@@ -2174,6 +2174,7 @@ local function start_lease(s, job, step_index, machine, batch, map)
 	local inp = input_inventory(machine)
 	if not inp then return false end
 	for _, ing in pairs(ingredients) do               -- never hand out more than the pool holds
+		if ing.type == "item" and not N.item_exists(ing.name) then return false end   -- (issue #503: an item no longer there)
 		local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
 		if ing_pool(job, ing) + FLUID_EPS < per * batch then return false end
 	end
@@ -2270,7 +2271,7 @@ local function push_chest(s, job, step_index, chest, batch)
 		end
 	end
 	for _, ing in pairs(step_ingredients(step)) do
-		if ing.type ~= "item" then undo() return false end
+		if ing.type ~= "item" or not N.item_exists(ing.name) then undo() return false end   -- (issue #503)
 		local count = ing.amount * batch
 		local key = key_of(ing)
 		if (job.pool[key] or 0) < count then undo() return false end
@@ -3848,6 +3849,62 @@ function M.set_cpu_mode(entity, mode)
 	s.await = nil                                         -- (a queued job may take the CPU now)
 	return true
 end
+
+--- Issue #503: the jobs' keys of items that no longer exist, before on_configuration_changed (control.lua): a replaced item's
+--- under its replacement (the pool's counts added up), a removed one's dropped from the pool, from what the steps received and
+--- from what the machines were given (the engine dropped those items). A processing step whose pattern names a replaced item
+--- names its replacement (its id too, so it finds the providers again, whose patterns N.alias reads the same way); one that
+--- names a removed item keeps it, so it no longer normalizes and the job fails in on_configuration_changed, which takes back
+--- what the machines hold (the removed item no more: take_back_input) and returns the pool.
+function M.clean_removed_items()
+	local s = state()
+	local quiet = function() end
+	local function counts(map, note)
+		if type(map) ~= "table" then return map end
+		return (N.live_contents(map, nil, note or quiet)) or map
+	end
+	local function rows(list)
+		if type(list) ~= "table" then return list end
+		local out, changed = {}, false
+		for i, r in ipairs(list) do
+			local k = type(r) == "table" and N.live_key(r.key)
+			if k and k ~= r.key then
+				out[i], changed = { key = k, amount = r.amount }, true
+			else
+				out[i] = r                                    -- (a removed item stays: the pattern no longer normalizes)
+			end
+		end
+		return changed and out or list
+	end
+	for _, job in pairs(s.jobs or {}) do
+		job.item = N.live_key(job.item) or job.item
+		job.pool = counts(job.pool, N.note_removed_item)
+		for _, step in pairs(job.steps or {}) do
+			step.received = counts(step.received)
+			if type(step.keys) == "table" then step.keys = N.live_set(step.keys) or {} end
+			local def = step.def
+			if type(def) == "table" and def.kind == "processing" then
+				local inputs, outputs = rows(def.inputs), rows(def.outputs)
+				if inputs ~= def.inputs or outputs ~= def.outputs then
+					local mapped = { inputs = inputs, outputs = outputs }
+					for k, v in pairs(def) do if mapped[k] == nil then mapped[k] = v end end
+					local norm = P.normalize(mapped)                  -- (two rows that became one key are merged)
+					local old = step.pid
+					step.def = norm or mapped
+					if norm then
+						step.pid = P.id_of(norm)
+						for _, lease in pairs(job.leases or {}) do
+							if lease.pid == old then lease.pid = step.pid end
+						end
+					end
+				end
+			end
+		end
+		for _, lease in pairs(job.leases or {}) do lease.given = counts(lease.given) end
+	end
+	for unit, locked in pairs(s.locked or {}) do s.locked[unit] = counts(locked) end
+end
+
 --- Rebuild the registries from the world, drop stale references, and repair the job books.
 --- Jobs and their pools are kept; provider slots, blueprint patterns and priorities are kept by unit number.
 function M.on_configuration_changed()

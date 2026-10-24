@@ -105,6 +105,29 @@ frozen patch of the base's graphics is not kept (the assembler runs item recipes
 fluid boxes before it sets a recipe). Standalone it is a copy of `assembling-machine-2` with its item categories,
 speed 2.5, 375 kW.
 
+### `ME_NETWORK.replace_item(old, new)`
+
+Since issue #503: tells the network that the calling mod removed or renamed the item `old` and that `new` replaces it,
+usually next to the JSON migration (`migrations/*.json`, `"item": [["old", "new"]]`) that renames it in the game. A JSON
+migration renames the item in the engine's inventories only; the network keeps its contents in script storage, so
+without this call it would drop what it stores of `old`. The mapping is kept in the mod-data `fork-me-network`
+(`data.replaced_items`: { old -> new }); call it in any data stage.
+
+When a save is loaded (any mod changed) and `old` is no longer an item, the network's `on_configuration_changed` puts
+everything it holds under `old` under `new`: the contents of the cells (in drives, ME Chests, IO ports, the Cell
+Workbench), the snapshots of the storage buses, partitions, patterns, the filters and rows of buses, interfaces, level
+maintainers, emitters and circuit interfaces, crafting jobs. Counts are added to what it already held of `new`; quality
+and the tags of an item with tags are kept. While `old` still exists the call changes nothing (a migration may rename
+an item that its mod keeps: what the network stores of it keeps its name). A chain `a -> b`, `b -> c` is followed. A
+cell item outside the network (in a chest, in the player's inventory) is converted the same way when it goes into a
+drive. Items removed without a replacement are dropped, as the game drops them from inventories, with a log line
+`ME-REMOVED-ITEM <name> <count>` (a replaced one: `ME-REPLACED-ITEM <name> <new> <count>`).
+
+```lua
+-- Gregtorio Continued, issue #370: the apatite lens became the green sapphire lens
+ME_NETWORK.replace_item("apatite-lens", "green-sapphire-lens")
+```
+
 ### Helpers of this mod
 
 `add_item`, `add_recipe`, `add_technology` and `unit` are what this mod's own prototype files use (items with the
