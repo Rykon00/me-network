@@ -13,8 +13,8 @@ GT5-Unofficial parts of the graphics LGPL-3.0); **ME Network - AE2 Textures** (`
 CC BY-NC-SA 3.0. They are built into two zips and no zip contains both. Every origin and its rules:
 [`docs/LICENSES.md`](docs/LICENSES.md).
 
-- AE2 graphics get into the repository only through `tools/import_ae2_textures.py`, into `ae2-textures/graphics/`,
-  which records each file in `ae2-textures/MANIFEST.tsv`. They are never in the me-network zip (`tools/build.py` fails
+- AE2 graphics get into the repository only through `tools/import_ae2_textures.py`, into `ae2-textures/graphics/`
+  (and the texture mod's `thumbnail.png`, issue #500), which records each file in `ae2-textures/MANIFEST.tsv`. They are never in the me-network zip (`tools/build.py` fails
   then), never traced, never merged into one image with graphics of another origin (the texture mod replaces one file
   or layer of a sprite at a time, `ae2-textures/overrides.lua`), never given to `tools/gen_ae2_sprites.py` and never
   taken from anywhere else than a checkout of AE2 or of GTNewHorizons' AE2-Unofficial (the same authors' work under

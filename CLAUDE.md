@@ -91,7 +91,9 @@
   dependency without a load order; its code never names it), and Gregtorio, which depends on me-network only, gets it
   through that; the devcheck runs load an empty stand-in of it, the proof run a copy of the real one. AE2 graphics enter this repository **only** through
   `tools/import_ae2_textures.py` into `ae2-textures/graphics/`, with its manifest row (repository, source path, commit,
-  SHA-256, author, license, changed). They are **never in the me-network zip** (`tools/build.py` builds two zips and
+  SHA-256, author, license, changed); the one exception is the texture mod's `ae2-textures/thumbnail.png` (issue #500:
+  AE2-Unofficial's mod logo scaled to 144 x 144, manifest file `thumbnail.png`, the only row whose source may be the
+  logo instead of a texture). They are **never in the me-network zip** (`tools/build.py` builds two zips and
   fails when one holds the other's files or license), never traced, never merged into one image with graphics of
   another origin (the texture mod replaces one file or layer of a sprite at a time; a sprite that needs a GT part and
   an AE2 part keeps the GT part as a layer of its own), never given to `tools/gen_ae2_sprites.py` (it stays AE2-free:
@@ -111,8 +113,9 @@
   `..\GT-New-Horizons-Modpack` (the pack's configs and scripts).
 - Graphics: `tools/gen_ae2_sprites.py` (`--gt <GT5-Unofficial checkout>` for everything; `--fluids`, `--r1`,
   `--patterns` and the other switches for parts, see its docstring); it makes the GPLv3/LGPL graphics and never reads
-  AE2 graphics. AE2 graphics: `tools/import_ae2_textures.py` into `ae2-textures/graphics/` only (the rule above); a script
-  that transforms them reads only from `ae2-textures/graphics/` and writes only into it. The 17 icons of `graphics/icons/` are drawn by
+  AE2 graphics. AE2 graphics: `tools/import_ae2_textures.py` into `ae2-textures/graphics/` only (the rule above, and the
+  thumbnail); a script that transforms them reads only from `ae2-textures/graphics/` and `ae2-textures/thumbnail.png`
+  and writes only into them. The 17 icons of `graphics/icons/` are drawn by
   `--own-icons` (issue #238); until 0.5.2 they were taken over from the original Gregtorio 0.1.9 and looked like AE2's
   art. Never bring those old files back or make anything from them: `devcheck check` fails on a file under `graphics/` or
   `thumbnail.png` with a hash of `tools/upstream-icon-hashes.tsv` (`tools/upstream_icons.py`).

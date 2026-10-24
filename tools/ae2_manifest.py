@@ -4,12 +4,14 @@
 ae2-textures/ is a mod of its own, me-network-ae2-textures, under CC BY-NC-SA 3.0 (docs/LICENSES.md); the repository
 root is the mod me-network under GPLv3 (its GT5-Unofficial graphics LGPL-3.0), and no zip holds both
 (tools/build.py). The texture mod holds its mod files (MOD_FILES, locale/<language>/*.cfg), three documentation
-files (LICENSE-CC-BY-NC-SA-3.0.txt, README.md, MANIFEST.tsv) and in graphics/ the AE2-derived images, one manifest
-row per image:
+files (LICENSE-CC-BY-NC-SA-3.0.txt, README.md, MANIFEST.tsv), in graphics/ the AE2-derived images and in its top
+folder the thumbnail (THUMBNAIL, issue #500: the one AE2-derived image outside graphics/), one manifest row per image:
 
-    file           the image's path inside ae2-textures/graphics/ ("cable/fluix.png")
+    file           the image's path inside ae2-textures/graphics/ ("cable/fluix.png"); the thumbnail's row has the file
+                   "thumbnail.png", so graphics/ never holds a file of that name at its top
     repository     the AE2 repository it came from (one of REPOSITORIES)
-    source         its path in that repository (under the repository's textures folder); a file made from more than one
+    source         its path in that repository (under the repository's textures folder; the thumbnail's may also be
+                   the repository's mod logo, LOGOS); a file made from more than one
                    texture of the same checkout (issue #260: a block and its lights) lists them all, separated by `;`,
                    the imported one first
     commit         the commit of the checkout it was taken from (git rev-parse HEAD)
@@ -30,7 +32,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MOD_FOLDER = "ae2-textures"                 # the texture mod, me-network-ae2-textures
 MOD_NAME = "me-network-ae2-textures"
-FOLDER = MOD_FOLDER + "/graphics"           # its images, the only files with a manifest row
+FOLDER = MOD_FOLDER + "/graphics"           # its images: with THUMBNAIL the only files with a manifest row
+THUMBNAIL = "thumbnail.png"                 # issue #500: the mod's thumbnail in its top folder, manifest file "thumbnail.png"
 LICENSE_FILE = "LICENSE-CC-BY-NC-SA-3.0.txt"
 DOCS = (LICENSE_FILE, "README.md", "MANIFEST.tsv")
 # the texture mod's own files besides DOCS, locale/<language>/*.cfg and the images (all CC BY-NC-SA 3.0)
@@ -45,6 +48,10 @@ LICENSE_SHA256 = "8812f83442fd0eca14eb0208988e190fdcbfebec58fa5459d3218edfdfdc5a
 REPOSITORIES = {
     "https://github.com/AppliedEnergistics/Applied-Energistics-2": "src/main/resources/assets/ae2/textures/",
     "https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial": "src/main/resources/assets/appliedenergistics2/textures/",
+}
+# issue #500: the mod logo of an AE2 repository (its mcmod.info "logoFile"), a source the thumbnail's row may name
+LOGOS = {
+    "https://github.com/GTNewHorizons/Applied-Energistics-2-Unofficial": "src/main/resources/assets/appliedenergistics2/meta/logo.png",
 }
 IMAGE_SUFFIXES = (".png",)
 SOURCE_SEP = ";"            # between the sources of a file made from more than one texture (issue #260)
@@ -99,6 +106,16 @@ def write_manifest(rows, root=ROOT):
     manifest_path(root).write_bytes(("\n".join(out) + "\n").encode("utf-8"))
 
 
+def image_path(f, root=ROOT):
+    """the file of a manifest row: ae2-textures/thumbnail.png for THUMBNAIL (issue #500), else under graphics/"""
+    return Path(root) / MOD_FOLDER / THUMBNAIL if f == THUMBNAIL else Path(root) / FOLDER / f
+
+
+def image_name(f):
+    """the repository path of a manifest row's file, for messages"""
+    return f"{MOD_FOLDER}/{THUMBNAIL}" if f == THUMBNAIL else f"{FOLDER}/{f}"
+
+
 def sources(r):
     """[(path, sha256)] of a row's sources (one, or several for a file made from more than one texture)"""
     return list(zip(r["source"].split(SOURCE_SEP), r["source_sha256"].split(SOURCE_SEP)))
@@ -115,8 +132,11 @@ def row_problems(r):
         bad.append(f"repository {r['repository']!r} is not an AE2 repository (" + ", ".join(REPOSITORIES) + ")")
     else:
         for path in r["source"].split(SOURCE_SEP):
-            if not path.startswith(prefix) or ".." in path.split("/"):
-                bad.append(f"source {path!r} is not under {prefix}")
+            logo = f == THUMBNAIL and path == LOGOS.get(r["repository"])
+            if not (path.startswith(prefix) or logo) or ".." in path.split("/"):
+                bad.append(f"source {path!r} is not under {prefix}"
+                           + (f" and not the repository's logo ({LOGOS[r['repository']]})"
+                              if f == THUMBNAIL and r["repository"] in LOGOS else ""))
     if not re.fullmatch(r"[0-9a-f]{40}", r["commit"]):
         bad.append(f"commit {r['commit']!r} is not a full git commit hash")
     shas = r["source_sha256"].split(SOURCE_SEP)
@@ -172,11 +192,12 @@ def identical_files(root, hashes, skip_folder=False):
 
 def mod_file_problem(rel):
     """why a path inside the texture mod (relative to it, /) does not belong there, or None (an image under
-    graphics/ is checked against the manifest by check_tree)"""
-    if rel in DOCS or rel in MOD_FILES or LOCALE.fullmatch(rel) or rel.startswith("graphics/"):
+    graphics/ and the thumbnail are checked against the manifest by check_tree)"""
+    if (rel in DOCS or rel in MOD_FILES or LOCALE.fullmatch(rel) or rel.startswith("graphics/")
+            or rel == THUMBNAIL):
         return None
     return (f"{MOD_FOLDER}/{rel}: not a file of the texture mod; it holds {', '.join(MOD_FILES + DOCS)}, "
-            "locale/<language>/*.cfg and the AE2-derived images in graphics/")
+            f"locale/<language>/*.cfg, the AE2-derived images in graphics/ and {THUMBNAIL}")
 
 
 def manifest_hashes(root=ROOT):
@@ -184,13 +205,13 @@ def manifest_hashes(root=ROOT):
     rows, _ = read_manifest(root)
     hashes = {}
     for r in rows:
-        p = Path(root) / FOLDER / r["file"]
+        p = image_path(r["file"], root)
         if p.is_file():
-            hashes[sha256(p)] = f"{FOLDER}/{r['file']}"
+            hashes[sha256(p)] = image_name(r["file"])
     for r in rows:
         for path, h in sources(r):
             if re.fullmatch(r"[0-9a-f]{64}", h):
-                hashes.setdefault(h, f"the AE2 source of {FOLDER}/{r['file']} ({path})")
+                hashes.setdefault(h, f"the AE2 source of {image_name(r['file'])} ({path})")
     return hashes
 
 
@@ -230,19 +251,30 @@ def check_tree(root=ROOT, others=()):
         with open(p, "rb") as fh:
             if fh.read(len(PNG_MAGIC)) != PNG_MAGIC:
                 problems.append(f"{FOLDER}/{f}: not a PNG file")
-        if f not in by_file:
+        if f == THUMBNAIL:
+            problems.append(f"{FOLDER}/{f}: the name {THUMBNAIL} at the top of {FOLDER}/ is kept for the row of "
+                            f"{MOD_FOLDER}/{THUMBNAIL} (issue #500); give the image another name")
+        elif f not in by_file:
             problems.append(f"{FOLDER}/{f}: no row in MANIFEST.tsv (import AE2 graphics with tools/import_ae2_textures.py)")
+    thumb = mod / THUMBNAIL
+    if thumb.is_file():
+        with open(thumb, "rb") as fh:
+            if fh.read(len(PNG_MAGIC)) != PNG_MAGIC:
+                problems.append(f"{MOD_FOLDER}/{THUMBNAIL}: not a PNG file")
+        if THUMBNAIL not in by_file:
+            problems.append(f"{MOD_FOLDER}/{THUMBNAIL}: no row in MANIFEST.tsv (the thumbnail is AE2-derived too: "
+                            f"import it with tools/import_ae2_textures.py ... {THUMBNAIL})")
     for f, r in by_file.items():
-        p = folder / f
+        p = image_path(f, root)
         if not p.is_file():
-            problems.append(f"MANIFEST.tsv line {r['line']}: {FOLDER}/{f} does not exist")
+            problems.append(f"MANIFEST.tsv line {r['line']}: {image_name(f)} does not exist")
             continue
         h = sha256(p)
         if r["changed"] == "no" and h != r["source_sha256"]:
-            problems.append(f"{FOLDER}/{f}: changed is no, but the file is not the source's bytes (SHA-256 {h}); "
+            problems.append(f"{image_name(f)}: changed is no, but the file is not the source's bytes (SHA-256 {h}); "
                             "record a change with tools/import_ae2_textures.py --mark-changed")
         if r["changed"] == "yes" and h in r["source_sha256"].split(SOURCE_SEP):
-            problems.append(f"{FOLDER}/{f}: changed is yes, but the file is the source's bytes")
+            problems.append(f"{image_name(f)}: changed is yes, but the file is the source's bytes")
     hashes = manifest_hashes(root)
     for f, what in identical_files(root, hashes, skip_folder=True):
         problems.append(f"{f} is byte-identical to {what}: AE2 graphics belong in {FOLDER}/ only")
