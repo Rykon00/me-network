@@ -3880,3 +3880,35 @@ small functions):
 The queue: 0.03 visits per tick, every visit found a change (the feeders), the interval between two visits 0.50 s (30
 ticks) in all 120 visits of the window, no backlog. So a busy logistic network of this size costs about 0.017 ms per tick
 on average and about 0.45 ms in the tick of its visit; a quiet one a quarter of that on average.
+
+## The visit of the ME Logistic Storage Bus, halved (issue #509)
+
+The headless check of #507 measured 0.64 ms per visit on the maintainer's hub, 0.30 ms of it the engine's `get_contents`.
+The Lua part now builds no string per entry (a two-level key cache, `keys[quality][name]`) and `N.ext_sync` hands a key to
+`ext_set` only when its count changed (hundreds of unchanged kinds per visit; every external cell takes this path).
+
+**On a copy of SpaceAge_first-try** (1048 roboports, 486 storage points, 316 kinds shown; the same loaded save for both
+versions, three times 50 visits through the remote against 50 bare `get_contents("storage")`; the 49 visits after the
+first find no change in that tick, so this is the cost of reading and comparing):
+
+| | origin/main (#508) | #509 |
+|---|---|---|
+| visit (ms) | 0.443 / 0.526 / 0.463 | 0.349 / 0.349 / 0.366 |
+| `get_contents("storage")` alone (ms) | 0.192 / 0.190 / 0.167 | 0.204 / 0.195 / 0.227 |
+| **Lua part (ms), median** | **0.296** | **0.145** (49 %) |
+
+**Bench scene** (`bench --logistic 1000 --profile 1000 --exclusive`, 120 kinds, a network that changes at every visit):
+`read` (one `get_contents` and the loop) 416 → **176 µs per visit**, 0.0139 → 0.0059 ms per tick.
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000` (three rounds in turns): **regressions beyond the noise: 0**,
+throughput per kind of endpoint identical.
+
+| | origin/main (#508) | #509 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.386 / 2.26 | 0.373 / 2.25 |
+| 1000: Lua alloc KB per tick | 27.21 | 27.21 |
+| 5000: script avg / p99 (ms) | 0.931 / 2.88 | 0.909 / 2.99 (noise ±1.02) |
+| 5000: gc avg (ms) | 0.062 | 0.059 |
+| 5000: Lua alloc KB per tick | 35.57 | 35.57 |
+
+The allocation is the engine's result table of `get_contents` and did not change (#506).

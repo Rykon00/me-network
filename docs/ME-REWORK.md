@@ -3168,6 +3168,14 @@ the package "Spoilable items in ME storage".
   entries (a cached class check, the filter) and `N.ext_sync` (only the differences). The other engine calls cost what
   the issue measured (count 0.3 us, insert or remove 3 us, `select_drop_point` 3 us) plus one position lookup each.
 * Measured: `docs/PERFORMANCE.md`, "ME Logistic Storage Bus (issue #506)".
+* Issue #509 (from the headless check of #507 on the maintainer's hub: 0.64 ms per visit, 0.30 ms of it the engine's
+  `get_contents`): the Lua part of a visit was halved. The decision "can the bus show it" and the item's key come from one
+  two-level cache (`keys[quality][name]`, key or false, per load) instead of a `"name@quality"` string built per entry and a
+  `N.key_of` call; the first member read assigns, only the provider read adds. `N.ext_sync` passes a key to `ext_set` only
+  when its count differs from the snapshot's (the same test: an amount below ZERO is none), so the hundreds of kinds that did
+  not change between two visits cost a lookup each; this helps every external cell. Micro-measured on the hub copy before:
+  the string cache 15 % slower than the two-level one, filling the table and diffing it the larger share; a "nothing
+  changed, skip" shortcut alone would not help there, robots change the network between nearly every two visits.
 
 ### Limits
 

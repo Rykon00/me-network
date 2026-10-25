@@ -2442,8 +2442,12 @@ function M.ext_sync(unit, contents)
 	for key in pairs(cell.items) do
 		if not contents[key] and ext_set(net, cid, cell, key, 0) then changed = true end
 	end
+	--- issue #509: a key whose count is the snapshot's is not passed to ext_set (most keys of a large storage at a visit: the
+	--- logistic storage bus reads hundreds); the same test as ext_set's (an amount below ZERO is none)
+	local items = cell.items
 	for key, n in pairs(contents) do
-		if ext_set(net, cid, cell, key, n) then changed = true end
+		local old = items[key]
+		if old ~= n and not (old == nil and n < ZERO) and ext_set(net, cid, cell, key, n) then changed = true end
 	end
 	return changed
 end

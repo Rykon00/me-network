@@ -64,15 +64,20 @@ local function on_logistic(rec) return rec ~= nil and rec.logistic == true end
 --- items
 --------------------------------------------------------------------------------
 
-local plain_cache = {}
---- can the bus show and move this item? Plain items that do not spoil (per load, never saved)
-local function plain(name, quality)
-	local k = name .. "@" .. quality
-	local v = plain_cache[k]
+local keys = {}
+--- the storage key of an item the bus can show and move (plain items that do not spoil), false for any other. Issue #509:
+--- by quality, then name: one lookup per entry of a read, no key string built per entry (per load, never saved)
+local function key_for(name, quality)
+	local by_name = keys[quality]
+	if not by_name then
+		by_name = {}
+		keys[quality] = by_name
+	end
+	local v = by_name[name]
 	if v == nil then
 		local p = prototypes.item[name]
-		v = p ~= nil and N.item_class(p.type) == "plain" and p.get_spoil_ticks(quality) <= 0
-		plain_cache[k] = v
+		v = p ~= nil and N.item_class(p.type) == "plain" and p.get_spoil_ticks(quality) <= 0 and N.key_of(name, quality) or false
+		by_name[name] = v
 	end
 	return v
 end
@@ -80,7 +85,7 @@ end
 local function item_of(key)
 	if N.is_fluid_key(key) or key:find("#", 1, true) then return nil end
 	local name, q = N.parse_key(key)
-	if not plain(name, q) then return nil end
+	if not key_for(name, q) then return nil end
 	return name, q
 end
 
@@ -235,13 +240,13 @@ end
 
 local scratch, scratch_free = {}, true
 
---- add the items of `member` the bus shows to `contents`
-local function read(rec, net, member, contents, all)
+--- the items of `member` the bus shows into `contents` (`add`: added to what an earlier member put there; the engine lists a
+--- name and quality once per call)
+local function read(rec, net, member, contents, all, add)
 	for _, it in pairs(net.get_contents(member)) do
-		local q = it.quality or "normal"
-		if plain(it.name, q) then
-			local key = N.key_of(it.name, q)
-			if all or shown(rec, key) then contents[key] = (contents[key] or 0) + it.count end
+		local key = key_for(it.name, it.quality or "normal")
+		if key and (all or shown(rec, key)) then
+			if add then contents[key] = (contents[key] or 0) + it.count else contents[key] = it.count end
 		end
 	end
 end
@@ -261,8 +266,8 @@ function M.visit(rec)
 	end
 	if net then
 		local all = rec.inonly or not (rec.partition or rec.deny or rec.gf)   -- (no filter to check: the common case)
-		read(rec, net, "storage", contents, all)
-		if rec.mode == "providers" then read(rec, net, "providers", contents, all) end
+		read(rec, net, "storage", contents, all, false)
+		if rec.mode == "providers" then read(rec, net, "providers", contents, all, true) end
 	end
 	local changed = N.ext_sync(rec.unit, contents) or before ~= rec.lid
 	if contents == scratch then scratch_free = true end
@@ -278,8 +283,8 @@ function M.contents(rec)
 	local out = {}
 	local net = live(rec) or (rec.entity.valid and find(rec.entity))
 	if net then
-		read(rec, net, "storage", out, true)
-		if rec.mode == "providers" then read(rec, net, "providers", out, true) end
+		read(rec, net, "storage", out, true, false)
+		if rec.mode == "providers" then read(rec, net, "providers", out, true, true) end
 	end
 	return out
 end
@@ -347,7 +352,7 @@ end
 function M.reset()
 	local s = state()
 	s.list, s.lpos, s.claims, s.q = {}, {}, {}, Sched.new("lsbus")
-	plain_cache = {}
+	keys = {}
 end
 
 --- (tests, /me-stats) the visit list's size and its queue
