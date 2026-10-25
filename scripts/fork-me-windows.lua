@@ -613,9 +613,8 @@ end
 --- network, as the windows of the other blocks without slots do.
 --------------------------------------------------------------------------------
 
-local function open_qbridge(player, entity)
-	if not qbridge.info(entity) then return end
-	local _, content = G.open_window(player, "quantum-bridge", caption_of(entity), { unit = entity.unit_number }, true)
+--- the window's content (the tests build it into a stand-in, qbridge_view below)
+local function qbridge_content(content, entity)
 	G.label(content, { entity.name == qbridge.LINK and "fork-me-gui.wlink-help" or "fork-me-gui.qbridge-help" }, WIDTH)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.qbridge-frequency" }, tooltip = { "fork-me-gui.qbridge-frequency-tooltip" } }
@@ -625,15 +624,27 @@ local function open_qbridge(player, entity)
 	G.label(content, "", WIDTH, nil, "fork_me_qb_status")
 	G.label(content, "", WIDTH, nil, "fork_me_qb_power")
 	if entity.name == qbridge.LINK then G.label(content, "", WIDTH, nil, "fork_me_qb_range") end   -- (issue #384)
+end
+
+local function open_qbridge(player, entity)
+	if not qbridge.info(entity) then return end
+	local _, content = G.open_window(player, "quantum-bridge", caption_of(entity), { unit = entity.unit_number }, true)
+	qbridge_content(content, entity)
 	M.refresh_qbridge(player, G.window_of(player), true)
 end
 
+--- Issue #511: the field is written only when the stored frequency differs from the one written last (its tag `shown`:
+--- another player, a settings paste, a blueprint), so what the player types stays until Enter. The game cannot tell
+--- whether a field has the focus.
 function M.refresh_qbridge(player, frame, first)
 	local entity = G.entity_of(player, frame)
 	local d = entity and qbridge.info(entity)
 	if not d then return false end
 	local f = G.find(frame, "fork_me_qb_freq")
-	if f and (first or not f.focused) then f.text = d.freq > 0 and tostring(d.freq) or "" end
+	if f and (first or f.tags.shown ~= d.freq) then
+		f.text = d.freq > 0 and tostring(d.freq) or ""
+		f.tags = G.act("qb_freq", { shown = d.freq })
+	end
 	local p = d.partner
 	local caption = { "fork-me-gui.qbridge-status-" .. d.status }
 	if d.status == "linked" and p then
@@ -655,7 +666,8 @@ end
 G.window("quantum-bridge", { open = open_qbridge, refresh = M.refresh_qbridge, entities = { qbridge.NAME, qbridge.LINK },
 	shift = M.store_shift, control = M.store_all, message = G.net_message, hint = { "fork-me-gui.store-help" } })
 
---- the frequency: set when the field is confirmed or left (a number, empty: 0, none)
+--- the frequency: set when the field is confirmed (Enter; a number, empty: 0, none). Not on every change, which would
+--- link the bridge to each number on the way (typing 12 to 1 first); the game has no event for leaving a field.
 G.on("qb_freq", function(event, player, el)
 	if event.name ~= defines.events.on_gui_confirmed then return end
 	local entity = window_entity(player)
@@ -663,6 +675,7 @@ G.on("qb_freq", function(event, player, el)
 	if not qbridge.set_frequency(entity, el.text == "" and 0 or tonumber(el.text)) then
 		player.create_local_flying_text{ text = { "fork-me-gui.qbridge-frequency-refused" }, create_at_cursor = true }
 	end
+	el.tags = G.act("qb_freq")         -- the refresh writes the stored frequency back (a refused one, 007 as 7)
 	G.refresh_one(player)
 end)
 
@@ -2283,6 +2296,22 @@ remote.add_interface("gregtorio-me-gui", {
 			end
 		end
 		return out
+	end,
+	--- Issue #511: the window of a quantum bridge or a wireless link built into a stand-in frame kept under `name` (like an
+	--- open window between its refreshes; the harness has no player), `text` typed into its frequency field (nil:
+	--- nothing), then refreshed as every 60 ticks: { ok = still open, text = the field's text, shown = its tag }
+	qbridge_view = function(name, entity, text)
+		local frame = stand_in_frames[name]
+		local first = not frame
+		if first then
+			frame = stand_in_element{ type = "frame", tags = { unit = entity.unit_number } }
+			qbridge_content(frame, entity)
+			stand_in_frames[name] = frame
+		end
+		local f = G.find(frame, "fork_me_qb_freq")
+		if text then f.text = text end
+		local ok = M.refresh_qbridge({ valid = true, can_reach_entity = function() return true end }, frame, first)
+		return { ok = ok, text = f.text, shown = f.tags.shown }
 	end,
 	forget_player = function(index) G.forget_player(index) end,      -- (issue #179: what on_player_removed does)
 	--- every registered window: { [name] = { pane = true, shift = has a shift + click target, control, message } }
