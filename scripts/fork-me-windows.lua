@@ -1942,6 +1942,8 @@ end)
 --------------------------------------------------------------------------------
 
 local SBUS_MODES = { "readwrite", "read", "write" }
+--- issue #506: the ME Logistic Storage Bus's modes (the storage chests, also the provider chests, read only)
+local LSBUS_MODES = { "readwrite", "providers", "read" }
 
 function M.storage_bus_data(entity) return sbus.info(entity) end
 
@@ -1951,12 +1953,13 @@ local function open_storage_bus(player, entity)
 	if not d then return end
 	--- issue #28: the player's inventory on the left, the card slots in the window
 	local _, content = G.open_window(player, "storage-bus", caption_of(entity), { unit = entity.unit_number }, true)
-	G.label(content, { "fork-me-net.storage-bus-help" }, WIDTH)
+	local lp = d.logistic and "logistic-" or ""                  -- (issue #506: the logistic bus's own texts)
+	G.label(content, { "fork-me-net." .. lp .. "storage-bus-help" }, WIDTH)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.storage-bus-mode" } }
 	local items, index = {}, 1
-	for i, mode in ipairs(SBUS_MODES) do
-		items[i] = { "fork-me-gui.storage-bus-mode-" .. mode }
+	for i, mode in ipairs(d.logistic and LSBUS_MODES or SBUS_MODES) do
+		items[i] = { "fork-me-gui." .. lp .. "storage-bus-mode-" .. mode }
 		if mode == d.mode then index = i end
 	end
 	row.add{ type = "drop-down", items = items, selected_index = index, tags = G.act("sbus_mode") }
@@ -1987,7 +1990,7 @@ local function open_storage_bus(player, entity)
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-contents" }, tooltip = { "fork-me-gui.storage-bus-contents-tooltip" },
 		tags = G.act("sbus_contents") }
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("sbus_clear") }
-	G.label(content, { "fork-me-gui.connector-hint" }, WIDTH)   -- (issue #412)
+	if not d.logistic then G.label(content, { "fork-me-gui.connector-hint" }, WIDTH) end   -- (issue #412)
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_holds")
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_target")
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_status")
@@ -2035,8 +2038,9 @@ function M.refresh_storage_bus(player, frame)
 	end
 	G.find(frame, "fork_me_sbus_holds").caption = holds
 	local target = d.target and prototypes.entity[d.target]
-	G.find(frame, "fork_me_sbus_target").caption = target and { "fork-me-gui.bus-target", target.localised_name } or ""
-	G.find(frame, "fork_me_sbus_status").caption = { "fork-me-net." .. (d.side == "fluid" and "fluid-" or "")
+	G.find(frame, "fork_me_sbus_target").caption = target and { "fork-me-gui.bus-target", target.localised_name }
+		or (d.network and { "fork-me-gui.logistic-storage-bus-network", tostring(d.network) }) or ""
+	G.find(frame, "fork_me_sbus_status").caption = { "fork-me-net." .. (d.side == "fluid" and "fluid-" or d.logistic and "logistic-" or "")
 		.. "storage-bus-" .. (d.status or "ok") }
 	return true
 end
@@ -2049,7 +2053,10 @@ G.window("storage-bus", { open = open_storage_bus, refresh = M.refresh_storage_b
 G.on("sbus_mode", function(event, player, el)
 	if event.name ~= defines.events.on_gui_selection_state_changed then return end
 	local entity = window_entity(player)
-	if entity then sbus.set_mode(entity, SBUS_MODES[el.selected_index] or "readwrite") G.refresh_one(player) end
+	if not entity then return end
+	local modes = (M.storage_bus_data(entity) or {}).logistic and LSBUS_MODES or SBUS_MODES
+	sbus.set_mode(entity, modes[el.selected_index] or "readwrite")
+	G.refresh_one(player)
 end)
 
 G.on("sbus_filtermode", function(event, player, el)

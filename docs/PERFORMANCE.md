@@ -3830,3 +3830,53 @@ throughput per kind of endpoint identical.
 At 1000 the first rounds were slow on both sides (the machine was busy; the medians differ by the reference's
 slower second round), the third rounds are equal (0.42 ms); at 5000 the third rounds are equal (1.092 ms) and the
 difference of the first two lies within the noise. The allocation and the heap are the same, as the code taken per tick is.
+
+## The ME Logistic Storage Bus (issue #506)
+
+A queue of its own (`logistic_storage_bus`, budget 1 / 2 visits per tick); with no logistic bus on the map the handler
+reads one table and returns. A visit is one `find_logistic_network_by_position`, the claim, one `get_contents` per member
+it reads (`"storage"`, and `"providers"` in the provider mode), a loop over the entries and `N.ext_sync` of the
+differences. Measured on the maintainer's save (headless, 1048 roboports, 473 storage chests, 764 000 items of 368
+kinds): `get_contents("storage")` 0.28 ms, `get_contents("providers")` 0.06 ms, `get_item_count` 0.3 µs, `insert` and
+`remove_item` 3 µs, `select_drop_point` 3 µs, `find_logistic_network_by_position` 1.4 µs. A busy logistic network (its
+contents change at every visit) is read every 30 ticks, a quiet one every 120.
+
+The bench scene (`bench --logistic 1000`, new): below the ME scene a logistic network of 1000 roboports and 520 storage
+chests (500 with two kinds each, 120 kinds the ME scene never uses, 561 520 items; 20 fed by fast inserters, so its
+contents change all the time: the busy case) and one ME Logistic Storage Bus on the ME network, built only where the
+version has it: `--check origin/main` runs the same scene without the bus as the reference.
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000` (three rounds in turns):
+
+| | origin/main (no bus) | with the bus |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.534 / 3.83 | 0.524 / 3.63 |
+| 1000: ticks over 5 ms | 13 (noise ±16.5) | 9 |
+| 1000: gc avg (ms) | 0.046 | 0.050 |
+| 1000: Lua alloc KB per tick | 25.90 | 27.21 |
+| 1000: burst build / remove (ms) | 106.1 / 118.5 | 131.2 / 130.3 (noise ±16.8 / ±22.7) |
+| 5000: script avg / p99 (ms) | 1.296 / 5.46 | 1.223 / 4.83 |
+| 5000: ticks over 5 ms | 48 | 33 |
+| 5000: Lua alloc KB per tick | 34.26 | 35.57 |
+| 5000: mod heap alive (MB) | 57.81 | 57.90 |
+| throughput, latencies, crafts, backlogs | | identical |
+
+The script time does not move beyond the noise at either size: a visit every 30 ticks is far below the per-tick spread of
+the scene. The one number `--check` reports as worse is the **allocation, +1.31 KB per tick at both sizes**: the table
+`get_contents` returns (an entry per kind and member, made by the engine at every call) at a visit every 30 ticks. It is the
+price of reading a logistic network and grows with its kinds: on the maintainer's 368 kinds about 4 KB per tick while the
+network is busy, about 1 KB per tick while it is quiet (a read every 120 ticks). The collector's time did not change beyond the noise.
+
+`bench --sizes 1000 --logistic 1000 --profile 1000 --exclusive` (each function's own time; the profiler's wrappers add to
+small functions):
+
+| function | per call | calls per tick | per tick |
+|---|---|---|---|
+| `read` (one `get_contents("storage")` of 520 chests, 120 kinds, and the loop) | 416 µs | 0.03 | 0.0139 ms |
+| `M.visit` (without `read`, `claim` and `N.ext_sync`) | 22 µs | 0.03 | 0.0007 ms |
+| `claim` (`find_logistic_network_by_position`, the claim) | 13 µs | 0.03 | 0.0004 ms |
+| `M.on_tick` (the queue: nothing due) | 1.6 µs | 1 | 0.0016 ms |
+
+The queue: 0.03 visits per tick, every visit found a change (the feeders), the interval between two visits 0.50 s (30
+ticks) in all 120 visits of the window, no backlog. So a busy logistic network of this size costs about 0.017 ms per tick
+on average and about 0.45 ms in the tick of its visit; a quiet one a quarter of that on average.

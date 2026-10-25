@@ -22,6 +22,8 @@ Sources:
     python tools/gen_ae2_sprites.py --r1          # only the issue #68 (R1) graphics, from the existing PNGs
     python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
     python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
+    python tools/gen_ae2_sprites.py --logistic-storage-bus # only the ME Logistic Storage Bus (issue #506): the storage
+                                                  # bus's 64 px picture and icon under file names of its own
     python tools/gen_ae2_sprites.py --bus-markers # only the marker layers of the import, export and storage bus
                                                   # (issue #282: the plate and the arrows alone, drawn over the bus)
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
@@ -1018,6 +1020,17 @@ def storage_bus():
     path = OUT_ICON / "me-storage-bus.png"
     storage_bus_sprite("north").save(path)
     written.append(path)
+    return written
+
+
+def logistic_storage_bus():
+    """me-network issue #506: the ME Logistic Storage Bus (1x1, not rotatable) has the storage bus's 64 px picture facing
+    north and its icon for now, under file names of their own that stay (the texture mod can replace them by name)"""
+    written = []
+    for src, dst in ((HD_ENTITY / "me-storage-bus-north.png", HD_ENTITY / "me-logistic-storage-bus.png"),
+                     (HD_ICON / "me-storage-bus.png", HD_ICON / "me-logistic-storage-bus.png")):
+        Image.open(src).convert("RGBA").save(dst)
+        written.append(dst)
     return written
 
 
@@ -2543,6 +2556,9 @@ def main():
                     help="only the ME Underground Cable (drawn from the cable colours)")
     ap.add_argument("--storage-bus", action="store_true",
                     help="only the ME Storage Bus, derived from the R1 PNGs")
+    ap.add_argument("--logistic-storage-bus", action="store_true",
+                    help="only the ME Logistic Storage Bus (me-network issue #506): copies of the storage bus's 64 px "
+                         "picture facing north and its icon under their own file names")
     ap.add_argument("--fluid-storage-bus", action="store_true",
                     help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
     ap.add_argument("--patterns", action="store_true",
@@ -2606,11 +2622,11 @@ def main():
     ap.add_argument("--sheet-assembler", type=Path, metavar="PNG",
                     help="writes a contact sheet of the 1x1 ME Molecular Assembler (issue #131) to PNG")
     a = ap.parse_args()
-    if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus
+    if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus or a.logistic_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
             or a.sheet_assembler or a.pattern_terminal or a.interface_terminal or a.monitors or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
             or a.own_icons or a.light or a.bus_markers or a.toggle_emitter or a.io_port or a.quantum_bridge or a.wireless_link):
-        ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --fluid-storage-bus,"
+        ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --logistic-storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --interface-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
                  " --sheet-assembler or --sheet-pattern-terminal is required")
@@ -2640,6 +2656,9 @@ def main():
     if a.gt or a.storage_bus:
         written = storage_bus()
         print("ME storage bus sprites:", len(written))
+    if a.gt or a.logistic_storage_bus:
+        written = logistic_storage_bus()
+        print("ME logistic storage bus sprites:", len(written))
     if a.gt or a.fluid_storage_bus:
         written = fluid_storage_bus()
         print("ME fluid storage bus sprites:", len(written))

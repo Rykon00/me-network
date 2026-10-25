@@ -825,6 +825,79 @@ local function strip_me()
 	log("DEVCHECK-BENCH-STRIP " .. n)
 end
 
+--- Issue #506 (`logistic` = N, devcheck.py bench --logistic N): a vanilla logistic network below the last part, N roboports
+--- every LOG_PITCH tiles (no robots, no power: the network and its areas exist without them) and N / 2 storage chests, each
+--- with two kinds of items the ME scene never uses (so the scene's blocks, maintainers and jobs behave as without it),
+--- about LOG_FILL of each; LOG_FEEDERS fast inserters keep moving items into storage chests, so what the network holds
+--- changes all the time (the bus's busy case). An ME Logistic Storage Bus on a cable column from the part's spine stands in
+--- the network's area when the version has one (`--check` against an older version: the same scene without the bus).
+local LOG_PITCH, LOG_FILL, LOG_FEEDERS = 6, 800, 20
+local function logistic_height(n)
+	if not (n and n > 0) then return 0 end
+	return PART_GAP + 6 + LOG_PITCH * math.ceil(n / math.ceil(math.sqrt(n)))
+end
+local function logistic_width(n)
+	if not (n and n > 0) then return 0 end
+	return LOG_PITCH * math.ceil(math.sqrt(n)) + 4
+end
+
+local function logistic_items()
+	local used = { [PROBE_ITEM] = true }
+	for _, name in ipairs(RAW) do used[name] = true end
+	for _, name in ipairs(BLOCKERS) do used[name] = true end
+	local recipes = pattern_recipes(game.forces.player)
+	for _, name in ipairs(PAIR_RECIPES) do recipes[#recipes + 1] = name end
+	for _, name in ipairs(recipes) do
+		local r = prototypes.recipe[name]
+		for _, p in pairs(r and r.products or {}) do used[p.name] = true end
+		for _, i in pairs(r and r.ingredients or {}) do used[i.name] = true end
+	end
+	local out = {}
+	for name in pairs(prototypes.item) do if plain(name) and not used[name] then out[#out + 1] = name end end
+	table.sort(out)
+	return out
+end
+
+local function build_logistic(b, part, members)
+	local n = C.logistic
+	local s = surface()
+	local LY = part.y + part.rows * PITCH + PART_GAP
+	local items = logistic_items()
+	local cols = math.ceil(math.sqrt(n))
+	--- the bus: a cable column from the spine's last cable down to it, one tile above the feeders
+	for y = part.y + (part.rows - 1) * PITCH + 1, LY - 2 do place("me-cable", p1(X0 - 1, y)) end
+	local bus = prototypes.entity["me-logistic-storage-bus"] and place("me-logistic-storage-bus", p1(X0 - 1, LY - 1))
+	if bus then members[#members + 1] = bus end
+	--- the feeders: a steel chest full of one item, a fast inserter, a storage chest
+	power_row(LY - 2, X0 + 4, X0 + 2 + 2 * LOG_FEEDERS)
+	for f = 0, LOG_FEEDERS - 1 do
+		local x = X0 + 2 + 2 * f
+		local src = place("steel-chest", p1(x, LY))
+		if src then chest_fill(src, items[f % #items + 1], #src.get_inventory(defines.inventory.chest)) end
+		inserter("fast-inserter", x, LY + 1, defines.direction.north)
+		place("storage-chest", p1(x, LY + 2))
+	end
+	--- the roboports (4x4, centred on a tile corner) and a storage chest in the gap right of every other one
+	local chests = 0
+	for r = 0, n - 1 do
+		local cx, cy = X0 + 2 + LOG_PITCH * (r % cols), LY + 6 + LOG_PITCH * math.floor(r / cols)
+		place("roboport", cx, cy)
+		if r % 2 == 0 then
+			local c = place("storage-chest", p1(cx + 2, cy))
+			if c then
+				for k = 0, 1 do
+					local name = items[(2 * chests + k) % #items + 1]
+					c.insert{ name = name, count = math.min(LOG_FILL, prototypes.item[name].stack_size * 20) }
+				end
+				chests = chests + 1
+			end
+		end
+	end
+	local net = s.find_logistic_network_by_position({ X0 + 2, LY + 6 }, "player")
+	b.logistic = { roboports = n, storage_chests = chests + LOG_FEEDERS, kinds = #items, bus = bus ~= nil,
+		network = net ~= nil, items = net and net.get_item_count() or 0 }
+end
+
 local function build_me()
 	local b = storage.b
 	research_all(game.forces.player)
@@ -837,7 +910,7 @@ local function build_me()
 		total_h = total_h + geos[k].height + (k < K and PART_GAP or 0)
 		max_w = math.max(max_w, geos[k].width)
 	end
-	new_surface(max_w + 16, total_h + 16)
+	new_surface(math.max(max_w, logistic_width(C.logistic)) + 16, total_h + 16 + logistic_height(C.logistic))
 	b.slots, b.drives, b.count, b.parts, b.anchors, b.lat_maint, b.sb_probe, b.job_keys = {}, {}, {}, {}, {}, {}, {}, {}
 	local members = {}
 	local y = Y0
@@ -849,6 +922,7 @@ local function build_me()
 	end
 	b.anchor = b.parts[1].anchor
 	b.cpus = b.parts[1].cpus
+	if (C.logistic or 0) > 0 then build_logistic(b, b.parts[K], members) end   -- (issue #506)
 	if C.noent then
 		--- the engine's share: the ME entities are placed like the rest and destroyed again before the mod ever
 		--- registers them (nothing to sweep, no cells to spill); the chests, tanks, machines, inserters and power stay
@@ -880,6 +954,7 @@ local function build_me()
 		slots = #b.slots, rows = rows, slots_per_row = 2 * geos[1].spr, counts = b.count, cables = b.parts[1].cables,
 		members = members_all, cells = cells_all, fluid_cells = fcells_all,
 		storage_buses = sb_all, fluid_storage_buses = fsb_all, item_types = types, recipes = #b.parts[1].reg_recipes,
+		logistic = b.logistic,                                                  -- (issue #506)
 		jobs = #b.job_keys, cpus = b.parts[1].ncpu, network_ok = net and net.ok or false,
 		entities = #surface().find_entities_filtered{}, fails = fails })
 end

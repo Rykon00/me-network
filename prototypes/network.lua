@@ -644,6 +644,36 @@ for _, bus in pairs({ IMPORT_BUS, EXPORT_BUS, STORAGE_BUS }) do
 	end
 end
 
+--------------------------------------------------------------------------------
+--- ME LOGISTIC STORAGE BUS (me-network issue #506; not in AE2): a 1x1 block that is not rotated; the vanilla logistic
+--- network whose area it stands in is storage of the ME network (its storage chests, in one mode also its provider chests;
+--- runtime: scripts/fork-me-logistic-storagebus.lua). Its picture and icon are the storage bus's for now, in files of
+--- their own (tools/gen_ae2_sprites.py --logistic-storage-bus) that the texture mod can replace; the storage bus's badge
+--- (both ways) is the second icon layer, as on the buses.
+--------------------------------------------------------------------------------
+
+local LOGISTIC_STORAGE_BUS = "me-logistic-storage-bus"
+ME.add_item{
+	name = LOGISTIC_STORAGE_BUS,
+	icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. ".png",
+	icon_size = 64,
+	subgroup = "fork-me-buses",
+	order = "b5",
+	stack_size = 50,
+	place_result = LOGISTIC_STORAGE_BUS,
+	recipe = { energy_required = 2, ingredients = I{ STORAGE_BUS, 1, "storage-chest", 1, "advanced-circuit", 2 } },
+}
+block{
+	name = LOGISTIC_STORAGE_BUS, icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. ".png", icon_size = 64,
+	description = { "entity-description." .. LOGISTIC_STORAGE_BUS },
+	extra = { picture = { filename = HD_ENTITY .. LOGISTIC_STORAGE_BUS .. ".png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
+		additional_pastable_entities = { LOGISTIC_STORAGE_BUS }, render_layer = "lower-object", collision_mask = WALKABLE },
+}
+for _, proto in pairs({ data.raw.item[LOGISTIC_STORAGE_BUS], data.raw["simple-entity-with-force"][LOGISTIC_STORAGE_BUS] }) do
+	proto.icon, proto.icon_size = nil, nil
+	proto.icons = { { icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. ".png", icon_size = 64 }, { icon = HD_ICON .. STORAGE_BUS .. "-badge.png", icon_size = 64 } }
+end
+
 
 
 --------------------------------------------------------------------------------
@@ -762,6 +792,7 @@ data:extend({ {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
+			logistic_storage_bus = LOGISTIC_STORAGE_BUS,                          -- (issue #506: kind "storage-bus")
 			creative_energy = CREATIVE_ENERGY,                                    -- (issue #442)
 			pattern_terminal_ex = "me-pattern-terminal-ex",                     -- (issue #416)
 			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
@@ -1011,6 +1042,7 @@ ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "l
 	"me-void-storage-cell",
 	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
+	LOGISTIC_STORAGE_BUS,                                                                      -- (issue #506)
 } }
 
 ME.add_technology{ name = "me-storage-64k", prerequisites = { "me-network", "processing-unit" }, unit = ME.unit(3, 400),
