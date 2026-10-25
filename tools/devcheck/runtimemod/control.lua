@@ -934,6 +934,9 @@ plans50 = require("plans")({ me_place = me_place, me_report = me_report })
 scan50 = require("scan")({ me_place = me_place, me_report = me_report })
 --- me-network issue #50, lever 8: the terminal's kept entries (entries.lua)
 entries50 = require("entries")({ me_place = me_place, me_report = me_report })
+--- me-network issue #514: the terminal's quality filter and sort by quality (qualityterm.lua)
+qualityterm514 = require("qualityterm")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
+	me_connect = me_connect })
 --- me-network issue #59: the storage engine's kept holder lists (holderlists.lua)
 holderlists59 = require("holderlists")({ me_place = me_place, me_report = me_report })
 --- me-network issue #59, lever 3: the machine a crafting job step takes (crafter.lua)
@@ -1136,6 +1139,7 @@ local function tests_running()
 	plans50.running(check)
 	scan50.running(check)
 	entries50.running(check)
+	qualityterm514.running(check)
 	holderlists59.running(check)
 	crafter59.running(check)
 	holders43.running(check)
@@ -2101,6 +2105,7 @@ script.on_nth_tick(10, function()
 	plans50.tick()
 	scan50.tick()
 	entries50.tick()
+	qualityterm514.tick()
 	holderlists59.tick()
 	crafter59.tick()
 	holders43.tick()
@@ -4997,6 +5002,7 @@ script.on_init(function()
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(qualityterm514.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end

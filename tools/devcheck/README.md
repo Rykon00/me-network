@@ -63,7 +63,9 @@ ingredients of the blank pattern recipe of the game it runs in.
 Helper mods are linked into the test mod folder next to the mod (and, for the second map of `check`, the throw-away
 copy of the texture mod as `me-network-ae2-textures`; `migrate`, `runtime` and `bench` never load it):
 
-- `checkmod/` (`zz-me-network-devcheck`): `data.lua` lists references to missing prototypes, `data-final-fixes.lua`
+- `checkmod/` (`zz-me-network-devcheck`): issue #514: its `control.lua` logs the ME Terminal's row above the tabs as the
+  window builds it (remote `terminal_top_view`, a stand-in: the map of `check` has no player), and `check` fails when the
+  quality filter is missing with the quality mod or there without it (`--base-only`). `data.lua` lists references to missing prototypes, `data-final-fixes.lua`
   dumps recipes, machines, items, technologies, resources, file paths, sprite layers, locale names and the names in
   `ME_NETWORK` into the log (`DEVCHECK-<SECTION>-BEGIN/END`). Issue #487: it also walks every prototype of `data.raw` for
   keys that Factorio removed since 2.0 (`checkmod/removed-keys.lua`, written by `tools/devcheck/removed_keys.py` from

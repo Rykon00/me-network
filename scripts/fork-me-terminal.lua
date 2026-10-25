@@ -1,8 +1,9 @@
 --------------------------------------------------------------------------------
 --- FORK AE2: ME TERMINAL (runtime; issue #68: the hub of the ME network, scripts/fork-me-network.lua)
 ---   * Status line: network state, bytes and types used of the item cells and of the fluid cells, drives and
----     cells, the controller's power draw. A search field above the tabs filters the Storage and Crafting tabs.
----   * Storage tab: sort (amount or name), kind (all, items, fluids), one grid with the items and then the
+---     cells, the controller's power draw. A search field above the tabs filters the Storage and Crafting tabs, and so
+---     does the quality filter next to it (issue #514: a comparator and a quality; only in a game with qualities).
+---   * Storage tab: sort (amount, name or quality), kind (all, items, fluids), one grid with the items and then the
 ---     fluids. Left click on an item: a stack into the cursor (with something in the cursor: that is stored
 ---     instead); right click: one item into the cursor; shift click: a stack into the inventory. Fluids are
 ---     shown with their amounts; they cannot be taken by hand. Issue #28: the window shows the player's inventory on
@@ -22,7 +23,8 @@
 --- Every button calls a function of this module that the runtime test calls directly (take, store_cursor,
 --- store_inventory_item, withdraw, store_stack, entries, craft_preview, start_craft, cancel_job, cells). The Patterns tab is
 --- gone (issue #130): encoding patterns is the ME Pattern Terminal's job (scripts/fork-me-patternterm.lua).
---- State: storage.fork_me_terminal[player_index] = { entity, filter, sort, kind, pick, amount, shown... }
+--- State: storage.fork_me_terminal[player_index] = { entity, filter, sort, kind, quality, pick, amount, shown... }
+--- (issue #514: quality = { cmp = "=", ">=" or "<=", name = a quality or nil }, nil or no name: any quality)
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -33,6 +35,7 @@ local Names = require("scripts.fork-me-names")
 local Conn = require("scripts.fork-me-connector")
 local IO = require("scripts.fork-me-io")
 local VC = require("scripts.fork-me-viewcells")        -- (issue #440)
+local picker = require("scripts.fork-me-picker")        -- (issue #514: the visible qualities)
 
 local M = {}
 
@@ -42,6 +45,9 @@ local COLUMNS = 10
 local REFRESH_TICKS = 60
 local WIDTH = 40 * COLUMNS + 12
 local KINDS = { all = "items", items = "fluids", fluids = "all" }     -- the kind button cycles
+local SORTS = { count = "name", name = "quality", quality = "count" }  -- the sort button cycles (issue #514: quality)
+local CMPS = { "=", ">=", "<=" }                                       -- issue #514: the quality filter's comparators
+local CMP_CAPTIONS = { ["="] = "=", [">="] = "≥", ["<="] = "≤" }
 
 local function state()
 	storage.fork_me_terminal = storage.fork_me_terminal or {}
@@ -84,9 +90,15 @@ end
 --- data of the tabs (also the remote interface: the runtime test calls the same code)
 --------------------------------------------------------------------------------
 
+--- Issue #514: the level of a quality (LuaQualityPrototype.level); 0 (normal's) for a quality the game does not know
+local function level_of(quality)
+	local p = quality and prototypes.quality[quality]
+	return p and p.level or 0
+end
+
 --- Issue #50, lever 8: what an entry reads of its key alone, once per key (per load: prototypes do not change while the
 --- game runs): a fluid's name, an item's name, quality and whether it has data (N.parse_key), and whether the prototype
---- exists (an entry of a removed prototype is not shown)
+--- exists (an entry of a removed prototype is not shown). Issue #514: `level`, its quality's level (a fluid: normal's).
 local key_info, key_info_n = {}, 0
 local function info_of(key)
 	local i = key_info[key]
@@ -94,15 +106,31 @@ local function info_of(key)
 		if key_info_n >= 50000 then key_info, key_info_n = {}, 0 end   -- (keys with data can be many)
 		if N.is_fluid_key(key) then
 			local name = N.fluid_name(key)                  -- (issue #159: one entry per temperature, "fluid/<name>@<degrees>")
-			i = { fluid = true, name = name, ok = prototypes.fluid[name] ~= nil }
+			i = { fluid = true, name = name, level = level_of("normal"), ok = prototypes.fluid[name] ~= nil }
 		else
 			local name, quality, json = N.parse_key(key)
-			i = { name = name, quality = quality, special = json ~= nil, ok = prototypes.item[name] ~= nil }
+			i = { name = name, quality = quality, level = level_of(quality), special = json ~= nil, ok = prototypes.item[name] ~= nil }
 		end
 		key_info[key] = i
 		key_info_n = key_info_n + 1
 	end
 	return i
+end
+
+--- Issue #514: the quality filter `q` ({ cmp, name }, the player's state) as its comparator, the chosen quality's level and
+--- its part of a kept list's id; nil for any quality (no filter, no quality chosen, one the game does not know)
+local function quality_test(q)
+	local p = type(q) == "table" and q.name and prototypes.quality[q.name]
+	if not p then return nil end
+	local cmp = CMP_CAPTIONS[q.cmp] and q.cmp or "="
+	return cmp, p.level, "|q" .. cmp .. q.name
+end
+
+--- issue #514: whether a key of quality level `level` passes the quality filter (quality_test)
+local function quality_passes(level, cmp, ql)
+	if cmp == "=" then return level == ql end
+	if cmp == ">=" then return level >= ql end
+	return level <= ql
 end
 
 --- issue #50, lever 8: { kept, resorted, sorted } lists since the load (tests, the benchmark)
@@ -167,13 +195,16 @@ local lists = setmetatable({}, { __mode = "k" })
 local KEEP_LISTS = 16
 
 --- The entries of the storage grid: the items, then the fluids (key "fluid/<name>", fluid = true), each filtered
---- by the search and sorted by amount or name. `kind`: "all" (default), "items" or "fluids". Issue #50, lever 8: the
+--- by the search and sorted by amount, name or quality (issue #514: higher quality first, then name, then amount; the
+--- qualities of one name by their level in every sort, normal first, never by the key's text). `kind`: "all" (default),
+--- "items" or "fluids". Issue #50, lever 8: the
 --- same table as the last call while the network's contents did not change (do not change it). `fresh` (tests, the
 --- benchmark): made from nothing, as at a first refresh, and not kept. Issue #295: `index` is the player whose
 --- translated names the search matches too (a kept list of a search is the player's, of the version of their names).
 --- Issue #440: `view`, the filter of the window's view cells (scripts/fork-me-viewcells.lua) and `vsig` its signature: only the
---- keys it allows (a kept list is the one of those cells).
-function M.entries(net, filter, sort, kind, fresh, index, view, vsig)
+--- keys it allows (a kept list is the one of those cells). Issue #514: `quality`, the quality filter ({ cmp = "=", ">=" or
+--- "<=", name }; a fluid counts as normal quality; nil or no name: any quality, with the id of the lists from before it).
+function M.entries(net, filter, sort, kind, fresh, index, view, vsig, quality)
 	local lower
 	filter, lower = Names.search(filter)
 	local names = filter ~= "" and Names.names_of(index) or nil
@@ -186,6 +217,8 @@ function M.entries(net, filter, sort, kind, fresh, index, view, vsig)
 	local id = tostring(sort) .. "|" .. tostring(kind) .. "|" .. filter
 	if names then id = id .. "|" .. index .. "@" .. Names.version(index) end
 	if view then id = id .. "|v" .. vsig end                       -- (issue #440)
+	local qcmp, qlevel, qid = quality_test(quality)
+	if qcmp then id = id .. qid end                                -- (issue #514)
 	local last = not fresh and per.of[id] or nil
 	if last and last.cver == net.cver and last.usable == usable then
 		list_stats.kept = list_stats.kept + 1
@@ -201,20 +234,27 @@ function M.entries(net, filter, sort, kind, fresh, index, view, vsig)
 		for key, count in pairs(net.items) do
 			local i = info_of(key)
 			if i.ok and Names.matches(names, i.fluid and "fluid" or "item", i.name, filter, lower)
-				and (not view or VC.allows(view, key)) then           -- (issue #440: the view cells)
+				and (not view or VC.allows(view, key))                -- (issue #440: the view cells)
+				and (not qcmp or quality_passes(i.level, qcmp, qlevel)) then   -- (issue #514)
 				if i.fluid then
-					if kind ~= "items" then liquids[key] = { key = key, name = i.name, count = count, fluid = true } end
+					if kind ~= "items" then liquids[key] = { key = key, name = i.name, count = count, fluid = true, level = i.level } end
 				elseif kind ~= "fluids" then
-					items[key] = { key = key, name = i.name, quality = i.quality, count = count, special = i.special }
+					items[key] = { key = key, name = i.name, quality = i.quality, count = count, special = i.special, level = i.level }
 				end
 			end
 		end
 	end
+	--- (a strict total order: the key decides only between keys of one name and quality, items with data or fluids of
+	--- other temperatures)
 	local function order(a, b)
-		if sort == "name" then
+		if sort == "quality" then                                 -- (issue #514: higher quality, name, amount)
+			if a.level ~= b.level then return a.level > b.level end
 			if a.name ~= b.name then return a.name < b.name end
-		elseif a.count ~= b.count then
-			return a.count > b.count
+			if a.count ~= b.count then return a.count > b.count end
+		else
+			if sort ~= "name" and a.count ~= b.count then return a.count > b.count end
+			if a.name ~= b.name then return a.name < b.name end
+			if a.level ~= b.level then return a.level < b.level end   -- (issue #514: not by the key's text)
 		end
 		return a.key < b.key
 	end
@@ -468,6 +508,43 @@ local function build_cells(tab)
 	scroll.add{ type = "table", name = "fork_me_cells", column_count = 2 }
 end
 
+--- Issue #514: the quality filter (it filters the Storage and the Crafting tab, as the search next to it does): a
+--- comparator (=, ≥, ≤) and a quality, "Any quality" or one of the game's visible qualities with its icon (a drop-down:
+--- 2.1 has a choose-elem-button of qualities but no filter to leave out hidden ones such as quality-unknown). Only when
+--- the game has more than one visible quality (not without the quality mod). Returns whether it was added.
+local function add_quality_filter(parent, st)
+	local names = picker.qualities()
+	if #names < 2 then return false end
+	local q = type(st.quality) == "table" and st.quality or {}
+	local cmps, cmp_index = {}, 1
+	for i, c in ipairs(CMPS) do
+		cmps[i] = CMP_CAPTIONS[c]
+		if c == q.cmp then cmp_index = i end
+	end
+	local cmp = parent.add{ type = "drop-down", name = "fork_me_qcmp", items = cmps, selected_index = cmp_index,
+		tooltip = { "fork-me-terminal.quality-cmp-tooltip" }, tags = G.act("term_qcmp") }
+	cmp.style.width = 52
+	local items, sel = { { "fork-me-terminal.quality-any" } }, 1
+	for i, name in ipairs(names) do
+		items[i + 1] = { "", "[quality=" .. name .. "] ", prototypes.quality[name].localised_name }
+		if name == q.name then sel = i + 1 end
+	end
+	local dd = parent.add{ type = "drop-down", name = "fork_me_quality", items = items, selected_index = sel,
+		tooltip = { "fork-me-terminal.quality-tooltip" }, tags = G.act("term_quality", { names = names }) }
+	dd.style.width = 140
+	return true
+end
+
+--- the row above the tabs: the search field and (issue #514) the quality filter
+function M.build_top(content, st)
+	local top = G.row(content)
+	top.add{ type = "label", caption = { "fork-me-terminal.search" } }
+	local search = top.add{ type = "textfield", name = "fork_me_search", text = st.filter or "", tags = G.act("term_search") }
+	search.style.width = 200
+	if add_quality_filter(top, st) then search.style.width = 150 end
+	return top
+end
+
 --- Issue #229: the top of an ME Chest's window: its cell slot with the cell's fill, the priority, the input slot, the power
 local function build_chest(content, entity)
 	local row = G.row(content)
@@ -531,10 +608,7 @@ local function open(player, entity)
 	if chest then build_chest(content, entity) end
 	G.label(content, "", WIDTH, nil, "fork_me_net_line")
 	if G.wireless_mode_button then G.wireless_mode_button(content, entity, "pattern") end   -- (issue #210: a wireless window)
-	local top = G.row(content)
-	top.add{ type = "label", caption = { "fork-me-terminal.search" } }
-	local search = top.add{ type = "textfield", name = "fork_me_search", text = st.filter or "", tags = G.act("term_search") }
-	search.style.width = 200
+	M.build_top(content, st)
 	local tabs = content.add{ type = "tabbed-pane", name = "fork_me_tabs", tags = G.act("term_tab") }
 	for _, name in ipairs(chest and CHEST_TABS or TABS) do
 		local tab = tabs.add{ type = "tab", caption = { "fork-me-gui.tab-" .. name } }
@@ -567,7 +641,7 @@ local function refresh_storage(player, st, frame, net)
 	elseif vbox then
 		vbox.visible = false
 	end
-	local items = M.entries(net, st.filter, st.sort, st.kind, nil, player.index, view, vsig)
+	local items = M.entries(net, st.filter, st.sort, st.kind, nil, player.index, view, vsig, st.quality)
 	local n = math.min(#items, MAX_BUTTONS)
 	local sort, kind = st.sort or "count", st.kind or "all"
 	--- What the grid shows is kept in storage (every peer sets the same buttons) and compared entry by entry. Issue #50,
@@ -627,12 +701,13 @@ local function refresh_crafting(st, frame, net, index)
 		autocraft.ignored_list(ignored), slots }
 	local filter, lower = Names.search(st.filter)
 	local names = filter ~= "" and Names.names_of(index) or nil      -- (issue #295: the names the player sees)
+	local qcmp, qlevel = quality_test(st.quality)                  -- (issue #514)
 	local shown, sig = {}, {}
 	for _, key in pairs(keys) do
 		local fluid = key:sub(1, 6) == "fluid/"
 		local name = fluid and key:sub(7) or N.parse_key(key)
 		if (filter == "" or key:find(filter, 1, true) or Names.matches(names, fluid and "fluid" or "item", name, filter, lower))
-			and #shown < MAX_CRAFT_BUTTONS then
+			and (not qcmp or quality_passes(info_of(key).level, qcmp, qlevel)) and #shown < MAX_CRAFT_BUTTONS then
 			local d = autocraft.describe(key)
 			if d then
 				local count = d.fluid and N.count_key(net, key) or N.count(net, d.name, d.quality)   -- (issue #352: its quality)
@@ -945,9 +1020,31 @@ end)
 G.on("term_sort", function(event, player, el)
 	local st = st_of(player)
 	if not st then return end
-	st.sort = st.sort == "name" and "count" or "name"
+	st.sort = SORTS[st.sort or "count"] or "count"
+	if st.sort == "quality" and #picker.qualities() < 2 then st.sort = "count" end   -- (issue #514: a game without qualities)
 	el.caption = { "fork-me-net.sort-" .. st.sort }
 	M.refresh(player)
+end)
+
+--- issue #514: the quality filter's comparator or quality (nil: the other one as it was); "=" and any quality is no filter
+--- (nil, as before it)
+local function set_quality(player, cmp, name)
+	local st = st_of(player)
+	if not st then return end
+	local q = type(st.quality) == "table" and st.quality or {}
+	if cmp then name = q.name else cmp = q.cmp or "=" end
+	st.quality = (cmp ~= "=" or name) and { cmp = cmp, name = name } or nil
+	M.refresh(player)
+end
+
+G.on("term_qcmp", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	set_quality(player, CMPS[el.selected_index] or "=")
+end)
+
+G.on("term_quality", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	set_quality(player, nil, el.tags.names and el.tags.names[el.selected_index - 1])
 end)
 
 G.on("term_kind", function(event, player, el)
@@ -1113,14 +1210,16 @@ remote.add_interface("gregtorio-me-terminal", {
 	store_inventory_item = function(inventory, terminal, name, quality, all)
 		return M.store_inventory_item(inventory, terminal, name, quality, all)
 	end,
-	--- the grid's entries for a search text, a sort ("count" or "name") and a kind ("all", "items", "fluids")
-	--- `fresh` (tests, the benchmark): made from nothing, as at a first refresh, and not kept
+	--- the grid's entries for a search text, a sort ("count", "name" or, issue #514, "quality") and a kind ("all", "items",
+	--- "fluids"). `fresh` (tests, the benchmark): made from nothing, as at a first refresh, and not kept
 	--- (issue #440: `views`, the view cells of the window of `terminal` count, as the window's list; `player` for a wireless one)
-	entries = function(terminal, filter, sort, kind, fresh, index, views, player)
+	--- Issue #514: `quality`, the quality filter { cmp = "=", ">=" or "<=", name = a quality } (nil: any quality); the last
+	--- argument, so the calls from before it stay as they were
+	entries = function(terminal, filter, sort, kind, fresh, index, views, player, quality)
 		local net = network(terminal)
 		local view, vsig
 		if views then view, vsig = VC.filter(VC.inventory(terminal, player)) end
-		return net and M.entries(net, filter, sort, kind, fresh, index, view, vsig) or {}
+		return net and M.entries(net, filter, sort, kind, fresh, index, view, vsig, quality) or {}
 	end,
 	--- issue #50, lever 8: { kept, resorted, sorted } since the load: lists given back unchanged, made from the last one, sorted
 	--- with table.sort after too many moves

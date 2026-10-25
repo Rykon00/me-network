@@ -3912,3 +3912,37 @@ throughput per kind of endpoint identical.
 | 5000: Lua alloc KB per tick | 35.57 | 35.57 |
 
 The allocation is the engine's result table of `get_contents` and did not change (#506).
+
+## The ME Terminal's quality filter and sort (issue #514)
+
+The terminal's list gets the quality level of each key from the per-key cache it already had (`info_of`, once per key and
+load), so a list made anew pays one number field per entry, the filter one comparison per key (only while a quality is
+chosen), and the sort one more comparison where two entries of one name tie (before: the key's text). The kept lists keep
+their id for "any quality", so nothing changes for a window without the filter; nothing runs per tick.
+
+`bench --check origin/main` (sizes 100, 1000, 5000; three rounds in turns): **regressions beyond the noise: 0**,
+throughput per kind of endpoint identical.
+
+| | origin/main (#513) | #514 |
+|---|---|---|
+| 100: script avg / p99 (ms) | 0.208 / 1.87 | 0.205 / 1.86 |
+| 1000: script avg / p99 (ms) | 0.352 / 2.02 | 0.353 / 2.01 |
+| 5000: script avg / p99 (ms) | 0.927 / 2.79 | 0.935 / 2.82 |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 28.06 / 25.90 / 34.26 | 28.06 / 25.90 / 34.26 |
+
+The window probes (`bench --sizes 1000 --profile 1000`, two runs of each version in turns, µs per call; the bench network
+holds every item in every quality, so "≤ normal" keeps about a fifth of the keys; the version before #514 sorts
+"quality" by amount and ignores the filter):
+
+| window: terminal entries | origin/main (#513) | #514 |
+|---|---|---|
+| all, by count (made anew) | 4221 / 4517 | 4873 / 4943 |
+| items, by name (made anew) | 4671 / 4270 | 4363 / 4476 |
+| all, by quality (made anew) | 4292 / 4454 | 4694 / 4779 |
+| all, by count, quality ≤ normal (made anew) | 4228 / 4427 | 1254 / 1159 |
+| all, by count, nothing changed | 1921 / 1866 | 1961 / 1880 |
+| all, by count, one amount changed (a refresh) | 3946 / 3930 | 3445 / 3586 |
+
+A list made from nothing by amount is up to a tenth slower in these runs (the scene's qualities of one item often hold the
+same amount, so their tie goes on to the name and the level), by name it is the same; the refresh of an open window (one
+amount changed, the list sorted again from the last one) and a window whose network did not change cost the same as before.

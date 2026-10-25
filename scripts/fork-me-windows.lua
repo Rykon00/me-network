@@ -2149,7 +2149,7 @@ local stand_in_frames = {}      -- name -> a table standing for a window's frame
 local function stand_in_element(def)
 	local el = { type = def.type, name = def.name, caption = def.caption, sprite = def.sprite, number = def.number,
 		tooltip = def.tooltip, elem_tooltip = def.elem_tooltip, value = def.value, tags = def.tags or {}, style = {},
-		style_name = def.style, text = def.text, children = {} }
+		style_name = def.style, text = def.text, items = def.items, selected_index = def.selected_index, children = {} }
 	el.add = function(d)
 		local c = stand_in_element(d)
 		el.children[#el.children + 1] = c
@@ -2312,6 +2312,17 @@ remote.add_interface("gregtorio-me-gui", {
 		if text then f.text = text end
 		local ok = M.refresh_qbridge({ valid = true, can_reach_entity = function() return true end }, frame, first)
 		return { ok = ok, text = f.text, shown = f.tags.shown }
+	end,
+	--- Issue #514: the ME Terminal's row above the tabs (the search, the quality filter) built into a stand-in for a player
+	--- whose terminal state has the quality filter `quality` (nil: any): { { type, name, items, selected_index } per element }
+	terminal_top_view = function(quality)
+		local frame = stand_in_element{ type = "frame" }
+		local top = terminal.build_top(frame, { filter = "", quality = quality })
+		local out = {}
+		for i, c in ipairs(top.children) do
+			out[i] = { type = c.type, name = c.name, items = c.items, selected_index = c.selected_index }
+		end
+		return out
 	end,
 	forget_player = function(index) G.forget_player(index) end,      -- (issue #179: what on_player_removed does)
 	--- every registered window: { [name] = { pane = true, shift = has a shift + click target, control, message } }
