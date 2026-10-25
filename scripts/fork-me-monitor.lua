@@ -84,14 +84,16 @@ M.rate_of = rate_of
 --- the face: the resource's icon and the amount (and the rate) as render objects on the block
 local function draw(rec, text)
 	local e = rec.entity
-	if not rec.key then
+	local sprite = rec.key and (N.is_fluid_key(rec.key) and ("fluid/" .. N.fluid_name(rec.key)) or ("item/" .. (N.parse_key(rec.key))))
+	local redraw = sprite and (not (rec.icon and rec.icon.valid) or rec.sprite ~= sprite)
+	--- (issue #503: a name the game does not know has no face; asked only when the icon is drawn)
+	if not sprite or (redraw and not helpers.is_valid_sprite_path(sprite)) then
 		if rec.icon and rec.icon.valid then rec.icon.destroy() end
 		if rec.text and rec.text.valid then rec.text.destroy() end
 		rec.icon, rec.text, rec.shown = nil, nil, nil
 		return
 	end
-	local sprite = N.is_fluid_key(rec.key) and ("fluid/" .. N.fluid_name(rec.key)) or ("item/" .. (N.parse_key(rec.key)))
-	if not (rec.icon and rec.icon.valid) or rec.sprite ~= sprite then
+	if redraw then
 		if rec.icon and rec.icon.valid then rec.icon.destroy() end
 		rec.icon = rendering.draw_sprite{ sprite = sprite, target = { entity = e, offset = { 0, -0.1 } }, surface = e.surface,
 			x_scale = 0.45, y_scale = 0.45, render_layer = "lower-object-above-shadow" }
@@ -229,7 +231,11 @@ function M.on_configuration_changed()
 			local rec = record(e)
 			local o = old[e.unit_number]
 			if o then
-				rec.key, rec.locked, rec.unit, rec.icon, rec.text = o.key, o.locked, o.unit or "second", o.icon, o.text
+				--- (issue #503: a replaced item's key is its replacement's, a removed one's none)
+				local key = type(o.key) == "string" and N.live_key(o.key) or nil
+				if key and not N.is_fluid_key(key) and not prototypes.quality[select(2, N.parse_key(key))] then key = nil end
+				if key and N.is_fluid_key(key) and not prototypes.fluid[N.fluid_name(key)] then key = nil end
+				rec.key, rec.locked, rec.unit, rec.icon, rec.text = key, o.locked, o.unit or "second", o.icon, o.text
 				rec.sprite, rec.shown = o.sprite, nil
 			end
 			visit(rec)

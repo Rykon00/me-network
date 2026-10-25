@@ -16,6 +16,9 @@
 ---                                                 (def.recipes: names, in order) of a technology
 ---   ME_NETWORK.make_molecular_assembler(def)      rebuild the ME Molecular Assembler from another assembling
 ---                                                 machine (base, crafting_categories, crafting_speed, energy_usage)
+---   ME_NETWORK.replace_item(old, new)             an item another mod removed or renamed (with a JSON migration): what the
+---                                                 network stores of `old` becomes `new` when a save is loaded without
+---                                                 `old` (issue #503; mod-data "fork-me-network", replaced_items)
 ---   ME_NETWORK.removed                            items this mod no longer lets players make: { old item ->
 ---                                                 the item that replaced it }; their recipes are ignored by
 ---                                                 replace_recipe and deleted in data-final-fixes.lua (issue #3)
@@ -161,6 +164,21 @@ function M.replace_recipe(def)
 	data.raw.recipe[def.name] = nil
 	data:extend({ def })
 	remember(M.recipes, def.name)
+end
+
+--- Issue #503: `old` (an item name) was removed or renamed by the calling mod, `new` is the item that replaces it. A JSON
+--- migration renames the item in the engine's inventories only; the ME network keeps its contents in script storage, so a
+--- mod tells it the same mapping here. When a save is loaded and `old` no longer exists, everything the network stores or is
+--- set to under `old` (cells, storage bus snapshots, partitions, patterns, filters, crafting jobs) is under `new` afterwards,
+--- the counts added to what it held of `new`, the quality and tags kept. While `old` still exists nothing changes (a migration
+--- may rename an item that its mod keeps). Items removed without a replacement are dropped by the network itself.
+function M.replace_item(old, new)
+	if type(old) ~= "string" or type(new) ~= "string" or old == new then
+		error("ME_NETWORK.replace_item(old, new): two different item names, got " .. serpent.line(old) .. ", " .. serpent.line(new))
+	end
+	local md = data.raw["mod-data"]["fork-me-network"]
+	md.data.replaced_items = md.data.replaced_items or {}
+	md.data.replaced_items[old] = new
 end
 
 function M.remove_recipe(name)

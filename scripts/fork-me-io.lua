@@ -1025,7 +1025,7 @@ function M.interface_step(rec, dt, u)
 	end
 	for i = 1, rows_of(rec) do
 		local c = config[i]
-		if c and c.type ~= "fluid" then
+		if c and c.type ~= "fluid" and N.item_exists(c.name) then   -- (issue #503: a row of a removed item does nothing)
 			local key = c.key
 			if not key then
 				key = N.key_of(c.name, c.quality)
@@ -2710,6 +2710,41 @@ function M.tag_blueprint(bp, mapping)
 			if b and (#b.filters > 0 or list or b.gtext or b.pulse or b.conly) then
 				bp.set_blueprint_entity_tag(index, BUS_TAG, { filters = b.filters, cards = list, gtext = b.gtext, pulse = b.pulse,
 					conly = b.conly })                                             -- (issue #426: craft only)
+			end
+		end
+	end
+end
+
+--- Issue #503: before on_configuration_changed (control.lua) the rows of the interfaces and the filters of the buses that name
+--- an item that no longer exists name its replacement (ME_NETWORK.replace_item, quality kept); a removed one's is dropped below,
+--- as before (clean_config, filter_key)
+function M.clean_removed_items()
+	local s = state()
+	for _, rec in pairs(s.recs) do
+		for _, rows in ipairs({ rec.config or {}, rec.extra or {} }) do
+			for _, c in pairs(rows) do
+				if type(c) == "table" and c.type ~= "fluid" and type(c.name) == "string" and not N.item_exists(c.name) then
+					local old = N.key_of(c.name, type(c.quality) == "string" and c.quality or "normal")
+					local new = N.live_key(old)
+					N.note_removed_item(old, 0, new)
+					if new then
+						c.name, c.quality = N.parse_key(new)
+						c.key = nil
+					end
+				end
+			end
+		end
+		for _, field in ipairs({ "keys", "filters" }) do
+			local list = rec[field]
+			if type(list) == "table" then
+				for i, f in pairs(list) do
+					--- (a plain name may be a fluid's: filter_key)
+					if type(f) == "string" and not N.is_fluid_key(f) and not prototypes.fluid[f] and not N.key_item_exists(f) then
+						local new = N.live_key(f)
+						N.note_removed_item(f, 0, new)
+						if new then list[i] = new end
+					end
+				end
 			end
 		end
 	end

@@ -1,4 +1,11 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.10
+Date: 2026-10-25
+  Bugfixes:
+    - Items that another mod removed or renamed no longer stay in the network (issue #503). After such an update a circuit interface on a network that still held one (Gregtorio Continued's apatite lens, which became the green sapphire lens) stopped the game with "Unknown item name". Loading the save now puts what the network stores of a renamed item under its new name, the counts added to what it held of that one, in its quality: in the cells, partitions, patterns, crafting jobs and the settings of the buses, interfaces, level maintainers, emitters, monitors and circuit interfaces. Items removed without a replacement are dropped, as the game drops them from chests, with a line in the log. A name the game no longer knows never reaches a circuit signal, a machine or a chest.
+  Info:
+    - For other mods: ME_NETWORK.replace_item(old, new) tells the network that an item was renamed, next to the JSON migration that renames it in the game (docs/API.md).
+---------------------------------------------------------------------------------------------------
 Version: 0.5.9
 Date: 2026-10-24
   Changes:

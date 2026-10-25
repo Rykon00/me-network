@@ -702,9 +702,19 @@ end
 N.slow_hooks[#N.slow_hooks + 1] = M.sweep
 
 --- after a mod update: the records of workbenches that are gone are swept, every workbench has one (and the
---- inventory of issue #28)
+--- inventory of issue #28); issue #503: a partition key of an item that no longer exists is its replacement's, or dropped (the
+--- cell in the slot is read from its tags, which N.cell_from_tags cleans the same way)
 function M.on_configuration_changed()
-	state()
+	local s = state()
+	for _, rec in pairs(s.recs) do
+		local list = N.live_list(rec.config)
+		if list ~= rec.config then
+			for _, key in ipairs(rec.config) do
+				if N.live_key(key) ~= key then N.note_removed_item(key, 0, N.live_key(key)) end
+			end
+			rec.config = list
+		end
+	end
 	for _, surface in pairs(game.surfaces) do
 		for _, e in pairs(surface.find_entities_filtered{ name = NAME }) do register(e) end
 	end
