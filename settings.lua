@@ -14,6 +14,9 @@ data:extend({
 	int("me-network-io-visits-per-tick-max", "a2", 32, 1, 1000),
 	int("me-network-storage-bus-visits-per-tick", "b1", 8, 1, 1000),
 	int("me-network-storage-bus-visits-per-tick-max", "b2", 24, 1, 1000),
+	--- issue #506: the ME Logistic Storage Bus reads a whole logistic network per visit (0.28 ms at 473 storage chests)
+	int("me-network-logistic-storage-bus-visits-per-tick", "b21", 1, 1, 100),
+	int("me-network-logistic-storage-bus-visits-per-tick-max", "b22", 2, 1, 100),
 	int("me-network-io-port-visits-per-tick", "b3", 2, 1, 1000),         -- issue #386: the ME IO Port
 	int("me-network-io-port-visits-per-tick-max", "b4", 8, 1, 1000),
 	int("me-network-maintainer-checks-per-tick", "c1", 4, 1, 1000),

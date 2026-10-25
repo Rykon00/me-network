@@ -2869,6 +2869,8 @@ remote.add_interface("gregtorio-me-io", {
 		out.io_probing = out.io_probing - parked                        -- (the parked are in the probe list for their fallback)
 		put("storage_bus", sb and sb.q, sb and #sb.list)
 		put("fluid_storage_bus", fsb and fsb.q, fsb and #fsb.list)
+		local lsb = storage.fork_me_lsbus                                   -- (issue #506)
+		put("logistic_storage_bus", lsb and lsb.q, lsb and #lsb.list)
 		put("maintainer", ae and ae.mq, ae and ae.mlist and #ae.mlist)
 		local mparked = 0
 		for _, rec in pairs(ae and ae.maintainers or {}) do if rec.park then mparked = mparked + 1 end end

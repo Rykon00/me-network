@@ -91,6 +91,7 @@ local function kinds()
 		if n.advanced_level_emitter then k[n.advanced_level_emitter] = "level-emitter" end   -- issue #443: the same kind
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
+		if n.logistic_storage_bus then k[n.logistic_storage_bus] = "storage-bus" end   -- issue #506: a storage bus on a logistic network
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
 		if n.charger then k[n.charger] = "charger" end                -- issue #208
 		if n.chest then k[n.chest] = "chest" end                      -- issue #229
