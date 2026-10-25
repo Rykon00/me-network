@@ -22,6 +22,7 @@ The rework comes in three steps:
 | Fluid storage bus | the ME Fluid Storage Bus: the fluid segment of a tank as network storage, one bus per segment | done (this document, "Fluid storage bus (after the storage bus)") |
 | Encoded patterns | issue #80: blank and encoded pattern items, the Patterns tab of the terminal (the ME Pattern Terminal since issue #130), the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
 | Unified I/O | me-network issue #3: one ME Interface, Import Bus, Export Bus and Storage Bus for items and fluids; the four fluid blocks removed and migrated | done (this document, "Items and fluids in one block (me-network issue #3)") |
+| Logistic storage bus | me-network issue #506, the first package of the crossover "me-network x logistic network": the ME Logistic Storage Bus, a vanilla logistic network as an external cell | done (this document, "The ME Logistic Storage Bus (issue #506)") |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
 player's guide is `docs/AE2.md`.
@@ -3089,3 +3090,105 @@ the controllers' energy; `M.stored_energy` reports the controllers' buffers full
 interface stays as it is (its draw, its status without a pole).
 
 *Test:* `tools/devcheck/runtimemod/creativeenergy.lua`.
+
+## The ME Logistic Storage Bus (issue #506)
+
+The first package of the crossover plan "me-network x logistic network": the whole vanilla logistic network a block
+stands in as storage of the ME network. In-game check: issue #507.
+
+### Model: the storage bus's record, a module of its own
+
+`me-logistic-storage-bus` is a 1x1 member that is not rotated (4 kW through the controller, as the other buses). Its
+kind is `storage-bus` (mod-data name `logistic_storage_bus`), so its record is the storage bus's external cell (`ext =
+"storage-bus"`) with `logistic = true`, `side = "logistic"` and `handler = "logistic-storage-bus"`: the engine calls the
+logistic handler directly, as it does for the fluid side (`ext_handlers[cell.handler or cell.ext]`, no dispatch per
+call). Everything a player sets is the storage bus's: the window, the filters, whitelist and blacklist, filter on
+extract, priority, cards, blueprint tag `fork_me_storage_bus`, settings paste (between logistic buses:
+`additional_pastable_entities` lists only itself) and clones. What is its own lives in
+`scripts/fork-me-logistic-storagebus.lua`: the visit, the claims, the engine calls and the queue. The storage bus module
+hands a record with `logistic` to it in `list_side`, `M.visit`, `M.wake`, "From contents", the removal and
+`on_configuration_changed`.
+
+* **Modes**: `readwrite` ("Storage"), `providers` ("Storage and providers") and `read`; `write` (insert only) is no mode
+  of it (`set_settings` ignores it). The engine needs no change: `read` keeps it out of the insertion lists as for a
+  storage bus, `providers` is an ordinary mode for it.
+* **Default priority -100**: the drives fill first, the logistic network is the overflow, and it is emptied first (lower
+  priority first). Set at registration, so a blueprint of such a bus always carries its priority.
+
+### Which logistic network: resolved anew, claimed by id
+
+`LuaSurface::find_logistic_network_by_position(position, force)` at every visit and at every engine call (1.4 us). The
+network is never kept as an object across ticks: the network ids change when networks split or join, and an object kept
+by one peer could differ from the one a peer that joined the game finds by position (a desync). The record keeps the id
+it claimed at its last visit (`rec.lid`, saved); an engine call uses the network at the bus's position only while its
+id is that one. Between a split or a join and the next visit the bus therefore sees nothing: an extraction finds 0 and
+corrects the snapshot (the engine's staleness rule), an insert goes to other storage, and the visit takes the new
+network (a changed id counts as a change: the next visit comes after 30 ticks).
+
+**One bus per logistic network**: `storage.fork_me_lsbus.claims[network id] = bus unit`. Conflicts are decided in unit
+order, as the fluid side's segments: the lower unit keeps the network, the other one is cleared at once (`ext_sync` with
+nothing) and shows "shared-target". A claim whose bus no longer stands in that network (or is gone) is stale and taken
+over. When the first bus is removed, the second takes over at its next visit.
+
+### Engine calls (Factorio 2.1.23, probed headless)
+
+* `get_contents(member)` and `get_item_count(item, member)` take `"storage"` or `"providers"`; **`"providers"` is the
+  active and passive provider and the buffer chests together** (probed: 100 in a passive, 1000 in an active provider and
+  4800 in a buffer chest gave 5900), `"storage"` the storage chests; requester chests are in neither. So the mode
+  "providers" reads both members and takes, after `"storage"`, from `"passive-provider"`, `"active-provider"` and
+  `"buffer"` in that order (`remove_item` takes one member at a time): what it counts is exactly what it can take.
+  Taking only from passive providers would have shown items (the active and buffer chests' part of `"providers"`) that the
+  network can never hand out.
+* `insert(stack, "storage")` puts into storage chests as robots do: `select_drop_point{ stack, members = "storage" }`
+  honours a storage chest's filter (probed). The handler's `room` is the insertable count of the chest
+  `select_drop_point` picks: a lower bound, never more than fits; an insert that stores less than offered marks the key
+  `full` until the next visit (the engine's rule for every external cell).
+* `remove_item` takes damaged stacks too and does not keep their health (probed: two turrets at half health came out
+  with the whole ones). A logistic network cannot be read stack by stack at the cost of a visit, so the bus takes damaged
+  items out by count, as the storage bus did before issue #84; documented for the player.
+* Every call carries the quality (`{ name, quality }`); the keys are `name@quality` as everywhere.
+
+### What it shows
+
+Plain items that do not spoil (`N.item_class` "plain", `get_spoil_ticks` 0), any quality. Not the classes the storage
+bus walks stack by stack on a chest (tools, ammo, repair tools: "worn"; items with tags or a label): a partly used
+magazine would be counted and taken as a whole one, a turret with kills would lose them. Spoiling items stay out until
+the package "Spoilable items in ME storage".
+
+### Visits and cost
+
+* A queue of its own (`Sched.new("lsbus")`, `storage.fork_me_lsbus = { list, lpos, claims, q }`) with its own budget:
+  map settings `me-network-logistic-storage-bus-visits-per-tick` (floor, 1) and `-max` (ceiling, 2), since one visit
+  reads a whole logistic network (`get_contents("storage")` 0.28 ms at 1048 roboports, 473 storage chests, 764 000 items
+  of 368 kinds on the maintainer's save; `"providers"` 0.06 ms). Intervals as the storage bus: 30 ticks after a visit
+  that found a change, doubling up to the storage bus idle limit (120 ticks) while nothing changes (the probe list).
+  Everything that decides a visit is in `storage`; the save at tick 500 of `devcheck runtime` covers the queue (its buses
+  are in the schedule digest). `/me-stats` lists the queue ("Logistic storage buses"), `backlogs` reports it.
+* A visit: one `find_logistic_network_by_position`, the claim, one `get_contents` per member read, a Lua loop over its
+  entries (a cached class check, the filter) and `N.ext_sync` (only the differences). The other engine calls cost what
+  the issue measured (count 0.3 us, insert or remove 3 us, `select_drop_point` 3 us) plus one position lookup each.
+* Measured: `docs/PERFORMANCE.md`, "ME Logistic Storage Bus (issue #506)".
+
+### Limits
+
+* No limit per move: as a storage bus on a chest, the network takes or stores what a caller asks (the bus speed of the
+  import and export buses applies to them, not to storage).
+* Items in robots are not in a chest and not shown; items a robot is about to fetch are counted until it took them (the
+  engine's own counts).
+* Not tested in the real game: the window, the sprite, a real base (issue #507).
+
+### Tests
+
+`devcheck runtime`, "ME logistic storage bus (issue #506)" (`tools/devcheck/runtimemod/lsbus.lua`): three roboports in a
+row (the middle one joins the outer two), storage chests, a passive and an active provider, a buffer and a requester chest,
+a storage chest in the far roboport's area only, three buses. Checked: the second bus refused, the one outside every area
+"no-target"; the counts (storage only, a rare quality, no spoiling item, no ammo, never the requester); extraction and
+insertion (the drive first at -100, the logistic network first at priority 10, rare quality); the mode "providers" (the
+three provider kinds counted and taken in order, inserts still into storage chests); read only; a whitelist and a
+blacklist; settings by paste, clone and blueprint tag, `write` refused; a split by a removed roboport (the stale count
+corrected by an extraction, the visit drops the far half); the second bus taking over; a bus that gets a network when a
+roboport is built and loses it at its next scheduled visit when the roboport goes; a change by hand seen at a scheduled
+visit; the visit lists. Two mutations were checked to fail it: no claims (the network counted twice) and the provider
+mode counting only storage (its extractions came up short). `devcheck bench --logistic N` adds a logistic network of N
+roboports and N / 2 filled storage chests with feeding inserters and the bus to every ME scene (only where the version
+has the bus: `--check` against an older version measures exactly the bus).

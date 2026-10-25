@@ -534,6 +534,54 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
   second bus on the same wagon is "shared".
 * Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
 
+## ME Logistic Storage Bus
+
+The **ME Logistic Storage Bus** (issue #506; tech ME Network; an ME Storage Bus, a storage chest and 2 advanced
+circuits) makes a whole **vanilla logistic network** storage of the ME network: not one chest, but every chest of the
+logistic network it stands in. It has no AE2 counterpart. It is a 1x1 block that is not rotated: place it **inside the
+area of a logistic network** (the orange area of the roboports) and connect it to the ME network like any bus.
+
+* **What it shows**: in the mode **Storage** (the default) what the network's **storage chests** hold, in every quality.
+  The terminal shows it with the cells' items as one total; autocrafting, export buses, ME Interfaces, level maintainers
+  and the circuit interface count it and take from it. Items that robots carry are not in a chest and not shown until
+  they arrive.
+* **Storing**: the network stores into the storage chests (the game picks the chest, as for a robot: a chest whose filter
+  is another item is passed by) by the bus's **filters** and **priority**, together with the drives (see "Partitions and
+  priorities"). Its **default priority is -100**: the drives are filled first, the logistic network takes what does not
+  fit, and the network takes items out of the logistic network first. Give it a priority above the drives to make the
+  logistic network the main storage.
+* **Modes** (in its window): **Storage** (its storage chests: shown, taken from, stored into); **Storage and providers**
+  (also shows and takes from the **active provider, passive provider and buffer chests**: the game counts these three
+  together, so they come as one; the network takes from the storage chests first, then the passive providers, the
+  active providers and the buffer chests, and stores only into storage chests); **Read only** (its storage chests are
+  shown and taken from, the network never stores into them). Requester chests are never read.
+* **Filters, filter mode, filter on extract, From contents, Clear and the upgrade cards** work as on the ME Storage Bus
+  (above). "From contents" takes what the logistic network holds now, sorted by name, as many as there are filters. With
+  an Overflow Destruction Card what does not fit into the storage chests is destroyed: give such a bus a low priority.
+* **One bus per logistic network**: a second logistic storage bus in the same logistic network shows "Another ME
+  Logistic Storage Bus already uses this logistic network" and does nothing; when two logistic networks join, the bus
+  that was built first keeps the joined one. When the first bus is removed, the second takes over at its next look.
+* **Changes**: robots, inserters and players change the chests without the network noticing at once. The bus reads the
+  whole logistic network at its visits: about every half second while its contents change, less often while they do
+  not, at the latest every two seconds (the setting "Longest wait of an idle storage bus"). Taking out always asks the
+  logistic network first, so nothing is duplicated or promised from an empty chest. When a logistic network is split
+  (a roboport removed between two parts) or its last roboport is removed, the bus follows at its next look; until then
+  it hands out nothing from the part it lost. A bus outside every area shows "Stands in no logistic network".
+* **Not shown or moved**: items that spoil (they come in a package of their own), tools (science packs), ammunition and
+  repair packs (a partly used one could not be told from a whole one), items with tags or a label, items with an
+  inventory or own data. **A damaged item** in a storage chest (a mined wall or turret with less than full health) is
+  taken out by count like a whole one and comes out whole: the game's logistic network does not tell them apart. (The
+  ME Storage Bus on a chest takes whole stacks only; a logistic network cannot be read stack by stack at this cost.)
+* **What it costs**: a look reads the whole logistic network once (about 0.3 to 0.4 ms for a logistic network of 1000
+  roboports and 500 storage chests holding 560 000 to 760 000 items); the looks have a budget of their own (map settings "Logistic storage bus
+  visits per tick", at least 1, at most 2), `/me-stats` shows them as "Logistic storage buses". Numbers:
+  `docs/PERFORMANCE.md`.
+* Removing the bus takes the logistic network's items out of the ME network at once; nothing is lost, the items stay in
+  the chests. Settings (mode, priority, filters, filter on extract) are kept in blueprints, copied by settings paste
+  (between logistic storage buses) and by cloning; so is which cards it has (the cards themselves are items).
+* Its picture is the ME Storage Bus's for now, in a file of its own (`me-logistic-storage-bus.png`) that a texture pack can
+  replace.
+
 ## Recipes (standalone)
 
 On its own, ME Network uses **AE2's recipes** (modern AE2; AE2-Unofficial for its own cards) with AE2's ingredients and
@@ -583,6 +631,7 @@ The recipes that follow:
 | Void ME Fluid Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 copper plates | (AE2-U's void cell takes fluids too; this one has the fluid cell housing's copper) |
 | ME Import / Export Bus | an electronic circuit, 2 iron plates, a fast inserter | an annihilation (import) or formation core (export), 2 iron, a piston |
 | ME Storage Bus | an ME Interface, 2 fast inserters | an interface, 2 pistons |
+| ME Logistic Storage Bus (issue #506) | an ME Storage Bus, a storage chest, 2 advanced circuits | (not in AE2) |
 | ME IO Port | an ME Drive, 2 fluix cables, 2 iron plates, an advanced circuit (no stand-in for the glass: the plastic bar is not made with Gregtorio Continued, which gives the block its own recipe) | 3 glass, 2 fluix crystals, a drive, 2 iron, an engineering processor |
 | ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
 | ME Pattern Terminal | an ME Terminal, an assembling machine 1, an advanced circuit, a processing unit | a crafting terminal (terminal, crafting table, calculation processor), an engineering processor |
