@@ -221,10 +221,13 @@ slot: the source slot's partition, or none) and by cloning.
 
 Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
 fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs (it matches the
-name you see in your language, issue #295, and the internal name), and four
+name you see in your language, issue #295, and the internal name), next to it a **quality filter** for the same two
+tabs (issue #514, only in a game with qualities: a comparator **=**, **≥** or **≤** and **Any quality** or a quality;
+fluids count as normal quality; the wireless terminal has it too), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
-* **Storage:** sort (by amount or by name) and **Show: all / items / fluids**. **Left click** an item: a stack into
+* **Storage:** sort (by amount, by name or by quality: higher quality first, then name, then amount; the qualities of one
+  item are always in the order of their level, normal first) and **Show: all / items / fluids**. **Left click** an item: a stack into
   your hand; with something in hand, the click stores that instead. **Right click**: one item into your hand (one
   more of the same item). **Shift click**: a stack into your inventory. Items with tags (loaded cells), a label or damage
   have a yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).

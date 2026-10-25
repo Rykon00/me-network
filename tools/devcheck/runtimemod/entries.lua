@@ -2,9 +2,10 @@
 --- of a network are kept per search, sort and kind with the network's contents version (net.cver) and given back while it
 --- did not change; a changed network sorts the last list again (an insertion sort that moves only what changed). Every 20
 --- ticks of the whole run, for every terminal of the map (the other tests' networks move items and fluids all the time) and
---- every sort (count, name), kind (all, items, fluids) and search ("", "iron"), the entries through the kept lists must be
---- the entries made from nothing (remote `entries` with `fresh`). The test's own network changes an amount before every
---- round (four items, two of them at the same amount: ties are sorted by key), so lists are given back unchanged and sorted
+--- every sort (count, name), kind (all, items, fluids) and search ("", "iron"), and (issue #514) three of them with the sort
+--- by quality or the quality filter "≥ uncommon", the entries through the kept lists must be the entries made from nothing
+--- (remote `entries` with `fresh`). The test's own network changes an amount before every
+--- round (four items, two of them at the same amount: ties are sorted by name), so lists are given back unchanged and sorted
 --- again from the last one in both halves of the run (else the test proved nothing). Loaded by control.lua:
 --- require("entries")(H).
 
@@ -18,6 +19,11 @@ for _, sort in ipairs({ "count", "name" }) do
 		for _, filter in ipairs({ "", "iron" }) do COMBOS[#COMBOS + 1] = { sort, kind, filter } end
 	end
 end
+--- issue #514: the sort by quality and a quality filter. A terminal keeps 16 lists per network (KEEP_LISTS of
+--- fork-me-terminal.lua): more combinations than that drop the kept lists every round, and nothing is sorted again.
+COMBOS[#COMBOS + 1] = { "quality", "all", "" }
+COMBOS[#COMBOS + 1] = { "quality", "items", "iron" }
+COMBOS[#COMBOS + 1] = { "count", "all", "", { cmp = ">=", name = "uncommon" } }
 
 return function(H)
 	local me_place, me_report = H.me_place, H.me_report
@@ -62,13 +68,14 @@ return function(H)
 		table.sort(terms, function(a, b) return a.unit_number < b.unit_number end)
 		for _, term in ipairs(terms) do
 			for _, c in ipairs(COMBOS) do
-				local kept = remote.call(TERM, "entries", term, c[3], c[1], c[2])
-				local again = remote.call(TERM, "entries", term, c[3], c[1], c[2])
-				local fresh = remote.call(TERM, "entries", term, c[3], c[1], c[2], true)
+				local kept = remote.call(TERM, "entries", term, c[3], c[1], c[2], nil, nil, nil, nil, c[4])
+				local again = remote.call(TERM, "entries", term, c[3], c[1], c[2], nil, nil, nil, nil, c[4])
+				local fresh = remote.call(TERM, "entries", term, c[3], c[1], c[2], true, nil, nil, nil, c[4])
 				st.compared = st.compared + 1
 				local a, b, f = line(kept), line(again), line(fresh)
 				if (a ~= f or b ~= f) and #problems < 10 then
-					problems[#problems + 1] = "tick " .. tick .. ", terminal " .. term.unit_number .. " (" .. table.concat(c, ", ") .. "): "
+					problems[#problems + 1] = "tick " .. tick .. ", terminal " .. term.unit_number .. " (" .. c[1] .. ", " .. c[2] .. ", "
+						.. c[3] .. (c[4] and ", >= uncommon" or "") .. "): "
 						.. #kept .. " entries kept, " .. #fresh .. " fresh: " .. a:sub(1, 300) .. " against " .. f:sub(1, 300)
 				end
 			end

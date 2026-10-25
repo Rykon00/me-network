@@ -882,6 +882,19 @@ def check(a):
     ok, sec, _ = check_map(a, WORK / "check-map.zip")
     if sec is None:
         return 1
+    # issue #514: the ME Terminal's row above the tabs (checkmod/control.lua): the quality filter with the quality mod only
+    top = [r[1] for r in sec.get("TERMTOP", []) if len(r) > 1]
+    quality = {"fork_me_qcmp", "fork_me_quality"}
+    print(f"\nME Terminal, the row above the tabs: {', '.join(n or '(label)' for n in top) or 'not built'}")
+    term = []
+    if not top:
+        term.append("the row was not built (checkmod/control.lua, remote terminal_top_view)")
+    elif a.base_only and quality & set(top):
+        term.append("the quality filter is there without the quality mod")
+    elif not a.base_only and not quality <= set(top):
+        term.append("the quality filter is missing with the quality mod")
+    report("ME Terminal quality filter (issue #514)", term)
+    ok = ok and not term
     if not a.with_gregtorio:
         ok = check_textures(a, sec) and ok
     ok = ok and not ae2
@@ -908,7 +921,7 @@ RUNTIME_TESTS = (
     ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("TAGITEM", "ME items with tags through storage buses test"), ("TAGDAMAGED", "ME damaged items with tags test"), ("TAGCRAFT", "ME autocrafting of items with tags test"), ("TAGLABEL", "ME items with a label test"), ("FUZZYDATA", "ME fuzzy export of items with data test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("BULK", "ME export bus into a recipe of more than a stack test"), ("COPYPASTE", "ME settings through the copy-paste tool test"), ("DISASSEMBLY", "ME cell disassembly test"), ("IOPORT", "ME IO Port test"), ("CELLQUALITY", "ME cell item quality test"), ("QBRIDGE", "ME Quantum Bridge test"), ("WLINK", "ME Wireless Link test"), ("REFILL", "ME storage bus refill test"),
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
-    ("ENTRIES", "ME terminal entries test"),
+    ("ENTRIES", "ME terminal entries test"), ("QUALITYTERM", "ME Terminal quality filter and sort test"),
     ("HOLDERLISTS", "ME holder lists test"),
     ("CRAFTER", "ME crafter choice test"),
     ("HOLDERS", "ME holder cursor test"),
