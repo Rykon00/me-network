@@ -955,6 +955,7 @@ RUNTIME_TESTS = (
     ("STICKY", "ME Sticky Card (issue #193)"),
     ("CHEST", "ME Chest (issue #229)"),
     ("SBUSMODE", "ME storage bus filter mode (issue #155)"),
+    ("LSBUS", "ME logistic storage bus (issue #506)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
@@ -1281,6 +1282,9 @@ PROFILE_WRAP = {
                                        "ITEM.count", "ITEM.extract", "M.on_built", "M.on_removed", "inventory_of"],
     "scripts/fork-me-fluid-storagebus.lua": ["M.visit", "M.on_step", "M.on_tick", "claim", "contents_of", "M.handlers.room",
                                              "M.handlers.insert", "M.handlers.count", "M.handlers.extract"],
+    # issue #506: the ME Logistic Storage Bus
+    "scripts/fork-me-logistic-storagebus.lua": ["M.visit", "M.on_tick", "claim", "read", "HANDLER.room", "HANDLER.insert",
+                                                "HANDLER.count", "HANDLER.extract"],
     "scripts/fork-me-autocraft.lua": ["job_step", "maintenance", "scan_provider", "refresh_providers",
                                       "rebuild_patterns", "make_plan", "M.start", "assign_cpus", "await_index",
                                       "on_arrival", "awaiting", "cpus_in", "collect_output", "find_crafter",
@@ -1621,7 +1625,9 @@ def bench_config(a, scene, size, variant, profile):
            "noent": bool(variant.get("noent")), "base": bool(variant.get("base")),
            "burst": 0 if (variant.get("long") or variant.get("noent") or variant.get("base") or scene != "me") else a.burst,
            "slice": (SLICE_TICKS if window >= 2 * SLICE_TICKS else max(300, window // 2 // 300 * 300)) if variant.get("long") else None,
-           "planner_targets": a.planner_targets}
+           "planner_targets": a.planner_targets,
+           # issue #506: a logistic network of that many roboports below the ME scene, with an ME Logistic Storage Bus
+           "logistic": (getattr(a, "logistic", 0) or 0) if scene == "me" else 0}
     return cfg
 
 
@@ -1910,6 +1916,7 @@ def print_service(s):
     print(f"    {'queue':18} {'visits/tick':>11} {'due/tick':>9} {'backlog avg':>11} {'backlog max':>11} "
           f"{'busy interval s: median':>23} {'p99':>7} {'max':>7} {'n':>7} | {'idle interval s: median':>23} {'p99':>7} {'max':>7} {'n':>7}")
     for q in ("io", "io_probe", "storage_bus", "storage_bus_probe", "fluid_storage_bus", "fluid_storage_bus_probe",
+              "logistic_storage_bus", "logistic_storage_bus_probe",                   # (issue #506)
               "maintainer", "maintainer_probe", "circuit", "jobs"):
         st = sched.get(q)
         if not st or not (st.get("visits") or st.get("due")):
@@ -2242,6 +2249,8 @@ def main():
     p.add_argument("--engine-share", action="store_true", help="also each scene without its ME entities (the engine's share)")
     p.add_argument("--long", type=int, metavar="MINUTES", help="also one run of that many minutes at the largest size, reported per 5 minutes")
     p.add_argument("--burst", type=int, default=1000, metavar="N", help="ME blocks built and removed in one tick after the probes (default 1000, 0: none)")
+    p.add_argument("--logistic", type=int, default=0, metavar="N", help="issue #506: every ME scene also gets a logistic network of N "
+                   "roboports and N / 2 filled storage chests, and an ME Logistic Storage Bus on it (where the version has one)")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "
