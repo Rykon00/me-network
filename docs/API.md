@@ -204,7 +204,10 @@ local view = data.raw["mod-data"]["fork-me-network"].data.bus_view
 view.x, view.y, view.size = 3, 3, 48
 ```
 
-me-network's `data-final-fixes.lua` scales and moves the marker layer of every bus and direction to that square.
+me-network's `data-final-fixes.lua` scales and moves the marker layer of every bus and direction to that square. The ME
+Logistic Storage Bus (issue #518) is not rotated: its picture is one sprite whose second layer is its marker
+(`me-logistic-storage-bus-marker.png`, orange corner marks and a storage chest), moved the same way; its first layer
+`me-logistic-storage-bus.png` is the base a graphics mod replaces. Its icons are the base, the marker and the badge.
 
 ## Runtime
 
