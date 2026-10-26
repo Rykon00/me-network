@@ -3298,3 +3298,30 @@ three engine facts, and with a logistic storage bus (priority 10): pulled-in coa
 (a run without the skip failed exactly there), the provider not counted, the network's insert into a vanilla storage
 chest. The save at tick 500 covers the queue (schedule digest, every surface). `devcheck bench --logistic N`: 16
 interfaces with three offer and three request rows each in the logistic scene.
+
+### Requests for what crafting lacks (issue #532)
+
+The issue asked for the needs of jobs that wait for ingredients. A job never waits for what the network lacks: `M.start`
+refuses its plan ("missing") and takes every ingredient at its start. So the maintainer chose (2026-10-26) **option A**:
+the needs of the starts that failed, which their owners try again (a level maintainer's row every `RETRY_TICKS`, a
+Crafting Card every `CRAFT_RETRY`).
+
+* **The notes** (`scripts/fork-me-autocraft.lua`): `AC.note_missing(owner, unit, net, missing, upto)`, called by the owner
+  after each start: `storage.fork_ae2.wmissing[owner] = { unit, keys = { key -> { n = what plan.missing said, have = the
+  network's count then } }, upto }`; a start that succeeds or a stocked row drops it, else it runs out at `upto` (the try
+  after the next one: an owner that stops trying, a removed block, a changed row). Owners: `"m<unit>:<key>"` (a
+  maintainer's row; `row.noted` keeps the stocked check from building the string each time), `"c<unit>:<key>"` (a Crafting
+  Card of an interface, an export bus or a logistic interface).
+* **The needs** (`AC.waiting_needs(net)`): per key the sum of what the notes of the network lacked and the lowest count the
+  network had when one was noted; the need now is sum + base - the count (what arrived since is taken off). Kept outside
+  `storage`, made again when a note changes, the graph changes (`N.version()`) or a note runs out. `AC.missing_hooks` wake
+  the network's interfaces with the switch on when a note changes.
+* **The requests** (`scripts/fork-me-logistic-interface.lua`, `auto_request`): only the first interface (by unit number)
+  of a logistic network and ME network with the switch on (`rec.auto`, nil = on); item keys only, rows' items only (no
+  spoiling item), not the keys its own request rows have, not the keys offered in the logistic network (counted as
+  skipped). Largest need first, then by key; at most `me-network-logistic-interface-auto-keys` (20). Into the requester's
+  second section, slot i = the i-th need, asked = need - in the requester - `targeted_items_deliver`, written only on a
+  change (`rec.aq`), cleared when it no longer asks.
+* **Arrival**: pulled in like every delivery (`N.insert_partial`, skipping the logistic storage bus of the same logistic
+  network); the owner's next try plans with it. No job waits, so `N.on_arrival` has nothing to hand over.
+* **Tests**: `lif.lua` clusters G, H and I (the header of the file).

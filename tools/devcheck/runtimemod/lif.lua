@@ -16,25 +16,32 @@
 --- * F: with an ME Logistic Storage Bus on the same logistic network (priority 10, the network stores there first): what the
 ---   interface pulls in goes into the drive, never into the bus's storage chest; the bus does not count the interface's
 ---   provider; what the network stores goes into the vanilla storage chest, not the interface's.
+--- * G, H, I (issue #532): an ME network with iron sticks and no iron plates, a CPU, a provider with a molecular assembler and
+---   the gear pattern, a level maintainer that keeps 10 gears (its start lacks 10 iron plates), a vanilla storage chest with
+---   30 iron plates. G: the interface asks for what the start lacks ("Request what crafting lacks", on by default), the
+---   plates arrive and the maintainer's job makes the gears; a second interface there does not ask (only the first of a
+---   logistic network). H: a second interface offers iron plates: they are left out, nothing arrives. I: the switch off:
+---   nothing arrives (both interfaces).
 --- The save at tick 500 and the schedule digest (control.lua) cover the interfaces' queue. Loaded by control.lua like lab.lua.
 
 local NET, LIF, SB = "gregtorio-me-network", "gregtorio-me-logistic-interface", "gregtorio-me-storagebus"
 local SURFACE = "me-lif-test"
 local NAME = "me-logistic-interface"
 local PROV, REQ, STOR = NAME .. "-provider", NAME .. "-requester", NAME .. "-storage"
-local X = { A = 0, B = 200, C = 400, D = 600, E = 800, F = 1000 }
+local X = { A = 0, B = 200, C = 400, D = 600, E = 800, F = 1000, G = 1200, H = 1400, I = 1600 }
+local GEAR, GEAR_RECIPE = "iron-gear-wheel", "iron-gear-crafting-table"   -- (1 iron plate and 2 sticks: the stand-in or Gregtorio's)
 local T1, T2, T3, T4 = 60, 450, 800, 1150   -- (the checks; the save at 500 lies between T2 and T3)
 
 local function surface()
 	local s = game.surfaces[SURFACE]
 	if s then return s end
-	s = game.create_surface(SURFACE, { width = 2400, height = 160, default_enable_all_autoplace_controls = false,
+	s = game.create_surface(SURFACE, { width = 3600, height = 160, default_enable_all_autoplace_controls = false,
 		autoplace_settings = { entity = { treat_missing_as_default = false, settings = {} },
 			decorative = { treat_missing_as_default = false, settings = {} } } })
 	s.always_day = true
 	local tiles = {}
 	for _, x0 in pairs(X) do
-		s.request_to_generate_chunks({ x0, 0 }, 2)
+		s.request_to_generate_chunks({ x0, 0 }, 3)
 		for x = x0 - 32, x0 + 31 do for y = -32, 31 do tiles[#tiles + 1] = { name = "refined-concrete", position = { x, y } } end end
 	end
 	s.force_generate_chunk_requests()
@@ -77,6 +84,29 @@ return function(H)
 		local c = me_place(s, fails, what, name, x, y)
 		for _, it in pairs(c and items or {}) do c.insert(it) end
 		return c
+	end
+
+	--- issue #532: a crafting cluster at x0 (see the header); returns its interfaces L, L2
+	local function crafting(s, fails, what, x0, second_offers)
+		cluster(s, fails, what, x0)
+		power(s, fails, what, x0 + 14, -12)
+		place(s, fails, what, "storage-chest", x0 - 4.5, 4.5, { { name = "iron-plate", count = 30 } })
+		local l = me_place(s, fails, what, NAME, x0 + 4.5, 3.5)
+		local l2 = me_place(s, fails, what, NAME, x0 + 6.5, 3.5)
+		local cpu = me_place(s, fails, what, "me-16k-crafting-storage", x0 + 8.5, -6.5)
+		local p = me_place(s, fails, what, "me-pattern-provider", x0 + 10.5, -6.5)
+		local m = me_place(s, fails, what, "me-molecular-assembler", x0 + 10.5, -7.5)
+		if m then
+			m.force.recipes[GEAR_RECIPE].enabled = true
+			m.get_module_inventory().insert{ name = "me-acceleration-card", count = 5 }
+		end
+		local maint = me_place(s, fails, what, "me-level-maintainer", x0 + 12.5, -6.5)
+		me_net(s, fails, what, x0, { ["iron-stick"] = 100 }, { l, l2, cpu, p, maint })
+		if p then give_patterns(p, { { kind = "crafting", recipe = GEAR_RECIPE } }, fails) end
+		if maint then remote.call("gregtorio-me-circuit", "set_maintainer", maint, GEAR, 10, false, 1, 0) end
+		if second_offers and l2 then remote.call(LIF, "set_row", l2, "offer", 1, "iron-plate", 10) end
+		for _, x in ipairs({ l, l2 }) do remote.call(LIF, "set_accept", x, false) end
+		return l, l2
 	end
 
 	function T.setup()
@@ -136,6 +166,11 @@ return function(H)
 		local bus = me_place(s, fails, what, "me-logistic-storage-bus", f + 3.5, -2.5)
 		me_net(s, fails, what, f, { ["iron-plate"] = 100 }, { lf, bus })
 		if bus then remote.call(SB, "set_settings", bus, { priority = 10 }) end
+		--- G, H, I: what failed crafting starts lack (issue #532)
+		crafting(s, fails, what, X.G, false)
+		crafting(s, fails, what, X.H, true)
+		local li, li2 = crafting(s, fails, what, X.I, false)
+		for _, x in ipairs({ li, li2 }) do remote.call(LIF, "set_auto", x, false) end
 		--- the rows
 		local function row(l, tab, i, key, amount)
 			if not (l and remote.call(LIF, "set_row", l, tab, i, key, amount)) then
@@ -156,7 +191,7 @@ return function(H)
 		st.done = true
 		me_report("LIF", "ME logistic interface (issue #531)", problems, "offer to a requester and a ghost, request to the target, "
 			.. "accept, the switch and the filter, the loop guard, settings copies, mined and destroyed, the engine facts, "
-			.. "the logistic storage bus")
+			.. "the logistic storage bus, what failed crafting starts lack (issue #532)")
 	end
 
 	function T.tick()
@@ -287,6 +322,10 @@ return function(H)
 				"E: the first source is not the active provider: active " .. n(ap, "iron-plate") .. ", storage " .. n(sc, "iron-plate")
 				.. ", passive " .. n(pp, "iron-plate") .. " (engine)")
 			if vr3 then set_request(vr3, 1, "iron-plate", 20) end
+			--- G: the first interface asks for what the maintainer's start lacked, the second does not
+			local g, g2 = find(NAME, X.G + 4.5, 3.5), find(NAME, X.G + 6.5, 3.5)
+			local ig, ig2 = info(g), info(g2)
+			expect(ig.auto and ig.auto_asks and not ig2.auto_asks, "G: who asks: " .. tostring(ig.auto_asks) .. " / " .. tostring(ig2.auto_asks))
 			--- F: pulled in into the drive, not into the bus's storage chest
 			local sd = find("storage-chest", f - 4.5, -4.5)
 			expect(count(lf, "coal") == 20 and n(sd, "coal") == 0, "F: coal in the network " .. count(lf, "coal") .. ", in the bus's "
@@ -345,6 +384,23 @@ return function(H)
 		--- E: the passive provider last
 		local pp = find("passive-provider-chest", e + 5.5, 4.5)
 		expect(n(pp, "iron-plate") == 10, "E: the passive provider was taken from while others had some: " .. n(pp, "iron-plate"))
+		--- G, H, I (issue #532)
+		local function plates(x0) return n(find("storage-chest", x0 - 4.5, 4.5), "iron-plate") end
+		local g, h, h2, i3 = find(NAME, X.G + 4.5, 3.5), find(NAME, X.H + 4.5, 3.5), find(NAME, X.H + 6.5, 3.5), find(NAME, X.I + 4.5, 3.5)
+		expect(count(g, GEAR) == 10 and plates(X.G) == 20, "G: gears " .. count(g, GEAR) .. ", plates left in the storage chest "
+			.. plates(X.G) .. " (the maintainer's job got its plates from the robots)")
+		local ih = info(h)
+		expect(count(h, GEAR) == 0 and plates(X.H) == 30 and ih.auto_asks and ih.auto_skipped == 1 and #ih.auto_list == 0,
+			"H: an offered key was asked for: gears " .. count(h, GEAR) .. ", plates " .. plates(X.H) .. ", skipped "
+			.. tostring(ih.auto_skipped) .. ", asked " .. #(ih.auto_list or {}))
+		expect(info(h2).offer[1] ~= nil, "H: the offer row is gone")
+		local ii = info(i3)
+		expect(count(i3, GEAR) == 0 and plates(X.I) == 30 and not ii.auto and #ii.auto_list == 0, "I: the switch off, yet gears "
+			.. count(i3, GEAR) .. ", plates " .. plates(X.I))
+		local vi = remote.call("gregtorio-me-gui", "lif_view", i3)
+		expect(vi and vi.ok and vi.auto == false and vi.auto_list == 0, "I's window: " .. serpent.line(vi and { vi.ok, vi.auto, vi.auto_list }))
+		local gs = remote.call(LIF, "get_settings", i3)
+		expect(gs and gs.auto == false, "I's settings keep the switch: " .. serpent.line(gs and gs.auto))
 		local sch = remote.call(LIF, "schedule", l1)
 		expect(sch and sch.due and sch.interval, "L1's schedule: " .. serpent.line(sch))
 		finish(st, problems)

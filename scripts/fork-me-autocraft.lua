@@ -2969,6 +2969,82 @@ local function job_step_of(st)
 	return step
 end
 
+--------------------------------------------------------------------------------
+--- Issue #532: what the failed starts lacked
+--------------------------------------------------------------------------------
+--- A job never waits for an ingredient the network lacks: M.start refuses its plan ("missing", plan.missing: the raw part of
+--- what it would craft). Who asked tries again later: a level maintainer's row, a Crafting Card (ME Interface, export bus,
+--- ME Logistic Interface). They note here what their last start lacked (the maintainer's choice of 2026-10-26, option A of
+--- the issue): `storage.fork_ae2.wmissing[owner] = { unit, keys = { key -> { n = missing, have = the network's count
+--- then } }, upto }`, kept until `upto` (the owner's next try and one more) unless it notes again: a start that succeeds, a
+--- row that is stocked, or an owner that stops trying drops it. The ME Logistic Interface asks the robots for it
+--- (M.waiting_needs).
+M.missing_hooks = {}                         -- functions(net): what the failed starts of `net` lack changed
+--- (per load, never saved; one table: this file is at Lua's limit of 200 locals) ver: a change of the notes, the lookups
+--- below are made again; cache: network id -> { ver, gver, upto, totals = { key -> { sum, base } } }; none: no needs
+M.wmiss = { ver = 0, cache = {}, none = {} }
+
+--- `owner` (a string naming the block and its row or key), the member `unit` of network `net`: its last start lacked
+--- `missing` ({ key -> count }; nil or empty: nothing, the note goes), noted until tick `upto`
+function M.note_missing(owner, unit, net, missing, upto)
+	local s = state()
+	local all = s.wmissing
+	if not (missing and next(missing)) then
+		if all and all[owner] then
+			all[owner] = nil
+			M.wmiss.ver = M.wmiss.ver + 1
+			if net then for _, h in ipairs(M.missing_hooks) do h(net) end end
+		end
+		return
+	end
+	if not all then
+		all = {}
+		s.wmissing = all
+	end
+	local now = game.tick
+	for o, m in pairs(all) do                                       -- (notes that ran out go)
+		if m.upto < now then all[o] = nil end
+	end
+	local keys = {}
+	for key, n in pairs(missing) do
+		if n > 0 then keys[key] = { n = n, have = N.count_key(net, key) } end
+	end
+	all[owner] = { unit = unit, keys = keys, upto = upto }
+	M.wmiss.ver = M.wmiss.ver + 1
+	for _, h in ipairs(M.missing_hooks) do h(net) end
+end
+
+--- what the failed starts of network `net` lack: { key -> { sum = what they lacked together, base = the lowest count the
+--- network had when one was noted } } (the need now: sum + base - the network's count). Made again only when a note, the
+--- graph or a note's time changed (outside storage, from storage only).
+function M.waiting_needs(net)
+	local all = storage.fork_ae2 and storage.fork_ae2.wmissing
+	local W = M.wmiss
+	if not (net and all and next(all)) then return W.none end
+	local now, gver = game.tick, N.version()
+	local c = W.cache[net.id]
+	if not (c and c.ver == W.ver and c.gver == gver and now <= c.upto) then
+		local totals, upto = {}, math.huge
+		for _, m in pairs(all) do
+			if m.upto >= now and N.network_of_unit(m.unit) == net then
+				if m.upto < upto then upto = m.upto end
+				for key, v in pairs(m.keys) do
+					local t = totals[key]
+					if not t then
+						t = { sum = 0, base = v.have }
+						totals[key] = t
+					end
+					t.sum = t.sum + v.n
+					if v.have < t.base then t.base = v.have end
+				end
+			end
+		end
+		c = { ver = W.ver, gver = gver, upto = upto, totals = totals }
+		W.cache[net.id] = c
+	end
+	return c.totals
+end
+
 --- Start a job for `amount` of `key` in the network of `entity` (a network member such as the
 --- terminal). `owner`: unit number of the level maintainer that asked for it (nil for a player).
 --- Returns the job id, or nil, a reason key and the plan. Issue #6: the job needs a CPU now (a free multiblock CPU

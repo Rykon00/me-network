@@ -24,6 +24,12 @@
 ---     visit, `rec.lid`, and its offer rows), never saved. What is pulled in never goes into an ME Logistic Storage Bus of
 ---     the same logistic network (N.insert_partial's `skip`), and that bus never stores into, counts or takes from the hidden
 ---     chests (issue #530: this module is a source of its ME-owned chests).
+---   * Automatic requests (issue #532, on by default, the switch "auto"): what the failed starts of the ME network's level
+---     maintainers and Crafting Cards lacked (AC.waiting_needs, the maintainer's option A) is asked for too, in the
+---     requester's second section: per key the need (what they lacked together, less what arrived since) less what lies
+---     in the requester and is on its way, the largest first, at most the setting "keys" (20). Per logistic network and ME
+---     network only the first interface (by unit number) with the switch on asks; keys offered in the logistic network
+---     (the loop guard) and keys of its own request rows are left out.
 ---   * Cards: the ME Interface's (Interface Capacity Card: 9 more rows per card, up to 36; Crafting Card: an offer row the
 ---     network cannot fill starts a job, as the interface's, issue #411).
 ---   * Visits: a queue of its own (Sched, tag "logistic_interface") with a budget (map settings "ME Logistic Interface visits
@@ -122,7 +128,27 @@ local function offered_in(lid)
 	return guard[lid]
 end
 
-local function guard_changed() guard = nil end
+--- issue #532: the interface that asks for the failed starts' needs, per logistic network and ME network: the first by unit
+--- number with the switch on ("<lid>:<network id>" -> unit; made again when a record or the graph changed)
+local firsts, firsts_ver = nil, -1
+local function asks_needs(rec, net)
+	if rec.auto == false or not rec.lid then return false end
+	local v = N.version()
+	if not firsts or firsts_ver ~= v then
+		firsts, firsts_ver = {}, v
+		local s = storage.fork_me_lif
+		for unit, r in pairs(s and s.recs or {}) do
+			local n = r.lid and r.auto ~= false and N.network_of_unit(unit)
+			if n then
+				local k = r.lid .. ":" .. n.id
+				if not firsts[k] or unit < firsts[k] then firsts[k] = unit end
+			end
+		end
+	end
+	return firsts[rec.lid .. ":" .. net.id] == rec.entity.unit_number
+end
+
+local function guard_changed() guard, firsts = nil, nil end
 M.offered_in = function(lid) return offered_in(lid) end
 
 --- is request row `i` of `rec` not applied (its item is offered in the same logistic network)?
@@ -154,6 +180,13 @@ local function section_of(rec)
 	local p = rec.requester.get_logistic_point(MAIN_POINT)
 	if not p then return nil end
 	return p.get_section(1) or p.add_section()
+end
+
+--- issue #532: the requester's section of the automatic requests (the second; made when missing)
+local function auto_section(rec)
+	local p = rec.requester.get_logistic_point(MAIN_POINT)
+	if not (p and section_of(rec)) then return nil end
+	return p.get_section(2) or p.add_section()
 end
 
 --- the three chests of `rec` on its tile: kept, taken over (a clone's, a chest no record has) or made
@@ -287,6 +320,18 @@ local function forget(s, unit, net, buffer)
 	L.owned_changed()
 end
 
+--- issue #532: what the failed starts of an ME network lack changed: its interfaces that ask for it look again at once
+AC.missing_hooks[#AC.missing_hooks + 1] = function(net)
+	local s = storage.fork_me_lif
+	if not s then return end
+	local units = {}
+	for unit, rec in pairs(s.recs) do
+		if rec.auto ~= false and rec.lid and N.network_of_unit(unit) == net then units[#units + 1] = unit end
+	end
+	table.sort(units)
+	for _, unit in ipairs(units) do wake(unit) end
+end
+
 --- issue #530: the hidden chests are ME-owned chests of the ME Logistic Storage Bus
 L.owned_source(function(add)
 	local s = storage.fork_me_lif
@@ -332,8 +377,11 @@ local function craft(rec, net, key, amount)
 	local why
 	if not AC.free_slot(net) then why = "no-free-cpu"
 	else
-		local nid
-		nid, why = AC.start(rec.entity, key, math.max(1, math.floor(amount)), rec.entity.unit_number, nil, WAKER)
+		local nid, plan
+		nid, why, plan = AC.start(rec.entity, key, math.max(1, math.floor(amount)), rec.entity.unit_number, nil, WAKER)
+		--- issue #532: what the start lacked (until the try after the next one)
+		AC.note_missing("c" .. rec.entity.unit_number .. ":" .. key, rec.entity.unit_number, net,
+			why == "missing" and plan and plan.missing or nil, now + 2 * CRAFT_RETRY + 60)
 		if nid then
 			rec.cjobs = jobs or {}
 			rec.cjobs[key] = nid
@@ -483,6 +531,69 @@ local function request(rec, net, unit)
 	end
 end
 
+--- Issue #532: the automatic requests into the requester's second section (slot i: the i-th largest need), written only when
+--- changed (`rec.aq`); an interface that does not ask (the switch off, not the first, no logistic network) clears them.
+--- Returns the keys asked for and the needed keys left out because they are offered: { { key, need, asked } }, skipped.
+local function auto_request(rec, net)
+	local list, skipped = {}, 0
+	if asks_needs(rec, net) then
+		local offered = offered_in(rec.lid) or {}
+		local own = {}
+		for i = 1, rows_of(rec) do
+			local r = rec.request[i]
+			if r then own[row_key(r)] = true end
+		end
+		for key, t in pairs(AC.waiting_needs(net)) do
+			if not (N.is_fluid_key(key) or key:find("#", 1, true) or own[key]) then
+				local need = t.sum + t.base - N.count_key(net, key)
+				if need > 0 then
+					local name, q = N.parse_key(key)
+					if not M.row_item(name, q) then                 -- (defined below)
+					elseif offered[key] then skipped = skipped + 1
+					else list[#list + 1] = { key = key, need = math.ceil(need), name = name, quality = q } end
+				end
+			end
+		end
+		table.sort(list, function(a, b) if a.need ~= b.need then return a.need > b.need end return a.key < b.key end)
+		local max = Sched.setting("logistic_interface_auto")
+		for i = #list, max + 1, -1 do list[i] = nil end
+	end
+	local aq = rec.aq
+	if #list == 0 and not aq then return list, skipped end           -- (never asked: nothing to clear)
+	local section = auto_section(rec)
+	if not section then return list, skipped end
+	if not aq then
+		aq = {}
+		rec.aq = aq
+	end
+	local inv, deliver = rec.requester.get_inventory(CHEST), nil
+	for i, a in ipairs(list) do
+		local count = a.need - inv.get_item_count(item(a.name, a.quality))
+		if count > 0 then
+			deliver = deliver or reserved(rec.requester.get_logistic_point(MAIN_POINT), "targeted_items_deliver")
+			count = count - (deliver[a.key] or 0)
+		end
+		a.asked = count > 0 and count or 0
+		local sig = a.asked > 0 and (a.key .. "=" .. a.asked) or false
+		if aq[i] ~= sig then
+			if sig then
+				section.set_slot(i, { value = { name = a.name, quality = a.quality, comparator = "=" }, min = a.asked })
+			elseif i <= section.filters_count then
+				section.clear_slot(i)
+			end
+			aq[i] = sig
+		end
+	end
+	for i = #list + 1, math.max(#aq, section.filters_count) do
+		if aq[i] ~= false then
+			if i <= section.filters_count then section.clear_slot(i) end
+			aq[i] = false
+		end
+	end
+	if #list == 0 then rec.aq = nil end
+	return list, skipped
+end
+
 --- the storage engine's `skip` for logistic network `lid`: an ME Logistic Storage Bus that claimed it (one function per id,
 --- kept for the load: it depends on the id only)
 local skips, nskips = {}, 0
@@ -530,6 +641,8 @@ local function visit(rec, unit, fallback)
 	local moved, refused = m1 + m2 + m3, r1 or r2 or r3
 	moved = moved + offer(rec, net, unit, skip)
 	request(rec, net, unit)
+	local auto, skipped = auto_request(rec, net)                  -- (issue #532)
+	rec.anum, rec.askip = #auto > 0 and #auto or nil, skipped > 0 and skipped or nil
 	rec.full = refused or nil
 	rec.status = not lid and "no-logistic-network" or refused and "me-full" or "ok"
 	if refused then N.wait_room(net, WAKER, unit) end
@@ -609,6 +722,16 @@ function M.set_accept(entity, on)
 	return true
 end
 
+--- issue #532: the automatic requests for what the failed crafting starts lack, on (the default) or off
+function M.set_auto(entity, on)
+	local rec = rec_of(entity)
+	if not rec then return false end
+	if on then rec.auto = nil else rec.auto = false end
+	guard_changed()
+	wake(entity.unit_number)
+	return true
+end
+
 --- the storage chest's filter item (`key`, nil: none); refused for a key that is no row item
 function M.set_filter(entity, key)
 	local rec = rec_of(entity)
@@ -638,7 +761,7 @@ end
 local function settings_of(rec)
 	local list = rec.want and { table.unpack(rec.want) } or cards.card_list(rec)
 	return { offer = copy_rows(rec.offer, 36), request = copy_rows(rec.request, 36), accept = rec.accept ~= false,
-		filter = rec.filter and N.key_of(rec.filter.name, rec.filter.quality) or nil, cards = list }
+		filter = rec.filter and N.key_of(rec.filter.name, rec.filter.quality) or nil, cards = list, auto = rec.auto ~= false }
 end
 
 --- the settings `t` (a blueprint tag, a source's settings) onto `entity`; `player`: the cards come from its inventory first
@@ -657,6 +780,7 @@ local function apply(entity, t, player)
 		end
 	end
 	rec.accept = t.accept ~= false
+	if t.auto == false then rec.auto = false else rec.auto = nil end   -- (issue #532: on unless the settings say off)
 	rec.filter = nil
 	if type(t.filter) == "string" then M.set_filter(entity, t.filter) end
 	rec.rq = nil
@@ -688,6 +812,21 @@ function M.info(entity)
 		end
 	end
 	d.filter = rec.filter and N.key_of(rec.filter.name, rec.filter.quality) or nil
+	--- issue #532: the switch, whether this interface asks (the first of its logistic and ME network), what it asks for now
+	d.auto = rec.auto ~= false
+	local net = N.network_of(entity)
+	d.auto_asks = net ~= nil and N.usable(net) and asks_needs(rec, net) or false
+	d.auto_skipped = rec.askip or 0
+	d.auto_list = {}
+	local asec = rec.aq and rec.requester and rec.requester.valid and auto_section(rec)
+	if asec then
+		for i = 1, asec.filters_count do
+			local f = asec.get_slot(i)
+			if f and f.value and f.min and f.min > 0 then
+				d.auto_list[#d.auto_list + 1] = { key = N.key_of(f.value.name, f.value.quality or "normal"), asked = f.min }
+			end
+		end
+	end
 	local ncollide = 0
 	for _ in pairs(d.collide) do ncollide = ncollide + 1 end
 	d.ncollide = ncollide
@@ -852,6 +991,7 @@ remote.add_interface("gregtorio-me-logistic-interface", {
 	set_amount = function(entity, tab, i, amount) return M.set_amount(entity, tab, i, amount) end,
 	set_accept = function(entity, on) return M.set_accept(entity, on) end,
 	set_filter = function(entity, key) return M.set_filter(entity, key) end,
+	set_auto = function(entity, on) return M.set_auto(entity, on) end,                     -- (issue #532)
 	get_settings = function(entity)
 		local rec = rec_of(entity)
 		return rec and settings_of(rec) or nil

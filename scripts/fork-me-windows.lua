@@ -729,6 +729,11 @@ local function lif_content(content)
 		scroll.style.maximal_height = 300
 		scroll.add{ type = "flow", name = "fork_me_lif_rows_" .. name, direction = "vertical" }
 	end
+	--- issue #532: the automatic requests for what the failed crafting starts lack (under the request rows)
+	flows.request.add{ type = "checkbox", name = "fork_me_lif_auto", state = true, caption = { "fork-me-gui.logistic-interface-auto" },
+		tooltip = { "fork-me-gui.logistic-interface-auto-tooltip" }, tags = G.act("lif_auto") }
+	G.label(flows.request, "", WIDTH, nil, "fork_me_lif_auto_line")
+	G.grid(flows.request, 9, "fork_me_lif_auto_list")
 	local accept = flows.accept
 	accept.add{ type = "checkbox", name = "fork_me_lif_accept", state = true, caption = { "fork-me-gui.logistic-interface-accept" },
 		tooltip = { "fork-me-gui.logistic-interface-accept-tooltip" }, tags = G.act("lif_accept") }
@@ -796,6 +801,16 @@ function M.refresh_logistic_interface(player, frame)
 		end
 	end
 	G.find(frame, "fork_me_lif_accept").state = d.accept
+	G.find(frame, "fork_me_lif_auto").state = d.auto
+	G.find(frame, "fork_me_lif_auto_line").caption = not d.auto and ""
+		or not d.auto_asks and { "fork-me-gui.logistic-interface-auto-other" }
+		or { "", { "fork-me-gui.logistic-interface-auto-asks", tostring(#d.auto_list) },
+			d.auto_skipped > 0 and { "", " ", { "fork-me-gui.logistic-interface-auto-skipped", tostring(d.auto_skipped) } } or "" }
+	local asig = {}
+	for _, a in ipairs(d.auto_list) do asig[#asig + 1] = a.key .. "=" .. a.asked end
+	rebuild(frame, "fork_me_lif_auto_list", table.concat(asig, ","), function(grid)
+		for _, a in ipairs(d.auto_list) do G.slot(grid, a.key, a.asked) end
+	end)
 	rebuild(frame, "fork_me_lif_filter", d.filter or "-", function(box)
 		G.key_button(box, d.filter, G.act("lif_filter"), { "fork-me-gui.key-slot-tooltip" })
 	end)
@@ -866,6 +881,12 @@ G.on("lif_accept", function(event, player, el)
 	if event.name ~= defines.events.on_gui_checked_state_changed then return end
 	local entity = window_entity(player)
 	if entity then lif.set_accept(entity, el.state) G.refresh_one(player) end
+end)
+
+G.on("lif_auto", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then lif.set_auto(entity, el.state) G.refresh_one(player) end
 end)
 
 G.on("lif_filter", function(event, player)
@@ -2530,6 +2551,8 @@ remote.add_interface("gregtorio-me-gui", {
 		out.status = G.find(frame, "fork_me_lif_status").caption
 		out.net = G.find(frame, "fork_me_lif_net").caption
 		out.accept = G.find(frame, "fork_me_lif_accept").state
+		out.auto, out.auto_line = G.find(frame, "fork_me_lif_auto").state, G.find(frame, "fork_me_lif_auto_line").caption   -- (issue #532)
+		out.auto_list = #G.find(frame, "fork_me_lif_auto_list").children
 		return out
 	end,
 	--- Issue #514: the ME Terminal's row above the tabs (the search, the quality filter) built into a stand-in for a player
