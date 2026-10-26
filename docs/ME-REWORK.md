@@ -23,6 +23,7 @@ The rework comes in three steps:
 | Encoded patterns | issue #80: blank and encoded pattern items, the Patterns tab of the terminal (the ME Pattern Terminal since issue #130), the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
 | Unified I/O | me-network issue #3: one ME Interface, Import Bus, Export Bus and Storage Bus for items and fluids; the four fluid blocks removed and migrated | done (this document, "Items and fluids in one block (me-network issue #3)") |
 | Logistic storage bus | me-network issue #506, the first package of the crossover "me-network x logistic network": the ME Logistic Storage Bus, a vanilla logistic network as an external cell | done (this document, "The ME Logistic Storage Bus (issue #506)") |
+| Logistic interface | me-network issue #531, the second package: the ME Logistic Interface, three hidden logistic chests that offer to the robots, ask them for what the network lacks and take their trash | done (this document, "The ME Logistic Interface (issue #531)") |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
 player's guide is `docs/AE2.md`.
@@ -3195,10 +3196,13 @@ restock its provider from the network: a loop with nothing gained).
 * **The lookup**: `owned[unit] = { entity, role }` outside `storage`, built from the sources the owning modules register
   at load (`L.owned_source(fn)`, `fn(add)` calls `add(entity, role)` for each chest of its records) and built again after
   `L.owned_changed()`. Roles: `"storage"` (left out of the member `"storage"`), `"provider"` (left out of `"providers"`).
-  Per logistic network, the owned chests standing in it come from one pass over the lookup
-  (`logistic_network.network_id`), kept for the tick only: a network's members change without an event, and a peer that
-  joins between two ticks builds the same. The runtime test registers stand-ins through the remote
-  (`own_logistic`, kept in `storage.fork_me_lsbus.owned_test`, a source like the others).
+  Grouped by logistic network: since issue #531 a source gives each chest's network id too, the one its owner saved at its
+  last visit (`add(entity, role, lid)`; the owner calls `owned_changed` when it changes), so a call of the bus costs one
+  `network_id` read and a lookup. (In #530 the lookup asked each owned chest's `logistic_network` once per tick a bus used
+  it: with 48 owned chests that made a bus visit 90 µs dearer.) A split or a join is seen at the owner's next visit, as the
+  bus sees one at its own. Role `"requester"` (issue #531): a requester's trash is an active provider point and counted in
+  `"providers"`, so its trash is left out of the provider counts and reads. The runtime test registers stand-ins through
+  the remote (`own_logistic`, kept with their network id in `storage.fork_me_lsbus.owned_test`, a source like the others).
 * **Nothing owned** (every game until the interface exists): each call reads one count and takes the path of #509.
 * **Read and count**: the owned chests' contents are subtracted from `get_contents` and `get_item_count` (never below 0).
 * **Store**: `select_drop_point` for `"storage"`, then `"storage-empty-slot"`, then `"storage-empty"`; a point whose owner is
@@ -3224,3 +3228,73 @@ visit; the visit lists. Two mutations were checked to fail it: no claims (the ne
 mode counting only storage (its extractions came up short). `devcheck bench --logistic N` adds a logistic network of N
 roboports and N / 2 filled storage chests with feeding inserters and the bus to every ME scene (only where the version
 has the bus: `--check` against an older version measures exactly the bus).
+
+## The ME Logistic Interface (issue #531)
+
+The second package of the crossover plan: the logistic robots work with the ME network. In-game check: issue #533. The
+concept (with the maintainer's headless research, Factorio 2.1.23) decided: the visible part is an ME block, 1x1, trash
+accepted by default, automatic requests for crafting ingredients on by default (issue #532).
+
+### Model: a block and three hidden chests
+
+`me-logistic-interface` is a solid 1x1 `simple-entity-with-force`, kind `logistic-interface` (mod-data name
+`logistic_interface`), 4 kW through the controller (the default). On its tile the module makes three copies of vanilla
+logistic chests: `-provider` (passive provider, 36 slots), `-requester` (36 slots, 20 trash slots) and `-storage` (48 slots).
+They are hidden, not selectable, without collision, not on the map, not blueprintable, deconstructable or pasteable, not
+minable, `destructible = false` at runtime, and have no picture (Factorio 2.1 moved a logistic chest's picture into
+`robot_door`). A logistic chest cannot have more than one kind of logistic point by mod, so one chest per role.
+
+* **Engine facts it relies on** (the maintainer's research; the runtime test checks the first three on every run):
+  robots and construction robots serve hidden chests, also two on one tile; robots carry an item between a requester and a
+  passive provider on the same tile; requesters take from active providers first, then storage chests, then passive
+  providers; buffers only with `request_from_buffers`; removing items robots reserved is safe (they plan again); a filtered
+  storage chest takes nothing else. Probed here: a requester's trash is an active provider point
+  (`logistic_container_trash_provider`) and **is counted in `get_contents("providers")`** (7 in the trash and 3 in a passive
+  provider gave 10); `set_slot` on a requester chest works without research; the requester's `trash_not_requested` is
+  false by default.
+* **Offer**: the rows (item with quality, amount) are a want per key; the visit fills the provider with `N.extract_to` up to
+  it, takes back the surplus and what no row keeps less what robots reserved (`targeted_items_pickup`), and waits for a key
+  the network lacks (`N.wait_for`, up). A Crafting Card starts a job as the ME Interface's (`AC.start` with the waker
+  `logistic_interface`, a retry after 300 or 1200 ticks).
+* **Request**: section 1 of the requester, slot i = row i. Asked = target - `N.count_key` (every storage, external cells
+  too) - the requester's count - `targeted_items_deliver`; written only when the key or the count changed (`rec.rq[i]`, a
+  signature, cleared when the chests or the rows change). A row registers `N.wait_below` at its target (or `wait_for` up
+  while the network is below it).
+* **Accept**: `storage_filter` is nil (accept), the filter item, or `me-logistic-interface-nothing` (a hidden item never
+  delivered: accepts nothing).
+* **Pull in**: the requester's main inventory and trash and the storage chest, stack by stack, through
+  `N.insert_partial(net, stack, max, skip)`; the storage chest's reserved pickups stay. What the network refuses stays, the
+  status is "me-full" and the block waits for room (`N.wait_room`).
+* **Loop guard**: offered keys per logistic network, derived from the records (`rec.lid`, the network id the last visit
+  found at the provider, saved; the offer rows), outside `storage` and built again when a record's network, offers or
+  existence changes. A request row of an offered key (its own interface included) asks for 0 and is shown red. The
+  storage engine got `skip(cell)` on its insert path (`insert_key`, `put`): an external cell it returns true for is left
+  out; the interface skips a logistic storage bus whose claimed network is its own. The bus leaves the hidden chests alone
+  (issue #530): the module is a source of `L.owned_source` with the roles provider, storage and requester (its trash).
+* **Visits**: a queue of its own (`Sched.new("logistic_interface")`, `storage.fork_me_lif = { recs, list, lpos, q }`),
+  budget map settings `me-network-logistic-interface-visits-per-tick` (2) and `-max` (8), `/me-stats` "ME Logistic
+  Interfaces". After a visit that moved something the next comes after 30 ticks, else the interval doubles up to the idle
+  limit (300): a robot's drop raises no event. No network or no power parks it (`N.wait_usable`).
+* **Build, remove, copies**: the chests are made on build (one standing on the tile without an owner is taken over: a
+  clone's); mined, their contents go into the network (else the buffer, else spilled); destroyed, spilled. A cloned
+  hidden chest replaces the fresh one of its block. Blueprint tag `fork_me_logistic_interface` = { offer, request (with
+  their row index), accept, filter, cards }, settings paste (`prototypes/paste.lua`), clones. `on_configuration_changed`
+  registers the blocks, makes missing chests, drops rows of items that are gone and destroys hidden chests that belong to
+  no block (their contents spilled).
+
+### Limits
+
+* No robots of its own: it works with the logistic network's robots, in their order (the ME stock last).
+* Rows are plain items that do not spoil (the network stores no spoiling items yet).
+* Not tested in the real game: the window, the sprite, personal logistics from the provider (issue #533).
+
+### Tests
+
+`devcheck runtime`, "ME logistic interface (issue #531)" (`tools/devcheck/runtimemod/lif.lua`), on a surface of its own
+with six logistic networks: offer to a requester and to a construction ghost, a request filled from a storage chest and an
+active provider to its target, the loop guard (its own row and another interface's), refused rows, settings by paste,
+blueprint tag and clone (exactly three chests on a clone's tile), accept, accept off and a filter, mined and destroyed, the
+three engine facts, and with a logistic storage bus (priority 10): pulled-in coal in the drive, not in the bus's chest
+(a run without the skip failed exactly there), the provider not counted, the network's insert into a vanilla storage
+chest. The save at tick 500 covers the queue (schedule digest, every surface). `devcheck bench --logistic N`: 16
+interfaces with three offer and three request rows each in the logistic scene.

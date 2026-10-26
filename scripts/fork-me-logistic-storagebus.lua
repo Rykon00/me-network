@@ -127,15 +127,16 @@ end
 --------------------------------------------------------------------------------
 --- ME-owned logistic chests (issue #530)
 --------------------------------------------------------------------------------
---- Derived from the owners' records in `storage`, never saved: `owned[unit] = { entity, role }`, built from the sources the
---- owning modules register when they are loaded (M.owned_source), again after a module says its chests changed
---- (M.owned_changed). Per logistic network the owned chests standing in it are looked up once per tick (`by_net`: valid in
---- one tick only, because a network's members change without an event; a peer that joins between two ticks finds the same).
---- Roles: "storage" (a storage chest, left out of the member "storage") and "provider" (a passive provider, left out of the
---- member "providers"); any owned chest is skipped as a drop and a supply point.
+--- Derived from the owners' records in `storage`, never saved: `owned[network id] = { storage, provider, requester = { entity },
+--- units = { unit -> true } }`, built from the sources the owning modules register when they are loaded (M.owned_source),
+--- again after a module says its chests or their logistic network changed (M.owned_changed). The network id of a chest is
+--- the one its owner saved at its last visit (issue #531: no engine call; a split or a join is seen at the owner's next
+--- visit, as the bus sees one at its own). Roles: "storage" (a storage chest, left out of the member "storage"), "provider" (a passive provider, left out of the
+--- member "providers") and "requester" (issue #531: its trash, an active provider point, is in the member "providers": left
+--- out of it; its main inventory is in no member); any owned chest is skipped as a drop and a supply point.
 
 local CHEST = defines.inventory.chest
-local ROLES = { "storage", "provider" }
+local ROLES = { "storage", "provider", "requester" }
 local DROP_MEMBERS = { "storage", "storage-empty-slot", "storage-empty" }   -- (select_drop_point, in this order)
 local FIRST_FIT = 64                       -- storage chests tried in order when select_drop_point picks only owned ones
 local SUPPLY = { "storage" }               -- (the members of an extraction, as on the remove_item path)
@@ -149,9 +150,8 @@ local TRASH = {
 	["cargo-landing-pad"] = defines.inventory.cargo_landing_pad_trash,
 }
 
-local sources = {}                         -- functions(add) of the owning modules: add(entity, role) for each chest they own
+local sources = {}                         -- functions(add) of the owning modules: add(entity, role, network id) per chest
 local owned, owned_n = nil, 0              -- (nil: build again)
-local by_net, by_net_tick = {}, -1
 
 --- a module that owns logistic chests registers the function that lists them (when it is loaded)
 function M.owned_source(fn)
@@ -165,64 +165,58 @@ function M.owned_changed() owned = nil end
 --- (tests) chests registered as owned by the runtime tests, kept in `storage` (a stand-in for the interface's records)
 M.owned_source(function(add)
 	local s = storage.fork_me_lsbus
-	for _, o in pairs(s and s.owned_test or {}) do add(o.entity, o.role) end
+	for _, o in pairs(s and s.owned_test or {}) do add(o.entity, o.role, o.lid) end
 end)
 
---- (tests) register `entity` as an owned chest of `role`, or (role nil) no more
+--- (tests) register `entity` as an owned chest of `role` in the logistic network it stands in now, or (role nil) no more
 function M.own_test(entity, role)
 	local s = state()
 	s.owned_test = s.owned_test or {}
-	s.owned_test[entity.unit_number] = role and { entity = entity, role = role } or nil
+	local n = role and entity.logistic_network
+	s.owned_test[entity.unit_number] = role and { entity = entity, role = role, lid = n and n.network_id } or nil
 	owned = nil
 end
 
 local function build_owned()
-	owned, owned_n, by_net = {}, 0, {}
-	local function add(e, role)
-		if e and e.valid and not owned[e.unit_number] then
-			owned[e.unit_number] = { e, role }
-			owned_n = owned_n + 1
+	owned, owned_n = {}, 0
+	local function add(e, role, lid)
+		if not (lid and e and e.valid) then return end
+		local g = owned[lid]
+		if not g then
+			g = { units = {} }
+			for _, r in ipairs(ROLES) do g[r] = {} end
+			owned[lid] = g
 		end
+		local unit = e.unit_number
+		if g.units[unit] then return end
+		g.units[unit] = true
+		local list = g[role]
+		list[#list + 1] = e
+		owned_n = owned_n + 1
 	end
 	for _, fn in ipairs(sources) do fn(add) end
 end
 
---- the owned chests standing in `net` now: { storage = { entity }, provider = { entity }, units = { unit -> true } }, or nil
---- when there is none (always nil while nothing is owned: no engine call)
+--- the owned chests in `net`: { storage, provider, requester = { entity }, units = { unit -> true } }, or nil when there is
+--- none (while nothing is owned: no engine call)
 local function owned_in(net)
 	if not owned then build_owned() end
 	if owned_n == 0 then return nil end
-	local tick = game.tick
-	if by_net_tick ~= tick then by_net, by_net_tick = {}, tick end
-	local id = net.network_id
-	local g = by_net[id]
-	if g == nil then
-		g = false
-		for unit, o in pairs(owned) do
-			local e = o[1]
-			local n = e.valid and e.logistic_network
-			if n and n.network_id == id then
-				if not g then
-					g = { units = {} }
-					for _, r in ipairs(ROLES) do g[r] = {} end
-				end
-				local list = g[o[2]]
-				list[#list + 1] = e
-				g.units[unit] = true
-			end
-		end
-		by_net[id] = g
-	end
-	return g or nil
+	return owned[net.network_id]
 end
 
---- the count of `it` in the chests of `list`
-local function held(list, it)
+--- the count of `it` in inventory `index` (default the chest) of the chests of `list`
+local function held(list, it, index)
 	local n = 0
 	for _, e in ipairs(list) do
-		if e.valid then n = n + e.get_inventory(CHEST).get_item_count(it) end
+		if e.valid then n = n + e.get_inventory(index or CHEST).get_item_count(it) end
 	end
 	return n
+end
+
+--- the count of `it` the owned chests add to the member "providers": the passive providers, the requesters' trash
+local function provided(own, it)
+	return held(own.provider, it) + held(own.requester, it, defines.inventory.logistic_container_trash)
 end
 
 --------------------------------------------------------------------------------
@@ -331,7 +325,7 @@ local HANDLER = {
 		local own = owned_in(net)
 		if own then                                              -- (issue #530: what the owned chests hold is left out)
 			n = n - held(own.storage, it)
-			if rec.mode == "providers" then n = n - held(own.provider, it) end
+			if rec.mode == "providers" then n = n - provided(own, it) end
 			if n < 0 then n = 0 end
 		end
 		return n
@@ -342,7 +336,7 @@ local HANDLER = {
 		local net = name and live(rec)
 		if not net then return 0 end
 		local own = owned_in(net)
-		if own and held(own.storage, spec(name, q, nil)) + held(own.provider, spec(name, q, nil)) > 0 then
+		if own and held(own.storage, spec(name, q, nil)) + provided(own, spec(name, q, nil)) > 0 then
 			return take(net, own, name, q, count, rec.mode == "providers" and SUPPLY_PROVIDERS or SUPPLY)   -- (issue #530)
 		end
 		local got = net.remove_item(spec(name, q, count), "storage")
@@ -428,17 +422,25 @@ local function read(rec, net, member, contents, all, add, own)
 		end
 	end
 	if not own then return end
-	for _, e in ipairs(member == "storage" and own.storage or own.provider) do
-		if e.valid then
-			for _, it in pairs(e.get_inventory(CHEST).get_contents()) do
-				local key = key_for(it.name, it.quality or "normal")
-				local have = key and contents[key]
-				if have then
-					have = have - it.count
-					contents[key] = have > 0 and have or nil
+	local function sub(list, index)
+		for _, e in ipairs(list) do
+			if e.valid then
+				for _, it in pairs(e.get_inventory(index).get_contents()) do
+					local key = key_for(it.name, it.quality or "normal")
+					local have = key and contents[key]
+					if have then
+						have = have - it.count
+						contents[key] = have > 0 and have or nil
+					end
 				end
 			end
 		end
+	end
+	if member == "storage" then
+		sub(own.storage, CHEST)
+	else
+		sub(own.provider, CHEST)
+		sub(own.requester, defines.inventory.logistic_container_trash)   -- (issue #531: a requester's trash is a provider)
 	end
 end
 

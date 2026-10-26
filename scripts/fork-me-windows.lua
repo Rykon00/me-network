@@ -39,6 +39,7 @@ local io = require("scripts.fork-me-io")
 local sbus = require("scripts.fork-me-storagebus")
 local bench = require("scripts.fork-me-workbench")
 local ioport = require("scripts.fork-me-ioport")          -- (issue #386)
+local lif = require("scripts.fork-me-logistic-interface")   -- (issue #531)
 local qbridge = require("scripts.fork-me-qbridge")        -- (issue #385)
 local picker = require("scripts.fork-me-picker")
 local Names = require("scripts.fork-me-names")
@@ -690,6 +691,201 @@ G.on("iop_mode", function(event, player, el)
 	if event.name ~= defines.events.on_gui_selection_state_changed then return end
 	local entity = window_entity(player)
 	if entity then ioport.set_mode(entity, el.selected_index == 2 and "fill" or "empty") G.refresh_one(player) end
+end)
+
+--------------------------------------------------------------------------------
+--- issue #531: the ME Logistic Interface (scripts/fork-me-logistic-interface.lua): three tabs, "Offer" (rows the network
+--- keeps stocked for the robots, what its provider holds), "Request" (rows "keep this many in the network", what each asks
+--- for now; a row whose item an interface of the same logistic network offers is red and not applied, what lies in the
+--- requester) and "Accept" (the switch, the filter item, what lies in the storage chest); above them the status, the
+--- logistic network, the card slots (the ME Interface's cards) and the Crafting Card's state.
+--------------------------------------------------------------------------------
+
+local LIF_TABS = { "offer", "request", "accept" }
+
+--- the window's content (the tests build it into a stand-in, lif_view below)
+local function lif_content(content)
+	G.label(content, { "fork-me-gui.logistic-interface-help" }, WIDTH)
+	G.label(content, "", WIDTH, nil, "fork_me_lif_status")
+	G.label(content, "", WIDTH, nil, "fork_me_lif_net")
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.logistic-interface-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_lif_cards", direction = "horizontal" }
+	G.label(content, "", WIDTH, nil, "fork_me_lif_want")
+	G.label(content, "", WIDTH, nil, "fork_me_lif_craft")
+	local tabs = content.add{ type = "tabbed-pane", name = "fork_me_lif_tabs", tags = G.act("lif_tab") }
+	local flows = {}
+	for _, name in ipairs(LIF_TABS) do
+		local tab = tabs.add{ type = "tab", caption = { "fork-me-gui.logistic-interface-tab-" .. name } }
+		local flow = tabs.add{ type = "flow", name = "fork_me_lif_tab_" .. name, direction = "vertical" }
+		flow.style.vertical_spacing = 6
+		tabs.add_tab(tab, flow)
+		G.label(flow, { "fork-me-gui.logistic-interface-" .. name .. "-help" }, WIDTH)
+		flows[name] = flow
+	end
+	for _, name in ipairs({ "offer", "request" }) do
+		local flow = flows[name]
+		local scroll = flow.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
+		scroll.style.maximal_height = 300
+		scroll.add{ type = "flow", name = "fork_me_lif_rows_" .. name, direction = "vertical" }
+	end
+	local accept = flows.accept
+	accept.add{ type = "checkbox", name = "fork_me_lif_accept", state = true, caption = { "fork-me-gui.logistic-interface-accept" },
+		tooltip = { "fork-me-gui.logistic-interface-accept-tooltip" }, tags = G.act("lif_accept") }
+	row = G.row(accept)
+	row.add{ type = "label", caption = { "fork-me-gui.logistic-interface-filter" },
+		tooltip = { "fork-me-gui.logistic-interface-filter-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_lif_filter", direction = "horizontal" }
+	for _, t in ipairs({ { "offer", "stock" }, { "request", "held" }, { "accept", "trash" } }) do
+		local flow = flows[t[1]]
+		G.heading(flow, { "fork-me-gui.logistic-interface-" .. t[2] })
+		G.grid(flow, 9, "fork_me_lif_" .. t[2])
+	end
+end
+
+local function open_logistic_interface(player, entity)
+	if not lif.info(entity) then return end
+	local _, content = G.open_window(player, "logistic-interface", caption_of(entity), { unit = entity.unit_number })
+	lif_content(content)
+	M.refresh_logistic_interface(player, G.window_of(player))
+end
+
+function M.refresh_logistic_interface(player, frame)
+	local entity = G.entity_of(player, frame)
+	local d = entity and lif.info(entity)
+	if not d then return false end
+	local cinv = lif.card_inventory(entity)
+	block_slots(frame, "fork_me_lif_cards", cinv, 1, #cinv, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end)
+	local want = {}
+	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
+	G.find(frame, "fork_me_lif_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
+	G.find(frame, "fork_me_lif_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	G.find(frame, "fork_me_lif_status").caption = { "fork-me-gui.logistic-interface-status-" .. d.status }
+	G.find(frame, "fork_me_lif_net").caption = { "", d.lid and { "fork-me-gui.logistic-interface-network", tostring(d.lid) }
+		or { "fork-me-gui.logistic-interface-no-network" }, d.ncollide > 0 and { "", "  ",
+		{ "fork-me-gui.logistic-interface-collisions", tostring(d.ncollide) } } or "" }
+	for _, tab in ipairs({ "offer", "request" }) do
+		local rows = d[tab]
+		local sig = {}
+		for i = 1, d.rows do
+			local r = rows[i]
+			sig[i] = (r and r.key or "-") .. ((tab == "request" and d.collide[i]) and "!" or "")
+		end
+		rebuild(frame, "fork_me_lif_rows_" .. tab, table.concat(sig, ","), function(box)
+			local t = box.add{ type = "table", column_count = tab == "request" and 9 or 6 }
+			for i = 1, d.rows do
+				local r = rows[i]
+				local red = tab == "request" and d.collide[i]
+				local b = G.key_button(t, r and r.key or nil, G.act("lif_row", { tab = tab, index = i }),
+					red and { "fork-me-gui.logistic-interface-collide-tooltip" } or { "fork-me-gui.key-slot-tooltip" })
+				if red then b.style = "red_slot_button" end
+				local f = G.number_field(t, r and r.amount or 0, G.act("lif_amount", { tab = tab, index = i }), 70)
+				f.enabled = r ~= nil
+				if tab == "request" then G.label(t, "", 60, nil, "fork_me_lif_asked_" .. i) end
+			end
+		end)
+	end
+	for i = 1, d.rows do
+		local l = G.find(frame, "fork_me_lif_asked_" .. i)
+		local r = d.request[i]
+		if l then
+			l.caption = r and (d.collide[i] and "-" or { "fork-me-gui.logistic-interface-asked", G.fmt(r.asked) }) or ""
+			l.tooltip = r and { "fork-me-gui.logistic-interface-asked-tooltip" } or nil
+		end
+	end
+	G.find(frame, "fork_me_lif_accept").state = d.accept
+	rebuild(frame, "fork_me_lif_filter", d.filter or "-", function(box)
+		G.key_button(box, d.filter, G.act("lif_filter"), { "fork-me-gui.key-slot-tooltip" })
+	end)
+	for _, name in ipairs({ "stock", "held", "trash" }) do
+		local list = d[name]
+		local sig = {}
+		for _, c in ipairs(list) do sig[#sig + 1] = c.key .. "=" .. c.count end
+		rebuild(frame, "fork_me_lif_" .. name, table.concat(sig, ","), function(grid)
+			for _, c in ipairs(list) do G.slot(grid, c.key, c.count) end
+		end)
+	end
+	return true
+end
+
+--- the picker for a row or the filter: items only, with their quality
+local function item_picker(player, act, data, key)
+	picker.open(player, { callback = act, data = data, kinds = { item = true }, preset = picker.preset_of(key), quality = true })
+end
+
+local lif_window = storing({ open = open_logistic_interface, refresh = M.refresh_logistic_interface, entities = { lif.NAME } })
+local lif_store = lif_window.shift
+--- shift + click: a card into the card slots, anything else is stored in the network
+lif_window.shift = function(entity, stack, inv)
+	if stack.valid_for_read and N.card_kind(stack.name) then return lif.cards.shift_in(entity, stack) end
+	return lif_store(entity, stack, inv)
+end
+lif_window.click = function(entity, slot, cursor, inv, shift) return lif.cards.card_click(entity, slot, cursor, inv, shift) end
+local lif_message = lif_window.message
+lif_window.message = function(why)
+	if why == "not-here" or why == "limit" or why == "full" then return { "fork-me-gui.refused-" .. why } end
+	return lif_message(why)
+end
+G.window("logistic-interface", lif_window)
+
+G.on("lif_tab", function(event, player)
+	if event.name == defines.events.on_gui_selected_tab_changed then G.refresh_one(player) end
+end)
+
+G.on("lif_row", function(event, player, el)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local tab, index = el.tags.tab, el.tags.index
+	local d = lif.info(entity)
+	local r = d and d[tab] and d[tab][index]
+	if right_click(event) then
+		if r then lif.set_row(entity, tab, index, nil) G.refresh_one(player) end
+		return
+	end
+	item_picker(player, "lif_row", { unit = entity.unit_number, tab = tab, index = index }, r and r.key)
+end)
+
+picker.on_confirm("lif_row", function(player, data, choice)
+	local entity = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	local key = picker.key_of(choice, true)
+	if not (key and lif.set_row(entity, data.tab, data.index, key)) then refused_choice(player) end
+	G.refresh_one(player)
+end)
+
+G.on("lif_amount", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then lif.set_amount(entity, el.tags.tab, el.tags.index, tonumber(el.text) or 0) end
+end)
+
+G.on("lif_accept", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then lif.set_accept(entity, el.state) G.refresh_one(player) end
+end)
+
+G.on("lif_filter", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local d = lif.info(entity)
+	if right_click(event) then
+		if d and d.filter then lif.set_filter(entity, nil) G.refresh_one(player) end
+		return
+	end
+	item_picker(player, "lif_filter", { unit = entity.unit_number }, d and d.filter)
+end)
+
+picker.on_confirm("lif_filter", function(player, data, choice)
+	local entity = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	local key = picker.key_of(choice, true)
+	if not (key and lif.set_filter(entity, key)) then refused_choice(player) end
+	G.refresh_one(player)
 end)
 
 G.window("workbench", { open = open_workbench, refresh = M.refresh_workbench, entities = { bench.NAME },
@@ -2156,6 +2352,7 @@ local function stand_in_element(def)
 		return c
 	end
 	el.clear = function() el.children = {} end
+	el.add_tab = function() end                         -- (issue #531: a tabbed pane's; its children are what was added)
 	return el
 end
 M.stand_in_element = stand_in_element                 -- (issue #336: the ME Interface Terminal's page in its test)
@@ -2312,6 +2509,28 @@ remote.add_interface("gregtorio-me-gui", {
 		if text then f.text = text end
 		local ok = M.refresh_qbridge({ valid = true, can_reach_entity = function() return true end }, frame, first)
 		return { ok = ok, text = f.text, shown = f.tags.shown }
+	end,
+	--- Issue #531: the ME Logistic Interface's window built into a stand-in frame and refreshed: { ok, status, net, rows (the
+	--- request tab's row buttons: { key, red }), asked (the request rows' "asks" captions), accept }
+	lif_view = function(entity)
+		local frame = stand_in_element{ type = "frame", tags = { unit = entity.unit_number } }
+		lif_content(frame)
+		local ok = M.refresh_logistic_interface({ valid = true, can_reach_entity = function() return true end }, frame)
+		local out = { ok = ok, rows = {}, asked = {} }
+		local box = G.find(frame, "fork_me_lif_rows_request")
+		local t = box and box.children[1]
+		for _, c in ipairs(t and t.children or {}) do
+			if c.type == "sprite-button" then out.rows[#out.rows + 1] = { sprite = c.sprite, red = c.style == "red_slot_button" } end
+		end
+		local i = 1
+		while G.find(frame, "fork_me_lif_asked_" .. i) do
+			out.asked[i] = G.find(frame, "fork_me_lif_asked_" .. i).caption
+			i = i + 1
+		end
+		out.status = G.find(frame, "fork_me_lif_status").caption
+		out.net = G.find(frame, "fork_me_lif_net").caption
+		out.accept = G.find(frame, "fork_me_lif_accept").state
+		return out
 	end,
 	--- Issue #514: the ME Terminal's row above the tabs (the search, the quality filter) built into a stand-in for a player
 	--- whose terminal state has the quality filter `quality` (nil: any): { { type, name, items, selected_index } per element }

@@ -208,6 +208,10 @@ me-network's `data-final-fixes.lua` scales and moves the marker layer of every b
 Logistic Storage Bus (issue #518) is not rotated: its picture is one sprite whose second layer is its marker
 (`me-logistic-storage-bus-marker.png`, orange corner marks and a storage chest), moved the same way; its first layer
 `me-logistic-storage-bus.png` is the base a graphics mod replaces. Its icons are the base, the marker and the badge.
+The ME Logistic Interface (issue #531) is built the same way, but as a solid block: `me-logistic-interface.png` is the base,
+`me-logistic-interface-marker.png` (orange corner marks and its three chests) the second layer on the 54 px face at its top
+left (not moved by the bus view); its icons are the base and the marker. Its three hidden chests
+(`me-logistic-interface-provider`, `-requester`, `-storage`) have no picture.
 
 ## Runtime
 

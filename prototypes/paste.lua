@@ -27,6 +27,8 @@ M.SOURCES = {
 	["me-export-bus"] = { handler = "fork-me-io", targets = { "me-export-bus" } },
 	["me-storage-bus"] = { handler = "fork-me-storagebus", targets = { "me-storage-bus" } },
 	["me-logistic-storage-bus"] = { handler = "fork-me-storagebus", targets = { "me-logistic-storage-bus" } },   -- (issue #506)
+	--- issue #531: the offer and request rows, the switch, the filter and the cards
+	["me-logistic-interface"] = { handler = "fork-me-logistic-interface", targets = { "me-logistic-interface" } },
 	["me-pattern-provider"] = { handler = "fork-me-autocraft", targets = { "me-pattern-provider" } },            -- (issue #80)
 	["me-io-port"] = { handler = "fork-me-ioport", targets = { "me-io-port" } },                                 -- (mode, cards)
 	["me-wireless-access-point"] = { handler = "fork-me-wireless", targets = { "me-wireless-access-point" } },   -- (boosters)
