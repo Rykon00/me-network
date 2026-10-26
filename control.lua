@@ -53,6 +53,8 @@ local fork_ioport = require("scripts.fork-me-ioport")
 local fork_qbridge = require("scripts.fork-me-qbridge")
 --- issue #412: the circuit connector of the buses and the ME Interface
 local fork_conn = require("scripts.fork-me-connector")
+--- issue #527: settings paste of the ME Quantum Bridge and the ME Wireless Link by the mod's own copy and paste keys
+local paste_keys = require("scripts.fork-me-paste-keys")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -293,6 +295,7 @@ script.on_configuration_changed(function(data)
 	fork_ioport.on_configuration_changed()
 	fork_qbridge.on_configuration_changed()
 	fork_conn.on_configuration_changed()                      -- (issue #412: every bus and interface gets its connector)
+	paste_keys.on_configuration_changed()
 	names.on_configuration_changed()
 	fork_net.log_removed_items()                              -- (issue #503: ME-REMOVED-ITEM / ME-REPLACED-ITEM, once per name)
 end)

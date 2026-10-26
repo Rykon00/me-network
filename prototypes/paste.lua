@@ -4,10 +4,13 @@
 --- destination in `additional_pastable_entities`; and it copies nothing from an entity, or onto one, whose
 --- `allow_copy_paste` is false (the default of an electric energy interface). So every block whose paste handler in
 --- scripts/ copies its settings is here, with the blocks it pastes onto and the module of the handler: data.lua gives
---- each its list (what is there already stays) and `allow_copy_paste`, data-final-fixes.lua the crafting machines theirs.
+--- each of SOURCES its list (what is there already stays) and `allow_copy_paste`, data-final-fixes.lua the crafting
+--- machines theirs; the blocks of KEYS (issue #527) are pasted by the mod's own keys instead.
 --- `devcheck check` (tools/devcheck/checkmod/data-final-fixes.lua) fails when a final prototype lacks a target or the
---- flag, and when a module of scripts/ has a paste handler that this file names neither as a handler nor in BUILTIN.
---- Required by data.lua, data-final-fixes.lua and the check mod; it has no prototypes of its own.
+--- flag (a block of KEYS: has the flag, or the keys are missing), and when a module of scripts/ has a paste handler that
+--- this file names neither as a handler (SOURCES, KEYS) nor in BUILTIN.
+--- Required by data.lua, data-final-fixes.lua, prototypes/network.lua (the keys' custom inputs), the check mod and
+--- scripts/fork-me-paste-keys.lua; it has no prototypes of its own.
 
 local M = {}
 
@@ -27,13 +30,27 @@ M.SOURCES = {
 	["me-pattern-provider"] = { handler = "fork-me-autocraft", targets = { "me-pattern-provider" } },            -- (issue #80)
 	["me-io-port"] = { handler = "fork-me-ioport", targets = { "me-io-port" } },                                 -- (mode, cards)
 	["me-wireless-access-point"] = { handler = "fork-me-wireless", targets = { "me-wireless-access-point" } },   -- (boosters)
-	--- the frequency; the game also pastes an electric energy interface's power settings, which the handler sets back
-	["me-quantum-bridge"] = { handler = "fork-me-qbridge", targets = { "me-quantum-bridge" } },
-	["me-wireless-link"] = { handler = "fork-me-qbridge", targets = { "me-wireless-link" } },
 	--- the resource, the lock and the unit, between any two of the three kinds
 	["me-storage-monitor"] = { handler = "fork-me-monitor", targets = MONITORS },
 	["me-conversion-monitor"] = { handler = "fork-me-monitor", targets = MONITORS },
 	["me-throughput-monitor"] = { handler = "fork-me-monitor", targets = MONITORS },
+}
+
+--- Issue #527: blocks the game cannot paste for a player. The ME Quantum Bridge and the ME Wireless Link are electric
+--- energy interfaces with `gui_mode = "none"` (their window is the mod's): with `allow_copy_paste` the game finds them not
+--- operable for the player, says "Not operable" and pastes nothing. So they keep the type's default (false: the game pastes
+--- nothing onto them, not even by script) and the mod's own keys, linked to the game's copy and paste controls, paste them
+--- (scripts/fork-me-paste-keys.lua). Source -> { handler, targets } as in SOURCES; such a block is in no list.
+M.KEYS = {
+	--- the frequency, between two blocks of the same kind
+	["me-quantum-bridge"] = { handler = "fork-me-qbridge", targets = { "me-quantum-bridge" } },
+	["me-wireless-link"] = { handler = "fork-me-qbridge", targets = { "me-wireless-link" } },
+}
+--- the custom inputs of those keys (prototypes/network.lua) and the game control each follows (consuming "none": the
+--- game's own paste between other blocks goes on)
+M.INPUTS = {
+	copy = { name = "fork-me-copy-settings", control = "copy-entity-settings" },
+	paste = { name = "fork-me-paste-settings", control = "paste-entity-settings" },
 }
 
 --- issue #12: the recipe of a crafting machine of every mod pasted onto these (scripts/fork-me-recipe-paste.lua)

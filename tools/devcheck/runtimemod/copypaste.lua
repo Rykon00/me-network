@@ -199,13 +199,16 @@ return function(H)
 		return fails
 	end
 
-	--- me-network issue #519: settings paste through the game. The game pastes between two blocks only when their prototypes
-	--- allow it (prototypes/paste.lua; an electric energy interface copies nothing while its allow_copy_paste is false), and
-	--- raises on_entity_settings_pasted only for a player: LuaEntity.copy_settings without one copies the game's own settings
-	--- and raises nothing. The ME Quantum Bridge and the ME Wireless Link are electric energy interfaces, whose power settings
-	--- the game copies: copy_settings must paste (the source's marked power production arrives), then the handler, called as
-	--- the event calls it, gives the frequency and the block's own power back; a bridge pasted onto a link (and back) keeps
-	--- the frequency. The other blocks have no settings of the game's to copy: devcheck check covers their lists.
+	--- me-network issue #519: settings paste through the game, the script's path (LuaEntity.copy_settings). The game pastes
+	--- between two blocks only when their prototypes allow it (prototypes/paste.lua; an electric energy interface copies
+	--- nothing while its allow_copy_paste is false), and raises on_entity_settings_pasted only for a player: copy_settings
+	--- without one copies the game's own settings and raises nothing. Issue #527: the ME Quantum Bridge and the ME Wireless
+	--- Link are electric energy interfaces that the game cannot paste for a player ("Not operable"), so they keep the flag
+	--- off and the mod's own keys paste them (PASTEKEYS below, the player's path). Here copy_settings must paste nothing
+	--- onto them (a marked power production of the source must not arrive: with it, the game would copy the source's power
+	--- use and buffer too, which the handler does not repair), and the handler, called as the event calls it, copies the
+	--- frequency between two blocks of the same kind only. The other blocks have no settings of the game's to copy:
+	--- devcheck check covers their lists.
 	local QB, PY, MARK = "gregtorio-me-qbridge", BY + 130, 123   -- (MARK: a power production no bridge or link has)
 	local function game_paste(s)
 		local problems = {}
@@ -219,12 +222,12 @@ return function(H)
 		local function paste(src, dst, what)
 			src.power_production = MARK
 			dst.copy_settings(src)
-			if not near(dst.power_production, MARK) then
-				problems[#problems + 1] = what .. ": the game pasted nothing (allow_copy_paste, prototypes/paste.lua)"
+			if dst.power_production ~= 0 then
+				problems[#problems + 1] = what .. ": the game pasted the power settings (allow_copy_paste, prototypes/paste.lua KEYS)"
+				dst.power_production = 0
 			end
 			src.power_production = 0
 			remote.call(QB, "paste", src, dst)
-			if dst.power_production ~= 0 then problems[#problems + 1] = what .. ": the pasted power production stays" end
 		end
 		local function power(e, watts, what)
 			if not (near(e.power_usage * 60, watts) and near(e.electric_buffer_size, math.max(watts * 2, 1))) then
@@ -251,6 +254,71 @@ return function(H)
 		paste(c, b, "link onto bridge")
 		want(b, 1234, "link onto bridge")
 		power(b, bridge_w, "link onto bridge")
+		gone()
+		return problems
+	end
+
+	--- me-network issue #527: settings paste of the ME Quantum Bridge and the ME Wireless Link by the mod's copy and paste
+	--- keys (scripts/fork-me-paste-keys.lua), the player's path. The harness has no player: the keys' handlers are called
+	--- through the remote with a stand-in player (an empty hand) and the block as player.selected. The frequency goes from a
+	--- bridge onto a bridge and from a link onto a link with the game's sounds and a flying text, never from a bridge onto a
+	--- link or back; a copy over another block forgets the source, a copy over nothing keeps it, a block of another force
+	--- is neither copied nor pasted onto, and a source that is gone pastes nothing.
+	local PK, KY = "gregtorio-me-paste-keys", PY + 6
+	local function keys_paste(s)
+		local problems = {}
+		local B, L = "me-quantum-bridge", "me-wireless-link"
+		local function put(name, x) return me_place(s, problems, "paste keys", name, BX + x, KY) end
+		local a, b, c, d, chest = put(B, 1.5), put(B, 6.5), put(L, 11.5), put(L, 14.5), put("iron-chest", 17.5)
+		local function gone()
+			for _, e in pairs({ a, b, c, d, chest }) do if e and e.valid then e.destroy{ raise_destroy = true } end end
+		end
+		if not (a and b and c and d and chest) then gone() return problems end
+		local function freq(e) local i = remote.call(QB, "info", e) return i and i.freq end
+		local function set(e, f) remote.call(QB, "set_frequency", e, f) end
+		--- `key` ("copy" or "paste") over `e`: it must be done (or not), with the game's sound (and a flying text)
+		local function press(key, e, done, what, force)
+			local r = remote.call(PK, key, 1, e, force)
+			if r.done ~= done then
+				problems[#problems + 1] = what .. ": " .. key .. (done and " did nothing" or " was done")
+			elseif done then
+				local seen = key == "copy" and "utility/entity_settings_copied"
+					or "utility/entity_settings_pasted,fork-me-paste.settings-pasted"
+				if table.concat(r.seen, ",") ~= seen then
+					problems[#problems + 1] = what .. ": the player got " .. table.concat(r.seen, ",") .. ", not " .. seen
+				end
+			end
+		end
+		local function want(e, f, what)
+			if freq(e) ~= f then problems[#problems + 1] = what .. ": frequency " .. tostring(freq(e)) .. ", not " .. f end
+		end
+		set(a, 1234) set(b, 1) set(c, 4321) set(d, 2)
+		press("copy", a, true, "bridge onto bridge")
+		press("paste", b, true, "bridge onto bridge")
+		want(b, 1234, "bridge onto bridge")
+		press("copy", c, true, "link onto link")
+		press("paste", d, true, "link onto link")
+		want(d, 4321, "link onto link")
+		set(b, 1) set(d, 2)
+		press("paste", b, false, "link onto bridge")
+		want(b, 1, "link onto bridge")
+		press("copy", a, true, "bridge onto link")
+		press("paste", d, false, "bridge onto link")
+		want(d, 2, "bridge onto link")
+		press("copy", nil, false, "copy over nothing")
+		press("paste", b, true, "copy over nothing (keeps the source)")
+		want(b, 1234, "copy over nothing (keeps the source)")
+		set(b, 1)
+		press("copy", chest, false, "copy over another block")
+		press("paste", b, false, "copy over another block (forgets the source)")
+		want(b, 1, "copy over another block (forgets the source)")
+		press("copy", a, false, "copy from a block of another force", "enemy")
+		press("copy", a, true, "paste onto a block of another force")
+		press("paste", b, false, "paste onto a block of another force", "enemy")
+		want(b, 1, "paste onto a block of another force")
+		a.destroy{ raise_destroy = true }
+		press("paste", b, false, "a source that is gone")
+		want(b, 1, "a source that is gone")
 		gone()
 		return problems
 	end
@@ -352,8 +420,13 @@ return function(H)
 				.. " the game alone pasted over " .. #raw .. " of them without their settings: " .. table.concat(raw, ", "))
 			or ("lost: " .. table.concat(paths, "; ")))
 		me_report("SETTINGSPASTE", "ME settings paste through the game", game_paste(s),
-			"copy_settings pastes between two bridges, two links and a bridge and a link; the handler copies the frequency"
-				.. " and keeps each block's own power")
+			"the script's path (copy_settings; the player's path is PASTEKEYS): the game pastes nothing between two bridges,"
+				.. " two links and a bridge and a link; the handler copies the frequency between two of a kind only and each"
+				.. " block keeps its own power")
+		me_report("PASTEKEYS", "ME settings paste through the copy and paste keys", keys_paste(s),
+			"the player's path (the mod's keys, issue #527): the frequency from a bridge onto a bridge and a link onto a link,"
+				.. " not across, with sound and flying text; a copy over another block, another force and a source that is"
+				.. " gone paste nothing")
 	end
 
 	function T.running(check) check(storage.copypaste383 and storage.copypaste383.done, "ME settings through the copy-paste tool") end

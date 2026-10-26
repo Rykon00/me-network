@@ -232,6 +232,9 @@ section("REMOVEDKEYS", found)
 --- the runtime tests call the handlers directly, so they never see a missing list. Rows: "handler\t<module>" for every
 --- module the table names (devcheck.py compares them with the handlers in scripts/), "missing\t<prototype>\t<what>" for
 --- a source of the table, a target of it or a crafting machine whose final prototype lacks a target or allow_copy_paste.
+--- Issue #527: a block of KEYS (pasted by the mod's own keys) must not have allow_copy_paste (the game would try its own
+--- paste and say "Not operable"), nor be in SOURCES, and the keys' custom inputs must follow the game's controls without
+--- consuming them.
 local PASTE = require("__me-network__.prototypes.paste")
 local paste_rows, handlers = {}, {}
 local function pastable(p)                   -- (an electric energy interface's allow_copy_paste is false by default)
@@ -261,6 +264,31 @@ for name, spec in pairs(PASTE.SOURCES) do
 				paste_rows[#paste_rows + 1] = "missing\t" .. t .. "\tallow_copy_paste is false (a target of " .. name .. ")"
 			end
 		end
+	end
+end
+for name, spec in pairs(PASTE.KEYS) do
+	handlers[spec.handler] = true
+	local p = PASTE.entity(name)
+	if not p then
+		paste_rows[#paste_rows + 1] = "missing	" .. name .. "	no such entity prototype (pasted by the keys)"
+	else
+		if pastable(p) then
+			paste_rows[#paste_rows + 1] = "missing	" .. name .. "	allow_copy_paste is true, but the keys paste it (KEYS)"
+		end
+		if PASTE.SOURCES[name] then paste_rows[#paste_rows + 1] = "missing	" .. name .. "	in SOURCES and in KEYS" end
+		for _, t in ipairs(spec.targets) do
+			if not PASTE.KEYS[t] then
+				paste_rows[#paste_rows + 1] = "missing	" .. t .. "	a target of " .. name .. " that the keys do not paste (KEYS)"
+			end
+		end
+	end
+end
+for _, key in pairs(PASTE.INPUTS) do
+	local ci = data.raw["custom-input"][key.name]
+	if not ci then
+		paste_rows[#paste_rows + 1] = "missing	" .. key.name .. "	no such custom input"
+	elseif ci.linked_game_control ~= key.control or (ci.consuming or "none") ~= "none" then
+		paste_rows[#paste_rows + 1] = "missing	" .. key.name .. "	not linked to " .. key.control .. " with consuming \"none\""
 	end
 end
 handlers[PASTE.MACHINE_HANDLER] = true

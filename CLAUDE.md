@@ -20,7 +20,10 @@
   tiles) must keep to one surface, code that walks a network's members must not assume one.
 - Settings paste: the game raises `on_entity_settings_pasted` only for a pair its prototypes allow, so a block with a
   paste handler in `scripts/` has its row in `prototypes/paste.lua` (targets, `allow_copy_paste`; issue #519), and
-  `devcheck check` fails without it. The runtime tests call the handlers directly and never see a missing row.
+  `devcheck check` fails without it. The runtime tests call the handlers directly and never see a missing row. A block the
+  game cannot paste for a player (an energy interface with `gui_mode = "none"` says "Not operable": the ME Quantum Bridge
+  and the ME Wireless Link, issue #527) is in `KEYS` instead, without `allow_copy_paste`, and the mod's own copy and paste
+  keys paste it (`scripts/fork-me-paste-keys.lua`).
 - Runtime: `control.lua` registers the build, clone, settings paste, blueprint (also `on_pre_build`: a blueprint pasted
   over blocks that stand there, `scripts/fork-me-pasteover.lua`, issue #383), removal (with an event filter) and
   rotation events of all modules (the graph first on build, last on removal), `on_init` (first the hand-over of a

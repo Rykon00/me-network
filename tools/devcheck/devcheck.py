@@ -583,13 +583,14 @@ def check_tab(sec, gregtorio=None):
 def check_paste(sec):
     """issue #519: the problems of the settings paste: a prototype of prototypes/paste.lua (from the PASTE section of the
     check mod) without its targets or allow_copy_paste, a module of scripts/ with a paste handler the table does not
-    name, a module the table names that has none"""
+    name, a module the table names that has none. Issue #527: a block pasted by the mod's own keys (KEYS) instead has
+    allow_copy_paste off and the two custom inputs; a handler needs one of the two ways"""
     rows = sec.get("PASTE", [])
     named = {r[1] for r in rows if r[0] == "handler"}
     problems = [f"{r[1]}: {r[2]}" for r in rows if r[0] == "missing"]
     found = {p.stem for p in (ROOT / "scripts").glob("*.lua")
              if re.search(r"^function M\.on_entity_settings_pasted\b", p.read_text(encoding="utf-8"), re.M)}
-    problems += [f"scripts/{m}.lua: a paste handler that prototypes/paste.lua does not name (SOURCES or BUILTIN)"
+    problems += [f"scripts/{m}.lua: a paste handler that prototypes/paste.lua does not name (SOURCES, KEYS or BUILTIN)"
                  for m in sorted(found - named)]
     problems += [f"{m}: named in prototypes/paste.lua, but scripts/{m}.lua has no paste handler" for m in sorted(named - found)]
     if not named:
@@ -939,7 +940,7 @@ RUNTIME_TESTS = (
     ("UNIFIED", "ME unified I/O test"),
     ("MAINTAINER", "level maintainer test"),
     ("CIRCUIT", "circuit interface test"), ("SETTINGS", "settings copy test"), ("SCHEDULER", "ME scheduler test"), ("PARKING", "ME parked blocks test"),
-    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("TAGITEM", "ME items with tags through storage buses test"), ("TAGDAMAGED", "ME damaged items with tags test"), ("TAGCRAFT", "ME autocrafting of items with tags test"), ("TAGLABEL", "ME items with a label test"), ("FUZZYDATA", "ME fuzzy export of items with data test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("BULK", "ME export bus into a recipe of more than a stack test"), ("COPYPASTE", "ME settings through the copy-paste tool test"), ("SETTINGSPASTE", "ME settings paste through the game test"), ("DISASSEMBLY", "ME cell disassembly test"), ("IOPORT", "ME IO Port test"), ("CELLQUALITY", "ME cell item quality test"), ("QBRIDGE", "ME Quantum Bridge test"), ("WLINK", "ME Wireless Link test"), ("REFILL", "ME storage bus refill test"),
+    ("STATS", "ME stats command test"), ("MARGIN", "ME margin of a short busy list test"), ("ACCEL", "Acceleration Card test"), ("BUSACCEL", "ME bus acceleration cards test"), ("REFUSED", "ME import bus with refused stacks test"), ("TAGITEM", "ME items with tags through storage buses test"), ("TAGDAMAGED", "ME damaged items with tags test"), ("TAGCRAFT", "ME autocrafting of items with tags test"), ("TAGLABEL", "ME items with a label test"), ("FUZZYDATA", "ME fuzzy export of items with data test"), ("DAMAGED", "damaged items on the by-count paths test"), ("LAB", "ME export bus into a lab test"), ("BULK", "ME export bus into a recipe of more than a stack test"), ("COPYPASTE", "ME settings through the copy-paste tool test"), ("SETTINGSPASTE", "ME settings paste through the game test"), ("PASTEKEYS", "ME settings paste through the copy and paste keys test"),("DISASSEMBLY", "ME cell disassembly test"), ("IOPORT", "ME IO Port test"), ("CELLQUALITY", "ME cell item quality test"), ("QBRIDGE", "ME Quantum Bridge test"), ("WLINK", "ME Wireless Link test"), ("REFILL", "ME storage bus refill test"),
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"), ("QUALITYTERM", "ME Terminal quality filter and sort test"),
