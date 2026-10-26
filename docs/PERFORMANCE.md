@@ -3946,3 +3946,28 @@ holds every item in every quality, so "≤ normal" keeps about a fifth of the ke
 A list made from nothing by amount is up to a tenth slower in these runs (the scene's qualities of one item often hold the
 same amount, so their tie goes on to the name and the level), by name it is the same; the refresh of an open window (one
 amount changed, the list sorted again from the last one) and a window whose network did not change cost the same as before.
+
+## The ME Logistic Storage Bus skips ME-owned chests (issue #530)
+
+The bus learns which logistic chests belong to the ME network (the hidden chests of the ME Logistic Interface, issue #531)
+from a lookup outside `storage` that the owning modules fill. While no owned chest exists, every engine call is the one of
+#509; each call of the bus first reads one module-local count (`owned_n == 0`). With owned chests in its logistic network
+(looked up once per tick and network: `logistic_network.network_id` of each owned chest), the bus subtracts their contents
+from its read and its counts, stores through `select_drop_point` (then `"storage-empty-slot"`, `"storage-empty"`, then the
+first 64 storage chests) into a chest that is not owned, and takes through `get_supply_points` from points that are not
+owned, but only for an item that an owned chest holds (otherwise `remove_item` as before).
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000` (three rounds in turns; no owned chest in the scene, so this
+is the cost of the empty path): **regressions beyond the noise: 0**, throughput per kind of endpoint identical.
+
+| | origin/main (#529) | #530 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.397 / 2.17 | 0.392 / 2.13 |
+| 1000: gc avg (ms) | 0.0373 | 0.0374 |
+| 1000: Lua alloc KB per tick | 27.21 | 27.21 |
+| 5000: script avg / p99 (ms) | 1.015 / 2.97 | 0.995 / 2.94 |
+| 5000: gc avg (ms) | 0.0576 | 0.0592 (noise ±0.0032) |
+| 5000: Lua alloc KB per tick | 35.57 | 35.57 |
+| burst build / remove at 1000 (ms) | 80.8 / 81.7 | 82.9 / 80.5 (noise ±2.2) |
+
+The path with owned chests is measured with the interface (issue #531), which is the first to own any.

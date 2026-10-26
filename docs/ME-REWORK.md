@@ -3185,6 +3185,30 @@ the package "Spoilable items in ME storage".
   engine's own counts).
 * Not tested in the real game: the window, the sprite, a real base (issue #507).
 
+### ME-owned chests (issue #530)
+
+The ME Logistic Interface (issue #531) puts hidden logistic chests on its tile: ordinary members of the logistic network.
+The bus must not store into them (the interface pulls the storage chest back in: with full drives, a loop), count them
+(what lies there is the network's already, or its stock offered to the robots) or take from them (the interface would
+restock its provider from the network: a loop with nothing gained).
+
+* **The lookup**: `owned[unit] = { entity, role }` outside `storage`, built from the sources the owning modules register
+  at load (`L.owned_source(fn)`, `fn(add)` calls `add(entity, role)` for each chest of its records) and built again after
+  `L.owned_changed()`. Roles: `"storage"` (left out of the member `"storage"`), `"provider"` (left out of `"providers"`).
+  Per logistic network, the owned chests standing in it come from one pass over the lookup
+  (`logistic_network.network_id`), kept for the tick only: a network's members change without an event, and a peer that
+  joins between two ticks builds the same. The runtime test registers stand-ins through the remote
+  (`own_logistic`, kept in `storage.fork_me_lsbus.owned_test`, a source like the others).
+* **Nothing owned** (every game until the interface exists): each call reads one count and takes the path of #509.
+* **Read and count**: the owned chests' contents are subtracted from `get_contents` and `get_item_count` (never below 0).
+* **Store**: `select_drop_point` for `"storage"`, then `"storage-empty-slot"`, then `"storage-empty"`; a point whose owner is
+  owned is passed over; then the first 64 storage chests of `net.storages` that are not owned and take the item. Inserted
+  into that chest's inventory, at most four chests per call; never `net.insert`, which could pick an owned chest.
+* **Take**: while an owned chest of the network holds the item, `get_supply_points(item)` per member in the order of the
+  remove path (storage, then in the provider mode passive, active, buffer), skipping owned owners, from the inventory the
+  point stands for (an active provider point of a requester, a character or a vehicle is its trash). Otherwise
+  `remove_item`, the cheaper call.
+
 ### Tests
 
 `devcheck runtime`, "ME logistic storage bus (issue #506)" (`tools/devcheck/runtimemod/lsbus.lua`): three roboports in a
