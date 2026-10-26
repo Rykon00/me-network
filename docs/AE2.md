@@ -608,6 +608,17 @@ logistic chests** stand on its tile; you never see them, the robots do. Its wind
 * **Request** (a hidden requester): rows "**keep this many in the network**": the item and a target. The robots are asked
   for the target less what the whole network holds (drives, storage buses, also a logistic storage bus's chests) less what
   lies in the requester or is on its way; at the target the request is 0. Each row shows what it asks for now.
+* **Request what crafting lacks** (issue #532; a switch under the request rows, **on** by default): when a **level
+  maintainer** or a **Crafting Card** (ME Interface, export bus, this block) cannot start its crafting job because the
+  network lacks raw ingredients (the maintainer says "missing"), the interface asks the robots for them too: what the
+  failed starts lacked together, less what arrived since, less what lies in the requester or is on its way, the largest
+  needs first, at most 20 items (map setting "ME Logistic Interface: items it asks for what crafting lacks, at most").
+  The items go into the network at the next visit, and the maintainer's or card's next try (every 5 seconds) starts the
+  job. **Per logistic network and ME network only the first interface** (the one built first) with the switch on asks;
+  the others say so. Items that an interface of the logistic network **offers** are left out (the loop guard), and so
+  are the interface's own request rows. A job never waits for what the network lacks: it does not start at all, so this
+  follows the starts that failed. What they lacked is dropped when the job starts, the target is reached, or nobody has
+  tried for two tries. The list below the switch shows what it asks for now.
 * **Accept** (a hidden storage chest): robots drop **trash and surplus** there like into any storage chest. "**Accept
   trash**" is on by default; off, the chest takes nothing. A **filter** item makes it a filtered storage chest: robots
   prefer it for that item (handy to lead a sorting line into the network), and then it takes only that item.

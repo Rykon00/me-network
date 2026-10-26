@@ -20,6 +20,8 @@ data:extend({
 	--- issue #531: the ME Logistic Interface (a visit pulls three chests in and fills or asks for its rows)
 	int("me-network-logistic-interface-visits-per-tick", "b23", 2, 1, 1000),
 	int("me-network-logistic-interface-visits-per-tick-max", "b24", 8, 1, 1000),
+	--- issue #532: the keys an ME Logistic Interface asks for at most for what failed crafting starts lack
+	int("me-network-logistic-interface-auto-keys", "b25", 20, 0, 200),
 	int("me-network-io-port-visits-per-tick", "b3", 2, 1, 1000),         -- issue #386: the ME IO Port
 	int("me-network-io-port-visits-per-tick-max", "b4", 8, 1, 1000),
 	int("me-network-maintainer-checks-per-tick", "c1", 4, 1, 1000),

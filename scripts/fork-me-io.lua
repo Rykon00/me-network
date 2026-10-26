@@ -126,7 +126,11 @@ local function craft(rec, net, key, amount)
 	else
 		craft_starts = craft_starts + 1
 		local nid
-		nid, why = AC.start(rec.entity, key, math.max(1, math.floor(amount)), rec.entity.unit_number, nil, "io")
+		local plan
+		nid, why, plan = AC.start(rec.entity, key, math.max(1, math.floor(amount)), rec.entity.unit_number, nil, "io")
+		--- issue #532: what the start lacked, for the ME Logistic Interface (until the try after the next one)
+		AC.note_missing("c" .. rec.entity.unit_number .. ":" .. key, rec.entity.unit_number, net,
+			why == "missing" and plan and plan.missing or nil, now + 2 * CRAFT_RETRY + 60)
 		if nid then
 			rec.cjobs = jobs or {}
 			rec.cjobs[key] = nid
