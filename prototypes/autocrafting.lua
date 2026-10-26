@@ -144,7 +144,6 @@ data:extend({ {
 	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 60,
-	additional_pastable_entities = { "me-pattern-provider" },   -- settings paste copies the priority (issue #80)
 	picture = {
 		filename = ME.hd_entity_path .. "me-pattern-provider.png",
 		priority = "extra-high",
