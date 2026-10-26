@@ -387,9 +387,7 @@ block{
 	extra = { picture = {
 		filename = HD_ENTITY .. "me-drive.png",
 		priority = "extra-high", width = 64, height = 64, scale = 0.5,
-	},
-	--- settings paste of the priority and the cell partitions (issue #68 step R3, scripts/fork-me-network.lua)
-	additional_pastable_entities = { DRIVE } },
+	} },
 }
 data.raw.item["me-drive"].place_result = DRIVE
 
@@ -420,8 +418,6 @@ data:extend({ {
 	inventory_size = 1,
 	inventory_type = "normal",
 	picture = { filename = HD_ENTITY .. "me-chest.png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
-	--- the priority and the cell's partition (drive settings) go with a paste between chests and drives
-	additional_pastable_entities = { CHEST, DRIVE },
 	localised_description = { "entity-description.me-chest" },
 }, {
 	type = "electric-energy-interface",
@@ -502,8 +498,6 @@ data:extend({ {
 		filename = HD_ENTITY .. "me-interface-unified.png",
 		priority = "extra-high", width = 64, height = 64, scale = 0.5,
 	},
-	--- a container has no settings of its own: this lets the runtime copy the filters (settings paste)
-	additional_pastable_entities = { INTERFACE },
 	localised_description = { "entity-description.me-network-interface", tostring(INTERFACE_SLOTS) },
 } })
 data.raw.item["me-interface"].place_result = INTERFACE
@@ -607,10 +601,6 @@ data:extend({ {
 	localised_description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
 } })
 
---- shift right click / shift left click copies the filters of the buses (runtime, on_entity_settings_pasted)
-data.raw["simple-entity-with-force"][IMPORT_BUS].additional_pastable_entities = { IMPORT_BUS }
-data.raw["simple-entity-with-force"][EXPORT_BUS].additional_pastable_entities = { EXPORT_BUS }
-
 --------------------------------------------------------------------------------
 --- ME STORAGE BUS (rotatable: the arrow side faces the chest or cargo wagon whose inventory becomes network
 --- storage; AE2's recipe is an interface and two pistons; runtime: scripts/fork-me-storagebus.lua)
@@ -629,7 +619,7 @@ ME.add_item{
 block{
 	name = STORAGE_BUS, icon = HD_ICON .. STORAGE_BUS .. ".png", icon_size = 64,
 	description = { "entity-description." .. STORAGE_BUS },
-	extra = { picture = bus_picture(STORAGE_BUS), additional_pastable_entities = { STORAGE_BUS },
+	extra = { picture = bus_picture(STORAGE_BUS),
 		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 
@@ -673,7 +663,7 @@ block{
 			{ filename = HD_ENTITY .. LOGISTIC_STORAGE_BUS .. "-marker.png", priority = "extra-high", width = BUS_FACE,
 			  height = BUS_FACE, scale = 0.5, shift = { BUS_FACE / 2 / 64 - 0.5, BUS_FACE / 2 / 64 - 0.5 } },
 		} },
-		additional_pastable_entities = { LOGISTIC_STORAGE_BUS }, render_layer = "lower-object", collision_mask = WALKABLE },
+		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 for _, proto in pairs({ data.raw.item[LOGISTIC_STORAGE_BUS], data.raw["simple-entity-with-force"][LOGISTIC_STORAGE_BUS] }) do
 	proto.icon, proto.icon_size = nil, nil

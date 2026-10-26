@@ -227,3 +227,47 @@ for t, list in pairs(data.raw) do
 end
 table.sort(found)
 section("REMOVEDKEYS", found)
+
+--- Issue #519: settings paste. The game pastes only between entities whose prototypes allow it (prototypes/paste.lua), and
+--- the runtime tests call the handlers directly, so they never see a missing list. Rows: "handler\t<module>" for every
+--- module the table names (devcheck.py compares them with the handlers in scripts/), "missing\t<prototype>\t<what>" for
+--- a source of the table, a target of it or a crafting machine whose final prototype lacks a target or allow_copy_paste.
+local PASTE = require("__me-network__.prototypes.paste")
+local paste_rows, handlers = {}, {}
+local function pastable(p)                   -- (an electric energy interface's allow_copy_paste is false by default)
+	if p.allow_copy_paste == nil then return p.type ~= "electric-energy-interface" end
+	return p.allow_copy_paste == true
+end
+local function lacks(p, targets, owner)
+	local listed = {}
+	for _, n in pairs(p.additional_pastable_entities or {}) do listed[n] = true end
+	for _, n in ipairs(targets) do
+		if not listed[n] then paste_rows[#paste_rows + 1] = "missing\t" .. owner .. "\tadditional_pastable_entities has no " .. n end
+	end
+end
+for name, spec in pairs(PASTE.SOURCES) do
+	handlers[spec.handler] = true
+	local p = PASTE.entity(name)
+	if not p then
+		paste_rows[#paste_rows + 1] = "missing\t" .. name .. "\tno such entity prototype"
+	else
+		if not pastable(p) then paste_rows[#paste_rows + 1] = "missing\t" .. name .. "\tallow_copy_paste is false (a source)" end
+		lacks(p, spec.targets, name)
+		for _, t in ipairs(spec.targets) do
+			local tp = PASTE.entity(t)
+			if not tp then
+				paste_rows[#paste_rows + 1] = "missing\t" .. t .. "\tno such entity prototype (a target of " .. name .. ")"
+			elseif not pastable(tp) then
+				paste_rows[#paste_rows + 1] = "missing\t" .. t .. "\tallow_copy_paste is false (a target of " .. name .. ")"
+			end
+		end
+	end
+end
+handlers[PASTE.MACHINE_HANDLER] = true
+for _, t in ipairs(PASTE.MACHINE_TYPES) do
+	for n, p in pairs(data.raw[t] or {}) do lacks(p, PASTE.MACHINE_TARGETS, t .. ":" .. n) end
+end
+for m in pairs(PASTE.BUILTIN) do handlers[m] = true end
+for m in pairs(handlers) do paste_rows[#paste_rows + 1] = "handler\t" .. m end
+table.sort(paste_rows)
+section("PASTE", paste_rows)

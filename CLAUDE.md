@@ -18,6 +18,9 @@
 - Since issue #385 a network can span surfaces: an ME Quantum Bridge link (and since #384 an ME Wireless Link's, on one surface) is a graph edge between two members anywhere
   (`N.set_qlink`, `s.qlink`); code that looks for members by position (the cable router, the wireless range, a grid of
   tiles) must keep to one surface, code that walks a network's members must not assume one.
+- Settings paste: the game raises `on_entity_settings_pasted` only for a pair its prototypes allow, so a block with a
+  paste handler in `scripts/` has its row in `prototypes/paste.lua` (targets, `allow_copy_paste`; issue #519), and
+  `devcheck check` fails without it. The runtime tests call the handlers directly and never see a missing row.
 - Runtime: `control.lua` registers the build, clone, settings paste, blueprint (also `on_pre_build`: a blueprint pasted
   over blocks that stand there, `scripts/fork-me-pasteover.lua`, issue #383), removal (with an event filter) and
   rotation events of all modules (the graph first on build, last on removal), `on_init` (first the hand-over of a

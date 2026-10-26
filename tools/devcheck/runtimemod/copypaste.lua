@@ -199,6 +199,62 @@ return function(H)
 		return fails
 	end
 
+	--- me-network issue #519: settings paste through the game. The game pastes between two blocks only when their prototypes
+	--- allow it (prototypes/paste.lua; an electric energy interface copies nothing while its allow_copy_paste is false), and
+	--- raises on_entity_settings_pasted only for a player: LuaEntity.copy_settings without one copies the game's own settings
+	--- and raises nothing. The ME Quantum Bridge and the ME Wireless Link are electric energy interfaces, whose power settings
+	--- the game copies: copy_settings must paste (the source's marked power production arrives), then the handler, called as
+	--- the event calls it, gives the frequency and the block's own power back; a bridge pasted onto a link (and back) keeps
+	--- the frequency. The other blocks have no settings of the game's to copy: devcheck check covers their lists.
+	local QB, PY, MARK = "gregtorio-me-qbridge", BY + 130, 123   -- (MARK: a power production no bridge or link has)
+	local function game_paste(s)
+		local problems = {}
+		local B, L = "me-quantum-bridge", "me-wireless-link"
+		local function put(name, x) return me_place(s, problems, "settings paste", name, BX + x, PY) end
+		local a, b, c, d = put(B, 1.5), put(B, 6.5), put(L, 11.5), put(L, 14.5)
+		local function gone() for _, e in pairs({ a, b, c, d }) do if e and e.valid then e.destroy{ raise_destroy = true } end end end
+		if not (a and b and c and d) then gone() return problems end
+		local function freq(e) local i = remote.call(QB, "info", e) return i and i.freq end
+		local function near(x, y) return math.abs(x - y) <= 1e-6 * math.max(1, math.abs(y)) end
+		local function paste(src, dst, what)
+			src.power_production = MARK
+			dst.copy_settings(src)
+			if not near(dst.power_production, MARK) then
+				problems[#problems + 1] = what .. ": the game pasted nothing (allow_copy_paste, prototypes/paste.lua)"
+			end
+			src.power_production = 0
+			remote.call(QB, "paste", src, dst)
+			if dst.power_production ~= 0 then problems[#problems + 1] = what .. ": the pasted power production stays" end
+		end
+		local function power(e, watts, what)
+			if not (near(e.power_usage * 60, watts) and near(e.electric_buffer_size, math.max(watts * 2, 1))) then
+				problems[#problems + 1] = ("%s: power use %.0f W, buffer %.0f J (its own: %.0f W, %.0f J)"):format(what,
+					e.power_usage * 60, e.electric_buffer_size, watts, math.max(watts * 2, 1))
+			end
+		end
+		local function want(e, f, what)
+			if freq(e) ~= f then problems[#problems + 1] = what .. ": frequency " .. tostring(freq(e)) .. ", not " .. f end
+		end
+		local dx, dy = c.position.x - d.position.x, c.position.y - d.position.y
+		local bridge_w, link_w = remote.call(QB, "drain", B), remote.call(QB, "drain", L, math.sqrt(dx * dx + dy * dy))
+		remote.call(QB, "set_frequency", a, 1234)
+		paste(a, b, "bridge onto bridge")
+		want(b, 1234, "bridge onto bridge")
+		power(b, bridge_w, "bridge onto bridge")
+		remote.call(QB, "set_frequency", c, 4321)
+		paste(c, d, "link onto link")
+		want(d, 4321, "link onto link")
+		power(d, link_w, "link onto link (a pair)")
+		paste(a, d, "bridge onto link")
+		want(d, 4321, "bridge onto link")
+		power(d, link_w, "bridge onto link")
+		paste(c, b, "link onto bridge")
+		want(b, 1234, "link onto bridge")
+		power(b, bridge_w, "link onto bridge")
+		gone()
+		return problems
+	end
+
 	function T.setup() return {} end
 
 	function T.tick()
@@ -295,6 +351,9 @@ return function(H)
 			and (#BLOCKS .. " blocks keep their settings through a blueprint, a copy of ghosts, a paste over a blank block and a cut;"
 				.. " the game alone pasted over " .. #raw .. " of them without their settings: " .. table.concat(raw, ", "))
 			or ("lost: " .. table.concat(paths, "; ")))
+		me_report("SETTINGSPASTE", "ME settings paste through the game", game_paste(s),
+			"copy_settings pastes between two bridges, two links and a bridge and a link; the handler copies the frequency"
+				.. " and keeps each block's own power")
 	end
 
 	function T.running(check) check(storage.copypaste383 and storage.copypaste383.done, "ME settings through the copy-paste tool") end
