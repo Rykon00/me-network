@@ -1032,6 +1032,8 @@ remote.add_interface("gregtorio-me-storagebus", {
 		if rec then M.visit(rec) end
 		return rec ~= nil
 	end,
+	--- issue #530 (tests): register a logistic chest as ME-owned (`role` "storage" or "provider"), or (role nil) no more
+	own_logistic = function(entity, role) L.own_test(entity, role) end,
 	info = function(entity) return M.info(entity) end,
 	get_settings = function(entity) return M.get_settings(entity) end,
 	set_settings = function(entity, settings) return M.set_settings(entity, settings) end,

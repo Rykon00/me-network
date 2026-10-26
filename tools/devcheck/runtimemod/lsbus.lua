@@ -8,7 +8,9 @@
 --- clone and blueprint tag, the network split by a removed roboport (a stale count corrected at the next extraction, the
 --- other half gone at the next visit), the second bus taking over when the first is removed, a bus outside every area that
 --- gets a network when a roboport is built and loses it at its next scheduled visit when the roboport is removed, and a
---- change by hand seen at a scheduled visit. The save at tick 500 and its schedule digest cover the bus's queue (control.lua).
+--- change by hand seen at a scheduled visit; issue #530: a storage chest and a passive provider registered as ME-owned (the
+--- stand-ins of the ME Logistic Interface's hidden chests) are never stored into, shown or taken from, and count again when
+--- they are registered no more. The save at tick 500 and its schedule digest cover the bus's queue (control.lua).
 --- Loaded by control.lua: require("lsbus")(H) returns { setup, tick, running }.
 
 local NET, SB, IO = "gregtorio-me-network", "gregtorio-me-storagebus", "gregtorio-me-io"
@@ -59,7 +61,7 @@ return function(H)
 	local function finish(st, problems)
 		st.done = true
 		me_report("LSBUS", "ME logistic storage bus (issue #506)", problems, "counts, quality, extraction, insertion, modes, "
-			.. "filters, settings copies, a second bus, a split network, a bus outside every area, scheduled visits")
+			.. "filters, settings copies, a second bus, a split network, a bus outside every area, scheduled visits, ME-owned chests")
 	end
 
 	function T.tick()
@@ -221,6 +223,45 @@ return function(H)
 				.. ", plastic " .. count("plastic-bar"))
 			local sch = remote.call(SB, "schedule", l2)
 			expect(sch and sch.due and sch.interval and sch.side == "logistic", "L2's schedule: " .. serpent.line(sch))
+
+			--- issue #530: a stand-in of the ME Logistic Interface's hidden storage chest and passive provider, registered as
+			--- ME-owned: never stored into, not shown, never taken from; registered no more, they count as before
+			local hs = s.create_entity{ name = "storage-chest", position = { BX + 10.5, BY + 3.5 }, force = "player" }
+			local hp = s.create_entity{ name = "passive-provider-chest", position = { BX + 11.5, BY + 3.5 }, force = "player" }
+			local C = "copper-cable"
+			local function n(e) return e.get_item_count(C) end
+			hs.insert{ name = C, count = 30 }
+			hp.insert{ name = C, count = 20 }
+			s2.insert{ name = C, count = 5 }
+			remote.call(SB, "visit", l2)
+			expect(count(C) == 35, "not owned yet: cables counted " .. count(C) .. " (5 in a storage chest, 30 in the stand-in)")
+			set(l2, { mode = "providers" })
+			expect(count(C) == 55, "not owned yet, providers: cables counted " .. count(C))
+			set(l2, { mode = "readwrite" })
+			remote.call(SB, "own_logistic", hs, "storage")
+			remote.call(SB, "own_logistic", hp, "provider")
+			remote.call(SB, "visit", l2)
+			expect(count(C) == 5 and info(l2).items > 0, "owned: cables counted " .. count(C))
+			set(l2, { mode = "providers" })
+			expect(count(C) == 5, "owned, providers: cables counted " .. count(C))
+			expect(ext(C, 20) == 5 and n(s2) == 0 and n(hs) == 30 and n(hp) == 20, "owned: extract 20 cables took "
+				.. "s2 " .. n(s2) .. ", stand-ins " .. n(hs) .. " / " .. n(hp))
+			p1.insert{ name = C, count = 8 }
+			remote.call(SB, "visit", l2)
+			expect(ext(C, 50) == 8 and n(p1) == 0 and n(hs) == 30 and n(hp) == 20, "owned, providers: extract 50 cables, "
+				.. "passive provider " .. n(p1) .. ", stand-ins " .. n(hs) .. " / " .. n(hp))
+			set(l2, { mode = "readwrite", priority = 10 })
+			expect(ins(C, 40) == 40 and n(hs) == 30 and stored(C) == 70 and count(C) == 40, "owned: insert 40 cables, stand-in "
+				.. n(hs) .. ", storage chests " .. stored(C) .. ", counted " .. count(C))
+			expect(remote.call(SB, "visit", l2) and count(C) == 40, "owned: after a visit counted " .. count(C))
+			remote.call(SB, "own_logistic", hs, nil)
+			remote.call(SB, "own_logistic", hp, nil)
+			remote.call(SB, "visit", l2)
+			set(l2, { mode = "providers" })
+			expect(count(C) == 90, "owned no more: cables counted " .. count(C))
+			expect(ext(C, 90) == 90 and n(hs) == 0 and n(hp) == 0, "owned no more: extract 90 cables, stand-ins " .. n(hs) .. " / " .. n(hp))
+			set(l2, { mode = "readwrite", priority = -100 })
+			remote.call(SB, "visit", l2)
 		end
 		finish(st, problems)
 	end

@@ -31,8 +31,12 @@
 ---   * Visits: a queue of its own (Sched, tag "lsbus") with its own budget (settings "logistic storage bus visits per tick",
 ---     floor and ceiling); a bus whose network changed is read again after MIN_INTERVAL ticks, one that did not change twice
 ---     as late each time up to the storage bus idle limit (120 ticks). Everything that decides a visit is in `storage`.
+---   * ME-owned chests (issue #530): the hidden logistic chests of the ME Logistic Interface (issue #531) are members of the
+---     logistic network like any other. The bus never stores into them, never shows what they hold and never takes from
+---     them (what lies there is the ME network's already, or its stock offered to the robots: storing, counting or taking it
+---     would loop or count it twice). While no such chest stands in the bus's network, every engine call is the one above.
 --- State: the records are the storage bus's (storage.fork_me_net.ext); this module keeps the visit list, the queue and the
---- claims in storage.fork_me_lsbus = { list, lpos, claims, q }.
+--- claims in storage.fork_me_lsbus = { list, lpos, claims, q, owned_test }.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -121,6 +125,107 @@ local function live(rec)
 end
 
 --------------------------------------------------------------------------------
+--- ME-owned logistic chests (issue #530)
+--------------------------------------------------------------------------------
+--- Derived from the owners' records in `storage`, never saved: `owned[unit] = { entity, role }`, built from the sources the
+--- owning modules register when they are loaded (M.owned_source), again after a module says its chests changed
+--- (M.owned_changed). Per logistic network the owned chests standing in it are looked up once per tick (`by_net`: valid in
+--- one tick only, because a network's members change without an event; a peer that joins between two ticks finds the same).
+--- Roles: "storage" (a storage chest, left out of the member "storage") and "provider" (a passive provider, left out of the
+--- member "providers"); any owned chest is skipped as a drop and a supply point.
+
+local CHEST = defines.inventory.chest
+local ROLES = { "storage", "provider" }
+local DROP_MEMBERS = { "storage", "storage-empty-slot", "storage-empty" }   -- (select_drop_point, in this order)
+local FIRST_FIT = 64                       -- storage chests tried in order when select_drop_point picks only owned ones
+local SUPPLY = { "storage" }               -- (the members of an extraction, as on the remove_item path)
+local SUPPLY_PROVIDERS = { "storage", "passive-provider", "active-provider", "buffer" }
+--- the inventory of a supply point's owner that the point stands for (an active provider point of an entity that is no
+--- active provider chest is its trash)
+local MAIN = { ["logistic-container"] = CHEST, ["cargo-landing-pad"] = defines.inventory.cargo_landing_pad_main }
+local TRASH = {
+	["logistic-container"] = defines.inventory.logistic_container_trash, character = defines.inventory.character_trash,
+	["spider-vehicle"] = defines.inventory.spider_trash, car = defines.inventory.car_trash,
+	["cargo-landing-pad"] = defines.inventory.cargo_landing_pad_trash,
+}
+
+local sources = {}                         -- functions(add) of the owning modules: add(entity, role) for each chest they own
+local owned, owned_n = nil, 0              -- (nil: build again)
+local by_net, by_net_tick = {}, -1
+
+--- a module that owns logistic chests registers the function that lists them (when it is loaded)
+function M.owned_source(fn)
+	sources[#sources + 1] = fn
+	owned = nil
+end
+
+--- the owned chests changed (built, removed): the lookup is built again at its next use
+function M.owned_changed() owned = nil end
+
+--- (tests) chests registered as owned by the runtime tests, kept in `storage` (a stand-in for the interface's records)
+M.owned_source(function(add)
+	local s = storage.fork_me_lsbus
+	for _, o in pairs(s and s.owned_test or {}) do add(o.entity, o.role) end
+end)
+
+--- (tests) register `entity` as an owned chest of `role`, or (role nil) no more
+function M.own_test(entity, role)
+	local s = state()
+	s.owned_test = s.owned_test or {}
+	s.owned_test[entity.unit_number] = role and { entity = entity, role = role } or nil
+	owned = nil
+end
+
+local function build_owned()
+	owned, owned_n, by_net = {}, 0, {}
+	local function add(e, role)
+		if e and e.valid and not owned[e.unit_number] then
+			owned[e.unit_number] = { e, role }
+			owned_n = owned_n + 1
+		end
+	end
+	for _, fn in ipairs(sources) do fn(add) end
+end
+
+--- the owned chests standing in `net` now: { storage = { entity }, provider = { entity }, units = { unit -> true } }, or nil
+--- when there is none (always nil while nothing is owned: no engine call)
+local function owned_in(net)
+	if not owned then build_owned() end
+	if owned_n == 0 then return nil end
+	local tick = game.tick
+	if by_net_tick ~= tick then by_net, by_net_tick = {}, tick end
+	local id = net.network_id
+	local g = by_net[id]
+	if g == nil then
+		g = false
+		for unit, o in pairs(owned) do
+			local e = o[1]
+			local n = e.valid and e.logistic_network
+			if n and n.network_id == id then
+				if not g then
+					g = { units = {} }
+					for _, r in ipairs(ROLES) do g[r] = {} end
+				end
+				local list = g[o[2]]
+				list[#list + 1] = e
+				g.units[unit] = true
+			end
+		end
+		by_net[id] = g
+	end
+	return g or nil
+end
+
+--- the count of `it` in the chests of `list`
+local function held(list, it)
+	local n = 0
+	for _, e in ipairs(list) do
+		if e.valid then n = n + e.get_inventory(CHEST).get_item_count(it) end
+	end
+	return n
+end
+
+--------------------------------------------------------------------------------
 --- the external cell's functions (called by the storage engine)
 --------------------------------------------------------------------------------
 
@@ -130,6 +235,53 @@ local function spec(name, q, count)
 	return Q
 end
 
+--- issue #530: the inventory of a storage chest that is not owned and takes `name` / `q` now (nil: none): select_drop_point
+--- for the members "storage", "storage-empty-slot" and "storage-empty", then the first FIRST_FIT storage chests in order
+local function drop_inventory(net, own, name, q)
+	for _, members in ipairs(DROP_MEMBERS) do
+		local point = net.select_drop_point{ stack = spec(name, q, nil), members = members }
+		local owner = point and point.owner
+		if owner and owner.valid and not own.units[owner.unit_number] then
+			local inv = owner.get_inventory(CHEST)
+			if inv then return inv end
+		end
+	end
+	local list = net.storages
+	for i = 1, math.min(#list, FIRST_FIT) do
+		local e = list[i]
+		if not own.units[e.unit_number] then
+			local inv = e.get_inventory(CHEST)
+			if inv and inv.get_insertable_count(spec(name, q, nil)) > 0 then return inv end
+		end
+	end
+	return nil
+end
+
+--- issue #530: take up to `count` of `name` / `q` from the supply points of `members` whose owner is not owned (in the order
+--- of `members`); returns the count taken
+local function take(net, own, name, q, count, members)
+	local got = 0
+	local points = net.get_supply_points(spec(name, q, nil))
+	for _, member in ipairs(members) do
+		for _, p in ipairs(points[member] or {}) do
+			local owner = p.owner
+			if owner.valid and not own.units[owner.unit_number] then
+				local t = owner.type
+				local index = MAIN[t]
+				if member == "active-provider" and not (t == "logistic-container" and owner.prototype.logistic_mode == "active-provider") then
+					index = TRASH[t]
+				end
+				local inv = index and owner.get_inventory(index)
+				if inv then
+					got = got + inv.remove(spec(name, q, count - got))
+					if got >= count then return got end
+				end
+			end
+		end
+	end
+	return got
+end
+
 local HANDLER = {
 	--- items of `key` the storage chests take now: what the chest the network would drop it into takes (a lower bound)
 	room = function(rec, key)
@@ -137,9 +289,15 @@ local HANDLER = {
 		local name, q = item_of(key)
 		local net = name and live(rec)
 		if not net then return 0 end
-		local point = net.select_drop_point{ stack = spec(name, q, nil), members = "storage" }
-		local owner = point and point.owner
-		local inv = owner and owner.valid and owner.get_inventory(defines.inventory.chest)
+		local inv
+		local own = owned_in(net)
+		if own then
+			inv = drop_inventory(net, own, name, q)
+		else
+			local point = net.select_drop_point{ stack = spec(name, q, nil), members = "storage" }
+			local owner = point and point.owner
+			inv = owner and owner.valid and owner.get_inventory(CHEST)
+		end
 		if not inv then return 0 end
 		return inv.get_insertable_count(spec(name, q, nil))
 	end,
@@ -149,7 +307,17 @@ local HANDLER = {
 		local name, q = item_of(key)
 		local net = name and live(rec)
 		if not net then return 0 end
-		return net.insert(spec(name, q, count), "storage")
+		local own = owned_in(net)
+		if not own then return net.insert(spec(name, q, count), "storage") end
+		local left = count                                       -- (issue #530: chest by chest, never into an owned one)
+		for _ = 1, 4 do
+			local inv = drop_inventory(net, own, name, q)
+			local n = inv and inv.insert(spec(name, q, left)) or 0
+			if n == 0 then break end
+			left = left - n
+			if left <= 0 then break end
+		end
+		return count - left
 	end,
 	--- the real count of `key` in the members the bus reads (0 when it cannot take from them)
 	count = function(rec, key)
@@ -160,6 +328,12 @@ local HANDLER = {
 		local it = spec(name, q, nil)
 		local n = net.get_item_count(it, "storage")
 		if rec.mode == "providers" then n = n + net.get_item_count(it, "providers") end
+		local own = owned_in(net)
+		if own then                                              -- (issue #530: what the owned chests hold is left out)
+			n = n - held(own.storage, it)
+			if rec.mode == "providers" then n = n - held(own.provider, it) end
+			if n < 0 then n = 0 end
+		end
 		return n
 	end,
 	--- take up to `count` out of the storage chests, then (provider mode) the provider chests; returns the count removed
@@ -167,6 +341,10 @@ local HANDLER = {
 		local name, q = item_of(key)
 		local net = name and live(rec)
 		if not net then return 0 end
+		local own = owned_in(net)
+		if own and held(own.storage, spec(name, q, nil)) + held(own.provider, spec(name, q, nil)) > 0 then
+			return take(net, own, name, q, count, rec.mode == "providers" and SUPPLY_PROVIDERS or SUPPLY)   -- (issue #530)
+		end
 		local got = net.remove_item(spec(name, q, count), "storage")
 		if got < count and rec.mode == "providers" then
 			for _, member in ipairs(PROVIDERS) do
@@ -241,12 +419,25 @@ end
 local scratch, scratch_free = {}, true
 
 --- the items of `member` the bus shows into `contents` (`add`: added to what an earlier member put there; the engine lists a
---- name and quality once per call)
-local function read(rec, net, member, contents, all, add)
+--- name and quality once per call); `own`: the owned chests of the network (issue #530), whose contents are left out
+local function read(rec, net, member, contents, all, add, own)
 	for _, it in pairs(net.get_contents(member)) do
 		local key = key_for(it.name, it.quality or "normal")
 		if key and (all or shown(rec, key)) then
 			if add then contents[key] = (contents[key] or 0) + it.count else contents[key] = it.count end
+		end
+	end
+	if not own then return end
+	for _, e in ipairs(member == "storage" and own.storage or own.provider) do
+		if e.valid then
+			for _, it in pairs(e.get_inventory(CHEST).get_contents()) do
+				local key = key_for(it.name, it.quality or "normal")
+				local have = key and contents[key]
+				if have then
+					have = have - it.count
+					contents[key] = have > 0 and have or nil
+				end
+			end
 		end
 	end
 end
@@ -266,8 +457,9 @@ function M.visit(rec)
 	end
 	if net then
 		local all = rec.inonly or not (rec.partition or rec.deny or rec.gf)   -- (no filter to check: the common case)
-		read(rec, net, "storage", contents, all, false)
-		if rec.mode == "providers" then read(rec, net, "providers", contents, all, true) end
+		local own = owned_in(net)
+		read(rec, net, "storage", contents, all, false, own)
+		if rec.mode == "providers" then read(rec, net, "providers", contents, all, true, own) end
 	end
 	local changed = N.ext_sync(rec.unit, contents) or before ~= rec.lid
 	if contents == scratch then scratch_free = true end
@@ -283,8 +475,9 @@ function M.contents(rec)
 	local out = {}
 	local net = live(rec) or (rec.entity.valid and find(rec.entity))
 	if net then
-		read(rec, net, "storage", out, true, false)
-		if rec.mode == "providers" then read(rec, net, "providers", out, true, true) end
+		local own = owned_in(net)
+		read(rec, net, "storage", out, true, false, own)
+		if rec.mode == "providers" then read(rec, net, "providers", out, true, true, own) end
 	end
 	return out
 end
@@ -353,6 +546,7 @@ function M.reset()
 	local s = state()
 	s.list, s.lpos, s.claims, s.q = {}, {}, {}, Sched.new("lsbus")
 	keys = {}
+	owned = nil
 end
 
 --- (tests, /me-stats) the visit list's size and its queue
