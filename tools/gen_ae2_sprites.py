@@ -22,8 +22,9 @@ Sources:
     python tools/gen_ae2_sprites.py --r1          # only the issue #68 (R1) graphics, from the existing PNGs
     python tools/gen_ae2_sprites.py --underground # only the ME Underground Cable
     python tools/gen_ae2_sprites.py --storage-bus # only the ME Storage Bus, from the R1 PNGs
-    python tools/gen_ae2_sprites.py --logistic-storage-bus # only the ME Logistic Storage Bus (issue #506): the storage
-                                                  # bus's 64 px picture and icon under file names of its own
+    python tools/gen_ae2_sprites.py --logistic-storage-bus # only the ME Logistic Storage Bus (issues #506, #518): its
+                                                  # base picture and icon, their marker layers, its badge and the
+                                                  # contact sheet docs/graphics-review/issue-518.png
     python tools/gen_ae2_sprites.py --bus-markers # only the marker layers of the import, export and storage bus
                                                   # (issue #282: the plate and the arrows alone, drawn over the bus)
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
@@ -1023,15 +1024,121 @@ def storage_bus():
     return written
 
 
+# --- me-network issue #518: ME Logistic Storage Bus -----------------------------------------------
+# The bus casing without a plate or arrows (it is not rotated and faces nothing) as the base, and a layer of its own
+# over it: corner marks in the logistic network's orange and a storage chest in the game's yellow. The texture mod
+# replaces the base with AE2's storage bus and keeps the layer (issue #515), so the bus stays told apart from the
+# ME Storage Bus with it as well.
+LOGISTIC_ORANGE = (245, 140, 30)
+STORAGE_YELLOW = (226, 182, 52)
+STORAGE_LIGHT = (250, 220, 120)
+STORAGE_DARK = (100, 74, 14)
+
+
+def logistic_storage_bus_face():
+    """the 32 px face of the base: the casing and its dark panel, nothing on it"""
+    return casing_ring(load(OUT_ENTITY / "me-interface.png"))
+
+
+def logistic_storage_bus_marker():
+    """the 32 px marker alone: four orange corner marks at the panel's edge, the storage chest in the middle"""
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    for x0, x1 in ((4, 10), (TILE - 11, TILE - 5)):                                  # the corner marks
+        for y0, y1 in ((3, 4), (TILE - 5, TILE - 4)):
+            d.rectangle((x0, y0, x1, y1), fill=LOGISTIC_ORANGE + (255,))
+    for x0 in (4, TILE - 6):
+        for y0, y1 in ((3, 9), (TILE - 10, TILE - 4)):
+            d.rectangle((x0, y0, x0 + 1, y1), fill=LOGISTIC_ORANGE + (255,))
+    d.rectangle((8, 9, 23, 23), fill=STORAGE_YELLOW + (255,), outline=STORAGE_DARK + (255,))   # the chest
+    d.rectangle((9, 10, 22, 12), fill=STORAGE_LIGHT + (255,))                                    # its lid
+    d.line((9, 13, 22, 13), fill=STORAGE_DARK + (255,))
+    d.line((11, 14, 11, 22), fill=STORAGE_DARK + (255,))                                         # its straps
+    d.line((20, 14, 20, 22), fill=STORAGE_DARK + (255,))
+    d.rectangle((15, 13, 16, 16), fill=(40, 34, 24, 255))                                        # the latch
+    return img
+
+
+def logistic_storage_bus_icon_marker():
+    """the marker of the 64 px icon: the storage chest as a small yellow box standing on the cube's top face and an orange
+    ring around that face (the bus badge covers most of the cube's front face, the game's count its lower right)"""
+    img = Image.new("RGBA", (HD, HD))
+    w, h = HD // 2 - 2, (HD // 2 - 2) // 2                                            # hd_cube's top face
+    cx, y0 = HD // 2, 4
+    ring = [(cx, y0 + 3), (cx + w - 6, y0 + h), (cx, y0 + 2 * h - 3), (cx - w + 6, y0 + h)]
+    ImageDraw.Draw(img).polygon(ring, outline=LOGISTIC_ORANGE + (255,), width=2)
+    front = Image.new("RGBA", (7, 6), STORAGE_YELLOW + (255,))
+    fd = ImageDraw.Draw(front)
+    fd.rectangle((0, 0, 6, 5), outline=STORAGE_DARK + (255,))
+    fd.line((0, 2, 6, 2), fill=STORAGE_DARK + (255,))                                 # under the lid
+    fd.point((3, 3), fill=(40, 34, 24, 255))                                          # the latch
+    top = Image.new("RGBA", (7, 7), STORAGE_LIGHT + (255,))
+    ImageDraw.Draw(top).rectangle((0, 0, 6, 6), outline=STORAGE_DARK + (255,))
+    side = hd_shade(front, 0.7)
+    cw, ch, ty = 14, 7, 6                                                             # the chest: half width, its depth
+    chest = Image.new("RGBA", (HD, HD))
+    hd_affine(chest, hd_up(top), (cx, ty), (cw, ch), (-cw, ch))
+    hd_affine(chest, hd_up(front), (cx - cw, ty + ch), (cw, ch), (0, 12))
+    hd_affine(chest, hd_up(side), (cx, ty + 2 * ch), (cw, -ch), (0, 12))
+    img.alpha_composite(hd_contour(chest))
+    return img
+
+
 def logistic_storage_bus():
-    """me-network issue #506: the ME Logistic Storage Bus (1x1, not rotatable) has the storage bus's 64 px picture facing
-    north and its icon for now, under file names of their own that stay (the texture mod can replace them by name)"""
-    written = []
-    for src, dst in ((HD_ENTITY / "me-storage-bus-north.png", HD_ENTITY / "me-logistic-storage-bus.png"),
-                     (HD_ICON / "me-storage-bus.png", HD_ICON / "me-logistic-storage-bus.png")):
-        Image.open(src).convert("RGBA").save(dst)
-        written.append(dst)
-    return written
+    """me-network issue #518: the ME Logistic Storage Bus's base (its 64 px picture, made like the buses' with hd_block,
+    and its icon cube) and its marker layer (the picture's face, BUS_FACE px, and the icon's), and its badge: the bus
+    badge both ways in the logistic orange. prototypes/network.lua draws the marker over the base, so the texture mod
+    can replace the base alone; the file names stay."""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    face = logistic_storage_bus_face()
+    images = {HD_ENTITY / "me-logistic-storage-bus.png": hd_block(face, depth=BUS_DEPTH),
+              HD_ENTITY / "me-logistic-storage-bus-marker.png":
+                  hd_up(logistic_storage_bus_marker()).resize((BUS_FACE, BUS_FACE), Image.NEAREST),
+              HD_ICON / "me-logistic-storage-bus.png": hd_cube(face),
+              HD_ICON / "me-logistic-storage-bus-marker.png": logistic_storage_bus_icon_marker(),
+              HD_ICON / "me-logistic-storage-bus-badge.png": bus_badge(LOGISTIC_ORANGE, "both")}
+    for path, img in images.items():
+        img.save(path)
+    return list(images)
+
+
+def logistic_storage_bus_sheet(path):
+    """issue #518: the logistic storage bus's picture and icon (all layers) next to the import, export and storage bus's,
+    at 32 px (as the map at normal zoom and the inventory show them) and 64 px, on a dark and a light ground"""
+    buses = ("me-import-bus", "me-export-bus", "me-storage-bus", "me-logistic-storage-bus")
+
+    def picture(bus):
+        if bus == "me-logistic-storage-bus":
+            img = load(HD_ENTITY / f"{bus}.png").copy()
+            img.alpha_composite(load(HD_ENTITY / f"{bus}-marker.png"))
+            return img
+        img = load(HD_ENTITY / f"{bus}-north.png").copy()
+        img.alpha_composite(load(HD_ENTITY / f"{bus}-north-marker.png"))
+        return img
+
+    def icon(bus):
+        img = load(HD_ICON / f"{bus}.png").copy()
+        for layer in ("marker", "badge"):
+            p = HD_ICON / f"{bus}-{layer}.png"
+            if p.exists():
+                img.alpha_composite(load(p))
+        return img
+
+    col, row_h = 80, 64 + 32 + 24
+    sheet = Image.new("RGBA", (2 * len(buses) * col + 24, 2 * row_h + 8), (60, 60, 60, 255))
+    for row, ground in enumerate(((60, 60, 60, 255), (170, 170, 170, 255))):
+        y0 = 8 + row * row_h
+        ImageDraw.Draw(sheet).rectangle((0, y0 - 4, sheet.width, y0 + row_h - 8), fill=ground)
+        for part, draw in enumerate((picture, icon)):
+            for i, bus in enumerate(buses):
+                img = draw(bus)
+                x = 8 + part * (len(buses) * col + 8) + i * col
+                sheet.alpha_composite(img, (x, y0))
+                sheet.alpha_composite(img.resize((32, 32), Image.LANCZOS), (x + 16, y0 + 72))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(path)
+    return path
 
 
 # --- issue #68: ME Fluid Storage Bus ----------------------------------------------------------
@@ -2557,8 +2664,9 @@ def main():
     ap.add_argument("--storage-bus", action="store_true",
                     help="only the ME Storage Bus, derived from the R1 PNGs")
     ap.add_argument("--logistic-storage-bus", action="store_true",
-                    help="only the ME Logistic Storage Bus (me-network issue #506): copies of the storage bus's 64 px "
-                         "picture facing north and its icon under their own file names")
+                    help="only the ME Logistic Storage Bus (me-network issues #506, #518): its picture and icon (the "
+                         "casing as the base, the orange marks and the storage chest as a layer of their own), its badge "
+                         "and the contact sheet docs/graphics-review/issue-518.png")
     ap.add_argument("--fluid-storage-bus", action="store_true",
                     help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
     ap.add_argument("--patterns", action="store_true",
@@ -2656,9 +2764,6 @@ def main():
     if a.gt or a.storage_bus:
         written = storage_bus()
         print("ME storage bus sprites:", len(written))
-    if a.gt or a.logistic_storage_bus:
-        written = logistic_storage_bus()
-        print("ME logistic storage bus sprites:", len(written))
     if a.gt or a.fluid_storage_bus:
         written = fluid_storage_bus()
         print("ME fluid storage bus sprites:", len(written))
@@ -2717,6 +2822,9 @@ def main():
     if a.gt or a.own_icons:                     # issue #381: the buses' direction badges (a layer of their own)
         print("bus badges (issue #381):", len(bus_badges()))
         print("contact sheet:", bus_icon_sheet(ROOT / "docs/graphics-review/issue-381.png"))
+    if a.gt or a.logistic_storage_bus:          # (issue #518; its sheet after the other buses' pictures and badges)
+        print("ME logistic storage bus sprites:", len(logistic_storage_bus()))
+        print("contact sheet:", logistic_storage_bus_sheet(ROOT / "docs/graphics-review/issue-518.png"))
     if a.gt or a.own_icons:
         print("contact sheet:", own_icons_sheet(ROOT / "docs/graphics-review/own-icons-238.png"))
     if a.gt or a.thumbnail:

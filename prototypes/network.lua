@@ -637,9 +637,11 @@ end
 --------------------------------------------------------------------------------
 --- ME LOGISTIC STORAGE BUS (me-network issue #506; not in AE2): a 1x1 block that is not rotated; the vanilla logistic
 --- network whose area it stands in is storage of the ME network (its storage chests, in one mode also its provider chests;
---- runtime: scripts/fork-me-logistic-storagebus.lua). Its picture and icon are the storage bus's for now, in files of
---- their own (tools/gen_ae2_sprites.py --logistic-storage-bus) that the texture mod can replace; the storage bus's badge
---- (both ways) is the second icon layer, as on the buses.
+--- runtime: scripts/fork-me-logistic-storagebus.lua). Issue #518: its picture and icon have two layers
+--- (tools/gen_ae2_sprites.py --logistic-storage-bus): the base, the bus casing without a plate or arrows, and the
+--- marker, orange corner marks and a storage chest, a layer of its own over it (as the buses' markers, placed by the
+--- bus view), so a graphics mod can replace the base and keep the marker (the texture mod: AE2's storage bus, issue
+--- #515). The icons add its badge (both ways, in the logistic orange) as the third layer. The file names stay.
 --------------------------------------------------------------------------------
 
 local LOGISTIC_STORAGE_BUS = "me-logistic-storage-bus"
@@ -656,12 +658,20 @@ ME.add_item{
 block{
 	name = LOGISTIC_STORAGE_BUS, icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. ".png", icon_size = 64,
 	description = { "entity-description." .. LOGISTIC_STORAGE_BUS },
-	extra = { picture = { filename = HD_ENTITY .. LOGISTIC_STORAGE_BUS .. ".png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
+	extra = { picture = { layers = {
+			{ filename = HD_ENTITY .. LOGISTIC_STORAGE_BUS .. ".png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
+			{ filename = HD_ENTITY .. LOGISTIC_STORAGE_BUS .. "-marker.png", priority = "extra-high", width = BUS_FACE,
+			  height = BUS_FACE, scale = 0.5, shift = { BUS_FACE / 2 / 64 - 0.5, BUS_FACE / 2 / 64 - 0.5 } },
+		} },
 		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 for _, proto in pairs({ data.raw.item[LOGISTIC_STORAGE_BUS], data.raw["simple-entity-with-force"][LOGISTIC_STORAGE_BUS] }) do
 	proto.icon, proto.icon_size = nil, nil
-	proto.icons = { { icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. ".png", icon_size = 64 }, { icon = HD_ICON .. STORAGE_BUS .. "-badge.png", icon_size = 64 } }
+	proto.icons = {
+		{ icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. ".png", icon_size = 64 },
+		{ icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. "-marker.png", icon_size = 64 },
+		{ icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. "-badge.png", icon_size = 64 },
+	}
 end
 
 

@@ -222,7 +222,8 @@ slot: the source slot's partition, or none) and by cloning.
 Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
 fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs (it matches the
 name you see in your language, issue #295, and the internal name), next to it a **quality filter** for the same two
-tabs (issue #514, only in a game with qualities: a comparator **=**, **≥** or **≤** and **Any quality** or a quality;
+tabs (issue #514, only in a game with qualities: a comparator **>**, **<**, **=**, **≥**, **≤** or **≠** (as in the
+game's own filters, issue #520) and **Any quality** or a quality;
 fluids count as normal quality; the wireless terminal has it too), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
@@ -582,8 +583,10 @@ area of a logistic network** (the orange area of the roboports) and connect it t
 * Removing the bus takes the logistic network's items out of the ME network at once; nothing is lost, the items stay in
   the chests. Settings (mode, priority, filters, filter on extract) are kept in blueprints, copied by settings paste
   (between logistic storage buses) and by cloning; so is which cards it has (the cards themselves are items).
-* Its picture is the ME Storage Bus's for now, in a file of its own (`me-logistic-storage-bus.png`) that a texture pack can
-  replace.
+* Its picture and icon are its own (issue #518): the bus casing without a plate or arrows (it faces nothing), with orange
+  corner marks (the logistic network's colour) and a yellow storage chest in the middle; its icon's badge is the storage
+  bus's both-ways arrow in orange. With the texture mod it is AE2's storage bus with the same marks and chest on it
+  (issue #515).
 
 ## Recipes (standalone)
 

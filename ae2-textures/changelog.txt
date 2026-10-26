@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.5
+  Graphics:
+    - The ME Logistic Storage Bus (ME Network issues #506, #515, #518) has the look of AE2's storage bus in the world and as an icon, with ME Network's orange corner marks, storage chest and badge over it, so it is still told apart from the ME Storage Bus. AE2 has no logistic storage bus; no new image.
+---------------------------------------------------------------------------------------------------
 Version: 0.2.4
 Date: 2026-10-24
   Graphics:

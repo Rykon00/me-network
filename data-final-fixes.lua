@@ -164,20 +164,26 @@ do
 	--- issue #282: the buses' markers (their plate and arrows, the second layer of each direction's picture) on the face of
 	--- the mod-data's bus view (docs/API.md), set by a graphics mod that replaces the buses' pictures: a marker is drawn
 	--- for a face of 58 px at the picture's top left (prototypes/network.lua BUS_FACE), so it is scaled and moved to the
-	--- view's square. With this mod's own view it stays where it is.
+	--- view's square. With this mod's own view it stays where it is. Issue #518: the ME Logistic Storage Bus's marker (its
+	--- orange marks and storage chest) likewise; it is not rotated, so its picture is one sprite with the marker as its
+	--- second layer.
 	local bview = md and md.data.bus_view
 	if bview and bview.size and bview.size > 0 then
+		local function place(layers)
+			local m = layers and layers[2]
+			if m and m.filename and m.filename:find("%-marker%.png$") then
+				m.scale = 0.5 * bview.size / m.width
+				m.shift = { (bview.x + bview.size / 2) / 64 - 0.5, (bview.y + bview.size / 2) / 64 - 0.5 }
+			end
+		end
 		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus" }) do
 			local e = data.raw["simple-entity-with-force"][name]
 			for _, dir in pairs({ "north", "east", "south", "west" }) do
-				local layers = e and e.picture and e.picture[dir] and e.picture[dir].layers
-				local m = layers and layers[2]
-				if m and m.filename and m.filename:find("%-marker%.png$") then
-					m.scale = 0.5 * bview.size / m.width
-					m.shift = { (bview.x + bview.size / 2) / 64 - 0.5, (bview.y + bview.size / 2) / 64 - 0.5 }
-				end
+				place(e and e.picture and e.picture[dir] and e.picture[dir].layers)
 			end
 		end
+		local lbus = data.raw["simple-entity-with-force"]["me-logistic-storage-bus"]
+		place(lbus and lbus.picture and lbus.picture.layers)
 	end
 	--- issue #278: the ME Controller's state as a graphics mod draws it (the mod-data's controller view, docs/API.md): a
 	--- hidden entity of the same kind on the controller's position, above its picture, one animation variation per state
