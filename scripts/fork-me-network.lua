@@ -96,6 +96,7 @@ local function kinds()
 		if n.charger then k[n.charger] = "charger" end                -- issue #208
 		if n.chest then k[n.chest] = "chest" end                      -- issue #229
 		if n.io_port then k[n.io_port] = "io-port" end                -- issue #386
+		if n.logistic_interface then k[n.logistic_interface] = "logistic-interface" end   -- issue #531
 		if n.quantum_bridge then k[n.quantum_bridge] = "quantum-bridge" end   -- issue #385
 		if n.wireless_link then k[n.wireless_link] = "wireless-link" end      -- issue #384
 		if n.creative_energy then k[n.creative_energy] = "creative-energy" end   -- issue #442
@@ -2927,7 +2928,7 @@ end
 
 --- the insertion in progress (insert_key; module-level instead of closures, so an insert makes no garbage); `void`:
 --- what cells with an Overflow Destruction Card destroyed of it (issue #17)
-local ins = { net = nil, key = nil, left = 0, data = nil, s = nil, void = 0 }
+local ins = { net = nil, key = nil, left = 0, data = nil, s = nil, void = 0, skip = nil }
 
 --- Issue #17: the rest of the insert is destroyed by `cell`. Counted on the cell (its window) and per key for the map
 --- (storage.fork_me_net.voided: the conservation checks of the tests add it).
@@ -2946,6 +2947,7 @@ local function put(cid)
 	local cell = net.cells[cid]
 	if cell.ext then                               -- external cell: into the real storage, then the snapshot
 		if ins.data then return false end          -- items with tags only go into cells
+		if ins.skip and ins.skip(cell) then return false end   -- (issue #531: a storage the caller leaves out)
 		if cell.full and cell.full[key] then return false end
 		local want = is_fluid_key(key) and ins.left or math.floor(ins.left)
 		local n = M.ext_handlers[cell.handler or cell.ext].insert(cell, key, want)
@@ -3005,11 +3007,13 @@ end
 --- priority first; within one priority the cells partitioned for the key first, then the cells that hold it,
 --- then any cell with room (a partitioned cell only takes its keys). Issue #5: the passes use the lookups of the
 --- network instead of walking every cell.
-local function insert_key(net, key, count, data)
+--- Issue #531: `skip(cell)`, when given, leaves out each external cell it returns true for (the ME Logistic Interface's
+--- pull-in never goes into an ME Logistic Storage Bus of its own logistic network).
+local function insert_key(net, key, count, data, skip)
 	if count <= 0 then return 0 end
 	if net.chest then return CH.store(net, key, count, data) end   -- (issue #229: into the ME Chest's cell only)
 	local s = state()
-	ins.net, ins.key, ins.left, ins.data, ins.s, ins.void = net, key, count, data, s, 0
+	ins.net, ins.key, ins.left, ins.data, ins.s, ins.void, ins.skip = net, key, count, data, s, 0, skip
 	local c = lookups(s, net)
 	local kind = is_fluid_key(key) and "fluid" or "item"
 	if net.uniform then                                -- one priority, no partition: the cells that hold it first
@@ -3079,7 +3083,7 @@ local function insert_key(net, key, count, data)
 		end
 	end
 	local left = ins.left
-	ins.net, ins.data = nil, nil
+	ins.net, ins.data, ins.skip = nil, nil, nil
 	if left + ins.void < count then moved_key(net, key, true) end   -- something was stored (not only destroyed)
 	return count - left
 end
@@ -3226,13 +3230,13 @@ local function awaited(net, key)
 	return M.awaiting(net, key) or 0
 end
 
---- the public API: plain items by name and quality; nothing happens when the network does not work
-function M.insert(net, name, quality, count)
+--- the public API: plain items by name and quality; nothing happens when the network does not work (`skip`: insert_key's)
+function M.insert(net, name, quality, count, skip)
 	if not (M.usable(net) and item_exists(name)) then return 0 end
 	local key = key_of(name, quality)
 	count = math.floor(count)
 	local claimed = arrive(net, key, count)
-	return claimed + insert_key(net, key, count - claimed)
+	return claimed + insert_key(net, key, count - claimed, nil, skip)
 end
 
 function M.extract(net, name, quality, count)
@@ -3630,27 +3634,28 @@ function M.storable(stack)
 end
 
 --- Store (part of) a LuaItemStack; the stack shrinks by what was stored. Returns the count, or nil and a reason.
-function M.insert_stack(net, stack)
+--- (`skip`: insert_key's, issue #531)
+function M.insert_stack(net, stack, skip)
 	local ok, why = M.usable(net)
 	if not ok then return nil, why end
 	local problem, key, data = M.storable(stack)
 	if problem then return nil, problem end
 	local claimed = (data or net.chest) and 0 or arrive(net, key, stack.count)
-	local n = claimed + insert_key(net, key, stack.count - claimed, data)
+	local n = claimed + insert_key(net, key, stack.count - claimed, data, skip)
 	if n <= 0 then return nil, "no-storage" end
 	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
 	return n
 end
 
---- Store up to `max` items of a LuaItemStack (the stack shrinks). Returns the count, or nil and a reason.
-function M.insert_partial(net, stack, max)
+--- Store up to `max` items of a LuaItemStack (the stack shrinks). Returns the count, or nil and a reason. (`skip`: issue #531)
+function M.insert_partial(net, stack, max, skip)
 	local ok, why = M.usable(net)
 	if not ok then return nil, why end
 	local problem, key, data = M.storable(stack)
 	if problem then return nil, problem end
 	local want = math.min(stack.count, math.floor(max))
 	local claimed = (data or net.chest) and 0 or arrive(net, key, want)
-	local n = claimed + insert_key(net, key, want - claimed, data)
+	local n = claimed + insert_key(net, key, want - claimed, data, skip)
 	if n <= 0 then return nil, "no-storage" end
 	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
 	return n

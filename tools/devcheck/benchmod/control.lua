@@ -832,6 +832,11 @@ end
 --- changes all the time (the bus's busy case). An ME Logistic Storage Bus on a cable column from the part's spine stands in
 --- the network's area when the version has one (`--check` against an older version: the same scene without the bus).
 local LOG_PITCH, LOG_FILL, LOG_FEEDERS = 6, 800, 20
+--- Issue #531: ME Logistic Interfaces beside the bus's cable column (where the version has them), each offering LIF_ROWS kinds
+--- of the logistic network's items (20 each, from the storage chests through the bus) and asking for LIF_ROWS others (more than
+--- the network holds). The scene has no robots: the offers stay stocked and the requests open, so every visit pulls nothing in
+--- but reads its chests and works out its rows.
+local LOG_INTERFACES, LIF_ROWS = 16, 3
 local function logistic_height(n)
 	if not (n and n > 0) then return 0 end
 	return PART_GAP + 6 + LOG_PITCH * math.ceil(n / math.ceil(math.sqrt(n)))
@@ -868,6 +873,16 @@ local function build_logistic(b, part, members)
 	for y = part.y + (part.rows - 1) * PITCH + 1, LY - 2 do place("me-cable", p1(X0 - 1, y)) end
 	local bus = prototypes.entity["me-logistic-storage-bus"] and place("me-logistic-storage-bus", p1(X0 - 1, LY - 1))
 	if bus then members[#members + 1] = bus end
+	local lifs = {}
+	if prototypes.entity["me-logistic-interface"] then                     -- (issue #531, beside the column)
+		for k = 0, LOG_INTERFACES - 1 do
+			local l = place("me-logistic-interface", p1(X0 - 2, LY - 2 - k))
+			if l then
+				members[#members + 1] = l
+				lifs[#lifs + 1] = l
+			end
+		end
+	end
 	--- the feeders: a steel chest full of one item, a fast inserter, a storage chest
 	power_row(LY - 2, X0 + 4, X0 + 2 + 2 * LOG_FEEDERS)
 	for f = 0, LOG_FEEDERS - 1 do
@@ -895,7 +910,8 @@ local function build_logistic(b, part, members)
 	end
 	local net = s.find_logistic_network_by_position({ X0 + 2, LY + 6 }, "player")
 	b.logistic = { roboports = n, storage_chests = chests + LOG_FEEDERS, kinds = #items, bus = bus ~= nil,
-		network = net ~= nil, items = net and net.get_item_count() or 0 }
+		network = net ~= nil, items = net and net.get_item_count() or 0, interfaces = #lifs }
+	b.lifs = { list = lifs, items = items }
 end
 
 local function build_me()
@@ -939,6 +955,17 @@ local function build_me()
 	log({ "", "DEVCHECK-BENCH-BUILD registered ", #members, " members: ", prof })
 	local types = 0
 	for k = 1, K do types = types + configure_part(b, b.parts[k], k == 1) end
+	--- issue #531: the logistic interfaces' rows (registered now): distinct kinds offered and asked for, no collision
+	for k, l in ipairs(b.lifs and b.lifs.list or {}) do
+		local items = b.lifs.items
+		for i = 1, LIF_ROWS do
+			local o = items[((k - 1) * LIF_ROWS + i - 1) % #items + 1]
+			local r = items[(LOG_INTERFACES * LIF_ROWS + (k - 1) * LIF_ROWS + i - 1) % #items + 1]
+			if not remote.call("gregtorio-me-logistic-interface", "set_row", l, "offer", i, o, 20) then fail("offer row " .. o) end
+			if not remote.call("gregtorio-me-logistic-interface", "set_row", l, "request", i, r, 1000000) then fail("request row " .. r) end
+		end
+	end
+	b.lifs = nil
 	local net = remote.call(NET, "network", b.anchor)
 	local members_all, cells_all, fcells_all, sb_all, fsb_all = 0, 0, 0, 0, 0
 	for k = 1, K do

@@ -3971,3 +3971,51 @@ is the cost of the empty path): **regressions beyond the noise: 0**, throughput 
 | burst build / remove at 1000 (ms) | 80.8 / 81.7 | 82.9 / 80.5 (noise ±2.2) |
 
 The path with owned chests is measured with the interface (issue #531), which is the first to own any.
+
+## The ME Logistic Interface (issue #531)
+
+A queue of its own (`logistic_interface`, budget 2 / 8 visits per tick). A visit: `ensure_chests` (three `valid` reads), the
+pull of three inventories (an empty one is one `is_empty`), the offer rows (one `get_item_count` per key, `N.extract_to`
+for what is missing), the request rows (`N.count_key`, one `get_item_count`, `targeted_items_deliver` only for a row that
+still asks, `set_slot` only on a change). An interface that moved nothing doubles its interval up to the idle limit
+(300 ticks): a robot's drop raises no event.
+
+**Bench scene** (`bench --logistic N`): 16 ME Logistic Interfaces beside the bus's cable column, each offering 3 kinds of the
+logistic network's items (20 each, taken from the storage chests through the bus) and asking for 3 others beyond what the
+network holds. The scene has no robots: the offers stay stocked and the requests open, so every visit reads its chests and
+works out all its rows; 48 hidden chests are owned (issue #530).
+
+`bench --sizes 1000 --logistic 1000 --profile 1000 --exclusive` (each function's own time):
+
+| function | per call | calls per tick | per tick |
+|---|---|---|---|
+| `request` (3 rows that ask, the deliveries read) | 23.7 µs | 0.05 | 0.0013 ms |
+| `offer` (3 rows stocked) | 18.4 µs | 0.05 | 0.0010 ms |
+| `visit` (without the parts listed) | 12.1 µs | 0.05 | 0.0006 ms |
+| `M.on_tick` (the queue: nothing due) | 1.2 µs | 1 | 0.0012 ms |
+| `pull` (an empty inventory) | 0.65 µs | 0.16 | 0.0001 ms |
+
+So 16 idle interfaces cost about 0.0045 ms per tick (each visited every 320 ticks), 55 µs per visit.
+
+**The bus with owned chests**: the first version grouped the owned chests by asking each one's `logistic_network` once per
+tick a bus used it (#530): with 48 owned chests a bus visit cost 112.9 µs of its own (22 µs in #506). Now the owner gives
+each chest's network id from its saved record (`rec.lid`): **15.8 µs**. The bus's `read` subtracts the owned storage chests'
+contents: 156 µs per visit with 120 kinds (176 µs in #509 without owned chests; the run differs, the subtraction is a
+`get_contents` of 16 small chests).
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000` (three rounds in turns; the reference has neither the
+interfaces nor the #530 path with owned chests): **regressions beyond the noise: 0**, throughput per kind of endpoint
+identical.
+
+| | origin/main (#530) | #531 (16 interfaces) |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.400 / 2.13 | 0.407 / 2.17 (noise ±0.027 / ±0.14) |
+| 1000: gc avg (ms) | 0.0379 | 0.0371 |
+| 1000: Lua alloc KB per tick | 27.21 | 27.57 |
+| 1000: mod heap alive (MB) | 25.95 | 26.22 |
+| 5000: script avg / p99 (ms) | 1.015 / 2.97 | 1.020 / 3.12 (noise ±0.065 / ±0.44) |
+| 5000: Lua alloc KB per tick | 35.57 | 35.93 |
+
+The first check, before the bus took the network id from the records and before the visit reused its scratch tables,
+failed at 1000 (0.403 → 0.415 ms, +0.73 KB per tick); the allocation is now half of that (the tables `targeted_items_deliver`
+and `get_contents` return, which the engine makes).

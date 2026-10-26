@@ -2871,6 +2871,8 @@ remote.add_interface("gregtorio-me-io", {
 		put("fluid_storage_bus", fsb and fsb.q, fsb and #fsb.list)
 		local lsb = storage.fork_me_lsbus                                   -- (issue #506)
 		put("logistic_storage_bus", lsb and lsb.q, lsb and #lsb.list)
+		local lif = storage.fork_me_lif                                     -- (issue #531)
+		put("logistic_interface", lif and lif.q, lif and #lif.list)
 		put("maintainer", ae and ae.mq, ae and ae.mlist and #ae.mlist)
 		local mparked = 0
 		for _, rec in pairs(ae and ae.maintainers or {}) do if rec.park then mparked = mparked + 1 end end

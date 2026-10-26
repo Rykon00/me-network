@@ -1103,6 +1103,64 @@ def logistic_storage_bus():
     return list(images)
 
 
+# me-network issue #531: the ME Logistic Interface, a solid 1x1 block (not walked over: the whole HD_DEPTH). Its base is the
+# interface's casing without anything on it; its marker, a layer of its own (the texture mod can replace the base and keep
+# it), has the logistic network's orange corner marks and its three hidden chests side by side: the passive provider (red,
+# what it offers), the requester (blue, what it asks for) and the storage chest (yellow, the trash it takes).
+LOGISTIC_INTERFACE_FACE = 54                  # the face of its 64 px picture (HD - HD_DEPTH, set below)
+PROVIDER_RED, PROVIDER_LIGHT, PROVIDER_DARK = (200, 62, 52), (238, 128, 116), (92, 24, 20)
+REQUESTER_BLUE, REQUESTER_LIGHT, REQUESTER_DARK = (62, 112, 210), (134, 170, 238), (22, 40, 96)
+
+
+def logistic_interface_marker():
+    """the 32 px marker alone: the orange corner marks of the logistic storage bus and three small chests in a row"""
+    img = logistic_storage_bus_marker()
+    d = ImageDraw.Draw(img)
+    d.rectangle((8, 9, 23, 23), fill=(0, 0, 0, 0))                                    # (the bus's one chest out)
+    for x0, (fill, light, dark) in zip((5, 13, 21), ((PROVIDER_RED, PROVIDER_LIGHT, PROVIDER_DARK),
+                                                     (REQUESTER_BLUE, REQUESTER_LIGHT, REQUESTER_DARK),
+                                                     (STORAGE_YELLOW, STORAGE_LIGHT, STORAGE_DARK))):
+        d.rectangle((x0, 11, x0 + 6, 21), fill=fill + (255,), outline=dark + (255,))
+        d.rectangle((x0 + 1, 12, x0 + 5, 13), fill=light + (255,))                    # its lid
+        d.line((x0 + 1, 14, x0 + 5, 14), fill=dark + (255,))
+        d.point((x0 + 3, 16), fill=(40, 34, 24, 255))                                  # its latch
+    return img
+
+
+def logistic_interface_icon_marker():
+    """the marker of the 64 px icon: the orange ring around the cube's top face and the three chests' colours as three
+    small boxes standing on it"""
+    img = Image.new("RGBA", (HD, HD))
+    w, h = HD // 2 - 2, (HD // 2 - 2) // 2
+    cx, y0 = HD // 2, 4
+    d = ImageDraw.Draw(img)
+    d.polygon([(cx, y0 + 3), (cx + w - 6, y0 + h), (cx, y0 + 2 * h - 3), (cx - w + 6, y0 + h)], outline=LOGISTIC_ORANGE + (255,),
+              width=2)
+    for dx, (fill, dark) in zip((-14, 0, 14), ((PROVIDER_RED, PROVIDER_DARK), (REQUESTER_BLUE, REQUESTER_DARK),
+                                               (STORAGE_YELLOW, STORAGE_DARK))):
+        x, y = cx + dx, y0 + h + (abs(dx) // 2) - 6
+        d.rectangle((x - 5, y, x + 5, y + 9), fill=fill + (255,), outline=dark + (255,))
+        d.line((x - 4, y + 3, x + 4, y + 3), fill=dark + (255,))
+    return hd_contour(img)
+
+
+def logistic_interface():
+    """me-network issue #531: the ME Logistic Interface's base (its 64 px picture and its icon cube), its marker layer (the
+    picture's face, LOGISTIC_INTERFACE_FACE px, and the icon's) and its badge (the bus badge both ways in the logistic
+    orange, as the logistic storage bus). prototypes/network.lua draws the marker over the base; the file names stay."""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    face = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    images = {HD_ENTITY / "me-logistic-interface.png": hd_block(face),
+              HD_ENTITY / "me-logistic-interface-marker.png":
+                  hd_up(logistic_interface_marker()).resize((LOGISTIC_INTERFACE_FACE, LOGISTIC_INTERFACE_FACE), Image.NEAREST),
+              HD_ICON / "me-logistic-interface.png": hd_cube(face),
+              HD_ICON / "me-logistic-interface-marker.png": logistic_interface_icon_marker()}
+    for path, img in images.items():
+        img.save(path)
+    return list(images)
+
+
 def logistic_storage_bus_sheet(path):
     """issue #518: the logistic storage bus's picture and icon (all layers) next to the import, export and storage bus's,
     at 32 px (as the map at normal zoom and the inventory show them) and 64 px, on a dark and a light ground"""
@@ -2667,6 +2725,9 @@ def main():
                     help="only the ME Logistic Storage Bus (me-network issues #506, #518): its picture and icon (the "
                          "casing as the base, the orange marks and the storage chest as a layer of their own), its badge "
                          "and the contact sheet docs/graphics-review/issue-518.png")
+    ap.add_argument("--logistic-interface", action="store_true",
+                    help="only the ME Logistic Interface (me-network issue #531): its picture and icon (the casing as the base, "
+                         "the orange marks and its three chests as a layer of their own)")
     ap.add_argument("--fluid-storage-bus", action="store_true",
                     help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
     ap.add_argument("--patterns", action="store_true",
@@ -2733,7 +2794,8 @@ def main():
     if not (a.gt or a.fluids or a.extras or a.r1 or a.underground or a.storage_bus or a.fluid_storage_bus or a.logistic_storage_bus
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
             or a.sheet_assembler or a.pattern_terminal or a.interface_terminal or a.monitors or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
-            or a.own_icons or a.light or a.bus_markers or a.toggle_emitter or a.io_port or a.quantum_bridge or a.wireless_link):
+            or a.own_icons or a.light or a.bus_markers or a.toggle_emitter or a.io_port or a.quantum_bridge or a.wireless_link
+            or a.logistic_interface):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --logistic-storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --interface-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
@@ -2825,6 +2887,8 @@ def main():
     if a.gt or a.logistic_storage_bus:          # (issue #518; its sheet after the other buses' pictures and badges)
         print("ME logistic storage bus sprites:", len(logistic_storage_bus()))
         print("contact sheet:", logistic_storage_bus_sheet(ROOT / "docs/graphics-review/issue-518.png"))
+    if a.gt or a.logistic_interface:            # (issue #531)
+        print("ME logistic interface sprites:", len(logistic_interface()))
     if a.gt or a.own_icons:
         print("contact sheet:", own_icons_sheet(ROOT / "docs/graphics-review/own-icons-238.png"))
     if a.gt or a.thumbnail:

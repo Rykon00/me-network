@@ -991,6 +991,7 @@ RUNTIME_TESTS = (
     ("CHEST", "ME Chest (issue #229)"),
     ("SBUSMODE", "ME storage bus filter mode (issue #155)"),
     ("LSBUS", "ME logistic storage bus (issue #506)"),
+    ("LIF", "ME logistic interface (issue #531)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
@@ -1320,6 +1321,9 @@ PROFILE_WRAP = {
     # issue #506: the ME Logistic Storage Bus
     "scripts/fork-me-logistic-storagebus.lua": ["M.visit", "M.on_tick", "claim", "read", "HANDLER.room", "HANDLER.insert",
                                                 "HANDLER.count", "HANDLER.extract"],
+    # issue #531: the ME Logistic Interface
+    "scripts/fork-me-logistic-interface.lua": ["M.on_tick", "visit", "pull", "offer", "request", "ensure_chests", "offered_in",
+                                               "reserved"],
     "scripts/fork-me-autocraft.lua": ["job_step", "maintenance", "scan_provider", "refresh_providers",
                                       "rebuild_patterns", "make_plan", "M.start", "assign_cpus", "await_index",
                                       "on_arrival", "awaiting", "cpus_in", "collect_output", "find_crafter",
@@ -2285,7 +2289,8 @@ def main():
     p.add_argument("--long", type=int, metavar="MINUTES", help="also one run of that many minutes at the largest size, reported per 5 minutes")
     p.add_argument("--burst", type=int, default=1000, metavar="N", help="ME blocks built and removed in one tick after the probes (default 1000, 0: none)")
     p.add_argument("--logistic", type=int, default=0, metavar="N", help="issue #506: every ME scene also gets a logistic network of N "
-                   "roboports and N / 2 filled storage chests, and an ME Logistic Storage Bus on it (where the version has one)")
+                   "roboports and N / 2 filled storage chests, and an ME Logistic Storage Bus and (issue #531) 16 ME Logistic "
+                   "Interfaces on it (where the version has them)")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "

@@ -677,6 +677,81 @@ end
 
 
 --------------------------------------------------------------------------------
+--- ME LOGISTIC INTERFACE (me-network issue #531; not in AE2): a solid 1x1 block (4 kW through the controller) with three
+--- hidden logistic chests on its tile that the runtime makes (scripts/fork-me-logistic-interface.lua): a passive provider
+--- (what the network offers to the robots), a requester (what it asks them for) and a storage chest (the trash they drop).
+--- Measured headless (Factorio 2.1.23): robots and construction robots serve such hidden chests, also two on one tile.
+--- The chests are copies of the vanilla ones: not selectable, no collision, hidden, not on the map, not minable, not in
+--- blueprints; the provider and the requester hold 36 rows of one stack, the storage chest 48 slots like the vanilla one.
+--- `REFUSE` is a hidden item that is never delivered: the storage chest is filtered on it while it accepts no trash.
+--- Picture and icon: the casing as the base and a marker layer (orange corner marks, the three chests), so a graphics mod
+--- can replace the base and keep the marker (tools/gen_ae2_sprites.py --logistic-interface).
+--------------------------------------------------------------------------------
+
+local LOGISTIC_INTERFACE = "me-logistic-interface"
+local LIF_FACE = 54                     -- the face of the 64 px picture (the marker's square at its top left)
+ME.add_item{
+	name = LOGISTIC_INTERFACE,
+	icon = HD_ICON .. LOGISTIC_INTERFACE .. ".png",
+	icon_size = 64,
+	subgroup = "fork-me-buses",
+	order = "b6",
+	stack_size = 50,
+	place_result = LOGISTIC_INTERFACE,
+	recipe = { energy_required = 2, ingredients = I{ "me-interface", 1, "storage-chest", 1, "passive-provider-chest", 1,
+		"advanced-circuit", 2 } },
+}
+block{
+	name = LOGISTIC_INTERFACE, icon = HD_ICON .. LOGISTIC_INTERFACE .. ".png", icon_size = 64, health = 300,
+	description = { "entity-description." .. LOGISTIC_INTERFACE, "4" },
+	extra = { picture = { layers = {
+		{ filename = HD_ENTITY .. LOGISTIC_INTERFACE .. ".png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
+		{ filename = HD_ENTITY .. LOGISTIC_INTERFACE .. "-marker.png", priority = "extra-high", width = LIF_FACE, height = LIF_FACE,
+		  scale = 0.5, shift = { LIF_FACE / 2 / 64 - 0.5, LIF_FACE / 2 / 64 - 0.5 } },
+	} } },
+}
+for _, proto in pairs({ data.raw.item[LOGISTIC_INTERFACE], data.raw["simple-entity-with-force"][LOGISTIC_INTERFACE] }) do
+	proto.icon, proto.icon_size = nil, nil
+	proto.icons = {
+		{ icon = HD_ICON .. LOGISTIC_INTERFACE .. ".png", icon_size = 64 },
+		{ icon = HD_ICON .. LOGISTIC_INTERFACE .. "-marker.png", icon_size = 64 },
+	}
+end
+
+local EMPTY_PICTURE = { filename = "__core__/graphics/empty.png", priority = "high", width = 1, height = 1, frame_count = 1 }
+--- a hidden copy of the vanilla logistic chest `base`
+local function hidden_chest(base, role, size)
+	local c = table.deepcopy(data.raw["logistic-container"][base])
+	c.name = LOGISTIC_INTERFACE .. "-" .. role
+	c.localised_name = { "entity-name." .. LOGISTIC_INTERFACE .. "-" .. role }
+	c.localised_description = nil
+	c.icon, c.icon_size = nil, nil
+	c.icons = data.raw.item[LOGISTIC_INTERFACE].icons
+	c.flags = { "not-on-map", "not-blueprintable", "not-deconstructable", "not-upgradable", "no-copy-paste", "hide-alt-info",
+		"not-in-kill-statistics", "not-flammable" }
+	c.hidden, c.hidden_in_factoriopedia = true, true
+	c.selectable_in_game = false
+	c.collision_mask = { layers = {} }
+	c.minable, c.placeable_by, c.next_upgrade, c.fast_replaceable_group = nil, nil, nil, nil
+	c.corpse, c.dying_explosion, c.damaged_trigger_effect = nil, nil, nil
+	c.robot_door = { animation = EMPTY_PICTURE }            -- (Factorio 2.1: the chest's picture and door are here)
+	c.open_sound, c.close_sound = nil, nil
+	c.circuit_connector, c.circuit_wire_max_distance, c.draw_copper_wires, c.draw_circuit_wires = nil, 0, false, false
+	c.water_reflection = nil
+	c.render_not_in_network_icon = false
+	c.inventory_size = size
+	c.is_military_target = false
+	return c
+end
+data:extend({
+	hidden_chest("passive-provider-chest", "provider", 36),
+	hidden_chest("requester-chest", "requester", 36),
+	hidden_chest("storage-chest", "storage", 48),
+	{ type = "item", name = LOGISTIC_INTERFACE .. "-nothing", icons = data.raw.item[LOGISTIC_INTERFACE].icons, stack_size = 1,
+	  hidden = true, hidden_in_factoriopedia = true, subgroup = "fork-me-buses", order = "b6z" },
+})
+
+--------------------------------------------------------------------------------
 --- ME TERMINAL (a lamp, as it always was: saves hold it by type and name; its GUI is replaced by the terminal GUI)
 ---
 --- Issue #128: it needs no pole, the ME Controller draws its power (`member_power` of the mod-data below, W). A lamp
@@ -953,6 +1028,7 @@ data:extend({ {
 	localised_description = { "entity-description.me-io-port", tostring(IO_PORT_POWER / 1000) },
 } })
 data.raw["mod-data"]["fork-me-network"].data.names.io_port = IO_PORT
+data.raw["mod-data"]["fork-me-network"].data.names.logistic_interface = LOGISTIC_INTERFACE   -- (issue #531)
 data.raw["mod-data"]["fork-me-network"].data.member_power["io-port"] = IO_PORT_POWER
 ME.crafting_block_tech[IO_PORT] = "me-network"
 
@@ -1055,6 +1131,7 @@ ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "l
 	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
 	LOGISTIC_STORAGE_BUS,                                                                      -- (issue #506)
+	LOGISTIC_INTERFACE,                                                                        -- (issue #531)
 } }
 
 ME.add_technology{ name = "me-storage-64k", prerequisites = { "me-network", "processing-unit" }, unit = ME.unit(3, 400),

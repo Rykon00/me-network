@@ -587,6 +587,51 @@ area of a logistic network** (the orange area of the roboports) and connect it t
   corner marks (the logistic network's colour) and a yellow storage chest in the middle; its icon's badge is the storage
   bus's both-ways arrow in orange. With the texture mod it is AE2's storage bus with the same marks and chest on it
   (issue #515).
+* It never stores into, shows or takes from the hidden chests of an **ME Logistic Interface** (below, issue #530): what
+  lies there belongs to the ME network already, or is its stock offered to the robots.
+
+## ME Logistic Interface
+
+The **ME Logistic Interface** (issue #531; tech ME Network; an ME Interface, a storage chest, a passive provider chest and
+2 advanced circuits) lets the **logistic robots** work with the ME network: robots take items the network offers, bring
+what the network lacks and drop their trash into it. It has no AE2 counterpart. It is a solid 1x1 block (4 kW through the
+ME Controller): place it **inside the area of a logistic network** and connect it to the ME network. Three **hidden
+logistic chests** stand on its tile; you never see them, the robots do. Its window has three tabs.
+
+* **Offer** (a hidden passive provider): rows of an item (with its quality) and an amount. The network keeps that amount
+  in the chest; robots take from it for requester chests, construction (ghosts, repairs) and players' logistics. A new
+  row offers one stack (a small stock limits how fast robots can take: a chest kept at 10 delivered about 9 items per
+  second). Requester chests take from **active providers first, then storage chests, then passive providers**, so the
+  base empties its own chests first and the ME stock is its **last source**. When a row shrinks or goes, the network takes
+  back what no robot has reserved yet. With a **Crafting Card** an offer row the network cannot fill starts a crafting
+  job, as on the ME Interface.
+* **Request** (a hidden requester): rows "**keep this many in the network**": the item and a target. The robots are asked
+  for the target less what the whole network holds (drives, storage buses, also a logistic storage bus's chests) less what
+  lies in the requester or is on its way; at the target the request is 0. Each row shows what it asks for now.
+* **Accept** (a hidden storage chest): robots drop **trash and surplus** there like into any storage chest. "**Accept
+  trash**" is on by default; off, the chest takes nothing. A **filter** item makes it a filtered storage chest: robots
+  prefer it for that item (handy to lead a sorting line into the network), and then it takes only that item.
+* **Taken in**: at each visit everything in the requester (also its trash) and in the storage chest goes into the
+  network. What the network cannot store stays where it is and the window says "ME full". Items robots reserved in the
+  storage chest for a pickup stay for them. A robot's drop raises no event: an interface that moved something comes back
+  after half a second, an idle one less and less often, at the latest after the idle limit (5 seconds by default).
+* **Loop guard**: robots carry an item between a requester and a passive provider on the same tile in a circle. So **per
+  logistic network an item is either offered or requested**, across all its ME Logistic Interfaces: a request row of an
+  item that an interface of the same logistic network offers is **red** and asks for nothing (the status line counts
+  them). What an interface takes in never goes into an ME Logistic Storage Bus of the same logistic network.
+* **Rows and cards**: 9 rows on each tab, 9 more per **Interface Capacity Card** (up to 36); a **Crafting Card** (above).
+  Items that spoil, items with tags or a label, tools and ammunition cannot be rows (the network does not store spoiling
+  items yet); spoiling trash stays in the storage chest.
+* The window also shows its **logistic network** (or that it stands in none: then it offers and requests nothing), what
+  each chest holds now, the card slots and the cards it waits for.
+* **Mined**: the contents of its chests go into the network (without a working network into your inventory, as the mined
+  block's contents); **destroyed** or removed by a script: they are spilled where it stood. Rows, switch, filter and cards
+  are kept in **blueprints**, **settings paste** and **clones**.
+* **What it costs**: a visit reads its three chests and works out its rows; the visits have a budget of their own (map
+  settings "ME Logistic Interface visits per tick", at least 2, at most 8), `/me-stats` shows them as "ME Logistic
+  Interfaces". Numbers: `docs/PERFORMANCE.md`.
+* Its picture and icon: the casing with the orange logistic marks and its three chests, red (offer), blue (request) and
+  yellow (accept).
 
 ## Recipes (standalone)
 
@@ -638,6 +683,7 @@ The recipes that follow:
 | ME Import / Export Bus | an electronic circuit, 2 iron plates, a fast inserter | an annihilation (import) or formation core (export), 2 iron, a piston |
 | ME Storage Bus | an ME Interface, 2 fast inserters | an interface, 2 pistons |
 | ME Logistic Storage Bus (issue #506) | an ME Storage Bus, a storage chest, 2 advanced circuits | (not in AE2) |
+| ME Logistic Interface (issue #531) | an ME Interface, a storage chest, a passive provider chest, 2 advanced circuits | (not in AE2) |
 | ME IO Port | an ME Drive, 2 fluix cables, 2 iron plates, an advanced circuit (no stand-in for the glass: the plastic bar is not made with Gregtorio Continued, which gives the block its own recipe) | 3 glass, 2 fluix crystals, a drive, 2 iron, an engineering processor |
 | ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
 | ME Pattern Terminal | an ME Terminal, an assembling machine 1, an advanced circuit, a processing unit | a crafting terminal (terminal, crafting table, calculation processor), an engineering processor |

@@ -207,7 +207,10 @@ return function(H)
 			--- a change by hand: seen at a scheduled visit
 			s2.insert{ name = "iron-stick", count = 7 }
 			local bl = remote.call(IO, "backlogs")
-			expect(bl.logistic_storage_bus_units == 2, "logistic buses in the queue: " .. tostring(bl.logistic_storage_bus_units))
+			local buses = 0                                              -- (L2, L3 and those of other tests, issue #531)
+			for _, surface in pairs(game.surfaces) do buses = buses + #surface.find_entities_filtered{ name = NAME } end
+			expect(bl.logistic_storage_bus_units == buses and buses >= 2, "logistic buses in the queue: "
+				.. tostring(bl.logistic_storage_bus_units) .. " of " .. buses)
 			local ok, why = remote.call(SB, "lists_ok")
 			expect(ok, "visit lists: " .. tostring(why))
 			return
