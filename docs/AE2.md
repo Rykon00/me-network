@@ -222,7 +222,8 @@ slot: the source slot's partition, or none) and by cloning.
 Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
 fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs (it matches the
 name you see in your language, issue #295, and the internal name), next to it a **quality filter** for the same two
-tabs (issue #514, only in a game with qualities: a comparator **=**, **≥** or **≤** and **Any quality** or a quality;
+tabs (issue #514, only in a game with qualities: a comparator **>**, **<**, **=**, **≥**, **≤** or **≠** (as in the
+game's own filters, issue #520) and **Any quality** or a quality;
 fluids count as normal quality; the wireless terminal has it too), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 

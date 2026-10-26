@@ -24,7 +24,8 @@
 --- store_inventory_item, withdraw, store_stack, entries, craft_preview, start_craft, cancel_job, cells). The Patterns tab is
 --- gone (issue #130): encoding patterns is the ME Pattern Terminal's job (scripts/fork-me-patternterm.lua).
 --- State: storage.fork_me_terminal[player_index] = { entity, filter, sort, kind, quality, pick, amount, shown... }
---- (issue #514: quality = { cmp = "=", ">=" or "<=", name = a quality or nil }, nil or no name: any quality)
+--- (issue #514: quality = { cmp = ">", "<", "=", ">=", "<=" or "!=" (issue #520: <, > and != added), name = a quality
+--- or nil }, nil or no name: any quality)
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -36,6 +37,7 @@ local Conn = require("scripts.fork-me-connector")
 local IO = require("scripts.fork-me-io")
 local VC = require("scripts.fork-me-viewcells")        -- (issue #440)
 local picker = require("scripts.fork-me-picker")        -- (issue #514: the visible qualities)
+local circuit = require("scripts.fork-me-circuit")      -- (issue #520: the game's comparators)
 
 local M = {}
 
@@ -46,8 +48,9 @@ local REFRESH_TICKS = 60
 local WIDTH = 40 * COLUMNS + 12
 local KINDS = { all = "items", items = "fluids", fluids = "all" }     -- the kind button cycles
 local SORTS = { count = "name", name = "quality", quality = "count" }  -- the sort button cycles (issue #514: quality)
-local CMPS = { "=", ">=", "<=" }                                       -- issue #514: the quality filter's comparators
-local CMP_CAPTIONS = { ["="] = "=", [">="] = "≥", ["<="] = "≤" }
+--- issue #514: the quality filter's comparators; issue #520: the game's six, in the order of its drop-downs
+local CMPS = circuit.COMPARATORS
+local CMP_CAPTIONS = { [">"] = ">", ["<"] = "<", ["="] = "=", [">="] = "≥", ["<="] = "≤", ["!="] = "≠" }
 
 local function state()
 	storage.fork_me_terminal = storage.fork_me_terminal or {}
@@ -130,7 +133,11 @@ end
 local function quality_passes(level, cmp, ql)
 	if cmp == "=" then return level == ql end
 	if cmp == ">=" then return level >= ql end
-	return level <= ql
+	if cmp == "<=" then return level <= ql end
+	if cmp == ">" then return level > ql end
+	if cmp == "<" then return level < ql end
+	if cmp == "!=" then return level ~= ql end
+	return false                                                -- (issue #520: quality_test passes no other one)
 end
 
 --- issue #50, lever 8: { kept, resorted, sorted } lists since the load (tests, the benchmark)
@@ -202,8 +209,9 @@ local KEEP_LISTS = 16
 --- benchmark): made from nothing, as at a first refresh, and not kept. Issue #295: `index` is the player whose
 --- translated names the search matches too (a kept list of a search is the player's, of the version of their names).
 --- Issue #440: `view`, the filter of the window's view cells (scripts/fork-me-viewcells.lua) and `vsig` its signature: only the
---- keys it allows (a kept list is the one of those cells). Issue #514: `quality`, the quality filter ({ cmp = "=", ">=" or
---- "<=", name }; a fluid counts as normal quality; nil or no name: any quality, with the id of the lists from before it).
+--- keys it allows (a kept list is the one of those cells). Issue #514: `quality`, the quality filter ({ cmp = ">", "<", "=",
+--- ">=", "<=" or "!=" (issue #520), name }; a fluid counts as normal quality; nil or no name: any quality, with the id of
+--- the lists from before it).
 function M.entries(net, filter, sort, kind, fresh, index, view, vsig, quality)
 	local lower
 	filter, lower = Names.search(filter)
@@ -509,17 +517,19 @@ local function build_cells(tab)
 end
 
 --- Issue #514: the quality filter (it filters the Storage and the Crafting tab, as the search next to it does): a
---- comparator (=, ≥, ≤) and a quality, "Any quality" or one of the game's visible qualities with its icon (a drop-down:
---- 2.1 has a choose-elem-button of qualities but no filter to leave out hidden ones such as quality-unknown). Only when
---- the game has more than one visible quality (not without the quality mod). Returns whether it was added.
+--- comparator (issue #520: the game's >, <, =, ≥, ≤ and ≠) and a quality, "Any quality" or one of the game's visible
+--- qualities with its icon (a drop-down: 2.1 has a choose-elem-button of qualities but no filter to leave out hidden
+--- ones such as quality-unknown). Only when the game has more than one visible quality (not without the quality mod).
+--- Returns whether it was added.
 local function add_quality_filter(parent, st)
 	local names = picker.qualities()
 	if #names < 2 then return false end
 	local q = type(st.quality) == "table" and st.quality or {}
-	local cmps, cmp_index = {}, 1
+	local cmps, cmp_index = {}
+	local want = CMP_CAPTIONS[q.cmp] and q.cmp or "="                -- (issue #520: "=" is no longer the first)
 	for i, c in ipairs(CMPS) do
 		cmps[i] = CMP_CAPTIONS[c]
-		if c == q.cmp then cmp_index = i end
+		if c == want then cmp_index = i end
 	end
 	local cmp = parent.add{ type = "drop-down", name = "fork_me_qcmp", items = cmps, selected_index = cmp_index,
 		tooltip = { "fork-me-terminal.quality-cmp-tooltip" }, tags = G.act("term_qcmp") }
@@ -1213,8 +1223,8 @@ remote.add_interface("gregtorio-me-terminal", {
 	--- the grid's entries for a search text, a sort ("count", "name" or, issue #514, "quality") and a kind ("all", "items",
 	--- "fluids"). `fresh` (tests, the benchmark): made from nothing, as at a first refresh, and not kept
 	--- (issue #440: `views`, the view cells of the window of `terminal` count, as the window's list; `player` for a wireless one)
-	--- Issue #514: `quality`, the quality filter { cmp = "=", ">=" or "<=", name = a quality } (nil: any quality); the last
-	--- argument, so the calls from before it stay as they were
+	--- Issue #514: `quality`, the quality filter { cmp = ">", "<", "=", ">=", "<=" or "!=" (issue #520), name = a quality }
+	--- (nil: any quality); the last argument, so the calls from before it stay as they were
 	entries = function(terminal, filter, sort, kind, fresh, index, views, player, quality)
 		local net = network(terminal)
 		local view, vsig
