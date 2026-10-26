@@ -17,7 +17,8 @@
 ---     rule of the network: the second controller's network does not work); build the far side without a controller.
 ---   * The checks of the pairs run in the network's slow step (every 60 ticks, N.slow_hooks, as the ME Chest's power): one
 ---     energy read per block; a change of a frequency or a built block is checked at once.
----   * Kept in blueprints, settings paste and clones: the frequency (a third block of it then waits).
+---   * Kept in blueprints, settings paste (the mod's own keys, issue #527) and clones: the frequency (a third block of it
+---     then waits).
 --- State: storage.fork_me_qbridge = { recs = { [unit] = { entity, freq, where } } }; the links are the network's state
 --- (storage.fork_me_net.qlink).
 --------------------------------------------------------------------------------
@@ -249,28 +250,14 @@ function M.on_removed(entity)
 	s.recs[entity.unit_number] = nil                              -- (its link goes with its node: N.on_removed; a third block
 end                                                           -- of the frequency pairs at the next slow step)
 
---- Issue #519: the game's settings paste between two electric energy interfaces copies their power settings too (power
---- use, buffer, production; not the energy): a bridge or a link gets its own back, whatever the source was (a bridge
---- pasted onto a link, too)
-local function own_power(entity)
-	local rec = register(entity)
-	entity.power_production = 0
-	if entity.name == LINK then
-		set_drain(entity, drain(LINK, nil))
-		decide(state(), LINK, rec.freq)
-	else
-		local watts = drain(NAME)
-		entity.power_usage = watts / 60
-		entity.electric_buffer_size = watts * 2
-	end
-end
-
---- settings paste (prototypes/paste.lua): the frequency, between two blocks of the same kind
+--- settings paste: the frequency, between two blocks of the same kind. Issue #527: the mod's copy and paste keys call it
+--- (scripts/fork-me-paste-keys.lua, prototypes/paste.lua KEYS). The game pastes nothing onto a bridge or a link, not even
+--- LuaEntity.copy_settings from a script (allow_copy_paste stays the energy interface's false), so their power settings
+--- (which the game copies between energy interfaces that allow it) need no repair here; the runtime test SETTINGSPASTE
+--- fails if the game pastes again.
 function M.on_entity_settings_pasted(event)
 	local src, dst = event.source, event.destination
-	if not is_linker(dst) then return end
-	own_power(dst)
-	if not (is_linker(src) and src.name == dst.name) then return end
+	if not (is_linker(dst) and is_linker(src) and src.name == dst.name) then return end
 	local from = rec_of(src)
 	if from then M.set_frequency(dst, from.freq) end
 end

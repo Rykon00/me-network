@@ -936,7 +936,8 @@ one 3x3 block.
   conflict and do not work (the controller's rule). The far side's blocks take their power through the one controller.
 * When the link goes (power, a bridge mined, a frequency changed), the network splits again, as for a removed cable;
   crafting jobs whose machine is on the other side wait.
-* Blueprints, settings paste and clones carry the frequency (a copy pasted next to a pair makes a third bridge: change it).
+* Blueprints, settings paste (Shift + right click on one bridge, Shift + left click on the other, with an empty hand) and
+  clones carry the frequency (a copy pasted next to a pair makes a third bridge: change it).
 * Recipe (standalone, AE2's eight rings and a chamber in the stand-ins): 32 iron plates, 20 electronic circuits, 8
   processing units, 8 batteries, 32 fluix cables; AE2's quartz glass is left out (its stand-in, the plastic bar, is made in
   no game of Gregtorio Continued, whose compat file gives the block its own recipe and tier).

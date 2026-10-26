@@ -759,6 +759,18 @@ data:extend({ {
 	consuming = "none",
 } })
 
+--- Issue #527: the settings paste of the ME Quantum Bridge and the ME Wireless Link (prototypes/paste.lua, KEYS), on the
+--- game's copy and paste keys (Shift + right click, Shift + left click by default); the game's own paste goes on
+for _, key in pairs(require("prototypes.paste").INPUTS) do
+	data:extend({ {
+		type = "custom-input",
+		name = key.name,
+		key_sequence = "",
+		linked_game_control = key.control,
+		consuming = "none",
+	} })
+end
+
 
 
 --------------------------------------------------------------------------------
