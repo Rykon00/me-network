@@ -9,6 +9,7 @@
 --- Issue #281 the ME Terminal and the ME Pattern Terminal: AE2's terminal panels, dark and lit.
 --- Issue #282 the ME Import, Export and Storage Bus: AE2's fronts as blocks; ME Network's marker (the plate on the side a
 --- bus faces and its arrows) is a layer of its own above them, which data-updates.lua moves onto the AE2 face.
+--- ME Network issues #515, #518 the ME Logistic Storage Bus: AE2's storage bus front and cube under ME Network's own marker.
 --- Issue #283 the cable: AE2's Fluix glass cable in the 16 variations of ME Network's cable sheet.
 --- Issue #302 the blocks of a Crafting CPU: AE2 cubes without a CPU, AE2's formed look (one big block, issue #306) in a
 --- CPU, in ME Network's sheet.
@@ -240,6 +241,16 @@ return {
 	},
 	["item/me-storage-bus"] = {
 		["__me-network__/graphics/icons/hd/me-storage-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
+	},
+	--- ME Network issues #515, #518: the ME Logistic Storage Bus (not in AE2) gets the storage bus's front and cube as its
+	--- base; ME Network's marker (orange corner marks and a storage chest) and its badge stay as layers of their own over
+	--- it, so it is still told apart from the storage bus
+	["simple-entity-with-force/me-logistic-storage-bus"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-logistic-storage-bus.png"] = "__me-network-ae2-textures__/graphics/blocks/me-storage-bus.png",
+		["__me-network__/graphics/icons/hd/me-logistic-storage-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
+	},
+	["item/me-logistic-storage-bus"] = {
+		["__me-network__/graphics/icons/hd/me-logistic-storage-bus.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-storage-bus.png", icon_size = 64 },
 	},
 	--- the cable (issue #283): the sheet of its 16 variations, in ME Network's layout; the item and the entity show the crossing
 	["simple-entity-with-force/me-cable"] = {

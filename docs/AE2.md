@@ -582,8 +582,10 @@ area of a logistic network** (the orange area of the roboports) and connect it t
 * Removing the bus takes the logistic network's items out of the ME network at once; nothing is lost, the items stay in
   the chests. Settings (mode, priority, filters, filter on extract) are kept in blueprints, copied by settings paste
   (between logistic storage buses) and by cloning; so is which cards it has (the cards themselves are items).
-* Its picture is the ME Storage Bus's for now, in a file of its own (`me-logistic-storage-bus.png`) that a texture pack can
-  replace.
+* Its picture and icon are its own (issue #518): the bus casing without a plate or arrows (it faces nothing), with orange
+  corner marks (the logistic network's colour) and a yellow storage chest in the middle; its icon's badge is the storage
+  bus's both-ways arrow in orange. With the texture mod it is AE2's storage bus with the same marks and chest on it
+  (issue #515).
 
 ## Recipes (standalone)
 
