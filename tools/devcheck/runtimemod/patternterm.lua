@@ -170,12 +170,13 @@ return function(H)
 			expect(R("click", pt, 1, hand[1], inv, false) == "not-a-blank" and hand[1].valid_for_read and not slots[1].valid_for_read, "an iron plate into the blank slot")
 			hand[1].set_stack{ name = BLANK, count = 10 }
 			expect(R("click", pt, 1, hand[1], inv, false) == nil and slots[1].count == 10 and not hand[1].valid_for_read, "ten blanks into the slot")
-			hand[1].set_stack{ name = BLANK, count = 60 }
-			expect(R("click", pt, 1, hand[1], inv, false) == nil and slots[1].count == 64 and hand[1].count == 6, "a stack merges up to 64: " .. slots[1].count .. ", hand " .. tostring(hand[1].count))
+			local full = prototypes.item[BLANK].stack_size    -- (50 standalone, 64 with Gregtorio)
+			hand[1].set_stack{ name = BLANK, count = full - 4 }
+			expect(R("click", pt, 1, hand[1], inv, false) == nil and slots[1].count == full and hand[1].count == 6, "a stack merges up to " .. full .. ": " .. slots[1].count .. ", hand " .. tostring(hand[1].count))
 			expect(R("click", pt, 1, hand[1], inv, false) == "slot-full", "a full blank slot")
 			--- taking them out: into the hand (the hand is not empty here: refused by transfer), shift into the inventory
 			hand[1].clear()
-			expect(R("click", pt, 1, hand[1], inv, true) == nil and not slots[1].valid_for_read and inv.get_item_count(BLANK) == 64, "shift + click takes the blanks into the inventory")
+			expect(R("click", pt, 1, hand[1], inv, true) == nil and not slots[1].valid_for_read and inv.get_item_count(BLANK) == full, "shift + click takes the blanks into the inventory")
 			inv.clear()
 			--- an empty slot with an empty hand fetches a stack from the network (5 there)
 			local before = count(BLANK)

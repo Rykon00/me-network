@@ -132,7 +132,8 @@ ME_NETWORK.replace_item("apatite-lens", "green-sapphire-lens")
 
 `add_item`, `add_recipe`, `add_technology` and `unit` are what this mod's own prototype files use (items with the
 same fields as Gregtorio's upstream `create_item`, so saves and other mods see the same items). Other mods do not
-need them. `ME_NETWORK.WALKABLE` is the collision mask of the blocks that are walked over (cable, buses, terminals), and
+need them. An item of `add_item` stacks to 50 unless it says otherwise (Factorio's usual size; no item of this mod
+stacks to Minecraft's 64 any more): Gregtorio Continued raises the ones that stack to 64 there. `ME_NETWORK.WALKABLE` is the collision mask of the blocks that are walked over (cable, buses, terminals), and
 `ME_NETWORK.solid_box()` (since issue #268) a new copy of the collision box of the solid one-tile blocks, -0.29 .. 0.29:
 two of them on neighbouring tiles leave a gap of 0.42 tiles, which a character (0.4 wide) walks through. A mod that adds
 a solid one-tile block next to ME blocks should give it that box (the blocks of a Crafting CPU keep -0.35 .. 0.35: they

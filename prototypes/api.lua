@@ -110,7 +110,7 @@ function M.add_item(def)
 		name = def.name,
 		icon = def.icon or (M.icons .. def.name .. ".png"),
 		icon_size = def.icon_size or 32,
-		stack_size = def.stack_size or 64,
+		stack_size = def.stack_size or 50,                 -- (Factorio's 50, not Minecraft's 64: Gregtorio raises its own)
 		subgroup = def.subgroup,
 		order = def.order,
 		place_result = def.place_result,

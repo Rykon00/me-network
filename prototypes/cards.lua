@@ -86,7 +86,7 @@ for _, c in ipairs(CARDS) do
 		icon_size = 64,
 		subgroup = CAPACITY_SPEED[c.kind] and "fork-me-capacity-speed-cards" or "fork-me-cards",   -- (issue #474: two rows)
 		order = c.order,
-		stack_size = 64,
+		stack_size = 50,
 		localised_description = { "item-description." .. c.name },
 		recipe = { energy_required = 2, amount = c.amount, ingredients = c.ingredients },
 	}
