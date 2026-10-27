@@ -2575,6 +2575,18 @@ actions, so the window tests of #28 keep their shift and control clicks; the pan
 merge, swap, half) are gone with the code, the game does that now. `ifacecap.lua`'s check of #201 (a buffer stack pushed
 back) became the same check by shift + click; `remoteview.lua` checks the flags instead of the buffer.
 
+**Sounds (issue #545).** Factorio 2.1.13's `utility/machine_gui_open` and `utility/machine_gui_close` (valid sound paths,
+probed): `G.open_window` plays the open sound for the player (`player.play_sound` without a position: only they hear it)
+unless the same window (name and unit) is only built again; a window that replaces another (a cell window from the drive,
+Back to the terminal) plays the open sound alone. `G.close_window(player, true)` plays the close sound when a window was
+open: the close button, E or Escape (`on_gui_closed`), the refresh closing a window whose block is gone or out of reach,
+Back without a terminal, the wireless hotkey. Silent: the close inside `open_window`, another GUI that took over without an
+event, a player leaving, a mod update (`close_all`). Test `runtimemod/windowsound.lua`: the window functions run on a
+stand-in player with a stand-in of `player.gui.screen` (the remote's `stand_in` with `gui`; `stand_in_element` keeps every
+field of `add`, finds children by name and can be destroyed) whose `play_sound` records the paths: open, rebuild, open from
+another window, close, close without a window, the silent close; it also checks the window's inventory element (bound to
+the stand-in's inventory, the game's cursor handling, 10 per row).
+
 **Not done with the element here:** the block's slots (cards, the workbench's cell, the IO port, the drive) are still slot
 buttons; issue #543 takes them on.
 

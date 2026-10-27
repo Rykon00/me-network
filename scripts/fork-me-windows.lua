@@ -2393,19 +2393,33 @@ local stand_ins = {}            -- name -> a table standing for a LuaPlayer (the
 local stand_in_frames = {}      -- name -> a table standing for a window's frame (issue #311, interface_fluid_view below)
 
 --- Issue #311 (tests): a table standing for a LuaGuiElement, as much of one as the window code that builds and updates
---- a section uses (add, clear, children, name, tags, style and the fields it sets)
+--- a section uses (add, clear, children, name, tags, style and the fields it sets). Issue #545: every field of the `add`
+--- table is kept, a child is found by its name (element.<name>) and can be destroyed, so that G.open_window and
+--- G.close_window run on a stand-in of player.gui.screen.
 local function stand_in_element(def)
-	local el = { type = def.type, name = def.name, caption = def.caption, sprite = def.sprite, number = def.number,
-		tooltip = def.tooltip, elem_tooltip = def.elem_tooltip, value = def.value, tags = def.tags or {}, style = {},
-		style_name = def.style, text = def.text, items = def.items, selected_index = def.selected_index, children = {} }
+	local el = {}
+	for k, v in pairs(def) do el[k] = v end
+	el.tags, el.style, el.style_name, el.children, el.valid = def.tags or {}, {}, def.style, {}, true
 	el.add = function(d)
 		local c = stand_in_element(d)
 		el.children[#el.children + 1] = c
+		c.parent = el
 		return c
 	end
 	el.clear = function() el.children = {} end
+	el.destroy = function()
+		el.valid = false
+		local p = el.parent
+		for i, c in ipairs(p and p.children or {}) do
+			if c == el then table.remove(p.children, i) break end
+		end
+	end
 	el.add_tab = function() end                         -- (issue #531: a tabbed pane's; its children are what was added)
-	return el
+	return setmetatable(el, { __index = function(t, k)
+		for _, c in ipairs(rawget(t, "children")) do
+			if c.name == k then return c end
+		end
+	end })
 end
 M.stand_in_element = stand_in_element                 -- (issue #336: the ME Interface Terminal's page in its test)
 remote.add_interface("gregtorio-me-gui", {
@@ -2503,13 +2517,16 @@ remote.add_interface("gregtorio-me-gui", {
 	end,
 	--- Issues #176 and #177: the harness has no player and a remote call cannot carry functions, so a table standing for a
 	--- LuaPlayer is made here from plain data: `spec` = { remote = in remote view, main = the main inventory (not in remote
-	--- view), character = the character's main inventory (nil: no character), index = a number }; kept under `name`.
+	--- view), character = the character's main inventory (nil: no character), index = a number, gui = true: a stand-in of
+	--- player.gui (issue #545: the window functions run on it) }; kept under `name`. Its sounds are recorded.
 	stand_in = function(name, spec)
-		local texts = {}
-		local sp = { object_name = "LuaPlayer", valid = true, index = spec.index or 9001, texts = texts,
+		local texts, sounds = {}, {}
+		local sp = { object_name = "LuaPlayer", valid = true, index = spec.index or 9001, texts = texts, sounds = sounds,
 			controller_type = spec.remote and defines.controllers.remote or defines.controllers.character,
 			get_main_inventory = function() return not spec.remote and spec.main or nil end,
-			create_local_flying_text = function(a) texts[#texts + 1] = a.text end }
+			create_local_flying_text = function(a) texts[#texts + 1] = a.text end,
+			play_sound = function(a) sounds[#sounds + 1] = a.path end }
+		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
 		if spec.character then
 			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
 				get_inventory = function() return spec.character end }
@@ -2525,6 +2542,19 @@ remote.add_interface("gregtorio-me-gui", {
 	stand_in_parked = function(name) return G.parked_count(stand_ins[name]) end,
 	stand_in_return_parked = function(name) return G.return_parked(stand_ins[name]) end,
 	stand_in_texts = function(name) return stand_ins[name].texts end,
+	--- Issue #545: the window `window` (a registered name) of the unit `unit` opened for a stand-in with `gui` (G.open_window, as the
+	--- windows' open functions call it), what it built: { open, opened = it is the opened GUI, and the pane's inventory element
+	--- (issue #542): inventory_bound, cursor_transfer, slots_per_row }; closing it (`sound`: for good), the sounds it got
+	stand_in_open_window = function(name, window, unit)
+		local sp = stand_ins[name]
+		local frame = G.open_window(sp, window, "devcheck", { unit = unit })
+		local el = G.find(frame, "fork_me_inv")
+		return { open = sp.gui.screen.fork_me_window == frame, opened = sp.opened == frame,
+			inventory_bound = el ~= nil and el.inventory == G.player_inventory(sp),
+			cursor_transfer = el and el.handle_cursor_transfer, slots_per_row = el and el.slots_per_row }
+	end,
+	stand_in_close_window = function(name, sound) G.close_window(stand_ins[name], sound) end,
+	stand_in_sounds = function(name) return stand_ins[name].sounds end,
 	stand_in_forget = function(name) stand_ins[name] = nil stand_in_frames[name] = nil end,
 	--- Issue #311: the fluid entries of an interface's window, and its fluid section built into a stand-in frame kept
 	--- under `name` (like an open window between its refreshes; the harness has no player): { rebuilt = built anew by

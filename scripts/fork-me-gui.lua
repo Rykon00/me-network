@@ -256,9 +256,17 @@ function M.drop_buffer(player)
 	return n
 end
 
-function M.close_window(player)
+--- Issue #545: the game's machine window sounds (Factorio 2.1.13), for the player alone (play_sound without a position)
+local SOUND_OPEN, SOUND_CLOSE = "utility/machine_gui_open", "utility/machine_gui_close"
+
+--- Close the player's ME window. `sound`: the window is closed for good (the close button, E, Escape, another GUI, the
+--- refresh), so the close sound plays when there was one; never when a window is replaced by another (open_window) or on
+--- a mod update (close_all).
+function M.close_window(player, sound)
 	local frame = player.gui.screen.fork_me_window
-	if frame and frame.valid then frame.destroy() end
+	local had = frame and frame.valid
+	if had then frame.destroy() end
+	if had and sound then player.play_sound{ path = SOUND_CLOSE } end
 	M.drop_buffer(player)                                 -- (issue #542: a buffer of a 0.5.10 save)
 	local picker = player.gui.screen.fork_me_picker       -- the picker (scripts/fork-me-picker.lua) belongs to the window
 	if picker and picker.valid then picker.destroy() end
@@ -384,8 +392,11 @@ end
 --- A window: closes the player's ME window, builds frame, title bar and content frame; the frame is the player's
 --- opened GUI. Returns the frame and the content flow. `tags` go onto the frame (fork_me_window = name is added).
 --- Issue #28: every window has the pane, the player's inventory on the left of the content (`pane` false: none; issue
---- #542: the game's inventory element).
+--- #542: the game's inventory element). Issue #545: the open sound plays unless the same window (name and unit) is only
+--- built again; a window that replaces another plays it alone (no close sound).
 function M.open_window(player, name, caption, tags, pane)
+	local old, old_name = M.window_of(player)
+	local rebuilt = old ~= nil and old_name == name and old.tags.unit == (tags and tags.unit)
 	M.close_window(player)
 	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
@@ -409,6 +420,7 @@ function M.open_window(player, name, caption, tags, pane)
 	content.style.vertical_spacing = 6
 	frame.auto_center = true
 	player.opened = frame
+	if not rebuilt then player.play_sound{ path = SOUND_OPEN } end
 	return frame, content
 end
 
@@ -819,11 +831,11 @@ function M.dispatch(event)
 	if not act then return false end
 	local player = game.get_player(event.player_index)
 	if act == "close" then
-		M.close_window(player)
+		M.close_window(player, true)
 		return true
 	elseif act == "back" then                       -- back to the terminal a drive or cell window came from
 		local via = M.entity_by_unit(el.tags.via)
-		if via and via.valid then M.open_entity(player, via) else M.close_window(player) end
+		if via and via.valid then M.open_entity(player, via) else M.close_window(player, true) end
 		return true
 	elseif act == "block_slot" then                 -- issue #28: the block's slots
 		if event.name ~= defines.events.on_gui_click then return true end
@@ -890,7 +902,7 @@ function M.on_closed(event)
 				if hook(player, el) then return true end
 			end
 		end
-		if player then M.close_window(player) else el.destroy() end
+		if player then M.close_window(player, true) else el.destroy() end
 		return true
 	end
 	return false
@@ -910,7 +922,7 @@ function M.refresh_all()
 			n = n + 1
 			local def = windows[name]
 			if not def then
-				M.close_window(player)
+				M.close_window(player, true)
 			elseif player.opened ~= frame then
 				M.close_window(player)                     -- dying or another GUI closed it without an event
 			else
@@ -920,7 +932,7 @@ function M.refresh_all()
 				end
 				ok = ok and (def.refresh and def.refresh(player, frame))
 				if ok == false then
-					M.close_window(player)
+					M.close_window(player, true)
 				elseif frame.valid then
 					follow_inventory(player, frame)
 				end
@@ -933,7 +945,7 @@ end
 function M.refresh_one(player)
 	local frame, name = M.window_of(player)
 	local def = frame and windows[name]
-	if def and def.refresh and def.refresh(player, frame) == false and frame.valid then M.close_window(player) end
+	if def and def.refresh and def.refresh(player, frame) == false and frame.valid then M.close_window(player, true) end
 end
 
 --- Issue #179: a player was removed from the game: what the windows kept for them goes (the parked items of remote view and a

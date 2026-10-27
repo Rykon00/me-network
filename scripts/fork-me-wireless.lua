@@ -303,7 +303,7 @@ function M.open_for(player)
 	local frame = G.window_of(player)
 	local anchor = frame and (G.entity_by_unit(frame.tags.via) or G.entity_by_unit(frame.tags.unit))
 	if anchor and anchor.valid and anchor.name == AP then
-		G.close_window(player)
+		G.close_window(player, true)                 -- (issue #545: with the close sound)
 		return true
 	end
 	local src = M.source_of(player)
