@@ -9,6 +9,7 @@ local AREA = { { -10, -12 }, { 80, 30 } }
 local EPS = 0.5
 
 local AC = "gregtorio-me-autocraft"
+local LIF = "gregtorio-me-logistic-interface"
 local function L(key, msg) log("DEVCHECK-MIGRATE-" .. key .. " " .. msg) end
 --- me-network issue #503: the stage of the helper's test items (settings.lua, data.lua)
 local ITEMS = settings.startup["zz-me-network-devcheck-migrate-items"].value
@@ -269,8 +270,27 @@ local function setup_unified(s)
 		local c2 = place(s, fails, "me-circuit-interface", 56.5, 2.5)
 		if c2 then remote.call("gregtorio-me-circuit", "set_circuit_filters", c2, { "devcheck-renamed-item", "devcheck-removed-item" }) end
 	end
+	--- me-network issue #537: an ME Logistic Interface in a logistic network (a version that has it). Built by a version without
+	--- the automatic mode it must be Manual after the load; with `--removed-items` (a save of the working copy) it is in
+	--- Automatic mode and a requester of the logistic network asks for the item the load removes: after the load its pass
+	--- runs without an error (the game drops that filter)
+	local lif
+	if prototypes.entity["me-logistic-interface"] then
+		place(s, fails, "roboport", 50, -8)
+		local e = place(s, fails, "me-logistic-interface", 45.5, 0.5)
+		if e then
+			lif = { modes = remote.interfaces[LIF].set_mode ~= nil }
+			if ITEMS == "old" then
+				local rq = place(s, fails, "requester-chest", 49.5, -3.5)
+				local p = rq and rq.get_logistic_point(defines.logistic_member_index.logistic_container)
+				local sec = p and (p.get_section(1) or p.add_section())
+				if sec then sec.set_slot(1, { value = { name = "devcheck-removed-item", quality = "normal", comparator = "=" }, min = 50 }) end
+				if lif.modes then remote.call(LIF, "set_mode", e, "auto") end
+			end
+		end
+	end
 	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, cards = cards, legacy_chest = legacy_chest,
-		damaged = damaged, items = items }
+		damaged = damaged, items = items, lif = lif }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
 		.. (has_legacy and "; the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "")
@@ -470,6 +490,35 @@ local function check_items(st)
 		.. "one nowhere; a circuit interface built after the load writes its signals)")
 end
 
+--- me-network issue #537: the ME Logistic Interface after the load (LIF)
+local function check_lif(st)
+	local s = game.surfaces[1]
+	local e = s.find_entity("me-logistic-interface", { 45.5, 0.5 })
+	local d = e and remote.call(LIF, "info", e)
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local what
+	if not st.lif.modes then
+		what = "a block built before the automatic mode is Manual"
+		expect(d and d.mode == "manual", "the block of the old version: mode " .. serpent.line(d and d.mode))
+	elseif ITEMS == "new" then
+		--- (Factorio 2.1.23, measured: the load drops a logistic filter of a removed item from the section; the scan's check
+		--- for a name without a prototype is a safety net, and a pass over the point must run without an error)
+		what = "a requester of the removed item: its filter dropped by the game, the pass ran, nothing offered or counted"
+		local rq = s.find_entity("requester-chest", { 49.5, -3.5 })
+		local pt = rq and rq.get_logistic_point(defines.logistic_member_index.logistic_container)
+		local sec = pt and pt.get_section(1)
+		local demand = remote.call(LIF, "demand")
+		expect(sec and #sec.filters == 0, "the game kept the filter of the removed item: " .. serpent.line(sec and sec.filters))
+		expect(d and d.mode == "auto" and d.auto_unknown == 0 and d.auto_offered == 0 and demand and demand.auto
+			and demand.auto[d.lid], "the block after the load: " .. serpent.line(d and { d.mode, d.auto_unknown, d.auto_offered, d.lid }))
+	else
+		what = "nothing to check: the save has the automatic mode and no removed item"
+	end
+	for _, p in pairs(problems) do L("FAIL", p) end
+	L("LIF", (#problems == 0 and "ok" or "failed") .. " (" .. what .. ")")
+end
+
 script.on_init(function()
 	local s = game.surfaces[1]
 	s.always_day = true
@@ -500,6 +549,7 @@ script.on_nth_tick(10, function()
 		st.ticked = true
 		check_unified(st)
 		if st.items and ITEMS == "new" then check_items(st) end
+		if st.lif then check_lif(st) end
 		local after = fluid_totals(game.surfaces[1])
 		local ok, diff = same_totals(st.before, after)
 		if not ok then L("FAIL", "fluid differs: " .. diff) end

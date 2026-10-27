@@ -77,17 +77,23 @@ return function(H)
 				if f.starve then st.starved = st.starved + 1 end
 			end
 		end
-		--- the item bus into the chest: its intervals after the first visits, each with the cap of its visit's tick
+		--- the item bus into the chest: its intervals after the first visits, each with the cap of its visit's tick. Issue #537:
+		--- this check runs every 10 ticks, so it sees most visits after their tick; the cap a visit used lies between the one
+		--- read at the check before it and the one read now (busy units enter and leave the list): held against the larger
+		--- (before, a visit not seen in its tick was held against the cap at the end, which had fallen since)
+		local cap_now = remote.call(IO, "margin_cap")
 		local i = remote.call(IO, "schedule", sc.ibus)
 		if i and i.last and i.last ~= st.ilast then
 			st.ilast = i.last
 			st.ivisits = st.ivisits + 1
+			st.icap = i.last == tick and cap_now or math.max(cap_now or 0, st.pcap or 0)
 			if st.ivisits > 2 and i.interval then
 				st.ivs[#st.ivs + 1] = i.interval
 				st.caps = st.caps or {}
-				st.caps[#st.ivs] = i.last == tick and remote.call(IO, "margin_cap") or nil
+				st.caps[#st.ivs] = st.icap
 			end
 		end
+		st.pcap = cap_now
 		if tick < CHECK then return end
 		local cap = remote.call(IO, "margin_cap")
 		local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
@@ -97,6 +103,7 @@ return function(H)
 		local caps = st.caps or {}
 		if st.ivisits >= 2 and i and i.interval and i.last ~= tick then   -- (the interval it is waiting now: set at an earlier tick)
 			st.ivs[#st.ivs + 1] = i.interval
+			caps[#st.ivs] = st.icap
 		end
 		local worst, over = 0, nil
 		for k, iv in ipairs(st.ivs) do

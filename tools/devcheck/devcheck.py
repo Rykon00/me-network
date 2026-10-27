@@ -992,6 +992,7 @@ RUNTIME_TESTS = (
     ("SBUSMODE", "ME storage bus filter mode (issue #155)"),
     ("LSBUS", "ME logistic storage bus (issue #506)"),
     ("LIF", "ME logistic interface (issue #531)"),
+    ("LIFAUTO", "ME logistic interface automatic mode (issue #537)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
@@ -1264,6 +1265,9 @@ def migrate_run(a):
     fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
     print(f"the blocks after the update: {unified.group(1) if unified else 'no result'}")
     print(f"the fluid after the I/O steps: {fluids.group(1) if fluids else 'no result'}")
+    lif = re.search(r"DEVCHECK-MIGRATE-LIF (.*)", log)       # issue #537 (a version with the ME Logistic Interface)
+    if lif:
+        print(f"the ME Logistic Interface after the update: {lif.group(1)}")
     fails = re.findall(r"DEVCHECK-MIGRATE-FAIL (.*)", log)
     for f in fails:
         print("  - " + f)
@@ -1323,7 +1327,10 @@ PROFILE_WRAP = {
                                                 "HANDLER.count", "HANDLER.extract"],
     # issue #531: the ME Logistic Interface
     "scripts/fork-me-logistic-interface.lua": ["M.on_tick", "visit", "pull", "offer", "request", "ensure_chests", "offered_in",
-                                               "reserved"],
+                                               "reserved",
+                                               # issue #537: the automatic mode
+                                               "demand_step", "scan_point", "scan_key", "decide", "auto_request",
+                                               "auto_blocks", "me_waits"],
     "scripts/fork-me-autocraft.lua": ["job_step", "maintenance", "scan_provider", "refresh_providers",
                                       "rebuild_patterns", "make_plan", "M.start", "assign_cpus", "await_index",
                                       "on_arrival", "awaiting", "cpus_in", "collect_output", "find_crafter",
@@ -1666,7 +1673,9 @@ def bench_config(a, scene, size, variant, profile):
            "slice": (SLICE_TICKS if window >= 2 * SLICE_TICKS else max(300, window // 2 // 300 * 300)) if variant.get("long") else None,
            "planner_targets": a.planner_targets,
            # issue #506: a logistic network of that many roboports below the ME scene, with an ME Logistic Storage Bus
-           "logistic": (getattr(a, "logistic", 0) or 0) if scene == "me" else 0}
+           "logistic": (getattr(a, "logistic", 0) or 0) if scene == "me" else 0,
+           # issue #537: that many requester chests in the logistic network (for the ME Logistic Interface's automatic mode)
+           "requesters": (getattr(a, "requesters", 0) or 0) if scene == "me" else 0}
     return cfg
 
 
@@ -1956,6 +1965,7 @@ def print_service(s):
           f"{'busy interval s: median':>23} {'p99':>7} {'max':>7} {'n':>7} | {'idle interval s: median':>23} {'p99':>7} {'max':>7} {'n':>7}")
     for q in ("io", "io_probe", "storage_bus", "storage_bus_probe", "fluid_storage_bus", "fluid_storage_bus_probe",
               "logistic_storage_bus", "logistic_storage_bus_probe",                   # (issue #506)
+              "logistic_interface", "logistic_interface_probe", "logistic_demand",  # (issue #531, #537)
               "maintainer", "maintainer_probe", "circuit", "jobs"):
         st = sched.get(q)
         if not st or not (st.get("visits") or st.get("due")):
@@ -2291,6 +2301,8 @@ def main():
     p.add_argument("--logistic", type=int, default=0, metavar="N", help="issue #506: every ME scene also gets a logistic network of N "
                    "roboports and N / 2 filled storage chests, and an ME Logistic Storage Bus and (issue #531) 16 ME Logistic "
                    "Interfaces on it (where the version has them)")
+    p.add_argument("--requesters", type=int, default=0, metavar="N", help="issue #537: with --logistic, N requester chests in the "
+                   "logistic network that ask for items it holds, items only the ME network has and items nobody has")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "

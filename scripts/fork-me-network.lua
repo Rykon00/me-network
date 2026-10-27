@@ -3151,7 +3151,8 @@ local function extract_order(s, net, c, key)
 	return l
 end
 
-local function extract_key(net, key, count)
+--- (`skip(cell)`, issue #537: an external cell it returns true for is left out, as insert_key's)
+local function extract_key(net, key, count, skip)
 	if count <= 0 or not net.items[key] then return 0 end
 	if net.chest then return CH.take(net, key, count) end          -- (issue #229: out of the ME Chest's cell only)
 	local s = state()
@@ -3163,7 +3164,8 @@ local function extract_key(net, key, count)
 	for _, cid in ipairs(extract_order(s, net, c, key)) do
 		if left <= 0 then break end
 		local cell = net.cells[cid]
-		if cell.creative then                          -- issue #441: a creative cell gives the rest without end
+		if skip and cell.ext and skip(cell) then
+		elseif cell.creative then                      -- issue #441: a creative cell gives the rest without end
 			kept = kept + left
 			left = 0
 		elseif cell.ext then                           -- external cell: the real storage first (staleness)
@@ -3257,6 +3259,17 @@ end
 function M.count_key(net, key)
 	if not M.usable(net) then return 0 end
 	return net.items[key] or 0
+end
+
+--- issue #537: the count of `key` without the external cells `skip(cell)` returns true for (their snapshot)
+function M.count_key_skip(net, key, skip)
+	local n = M.count_key(net, key)
+	if n <= 0 then return 0 end
+	for cid in pairs(net.index and net.index[key] or {}) do
+		local cell = net.cells[cid]
+		if cell and cell.ext and skip(cell) then n = n - (cell.items[key] or 0) end
+	end
+	return n > 0 and n or 0
 end
 
 function M.can_insert(net, name, quality, count)
@@ -3726,16 +3739,16 @@ function M.put_labelled(target, def, data)
 end
 
 --- Move up to `count` of `key` into `target` (LuaPlayer, LuaEntity, LuaInventory: anything with insert, or an
---- empty LuaItemStack). Returns the amount moved.
-function M.extract_to(net, target, key, count)
+--- empty LuaItemStack). Returns the amount moved. (`skip`, issue #537: external cells left out, as M.count_key_skip)
+function M.extract_to(net, target, key, count, skip)
 	if not M.usable(net) then return 0 end
-	count = math.min(math.floor(count), net.items[key] or 0)
+	count = math.min(math.floor(count), skip and M.count_key_skip(net, key, skip) or net.items[key] or 0)
 	if count <= 0 or not key_item_exists(key) then return 0 end
 	local def, data = stack_def(net, key, count)
 	if data and data.label then
 		local moved, placed = M.put_labelled(target, def, data)
 		if moved <= 0 then return 0 end
-		local got = extract_key(net, key, moved)
+		local got = extract_key(net, key, moved, skip)
 		local surplus = moved - got                 -- (never duplicate, as below: taken back from the stacks it wrote)
 		for i = #placed, 1, -1 do
 			if surplus <= 0 then break end
@@ -3758,7 +3771,7 @@ function M.extract_to(net, target, key, count)
 		moved = target.insert(def)
 	end
 	if moved <= 0 then return 0 end
-	local got = extract_key(net, key, moved)
+	local got = extract_key(net, key, moved, skip)
 	if got < moved then                       -- a storage bus's chest had less than its snapshot: never duplicate
 		local surplus = { name = def.name, quality = def.quality, count = moved - got }
 		if target.object_name == "LuaItemStack" then

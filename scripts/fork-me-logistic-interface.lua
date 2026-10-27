@@ -30,6 +30,27 @@
 ---     in the requester and is on its way, the largest first, at most the setting "keys" (20). Per logistic network and ME
 ---     network only the first interface (by unit number) with the switch on asks; keys offered in the logistic network
 ---     (the loop guard) and keys of its own request rows are left out.
+---   * Automatic mode (issue #537; `rec.mode` "auto", the default of a block built since; a record without it, a block built
+---     before, is Manual): the rows still apply, and the block also
+---       offers  what the logistic network's requester points (chests, rocket silos, characters, vehicles) want and the
+---               network cannot supply itself: per key the open demand (min - content - targeted_items_deliver of every
+---               point) less what the logistic network holds outside the ME-owned chests (issue #530: else the stock would
+---               cover the demand, the demand vanish and ME take the stock back); the stock is min(that, ME's count, the
+---               setting "stacks" x stack size). ME's count and the extraction leave out an ME Logistic Storage Bus of the
+---               same logistic network (`skip_of`: what it shows is the base's own). Keys ME blocks wait for (net.wait_in but the interfaces' own waits,
+---               AC.waiting_needs) are not offered (the network's needs first), nor keys of rows in that logistic network.
+---               A key without unmet demand keeps its stock (no fill, no return) for two passes, then what robots did not
+---               reserve goes back. Unknown items (their mod is gone) are counted, not offered; a stock that does not fit
+---               the provider's free slots is left out, the largest unmet keys first.
+---       asks    for what ME blocks wait for: the keys of net.wait_in (but the interfaces') and AC.waiting_needs, one stack
+---               each, and only while the logistic network holds them outside the ME-owned chests (the second section, as
+---               #532; in Automatic mode it asks whatever the switch "auto" says).
+---     The scan: a pass per logistic network with an automatic block, one after the other; its first automatic block by
+---     unit number leads, a stock goes to the automatic block nearest to the point with the largest open demand of the key
+---     (ties by unit number). A pass reads the points' filters (the setting "points per tick", default 2, about 25 us each;
+---     the point list kept in `storage`, taken again after POINTS_TTL ticks or a requester built), then works out the keys
+---     (KEY_WORK keys per point of the budget), then decides in one tick. Everything a pass keeps is in `storage`
+---     (`s.dm`, `s.auto`, `s.pts`): it decides when blocks are woken.
 ---   * Cards: the ME Interface's (Interface Capacity Card: 9 more rows per card, up to 36; Crafting Card: an offer row the
 ---     network cannot fill starts a job, as the interface's, issue #411).
 ---   * Visits: a queue of its own (Sched, tag "logistic_interface") with a budget (map settings "ME Logistic Interface visits
@@ -40,7 +61,10 @@
 ---     fork_me_logistic_interface). Mined: the chests' contents go into the network, without one into the buffer; destroyed or
 ---     removed by a script: spilled. Hidden chests without their block are removed in on_configuration_changed.
 --- State: storage.fork_me_lif = { recs = { [unit] = { entity, provider, requester, store, offer, request, accept, filter,
---- inv, cards, want, nrows, ccard, lid, status, rq, ... the scheduler's fields } }, list, lpos, q }.
+--- inv, cards, want, nrows, ccard, lid, status, rq, mode, ... the scheduler's fields } }, list, lpos, q, dm (the pass that
+--- runs: lid, phase, i, acc, top, unk, keys, own, unmet), dlast (the logistic network of the last pass), dstale (the tick a
+--- requester was built), pts = { [lid] = { list, at } } (the requester points), auto = { [lid] = { keys = { [key] = { u, n, z } },
+--- nunk, nofit, nwait } } (the stock of the last pass: block u keeps n; n 0: kept as it is; z the passes without demand) }.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -66,6 +90,15 @@ local MAIN_POINT = defines.logistic_member_index.logistic_container
 local TABS = { offer = true, request = true }
 --- Issue #411, as the ME Interface's: a start that failed waits this long before the key is tried again (no pattern: longer)
 local CRAFT_RETRY, CRAFT_RETRY_NONE = 300, 1200
+--- Issue #537, the automatic mode: the scheduler's counters of the demand scan, the age of a point list, the keys worked out
+--- per point of the budget, the passes a key without demand keeps its stock
+local DEMAND = "logistic_demand"
+local POINTS_TTL = 600
+local KEY_WORK = 4
+local HOLD_PASSES = 2
+--- the entity types with requester points (a build of one takes the point lists again)
+local REQUESTER_TYPES = { ["logistic-container"] = true, ["rocket-silo"] = true, character = true, car = true,
+	["spider-vehicle"] = true, ["cargo-landing-pad"] = true, ["space-platform-hub"] = true }
 
 M.NAME, M.CHEST_NAMES, M.REFUSE = NAME, CHEST_NAMES, REFUSE
 
@@ -124,31 +157,70 @@ local function offered_in(lid)
 				end
 			end
 		end
+		--- issue #537: what the automatic mode offers (and keeps) there
+		for lid, a in pairs(s and s.auto or {}) do
+			local g = guard[lid]
+			if not g then
+				g = {}
+				guard[lid] = g
+			end
+			for key in pairs(a.keys) do g[key] = true end
+		end
 	end
 	return guard[lid]
 end
 
+--- issue #537: the automatic blocks by logistic network (lid -> their units, sorted; the first leads) and the ids with one,
+--- sorted (derived from the records, never saved)
+local autos, auto_lids = nil, nil
+local function auto_blocks()
+	if not autos then
+		autos, auto_lids = {}, {}
+		local s = storage.fork_me_lif
+		for unit, rec in pairs(s and s.recs or {}) do
+			if rec.mode == "auto" and rec.lid and rec.entity.valid then
+				local list = autos[rec.lid]
+				if not list then
+					list = {}
+					autos[rec.lid] = list
+					auto_lids[#auto_lids + 1] = rec.lid
+				end
+				list[#list + 1] = unit
+			end
+		end
+		for _, list in pairs(autos) do table.sort(list) end
+		table.sort(auto_lids)
+	end
+	return autos, auto_lids
+end
+
 --- issue #532: the interface that asks for the failed starts' needs, per logistic network and ME network: the first by unit
---- number with the switch on ("<lid>:<network id>" -> unit; made again when a record or the graph changed)
-local firsts, firsts_ver = nil, -1
+--- number with the switch on ("<lid>:<network id>" -> unit; made again when a record or the graph changed). Issue #537: a
+--- block in Automatic mode asks whatever its switch says, and comes before the blocks in Manual mode.
+local firsts, firsts_auto, firsts_ver = nil, nil, -1
+local function asks(rec) return rec.lid ~= nil and (rec.mode == "auto" or rec.auto ~= false) end
 local function asks_needs(rec, net)
-	if rec.auto == false or not rec.lid then return false end
+	if not asks(rec) then return false end
 	local v = N.version()
 	if not firsts or firsts_ver ~= v then
-		firsts, firsts_ver = {}, v
+		firsts, firsts_auto, firsts_ver = {}, {}, v
 		local s = storage.fork_me_lif
 		for unit, r in pairs(s and s.recs or {}) do
-			local n = r.lid and r.auto ~= false and N.network_of_unit(unit)
+			local n = asks(r) and N.network_of_unit(unit)
 			if n then
 				local k = r.lid .. ":" .. n.id
-				if not firsts[k] or unit < firsts[k] then firsts[k] = unit end
+				local auto = r.mode == "auto"
+				local cur = firsts[k]
+				if not cur or (auto and not firsts_auto[k]) or (auto == firsts_auto[k] and unit < cur) then
+					firsts[k], firsts_auto[k] = unit, auto
+				end
 			end
 		end
 	end
 	return firsts[rec.lid .. ":" .. net.id] == rec.entity.unit_number
 end
 
-local function guard_changed() guard, firsts = nil, nil end
+local function guard_changed() guard, firsts, autos, auto_lids = nil, nil, nil, nil end
 M.offered_in = function(lid) return offered_in(lid) end
 
 --- is request row `i` of `rec` not applied (its item is offered in the same logistic network)?
@@ -286,7 +358,7 @@ local function register(entity)
 	local unit = entity.unit_number
 	local rec = s.recs[unit]
 	if not rec then
-		rec = { entity = entity, offer = {}, request = {}, accept = true,
+		rec = { entity = entity, offer = {}, request = {}, accept = true, mode = "auto",      -- (issue #537: new blocks automatic)
 			where = { surface = entity.surface.index, x = entity.position.x, y = entity.position.y } }
 		s.recs[unit] = rec
 		s.list[#s.list + 1] = unit
@@ -435,11 +507,13 @@ local function item(name, q)
 	return ITEM
 end
 
+local AUTO, HOLD = {}, -1               -- (issue #537: the keys of the automatic stock; a want of HOLD keeps what lies there)
 local function offer(rec, net, unit, skip)
 	local inv = rec.provider.get_inventory(CHEST)
 	local point = rec.provider.get_logistic_point(MAIN_POINT)
-	local want = WANT
+	local want, auto = WANT, AUTO
 	for k in pairs(want) do want[k] = nil end
+	for k in pairs(auto) do auto[k] = nil end
 	local moved = 0
 	for i = 1, rows_of(rec) do
 		local r = rec.offer[i]
@@ -449,15 +523,32 @@ local function offer(rec, net, unit, skip)
 		end
 	end
 	local res
+	--- issue #537: the automatic stock of this block (what robots reserved comes on top: it is on its way out)
+	local s = storage.fork_me_lif
+	local a = rec.mode == "auto" and rec.lid and s.auto and s.auto[rec.lid]
+	if a then
+		for key, o in pairs(a.keys) do
+			if o.u == unit and not want[key] and N.item_exists((N.parse_key(key))) then
+				if o.n > 0 then
+					res = res or reserved(point, "targeted_items_pickup")
+					want[key] = o.n + (res[key] or 0)
+					auto[key] = true
+				else
+					want[key] = HOLD
+				end
+			end
+		end
+	end
 	for key, amount in pairs(want) do
 		local name, q = N.parse_key(key)
-		local have = inv.get_item_count(item(name, q))
-		if have < amount then
-			local got = N.extract_to(net, inv, key, amount - have)
+		local have = amount ~= HOLD and inv.get_item_count(item(name, q)) or 0
+		if amount == HOLD then                                         -- (no demand for a pass or two: neither filled nor returned)
+		elseif have < amount then
+			local got = N.extract_to(net, inv, key, amount - have, auto[key] and skip or nil)   -- (issue #537: not the base's)
 			moved = moved + got
 			if got <= 0 and N.count_key(net, key) <= 0 then
 				N.wait_for(net, key, WAKER, unit, true)
-				if rec.ccard then craft(rec, net, key, amount - have) end
+				if rec.ccard and not auto[key] then craft(rec, net, key, amount - have) end
 			end
 		elseif have > amount then
 			res = res or reserved(point, "targeted_items_pickup")
@@ -534,7 +625,7 @@ end
 --- Issue #532: the automatic requests into the requester's second section (slot i: the i-th largest need), written only when
 --- changed (`rec.aq`); an interface that does not ask (the switch off, not the first, no logistic network) clears them.
 --- Returns the keys asked for and the needed keys left out because they are offered: { { key, need, asked } }, skipped.
-local function auto_request(rec, net)
+local function auto_request(rec, net, ln)
 	local list, skipped = {}, 0
 	if asks_needs(rec, net) then
 		local offered = offered_in(rec.lid) or {}
@@ -543,14 +634,36 @@ local function auto_request(rec, net)
 			local r = rec.request[i]
 			if r then own[row_key(r)] = true end
 		end
+		--- issue #537: in Automatic mode one stack at most, and only what the logistic network holds outside the ME-owned chests
+		local auto = rec.mode == "auto"
+		local function add(key, need)
+			if own[key] or N.is_fluid_key(key) or key:find("#", 1, true) then return end
+			own[key] = true                                          -- (each key once)
+			local name, q = N.parse_key(key)
+			if not M.row_item(name, q) then return end               -- (defined below)
+			if offered[key] then
+				skipped = skipped + 1
+				return
+			end
+			if auto then
+				local it = item(name, q)
+				local supply = ln and ln.get_item_count(it) - L.owned_count(ln, it) or 0
+				need = math.min(need, supply, prototypes.item[name].stack_size)
+				if need <= 0 then return end
+			end
+			list[#list + 1] = { key = key, need = math.ceil(need), name = name, quality = q }
+		end
 		for key, t in pairs(AC.waiting_needs(net)) do
-			if not (N.is_fluid_key(key) or key:find("#", 1, true) or own[key]) then
-				local need = t.sum + t.base - N.count_key(net, key)
-				if need > 0 then
-					local name, q = N.parse_key(key)
-					if not M.row_item(name, q) then                 -- (defined below)
-					elseif offered[key] then skipped = skipped + 1
-					else list[#list + 1] = { key = key, need = math.ceil(need), name = name, quality = q } end
+			local need = t.sum + t.base - N.count_key(net, key)
+			if need > 0 then add(key, need) end
+		end
+		if auto then                                                 -- (issue #537: what ME blocks wait for, but the interfaces)
+			for key, w in pairs(net.wait_in or {}) do
+				for _, kind in pairs(w) do
+					if kind ~= WAKER then
+						add(key, math.huge)
+						break
+					end
 				end
 			end
 		end
@@ -641,7 +754,7 @@ local function visit(rec, unit, fallback)
 	local moved, refused = m1 + m2 + m3, r1 or r2 or r3
 	moved = moved + offer(rec, net, unit, skip)
 	request(rec, net, unit)
-	local auto, skipped = auto_request(rec, net)                  -- (issue #532)
+	local auto, skipped = auto_request(rec, net, ln)              -- (issue #532)
 	rec.anum, rec.askip = #auto > 0 and #auto or nil, skipped > 0 and skipped or nil
 	rec.full = refused or nil
 	rec.status = not lid and "no-logistic-network" or refused and "me-full" or "ok"
@@ -654,11 +767,285 @@ end
 
 local function probe(rec, unit) return visit(rec, unit, rec.park ~= nil) end
 
+--------------------------------------------------------------------------------
+--- issue #537: the automatic mode's demand scan
+--------------------------------------------------------------------------------
+
+local OWN_CHEST = { [PROVIDER] = true, [REQUESTER] = true, [STORAGE] = true }
+local known = {}                         -- item name -> its prototype exists (per load, a pure function of the prototypes)
+local function exists(name)
+	local v = known[name]
+	if v == nil then
+		v = prototypes.item[name] ~= nil
+		known[name] = v
+	end
+	return v
+end
+
+--- phase 1: the open demand of one requester point into the pass (per key the sum, and the point of the largest)
+local function scan_point(dm, p)
+	if not (p.valid and p.enabled) then return end
+	local owner = p.owner
+	if not (owner and owner.valid) or OWN_CHEST[owner.name] then return end
+	local filters = p.filters
+	if not filters then return end
+	local deliver
+	for _, f in pairs(filters) do
+		local name = f.name
+		if name and f.count > 0 and (f.type == nil or f.type == "item") then
+			if not exists(name) then
+				dm.unk[name] = true
+			else
+				local q = f.quality or "normal"
+				local open = f.count - owner.get_item_count(item(name, q))
+				if open > 0 then
+					local key = N.key_of(name, q)
+					deliver = deliver or reserved(p, "targeted_items_deliver")
+					open = open - (deliver[key] or 0)
+					if open > 0 then
+						dm.acc[key] = (dm.acc[key] or 0) + open
+						local t = dm.top[key]
+						if not t or open > t.d then
+							local pos = owner.position
+							dm.top[key] = { d = open, x = pos.x, y = pos.y }
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+local offerable = {}                     -- key -> may it be offered (M.row_item; per load, a pure function of the prototypes)
+local stacks = {}                        -- item name -> stack size (the same)
+local function stack_of(name)
+	local n = stacks[name]
+	if not n then
+		n = prototypes.item[name].stack_size
+		stacks[name] = n
+	end
+	return n
+end
+--- phase 2: the unmet demand of one key: what the logistic network `ln` cannot supply outside the ME-owned chests (what
+--- those hold: dm.own, read once at the start of the phase)
+local function scan_key(dm, ln, key)
+	local name, q = N.parse_key(key)
+	local ok = offerable[key]
+	if ok == nil then
+		ok = M.row_item(name, q)
+		offerable[key] = ok
+	end
+	if not ok then return end
+	local supply = ln.get_item_count(item(name, q)) - (dm.own[key] or 0)
+	local unmet = dm.acc[key] - math.max(0, supply)
+	if unmet > 0 then dm.unmet[key] = unmet end
+end
+
+--- does an ME block of `net` wait for `key`? (`needs`: AC.waiting_needs of the network, read once per decision)
+local function me_waits(net, key, needs)
+	if needs[key] then return true end
+	local w = net.wait_in and net.wait_in[key]
+	for _, kind in pairs(w or {}) do
+		if kind ~= WAKER then return true end
+	end
+	return false
+end
+
+--- phase 3: the stock of each key and the block that keeps it; the blocks of the logistic network are woken
+local function decide(s, dm, units)
+	local lid = dm.lid
+	local skip = skip_of(lid)
+	local old = s.auto and s.auto[lid]
+	old = old and old.keys or {}
+	local rows = {}                                               -- (the keys of rows of the logistic network: theirs)
+	for _, rec in pairs(s.recs) do
+		if rec.lid == lid then
+			for _, tab in ipairs({ "offer", "request" }) do
+				for i = 1, rows_of(rec) do
+					local r = rec[tab][i]
+					if r then rows[row_key(r)] = true end
+				end
+			end
+		end
+	end
+	local blocks, by_unit, nets, seen = {}, {}, {}, {}
+	for _, unit in ipairs(units) do
+		local rec = s.recs[unit]
+		local net = rec and rec.entity.valid and rec.provider and rec.provider.valid and N.network_of(rec.entity)
+		if net and N.usable(net) then
+			local inv = rec.provider.get_inventory(CHEST)
+			local free = #inv
+			for i = 1, rows_of(rec) do
+				local r = rec.offer[i]
+				if r and exists(r.name) then free = free - math.ceil(r.amount / stack_of(r.name)) end
+			end
+			local b = { unit = unit, net = net, pos = rec.entity.position, inv = inv, free = free }
+			blocks[#blocks + 1] = b
+			by_unit[unit] = b
+			if not seen[net.id] then
+				seen[net.id] = true
+				nets[#nets + 1] = net
+			end
+		end
+	end
+	local list = {}
+	for key in pairs(dm.unmet) do list[#list + 1] = key end
+	table.sort(list, function(a, b)
+		local x, y = dm.unmet[a], dm.unmet[b]
+		if x ~= y then return x > y end
+		return a < b
+	end)
+	local cap = Sched.setting("logistic_interface_stacks")
+	local keys, nofit, nwait, needs = {}, 0, 0, {}
+	for _, key in ipairs(list) do
+		if not rows[key] and cap > 0 then
+			local t, o = dm.top[key], old[key]
+			--- what each ME network has (once per network; not what an ME Logistic Storage Bus of this logistic network shows:
+			--- that is the base's own), and what the block that kept the stock holds of it
+			local have, any = {}, o ~= nil
+			for _, net in ipairs(nets) do
+				local c = N.count_key_skip(net, key, skip)
+				have[net.id] = c
+				if c > 0 then any = true end
+			end
+			--- the nearest block (ties: the lower unit) whose ME network has the key
+			local best, avail, name, q
+			if any then
+				name, q = N.parse_key(key)
+				for _, b in ipairs(blocks) do b.d = (b.pos.x - t.x) ^ 2 + (b.pos.y - t.y) ^ 2 end
+				if #blocks > 1 then table.sort(blocks, function(x, y) if x.d ~= y.d then return x.d < y.d end return x.unit < y.unit end) end
+				for _, b in ipairs(blocks) do
+					local n = have[b.net.id] + ((o and o.u == b.unit) and b.inv.get_item_count(item(name, q)) or 0)
+					if n > 0 then
+						best, avail = b, n
+						break
+					end
+				end
+			end
+			if best then
+				needs[best.net.id] = needs[best.net.id] or AC.waiting_needs(best.net)
+				if me_waits(best.net, key, needs[best.net.id]) then
+					nwait = nwait + 1
+				else
+					local stack = stack_of(name)
+					local n = math.min(math.ceil(dm.unmet[key]), avail, cap * stack)
+					local slots = math.ceil(n / stack)
+					if slots > best.free then
+						nofit = nofit + 1
+					else
+						best.free = best.free - slots
+						keys[key] = { u = best.unit, n = n, z = 0 }
+					end
+				end
+			end
+		end
+	end
+	--- a key that had a stock and no unmet demand now keeps it as it is for HOLD_PASSES passes (robots on their way)
+	for key, o in pairs(old) do
+		local b = by_unit[o.u]
+		if not (keys[key] or dm.unmet[key] or rows[key]) and o.z + 1 < HOLD_PASSES and b then
+			needs[b.net.id] = needs[b.net.id] or AC.waiting_needs(b.net)
+			if not me_waits(b.net, key, needs[b.net.id]) then keys[key] = { u = o.u, n = 0, z = o.z + 1 } end
+		end
+	end
+	local nunk = 0
+	for _ in pairs(dm.unk) do nunk = nunk + 1 end
+	s.auto = s.auto or {}
+	s.auto[lid] = { keys = keys, nunk = nunk, nofit = nofit, nwait = nwait }
+	guard_changed()
+	local woken = {}
+	for _, unit in ipairs(units) do woken[unit] = true end
+	for _, o in pairs(old) do woken[o.u] = true end
+	local list2 = {}
+	for unit in pairs(woken) do list2[#list2 + 1] = unit end
+	table.sort(list2)
+	for _, unit in ipairs(list2) do wake(unit) end
+end
+
+--- the logistic network of the leader (the first automatic block of `lid`), nil when it stands elsewhere now
+local function leader_network(s, units, lid)
+	local rec = units and s.recs[units[1]]
+	local ln = rec and rec.provider and rec.provider.valid and rec.provider.logistic_network
+	return ln and ln.network_id == lid and ln or nil
+end
+
+--- One tick of the scan: `budget` requester points (a key of phase 2 costs 1 / KEY_WORK of a point)
+local function demand_step(s, tick)
+	local all, lids = auto_blocks()
+	if #lids == 0 then
+		if s.dm or s.auto or s.pts then
+			s.dm, s.auto, s.pts = nil, nil, nil
+			guard_changed()
+		end
+		return
+	end
+	local dm = s.dm
+	if dm and not all[dm.lid] then dm, s.dm = nil, nil end
+	if not dm then
+		--- the next logistic network after the last one; the passes and point lists of networks without an automatic block go
+		local lid = lids[1]
+		for _, id in ipairs(lids) do
+			if s.dlast and id > s.dlast then
+				lid = id
+				break
+			end
+		end
+		s.dlast = lid
+		for id in pairs(s.auto or {}) do if not all[id] then s.auto[id] = nil end end
+		for id in pairs(s.pts or {}) do if not all[id] then s.pts[id] = nil end end
+		local ln = leader_network(s, all[lid], lid)
+		if not ln then return end
+		s.pts = s.pts or {}
+		local c = s.pts[lid]
+		if not c or tick - c.at >= POINTS_TTL or (s.dstale and s.dstale >= c.at) then
+			c = { list = ln.requester_points, at = tick }
+			s.pts[lid] = c
+		end
+		dm = { lid = lid, phase = 1, i = 1, acc = {}, top = {}, unk = {}, unmet = {} }
+		s.dm = dm
+	end
+	local ln = leader_network(s, all[dm.lid], dm.lid)
+	if not ln then
+		s.dm = nil
+		return
+	end
+	local work, done = Sched.setting("logistic_demand") * KEY_WORK, 0
+	if dm.phase == 1 then
+		local list = s.pts[dm.lid].list
+		while work >= KEY_WORK and dm.i <= #list do
+			scan_point(dm, list[dm.i])
+			dm.i = dm.i + 1
+			work = work - KEY_WORK
+			done = done + 1
+		end
+		if dm.i > #list then
+			local keys = {}
+			for key in pairs(dm.acc) do keys[#keys + 1] = key end
+			table.sort(keys)
+			dm.phase, dm.i, dm.keys, dm.own = 2, 1, keys, L.owned_contents(ln)
+		end
+	end
+	if dm.phase == 2 then
+		local keys = dm.keys
+		while work > 0 and dm.i <= #keys do
+			scan_key(dm, ln, keys[dm.i])
+			dm.i = dm.i + 1
+			work = work - 1
+		end
+		if dm.i > #keys then dm.phase = 3 end
+	elseif dm.phase == 3 then
+		decide(s, dm, all[dm.lid])
+		s.dm = nil
+	end
+	Sched.work(DEMAND, done)
+end
+
 function M.on_tick(tick)
 	local s = storage.fork_me_lif
 	if s and #s.list > 0 then
 		Sched.run(s.q, tick, Sched.setting("logistic_interface"), Sched.setting("logistic_interface_max"), unit_rec, visit, probe,
 			WAKER)
+		demand_step(s, tick)
 	end
 end
 
@@ -732,6 +1119,16 @@ function M.set_auto(entity, on)
 	return true
 end
 
+--- issue #537: the mode, "auto" (Automatic) or "manual"; refused for anything else
+function M.set_mode(entity, mode)
+	local rec = rec_of(entity)
+	if not (rec and (mode == "auto" or mode == "manual")) then return false end
+	rec.mode = mode == "auto" and "auto" or nil
+	guard_changed()
+	wake(entity.unit_number)
+	return true
+end
+
 --- the storage chest's filter item (`key`, nil: none); refused for a key that is no row item
 function M.set_filter(entity, key)
 	local rec = rec_of(entity)
@@ -761,7 +1158,8 @@ end
 local function settings_of(rec)
 	local list = rec.want and { table.unpack(rec.want) } or cards.card_list(rec)
 	return { offer = copy_rows(rec.offer, 36), request = copy_rows(rec.request, 36), accept = rec.accept ~= false,
-		filter = rec.filter and N.key_of(rec.filter.name, rec.filter.quality) or nil, cards = list, auto = rec.auto ~= false }
+		filter = rec.filter and N.key_of(rec.filter.name, rec.filter.quality) or nil, cards = list, auto = rec.auto ~= false,
+		mode = rec.mode == "auto" and "auto" or "manual" }
 end
 
 --- the settings `t` (a blueprint tag, a source's settings) onto `entity`; `player`: the cards come from its inventory first
@@ -781,6 +1179,7 @@ local function apply(entity, t, player)
 	end
 	rec.accept = t.accept ~= false
 	if t.auto == false then rec.auto = false else rec.auto = nil end   -- (issue #532: on unless the settings say off)
+	if t.mode == "auto" then rec.mode = "auto" elseif t.mode == "manual" then rec.mode = nil end   -- (issue #537; none: kept)
 	rec.filter = nil
 	if type(t.filter) == "string" then M.set_filter(entity, t.filter) end
 	rec.rq = nil
@@ -827,6 +1226,23 @@ function M.info(entity)
 			end
 		end
 	end
+	--- issue #537: the mode; what the automatic mode offers here (key, the stock it keeps, 0: kept as it is) and the counts of
+	--- its logistic network's last pass (offered there, unknown items, keys that did not fit, keys left to waiting ME blocks)
+	d.mode = rec.mode == "auto" and "auto" or "manual"
+	d.auto_offer, d.auto_offered, d.auto_unknown, d.auto_nofit, d.auto_waits = {}, 0, 0, 0, 0
+	local s = storage.fork_me_lif
+	local a = rec.lid and s.auto and s.auto[rec.lid]
+	if a then
+		for key, o in pairs(a.keys) do
+			if o.n > 0 then d.auto_offered = d.auto_offered + 1 end
+			if o.u == entity.unit_number and rec.mode == "auto" then d.auto_offer[#d.auto_offer + 1] = { key = key, amount = o.n } end
+		end
+		table.sort(d.auto_offer, function(x, y) return x.key < y.key end)
+		d.auto_unknown, d.auto_nofit, d.auto_waits = a.nunk, a.nofit, a.nwait
+	end
+	local all = auto_blocks()
+	local list = rec.lid and all[rec.lid]
+	d.auto_leads = rec.mode == "auto" and list ~= nil and list[1] == entity.unit_number
 	local ncollide = 0
 	for _ in pairs(d.collide) do ncollide = ncollide + 1 end
 	d.ncollide = ncollide
@@ -862,6 +1278,8 @@ end
 --- goes to the block that stands on its tile (it takes the clone's contents and drops its own chest), or waits for its
 --- block's clone (ensure_chests takes it over).
 function M.on_built(entity, tags, source)
+	local s0 = storage.fork_me_lif
+	if s0 and s0.pts and entity.valid and REQUESTER_TYPES[entity.type] then s0.dstale = game.tick end   -- (issue #537)
 	if is_chest(entity) then
 		local s = storage.fork_me_lif
 		for _, b in pairs(entity.surface.find_entities_filtered{ name = NAME, position = entity.position }) do
@@ -992,6 +1410,16 @@ remote.add_interface("gregtorio-me-logistic-interface", {
 	set_accept = function(entity, on) return M.set_accept(entity, on) end,
 	set_filter = function(entity, key) return M.set_filter(entity, key) end,
 	set_auto = function(entity, on) return M.set_auto(entity, on) end,                     -- (issue #532)
+	set_mode = function(entity, mode) return M.set_mode(entity, mode) end,                 -- (issue #537)
+	--- (tests, issue #537) the automatic mode's state: { auto (the stock per logistic network), dm (the pass: lid, phase, i),
+	--- points (per logistic network the length of the point list) }
+	demand = function()
+		local s = storage.fork_me_lif
+		if not s then return nil end
+		local points = {}
+		for lid, c in pairs(s.pts or {}) do points[lid] = #c.list end
+		return { auto = s.auto, dm = s.dm and { lid = s.dm.lid, phase = s.dm.phase, i = s.dm.i } or nil, points = points }
+	end,
 	get_settings = function(entity)
 		local rec = rec_of(entity)
 		return rec and settings_of(rec) or nil

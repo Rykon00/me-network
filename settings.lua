@@ -22,6 +22,10 @@ data:extend({
 	int("me-network-logistic-interface-visits-per-tick-max", "b24", 8, 1, 1000),
 	--- issue #532: the keys an ME Logistic Interface asks for at most for what failed crafting starts lack
 	int("me-network-logistic-interface-auto-keys", "b25", 20, 0, 200),
+	--- issue #537: the automatic mode reads this many requester points per tick (about 25 us each) and offers at most this
+	--- many stacks of an item
+	int("me-network-logistic-interface-demand-points-per-tick", "b26", 2, 1, 1000),
+	int("me-network-logistic-interface-auto-stacks", "b27", 1, 0, 100),
 	int("me-network-io-port-visits-per-tick", "b3", 2, 1, 1000),         -- issue #386: the ME IO Port
 	int("me-network-io-port-visits-per-tick-max", "b4", 8, 1, 1000),
 	int("me-network-maintainer-checks-per-tick", "c1", 4, 1, 1000),

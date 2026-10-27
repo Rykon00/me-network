@@ -977,6 +977,9 @@ lsbus506 = require("lsbus")({ me_place = me_place, cable_row = cable_row, power 
 --- me-network issue #531: the ME Logistic Interface (lif.lua)
 lif531 = require("lif")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #537: the ME Logistic Interface's automatic mode (lifauto.lua)
+lifauto537 = require("lifauto")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #156: the ME Pattern Capacity Card (patterncap.lua)
 patterncap156 = require("patterncap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1187,6 +1190,7 @@ local function tests_running()
 	sbusmode155.running(check)
 	lsbus506.running(check)
 	lif531.running(check)
+	lifauto537.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
 	return running
@@ -2044,7 +2048,7 @@ local function schedule_digest()
 	for _, e in pairs(s.find_entities_filtered{ name = "me-io-port" }) do                -- (issue #386)
 		put("iop", e, remote.call("gregtorio-me-ioport", "schedule", e))
 	end
-	for _, surface in pairs(game.surfaces) do                                           -- (issue #531, on its own surface)
+	for _, surface in pairs(game.surfaces) do                                           -- (issue #531, #537: on surfaces of their own)
 		for _, e in pairs(surface.find_entities_filtered{ name = "me-logistic-interface" }) do
 			put("lif", e, remote.call("gregtorio-me-logistic-interface", "schedule", e))
 		end
@@ -2159,6 +2163,7 @@ script.on_nth_tick(10, function()
 	sbusmode155.tick()
 	lsbus506.tick()
 	lif531.tick()
+	lifauto537.tick()
 	remoteview176.tick()
 	graph43.tick()
 	done_test()
@@ -5057,6 +5062,7 @@ script.on_init(function()
 	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lsbus506.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lif531.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(lifauto537.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")

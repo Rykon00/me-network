@@ -43,6 +43,7 @@ local QUEUES = {
 	{ name = "io_port", floor = "io_port", ceiling = "io_port_max", probe = "io_port_probe" },       -- issue #386
 	{ name = "logistic_interface", floor = "logistic_interface", ceiling = "logistic_interface_max",   -- issue #531
 		probe = "logistic_interface_probe" },
+	{ name = "logistic_demand", floor = "logistic_demand", ceiling = "logistic_demand" },        -- issue #537 (requester points)
 	{ name = "maintainer", floor = "maintainer", ceiling = "maintainer_max", probe = "maintainer_probe" },
 	{ name = "circuit", rate = "circuit" },
 	{ name = "jobs", floor = "jobs", ceiling = "jobs_max" },

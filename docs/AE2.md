@@ -619,6 +619,35 @@ logistic chests** stand on its tile; you never see them, the robots do. Its wind
   are the interface's own request rows. A job never waits for what the network lacks: it does not start at all, so this
   follows the starts that failed. What they lacked is dropped when the job starts, the target is reached, or nobody has
   tried for two tries. The list below the switch shows what it asks for now.
+* **Automatic mode** (issue #537; the switch at the top of the window, **on** for a newly built block, off for a block
+  built before): the block works without rows. The rows still apply on top, and an item that a row of the logistic
+  network names is left to that row.
+  * **Offer**: it reads what the **requester points** of its logistic network want (requester chests, rocket silos,
+    players' and vehicles' logistics): per item the requests less what lies there less what robots bring now. Of that, what
+    the logistic network **cannot supply itself** (its storage and provider chests, without the ME Logistic Interfaces'
+    own chests) is offered, as far as the ME network has it (not counting what an ME Logistic Storage Bus of the same
+    logistic network shows: that is the base's own), at most **one stack** per item (map setting "ME Logistic
+    Interface: stacks offered per item"). So the base's own chests are used first, and what ME offers is not counted as the
+    base's supply (else it would cover the demand, the demand would vanish and ME would take the stock back). When the
+    demand of an item is gone, its stock stays for **two rounds** (robots may be on their way), then what no robot reserved
+    goes back into the network.
+  * **The ME network first**: an item that an ME block waits for (a parked export bus, an interface, a level maintainer, a
+    crafting start that lacked it) is not offered while it waits; if it was, it goes back at once. The window counts these
+    items.
+  * **Asks**: for what ME blocks wait for (the same list) and what crafting lacks (above), **one stack** per item and only
+    while the logistic network has the item outside the ME Logistic Interfaces' chests (otherwise the request would only
+    fill the requester). In Automatic mode the switch "Request what crafting lacks" does not apply: the block always asks.
+    Only the first block of a logistic network and ME network asks, a block in Automatic mode before one in Manual mode.
+  * **Several blocks** in one logistic network: the first one in Automatic mode (built first) reads the requests and
+    decides; the stock of an item goes to the block **nearest to the requester with the largest demand** for it (the
+    robots fly less).
+  * **Unknown items and room**: a request for an item the game does not know is skipped and counted in the window (a
+    safety net: Factorio 2.1 drops such requests itself when the mod of the item is removed). A stock that does not fit
+    into the hidden chest (36 slots, less what the offer rows take) is left out, the largest demands first, and counted.
+  * **What it costs**: the block reads 2 requester points per tick (map setting "ME Logistic Interface: requests read per
+    tick"; about 25 microseconds each), one logistic network after the other: a base of 355 points is read in about 3
+    seconds. Then it works out each requested item (a few microseconds each) and decides. `/me-stats` shows the points read
+    as a queue of their own. The list of points is taken again every 10 seconds and when a requester is built.
 * **Accept** (a hidden storage chest): robots drop **trash and surplus** there like into any storage chest. "**Accept
   trash**" is on by default; off, the chest takes nothing. A **filter** item makes it a filtered storage chest: robots
   prefer it for that item (handy to lead a sorting line into the network), and then it takes only that item.

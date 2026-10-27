@@ -219,6 +219,36 @@ local function provided(own, it)
 	return held(own.provider, it) + held(own.requester, it, defines.inventory.logistic_container_trash)
 end
 
+--- issue #537: what the owned chests of logistic network `net` hold of `it` in the members its get_item_count counts without
+--- a member (the storage chests, the providers, the requesters' trash); 0 while nothing is owned there
+function M.owned_count(net, it)
+	local own = owned_in(net)
+	if not own then return 0 end
+	return held(own.storage, it) + provided(own, it)
+end
+
+--- issue #537: the same for every key at once ({ key -> count }, one get_contents per owned chest; empty while nothing is
+--- owned there)
+function M.owned_contents(net)
+	local out = {}
+	local own = owned_in(net)
+	if not own then return out end
+	local function add(list, index)
+		for _, e in ipairs(list) do
+			if e.valid then
+				for _, it in pairs(e.get_inventory(index).get_contents()) do
+					local key = N.key_of(it.name, it.quality)
+					out[key] = (out[key] or 0) + it.count
+				end
+			end
+		end
+	end
+	add(own.storage, CHEST)
+	add(own.provider, CHEST)
+	add(own.requester, defines.inventory.logistic_container_trash)
+	return out
+end
+
 --------------------------------------------------------------------------------
 --- the external cell's functions (called by the storage engine)
 --------------------------------------------------------------------------------
