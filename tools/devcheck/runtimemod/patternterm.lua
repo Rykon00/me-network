@@ -171,8 +171,8 @@ return function(H)
 			hand[1].set_stack{ name = BLANK, count = 10 }
 			expect(R("click", pt, 1, hand[1], inv, false) == nil and slots[1].count == 10 and not hand[1].valid_for_read, "ten blanks into the slot")
 			local full = prototypes.item[BLANK].stack_size    -- (50 standalone, 64 with Gregtorio)
-			hand[1].set_stack{ name = BLANK, count = 60 }
-			expect(R("click", pt, 1, hand[1], inv, false) == nil and slots[1].count == full and hand[1].count == 70 - full, "a stack merges up to " .. full .. ": " .. slots[1].count .. ", hand " .. tostring(hand[1].count))
+			hand[1].set_stack{ name = BLANK, count = full - 4 }
+			expect(R("click", pt, 1, hand[1], inv, false) == nil and slots[1].count == full and hand[1].count == 6, "a stack merges up to " .. full .. ": " .. slots[1].count .. ", hand " .. tostring(hand[1].count))
 			expect(R("click", pt, 1, hand[1], inv, false) == "slot-full", "a full blank slot")
 			--- taking them out: into the hand (the hand is not empty here: refused by transfer), shift into the inventory
 			hand[1].clear()
