@@ -13,8 +13,9 @@
 ---     through on_object_destroyed (every recorded object is registered: revived, mined, cancelled, destroyed, upgraded or a
 ---     proxy fulfilled, whatever the cause) and on_cancelled_upgrade.
 ---   * The safety net: a rescan of one logistic cell after the other of the networks with an automatic block (its construction
----     square, one find_entities_filtered for ghosts and proxies; with a second one for upgrades it cost 132 us per cell on the
----     maintainer's Nauvis), at the map setting "construction cells rescanned per second" (10). It adds what no event
+---     square in four quarters on four steps, one find_entities_filtered for ghosts and proxies each; the whole square with a
+---     second search for upgrades cost 132 us per cell on the maintainer's Nauvis), at the map setting "construction cells
+---     rescanned per second" (10). It adds what no event
 ---     announced (a ghost made by a script without raise_built, a network that got its first automatic block) and takes the
 ---     current needs of a proxy (one that was partly served raises no event); a recorded ghost is left as it is. Upgrades are
 ---     looked for only in the first round of a network (`s.full`): order_upgrade raises on_marked_for_upgrade whoever calls it,
@@ -22,7 +23,8 @@
 ---   * In `storage` (the maintainer's choice, issue #538): the records decide what is offered, and a peer that joins must see
 ---     what the server counted (events a script never raised would make a count built again from the world differ).
 --- State: storage.fork_me_lifc = { recs = { [registration number] = { e, lid, items = { [key] = n }, x, y } }, tally = { [lid] =
---- { [key] = { n, x, y } } }, cur (the rescan: lid, cells, i), last (the lid of the last rescan), full = { [lid] = true } (rescanned
+--- { [key] = { n, x, y } } }, cur (the rescan: lid, cells, i, q the quarter), last (the lid of the last rescan),
+--- full = { [lid] = true } (rescanned
 --- once) }.
 --------------------------------------------------------------------------------
 
@@ -181,11 +183,14 @@ end
 --------------------------------------------------------------------------------
 
 --- one cell: what stands in its construction square (and belongs to `lid`) recorded with its needs now
-local function rescan_cell(s, lid, cell, autos, upgrades)
+--- (`quarter` 1..4: the quarter of the construction square, one per call: a whole square cost 132 us at once)
+local QUARTERS = { { -1, -1 }, { 0, -1 }, { -1, 0 }, { 0, 0 } }
+local function rescan_cell(s, lid, cell, autos, upgrades, quarter)
 	if not (cell.valid and cell.construction_radius > 0) then return end
 	local owner = cell.owner
 	local p, r = owner.position, cell.construction_radius
-	local area = { { p.x - r, p.y - r }, { p.x + r, p.y + r } }
+	local qx, qy = p.x + QUARTERS[quarter][1] * r, p.y + QUARTERS[quarter][2] * r
+	local area = { { qx, qy }, { qx + r, qy + r } }
 	local surface, force = owner.surface, owner.force
 	for _, e in pairs(surface.find_entities_filtered{ area = area, type = TYPES, force = force }) do
 		local reg = script.register_on_object_destroyed(e)
@@ -229,7 +234,7 @@ function M.on_tick(tick, net_of)
 		end
 		return
 	end
-	local n = Sched.per_second(Sched.setting("logistic_construction"), tick)
+	local n = Sched.per_second(4 * Sched.setting("logistic_construction"), tick)   -- (quarters of a square)
 	if n <= 0 then return end
 	s = state()
 	local done = 0
@@ -253,8 +258,9 @@ function M.on_tick(tick, net_of)
 			s.cur = cur
 		end
 		local cell = cur.cells[cur.i]
-		if cell then rescan_cell(s, cur.lid, cell, autos, not (s.full and s.full[cur.lid])) end
-		cur.i = cur.i + 1
+		cur.q = (cur.q or 0) + 1
+		if cell then rescan_cell(s, cur.lid, cell, autos, not (s.full and s.full[cur.lid]), cur.q) end
+		if cur.q >= 4 then cur.i, cur.q = cur.i + 1, 0 end
 		if cur.i > #cur.cells then
 			s.cur = nil
 			s.full = s.full or {}

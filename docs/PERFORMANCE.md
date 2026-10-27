@@ -4068,3 +4068,55 @@ range the issue estimated (0.05–0.07 ms), and about 3 KB per point read (the t
 `targeted_items_deliver`, `position`). Throughput, latencies and the service of every other kind of block are identical. A
 base without an automatic block pays nothing (`demand_step` returns after one cached lookup); fewer points per tick (the
 setting) lower the cost and lengthen a pass.
+
+## What construction needs, for the automatic mode (issue #538)
+
+`scripts/fork-me-logistic-construction.lua`: entity and tile ghosts, entities marked for upgrade and item request proxies in
+a logistic network with an automatic block are records in `storage` (the maintainer's choice: a joining peer must see what
+the server counted), added by the build events and `on_marked_for_upgrade`, removed by `on_object_destroyed` and
+`on_cancelled_upgrade`. The interface's pass adds the tally of its logistic network to the points' demand (one `pairs` over
+the keys at the end of phase 1).
+
+**Measured on the maintainer's save** (SpaceAge_first-try, Nauvis, a copy): 1048 logistic cells; searching each cell's
+construction square for ghosts, proxies and upgrades costs 132 µs per cell (138 ms for all of them, about what one count
+over the surface cost: 102 ms). So the safety net goes at 10 cells per second (map setting), one quarter of a square per
+step: about 0.013–0.04 ms per tick, a full round in about 100 s on Nauvis.
+
+**Bench** (`bench --ghosts N`, new): after the build burst (and after the allocation meter's ticks) N wall ghosts are pasted in
+one tick in the logistic network of `--logistic` (with `raise_built`, as a paste raises `on_built_entity` per ghost) and
+removed in one tick 60 ticks later. The first version pasted during the allocation meter's ticks when the latency probes
+ended early; the meter then counted the rescan of the pasted ghosts (+3.35 KB per tick).
+
+`bench --sizes 1000 --logistic 1000 --requesters 400 --ghosts 5000` (three runs each, median):
+
+| | origin/main (#537) | #538 |
+|---|---|---|
+| paste of 5000 ghosts: the loop (engine and every handler) | 106.0 ms | 167.6 ms |
+| removal of 5000 ghosts: the tick, whole (on_object_destroyed) | 6.5 ms | 18.2 ms |
+
+So a ghost costs about 12 µs in the paste tick and 2.3 µs when it goes. Profile of the paste (`--profile 1000 --exclusive`,
+own time per function, the instrumented copy adds about 0.6 µs per wrapped call): `needs_of` 3.7 µs (the item of the
+ghost's prototype, cached per name; its quality; its `item_requests`), `lid_of` 3.4 µs
+(`find_logistic_networks_by_construction_area`), `track` 2.7 µs (`register_on_object_destroyed`), `put` 1.8 µs, `drop`
+0.3 µs.
+
+The safety net: the first version searched a whole square at once and every recorded ghost again (110 ghosts in a square: a
+rescan of 185 KB and about 1 ms). Now a recorded ghost is left as it is (what it needs does not change; a proxy's needs are
+taken again), upgrades are searched only in a network's first round (`order_upgrade` raises its event whoever calls it), and a
+square is searched in four steps: 58.7 µs per quarter in the first round (both searches), 0.039 ms per tick at 10 cells per
+second.
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000 --requesters 400 --ghosts 5000` (three rounds in turns; the
+measured window is the first rescan round):
+
+| | origin/main (#537) | #538 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.498 / 2.38 | 0.544 / 2.40 (noise ±0.038 / ±0.15) |
+| 1000: Lua alloc KB per tick | 33.59 | 34.70 |
+| 5000: script avg / p99 (ms) | 1.118 / 3.11 | 1.103 / 3.01 (noise ±0.050 / ±0.16) |
+| 5000: load, first tick (ms) | 5.9 | 7.1 (noise ±0.6) |
+
+The check reports two numbers: the average at 1000 (+0.047 ms; the first round of the working copy was 0.575 ms, the other
+two +0.023 and +0.046 ms: the rescan's 0.039 ms per tick) and the first tick after the load at 5000 (+1.2 ms, once). The 99th
+percentile, which the whole squares had moved by +0.155 ms at 1000, is within the noise now; throughput and latencies are
+identical.

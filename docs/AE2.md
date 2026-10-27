@@ -638,8 +638,9 @@ logistic chests** stand on its tile; you never see them, the robots do. Its wind
     destroyed; only in logistic networks with a block in Automatic mode (whose construction area they stand in). What the
     logistic network cannot supply itself is offered like the requesters' demand, at the block nearest to them, so the
     robots fetch it from there. As a safety net the block also looks through the construction area of one roboport after the
-    other (map setting "construction areas rescanned per second", 10; about 0.13 ms each): that finds ghosts another mod
-    made without telling the game's events and module requests that were partly served. The window says how many items
+    other, a quarter per step (map setting "construction areas rescanned per second", 10; about 0.13 ms per area): that
+    finds ghosts another mod made without telling the game's events and module requests that were partly served; in the
+    first round after a logistic network got its first automatic block it also finds buildings marked for upgrade before. The window says how many items
     construction needs there. The count is kept in the save, so every player of a multiplayer game sees the same.
   * **The ME network first**: an item that an ME block waits for (a parked export bus, an interface, a level maintainer, a
     crafting start that lacked it) is not offered while it waits; if it was, it goes back at once. The window counts these
