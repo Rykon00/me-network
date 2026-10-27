@@ -5894,6 +5894,8 @@ remote.add_interface("gregtorio-me-network", {
 			inv.insert{ name = name, count = 1, quality = quality }
 		end)
 	end,
+	--- tests: the tick step of the drag (the ends turned back after the engine turned them)
+	drag_tick = function() M.drag_tick(game.tick) end,
 })
 
 return M

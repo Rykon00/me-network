@@ -135,10 +135,22 @@ local function take_back(e, give)
 end
 
 --- turn an underground end (the graph follows, as for a rotation by the player)
-local function turn(e, dir)
+local function set_dir(e, dir)
 	if e.direction == dir then return end
 	e.direction = dir
 	if e.type ~= "entity-ghost" then N.on_rotated(e) end
+end
+
+--- How long (ticks after the last build of a drag) the ends of the drag keep the direction given here: in the game the
+--- engine turns dragged underground pipes by its own rule (an underground pipe's above ground side faces its
+--- direction, the underground cable's faces away from it) after the build event, so M.on_tick turns them back.
+local HOLD = 5
+
+--- turn an end now and keep it turned while the drag goes on (`rec.ends`)
+local function turn(rec, e, dir)
+	set_dir(e, dir)
+	rec.ends = rec.ends or {}
+	rec.ends[#rec.ends + 1] = { e = e, dir = dir }
 end
 
 --- One underground cable `e` built by a player (`key`): the pair of the drag follows it. `moving`: part of a drag.
@@ -162,22 +174,42 @@ function M.underground_step(key, e, moving, give)
 	local dir = VEC_DIR[dx / dist][dy / dist]
 	if not rec.dir then
 		rec.dir = dir
-		turn(entry, dir)
+		turn(rec, entry, dir)
 	elseif dir ~= rec.dir then
 		take_back(e, give)
+		rec.tick = game.tick
 		return "taken"
 	end
 	if dist > reach() then
 		--- beyond the reach: the next pair starts here
-		s.ug[key] = { entry = e, ghost = ghost, dir = dir }
-		turn(e, dir)
+		local nrec = { entry = e, ghost = ghost, dir = dir, ends = rec.ends, tick = game.tick }
+		s.ug[key] = nrec
+		turn(nrec, e, dir)
 		return "entry"
 	end
 	local old = rec.exit
 	rec.exit = e
 	if old and old.valid and old ~= e then take_back(old, give) end
-	turn(e, OPPOSITE[dir])
+	turn(rec, e, OPPOSITE[dir])
+	rec.tick = game.tick
 	return "exit"
+end
+
+--- every tick: the ends of a drag that goes on (or ended at most HOLD ticks ago) keep the direction given to them
+function M.on_tick(tick)
+	local s = storage.fork_me_cabledrag
+	if not (s and s.ug and next(s.ug)) then return end
+	for key, rec in pairs(s.ug) do
+		if rec.ends then
+			if not rec.tick or tick - rec.tick > HOLD then
+				rec.ends = nil
+			else
+				for _, h in pairs(rec.ends) do
+					if h.e.valid then set_dir(h.e, h.dir) end
+				end
+			end
+		end
+	end
 end
 
 --- the item of a taken underground end back to the player: into the hand when it holds that item, else the inventory,
@@ -237,5 +269,6 @@ end
 
 N.drag_bridge = M.bridge                 -- (the runtime test calls both through the remote interface)
 N.drag_underground = M.underground_step
+N.drag_tick = M.on_tick
 
 return M

@@ -233,6 +233,7 @@ local function on_tick(tick)
 	fork_me.on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
 	names.step()                                              -- (issue #295: translation requests, while any wait)
+	cabledrag.on_tick(tick)                                   -- (the ends of a dragged underground cable keep their way)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
 

@@ -418,6 +418,14 @@ function me_graph_test()
 			and remote.call(NET, "underground_partner", at[23]) == at[24].unit_number,
 			"a drag of underground cables did not make pairs at the full reach: "
 			.. serpent.line((function() local o = {} for x, e in pairs(at) do o[#o + 1] = x .. ":" .. e.direction end return o end)()))
+		--- the game turns dragged underground pipes by its own rule after the build: the drag turns them back
+		for _, e in pairs(ends) do e.direction = (e.direction + 8) % 16 end
+		remote.call(NET, "drag_tick")
+		ok = true
+		for x, d in pairs(want) do ok = ok and at[x].direction == d end
+		expect(ok and remote.call(NET, "underground_partner", at[1]) == at[11].unit_number
+			and remote.call(NET, "underground_partner", at[23]) == at[24].unit_number,
+			"the ends of a drag the engine turned around were not turned back")
 		expect(dchest.get_inventory(defines.inventory.chest).get_item_count("me-underground-cable") == 18,
 			"the ends taken away did not come back: " .. dchest.get_inventory(defines.inventory.chest).get_item_count("me-underground-cable"))
 		--- a drag that turns back takes the end built against its way
