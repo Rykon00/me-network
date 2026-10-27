@@ -472,7 +472,6 @@ G.on("it_slot", function(event, player, el)
 	why, out = autocraft.provider_click(cursor, inv, provider, el.tags.slot, event.shift or remote)
 	flying(player, why)
 	if remote and out then G.moved_text(player) end
-	G.update_pane(player)
 	M.refresh(player)
 end)
 

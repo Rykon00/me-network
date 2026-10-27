@@ -235,8 +235,11 @@ section("REMOVEDKEYS", found)
 --- Issue #527: a block of KEYS (pasted by the mod's own keys) must not have allow_copy_paste (the game would try its own
 --- paste and say "Not operable"), nor be in SOURCES, and the keys' custom inputs must follow the game's controls without
 --- consuming them.
-local PASTE = require("__me-network__.prototypes.paste")
+--- (An older me-network has no such table: `migrate --from-ref` of a version before issue #519 makes its save without the
+--- check.)
+local paste_ok, PASTE = pcall(require, "__me-network__.prototypes.paste")
 local paste_rows, handlers = {}, {}
+if paste_ok then
 local function pastable(p)                   -- (an electric energy interface's allow_copy_paste is false by default)
 	if p.allow_copy_paste == nil then return p.type ~= "electric-energy-interface" end
 	return p.allow_copy_paste == true
@@ -296,6 +299,7 @@ for _, t in ipairs(PASTE.MACHINE_TYPES) do
 	for n, p in pairs(data.raw[t] or {}) do lacks(p, PASTE.MACHINE_TARGETS, t .. ":" .. n) end
 end
 for m in pairs(PASTE.BUILTIN) do handlers[m] = true end
+end
 for m in pairs(handlers) do paste_rows[#paste_rows + 1] = "handler\t" .. m end
 table.sort(paste_rows)
 section("PASTE", paste_rows)

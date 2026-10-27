@@ -250,40 +250,38 @@ tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 Every ME block has its own window in one style (title bar with close button), opened by **clicking the block** (the
 normal open key).
 
-**Beside the game's inventory** (issues #150 and #168, the default; map setting "ME windows beside the game's
-inventory"): an ME window opens next to the game's own inventory window, with its click rules. Between the two is a
-**hand-over buffer** of 20 slots ("Into the ME network"): what you put into it (shift + click, control + click for
-every stack of an item, a stack put down, half a stack) goes where a shift + click sends it below (into the network, a
-cell into the drive or the workbench, a pattern into the provider, a card into its slot); what the block cannot take
-stays in the buffer and comes back to you when the window closes (into your inventory, else onto the ground). E,
-Escape or the close button close the window.
+**Your inventory is in the window** (issue #542, Factorio 2.1's own inventory element): **every ME window is one window
+with your inventory on its left** ("Character") and the block's content and slots (cards, cell, cells of a drive,
+patterns) on its right. The inventory there is the game's own: click, right click, drag, the hand, the tooltips (a
+cell's or a pattern's description, a spoiling item, a label) and the trash keys work as in your inventory window.
+**Shift + click a stack to put it into the block** (a card into a card slot, a cell into the workbench or a free drive
+slot, a pattern into a free provider slot; in the terminal and every block without slots of its own (interface, import
+and export bus, controller, level maintainer, circuit interface, crafting CPUs) it is **stored in the network**);
+**control + click** puts every stack of that item there; shift + right click half the stack, control + right click half
+of every stack of it. What the block cannot take stays where it is, with a short message. Click a slot of the block with
+an item in hand to put it in (what does not belong there is refused and stays in your hand), click it with an empty hand
+to take the item, shift + click to take it into your inventory. (Until 0.5.10 the windows opened beside the game's
+inventory window with a hand-over buffer between them, or drew your inventory themselves; the map setting "ME windows
+beside the game's inventory" is gone. Items left in a buffer of an old save come back into your inventory when you
+update; what does not fit is kept for you, see below.)
 
-**In remote view** (issues #176 and #177; a space platform, or the map): the game has no inventory window there (it shows
-the ghost picker), the hand holds nothing and you have no main inventory of your own, so the buffer is not used and the
-setting makes no difference: the window draws your **character's inventory** on its left (the "Character" pane), even
-when the character stands on another planet. A click on a stack in it sends it to the block, like shift + click (a cell
-into the drive or the workbench, a pattern into the provider, a card into its slot, else into the network). What you
-take out of a block (a click on a cell in the drive, a pattern in the provider, a card in a slot, a stack in the terminal
-(right click: one item)) goes **straight into the character's inventory**, with the message "Moved to your inventory"; it
-never goes through the hand. If the inventory is full the item stays in the block and the window says so; without a
-character (the editor, a spectator) there is no inventory: the window says so, nothing can be put in or taken out and
-everything stays where it is. Items that have no place any more (a window closed with something in its buffer, cards a
-cell does not take) are never spilled from remote view: they are kept for you ("the items are kept for you") and come
-back into your inventory the next time you have room (when you open or close a window, or within a second). The
-command `/me-remote-probe` prints what the game reports for your controller. What the hand does elsewhere has a way in remote view too
-(issue #179): **Store item in hand** of the terminal is a click on the stack in the pane; for **Load pattern** and **Clear
-pattern** of the ME Pattern Terminal click the encoded pattern in the pane (it goes into the output slot), then press the
-button (they work on the output slot when the hand is empty).
+**In remote view** (issues #176 and #177; a space platform, or the map): the hand holds nothing and you have no main
+inventory of your own, so the window shows your **character's inventory** on its left, even when the character stands on
+another planet. A click on a stack in it sends it to the block, like shift + click (a cell into the drive or the
+workbench, a pattern into the provider, a card into its slot, else into the network). What you take out of a block (a
+click on a cell in the drive, a pattern in the provider, a card in a slot, a stack in the terminal (right click: one
+item)) goes **straight into the character's inventory**, with the message "Moved to your inventory"; it never goes
+through the hand. If the inventory is full the item stays in the block and the window says so; without a character (the
+editor, a spectator) there is no inventory: the window says so, nothing can be put in or taken out and everything stays
+where it is. Items that have no place any more (cards a cell does not take, a hand-over buffer of an old save) are never
+spilled from remote view: they are kept for you ("the items are kept for you") and come back into your inventory the next
+time you have room (when you open or close a window, or within a second). The command `/me-remote-probe` prints what the
+game reports for your controller. What the hand does elsewhere has a way in remote view too (issue #179): **Store item in
+hand** of the terminal is a click on the stack in your inventory there; for **Load pattern** and **Clear pattern** of the ME
+Pattern Terminal click the encoded pattern in it (it goes into the output slot), then press the button (they work on the
+output slot when the hand is empty).
 
-With the setting off, the windows draw your inventory themselves (issue #28): **every ME window shows your inventory on its left**
-("Character"), the block's slots (cards, cell, cells of a drive, patterns) in the window: click a stack in your
-inventory to pick it up, put it down, merge or swap it, right click for half a stack, **shift + click to put it into
-the block** (a card into a card slot, a cell into the workbench or a free drive slot, a pattern into a free provider
-slot; in the terminal and every block without slots of its own (interface, import and export bus, controller, level
-maintainer, circuit interface, crafting CPUs) it is **stored in the network**, control + click stores every stack of
-that item). What the block cannot take stays where it is, with a short message. Click a slot of the block with an item
-in hand to put it in (what does not belong there is refused and stays in your hand), click it with an empty hand to
-take the item, shift + click to take it into your inventory. Blocks that have a window of the game (terminal, crafting CPUs and
+Blocks that have a window of the game (terminal, crafting CPUs and
 level maintainer: lamps; circuit interface: constant combinator; ME Interface: container) show the ME window
 instead; the others (drive, controller, buses, pattern provider) have no window of
 their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second. With a tool
@@ -1861,13 +1859,12 @@ each shows data from a `*_data` function and changes things through a function o
 window is in storage except the terminal's tab, search, sort, kind and picked craft
 (`storage.fork_me_terminal[player]`).
 
-Issue #28 (`docs/ME-REWORK.md`, "Windows with the player's inventory"): a window can have the **inventory pane**, the
-player's main inventory drawn by the mod on the left of the content (`G.open_window(..., pane)`): one slot button per
-slot, updated through `on_player_main_inventory_changed` and `on_player_cursor_stack_changed` for the slots that changed
-only (`G.update_pane`, signatures in `storage.fork_me_gui_pane[player]`). Its clicks (`G.inventory_click`) pick up, put
-down, merge, swap and halve stacks like the game's, and shift + click hands the stack to the window's `shift`; the
-block's slots are buttons whose click goes to the window's `click`, which refuses a wrong item before anything moves.
-A slot's tooltip is the item's own (`elem_tooltip`) and, below it, the stack's description when it has one (issue #75: a
+Issue #28 (`docs/ME-REWORK.md`, "Windows with the player's inventory"): every window has the **inventory pane**, the
+player's inventory on the left of the content (`G.open_window(..., pane)`); since issue #542 ("The game's inventory
+element" there) it is Factorio 2.1's `inventory` element bound to the player's inventory: the game draws it and moves stacks
+to and from the hand, and `on_gui_inventory_action` brings shift + click (the window's `shift`) and control + click (its
+`control`, else `shift` for every stack of the item) to `G.inventory_action`. The block's slots are buttons whose click goes
+to the window's `click`, which refuses a wrong item before anything moves. A block slot's tooltip is the item's own (`elem_tooltip`) and, below it, the stack's description when it has one (issue #75: a
 cell's contents, partition and cards, a pattern's recipe; `G.stack_tooltip`), then the slot's own hint. The terminal's
 storage tab and every other grid of items kept in the network show the same for a stored cell or pattern (issue #79):
 the description is part of its key (`G.key_description`).

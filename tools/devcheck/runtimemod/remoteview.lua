@@ -66,9 +66,9 @@ return function(H)
 		expect(c == nil and inv == char and remote_view == true, "the hand in remote view: no cursor, the character's inventory, remote")
 		c, inv, remote_view = g("stand_in_hand", "none")
 		expect(c == nil and inv == nil and remote_view == true, "the hand in remote view without a character")
-		expect(g("stand_in_uses_buffer", "normal") == true, "the hand-over buffer is used outside remote view")
-		expect(g("stand_in_uses_buffer", "remote") == false and g("stand_in_uses_buffer", "none") == false,
-			"the hand-over buffer is not used in remote view (the pane is)")
+		--- issue #542: the pane's inventory element leaves the hand to the mod in remote view (a click sends the stack)
+		expect(g("pane_flags", false).handle_cursor_transfer == true and g("pane_flags", true).handle_cursor_transfer == false,
+			"the game handles the hand outside remote view only")
 
 		--- a cell out of the drive (issue #177): no inventory -> it stays; a full inventory -> it stays; else it arrives
 		local function cells() local n = 0 for _ in pairs(remote.call(NET, "drive", drive)) do n = n + 1 end return n end
@@ -149,7 +149,7 @@ return function(H)
 		local size = prototypes.item["iron-plate"].stack_size
 		local feed = game.create_inventory(4)
 		feed.insert{ name = "iron-plate", count = 2 * size + 10 }
-		remote.call(GUI, "buffer_absorb", feed, "terminal", term)
+		remote.call(GUI, "inventory_click", nil, feed, 1, "control", term)
 		expect(remote.call(NET, "count", term, "iron-plate") == before_plates + 2 * size + 10, "plates fed to the network")
 		local n, tw = remote.call(TERM, "take", nil, nil, term, "iron-plate", "inventory-one")
 		expect(n == nil and tw == "no-inventory", "terminal take without an inventory: " .. tostring(n) .. "/" .. tostring(tw))
@@ -211,7 +211,7 @@ return function(H)
 		main.destroy()
 		char.destroy()
 		me_report("REMOTEVIEW", "ME windows in remote view", problems,
-			"the helper, no buffer, a cell and an item out into the character's inventory or kept, no spill, parked and returned")
+			"the helper, the pane's flags, a cell and an item out into the character's inventory or kept, no spill, parked and returned")
 	end
 
 	function T.running(check) check(storage.remoteview and storage.remoteview.done, "ME windows in remote view") end

@@ -2793,6 +2793,9 @@ measurement cannot tell from the noise is no reason for a cache that has to be k
 
 ## The pane's slot signature (issue #75)
 
+(Gone since issue #542: the pane is the game's `inventory` element, which costs no Lua work per slot or per inventory change.
+The numbers are the record of the mod's pane.)
+
 The inventory pane compares a signature per slot at every refresh (on each inventory change, and once a second with the
 quality), and since issue #75 a cell or an encoded pattern adds its `item_number` to it, so a slot that shows a stack's
 description notices when the stack was written anew. Measured as the signature work alone, headless (the loop of

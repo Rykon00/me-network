@@ -958,7 +958,7 @@ RUNTIME_TESTS = (
     ("TEMPERATURE", "ME fluid temperature test (issue #159)"),
     ("PROVIDERS", "ME pattern provider machines test (issue #158)"),
     ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
-    ("BUFFER", "ME terminal buffer (issue #150, experiment)"),
+    ("NATIVEINV", "ME windows with the native inventory (issue #542)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
     ("IFACETERM", "ME Interface Terminal (issue #336)"),
     ("BLOCKING", "ME Pattern Provider blocking mode (issue #335)"),

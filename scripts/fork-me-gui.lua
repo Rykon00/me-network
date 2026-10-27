@@ -9,14 +9,14 @@
 ---     entity), def.refresh(player, frame) for the bounded refresh of open windows, def.entities (names whose
 ---     click opens it). open_entity() is called by the open key (simple entities have no vanilla GUI) and by
 ---     on_gui_opened (lamps, combinators, tanks, containers: the vanilla window is replaced at once).
----   * Issue #28 (docs/ME-REWORK.md "Windows next to the player's inventory"): a window can have the inventory pane:
----     the player's main inventory drawn by the mod on the left of the content (update_pane: only the buttons whose
----     slot changed; on_player_main_inventory_changed and on_player_cursor_stack_changed, nothing per tick). Its
----     clicks (inventory_click) work like the game's: pick up, put down, merge, swap, half a stack, and shift + click
----     sends the stack to the block (the window's `shift`). The block's slots in the content are buttons too
----     (block_click: the window's `click` refuses a wrong item before anything moves).
---- State: what a window shows lives in its elements' tags; the slot signatures of a pane in
---- storage.fork_me_gui_pane[player_index] = { size, sigs }.
+---   * Issue #28, since issue #542 with Factorio 2.1's GUI element `inventory` (docs/ME-REWORK.md "Windows with the
+---     player's inventory"): every window is one frame with the player's real inventory on the left (the pane: an
+---     `inventory` element bound to it, drawn and clicked by the game: pick up, put down, swap, half a stack, the tooltips)
+---     and the ME content on the right. The game raises on_gui_inventory_action for what it cannot do itself: shift +
+---     click sends the stack to the block (the window's `shift`), control + click every stack of the item
+---     (inventory_action). The block's slots in the content are buttons (block_click: the window's `click` refuses a
+---     wrong item before anything moves).
+--- State: what a window shows lives in its elements' tags; nothing of the pane is kept.
 --------------------------------------------------------------------------------
 
 local M = {}
@@ -108,7 +108,8 @@ function M.act(act, data)
 end
 
 --------------------------------------------------------------------------------
---- windows: one screen frame; issue #28: with the player's inventory drawn by the mod on the left (the pane)
+--- windows: one screen frame; issue #28: with the player's inventory on the left (the pane; issue #542: the game's
+--- own `inventory` element)
 --------------------------------------------------------------------------------
 
 local PANE_COLUMNS = 10
@@ -124,125 +125,28 @@ function M.fit_height(player, reserve, max, min)
 	if h < min then h = min end
 	return h
 end
---- LuaItemStacks of the main inventory's slots per player: only a cache for reading (indexing a slot makes a new
---- object each time; the values are always read from the game), so it is no game state and is not saved
-local slot_cache = {}
-
-local function pane_state()
-	local s = storage.fork_me_gui_pane
-	if not s then
-		s = {}
-		storage.fork_me_gui_pane = s
-	end
-	return s
-end
 
 --------------------------------------------------------------------------------
---- Issue #150, rolled out to every ME window in #168 (the map setting "me-network-real-inventory", on by default; off:
---- the pane of issue #28): a window opened `relative` is a frame in player.gui.relative anchored right of a script inventory of BUFFER_SLOTS
---- slots, the hand-over buffer, which is the player's opened GUI: the game draws its own container window with the
---- player's real inventory left of the buffer. What lands in the buffer (shift + click, a stack put down, a drag) goes
---- into the network through the window's `shift` function. There is no event for a script inventory that changed, so
---- the buffer is emptied on the events that come with every such move (the player's main inventory or cursor changed:
---- on_inventory_changed below), at the window's refresh (once a second, refresh_all) and when the window closes; what
---- the network refuses stays in the buffer and goes back to the player on close (give_back: the inventory, else the
---- ground), so nothing is lost. storage.fork_me_gui_buffer[player_index] = { inv, opened_tick }.
---- Issues #176 and #177: in remote view (a space platform: defines.controllers.remote) the game's inventory window is
---- the ghost picker, the hand holds nothing and player.get_main_inventory() is nil. A window then never uses the buffer
---- but the pane, which shows the character's inventory (player_inventory); every click acts as if shift were held, and
---- what is taken out of a block goes into that inventory with a flying text (hand hands the windows their cursor, inventory
+--- Issues #176 and #177: in remote view (a space platform: defines.controllers.remote) the hand holds nothing and
+--- player.get_main_inventory() is nil. The pane then shows the character's inventory (player_inventory) with the game's
+--- cursor handling off: every click on a stack sends it to the block as if shift were held (inventory_action), and what
+--- is taken out of a block goes into that inventory with a flying text (hand hands the windows their cursor, inventory
 --- and "remote"). Without an inventory nothing moves and the window says why. give_back never spills from remote view:
 --- what has no place is parked (storage.fork_me_gui_parked[player_index]) and returned by return_parked.
 --------------------------------------------------------------------------------
 
-local BUFFER_SLOTS = 20
-M.BUFFER_SLOTS = BUFFER_SLOTS
-
-local function buffer_of(player)
-	local s = storage.fork_me_gui_buffer
-	local b = s and s[player.index]
-	if b and not (b.inv and b.inv.valid) then
-		s[player.index] = nil
-		return nil
-	end
-	return b
-end
-M.buffer_of = buffer_of
-
---- what a buffer slot holds, for `seen` (name, count, quality and, for an item with tags, its number)
-local function slot_key(st)
-	return st.name .. "#" .. st.count .. "@" .. st.quality.name .. M.stack_ident(st)
-end
-
---- Every stack of `inv` into the window's block through `def.shift` (what it refuses stays); the number of stacks taken.
---- Issue #201: with `seen` (what the slots held after the last call: { [slot] = key }) a stack that is still what the block
---- refused last time is left alone. Otherwise a stack of cards in the buffer (the block takes three, the rest stays) filled a card
---- slot again as soon as the player took a card out of it: a click on a card made a second one. A stack that is new or
---- changed is tried. The second value is the new `seen`.
-function M.buffer_absorb(inv, def, entity, seen)
-	if not (inv and inv.valid and def and def.shift and entity and entity.valid) or inv.is_empty() then return 0, {} end
-	local n = 0
-	for i = 1, #inv do
-		local st = inv[i]
-		if st.valid_for_read and not (seen and seen[i] == slot_key(st)) then
-			local why = def.shift(entity, st, inv)
-			if not why and not st.valid_for_read then n = n + 1 end
-		end
-	end
-	local now = {}
-	for i = 1, #inv do
-		local st = inv[i]
-		if st.valid_for_read then now[i] = slot_key(st) end
-	end
-	return n, now
-end
-
---- what is left in `inv` back to `to` (a player or an inventory; give_back: else the ground at `entity`)
-function M.buffer_return(inv, to, entity)
-	if not (inv and inv.valid) then return end
-	for i = 1, #inv do
-		local st = inv[i]
-		if st.valid_for_read then M.give_back(to, st, entity) end
-	end
-end
+local PARK_SLOTS = 20
 
 --- the player's open ME window (or nil), and its name
 function M.window_of(player)
 	local frame = player.gui.screen.fork_me_window
 	if frame and frame.valid then return frame, frame.tags.fork_me_window end
-	frame = buffer_of(player) and player.gui.relative.fork_me_window
-	if frame and frame.valid then return frame, frame.tags.fork_me_window end
 	return nil
-end
-
---- empty the player's buffer into the window's block (issue #150)
-local function absorb(player)
-	local b = buffer_of(player)
-	if not b or b.inv.is_empty() then return end
-	local frame, name = M.window_of(player)
-	local entity = frame and M.entity_of(player, frame)
-	if entity then
-		local _, seen = M.buffer_absorb(b.inv, windows[name], entity, b.seen)
-		b.seen = seen
-	end
-end
-
---- the window's GUI for player.opened: the frame, or the buffer of a relative window
-local function opened_of(player, frame)
-	local b = frame and frame.parent == player.gui.relative and buffer_of(player)
-	return b and b.inv or frame
 end
 
 --- make the player's ME window the opened GUI again (the picker keeps a window open on the close keys)
 function M.focus(player, frame)
-	local o = opened_of(player, frame)
-	if player.opened ~= o then player.opened = o end
-end
-
---- does a new window open beside the game's inventory? (issue #168: the map setting, on by default)
-local function real_inventory()
-	local s = settings.global["me-network-real-inventory"]
-	return s == nil or s.value == true
+	if player.opened ~= frame then player.opened = frame end
 end
 
 --- Issue #177: what could not go to a player in remote view waits here, never spilled and never lost (give_back);
@@ -260,19 +164,20 @@ local function parked_of(player, create)
 		p = nil
 	end
 	if not p and create then
-		p = { inv = game.create_inventory(BUFFER_SLOTS), told = -1 }
+		p = { inv = game.create_inventory(PARK_SLOTS), told = -1 }
 		s[player.index] = p
 	end
 	return p
 end
 
---- `stack` into the player's parked items (all of it, the stack is empty afterwards); says so once per tick
+--- `stack` into the player's parked items (all of it, the stack is empty afterwards); says so once per tick to a
+--- connected player
 local function park(player, stack)
 	local p = parked_of(player, true)
-	if not p.inv.can_insert(stack) then p.inv.resize(#p.inv + BUFFER_SLOTS) end
+	if not p.inv.can_insert(stack) then p.inv.resize(#p.inv + PARK_SLOTS) end
 	p.inv.insert(stack)
 	stack.clear()
-	if p.told ~= game.tick then
+	if p.told ~= game.tick and player.connected ~= false then
 		p.told = game.tick
 		player.create_local_flying_text{ text = { M.player_inventory(player) and "fork-me-gui.parked-full" or "fork-me-gui.parked" },
 			create_at_cursor = true }
@@ -314,35 +219,54 @@ function M.return_parked(player)
 	return n
 end
 
---- does a window open beside the game's inventory with the hand-over buffer, not with the mod's pane? (issue #168;
---- never in remote view, issue #176: the game's inventory window is the ghost picker there)
-function M.uses_buffer(player, pane)
-	return pane ~= false and real_inventory() and not M.in_remote_view(player)
+--- Issue #542: the hand-over buffer of issues #150 and #168 is gone (the inventory element replaced it). A save of 0.5.10 may
+--- hold one per player, storage.fork_me_gui_buffer[player_index] = { inv, ... } (a script inventory that was the player's
+--- opened GUI), and the ME frame anchored beside it in player.gui.relative. Its stacks go back to the player, never onto the
+--- ground: into their inventory, what does not fit is parked (return_parked hands it over later). The frame goes. Called by
+--- close_window (the old buffer's own close, on_closed) and through it by close_all (a mod update). Returns the number of
+--- stacks handed back.
+function M.drop_buffer(player)
+	local s = storage.fork_me_gui_buffer
+	local b = s and s[player.index]
+	local n = 0
+	if b then
+		s[player.index] = nil
+		if next(s) == nil then storage.fork_me_gui_buffer = nil end
+		local inv = b.inv
+		if inv and inv.valid then
+			local to = M.player_inventory(player)
+			for i = 1, #inv do
+				local st = inv[i]
+				if st.valid_for_read then
+					n = n + 1
+					local put = to and to.insert(st) or 0
+					if put >= st.count then st.clear()
+					else
+						if put > 0 then st.count = st.count - put end
+						park(player, st)
+					end
+				end
+			end
+			inv.destroy()
+		end
+	end
+	local gui = player.gui
+	local rel = gui and gui.relative and gui.relative.fork_me_window
+	if rel and rel.valid then rel.destroy() end
+	return n
 end
 
 function M.close_window(player)
 	local frame = player.gui.screen.fork_me_window
 	if frame and frame.valid then frame.destroy() end
-	local b = buffer_of(player)
-	if b then                                             -- issue #150: the buffer into the block, the rest back
-		absorb(player)
-		local rel = player.gui.relative.fork_me_window
-		local entity = rel and rel.valid and M.entity_by_unit(rel.tags.unit)
-		storage.fork_me_gui_buffer[player.index] = nil
-		M.buffer_return(b.inv, player, entity)
-		if rel and rel.valid then rel.destroy() end
-		b.inv.destroy()
-	end
+	M.drop_buffer(player)                                 -- (issue #542: a buffer of a 0.5.10 save)
 	local picker = player.gui.screen.fork_me_picker       -- the picker (scripts/fork-me-picker.lua) belongs to the window
 	if picker and picker.valid then picker.destroy() end
-	local s = storage.fork_me_gui_pane
-	if s then s[player.index] = nil end
-	slot_cache[player.index] = nil
 	M.return_parked(player)
 end
 
---- the table of the pane's slot buttons (named "s<slot>"), or nil
-local function pane_table(frame)
+--- the pane's inventory element (named "fork_me_inv"), or nil
+local function pane_element(frame)
 	local body = frame and frame.valid and frame.fork_me_body
 	local pane = body and body.fork_me_pane
 	local scroll = pane and pane.fork_me_inv_scroll
@@ -411,102 +335,63 @@ function M.stack_button(parent, s, tags, tooltip)
 	return btn
 end
 
+--- Issue #542: the handling flags of the pane's inventory element. Outside remote view the game moves stacks between the
+--- slots and the hand itself (left and right click, drag), opens an item (a blueprint book, an armor's grid) and trashes
+--- a stack; shift + click and control + click it cannot do (it does not know where they go): they raise
+--- on_gui_inventory_action for the mod. In remote view (issues #176, #177) the hand holds nothing, so the cursor moves are
+--- the mod's too: a click sends the stack to the block.
+function M.pane_flags(remote)
+	return { handle_cursor_transfer = not remote, handle_cursor_split = not remote, handle_open_item = true,
+		handle_open_mod_item = true, handle_send_stack_to_trash = true, handle_send_stacks_to_trash = true }
+end
+
 --- the left pane: "Character" (`hint`: what shift + click does there, as its tooltip and a line below), a scroll pane,
---- a table of 10 columns (filled by update_pane)
+--- the inventory element bound to the player's inventory (issue #542: the game draws and updates its slots)
 local function build_pane(parent, hint, player)
 	local box = parent.add{ type = "frame", name = "fork_me_pane", style = "inside_shallow_frame_with_padding", direction = "vertical" }
 	box.add{ type = "label", caption = { "fork-me-gui.character" }, style = "caption_label", tooltip = hint }
 	if hint then M.label(box, hint, PANE_COLUMNS * 40) end
-	if M.in_remote_view(player) then                   -- issues #176, #177: what remote view does
-		local inv = M.player_inventory(player)
+	local remote = M.in_remote_view(player)
+	local inv = M.player_inventory(player)
+	if remote then                                     -- issues #176, #177: what remote view does
 		M.label(box, { inv and "fork-me-gui.remote-help" or "fork-me-gui.remote-no-inventory" }, PANE_COLUMNS * 40, nil, "fork_me_remote_help")
-		if not inv then return end                     -- (no table: there is nothing to show)
 	end
+	if not inv then return end                         -- (no element: there is nothing to show)
 	local scroll = box.add{ type = "scroll-pane", name = "fork_me_inv_scroll", horizontal_scroll_policy = "never" }
 	--- (issue #469: at most what the screen leaves below the title bar, the caption and the hint: a 1080p screen at 150 % UI
 	--- scale has 720 GUI pixels)
 	scroll.style.maximal_height = M.fit_height(player, 220, PANE_HEIGHT, 200)
-	scroll.add{ type = "table", name = "fork_me_inv", column_count = PANE_COLUMNS, style = "filter_slot_table" }
+	local def = { type = "inventory", name = "fork_me_inv", slots_per_row = PANE_COLUMNS, tags = M.act("inventory") }
+	for k, v in pairs(M.pane_flags(remote)) do def[k] = v end
+	local el = scroll.add(def)
+	el.inventory = inv
 end
 
---- The pane follows the main inventory: every slot's signature (name and count, an item with tags' item_number, or the
---- hand mark) is compared with the one shown, and only the buttons whose signature changed are set again (the quality is read for those only:
---- reading it costs twice as much as name and count, measured). `quality`: the quality of every filled slot is read
---- and compared too (the refresh, with the quality mod: a change of quality alone). A new window or a changed
---- inventory size builds the table and sets every button. Returns the number of buttons set.
-function M.update_pane(player, quality)
-	local frame = M.window_of(player)
-	local t = pane_table(frame)
-	local inv = t and M.player_inventory(player)
-	if not inv then return 0 end
-	local ps = pane_state()
-	local st = ps[player.index]
-	local n = #inv
-	local full = false
-	if not st or st.size ~= n then
-		st = { size = n, sigs = {}, quals = {} }
-		ps[player.index] = st
-		t.clear()
-		for i = 1, n do t.add{ type = "sprite-button", name = "s" .. i, style = "slot_button", tags = M.act("inv_slot", { slot = i }) } end
-		full = true
+--- Issue #542: the pane follows the player at the refresh (once a second): another inventory (the character died, remote
+--- view was entered or left) is bound and the handling flags are set for it. Nothing to do per slot: the game draws them.
+local function follow_inventory(player, frame)
+	local el = pane_element(frame)
+	if not el then return end
+	local inv = M.player_inventory(player)
+	if inv and el.inventory ~= inv then el.inventory = inv end
+	local remote = M.in_remote_view(player)
+	if el.handle_cursor_transfer == remote then
+		el.handle_cursor_transfer = not remote
+		el.handle_cursor_split = not remote
 	end
-	quality = quality and script.feature_flags.quality and not full
-	local cache = slot_cache[player.index]
-	if not (cache and cache.inv == inv and cache.n == n) then
-		cache = { inv = inv, n = n }
-		for i = 1, n do cache[i] = inv[i] end
-		slot_cache[player.index] = cache
-	end
-	local hand = not M.in_remote_view(player) and player.hand_location or nil   -- (the hand holds nothing in remote view)
-	local hand_slot = hand and hand.inventory == inv.index and hand.slot or nil
-	local sigs, quals, set = st.sigs, st.quals, 0
-	for i = 1, n do
-		local s = cache[i]
-		local sig, filled
-		if s.valid_for_read then
-			local name = s.name
-			sig = name .. "#" .. s.count
-			local tagged = tagged_names[name]               -- (stack_ident, inline: this runs for every slot)
-			if tagged == nil then tagged = is_tagged(name) end
-			if tagged then sig = sig .. "#" .. tostring(s.item_number) end
-			filled = true
-		elseif i == hand_slot then sig = "hand"
-		else sig = "" end
-		local q = quality and filled and s.quality.name or nil
-		if full or sig ~= sigs[i] or (q and q ~= quals[i]) then
-			sigs[i] = sig
-			quals[i] = filled and script.feature_flags.quality and (q or s.quality.name) or nil
-			M.render_slot(t["s" .. i], s, i == hand_slot)
-			set = set + 1
-		end
-	end
-	return set
 end
 
 --- A window: closes the player's ME window, builds frame, title bar and content frame; the frame is the player's
 --- opened GUI. Returns the frame and the content flow. `tags` go onto the frame (fork_me_window = name is added).
---- Issue #28: every window has the pane, the player's inventory drawn on the left of the content (`pane` false: none).
---- Issue #150: `relative` (an experiment): no pane; the frame is anchored right of the hand-over buffer, which is the
---- opened GUI (the game's own window with the player's inventory).
-function M.open_window(player, name, caption, tags, pane, relative)
-	--- (issue #168: every window with a pane; issue #176: not in remote view, where the game's inventory window is the ghost picker)
-	if relative == nil then relative = M.uses_buffer(player, pane) end
-	pane = pane ~= false and not relative
+--- Issue #28: every window has the pane, the player's inventory on the left of the content (`pane` false: none; issue
+--- #542: the game's inventory element).
+function M.open_window(player, name, caption, tags, pane)
 	M.close_window(player)
 	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
-	local frame
-	if relative then
-		local inv = game.create_inventory(BUFFER_SLOTS, { "fork-me-gui.buffer-title" })
-		storage.fork_me_gui_buffer = storage.fork_me_gui_buffer or {}
-		storage.fork_me_gui_buffer[player.index] = { inv = inv, opened_tick = game.tick }
-		frame = player.gui.relative.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t,
-			anchor = { gui = defines.relative_gui_type.script_inventory_gui, position = defines.relative_gui_position.right } }
-	else
-		frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t }
-	end
+	local frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t }
 	local bar = frame.add{ type = "flow", direction = "horizontal" }
-	if not relative then bar.drag_target = frame end
+	bar.drag_target = frame
 	bar.style.horizontal_spacing = 8
 	bar.add{ type = "label", caption = caption, style = "frame_title", ignored_by_interaction = true }
 	local drag = bar.add{ type = "empty-widget", style = "draggable_space_header", ignored_by_interaction = true }
@@ -517,58 +402,64 @@ function M.open_window(player, name, caption, tags, pane, relative)
 		tooltip = { "gui.close-instruction" }, tags = M.act("close") }
 	local body = frame.add{ type = "flow", name = "fork_me_body", direction = "horizontal" }
 	body.style.horizontal_spacing = 12
-	if pane then build_pane(body, windows[name] and windows[name].hint, player) end
+	if pane ~= false then build_pane(body, windows[name] and windows[name].hint, player) end
 	local inner = body.add{ type = "frame", style = "inside_shallow_frame_with_padding", direction = "vertical" }
 	inner.style.vertically_stretchable = true
 	local content = inner.add{ type = "flow", name = "fork_me_content", direction = "vertical" }
 	content.style.vertical_spacing = 6
-	if relative then
-		player.opened = buffer_of(player).inv
-	else
-		frame.auto_center = true
-		player.opened = frame
-	end
-	if pane then M.update_pane(player, true) end
+	frame.auto_center = true
+	player.opened = frame
 	return frame, content
 end
 
---- the same item and quality? (a stack merges into another only then)
-local function same_item(a, b)
-	return a.name == b.name and a.quality.name == b.quality.name
+--- `count` items of `stack` to the block through `def.shift` (a part goes through a stack of its own; what the block does not
+--- take comes back into `stack`). Returns the reason of a refusal.
+local function shift_part(def, entity, stack, inv, count)
+	if count >= stack.count then return def.shift(entity, stack, inv) end
+	local tmp = game.create_inventory(1)
+	tmp[1].transfer_stack(stack, count)
+	local why = def.shift(entity, tmp[1], inv)
+	if tmp[1].valid_for_read then stack.transfer_stack(tmp[1]) end
+	if tmp[1].valid_for_read then M.give_back(inv, tmp[1]) end   -- (never: the stack had room for it)
+	tmp.destroy()
+	return why
 end
 
---- A click on slot `slot` of the inventory pane, for a cursor stack and the main inventory (the window's function and
---- the tests'). `mode`: "left" (pick the stack up; with a stack in the cursor: put it down, merge or swap), "right"
---- (half the stack into the cursor; with a stack in the cursor: put one item down), "shift" (the stack goes to the
---- block: `def.shift(entity, stack, inv)`), "control" (every stack of that item goes to the block: `def.control`, or
---- `def.shift` for this stack when the window has none). Returns the reason a block refused, and "picked" as the
---- second value when the cursor took the whole stack (the caller marks the slot with the hand).
-function M.inventory_click(cursor, inv, slot, mode, def, entity)
-	local stack = inv and slot >= 1 and slot <= #inv and inv[slot]
-	if not stack then return nil end
-	if mode == "shift" or mode == "control" then
-		if not stack.valid_for_read then return nil end
-		if not (def and def.shift and entity and entity.valid) then return "no-target" end
-		if mode == "control" and def.control then return def.control(entity, stack, inv) end
-		return def.shift(entity, stack, inv)
-	end
-	if not cursor then return nil end
-	if mode == "right" then
-		if cursor.valid_for_read then
-			if not stack.valid_for_read or same_item(stack, cursor) then stack.transfer_stack(cursor, 1) end
-		elseif stack.valid_for_read then
-			cursor.transfer_stack(stack, math.ceil(stack.count / 2))
+--- every stack of `inv` with the item and quality of `stack` to the block, each whole or (`half`) half of it; the reason
+--- of a refusal when nothing went
+local function shift_every(def, entity, stack, inv, half)
+	local name, q = stack.name, stack.quality.name
+	local filter = { name = name, quality = q }
+	local before, why = inv.get_item_count(filter), nil
+	for i = 1, #inv do
+		local s = inv[i]
+		if s.valid_for_read and s.name == name and s.quality.name == q then
+			why = shift_part(def, entity, s, inv, half and math.ceil(s.count / 2) or s.count) or why
 		end
+	end
+	if inv.get_item_count(filter) < before then return nil end
+	return why
+end
+
+--- What an action of on_gui_inventory_action on slot `slot` of the pane does (the event handler's work and the tests'):
+--- `action` is a defines.inventory_actions value. stack_transfer (shift + click) sends the stack to the block
+--- (`def.shift(entity, stack, inv)`), stack_split (shift + right click) half of it, inventory_transfer (control + click) every
+--- stack of the item (`def.control`, else `def.shift` per stack), inventory_split (control + right click) half of each.
+--- `remote` (remote view, issue #177): a click (cursor_transfer, cursor_split; the game raises them only with its handling
+--- off) sends the stack as shift + click does. Every other action is the game's. Returns the reason the block refused.
+function M.inventory_action(inv, slot, action, def, entity, remote)
+	local A = defines.inventory_actions
+	if remote and (action == A.cursor_transfer or action == A.cursor_split) then action = A.stack_transfer end
+	if not (action == A.stack_transfer or action == A.stack_split or action == A.inventory_transfer or action == A.inventory_split) then
 		return nil
 	end
-	if cursor.valid_for_read then
-		if not stack.valid_for_read or same_item(stack, cursor) then stack.transfer_stack(cursor)
-		else stack.swap_stack(cursor) end
-		return nil
-	end
-	if not stack.valid_for_read then return nil end
-	cursor.transfer_stack(stack)
-	return nil, "picked"
+	local stack = inv and inv.valid and slot and slot >= 1 and slot <= #inv and inv[slot]
+	if not (stack and stack.valid_for_read) then return nil end
+	if not (def and def.shift and entity and entity.valid) then return "no-target" end
+	if action == A.stack_transfer then return def.shift(entity, stack, inv) end
+	if action == A.stack_split then return shift_part(def, entity, stack, inv, math.ceil(stack.count / 2)) end
+	if action == A.inventory_transfer and def.control then return def.control(entity, stack, inv) end
+	return shift_every(def, entity, stack, inv, action == A.inventory_split)
 end
 
 --- A click on slot `slot` of the block in the window (its cards, its cell): `def.click(entity, slot, cursor, inv,
@@ -913,7 +804,7 @@ function M.open_entity(player, entity)
 	if not player.can_reach_entity(entity) then return true end
 	local frame, name = M.window_of(player)
 	if frame and frame.tags.unit == entity.unit_number and not frame.tags.via and windows[name] and open == windows[name].open then
-		player.opened = opened_of(player, frame)      -- already open (the open key and on_gui_opened both fire)
+		player.opened = frame                         -- already open (the open key and on_gui_opened both fire)
 		return true
 	end
 	open(player, entity)
@@ -934,36 +825,39 @@ function M.dispatch(event)
 		local via = M.entity_by_unit(el.tags.via)
 		if via and via.valid then M.open_entity(player, via) else M.close_window(player) end
 		return true
-	elseif act == "inv_slot" or act == "block_slot" then   -- issue #28: the inventory pane and the block's slots
+	elseif act == "block_slot" then                 -- issue #28: the block's slots
 		if event.name ~= defines.events.on_gui_click then return true end
 		local frame, name = M.window_of(player)
 		local def = name and windows[name]
 		local entity = frame and M.entity_of(player, frame)
 		local cursor, inv, remote = M.hand(player)
 		if not entity then return true end
-		local why, picked, out
-		if act == "inv_slot" then
-			if not inv then return true end
-			--- (remote view: the hand holds nothing, so a plain click on a stack sends it to the block like shift + click)
-			local mode = event.control and "control" or (event.shift or remote) and "shift"
-				or event.button == defines.mouse_button_type.right and "right" or "left"
-			why, picked = M.inventory_click(cursor, inv, el.tags.slot, mode, def, entity)
-			if picked then
-				local slot = el.tags.slot
-				pcall(function() player.hand_location = { inventory = inv.index, slot = slot } end)
-			end
-		else
-			why, out = M.block_click(def, entity, el.tags.slot, cursor, inv, event.shift or remote)
-			if remote and not why and out then M.moved_text(player) end
-		end
+		local why, out = M.block_click(def, entity, el.tags.slot, cursor, inv, event.shift or remote)
+		if remote and not why and out then M.moved_text(player) end
 		refused(player, why, def)
-		M.update_pane(player)
 		M.refresh_one(player)
 		return true
 	end
 	local fn = actions[act]
 	if not fn then return false end
 	fn(event, player, el)
+	return true
+end
+
+--- Issue #542: on_gui_inventory_action of the pane's inventory element: what the game leaves to the mod (shift + click,
+--- control + click, their right click halves; in remote view every click) goes to the window's block (inventory_action),
+--- a refusal says why. Returns true when the element is the mod's.
+function M.on_inventory_action(event)
+	local el = event.element
+	if not (el and el.valid and el.tags and el.tags.fork_me_act == "inventory") then return false end
+	local player = game.get_player(event.player_index)
+	local frame, name = M.window_of(player)
+	local def = name and windows[name]
+	local entity = frame and M.entity_of(player, frame)
+	if not entity then return true end
+	local why = M.inventory_action(el.inventory, event.slot, event.action, def, entity, M.in_remote_view(player))
+	refused(player, why, def)
+	M.refresh_one(player)
 	return true
 end
 
@@ -975,27 +869,11 @@ function M.on_window_closed(fn) closed_hooks[#closed_hooks + 1] = fn end
 --- on_gui_closed: our window was closed (E, Escape, another GUI opened)
 function M.on_closed(event)
 	if event.gui_type == defines.gui_type.script_inventory then
+		--- issue #542: the hand-over buffer of a window opened by 0.5.10 (a save loaded without on_configuration_changed, which
+		--- closes it) was closed: its stacks go back to the player, its anchored frame goes (drop_buffer); and the frame anchored
+		--- to a script inventory of a save made with #30
 		local player = game.get_player(event.player_index)
-		--- issue #150: the hand-over buffer of a relative window closed (E, Escape, another GUI): the window closes; the
-		--- open key's own game action may close it in the tick it was opened: open again then
-		local b = player and buffer_of(player)
-		if b and event.inventory == b.inv then
-			if b.opened_tick == game.tick then
-				player.opened = b.inv
-				return true
-			end
-			local rel = player.gui.relative.fork_me_window
-			if rel and rel.valid then                      -- the picker above it takes the close keys first (issue #94)
-				for _, hook in ipairs(closed_hooks) do
-					if hook(player, rel) then return true end
-				end
-			end
-			M.close_window(player)
-			return true
-		end
-		--- a save made with #30 (same version number, no close_all): its frame anchored to a script inventory goes
-		local old = player and not b and player.gui.relative.fork_me_window
-		if old and old.valid then old.destroy() end
+		if player then M.drop_buffer(player) end
 		return false
 	end
 	local el = event.element
@@ -1019,7 +897,7 @@ function M.on_closed(event)
 end
 
 --- every 60 ticks (terminal module): refresh the open windows (one per player), close those whose entity is
---- gone or out of reach; a window with the inventory pane sets every slot once (a change of quality alone)
+--- gone or out of reach; the pane follows the player's inventory (follow_inventory)
 function M.refresh_all()
 	local n = 0
 	for _, player in pairs(game.connected_players) do
@@ -1033,10 +911,9 @@ function M.refresh_all()
 			local def = windows[name]
 			if not def then
 				M.close_window(player)
-			elseif player.opened ~= opened_of(player, frame) then
+			elseif player.opened ~= frame then
 				M.close_window(player)                     -- dying or another GUI closed it without an event
 			else
-				absorb(player)                             -- issue #150: the buffer, also without an event
 				local ok = true
 				for _, hook in ipairs(M.refresh_hooks) do
 					if hook(player, frame) == false then ok = false end
@@ -1044,8 +921,8 @@ function M.refresh_all()
 				ok = ok and (def.refresh and def.refresh(player, frame))
 				if ok == false then
 					M.close_window(player)
-				elseif storage.fork_me_gui_pane and storage.fork_me_gui_pane[player.index] then
-					M.update_pane(player, true)
+				elseif frame.valid then
+					follow_inventory(player, frame)
 				end
 			end
 		end
@@ -1059,26 +936,8 @@ function M.refresh_one(player)
 	if def and def.refresh and def.refresh(player, frame) == false and frame.valid then M.close_window(player) end
 end
 
---- on_player_main_inventory_changed, on_player_cursor_stack_changed (issue #28): the inventory pane of the player's
---- window follows the real inventory and the hand. A player without a pane costs one lookup.
-function M.on_inventory_changed(event)
-	local bs = storage.fork_me_gui_buffer
-	if bs and bs[event.player_index] then                 -- issue #150: what was put into the buffer goes into the block
-		local player = game.get_player(event.player_index)
-		if player then
-			absorb(player)
-			M.refresh_one(player)
-		end
-		return
-	end
-	local s = storage.fork_me_gui_pane
-	if not (s and s[event.player_index]) then return end
-	local player = game.get_player(event.player_index)
-	if player then M.update_pane(player) end
-end
-
 --- Issue #179: a player was removed from the game: what the windows kept for them goes (the parked items of remote view and a
---- hand-over buffer, like the game drops a removed player's own inventory; the pane's state)
+--- hand-over buffer of a 0.5.10 save, like the game drops a removed player's own inventory)
 function M.forget_player(index)
 	for _, key in ipairs({ "fork_me_gui_parked", "fork_me_gui_buffer" }) do
 		local list = storage[key]
@@ -1088,7 +947,6 @@ function M.forget_player(index)
 			list[index] = nil
 		end
 	end
-	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[index] = nil end
 end
 
 --- a player left the game: the window closes
@@ -1133,13 +991,15 @@ function M.back_button(parent, via)
 end
 
 --- after a mod update every open ME window is closed (a window built by an older version may lack elements; the
---- frames anchored beside a script inventory of #30 too)
+--- frames anchored beside a script inventory of #30 and the hand-over buffers of 0.5.10 too: close_window hands their
+--- stacks back, issue #542); the pane's slot signatures of 0.5.10 and before (storage.fork_me_gui_pane) are dropped
 function M.close_all()
 	for _, player in pairs(game.players) do
 		M.close_window(player)
-		local old = player.gui.relative.fork_me_window
-		if old and old.valid then old.destroy() end
 	end
+	local bs = storage.fork_me_gui_buffer                  -- (a buffer of a player that is gone: forget_player's rule)
+	for index in pairs(bs or {}) do M.forget_player(index) end
+	storage.fork_me_gui_buffer = nil
 	storage.fork_me_gui_open = nil
 	storage.fork_me_gui_pane = nil
 end

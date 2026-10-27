@@ -2275,8 +2275,9 @@ The ME windows were free frames in `player.gui.screen` without the player's inve
 in only by a click with the item in hand. **Decision (the maintainer's comment "Maintainer decision after the in-game
 test of pull request #30" on #28, approved in the game from a mock): every ME window is one screen frame with two
 panes, the player's inventory drawn by the mod on the left, the ME content with the block's slots on the right.** The
-game cannot show its inventory without its own second panel, and a mod cannot put the real inventory element into its
-own window.
+game could not show its inventory without its own second panel, and a mod could not put the real inventory element into
+its own window (Factorio 2.0). Since issue #542 the pane is Factorio 2.1's own `inventory` element ("The game's inventory
+element" below); the description of the mod's pane here is the state from #28 to 0.5.10.
 
 The first attempt (pull request #30) made the window a frame in `player.gui.relative` anchored to `script_inventory_gui`
 with the block's script inventory as the opened GUI: it worked, but showed three parts side by side (the game's
@@ -2408,6 +2409,9 @@ events) was run against a mock of the GUI elements outside the game; how it look
 
 ### The windows beside the game's inventory (me-network issues #150 and #168)
 
+(Replaced by issue #542, "The game's inventory element" below: the buffer, the relative frame and the map setting are gone.
+This section is the record of 0.5.10.)
+
 Issue #150 built it for the ME Terminal behind a map setting; after the maintainer's test in the game (#168: "much
 better so") every ME window opens so, and the map setting "me-network-real-inventory" is **on by default** (off: the
 pane of issue #28, kept as it was). `G.open_window` decides it for every window with a pane; the buffer does what the
@@ -2479,6 +2483,100 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
   returns, and spills outside it. The remote controller itself cannot be created headless: what the API returns there (the
   forum report: `get_main_inventory()` nil, the character's inventory reachable) and how the pane looks is checked in the
   game with `/me-remote-probe` (`scripts/fork-me-stats.lua`) on a space platform.
+
+### The game's inventory element (me-network issue #542)
+
+Factorio 2.1 has a GUI element `inventory`: it shows any `LuaInventory` inside a mod's frame, drawn and clicked by the
+game. With it the layout decided in #28 is possible as meant: **every ME window is one frame, the player's real inventory
+on the left, the ME content with the block's slots on the right** (the maintainer's decision for #542: no relative frame,
+no hand-over buffer, no extra column). It replaces both the mod's pane of #28 (slot buttons, clicks emulated by
+`inventory_click`) and the hand-over buffer of #150/#168, and with them the map setting "me-network-real-inventory".
+
+**Probe (Factorio 2.1.23, headless).** A probe mod on a copy of a save with a player, run with `--benchmark` (the player
+is connected there), and the working copy's windows on the same save:
+
+* `add{ type = "inventory", ... }` takes `slots_per_row`, `empty_slot_info` and the six `handle_*` flags; `inventory` is
+  no `add` parameter and is set afterwards. Defaults: `handle_cursor_transfer`, `handle_cursor_split`, `handle_open_item`
+  and `handle_open_mod_item` true, `handle_send_stack_to_trash` and `handle_send_stacks_to_trash` false, `slots_per_row`
+  and `empty_slot_info` nil, style `inventory_frame`. Tags, a scroll pane around it and `style.maximal_height` work.
+* `element.inventory` takes any inventory (the main inventory, a script inventory, a chest's) and nil; read back it is
+  `==` the bound inventory (a new wrapper, not `rawequal`). A bound inventory that is destroyed reads back as nil and the
+  element stays valid; a resized one reports its new size.
+* Script inventories still have no filters (`supports_filters()` false, `set_filter` errors): an element of a block's
+  script inventory cannot show or enforce a slot rule by itself.
+* `player.opened = frame` works with the element inside.
+* `LuaPlayer.stack_transfers{ source_inventory, index, target, transfer_type }`: `stack_transfer` moves the slot's stack,
+  `stack_split` half of it, `inventory_transfer` every stack of that item; the target may be a `LuaInventory`, a
+  `LuaEntity` (a chest) or a `LuaPlayer` (into their main inventory). An empty slot or a full target returns `{}`, not nil.
+  `cursor_transfer` and `cursor_split` on a script inventory pick up, put down, take half, put one down and swap as the
+  game's own slots do.
+* The working copy: the terminal window opens as one frame, `player.opened` is the frame, no frame in `gui.relative`; the
+  pane is an `inventory` element bound to the main inventory (80 slots), 10 per row, the flags below, in a scroll pane of at
+  most 600 pixels; shift + click at a terminal without network is refused (`no-controller`), a cell goes into a drive by
+  shift + click; after the refresh the element is still bound; `player.opened = nil` closes the window.
+* What only the game shows goes to the `[Task-Ingame]` issue #546: whether the slots follow a change of the inventory at
+  once (belt, robots, crafting: there is no Lua refresh any more and nothing headless sees a drawing), which actions reach
+  the event for drag, middle click and the trash keys, E and Escape with the frame as the opened GUI, the tooltips (a cell,
+  an encoded pattern, a spoiling item, a labelled blueprint), remote view.
+
+**The window** (`scripts/fork-me-gui.lua`): `build_pane` adds "Character", the window's hint and, in a scroll pane of at
+most 600 pixels (issue #469: less on a small screen), the element `fork_me_inv` (tag `fork_me_act = "inventory"`,
+`slots_per_row = 10`) bound to `G.player_inventory(player)`. Flags (`G.pane_flags`): the game handles the hand (cursor
+transfer and split), opening an item (`handle_open_item`, and `handle_open_mod_item` for items of other mods, as in its own
+inventory) and the trash keys. Shift + click and control + click it cannot do (it does not know where the stack goes): they
+come as `on_gui_inventory_action` (registered in `scripts/fork-me-terminal.lua`), and `G.on_inventory_action` hands them to
+`G.inventory_action(inv, slot, action, def, entity, remote)`:
+
+| Action | Mouse | What the window does |
+|---|---|---|
+| `stack_transfer` | shift + click | `def.shift(entity, stack, inv)` (as the pane's shift + click before) |
+| `stack_split` | shift + right click | half the stack through `def.shift` (a part goes through a stack of its own; what the block leaves comes back) |
+| `inventory_transfer` | control + click | `def.control` where the window has one (store every stack), else `def.shift` for every stack of the item (before: this stack only) |
+| `inventory_split` | control + right click | half of every stack of the item through `def.shift` |
+| `cursor_transfer`, `cursor_split` | click, right click | the game's; in remote view (flags off) the stack goes to the block like shift + click (issue #177) |
+| `open_item`, `open_mod_item`, the trash actions | | the game's |
+
+A refusal is shown as flying text as before (`def.message`). The refresh once a second binds the element again when the
+player's inventory changed (the character died, remote view entered or left) and sets the cursor flags for remote view
+(`follow_inventory`); that is all the pane costs: nothing per inventory change (the events
+`on_player_main_inventory_changed` and `on_player_cursor_stack_changed` are no longer registered) and nothing per slot. The
+refresh step only lost work (the quality pass over the pane), so no bench was run.
+
+**Remote view** (issues #176, #177): the element shows the character's inventory with the cursor flags off, so every click
+on a stack sends it to the block as before; without a character the window says so and has no element. Parking stays
+(`give_back` still parks from remote view).
+
+**Gone:** `update_pane`, `inventory_click`, the slot cache and `storage.fork_me_gui_pane`; the hand-over buffer
+(`buffer_absorb`, `buffer_return`, `uses_buffer`, the relative frame, the absorbing on inventory and cursor events and at
+the refresh); the map setting. A removed runtime-global setting is dropped silently when a save loads (no message in the
+log of a 0.5.10 save loaded with the working copy), so it went with its locale.
+
+**Saves.** No storage key, prototype or remote interface was renamed. `storage.fork_me_gui_pane` is dropped by `close_all`
+(a mod update). A 0.5.10 save can hold a player's hand-over buffer (`storage.fork_me_gui_buffer[player_index]`) with items
+in it and the frame anchored beside it: `G.drop_buffer` (from `close_window`, so from `close_all` on a mod update, and from
+the buffer's own close if a save loads without one) puts its stacks into the player's inventory, parks what does not fit
+(never the ground) and destroys the frame; a buffer of a player who is gone is dropped like that player's inventory
+(issue #179's rule). Parked items stay where they are and are returned as before. Proof run (a scratch script, not part of
+the harness, since `devcheck migrate` makes its save without a player): v0.5.10 on a headless server with a copy of a save
+with a player, the terminal window opened for player 1 through `remote.call("gregtorio-me-terminal", "open", ...)` (the old
+window opens for a player who is not connected too), 77 iron plates, 2 storage cells and 5 science packs put into the
+buffer (the terminal had no network, so they stayed), saved; loaded with the working copy one version up: all of it in the
+player's inventory, no buffer, no anchored frame, the setting gone. With the player's inventory full: 84 items parked
+(remote `parked_count`), nothing on the ground. `devcheck migrate --from-ref v0.5.10` loads an old save (every kind of
+block) with the working copy.
+
+**Tests.** `runtimemod/nativeinv.lua` replaces `buffer150.lua`: the setting is gone; the flags in and outside remote view;
+at a terminal shift + click stores 50 plates, a used science pack is refused and stays, shift + right click stores half of
+40, control + click every stack, control + right click half of each, a click in remote view the whole stack, another action
+nothing; at a drive a cell by shift + click and two cells by control + click, plates refused; a 0.5.10 buffer goes back to
+its player (a stand-in), into a full inventory it is parked and returned later, and `close_all` leaves no buffer. The
+remote `inventory_click` of `gregtorio-me-gui` maps "shift", "control", "shift-right", "control-right" and "remote" to these
+actions, so the window tests of #28 keep their shift and control clicks; the pane's own click tests (pick up, put down,
+merge, swap, half) are gone with the code, the game does that now. `ifacecap.lua`'s check of #201 (a buffer stack pushed
+back) became the same check by shift + click; `remoteview.lua` checks the flags instead of the buffer.
+
+**Not done with the element here:** the block's slots (cards, the workbench's cell, the IO port, the drive) are still slot
+buttons; issue #543 takes them on.
 
 ## Open points
 
