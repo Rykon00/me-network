@@ -11,11 +11,14 @@
 ---     block (a cable crossed on the way joins the run anyway; an underground end there would take the pairing).
 ---   * Without two underground cables in the inventory (or for an obstacle wider than the reach) nothing changes, as with
 ---     belts.
----   * Dragging the ME Underground Cable itself is left to the game: it is a real pipe-to-ground (prototypes/network.lua)
----     and drags like an underground pipe.
+---   * Dragging the ME Underground Cable places the pairs at the full reach, like underground belts. The game builds a
+---     dragged underground cable on every free tile under the cursor, so the drag is followed here: the first end is the
+---     entrance (turned along the drag once the drag shows its way), the newest end within the reach is the exit (turned
+---     back; the one before it is taken away again and its item given back), and the first end beyond the reach starts
+---     the next pair. Where the player lets go, the last pair ends. An end built against the drag's way is taken away.
 --- What a drag is: on_pre_build says created_by_moving for the build that follows it in the same tick.
---- State: storage.fork_me_cabledrag (lazy): per player the last cable of the current drag ({ last, ghost }) and the
---- tick of a dragged pre-build.
+--- State: storage.fork_me_cabledrag (lazy): per player the last cable of the current drag (`players`: { last, ghost }),
+--- the pair of the current underground drag (`ug`: { entry, exit, dir, ghost }) and the tick of a dragged pre-build.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -51,9 +54,10 @@ local function is_me(name) return N.kind_of(name) ~= nil end
 local function state()
 	local s = storage.fork_me_cabledrag
 	if not s then
-		s = { players = {}, moving = {} }
+		s = { players = {}, moving = {}, ug = {} }
 		storage.fork_me_cabledrag = s
 	end
+	s.ug = s.ug or {}
 	return s
 end
 
@@ -122,6 +126,77 @@ function M.bridge(a, b, inv, spill_at)
 	return exit, entry
 end
 
+--- an underground end of a drag taken away again; `give(name, quality)` takes its item back (nil for a ghost)
+local function take_back(e, give)
+	local n, ghost = name_of(e)
+	local quality = e.quality and e.quality.name
+	e.destroy{ raise_destroy = true }
+	if not ghost and give then give(n, quality) end
+end
+
+--- turn an underground end (the graph follows, as for a rotation by the player)
+local function turn(e, dir)
+	if e.direction == dir then return end
+	e.direction = dir
+	if e.type ~= "entity-ghost" then N.on_rotated(e) end
+end
+
+--- One underground cable `e` built by a player (`key`): the pair of the drag follows it. `moving`: part of a drag.
+--- `give(name, quality)`: where the item of an end taken away goes. Returns what `e` became: "entry", "exit" or "taken".
+function M.underground_step(key, e, moving, give)
+	local s = state()
+	local _, ghost = name_of(e)
+	local rec = s.ug[key]
+	local entry = rec and rec.entry
+	if not (moving and entry and entry.valid and rec.ghost == ghost and entry.surface == e.surface) then
+		s.ug[key] = { entry = e, ghost = ghost }
+		return "entry"
+	end
+	local pa, pb = entry.position, e.position
+	local dx, dy = pb.x - pa.x, pb.y - pa.y
+	if (dx ~= 0 and dy ~= 0) or (dx == 0 and dy == 0) then
+		s.ug[key] = { entry = e, ghost = ghost }
+		return "entry"
+	end
+	local dist = math.abs(dx + dy)
+	local dir = VEC_DIR[dx / dist][dy / dist]
+	if not rec.dir then
+		rec.dir = dir
+		turn(entry, dir)
+	elseif dir ~= rec.dir then
+		take_back(e, give)
+		return "taken"
+	end
+	if dist > reach() then
+		--- beyond the reach: the next pair starts here
+		s.ug[key] = { entry = e, ghost = ghost, dir = dir }
+		turn(e, dir)
+		return "entry"
+	end
+	local old = rec.exit
+	rec.exit = e
+	if old and old.valid and old ~= e then take_back(old, give) end
+	turn(e, OPPOSITE[dir])
+	return "exit"
+end
+
+--- the item of a taken underground end back to the player: into the hand when it holds that item, else the inventory,
+--- else spilled at the player
+local function giver(player)
+	return function(name, quality)
+		local stack = { name = name, count = 1, quality = quality }
+		local cs = player.cursor_stack
+		if cs and cs.valid_for_read and cs.name == name and (cs.quality.name == (quality or "normal"))
+			and cs.count < cs.prototype.stack_size then
+			cs.count = cs.count + 1
+			return
+		end
+		if player.insert(stack) == 0 then
+			player.surface.spill_item_stack{ position = player.position, stack = stack, force = player.force, allow_belts = false }
+		end
+	end
+end
+
 --- on_pre_build: remember whether the build of this tick is part of a drag
 function M.on_pre_build(event)
 	if not event.player_index then return end
@@ -135,8 +210,14 @@ function M.on_built(entity, event)
 	local s = state()
 	local pi = event.player_index
 	local n, ghost = name_of(entity)
+	if n == UNDERGROUND then
+		local player = game.get_player(pi)
+		M.underground_step(pi, entity, s.moving[pi] == game.tick, player and giver(player))
+		return
+	end
+	s.ug[pi] = nil
 	if n ~= CABLE then
-		if n ~= UNDERGROUND then s.players[pi] = nil end
+		s.players[pi] = nil
 		return
 	end
 	local moving = s.moving[pi] == game.tick
@@ -154,6 +235,7 @@ function M.on_built(entity, event)
 	s.players[pi] = { last = entity, ghost = ghost }
 end
 
-N.drag_bridge = M.bridge                 -- (the runtime test calls it through the remote interface)
+N.drag_bridge = M.bridge                 -- (the runtime test calls both through the remote interface)
+N.drag_underground = M.underground_step
 
 return M
