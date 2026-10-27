@@ -847,7 +847,8 @@ local REQ_RAW, REQ_BIG, REQ_KINDS = 50, 100000, 60
 local REQ_SLOTS = { { 3, -2 }, { 3, -1 }, { 3, 0 }, { 3, 1 }, { 2, -2 }, { 2, -1 }, { 2, 1 } }
 local function logistic_height(n)
 	if not (n and n > 0) then return 0 end
-	return PART_GAP + 6 + LOG_PITCH * math.ceil(n / math.ceil(math.sqrt(n)))
+	local ghost_rows = (C.ghosts or 0) > 0 and math.ceil(C.ghosts / (LOG_PITCH * math.ceil(math.sqrt(n)))) + 2 or 0   -- (issue #538)
+	return PART_GAP + 6 + LOG_PITCH * math.ceil(n / math.ceil(math.sqrt(n))) + ghost_rows
 end
 local function logistic_width(n)
 	if not (n and n > 0) then return 0 end
@@ -936,6 +937,11 @@ local function build_logistic(b, part, members)
 				reqs = reqs + 1
 			end
 		end
+	end
+	--- issue #538: the area of the ghost paste, below the last row of roboports (inside their construction areas)
+	if (C.ghosts or 0) > 0 then
+		local rows = math.ceil(n / cols)
+		b.ghost_area = { x = X0 + 2, y = LY + 6 + LOG_PITCH * rows, w = LOG_PITCH * cols }
 	end
 	local net = s.find_logistic_network_by_position({ X0 + 2, LY + 6 }, "player")
 	b.logistic = { roboports = n, storage_chests = chests + LOG_FEEDERS, kinds = #items, bus = bus ~= nil,
@@ -2205,7 +2211,51 @@ local function on_burst_tick()
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-BURST plain-remove ", k, " ", game.tick, " ", p })
 		b.burst_made = nil
-	elseif t >= 200 then
+	elseif t >= 200 and not b.ghost_t0 and (C.ghosts or 0) > 0 and b.ghost_area
+		and game.tick > C.warmup + C.window + ALLOC_FROM + ALLOC_TICKS then   -- (after the allocation meter's ticks)
+		b.ghost_t0 = game.tick
+		--- issue #538: a blueprint of C.ghosts walls pasted in one tick (raise_built, as a paste raises on_built_entity per
+		--- ghost) below the roboports of the logistic network, then all of them removed in one tick (on_object_destroyed comes
+		--- at the end of that tick or the next one: its script time is the "ghost-after" line)
+		local a = b.ghost_area
+		local prof = C.profile and remote.interfaces["zz-me-bench-profile"]
+		if prof then remote.call("zz-me-bench-profile", "enable", false, C.exclusive) end
+		local p = helpers.create_profiler()
+		local made, k = {}, 0
+		for y = 0, 1000 do
+			for x = 0, a.w - 1 do
+				if k >= C.ghosts then break end
+				local g = s.create_entity{ name = "entity-ghost", inner_name = "stone-wall", position = { p1(a.x + x, a.y + y) },
+					force = "player", raise_built = true }
+				if g then made[#made + 1] = g end
+				k = k + 1
+			end
+			if k >= C.ghosts then break end
+		end
+		p.stop()
+		if prof then
+			log("DEVCHECK-BENCH-PROF-BURST ghost-paste")
+			remote.call("zz-me-bench-profile", "report")
+		end
+		b.ghosts_made = made
+		log({ "", "DEVCHECK-BENCH-BURST ghost-paste ", #made, " ", game.tick, " ", p })
+	elseif b.ghost_t0 and game.tick == b.ghost_t0 + 60 then
+		local p = helpers.create_profiler()
+		local k = 0
+		for _, g in ipairs(b.ghosts_made) do
+			if g.valid then
+				g.destroy()
+				k = k + 1
+			end
+		end
+		p.stop()
+		b.ghosts_made = nil
+		log({ "", "DEVCHECK-BENCH-BURST ghost-remove ", k, " ", game.tick, " ", p })
+	elseif b.ghost_t0 and game.tick == b.ghost_t0 + 61 then
+		local p = helpers.create_profiler()
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST ghost-after 0 ", game.tick, " ", p })
+	elseif (b.ghost_t0 and game.tick >= b.ghost_t0 + 70) or (t >= 200 and not ((C.ghosts or 0) > 0 and b.ghost_area)) then
 		b.phase = "done"
 		script.on_event(defines.events.on_tick, nil)
 		log("DEVCHECK-BENCH-DONE")

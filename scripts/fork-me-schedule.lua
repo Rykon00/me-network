@@ -48,6 +48,7 @@ local SETTINGS = {
 	logistic_interface_auto = "me-network-logistic-interface-auto-keys",          -- issue #532
 	logistic_demand = "me-network-logistic-interface-demand-points-per-tick",     -- issue #537
 	logistic_interface_stacks = "me-network-logistic-interface-auto-stacks",
+	logistic_construction = "me-network-logistic-interface-construction-cells-per-second",   -- issue #538
 	io_port = "me-network-io-port-visits-per-tick",               -- issue #386
 	io_port_max = "me-network-io-port-visits-per-tick-max",
 	maintainer = "me-network-maintainer-checks-per-tick",
@@ -62,7 +63,7 @@ local SETTINGS = {
 	storage_bus_idle = "me-network-storage-bus-idle-limit",
 }
 M.DEFAULTS = { io = 16, io_max = 32, storage_bus = 8, storage_bus_max = 24, logistic_storage_bus = 1, logistic_storage_bus_max = 2,
-	logistic_interface = 2, logistic_interface_max = 8, logistic_interface_auto = 20, logistic_demand = 2, logistic_interface_stacks = 1, io_port = 2, io_port_max = 8, maintainer = 4, maintainer_max = 12,
+	logistic_interface = 2, logistic_interface_max = 8, logistic_interface_auto = 20, logistic_demand = 2, logistic_interface_stacks = 1, logistic_construction = 10, io_port = 2, io_port_max = 8, maintainer = 4, maintainer_max = 12,
 	circuit = 10, jobs = 1, jobs_max = 2, job_ops = 1024, bus_items = 256, bus_fluid = 4000, idle = 300, storage_bus_idle = 120 }
 local values
 

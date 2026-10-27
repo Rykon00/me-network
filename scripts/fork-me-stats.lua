@@ -44,6 +44,7 @@ local QUEUES = {
 	{ name = "logistic_interface", floor = "logistic_interface", ceiling = "logistic_interface_max",   -- issue #531
 		probe = "logistic_interface_probe" },
 	{ name = "logistic_demand", floor = "logistic_demand", ceiling = "logistic_demand" },        -- issue #537 (requester points)
+	{ name = "logistic_construction", rate = "logistic_construction" },                         -- issue #538 (logistic cells)
 	{ name = "maintainer", floor = "maintainer", ceiling = "maintainer_max", probe = "maintainer_probe" },
 	{ name = "circuit", rate = "circuit" },
 	{ name = "jobs", floor = "jobs", ceiling = "jobs_max" },

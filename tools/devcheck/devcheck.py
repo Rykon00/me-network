@@ -993,6 +993,7 @@ RUNTIME_TESTS = (
     ("LSBUS", "ME logistic storage bus (issue #506)"),
     ("LIF", "ME logistic interface (issue #531)"),
     ("LIFAUTO", "ME logistic interface automatic mode (issue #537)"),
+    ("LIFBUILD", "ME logistic interface construction supply (issue #538)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
@@ -1300,7 +1301,8 @@ BENCH_SAMPLE_TICKS, BENCH_STEADY_TICKS = 300, 1200      # (benchmod/control.lua 
 # 2000 ticks at 20 000 is a small part of it, so its position no longer moves the 99th percentile
 CHECK_LONG_SIZE, CHECK_LONG_TICKS = 20000, 10800
 LATENCY_TICKS = 3700            # after the window: the latency probes (time out after 3600 ticks)
-BURST_TICKS = 260               # after the latency probes: the build burst (build, remove, plain build, plain remove)
+BURST_TICKS = 330               # after the latency probes: the build burst (build, remove, plain build, plain remove, issue #538: ghosts)
+GHOST_WAIT = 600                # issue #538: the ghost paste waits for the allocation meter's ticks (ALLOC_FROM + ALLOC_TICKS)
 SLICE_TICKS = 5 * 60 * 60       # the long run reports per 5 minutes
 # the functions the profile times, per module of the instrumented copy (local functions through their upvalue,
 # M.<name> through the module table, and the handler tables of the storage bus)
@@ -1331,6 +1333,9 @@ PROFILE_WRAP = {
                                                # issue #537: the automatic mode
                                                "demand_step", "scan_point", "scan_key", "decide", "auto_request",
                                                "auto_blocks", "me_waits"],
+    # issue #538: what construction needs
+    "scripts/fork-me-logistic-construction.lua": ["M.on_built", "M.on_object_destroyed", "M.on_tick", "track", "put", "drop",
+                                                  "needs_of", "lid_of", "rescan_cell"],
     "scripts/fork-me-autocraft.lua": ["job_step", "maintenance", "scan_provider", "refresh_providers",
                                       "rebuild_patterns", "make_plan", "M.start", "assign_cpus", "await_index",
                                       "on_arrival", "awaiting", "cpus_in", "collect_output", "find_crafter",
@@ -1675,7 +1680,9 @@ def bench_config(a, scene, size, variant, profile):
            # issue #506: a logistic network of that many roboports below the ME scene, with an ME Logistic Storage Bus
            "logistic": (getattr(a, "logistic", 0) or 0) if scene == "me" else 0,
            # issue #537: that many requester chests in the logistic network (for the ME Logistic Interface's automatic mode)
-           "requesters": (getattr(a, "requesters", 0) or 0) if scene == "me" else 0}
+           "requesters": (getattr(a, "requesters", 0) or 0) if scene == "me" else 0,
+           # issue #538: that many wall ghosts pasted in one tick (and removed in one) in that logistic network, after the burst
+           "ghosts": (getattr(a, "ghosts", 0) or 0) if scene == "me" else 0}
     return cfg
 
 
@@ -1704,7 +1711,8 @@ def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label="")
     # not read the file a 2.1 run wrote)
     runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
     window = cfg["window"]
-    ticks = BENCH_WARMUP + window + (LATENCY_TICKS if cfg["latency"] else 30) + (BURST_TICKS if cfg["burst"] else 0)
+    ticks = BENCH_WARMUP + window + (LATENCY_TICKS if cfg["latency"] else 30) + (BURST_TICKS if cfg["burst"] else 0) \
+        + (GHOST_WAIT if cfg.get("ghosts") else 0)
     log = factorio("--benchmark", str(mapfile), "--benchmark-ticks", str(ticks), "--benchmark-verbose", "all")
     if not re.search(r"Performed (\d+) updates", log):
         print(f"  {label}: did not run\n{load_errors(log) or ''}")
@@ -2060,7 +2068,7 @@ def print_bench(results):
           "the tick's script and whole update):")
     for s in results["scenes"]:
         b = s.get("burst") or {}
-        for what in ("build", "remove", "plain-build", "plain-remove"):
+        for what in ("build", "remove", "plain-build", "plain-remove", "ghost-paste", "ghost-remove", "ghost-after"):
             v = b.get(what)
             if v:
                 print(f"  {scene_label(s)} {s['size']} {what:12}: {fmt(v.get('n'), 0)} entities, loop {fmt(v.get('ms'), 1)} ms, "
@@ -2303,6 +2311,8 @@ def main():
                    "Interfaces on it (where the version has them)")
     p.add_argument("--requesters", type=int, default=0, metavar="N", help="issue #537: with --logistic, N requester chests in the "
                    "logistic network that ask for items it holds, items only the ME network has and items nobody has")
+    p.add_argument("--ghosts", type=int, default=0, metavar="N", help="issue #538: with --logistic, N wall ghosts pasted in one tick "
+                   "in the logistic network after the build burst, then removed in one tick")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "
