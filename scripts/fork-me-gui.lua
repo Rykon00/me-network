@@ -256,9 +256,17 @@ function M.drop_buffer(player)
 	return n
 end
 
-function M.close_window(player)
+--- Issue #545: the game's machine window sounds (Factorio 2.1.13), for the player alone (play_sound without a position)
+local SOUND_OPEN, SOUND_CLOSE = "utility/machine_gui_open", "utility/machine_gui_close"
+
+--- Close the player's ME window. `sound`: the window is closed for good (the close button, E, Escape, another GUI, the
+--- refresh), so the close sound plays when there was one; never when a window is replaced by another (open_window) or on
+--- a mod update (close_all).
+function M.close_window(player, sound)
 	local frame = player.gui.screen.fork_me_window
-	if frame and frame.valid then frame.destroy() end
+	local had = frame and frame.valid
+	if had then frame.destroy() end
+	if had and sound then player.play_sound{ path = SOUND_CLOSE } end
 	M.drop_buffer(player)                                 -- (issue #542: a buffer of a 0.5.10 save)
 	local picker = player.gui.screen.fork_me_picker       -- the picker (scripts/fork-me-picker.lua) belongs to the window
 	if picker and picker.valid then picker.destroy() end
@@ -335,6 +343,46 @@ function M.stack_button(parent, s, tags, tooltip)
 	return btn
 end
 
+--- what a slot's tooltip function gets for the empty slots of an inventory element (issue #543)
+local EMPTY_SLOT = { valid_for_read = false }
+
+--- Issue #28: the slots `first` .. `last` of a block's inventory `inv` in the flow `name` of `frame`; `tip(slot, stack)` gives
+--- a slot's tooltip, `offset` is added to the slot numbers the window's click gets. Issue #543: when the window shows the whole
+--- inventory, it is the game's `inventory` element (the game's tooltips, quality, the hand) with the game's handling off: every
+--- click comes as on_gui_inventory_action and goes through the window's `click`, which refuses a wrong item before anything
+--- moves (block_action); the empty slots' tooltip is `tip`'s for an empty slot. A part of an inventory (the workbench's cell
+--- and card slots, the IO port's input and output) stays slot buttons (block_slot), rebuilt when a stack changed.
+function M.block_slots(frame, name, inv, first, last, tip, offset)
+	local box = M.find(frame, name)
+	if not (box and inv and inv.valid) then return end
+	if first == 1 and last == #inv then
+		local el = box.children[1]
+		if not (el and el.valid and el.type == "inventory") then
+			box.clear()
+			box.tags = { sig = "inventory" }
+			el = box.add{ type = "inventory", name = "fork_me_block_inv", slots_per_row = #inv,
+				tags = M.act("block_inventory", { offset = offset or 0 }), handle_cursor_transfer = false,
+				handle_cursor_split = false, handle_open_item = false, handle_open_mod_item = false,
+				handle_send_stack_to_trash = false, handle_send_stacks_to_trash = false }
+			local empty = tip and tip(1, EMPTY_SLOT)
+			if empty then el.empty_slot_info = { text = empty } end
+		end
+		if el.inventory ~= inv then el.inventory = inv end
+		if el.slots_per_row ~= #inv then el.slots_per_row = #inv end
+		return
+	end
+	local sig = { tostring(first), tostring(last) }
+	for i = first, last do
+		local st = inv[i]
+		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name .. M.stack_ident(st)) or "-"
+	end
+	sig = table.concat(sig, ",")
+	if box.tags.sig == sig then return end
+	box.clear()
+	box.tags = { sig = sig }
+	for i = first, last do M.stack_button(box, inv[i], M.act("block_slot", { slot = i + (offset or 0) }), tip and tip(i, inv[i]) or nil) end
+end
+
 --- Issue #542: the handling flags of the pane's inventory element. Outside remote view the game moves stacks between the
 --- slots and the hand itself (left and right click, drag), opens an item (a blueprint book, an armor's grid) and trashes
 --- a stack; shift + click and control + click it cannot do (it does not know where they go): they raise
@@ -384,8 +432,11 @@ end
 --- A window: closes the player's ME window, builds frame, title bar and content frame; the frame is the player's
 --- opened GUI. Returns the frame and the content flow. `tags` go onto the frame (fork_me_window = name is added).
 --- Issue #28: every window has the pane, the player's inventory on the left of the content (`pane` false: none; issue
---- #542: the game's inventory element).
+--- #542: the game's inventory element). Issue #545: the open sound plays unless the same window (name and unit) is only
+--- built again; a window that replaces another plays it alone (no close sound).
 function M.open_window(player, name, caption, tags, pane)
+	local old, old_name = M.window_of(player)
+	local rebuilt = old ~= nil and old_name == name and old.tags.unit == (tags and tags.unit)
 	M.close_window(player)
 	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
@@ -409,6 +460,7 @@ function M.open_window(player, name, caption, tags, pane)
 	content.style.vertical_spacing = 6
 	frame.auto_center = true
 	player.opened = frame
+	if not rebuilt then player.play_sound{ path = SOUND_OPEN } end
 	return frame, content
 end
 
@@ -468,6 +520,36 @@ end
 function M.block_click(def, entity, slot, cursor, inv, shift)
 	if not (def and def.click and entity and entity.valid) then return "no-target" end
 	return def.click(entity, slot, cursor, inv, shift)
+end
+
+--- Issue #543: an action of on_gui_inventory_action on slot `slot` of a block's inventory element (`binv`; the window's slot
+--- number is slot + `offset`), with the player's cursor, inventory and remote view as G.hand gives them. A click or right
+--- click is the window's click (with an item in the hand: put in, refused before anything moves; else into the hand; in remote
+--- view into the inventory); shift + click (and shift + right click) takes the slot's item into the inventory whatever the
+--- hand holds; control + click (and control + right click) every slot with that item. Opening and trashing do nothing. Returns
+--- the reason of a refusal and "out" when an item went into the inventory.
+function M.block_action(def, entity, binv, slot, action, cursor, inv, remote, offset)
+	local A = defines.inventory_actions
+	offset = offset or 0
+	if action == A.cursor_transfer or action == A.cursor_split then
+		return M.block_click(def, entity, slot + offset, cursor, inv, remote)
+	elseif action == A.stack_transfer or action == A.stack_split then
+		return M.block_click(def, entity, slot + offset, nil, inv, true)
+	elseif action == A.inventory_transfer or action == A.inventory_split then
+		local st = binv and binv.valid and binv[slot]
+		if not (st and st.valid_for_read) then return nil end
+		local name, q = st.name, st.quality.name
+		local why, out
+		for i = 1, #binv do
+			local s = binv[i]
+			if s.valid_for_read and s.name == name and s.quality.name == q then
+				local w, o = M.block_click(def, entity, i + offset, nil, inv, true)
+				why, out = why or w, out or o
+			end
+		end
+		return why, out
+	end
+	return nil
 end
 
 --- the short message of a refusal: the window's own text for its reasons (def.message), else fork-me-gui.refused-*
@@ -819,11 +901,11 @@ function M.dispatch(event)
 	if not act then return false end
 	local player = game.get_player(event.player_index)
 	if act == "close" then
-		M.close_window(player)
+		M.close_window(player, true)
 		return true
 	elseif act == "back" then                       -- back to the terminal a drive or cell window came from
 		local via = M.entity_by_unit(el.tags.via)
-		if via and via.valid then M.open_entity(player, via) else M.close_window(player) end
+		if via and via.valid then M.open_entity(player, via) else M.close_window(player, true) end
 		return true
 	elseif act == "block_slot" then                 -- issue #28: the block's slots
 		if event.name ~= defines.events.on_gui_click then return true end
@@ -849,13 +931,22 @@ end
 --- a refusal says why. Returns true when the element is the mod's.
 function M.on_inventory_action(event)
 	local el = event.element
-	if not (el and el.valid and el.tags and el.tags.fork_me_act == "inventory") then return false end
+	local act = el and el.valid and el.tags and el.tags.fork_me_act
+	if act ~= "inventory" and act ~= "block_inventory" then return false end
 	local player = game.get_player(event.player_index)
 	local frame, name = M.window_of(player)
 	local def = name and windows[name]
 	local entity = frame and M.entity_of(player, frame)
 	if not entity then return true end
-	local why = M.inventory_action(el.inventory, event.slot, event.action, def, entity, M.in_remote_view(player))
+	local why
+	if act == "block_inventory" then                     -- issue #543: a block's slots
+		local cursor, inv, remote = M.hand(player)
+		local out
+		why, out = M.block_action(def, entity, el.inventory, event.slot, event.action, cursor, inv, remote, el.tags.offset)
+		if remote and not why and out then M.moved_text(player) end
+	else
+		why = M.inventory_action(el.inventory, event.slot, event.action, def, entity, M.in_remote_view(player))
+	end
 	refused(player, why, def)
 	M.refresh_one(player)
 	return true
@@ -890,7 +981,7 @@ function M.on_closed(event)
 				if hook(player, el) then return true end
 			end
 		end
-		if player then M.close_window(player) else el.destroy() end
+		if player then M.close_window(player, true) else el.destroy() end
 		return true
 	end
 	return false
@@ -910,7 +1001,7 @@ function M.refresh_all()
 			n = n + 1
 			local def = windows[name]
 			if not def then
-				M.close_window(player)
+				M.close_window(player, true)
 			elseif player.opened ~= frame then
 				M.close_window(player)                     -- dying or another GUI closed it without an event
 			else
@@ -920,7 +1011,7 @@ function M.refresh_all()
 				end
 				ok = ok and (def.refresh and def.refresh(player, frame))
 				if ok == false then
-					M.close_window(player)
+					M.close_window(player, true)
 				elseif frame.valid then
 					follow_inventory(player, frame)
 				end
@@ -933,7 +1024,7 @@ end
 function M.refresh_one(player)
 	local frame, name = M.window_of(player)
 	local def = frame and windows[name]
-	if def and def.refresh and def.refresh(player, frame) == false and frame.valid then M.close_window(player) end
+	if def and def.refresh and def.refresh(player, frame) == false and frame.valid then M.close_window(player, true) end
 end
 
 --- Issue #179: a player was removed from the game: what the windows kept for them goes (the parked items of remote view and a

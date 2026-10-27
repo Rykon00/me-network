@@ -965,6 +965,10 @@ pastecraft157 = require("pastecraft")({ me_place = me_place, power = power, me_r
 --- me-network issue #542: the native inventory element of the ME windows; the hand-over buffer of #150 is gone (nativeinv.lua)
 nativeinv542 = require("nativeinv")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #545: the machine window sounds of the ME windows (windowsound.lua)
+windowsound545 = require("windowsound")({ me_report = me_report })
+--- me-network issue #543: the block slots of the ME windows as inventory elements (blockinv.lua)
+blockinv543 = require("blockinv")({ me_place = me_place, me_report = me_report })
 --- me-network issues #176 and #177: ME windows in remote view (remoteview.lua)
 remoteview176 = require("remoteview")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1160,6 +1164,8 @@ local function tests_running()
 	providers158.running(check)
 	pastecraft157.running(check)
 	nativeinv542.running(check)
+	windowsound545.running(check)
+	blockinv543.running(check)
 	sticky193.running(check)
 	chest229.running(check)
 	wireless205.running(check)
@@ -2134,6 +2140,8 @@ script.on_nth_tick(10, function()
 	providers158.tick()
 	pastecraft157.tick()
 	nativeinv542.tick()
+	windowsound545.tick()
+	blockinv543.tick()
 	sticky193.tick()
 	chest229.tick()
 	wireless205.tick()
@@ -5034,6 +5042,7 @@ script.on_init(function()
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(nativeinv542.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(blockinv543.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sticky193.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(chest229.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wireless205.setup(s)) do fails[#fails + 1] = f end

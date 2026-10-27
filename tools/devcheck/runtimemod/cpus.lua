@@ -170,6 +170,23 @@ return function(H)
 			local m = remote.call(C, "get_maintainer", st.maint) or {}
 			if m.status ~= "cpu-too-small" and game.tick < st.tick + 120 then return end
 			expect(m.status == "cpu-too-small" and not m.job, "the maintainer with a job too big: " .. line(m))
+			--- issue #544: the maintainer's row button shows the stock and, as its second number, the amount to keep; the
+			--- provider's pattern slot the amount of its output (the window for a stand-in player with a GUI)
+			do
+				local inv = game.create_inventory(10)
+				remote.call(GUI, "stand_in", "cpus544", { main = inv, index = 9501, gui = true })
+				local ok, err = pcall(remote.call, GUI, "stand_in_open_entity", "cpus544", st.maint)
+				local b = ok and remote.call(GUI, "stand_in_numbers", "cpus544", "fork_me_maint_target_1")[1]
+				expect(b and b.number == count(GEAR) and b.secondary_number == BIG, "the maintainer's row button (issue #544): "
+					.. line(ok and b or err))
+				local p = find("me-pattern-provider", 30, -2)
+				ok, err = pcall(remote.call, GUI, "stand_in_open_entity", "cpus544", p)
+				local slots = ok and remote.call(GUI, "stand_in_numbers", "cpus544", "fork_me_provider_slots") or {}
+				expect(slots[1] and slots[1].number == 1, "the provider's pattern slot shows its output amount (issue #544): "
+					.. line(ok and slots or err))
+				remote.call(GUI, "stand_in_close_window", "cpus544", false)
+				inv.destroy()
+			end
 			remote.call(C, "set_maintainer", st.maint, false)
 			conserved("after the maintainer")
 			--- two jobs at once: the small one takes A (the smallest CPU that fits), the next one B; a third is refused (issue #418:
@@ -189,6 +206,29 @@ return function(H)
 			local pv = remote.call(TERM, "craft_preview", t, GEAR, 5)
 			expect(not pv.ok and pv.reason == "no-free-cpu", "preview while both CPUs run: " .. line({ pv.reason }))
 			check_pictures("two jobs running")
+			--- issue #544: the terminal's crafting tab shows what the two jobs craft (30 gears) as the second number of the gear,
+			--- its jobs tab the jobs' amounts
+			do
+				local inv = game.create_inventory(10)
+				remote.call(GUI, "stand_in", "cpus544", { main = inv, index = 9501, gui = true })
+				local ok, err = pcall(remote.call, GUI, "stand_in_open_entity", "cpus544", t)
+				local gear
+				if ok and remote.call(GUI, "stand_in_select_tab", "cpus544", "fork_me_tabs", 2) then
+					for _, b in ipairs(remote.call(GUI, "stand_in_numbers", "cpus544", "fork_me_craft_grid")) do
+						if b.sprite == "item/" .. GEAR then gear = b end
+					end
+				end
+				expect(gear and gear.secondary_number == 30, "the crafting tab's second number of the gear (issue #544): " .. line(ok and gear or err))
+				local amounts = {}
+				if ok and remote.call(GUI, "stand_in_select_tab", "cpus544", "fork_me_tabs", 3) then
+					for _, b in ipairs(remote.call(GUI, "stand_in_numbers", "cpus544", "fork_me_jobs")) do amounts[#amounts + 1] = b.number end
+				end
+				table.sort(amounts)
+				expect(line(amounts) == line({ 10, 20 }), "the jobs tab's amounts: " .. line(amounts))
+				remote.call(GUI, "stand_in_close_window", "cpus544", false)
+				remote.call(GUI, "stand_in_forget", "cpus544")
+				inv.destroy()
+			end
 			st.ja, st.jb, st.phase, st.tick = ja, jb, "two", game.tick
 			return
 		end

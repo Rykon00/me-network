@@ -69,18 +69,9 @@ local function rebuild(frame, name, sig, build)
 	build(box)
 end
 
---- Issue #28: the slots `first` .. `last` of a block's inventory `inv` as slot buttons (block_slot: the window's
---- click), rebuilt when a stack changed; `tip(slot, stack)` gives a button's tooltip
-local function block_slots(frame, name, inv, first, last, tip, offset)
-	local sig = { tostring(first), tostring(last) }
-	for i = first, last do
-		local st = inv[i]
-		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name .. G.stack_ident(st)) or "-"
-	end
-	rebuild(frame, name, table.concat(sig, ","), function(box)
-		for i = first, last do G.stack_button(box, inv[i], G.act("block_slot", { slot = i + (offset or 0) }), tip and tip(i, inv[i]) or nil) end
-	end)
-end
+--- Issue #28: the slots of a block's inventory; since issue #543 the game's inventory element where the window shows the
+--- whole inventory, slot buttons for a part of one (G.block_slots)
+local block_slots = G.block_slots
 
 local function caption_of(entity)
 	return entity.localised_name
@@ -1127,6 +1118,15 @@ local function pattern_sprite(d)
 end
 M.pattern_sprite = pattern_sprite
 
+--- Issue #544: the number on a pattern's slot: the amount of its first output (nil: none known)
+local function pattern_number(d)
+	local def = patterns.normalize(d)
+	local first = def and type(def.outputs) == "table" and def.outputs[1]
+	local amount = type(first) == "table" and first.amount
+	return type(amount) == "number" and amount > 0 and amount or nil
+end
+M.pattern_number = pattern_number
+
 --- the status line of a slot (LocalisedString)
 local function slot_status(d)
 	if d.pending then return { "fork-me-pattern.status-pending" } end
@@ -1152,7 +1152,7 @@ local function build_provider_slots(box, entity)
 		local d = info.slots[slot]
 		local tags = G.act("prov_slot", { slot = slot })
 		if d then
-			t.add{ type = "sprite-button", sprite = pattern_sprite(d), tooltip = slot_tooltip(d), tags = tags,
+			t.add{ type = "sprite-button", sprite = pattern_sprite(d), tooltip = slot_tooltip(d), tags = tags, number = pattern_number(d),
 				style = d.pending and "yellow_slot_button" or d.ok and "slot_button" or "red_slot_button" }
 		else
 			t.add{ type = "sprite-button", style = "slot_button", tooltip = { "fork-me-gui.provider-empty-tooltip" }, tags = tags }
@@ -1558,6 +1558,15 @@ function M.refresh_maintainer(player, frame)
 		rebuild(frame, "fork_me_maint_target_" .. i, r.key or "-", function(box)
 			G.key_button(box, r.key, G.act("maint_target", { row = i }), { "fork-me-circuit.maintainer-target-tooltip" }).style.size = 40
 		end)
+		--- issue #544: the row's button shows the stock and, above it, the amount to keep (a fluid filter of one temperature
+		--- keeps its degrees as the number)
+		local box = G.find(frame, "fork_me_maint_target_" .. i)
+		local b = box and box.children[1]
+		if b and r.key and not (r.key:sub(1, 6) == "fluid/" and r.key:find("@%-?%d+$")) then
+			local stock, keep = math.floor(r.stock or 0), r.target or r.amount
+			if b.number ~= stock then b.number = stock end
+			if b.secondary_number ~= keep then b.secondary_number = keep end
+		end
 		local rl = G.find(frame, "fork_me_maint_row_" .. i)
 		if rl then
 			rl.caption = r.key and { "", G.fmt(r.stock or 0), " / ", G.fmt(r.target or r.amount or 0), "  ", circuit.row_status(r) } or ""
@@ -2393,19 +2402,33 @@ local stand_ins = {}            -- name -> a table standing for a LuaPlayer (the
 local stand_in_frames = {}      -- name -> a table standing for a window's frame (issue #311, interface_fluid_view below)
 
 --- Issue #311 (tests): a table standing for a LuaGuiElement, as much of one as the window code that builds and updates
---- a section uses (add, clear, children, name, tags, style and the fields it sets)
+--- a section uses (add, clear, children, name, tags, style and the fields it sets). Issue #545: every field of the `add`
+--- table is kept, a child is found by its name (element.<name>) and can be destroyed, so that G.open_window and
+--- G.close_window run on a stand-in of player.gui.screen.
 local function stand_in_element(def)
-	local el = { type = def.type, name = def.name, caption = def.caption, sprite = def.sprite, number = def.number,
-		tooltip = def.tooltip, elem_tooltip = def.elem_tooltip, value = def.value, tags = def.tags or {}, style = {},
-		style_name = def.style, text = def.text, items = def.items, selected_index = def.selected_index, children = {} }
+	local el = {}
+	for k, v in pairs(def) do el[k] = v end
+	el.tags, el.style, el.style_name, el.children, el.valid = def.tags or {}, {}, def.style, {}, true
 	el.add = function(d)
 		local c = stand_in_element(d)
 		el.children[#el.children + 1] = c
+		c.parent = el
 		return c
 	end
 	el.clear = function() el.children = {} end
+	el.destroy = function()
+		el.valid = false
+		local p = el.parent
+		for i, c in ipairs(p and p.children or {}) do
+			if c == el then table.remove(p.children, i) break end
+		end
+	end
 	el.add_tab = function() end                         -- (issue #531: a tabbed pane's; its children are what was added)
-	return el
+	return setmetatable(el, { __index = function(t, k)
+		for _, c in ipairs(rawget(t, "children")) do
+			if c.name == k then return c end
+		end
+	end })
 end
 M.stand_in_element = stand_in_element                 -- (issue #336: the ME Interface Terminal's page in its test)
 remote.add_interface("gregtorio-me-gui", {
@@ -2503,13 +2526,18 @@ remote.add_interface("gregtorio-me-gui", {
 	end,
 	--- Issues #176 and #177: the harness has no player and a remote call cannot carry functions, so a table standing for a
 	--- LuaPlayer is made here from plain data: `spec` = { remote = in remote view, main = the main inventory (not in remote
-	--- view), character = the character's main inventory (nil: no character), index = a number }; kept under `name`.
+	--- view), character = the character's main inventory (nil: no character), index = a number, gui = true: a stand-in of
+	--- player.gui (issue #545: the window functions run on it) }; kept under `name`. Its sounds are recorded.
 	stand_in = function(name, spec)
-		local texts = {}
-		local sp = { object_name = "LuaPlayer", valid = true, index = spec.index or 9001, texts = texts,
+		local texts, sounds = {}, {}
+		local sp = { object_name = "LuaPlayer", valid = true, index = spec.index or 9001, texts = texts, sounds = sounds,
 			controller_type = spec.remote and defines.controllers.remote or defines.controllers.character,
 			get_main_inventory = function() return not spec.remote and spec.main or nil end,
-			create_local_flying_text = function(a) texts[#texts + 1] = a.text end }
+			create_local_flying_text = function(a) texts[#texts + 1] = a.text end,
+			play_sound = function(a) sounds[#sounds + 1] = a.path end,
+			can_reach_entity = function() return true end, force = game.forces.player, surface = game.surfaces[1],
+			position = { x = 0, y = 0 } }
+		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
 		if spec.character then
 			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
 				get_inventory = function() return spec.character end }
@@ -2525,6 +2553,80 @@ remote.add_interface("gregtorio-me-gui", {
 	stand_in_parked = function(name) return G.parked_count(stand_ins[name]) end,
 	stand_in_return_parked = function(name) return G.return_parked(stand_ins[name]) end,
 	stand_in_texts = function(name) return stand_ins[name].texts end,
+	--- Issue #545: the window `window` (a registered name) of the unit `unit` opened for a stand-in with `gui` (G.open_window, as the
+	--- windows' open functions call it), what it built: { open, opened = it is the opened GUI, and the pane's inventory element
+	--- (issue #542): inventory_bound, cursor_transfer, slots_per_row }; closing it (`sound`: for good), the sounds it got
+	stand_in_open_window = function(name, window, unit)
+		local sp = stand_ins[name]
+		local frame = G.open_window(sp, window, "devcheck", { unit = unit })
+		local el = G.find(frame, "fork_me_inv")
+		return { open = sp.gui.screen.fork_me_window == frame, opened = sp.opened == frame,
+			inventory_bound = el ~= nil and el.inventory == G.player_inventory(sp),
+			cursor_transfer = el and el.handle_cursor_transfer, slots_per_row = el and el.slots_per_row }
+	end,
+	stand_in_close_window = function(name, sound) G.close_window(stand_ins[name], sound) end,
+	--- Issue #543: `entity`'s window opened for a stand-in with `gui` (the open key's path, G.open_entity) and refreshed once;
+	--- its block inventory elements: { { box = the flow's name, inventory, offset, size, cursor_transfer } }, and its slot
+	--- buttons (block_slot) by flow name
+	stand_in_open_entity = function(name, entity)
+		local sp = stand_ins[name]
+		G.open_entity(sp, entity)
+		local frame = G.window_of(sp)
+		if not frame then return nil end
+		G.refresh_one(sp)
+		local out = { elements = {}, buttons = {} }
+		local queue, i = { frame }, 1
+		while queue[i] do
+			for _, c in pairs(queue[i].children) do
+				local tags = c.tags or {}
+				if c.type == "inventory" and tags.fork_me_act == "block_inventory" then
+					out.elements[#out.elements + 1] = { box = c.parent.name, inventory = c.inventory, offset = tags.offset,
+						size = c.slots_per_row, cursor_transfer = c.handle_cursor_transfer, empty = c.empty_slot_info }
+				elseif tags.fork_me_act == "block_slot" then
+					out.buttons[c.parent.name] = (out.buttons[c.parent.name] or 0) + 1
+				end
+				queue[#queue + 1] = c
+			end
+			i = i + 1
+		end
+		return out
+	end,
+	--- Issue #544: in the stand-in's open window, select tab `index` of the tabbed pane `tabs` and refresh (only the shown tab of
+	--- the terminal is refreshed); and the buttons below the element `element`: { { sprite, number, secondary_number } }
+	stand_in_select_tab = function(name, tabs, index)
+		local sp = stand_ins[name]
+		local frame = G.window_of(sp)
+		local t = frame and G.find(frame, tabs)
+		if not t then return false end
+		t.selected_tab_index = index
+		G.refresh_one(sp)
+		return true
+	end,
+	stand_in_numbers = function(name, element)
+		local frame = G.window_of(stand_ins[name])
+		local root = frame and G.find(frame, element)
+		local out = {}
+		local queue, i = { root }, 1
+		while root and queue[i] do
+			for _, c in pairs(queue[i].children) do
+				if c.type == "sprite-button" then out[#out + 1] = { sprite = c.sprite, number = c.number, secondary_number = c.secondary_number } end
+				queue[#queue + 1] = c
+			end
+			i = i + 1
+		end
+		return out
+	end,
+	--- Issue #543: an action on slot `slot` of a block's inventory element (`binv`, the window's slots offset by `offset`) of
+	--- `entity`'s window: `mode` "click", "right", "shift", "control" or "remote" (a click in remote view), with `cursor` and the
+	--- player's `inventory`; returns the reason of a refusal and "out"
+	block_action = function(entity, binv, slot, mode, cursor, inventory, offset)
+		local A = defines.inventory_actions
+		local action = ({ click = A.cursor_transfer, right = A.cursor_split, shift = A.stack_transfer, control = A.inventory_transfer,
+			remote = A.cursor_transfer })[mode]
+		return G.block_action(G.def_of(entity), entity, binv, slot, action, mode ~= "remote" and cursor or nil, inventory,
+			mode == "remote", offset)
+	end,
+	stand_in_sounds = function(name) return stand_ins[name].sounds end,
 	stand_in_forget = function(name) stand_ins[name] = nil stand_in_frames[name] = nil end,
 	--- Issue #311: the fluid entries of an interface's window, and its fluid section built into a stand-in frame kept
 	--- under `name` (like an open window between its refreshes; the harness has no player): { rebuilt = built anew by

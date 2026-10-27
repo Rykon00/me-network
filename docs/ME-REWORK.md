@@ -2575,8 +2575,97 @@ actions, so the window tests of #28 keep their shift and control clicks; the pan
 merge, swap, half) are gone with the code, the game does that now. `ifacecap.lua`'s check of #201 (a buffer stack pushed
 back) became the same check by shift + click; `remoteview.lua` checks the flags instead of the buffer.
 
-**Not done with the element here:** the block's slots (cards, the workbench's cell, the IO port, the drive) are still slot
-buttons; issue #543 takes them on.
+**Sounds (issue #545).** Factorio 2.1.13's `utility/machine_gui_open` and `utility/machine_gui_close` (valid sound paths,
+probed): `G.open_window` plays the open sound for the player (`player.play_sound` without a position: only they hear it)
+unless the same window (name and unit) is only built again; a window that replaces another (a cell window from the drive,
+Back to the terminal) plays the open sound alone. `G.close_window(player, true)` plays the close sound when a window was
+open: the close button, E or Escape (`on_gui_closed`), the refresh closing a window whose block is gone or out of reach,
+Back without a terminal, the wireless hotkey. Silent: the close inside `open_window`, another GUI that took over without an
+event, a player leaving, a mod update (`close_all`). Test `runtimemod/windowsound.lua`: the window functions run on a
+stand-in player with a stand-in of `player.gui.screen` (the remote's `stand_in` with `gui`; `stand_in_element` keeps every
+field of `add`, finds children by name and can be destroyed) whose `play_sound` records the paths: open, rebuild, open from
+another window, close, close without a window, the silent close; it also checks the window's inventory element (bound to
+the stand-in's inventory, the game's cursor handling, 10 per row).
+
+**Not done with the element here:** the block's slots; issue #543 (next section).
+
+### The block slots as inventory elements (me-network issue #543)
+
+The card slots of a block are a script inventory of the block (`rec.inv`, scripts/fork-me-cardslots.lua), and the window
+showed them as slot buttons. Since #543 `G.block_slots(frame, name, inv, first, last, tip, offset)` (moved from
+`scripts/fork-me-windows.lua` into the GUI module, so the access point uses it too) puts the game's `inventory` element there
+**when the window shows the whole inventory** (`first == 1` and `last == #inv`): the game draws the slots, their tooltips
+(the card's description), quality and the hand. A part of an inventory stays slot buttons as before.
+
+**The rule check.** Script inventories have no filters (the probe of #542), so the element cannot keep a wrong item out by
+itself. Its handling flags are all off (`handle_cursor_transfer`, `handle_cursor_split`, opening and trashing): the game moves
+nothing and raises `on_gui_inventory_action` for every click, and `G.block_action` hands it to the window's `click`, the same
+function the buttons call, which refuses a wrong item before anything moves:
+
+| Action | Mouse | What happens |
+|---|---|---|
+| `cursor_transfer`, `cursor_split` | click, right click | `def.click(entity, slot + offset, cursor, inventory, remote)`: the hand's card goes in (one of the stack) or is refused and stays in the hand; with an empty hand the card goes into the hand; in remote view into the inventory |
+| `stack_transfer`, `stack_split` | shift + click, shift + right click | `def.click(..., nil, inventory, true)`: the card into the inventory, whatever the hand holds |
+| `inventory_transfer`, `inventory_split` | control + click, control + right click | the same for every slot with that card |
+| `open_item`, `open_mod_item`, the trash actions | | nothing |
+
+From the player's side a card comes in only by the window's `shift` (shift + click, control + click: #542), which checks the
+same rules. Whether the game can put an item into an element with its handling off by any other path (a drag over the
+slots, a drop from the hand while dragging) cannot be seen headless: the `[Task-Ingame]` issue #546 checks it. Should one
+exist, `cards.sync` (the backstop of #30 that gives back what does not belong) is there to be called at the refresh.
+The empty slots' tooltip is the window's hint for an empty slot (`empty_slot_info.text`, no sprite: a custom
+`empty_slot_info` sprite hides the bar in 2.1.11, forum t=135616).
+
+**Per window:**
+
+| Window | Slots | Now |
+|---|---|---|
+| ME Interface | card slots (`io.interface_inventory`) | element |
+| Import / Export Bus | card slots (`io.bus_inventory`) | element |
+| ME Storage Bus | card slots (`sbus.inventory`) | element |
+| ME Pattern Provider | card slots (`autocraft.provider_inventory`) | element |
+| ME Logistic Interface | card slots (`fork_me_lif_cards`) | element |
+| ME IO Port | card slots (`fork_me_iop_cards`; the window's slots 3 to 6: offset 2) | element |
+| ME Wireless Access Point | booster slots | element (not in the issue's list; the same card inventory) |
+| ME IO Port | input and output cell (slots 1 and 2 of one inventory, shown apart with their own tooltips) | **buttons**: an element shows a whole inventory with one empty-slot tooltip; two inventories would change the saved layout (migration) |
+| ME Cell Workbench | cell slot and card slots (slot 1 and 2 to 5 of one inventory; how many card slots depends on the cell) | **buttons**: a range of one inventory whose shown part changes with the cell; splitting it touches saved state |
+| ME Drive | 10 cell slots | **buttons**: the fill numbers and the yellow partition style are per slot, the element has no per-slot style; the cells are records, not an inventory |
+| ME Pattern Provider | the pattern slots | **buttons**: records with a state colour per slot (yellow pending, red broken), not an inventory |
+| ME Pattern Terminal, charger, the terminal's View Cell slots | blank and output slot, the charger's slot, the view cells | buttons (not in the issue's list) |
+
+The rest is issue #550 (the parts of inventories and the slots outside the issue's list).
+
+**Tests.** `runtimemod/blockinv.lua` opens every window of the table that has an element for a stand-in player (the open
+key's path, `G.open_entity`, and one refresh; the stand-in of #545 can reach every entity) and finds the element: bound to the
+block's card inventory, its size, the handling off, the offset, an empty-slot tooltip; the IO port's cell slots are still one
+button each. Then, through `block_action` as the event calls it: iron plates in the hand are refused by click and by right
+click and stay in the hand, a card goes in by click and by right click (one of a stack of three), shift + click takes one out
+into the inventory, control + click every card of the kind, a click in remote view takes it into the inventory, and no card
+is made or lost.
+
+### A second number on slot buttons (me-network issue #544)
+
+Factorio 2.1.18's `LuaGuiElement.secondary_number` puts a second number on a sprite-button, at the right above `number`
+(probed: read back as set, a fraction too, nil removes it; only sprite-buttons have it). Decided per window, the tooltips
+stay as they were:
+
+| Window | `number` | `secondary_number` |
+|---|---|---|
+| ME Terminal, storage tab | stored (as before) | what the network's active jobs (queued or running) are crafting of that key (`autocraft.crafting_amounts`) |
+| ME Terminal, crafting tab | stored (as before) | the same |
+| Jobs (terminal tab, Crafting CPU window) | the job's amount (as before) | what is done of it: the amount times the share of the runs done, once a run is done |
+| ME Level Maintainer rows | the stock (new; the button had none) | the amount to keep (with the circuit's amount when it sets it); a fluid filter of one temperature keeps its degrees as the number and gets neither |
+| ME Pattern Provider and ME Interface Terminal, pattern slots | the amount of the pattern's first output (new: only the tooltip had it) | none |
+| ME Interface config rows, ME Logistic Interface rows, ME Pattern Terminal | unchanged | none: the rows show the configured amount and the windows show the current state in their own lines (what the interface holds, the asks and the stock); a current amount per row would be a read of the block's inventory per row and refresh, for a number the lines already give |
+
+The numbers are written as plain amounts (`G.fmt` is for captions): the game draws `number` short (1.2k); how it draws a
+large `secondary_number` only the game shows (#546). Cost: the terminal's refresh walks the network's active jobs once (a
+handful) and writes a second number only where it changed (the grid keeps `shown.crafts` next to the keys and counts of
+issue #50's lever 8; a window of an older version without it sets them once); the maintainer reads and writes five buttons'
+two numbers only when they differ. Test: the CPU test (`runtimemod/cpus.lua`) opens the windows for a stand-in player while
+its two jobs run (10 and 20 gears): the crafting tab's gear has 30 as its second number, the jobs tab the amounts 10 and 20;
+with the maintainer waiting for 1100 gears its row button shows the stock and 1100; the provider's gear pattern shows 1. A
+negative run (no crafting amounts, no second number on the maintainer) fails both checks.
 
 ## Open points
 

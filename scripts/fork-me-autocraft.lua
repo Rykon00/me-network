@@ -3218,6 +3218,21 @@ function M.jobs(net)
 	return out
 end
 
+--- Issue #544: what the network's active jobs (queued or running, not closing) are crafting, by resource key: { [key] =
+--- amount } (the terminal's second number on a slot)
+function M.crafting_amounts(net)
+	local s = state()
+	local out = {}
+	for _, id in pairs(s.active) do
+		local job = s.jobs[id]
+		if job and not job.closing and (job.status == "queued" or job.status == "running") then
+			local jn = job_network(job)
+			if jn and jn.id == net.id then out[job.item] = (out[job.item] or 0) + job.amount end
+		end
+	end
+	return out
+end
+
 --- The crafting CPUs of a network and how many of them have a job (the in-game diagnostic, issue #38)
 function M.cpu_report(net)
 	local s = state()
