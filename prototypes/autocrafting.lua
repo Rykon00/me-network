@@ -94,7 +94,7 @@ ME.add_item{
 	icon_size = 64,
 	subgroup = "fork-me-autocrafting",
 	order = "e1",
-	stack_size = 64,
+	stack_size = 50,
 	--- AE2 (issue #233): 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2
 	recipe = { energy_required = 1, amount = 2,
 		ingredients = I{ "plastic-bar", 2, "copper-cable", 3, "stone", 1, "iron-plate", 2, "copper-plate", 1 } },

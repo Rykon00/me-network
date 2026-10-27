@@ -78,7 +78,7 @@ ME.add_item{
 	icon_size = 64,
 	subgroup = "fork-me-wireless",
 	order = "b",
-	stack_size = 64,
+	stack_size = 50,
 	localised_description = { "item-description.me-wireless-booster" },
 	--- AE2: a fluix dust, a certus quartz, an ender dust, 3 iron -> 2
 	recipe = { energy_required = 2, amount = 2, ingredients = I{ "copper-cable", 1, "stone", 1, "electronic-circuit", 1, "iron-plate", 3 } },
