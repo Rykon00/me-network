@@ -223,6 +223,8 @@ script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILT
 --- circuit interfaces.
 --- The terminal's 60 tick step stays (windows, drive lights, the sweep).
 local function on_tick(tick)
+	--- a save of a development build of the same version (no on_configuration_changed): the underground cables' turn once
+	if not storage.fork_me_ug_vanilla then fork_net.migrate_underground_direction() end
 	sched.mark(tick)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
@@ -233,7 +235,6 @@ local function on_tick(tick)
 	fork_me.on_tick(tick)
 	fork_net.chest_tick(tick)                                 -- (issue #229: the ME Chest's input into its cell)
 	names.step()                                              -- (issue #295: translation requests, while any wait)
-	cabledrag.on_tick(tick)                                   -- (the ends of a dragged underground cable keep their way)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
 
@@ -278,6 +279,7 @@ end
 script.on_init(function()
 	if handover_pending() then refuse_old_save(nil) end
 	handover.pull()
+	fork_net.migrate_underground_direction()                  -- (a handed-over save's underground cables, before the graph)
 	fork_me.on_init()
 end)
 
@@ -302,7 +304,9 @@ script.on_configuration_changed(function(data)
 	fork_ae2.clean_removed_items()
 	fork_circuit.clean_removed_items()
 	fork_io.clean_removed_items()
-	--- the graph first (the only map scan), then the modules that read it
+	--- the underground cables of a save from before 0.5.11 turned to the vanilla underground pipe's rule, then the graph first
+	--- (the only map scan), then the modules that read it
+	fork_net.migrate_underground_direction()
 	fork_net.rebuild()
 	--- issue #146: the reports of the conversions of old saves (0.5.0 and older) are gone with them
 	storage.fork_me_migrate, storage.fork_me_migrate_fluids, storage.fork_me_unify = nil, nil, nil

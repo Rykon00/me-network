@@ -937,14 +937,15 @@ def bus_sprite(accent, export, direction, marker_only=False):
 
 
 def underground_sprite(direction):
-    """1x1 underground cable end, drawn facing north (the run goes north under the ground): the cable arm on
-    the back side (south) into a dark tunnel mouth with a fluix arrow pointing along the run. Rotated."""
+    """1x1 underground cable end. Drawn with the run going north under the ground (the cable arm on the south side
+    into a dark tunnel mouth with a fluix arrow pointing along the run), which since 0.5.11 is the end facing south: the
+    underground cable has the vanilla underground pipe's connections (the cable side on its direction). Rotated."""
     img = cable_variation(4)
     d = ImageDraw.Draw(img)
     d.rounded_rectangle((6, 3, TILE - 7, 20), radius=4, fill=(24, 22, 30, 255), outline=CABLE_EDGE + (255,), width=2)
     d.rectangle((10, 6, TILE - 11, 18), fill=(12, 10, 16, 255))
     d.polygon([(11, 15), (20, 15), (15, 8)], fill=CABLE_GLOW + (255,))
-    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    turns = {"south": 0, "west": 270, "north": 180, "east": 90}[direction]
     return img.rotate(turns, resample=Image.NEAREST) if turns else img
 
 
@@ -956,7 +957,7 @@ def underground():
         underground_sprite(direction).save(path)
         written.append(path)
     path = OUT_ICON / "me-underground-cable.png"
-    underground_sprite("north").save(path)
+    underground_sprite("south").save(path)                 # (the icon as before 0.5.11: the run going north)
     written.append(path)
     return written
 

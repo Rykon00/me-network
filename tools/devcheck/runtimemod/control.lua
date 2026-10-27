@@ -306,14 +306,15 @@ function me_graph_test()
 		local e = s.create_entity{ name = "me-drive", position = { GX + 12.5, GY + 4.5 }, force = "player", raise_built = true }
 		local placed, unreached = remote.call(NET, "connect", { a, e }, 8)
 		expect(placed > 0 and #unreached == 0 and same(a, e), "router: " .. placed .. " cables, " .. #unreached .. " unreached")
-		--- underground cable: drive, end facing east, 3 free tiles, end facing west, drive (no controller needed)
+		--- underground cable (the vanilla underground pipe's rule: the cable side on its direction): drive, end facing west
+		--- (its cable side to the drive), 3 free tiles, end facing east, drive (no controller needed)
 		local ux, uy = GX + 20.5, GY + 12.5
 		local function put(name, dx, dy, dir)
 			return s.create_entity{ name = name, position = { ux + dx, uy + dy }, force = "player", direction = dir, raise_built = true }
 		end
 		local ud1 = put("me-drive", 0, 0)
-		local u1 = put("me-underground-cable", 1, 0, defines.direction.east)
-		local u2 = put("me-underground-cable", 5, 0, defines.direction.west)
+		local u1 = put("me-underground-cable", 1, 0, defines.direction.west)
+		local u2 = put("me-underground-cable", 5, 0, defines.direction.east)
 		local ud2 = put("me-drive", 6, 0)
 		expect(ud1 and u1 and u2 and ud2 and same(ud1, ud2), "the drives are not connected through the underground cable")
 		expect(u1 and u2 and remote.call(NET, "underground_partner", u1) == u2.unit_number, "the underground ends did not pair")
@@ -325,29 +326,29 @@ function me_graph_test()
 		--- removing an end splits, placing it again joins
 		u2.destroy{ raise_destroy = true }
 		expect(not same(ud1, ud2), "still connected without the second end")
-		u2 = put("me-underground-cable", 5, 0, defines.direction.west)
+		u2 = put("me-underground-cable", 5, 0, defines.direction.east)
 		expect(u2 and same(ud1, ud2), "not connected again after placing the end again")
 		--- rotating an end breaks the link (and turning it back restores it)
 		u1.direction = defines.direction.south
 		remote.call(NET, "rotated", u1)
 		expect(not same(ud1, ud2) and remote.call(NET, "underground_partner", u2) == nil, "still linked after rotating an end")
-		u1.direction = defines.direction.east
+		u1.direction = defines.direction.west
 		remote.call(NET, "rotated", u1)
 		expect(same(ud1, ud2), "not linked after rotating the end back")
 		st.underground = { ud1 = ud1, ud2 = ud2, u1 = u1, u2 = u2, over = over, beside = beside }
 		--- out of reach: an end 12 tiles away does not pair
-		local far1 = put("me-underground-cable", 1, 3, defines.direction.east)
-		local far2 = put("me-underground-cable", 13, 3, defines.direction.west)
+		local far1 = put("me-underground-cable", 1, 3, defines.direction.west)
+		local far2 = put("me-underground-cable", 13, 3, defines.direction.east)
 		expect(far1 and far2 and remote.call(NET, "underground_partner", far1) == nil, "ends 12 tiles apart paired")
 		--- it is an underground pipe of its own category: a pipe next to it does not connect
 		local pipe = put("pipe", 0, 3)
 		expect(pipe and #pipe.get_fluid_box_neighbours(1) == 0, "a pipe connected to an underground cable")
 		--- an end placed between a pair takes the near end (like underground pipes); removing it gives the pair back
 		local wd1, wd2 = put("me-drive", 0, 6), put("me-drive", 8, 6)
-		local w1 = put("me-underground-cable", 1, 6, defines.direction.east)
-		local w2 = put("me-underground-cable", 7, 6, defines.direction.west)
+		local w1 = put("me-underground-cable", 1, 6, defines.direction.west)
+		local w2 = put("me-underground-cable", 7, 6, defines.direction.east)
 		expect(same(wd1, wd2), "the second pair did not connect")
-		local w3 = put("me-underground-cable", 4, 6, defines.direction.west)
+		local w3 = put("me-underground-cable", 4, 6, defines.direction.east)
 		expect(remote.call(NET, "underground_partner", w1) == w3.unit_number and not same(wd1, wd2)
 			and remote.call(NET, "underground_partner", w2) == nil, "the middle end did not take the near end")
 		w3.destroy{ raise_destroy = true }
@@ -367,8 +368,8 @@ function me_graph_test()
 		local c, chest = row(9, 1, 7, walls, { ["me-underground-cable"] = 3 })
 		local exit, entry = remote.call(NET, "drag_bridge", c[2], c[6], chest)
 		local inv = chest.get_inventory(defines.inventory.chest)
-		expect(exit and entry and entry.name == "me-underground-cable" and entry.direction == defines.direction.east
-			and exit.direction == defines.direction.west and same(dd1, dd2)
+		expect(exit and entry and entry.name == "me-underground-cable" and entry.direction == defines.direction.west
+			and exit.direction == defines.direction.east and same(dd1, dd2)
 			and remote.call(NET, "underground_partner", entry) == exit.unit_number,
 			"a dragged cable over walls did not become a connected underground pair")
 		expect(inv.get_item_count("me-underground-cable") == 1 and inv.get_item_count("fluix-cable") == 2,
@@ -397,45 +398,19 @@ function me_graph_test()
 		local g2 = s.create_entity{ name = "entity-ghost", inner_name = "me-cable", position = { ux + 4, uy + 27 }, force = "player" }
 		local gx, ge = remote.call(NET, "drag_bridge", g1, g2, nil)
 		expect(gx and ge and gx.ghost_name == "me-underground-cable" and ge.ghost_name == "me-underground-cable"
-			and ge.direction == defines.direction.east, "a dragged ghost over a wall did not become a ghost pair")
-		--- dragging the ME Underground Cable: the game builds one on every tile, the pairs end up at the full reach
-		local dchest = put("wooden-chest", 0, 31)
-		local made = {}
-		for x = 1, 24 do
-			local e = put("me-underground-cable", x, 30, defines.direction.north)
-			local what = remote.call(NET, "drag_underground", "test", e, x > 1, dchest)
-			made[x] = what ~= "taken" and e or nil
-		end
-		local ends = s.find_entities_filtered{ name = "me-underground-cable", area = { { ux + 0.5, uy + 29.5 }, { ux + 25, uy + 30.5 } } }
-		local at = {}
-		for _, e in pairs(ends) do at[e.position.x - ux] = e end
-		local want = { [1] = defines.direction.east, [11] = defines.direction.west, [12] = defines.direction.east,
-			[22] = defines.direction.west, [23] = defines.direction.east, [24] = defines.direction.west }
-		local ok = #ends == 6
-		for x, d in pairs(want) do ok = ok and at[x] and at[x].direction == d end
-		expect(ok and remote.call(NET, "underground_partner", at[1]) == at[11].unit_number
-			and remote.call(NET, "underground_partner", at[12]) == at[22].unit_number
-			and remote.call(NET, "underground_partner", at[23]) == at[24].unit_number,
-			"a drag of underground cables did not make pairs at the full reach: "
-			.. serpent.line((function() local o = {} for x, e in pairs(at) do o[#o + 1] = x .. ":" .. e.direction end return o end)()))
-		--- the game turns dragged underground pipes by its own rule after the build: the drag turns them back
-		for _, e in pairs(ends) do e.direction = (e.direction + 8) % 16 end
-		remote.call(NET, "drag_tick")
-		ok = true
-		for x, d in pairs(want) do ok = ok and at[x].direction == d end
-		expect(ok and remote.call(NET, "underground_partner", at[1]) == at[11].unit_number
-			and remote.call(NET, "underground_partner", at[23]) == at[24].unit_number,
-			"the ends of a drag the engine turned around were not turned back")
-		expect(dchest.get_inventory(defines.inventory.chest).get_item_count("me-underground-cable") == 18,
-			"the ends taken away did not come back: " .. dchest.get_inventory(defines.inventory.chest).get_item_count("me-underground-cable"))
-		--- a drag that turns back takes the end built against its way
-		local b1 = put("me-underground-cable", 1, 33, defines.direction.north)
-		remote.call(NET, "drag_underground", "test", b1, false, dchest)
-		local b2 = put("me-underground-cable", 4, 33, defines.direction.north)
-		remote.call(NET, "drag_underground", "test", b2, true, dchest)
-		local b3 = put("me-underground-cable", 0, 33, defines.direction.north)
-		expect(remote.call(NET, "drag_underground", "test", b3, true, dchest) == "taken" and not b3.valid
-			and b2.valid and remote.call(NET, "underground_partner", b1) == b2.unit_number, "an end against the drag's way stayed")
+			and ge.direction == defines.direction.west, "a dragged ghost over a wall did not become a ghost pair")
+		--- an older save (before 0.5.11, the run along the direction): its ends are turned around once and stay paired
+		local m1 = put("me-underground-cable", 1, 30, defines.direction.east)
+		local m2 = put("me-underground-cable", 6, 30, defines.direction.west)
+		local md1, md2 = put("me-cable", 0, 30), put("me-cable", 7, 30)
+		local mg = s.create_entity{ name = "entity-ghost", inner_name = "me-underground-cable", position = { ux + 3, uy + 33 },
+			direction = defines.direction.north, force = "player" }
+		expect(not same(md1, md2), "an end facing away from its cable connected to it")
+		local turned = remote.call(NET, "migrate_underground_direction", s, { { ux - 0.5, uy + 29.5 }, { ux + 8, uy + 33.6 } })
+		expect(turned == 3 and m1.direction == defines.direction.west and m2.direction == defines.direction.east
+			and mg.direction == defines.direction.south, "the turn of an older save's underground cables: " .. tostring(turned))
+		st.migrated = { md1 = md1, md2 = md2, m1 = m1, m2 = m2 }        -- (connected by the graph rebuild below)
+		expect(remote.call(NET, "migrate_underground_direction") == nil, "the turn of a save ran a second time")
 		--- cables can be walked over
 		local mask = prototypes.entity["me-cable"].collision_mask.layers
 		expect(not mask.player and not prototypes.entity["me-underground-cable"].collision_mask.layers.player,
@@ -480,7 +455,12 @@ function me_graph_test()
 					"the underground pair is lost after the graph rebuild")
 				expect(not same(u.over, u.ud1) and not same(u.beside, u.ud1), "the graph rebuild joined cables over or beside the run")
 			end
-			return finish("join, split, conflict, sweep, router, underground cable, cable drag, underground drag, walkable, power")
+			local m = st.migrated
+			if m then
+				expect(same(m.md1, m.md2) and remote.call(NET, "underground_partner", m.m1) == m.m2.unit_number,
+					"the turned underground cables of an older save are not connected after the graph rebuild")
+			end
+			return finish("join, split, conflict, sweep, router, underground cable, cable drag, underground turn, walkable, power")
 		end
 	end
 	if #problems > 0 then finish() end

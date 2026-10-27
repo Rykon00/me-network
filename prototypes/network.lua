@@ -555,8 +555,8 @@ for _, bus in pairs({
 end
 
 --------------------------------------------------------------------------------
---- ME UNDERGROUND CABLE (rotatable pair, like the underground pipe: the direction points along the run;
---- above ground an end connects only on its back side, under ground to the first end within reach that faces
+--- ME UNDERGROUND CABLE (rotatable pair, exactly like the vanilla underground pipe: above ground an end connects only
+--- on the side its direction points to, under ground on the opposite side to the first end within reach that faces
 --- it; runtime: scripts/fork-me-network.lua, find_partner)
 --------------------------------------------------------------------------------
 
@@ -572,8 +572,10 @@ ME.add_item{
 }
 --- A real pipe-to-ground whose fluid box has its own connection category: it never connects to pipes or carries
 --- fluid, but the engine pairs the ends exactly like underground pipes (reach, rotation, blocking, dragging) and
---- shows the pairing on hover and while placing. Its direction is the run's direction; the above ground
---- connection points backwards. The ME graph reads the engine's pairing (fluidbox.get_connections).
+--- shows the pairing on hover and while placing. Its connections are the vanilla underground pipe's (the above
+--- ground one on the direction side), so the game's underground drag places the pairs at the full reach as for
+--- underground pipes (it reads the connections by the vanilla rule; before 0.5.11 they were the other way round and a
+--- drag put the ends side by side). The ME graph reads the engine's pairing (fluidbox.get_connections).
 data:extend({ {
 	type = "pipe-to-ground",
 	name = UNDERGROUND,
@@ -592,8 +594,8 @@ data:extend({ {
 	fluid_box = {
 		volume = 1,
 		pipe_connections = {
-			{ direction = defines.direction.south, position = { 0, 0 }, connection_category = "me-cable", hide_connection_info = true },
-			{ connection_type = "underground", direction = defines.direction.north, position = { 0, 0 },
+			{ direction = defines.direction.north, position = { 0, 0 }, connection_category = "me-cable", hide_connection_info = true },
+			{ connection_type = "underground", direction = defines.direction.south, position = { 0, 0 },
 			  max_underground_distance = UNDERGROUND_REACH, connection_category = "me-cable", hide_connection_info = true },
 		},
 	},

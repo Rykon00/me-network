@@ -288,17 +288,17 @@ local function side_of(b, ob)
 	return 0
 end
 
---- Underground cable: its direction points along the run under the ground; above ground it connects only on
---- the opposite side (like an underground pipe), under ground to its partner (see engine_partner).
+--- Underground cable: like the vanilla underground pipe, above ground it connects only on the side its direction
+--- points to, under ground on the opposite side to its partner (see engine_partner). (Before 0.5.11 it was the other way
+--- round; M.migrate_underground_direction turns the ends of older saves.)
 local DIR_BIT = { [defines.direction.north] = 1, [defines.direction.east] = 2, [defines.direction.south] = 4, [defines.direction.west] = 8 }
-local BACK_BIT = { [1] = 4, [2] = 8, [4] = 1, [8] = 2 }
 local DIR_VEC = { [defines.direction.north] = { 0, -1 }, [defines.direction.east] = { 1, 0 },
 	[defines.direction.south] = { 0, 1 }, [defines.direction.west] = { -1, 0 } }
 
 --- may `a` and `b` (adjacent boxes) connect above ground?
 local function connects(a, b)
-	if a.kind == "underground" and side_of(a, b) ~= BACK_BIT[DIR_BIT[a.dir]] then return false end
-	if b.kind == "underground" and side_of(b, a) ~= BACK_BIT[DIR_BIT[b.dir]] then return false end
+	if a.kind == "underground" and side_of(a, b) ~= DIR_BIT[a.dir] then return false end
+	if b.kind == "underground" and side_of(b, a) ~= DIR_BIT[b.dir] then return false end
 	return true
 end
 
@@ -313,7 +313,7 @@ end
 
 --- The underground cable is a pipe-to-ground with its own connection category (prototypes/network.lua), so the
 --- engine pairs the ends exactly like underground pipes and shows the pairing on hover and while placing. The graph
---- follows the engine: the partner is the end the underground pipe connection reaches (ahead in the direction).
+--- follows the engine: the partner is the end the underground pipe connection reaches (behind the direction).
 local function engine_partner(entity, dir)
 	local v = DIR_VEC[dir]
 	if not (v and entity.fluids_count > 0) then return nil end
@@ -321,7 +321,7 @@ local function engine_partner(entity, dir)
 		local o = other.entity
 		if o and o.valid and o ~= entity and o.name == entity.name then
 			local dx, dy = o.position.x - entity.position.x, o.position.y - entity.position.y
-			if dx * v[1] + dy * v[2] > 0 then return o end
+			if dx * v[1] + dy * v[2] < 0 then return o end
 		end
 	end
 	return nil
@@ -721,6 +721,37 @@ local function remove_node(s, unit)
 		s.ug_dirty = s.ug_dirty or {}
 		s.ug_dirty[pu] = true
 	end
+end
+
+--- Issue: dragging the underground cable (0.5.11). Its prototype took the vanilla underground pipe's connections (the
+--- cable side on its direction, the underground side opposite), so the game's own underground drag places the pairs at
+--- the full reach. Every underground cable (and ghost) of a save from before is turned around once, which keeps its
+--- connections, and its node's direction follows (a kept graph is taken over as it is). Blueprints keep their old
+--- directions. Runs before the graph is built (on_init after the hand-over, on_configuration_changed before the rebuild).
+--- `only` (tests): { surface, area } turns the ends there, whatever the flag says.
+function M.migrate_underground_direction(only)
+	if not only then
+		if storage.fork_me_ug_vanilla then return end
+		storage.fork_me_ug_vanilla = true
+	end
+	local name = mod_data().names.underground
+	local s = storage.fork_me_net
+	local turned = 0
+	for _, surface in pairs(only and { only.surface } or game.surfaces) do
+		local area = only and only.area
+		for _, e in pairs(surface.find_entities_filtered{ name = name, area = area }) do
+			e.direction = (e.direction + 8) % 16
+			local node = s and s.nodes and s.nodes[e.unit_number]
+			if node and node.kind == "underground" then node.dir = e.direction end
+			turned = turned + 1
+		end
+		for _, g in pairs(surface.find_entities_filtered{ ghost_name = name, area = area }) do
+			g.direction = (g.direction + 8) % 16
+			turned = turned + 1
+		end
+	end
+	if turned > 0 then log("ME-UNDERGROUND-DIRECTION: turned " .. turned .. " underground cables around") end
+	return turned
 end
 
 --- A rotated underground cable changes its connections: register it again (its old partner too).
@@ -5879,6 +5910,10 @@ remote.add_interface("gregtorio-me-network", {
 		local node = s and entity and entity.valid and s.nodes[entity.unit_number]
 		return node and node.partner or nil
 	end,
+	--- tests: the turn of the underground cables of an older save; with `surface` and `area` only there (and again)
+	migrate_underground_direction = function(surface, area)
+		return M.migrate_underground_direction(surface and { surface = surface, area = area } or nil)
+	end,
 	--- tests: the underground pair a drag of ME Cable from `a` to `b` makes over an obstacle (scripts/fork-me-cabledrag.lua);
 	--- the underground cables come from and the cables go to the inventory of the chest `chest` (nil: ghosts only)
 	drag_bridge = function(a, b, chest)
@@ -5886,16 +5921,6 @@ remote.add_interface("gregtorio-me-network", {
 		local exit, entry = M.drag_bridge(a, b, inv)          -- (set by scripts/fork-me-cabledrag.lua)
 		return exit, entry
 	end,
-	--- tests: one underground cable of a player's drag (scripts/fork-me-cabledrag.lua); the items of ends taken away go
-	--- into the chest `chest`
-	drag_underground = function(key, e, moving, chest)
-		local inv = chest and chest.valid and chest.get_inventory(defines.inventory.chest)
-		return M.drag_underground(key, e, moving, inv and function(name, quality)
-			inv.insert{ name = name, count = 1, quality = quality }
-		end)
-	end,
-	--- tests: the tick step of the drag (the ends turned back after the engine turned them)
-	drag_tick = function() M.drag_tick(game.tick) end,
 })
 
 return M

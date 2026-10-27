@@ -129,6 +129,14 @@ local function setup_unified(s)
 		inv.destroy()
 		return d
 	end
+	--- me-network 0.5.11: an underground pair as the old rule built it (the run along the direction), the cables at its
+	--- ends and a ghost; the load turns them to the vanilla underground pipe's rule and keeps them connected
+	place(s, fails, "me-cable", 70.5, 10.5)
+	place(s, fails, "me-underground-cable", 71.5, 10.5, { direction = defines.direction.east })
+	place(s, fails, "me-underground-cable", 76.5, 10.5, { direction = defines.direction.west })
+	place(s, fails, "me-cable", 77.5, 10.5)
+	s.create_entity{ name = "entity-ghost", inner_name = "me-underground-cable", position = { 73.5, 12.5 },
+		direction = defines.direction.north, force = "player" }
 	local di = drive(10.5, "me-16k-storage-cell")
 	local df = drive(11.5, "me-1k-fluid-storage-cell")
 	place(s, fails, "me-terminal", 12.5, 0.5)
@@ -304,6 +312,13 @@ local function check_unified(st)
 	local function at(name, x, y) return s.find_entity(name, { x, y }) end
 	local problems = {}
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	--- me-network 0.5.11: the old underground pair turned and still paired, its ghost turned
+	local ua, ub = at("me-underground-cable", 71.5, 10.5), at("me-underground-cable", 76.5, 10.5)
+	local ug = s.find_entities_filtered{ ghost_name = "me-underground-cable", position = { 73.5, 12.5 } }[1]
+	expect(ua and ub and ua.direction == defines.direction.west and ub.direction == defines.direction.east
+		and remote.call(NET, "underground_partner", ua) == ub.unit_number
+		and ug and ug.direction == defines.direction.south, "the underground cables of the old save: "
+		.. serpent.line({ ua and ua.direction, ub and ub.direction, ug and ug.direction }))
 	local t = at("me-terminal", 12.5, 0.5)
 	local function count(name) return t and remote.call(NET, "count", t, name) or -1 end
 	local c1, c2, c3 = at("iron-chest", 14.5, 3.5), at("iron-chest", 16.5, 3.5), at("iron-chest", 30.5, 3.5)
