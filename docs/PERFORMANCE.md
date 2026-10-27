@@ -4019,3 +4019,52 @@ identical.
 The first check, before the bus took the network id from the records and before the visit reused its scratch tables,
 failed at 1000 (0.403 → 0.415 ms, +0.73 KB per tick); the allocation is now half of that (the tables `targeted_items_deliver`
 and `get_contents` return, which the engine makes).
+
+## The ME Logistic Interface's automatic mode (issue #537)
+
+A scan with a budget of its own (`logistic_demand`, map setting "requests read per tick", 2 requester points per tick), one
+logistic network with an automatic block after the other: phase 1 reads the points (`filters`, one `get_item_count` per
+filter, `targeted_items_deliver` only for a point with open demand), phase 2 works out each requested key (one
+`get_item_count` of the logistic network; what the ME-owned chests hold is read once per pass, one `get_contents` per owned
+chest), phase 3 decides in one tick. The point list (`requester_points`) is kept in `storage` and taken again after 600 ticks
+or when a requester is built.
+
+**Measured on the maintainer's save** (SpaceAge_first-try, Nauvis; issue #537): 355 requester points, a full read 7–12 ms,
+20–35 µs per point. The cost estimated in the issue for 2 points per tick: 0.05–0.07 ms per tick.
+
+**Bench scene** (`bench --logistic N --requesters M`, issue #537): M requester chests beside the roboports, each asking for
+10 of an item the logistic network holds (covered), 50 of a raw item of the ME scene (unmet, ME has it) and 100 000 of another
+item of the logistic network (unmet, ME lacks it: the ME Logistic Storage Bus of the scene shows the base's chests, which the
+automatic mode leaves out). The scene has no robots, so the demand stays and every pass offers the same stock. The 16
+interfaces of #531 are built in Automatic mode (the first leads).
+
+`bench --sizes 1000 --logistic 1000 --requesters 400 --profile 1000 --exclusive` (each function's own time):
+
+| function | per call | calls per tick | per tick |
+|---|---|---|---|
+| `scan_point` (3 filters with open demand, the deliveries read) | 21.0 µs | 1.92 | 0.040 ms |
+| `demand_step` (the step, without the parts listed) | 8.9 µs | 1 | 0.009 ms |
+| `scan_key` (one key) | 3.1 µs | 0.30 | 0.001 ms |
+| `decide` (once per pass, 16 blocks) | 682 µs | 0.005 | 0.003 ms |
+| `auto_request` (the asker's visit) | 7.7 µs | 0.23 | 0.002 ms |
+
+`scan_key` first cost 99 µs per key: it counted the 48 owned chests one by one for every key; they are now read once per
+pass (`L.owned_contents`). `decide` first cost 850 µs: every key asked all 16 blocks' networks; now each ME network is asked
+once per key and blocks are sorted only for a key some network has.
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000 --requesters 400` (three rounds in turns; the reference has no
+automatic mode: its 400 requesters cost nothing):
+
+| | origin/main (#532) | #537 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.424 / 2.16 | 0.482 / 2.25 (noise ±0.021 / ±0.09) |
+| 1000: gc avg (ms) | 0.0386 | 0.0440 |
+| 1000: Lua alloc KB per tick | 27.56 | 33.59 |
+| 5000: script avg / p99 (ms) | 1.015 / 2.91 | 1.084 / 2.98 (noise ±0.020 / ±0.08) |
+| 5000: Lua alloc KB per tick | 35.93 | 41.95 |
+
+The check reports these five numbers as regressions: they are the scan's cost, **+0.058 to +0.069 ms per tick**, in the
+range the issue estimated (0.05–0.07 ms), and about 3 KB per point read (the tables the engine returns: `filters`,
+`targeted_items_deliver`, `position`). Throughput, latencies and the service of every other kind of block are identical. A
+base without an automatic block pays nothing (`demand_step` returns after one cached lookup); fewer points per tick (the
+setting) lower the cost and lengthen a pass.

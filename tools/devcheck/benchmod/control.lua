@@ -837,6 +837,14 @@ local LOG_PITCH, LOG_FILL, LOG_FEEDERS = 6, 800, 20
 --- the network holds). The scene has no robots: the offers stay stocked and the requests open, so every visit pulls nothing in
 --- but reads its chests and works out its rows.
 local LOG_INTERFACES, LIF_ROWS = 16, 3
+--- Issue #537 (`requesters` = N, devcheck.py bench --requesters N): N requester chests in the gaps beside the roboports (up to
+--- 7 a roboport), each asking for three items: 10 of one the logistic network holds (covered), REQ_RAW of a raw item of the ME
+--- scene (the logistic network has none: unmet, the ME network has it) and REQ_BIG of another item of the logistic network
+--- (more than it holds: unmet, the ME network lacks it). The scene has no robots, so the demand stays: the interfaces in
+--- Automatic mode (built since #537) read every point once per pass and keep their stock. REQ_KINDS kinds of the logistic
+--- network's items take part.
+local REQ_RAW, REQ_BIG, REQ_KINDS = 50, 100000, 60
+local REQ_SLOTS = { { 3, -2 }, { 3, -1 }, { 3, 0 }, { 3, 1 }, { 2, -2 }, { 2, -1 }, { 2, 1 } }
 local function logistic_height(n)
 	if not (n and n > 0) then return 0 end
 	return PART_GAP + 6 + LOG_PITCH * math.ceil(n / math.ceil(math.sqrt(n)))
@@ -908,9 +916,31 @@ local function build_logistic(b, part, members)
 			end
 		end
 	end
+	--- issue #537: the requester chests
+	local reqs, want = 0, C.requesters or 0
+	local kinds = math.min(#items, REQ_KINDS)
+	for r = 0, n - 1 do
+		if reqs >= want then break end
+		local cx, cy = X0 + 2 + LOG_PITCH * (r % cols), LY + 6 + LOG_PITCH * math.floor(r / cols)
+		for _, d in ipairs(REQ_SLOTS) do
+			if reqs >= want then break end
+			local c = place("requester-chest", p1(cx + d[1], cy + d[2]))
+			if c then
+				local sec = c.get_logistic_point(defines.logistic_member_index.logistic_container).add_section()
+				local function ask(i, name, count)
+					sec.set_slot(i, { value = { name = name, quality = "normal", comparator = "=" }, min = count })
+				end
+				ask(1, items[(3 * reqs) % kinds + 1], 10)
+				ask(2, RAW[reqs % #RAW + 1], REQ_RAW)
+				ask(3, items[(3 * reqs + 1) % kinds + 1], REQ_BIG)
+				reqs = reqs + 1
+			end
+		end
+	end
 	local net = s.find_logistic_network_by_position({ X0 + 2, LY + 6 }, "player")
 	b.logistic = { roboports = n, storage_chests = chests + LOG_FEEDERS, kinds = #items, bus = bus ~= nil,
-		network = net ~= nil, items = net and net.get_item_count() or 0, interfaces = #lifs }
+		network = net ~= nil, items = net and net.get_item_count() or 0, interfaces = #lifs, requesters = reqs,
+		points = net and #net.requester_points or 0 }
 	b.lifs = { list = lifs, items = items }
 end
 

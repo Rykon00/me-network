@@ -22,6 +22,7 @@
 ---   plates arrive and the maintainer's job makes the gears; a second interface there does not ask (only the first of a
 ---   logistic network). H: a second interface offers iron plates: they are left out, nothing arrives. I: the switch off:
 ---   nothing arrives (both interfaces).
+--- All blocks here are in Manual mode (issue #537; its automatic mode: lifauto.lua).
 --- The save at tick 500 and the schedule digest (control.lua) cover the interfaces' queue. Loaded by control.lua like lab.lua.
 
 local NET, LIF, SB = "gregtorio-me-network", "gregtorio-me-logistic-interface", "gregtorio-me-storagebus"
@@ -184,6 +185,8 @@ return function(H)
 		row(lf, "request", 1, "coal", 20)
 		--- (an active provider's items go to storage chests, the hidden ones too: only B's LB and F's LF accept trash)
 		for _, l in ipairs({ l1, l2, l3, lc }) do remote.call(LIF, "set_accept", l, false) end
+		--- issue #537: these blocks are in Manual mode (as the blocks built before it); the automatic mode is lifauto.lua's
+		for _, l in pairs(s.find_entities_filtered{ name = NAME }) do remote.call(LIF, "set_mode", l, "manual") end
 		return fails
 	end
 

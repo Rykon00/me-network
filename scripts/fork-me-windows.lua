@@ -708,6 +708,10 @@ local function lif_content(content)
 	G.label(content, { "fork-me-gui.logistic-interface-help" }, WIDTH)
 	G.label(content, "", WIDTH, nil, "fork_me_lif_status")
 	G.label(content, "", WIDTH, nil, "fork_me_lif_net")
+	--- issue #537: the mode and what the automatic mode does
+	content.add{ type = "checkbox", name = "fork_me_lif_mode", state = true, caption = { "fork-me-gui.logistic-interface-mode" },
+		tooltip = { "fork-me-gui.logistic-interface-mode-tooltip" }, tags = G.act("lif_mode") }
+	G.label(content, "", WIDTH, nil, "fork_me_lif_mode_line")
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.logistic-interface-cards-tooltip" } }
 	row.add{ type = "flow", name = "fork_me_lif_cards", direction = "horizontal" }
@@ -734,6 +738,9 @@ local function lif_content(content)
 		tooltip = { "fork-me-gui.logistic-interface-auto-tooltip" }, tags = G.act("lif_auto") }
 	G.label(flows.request, "", WIDTH, nil, "fork_me_lif_auto_line")
 	G.grid(flows.request, 9, "fork_me_lif_auto_list")
+	--- issue #537: the automatic offer, read only (under the offer rows)
+	G.heading(flows.offer, { "fork-me-gui.logistic-interface-auto-offer" })
+	G.grid(flows.offer, 9, "fork_me_lif_auto_offer")
 	local accept = flows.accept
 	accept.add{ type = "checkbox", name = "fork_me_lif_accept", state = true, caption = { "fork-me-gui.logistic-interface-accept" },
 		tooltip = { "fork-me-gui.logistic-interface-accept-tooltip" }, tags = G.act("lif_accept") }
@@ -801,8 +808,25 @@ function M.refresh_logistic_interface(player, frame)
 		end
 	end
 	G.find(frame, "fork_me_lif_accept").state = d.accept
-	G.find(frame, "fork_me_lif_auto").state = d.auto
-	G.find(frame, "fork_me_lif_auto_line").caption = not d.auto and ""
+	--- issue #537: the mode, its counts, the automatic offer; in Automatic mode the block asks whatever the switch says
+	local auto_mode = d.mode == "auto"
+	G.find(frame, "fork_me_lif_mode").state = auto_mode
+	G.find(frame, "fork_me_lif_mode_line").caption = not auto_mode and { "fork-me-gui.logistic-interface-mode-manual" }
+		or { "", { "fork-me-gui.logistic-interface-mode-line", tostring(#d.auto_offer), tostring(d.auto_offered) },
+			d.auto_leads and { "", " ", { "fork-me-gui.logistic-interface-mode-leads" } } or "",
+			d.auto_unknown > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-unknown", tostring(d.auto_unknown) } } or "",
+			d.auto_nofit > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-nofit", tostring(d.auto_nofit) } } or "",
+			d.auto_waits > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-waits", tostring(d.auto_waits) } } or "" }
+	local osig = {}
+	for _, o in ipairs(d.auto_offer) do osig[#osig + 1] = o.key .. "=" .. o.amount end
+	rebuild(frame, "fork_me_lif_auto_offer", table.concat(osig, ","), function(grid)
+		for _, o in ipairs(d.auto_offer) do G.slot(grid, o.key, o.amount) end
+	end)
+	local box = G.find(frame, "fork_me_lif_auto")
+	box.state = d.auto or auto_mode
+	box.enabled = not auto_mode
+	box.tooltip = auto_mode and { "fork-me-gui.logistic-interface-auto-tooltip-auto" } or { "fork-me-gui.logistic-interface-auto-tooltip" }
+	G.find(frame, "fork_me_lif_auto_line").caption = not (d.auto or auto_mode) and ""
 		or not d.auto_asks and { "fork-me-gui.logistic-interface-auto-other" }
 		or { "", { "fork-me-gui.logistic-interface-auto-asks", tostring(#d.auto_list) },
 			d.auto_skipped > 0 and { "", " ", { "fork-me-gui.logistic-interface-auto-skipped", tostring(d.auto_skipped) } } or "" }
@@ -887,6 +911,12 @@ G.on("lif_auto", function(event, player, el)
 	if event.name ~= defines.events.on_gui_checked_state_changed then return end
 	local entity = window_entity(player)
 	if entity then lif.set_auto(entity, el.state) G.refresh_one(player) end
+end)
+
+G.on("lif_mode", function(event, player, el)                        -- (issue #537)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then lif.set_mode(entity, el.state and "auto" or "manual") G.refresh_one(player) end
 end)
 
 G.on("lif_filter", function(event, player)
@@ -2553,6 +2583,9 @@ remote.add_interface("gregtorio-me-gui", {
 		out.accept = G.find(frame, "fork_me_lif_accept").state
 		out.auto, out.auto_line = G.find(frame, "fork_me_lif_auto").state, G.find(frame, "fork_me_lif_auto_line").caption   -- (issue #532)
 		out.auto_list = #G.find(frame, "fork_me_lif_auto_list").children
+		out.mode, out.mode_line = G.find(frame, "fork_me_lif_mode").state, G.find(frame, "fork_me_lif_mode_line").caption   -- (issue #537)
+		out.auto_offer = #G.find(frame, "fork_me_lif_auto_offer").children
+		out.auto_enabled = G.find(frame, "fork_me_lif_auto").enabled
 		return out
 	end,
 	--- Issue #514: the ME Terminal's row above the tabs (the search, the quality filter) built into a stand-in for a player
