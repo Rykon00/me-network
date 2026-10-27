@@ -962,8 +962,8 @@ providers158 = require("providers")({ me_place = me_place, power = power, me_rep
 --- me-network issue #157: a machine fed by an interface that keeps one craft (pastecraft.lua)
 pastecraft157 = require("pastecraft")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
---- me-network issue #150: the terminal's hand-over buffer (buffer150.lua)
-buffer150 = require("buffer150")({ me_place = me_place, power = power, me_report = me_report,
+--- me-network issue #542: the native inventory element of the ME windows; the hand-over buffer of #150 is gone (nativeinv.lua)
+nativeinv542 = require("nativeinv")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issues #176 and #177: ME windows in remote view (remoteview.lua)
 remoteview176 = require("remoteview")({ me_place = me_place, power = power, me_report = me_report,
@@ -1159,7 +1159,7 @@ local function tests_running()
 	ifacefluids311.running(check)
 	providers158.running(check)
 	pastecraft157.running(check)
-	buffer150.running(check)
+	nativeinv542.running(check)
 	sticky193.running(check)
 	chest229.running(check)
 	wireless205.running(check)
@@ -2133,7 +2133,7 @@ script.on_nth_tick(10, function()
 	ifacefluids311.tick()
 	providers158.tick()
 	pastecraft157.tick()
-	buffer150.tick()
+	nativeinv542.tick()
 	sticky193.tick()
 	chest229.tick()
 	wireless205.tick()
@@ -5033,7 +5033,7 @@ script.on_init(function()
 	for _, f in pairs(ifacefluids311.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
-	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(nativeinv542.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sticky193.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(chest229.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wireless205.setup(s)) do fails[#fails + 1] = f end

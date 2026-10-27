@@ -2414,11 +2414,20 @@ remote.add_interface("gregtorio-me-gui", {
 	fit_height = function(height, scale, reserve, max, min)
 		return G.fit_height({ display_resolution = { width = 1920, height = height }, display_scale = scale }, reserve, max, min)
 	end,
-	--- issue #150 (tests): the hand-over buffer of a relative window: its stacks into the block of window `name` (what it
-	--- refuses stays), and what is left back to `to` (a player or an inventory)
-	buffer_absorb = function(inv, name, entity, seen) return G.buffer_absorb(inv, G.def_named(name), entity, seen) end,
-	buffer_return = function(inv, to, entity) G.buffer_return(inv, to, entity) end,
-	buffer_slots = function() return G.BUFFER_SLOTS end,
+	--- issue #542 (tests): a hand-over buffer of a 0.5.10 save for the player `index` (the script inventory `inv` is handed
+	--- over to the GUI module, as the old version kept it), and whether any is kept
+	legacy_buffer = function(index, inv)
+		storage.fork_me_gui_buffer = storage.fork_me_gui_buffer or {}
+		storage.fork_me_gui_buffer[index] = { inv = inv, opened_tick = 0 }
+	end,
+	has_legacy_buffer = function(index)
+		local s = storage.fork_me_gui_buffer
+		return s ~= nil and (index == nil or s[index] ~= nil)
+	end,
+	--- issue #542 (tests): the handling flags of the pane's inventory element (in remote view or not), and what a mod update
+	--- does to the windows
+	pane_flags = function(remote) return G.pane_flags(remote) end,
+	close_all = function() G.close_all() end,
 	--- true when the entity opens an ME window (click or open key)
 	has_window = function(entity) return G.has_window(entity) end,
 	drive_data = function(drive) return M.drive_data(drive) end,
@@ -2482,10 +2491,15 @@ remote.add_interface("gregtorio-me-gui", {
 	--- issue #70: the key of the picker's choice (`with_quality`: an item keeps its quality), a row from a choice
 	key_of_choice = function(choice, with_quality) return picker.key_of(choice, with_quality) end,
 	set_interface_choice = function(entity, i, choice, amount) return M.set_interface_choice(entity, i, choice, amount) end,
-	--- issue #28: a click on slot `slot` of the inventory pane of `entity`'s window (`mode` "left", "right", "shift"), for
-	--- a cursor stack and an inventory standing for the player's; returns the reason of a refusal and "picked"
+	--- issue #28, since #542 the actions of the inventory element (on_gui_inventory_action): `mode` "shift" (stack_transfer),
+	--- "control" (inventory_transfer), "shift-right" (stack_split), "control-right" (inventory_split) or "remote" (a plain
+	--- click in remote view) on slot `slot` of an inventory standing for the player's, in `entity`'s window (or the window
+	--- named `window`); returns the reason of a refusal. (`cursor` is unused: the game moves stacks to and from the hand.)
 	inventory_click = function(cursor, inventory, slot, mode, entity, window)
-		return G.inventory_click(cursor, inventory, slot, mode, window and G.def_named(window) or G.def_of(entity), entity)
+		local A = defines.inventory_actions
+		local action = ({ shift = A.stack_transfer, control = A.inventory_transfer, ["shift-right"] = A.stack_split,
+			["control-right"] = A.inventory_split, remote = A.cursor_transfer })[mode]
+		return G.inventory_action(inventory, slot, action, window and G.def_named(window) or G.def_of(entity), entity, mode == "remote")
 	end,
 	--- Issues #176 and #177: the harness has no player and a remote call cannot carry functions, so a table standing for a
 	--- LuaPlayer is made here from plain data: `spec` = { remote = in remote view, main = the main inventory (not in remote
@@ -2505,7 +2519,8 @@ remote.add_interface("gregtorio-me-gui", {
 	end,
 	stand_in_inventory = function(name) return G.player_inventory(stand_ins[name]) end,
 	stand_in_hand = function(name) return G.hand(stand_ins[name]) end,
-	stand_in_uses_buffer = function(name) return G.uses_buffer(stand_ins[name]) end,
+	stand_in_drop_buffer = function(name) return G.drop_buffer(stand_ins[name]) end,    -- (issue #542)
+	parked_count = function(player) return G.parked_count(player) end,                  -- (a real player's, issue #542)
 	stand_in_give_back = function(name, stack, entity) G.give_back(stand_ins[name], stack, entity) end,
 	stand_in_parked = function(name) return G.parked_count(stand_ins[name]) end,
 	stand_in_return_parked = function(name) return G.return_parked(stand_ins[name]) end,

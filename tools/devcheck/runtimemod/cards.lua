@@ -678,27 +678,12 @@ return function(H)
 		expect(bclick(2, true) == nil and not binv[2].valid_for_read and n(pinv, CARD.capacity) == 2,
 			"a card shift-clicked into the inventory: " .. n(pinv, CARD.capacity))
 		expect(all_cards() == total, "cards made or lost by the clicks: " .. all_cards() .. "/" .. total)
-		--- the pane's own clicks: half a stack, one item put down, merge, pick up, put down, swap
-		pinv[5].set_stack{ name = "stone", count = 10 }
-		expect(click(5, "right") == nil and cursor.valid_for_read and cursor.count == 5 and pinv[5].count == 5, "half a stack: cursor "
-			.. (cursor.valid_for_read and cursor.count or 0))
-		click(6, "right")
-		expect(pinv[6].valid_for_read and pinv[6].count == 1 and cursor.count == 4, "right click with a stack in the cursor puts one down")
-		click(5, "left")
-		expect(not cursor.valid_for_read and pinv[5].count == 9, "left click merges: " .. pinv[5].count)
-		local _, picked = click(5, "left")
-		expect(picked == "picked" and cursor.valid_for_read and cursor.count == 9 and not pinv[5].valid_for_read, "left click picks the stack up")
-		click(7, "left")
-		expect(not cursor.valid_for_read and pinv[7].valid_for_read and pinv[7].count == 9, "left click puts the stack down")
-		cursor.set_stack{ name = "wood", count = 3 }
-		click(2, "left")
-		expect(cursor.valid_for_read and cursor.name == "iron-plate" and pinv[2].name == "wood", "left click swaps")
+		--- (the clicks that move stacks inside the inventory are the game's since issue #542: its inventory element)
 		cursor.clear()
 		hold.destroy()
 		pinv.destroy()
 		me_report("PANE", "ME window pane (storage bus)", problems, "shift + click of cards, a wrong item and the limit refused, "
-			.. "block slot clicks with a wrong item, a card, a full bus, an empty cursor, shift; half a stack, put one, merge, "
-			.. "pick, put, swap; no card made or lost")
+			.. "block slot clicks with a wrong item, a card, a full bus, an empty cursor, shift; no card made or lost")
 	end
 
 	function T.tick()

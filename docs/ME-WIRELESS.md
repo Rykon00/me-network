@@ -104,7 +104,8 @@ asked for.
 
 **The player's real inventory (#150, #168).** The hand-over buffer of #168 is the game's inventory window beside a script
 inventory; a hotkey can open that as well (`player.opened = buffer`), and in remote view #176's rule (the pane) applies. So the
-wireless window needs no special case; it uses `open_window` like every other.
+wireless window needs no special case; it uses `open_window` like every other. (Since issue #542 every window, the wireless
+ones too, has the game's `inventory` element on its left instead: `docs/ME-REWORK.md`, "The game's inventory element".)
 
 **Multiplayer.** Two players on one network: each has their own link and window; the network is one object, the windows are
 local. Nothing is exclusive (the terminal block already works so).

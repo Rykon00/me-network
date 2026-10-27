@@ -1323,9 +1323,10 @@ script.on_event(defines.events.on_gui_closed, function(event)
 	IO.fluid_entity_changed(event.entity)                    -- (issue #420: a machine's recipe may give it a fluid box)
 end)
 
---- issue #28: the inventory pane of an open ME window follows the player's main inventory and cursor
-script.on_event({ defines.events.on_player_main_inventory_changed, defines.events.on_player_cursor_stack_changed }, function(event)
-	G.on_inventory_changed(event)
+--- issue #542: shift + click and control + click in the inventory element of an ME window (the game draws its slots and
+--- moves stacks between them and the hand itself)
+script.on_event(defines.events.on_gui_inventory_action, function(event)
+	G.on_inventory_action(event)
 end)
 
 script.on_event(defines.events.on_player_left_game, function(event)
@@ -1347,7 +1348,6 @@ script.on_nth_tick(REFRESH_TICKS, function() Sched.metered(refresh) end)
 
 script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
-	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[event.player_index] = nil end
 	if storage.fork_me_pterm_ui then storage.fork_me_pterm_ui[event.player_index] = nil end      -- (the ME Pattern Terminal's editor)
 	if storage.fork_me_iterm_ui then storage.fork_me_iterm_ui[event.player_index] = nil end      -- (issue #336: the Interface Terminal's)
 	G.forget_player(event.player_index)                                                          -- (issue #179: parked items, buffer)
