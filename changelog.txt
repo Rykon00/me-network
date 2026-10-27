@@ -23,6 +23,7 @@ Version: 0.5.11
     - A visit of the ME Logistic Storage Bus costs about half as much script time beyond the game's own read of the logistic network (issue #509): on a logistic network of 1048 roboports and 316 kinds of items 0.15 ms instead of 0.30 ms. Storage buses on chests and tanks pass the item types that did not change by as well.
     - The hand-over buffer beside the game's inventory window and the map setting "ME windows beside the game's inventory" are gone (issue #542). Items in the buffer of a window that was open in an older save come back into your inventory with the update; what does not fit is kept for you and returned as soon as there is room, never dropped on the ground.
   Bugfixes:
+    - ME Underground Cable: the pairs of a drag no longer end up facing the wrong way (both cable sides towards each other): the game turned dragged underground pipes by its own rule after the mod set them.
     - The frequency field of the ME Quantum Bridge and the ME Wireless Link no longer resets while typing (issue #511).
     - Settings paste (Shift + right/left click) works for the ME IO Port, ME Wireless Access Point and the ME monitors (issue #519).
     - Settings paste works on the ME Quantum Bridge and ME Wireless Link (no more "Not operable").
