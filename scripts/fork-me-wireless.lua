@@ -601,18 +601,9 @@ function M.refresh_ap(player, frame)
 	local rec = ap_rec(entity)
 	if not rec then return false end
 	local inv = cards.inv_of(rec)
-	local box = G.find(frame, "fork_me_ap_cards")
-	local sig = {}
-	for i = 1, #inv do sig[i] = inv[i].valid_for_read and inv[i].name or "-" end
-	sig = table.concat(sig, ",")
-	if box.tags.sig ~= sig then
-		box.clear()
-		box.tags = { sig = sig }
-		for i = 1, #inv do
-			G.stack_button(box, inv[i], G.act("block_slot", { slot = i }),
-				{ inv[i].valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" })
-		end
-	end
+	G.block_slots(frame, "fork_me_ap_cards", inv, 1, #inv, function(_, st)    -- (issue #543: the game's inventory element)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end)
 	local want = {}
 	for _, name in ipairs(rec.want and cards.missing_cards(rec, rec.want) or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_ap_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""

@@ -2587,8 +2587,61 @@ field of `add`, finds children by name and can be destroyed) whose `play_sound` 
 another window, close, close without a window, the silent close; it also checks the window's inventory element (bound to
 the stand-in's inventory, the game's cursor handling, 10 per row).
 
-**Not done with the element here:** the block's slots (cards, the workbench's cell, the IO port, the drive) are still slot
-buttons; issue #543 takes them on.
+**Not done with the element here:** the block's slots; issue #543 (next section).
+
+### The block slots as inventory elements (me-network issue #543)
+
+The card slots of a block are a script inventory of the block (`rec.inv`, scripts/fork-me-cardslots.lua), and the window
+showed them as slot buttons. Since #543 `G.block_slots(frame, name, inv, first, last, tip, offset)` (moved from
+`scripts/fork-me-windows.lua` into the GUI module, so the access point uses it too) puts the game's `inventory` element there
+**when the window shows the whole inventory** (`first == 1` and `last == #inv`): the game draws the slots, their tooltips
+(the card's description), quality and the hand. A part of an inventory stays slot buttons as before.
+
+**The rule check.** Script inventories have no filters (the probe of #542), so the element cannot keep a wrong item out by
+itself. Its handling flags are all off (`handle_cursor_transfer`, `handle_cursor_split`, opening and trashing): the game moves
+nothing and raises `on_gui_inventory_action` for every click, and `G.block_action` hands it to the window's `click`, the same
+function the buttons call, which refuses a wrong item before anything moves:
+
+| Action | Mouse | What happens |
+|---|---|---|
+| `cursor_transfer`, `cursor_split` | click, right click | `def.click(entity, slot + offset, cursor, inventory, remote)`: the hand's card goes in (one of the stack) or is refused and stays in the hand; with an empty hand the card goes into the hand; in remote view into the inventory |
+| `stack_transfer`, `stack_split` | shift + click, shift + right click | `def.click(..., nil, inventory, true)`: the card into the inventory, whatever the hand holds |
+| `inventory_transfer`, `inventory_split` | control + click, control + right click | the same for every slot with that card |
+| `open_item`, `open_mod_item`, the trash actions | | nothing |
+
+From the player's side a card comes in only by the window's `shift` (shift + click, control + click: #542), which checks the
+same rules. Whether the game can put an item into an element with its handling off by any other path (a drag over the
+slots, a drop from the hand while dragging) cannot be seen headless: the `[Task-Ingame]` issue #546 checks it. Should one
+exist, `cards.sync` (the backstop of #30 that gives back what does not belong) is there to be called at the refresh.
+The empty slots' tooltip is the window's hint for an empty slot (`empty_slot_info.text`, no sprite: a custom
+`empty_slot_info` sprite hides the bar in 2.1.11, forum t=135616).
+
+**Per window:**
+
+| Window | Slots | Now |
+|---|---|---|
+| ME Interface | card slots (`io.interface_inventory`) | element |
+| Import / Export Bus | card slots (`io.bus_inventory`) | element |
+| ME Storage Bus | card slots (`sbus.inventory`) | element |
+| ME Pattern Provider | card slots (`autocraft.provider_inventory`) | element |
+| ME Logistic Interface | card slots (`fork_me_lif_cards`) | element |
+| ME IO Port | card slots (`fork_me_iop_cards`; the window's slots 3 to 6: offset 2) | element |
+| ME Wireless Access Point | booster slots | element (not in the issue's list; the same card inventory) |
+| ME IO Port | input and output cell (slots 1 and 2 of one inventory, shown apart with their own tooltips) | **buttons**: an element shows a whole inventory with one empty-slot tooltip; two inventories would change the saved layout (migration) |
+| ME Cell Workbench | cell slot and card slots (slot 1 and 2 to 5 of one inventory; how many card slots depends on the cell) | **buttons**: a range of one inventory whose shown part changes with the cell; splitting it touches saved state |
+| ME Drive | 10 cell slots | **buttons**: the fill numbers and the yellow partition style are per slot, the element has no per-slot style; the cells are records, not an inventory |
+| ME Pattern Provider | the pattern slots | **buttons**: records with a state colour per slot (yellow pending, red broken), not an inventory |
+| ME Pattern Terminal, charger, the terminal's View Cell slots | blank and output slot, the charger's slot, the view cells | buttons (not in the issue's list) |
+
+The rest is issue #550 (the parts of inventories and the slots outside the issue's list).
+
+**Tests.** `runtimemod/blockinv.lua` opens every window of the table that has an element for a stand-in player (the open
+key's path, `G.open_entity`, and one refresh; the stand-in of #545 can reach every entity) and finds the element: bound to the
+block's card inventory, its size, the handling off, the offset, an empty-slot tooltip; the IO port's cell slots are still one
+button each. Then, through `block_action` as the event calls it: iron plates in the hand are refused by click and by right
+click and stay in the hand, a card goes in by click and by right click (one of a stack of three), shift + click takes one out
+into the inventory, control + click every card of the kind, a click in remote view takes it into the inventory, and no card
+is made or lost.
 
 ## Open points
 

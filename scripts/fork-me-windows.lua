@@ -69,18 +69,9 @@ local function rebuild(frame, name, sig, build)
 	build(box)
 end
 
---- Issue #28: the slots `first` .. `last` of a block's inventory `inv` as slot buttons (block_slot: the window's
---- click), rebuilt when a stack changed; `tip(slot, stack)` gives a button's tooltip
-local function block_slots(frame, name, inv, first, last, tip, offset)
-	local sig = { tostring(first), tostring(last) }
-	for i = first, last do
-		local st = inv[i]
-		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name .. G.stack_ident(st)) or "-"
-	end
-	rebuild(frame, name, table.concat(sig, ","), function(box)
-		for i = first, last do G.stack_button(box, inv[i], G.act("block_slot", { slot = i + (offset or 0) }), tip and tip(i, inv[i]) or nil) end
-	end)
-end
+--- Issue #28: the slots of a block's inventory; since issue #543 the game's inventory element where the window shows the
+--- whole inventory, slot buttons for a part of one (G.block_slots)
+local block_slots = G.block_slots
 
 local function caption_of(entity)
 	return entity.localised_name
@@ -2525,7 +2516,9 @@ remote.add_interface("gregtorio-me-gui", {
 			controller_type = spec.remote and defines.controllers.remote or defines.controllers.character,
 			get_main_inventory = function() return not spec.remote and spec.main or nil end,
 			create_local_flying_text = function(a) texts[#texts + 1] = a.text end,
-			play_sound = function(a) sounds[#sounds + 1] = a.path end }
+			play_sound = function(a) sounds[#sounds + 1] = a.path end,
+			can_reach_entity = function() return true end, force = game.forces.player, surface = game.surfaces[1],
+			position = { x = 0, y = 0 } }
 		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
 		if spec.character then
 			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
@@ -2554,6 +2547,42 @@ remote.add_interface("gregtorio-me-gui", {
 			cursor_transfer = el and el.handle_cursor_transfer, slots_per_row = el and el.slots_per_row }
 	end,
 	stand_in_close_window = function(name, sound) G.close_window(stand_ins[name], sound) end,
+	--- Issue #543: `entity`'s window opened for a stand-in with `gui` (the open key's path, G.open_entity) and refreshed once;
+	--- its block inventory elements: { { box = the flow's name, inventory, offset, size, cursor_transfer } }, and its slot
+	--- buttons (block_slot) by flow name
+	stand_in_open_entity = function(name, entity)
+		local sp = stand_ins[name]
+		G.open_entity(sp, entity)
+		local frame = G.window_of(sp)
+		if not frame then return nil end
+		G.refresh_one(sp)
+		local out = { elements = {}, buttons = {} }
+		local queue, i = { frame }, 1
+		while queue[i] do
+			for _, c in pairs(queue[i].children) do
+				local tags = c.tags or {}
+				if c.type == "inventory" and tags.fork_me_act == "block_inventory" then
+					out.elements[#out.elements + 1] = { box = c.parent.name, inventory = c.inventory, offset = tags.offset,
+						size = c.slots_per_row, cursor_transfer = c.handle_cursor_transfer, empty = c.empty_slot_info }
+				elseif tags.fork_me_act == "block_slot" then
+					out.buttons[c.parent.name] = (out.buttons[c.parent.name] or 0) + 1
+				end
+				queue[#queue + 1] = c
+			end
+			i = i + 1
+		end
+		return out
+	end,
+	--- Issue #543: an action on slot `slot` of a block's inventory element (`binv`, the window's slots offset by `offset`) of
+	--- `entity`'s window: `mode` "click", "right", "shift", "control" or "remote" (a click in remote view), with `cursor` and the
+	--- player's `inventory`; returns the reason of a refusal and "out"
+	block_action = function(entity, binv, slot, mode, cursor, inventory, offset)
+		local A = defines.inventory_actions
+		local action = ({ click = A.cursor_transfer, right = A.cursor_split, shift = A.stack_transfer, control = A.inventory_transfer,
+			remote = A.cursor_transfer })[mode]
+		return G.block_action(G.def_of(entity), entity, binv, slot, action, mode ~= "remote" and cursor or nil, inventory,
+			mode == "remote", offset)
+	end,
 	stand_in_sounds = function(name) return stand_ins[name].sounds end,
 	stand_in_forget = function(name) stand_ins[name] = nil stand_in_frames[name] = nil end,
 	--- Issue #311: the fluid entries of an interface's window, and its fluid section built into a stand-in frame kept

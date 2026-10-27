@@ -343,6 +343,46 @@ function M.stack_button(parent, s, tags, tooltip)
 	return btn
 end
 
+--- what a slot's tooltip function gets for the empty slots of an inventory element (issue #543)
+local EMPTY_SLOT = { valid_for_read = false }
+
+--- Issue #28: the slots `first` .. `last` of a block's inventory `inv` in the flow `name` of `frame`; `tip(slot, stack)` gives
+--- a slot's tooltip, `offset` is added to the slot numbers the window's click gets. Issue #543: when the window shows the whole
+--- inventory, it is the game's `inventory` element (the game's tooltips, quality, the hand) with the game's handling off: every
+--- click comes as on_gui_inventory_action and goes through the window's `click`, which refuses a wrong item before anything
+--- moves (block_action); the empty slots' tooltip is `tip`'s for an empty slot. A part of an inventory (the workbench's cell
+--- and card slots, the IO port's input and output) stays slot buttons (block_slot), rebuilt when a stack changed.
+function M.block_slots(frame, name, inv, first, last, tip, offset)
+	local box = M.find(frame, name)
+	if not (box and inv and inv.valid) then return end
+	if first == 1 and last == #inv then
+		local el = box.children[1]
+		if not (el and el.valid and el.type == "inventory") then
+			box.clear()
+			box.tags = { sig = "inventory" }
+			el = box.add{ type = "inventory", name = "fork_me_block_inv", slots_per_row = #inv,
+				tags = M.act("block_inventory", { offset = offset or 0 }), handle_cursor_transfer = false,
+				handle_cursor_split = false, handle_open_item = false, handle_open_mod_item = false,
+				handle_send_stack_to_trash = false, handle_send_stacks_to_trash = false }
+			local empty = tip and tip(1, EMPTY_SLOT)
+			if empty then el.empty_slot_info = { text = empty } end
+		end
+		if el.inventory ~= inv then el.inventory = inv end
+		if el.slots_per_row ~= #inv then el.slots_per_row = #inv end
+		return
+	end
+	local sig = { tostring(first), tostring(last) }
+	for i = first, last do
+		local st = inv[i]
+		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name .. M.stack_ident(st)) or "-"
+	end
+	sig = table.concat(sig, ",")
+	if box.tags.sig == sig then return end
+	box.clear()
+	box.tags = { sig = sig }
+	for i = first, last do M.stack_button(box, inv[i], M.act("block_slot", { slot = i + (offset or 0) }), tip and tip(i, inv[i]) or nil) end
+end
+
 --- Issue #542: the handling flags of the pane's inventory element. Outside remote view the game moves stacks between the
 --- slots and the hand itself (left and right click, drag), opens an item (a blueprint book, an armor's grid) and trashes
 --- a stack; shift + click and control + click it cannot do (it does not know where they go): they raise
@@ -480,6 +520,36 @@ end
 function M.block_click(def, entity, slot, cursor, inv, shift)
 	if not (def and def.click and entity and entity.valid) then return "no-target" end
 	return def.click(entity, slot, cursor, inv, shift)
+end
+
+--- Issue #543: an action of on_gui_inventory_action on slot `slot` of a block's inventory element (`binv`; the window's slot
+--- number is slot + `offset`), with the player's cursor, inventory and remote view as G.hand gives them. A click or right
+--- click is the window's click (with an item in the hand: put in, refused before anything moves; else into the hand; in remote
+--- view into the inventory); shift + click (and shift + right click) takes the slot's item into the inventory whatever the
+--- hand holds; control + click (and control + right click) every slot with that item. Opening and trashing do nothing. Returns
+--- the reason of a refusal and "out" when an item went into the inventory.
+function M.block_action(def, entity, binv, slot, action, cursor, inv, remote, offset)
+	local A = defines.inventory_actions
+	offset = offset or 0
+	if action == A.cursor_transfer or action == A.cursor_split then
+		return M.block_click(def, entity, slot + offset, cursor, inv, remote)
+	elseif action == A.stack_transfer or action == A.stack_split then
+		return M.block_click(def, entity, slot + offset, nil, inv, true)
+	elseif action == A.inventory_transfer or action == A.inventory_split then
+		local st = binv and binv.valid and binv[slot]
+		if not (st and st.valid_for_read) then return nil end
+		local name, q = st.name, st.quality.name
+		local why, out
+		for i = 1, #binv do
+			local s = binv[i]
+			if s.valid_for_read and s.name == name and s.quality.name == q then
+				local w, o = M.block_click(def, entity, i + offset, nil, inv, true)
+				why, out = why or w, out or o
+			end
+		end
+		return why, out
+	end
+	return nil
 end
 
 --- the short message of a refusal: the window's own text for its reasons (def.message), else fork-me-gui.refused-*
@@ -861,13 +931,22 @@ end
 --- a refusal says why. Returns true when the element is the mod's.
 function M.on_inventory_action(event)
 	local el = event.element
-	if not (el and el.valid and el.tags and el.tags.fork_me_act == "inventory") then return false end
+	local act = el and el.valid and el.tags and el.tags.fork_me_act
+	if act ~= "inventory" and act ~= "block_inventory" then return false end
 	local player = game.get_player(event.player_index)
 	local frame, name = M.window_of(player)
 	local def = name and windows[name]
 	local entity = frame and M.entity_of(player, frame)
 	if not entity then return true end
-	local why = M.inventory_action(el.inventory, event.slot, event.action, def, entity, M.in_remote_view(player))
+	local why
+	if act == "block_inventory" then                     -- issue #543: a block's slots
+		local cursor, inv, remote = M.hand(player)
+		local out
+		why, out = M.block_action(def, entity, el.inventory, event.slot, event.action, cursor, inv, remote, el.tags.offset)
+		if remote and not why and out then M.moved_text(player) end
+	else
+		why = M.inventory_action(el.inventory, event.slot, event.action, def, entity, M.in_remote_view(player))
+	end
 	refused(player, why, def)
 	M.refresh_one(player)
 	return true

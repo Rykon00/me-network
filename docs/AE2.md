@@ -260,7 +260,9 @@ and export bus, controller, level maintainer, circuit interface, crafting CPUs) 
 **control + click** puts every stack of that item there; shift + right click half the stack, control + right click half
 of every stack of it. What the block cannot take stays where it is, with a short message. Click a slot of the block with
 an item in hand to put it in (what does not belong there is refused and stays in your hand), click it with an empty hand
-to take the item, shift + click to take it into your inventory. (Until 0.5.10 the windows opened beside the game's
+to take the item, shift + click to take it into your inventory. The card slots of the interface, the import and export
+bus, the storage bus, the pattern provider, the logistic interface, the IO port and the access point are the game's own
+slots (issue #543, with the cards' tooltips): control + click there takes every card of that kind. (Until 0.5.10 the windows opened beside the game's
 inventory window with a hand-over buffer between them, or drew your inventory themselves; the map setting "ME windows
 beside the game's inventory" is gone. Items left in a buffer of an old save come back into your inventory when you
 update; what does not fit is kept for you, see below.)

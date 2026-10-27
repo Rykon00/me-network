@@ -960,6 +960,7 @@ RUNTIME_TESTS = (
     ("PASTECRAFT", "ME interface keeping one craft (issue #157)"),
     ("NATIVEINV", "ME windows with the native inventory (issue #542)"),
     ("WINSOUND", "ME window sounds (issue #545)"),
+    ("BLOCKINV", "ME windows: block slots as inventory elements (issue #543)"),
     ("PATTERNCAP", "ME Pattern Capacity Card (issue #156)"),
     ("IFACETERM", "ME Interface Terminal (issue #336)"),
     ("BLOCKING", "ME Pattern Provider blocking mode (issue #335)"),
