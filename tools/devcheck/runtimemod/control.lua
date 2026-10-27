@@ -980,6 +980,9 @@ lif531 = require("lif")({ me_place = me_place, cable_row = cable_row, power = po
 --- me-network issue #537: the ME Logistic Interface's automatic mode (lifauto.lua)
 lifauto537 = require("lifauto")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #538: the ME Logistic Interface's construction supply (lifbuild.lua)
+lifbuild538 = require("lifbuild")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #156: the ME Pattern Capacity Card (patterncap.lua)
 patterncap156 = require("patterncap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1191,6 +1194,7 @@ local function tests_running()
 	lsbus506.running(check)
 	lif531.running(check)
 	lifauto537.running(check)
+	lifbuild538.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
 	return running
@@ -2164,6 +2168,7 @@ script.on_nth_tick(10, function()
 	lsbus506.tick()
 	lif531.tick()
 	lifauto537.tick()
+	lifbuild538.tick()
 	remoteview176.tick()
 	graph43.tick()
 	done_test()
@@ -5063,6 +5068,7 @@ script.on_init(function()
 	for _, f in pairs(lsbus506.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lif531.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(lifauto537.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(lifbuild538.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")

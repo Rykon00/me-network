@@ -26,6 +26,9 @@ data:extend({
 	--- many stacks of an item
 	int("me-network-logistic-interface-demand-points-per-tick", "b26", 2, 1, 1000),
 	int("me-network-logistic-interface-auto-stacks", "b27", 1, 0, 100),
+	--- issue #538: the safety net of what construction needs, logistic cells rescanned per second (132 us each on the
+	--- maintainer's Nauvis; 0: none, the events alone)
+	int("me-network-logistic-interface-construction-cells-per-second", "b28", 10, 0, 6000),
 	int("me-network-io-port-visits-per-tick", "b3", 2, 1, 1000),         -- issue #386: the ME IO Port
 	int("me-network-io-port-visits-per-tick-max", "b4", 8, 1, 1000),
 	int("me-network-maintainer-checks-per-tick", "c1", 4, 1, 1000),

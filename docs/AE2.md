@@ -631,6 +631,16 @@ logistic chests** stand on its tile; you never see them, the robots do. Its wind
     base's supply (else it would cover the demand, the demand would vanish and ME would take the stock back). When the
     demand of an item is gone, its stock stays for **two rounds** (robots may be on their way), then what no robot reserved
     goes back into the network.
+  * **Construction** (issue #538): what the construction robots of the logistic network need counts as demand too: **ghosts**
+    of buildings and tiles (a pasted blueprint; a ghost left by a destroyed building), buildings marked with the **upgrade
+    planner** (the item of the new building) and **module requests** (item request proxies, and the modules a ghost asks
+    for). They are counted when they are made (the game's events) and dropped when they are built, cancelled, mined or
+    destroyed; only in logistic networks with a block in Automatic mode (whose construction area they stand in). What the
+    logistic network cannot supply itself is offered like the requesters' demand, at the block nearest to them, so the
+    robots fetch it from there. As a safety net the block also looks through the construction area of one roboport after the
+    other (map setting "construction areas rescanned per second", 10; about 0.13 ms each): that finds ghosts another mod
+    made without telling the game's events and module requests that were partly served. The window says how many items
+    construction needs there. The count is kept in the save, so every player of a multiplayer game sees the same.
   * **The ME network first**: an item that an ME block waits for (a parked export bus, an interface, a level maintainer, a
     crafting start that lacked it) is not offered while it waits; if it was, it goes back at once. The window counts these
     items.

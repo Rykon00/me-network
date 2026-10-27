@@ -816,7 +816,8 @@ function M.refresh_logistic_interface(player, frame)
 			d.auto_leads and { "", " ", { "fork-me-gui.logistic-interface-mode-leads" } } or "",
 			d.auto_unknown > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-unknown", tostring(d.auto_unknown) } } or "",
 			d.auto_nofit > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-nofit", tostring(d.auto_nofit) } } or "",
-			d.auto_waits > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-waits", tostring(d.auto_waits) } } or "" }
+			d.auto_waits > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-waits", tostring(d.auto_waits) } } or "",
+			d.auto_build > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-build", G.fmt(d.auto_build) } } or "" }
 	local osig = {}
 	for _, o in ipairs(d.auto_offer) do osig[#osig + 1] = o.key .. "=" .. o.amount end
 	rebuild(frame, "fork_me_lif_auto_offer", table.concat(osig, ","), function(grid)

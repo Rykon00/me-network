@@ -50,7 +50,9 @@
 ---     (ties by unit number). A pass reads the points' filters (the setting "points per tick", default 2, about 25 us each;
 ---     the point list kept in `storage`, taken again after POINTS_TTL ticks or a requester built), then works out the keys
 ---     (KEY_WORK keys per point of the budget), then decides in one tick. Everything a pass keeps is in `storage`
----     (`s.dm`, `s.auto`, `s.pts`): it decides when blocks are woken.
+---     (`s.dm`, `s.auto`, `s.pts`): it decides when blocks are woken. Issue #538: what construction needs in the logistic
+---     network (ghosts, upgrades, item request proxies; scripts/fork-me-logistic-construction.lua) is added to the points'
+---     demand at the end of phase 1, at the position of its first record.
 ---   * Cards: the ME Interface's (Interface Capacity Card: 9 more rows per card, up to 36; Crafting Card: an offer row the
 ---     network cannot fill starts a job, as the interface's, issue #411).
 ---   * Visits: a queue of its own (Sched, tag "logistic_interface") with a budget (map settings "ME Logistic Interface visits
@@ -72,6 +74,7 @@ local Sched = require("scripts.fork-me-schedule")
 local CS = require("scripts.fork-me-cardslots")
 local AC = require("scripts.fork-me-autocraft")
 local L = require("scripts.fork-me-logistic-storagebus")
+local C = require("scripts.fork-me-logistic-construction")     -- (issue #538: what construction needs)
 
 local M = {}
 
@@ -221,6 +224,7 @@ local function asks_needs(rec, net)
 end
 
 local function guard_changed() guard, firsts, autos, auto_lids = nil, nil, nil, nil end
+C.auto_lids = auto_blocks
 M.offered_in = function(lid) return offered_in(lid) end
 
 --- is request row `i` of `rec` not applied (its item is offered in the same logistic network)?
@@ -969,6 +973,13 @@ local function leader_network(s, units, lid)
 	return ln and ln.network_id == lid and ln or nil
 end
 
+--- issue #538: the logistic network `lid` now (through its leader), or nil
+local function net_of(lid)
+	local s = storage.fork_me_lif
+	local all = auto_blocks()
+	return s and leader_network(s, all[lid], lid)
+end
+
 --- One tick of the scan: `budget` requester points (a key of phase 2 costs 1 / KEY_WORK of a point)
 local function demand_step(s, tick)
 	local all, lids = auto_blocks()
@@ -1019,6 +1030,12 @@ local function demand_step(s, tick)
 			done = done + 1
 		end
 		if dm.i > #list then
+			--- issue #538: what construction needs (ghosts, upgrades, item request proxies), as a point at its first record
+			for key, t in pairs(C.tally(dm.lid)) do
+				dm.acc[key] = (dm.acc[key] or 0) + t.n
+				local top = dm.top[key]
+				if not top or t.n > top.d then dm.top[key] = { d = t.n, x = t.x, y = t.y } end
+			end
 			local keys = {}
 			for key in pairs(dm.acc) do keys[#keys + 1] = key end
 			table.sort(keys)
@@ -1046,6 +1063,7 @@ function M.on_tick(tick)
 		Sched.run(s.q, tick, Sched.setting("logistic_interface"), Sched.setting("logistic_interface_max"), unit_rec, visit, probe,
 			WAKER)
 		demand_step(s, tick)
+		C.on_tick(tick, net_of)                                  -- (issue #538: the construction safety net)
 	end
 end
 
@@ -1240,6 +1258,8 @@ function M.info(entity)
 		table.sort(d.auto_offer, function(x, y) return x.key < y.key end)
 		d.auto_unknown, d.auto_nofit, d.auto_waits = a.nunk, a.nofit, a.nwait
 	end
+	d.auto_build = 0                                              -- (issue #538: the items construction needs there)
+	for _, t in pairs(rec.lid and C.tally(rec.lid) or {}) do d.auto_build = d.auto_build + t.n end
 	local all = auto_blocks()
 	local list = rec.lid and all[rec.lid]
 	d.auto_leads = rec.mode == "auto" and list ~= nil and list[1] == entity.unit_number
@@ -1423,6 +1443,12 @@ remote.add_interface("gregtorio-me-logistic-interface", {
 	get_settings = function(entity)
 		local rec = rec_of(entity)
 		return rec and settings_of(rec) or nil
+	end,
+	--- (tests, issue #538) what construction needs in logistic network `lid`: { [key] = count }
+	construction = function(lid)
+		local out = {}
+		for key, t in pairs(C.tally(lid)) do out[key] = t.n end
+		return out
 	end,
 	--- the hidden chests: { provider, requester, store }
 	chests = function(entity)
