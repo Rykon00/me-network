@@ -1118,6 +1118,15 @@ local function pattern_sprite(d)
 end
 M.pattern_sprite = pattern_sprite
 
+--- Issue #544: the number on a pattern's slot: the amount of its first output (nil: none known)
+local function pattern_number(d)
+	local def = patterns.normalize(d)
+	local first = def and type(def.outputs) == "table" and def.outputs[1]
+	local amount = type(first) == "table" and first.amount
+	return type(amount) == "number" and amount > 0 and amount or nil
+end
+M.pattern_number = pattern_number
+
 --- the status line of a slot (LocalisedString)
 local function slot_status(d)
 	if d.pending then return { "fork-me-pattern.status-pending" } end
@@ -1143,7 +1152,7 @@ local function build_provider_slots(box, entity)
 		local d = info.slots[slot]
 		local tags = G.act("prov_slot", { slot = slot })
 		if d then
-			t.add{ type = "sprite-button", sprite = pattern_sprite(d), tooltip = slot_tooltip(d), tags = tags,
+			t.add{ type = "sprite-button", sprite = pattern_sprite(d), tooltip = slot_tooltip(d), tags = tags, number = pattern_number(d),
 				style = d.pending and "yellow_slot_button" or d.ok and "slot_button" or "red_slot_button" }
 		else
 			t.add{ type = "sprite-button", style = "slot_button", tooltip = { "fork-me-gui.provider-empty-tooltip" }, tags = tags }
@@ -1549,6 +1558,15 @@ function M.refresh_maintainer(player, frame)
 		rebuild(frame, "fork_me_maint_target_" .. i, r.key or "-", function(box)
 			G.key_button(box, r.key, G.act("maint_target", { row = i }), { "fork-me-circuit.maintainer-target-tooltip" }).style.size = 40
 		end)
+		--- issue #544: the row's button shows the stock and, above it, the amount to keep (a fluid filter of one temperature
+		--- keeps its degrees as the number)
+		local box = G.find(frame, "fork_me_maint_target_" .. i)
+		local b = box and box.children[1]
+		if b and r.key and not (r.key:sub(1, 6) == "fluid/" and r.key:find("@%-?%d+$")) then
+			local stock, keep = math.floor(r.stock or 0), r.target or r.amount
+			if b.number ~= stock then b.number = stock end
+			if b.secondary_number ~= keep then b.secondary_number = keep end
+		end
 		local rl = G.find(frame, "fork_me_maint_row_" .. i)
 		if rl then
 			rl.caption = r.key and { "", G.fmt(r.stock or 0), " / ", G.fmt(r.target or r.amount or 0), "  ", circuit.row_status(r) } or ""
@@ -2567,6 +2585,31 @@ remote.add_interface("gregtorio-me-gui", {
 				elseif tags.fork_me_act == "block_slot" then
 					out.buttons[c.parent.name] = (out.buttons[c.parent.name] or 0) + 1
 				end
+				queue[#queue + 1] = c
+			end
+			i = i + 1
+		end
+		return out
+	end,
+	--- Issue #544: in the stand-in's open window, select tab `index` of the tabbed pane `tabs` and refresh (only the shown tab of
+	--- the terminal is refreshed); and the buttons below the element `element`: { { sprite, number, secondary_number } }
+	stand_in_select_tab = function(name, tabs, index)
+		local sp = stand_ins[name]
+		local frame = G.window_of(sp)
+		local t = frame and G.find(frame, tabs)
+		if not t then return false end
+		t.selected_tab_index = index
+		G.refresh_one(sp)
+		return true
+	end,
+	stand_in_numbers = function(name, element)
+		local frame = G.window_of(stand_ins[name])
+		local root = frame and G.find(frame, element)
+		local out = {}
+		local queue, i = { root }, 1
+		while root and queue[i] do
+			for _, c in pairs(queue[i].children) do
+				if c.type == "sprite-button" then out[#out + 1] = { sprite = c.sprite, number = c.number, secondary_number = c.secondary_number } end
 				queue[#queue + 1] = c
 			end
 			i = i + 1

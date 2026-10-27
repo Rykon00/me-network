@@ -654,6 +654,9 @@ local function refresh_storage(player, st, frame, net)
 	local items = M.entries(net, st.filter, st.sort, st.kind, nil, player.index, view, vsig, st.quality)
 	local n = math.min(#items, MAX_BUTTONS)
 	local sort, kind = st.sort or "count", st.kind or "all"
+	--- issue #544: the second number of a slot (Factorio 2.1's secondary_number, above the stored amount): what the network's
+	--- jobs are crafting of that key
+	local crafting = autocraft.crafting_amounts(net)
 	--- What the grid shows is kept in storage (every peer sets the same buttons) and compared entry by entry. Issue #50,
 	--- lever 8: unchanged since the last refresh: nothing is set (open tooltips stay); a button whose entry has another
 	--- amount gets the new number, one whose entry is another key is made again in its place. A new sort, kind or number
@@ -662,21 +665,29 @@ local function refresh_storage(player, st, frame, net)
 	if type(shown) == "table" and shown.sort == sort and shown.kind == kind and shown.n == n
 		and (shown.total > MAX_BUTTONS) == (#items > MAX_BUTTONS) then
 		local keys, counts = shown.keys, shown.counts
+		local crafts = shown.crafts or {}
+		shown.crafts = crafts
 		local first
 		for i = 1, n do
-			if keys[i] ~= items[i].key or counts[i] ~= items[i].count then first = i break end
+			local key = items[i].key
+			if keys[i] ~= key or counts[i] ~= items[i].count or crafts[i] ~= crafting[key] then first = i break end
 		end
 		local children = first and grid.children
 		if not first or #children == n then              -- (else the grid is not what was kept: built anew below)
 			for i = first or n + 1, n do
 				local c = items[i]
+				local button = children[i]
 				if keys[i] ~= c.key then
-					children[i].destroy()
-					G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil, nil, i)
-					keys[i], counts[i] = c.key, c.count
+					button.destroy()
+					button = G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil, nil, i)
+					keys[i], counts[i], crafts[i] = c.key, c.count, nil
 				elseif counts[i] ~= c.count then
-					G.slot_amount(children[i], c.key, c.count)
+					G.slot_amount(button, c.key, c.count)
 					counts[i] = c.count
+				end
+				if crafts[i] ~= crafting[c.key] then
+					button.secondary_number = crafting[c.key]
+					crafts[i] = crafting[c.key]
 				end
 			end
 			if #items > MAX_BUTTONS and shown.total ~= #items then
@@ -686,9 +697,9 @@ local function refresh_storage(player, st, frame, net)
 			return
 		end
 	end
-	local keys, counts = {}, {}
-	for i = 1, n do keys[i], counts[i] = items[i].key, items[i].count end
-	st.shown = { sort = sort, kind = kind, n = n, keys = keys, counts = counts, total = #items }
+	local keys, counts, crafts = {}, {}, {}
+	for i = 1, n do keys[i], counts[i], crafts[i] = items[i].key, items[i].count, crafting[items[i].key] end
+	st.shown = { sort = sort, kind = kind, n = n, keys = keys, counts = counts, crafts = crafts, total = #items }
 	grid.clear()
 	status.visible = false
 	if #items == 0 then
@@ -700,7 +711,8 @@ local function refresh_storage(player, st, frame, net)
 	end
 	for i = 1, math.min(#items, MAX_BUTTONS) do
 		local c = items[i]
-		G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil)
+		local button = G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil)
+		if crafts[i] then button.secondary_number = crafts[i] end
 	end
 end
 
@@ -712,6 +724,7 @@ local function refresh_crafting(st, frame, net, index)
 	local filter, lower = Names.search(st.filter)
 	local names = filter ~= "" and Names.names_of(index) or nil      -- (issue #295: the names the player sees)
 	local qcmp, qlevel = quality_test(st.quality)                  -- (issue #514)
+	local crafting = autocraft.crafting_amounts(net)               -- (issue #544: the second number, what jobs craft of it)
 	local shown, sig = {}, {}
 	for _, key in pairs(keys) do
 		local fluid = key:sub(1, 6) == "fluid/"
@@ -721,8 +734,8 @@ local function refresh_crafting(st, frame, net, index)
 			local d = autocraft.describe(key)
 			if d then
 				local count = d.fluid and N.count_key(net, key) or N.count(net, d.name, d.quality)   -- (issue #352: its quality)
-				shown[#shown + 1] = { key = key, craft = key, count = count }
-				sig[#sig + 1] = key .. "=" .. count
+				shown[#shown + 1] = { key = key, craft = key, count = count, crafting = crafting[key] }
+				sig[#sig + 1] = key .. "=" .. count .. "+" .. (crafting[key] or 0)
 			end
 		end
 	end
@@ -732,8 +745,9 @@ local function refresh_crafting(st, frame, net, index)
 		local grid = G.find(frame, "fork_me_craft_grid")
 		grid.clear()
 		for _, c in ipairs(shown) do
-			G.slot(grid, c.key, c.count, G.act("term_pick", { key = c.craft }),
+			local button = G.slot(grid, c.key, c.count, G.act("term_pick", { key = c.craft }),
 				c.craft == st.pick and "yellow_slot_button" or nil)
+			if c.crafting then button.secondary_number = c.crafting end
 		end
 	end
 	--- the picked resource: the plan preview
@@ -878,7 +892,9 @@ function M.job_rows(t, jobs)
 	t.clear()
 	for _, j in ipairs(jobs) do
 		local d = autocraft.describe(j.item)
-		G.slot(t, j.item, j.amount)
+		local button = G.slot(t, j.item, j.amount)
+		--- issue #544: the second number is what is done of the amount (its share of the runs)
+		if j.total > 0 and j.done > 0 then button.secondary_number = math.floor(j.amount * math.min(j.done, j.total) / j.total) end
 		local name = t.add{ type = "label", caption = { "", G.fmt(j.amount), " ", d and d.localised_name or j.item } }
 		name.style.minimal_width = 140
 		local bar = t.add{ type = "progressbar", value = j.total > 0 and j.done / j.total or 0,

@@ -294,7 +294,7 @@ function M.build_entry(box, v, editing)
 		for slot, d in ipairs(v.slots) do
 			local tags = G.act("it_slot", { unit = v.unit, slot = slot })
 			if d then
-				t.add{ type = "sprite-button", sprite = W.pattern_sprite(d), tooltip = W.slot_tooltip(d), tags = tags,
+				t.add{ type = "sprite-button", sprite = W.pattern_sprite(d), tooltip = W.slot_tooltip(d), tags = tags, number = W.pattern_number(d),
 					style = d.pending and "yellow_slot_button" or d.ok and "slot_button" or "red_slot_button" }
 			else
 				t.add{ type = "sprite-button", style = "slot_button", tooltip = { "fork-me-gui.provider-empty-tooltip" }, tags = tags }

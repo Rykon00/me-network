@@ -2643,6 +2643,30 @@ click and stay in the hand, a card goes in by click and by right click (one of a
 into the inventory, control + click every card of the kind, a click in remote view takes it into the inventory, and no card
 is made or lost.
 
+### A second number on slot buttons (me-network issue #544)
+
+Factorio 2.1.18's `LuaGuiElement.secondary_number` puts a second number on a sprite-button, at the right above `number`
+(probed: read back as set, a fraction too, nil removes it; only sprite-buttons have it). Decided per window, the tooltips
+stay as they were:
+
+| Window | `number` | `secondary_number` |
+|---|---|---|
+| ME Terminal, storage tab | stored (as before) | what the network's active jobs (queued or running) are crafting of that key (`autocraft.crafting_amounts`) |
+| ME Terminal, crafting tab | stored (as before) | the same |
+| Jobs (terminal tab, Crafting CPU window) | the job's amount (as before) | what is done of it: the amount times the share of the runs done, once a run is done |
+| ME Level Maintainer rows | the stock (new; the button had none) | the amount to keep (with the circuit's amount when it sets it); a fluid filter of one temperature keeps its degrees as the number and gets neither |
+| ME Pattern Provider and ME Interface Terminal, pattern slots | the amount of the pattern's first output (new: only the tooltip had it) | none |
+| ME Interface config rows, ME Logistic Interface rows, ME Pattern Terminal | unchanged | none: the rows show the configured amount and the windows show the current state in their own lines (what the interface holds, the asks and the stock); a current amount per row would be a read of the block's inventory per row and refresh, for a number the lines already give |
+
+The numbers are written as plain amounts (`G.fmt` is for captions): the game draws `number` short (1.2k); how it draws a
+large `secondary_number` only the game shows (#546). Cost: the terminal's refresh walks the network's active jobs once (a
+handful) and writes a second number only where it changed (the grid keeps `shown.crafts` next to the keys and counts of
+issue #50's lever 8; a window of an older version without it sets them once); the maintainer reads and writes five buttons'
+two numbers only when they differ. Test: the CPU test (`runtimemod/cpus.lua`) opens the windows for a stand-in player while
+its two jobs run (10 and 20 gears): the crafting tab's gear has 30 as its second number, the jobs tab the amounts 10 and 20;
+with the maintainer waiting for 1100 gears its row button shows the stock and 1100; the provider's gear pattern shows 1. A
+negative run (no crafting amounts, no second number on the maintainer) fails both checks.
+
 ## Open points
 
 * View Cells (issue #440) are built: `scripts/fork-me-viewcells.lua`, below in "View Cells".
