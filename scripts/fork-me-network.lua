@@ -5879,6 +5879,13 @@ remote.add_interface("gregtorio-me-network", {
 		local node = s and entity and entity.valid and s.nodes[entity.unit_number]
 		return node and node.partner or nil
 	end,
+	--- tests: the underground pair a drag of ME Cable from `a` to `b` makes over an obstacle (scripts/fork-me-cabledrag.lua);
+	--- the underground cables come from and the cables go to the inventory of the chest `chest` (nil: ghosts only)
+	drag_bridge = function(a, b, chest)
+		local inv = chest and chest.valid and chest.get_inventory(defines.inventory.chest) or nil
+		local exit, entry = M.drag_bridge(a, b, inv)          -- (set by scripts/fork-me-cabledrag.lua)
+		return exit, entry
+	end,
 })
 
 return M

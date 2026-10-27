@@ -352,6 +352,52 @@ function me_graph_test()
 			and remote.call(NET, "underground_partner", w2) == nil, "the middle end did not take the near end")
 		w3.destroy{ raise_destroy = true }
 		st.weave = { wd1 = wd1, wd2 = wd2, w1 = w1, w2 = w2 }
+		--- dragging ME Cable over an obstacle: the two cables at its sides become an underground pair (like belts)
+		local function row(y, from, to, gap_walls, chest_items)
+			local c = { }
+			for x = from, to do
+				if gap_walls[x] then put("stone-wall", x, y) else c[x] = put("me-cable", x, y) end
+			end
+			local chest = chest_items and put("wooden-chest", from - 1, y + 1)
+			if chest then for name, n in pairs(chest_items) do chest.insert{ name = name, count = n } end end
+			return c, chest
+		end
+		local walls = { [3] = true, [4] = true, [5] = true }
+		local dd1, dd2 = put("me-drive", 0, 9), put("me-drive", 8, 9)
+		local c, chest = row(9, 1, 7, walls, { ["me-underground-cable"] = 3 })
+		local exit, entry = remote.call(NET, "drag_bridge", c[2], c[6], chest)
+		local inv = chest.get_inventory(defines.inventory.chest)
+		expect(exit and entry and entry.name == "me-underground-cable" and entry.direction == defines.direction.east
+			and exit.direction == defines.direction.west and same(dd1, dd2)
+			and remote.call(NET, "underground_partner", entry) == exit.unit_number,
+			"a dragged cable over walls did not become a connected underground pair")
+		expect(inv.get_item_count("me-underground-cable") == 1 and inv.get_item_count("fluix-cable") == 2,
+			"the drag took or gave back the wrong items: " .. serpent.line(inv.get_contents()))
+		--- no underground cables in the inventory: nothing changes
+		c, chest = row(12, 1, 7, walls, { ["iron-plate"] = 1 })
+		expect(not remote.call(NET, "drag_bridge", c[2], c[6], chest) and c[2].valid and c[6].valid,
+			"bridged without underground cables")
+		--- a gap without an obstacle, a gap with an ME cable in it and a gap wider than the reach are left alone
+		c, chest = row(15, 1, 7, {}, { ["me-underground-cable"] = 2 })
+		expect(not remote.call(NET, "drag_bridge", c[2], c[6], chest), "bridged a gap without an obstacle")
+		c, chest = row(18, 1, 7, { [3] = true, [5] = true }, { ["me-underground-cable"] = 2 })
+		expect(not remote.call(NET, "drag_bridge", c[2], c[6], chest), "bridged a gap with an ME cable in it")
+		local wide = {}
+		for x = 3, 12 do wide[x] = true end
+		c, chest = row(21, 1, 14, wide, { ["me-underground-cable"] = 4 })
+		expect(not remote.call(NET, "drag_bridge", c[2], c[13], chest), "bridged a gap wider than the reach")
+		--- the widest gap the reach allows pairs (the ends 10 tiles apart)
+		wide[12] = nil
+		c, chest = row(24, 1, 13, wide, { ["me-underground-cable"] = 2 })
+		local fx = remote.call(NET, "drag_bridge", c[2], c[12], chest)
+		expect(fx and remote.call(NET, "underground_partner", fx) ~= nil, "the ends at the full reach did not pair")
+		--- ghosts (a shift drag) become ghosts of the pair, without items
+		local g1 = s.create_entity{ name = "entity-ghost", inner_name = "me-cable", position = { ux + 2, uy + 27 }, force = "player" }
+		put("stone-wall", 3, 27)
+		local g2 = s.create_entity{ name = "entity-ghost", inner_name = "me-cable", position = { ux + 4, uy + 27 }, force = "player" }
+		local gx, ge = remote.call(NET, "drag_bridge", g1, g2, nil)
+		expect(gx and ge and gx.ghost_name == "me-underground-cable" and ge.ghost_name == "me-underground-cable"
+			and ge.direction == defines.direction.east, "a dragged ghost over a wall did not become a ghost pair")
 		--- cables can be walked over
 		local mask = prototypes.entity["me-cable"].collision_mask.layers
 		expect(not mask.player and not prototypes.entity["me-underground-cable"].collision_mask.layers.player,
@@ -396,7 +442,7 @@ function me_graph_test()
 					"the underground pair is lost after the graph rebuild")
 				expect(not same(u.over, u.ud1) and not same(u.beside, u.ud1), "the graph rebuild joined cables over or beside the run")
 			end
-			return finish("join, split, conflict, sweep, router, underground cable, walkable, power")
+			return finish("join, split, conflict, sweep, router, underground cable, cable drag, walkable, power")
 		end
 	end
 	if #problems > 0 then finish() end
