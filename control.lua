@@ -59,6 +59,8 @@ local fork_qbridge = require("scripts.fork-me-qbridge")
 local fork_conn = require("scripts.fork-me-connector")
 --- issue #527: settings paste of the ME Quantum Bridge and the ME Wireless Link by the mod's own copy and paste keys
 local paste_keys = require("scripts.fork-me-paste-keys")
+--- ME Cable dragged across an obstacle becomes a pair of underground cables (like belts)
+local cabledrag = require("scripts.fork-me-cabledrag")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -87,6 +89,7 @@ local function on_built(entity, tags, event)
 	fork_lc.on_built(entity)                                  -- (issue #538: a ghost or proxy in an automatic network)
 	fork_qbridge.on_built(entity, tags)
 	fork_conn.on_built(entity)                                -- (issue #412: a block's connector; a connector's ghost revived)
+	cabledrag.on_built(entity, event)                         -- (last: a dragged cable may become an underground end)
 end
 
 --- built by players and robots, by other scripts and on space platforms
@@ -157,7 +160,10 @@ pasteover.apply = function(entity, tags)
 	if tags.fork_me_logistic_interface then fork_lif.on_built(entity, tags) end
 	if tags.fork_me_qbridge or tags.fork_me_wireless_link then fork_qbridge.on_built(entity, tags) end
 end
-script.on_event(defines.events.on_pre_build, function(event) pasteover.on_pre_build(event) end)
+script.on_event(defines.events.on_pre_build, function(event)
+	cabledrag.on_pre_build(event)
+	pasteover.on_pre_build(event)
+end)
 
 --- removed ME members. Mined: an ME Drive's cells (with their items and fluids), an ME Pattern Provider's encoded
 --- patterns, an ME Storage Bus's cards and the cell in an ME Cell Workbench go into the mined buffer, the fluid in an
