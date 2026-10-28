@@ -1953,8 +1953,20 @@ local function update_power(s, net)
 	net.power = BASE_POWER + members
 	for unit in pairs(net.controllers) do
 		local node = s.nodes[unit]
-		if node and node.entity.valid then node.entity.power_usage = net.power / 60 end
+		if node and node.entity.valid then M.set_draw(node.entity, net.power) end
 	end
+end
+
+--- Issue #556: a controller draws `watts` (its network's power), and its buffer holds BUFFER_TICKS of that draw, at least the
+--- prototype's 100 kJ: with a fixed buffer a draw of more than 100 kJ per tick (6 MW) emptied it every tick and the network
+--- reported "no-power" on any grid. The prototype's input flow limit is far above any network. (A field: the main chunk is at
+--- Lua's limit of 200 locals.)
+M.BUFFER_TICKS = 30
+M.MIN_BUFFER = 100000
+function M.set_draw(entity, watts)
+	entity.power_usage = watts / 60
+	local buffer = math.max(M.MIN_BUFFER, watts / 60 * M.BUFFER_TICKS)
+	if entity.electric_buffer_size ~= buffer then entity.electric_buffer_size = buffer end
 end
 
 --- Issue #420: a member that joined (`sign` 1) or left (-1) a network without a split changes its controller's draw by its
@@ -1988,7 +2000,7 @@ function M.power_add(s, net, node, sign)
 	net.power = net.power + sign * w
 	for unit in pairs(net.controllers) do
 		local c = s.nodes[unit]
-		if c and c.entity.valid then c.entity.power_usage = net.power / 60 end
+		if c and c.entity.valid then M.set_draw(c.entity, net.power) end
 	end
 end
 
@@ -2041,8 +2053,14 @@ function M.usable(net)
 		local node = s.nodes[unit]
 		local e = node and node.entity
 		if e and e.valid then
-			--- an energy interface without any pole reports no "no power" status: its buffer stays empty
-			if e.status == defines.entity_status.no_power or e.energy <= 0 then why = "no-power" else ok, why = true, nil end
+			--- an energy interface without any pole reports no "no power" status: its buffer stays empty. Issue #556: nor does one
+			--- on a grid that delivers less than its draw; the engine refills the buffer after the draw, so it holds what the grid
+			--- gave in the last tick: less than one tick's draw is no power
+			if e.status == defines.entity_status.no_power or e.energy <= 0 or e.energy < e.power_usage then
+				why = "no-power"
+			else
+				ok, why = true, nil
+			end
 		end
 	end
 	net.usable, net.why, net.usable_tick = ok, why, game.tick

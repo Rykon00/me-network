@@ -1044,8 +1044,7 @@ function M.controller_data(entity)
 	if not net then return { status = "no-network" } end
 	local st = N.stats(net)
 	st.energy = entity.energy
-	local cap = entity.prototype.electric_energy_source_prototype
-	cap = cap and cap.buffer_capacity
+	local cap = entity.electric_buffer_size                -- (issue #556: set with the draw, not the prototype's)
 	st.supply = cap and cap > 0 and math.min(1, st.energy / cap) or nil    -- (issue #149: the buffer stays full while the network delivers)
 	return st
 end
