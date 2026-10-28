@@ -542,6 +542,18 @@ local function add_node(s, entity, kind)
 			order[#order + 1] = qn.net
 		end
 	end
+	--- issue #559: an ME Wireless Link has the links of its group it is linked to as neighbours (M.set_wlinks)
+	for wu in pairs(s.wlinks and s.wlinks[unit] or M.NONE) do
+		local wn = s.nodes[wu]
+		if wn and wn.entity.valid then
+			node.adj[wu] = true
+			wn.adj[unit] = true
+			if not nets[wn.net] then
+				nets[wn.net] = true
+				order[#order + 1] = wn.net
+			end
+		end
+	end
 	local net
 	if #order == 0 then
 		net = new_net(s, node.surface, node.force)
@@ -707,6 +719,7 @@ local function remove_node(s, unit)
 		s.qlink[unit] = nil
 		if s.qlink[qu] == unit then s.qlink[qu] = nil end
 	end
+	M.drop_wlinks(s, unit)                               -- (issue #559: so are a removed wireless link's)
 	if pu and s.nodes[pu] then
 		s.nodes[pu].partner = nil
 		s.nodes[pu].link = nil
@@ -4929,6 +4942,79 @@ function M.qlink_of(entity)
 	return s and s.qlink and entity and entity.valid and s.qlink[entity.unit_number] or nil
 end
 
+--- Issue #559: the edges of the ME Wireless Links. All links of a frequency on a surface form one wireless network
+--- (scripts/fork-me-qbridge.lua decides which pairs of them are linked: a spanning forest within their range), so a link
+--- may have several partners: `s.wlinks` = { [unit] = { [unit] = true } }, both ways, state like `s.qlink`. Each edge is a
+--- graph edge like a cable. Returns the set of a link's partners (nil: none).
+function M.wlinks_of(entity)
+	local s = storage.fork_me_net
+	return s and s.wlinks and entity and entity.valid and s.wlinks[entity.unit_number] or nil
+end
+
+--- forget every edge of `unit` (both ways); returns the units that lost an edge to it
+function M.drop_wlinks(s, unit)
+	local set = s.wlinks and s.wlinks[unit]
+	if not set then return M.NONE end
+	local lost = {}
+	for other in pairs(set) do
+		local o = s.wlinks[other]
+		if o then
+			o[unit] = nil
+			if next(o) == nil then s.wlinks[other] = nil end
+		end
+		lost[#lost + 1] = other
+	end
+	s.wlinks[unit] = nil
+	return lost
+end
+
+--- The edges among the links `units` (unit numbers) become `edges` ({ { a, b } } pairs of them); an edge of one of them to a link
+--- outside the list goes. Only the links whose edges changed (and the ones that lost an edge) are registered again, in unit
+--- order. Returns true when the graph changed.
+function M.set_wlinks(units, edges)
+	local s = state()
+	s.wlinks = s.wlinks or {}
+	local want = {}
+	for _, u in ipairs(units) do want[u] = {} end
+	for _, e in ipairs(edges) do
+		if want[e[1]] and want[e[2]] and e[1] ~= e[2] then
+			want[e[1]][e[2]] = true
+			want[e[2]][e[1]] = true
+		end
+	end
+	local dirty = {}
+	for _, u in ipairs(units) do
+		local old, new = s.wlinks[u] or M.NONE, want[u]
+		local same = true
+		for k in pairs(old) do if not new[k] then same = false break end end
+		if same then for k in pairs(new) do if not old[k] then same = false break end end end
+		if not same then
+			dirty[u] = true
+			for _, k in ipairs(M.drop_wlinks(s, u)) do dirty[k] = true end
+		end
+	end
+	if next(dirty) == nil then return false end
+	for u in pairs(dirty) do
+		for k in pairs(want[u] or M.NONE) do
+			s.wlinks[u] = s.wlinks[u] or {}
+			s.wlinks[k] = s.wlinks[k] or {}
+			s.wlinks[u][k], s.wlinks[k][u] = true, true
+			dirty[k] = true
+		end
+	end
+	local list = {}
+	for u in pairs(dirty) do list[#list + 1] = u end
+	table.sort(list)
+	for _, u in ipairs(list) do
+		local node = s.nodes[u]
+		if node and node.entity.valid then
+			remove_node_graph(s, u)
+			add_node(s, node.entity, node.kind)
+		end
+	end
+	return true
+end
+
 --- issue #355: the energy the network's controllers hold now (J; the level emitter's "stored energy")
 function M.stored_energy(net)
 	local s = storage.fork_me_net
@@ -5535,6 +5621,17 @@ function M.rebuild(full)
 		if a and b then
 			a.adj[qu] = true
 			b.adj[unit] = true
+		end
+	end
+	--- issue #559: the edges of the ME Wireless Links (s.wlinks)
+	for unit, set in pairs(s.wlinks or {}) do
+		local a = s.nodes[unit]
+		for wu in pairs(set) do
+			local b = s.nodes[wu]
+			if a and b then
+				a.adj[wu] = true
+				b.adj[unit] = true
+			end
 		end
 	end
 	local seen = {}

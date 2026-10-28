@@ -984,6 +984,7 @@ RUNTIME_TESTS = (
     ("BIGPOWER", "ME Controller buffer above 6 MW (issue #556)"),
     ("PENDING", "Pattern provider waiting for patterns (issue #558)"),
     ("MEMCARD", "ME Memory Card (issue #561)"),
+    ("WGROUP", "ME Wireless Link groups (issue #559)"),
     ("CELLLIGHT", "Cell light with all types used (issue #468)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
