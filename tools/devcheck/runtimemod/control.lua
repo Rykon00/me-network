@@ -431,6 +431,52 @@ function me_graph_test()
 		local back = replace("me-cable", 6)
 		expect(back and back.name == "me-cable" and not r6.valid and remote.call(NET, "underground_partner", r1) == nil,
 			"an underground cable could not be replaced by a cable in place")
+		--- blueprints (like pipes and underground pipes, belts and underground belts): a shift paste (superforced) of an
+		--- underground cable over a cable, or of a cable over an underground cable, makes the ghost and marks the old one for
+		--- deconstruction; over a ghost it replaces the ghost; the robots' work (the old one mined, the ghost revived) joins
+		--- the network. A normal paste leaves a different entity alone, as for the vanilla pairs.
+		do
+			local inv = game.create_inventory(1)
+			inv.insert{ name = "blueprint" }
+			local bp = inv[1]
+			local function paste(name, x, y, dir, mode)
+				bp.set_blueprint_entities({ { entity_number = 1, name = name, position = { 0.5, 0.5 }, direction = dir } })
+				return bp.build_blueprint{ surface = s, force = "player", position = { ux + x, uy + y },
+					build_mode = defines.build_mode[mode] } or {}
+			end
+			local function robots(x, y)
+				for _, e in pairs(s.find_entities_filtered{ position = { ux + x, uy + y }, radius = 0.3, to_be_deconstructed = true }) do
+					e.destroy{ raise_destroy = true }
+				end
+				local g = s.find_entities_filtered{ position = { ux + x, uy + y }, radius = 0.3, type = "entity-ghost" }[1]
+				if g then g.revive{ raise_revive = true } end
+				return s.find_entities_filtered{ position = { ux + x, uy + y }, radius = 0.3, name = { "me-cable", "me-underground-cable" } }[1]
+			end
+			local bd1, bd2 = put("me-drive", 0, 40), put("me-drive", 7, 40)
+			for x = 1, 6 do put("me-cable", x, 40) end
+			local n0 = #paste("me-underground-cable", 1, 40, defines.direction.west, "normal")
+			local c1 = s.find_entity("me-cable", { ux + 1, uy + 40 })
+			expect(n0 == 0 and c1 and not c1.to_be_deconstructed(), "a normal paste replaced a cable")
+			local n1 = #paste("me-underground-cable", 1, 40, defines.direction.west, "superforced")
+			local n2 = #paste("me-underground-cable", 6, 40, defines.direction.east, "superforced")
+			expect(n1 == 1 and n2 == 1 and c1.to_be_deconstructed(), "a shift paste of underground cables over cables: "
+				.. n1 .. ", " .. n2 .. " ghosts")
+			local e1, e6 = robots(1, 40), robots(6, 40)
+			expect(e1 and e6 and e1.name == "me-underground-cable" and same(bd1, bd2)
+				and remote.call(NET, "underground_partner", e1) == e6.unit_number,
+				"the robots' underground cables from a blueprint over cables do not connect")
+			--- and back: a cable over an underground cable, and an underground cable's ghost over a cable's ghost
+			local n3 = #paste("me-cable", 6, 40, nil, "superforced")
+			local c6 = robots(6, 40)
+			expect(n3 == 1 and c6 and c6.name == "me-cable" and remote.call(NET, "underground_partner", e1) == nil,
+				"a cable from a blueprint over an underground cable")
+			s.create_entity{ name = "entity-ghost", inner_name = "me-cable", position = { ux + 3, uy + 42 }, force = "player" }
+			local n4 = #paste("me-underground-cable", 3, 42, defines.direction.west, "superforced")
+			local gs = s.find_entities_filtered{ position = { ux + 3, uy + 42 }, radius = 0.3, type = "entity-ghost" }
+			expect(n4 == 1 and #gs == 1 and gs[1].ghost_name == "me-underground-cable", "a blueprint over a cable's ghost: "
+				.. #gs .. " ghosts")
+			inv.destroy()
+		end
 		--- cables can be walked over
 		local mask = prototypes.entity["me-cable"].collision_mask.layers
 		expect(not mask.player and not prototypes.entity["me-underground-cable"].collision_mask.layers.player,
@@ -480,7 +526,7 @@ function me_graph_test()
 				expect(same(m.md1, m.md2) and remote.call(NET, "underground_partner", m.m1) == m.m2.unit_number,
 					"the turned underground cables of an older save are not connected after the graph rebuild")
 			end
-			return finish("join, split, conflict, sweep, router, underground cable, cable drag, underground turn, fast replace, walkable, power")
+			return finish("join, split, conflict, sweep, router, underground cable, cable drag, underground turn, fast replace, blueprints, walkable, power")
 		end
 	end
 	if #problems > 0 then finish() end
