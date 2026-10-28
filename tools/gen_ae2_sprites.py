@@ -659,6 +659,21 @@ def neutral(rgb, lo=90, hi=200, spread=12):
     return max(abs(r - g), abs(g - b), abs(r - b)) <= spread and lo <= (r + g + b) // 3 <= hi
 
 
+def singularity_fluid_icon():
+    """issue #562: the Singularity cell for fluids: the Singularity cell's icon with the fluid cells' steel blue housing (its
+    LED, window and core kept) and their blue drop bottom left"""
+    img = singularity_icon()
+    keep = {SINGULARITY_LED, (10, 8, 18), (0, 0, 0), (120, 40, 170)}
+    px = img.load()
+    for y in range(img.height):
+        for x in range(img.width):
+            r, g, b, a = px[x, y]
+            if a and (r, g, b) not in keep and neutral((r, g, b)):
+                px[x, y] = (r * STEEL[0] // 255, g * STEEL[1] // 255, b * STEEL[2] // 255, a)
+    ImageDraw.Draw(img).rectangle((12, 22, 13, 27), fill=FLUID + (255,))
+    return img
+
+
 def recolor(img, mapping):
     """Replaces exact RGB values (mapping old -> new), alpha is kept."""
     px = img.load()
@@ -1877,6 +1892,7 @@ def hd_batch1():
         for kind in ("storage-cell", "fluid-storage-cell"):
             save(hd_cell(load(OUT_ICON / f"me-{k}-{kind}.png")), HD_ICON / f"me-{k}-{kind}.png")
     save(hd_cell(singularity_icon()), HD_ICON / "me-singularity-storage-cell.png")              # (issue #414)
+    save(hd_cell(singularity_fluid_icon()), HD_ICON / "me-singularity-fluid-storage-cell.png")  # (issue #562)
     return written
 
 
