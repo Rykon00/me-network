@@ -1130,6 +1130,9 @@ wgroup559 = require("wgroup")({ me_place = me_place, power = power, me_report = 
 --- me-network issue #562: the Singularity cell for fluids (singfluid.lua)
 singfluid562 = require("singfluid")({ me_place = me_place, power = power, me_report = me_report,
 	me_connect = function(...) return me_connect(...) end })
+--- me-network issue #560: the ME Molecular Assembler carries the network, its power through the controller (asmnet.lua)
+asmnet560 = require("asmnet")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #557: a fast machine kept busy by its job (fastcraft.lua)
 fastcraft557 = require("fastcraft")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
 	me_drive = function(...) return me_drive(...) end })
@@ -1274,6 +1277,7 @@ local function tests_running()
 	creativeenergy442.running(check)
 	bigpower556.running(check)
 	fastcraft557.running(check)
+	asmnet560.running(check)
 	singfluid562.running(check)
 	wgroup559.running(check)
 	memcard561.running(check)
@@ -2256,6 +2260,7 @@ script.on_nth_tick(10, function()
 	creativeenergy442.tick()
 	bigpower556.tick()
 	fastcraft557.tick()
+	asmnet560.tick()
 	singfluid562.tick()
 	wgroup559.tick()
 	memcard561.tick()
@@ -5163,6 +5168,7 @@ script.on_init(function()
 	for _, f in pairs(creativeenergy442.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bigpower556.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(fastcraft557.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(asmnet560.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(singfluid562.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wgroup559.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(memcard561.setup(s)) do fails[#fails + 1] = f end

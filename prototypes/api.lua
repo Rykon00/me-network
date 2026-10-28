@@ -238,6 +238,9 @@ function M.make_molecular_assembler(def)
 	assembler.crafting_categories = def.crafting_categories
 	assembler.crafting_speed = def.crafting_speed
 	assembler.energy_usage = def.energy_usage
+	--- issue #560: a member of the ME network that carries it (like a cable), without a power connection: the ME Controller draws
+	--- its energy usage while it crafts, a thirtieth of it otherwise (scripts/fork-me-network.lua, M.assembler_power)
+	assembler.energy_source = { type = "void" }
 	assembler.fluid_boxes = nil
 	assembler.fluid_boxes_off_when_no_fluid_recipe = nil
 	--- issue #110: five slots for Acceleration Cards and nothing else (no module of the game, no beacon: AE2's assembler has

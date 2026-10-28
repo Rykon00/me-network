@@ -3392,6 +3392,37 @@ of 20 links decides in well under a millisecond; groups of hundreds of links are
 
 `regressions beyond the noise: 0`.
 
+## The ME Molecular Assembler carries the network (issue #560)
+
+The assembler is a member of kind `assembler`: the graph's join, removal, split and rebuild treat it like any other member
+(one more name in the members' filter). Its draw is kept in its node (`node.w`, whole watts, so the sums do not depend on
+their order): a join or a removal adds or takes it out without the walk over the members (issue #420), a change adds the
+difference. The slow step (once a second) walks the assemblers (`s.asm`, their units): per assembler one look at its
+network's state (kept for the tick), one status read, and a write only when its draw or its on/off state changed.
+
+**A burst of assemblers** (the bench's new burst step: 1000 blocks, pattern providers and assemblers in a checkerboard, no
+cable, built in one tick and removed in one tick; `bench --sizes 1000 --runs 3`, medians, origin/main with the same harness):
+
+| 1000 providers and assemblers | origin/main (the assemblers no members) | #560 |
+|---|---|---|
+| build (loop) | 72.9 ms | 99.7 ms |
+| remove (loop) | 44.4 ms | 97.9 ms |
+
+About 0.1 ms per member, what the other ME blocks cost (the burst of 998 buses, interfaces and cables: 99 to 105 ms).
+
+**The scenes** have an assembler next to every pattern provider, members now: `bench --check origin/main --sizes 100,1000
+--runs 3` (three rounds in turns):
+
+| | origin/main | #560 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2483 / 2.200 | 0.2430 / 2.150 |
+| 1000: script average / p99 ms | 0.4743 / 2.820 | 0.4731 / 2.659 |
+| Lua alloc KB per tick (100 / 1000) | 28.12 / 26.18 | 28.12 / 26.18 |
+| burst build / remove ms (1000) | 95.76 / 94.42 | 109.7 / 102.8 (spread ±27 / ±30) |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
 ## Fast machines kept busy (issue #557)
 
 A job hands a machine its work only in its steps (every 20 ticks at most, fewer with many jobs: the map setting "crafting

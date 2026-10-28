@@ -206,6 +206,14 @@ local function setup_unified(s)
 		if not (m and p and stack and remote.call(AC, "insert_pattern", p, stack)) then fails[#fails + 1] = "pattern at " .. x end
 		inv.destroy()
 	end
+	--- me-network issue #560: a provider that touches only an assembler (no cable, no other block), and two networks with a
+	--- controller each whose providers meet at an assembler: before, the assembler was no member (the provider alone, two
+	--- networks); after the load the provider is in the network and the two networks are one, in conflict
+	place(s, fails, "me-pattern-provider", 29.5, -0.5)
+	place(s, fails, "me-network-controller", 9, 40)
+	for _, x in ipairs({ 10.5, 12.5 }) do place(s, fails, "me-pattern-provider", x, 39.5) end
+	place(s, fails, "me-molecular-assembler", 11.5, 39.5)
+	place(s, fails, "me-network-controller", 14, 40)
 	local has_legacy = prototypes.entity["me-crafting-cpu"] ~= nil
 	local legacy_chest
 	if has_legacy then
@@ -371,6 +379,14 @@ local function check_unified(st)
 		expect(same(l1, l2) and same(l1, l3), "the three wireless links of one frequency after the update (issue #559): "
 			.. serpent.line({ same(l1, l2), same(l1, l3), l1 and remote.call("gregtorio-me-qbridge", "info", l1) }))
 	end
+	--- me-network issue #560: the assemblers carry the network
+	local lone, asm = at("me-pattern-provider", 29.5, -0.5), at("me-molecular-assembler", 28.5, -0.5)
+	expect(t and lone and asm and remote.call(NET, "same_network", t, lone) and remote.call(NET, "same_network", t, asm),
+		"the provider next to an assembler only is not in the network after the update (issue #560)")
+	local ca, cb = at("me-network-controller", 9, 40), at("me-network-controller", 14, 40)
+	local nab = ca and remote.call(NET, "network", ca)
+	expect(ca and cb and remote.call(NET, "same_network", ca, cb) and nab and nab.graph_status == "conflict",
+		"two networks that meet at an assembler after the update (issue #560): " .. serpent.line(nab and nab.graph_status))
 	if st.big then
 		local c = at("me-network-controller", 9, -24)
 		local n = c and remote.call(NET, "network", c)

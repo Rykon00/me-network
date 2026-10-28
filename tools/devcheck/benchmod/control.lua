@@ -2211,6 +2211,31 @@ local function on_burst_tick()
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-BURST plain-remove ", k, " ", game.tick, " ", p })
 		b.burst_made = nil
+	elseif t == 250 then
+		--- me-network issue #560: a block of pattern providers and ME Molecular Assemblers in a checkerboard (every block touches
+		--- its neighbours, no cable), `C.burst` of them where the plain chests stood, built in one tick and removed in one tick: the
+		--- assemblers carry the network since #560 (one component of them all), before they were no members (each provider alone)
+		local col, row = burst_layout(n)
+		local p = helpers.create_profiler()
+		local made, k = {}, 0
+		for y = 0, math.ceil(n / row) do
+			for i = 0, row - 1 do
+				if k < n then
+					k = k + 1
+					local name = (i + y) % 2 == 0 and "me-pattern-provider" or "me-molecular-assembler"
+					made[#made + 1] = s.create_entity{ name = name, position = { p1(X0 - 1 + i, BURST_Y - 4 - y) }, force = "player", raise_built = true }
+				end
+			end
+		end
+		p.stop()
+		b.burst_made = made
+		log({ "", "DEVCHECK-BENCH-BURST asm-build ", #made, " ", game.tick, " ", p })
+	elseif t == 310 then
+		local p = helpers.create_profiler()
+		local k = burst_remove(b.burst_made)
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST asm-remove ", k, " ", game.tick, " ", p })
+		b.burst_made = nil
 	elseif t >= 200 and not b.ghost_t0 and (C.ghosts or 0) > 0 and b.ghost_area
 		and game.tick > C.warmup + C.window + ALLOC_FROM + ALLOC_TICKS then   -- (after the allocation meter's ticks)
 		b.ghost_t0 = game.tick
@@ -2255,7 +2280,7 @@ local function on_burst_tick()
 		local p = helpers.create_profiler()
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-BURST ghost-after 0 ", game.tick, " ", p })
-	elseif (b.ghost_t0 and game.tick >= b.ghost_t0 + 70) or (t >= 200 and not ((C.ghosts or 0) > 0 and b.ghost_area)) then
+	elseif t >= 320 and ((b.ghost_t0 and game.tick >= b.ghost_t0 + 70) or not ((C.ghosts or 0) > 0 and b.ghost_area)) then   -- (after #560's assembler burst)
 		b.phase = "done"
 		script.on_event(defines.events.on_tick, nil)
 		log("DEVCHECK-BENCH-DONE")
