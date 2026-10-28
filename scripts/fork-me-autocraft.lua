@@ -765,6 +765,7 @@ function M.network_patterns(net)
 			end
 		end
 	end
+	for _, keys in pairs(ids) do table.sort(keys) end                    -- (every peer takes the same key first)
 	M.net_pattern_cache[net] = { kgen = net.kgen, ids = ids }
 	return ids
 end
