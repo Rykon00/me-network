@@ -61,6 +61,11 @@ do
 	end
 end
 
+--- Issue #561: the ME Memory Card holds its settings per item (its item number), so it never stacks: a mod that raises the
+--- stack of every "me-...-card" in its data stage (Gregtorio Continued's compat file) would break its "not-stackable" flag
+local memory_card = data.raw["selection-tool"]["me-memory-card"]
+if memory_card then memory_card.stack_size = 1 end
+
 --- Issue #17: the upgrade cards technology costs what ME 64k Storage costs (its prerequisite), unless a mod set it
 --- itself (ME_NETWORK.set_technology). A mod that puts the network on its own tiers (Gregtorio Continued) thereby gets a
 --- researchable cards technology on the 64k tier before it knows about the cards.
