@@ -1309,6 +1309,7 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-super-speed-card": ("advanced", "gui/overlay_button/x2", (255, 150, 40)),    # issue #356: the "x2" sign (orange)
     "me-superluminal-speed-card": ("advanced", "gui/overlay_button/x2", (240, 70, 230)),   # issue #356: the "x2" sign (magenta)
     "me-crafting-card": ("basic", "gui/overlay_button/pattern_optimize", (235, 160, 60)),   # issue #411: a hammer (amber)
+    "me-memory-card": ("basic", "gui/overlay_button/copy_to_clipboard", (70, 170, 245)),   # issue #561: two sheets (blue)
 }
 CARD_SIGN_MAX = 20            # px; larger GT signs (the 24 px ring of "disable") are scaled down to it
 
@@ -1993,7 +1994,7 @@ def hd_batch3():
 
 
 # --- issue #221 (batch 4 of #154): the upgrade cards, patterns, storage components, housing, wireless items -------------
-HD_CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'group-filter', 'inverter', 'equal-distribution', 'acceleration', 'super-speed', 'superluminal-speed', 'crafting')
+HD_CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'group-filter', 'inverter', 'equal-distribution', 'acceleration', 'super-speed', 'superluminal-speed', 'crafting', 'memory')
 
 
 def hd_plate(icon, depth=5):
