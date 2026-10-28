@@ -478,13 +478,6 @@ local function build_pattern_box(box, player, ed)
 	editor_rows(box, ed, "outputs", max_out)
 end
 
-local function slot_column(parent, caption, name, slot, tooltip)
-	local col = parent.add{ type = "flow", direction = "vertical" }
-	col.style.horizontal_align = "center"
-	col.add{ type = "label", caption = caption }
-	col.add{ type = "sprite-button", name = name, style = "slot_button", tags = G.act("block_slot", { slot = slot }), tooltip = tooltip }
-end
-
 --- the editor of a player for the block `entity` (issue #416: the Ex has its own), made when it has none
 local function editor_for(u, entity)
 	if is_ex(entity) then
@@ -519,14 +512,15 @@ local function open(player, entity)
 	content.add{ type = "line" }
 	local row = G.row(content)
 	if not remote_view then
-		slot_column(row, { "fork-me-pattern-terminal.blank-slot" }, "fork_me_pt_blank", BLANK_SLOT, { "fork-me-pattern-terminal.blank-slot-tooltip" })
+		--- issue #550: the blank and the output slot are one element of the block's two slots (the rule per slot is M.click's:
+		--- blank patterns into the first, nothing into the second)
+		local col = row.add{ type = "flow", direction = "vertical" }
+		col.add{ type = "label", caption = { "fork-me-pattern-terminal.slots" }, tooltip = { "fork-me-pattern-terminal.slots-tooltip" } }
+		col.add{ type = "flow", name = "fork_me_pt_slots", direction = "horizontal" }
 	end
 	local mid = row.add{ type = "flow", direction = "vertical" }
 	mid.add{ type = "button", name = "fork_me_pat_encode", caption = { "fork-me-gui.patterns-encode" }, style = "confirm_button",
 		tooltip = { remote_view and "fork-me-wireless.encode-tooltip" or "fork-me-gui.patterns-encode-tooltip" }, tags = G.act("pat_encode") }
-	if not remote_view then
-		slot_column(row, { "fork-me-pattern-terminal.output-slot" }, "fork_me_pt_output", OUTPUT_SLOT, { "fork-me-pattern-terminal.output-slot-tooltip" })
-	end
 	row.add{ type = "empty-widget" }.style.horizontally_stretchable = true
 	local buttons = row.add{ type = "flow", direction = "vertical" }
 	buttons.add{ type = "button", caption = { "fork-me-gui.patterns-load" }, tooltip = { "fork-me-gui.patterns-load-tooltip" },
@@ -563,8 +557,7 @@ function M.refresh(player, frame)
 	end
 	local out = rec and rec.inv[OUTPUT_SLOT]
 	if rec then
-		G.render_slot(G.find(frame, "fork_me_pt_blank"), rec.inv[BLANK_SLOT], nil, { "fork-me-pattern-terminal.blank-slot-tooltip" })
-		G.render_slot(G.find(frame, "fork_me_pt_output"), out, nil, { "fork-me-pattern-terminal.output-slot-tooltip" })
+		G.block_slots(frame, "fork_me_pt_slots", rec.inv, 1, #rec.inv, function() return { "fork-me-pattern-terminal.slots-tooltip" } end)
 	end
 	local own, in_net = M.blanks(entity)
 	G.find(frame, "fork_me_pat_status").caption = { "", { "fork-me-pattern-terminal.blanks", own, in_net },

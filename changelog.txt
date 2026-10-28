@@ -24,6 +24,7 @@ Version: 0.5.11
     - ME Logistic Storage Bus: an icon and a picture of its own (with the texture mod: the AE2 storage bus look with a logistic mark).
     - ME Logistic Interface: an icon and a picture of its own (the casing with orange logistic marks and its three chests).
   Changes:
+    - ME windows: the ME Charger's slot, the ME Terminal's View Cell slots, the ME IO Port's two cell slots and the ME Pattern Terminal's blank and output slot are the game's own slots now (issue #550), with the game's tooltips; the IO Port's and the Pattern Terminal's two slots sit side by side in one row. What may not go into a slot is still refused and stays in your hand.
     - Items that stacked to 64 (Minecraft's size) now stack to 50 like other Factorio items: the ME Fluix Cable, the storage housing and storage components, blank patterns, all upgrade cards and the ME Wireless Booster. With Gregtorio Continued they still stack to 64.
     - The ME Terminal lists the qualities of one item in the order of their level (normal, uncommon, rare, epic, legendary) in every sort; before, "Sort: name" put them in alphabetical order (issue #514).
     - A visit of the ME Logistic Storage Bus costs about half as much script time beyond the game's own read of the logistic network (issue #509): on a logistic network of 1048 roboports and 316 kinds of items 0.15 ms instead of 0.30 ms. Storage buses on chests and tanks pass the item types that did not change by as well.
