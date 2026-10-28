@@ -145,3 +145,15 @@ do
 			results = { { type = "item", name = "zz-devcheck-tagged-post", amount = 1 } } },
 	})
 end
+
+--- me-network issue #557: a fast recipe of the ME Molecular Assembler (a plate into a gear in a tenth of a second), in its first
+--- crafting category, so that a machine finishes 16 crafts long before a job's next step (fastcraft.lua)
+local ma = data.raw["assembling-machine"]["me-molecular-assembler"]
+if ma and ma.crafting_categories and ma.crafting_categories[1] then
+	data:extend({ {
+		type = "recipe", name = "zz-devcheck-fast-gear", categories = { ma.crafting_categories[1] }, energy_required = 0.1,
+		enabled = false, ingredients = { { type = "item", name = "iron-plate", amount = 1 } },
+		results = { { type = "item", name = "iron-gear-wheel", amount = 1 } },
+		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
+	} })
+end

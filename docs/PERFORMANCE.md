@@ -3392,6 +3392,40 @@ of 20 links decides in well under a millisecond; groups of hundreds of links are
 
 `regressions beyond the noise: 0`.
 
+## Fast machines kept busy (issue #557)
+
+A job hands a machine its work only in its steps (every 20 ticks at most, fewer with many jobs: the map setting "crafting
+jobs per tick"), and a hand-over was at most 16 crafts. A machine that crafts 16 in less than a step idled until the next one.
+Now `M.machine_batch` gives a machine as many crafts as it makes in two steps (its `crafting_speed`, which has its modules,
+quality and Acceleration Cards, against the recipe's time, cached per recipe), at least 16, as far as the pool, its input
+slots and its output slot allow; and `M.top_up` adds runs to a crafting lease whose machine still works and has less than half
+of that left (the products so far collected and counted as done first). A machine that runs out of work or fills its output
+slot (one stack of the product) before the job's next regular step has the job stepped earlier, at three quarters of that time
+(`M.note_early`, `job.early` in storage; the step's operations are at least one round's): Gregtorio's molecular assembler
+(speed 30, gears stack to 64) makes more than a stack in a step. A step's costs per busy lease: one more read
+(`products_finished`) and the speed and recipe time (cached per recipe); per top-up, the inserts a hand-over makes. The default
+and the ceiling of "crafting jobs per tick" are unchanged: top-ups and the early steps of the jobs that need them keep the
+machines busy without stepping every job more often.
+
+**The test** (`fastcraft.lua`): an ME Molecular Assembler with five Acceleration Cards on a 0.1 s recipe, a job that lasts about
+510 ticks at its speed, measured over 300 ticks from 60 ticks after its start. Standalone (2.08 crafts per tick): 38 % busy
+with origin/main (16 crafts per 20 ticks), 99 to 100 % now. With Gregtorio (5 crafts per tick): 63 % with the top-ups alone (the
+output slot holds 64 gears, a step is 100 crafts), 100 % with the early steps.
+
+`bench --check origin/main --sizes 100,1000 --runs 3` (three rounds in turns; the scenes' providers and assemblers):
+
+| | origin/main | #557 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2466 / 2.166 | 0.2363 / 2.125 |
+| 100: provider crafts per second | 2.317 | 2.500 |
+| 1000: script average / p99 ms | 0.4165 / 2.302 | 0.4240 / 2.428 |
+| 1000: provider crafts per second | 14.83 | 15.78 |
+| Lua alloc KB per tick (100 / 1000) | 28.05 / 25.90 | 28.12 / 26.18 |
+| script time per craft (100 / 1000) | 6.39 / 1.69 ms | 5.67 / 1.61 ms |
+
+`regressions beyond the noise: 0`. The scenes' machines craft 6 to 8 % more in the same time at a lower script time per craft
+(the script average divided by the crafts per tick).
+
 ## Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)
 
 The filter sets are made when the filters or the cards change, never in a visit: a Capacity Card only makes the set longer

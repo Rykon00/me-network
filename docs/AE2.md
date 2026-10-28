@@ -1238,6 +1238,13 @@ ingredient fits into a slot, and fluid boxes for the recipe's fluids without pip
 * **One machine, many patterns:** a machine works for one job at a time. A job that needs a machine that is busy with
   another job (or another pattern) **waits** ("Waiting for a free machine") and takes it at the next step after it is
   free. Jobs take turns: one job per tick (setting "Crafting jobs stepped per tick"), each one every 20 ticks at most.
+* **How much at once** (issue #557): a machine gets 16 crafts at a hand-over, or more when it is fast (its crafting speed
+  with modules, quality and Acceleration Cards against the recipe's time): enough for two of the job's steps, as far as
+  its input slots (one stack per ingredient), its output slot and what the job holds allow. While it still works and has
+  less than half of that left, the job's step tops it up (the products so far are taken out first and count as done), and
+  a machine that would run out or fill its output slot before the job's next step has the job stepped earlier, so a fast
+  machine never waits for the job. Not for recipes with fluids or ingredients with data (they get their batch when the
+  machine is idle, as before).
 * The machine keeps the recipe of the last job; it is never switched back.
 * **Cannot make it:** a pattern whose machines cannot make the recipe is no pattern of the network: the provider
   window shows why (`category`: no machine of the right kind, `not-researched`, `fixed-recipe`, `stack`, the fluid
