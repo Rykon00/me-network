@@ -24,9 +24,9 @@ M.TAGS = { "fork_me_interface", "fork_me_bus", "fork_me_storage_bus", "fork_me_p
 	"fork_me_fluid_storage_bus", "fork_me_io_port", "fork_me_qbridge",
 	"fork_me_wireless_link" }
 
---- function(entity, tags) per entity name: the settings of `tags` onto an existing block (control.lua fills it)
+--- function(entity, tags, player) per entity name: the settings of `tags` onto an existing block (control.lua fills it)
 M.appliers = {}
-M.apply = nil                            -- function(entity, tags): the default applier (control.lua)
+M.apply = nil                            -- function(entity, tags, player): the default applier (control.lua)
 
 local function has_tag(tags)
 	if type(tags) ~= "table" then return false end
@@ -150,7 +150,7 @@ function M.paste(bp, surface, force, at, direction, fh, fv, player)
 		if found and found.valid and facing then
 			local f = M.appliers[be.name] or M.apply
 			if f then
-				f(found, be.tags)
+				f(found, be.tags, player)
 				n = n + 1
 			end
 		end
