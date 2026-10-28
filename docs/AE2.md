@@ -49,12 +49,14 @@ technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.l
 ## Building a network
 
 1. Place an **ME Controller** and give it power. It draws 120 kW, plus 4 kW for every drive, interface, bus, pattern
-   provider and circuit interface of the network, 8 kW for every terminal, 30 kW for every level maintainer and what
-   its crafting blocks need. Cables, terminals, level maintainers and every other block need no power connection of
+   provider and circuit interface of the network, 8 kW for every terminal, 30 kW for every level maintainer, what
+   its crafting blocks need and its ME Molecular Assemblers (their energy usage while they craft, a thirtieth of it while
+   they are idle; issue #560). Cables, terminals, level maintainers and every other block need no power connection of
    their own (no pole next to a terminal). The controller's buffer holds half a second of that draw (at least
    100 kJ), so a network of any size works on a grid that delivers its power (issue #556).
 2. Connect everything else with **ME cables**: a cable connects on all four sides, and ME blocks that touch
-   each other connect without a cable (a row of drives next to the controller is one network). Corners do not
+   each other connect without a cable (a row of drives next to the controller is one network; so do pattern providers
+   and ME Molecular Assemblers, issue #560). Corners do not
    connect. Everything connected is one network. The cable picture shows its connections.
 3. Place **ME Drives** and put **storage cells** into them (see below), and an **ME Terminal** (it takes its power from the network).
 4. Import and export with **ME Interfaces** (inserters, belts, pipes) or **buses** (directly on a machine, chest or
@@ -1106,7 +1108,7 @@ Tech `me-autocrafting` (needs `me-storage-64k`, Automation 2 and Circuit network
 | **ME Blank Pattern** | cheap item (2 per craft, recipe in **Recipes (standalone)**). Encoded in an **ME Pattern Terminal** |
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
 | **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns** (**Pattern Capacity Cards** in its three card slots add 9 each, up to 36); each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
-| **ME Molecular Assembler** | **1x1** (one tile, like AE2's block) assembling machine for item-only crafting recipes (the item categories of the assembling machine 2, no fluid boxes), speed 2.5, 375 kW (Gregtorio Continued: its own categories and numbers), five module slots for Acceleration Cards. Up to three of them fit around one provider (its fourth side joins the network) |
+| **ME Molecular Assembler** | **1x1** (one tile, like AE2's block) assembling machine for item-only crafting recipes (the item categories of the assembling machine 2, no fluid boxes), speed 2.5, 375 kW (Gregtorio Continued: its own categories and numbers), five module slots for Acceleration Cards. Since issue #560 a **member of the network that carries it**, like a cable (AE2): providers and assemblers touching each other in any arrangement are one network, without cables in between; no power connection: the ME Controller draws its energy usage while it crafts (with its cards' extra use) and a thirtieth of it while it is idle. While its network does not work it is switched off with a status saying why |
 | **Crafting blocks** | 1x1 members of the network; a solid rectangle of them with at least one **crafting storage** is a Crafting CPU running one job (see [Crafting CPUs](#crafting-cpus)). The first: a single **ME 1k Crafting Storage** |
 
 Step by step:
@@ -1347,7 +1349,9 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   and takes its products out, and crafting patterns change its recipe. Do not feed them with inserters, belts or
   pipes as well.
 * A provider that is not connected to the network, or that touches no machine, makes no pattern; its patterns stay
-  in it. An ME Molecular Assembler is one tile (it was 3x3 before 0.5.0): it has to stand on a tile next to the provider, one
+  in it. ME Molecular Assemblers connect the network (issue #560), so a block of providers and assemblers needs no cable
+  inside: one cable or ME block at its edge is enough. Two networks that touch through an assembler are one network (with two
+  controllers: a conflict; an older save says so once in the chat). An ME Molecular Assembler is one tile (it was 3x3 before 0.5.0): it has to stand on a tile next to the provider, one
   tile further away is no neighbour. Assemblers of an older save keep their centre and are one tile now, so a provider that
   touched the edge of the old block is one tile away until you move the assembler or the provider: its patterns then say "No
   machine or chest next to the provider", and a job that was waiting for it waits for a machine (it holds its ingredients

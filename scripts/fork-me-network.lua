@@ -102,6 +102,9 @@ local function kinds()
 		if n.creative_energy then k[n.creative_energy] = "creative-energy" end   -- issue #442
 	end
 	k["me-pattern-provider"] = "provider"
+	--- issue #560: the ME Molecular Assembler carries the network like a cable (AE2), and draws its power through the controller
+	--- (M.assembler_power); another mod's (ME_NETWORK.make_molecular_assembler) has the same name
+	k["me-molecular-assembler"] = "assembler"
 	k["me-level-maintainer"] = "maintainer"
 	k["me-circuit-interface"] = "circuit"
 	k["me-fluid-interface"] = "fluid-interface"
@@ -138,6 +141,7 @@ M.power_hooks = {}
 --- issue #6: the power (W) of a crafting block drawn through the controller (mod-data "fork-me-autocraft", blocks)
 local block_power_cache
 local function member_power(node)
+	if node.kind == "assembler" then return M.assembler_power(node) end   -- (issue #560: its draw is kept in its node)
 	local hook = M.power_hooks[node.kind]
 	if hook then return node.entity.valid and hook(node.entity) or MEMBER_POWER end
 	if node.kind ~= "crafting" then return kind_power(node.kind) end
@@ -209,6 +213,10 @@ local function state()
 		storage.fork_me_net = s
 	end
 	if not s.ext then s.ext = {} end          -- saves before the storage bus
+	if not s.asm then                         -- issue #560: the units of the ME Molecular Assemblers (M.assembler_step)
+		s.asm = {}
+		for unit, node in pairs(s.nodes) do if node.kind == "assembler" then s.asm[unit] = true end end
+	end
 	return s
 end
 M.state = state
@@ -501,6 +509,7 @@ local function add_node(s, entity, kind)
 		force = entity.force.name }
 	if kind == "underground" then node.dir = entity.direction end
 	s.nodes[unit] = node
+	if kind == "assembler" then s.asm[unit] = true end      -- (issue #560)
 	local nl = s.nlist
 	if nl then
 		nl[#nl + 1] = unit
@@ -1980,6 +1989,80 @@ function M.set_draw(entity, watts)
 	entity.power_usage = watts / 60
 	local buffer = math.max(M.MIN_BUFFER, watts / 60 * M.BUFFER_TICKS)
 	if entity.electric_buffer_size ~= buffer then entity.electric_buffer_size = buffer end
+end
+
+--- Issue #560: the ME Molecular Assembler is a member without a power connection (a void energy source, prototypes/api.lua): the
+--- controller draws its prototype's energy usage (with its Acceleration Cards' consumption) while it crafts and a thirtieth of
+--- it otherwise (the game's drain of a machine), AE2's and the game's way. Its node keeps the draw counted for it (`w`), so a
+--- change is added to the controller's draw as it is (no walk over the members) and a member that leaves takes out what it
+--- added. M.assembler_step (once a second, from the slow step) reads each assembler's status: the draw follows within a
+--- second, and an assembler whose network does not work is switched off with a status saying why (`off`), and on again (`on`:
+--- switched on since its node was made). The usage per name is derived, read once per load.
+M.ASM_IDLE = 30
+M.asm_usage = {}
+function M.asm_watts(entity, crafting)
+	local name = entity.name
+	local w = M.asm_usage[name]
+	if not w then
+		w = prototypes.entity[name].energy_usage * 60
+		M.asm_usage[name] = w
+	end
+	--- (whole watts: the sums of the draws do not depend on their order)
+	if not crafting then return math.floor(w / M.ASM_IDLE + 0.5) end
+	return math.floor(w * math.max(0.2, 1 + entity.consumption_bonus) + 0.5)      -- (the game's floor: -80 %)
+end
+
+function M.assembler_power(node)
+	if not node.w then node.w = node.entity.valid and M.asm_watts(node.entity, false) or 0 end
+	return node.w
+end
+
+--- the draw of assembler `node` (in network `net`) becomes `w`
+function M.asm_draw(s, net, node, w)
+	local d = w - M.assembler_power(node)
+	node.w = w
+	local row = net and not net.power_dirty and net.power_by and net.power_by.assembler
+	if not row then
+		if net then net.power_dirty = true end
+		return
+	end
+	row.w = row.w + d
+	net.power = net.power + d
+	for unit in pairs(net.controllers) do
+		local c = s.nodes[unit]
+		if c and c.entity.valid then M.set_draw(c.entity, net.power) end
+	end
+end
+
+function M.assembler_step(s)
+	local working = defines.entity_status.working
+	for unit in pairs(s.asm) do
+		local node = s.nodes[unit]
+		if not (node and node.kind == "assembler") then
+			s.asm[unit] = nil
+		elseif node.entity.valid then
+			local e = node.entity
+			local net = s.nets[node.net]
+			local ok, why = M.usable(net)
+			local w
+			if ok then
+				if not node.on then
+					e.disabled_by_script = false
+					e.custom_status = nil
+					node.on, node.off = true, nil
+				end
+				w = M.asm_watts(e, e.status == working)
+			else
+				if node.off ~= why then
+					e.disabled_by_script = true
+					e.custom_status = { diode = defines.entity_status_diode.red, label = { "fork-me-net.status-" .. why } }
+					node.on, node.off = nil, why
+				end
+				w = M.asm_watts(e, false)
+			end
+			if w ~= node.w then M.asm_draw(s, net, node, w) end
+		end
+	end
 end
 
 --- Issue #420: a member that joined (`sign` 1) or left (-1) a network without a split changes its controller's draw by its
@@ -5122,6 +5205,7 @@ function M.slow_step()
 	end
 	refresh_controller_lights(s, refresh_screens(s))
 	CH.power_step(s)
+	if next(s.asm) then M.assembler_step(s) end                -- (issue #560)
 	if not s.light_parts then                                      -- issue #267: the lights of a save from before
 		s.light_parts = true
 		for unit in pairs(s.drives) do s.dirty[unit] = true end
@@ -5471,6 +5555,7 @@ function M.rebuild(full)
 	for _, id in ipairs(ids) do fire_all_waits(s.nets[id]) end   -- (issue #38: no parked endpoint loses its wake)
 	s.nodes, s.nets, s.version = {}, {}, s.version + 1
 	s.drives, s.dirty, s.sweep, s.sweep_list, s.nlist = {}, {}, 1, nil, {}
+	s.asm = {}                                             -- (issue #560)
 	local names = M.node_names()
 	--- issue #43: each property of an entity is read once (a read is an engine call, and the sort read two per comparison: 1 s
 	--- at 20 000 members); the members are sorted by unit number as before
@@ -5548,6 +5633,7 @@ function M.rebuild(full)
 		s.nodes[unit] = node
 		s.nlist[#s.nlist + 1] = unit                       -- (`units` is sorted)
 		if kind == "underground" then node.dir = dir end
+		if kind == "assembler" then s.asm[unit] = true end     -- (issue #560)
 		if CELL_KINDS[kind] then drive_record(s, e) s.dirty[unit] = true end
 		if kind == "chest" then CH.parts(s, e) end
 	end
@@ -5666,7 +5752,35 @@ function M.rebuild(full)
 			end
 		end
 	end
+	if not s.asm_told then                                 -- issue #560: once, at the first rebuild with the assemblers as members
+		s.asm_told = true
+		M.tell_asm_conflicts(s)
+	end
 	for _, hook in pairs(M.change_hooks) do hook(nil) end
+end
+
+--- Issue #560: an older save's ME Molecular Assemblers join the networks they touch, so two networks that only met in an
+--- assembler (between their pattern providers) are one now, with two controllers: its force is told where, once
+function M.tell_asm_conflicts(s)
+	local ids = {}
+	for id in pairs(s.nets) do ids[#ids + 1] = id end
+	table.sort(ids)
+	for _, id in ipairs(ids) do
+		local net = s.nets[id]
+		local asm, ctrl
+		if net.status == "conflict" then
+			for unit in pairs(net.nodes) do
+				local node = s.nodes[unit]
+				if node.kind == "assembler" then asm = true end
+				if node.kind == "controller" and node.entity.valid and not (ctrl and ctrl.unit_number < unit) then ctrl = node.entity end
+			end
+		end
+		local force = asm and ctrl and game.forces[net.force]
+		if force then
+			force.print({ "fork-me-net.assembler-conflict", string.format("[gps=%d,%d,%s]", math.floor(ctrl.position.x),
+				math.floor(ctrl.position.y), ctrl.surface.name) })
+		end
+	end
 end
 
 --------------------------------------------------------------------------------

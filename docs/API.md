@@ -103,7 +103,8 @@ copy would inherit that is laid out for a bigger machine is set for one tile (th
 the five module slots, the alert icon, the circuit connector if the base has one, the corpse and the dying explosion); a
 frozen patch of the base's graphics is not kept (the assembler runs item recipes; autocrafting checks the machine's
 fluid boxes before it sets a recipe). Standalone it is a copy of `assembling-machine-2` with its item categories,
-speed 2.5, 375 kW.
+speed 2.5, 375 kW. Since issue #560 it is a member of the ME network (it carries it like a cable) and gets a `void` energy
+source whatever the base has: the ME Controller draws `def.energy_usage` while it crafts and a thirtieth of it while idle.
 
 ### `ME_NETWORK.replace_item(old, new)`
 

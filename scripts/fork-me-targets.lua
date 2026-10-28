@@ -47,9 +47,11 @@ function M.front(entity)
 	return { entity.position.x + d[1], entity.position.y + d[2] }
 end
 
---- an ME block or a hidden part of one: never the target of a bus
+--- an ME block or a hidden part of one: never the target of a bus. Issue #560: the ME Molecular Assembler is a member (it carries
+--- the network) and stays a machine a bus can fill and empty, as before
 function M.is_me(entity)
-	return N.kind_of(entity.name) ~= nil or entity.name == M.SIDE
+	local k = N.kind_of(entity.name)
+	return (k ~= nil and k ~= "assembler") or entity.name == M.SIDE
 end
 
 local fluid_cache = {}
