@@ -307,12 +307,26 @@ local function setup_unified(s)
 		big = place(s, fails, "me-network-controller", 9, -24) ~= nil
 		for i = 1, 4 do place(s, fails, "me-crafting-accelerator-4096x", 9.5 + i, -24.5) end
 	end
+	--- me-network issue #559: three ME Wireless Links of one frequency (a version that has them): until 0.5.10 a third link of a
+	--- frequency linked nothing; after the load the three are one wireless network
+	local links
+	if prototypes.entity["me-wireless-link"] and remote.interfaces["gregtorio-me-qbridge"] then
+		links = true
+		for _, x in ipairs({ 0, 30, 60 }) do
+			local e = place(s, fails, "electric-energy-interface", x - 6, 22)
+			if e then e.power_production = 1e7 e.electric_buffer_size = 1e8 end
+			place(s, fails, "substation", x - 3, 22)
+			local l = place(s, fails, "me-wireless-link", x + 0.5, 22.5)
+			if l then remote.call("gregtorio-me-qbridge", "set_frequency", l, 17) else links = nil end
+		end
+	end
 	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, cards = cards, legacy_chest = legacy_chest,
-		damaged = damaged, items = items, lif = lif, big = big }
+		damaged = damaged, items = items, lif = lif, big = big, links = links }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
 		.. (has_legacy and "; the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "")
-		.. (damaged and "; damaged stone walls" or "") .. (big and "; an 8 MW network" or "") .. ")"
+		.. (damaged and "; damaged stone walls" or "") .. (big and "; an 8 MW network" or "")
+		.. (links and "; three wireless links of one frequency" or "") .. ")"
 		.. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
 end
 
@@ -351,6 +365,12 @@ local function check_unified(st)
 	local m = maint and remote.call("gregtorio-me-circuit", "get_maintainer", maint)
 	expect(m and m.status and m.status ~= "no-target" and m.stock ~= nil, "level maintainer not checked: " .. serpent.line(m))
 	--- me-network issue #128: the terminal and the level maintainer without a pole work in the network that has the power
+	if st.links then
+		local l1, l2, l3 = at("me-wireless-link", 0.5, 22.5), at("me-wireless-link", 30.5, 22.5), at("me-wireless-link", 60.5, 22.5)
+		local function same(a, b) return a and b and remote.call(NET, "same_network", a, b) end
+		expect(same(l1, l2) and same(l1, l3), "the three wireless links of one frequency after the update (issue #559): "
+			.. serpent.line({ same(l1, l2), same(l1, l3), l1 and remote.call("gregtorio-me-qbridge", "info", l1) }))
+	end
 	if st.big then
 		local c = at("me-network-controller", 9, -24)
 		local n = c and remote.call(NET, "network", c)

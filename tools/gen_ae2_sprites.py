@@ -659,6 +659,21 @@ def neutral(rgb, lo=90, hi=200, spread=12):
     return max(abs(r - g), abs(g - b), abs(r - b)) <= spread and lo <= (r + g + b) // 3 <= hi
 
 
+def singularity_fluid_icon():
+    """issue #562: the Singularity cell for fluids: the Singularity cell's icon with the fluid cells' steel blue housing (its
+    LED, window and core kept) and their blue drop bottom left"""
+    img = singularity_icon()
+    keep = {SINGULARITY_LED, (10, 8, 18), (0, 0, 0), (120, 40, 170)}
+    px = img.load()
+    for y in range(img.height):
+        for x in range(img.width):
+            r, g, b, a = px[x, y]
+            if a and (r, g, b) not in keep and neutral((r, g, b)):
+                px[x, y] = (r * STEEL[0] // 255, g * STEEL[1] // 255, b * STEEL[2] // 255, a)
+    ImageDraw.Draw(img).rectangle((12, 22, 13, 27), fill=FLUID + (255,))
+    return img
+
+
 def recolor(img, mapping):
     """Replaces exact RGB values (mapping old -> new), alpha is kept."""
     px = img.load()
@@ -1309,6 +1324,7 @@ CARDS = {                     # name -> (base card, GT GUI texture of the sign, 
     "me-super-speed-card": ("advanced", "gui/overlay_button/x2", (255, 150, 40)),    # issue #356: the "x2" sign (orange)
     "me-superluminal-speed-card": ("advanced", "gui/overlay_button/x2", (240, 70, 230)),   # issue #356: the "x2" sign (magenta)
     "me-crafting-card": ("basic", "gui/overlay_button/pattern_optimize", (235, 160, 60)),   # issue #411: a hammer (amber)
+    "me-memory-card": ("basic", "gui/overlay_button/copy_to_clipboard", (70, 170, 245)),   # issue #561: two sheets (blue)
 }
 CARD_SIGN_MAX = 20            # px; larger GT signs (the 24 px ring of "disable") are scaled down to it
 
@@ -1876,6 +1892,7 @@ def hd_batch1():
         for kind in ("storage-cell", "fluid-storage-cell"):
             save(hd_cell(load(OUT_ICON / f"me-{k}-{kind}.png")), HD_ICON / f"me-{k}-{kind}.png")
     save(hd_cell(singularity_icon()), HD_ICON / "me-singularity-storage-cell.png")              # (issue #414)
+    save(hd_cell(singularity_fluid_icon()), HD_ICON / "me-singularity-fluid-storage-cell.png")  # (issue #562)
     return written
 
 
@@ -1993,7 +2010,7 @@ def hd_batch3():
 
 
 # --- issue #221 (batch 4 of #154): the upgrade cards, patterns, storage components, housing, wireless items -------------
-HD_CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'group-filter', 'inverter', 'equal-distribution', 'acceleration', 'super-speed', 'superluminal-speed', 'crafting')
+HD_CARDS = ('basic', 'advanced', 'capacity', 'overflow-destruction', 'fuzzy', 'pattern-capacity', 'interface-capacity', 'sticky', 'group-filter', 'inverter', 'equal-distribution', 'acceleration', 'super-speed', 'superluminal-speed', 'crafting', 'memory')
 
 
 def hd_plate(icon, depth=5):

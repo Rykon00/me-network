@@ -615,7 +615,10 @@ local function qbridge_content(content, entity)
 	f.style.width = 120
 	G.label(content, "", WIDTH, nil, "fork_me_qb_status")
 	G.label(content, "", WIDTH, nil, "fork_me_qb_power")
-	if entity.name == qbridge.LINK then G.label(content, "", WIDTH, nil, "fork_me_qb_range") end   -- (issue #384)
+	if entity.name == qbridge.LINK then
+		G.label(content, "", WIDTH, nil, "fork_me_qb_range")                   -- (issue #384)
+		G.label(content, "", WIDTH, nil, "fork_me_qb_group")                   -- (issue #559: the links of its frequency)
+	end
 end
 
 local function open_qbridge(player, entity)
@@ -638,11 +641,12 @@ function M.refresh_qbridge(player, frame, first)
 		f.tags = G.act("qb_freq", { shown = d.freq })
 	end
 	local p = d.partner
-	local caption = { "fork-me-gui.qbridge-status-" .. d.status }
+	local prefix = d.kind == "link" and "fork-me-gui.wlink-status-" or "fork-me-gui.qbridge-status-"   -- (issue #559: a group)
+	local caption = { prefix .. d.status }
 	if d.status == "linked" and p then
-		caption = { "fork-me-gui.qbridge-status-linked", p.surface, string.format("%.0f", p.x), string.format("%.0f", p.y) }
+		caption = { prefix .. "linked", p.surface, string.format("%.0f", p.x), string.format("%.0f", p.y) }
 	elseif d.status == "other-surface" and p then
-		caption = { "fork-me-gui.qbridge-status-other-surface", p.surface }
+		caption = { prefix .. "other-surface", p.surface }
 	end
 	G.find(frame, "fork_me_qb_status").caption = caption
 	G.find(frame, "fork_me_qb_power").caption = { "fork-me-gui.qbridge-power", G.fmt(d.watts / 1000),
@@ -652,6 +656,8 @@ function M.refresh_qbridge(player, frame, first)
 		r.caption = d.distance and { "fork-me-gui.wlink-range", string.format("%.0f", d.distance), tostring(d.range) }
 			or { "fork-me-gui.wlink-range-none", tostring(d.range) }
 	end
+	local g = G.find(frame, "fork_me_qb_group")
+	if g then g.caption = (d.group or 0) > 1 and { "fork-me-gui.wlink-group", d.group, d.edges or 0 } or "" end
 	return true
 end
 

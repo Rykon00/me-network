@@ -16,7 +16,7 @@
   `add_recipe` so it is listed in `ME_NETWORK.recipes`; tell Gregtorio's maintainer (its compat file gives it the GT
   recipe). Numbers reach the runtime through the mod-data `fork-me-network`, `fork-me-autocraft`, `fork-me-fluids`.
 - Since issue #385 a network can span surfaces: an ME Quantum Bridge link (and since #384 an ME Wireless Link's, on one surface) is a graph edge between two members anywhere
-  (`N.set_qlink`, `s.qlink`); code that looks for members by position (the cable router, the wireless range, a grid of
+  (`N.set_qlink`, `s.qlink`; since #559 the links of a frequency are a group whose edges are `N.set_wlinks`, `s.wlinks`); code that looks for members by position (the cable router, the wireless range, a grid of
   tiles) must keep to one surface, code that walks a network's members must not assume one.
 - Settings paste: the game raises `on_entity_settings_pasted` only for a pair its prototypes allow, so a block with a
   paste handler in `scripts/` has its row in `prototypes/paste.lua` (targets, `allow_copy_paste`; issue #519), and

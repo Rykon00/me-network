@@ -3354,6 +3354,44 @@ and, for a pair, the drain written once when it changes). Nothing per tick, noth
 
 `regressions beyond the noise: 0`.
 
+## ME Wireless Link groups (issue #559)
+
+All links of a frequency on a surface are one group; its edges (`s.wlinks`, several per link) are a minimum spanning forest of
+the links with power, by distance (Prim's, O(n^2) in the group's size, on the records' saved places: no API call in the
+loops). `add_node` and the graph rebuild read one more table per member (nil for every member but a linked link). The slow
+step (once a second) reads each link's power and compares the group with its last decision (a string of the units and their
+power): nothing else runs while nothing changed. A link built without power (a fresh one) does not decide its group at once:
+only its own drain is set (its nearest link in reach), the slow step decides; a burst of n built links costs n^2, not n^3.
+A change (a link loses or gets power, changes its frequency, is removed) decides the group again and registers again the links
+whose edges changed (the graph's remove and add, as a pair's link did; a removal can be a split search).
+
+**The group itself** (runtime test `wgroup.lua`, a probe logged as `DEVCHECK-RUNTIME-WGROUP-PERF`, `LuaProfiler`, one run; 200
+links of one frequency in reach of each other, in a 15 x 14 grid, no other ME block):
+
+| 200 links | time |
+|---|---|
+| build them (`raise_built`) | 12.4 ms |
+| set their frequency, one after the other (no power yet) | 19.3 ms (the first version, deciding the group each time: 868 ms) |
+| the slow step, nothing changed | 2.06 ms |
+| the slow step after one link lost its power (the group decided again, edges changed) | 35.6 ms |
+| one link to another frequency and back (two decisions each) | 77.3 ms |
+
+The first versions read the links' positions through the API in Prim's inner loop: the decision after a power loss took 60.5
+ms and the frequency change 135 ms. What is left is mostly the graph's re-registration of the links whose edges changed. A group
+of 20 links decides in well under a millisecond; groups of hundreds of links are not what the link is for.
+
+**The scenes** have no link; `bench --check origin/main --sizes 100,1000 --runs 3` (three rounds in turns):
+
+| | origin/main | #559 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2406 / 2.238 | 0.2395 / 2.146 |
+| 1000: script average / p99 ms | 0.4166 / 2.424 | 0.4193 / 2.458 |
+| Lua alloc KB per tick (100 / 1000) | 28.05 / 25.90 | 28.06 / 25.90 |
+| burst build / remove ms (1000) | 94.78 / 89.79 | 92.54 / 90.28 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
 ## Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)
 
 The filter sets are made when the filters or the cards change, never in a visit: a Capacity Card only makes the set longer
