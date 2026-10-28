@@ -411,6 +411,26 @@ function me_graph_test()
 			and mg.direction == defines.direction.south, "the turn of an older save's underground cables: " .. tostring(turned))
 		st.migrated = { md1 = md1, md2 = md2, m1 = m1, m2 = m2 }        -- (connected by the graph rebuild below)
 		expect(remote.call(NET, "migrate_underground_direction") == nil, "the turn of a save ran a second time")
+		--- cable and underground cable replace each other in place (fast replace, like pipe and underground pipe)
+		local rd1, rd2 = put("me-drive", 0, 36), put("me-drive", 7, 36)
+		local rc = {}
+		for x = 1, 6 do rc[x] = put("me-cable", x, 36) end
+		local function replace(name, x, dir)
+			local p = { ux + x, uy + 36 }
+			if not s.can_fast_replace{ name = name, position = p, direction = dir, force = "player" } then return nil end
+			local e = s.create_entity{ name = name, position = p, direction = dir, force = "player", fast_replace = true,
+				spill = false, raise_built = true }
+			remote.call(NET, "sweep")                                  -- (a script's fast replace raises no removal)
+			return e
+		end
+		local r1 = replace("me-underground-cable", 1, defines.direction.west)
+		local r6 = replace("me-underground-cable", 6, defines.direction.east)
+		expect(r1 and r6 and not rc[1].valid and not rc[6].valid and same(rd1, rd2)
+			and remote.call(NET, "underground_partner", r1) == r6.unit_number,
+			"a cable could not be replaced by an underground cable in place")
+		local back = replace("me-cable", 6)
+		expect(back and back.name == "me-cable" and not r6.valid and remote.call(NET, "underground_partner", r1) == nil,
+			"an underground cable could not be replaced by a cable in place")
 		--- cables can be walked over
 		local mask = prototypes.entity["me-cable"].collision_mask.layers
 		expect(not mask.player and not prototypes.entity["me-underground-cable"].collision_mask.layers.player,
@@ -460,7 +480,7 @@ function me_graph_test()
 				expect(same(m.md1, m.md2) and remote.call(NET, "underground_partner", m.m1) == m.m2.unit_number,
 					"the turned underground cables of an older save are not connected after the graph rebuild")
 			end
-			return finish("join, split, conflict, sweep, router, underground cable, cable drag, underground turn, walkable, power")
+			return finish("join, split, conflict, sweep, router, underground cable, cable drag, underground turn, fast replace, walkable, power")
 		end
 	end
 	if #problems > 0 then finish() end
