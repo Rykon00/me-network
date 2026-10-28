@@ -1045,18 +1045,25 @@ one 3x3 block.
 
 ## ME Wireless Link
 
-The **ME Wireless Link** (issue #384, AE2 Stuff's Wireless Connector; technology ME Wireless Link, after ME Wireless) joins two
-ME networks into one **without a cable**, on the **same surface**: a cable link for a far mine or outpost without kilometres
-of cable. It works like the ME Quantum Bridge (above), on a smaller scale:
+The **ME Wireless Link** (issue #384, AE2 Stuff's Wireless Connector; technology ME Wireless Link, after ME Wireless) joins
+ME networks into one **without a cable**, on the **same surface**: a cable link for far mines or outposts without kilometres
+of cable. Like the ME Quantum Bridge (above), but with no limit of two (issue #559):
 
-* **Frequency** in its window; exactly two links with the same frequency are a pair (a link never pairs with a bridge). A third
-  link of a frequency links nothing.
-* **Range: 512 tiles** between the two links. A pair on two surfaces or further apart does not link; the window says why.
+* **Frequency** in its window. **All links with the same frequency on a surface form one wireless network**: a third, fourth ...
+  link joins the others (a link never joins a bridge). The window says how many links have the frequency and to how many of
+  them this one is linked.
+* **Range: 512 tiles.** A link joins when another link of the frequency is within 512 tiles of it, so the links can stand in a
+  **chain** (A to B to C, with A and C further apart). The links are joined by the shortest connections that reach every one
+  of them (a spanning tree: one connection fewer than there are links, never one per pair). Links on two surfaces or with
+  no other link in reach do not link; the window says why.
 * **Power from the grid where each link stands, growing with the distance:** 10 kW, and 50 kW more for every started 32 tiles
-  (a chunk) between the two: 60 kW at up to 32 tiles, 210 kW at 100 tiles, 810 kW at 512. Both ends pay it while they are
-  a pair; an end without a partner in reach draws 10 kW. The link holds while both ends have power.
-* As with the bridge: while linked it is one network with one ME Controller (build the far side without one); when the link
-  goes, the network splits as for a removed cable; blueprints, settings paste and clones carry the frequency.
+  (a chunk) of its **longest connection**: 60 kW at up to 32 tiles, 210 kW at 100 tiles, 810 kW at 512. A link without a link
+  in reach draws 10 kW. A link holds while it and the link at the other end have power; one without power drops out and
+  joins again when its power is back (the others stay linked through the rest of the chain where they can).
+* As with the bridge: the joined networks are one network with one ME Controller (build the other sides without one); when a
+  connection goes, the network splits as for a removed cable; blueprints, settings paste and clones carry the frequency.
+  Changing a link's frequency or removing it takes it out of its group at once; a newly built link joins when it has power
+  (within a second).
 * Recipe (standalone): a radar (AE2's wireless receiver), 2 advanced circuits, 4 fluix cables, 4 iron plates.
 
 ## Old saves

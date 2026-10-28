@@ -1,15 +1,18 @@
 --------------------------------------------------------------------------------
 --- ME QUANTUM BRIDGE AND ME WIRELESS LINK (me-network issues #385 and #384, option 2 each; AE2's Quantum Network Bridge and
 --- AE2 Stuff's Wireless Connector; prototypes/network.lua; guide: docs/AE2.md "ME Quantum Bridge", "ME Wireless Link")
----   * Two kinds of linking block with a frequency (a whole number set in its window, 0: none). Exactly two blocks of a kind
----     with the same frequency are a pair (the kinds never pair with each other); while the pair may link and both have power,
----     it is linked: a graph edge between them (N.set_qlink), so the networks on both sides are one network.
----     * The ME Quantum Bridge (3x3): at any distance and on any surface (another planet, a space platform, a factory floor
----       of another mod); a constant drain (mod-data `quantum_bridge.watts`).
----     * The ME Wireless Link (1x1): on the same surface only, within `wireless_link.range` tiles (between the two blocks'
----       centres); its drain grows with the distance: `base` W, and `per_chunk` W more for every started 32 tiles. Both ends
----       pay it; an end that is no pair (or out of range, on another surface) draws only the base.
----   * A third block of a frequency links nothing (the frequency is taken); the other two stay unlinked until it goes.
+---   * Two kinds of linking block with a frequency (a whole number set in its window, 0: none); the kinds never link with
+---     each other.
+---     * The ME Quantum Bridge (3x3): exactly two bridges of a frequency are a pair; while both have power it is linked: a
+---       graph edge between them (N.set_qlink), at any distance and on any surface (another planet, a space platform, a
+---       factory floor of another mod); a constant drain (mod-data `quantum_bridge.watts`). A third bridge of a frequency
+---       links nothing (the frequency is taken); the other two stay unlinked until it goes.
+---     * The ME Wireless Link (1x1, issue #559): all links of a frequency on a surface form one wireless network, as many as
+---       there are. Two of them may link within `wireless_link.range` tiles (between their centres), so a group can be a
+---       chain. The edges (N.set_wlinks) are a minimum spanning forest of the links that have power, by distance (Prim's,
+---       ties by unit number): n - 1 edges for a group in reach, not one per pair, and each link's edge to its nearest
+---       member in reach is among them. A link's drain grows with the longest of its edges: `base` W, and `per_chunk` W
+---       more for every started 32 tiles (a pair: both ends pay their edge, as before); an unlinked one draws the base.
 ---   * Power: each block is an electric energy interface that draws its drain from the power grid where it stands; the
 ---     network does not pay for it (POWERED_SELF). The link forms when both have at least half their buffer (two seconds of
 ---     the drain) and goes when one of them has run dry (no flicker at the edge).
@@ -114,10 +117,103 @@ local function reach(name, a, b)
 	return true, dist
 end
 
+local last_sig = {}                     -- frequency -> the links (with power) of its last decision (issue #559, derived)
+
+--- issue #559: the distance from the link of record `rec` to the nearest other link of frequency `f` in its reach (nil: none)
+local function nearest_in_reach(s, rec, f)
+	local range = spec(LINK).range or 0
+	local w, m = rec.where, nil
+	for unit, o in pairs(s.recs) do
+		if o ~= rec and o.freq == f and o.where.surface == w.surface and o.entity.valid and o.entity.name == LINK then
+			local dx, dy = o.where.x - w.x, o.where.y - w.y
+			local d2 = dx * dx + dy * dy
+			if d2 <= range * range and (not m or d2 < m) then m = d2 end
+		end
+	end
+	return m and math.sqrt(m) or nil
+end
+
+--- Issue #559: decide the group of ME Wireless Links of frequency `f`: the edges of a minimum spanning forest of the links that
+--- have power (a linked one keeps it until its buffer has run dry, as a pair did), two of them in reach when they stand on one
+--- surface within the range; each link's drain by its longest edge. A pair link of a save before #559 (N.set_qlink) goes.
+--- Returns true when the graph changed.
+local function decide_links(s, f)
+	local list = members(s, LINK, f)
+	local changed = false
+	local range = spec(LINK).range or 0
+	local r2 = range * range
+	local on, keys = {}, {}
+	for i, unit in ipairs(list) do
+		local e = s.recs[unit].entity
+		if N.qlink_of(e) then changed = N.set_qlink(e, nil) or changed end
+		on[i] = powered(e, N.wlinks_of(e) ~= nil)
+		keys[i] = unit .. (on[i] and "+" or "-")
+	end
+	--- (the same links and the same of them with power as at the last decision: the same forest and drains; derived, so a load
+	--- or a joining peer decides once more and gets the same edges)
+	local sig = table.concat(keys, ",")
+	if last_sig[f] == sig then return changed end
+	last_sig[f] = sig
+	local n = #list
+	local xs, ys, ss = {}, {}, {}                              -- (the places of the records: no API call in the loops)
+	for i, unit in ipairs(list) do
+		local w = s.recs[unit].where
+		xs[i], ys[i], ss[i] = w.x, w.y, w.surface
+	end
+	--- Prim's minimum spanning forest of the links with power
+	local done, best, parent, edges, longest = {}, {}, {}, {}, {}
+	for i = 1, n do best[i] = math.huge end
+	for _ = 1, n do
+		local bi
+		for i = 1, n do
+			if on[i] and not done[i] and (not bi or best[i] < best[bi]) then bi = i end   -- (none in reach: the lowest unit, a new tree)
+		end
+		if not bi then break end
+		done[bi] = true
+		local pi = parent[bi]
+		if pi then
+			local d = math.sqrt(best[bi])
+			edges[#edges + 1] = { list[bi], list[pi] }
+			if d > (longest[bi] or -1) then longest[bi] = d end
+			if d > (longest[pi] or -1) then longest[pi] = d end
+		end
+		local ax, ay, as = xs[bi], ys[bi], ss[bi]
+		for j = 1, n do
+			if on[j] and not done[j] and ss[j] == as then
+				local dx, dy = ax - xs[j], ay - ys[j]
+				local d2 = dx * dx + dy * dy
+				if d2 <= r2 and d2 < best[j] then
+					best[j] = d2
+					parent[j] = bi
+				end
+			end
+		end
+	end
+	--- a link without power pays for the distance to its nearest link in reach (as a pair's ends did before they linked: its
+	--- buffer is the size the link wants)
+	for i = 1, n do
+		if not on[i] then
+			local m
+			for j = 1, n do
+				if j ~= i and ss[j] == ss[i] then
+					local dx, dy = xs[i] - xs[j], ys[i] - ys[j]
+					local d2 = dx * dx + dy * dy
+					if d2 <= r2 and (not m or d2 < m) then m = d2 end
+				end
+			end
+			longest[i] = m and math.sqrt(m) or nil
+		end
+	end
+	for i, unit in ipairs(list) do set_drain(s.recs[unit].entity, drain(LINK, longest[i])) end
+	return N.set_wlinks(list, edges) or changed
+end
+
 --- Decide the pair of kind `name` and frequency `f` (0: none): linked while there are exactly two blocks of it, they reach
---- each other and both have power; every other block of it is unlinked (and draws its base). Returns true when a link changed.
+--- each other and both have power; every other block of it is unlinked (and draws its base). The ME Wireless Link's group:
+--- decide_links. Returns true when a link changed.
 local function decide(s, name, f)
 	if not f or f == 0 then return false end
+	if name == LINK then return decide_links(s, f) end
 	local list = members(s, name, f)
 	local changed = false
 	if #list == 2 then
@@ -165,17 +261,64 @@ function M.set_frequency(entity, f)
 	local old = rec.freq
 	if old == f then return true end
 	if N.qlink_of(entity) then N.set_qlink(entity, nil) end
+	--- issue #559: a wireless link without power and without an edge (a block just built) changes neither group: its drain is
+	--- set for its nearest link in reach, and the next slow step decides both groups (a burst of n built links costs n^2, not
+	--- n^3); else it leaves its old group at once and both groups are decided now
+	local quiet = entity.name == LINK and not N.wlinks_of(entity) and not powered(entity, false)
+	if entity.name == LINK then N.set_wlinks({ entity.unit_number }, {}) end
 	rec.freq = f
 	set_drain(entity, drain(entity.name, nil))
+	if quiet then
+		last_sig[old], last_sig[f] = nil, nil
+		set_drain(entity, drain(LINK, f ~= 0 and nearest_in_reach(s, rec, f) or nil))
+		return true
+	end
 	decide(s, entity.name, old)
 	decide(s, entity.name, f)
 	return true
 end
 
+--- Issue #559: what the window of a wireless link shows (see M.info): `group` the links of its frequency on its surface (with
+--- itself), `edges` how many it is linked to, `partner` and `distance` its nearest linked one (else the nearest of the group).
+--- Status: "no-frequency", "linked", "waiting" (alone on its surface; "other-surface" when a link of the frequency is on
+--- another one), "out-of-range" (none of the group in reach), "no-power" (this one), "no-power-there" (the ones in reach).
+local function link_info(s, entity, rec, out)
+	if rec.freq == 0 then out.status = "no-frequency" return out end
+	local own = entity.surface.index
+	local near, nd, lnear, lnd, other, inreach = nil, nil, nil, nil, nil, false
+	local linked = N.wlinks_of(entity) or {}
+	out.group, out.edges = 1, table_size(linked)
+	for _, unit in ipairs(members(s, LINK, rec.freq)) do
+		local e = s.recs[unit].entity
+		if unit ~= entity.unit_number then
+			if e.surface.index ~= own then
+				other = other or e
+			else
+				out.group = out.group + 1
+				local dx, dy = e.position.x - entity.position.x, e.position.y - entity.position.y
+				local d = math.sqrt(dx * dx + dy * dy)
+				if not nd or d < nd then near, nd = e, d end
+				if linked[unit] and (not lnd or d < lnd) then lnear, lnd = e, d end
+				if d <= (out.range or 0) then inreach = true end
+			end
+		end
+	end
+	local p, d = lnear or near, lnear and lnd or nd
+	if p then out.partner, out.distance = { surface = p.surface.name, x = p.position.x, y = p.position.y }, d end
+	if out.edges > 0 then out.status = "linked"
+	elseif not near then
+		out.status = other and "other-surface" or "waiting"
+		if other then out.partner = { surface = other.surface.name, x = other.position.x, y = other.position.y } end
+	elseif not inreach then out.status = "out-of-range"
+	elseif not powered(entity, false) then out.status = "no-power"
+	else out.status = "no-power-there" end
+	return out
+end
+
 --- what the window shows: { kind ("bridge" or "link"), freq, status, partner = { surface, x, y } or nil, watts (its drain
 --- now), energy, buffer, distance and range (a wireless link) }. Status: "no-frequency", "linked", "waiting" (no second
---- block of the frequency), "taken" (more than two), "other-surface", "out-of-range" (a wireless link), "no-power" (this one),
---- "no-power-there".
+--- block of the frequency), "taken" (more than two bridges), "other-surface", "no-power" (this one), "no-power-there". A
+--- wireless link: link_info.
 function M.info(entity)
 	local rec = rec_of(entity)
 	if not rec then return nil end
@@ -184,6 +327,7 @@ function M.info(entity)
 	local out = { kind = name == NAME and "bridge" or "link", freq = rec.freq, energy = entity.energy,
 		buffer = entity.electric_buffer_size, watts = name == LINK and entity.power_usage * 60 or drain(name),
 		range = name == LINK and spec(name).range or nil }
+	if name == LINK then return link_info(s, entity, rec, out) end
 	local list = rec.freq ~= 0 and members(s, name, rec.freq) or {}
 	if #list == 2 then
 		local other = s.recs[list[1] == entity.unit_number and list[2] or list[1]].entity
@@ -248,7 +392,11 @@ function M.on_removed(entity)
 	local rec = s.recs[entity.unit_number]
 	if not rec then return end
 	s.recs[entity.unit_number] = nil                              -- (its link goes with its node: N.on_removed; a third block
-end                                                           -- of the frequency pairs at the next slow step)
+	if entity.name == LINK then                                   -- of the frequency pairs at the next slow step)
+		N.set_wlinks({ entity.unit_number }, {})                   -- (issue #559: the rest of its group links anew at once)
+		decide(s, LINK, rec.freq)
+	end
+end
 
 --- settings paste: the frequency, between two blocks of the same kind. Issue #527: the mod's copy and paste keys call it
 --- (scripts/fork-me-paste-keys.lua, prototypes/paste.lua KEYS). The game pastes nothing onto a bridge or a link, not even
