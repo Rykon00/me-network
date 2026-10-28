@@ -334,6 +334,9 @@ block{
 		random_variation_on_create = false,
 		render_layer = "lower-object",
 		collision_mask = WALKABLE,
+		--- the cable and the underground cable replace each other in place, like pipe and underground pipe (vanilla's
+		--- group "pipe" on both)
+		fast_replaceable_group = "me-cable",
 	},
 }
 data.raw.item["fluix-cable"].place_result = CABLE
@@ -591,6 +594,7 @@ data:extend({ {
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 45,
 	collision_mask = WALKABLE,
+	fast_replaceable_group = "me-cable",                      -- (with the cable, see there)
 	fluid_box = {
 		volume = 1,
 		pipe_connections = {
