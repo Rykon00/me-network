@@ -1118,6 +1118,9 @@ perf420 = require("perf420")({ me_place = me_place, cable_row = cable_row, power
 --- me-network issue #468: the light of a cell with all its types used (celllight.lua)
 celllight468 = require("celllight")({ me_place = me_place, power = power, me_report = me_report,
 	me_connect = function(...) return me_connect(...) end })
+--- me-network issue #556: the ME Controller's buffer follows a draw above 6 MW (bigpower.lua)
+bigpower556 = require("bigpower")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #442: the Creative Energy Cell (creativeenergy.lua)
 creativeenergy442 = require("creativeenergy")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1254,6 +1257,7 @@ local function tests_running()
 	viewcell440.running(check)
 	creativecell441.running(check)
 	creativeenergy442.running(check)
+	bigpower556.running(check)
 	celllight468.running(check)
 	maintrows351.running(check)
 	cpumode350.running(check)
@@ -2230,6 +2234,7 @@ script.on_nth_tick(10, function()
 	viewcell440.tick()
 	creativecell441.tick()
 	creativeenergy442.tick()
+	bigpower556.tick()
 	celllight468.tick()
 	maintrows351.tick()
 	cpumode350.tick()
@@ -5131,6 +5136,7 @@ script.on_init(function()
 	for _, f in pairs(viewcell440.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(creativecell441.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(creativeenergy442.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(bigpower556.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(celllight468.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpumode350.setup(s)) do fails[#fails + 1] = f end

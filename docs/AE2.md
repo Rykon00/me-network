@@ -51,7 +51,8 @@ technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.l
 1. Place an **ME Controller** and give it power. It draws 120 kW, plus 4 kW for every drive, interface, bus, pattern
    provider and circuit interface of the network, 8 kW for every terminal, 30 kW for every level maintainer and what
    its crafting blocks need. Cables, terminals, level maintainers and every other block need no power connection of
-   their own (no pole next to a terminal).
+   their own (no pole next to a terminal). The controller's buffer holds half a second of that draw (at least
+   100 kJ), so a network of any size works on a grid that delivers its power (issue #556).
 2. Connect everything else with **ME cables**: a cable connects on all four sides, and ME blocks that touch
    each other connect without a cable (a row of drives next to the controller is one network). Corners do not
    connect. Everything connected is one network. The cable picture shows its connections.
