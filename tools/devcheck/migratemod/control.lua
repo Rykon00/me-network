@@ -312,7 +312,7 @@ local function setup_unified(s)
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
 		.. (has_legacy and "; the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "")
-		.. (damaged and "; damaged stone walls" or "") .. ")"
+		.. (damaged and "; damaged stone walls" or "") .. (big and "; an 8 MW network" or "") .. ")"
 		.. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
 end
 
