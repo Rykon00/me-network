@@ -15,7 +15,8 @@
 ---   active provider first, then a storage chest, then a passive provider (the nearest).
 --- * F: with an ME Logistic Storage Bus on the same logistic network (priority 10, the network stores there first): what the
 ---   interface pulls in goes into the drive, never into the bus's storage chest; the bus does not count the interface's
----   provider; what the network stores goes into the vanilla storage chest, not the interface's.
+---   provider; what the network stores goes into the vanilla storage chest, not the interface's. Issue #540: an offer row of
+---   copper plates, which only the bus's storage chest holds (40), stays empty: the chest keeps them.
 --- * G, H, I (issue #532): an ME network with iron sticks and no iron plates, a CPU, a provider with a molecular assembler and
 ---   the gear pattern, a level maintainer that keeps 10 gears (its start lacks 10 iron plates), a vanilla storage chest with
 ---   30 iron plates. G: the interface asks for what the start lacks ("Request what crafting lacks", on by default), the
@@ -162,7 +163,7 @@ return function(H)
 		local f = X.F
 		cluster(s, fails, what, f)
 		place(s, fails, what, "passive-provider-chest", f - 3.5, 4.5, { { name = "coal", count = 20 } })
-		place(s, fails, what, "storage-chest", f - 4.5, -4.5)
+		place(s, fails, what, "storage-chest", f - 4.5, -4.5, { { name = "copper-plate", count = 40 } })   -- (issue #540)
 		local lf = me_place(s, fails, what, NAME, f + 4.5, 3.5)
 		local bus = me_place(s, fails, what, "me-logistic-storage-bus", f + 3.5, -2.5)
 		me_net(s, fails, what, f, { ["iron-plate"] = 100 }, { lf, bus })
@@ -182,6 +183,7 @@ return function(H)
 		row(l1, "offer", 2, "stone-wall", 10)
 		row(l1, "request", 1, "copper-plate", 50)
 		row(lf, "offer", 1, "iron-plate", 50)
+		row(lf, "offer", 2, "copper-plate", 20)                 -- (issue #540: only the bus's storage chest has copper)
 		row(lf, "request", 1, "coal", 20)
 		--- (an active provider's items go to storage chests, the hidden ones too: only B's LB and F's LF accept trash)
 		for _, l in ipairs({ l1, l2, l3, lc }) do remote.call(LIF, "set_accept", l, false) end
@@ -194,7 +196,7 @@ return function(H)
 		st.done = true
 		me_report("LIF", "ME logistic interface (issue #531)", problems, "offer to a requester and a ghost, request to the target, "
 			.. "accept, the switch and the filter, the loop guard, settings copies, mined and destroyed, the engine facts, "
-			.. "the logistic storage bus, what failed crafting starts lack (issue #532)")
+			.. "the logistic storage bus, an offer row never from it (issue #540), what failed crafting starts lack (issue #532)")
 	end
 
 	function T.tick()
@@ -333,6 +335,10 @@ return function(H)
 			local sd = find("storage-chest", f - 4.5, -4.5)
 			expect(count(lf, "coal") == 20 and n(sd, "coal") == 0, "F: coal in the network " .. count(lf, "coal") .. ", in the bus's "
 				.. "storage chest " .. n(sd, "coal"))
+			--- issue #540: the offer row of copper plates, which only the bus's storage chest holds, is not filled from it
+			expect(count(lf, "copper-plate") == 40 and n(sd, "copper-plate") == 40 and n(chests(lf).provider, "copper-plate") == 0,
+				"F: the offer row took the base's copper: network " .. count(lf, "copper-plate") .. ", storage chest "
+				.. n(sd, "copper-plate") .. ", provider " .. n(chests(lf).provider, "copper-plate"))
 			return
 		end
 

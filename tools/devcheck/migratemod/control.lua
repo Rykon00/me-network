@@ -297,12 +297,22 @@ local function setup_unified(s)
 			end
 		end
 	end
+	--- me-network issue #556: a network of its own that draws 8.12 MW (four 4096x accelerators, a version that has them): until 0.5.10
+	--- its controller's buffer was 100 kJ, so it never worked; after the load its buffer follows the draw and it works
+	local big
+	if prototypes.entity["me-crafting-accelerator-4096x"] then
+		local e3 = place(s, fails, "electric-energy-interface", 2, -24)
+		if e3 then e3.power_production = 1e7 e3.electric_buffer_size = 1e8 end
+		place(s, fails, "substation", 5, -24)
+		big = place(s, fails, "me-network-controller", 9, -24) ~= nil
+		for i = 1, 4 do place(s, fails, "me-crafting-accelerator-4096x", 9.5 + i, -24.5) end
+	end
 	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, cards = cards, legacy_chest = legacy_chest,
-		damaged = damaged, items = items, lif = lif }
+		damaged = damaged, items = items, lif = lif, big = big }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
 		.. (has_legacy and "; the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "")
-		.. (damaged and "; damaged stone walls" or "") .. ")"
+		.. (damaged and "; damaged stone walls" or "") .. (big and "; an 8 MW network" or "") .. ")"
 		.. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
 end
 
@@ -341,6 +351,13 @@ local function check_unified(st)
 	local m = maint and remote.call("gregtorio-me-circuit", "get_maintainer", maint)
 	expect(m and m.status and m.status ~= "no-target" and m.stock ~= nil, "level maintainer not checked: " .. serpent.line(m))
 	--- me-network issue #128: the terminal and the level maintainer without a pole work in the network that has the power
+	if st.big then
+		local c = at("me-network-controller", 9, -24)
+		local n = c and remote.call(NET, "network", c)
+		expect(n and n.ok and n.power == 120000 + 4 * 2000000 and math.abs(c.electric_buffer_size - n.power / 60 * 30) < 1,
+			"the controller of the 8 MW network after the update (issue #556): " .. serpent.line({ n and n.status, n and n.power,
+			c and c.electric_buffer_size }))
+	end
 	local far_t, far_m = at("me-terminal", 60.5, 1.5), at("me-level-maintainer", 61.5, 1.5)
 	if remote.interfaces["gregtorio-me-terminal"].problem and far_t then
 		expect(remote.call("gregtorio-me-terminal", "problem", far_t) == nil, "the terminal far from every pole: "

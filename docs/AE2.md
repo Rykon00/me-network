@@ -51,7 +51,8 @@ technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.l
 1. Place an **ME Controller** and give it power. It draws 120 kW, plus 4 kW for every drive, interface, bus, pattern
    provider and circuit interface of the network, 8 kW for every terminal, 30 kW for every level maintainer and what
    its crafting blocks need. Cables, terminals, level maintainers and every other block need no power connection of
-   their own (no pole next to a terminal).
+   their own (no pole next to a terminal). The controller's buffer holds half a second of that draw (at least
+   100 kJ), so a network of any size works on a grid that delivers its power (issue #556).
 2. Connect everything else with **ME cables**: a cable connects on all four sides, and ME blocks that touch
    each other connect without a cable (a row of drives next to the controller is one network). Corners do not
    connect. Everything connected is one network. The cable picture shows its connections.
@@ -603,8 +604,9 @@ logistic chests** stand on its tile; you never see them, the robots do. Its wind
   row offers one stack (a small stock limits how fast robots can take: a chest kept at 10 delivered about 9 items per
   second). Requester chests take from **active providers first, then storage chests, then passive providers**, so the
   base empties its own chests first and the ME stock is its **last source**. When a row shrinks or goes, the network takes
-  back what no robot has reserved yet. With a **Crafting Card** an offer row the network cannot fill starts a crafting
-  job, as on the ME Interface.
+  back what no robot has reserved yet. A row is filled only from what ME holds outside an **ME Logistic Storage Bus** of the
+  same logistic network (issue #540): the base's own storage chests stay where they are. With a **Crafting Card** an
+  offer row the network cannot fill that way starts a crafting job, as on the ME Interface.
 * **Request** (a hidden requester): rows "**keep this many in the network**": the item and a target. The robots are asked
   for the target less what the whole network holds (drives, storage buses, also a logistic storage bus's chests) less what
   lies in the requester or is on its way; at the target the request is 0. Each row shows what it asks for now.
@@ -1188,7 +1190,7 @@ to a page (the arrows beside the count turn the pages; on the left your inventor
   the order they were built; then the **ME Interfaces**. A provider of another network is never listed.
 * **Each provider:** its name (or "ME Pattern Provider"), where it is, the icons of the machines and chests next to it (or
   "no machine next to it"), and its pattern slots (9 to 36) as in its own window: green, red (why it cannot be used: the
-  tooltip) or yellow (a blueprint's pattern waiting for a blank). **Click a pattern** to take it into your hand (shift +
+  tooltip) or yellow (a blueprint's pattern waiting for an encoded or a blank pattern). **Click a pattern** to take it into your hand (shift +
   click: into your inventory; in remote view always into the inventory), **click a slot with an encoded pattern in your
   hand** to put it in (a pattern there is swapped into your hand). The tooltip shows what the pattern takes and makes.
 * **Each interface:** its config rows (items and fluids with their amounts), shown only; change them in its own window.
@@ -1363,9 +1365,18 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   script) drops them where it stood, at the next scan.
 * **Blueprints, copy and paste:** a blueprint keeps the provider's priority and its **patterns as data**. An encoded
   pattern is an item, so a blueprint never creates one out of nothing: a provider built from a blueprint shows the
-  patterns as "waiting for a blank pattern" (yellow) and **encodes each one from a blank pattern of its network**
-  as soon as the network has one (within a few seconds). Click such a slot to forget it. Old blueprints (0.4.1 and
-  older) with a furnace recipe choice give a processing pattern of that recipe, the same way.
+  patterns it still waits for as yellow slots and fills each one from the first of these that has one (issue #558):
+  1. an **encoded pattern of the same pattern in your inventory** (when you build the provider or paste the blueprint
+     over it yourself),
+  2. an **encoded pattern of the same pattern in its network** (taken out of the network),
+  3. a **blank pattern in your inventory** (encoded into the slot),
+  4. a **blank pattern of its network** (as soon as the network has one, within a few seconds).
+
+  Encoded patterns come first, so nothing is encoded twice. A provider built by robots has no player: only the network's
+  patterns count. While patterns wait, the provider says so on the map (a yellow status "Waiting for N blank patterns"),
+  its window has a line above the slots, and the player who built it is told once (a flying text at the block, or a
+  chat line with its place when robots built it). Click such a slot to forget it. Old blueprints (0.4.1 and older) with
+  a furnace recipe choice give a processing pattern of that recipe, the same way.
 * **Settings paste** (shift right click, shift left click) and cloning copy the **priority**, the **blocking mode**
   (issue #335) and the **lock** setting (issue #346); patterns are items and stay where they are.
 * **The name** a provider got in the ME Interface Terminal (issue #336) goes with blueprints and clones, not with a

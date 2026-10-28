@@ -364,8 +364,8 @@ data:extend({ {
 	energy_source = {
 		type = "electric",
 		usage_priority = "secondary-input",
-		buffer_capacity = "100kJ",
-		input_flow_limit = "10MW",
+		buffer_capacity = "100kJ",                    -- (issue #556: the runtime sets it with the draw, N.set_draw)
+		input_flow_limit = "1TW",                     -- (issue #556: never the cap of a network; it cannot be set at runtime)
 		output_flow_limit = "0W",
 	},
 	energy_production = "0W",

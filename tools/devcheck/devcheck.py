@@ -981,6 +981,8 @@ RUNTIME_TESTS = (
     ("VIEWCELL", "View Cells (issue #440)"),
     ("CREATIVECELL", "Creative ME Storage Cell (issue #441)"),
     ("CREATIVEENERGY", "Creative Energy Cell (issue #442)"),
+    ("BIGPOWER", "ME Controller buffer above 6 MW (issue #556)"),
+    ("PENDING", "Pattern provider waiting for patterns (issue #558)"),
     ("CELLLIGHT", "Cell light with all types used (issue #468)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),
