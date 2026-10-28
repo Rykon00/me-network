@@ -2587,6 +2587,58 @@ local function set_wait(job, wait)
 	job.wait = wait
 end
 
+--- Issue #557: the crafts a machine gets at one hand-over: MAX_BATCH, or more when it crafts that many in less than
+--- BATCH_STEPS steps of a job (its crafting speed with modules, quality and Acceleration Cards, LuaEntity.crafting_speed, and
+--- the recipe's time): a fast machine finished 16 crafts long before the job's next step collected them and handed out more,
+--- and idled. The pool, the stack of each input and of the output limit it further (the hand-over). A recipe it does not know
+--- yet (a processing pattern's machine without one): MAX_BATCH. (Fields: the main chunk is at Lua's limit of 200 locals.)
+M.BATCH_STEPS = 2
+M.recipe_time = {}                      -- recipe name -> its time in seconds (a pure function of the prototypes, per load)
+function M.crafts_per_tick(machine, step)
+	local recipe = step.kind == "crafting" and step.def and step.def.recipe or nil
+	if not recipe then
+		local ok, r = pcall(machine.get_recipe)
+		recipe = ok and r and r.name or nil
+	end
+	local t = recipe and M.recipe_time[recipe]
+	if recipe and not t then
+		local proto = prototypes.recipe[recipe]
+		t = proto and proto.energy or 0
+		M.recipe_time[recipe] = t
+	end
+	if not t or t <= 0 then return nil end
+	local ok, speed = pcall(function() return machine.crafting_speed end)
+	if not ok or not speed or speed <= 0 then return nil end
+	return speed / (t * 60)
+end
+
+function M.machine_batch(machine, step)
+	local r = M.crafts_per_tick(machine, step)
+	if not r then return MAX_BATCH end
+	return math.max(MAX_BATCH, math.ceil(r * M.BATCH_STEPS * STEP_TICKS))
+end
+
+--- Issue #557: a machine that has `runs` to do runs out of work or fills its output slot (one stack of the product) before the
+--- job's next regular step: the job is stepped earlier, at three quarters of that time (`job.early`, a tick, in storage like
+--- `job.stepped`), so its machine is topped up and emptied in time. (A machine that makes more than a stack of its product in
+--- a step, Gregtorio's molecular assembler on a fast recipe, idled for the rest of the step.)
+function M.note_early(job, machine, step, runs)
+	local r = M.crafts_per_tick(machine, step)
+	if not r or runs <= 0 then return end
+	local cap = runs
+	for _, pr in pairs(step_products(step)) do
+		if pr.type == "item" then
+			local per = pr.amount or pr.amount_max
+			local size = stack_size_of(pr.name)
+			if size and per and per > 0 then cap = math.min(cap, math.floor(size / per)) end
+		end
+	end
+	local t = cap / r
+	if t >= STEP_TICKS then return end
+	local at = game.tick + math.max(1, math.floor(t * 0.75))
+	if not job.early or at < job.early then job.early = at end
+end
+
 --- machine interactions a job may use in this step: STEP_OPS times the speed of its CPU (its co-processors), at most the map
 --- setting "crafting operations per step" (issue #415: the accelerators of AE2-Unofficial reach 4096 co-processors; a step only
 --- spends what it hands over, so the cap matters for a job with that many machines free at once)
@@ -2646,6 +2698,67 @@ local function set_pos(job, entity)
 	if not (old and old.x == p.x and old.y == p.y) then job.pos = { x = p.x, y = p.y } end
 end
 
+--- Issue #557: top up a crafting lease whose machine still works: when less than half a hand-over (M.machine_batch) is left of
+--- it, more runs go in (the products made so far are collected first, so the output slot has room), as far as the pool, the
+--- input slots and the output slot allow, and what it made so far counts as done. A fast machine then never waits for the
+--- job's next step. Not for recipes with
+--- fluids or ingredients with data (their hand-over has more to it). Returns true when it topped up.
+function M.top_up(job, net, lease, step)
+	if lease.kind ~= "crafting" or not lease.finished0 or step.issued >= step.runs then return false end
+	if lease.fluid and lease.fluid.inputs and #lease.fluid.inputs > 0 then return false end
+	local m = lease.machine
+	local want = M.machine_batch(m, step)
+	local left = lease.runs - (m.products_finished - lease.finished0)
+	if left * 2 > want then
+		M.note_early(job, m, step, left)
+		return false
+	end
+	local inp = input_inventory(m)
+	if not inp then return false end
+	local add = math.min(want - left, step.runs - step.issued)
+	local ingredients = step_ingredients(step)
+	for _, ing in pairs(ingredients) do
+		if ing.type ~= "item" or with_data(ing.name) or not N.item_exists(ing.name) then return false end
+		local size = stack_size_of(ing.name)
+		local have = inp.get_item_count{ name = ing.name, quality = ing.quality or "normal" }
+		add = math.min(add, math.floor(ing_pool(job, ing) / ing.amount + 1e-9), size and math.floor((size - have) / ing.amount) or 0)
+	end
+	for _, pr in pairs(step_products(step)) do
+		if pr.type == "item" then
+			local per = pr.amount or pr.amount_max
+			local size = stack_size_of(pr.name)
+			if size and per and per > 0 then add = math.min(add, math.floor(size / per) - math.max(0, left)) end
+		end
+	end
+	if add <= 0 then return false end
+	collect_output(job, net, m, lease.fluid)
+	local crafted = m.products_finished - lease.finished0          -- (what it made so far counts now: the job's progress)
+	if crafted > 0 then
+		step.done = step.done + crafted
+		lease.runs = lease.runs - crafted
+		lease.finished0 = lease.finished0 + crafted
+		update_done(job)
+	end
+	local given = {}
+	for _, ing in pairs(ingredients) do
+		local key, q = key_of(ing), ing.quality or "normal"
+		local n = ing.amount * add
+		local got = inp.insert{ name = ing.name, count = n, quality = q }
+		pool_add(job, key, -got)
+		given[#given + 1] = { key, ing.name, q, got }
+		if got < n then
+			for _, g in pairs(given) do
+				if g[4] > 0 then inp.remove{ name = g[2], count = g[4], quality = g[3] } pool_add(job, g[1], g[4]) end
+			end
+			return false
+		end
+	end
+	lease.runs = lease.runs + add
+	step.issued = step.issued + add
+	M.note_early(job, m, step, lease.runs)
+	return true
+end
+
 --- `work.ops`: machine interactions left for this job in this step (counted down)
 local function job_step(s, job, work)
 	if job.status == "queued" and not job.closing then return end
@@ -2690,6 +2803,8 @@ local function job_step(s, job, work)
 				elseif recipe_changed or machine_idle(m, step_ingredients(step), real.fluid) then
 					close_lease(s, job, net, real)
 					progress = true
+				elseif not job.closing and M.top_up(job, net, real, step) then   -- (issue #557: still working, nearly done)
+					progress = true
 				end
 				work.ops = work.ops - 1
 			end
@@ -2720,7 +2835,7 @@ local function job_step(s, job, work)
 		local ingredients, products = step_ingredients(step), step_products(step)
 		local targets = targets_of[step.pid] or {}
 		while work.ops > 0 and step.issued < step.runs do
-			local batch = math.min(step.runs - step.issued, MAX_BATCH)
+			local batch = step.runs - step.issued                     -- (issue #557: the machine's share follows below)
 			for _, ing in pairs(ingredients) do   -- only what the pool holds, one stack per item ingredient
 				local per = ing.type == "fluid" and fixed_up(ing.amount) or ing.amount
 				batch = math.min(batch, math.floor(ing_pool(job, ing) / per + 1e-9))
@@ -2738,6 +2853,7 @@ local function job_step(s, job, work)
 				machine, mode, map, chest = find_pusher(s, net, job, step, targets)
 			end
 			if not machine then waiting = waiting or chest or "machine" break end
+			batch = math.min(batch, mode == "chest" and MAX_BATCH or M.machine_batch(machine, step))   -- (issue #557)
 			if mode ~= "chest" then
 				for _, p in pairs(products) do        -- the products must fit into the output slot
 					if p.type == "item" then
@@ -2761,6 +2877,7 @@ local function job_step(s, job, work)
 			else
 				collect_output(job, net, machine, map)
 				ok = start_lease(s, job, i, machine, batch, map)
+				if ok and step.kind == "crafting" then M.note_early(job, machine, step, batch) end   -- (issue #557)
 				if not ok and step.kind == "processing" then reject(job, machine.unit_number, step.pid) end
 				if ok then EXT.handed(s, chest) end              -- (issue #429: a pulse lock after a hand-over into a machine)
 			end
@@ -2861,11 +2978,12 @@ local function step_jobs(s, tick, budget)
 		local job = s.jobs[id]
 		if job and (job.status == "queued" or job.status == "running") then
 			local since = tick - (job.stepped or (tick - STEP_TICKS))
-			if since >= STEP_TICKS then
+			if since >= STEP_TICKS or (job.early and tick >= job.early) then     -- (issue #557: a machine runs out sooner)
 				if job.stepped then Sched.sample("jobs", since, 1) end
 				job.stepped = tick
+				job.early = nil
 				done = done + 1
-				local scale = math.min(math.floor(since / STEP_TICKS), MAX_CATCH_UP)
+				local scale = math.max(1, math.min(math.floor(since / STEP_TICKS), MAX_CATCH_UP))
 				job_step(s, job, { ops = job_ops(s, job) * scale })
 			end
 		end
