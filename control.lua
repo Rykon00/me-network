@@ -61,6 +61,8 @@ local fork_conn = require("scripts.fork-me-connector")
 local paste_keys = require("scripts.fork-me-paste-keys")
 --- ME Cable dragged across an obstacle becomes a pair of underground cables (like belts)
 local cabledrag = require("scripts.fork-me-cabledrag")
+--- issue #561: the ME Memory Card (a selection tool: copy a block's settings, paste them onto blocks of its kind)
+local memcard = require("scripts.fork-me-memorycard")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -145,6 +147,9 @@ script.on_event(defines.events.on_entity_settings_pasted, function(event)
 	fork_qbridge.on_entity_settings_pasted(event)
 	fork_conn.on_entity_settings_pasted(event)                -- (issue #412: the connector's condition)
 end)
+
+script.on_event(defines.events.on_player_selected_area, function(event) memcard.on_selected(event) end)
+script.on_event(defines.events.on_player_alt_selected_area, function(event) memcard.on_alt_selected(event) end)
 
 script.on_event(defines.events.on_player_setup_blueprint, function(event)
 	fork_ae2.on_player_setup_blueprint(event)

@@ -1655,6 +1655,22 @@ changes nothing (a blank bus pasted over a configured one keeps its filters). No
 absolute grid snapping (they are placed by other rules); the toggle buses' condition is the game's own and was always
 pasted.
 
+### The ME Memory Card (issue #561)
+
+AE2's Memory Card, a **selection tool** here (crafted from an advanced circuit, 2 iron plates, 2 copper plates and a copper
+cable; unlocked with ME Network). Take it in your hand:
+
+* **Select** (drag over) an ME block: the card copies its settings, exactly what a blueprint of the block carries (the table
+  above, the monitors, emitters, toggle buses, bridges and links too), and a **pattern provider's patterns**. With several
+  ME blocks in the area the one nearest the middle is copied. The card's label shows what it holds (the block, and the
+  number of patterns). **Select empty ground** (no ME block) to empty it.
+* **Alt + select** an area: **every block of the copied kind** in it takes the settings, as a blueprint pasted over it
+  would give them (so a row of providers or buses takes one drag). A pattern provider's patterns go into its **empty
+  slots** (a slot with a pattern keeps it), each filled as a blueprint's pattern is (issue #558): an encoded pattern of the
+  same pattern in your inventory, then one in the provider's network, then a blank pattern of your inventory (encoded into
+  the slot), then a blank of the network. What finds none waits in a yellow slot until the network has a blank. Cards a
+  block's settings name come from the network, as for a blueprint.
+
 ### A machine's recipe onto an ME block
 
 Like a requester chest: **shift + right click** a crafting machine (an assembling machine, a furnace, a rocket silo,

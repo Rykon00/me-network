@@ -190,6 +190,32 @@ ME.add_item{
 data.raw["mod-data"]["fork-me-network"].data.view_cells = { ["me-view-cell"] = { view = true, kind = "view", types = 63, bytes = 0 } }
 recipes[#recipes + 1] = "me-view-cell"
 
+--- Issue #561: the ME Memory Card (AE2's ToolMemoryCard), a selection tool here: select one ME block = copy its settings (what its
+--- blueprint tags carry, a provider's patterns too) onto the card; alt-select = paste them onto every block of that name in the
+--- area; a select without an ME block empties it (scripts/fork-me-memorycard.lua). AE2-Unofficial's recipe
+--- (recipes/tools/network.recipe): a calculation processor, 2 iron, 2 gold, a redstone. Unlocked with ME Network (below).
+ME.add_item{
+	type = "selection-tool",
+	name = "me-memory-card",
+	icon = ME.hd_icons .. "me-memory-card.png",
+	icon_size = 64,
+	subgroup = "fork-me-cards",
+	order = "z",
+	stack_size = 1,
+	localised_description = { "item-description.me-memory-card" },
+	fields = {
+		flags = { "not-stackable" },
+		select = { border_color = { 0.27, 0.67, 0.96 }, cursor_box_type = "copy", mode = { "same-force", "any-entity" } },
+		alt_select = { border_color = { 0.96, 0.75, 0.2 }, cursor_box_type = "pair", mode = { "same-force", "any-entity" } },
+	},
+	recipe = { energy_required = 2, ingredients = I{ "advanced-circuit", 1, "iron-plate", 2, "copper-plate", 2, "copper-cable", 1 } },
+}
+do
+	local tech = data.raw.technology["me-network"]
+	data.raw.recipe["me-memory-card"].enabled = false
+	table.insert(tech.effects, { type = "unlock-recipe", recipe = "me-memory-card" })
+end
+
 --- after ME 64k Storage (the advanced card needs a processing unit); its cost follows that technology in
 --- data-final-fixes.lua unless another mod sets it (ME_NETWORK.set_technology)
 ME.add_technology{ name = "me-upgrade-cards", prerequisites = { "me-storage-64k", "circuit-network" }, unit = ME.unit(3, 400), recipes = recipes }

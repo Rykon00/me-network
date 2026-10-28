@@ -1121,6 +1121,9 @@ celllight468 = require("celllight")({ me_place = me_place, power = power, me_rep
 --- me-network issue #558: a pattern provider's waiting patterns, their status and the sources that fill them (pending.lua)
 pending558 = require("pending")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
 	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #561: the ME Memory Card (memcard.lua)
+memcard561 = require("memcard")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #556: the ME Controller's buffer follows a draw above 6 MW (bigpower.lua)
 bigpower556 = require("bigpower")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1261,6 +1264,7 @@ local function tests_running()
 	creativecell441.running(check)
 	creativeenergy442.running(check)
 	bigpower556.running(check)
+	memcard561.running(check)
 	pending558.running(check)
 	celllight468.running(check)
 	maintrows351.running(check)
@@ -2239,6 +2243,7 @@ script.on_nth_tick(10, function()
 	creativecell441.tick()
 	creativeenergy442.tick()
 	bigpower556.tick()
+	memcard561.tick()
 	pending558.tick()
 	celllight468.tick()
 	maintrows351.tick()
@@ -5142,6 +5147,7 @@ script.on_init(function()
 	for _, f in pairs(creativecell441.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(creativeenergy442.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bigpower556.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(memcard561.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pending558.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(celllight468.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
