@@ -6,7 +6,9 @@
 ---     one tile, and construction robots fetch from them):
 ---       provider   a passive provider: "Offer" rows (item with quality, amount) are kept stocked from the network; robots
 ---                  take from it (requesters, construction, players). Requesters take from active providers first, then
----                  storage chests, then passive providers: the ME stock is the base's last source.
+---                  storage chests, then passive providers: the ME stock is the base's last source. Issue #540: a row counts
+---                  and takes only what ME holds outside an ME Logistic Storage Bus of the same logistic network (`skip_of`),
+---                  so the base's own items never move into the provider.
 ---       requester  a requester: "Request" rows (item, keep this many in the network) ask the robots for what the network
 ---                  lacks: target - the network's count (external cells too) - what lies in the requester - what robots
 ---                  bring to it now (targeted_items_deliver); written with set_slot only when it changes, 0 at the target.
@@ -54,7 +56,7 @@
 ---     network (ghosts, upgrades, item request proxies; scripts/fork-me-logistic-construction.lua) is added to the points'
 ---     demand at the end of phase 1, at the position of its first record.
 ---   * Cards: the ME Interface's (Interface Capacity Card: 9 more rows per card, up to 36; Crafting Card: an offer row the
----     network cannot fill starts a job, as the interface's, issue #411).
+---     network cannot fill, outside the base's own chests, starts a job, as the interface's, issue #411).
 ---   * Visits: a queue of its own (Sched, tag "logistic_interface") with a budget (map settings "ME Logistic Interface visits
 ---     per tick", at least and at most). A visit that moved something comes back after MIN_INTERVAL ticks, one that did not
 ---     twice as late each time up to the idle limit (a robot's drop raises no event); an offer row's item arriving in the
@@ -548,9 +550,11 @@ local function offer(rec, net, unit, skip)
 		local have = amount ~= HOLD and inv.get_item_count(item(name, q)) or 0
 		if amount == HOLD then                                         -- (no demand for a pass or two: neither filled nor returned)
 		elseif have < amount then
-			local got = N.extract_to(net, inv, key, amount - have, auto[key] and skip or nil)   -- (issue #537: not the base's)
+			--- issues #537, #540: never from an ME Logistic Storage Bus of this logistic network (the base's own chests), for the
+			--- automatic stock and the rows alike: a row offers what ME holds outside them
+			local got = N.extract_to(net, inv, key, amount - have, skip)
 			moved = moved + got
-			if got <= 0 and N.count_key(net, key) <= 0 then
+			if got <= 0 and (skip and N.count_key_skip(net, key, skip) or N.count_key(net, key)) <= 0 then
 				N.wait_for(net, key, WAKER, unit, true)
 				if rec.ccard and not auto[key] then craft(rec, net, key, amount - have) end
 			end

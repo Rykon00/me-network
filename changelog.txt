@@ -28,6 +28,7 @@ Version: 0.5.11
     - Settings paste works on the ME Quantum Bridge and ME Wireless Link (no more "Not operable").
     - Settings paste from an ME Drive onto an ME Chest works too; before, only a chest onto a drive did (issue #519).
     - A network that draws more than about 6 MW (for example with many crafting accelerators) no longer reports "The ME Controller has no power" on a grid that has the power (issue #556): the controller's buffer now grows with the network's draw (half a second of it, at least 100 kJ) and it takes up to 1 TW. Controllers of your saves get the new buffer with the update. A network whose grid delivers less than its draw now says "no power" instead of working on what the grid gave in the last tick.
+    - ME Logistic Interface: offer rows no longer take from an ME Logistic Storage Bus of the same logistic network (issue #540), so the base's own items no longer move from its storage chests into the interface; a row offers what ME holds outside them, as the automatic mode does. A Crafting Card crafts what a row cannot get that way.
   Info:
     - Two new map settings: "Logistic storage bus visits per tick, at least" (1) and "at most" (2): a visit reads the whole logistic network. /me-stats shows the logistic storage buses as a queue of their own.
     - The ME Logistic Storage Bus never stores into, shows or takes from the hidden chests of an ME Logistic Interface (issue #530), and what an interface takes in never goes into a logistic storage bus of the same logistic network.

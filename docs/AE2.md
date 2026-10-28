@@ -604,8 +604,9 @@ logistic chests** stand on its tile; you never see them, the robots do. Its wind
   row offers one stack (a small stock limits how fast robots can take: a chest kept at 10 delivered about 9 items per
   second). Requester chests take from **active providers first, then storage chests, then passive providers**, so the
   base empties its own chests first and the ME stock is its **last source**. When a row shrinks or goes, the network takes
-  back what no robot has reserved yet. With a **Crafting Card** an offer row the network cannot fill starts a crafting
-  job, as on the ME Interface.
+  back what no robot has reserved yet. A row is filled only from what ME holds outside an **ME Logistic Storage Bus** of the
+  same logistic network (issue #540): the base's own storage chests stay where they are. With a **Crafting Card** an
+  offer row the network cannot fill that way starts a crafting job, as on the ME Interface.
 * **Request** (a hidden requester): rows "**keep this many in the network**": the item and a target. The robots are asked
   for the target less what the whole network holds (drives, storage buses, also a logistic storage bus's chests) less what
   lies in the requester or is on its way; at the target the request is 0. Each row shows what it asks for now.
