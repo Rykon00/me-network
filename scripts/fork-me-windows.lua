@@ -564,10 +564,9 @@ local function open_io_port(player, entity)
 	local _, content = G.open_window(player, "io-port", caption_of(entity), { unit = entity.unit_number }, true)
 	G.label(content, { "fork-me-gui.io-port-help" }, WIDTH)
 	local row = G.row(content)
-	row.add{ type = "label", caption = { "fork-me-gui.io-port-in" } }
-	row.add{ type = "flow", name = "fork_me_iop_in", direction = "horizontal" }
-	row.add{ type = "label", caption = { "fork-me-gui.io-port-out" } }
-	row.add{ type = "flow", name = "fork_me_iop_out", direction = "horizontal" }
+	--- issue #550: input and output cell are one element of the two slots (the rule per slot is the click's, ioport.cell_click)
+	row.add{ type = "label", caption = { "fork-me-gui.io-port-cells" }, tooltip = { "fork-me-gui.io-port-cells-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_iop_cells", direction = "horizontal" }
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.io-port-mode" } }
 	row.add{ type = "drop-down", name = "fork_me_iop_mode", selected_index = 1, tags = G.act("iop_mode"),
@@ -585,10 +584,7 @@ function M.refresh_io_port(player, frame)
 	local d = entity and ioport.info(entity)
 	if not d then return false end
 	local inv = ioport.cells(entity)
-	block_slots(frame, "fork_me_iop_in", inv, 1, 1, function(_, st)
-		return { st.valid_for_read and "fork-me-gui.io-port-in-tooltip" or "fork-me-gui.io-port-in-empty" }
-	end)
-	block_slots(frame, "fork_me_iop_out", inv, 2, 2, function() return { "fork-me-gui.io-port-out-tooltip" } end)
+	block_slots(frame, "fork_me_iop_cells", inv, 1, #inv, function() return { "fork-me-gui.io-port-cells-tooltip" } end)
 	local cinv = ioport.card_inventory(entity)
 	block_slots(frame, "fork_me_iop_cards", cinv, 1, #cinv, function(_, st)
 		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }

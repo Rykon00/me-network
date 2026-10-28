@@ -2627,13 +2627,16 @@ The empty slots' tooltip is the window's hint for an empty slot (`empty_slot_inf
 | ME Logistic Interface | card slots (`fork_me_lif_cards`) | element |
 | ME IO Port | card slots (`fork_me_iop_cards`; the window's slots 3 to 6: offset 2) | element |
 | ME Wireless Access Point | booster slots | element (not in the issue's list; the same card inventory) |
-| ME IO Port | input and output cell (slots 1 and 2 of one inventory, shown apart with their own tooltips) | **buttons**: an element shows a whole inventory with one empty-slot tooltip; two inventories would change the saved layout (migration) |
-| ME Cell Workbench | cell slot and card slots (slot 1 and 2 to 5 of one inventory; how many card slots depends on the cell) | **buttons**: a range of one inventory whose shown part changes with the cell; splitting it touches saved state |
+| ME IO Port | input and output cell (slots 1 and 2 of one inventory) | element since #550: **one element of both slots** ("Cells (in, out)", one empty-slot tooltip for both); the rule per slot is the click's (`ioport.cell_click`: a cell only into the input, nothing into the output). Chosen over two inventories: no change of the saved layout |
+| ME Cell Workbench | cell slot and card slots (slot 1 and 2 to 5 of one inventory; how many card slots depends on the cell) | **buttons**: a range of one inventory whose shown part changes with the cell (4, 3 or 2 card slots); an element needs two inventories (cell, cards; the card inventory resized with the cell) and a migration of the saved one: issue #579 |
 | ME Drive | 10 cell slots | **buttons**: the fill numbers and the yellow partition style are per slot, the element has no per-slot style; the cells are records, not an inventory |
 | ME Pattern Provider | the pattern slots | **buttons**: records with a state colour per slot (yellow pending, red broken), not an inventory |
-| ME Pattern Terminal, charger, the terminal's View Cell slots | blank and output slot, the charger's slot, the view cells | buttons (not in the issue's list) |
+| ME Pattern Terminal | blank and output slot (one inventory of 2) | element since #550: **one element of both slots** next to Encode; the rule per slot is `M.click`'s (blank patterns into the first, nothing into the second) |
+| ME Charger | its slot (`rec.inv`, an inventory of 1) | element since #550 |
+| ME Terminal | the View Cell slots (`VC.inventory`, the terminal's or, wireless, the player's) | element since #550 (`VC.draw`: a label and the element's flow `fork_me_view_slots`) |
 
-The rest is issue #550 (the parts of inventories and the slots outside the issue's list).
+Issue #550 made the four above elements; old windows are closed by every mod update (`G.close_all`), and the inventories are
+the ones the saves hold, so nothing is migrated. Left: the workbench (#579).
 
 **Tests.** `runtimemod/blockinv.lua` opens every window of the table that has an element for a stand-in player (the open
 key's path, `G.open_entity`, and one refresh; the stand-in of #545 can reach every entity) and finds the element: bound to the

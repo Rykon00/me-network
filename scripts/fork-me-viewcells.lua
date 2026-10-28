@@ -220,15 +220,15 @@ function M.draw(box, entity, player)
 		return
 	end
 	box.visible = true
-	local sig = M.sig(inv)
-	if box.tags.sig == sig then return end
-	box.clear()
-	box.tags = { sig = sig }
-	box.add{ type = "label", caption = { "fork-me-terminal.view-cells" }, tooltip = { "fork-me-terminal.view-cells-tooltip" } }
-	for i = 1, #inv do
-		G.stack_button(box, inv[i], G.act("block_slot", { slot = i }),
-			{ inv[i].valid_for_read and "fork-me-terminal.view-slot-tooltip" or "fork-me-terminal.view-slot-empty" })
+	--- issue #550: the slots are the game's inventory element (G.block_slots: every click goes through M.click)
+	if not G.find(box, "fork_me_view_slots") then
+		box.clear()
+		box.add{ type = "label", caption = { "fork-me-terminal.view-cells" }, tooltip = { "fork-me-terminal.view-cells-tooltip" } }
+		box.add{ type = "flow", name = "fork_me_view_slots", direction = "horizontal" }
 	end
+	G.block_slots(box, "fork_me_view_slots", inv, 1, #inv, function(_, st)
+		return { st.valid_for_read and "fork-me-terminal.view-slot-tooltip" or "fork-me-terminal.view-slot-empty" }
+	end)
 end
 
 remote.add_interface("gregtorio-me-viewcells", {

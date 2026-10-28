@@ -6,7 +6,11 @@
 --- hand is refused and stays there, a card goes in (one of the hand's stack, by click and by right click), shift + click takes
 --- it into the inventory, control + click every card of that kind, a click in remote view takes it into the inventory; no
 --- card is made or lost. Per window: ME Interface, Import Bus, Storage Bus, Pattern Provider, Logistic Interface, IO Port
---- (its cell slots stay buttons: a part of its inventory) and Wireless Access Point.
+--- and Wireless Access Point.
+--- Issue #550, the other block slots (SLOTS below): the ME Charger's slot, the ME Terminal's View Cell slots (a terminal in a
+--- working network), the IO Port's two cell slots and the ME Pattern Terminal's blank and output slot are elements too (the
+--- last two one element of both slots each): a wrong item refused and kept in the hand, the right one in, the second slot of the
+--- IO Port and the Pattern Terminal refuses it, shift + click takes it into the inventory, nothing made or lost.
 --- Loaded by control.lua: require("blockinv")(H) returns { setup, tick, running }.
 
 local GUI = "gregtorio-me-gui"
@@ -20,9 +24,17 @@ local BLOCKS = {
 	{ name = "me-storage-bus", x = 8.5, box = "fork_me_sbus_cards", card = "me-capacity-card", limit = 5 },
 	{ name = "me-pattern-provider", x = 12.5, box = "fork_me_prov_cards", card = "me-pattern-capacity-card", limit = 3 },
 	{ name = "me-logistic-interface", x = 16.5, box = "fork_me_lif_cards", card = "me-interface-capacity-card", limit = 3 },
-	{ name = "me-io-port", x = 20.5, box = "fork_me_iop_cards", card = "me-acceleration-card", limit = 4, offset = 2,
-	  buttons = { "fork_me_iop_in", "fork_me_iop_out" } },
+	{ name = "me-io-port", x = 20.5, box = "fork_me_iop_cards", card = "me-acceleration-card", limit = 4, offset = 2 },
 	{ name = "me-wireless-access-point", x = 24.5, box = "fork_me_ap_cards", card = "me-wireless-booster", limit = 4 },
+}
+
+--- issue #550: the other block slots: the block, where it stands, the flow of its element, the element's size, the item that
+--- goes into slot 1, and whether slot 2 refuses it
+local SLOTS = {
+	{ name = "me-charger", x = 28.5, y = 0.5, box = "fork_me_charger_slots", size = 1, item = "me-wireless-terminal" },
+	{ name = "me-terminal", x = 48.5, y = 5.5, box = "fork_me_view_slots", item = "me-view-cell" },
+	{ name = "me-io-port", x = 20.5, y = 0.5, box = "fork_me_iop_cells", size = 2, item = "me-1k-storage-cell", refuse2 = true },
+	{ name = "me-pattern-terminal", x = 32.5, y = 0.5, box = "fork_me_pt_slots", size = 2, item = "me-blank-pattern", refuse2 = true },
 }
 
 return function(H)
@@ -32,6 +44,12 @@ return function(H)
 	function T.setup(s)
 		local fails = {}
 		for _, b in ipairs(BLOCKS) do me_place(s, fails, "block inventories", b.name, BX + b.x, BY + 0.5) end
+		--- issue #550: the charger, the pattern terminal, and a terminal in a working network (its storage tab shows the View Cells)
+		me_place(s, fails, "block inventories", "me-charger", BX + 28.5, BY + 0.5)
+		me_place(s, fails, "block inventories", "me-pattern-terminal", BX + 32.5, BY + 0.5)
+		H.power(s, fails, "block inventories", BX + 40, BY + 6)
+		me_place(s, fails, "block inventories", "me-network-controller", BX + 47, BY + 6)
+		me_place(s, fails, "block inventories", "me-terminal", BX + 48.5, BY + 5.5)
 		return fails
 	end
 
@@ -117,12 +135,54 @@ return function(H)
 				done[#done + 1] = b.name
 			end
 		end
+		--- issue #550: the other block slots
+		local done2 = {}
+		for _, b in ipairs(SLOTS) do
+			local e = s.find_entity(b.name, { BX + b.x, BY + b.y })
+			local what = b.name .. " (" .. b.box .. "): "
+			local ok, view = pcall(g, "stand_in_open_entity", "blockinv", e)
+			local el
+			for _, x in ipairs(ok and view and view.elements or {}) do
+				if x.box == b.box then el = x end
+			end
+			if not (e and ok and el) then
+				expect(false, what .. "no element: " .. serpent.line(ok and view or view))
+			else
+				local binv = el.inventory
+				expect(binv and binv.valid and (not b.size or #binv == b.size) and el.cursor_transfer == false and el.empty ~= nil
+					and (view.buttons[b.box] or 0) == 0, what .. "the element: " .. serpent.line(el))
+				local function act(slot, mode) return g("block_action", e, binv, slot, mode, cursor, pinv, 0) end
+				local function total() return binv.get_item_count(b.item) + pinv.get_item_count(b.item) + hold.get_item_count(b.item) end
+				cursor.set_stack{ name = "iron-plate", count = 5 }
+				local why = act(1, "click")
+				expect(why ~= nil and cursor.valid_for_read and cursor.name == "iron-plate" and cursor.count == 5
+					and binv.get_item_count("iron-plate") == 0, what .. "iron plates refused: " .. tostring(why))
+				cursor.clear()
+				cursor.set_stack{ name = b.item, count = 1 }
+				local before = total()
+				if b.refuse2 then
+					why = act(2, "click")
+					expect(why ~= nil and cursor.valid_for_read and binv.get_item_count(b.item) == 0, what .. "slot 2 took it: "
+						.. tostring(why))
+				end
+				why = act(1, "click")
+				expect(why == nil and binv.get_item_count(b.item) == 1 and not cursor.valid_for_read, what .. "into slot 1: " .. tostring(why))
+				why = act(1, "shift")
+				expect(why == nil and binv.get_item_count(b.item) == 0 and pinv.get_item_count(b.item) == 1, what .. "shift + click: "
+					.. tostring(why))
+				expect(total() == before, what .. "made or lost: " .. before .. " -> " .. total())
+				pinv.clear()
+				cursor.clear()
+				done2[#done2 + 1] = b.name
+			end
+		end
 		g("stand_in_close_window", "blockinv", false)
 		g("stand_in_forget", "blockinv")
 		pinv.destroy()
 		hold.destroy()
 		me_report("BLOCKINV", "ME windows: block slots as inventory elements", problems, table.concat(done, ", ")
-			.. ": the element, a wrong item refused by click and right click, a card by click and right click, shift, control, remote view")
+			.. ": the element, a wrong item refused by click and right click, a card by click and right click, shift, control, remote view; "
+			.. "issue #550: " .. table.concat(done2, ", ") .. ": the element, a wrong item refused, slot 2 refuses, in and out")
 	end
 
 	function T.running(check) check(storage.blockinv and storage.blockinv.done, "ME windows: block slots as inventory elements") end

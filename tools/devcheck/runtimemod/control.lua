@@ -1032,7 +1032,7 @@ nativeinv542 = require("nativeinv")({ me_place = me_place, power = power, me_rep
 --- me-network issue #545: the machine window sounds of the ME windows (windowsound.lua)
 windowsound545 = require("windowsound")({ me_report = me_report })
 --- me-network issue #543: the block slots of the ME windows as inventory elements (blockinv.lua)
-blockinv543 = require("blockinv")({ me_place = me_place, me_report = me_report })
+blockinv543 = require("blockinv")({ me_place = me_place, me_report = me_report, power = power })
 --- me-network issues #176 and #177: ME windows in remote view (remoteview.lua)
 remoteview176 = require("remoteview")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })

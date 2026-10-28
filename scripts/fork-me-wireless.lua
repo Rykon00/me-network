@@ -627,7 +627,7 @@ local function open_charger(player, entity)
 	local _, content = G.open_window(player, "charger", entity.localised_name, { unit = entity.unit_number })
 	G.label(content, { "fork-me-wireless.charger-help" }, WIDTH)
 	local row = G.row(content)
-	row.add{ type = "sprite-button", name = "fork_me_charger_slot", style = "slot_button", tags = G.act("block_slot", { slot = 1 }) }
+	row.add{ type = "flow", name = "fork_me_charger_slots", direction = "horizontal" }   -- (issue #550: the game's inventory element)
 	G.label(row, "", WIDTH - 50, nil, "fork_me_charger_info")
 	M.refresh_charger(player, G.window_of(player))
 end
@@ -636,7 +636,7 @@ function M.refresh_charger(player, frame)
 	local entity = G.entity_of(player, frame)
 	local rec = charger_rec(entity)
 	if not rec then return false end
-	G.render_slot(G.find(frame, "fork_me_charger_slot"), rec.inv[1], nil, { "fork-me-wireless.charger-slot-tooltip" })
+	G.block_slots(frame, "fork_me_charger_slots", rec.inv, 1, #rec.inv, function() return { "fork-me-wireless.charger-slot-tooltip" } end)
 	local i = M.charger_info(entity)
 	G.find(frame, "fork_me_charger_info").caption = i.charge and { "fork-me-wireless.charger-charge", math.floor(100 * i.charge),
 		{ i.charging and (i.network and "fork-me-wireless.charger-charging" or "fork-me-wireless.charger-no-power")
