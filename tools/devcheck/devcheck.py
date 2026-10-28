@@ -985,6 +985,7 @@ RUNTIME_TESTS = (
     ("PENDING", "Pattern provider waiting for patterns (issue #558)"),
     ("MEMCARD", "ME Memory Card (issue #561)"),
     ("WGROUP", "ME Wireless Link groups (issue #559)"),
+    ("SINGFLUID", "Singularity cell for fluids (issue #562)"),
     ("CELLLIGHT", "Cell light with all types used (issue #468)"),
     ("MAINTROWS", "ME level maintainer rows (issue #351)"),
     ("CPUMODE", "ME crafting CPU choice and modes (issue #350)"),

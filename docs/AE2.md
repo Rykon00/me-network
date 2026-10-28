@@ -26,7 +26,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount; 36 with Interface Capacity Cards): keeps those in stock in it, imports everything else (this page, **Import and export**) |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face; can be walked over |
 | ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
-| Fluid storage cell (1k ... 16384k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
+| Fluid storage cell (1k ... 16384k, Singularity) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | ME Wireless Access Point, ME Charger | 1x1 members, power through the controller: the range of the Wireless ME Terminal (with Wireless Boosters) and its charging (this page, **Wireless**) |
 | Crafting blocks: crafting unit, 1k ... 16384k and Singularity crafting storage, co-processing unit, 4x ... 4096x crafting accelerators, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns (up to 36 with Pattern Capacity Cards); the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
@@ -100,6 +100,13 @@ Issue #414: the 1024k, 4096k and 16384k cells and the Singularity cell are AE2-U
 Singularity cell has Long.MAX_VALUE / 16 bytes; here 2^50, so that its one type holds at most 2^53 - 32 768 items: the largest
 count a Lua number holds exactly (the storage engine's counts are numbers). AE2-U's idle drain of the cells is not built (no
 cell draws power here).
+
+**The Singularity cell for fluids** (issue #562; technology ME Singularity Storage): one fluid, 2^26 + 4 096 bytes at 8 units
+per byte, so **536 870 912 units** (2^29) of it. That is the largest amount the storage engine counts exactly: the game keeps
+fluid amounts to 2^-24 of a unit, so a sum of them is exact in a Lua number up to 2^53 / 2^24 = 2^29 units (not the 2^53 of
+item counts). It goes into the ME Drive and the ME Chest, the ME IO Port and the Cell Workbench like the other fluid cells
+(partition, cards, cell light) and keeps its fluid when taken out. Recipe: the item Singularity cell's (8 16384k components,
+4 ME Quantum Bridges, 4 accumulators, a storage housing) and a pump.
 
 Every item type in a cell costs its bytes per type, and every 8 items of it one byte. Another quality of an
 item is another type. A network fills cells that already hold an item first, then cells with a free type.
@@ -731,6 +738,7 @@ The recipes that follow:
 | ME Singularity Storage Cell (issue #414) | 8 16384k components, 4 ME Quantum Bridges, 4 accumulators, a storage housing | 8 Quantum cells (each 4 16384k components, 4 quantum rings, a dense energy cell) around a matter condenser (AE2-Unofficial) |
 | Storage cell | a component and a housing | the same |
 | Fluid storage cell | a component, 2 plastic bars, 3 copper cables, 3 copper plates | a component in a fluid cell housing (2 quartz glass, 3 redstone, 3 copper) |
+| ME Singularity Fluid Storage Cell (issue #562) | the ME Singularity Storage Cell's ingredients and a pump | none in AE2-Unofficial (the item Singularity cell's idea) |
 | Void ME Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 iron plates | 2 quartz glass, 3 redstone, an ender pearl, 3 iron (AE2-Unofficial) |
 | Void ME Fluid Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 copper plates | (AE2-U's void cell takes fluids too; this one has the fluid cell housing's copper) |
 | ME Import / Export Bus | an electronic circuit, 2 iron plates, a fast inserter | an annihilation (import) or formation core (export), 2 iron, a piston |
