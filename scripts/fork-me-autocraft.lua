@@ -734,7 +734,7 @@ local function new_provider(entity)
 	return { entity = entity, unit = entity.unit_number, surface = entity.surface.index,
 		position = { x = entity.position.x, y = entity.position.y }, force = entity.force.name,
 		slots = {},          -- [slot] = pattern as stored in the item (raw: kept exactly, validated by the scan)
-		pending = nil,       -- [slot] = pattern from a blueprint, encoded from a blank pattern of the network
+		pending = nil,       -- [slot] = pattern from a blueprint, filled by fill_pending (issue #558)
 		priority = 0,
 		patterns = {},       -- [slot] = { id, def, targets = { {entity, unit, mode} }, why = first reason of a machine that cannot } (scan)
 		status = {},         -- [slot] = { ok, reason, machines } (scan)
@@ -745,21 +745,137 @@ local function new_provider(entity)
 		--- last into a chest while in smart blocking; issue #346: `lock` ("result" or nil) and `locked`, what it waits for)
 end
 
---- blueprint patterns waiting for a blank pattern: encoded from the network's blanks (never out of nothing)
-local function fill_pending(p, net)
-	if not (p.pending and net and N.usable(net)) then return false end
-	local changed = false
+--- Issue #558: the encoded patterns a network holds, by pattern id (P.id_of of P.normalize): { [id] = { keys } }. Derived and
+--- kept per network (weak) until a key is new to it (net.kgen); a key in the list may be gone since (its count is looked at).
+M.net_pattern_cache = setmetatable({}, { __mode = "k" })
+M.ENCODED_PREFIX = P.ENCODED .. "@normal#"
+function M.network_patterns(net)
+	local c = M.net_pattern_cache[net]
+	if c and c.kgen == net.kgen then return c.ids end
+	local ids, prefix = {}, M.ENCODED_PREFIX
+	for key in pairs(net.items) do
+		if key:sub(1, #prefix) == prefix then
+			local data = helpers.json_to_table(key:sub(#prefix + 1))
+			local raw = type(data) == "table" and type(data.tags) == "table" and data.tags[P.TAG]
+			local def = type(raw) == "table" and P.normalize(raw)
+			if def then
+				local id = P.id_of(def)
+				ids[id] = ids[id] or {}
+				table.insert(ids[id], key)
+			end
+		end
+	end
+	M.net_pattern_cache[net] = { kgen = net.kgen, ids = ids }
+	return ids
+end
+
+--- Issue #558: the encoded patterns of an inventory by pattern id: { [id] = { slot indices } }
+function M.inventory_patterns(inv)
+	local ids = {}
+	for i = 1, #inv do
+		local st = inv[i]
+		if st.valid_for_read and st.name == P.ENCODED then
+			local raw = P.read(st)
+			local def = raw and P.normalize(raw)
+			if def then
+				local id = P.id_of(def)
+				ids[id] = ids[id] or {}
+				table.insert(ids[id], i)
+			end
+		end
+	end
+	return ids
+end
+
+--- Issue #558: one encoded pattern of `id` out of `inv` (its slots `list`, from M.inventory_patterns): its pattern as the item
+--- holds it, or nil
+function M.take_inventory_pattern(inv, list, id)
+	while list and #list > 0 do
+		local st = inv[list[#list]]
+		local raw = st.valid_for_read and st.name == P.ENCODED and P.read(st)
+		local def = raw and P.normalize(raw)
+		if def and P.id_of(def) == id then
+			if st.count > 1 then st.count = st.count - 1 else st.clear() table.remove(list) end
+			return raw
+		end
+		table.remove(list)
+	end
+	return nil
+end
+
+--- Patterns from a blueprint (or an ME Memory Card, issue #561) waiting in their slots, never made out of nothing. Issue #558: each
+--- slot is filled from the first source that has one, in the maintainer's order: an encoded pattern of the same pattern in `inv`
+--- (the main inventory of the player who built or pasted it; nil for robots and scripts), an encoded one in the network (taken
+--- out of it), a blank pattern of `inv` (encoded into the slot), a blank of the network. Encoded patterns first, so nothing is
+--- encoded twice. The network's sources need it to work. Returns the number of slots filled.
+local function fill_pending(p, net, inv)
+	if not p.pending then return 0 end
+	if not (net and N.usable(net)) then net = nil end
+	if inv and not inv.valid then inv = nil end
+	if not (net or inv) then return 0 end
+	local filled = 0
+	local inv_ids, net_ids
 	for slot, def in pairs(p.pending) do
 		if p.slots[slot] then
 			p.pending[slot] = nil                      -- a pattern was put into the slot by hand
-		elseif slot <= slots_of(p) and N.extract(net, P.BLANK, "normal", 1) == 1 then   -- (a slot a card has not given yet waits)
-			p.slots[slot] = def
-			p.pending[slot] = nil
-			changed = true
+		elseif slot <= slots_of(p) then                -- (a slot a card has not given yet waits)
+			local id = P.id_of(def)
+			local raw
+			if inv and inv.get_item_count(P.ENCODED) > 0 then
+				inv_ids = inv_ids or M.inventory_patterns(inv)
+				raw = M.take_inventory_pattern(inv, inv_ids[id], id)
+			end
+			if not raw and net then
+				net_ids = net_ids or M.network_patterns(net)
+				for _, key in ipairs(net_ids[id] or {}) do
+					if (net.items[key] or 0) > 0 and N.extract_key(net, key, 1) == 1 then
+						raw = def
+						break
+					end
+				end
+			end
+			if not raw and inv and inv.remove{ name = P.BLANK, quality = "normal", count = 1 } == 1 then raw = def end
+			if not raw and net and N.extract(net, P.BLANK, "normal", 1) == 1 then raw = def end
+			if raw then
+				p.slots[slot] = raw
+				p.pending[slot] = nil
+				filled = filled + 1
+			end
 		end
 	end
 	if next(p.pending) == nil then p.pending = nil end
-	return changed
+	return filled
+end
+M.fill_pending = fill_pending
+
+--- Issue #558: the provider shows on the map how many patterns wait (a yellow custom status), written when the number changes
+function M.pending_status(p)
+	local n = p.pending and table_size(p.pending) or 0
+	if (p.wstatus or 0) == n then return end
+	local e = p.entity
+	if not (e and e.valid) then return end
+	e.custom_status = n > 0 and { diode = defines.entity_status_diode.yellow, label = { "fork-me-pattern.status-waiting", n } } or nil
+	p.wstatus = n > 0 and n or nil
+end
+
+--- Issue #558: a build or paste left `p` waiting: tell `player` once (flying text at the block when the player built it by hand;
+--- else a chat line with the place, at most once per 10 s per player)
+function M.tell_waiting(p, player, by_hand)
+	if not (p.pending and player and player.valid and player.connected) then return end
+	local e = p.entity
+	if not (e and e.valid) then return end
+	local n = table_size(p.pending)
+	if by_hand then
+		player.create_local_flying_text{ text = { "fork-me-pattern.waiting-text", n }, position = e.position, surface = e.surface }
+		return
+	end
+	local s = state()
+	s.told = s.told or {}
+	local last = s.told[player.index]
+	if last and game.tick < last + 600 then return end
+	s.told[player.index] = game.tick
+	player.print({ "fork-me-pattern.waiting-message", n, string.format("[gps=%d,%d,%s]", math.floor(e.position.x),
+		math.floor(e.position.y), e.surface.name) })
 end
 
 --- Issue #50, lever 6: the clean pattern of a slot (P.normalize) or the reason it has none, and the pattern's id, once per
@@ -948,6 +1064,7 @@ local function scan_provider(p)
 	local e = p.entity
 	local net = N.network_of(e)                  -- patterns are kept while the network is off, jobs wait
 	if p.pending then fill_pending(p, N.active_of(e)) end
+	if p.pending or p.wstatus then M.pending_status(p) end                    -- (issue #558)
 	local net_id, priority = net and net.id or nil, p.priority or 0
 	local old_patterns, old_status = p.patterns or {}, p.status or {}
 	local same = p.net == net_id and p.scanned_priority == priority
@@ -3447,6 +3564,7 @@ function M.provider_click(cursor, inventory, provider, slot, shift)
 		if p.pending and p.pending[slot] then
 			p.pending[slot] = nil
 			if next(p.pending) == nil then p.pending = nil end
+			M.pending_status(p)                                 -- (issue #558)
 		end
 		return nil
 	end
@@ -3632,6 +3750,7 @@ function M.provider_info(entity)
 	local filled = 0
 	for slot = 1, slots_of(p) do if p.slots[slot] then filled = filled + 1 end end
 	local out = { slots = slots, slot_count = slots_of(p), filled = filled, machines = machines, priority = p.priority or 0,
+		pending = p.pending and table_size(p.pending) or 0,                         -- (issue #558)
 		blocking = p.blocking,                                                      -- (issue #335)
 		lock = p.lock, locked = p.locked and shallow_map(p.locked) or nil,          -- (issue #346)
 		--- issue #429: locked by its circuit condition now (looked at, not taken)
@@ -3672,10 +3791,10 @@ function M.provider_settings(entity)
 		lock = p.lock }                                                            -- (issue #346)
 end
 
---- Apply blueprint settings to a provider: the priority, and the patterns as "pending" (each costs a blank
---- pattern of the network when it is encoded). Old blueprint tags (`fork_ae2_recipe`, 0.4.1 and older: the furnace
---- recipe choice) give a processing pattern of that recipe.
-function M.apply_settings(entity, settings, old_recipe)
+--- Apply blueprint settings to a provider: the priority, and the patterns as "pending" (filled by fill_pending: an encoded
+--- pattern or a blank of `inv`, the inventory of the player who built or pasted it, or of the network). Old blueprint tags
+--- (`fork_ae2_recipe`, 0.4.1 and older: the furnace recipe choice) give a processing pattern of that recipe.
+function M.apply_settings(entity, settings, old_recipe, inv)
 	local p = provider_record(entity)
 	if not p then return false end
 	if type(settings) == "table" then
@@ -3707,6 +3826,7 @@ function M.apply_settings(entity, settings, old_recipe)
 			end
 		end
 	end
+	if p.pending and inv then fill_pending(p, N.active_of(entity), inv) end   -- (issue #558: the inventory first)
 	changed(p)
 	return true
 end
@@ -3744,13 +3864,18 @@ function M.on_player_setup_blueprint(event)
 end
 
 --- `tags`: the blueprint tags of a built ghost; `source`: the original of a cloned entity (its priority is copied,
---- its patterns are items and stay with it)
-function M.on_built(entity, tags, source)
+--- its patterns are items and stay with it); `player`: who built it by hand or pasted over it (issue #558: its patterns are
+--- filled from that player's inventory first, `inv` instead for a test; robots build for the ghost's last user, who is told)
+function M.on_built(entity, tags, source, player, inv)
 	if not (entity and entity.valid and (entity.name == PROVIDER or block_spec(entity.name))) then return end
 	register(state(), entity)
 	if entity.name ~= PROVIDER then return end
 	if type(tags) == "table" and (tags[BP_TAG] or tags[OLD_TAG]) then
-		M.apply_settings(entity, tags[BP_TAG], tags[OLD_TAG])
+		if player and not player.valid then player = nil end
+		inv = inv or player and player.get_main_inventory() or nil
+		M.apply_settings(entity, tags[BP_TAG], tags[OLD_TAG], inv)
+		local p = provider_record(entity)
+		if p and p.pending then M.tell_waiting(p, player or entity.last_user, player ~= nil) end
 		local list = type(tags[BP_TAG]) == "table" and tags[BP_TAG].cards
 		if type(list) == "table" and #list > 0 then cards.want_cards(entity, list, nil) end   -- issue #156: from the network, never from nothing
 	elseif source and source.valid and source.name == PROVIDER then
@@ -4185,7 +4310,17 @@ remote.add_interface("gregtorio-me-autocraft", {
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
 	--- the provider removal of the build events (mined: `buffer`, destroyed: nil)
 	on_removed = function(provider, buffer) M.on_removed(provider, buffer) end,
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,   -- (issue #156: a blueprint's tag, a clone)
+	--- (issue #156: a blueprint's tag, a clone; issue #558: `inv` the inventory of the player who built it)
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,
+	--- issue #558: fill a provider's waiting patterns from `inv` (or nil) and its network; its custom status
+	fill_pending = function(provider, inv)
+		local p = provider_record(provider)
+		if not p then return nil end
+		local n = fill_pending(p, N.active_of(provider), inv)
+		changed(p)
+		return n
+	end,
+	custom_status = function(entity) return entity.custom_status end,
 	--- what the jobs of the network of `entity` still wait for of `key` (processing outputs)
 	awaiting = function(entity, key)
 		local net = network_of(entity)

@@ -1190,7 +1190,7 @@ to a page (the arrows beside the count turn the pages; on the left your inventor
   the order they were built; then the **ME Interfaces**. A provider of another network is never listed.
 * **Each provider:** its name (or "ME Pattern Provider"), where it is, the icons of the machines and chests next to it (or
   "no machine next to it"), and its pattern slots (9 to 36) as in its own window: green, red (why it cannot be used: the
-  tooltip) or yellow (a blueprint's pattern waiting for a blank). **Click a pattern** to take it into your hand (shift +
+  tooltip) or yellow (a blueprint's pattern waiting for an encoded or a blank pattern). **Click a pattern** to take it into your hand (shift +
   click: into your inventory; in remote view always into the inventory), **click a slot with an encoded pattern in your
   hand** to put it in (a pattern there is swapped into your hand). The tooltip shows what the pattern takes and makes.
 * **Each interface:** its config rows (items and fluids with their amounts), shown only; change them in its own window.
@@ -1365,9 +1365,18 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   script) drops them where it stood, at the next scan.
 * **Blueprints, copy and paste:** a blueprint keeps the provider's priority and its **patterns as data**. An encoded
   pattern is an item, so a blueprint never creates one out of nothing: a provider built from a blueprint shows the
-  patterns as "waiting for a blank pattern" (yellow) and **encodes each one from a blank pattern of its network**
-  as soon as the network has one (within a few seconds). Click such a slot to forget it. Old blueprints (0.4.1 and
-  older) with a furnace recipe choice give a processing pattern of that recipe, the same way.
+  patterns it still waits for as yellow slots and fills each one from the first of these that has one (issue #558):
+  1. an **encoded pattern of the same pattern in your inventory** (when you build the provider or paste the blueprint
+     over it yourself),
+  2. an **encoded pattern of the same pattern in its network** (taken out of the network),
+  3. a **blank pattern in your inventory** (encoded into the slot),
+  4. a **blank pattern of its network** (as soon as the network has one, within a few seconds).
+
+  Encoded patterns come first, so nothing is encoded twice. A provider built by robots has no player: only the network's
+  patterns count. While patterns wait, the provider says so on the map (a yellow status "Waiting for N blank patterns"),
+  its window has a line above the slots, and the player who built it is told once (a flying text at the block, or a
+  chat line with its place when robots built it). Click such a slot to forget it. Old blueprints (0.4.1 and older) with
+  a furnace recipe choice give a processing pattern of that recipe, the same way.
 * **Settings paste** (shift right click, shift left click) and cloning copy the **priority**, the **blocking mode**
   (issue #335) and the **lock** setting (issue #346); patterns are items and stay where they are.
 * **The name** a provider got in the ME Interface Terminal (issue #336) goes with blueprints and clones, not with a

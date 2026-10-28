@@ -71,12 +71,18 @@ fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_ioport.tag_bluepr
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_qbridge.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_lif.tag_blueprint
 
+--- issue #558: the player who built an entity by hand (nil for robots, platforms and scripts)
+local function builder(event)
+	local p = event and event.name == defines.events.on_built_entity and game.get_player(event.player_index)
+	return p and p.valid and p or nil
+end
+
 local function on_built(entity, tags, event)
 	fork_net.on_built(entity, event)
 	fork_io.on_built(entity, tags)                            -- (any other entity: the buses facing it wake)
 	fork_sbus.on_built(entity, tags)
 	if entity and entity.valid and not fork_net.kind_of(entity.name) then fork_sbus.wake_near(entity) end
-	fork_ae2.on_built(entity, tags)
+	fork_ae2.on_built(entity, tags, nil, builder(event))
 	fork_circuit.on_built(entity, tags)
 	fork_bench.on_built(entity)
 	fork_pt.on_built(entity)
@@ -147,11 +153,11 @@ end)
 --- issue #383: a blueprint (or the copy-paste tool's copy) pasted over ME blocks of the same kind makes no ghost and raises
 --- no event in Factorio 2.0, so the settings in its tags are given to those blocks before the paste, as the build handlers
 --- give them to a block built from a ghost (only the module whose tag the blueprint entity carries)
-pasteover.apply = function(entity, tags)
+pasteover.apply = function(entity, tags, player)
 	if type(tags.fork_me_drive) == "table" then fork_net.apply_drive_settings(entity, tags.fork_me_drive) end
 	if tags.fork_me_interface or tags.fork_me_bus then fork_io.on_built(entity, tags) end
 	if tags.fork_me_storage_bus or tags.fork_me_fluid_storage_bus then fork_sbus.on_built(entity, tags) end
-	if tags.fork_me_provider then fork_ae2.on_built(entity, tags) end
+	if tags.fork_me_provider then fork_ae2.on_built(entity, tags, nil, player) end   -- (issue #558: its inventory first)
 	if tags.fork_me_maintainer or tags.fork_me_circuit then fork_circuit.on_built(entity, tags) end
 	if tags.fork_me_access_point then fork_wl.on_built(entity, tags) end
 	if tags.fork_me_monitor then fork_monitor.on_built(entity, tags) end

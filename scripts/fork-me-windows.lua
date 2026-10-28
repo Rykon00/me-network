@@ -1254,6 +1254,7 @@ local function open_provider(player, entity, opts)
 	G.label(content, "", WIDTH, nil, "fork_me_prov_want")
 	G.label(content, { "fork-me-gui.connector-hint-provider" }, WIDTH)   -- (issue #429: its circuit connector)
 	G.label(content, "", WIDTH, "caption_label", "fork_me_provider_count")
+	G.label(content, "", WIDTH, nil, "fork_me_provider_pending")          -- (issue #558: how many patterns wait)
 	local scroll = content.add{ type = "scroll-pane", name = "fork_me_provider_scroll", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = 380
 	scroll.add{ type = "flow", name = "fork_me_provider_slots", direction = "vertical" }
@@ -1276,6 +1277,8 @@ function M.refresh_provider(player, frame)
 	for _, name in ipairs(pinfo.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_prov_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_provider_count").caption = { "fork-me-gui.provider-count", pinfo.filled, pinfo.slot_count }
+	local pend = G.find(frame, "fork_me_provider_pending")
+	if pend then pend.caption = pinfo.pending > 0 and { "fork-me-gui.provider-pending", pinfo.pending } or "" end
 	local dd = G.find(frame, "fork_me_prov_blocking")          -- (issue #335: set elsewhere, by a paste or another player)
 	local index = M.blocking_index(pinfo.blocking)
 	if dd and dd.selected_index ~= index then dd.selected_index = index end
