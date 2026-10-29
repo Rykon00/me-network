@@ -174,7 +174,9 @@ local OPTIMIZATION = kr("space-science-pack", UTILITY)    -- (Krastorio 2's opti
 --- Krastorio 2 does not support Space Age: with it, its optimization tech card needs space research data that no rocket brings,
 --- so neither its singularity tech card nor anything after it can be researched. There the ME Singularity technologies stay
 --- on the advanced tier.
-local NO_SINGULARITY = mods["space-age"] ~= nil
+--- Krastorio 2 Spaced Out (issue #596) is an add-on of Krastorio 2 for Space Age; it reorders the upper tiers (below).
+local K2SO = mods["Krastorio2-spaced-out"] ~= nil
+local NO_SINGULARITY = mods["space-age"] ~= nil and not K2SO
 
 --- a unit of `count` with `time`, the packs listed (a fallback pack named twice is counted once)
 local function unit(count, time, packs)
@@ -234,6 +236,30 @@ local TECHS = {
 		NO_SINGULARITY and { "kr-matter-processing" } or { "kr-matter-processing", "kr-singularity-tech-card" } },
 	["me-crafting-storage-singularity"] = { 1000, 60, T_SINGULARITY },
 }
+--- Issue #596: Krastorio 2 Spaced Out's order of the upper tiers. Imersium processing is production and utility science (no
+--- matter card), the advanced tech card follows it and the energy control unit takes it, the matter tech card comes later
+--- (a trigger technology after Aquilo's cryogenic plant), and matter processing, the singularity tech card and what follows
+--- take the space, metallurgic, agricultural and electromagnetic science packs too. Its quantum computer needs Aquilo's
+--- quantum processor; the ME Quantum Bridge, which links the planets, takes only AI cores, so it follows the AI core
+--- technology there. Counts as Krastorio 2 Spaced Out's technologies of those tiers (matter processing 2000 x 45 s, the
+--- matter cube and singularity beacon 5000 x 60 s).
+if K2SO then
+	local SPACE = kr("space-science-pack", UTILITY)
+	local METALLURGIC = kr("metallurgic-science-pack", UTILITY)
+	local AGRICULTURAL = kr("agricultural-science-pack", UTILITY)
+	local ELECTROMAGNETIC = kr("electromagnetic-science-pack", UTILITY)
+	local SO_IMERSIUM = { PRODUCTION, UTILITY }
+	local SO_ADVANCED = { PRODUCTION, UTILITY, ADVANCED }
+	local SO_SINGULARITY = { PRODUCTION, UTILITY, SPACE, METALLURGIC, AGRICULTURAL, ELECTROMAGNETIC, MATTER, ADVANCED, SINGULARITY }
+	TECHS["me-quantum-bridge"] = { 750, 60, RGBPU, { "kr-ai-core" } }
+	for _, name in ipairs({ "me-storage-4096k", "me-crafting-storage-4096k", "me-fluid-storage-4096k" }) do TECHS[name][3] = SO_IMERSIUM end
+	for _, name in ipairs({ "me-storage-16384k", "me-crafting-accelerators-2", "me-crafting-storage-16384k", "me-fluid-storage-16384k" }) do
+		TECHS[name][3] = SO_ADVANCED
+	end
+	TECHS["me-storage-singularity"] = { 2000, 60, SO_SINGULARITY, { "kr-matter-processing", "kr-singularity-tech-card" } }
+	TECHS["me-crafting-storage-singularity"] = { 2000, 60, SO_SINGULARITY }
+end
+
 for _, name in ipairs(ME.technologies) do
 	local t = TECHS[name]
 	if t and data.raw.technology[name] then

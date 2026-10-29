@@ -11,14 +11,34 @@
 ---   matter, an import bus takes the matter a matter plant made (its output box) back into the network, at its temperature.
 --- * Steel pipes: Krastorio 2's steel pipe and steel pipe to ground connect to an ME Interface's side as a vanilla pipe does
 ---   (Krastorio 2's data-final-fixes gives every fluid box but a pipe's its steel pipe category).
+--- * Krastorio 2 Spaced Out (issue #596): an ME Quantum Bridge on this surface and one on Vulcanus (the planet's own surface),
+---   frequency 596: one network, an ME Interface on Vulcanus keeps 30 iron plates from the drive here.
 --- Loaded by control.lua like lab.lua.
 
-local NET, IO, SB, FL = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-storagebus", "gregtorio-me-fluids"
+local NET, IO, SB, FL, QB = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-storagebus", "gregtorio-me-fluids",
+	"gregtorio-me-qbridge"
 local SURFACE = "me-k2-test"
 local START, CHECK = 120, 900
 local MATTER = "kr-matter"
 
 local function active() return prototypes.entity["kr-warehouse"] ~= nil end
+--- Krastorio 2 Spaced Out with a planet to put the second bridge on
+local function spaced_out() return script.active_mods["Krastorio2-spaced-out"] ~= nil and game.planets["vulcanus"] ~= nil end
+
+--- Vulcanus's surface with a patch of concrete at its origin
+local function vulcanus()
+	local planet = game.planets["vulcanus"]
+	local s = planet.surface or planet.create_surface()
+	s.request_to_generate_chunks({ 0, 0 }, 1)
+	s.force_generate_chunk_requests()
+	for _, e in pairs(s.find_entities_filtered{ area = { { -16, -16 }, { 16, 16 } } }) do
+		if e.valid and e.type ~= "character" then e.destroy() end
+	end
+	local tiles = {}
+	for tx = -16, 15 do for ty = -16, 15 do tiles[#tiles + 1] = { name = "refined-concrete", position = { tx, ty } } end end
+	s.set_tiles(tiles)
+	return s
+end
 
 local function surface()
 	local s = game.surfaces[SURFACE]
@@ -114,14 +134,30 @@ return function(H)
 		sc.steel = me_place(s, fails, what, "kr-steel-pipe", ix + 1.5, -11.5)
 		sc.steel_ug = me_place(s, fails, what, "kr-steel-pipe-to-ground", ix + 0.5, -10.5, { direction = defines.direction.north })
 		sc.pipe = me_place(s, fails, what, "pipe", ix - 0.5, -11.5)
+		--- issue #596: a bridge here and one on Vulcanus
+		if spaced_out() then
+			power(s, fails, what, ix + 1, -18)                -- (a bridge draws from the power grid at its place)
+			sc.qa = me_place(s, fails, what, "me-quantum-bridge", ix + 4.5, -14.5)
+			members[#members + 1] = sc.qa
+			local v = vulcanus()
+			power(v, fails, what, 0, 0)
+			sc.qb = me_place(v, fails, what, "me-quantum-bridge", 6.5, 0.5)
+			sc.vface = me_place(v, fails, what, "me-network-interface", 8.5, 0.5)
+			if sc.qb and sc.vface then me_connect(fails, what, { sc.qb, sc.vface }) end
+		end
 		me_connect(fails, what, members)
 		--- the targets' contents
 		if sc.wh_t then sc.wh_t.insert{ name = "iron-plate", count = 300 } end
 		if sc.rq_t then sc.rq_t.insert{ name = "stone", count = 77 } end
 		if sc.huge_t then sc.huge_t.insert_fluid{ name = "crude-oil", amount = 5000 } end
 		--- the research server and the matter machines: a recipe each
-		sc.server_recipe = recipe_of("kr-research-data", function(r) return items_only(r.ingredients) end)
-			or recipe_of("kr-t2-tech-cards", function(r) return items_only(r.ingredients) end)
+		--- (the server's categories as the game has them: Krastorio 2 Spaced Out gives it others)
+		local cats = {}
+		for c in pairs(prototypes.entity["kr-research-server"].crafting_categories or {}) do cats[#cats + 1] = c end
+		table.sort(cats)
+		for _, c in ipairs(cats) do
+			sc.server_recipe = sc.server_recipe or recipe_of(c, function(r) return items_only(r.ingredients) end)
+		end
 		sc.assoc_recipe = recipe_of("kr-matter-deconversion", function(r) return has_fluid(r.ingredients, MATTER) end)
 		sc.plant_recipe = recipe_of("kr-matter-conversion", function(r) return has_fluid(r.products, MATTER) end)
 		for _, k in ipairs({ "server", "assoc", "plant" }) do
@@ -174,6 +210,14 @@ return function(H)
 			st.server_items = server
 			remote.call(IO, "set_bus_filters", sc.assoc, { "fluid/" .. MATTER })
 			remote.call(IO, "set_bus_filters", sc.plant, { "fluid/" .. MATTER })
+			if sc.qa then
+				expect(sc.qb and sc.qb.valid and sc.vface and sc.vface.valid, "the bridge on Vulcanus was not built")
+				if sc.qb and sc.qb.valid then
+					remote.call(IO, "set_interface_config", sc.vface, { [1] = { name = "iron-plate", quality = "normal", amount = 30 } }, {})
+					remote.call(QB, "set_frequency", sc.qa, 596)
+					remote.call(QB, "set_frequency", sc.qb, 596)
+				end
+			end
 			--- what the matter plant "made": its output box filled by hand
 			local out
 			for i = 1, sc.plant_t.fluids_count do        -- (the boxes the recipe uses: the index is the entity's, not the prototype's)
@@ -198,8 +242,11 @@ return function(H)
 		local function n(name) return remote.call(NET, "count", sc.wh, name) end
 		local function f(name) return remote.call(FL, "count", sc.wh, name, "any") end
 		--- items
-		expect(sc.wh_t.get_item_count("iron-plate") == 0 and n("iron-plate") == 700,
-			"import bus on a warehouse: " .. sc.wh_t.get_item_count("iron-plate") .. " left in it, the network " .. n("iron-plate") .. " (700)")
+		--- (with Krastorio 2 Spaced Out the interface on Vulcanus keeps 30 of the plates)
+		local away = sc.vface and sc.vface.valid and sc.vface.get_inventory(defines.inventory.chest).get_item_count("iron-plate") or 0
+		expect(sc.wh_t.get_item_count("iron-plate") == 0 and n("iron-plate") + away == 700,
+			"import bus on a warehouse: " .. sc.wh_t.get_item_count("iron-plate") .. " left in it, the network " .. n("iron-plate")
+			.. " and " .. away .. " on Vulcanus (700)")
 		expect(sc.sb_t.get_item_count("copper-plate") + n("copper-plate") == 500 and sc.sb_t.get_item_count("copper-plate") > 0,
 			"export bus into a strongbox: " .. sc.sb_t.get_item_count("copper-plate") .. ", the network " .. n("copper-plate"))
 		expect(n("stone") == 77, "storage bus on a requester warehouse: the network shows " .. n("stone") .. " stone (77)")
@@ -238,7 +285,13 @@ return function(H)
 		expect(joined(sc.pipe), "a vanilla pipe beside the ME Interface is not connected to its side")
 		expect(joined(sc.steel), "a steel pipe beside the ME Interface is not connected to its side")
 		expect(joined(sc.steel_ug), "a steel pipe to ground beside the ME Interface is not connected to its side")
-		report(st, "warehouse, strongbox, requester warehouse, big and huge tank, advanced lab, research server ("
+		if sc.qa then
+			local held = sc.vface.get_inventory(defines.inventory.chest).get_item_count("iron-plate")
+			expect(remote.call(NET, "same_network", sc.qa, sc.qb) == true and held == 30,
+				"the bridges on this surface and on Vulcanus: " .. tostring((remote.call(QB, "info", sc.qa) or {}).status)
+				.. ", the interface on Vulcanus holds " .. held .. " iron plates (30)")
+		end
+		report(st, (sc.qa and "Krastorio 2 Spaced Out: a network across this surface and Vulcanus; " or "") .. "warehouse, strongbox, requester warehouse, big and huge tank, advanced lab, research server ("
 			.. tostring(sc.server_recipe) .. "), matter associator (" .. tostring(sc.assoc_recipe) .. ") and plant, steel pipes")
 	end
 

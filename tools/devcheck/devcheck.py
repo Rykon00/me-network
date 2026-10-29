@@ -68,10 +68,6 @@ REMOVED_KEYS_OTHER_MODS = {
     "pump/configurable-valve": "configurable-valves 2.0.2 (for Factorio 2.1) still sets hide_connection_info on its fluid box",
     "storage-tank/configurable-valve-guage-input": "configurable-valves 2.0.2, as above",
     "storage-tank/configurable-valve-guage-output": "configurable-valves 2.0.2, as above",
-    # issue #591: Krastorio 2 2.1.4 (devcheck --with-mod Krastorio2)
-    "car/tank": "Krastorio 2 2.1.4 sets braking_power on the vanilla tank",
-    "mining-drill/kr-electric-mining-drill-mk2": "Krastorio 2 2.1.4 still sets the circuit connector layers of 2.0",
-    "mining-drill/kr-electric-mining-drill-mk3": "Krastorio 2 2.1.4, as above",
 }
 NAME = "me-network"
 TEXTURES = "me-network-ae2-textures"     # the texture mod in ae2-textures/ (issue #239), required since issue #325
@@ -826,9 +822,17 @@ def check_map(a, mapfile, textures=None):
     # probability, an item's fuel_category, a fluid box's temperatures) and ignores the others: those fail silently
     rows = [r for r in sec.get("REMOVEDKEYS", []) if len(r) > 1]
     other = [r for r in rows if re.split(r"[.\[]", r[0])[0] in REMOVED_KEYS_OTHER_MODS]
-    removed = [f"{r[0]}: {r[1]}" for r in rows if r not in other]
+    # issue #591: with --with-mod, a key on a prototype that is not this mod's (its items, recipes and technologies, the
+    # entities named me-...) is the third-party mod's (Krastorio 2 2.1.4 still sets 2.0 keys)
+    own_names = {r[1] for r in sec.get("OWN", []) if len(r) > 1}
+    def ours(r):
+        name = re.split(r"[.\[]", r[0])[0].split("/", 1)[-1]
+        return name in own_names or name.startswith("me-") or name == "fluix-cable"
+    third = [r for r in rows if r not in other and getattr(a, "with_mod", None) and not ours(r)]
+    removed = [f"{r[0]}: {r[1]}" for r in rows if r not in other and r not in third]
     report("prototype keys that Factorio removed, of other mods (information: REMOVED_KEYS_OTHER_MODS)",
            [f"{r[0]}: {r[1]} ({REMOVED_KEYS_OTHER_MODS[re.split(r'[.\[]', r[0])[0]]})" for r in other])
+    report("prototype keys that Factorio removed, of the mods of --with-mod (information)", [f"{r[0]}: {r[1]}" for r in third])
     print(f"prototype keys removed by Factorio {FACTORIO_VERSION}: {len(removed)}")
     report("prototype keys that Factorio removed (removed-keys.lua; ignored when loaded: they fail silently)", removed)
     tab, tab_info = check_tab(sec, getattr(a, "with_gregtorio", None))
