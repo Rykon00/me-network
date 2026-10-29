@@ -4647,7 +4647,7 @@ function scheduler_test()
 	elseif st.phase == 4 then
 		--- a full storage bus is passed by until its next read
 		local inv = c3.get_inventory(defines.inventory.chest)
-		inv.insert{ name = "iron-plate", count = 100 * #inv }
+		inv.insert{ name = "iron-plate", count = prototypes.item["iron-plate"].stack_size * #inv }    -- (Krastorio 2: 200 a stack)
 		remote.call(SB, "visit", s1)
 		local full = c3.get_item_count("iron-plate")
 		local total = count("iron-plate")
