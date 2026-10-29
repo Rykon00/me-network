@@ -303,7 +303,7 @@ click uses the tool and opens no window, as on a chest.
 | Block | Window |
 |---|---|
 | ME Terminal | the hub above; shift + click in your inventory stores (a View Cell: into its view cell slots, issue #440) |
-| ME Pattern Terminal | the pattern editor, the blank pattern slot, **Encode**, the output slot, **Load pattern**, **Clear pattern**; shift + click in your inventory: blank patterns into the blank slot, an encoded pattern into the output slot |
+| ME Pattern Terminal | the pattern editor, the blank pattern slot, **Encode**, the output slot, **Load pattern**, **Clear pattern**; **Clear patterns in inventory** (every encoded pattern in your inventory becomes a blank) and **Clear unused network patterns** (every encoded pattern in the network that no provider of it holds or waits for, broken ones always, becomes a blank in the network), each after a question that names the count (issue #585); shift + click in your inventory: blank patterns into the blank slot, an encoded pattern into the output slot |
 | ME Interface Terminal | the network's providers and interfaces, six to a page: search, machine filter, "only with free slots"; per block its name, position, the machines next to it, its pattern slots (a click works as in the provider's window) or config rows, **Rename** (providers), **Locate**, **Open**; shift + click an encoded pattern in your inventory: into the first free slot of the first provider listed |
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
@@ -1403,6 +1403,11 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   its window has a line above the slots, and the player who built it is told once (a flying text at the block, or a
   chat line with its place when robots built it). Click such a slot to forget it. Old blueprints (0.4.1 and older) with
   a furnace recipe choice give a processing pattern of that recipe, the same way.
+* **Settings paste** (shift + right click on one provider, shift + left click on another; issue #585) does the same with the
+  source's patterns: each goes into the same slot of the destination when that slot is empty and is filled in the order
+  above, from your inventory first; a slot that holds a pattern keeps it, and what finds nothing waits.
+* **Return all patterns** (a button in the provider's window, issue #585) puts every pattern of the provider into its
+  network as an encoded pattern and forgets the ones it waits for; what the network has no room for stays.
 * **Settings paste** (shift right click, shift left click) and cloning copy the **priority**, the **blocking mode**
   (issue #335) and the **lock** setting (issue #346); patterns are items and stay where they are.
 * **The name** a provider got in the ME Interface Terminal (issue #336) goes with blueprints and clones, not with a
@@ -1661,7 +1666,7 @@ connects whatever touches it, like the cable, but only while it is **joined**:
 
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
-| ME Pattern Provider | priority; its blocking mode (issue #335) and lock (issue #346); its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network); its name (issue #336) | yes (priority, blocking mode, lock, cards) | yes (patterns pending a blank pattern, blocking mode, lock, cards, name); clone: priority, blocking mode, lock, cards, name |
+| ME Pattern Provider | priority; its blocking mode (issue #335) and lock (issue #346); its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network); its name (issue #336) | yes (priority, blocking mode, lock, cards; patterns into its empty slots, as from a blueprint, issue #585) | yes (patterns pending a blank pattern, blocking mode, lock, cards, name); clone: priority, blocking mode, lock, cards, name |
 | ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority, its Interface Capacity Cards (the copy wants them from the player, then the network) | yes | yes (old blueprints with slot filters are converted); the cards first, so the rows they give room for are there |
 | ME Import Bus, ME Export Bus | filters (items and fluids, also the ones kept beyond its Capacity Cards, issue #413); which cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |

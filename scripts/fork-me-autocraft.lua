@@ -3879,18 +3879,116 @@ function M.provider_info(entity)
 	return out
 end
 
---- settings paste (shift right click, shift left click): the priority. Patterns are items: they are not copied.
-function M.on_entity_settings_pasted(event)
+--- settings paste (shift right click, shift left click): the priority, the blocking mode, the lock, the cards and (issue #585)
+--- the patterns. The source's patterns go into the destination's empty slots through the blueprint's path (M.apply_settings:
+--- waiting in their slots, filled by fill_pending from the pasting player's inventory first: an encoded copy of the inventory,
+--- of the network, a blank of the inventory, of the network); what finds none waits. A slot that holds a pattern keeps it.
+--- `inv`: an inventory standing for the player's (the runtime test).
+function M.on_entity_settings_pasted(event, inv)
 	local src, dst = event.source, event.destination
 	if not (src and src.valid and dst and dst.valid and src.name == PROVIDER and dst.name == PROVIDER) then return end
-	M.set_priority(dst, M.get_priority(src))
 	M.set_blocking(dst, M.get_blocking(src))         -- (issue #335)
 	M.set_lock(dst, M.get_lock(src))                 -- (issue #346)
+	local player = event.player_index and game.get_player(event.player_index) or nil
 	local from = provider_record(src)                -- issue #156: the Pattern Capacity Cards it has are wanted (from the player, then the network)
 	if from then
-		local player = event.player_index and game.get_player(event.player_index) or nil
 		cards.want_cards(dst, from.want and { table.unpack(from.want) } or cards.card_list(from) or {}, player)
 	end
+	inv = inv or player and player.get_main_inventory() or nil
+	local settings = M.provider_settings(src)
+	M.apply_settings(dst, { priority = settings.priority, patterns = settings.patterns }, nil, inv)
+	local p = provider_record(dst)
+	if p and p.pending and player then M.tell_waiting(p, player, true) end
+end
+
+--- Issue #585: "Return all patterns" of the provider window: every pattern of the provider goes into its network as an encoded
+--- pattern, and the slots waiting for one forget it, so a provider is emptied in one click (AE2-Unofficial's interface terminal
+--- moves an interface's patterns into the player's inventory instead: space + click, ContainerInterfaceTerminal MOVE_REGION).
+--- A pattern the network has no room for stays in its slot. Returns the number moved and the number left, or nil and a reason.
+function M.return_patterns(entity)
+	local p = provider_record(entity)
+	if not p then return nil, "no-provider" end
+	local net = N.network_of(entity)
+	local ok, why = N.usable(net)
+	if not ok then return nil, why end
+	p.pending = nil
+	local moved, left = 0, 0
+	local tmp = game.create_inventory(1)
+	for slot = 1, MAX_SLOTS do
+		local raw = p.slots[slot]
+		if raw then
+			tmp[1].set_stack(slot_stack(raw))
+			if N.insert_stack(net, tmp[1]) then
+				p.slots[slot] = nil
+				moved = moved + 1
+			else
+				tmp[1].clear()                           -- (it stays in the slot)
+				left = left + 1
+			end
+		end
+	end
+	tmp.destroy()
+	changed(p)
+	return moved, left
+end
+
+--- Issue #585: the encoded patterns stored in network `net` that no pattern provider of it holds or waits for (a broken one,
+--- "Broken pattern: clear it", always): { { key, count } } sorted by key, and their total
+function M.unused_network_patterns(net)
+	local held = {}
+	for _, p in ipairs(M.provider_records(net)) do
+		for _, raw in pairs(p.slots) do
+			local def = P.normalize(raw)
+			if def then held[P.id_of(def)] = true end
+		end
+		for _, def in pairs(p.pending or {}) do held[P.id_of(def)] = true end
+	end
+	local out, total, prefix = {}, 0, M.ENCODED_PREFIX
+	for key, count in pairs(net.items) do
+		local def
+		if count > 0 and key:sub(1, #prefix) == prefix then
+			local data = helpers.json_to_table(key:sub(#prefix + 1))
+			local raw = type(data) == "table" and type(data.tags) == "table" and data.tags[P.TAG]
+			def = type(raw) == "table" and P.normalize(raw) or nil
+		end
+		if count > 0 and (key == P.ENCODED or key:sub(1, #prefix) == prefix) and not (def and held[P.id_of(def)]) then
+			out[#out + 1] = { key = key, count = count }
+			total = total + count
+		end
+	end
+	table.sort(out, function(a, b) return a.key < b.key end)
+	return out, total
+end
+
+--- Issue #585: "Clear unused network patterns" of the ME Pattern Terminal: each unused encoded pattern of `net` becomes a blank
+--- pattern in it, through the storage engine (taken out, a blank put in: nothing is made or lost). When the network has no room
+--- for a blank, that pattern goes back and the rest stay as they are; one that cannot go back either (a storage bus that only
+--- reads) goes to `back` (G.give_back: the player, else the ground at `entity`). Returns the number cleared and the number
+--- left (0 unless the network was full).
+function M.clear_network_patterns(net, back, entity)
+	if not (net and N.usable(net)) then return 0, 0 end
+	local list = M.unused_network_patterns(net)
+	local cleared, full = 0, false
+	local tmp = game.create_inventory(1)
+	for _, u in ipairs(list) do
+		for _ = 1, u.count do
+			if N.extract_to(net, tmp[1], u.key, 1) ~= 1 then break end      -- (gone since: a storage bus's chest)
+			if store_item(net, P.BLANK, "normal", 1) == 1 then          -- (never offered to a job that waits for blanks)
+				tmp[1].clear()
+				cleared = cleared + 1
+			else
+				N.insert_stack(net, tmp[1])
+				if tmp[1].valid_for_read then G.give_back(back, tmp[1], entity) end
+				full = true
+				break
+			end
+		end
+		if full then break end
+	end
+	tmp.destroy()
+	if not full then return cleared, 0 end
+	local _, left = M.unused_network_patterns(net)
+	return cleared, left
 end
 
 --- The blueprint settings of a provider: { priority, patterns = { ["slot"] = pattern } } (its patterns and those
@@ -4425,7 +4523,22 @@ remote.add_interface("gregtorio-me-autocraft", {
 	set_label = function(provider, text) return M.set_label(provider, text) end,
 	provider_near = function(provider) local p = provider_record(provider) return p and p.near or nil end,
 	provider_settings = function(provider) return M.provider_settings(provider) end,
-	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
+	--- (issue #585: `inv` an inventory standing for the pasting player's)
+	paste = function(source, destination, inv) M.on_entity_settings_pasted({ source = source, destination = destination }, inv) end,
+	--- issue #585: the provider window's "Return all patterns"; the ME Pattern Terminal's "Clear unused network patterns" (its
+	--- count, and the clear: `back` an inventory for a pattern that can go nowhere)
+	return_patterns = function(provider) return M.return_patterns(provider) end,
+	unused_network_patterns = function(entity)
+		local net = network_of(entity)
+		if not net then return 0 end
+		local _, total = M.unused_network_patterns(net)
+		return total
+	end,
+	clear_network_patterns = function(entity, back)
+		local net = network_of(entity)
+		if not net then return 0, 0 end
+		return M.clear_network_patterns(net, back, entity)
+	end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
 	--- the provider removal of the build events (mined: `buffer`, destroyed: nil)
 	on_removed = function(provider, buffer) M.on_removed(provider, buffer) end,

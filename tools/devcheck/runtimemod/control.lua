@@ -1141,6 +1141,9 @@ celllight468 = require("celllight")({ me_place = me_place, power = power, me_rep
 --- me-network issue #558: a pattern provider's waiting patterns, their status and the sources that fill them (pending.lua)
 pending558 = require("pending")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
 	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #585: settings paste of a provider's patterns, bulk clearing of encoded patterns (patternbulk.lua)
+patternbulk585 = require("patternbulk")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #561: the ME Memory Card (memcard.lua)
 memcard561 = require("memcard")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
 	me_drive = function(...) return me_drive(...) end })
@@ -1301,6 +1304,7 @@ local function tests_running()
 	singfluid562.running(check)
 	wgroup559.running(check)
 	memcard561.running(check)
+	patternbulk585.running(check)
 	pending558.running(check)
 	celllight468.running(check)
 	maintrows351.running(check)
@@ -1748,11 +1752,19 @@ function furnace_test()
 		local ok, why = remote.call(PT, "clear", pterm, hand[1], inv)
 		expect(not ok and why == "no-pattern-in-hand", "clearing a blank pattern: " .. tostring(why))
 		expect(inv.get_item_count(ENCODED) == 0 and not remote.call(A, "provider_info", pa).slots[1], "slot 1 not empty after taking the pattern")
-		--- settings paste: the priority, no patterns
+		--- settings paste: the priority, and (issue #585) the pattern of slot 2, encoded from the network's last blank; taken out
+		--- and cleared to a blank again, back into the network
 		remote.call(A, "set_priority", pa, 5)
 		remote.call(A, "paste", pa, pb)
 		local pbi = remote.call(A, "provider_info", pb)
-		expect(pbi.priority == 5 and next(pbi.slots) == nil, "pasted provider " .. serpent.line(pbi))
+		expect(pbi.priority == 5 and pbi.slots[2] and not pbi.slots[2].pending and pbi.slots[2].kind == "processing"
+			and not pbi.slots[1] and count(BLANK) == FU_BLANKS - 2, "pasted provider " .. serpent.line(pbi) .. ", blanks " .. count(BLANK))
+		local h2 = game.create_inventory(1)                       -- (the hand still holds the blank cleared above)
+		expect(remote.call(A, "provider_click", h2[1], inv, pb, 2, false) == nil and remote.call(PT, "clear", pterm, h2[1], inv)
+			and h2[1].valid_for_read and h2[1].name == BLANK and remote.call(TERM, "store_stack", terminal, h2[1]) == 1
+			and count(BLANK) == FU_BLANKS - 1 and next(remote.call(A, "provider_info", pb).slots) == nil,
+			"the pasted pattern cleared back into the network: blanks " .. count(BLANK))
+		h2.destroy()
 		--- blueprint: priority and patterns as entity tag
 		local bpi = game.create_inventory(1)
 		bpi.insert{ name = "blueprint" }
@@ -2284,6 +2296,7 @@ script.on_nth_tick(10, function()
 	singfluid562.tick()
 	wgroup559.tick()
 	memcard561.tick()
+	patternbulk585.tick()
 	pending558.tick()
 	celllight468.tick()
 	maintrows351.tick()
@@ -5192,6 +5205,7 @@ script.on_init(function()
 	for _, f in pairs(singfluid562.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wgroup559.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(memcard561.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(patternbulk585.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pending558.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(celllight468.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end

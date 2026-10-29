@@ -1257,6 +1257,8 @@ local function open_provider(player, entity, opts)
 	G.label(content, { "fork-me-gui.connector-hint-provider" }, WIDTH)   -- (issue #429: its circuit connector)
 	G.label(content, "", WIDTH, "caption_label", "fork_me_provider_count")
 	G.label(content, "", WIDTH, nil, "fork_me_provider_pending")          -- (issue #558: how many patterns wait)
+	G.row(content).add{ type = "button", caption = { "fork-me-gui.provider-return" },     -- (issue #585)
+		tooltip = { "fork-me-gui.provider-return-tooltip" }, tags = G.act("prov_return") }
 	local scroll = content.add{ type = "scroll-pane", name = "fork_me_provider_scroll", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = 380
 	scroll.add{ type = "flow", name = "fork_me_provider_slots", direction = "vertical" }
@@ -1350,6 +1352,20 @@ G.on("prov_unlock", function(event, player)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if entity then autocraft.unlock(entity) end
+	G.refresh_one(player)
+end)
+
+--- Issue #585: "Return all patterns": the provider's patterns go into its network (what does not fit stays)
+G.on("prov_return", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local moved, left = autocraft.return_patterns(entity)
+	local text
+	if not moved then text = G.net_message(left)
+	elseif left > 0 then text = { "fork-me-gui.provider-returned-full", moved, left }
+	else text = { "fork-me-gui.provider-returned", moved } end
+	player.create_local_flying_text{ text = text, create_at_cursor = true }
 	G.refresh_one(player)
 end)
 
@@ -2629,6 +2645,36 @@ remote.add_interface("gregtorio-me-gui", {
 			remote = A.cursor_transfer })[mode]
 		return G.block_action(G.def_of(entity), entity, binv, slot, action, mode ~= "remote" and cursor or nil, inventory,
 			mode == "remote", offset)
+	end,
+	--- Issue #585: a left click on the element of the stand-in's open window whose action is `act` (and whose tags.what is `what`
+	--- when given, false: any), through the action's handler; then the captions of the labels in the window's element `element` (nil: none)
+	--- and the captions of its buttons. Returns false when there is no such element.
+	stand_in_act = function(name, act, what, element)
+		local sp = stand_ins[name]
+		local frame = G.window_of(sp)
+		local function each(root, fn)
+			local queue, i = { root }, 1
+			while root and queue[i] do
+				for _, c in pairs(queue[i].children) do
+					if fn(c) then return c end
+					queue[#queue + 1] = c
+				end
+				i = i + 1
+			end
+		end
+		local el = act and each(frame, function(c)
+			local tags = c.tags or {}
+			return tags.fork_me_act == act and (not what or tags.what == what)
+		end)
+		if act and not (el and G.run_action({ name = defines.events.on_gui_click, element = el,
+			button = defines.mouse_button_type.left }, sp, el)) then return false end
+		frame = G.window_of(sp)
+		local labels, buttons = {}, {}
+		each(frame and element and G.find(frame, element), function(c)
+			if c.type == "label" then labels[#labels + 1] = c.caption end
+			if c.type == "button" then buttons[#buttons + 1] = c.caption end
+		end)
+		return { labels = labels, buttons = buttons }
 	end,
 	stand_in_sounds = function(name) return stand_ins[name].sounds end,
 	stand_in_forget = function(name) stand_ins[name] = nil stand_in_frames[name] = nil end,
