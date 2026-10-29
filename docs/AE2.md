@@ -848,6 +848,18 @@ The ME Molecular Assembler is made again after Krastorio 2's changes, from the a
 that point (without Krastorio 2: the same; Krastorio 2's own machine categories such as crushing or electrolysis are never
 the assembling machine 2's), so it crafts Krastorio 2's assembler recipes such as the automation core.
 
+#### Krastorio 2's buildings
+
+Tested with Krastorio 2 loaded (issue #595, the runtime test `krastorio2.lua`), nothing of ME Network names them: the
+warehouses and strongboxes of every kind are chests for the import, export and storage bus and the ME Interface
+(containers and logistic containers: a storage bus on a requester warehouse shows and takes its contents); the big and huge
+storage tanks are tanks for the fluid side of the buses; the advanced lab takes science packs from an export bus as the
+vanilla lab does, and the research server is a crafting machine (an export bus fills its recipe's ingredients). Matter
+(`kr-matter`) is a fluid like any other: it is kept in fluid cells, an export bus fills it into a matter associator and an
+import bus takes it out of a matter plant, at its temperature (25 degrees). Krastorio 2's steel pipe and steel pipe to
+ground connect to the sides of an ME Interface (and an ME Chest) where a vanilla pipe does: Krastorio 2 lets every fluid
+box but a pipe's take its steel pipes.
+
 #### Technologies with Krastorio 2
 
 With Krastorio 2 the storage ladder follows its science tiers (issue #594): up to 256k the vanilla packs as without it, 1024k

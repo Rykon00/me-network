@@ -1203,6 +1203,7 @@ RUNTIME_TESTS = (
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
     ("IFACEFLUIDS", "ME interface window fluids (issue #311)"),
+    ("KRASTORIO2", "Krastorio 2 targets (issue #595)"),
     ("DONE", "all tests reported"),
 )
 
