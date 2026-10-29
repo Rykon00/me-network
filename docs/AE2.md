@@ -351,6 +351,14 @@ same lamp condition, so blueprints and settings paste of the game keep it).
 * **ME Wireless Terminal Module**: equipment for the armour's grid (2 x 2) that works like the item without charging: the grid
   charges it (20 MJ) and the window is paid from it. It is used before an item. Link it by pointing at an access point or the
   ME Controller and pressing the key.
+* **Refill** (issue #603, the module only): while you wear the linked module inside the range of an access point of its
+  network, the network serves your **personal logistics** without a window: what your logistic requests ask for (their
+  minimums) comes out of the network, at most one stack per request every half second, and whatever you put into your
+  **trash slots** goes into it. It needs personal logistics (the research that unlocks your logistic requests), and nothing
+  happens while you switched them off. Every item moved costs 50 J from the ME Controller (`refill_energy` in the mod data;
+  AE2 pays 1 AE per item it takes out of the network): what the controller holds beyond one tick of its draw pays, and what
+  it cannot pay for waits. The network comes first: your logistic robots bring only what it lacks. The map settings
+  "Wireless refill: players visited per tick" (at least 1, at most 4) set its share of the ticks; `/me-stats` shows its queue.
 
 ## Import and export
 

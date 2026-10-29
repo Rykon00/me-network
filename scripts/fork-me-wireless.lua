@@ -47,6 +47,8 @@ local function state()
 	return s
 end
 
+M.state = state                                     -- (issue #603: the refill keeps its queue here)
+
 local function player_state(player)
 	local s = state()
 	local ps = s.players[player.index]
@@ -139,6 +141,7 @@ local function controller_of(unit)
 	local e = unit and G.entity_by_unit(unit)
 	return e and e.valid and N.kind_of(e.name) == "controller" and e or nil
 end
+M.controller_of = controller_of                       -- (issue #603: the refill)
 
 --------------------------------------------------------------------------------
 --- the terminal item and the module (#207, #209)
@@ -189,6 +192,9 @@ local function item_of(player)
 	end
 	return first
 end
+
+--- issue #603: the controller unit the player's module is linked to (the refill)
+function M.module_link(player) return player_state(player).link end
 
 --- What the player opens the wireless window with: { kind = "module", eq, link, energy } or { kind = "item", stack, link,
 --- energy }; the module comes first. nil when the player has neither.
@@ -682,6 +688,14 @@ G.window("charger", { open = open_charger, refresh = function(player, frame) ret
 --------------------------------------------------------------------------------
 
 remote.add_interface("gregtorio-me-wireless", {
+	--- issue #603, the refill (scripts/fork-me-wireless-refill.lua): a character without a player as a record of its queue,
+	--- linked to the network of controller `ctrl` (returns its unit); one visit of a record now (the items moved); the energy
+	--- the controllers paid so far; the energy per item; the queue's records
+	refill_add = function(character, ctrl) return M.refill.add_character(character, ctrl) end,
+	refill_visit = function(unit) return M.refill.visit_now(unit) end,
+	refill_paid = function() return M.refill.paid() end,
+	refill_energy = function() return M.refill.energy_per_item() end,
+	refill_records = function() local n = 0 for _ in pairs(state().refill and state().refill.recs or {}) do n = n + 1 end return n end,
 	range_of = function(b) return M.range_of(b) end,
 	power_of = function(b) return M.power_of(b) end,
 	ap_range = function(entity) return M.ap_range(entity) end,

@@ -27,6 +27,28 @@ Everything below is the **design as written before** it was built (the decisions
 - Power: the **item has an energy buffer** (in its tags); the **module** takes its energy from the armour's equipment grid.
 - **One item with a mode switch** (terminal / pattern terminal); the module follows the same rule.
 
+## The refill (issue #603, decided 2026-10-29)
+
+The module (only the module, not the item) serves the player's personal logistics from the ME network, in the background
+(`scripts/fork-me-wireless-refill.lua`):
+
+- **List:** the game's own: the requests of the character's logistic sections (the requester point's compiled filters, their
+  minimums) and its trash slots. A force without personal logistics (not researched) or a player who switched them off gets
+  nothing.
+- **Range:** inside the range of an access point of the module's network only (as the window); a Quantum Link Card does not
+  extend it.
+- **Energy:** per item moved, `refill_energy` = 50 J (mod data `fork-me-network`, `wireless`), out of the network's controllers
+  (`N.pay_energy`: what each holds beyond one tick of its draw, by unit number). AE2 pays 1 AE per item it takes out of the
+  network (`Platform.poweredExtraction`); the access point's numbers above put 1 AE at about 40 J. What the controllers cannot
+  pay for does not move.
+- **Robots:** the network serves first; robots only fill what it could not. No setting.
+- **Queue:** one record per player whose character has the module (made when the module goes into the armour, the player joins
+  or respawns, and on a configuration change; dropped when the module, the character or the player is gone) in a scheduler
+  queue of its own (tag `wireless_refill`, `/me-stats`), budget: the map settings "Wireless refill: players visited per tick"
+  (1 at least, 4 at most). A visit fills each request that is below its minimum by at most one stack and stores every trash
+  stack; it comes back after 30 ticks when it moved something, 120 when it found nothing to do, 300 outside every range,
+  without a link, a network or personal logistics.
+
 ## What AE2-Unofficial does (read, not copied; LGPL, a port would be written anew)
 
 From `core/AEConfig.java`, `tile/networking/TileWireless.java`, `helpers/WirelessTerminalGuiObject.java`,

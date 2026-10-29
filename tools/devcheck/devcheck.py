@@ -1143,6 +1143,7 @@ RUNTIME_TESTS = (
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"), ("QUALITYTERM", "ME Terminal quality filter and sort test"),
     ("SORTPREFS", "ME Terminal sort preference test"),
+    ("WREFILL", "ME wireless refill test"),
     ("HOLDERLISTS", "ME holder lists test"),
     ("CRAFTER", "ME crafter choice test"),
     ("HOLDERS", "ME holder cursor test"),
@@ -1545,6 +1546,7 @@ PROFILE_WRAP = {
                                                "demand_step", "scan_point", "scan_key", "decide", "auto_request",
                                                "auto_blocks", "me_waits"],
     # issue #538: what construction needs
+    "scripts/fork-me-wireless-refill.lua": ["M.on_tick", "visit", "M.serve", "pay"],      # (issue #603)
     "scripts/fork-me-logistic-construction.lua": ["M.on_built", "M.on_object_destroyed", "M.on_tick", "track", "put", "drop",
                                                   "needs_of", "lid_of", "rescan_cell"],
     "scripts/fork-me-autocraft.lua": ["job_step", "maintenance", "scan_provider", "refresh_providers",
@@ -1893,7 +1895,9 @@ def bench_config(a, scene, size, variant, profile):
            # issue #537: that many requester chests in the logistic network (for the ME Logistic Interface's automatic mode)
            "requesters": (getattr(a, "requesters", 0) or 0) if scene == "me" else 0,
            # issue #538: that many wall ghosts pasted in one tick (and removed in one) in that logistic network, after the burst
-           "ghosts": (getattr(a, "ghosts", 0) or 0) if scene == "me" else 0}
+           "ghosts": (getattr(a, "ghosts", 0) or 0) if scene == "me" else 0,
+           # issue #603: that many characters with the ME Wireless Module and logistic requests at an access point
+           "refill": (getattr(a, "refill", 0) or 0) if scene == "me" else 0}
     return cfg
 
 
@@ -2188,6 +2192,7 @@ def print_service(s):
     for q in ("io", "io_probe", "storage_bus", "storage_bus_probe", "fluid_storage_bus", "fluid_storage_bus_probe",
               "logistic_storage_bus", "logistic_storage_bus_probe",                   # (issue #506)
               "logistic_interface", "logistic_interface_probe", "logistic_demand",  # (issue #531, #537)
+              "wireless_refill",                                                       # (issue #603)
               "maintainer", "maintainer_probe", "circuit", "jobs"):
         st = sched.get(q)
         if not st or not (st.get("visits") or st.get("due")):
@@ -2535,6 +2540,8 @@ def main():
                    "logistic network that ask for items it holds, items only the ME network has and items nobody has")
     p.add_argument("--ghosts", type=int, default=0, metavar="N", help="issue #538: with --logistic, N wall ghosts pasted in one tick "
                    "in the logistic network after the build burst, then removed in one tick")
+    p.add_argument("--refill", type=int, default=0, metavar="N", help="issue #603: every ME scene also gets N characters with the "
+                   "ME Wireless Module and 10 logistic requests each at an access point (the wireless refill's queue)")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "

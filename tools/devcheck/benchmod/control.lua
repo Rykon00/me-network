@@ -248,6 +248,12 @@ local function count_world()
 	for _, r in pairs(s.find_entities_filtered{ type = "logistic-robot" }) do
 		inv_add(out, r.get_inventory(defines.inventory.robot_cargo))
 	end
+	for _, c in pairs(s.find_entities_filtered{ type = "character" }) do            -- (issue #603: the refill's characters)
+		for _, i in ipairs({ defines.inventory.character_main, defines.inventory.character_trash }) do
+			local inv = c.get_inventory(i)
+			if inv then inv_add(out, inv) end
+		end
+	end
 	for _, r in pairs(s.find_entities_filtered{ type = "roboport" }) do
 		inv_add(out, r.get_inventory(defines.inventory.roboport_material))
 	end
@@ -950,6 +956,58 @@ local function build_logistic(b, part, members)
 	b.lifs = { list = lifs, items = items }
 end
 
+--- Issue #603 (`refill` = N, devcheck.py bench --refill N): an ME Wireless Access Point on the spine's top and N characters
+--- without players around it (inside its range), each in modular armour with the ME Wireless Module and a logistic section
+--- of REFILL_REQS requests: half of them raw items of the scene (REFILL_MIN each, the network has them), half items the
+--- network never holds (open: every visit looks at them). Every SAMPLE_TICKS inside the window the requested items of every
+--- character go into its trash slots (the churn): the refill stores them and fills the requests again. A version without the
+--- refill (a --check reference) gets the same characters, which then hold what they hold. The characters' inventories count
+--- in the conservation check.
+local REFILL_REQS, REFILL_MIN = 10, 50
+local function build_refill(b, part, members)
+	local n = C.refill
+	local s = surface()
+	local ap = place("me-wireless-access-point", p1(X0 - 1, part.y - 1))
+	if ap then members[#members + 1] = ap end
+	local open = {}
+	for name in pairs(prototypes.item) do
+		if #open < REFILL_REQS and plain(name) and not prototypes.recipe[name] then open[#open + 1] = name end
+	end
+	table.sort(open)
+	local chars = {}
+	for k = 0, n - 1 do
+		local pos = s.find_non_colliding_position("character", { X0 - 6 - 2 * (k % 10), part.y - 3 - 2 * math.floor(k / 10) }, 10, 0.5)
+		local c = pos and s.create_entity{ name = "character", position = pos, force = "player" }
+		if c then
+			c.get_inventory(defines.inventory.character_armor).insert{ name = "modular-armor" }
+			if c.grid and prototypes.equipment["me-wireless-module"] then c.grid.put{ name = "me-wireless-module" } end
+			local sec = c.get_requester_point().add_section()
+			for i = 1, REFILL_REQS do
+				local name = i % 2 == 1 and RAW[(k + i) % #RAW + 1] or open[(k + i) % #open + 1]
+				if name then sec.set_slot(i, { value = { name = name, quality = "normal", comparator = "=" }, min = REFILL_MIN }) end
+			end
+			chars[#chars + 1] = c
+		end
+	end
+	b.refill = { ap = ap ~= nil, characters = chars, n = #chars }
+end
+
+--- issue #603: the churn, every character's requested raw items into its trash slots
+local function refill_churn(b)
+	for _, c in ipairs(b.refill.characters) do
+		if c.valid then
+			local main, trash = c.get_inventory(defines.inventory.character_main), c.get_inventory(defines.inventory.character_trash)
+			for i = 1, #main do
+				local st = main[i]
+				if st.valid_for_read and trash and trash.can_insert(st) then
+					local got = trash.insert(st)
+					if got > 0 then st.count = st.count - got end
+				end
+			end
+		end
+	end
+end
+
 local function build_me()
 	local b = storage.b
 	research_all(game.forces.player)
@@ -975,6 +1033,7 @@ local function build_me()
 	b.anchor = b.parts[1].anchor
 	b.cpus = b.parts[1].cpus
 	if (C.logistic or 0) > 0 then build_logistic(b, b.parts[K], members) end   -- (issue #506)
+	if (C.refill or 0) > 0 then build_refill(b, b.parts[1], members) end         -- (issue #603)
 	if C.noent then
 		--- the engine's share: the ME entities are placed like the rest and destroyed again before the mod ever
 		--- registers them (nothing to sweep, no cells to spill); the chests, tanks, machines, inserters and power stay
@@ -991,6 +1050,15 @@ local function build_me()
 	log({ "", "DEVCHECK-BENCH-BUILD registered ", #members, " members: ", prof })
 	local types = 0
 	for k = 1, K do types = types + configure_part(b, b.parts[k], k == 1) end
+	--- issue #603: the characters join the refill's queue (where the version has it)
+	if b.refill then
+		local wl = remote.interfaces["gregtorio-me-wireless"]
+		b.refill.queued = wl and wl.refill_add ~= nil or false
+		for _, c in ipairs(b.refill.characters) do
+			if b.refill.queued then remote.call("gregtorio-me-wireless", "refill_add", c, b.anchor) end
+		end
+		b.refill.characters_n = #b.refill.characters
+	end
 	--- issue #531: the logistic interfaces' rows (registered now): distinct kinds offered and asked for, no collision
 	for k, l in ipairs(b.lifs and b.lifs.list or {}) do
 		local items = b.lifs.items
@@ -1018,6 +1086,7 @@ local function build_me()
 		members = members_all, cells = cells_all, fluid_cells = fcells_all,
 		storage_buses = sb_all, fluid_storage_buses = fsb_all, item_types = types, recipes = #b.parts[1].reg_recipes,
 		logistic = b.logistic,                                                  -- (issue #506)
+		refill = b.refill and { characters = b.refill.n, access_point = b.refill.ap, queued = b.refill.queued } or nil,   -- (issue #603)
 		jobs = #b.job_keys, cpus = b.parts[1].ncpu, network_ok = net and net.ok or false,
 		entities = #surface().find_entities_filtered{}, fails = fails })
 end
@@ -2406,6 +2475,7 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 			local st = sched_stats(false)
 			b.steady0, b.steady_tick = st and st.io and st.io.starved or 0, tick
 		end
+		if tick % SAMPLE_TICKS == 0 and b.refill then refill_churn(b) end   -- (issue #603; a sample tick: outside the timing)
 		if tick % SAMPLE_TICKS == 0 and b.samples then
 			local bl = backlogs()
 			if bl then

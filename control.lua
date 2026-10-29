@@ -33,6 +33,9 @@ local fork_monitor = require("scripts.fork-me-monitor")
 local fork_emitter = require("scripts.fork-me-emitter")
 --- issues #205 to #210: the access point, the wireless terminal and its hotkey, the charger, the equipment module
 local fork_wl = require("scripts.fork-me-wireless")
+--- issue #603: the wireless refill (the module's personal logistics from the ME network)
+local fork_refill = require("scripts.fork-me-wireless-refill")
+fork_wl.refill = fork_refill
 --- a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12)
 local fork_paste = require("scripts.fork-me-recipe-paste")
 --- the ME Cell Workbench: a cell's partition and upgrade cards (issue #17)
@@ -243,6 +246,7 @@ local function on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ioport.on_tick(tick)
 	fork_lif.on_tick(tick)                                    -- (issue #531)
+	fork_refill.on_tick(tick)                                 -- (issue #603)
 	fork_conn.on_tick(tick)                                   -- (issue #412: the conditions of the circuit connectors)
 	fork_ae2.on_tick(tick)
 	fork_me.on_tick(tick)
@@ -250,6 +254,16 @@ local function on_tick(tick)
 	names.step()                                              -- (issue #295: translation requests, while any wait)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
+
+--- issue #603: a player whose character gets the ME Wireless Module (or comes back with it) is visited by the refill
+local function refill_player(event)
+	if event.equipment and event.equipment.name ~= fork_wl.MODULE then return end
+	fork_refill.update_player(game.get_player(event.player_index))
+end
+script.on_event(defines.events.on_player_placed_equipment, refill_player)
+script.on_event(defines.events.on_player_joined_game, refill_player)
+script.on_event(defines.events.on_player_respawned, refill_player)
+script.on_event(defines.events.on_player_armor_inventory_changed, refill_player)
 
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
 	if event.setting_type == "runtime-global" then sched.on_setting_changed() end
@@ -331,6 +345,7 @@ script.on_configuration_changed(function(data)
 	fork_sbus.on_configuration_changed()
 	fork_bench.on_configuration_changed()
 	fork_wl.on_configuration_changed()
+	fork_refill.on_configuration_changed()                    -- (issue #603: the players who wear the module)
 	fork_monitor.on_configuration_changed()
 	fork_toggle.on_configuration_changed()
 	fork_emitter.on_configuration_changed()
