@@ -74,7 +74,13 @@ if cards_tech and storage_64k and not ME.customized["me-upgrade-cards"] then
 	cards_tech.unit = table.deepcopy(storage_64k.unit)
 	cards_tech.research_trigger = table.deepcopy(storage_64k.research_trigger)
 	if cards_tech.research_trigger then cards_tech.unit = nil end
-	cards_tech.prerequisites = { "me-storage-64k" }
+	--- (issue #594: its other prerequisites stay: the circuit network, whose combinators the Group Filter and Inverter
+	--- Cards take; before, they were dropped here)
+	local prerequisites = { "me-storage-64k" }
+	for _, p in ipairs(cards_tech.prerequisites or {}) do
+		if p ~= "me-storage-64k" then prerequisites[#prerequisites + 1] = p end
+	end
+	cards_tech.prerequisites = prerequisites
 end
 
 --- Issue #6: a crafting block recipe (the multiblock crafting CPUs) that no technology unlocks, because another mod

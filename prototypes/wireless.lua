@@ -137,7 +137,8 @@ data:extend({ {
 } })
 recipes[#recipes + 1] = "me-wireless-module"
 
-ME.add_technology{ name = "me-wireless", prerequisites = { "me-upgrade-cards", "battery" }, unit = ME.unit(3, 500), recipes = recipes }
+--- (issue #594: the access point and the terminal take a radar)
+ME.add_technology{ name = "me-wireless", prerequisites = { "me-upgrade-cards", "battery", "radar" }, unit = ME.unit(3, 500), recipes = recipes }
 
 --- the hotkey (rebindable in the controls): opens the wireless terminal of the item or the module
 data:extend({ {
