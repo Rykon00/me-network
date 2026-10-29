@@ -489,9 +489,31 @@ local function spill_inv(inv, rec, buffer)
 	end
 end
 
+--- issue #590: an access point that waits for boosters (rec.want) is retried from the network once a second (M.card_step);
+--- `s.awant` holds the units of those, few
+local function note_want(rec)
+	if not rec.want then return end
+	local s = state()
+	s.awant = s.awant or {}
+	s.awant[rec.unit] = true
+end
+
+--- the network's slow step (once a second): the access points that wait for boosters take them from their network
+function M.card_step()
+	local s = storage.fork_me_wireless
+	if not (s and s.awant and next(s.awant)) then return end
+	for unit in pairs(s.awant) do
+		local rec = s.aps[unit]
+		if rec and rec.want and rec.entity and rec.entity.valid then cards.fill_cards(rec) end
+		if not (rec and rec.want) then s.awant[unit] = nil end
+	end
+end
+N.slow_hooks[#N.slow_hooks + 1] = M.card_step
+
 --- built, revived or cloned (`tags`: blueprint tags, `source`: the original of a clone): an access point wants the source's
---- boosters (from the network, never from nothing); a charger starts empty
-function M.on_built(entity, tags, source)
+--- boosters (never from nothing: issue #590, from the inventory of `player`, who built it by hand or pasted over it, first,
+--- `inv` instead for a test; then the network); a charger starts empty
+function M.on_built(entity, tags, source, player, inv)
 	if not (entity and entity.valid) then return end
 	if entity.name == CHARGER then charger_rec(entity) return end
 	if entity.name ~= AP then return end
@@ -503,7 +525,10 @@ function M.on_built(entity, tags, source)
 		local from = ap_rec(source)
 		list = from.want and { table.unpack(from.want) } or cards.card_list(from)
 	end
-	if list and #list > 0 then cards.want_cards(entity, list, nil) end
+	if list and #list > 0 then
+		cards.want_cards(entity, list, player, inv)
+		note_want(ap_rec(entity))
+	end
 	N.power_changed(entity)
 end
 
@@ -554,6 +579,7 @@ function M.on_entity_settings_pasted(event)
 	local from = ap_rec(src)
 	local player = event.player_index and game.get_player(event.player_index) or nil
 	cards.want_cards(dst, from.want and { table.unpack(from.want) } or cards.card_list(from) or {}, player)
+	note_want(ap_rec(dst))
 end
 
 --- blueprints: an access point carries its boosters
@@ -573,6 +599,7 @@ function M.on_configuration_changed()
 	local s = state()
 	for unit, rec in pairs(s.aps) do if not (rec.entity and rec.entity.valid) then s.aps[unit] = nil end end
 	for unit, rec in pairs(s.chargers) do if not (rec.entity and rec.entity.valid) then s.chargers[unit] = nil end end
+	for _, rec in pairs(s.aps) do note_want(rec) end              -- (issue #590: a save of before waits too)
 end
 
 --------------------------------------------------------------------------------
@@ -687,7 +714,7 @@ remote.add_interface("gregtorio-me-wireless", {
 	use_rate = function(kind, d, r) return M.use_rate({ kind = kind }, d, r) end,
 	numbers = function() return numbers() end,
 	on_removed = function(entity, buffer) M.on_removed(entity, buffer) end,
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,   -- (`inv`: issue #590)
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 })
 

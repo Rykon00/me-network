@@ -1951,6 +1951,8 @@ function M.bus_step(rec, dt, u)
 		rec.status = why or "no-network"
 		return 0, false, nil, (n0 and why == "no-power") and "no-power" or "no-network", false, n0
 	end
+	--- issue #110: the cards a blueprint or a paste asked for (issue #590: before the target, a bus may face nothing yet)
+	if rec.want then cards.fill_cards(rec) end
 	local t = target_of(rec)
 	if not t then
 		rec.status = "no-target"
@@ -1958,7 +1960,6 @@ function M.bus_step(rec, dt, u)
 	end
 	if not rec.iset then M.set_bus_filters(e, rec.filters) end          -- a record of a save before issue #3
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
-	if rec.want then cards.fill_cards(rec) end                         -- issue #110: the cards a blueprint or a paste asked for
 	--- (issue #356: at most MAX_ICAP, what an engine call takes as a count; four Superluminal Speed Cards ask for billions)
 	local icap = math.max(1, math.min(MAX_ICAP, math.floor(Sched.setting("bus_items") * (rec.accel or 1) * ticks / 60)))
 	local fcap = Sched.setting("bus_fluid") * ticks / 60
@@ -2516,8 +2517,9 @@ function M.on_tick(tick)
 	Sched.run(queue(s), tick, Sched.setting("io"), Sched.setting("io_max"), rec_of, visit, probe, "io")
 end
 
---- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
-function M.on_built(entity, tags, source)
+--- `tags`: blueprint tags of a built ghost; `source`: the original of a clone; `player`: who built it by hand or pasted over it
+--- (issue #590: the cards of the tag come from its inventory first, `inv` instead for a test; nil for robots: the network)
+function M.on_built(entity, tags, source, player, inv)
 	if entity and entity.valid and entity.name == T.SIDE then          -- a cloned side tank: the interface's clone
 		local s = storage.fork_me_io                                    -- takes it, unless it has one there already
 		local d = SIDE_OF[entity.direction]
@@ -2541,7 +2543,7 @@ function M.on_built(entity, tags, source)
 		local t = type(tags) == "table" and tags[IFACE_TAG] or nil
 		local config, sides = config_from_tag(t)
 		--- issue #196: the cards first (from the network, never from nothing), so the rows they give room for are there
-		if type(t) == "table" and type(t.cards) == "table" and #t.cards > 0 then icards.want_cards(entity, t.cards, nil) end
+		if type(t) == "table" and type(t.cards) == "table" and #t.cards > 0 then icards.want_cards(entity, t.cards, player, inv) end
 		if config then
 			M.set_interface_config(entity, config, sides or {})
 			if type(t) == "table" and t.priority then M.set_interface_priority(entity, t.priority) end
@@ -2562,7 +2564,7 @@ function M.on_built(entity, tags, source)
 			if t.gtext then M.set_bus_gtext(entity, t.gtext) end               -- (issue #363)
 			if t.pulse then M.set_bus_pulse(entity, true) end                  -- (issue #412)
 			if t.conly then M.set_bus_craft_only(entity, true) end             -- (issue #426)
-			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, nil) end
+			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, player, inv) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)
 			M.set_bus_filters(entity, from and from.filters or {})
@@ -2946,8 +2948,9 @@ remote.add_interface("gregtorio-me-io", {
 	bus_info = function(entity) return M.bus_info(entity) end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
-	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone)
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
+	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone, `inv`: the inventory of the player
+	--- who built it, issue #590)
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,
 	--- what the removal events do (`mined`: the interface's fluid goes into the network first)
 	removed = function(entity, mined) M.on_removed(entity, mined) end,
 })

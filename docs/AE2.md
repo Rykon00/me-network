@@ -882,7 +882,8 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
 * **Cards are items and are never made or lost by the network:** a mined bus gives its cards back (with the bus), a
   destroyed one drops them, as a drive drops its cells.
 * **Blueprints, copy/paste, settings paste and clones** copy which cards a bus has, not the cards: a bus built from a
-  blueprint takes its cards from the network as soon as the network has them (its window lists the ones it still
+  blueprint takes its cards from your inventory first when you build it by hand (issue #590), else (robots) from the
+  network, and the cards neither had come from the network as soon as it has them (its window lists the ones it still
   waits for); a settings paste takes them from your inventory first, then from the network, and puts the cards the
   bus had beyond them into your inventory. Taking a card out by hand ends the waiting. A bus without its cards works
   as if it had none.
@@ -1403,6 +1404,12 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   its window has a line above the slots, and the player who built it is told once (a flying text at the block, or a
   chat line with its place when robots built it). Click such a slot to forget it. Old blueprints (0.4.1 and older) with
   a furnace recipe choice give a processing pattern of that recipe, the same way.
+  Its **Pattern Capacity Cards** come first (issue #590), in the same order: from your inventory when you build or paste
+  it yourself, then from the network; robots take them from the network. A card neither had is waited for: it comes
+  from the network as soon as the network has one, and the patterns of the slots it gives are filled then. While cards
+  wait, the yellow status says "Waiting for N cards" (with the patterns: "Waiting for N cards and M patterns"), the
+  window lists them above the card slots, and the player is told as for the patterns. Robots never take a card from a
+  chest or from your inventory: put the cards into the ME network.
 * **Settings paste** (shift + right click on one provider, shift + left click on another; issue #585) does the same with the
   source's patterns: each goes into the same slot of the destination when that slot is empty and is filled in the order
   above, from your inventory first; a slot that holds a pattern keeps it, and what finds nothing waits.
@@ -2281,8 +2288,9 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   (Factorio has no damage values or NBT, so AE2's fuzzy modes do not apply); a storage bus with an Overflow
   Destruction Card destroys nothing while it faces nothing, and a tank holding another fluid or at another temperature
   destroys nothing (AE2 voids into a bus without an inventory); items with tags are never destroyed; a storage bus never
-  shows what it cannot take (AE2 has a switch); cards a blueprint wants come from the network (AE2's memory card takes
-  them from the player's inventory); interface priority fills the higher priority interface first when the network is
+  shows what it cannot take (AE2 has a switch); cards a blueprint wants come from the inventory of the player who built
+  it by hand, then the network, robots take them from the network (AE2's memory card takes them from the player's
+  inventory); interface priority fills the higher priority interface first when the network is
   short (AE2's code uses it only to stop a lower priority interface from pulling stock out of a higher one through a
   storage bus, which this mod refuses anyway); partitioned storage is filled before storage that only holds the item
   (AE2: one pass for both). The card window's data is tested headless; its look, the red warning and the flying texts are not checked in the real
