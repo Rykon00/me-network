@@ -863,15 +863,16 @@ end
 M.settings_of_tags = settings_of_tags
 
 --- `tags`: blueprint tags of a built ghost; `source`: the original of a clone. The cards of the tag or the source are
---- wanted, taken from the network (issue #17): never copied.
-function M.on_built(entity, tags, source)
+--- wanted, taken from the network (issue #17): never copied. `player`: who built it by hand or pasted over it (issue #590: the
+--- cards come from its inventory first, `inv` instead for a test; nil for robots).
+function M.on_built(entity, tags, source, player, inv)
 	if not is_bus(entity) then return end
 	local rec = register(entity)
 	local t = settings_of_tags(tags)
 	if not t and source and is_bus(source) then t = M.get_settings(source) end
 	if t then
 		M.set_settings(entity, t)
-		if type(t.cards) == "table" and #t.cards > 0 then M.want_cards(entity, t.cards, nil) end
+		if type(t.cards) == "table" and #t.cards > 0 then M.want_cards(entity, t.cards, player, inv) end
 	else
 		M.visit(rec)
 	end
@@ -1044,7 +1045,7 @@ remote.add_interface("gregtorio-me-storagebus", {
 	end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
 	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone)
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,
 	--- what the removal events do for an inventory a bus uses (destroy() raises none); `buffer`: a mined bus's cards
 	removed = function(entity, buffer) M.on_removed(entity, buffer) end,
 	rotated = function(entity) M.on_rotated(entity) end,
@@ -1078,7 +1079,7 @@ remote.add_interface("gregtorio-me-fluid-storagebus", {
 	set_filter = function(entity, index, key) return M.set_filter(entity, index, key) end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,
 	removed = function(entity) M.on_removed(entity) end,
 	rotated = function(entity) M.on_rotated(entity) end,
 })
