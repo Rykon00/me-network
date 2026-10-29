@@ -1023,6 +1023,8 @@ margin51 = require("margin")({ me_place = me_place, me_report = me_report })
 refill67 = require("refill")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #86: an ME Export Bus into a lab (lab.lua)
 lab86 = require("lab")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #595: Krastorio 2's containers, tanks, labs, matter machines and steel pipes (krastorio2.lua; skipped without it)
+krastorio2_595 = require("krastorio2")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #382: an ME Export Bus into a recipe of more than a stack (bulkexport.lua)
 bulk382 = require("bulkexport")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1293,6 +1295,7 @@ local function tests_running()
 	taglabel485.running(check)
 	fuzzydata493.running(check)
 	lab86.running(check)
+	krastorio2_595.running(check)
 	bulk382.running(check)
 	copypaste383.running(check)
 	disassembly387.running(check)
@@ -2287,6 +2290,7 @@ script.on_nth_tick(10, function()
 	taglabel485.tick()
 	fuzzydata493.tick()
 	lab86.tick()
+	krastorio2_595.tick()
 	bulk382.tick()
 	copypaste383.tick()
 	disassembly387.tick()
@@ -5197,6 +5201,7 @@ script.on_init(function()
 	for _, f in pairs(taglabel485.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(fuzzydata493.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(krastorio2_595.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(disassembly387.setup(s)) do fails[#fails + 1] = f end
