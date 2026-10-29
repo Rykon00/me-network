@@ -1013,6 +1013,52 @@ def check_krastorio2(sec):
     return out
 
 
+# issue #594: ME recipes that may take an ingredient their technology comes before, with the reason
+ORDER_ALLOW = {
+    "me-logistic-storage-bus": "its storage chest: the block works only in a logistic network, which comes with the robots",
+    "me-logistic-interface": "its storage and passive provider chests: the block works only in a logistic network, as above",
+}
+
+
+def unlock_order(sec):
+    """issue #594: every ingredient of an ME recipe can be made no later than the recipe: it is a raw material, a recipe
+    enabled from the start makes it, or a technology of the recipe's technology or its prerequisites (walked) unlocks a
+    recipe that makes it (recycling left out). Returns the problems ("recipe (technology): ingredient, unlocked by ...")."""
+    m = Model(sec["DUMP"])
+    own = [n for k, n in sec.get("OWN", []) if k == "recipe"]
+    makers, unlocked_by = {}, {}
+    for r, v in m.R.items():
+        if r.endswith("-recycling") or v["cat"] & {"recycling"}:
+            continue
+        for x in v["res"]:
+            makers.setdefault(x, []).append(r)
+    for t, v in m.T.items():
+        for r in v["eff"]:
+            unlocked_by.setdefault(r, set()).add(t)
+
+    def before(t):
+        seen, todo = {t}, [t]
+        while todo:
+            for p in m.T.get(todo.pop(), {}).get("pre", []):
+                if p not in seen:
+                    seen.add(p)
+                    todo.append(p)
+        return seen
+
+    out = []
+    for r in own:
+        if r not in m.R or m.R[r]["en"] or r in ORDER_ALLOW:
+            continue
+        for t in sorted(unlocked_by.get(r, [])):
+            known = before(t)
+            for i in m.R[r]["ing"]:
+                if i in m.base or any(m.R[x]["en"] or unlocked_by.get(x, set()) & known for x in makers.get(i, [])):
+                    continue
+                later = sorted({u for x in makers.get(i, []) for u in unlocked_by.get(x, [])})
+                out.append(f"{r} ({t}): {i}, unlocked by {', '.join(later) or 'nothing'}")
+    return out
+
+
 def check(a):
     prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only, with_mods=with_mods(a))
     print("mods: " + mods_label(a, a.base_only))
@@ -1058,6 +1104,12 @@ def check(a):
     if got == "active":
         k2_problems += check_krastorio2(sec)
     report("Krastorio 2 compatibility (issues #592, #593)", k2_problems)
+    # issue #594: no ME recipe comes before what it takes (information with Gregtorio, whose tree its own devcheck checks)
+    order = unlock_order(sec)
+    print(f"\nME recipes whose ingredients come no later than their technology: {len([n for k, n in sec.get('OWN', []) if k == 'recipe']) - len({o.split(' ')[0] for o in order})}")
+    report("ME recipes with an ingredient that comes later than their technology" + (" (information)" if a.with_gregtorio else " (issue #594)"), order)
+    if not a.with_gregtorio:
+        k2_problems += order
     ok = ok and not k2_problems
     if not a.with_gregtorio:
         ok = check_textures(a, sec) and ok

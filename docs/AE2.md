@@ -766,7 +766,8 @@ The recipes that follow:
 The cards are in **Upgrade cards**. Not in AE2, kept as they were (with the stand-ins): the underground cable (8 fluix
 cables, 2 iron plates -> 2), the level maintainer, the circuit interface, the Interface Capacity Card and the wireless
 module. The technologies need what their recipes take: ME Network also needs Lamp and Fast inserter, ME Autocrafting and
-ME Upgrade Cards need Circuit network.
+ME Upgrade Cards need Circuit network, ME Wireless needs Radar and ME Singularity Storage Electric energy
+(accumulators); the Superluminal Speed Card (a 1024k component) comes with ME 1024k Storage (issue #594).
 
 ### With Krastorio 2
 
@@ -846,6 +847,37 @@ AE2, most cards):
 The ME Molecular Assembler is made again after Krastorio 2's changes, from the assembling machine 2's item categories at
 that point (without Krastorio 2: the same; Krastorio 2's own machine categories such as crushing or electrolysis are never
 the assembling machine 2's), so it crafts Krastorio 2's assembler recipes such as the automation core.
+
+#### Technologies with Krastorio 2
+
+With Krastorio 2 the storage ladder follows its science tiers (issue #594): up to 256k the vanilla packs as without it, 1024k
+on utility science, 4096k with the matter tech card, 16384k with the advanced tech card and the Singularity cells with the
+singularity tech card, each with the Krastorio 2 technology whose items its recipes take as a prerequisite. Counts and times
+follow Krastorio 2's technologies of the same tier. Production and utility science need Krastorio 2's Advanced lab, the
+tech cards its Singularity lab: nothing ME Network has to do. Krastorio 2 itself takes red to blue out of every technology
+that needs its higher cards; the ME technologies of those tiers name only the tier's packs anyway. Krastorio 2 does not support
+Space Age: with it, its optimization tech card (the space science pack) needs space research data that no rocket
+brings, so its singularity tech card cannot be researched; there the ME Singularity technologies stay on the advanced tier
+(production, utility, matter and advanced tech cards).
+
+| Technology | Without Krastorio 2 | With Krastorio 2 | Krastorio 2 prerequisite added |
+|---|---|---|---|
+| ME Network | 300 × 30 s, red, green | 250 × 30 s, red, green | Silicon processing |
+| ME 64k Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue | Rare metal processing |
+| ME Upgrade Cards | ME 64k Storage's | ME 64k Storage's |  |
+| ME Autocrafting, ME Automation | 500 × 30 s, red to blue | 300 × 30 s, red to blue |  |
+| ME Fluid Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue |  |
+| ME Wireless | 500 × 30 s, red to blue | 250 × 30 s, red to blue | Lithium-sulfur battery (instead of Battery) |
+| ME Wireless Link | 400 × 30 s, red to blue | 200 × 30 s, red to blue |  |
+| ME 256k Storage, ME Fluid 256k Storage | 600 × 30 s, red to production | 350 × 60 s, red to production | Quarry minerals extraction (256k) |
+| ME Co-Processing | 800 × 30 s, red to production | 350 × 60 s, red to production |  |
+| ME 1024k Storage, ME Fluid 1024k Storage | 800 × 30 s, red to utility | 500 × 60 s, red to utility | AI core (1024k) |
+| ME Quantum Crafting, ME Crafting Accelerators | 1000 × 30 s, red to utility | 500 × 60 s, red to utility | AI core |
+| ME 1024k Crafting Storage | 1200 × 30 s, red to utility | 500 × 60 s, red to utility |  |
+| ME Quantum Bridge | 1500 × 30 s, red to utility | 750 × 60 s, red to utility | Quantum computer |
+| ME 4096k Storage, crafting and fluid | 1200 / 1600 / 1200 × 30 s, red to utility | 500 × 60 s, production, utility, matter tech card | Imersium processing (4096k) |
+| ME 16384k Storage, crafting and fluid; ME Crafting Accelerators 2 | 1600 / 2000 / 1600 / 2500 × 30 s, red to utility | 500 × 45 s, production, utility, matter, advanced tech card | Energy control unit, Advanced tech card (16384k, accelerators 2) |
+| ME Singularity Storage, ME Singularity Crafting Storage | 2500 / 3000 × 30 s, red to utility | 1000 × 60 s, production, utility, optimization, matter, advanced, singularity tech card (with Space Age: the advanced tier, see above) | Matter processing, Singularity tech card (storage) |
 
 ### View Cells
 

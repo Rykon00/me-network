@@ -91,7 +91,15 @@ for _, c in ipairs(CARDS) do
 		recipe = { energy_required = 2, amount = c.amount, ingredients = c.ingredients },
 	}
 	if c.kind then kinds[c.name] = c.kind end
-	recipes[#recipes + 1] = c.name
+	if c.name ~= "me-superluminal-speed-card" then recipes[#recipes + 1] = c.name end
+end
+--- issue #594: the Superluminal Speed Card takes a 1024k component, so ME 1024k Storage unlocks it (it was the cards
+--- technology's, which comes much earlier) and has the cards technology as a prerequisite (the Super Speed Card)
+do
+	local tech = data.raw.technology["me-storage-1024k"]
+	data.raw.recipe["me-superluminal-speed-card"].enabled = false
+	table.insert(tech.effects, { type = "unlock-recipe", recipe = "me-superluminal-speed-card" })
+	table.insert(tech.prerequisites, "me-upgrade-cards")
 end
 
 --- The card slots and how many of each kind a block takes (AE2: StorageBusPart.getUpgradeSlots(), BasicStorageCell

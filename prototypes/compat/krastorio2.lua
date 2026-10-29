@@ -153,3 +153,90 @@ if assembler and base then
 		crafting_speed = assembler.crafting_speed, energy_usage = assembler.energy_usage }
 	ME.krastorio2.assembler_categories = categories
 end
+
+--------------------------------------------------------------------------------
+--- Issue #594: the technologies on Krastorio 2's science tiers. The storage ladder follows its tiers: up to 256k the
+--- vanilla packs as before, 1024k on utility science, 4096k with the matter tech card, 16384k with the advanced tech card,
+--- the Singularity cells with the singularity tech card. Each technology gets the Krastorio 2 technology whose items its
+--- recipes now take (the recipes above) as a prerequisite, and a count and time like the Krastorio 2 technologies of its
+--- tier (docs/AE2.md, "With Krastorio 2"). The units name the packs of the tier only: Krastorio 2's
+--- enforce-science-tier-separation.lua takes red to blue out of every technology with its higher cards anyway, so the
+--- result does not depend on it. me-upgrade-cards is left alone: data-final-fixes.lua gives it me-storage-64k's cost and
+--- prerequisite (issue #17), so it moves with it.
+--------------------------------------------------------------------------------
+
+local RED, GREEN, BLUE = "automation-science-pack", "logistic-science-pack", "chemical-science-pack"
+local PRODUCTION, UTILITY = "production-science-pack", "utility-science-pack"
+local MATTER = kr("kr-matter-tech-card", UTILITY)
+local ADVANCED = kr("kr-advanced-tech-card", UTILITY)
+local SINGULARITY = kr("kr-singularity-tech-card", UTILITY)
+local OPTIMIZATION = kr("space-science-pack", UTILITY)    -- (Krastorio 2's optimization tech card)
+--- Krastorio 2 does not support Space Age: with it, its optimization tech card needs space research data that no rocket brings,
+--- so neither its singularity tech card nor anything after it can be researched. There the ME Singularity technologies stay
+--- on the advanced tier.
+local NO_SINGULARITY = mods["space-age"] ~= nil
+
+--- a unit of `count` with `time`, the packs listed (a fallback pack named twice is counted once)
+local function unit(count, time, packs)
+	local ingredients, seen = {}, {}
+	for _, p in ipairs(packs) do
+		if not seen[p] then ingredients[#ingredients + 1] = { p, 1 } seen[p] = true end
+	end
+	return { count = count, time = time, ingredients = ingredients }
+end
+local RG = { RED, GREEN }
+local RGB = { RED, GREEN, BLUE }
+local RGBP = { RED, GREEN, BLUE, PRODUCTION }
+local RGBPU = { RED, GREEN, BLUE, PRODUCTION, UTILITY }
+local T_MATTER = { PRODUCTION, UTILITY, MATTER }
+local T_ADVANCED = { PRODUCTION, UTILITY, MATTER, ADVANCED }
+local T_SINGULARITY = NO_SINGULARITY and T_ADVANCED or { PRODUCTION, UTILITY, OPTIMIZATION, MATTER, ADVANCED, SINGULARITY }
+
+--- the prerequisites of `name` with `add` (technologies that exist) added and `drop` taken out
+local function prerequisites(name, add, drop)
+	local out, seen = {}, {}
+	for _, p in ipairs(data.raw.technology[name].prerequisites or {}) do
+		if not (drop and drop[p]) and not seen[p] then out[#out + 1] = p seen[p] = true end
+	end
+	for _, p in ipairs(add or {}) do
+		if data.raw.technology[p] and not seen[p] then out[#out + 1] = p seen[p] = true
+		elseif not data.raw.technology[p] then log("ME-NETWORK: Krastorio 2: no technology " .. p) end
+	end
+	return out
+end
+
+--- name -> { count, time, packs, prerequisites to add, prerequisites to drop }
+local TECHS = {
+	["me-network"] = { 250, 30, RG, { "kr-silicon-processing" } },
+	["me-storage-64k"] = { 250, 30, RGB, { "kr-rare-metal-processing" } },
+	["me-autocrafting"] = { 300, 30, RGB },
+	["me-automation"] = { 300, 30, RGB },
+	["me-fluid-storage"] = { 250, 30, RGB },
+	["me-wireless"] = { 250, 30, RGB, { "kr-lithium-sulfur-battery" }, { battery = true } },
+	["me-wireless-link"] = { 200, 30, RGB },
+	["me-storage-256k"] = { 350, 60, RGBP, { "kr-quarry-minerals-extraction" } },
+	["me-co-processing"] = { 350, 60, RGBP },
+	["me-fluid-storage-256k"] = { 350, 60, RGBP },
+	["me-storage-1024k"] = { 500, 60, RGBPU, { "kr-ai-core" } },
+	["me-quantum-crafting"] = { 500, 60, RGBPU, { "kr-ai-core" } },
+	["me-crafting-accelerators"] = { 500, 60, RGBPU, { "kr-ai-core" } },
+	["me-fluid-storage-1024k"] = { 500, 60, RGBPU },
+	["me-crafting-storage-1024k"] = { 500, 60, RGBPU },
+	["me-quantum-bridge"] = { 750, 60, RGBPU, { "kr-quantum-computer" } },
+	["me-storage-4096k"] = { 500, 60, T_MATTER, { "kr-imersium-processing" } },
+	["me-crafting-storage-4096k"] = { 500, 60, T_MATTER },
+	["me-fluid-storage-4096k"] = { 500, 60, T_MATTER },
+	["me-storage-16384k"] = { 500, 45, T_ADVANCED, { "kr-energy-control-unit", "kr-advanced-tech-card" } },
+	["me-crafting-accelerators-2"] = { 500, 45, T_ADVANCED, { "kr-energy-control-unit", "kr-advanced-tech-card" } },
+	["me-crafting-storage-16384k"] = { 500, 45, T_ADVANCED },
+	["me-fluid-storage-16384k"] = { 500, 45, T_ADVANCED },
+	["me-storage-singularity"] = { 1000, 60, T_SINGULARITY,
+		NO_SINGULARITY and { "kr-matter-processing" } or { "kr-matter-processing", "kr-singularity-tech-card" } },
+	["me-crafting-storage-singularity"] = { 1000, 60, T_SINGULARITY },
+}
+for _, name in ipairs(ME.technologies) do
+	local t = TECHS[name]
+	if t and data.raw.technology[name] then
+		ME.set_technology(name, { unit = unit(t[1], t[2], t[3]), prerequisites = prerequisites(name, t[4], t[5]) })
+	end
+end
