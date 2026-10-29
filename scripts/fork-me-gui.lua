@@ -926,6 +926,15 @@ function M.dispatch(event)
 	return true
 end
 
+--- Issue #585 (tests): the handler of element `el`'s action called for `player` (a stand-in: dispatch looks the player up by
+--- index), as dispatch calls it. False when the element has no registered action.
+function M.run_action(event, player, el)
+	local fn = actions[el.tags and el.tags.fork_me_act]
+	if not fn then return false end
+	fn(event, player, el)
+	return true
+end
+
 --- Issue #542: on_gui_inventory_action of the pane's inventory element: what the game leaves to the mod (shift + click,
 --- control + click, their right click halves; in remote view every click) goes to the window's block (inventory_action),
 --- a refusal says why. Returns true when the element is the mod's.

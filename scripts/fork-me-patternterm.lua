@@ -13,6 +13,10 @@
 ---     the inventory are not searched for blanks.
 ---   * Load pattern and Clear pattern work on the encoded pattern in the hand, else on the one in the output slot (a cleared
 ---     one becomes a blank pattern in the blank slot).
+---   * Issue #585, bulk clearing, each after a confirmation that names the count: **Clear patterns in inventory** (every encoded
+---     pattern in the player's main inventory becomes a blank, stacked with the blanks there) and **Clear unused network
+---     patterns** (every encoded pattern stored in the network that no pattern provider of it holds or waits for, a broken one
+---     always, becomes a blank in the network: fork-me-autocraft.lua `clear_network_patterns`).
 ---   * What lies in the slots stays when the window closes, is saved, comes out when the block is mined (into the mined buffer)
 ---     and is spilled when it is destroyed or vanishes; blueprints, copies and clones start with empty slots.
 ---   * Issue #416: the ME Pattern Terminal Ex (AE2-Unofficial's PartPatternTerminalEx) is the same block for processing patterns
@@ -27,6 +31,7 @@
 local N = require("scripts.fork-me-network")
 local G = require("scripts.fork-me-gui")
 local P = require("scripts.fork-me-patterns")
+local AC = require("scripts.fork-me-autocraft")
 local picker = require("scripts.fork-me-picker")
 
 local M = {}
@@ -343,6 +348,65 @@ local function is_blank(stack)
 	return stack ~= nil and stack.valid_for_read and stack.name == P.BLANK and stack.quality.name == "normal"
 end
 
+--- Issue #585: the encoded patterns in `inv` (the player's main inventory)
+function M.inventory_count(inv)
+	if not (inv and inv.valid) then return 0 end
+	local n = 0
+	for i = 1, #inv do
+		if P.is_encoded(inv[i]) then n = n + inv[i].count end
+	end
+	return n
+end
+
+--- Issue #585, "Clear patterns in inventory": every encoded pattern in `inv` becomes a blank pattern, stacked with the blanks
+--- there (AE2-Unofficial clears one stack at a time: shift + right click on an encoded pattern, ItemEncodedPattern
+--- `clearPattern`). Each one frees its slot, so the blanks fit; should they not (slot filters), the rest go to `back`
+--- (G.give_back: the player, else the ground at `entity`). Returns the number cleared.
+function M.clear_inventory(inv, back, entity)
+	if not (inv and inv.valid) then return 0 end
+	local n = 0
+	for i = 1, #inv do
+		local stack = inv[i]
+		if P.is_encoded(stack) then
+			n = n + stack.count
+			stack.clear()
+		end
+	end
+	if n == 0 then return 0 end
+	local put = inv.insert{ name = P.BLANK, count = n }
+	if put < n then
+		local tmp = game.create_inventory(1)
+		tmp[1].set_stack{ name = P.BLANK, count = n - put }
+		G.give_back(back, tmp[1], entity)
+		tmp.destroy()
+	end
+	return n
+end
+
+--- Issue #585: what a bulk clear button would clear for a window of `entity` ("inventory": the player's main inventory `inv`,
+--- "network": the unused encoded patterns of its network), or nil and a reason
+function M.bulk_count(entity, what, inv)
+	if what == "inventory" then
+		if not (inv and inv.valid) then return nil, "no-inventory" end
+		return M.inventory_count(inv)
+	end
+	local net, why = network(entity)
+	if not net then return nil, why end
+	local _, total = AC.unused_network_patterns(net)
+	return total
+end
+
+--- Issue #585: a confirmed bulk clear: returns the number cleared and the number left (a full network), or nil and a reason
+function M.bulk_clear(entity, what, inv, back)
+	if what == "inventory" then
+		if not (inv and inv.valid) then return nil, "no-inventory" end
+		return M.clear_inventory(inv, back, entity), 0
+	end
+	local net, why = network(entity)
+	if not net then return nil, why end
+	return AC.clear_network_patterns(net, back, entity)
+end
+
 --- A click on slot `slot` of the window (the window's `click`; the tests call it too), for the player's `cursor` (LuaItemStack)
 --- and main inventory `inventory`. Nothing moves when a reason is returned.
 ---   blank slot: with blank patterns in the cursor they go in (merging); with an empty cursor a filled slot is taken into the
@@ -501,6 +565,7 @@ local function open(player, entity)
 	end
 	editor_for(u, entity)
 	u.shown = nil
+	u.confirm, u.cshown = nil, nil                    -- (issue #585)
 	G.label(content, "", WIDTH, nil, "fork_me_net_line")
 	if remote_view and G.wireless_mode_button then G.wireless_mode_button(content, entity, "terminal") end   -- (issue #210)
 	G.label(content, { remote_view and "fork-me-wireless.patterns-help" or "fork-me-gui.patterns-help" }, WIDTH)
@@ -527,6 +592,13 @@ local function open(player, entity)
 		tags = G.act("pat_load") }
 	buttons.add{ type = "button", caption = { "fork-me-gui.patterns-clear" }, tooltip = { "fork-me-gui.patterns-clear-tooltip" },
 		tags = G.act("pat_clear") }
+	--- issue #585: the bulk clears, and the row that asks to confirm one
+	local bulk = G.row(content)
+	bulk.add{ type = "button", caption = { "fork-me-pattern-terminal.clear-inventory" },
+		tooltip = { "fork-me-pattern-terminal.clear-inventory-tooltip" }, tags = G.act("pat_bulk", { what = "inventory" }) }
+	bulk.add{ type = "button", caption = { "fork-me-pattern-terminal.clear-network" },
+		tooltip = { "fork-me-pattern-terminal.clear-network-tooltip" }, tags = G.act("pat_bulk", { what = "network" }) }
+	G.row(content, "fork_me_pat_confirm")
 	G.label(content, "", WIDTH, nil, "fork_me_pat_status")
 	M.refresh(player)
 end
@@ -566,6 +638,20 @@ function M.refresh(player, frame)
 	local def = M.pattern_of(player.force, ed)
 	G.find(frame, "fork_me_pat_encode").enabled = net ~= nil and def ~= nil
 		and (P.is_encoded(out) or own > 0 or in_net > 0)
+	--- issue #585: the question of a bulk clear (rebuilt when it changes)
+	local row = G.find(frame, "fork_me_pat_confirm")
+	local csig = u.confirm and (u.confirm.what .. "/" .. u.confirm.count) or ""
+	if row and u.cshown ~= csig then
+		u.cshown = csig
+		row.clear()
+		if u.confirm then
+			row.add{ type = "label", caption = { "fork-me-pattern-terminal.confirm-" .. u.confirm.what, u.confirm.count } }
+			row.add{ type = "button", caption = { "fork-me-pattern-terminal.confirm" }, style = "red_confirm_button",
+				tags = G.act("pat_bulk_ok") }
+			row.add{ type = "button", caption = { "fork-me-pattern-terminal.cancel" }, style = "back_button",
+				tags = G.act("pat_bulk_cancel") }
+		end
+	end
 	return true
 end
 
@@ -677,6 +763,47 @@ G.on("pat_clear", function(event, player)
 	G.refresh_one(player)
 end)
 
+--- issue #585: a bulk clear button asks first, naming the count; Confirm counts again and clears
+G.on("pat_bulk", function(event, player, el)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity, u = window_entity(player), ui_of(player)
+	if not (entity and u) then return end
+	local what = el.tags.what
+	local n, why = M.bulk_count(entity, what, G.player_inventory(player))
+	if not n then report(player, why) return end
+	if n == 0 then
+		player.create_local_flying_text{ text = { "fork-me-pattern-terminal.none-" .. what }, create_at_cursor = true }
+		u.confirm = nil
+	else
+		u.confirm = { what = what, count = n }
+	end
+	G.refresh_one(player)
+end)
+
+G.on("pat_bulk_ok", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity, u = window_entity(player), ui_of(player)
+	if not (entity and u and u.confirm) then return end
+	local what = u.confirm.what
+	u.confirm = nil
+	local n, left = M.bulk_clear(entity, what, G.player_inventory(player), player)
+	if not n then
+		report(player, left)
+	elseif left > 0 then
+		player.print({ "fork-me-pattern-terminal.cleared-full", n, left })
+	else
+		player.create_local_flying_text{ text = { "fork-me-pattern-terminal.cleared-" .. what, n }, create_at_cursor = true }
+	end
+	G.refresh_one(player)
+end)
+
+G.on("pat_bulk_cancel", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local u = ui_of(player)
+	if u then u.confirm = nil end
+	G.refresh_one(player)
+end)
+
 G.on("pat_load", function(event, player)
 	local ed, u = editor_of(player)
 	local entity = window_entity(player)
@@ -709,6 +836,9 @@ remote.add_interface("gregtorio-me-pattern-terminal", {
 		return M.encode_def(inv, net, def)
 	end,
 	clear = function(entity, cursor, back) return M.clear(entity, cursor, back) end,
+	--- issue #585: the bulk clears ("inventory": `inv`, "network": the network of `entity`); what the buttons ask before
+	bulk_count = function(entity, what, inv) return M.bulk_count(entity, what, inv) end,
+	bulk_clear = function(entity, what, inv, back) return M.bulk_clear(entity, what, inv, back) end,
 	--- issue #210: Encode of a wireless terminal (`entity` its access point): the blank from the network, the pattern into `back`
 	encode_wireless = function(entity, force, ed, back) return M.encode_wireless(entity, force, ed, back) end,
 	load_pattern = function(entity, cursor, ed)
