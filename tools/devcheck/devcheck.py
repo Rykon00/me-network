@@ -985,6 +985,7 @@ RUNTIME_TESTS = (
     ("PENDING", "Pattern provider waiting for patterns (issue #558)"),
     ("MEMCARD", "ME Memory Card (issue #561)"),
     ("PATTERNBULK", "Pattern paste and bulk clearing (issue #585)"),
+    ("BPCARDS", "Cards of blocks built from a blueprint (issue #590)"),
     ("WGROUP", "ME Wireless Link groups (issue #559)"),
     ("SINGFLUID", "Singularity cell for fluids (issue #562)"),
     ("FASTCRAFT", "Fast machines kept busy (issue #557)"),
