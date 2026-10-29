@@ -262,10 +262,14 @@ local SOUND_OPEN, SOUND_CLOSE = "utility/machine_gui_open", "utility/machine_gui
 --- Close the player's ME window. `sound`: the window is closed for good (the close button, E, Escape, another GUI, the
 --- refresh), so the close sound plays when there was one; never when a window is replaced by another (open_window) or on
 --- a mod update (close_all).
+--- functions(player) run when a player's window closes (issue #602: the terminal forgets its rows kept at 0)
+M.close_hooks = {}
+
 function M.close_window(player, sound)
 	local frame = player.gui.screen.fork_me_window
 	local had = frame and frame.valid
 	if had then frame.destroy() end
+	for _, hook in ipairs(M.close_hooks) do hook(player) end
 	if had and sound then player.play_sound{ path = SOUND_CLOSE } end
 	M.drop_buffer(player)                                 -- (issue #542: a buffer of a 0.5.10 save)
 	local picker = player.gui.screen.fork_me_picker       -- the picker (scripts/fork-me-picker.lua) belongs to the window

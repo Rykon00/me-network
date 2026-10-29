@@ -1142,6 +1142,7 @@ RUNTIME_TESTS = (
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"), ("QUALITYTERM", "ME Terminal quality filter and sort test"),
+    ("SORTPREFS", "ME Terminal sort preference test"),
     ("HOLDERLISTS", "ME holder lists test"),
     ("CRAFTER", "ME crafter choice test"),
     ("HOLDERS", "ME holder cursor test"),
