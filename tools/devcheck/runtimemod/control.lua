@@ -2260,6 +2260,9 @@ local function schedule_digest()
 	return table.concat(parts, " ")
 end
 
+--- the checks of a single tick (margin.lua: the cap of each visit's tick); after the mod's own on_tick (this mod loads later)
+script.on_event(defines.events.on_tick, function() margin51.on_tick() end)
+
 script.on_nth_tick(10, function()
 	if game.tick == 1000 or game.tick == 1400 then log("DEVCHECK-RUNTIME-SCHEDULE " .. game.tick .. " " .. schedule_digest()) end
 	if not (storage.me_graph and storage.me_graph.done) then me_graph_test() end
@@ -2730,10 +2733,12 @@ function fluid_test()
 		end
 		timeout_after(200, "import after making room")
 	elseif phase == "craft" then
+		--- (a job that is gone was finished and pruned: only the last 12 finished jobs of the map are kept, MAX_FINISHED of
+		--- scripts/fork-me-autocraft.lua, and the other tests finish many; the amounts below show what it did)
 		local all_over, failed = true, {}
 		for _, id in pairs(st.jobs) do
 			local j = job_of(id)
-			if not j or (j.status ~= "done" and j.status ~= "failed") then all_over = false end
+			if j and j.status ~= "done" and j.status ~= "failed" then all_over = false end
 			if j and j.status == "failed" then failed[#failed + 1] = id .. ":" .. serpent.line(j) end
 		end
 		if all_over then
@@ -2748,7 +2753,7 @@ function fluid_test()
 			expect(items("phenolic-circuit-board") == 3, "phenolic boards: " .. items("phenolic-circuit-board"))
 			for _, id in pairs(st.jobs) do
 				local j = job_of(id)
-				expect(j and next(j.pool) == nil, "job " .. id .. " keeps a pool: " .. serpent.line(j and j.pool))
+				expect(not j or next(j.pool) == nil, "job " .. id .. " keeps a pool: " .. serpent.line(j and j.pool))
 			end
 			--- the machines hold nothing of the jobs any more
 			for _, def in pairs({ FL.reactor_a, FL.extractor, FL.reactor_c }) do
@@ -2772,7 +2777,12 @@ function fluid_test()
 			if not st.job then return finish_test() end
 			return next_phase("mine-lease")
 		end
-		timeout_after(600, "fluid jobs")
+		local states = {}
+		for _, id in pairs(st.jobs) do
+			local j = job_of(id)
+			states[#states + 1] = id .. "=" .. tostring(j and j.status) .. " " .. serpent.line(j and j.pool or {})
+		end
+		timeout_after(600, "fluid jobs (" .. table.concat(states, "; ") .. ")")
 	elseif phase == "mine-lease" then
 		local j = job_of(st.job)
 		if j.leases > 0 then
