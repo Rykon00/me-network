@@ -5,7 +5,8 @@
 ---   the direction button turns it to Z first in both, and back;
 --- * the sorts by mod (base before me-network, turned: after) and by tier (by the tiers of scripts/fork-me-sortkeys.lua,
 ---   what has none last in both directions); in a game without Gregtorio the science packs have the tiers 0 (red), 1 (green),
----   2 (blue) and iron plates 0;
+---   2 (blue) and iron plates 0; with Krastorio 2 one more each (its basic tech card is the tier 0: red is researched with it; Krastorio 2 Spaced Out
+---   has no basic tech card: as without it);
 --- * a row whose amount reaches 0 stays in its place with 0, greyed; it is a row of its own again when the network has the
 ---   item back; after the window closed and opened again it is gone.
 --- Loaded by control.lua like qualityterm.lua.
@@ -155,7 +156,10 @@ return function(H)
 		for _, name in ipairs({ "automation-science-pack", "logistic-science-pack", "chemical-science-pack", "iron-plate" }) do
 			packs[#packs + 1] = name .. "=" .. tostring(remote.call(TERM, "sort_keys", false, name).tier)
 		end
-		if not script.active_mods["gregtorio-continued"] then
+		if script.active_mods["Krastorio2"] and not script.active_mods["Krastorio2-spaced-out"] then
+			expect(table.concat(packs, " ") == "automation-science-pack=1 logistic-science-pack=2 chemical-science-pack=3 "
+				.. "iron-plate=0", "the tiers with Krastorio 2: " .. table.concat(packs, " "))
+		elseif not script.active_mods["gregtorio-continued"] then
 			expect(table.concat(packs, " ") == "automation-science-pack=0 logistic-science-pack=1 chemical-science-pack=2 "
 				.. "iron-plate=0", "the vanilla tiers: " .. table.concat(packs, " "))
 		end

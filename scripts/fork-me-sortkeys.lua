@@ -41,8 +41,10 @@ end
 local function compute()
 	local made = { item = {}, fluid = {} }                 -- name -> { recipe names }
 	local enabled = {}                                      -- recipe name -> true: enabled from the start
+	--- (has_category raises an error for a category the game does not have: without the quality mod there is no recycling)
+	local recycling = prototypes.recipe_category["recycling"] ~= nil
 	for rname, r in pairs(prototypes.recipe) do
-		if not (r.hidden or r.parameter or r.has_category("recycling")) then   -- (Factorio 2.1: a recipe has categories)
+		if not (r.hidden or r.parameter or (recycling and r.has_category("recycling"))) then   -- (Factorio 2.1: a recipe has categories)
 			if r.enabled then enabled[rname] = true end
 			for _, p in pairs(r.products) do
 				local t = made[p.type]
