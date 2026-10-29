@@ -4226,3 +4226,25 @@ The check reports two numbers: the average at 1000 (+0.047 ms; the first round o
 two +0.023 and +0.046 ms: the rescan's 0.039 ms per tick) and the first tick after the load at 5000 (+1.2 ms, once). The 99th
 percentile, which the whole squares had moved by +0.155 ms at 1000, is within the noise now; throughput and latencies are
 identical.
+
+## Crafting jobs hand out their product as it arrives (issue #602)
+
+A job's requested item goes on from its pool at every job step (`M.hand_out`: one read of the pool when nothing came; when
+something did, a walk over the job's steps for what later runs still take of it, then the Crafting Card's block or one
+`N.insert` into the network) instead of in one flush when the job ends. The work is the same items stored in more, smaller
+inserts.
+
+`bench --check origin/main` (three rounds in turns; size 1000 seven rounds), measured while nothing else ran on the machine:
+
+| | origin/main | #602 |
+|---|---|---|
+| 100: script avg / p99 (ms) | 0.247 / 2.11 | 0.237 / 2.05 (noise ±0.008 / ±0.07) |
+| 1000: script avg / p99 (ms) | 0.423 / 2.30 | 0.432 / 2.38 (noise ±0.025 / ±0.19) |
+| 1000: ticks over 5 ms | 2 | 3 (noise ±2) |
+| 5000: script avg / p99 (ms) | 1.110 / 3.34 | 1.106 / 3.28 (noise ±0.015 / ±0.06) |
+| provider crafts per second (100 / 1000 / 5000) | 2.5 / 15.78 / 329.5 | the same |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 28.84 / 41.61 / 61.81 | 28.83 / 41.61 / 61.83 |
+
+Throughput, latencies and the crafts are identical; no number is worse than the noise. A first check, run while the game itself
+was running on the same machine, had rounds between 0.48 and 0.88 ms at 1000 for both versions and once flagged "ticks over
+5 ms" (34 against 51); the quiet seven-round run above shows 2 against 3.

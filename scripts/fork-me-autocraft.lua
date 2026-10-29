@@ -29,9 +29,10 @@
 --- Job: at start the resources taken from storage are removed from the network into the job's own
 ---   pool (storage.fork_ae2.jobs[id].pool). Each step the CPU hands batches of ingredients
 ---   to idle pattern machines (machine.insert, fluid boxes set by index), waits until the machine
----   is idle again, moves the products into the pool, and at the end everything left in the pool
----   (result and by-products) is stored in the network. Cancel and failure give the pool back
----   the same way.
+---   is idle again, moves the products into the pool; the requested item goes on from there as it
+---   comes, up to the job's amount (issue #602, M.hand_out), and at the end everything left in the pool
+---   (the rest of the result, by-products) is stored in the network. Cancel and failure give the pool
+---   back the same way.
 --- Work (issue #5: spread over the ticks, M.on_tick from control.lua): each tick the setting "crafting jobs per
 ---   tick" jobs are stepped, round robin, each at most once per STEP_TICKS ticks; a step makes STEP_OPS machine
 ---   interactions times the speed of the job's CPU (its co-processors) per STEP_TICKS since the job's last step (up to
@@ -2111,19 +2112,46 @@ local function ing_pool(job, ing)
 	return total
 end
 
---- move everything from the pool into the network; what does not fit stays in the pool. Issue #426: a job that is done hands
---- its product, up to its amount, to the block that asked for it first (a Crafting Card's block: N.deliverers of its waker,
---- AE2-U's injectCraftedItems), once; what that block does not take is stored as the rest.
+--- Issue #602: the job's requested item goes on as it reaches the pool, up to the job's amount, as AE2-U's crafting CPU passes
+--- on its final output (CraftingCPUCluster.injectItems; finalOutput.splitOutputToIngredient keeps what later steps still use as
+--- an ingredient): to the block that asked for it first (a Crafting Card's block: N.deliverers of its waker, AE2-U's
+--- injectCraftedItems, issue #426), the rest into the network; what fits nowhere stays in the pool. `job.sent` counts what went
+--- on. Intermediates and byproducts stay in the pool until the job closes.
+function M.hand_out(job, net)
+	local key = job.item
+	local n = math.min(job.pool[key] or 0, job.amount - (job.sent or 0))
+	if n <= FLUID_EPS then return end
+	for _, step in ipairs(job.steps) do                    -- (what the runs not handed out yet still take of it)
+		if step.issued < step.runs then
+			for _, ing in pairs(step_ingredients(step)) do
+				if key_of(ing) == key then n = n - (step.runs - step.issued) * ing.amount end
+			end
+		end
+	end
+	if n <= FLUID_EPS then return end
+	local moved = 0
+	local deliver = job.owner and N.deliverers[job.waker or ""]
+	if deliver then moved = math.min(n, deliver(job.owner, key, n) or 0) end
+	if n - moved > FLUID_EPS then
+		if is_fluid(key) then
+			moved = moved + store_fluid(net, key, n - moved)
+		else
+			local name, q = N.parse_key(key)
+			moved = moved + store_item(net, name, q, n - moved)
+		end
+	end
+	if moved > 0 then
+		pool_add(job, key, -moved)
+		job.sent = (job.sent or 0) + moved
+	end
+end
+
+--- move everything from the pool into the network; what does not fit stays in the pool (a job that is done hands out its
+--- product first: M.hand_out)
 local function flush_pool(job, net)
-	local deliver = job.closing == "done" and job.owner and not job.handed and N.deliverers[job.waker or ""]
-	if deliver then job.handed = true end
+	if job.closing == "done" then M.hand_out(job, net) end
 	for key, count in pairs(shallow_map(job.pool)) do
 		local inserted = 0
-		if deliver and key == job.item and count > 0 then
-			inserted = math.min(count, deliver(job.owner, key, math.min(count, job.amount)) or 0)
-			count = count - inserted
-			job.pool[key] = count
-		end
 		if count > 0 then
 			if is_fluid(key) then
 				inserted = store_fluid(net, key, count)
@@ -2819,6 +2847,8 @@ local function job_step(s, job, work)
 		end
 	end
 
+	if not job.closing then M.hand_out(job, net) end        -- (issue #602: the product goes on as it comes)
+
 	--- 2) closing: give everything back
 	if job.closing then
 		job.closing_steps = job.closing_steps + 1
@@ -3463,7 +3493,7 @@ function M.jobs(net)
 end
 
 --- Issue #544: what the network's active jobs (queued or running, not closing) are crafting, by resource key: { [key] =
---- amount } (the terminal's second number on a slot)
+--- amount still to come: less what was handed out, issue #602 } (the terminal's second number on a slot)
 function M.crafting_amounts(net)
 	local s = state()
 	local out = {}
@@ -3471,7 +3501,7 @@ function M.crafting_amounts(net)
 		local job = s.jobs[id]
 		if job and not job.closing and (job.status == "queued" or job.status == "running") then
 			local jn = job_network(job)
-			if jn and jn.id == net.id then out[job.item] = (out[job.item] or 0) + job.amount end
+			if jn and jn.id == net.id then out[job.item] = (out[job.item] or 0) + job.amount - (job.sent or 0) end   -- (issue #602)
 		end
 	end
 	return out
@@ -3498,7 +3528,7 @@ function M.job(id)
 			received = st.received, keys = st.keys }
 	end
 	return { id = job.id, item = job.item, amount = job.amount, status = job.status, closing = job.closing,
-		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool,
+		wait = job.wait, done = job.done_runs, total = job.total_runs, pool = job.pool, sent = job.sent or 0,
 		leases = #job.leases, owner = job.owner, ops = job_ops(s, job), group = job.group, bytes = job_bytes(job),
 		steps = steps, reason = job.reason, problem = job.problem }
 end
