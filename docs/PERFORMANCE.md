@@ -4227,6 +4227,44 @@ two +0.023 and +0.046 ms: the rescan's 0.039 ms per tick) and the first tick aft
 percentile, which the whole squares had moved by +0.155 ms at 1000, is within the noise now; throughput and latencies are
 identical.
 
+## Crafting jobs hand out their product as it arrives (issue #602)
+
+A job's requested item goes on from its pool at every job step (`M.hand_out`: one read of the pool when nothing came; when
+something did, a walk over the job's steps for what later runs still take of it, then the Crafting Card's block or one
+`N.insert` into the network) instead of in one flush when the job ends. The work is the same items stored in more, smaller
+inserts.
+
+`bench --check origin/main` (three rounds in turns; size 1000 seven rounds), measured while nothing else ran on the machine:
+
+| | origin/main | #602 |
+|---|---|---|
+| 100: script avg / p99 (ms) | 0.247 / 2.11 | 0.237 / 2.05 (noise ±0.008 / ±0.07) |
+| 1000: script avg / p99 (ms) | 0.423 / 2.30 | 0.432 / 2.38 (noise ±0.025 / ±0.19) |
+| 1000: ticks over 5 ms | 2 | 3 (noise ±2) |
+| 5000: script avg / p99 (ms) | 1.110 / 3.34 | 1.106 / 3.28 (noise ±0.015 / ±0.06) |
+| provider crafts per second (100 / 1000 / 5000) | 2.5 / 15.78 / 329.5 | the same |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 28.84 / 41.61 / 61.81 | 28.83 / 41.61 / 61.83 |
+
+Throughput, latencies and the crafts are identical; no number is worse than the noise. A first check, run while the game itself
+was running on the same machine, had rounds between 0.48 and 0.88 ms at 1000 for both versions and once flagged "ticks over
+5 ms" (34 against 51); the quiet seven-round run above shows 2 against 3.
+
+## The ME Terminal's sorts by mod and by tier, rows kept at 0 (issue #602)
+
+- **Tiers** (`scripts/fork-me-sortkeys.lua`): made once when the prototypes can have changed (`on_init`,
+  `on_configuration_changed`) and kept in `storage.fork_me_tiers`, so a sort by tier reads a table (the first one in the
+  runtime test: 0.09 ms). Making them reads every recipe and technology: about 0.9 s with Gregtorio (29 705 recipes, 701
+  technologies; the vanilla game with Space Age far less), paid while the game loads after a mod change. Measured on the way
+  (`helpers.create_profiler` in the runtime test with Gregtorio): a walk of `prototypes.recipe` costs about 2.4 µs per entry
+  (70 ms for all), `r.products` about 9 to 18 µs per recipe, the effects of one technology about 110 µs (78 ms for all). The
+  engine's filters are fast to call (`get_recipe_filtered` with `has-product-item`: 0.07 ms for one item, 0.13 ms for 300;
+  `get_technology_filtered` with `unlocks-recipe`: 6 µs) but slow to walk: their result tables cost about 190 µs per entry
+  (52 ms for the 279 recipes of 300 items), so a lookup per item through them took 0.23 s for 5 items and 5.9 s for 300 more,
+  and a tier per item at the first sort was not an option. Mods are looked up per item at the first sort by mod
+  (`prototypes.get_history`), outside storage.
+- **Rows kept at 0**: a refresh of the storage grid compares the keys it showed with the network's items (at most 400 lookups)
+  and copies the kept list only when a row is kept at 0.
+
 ## The wireless refill (issue #603)
 
 A queue of its own (tag `wireless_refill`, `/me-stats`), one record per player who wears the ME Wireless Module. A save

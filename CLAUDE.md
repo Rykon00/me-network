@@ -55,7 +55,10 @@
   more (Gregtorio no longer has ME code), so the list is fixed.
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
-  notice, `all --with-gregtorio <Gregtorio checkout>`. `runtime` also saves the test map at tick 500 through a headless
+  notice, `all --with-gregtorio <Gregtorio checkout>`. A third-party mod is loaded with `--with-mod NAME` (issue #591:
+  the mod and its required dependencies from the mod portal or `--mods-from DIR`, the maintainer's
+  `%APPDATA%\Factorio\mods`): the Krastorio 2 compatibility (issue #598) runs `all --with-mod Krastorio2` and
+  `check --base-only --with-mod Krastorio2` as well, and `all --with-mod Krastorio2-spaced-out` (issue #596, with Space Age). `runtime` also saves the test map at tick 500 through a headless
   server (RCON on 127.0.0.1:27815) and checks that the schedule after the load is the unbroken run's: anything that
   decides when a block is visited must live in `storage`. Both must end with `RESULT: OK`; `check --base-only` checks
   without Space Age; `migrate --from-ref v0.1.0` (the old fluid blocks) or `--from-ref v0.2.0` (every kind of

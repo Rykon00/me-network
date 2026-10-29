@@ -215,6 +215,18 @@ The ME Logistic Interface (issue #531) is built the same way, but as a solid blo
 left (not moved by the bus view); its icons are the base and the marker. Its three hidden chests
 (`me-logistic-interface-provider`, `-requester`, `-storage`) have no picture.
 
+## Krastorio 2
+
+me-network carries its Krastorio 2 compatibility itself (issue #598), the way Gregtorio Continued carries its own in its
+compat file: `data-updates.lua` requires `prototypes/compat/krastorio2.lua` when `Krastorio2` or `Krastorio2-spaced-out`
+is active (hidden optional dependencies in `info.json`, so me-network's stages run after theirs), Gregtorio Continued is
+not (`gregtorio-continued`: its recipes and tiers win) and the startup setting `me-network-krastorio2-recipes` (made only
+with one of the two mods, on by default) is on. The file uses only `replace_recipe` and `set_technology` (and
+`make_molecular_assembler`), so it ends up where another mod's changes would; it sets `ME_NETWORK.krastorio2` when it ran.
+Every Krastorio 2 item goes through its helper `kr(name, fallback)`: the item when a prototype of an item type has that
+name, else the vanilla stand-in, with one log line. Krastorio 2's `data-final-fixes.lua` runs after it and takes the red to
+blue packs out of every technology that needs its advanced, optimization, matter or singularity cards.
+
 ## Runtime
 
 The remote interfaces are `gregtorio-me-network` (storage: `insert`, `extract`, `count`, `contents`,

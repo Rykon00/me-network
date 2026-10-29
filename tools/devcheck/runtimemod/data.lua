@@ -184,9 +184,14 @@ local function category(name)
 end
 local function I(name, amount) return { type = "item", name = name, amount = amount } end
 local function F(name, amount) return { type = "fluid", name = name, amount = amount } end
+--- (issue #596: kept in ZZ_DEVCHECK_STANDIN_RECIPES, so data-final-fixes.lua sets them again: Krastorio 2 Spaced Out renames
+--- chlorine and hydrogen to its own fluids in every recipe of those names in its data-updates)
+ZZ_DEVCHECK_STANDIN_RECIPES = {}
 local function recipe(name, cat, time, ingredients, results)
-	data:extend({ { type = "recipe", name = name, categories = { cat }, energy_required = time, enabled = false,
-		ingredients = ingredients, results = results, icon = ICON, subgroup = "intermediate-product" } })
+	local def = { type = "recipe", name = name, categories = { cat }, energy_required = time, enabled = false,
+		ingredients = ingredients, results = results, icon = ICON, subgroup = "intermediate-product" }
+	data:extend({ def })
+	ZZ_DEVCHECK_STANDIN_RECIPES[name] = table.deepcopy(def)
 end
 local function machine(name, base_type, base, categories, speed)
 	local e = table.deepcopy(data.raw[base_type][base])
@@ -203,7 +208,7 @@ end
 for _, n in pairs({ "raw-iron", "crushed-iron", "iron-dust", "iron-ingot", "tin-ingot", "raw-silicon",
 	"resin-circuit-board", "phenolic-circuit-board", "nickel-dust" }) do item(n) end
 for _, n in pairs({ "chlorine", "hydrogen", "phenol", "silicon-tetrachloride", "molten-tin", "hydrochloric-acid" }) do fluid(n) end
-for _, c in pairs({ "zz-macerator", "zz-chemical-reactor", "zz-extractor" }) do category(c) end
+for _, c in pairs({ "zz-macerator", "zz-chemical-reactor", "zz-extractor", "zz-smelting" }) do category(c) end
 
 --- Gregtorio's gear recipe (crafting table): 1 plate + 2 sticks -> 1 gear, a hand recipe the molecular assembler
 --- also makes
@@ -213,7 +218,7 @@ recipe("iron-gear-crafting-table", "crafting", 1, { I("iron-plate", 1), I("iron-
 recipe("crushed-iron", "zz-macerator", 20, { I("raw-iron", 1) },
 	{ I("crushed-iron", 2), { type = "item", name = "nickel-dust", amount = 1, independent_probability = 0.05 } })
 data.raw.recipe["crushed-iron"].main_product = "crushed-iron"
-recipe("iron-dust-smelter", "smelting", 10, { I("iron-dust", 1) }, { I("iron-ingot", 1) })
+recipe("iron-dust-smelter", "zz-smelting", 10, { I("iron-dust", 1) }, { I("iron-ingot", 1) })
 recipe("silicon-tetrachloride", "zz-chemical-reactor", 3, { I("raw-silicon", 1), F("chlorine", 400) }, { F("silicon-tetrachloride", 100) })
 recipe("molten-tin", "zz-extractor", 1.2, { I("tin-ingot", 1) }, { F("molten-tin", 14.4) })
 recipe("phenolic-circuit-board", "zz-chemical-reactor", 5, { I("resin-circuit-board", 1), F("phenol", 10) }, { I("phenolic-circuit-board", 1) })
@@ -223,4 +228,6 @@ recipe("hydrochloric-acid", "zz-chemical-reactor", 3, { F("chlorine", 100), F("h
 machine("ev-macerator", "assembling-machine", "assembling-machine-2", { "zz-macerator" }, 8)
 machine("hv-chemical-reactor", "assembling-machine", "chemical-plant", { "zz-chemical-reactor" }, 4)
 machine("ev-fluid-extractor", "assembling-machine", "chemical-plant", { "zz-extractor" }, 8)   -- Gregtorio issue #152
-machine("iron-furnace", "furnace", "stone-furnace", { "smelting" }, 2)
+--- (issue #591: a category of its own, not "smelting": Krastorio 2 turns every furnace that smelts into an assembling machine
+--- in its data-updates, and the tests need a furnace that picks its recipe by its input)
+machine("iron-furnace", "furnace", "stone-furnace", { "zz-smelting" }, 2)

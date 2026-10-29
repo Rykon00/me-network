@@ -1153,5 +1153,6 @@ ME.add_technology{ name = "me-storage-4096k", prerequisites = { "me-storage-1024
 	unit = ME.unit(5, 1200), recipes = { "me-4096k-storage-component", "me-4096k-storage-cell" } }
 ME.add_technology{ name = "me-storage-16384k", prerequisites = { "me-storage-4096k" },
 	unit = ME.unit(5, 1600), recipes = { "me-16384k-storage-component", "me-16384k-storage-cell" } }
-ME.add_technology{ name = "me-storage-singularity", prerequisites = { "me-storage-16384k", "me-quantum-bridge" },
+ME.add_technology{ name = "me-storage-singularity", prerequisites = { "me-storage-16384k", "me-quantum-bridge",
+	"electric-energy-accumulators" },                                             -- (issue #594: the cell takes accumulators)
 	unit = ME.unit(5, 2500), recipes = { SINGULARITY } }

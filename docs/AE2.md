@@ -237,8 +237,14 @@ game's own filters, issue #520) and **Any quality** or a quality;
 fluids count as normal quality; the wireless terminal has it too), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
-* **Storage:** sort (by amount, by name or by quality: higher quality first, then name, then amount; the qualities of one
-  item are always in the order of their level, normal first) and **Show: all / items / fluids**. **Left click** an item: a stack into
+* **Storage:** sort (by amount, by name, by quality: higher quality first, then name, then amount; by mod: the mod that adds
+  the item, then name; by tier: the highest science pack of the earliest technology that unlocks a recipe of it, items no
+  recipe makes last; issue #602), the **direction** button beside it (▼ descending, ▲ ascending; each sort keeps its own;
+  the qualities of one item are always in the order of their level, normal first) and **Show: all / items / fluids**. The
+  sort, its direction and Show are yours: every terminal window (the ME Terminal, the wireless terminal, the ME Chest) uses
+  them, also after you opened another block (issue #602). An item whose amount reaches 0 while the window is open stays in
+  its place, greyed, with 0, until you close the window (or change the sort, the search or a filter); clicking it does
+  nothing, and it is a normal slot again when the network has the item again. **Left click** an item: a stack into
   your hand; with something in hand, the click stores that instead. **Right click**: one item into your hand (one
   more of the same item). **Shift click**: a stack into your inventory. Items with tags (loaded cells), a label or damage
   have a yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).
@@ -774,7 +780,146 @@ The recipes that follow:
 The cards are in **Upgrade cards**. Not in AE2, kept as they were (with the stand-ins): the underground cable (8 fluix
 cables, 2 iron plates -> 2), the level maintainer, the circuit interface, the Interface Capacity Card and the wireless
 module. The technologies need what their recipes take: ME Network also needs Lamp and Fast inserter, ME Autocrafting and
-ME Upgrade Cards need Circuit network.
+ME Upgrade Cards need Circuit network, ME Wireless needs Radar and ME Singularity Storage Electric energy
+(accumulators); the Superluminal Speed Card (a 1024k component) comes with ME 1024k Storage (issue #594).
+
+### With Krastorio 2
+
+With Krastorio 2 (issue #593; `prototypes/compat/krastorio2.lua`, the startup setting "Krastorio 2 recipes and technologies",
+not with Gregtorio Continued) every AE2 material whose stand-in has a Krastorio 2 counterpart takes that, with AE2's counts.
+The processors (electronic circuit, advanced circuit, processing unit), the lamp, the combinators and the machines stay:
+Krastorio 2 makes them dearer itself. No ME recipe takes printed silicon itself (in AE2 it goes into the processors), so
+Krastorio 2's silicon is not used.
+
+| AE2 | Stand-in | With Krastorio 2 |
+|---|---|---|
+| certus quartz | stone | quartz |
+| glass, quartz glass, quartz fiber | plastic bar | glass (also the 3 glass of the ME IO Port and the 4 quartz glass of the ME Quantum Bridge's chamber, which had no stand-in) |
+| fluix crystal, fluix dust | copper cable | a quartz and the copper cable |
+| annihilation core, formation core | electronic circuit | automation core |
+| piston | fast inserter | inserter parts |
+| smooth sky stone (ME Controller) | stone brick | stone brick (the controller stays at red and green science) |
+| sky stone dust (256k and 1024k components) | stone brick | imersite powder |
+| glowstone (64k component, blank pattern) | copper cable | rare metals (the 16k component keeps the copper cable: it comes with the first technology) |
+| diamond (Advanced Card) | processing unit | rare metals |
+| dense energy cell (wireless terminal and module, Singularity cells) | batteries, accumulator | lithium-sulfur battery (one for AE2's one cell; the wireless module's 10 batteries: 3) |
+| quantum ring (ME Quantum Bridge) | battery (its energy cell) | AI core |
+| the 4096k and 16384k components' material | stone brick | imersium plate, energy control unit |
+| matter condenser (Singularity cells) | (the bridges) | a charged matter stabilizer more |
+| the crafting accelerators 256x to 4096x (ME Crafting Accelerators 2) | - | an energy control unit more |
+
+The recipes that change (the others keep their ingredients: cells, crafting storages and units, the blocks that are not in
+AE2, most cards):
+
+| Item | Recipe with Krastorio 2 |
+|---|---|
+| Fluix Cable | 1 glass, 2 quartz, 2 copper cable |
+| ME Controller | 4 stone brick, 4 quartz, 4 copper cable, 1 advanced circuit |
+| ME Interface | 4 iron plate, 2 glass, 2 automation core |
+| ME Terminal | 2 automation core, 1 electronic circuit, 1 small lamp |
+| ME Chest | 2 glass, 1 ME Terminal, 2 Fluix Cable, 2 iron plate, 1 copper plate |
+| Basic Storage Housing | 2 glass, 3 copper cable, 2 iron plate, 1 copper plate |
+| ME 1K Storage Component | 4 copper cable, 4 quartz, 1 electronic circuit |
+| ME 4K Storage Component | 3 ME 1K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 16K Storage Component | 3 ME 4K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 64K Storage Component | 3 ME 16K Storage Component, 1 advanced circuit, 1 glass, 4 rare metals |
+| ME 256k Storage Component | 3 ME 64K Storage Component, 1 advanced circuit, 1 glass, 4 imersite powder |
+| ME 1024k Storage Component | 3 ME 256k Storage Component, 1 advanced circuit, 1 glass, 4 imersite powder |
+| ME 4096k Storage Component | 3 ME 1024k Storage Component, 1 advanced circuit, 1 glass, 4 imersium plate |
+| ME 16384k Storage Component | 3 ME 4096k Storage Component, 1 advanced circuit, 1 glass, 4 energy control unit |
+| ME Singularity Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 lithium-sulfur battery, 1 Basic Storage Housing, 1 charged matter stabilizer |
+| ME Import Bus | 1 automation core, 2 iron plate, 1 inserter parts |
+| ME Export Bus | 1 automation core, 2 iron plate, 1 inserter parts |
+| ME Storage Bus | 1 ME Interface, 2 inserter parts |
+| Void ME Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 iron plate |
+| Void ME Fluid Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 copper plate |
+| ME IO Port | 1 ME Drive, 2 Fluix Cable, 2 iron plate, 1 advanced circuit, 3 glass |
+| ME Quantum Bridge | 32 iron plate, 20 electronic circuit, 8 processing unit, 8 AI core, 32 Fluix Cable, 4 glass |
+| ME Pattern Provider | 4 iron plate, 2 assembling machine 1, 2 automation core |
+| ME Blank Pattern | 2 glass, 3 rare metals, 1 quartz, 2 iron plate, 1 copper plate |
+| ME Molecular Assembler | 4 iron plate, 2 glass, 2 automation core, 1 assembling machine 1 |
+| ME 256x Crafting Accelerator | 4 ME 64x Crafting Accelerator, 1 energy control unit |
+| ME 1024x Crafting Accelerator | 4 ME 256x Crafting Accelerator, 1 energy control unit |
+| ME 4096x Crafting Accelerator | 4 ME 1024x Crafting Accelerator, 1 energy control unit |
+| ME 1k Fluid Storage Cell | 1 ME 1K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4k Fluid Storage Cell | 1 ME 4K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16k Fluid Storage Cell | 1 ME 16K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 64k Fluid Storage Cell | 1 ME 64K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 256k Fluid Storage Cell | 1 ME 256k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 1024k Fluid Storage Cell | 1 ME 1024k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4096k Fluid Storage Cell | 1 ME 4096k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16384k Fluid Storage Cell | 1 ME 16384k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME Singularity Fluid Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 lithium-sulfur battery, 1 Basic Storage Housing, 1 pump, 1 charged matter stabilizer |
+| Advanced Card | 2 rare metals, 3 iron plate, 1 copper cable, 1 advanced circuit |
+| Capacity Card | 1 Basic Card, 1 quartz |
+| Acceleration Card | 1 Advanced Card, 1 quartz, 1 copper cable |
+| View Cell | 1 Basic Storage Housing, 1 quartz |
+| Wireless Booster | 2 quartz, 1 copper cable, 1 electronic circuit, 3 iron plate |
+| Wireless ME Terminal | 1 radar, 1 ME Terminal, 1 lithium-sulfur battery |
+| ME Wireless Terminal Module | 1 Wireless ME Terminal, 3 lithium-sulfur battery, 2 processing unit |
+
+The ME Molecular Assembler is made again after Krastorio 2's changes, from the assembling machine 2's item categories at
+that point (without Krastorio 2: the same; Krastorio 2's own machine categories such as crushing or electrolysis are never
+the assembling machine 2's), so it crafts Krastorio 2's assembler recipes such as the automation core.
+
+#### Krastorio 2's buildings
+
+Tested with Krastorio 2 loaded (issue #595, the runtime test `krastorio2.lua`), nothing of ME Network names them: the
+warehouses and strongboxes of every kind are chests for the import, export and storage bus and the ME Interface
+(containers and logistic containers: a storage bus on a requester warehouse shows and takes its contents); the big and huge
+storage tanks are tanks for the fluid side of the buses; the advanced lab takes science packs from an export bus as the
+vanilla lab does, and the research server is a crafting machine (an export bus fills its recipe's ingredients). Matter
+(`kr-matter`) is a fluid like any other: it is kept in fluid cells, an export bus fills it into a matter associator and an
+import bus takes it out of a matter plant, at its temperature (25 degrees). Krastorio 2's steel pipe and steel pipe to
+ground connect to the sides of an ME Interface (and an ME Chest) where a vanilla pipe does: Krastorio 2 lets every fluid
+box but a pipe's take its steel pipes.
+
+#### Technologies with Krastorio 2
+
+With Krastorio 2 the storage ladder follows its science tiers (issue #594): up to 256k the vanilla packs as without it, 1024k
+on utility science, 4096k with the matter tech card, 16384k with the advanced tech card and the Singularity cells with the
+singularity tech card, each with the Krastorio 2 technology whose items its recipes take as a prerequisite. Counts and times
+follow Krastorio 2's technologies of the same tier. Production and utility science need Krastorio 2's Advanced lab, the
+tech cards its Singularity lab: nothing ME Network has to do. Krastorio 2 itself takes red to blue out of every technology
+that needs its higher cards; the ME technologies of those tiers name only the tier's packs anyway. Krastorio 2 does not support
+Space Age: with it, its optimization tech card (the space science pack) needs space research data that no rocket
+brings, so its singularity tech card cannot be researched; there the ME Singularity technologies stay on the advanced tier
+(production, utility, matter and advanced tech cards).
+
+| Technology | Without Krastorio 2 | With Krastorio 2 | Krastorio 2 prerequisite added |
+|---|---|---|---|
+| ME Network | 300 × 30 s, red, green | 250 × 30 s, red, green | Silicon processing |
+| ME 64k Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue | Rare metal processing |
+| ME Upgrade Cards | ME 64k Storage's | ME 64k Storage's |  |
+| ME Autocrafting, ME Automation | 500 × 30 s, red to blue | 300 × 30 s, red to blue |  |
+| ME Fluid Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue |  |
+| ME Wireless | 500 × 30 s, red to blue | 250 × 30 s, red to blue | Lithium-sulfur battery (instead of Battery) |
+| ME Wireless Link | 400 × 30 s, red to blue | 200 × 30 s, red to blue |  |
+| ME 256k Storage, ME Fluid 256k Storage | 600 × 30 s, red to production | 350 × 60 s, red to production | Quarry minerals extraction (256k) |
+| ME Co-Processing | 800 × 30 s, red to production | 350 × 60 s, red to production |  |
+| ME 1024k Storage, ME Fluid 1024k Storage | 800 × 30 s, red to utility | 500 × 60 s, red to utility | AI core (1024k) |
+| ME Quantum Crafting, ME Crafting Accelerators | 1000 × 30 s, red to utility | 500 × 60 s, red to utility | AI core |
+| ME 1024k Crafting Storage | 1200 × 30 s, red to utility | 500 × 60 s, red to utility |  |
+| ME Quantum Bridge | 1500 × 30 s, red to utility | 750 × 60 s, red to utility | Quantum computer |
+| ME 4096k Storage, crafting and fluid | 1200 / 1600 / 1200 × 30 s, red to utility | 500 × 60 s, production, utility, matter tech card | Imersium processing (4096k) |
+| ME 16384k Storage, crafting and fluid; ME Crafting Accelerators 2 | 1600 / 2000 / 1600 / 2500 × 30 s, red to utility | 500 × 45 s, production, utility, matter, advanced tech card | Energy control unit, Advanced tech card (16384k, accelerators 2) |
+| ME Singularity Storage, ME Singularity Crafting Storage | 2500 / 3000 × 30 s, red to utility | 1000 × 60 s, production, utility, optimization, matter, advanced, singularity tech card (with Space Age: the advanced tier, see above) | Matter processing, Singularity tech card (storage) |
+
+#### Krastorio 2 Spaced Out
+
+Krastorio 2 Spaced Out (`Krastorio2-spaced-out`, issue #596) is an add-on of Krastorio 2 for Space Age (it needs Krastorio 2,
+k2so-assets and Space Age). Every item the recipes above take has the same name there, so the recipes are the same. Its
+upper tiers come in another order, and the technologies follow it:
+
+| Technology | With Krastorio 2 Spaced Out |
+|---|---|
+| ME 4096k Storage, crafting and fluid | 500 × 60 s, production and utility (Spaced Out's imersium processing has no matter card) |
+| ME 16384k Storage, crafting and fluid; ME Crafting Accelerators 2 | 500 × 45 s, production, utility, advanced tech card (its energy control unit comes after the advanced card, before the matter card) |
+| ME Singularity Storage, ME Singularity Crafting Storage | 2000 × 60 s, production, utility, space, metallurgic, agricultural, electromagnetic, matter, advanced and singularity (as its matter cube and singularity beacon) |
+| ME Quantum Bridge | 750 × 60 s, red to utility, after AI core (Spaced Out's quantum computer needs Aquilo's quantum processor; the bridge takes AI cores only) |
+
+The others are as with Krastorio 2. The ME Quantum Bridge links networks on different planets without a limit; the runtime
+test links a network on one surface with an ME Interface on Vulcanus.
 
 ### View Cells
 
@@ -842,9 +987,9 @@ into the ME Export Bus (not the import bus) and into the fourth card slot of the
   its target has room for) and a fluid row of the interface (what its side lacks), at the filter's or row's temperature or
   the fluid's default one.
 * The products go to the block that asked for them (issue #426, AE2-Unofficial's `injectCraftedItems` of
-  `PartBaseExportBus` and `DualityInterface`): when the job is done, its product, up to the amount it was asked for, goes
-  into the export bus's target, or into the interface (items into its inventory, fluid into the tank of a side tied to a row
-  of that fluid); what the block does not take, and what the job made beyond the amount, goes into the network.
+  `PartBaseExportBus` and `DualityInterface`): as the job makes it (issue #602), its product, up to the amount it was asked
+  for, goes into the export bus's target, or into the interface (items into its inventory, fluid into the tank of a side tied
+  to a row of that fluid); what the block does not take, and what the job made beyond the amount, goes into the network.
 * **Craft only** (issue #426, AE2-Unofficial's `Settings.CRAFT_ONLY`, a checkbox in the export bus's window while it has the
   card): the bus takes nothing from the network's storage. For each filter whose item its target can take (a machine: up to
   its level) or whose fluid it has room for, it starts a job for what the visit would move, and the job's products go
@@ -1143,7 +1288,8 @@ Step by step:
    red slot buttons. With something missing the Craft button stays disabled. Click **Craft**; the job
    appears in the **Jobs** tab (and in the window of the CPU that runs it) with its progress and a
    **Cancel** button.
-6. When the job is done, the result (and any by-products) is in network storage.
+6. The result goes into network storage as it is made (issue #602, as in GT New Horizons' AE2: a job of 1000 items does not
+   hold them back until the last one is done); by-products and what is left over of intermediates when the job is done.
 
 ### Patterns: encoding and clearing
 
@@ -1931,8 +2077,11 @@ a window whose entity is gone or out of reach; a window rebuilds a part only whe
 the part's tags), so focused text fields keep their text. `scripts/fork-me-windows.lua` builds the block windows;
 each shows data from a `*_data` function and changes things through a function of the block's module or a small
 `set_*` helper; the remote interface `gregtorio-me-gui` exposes the same functions to the runtime test. Nothing of a
-window is in storage except the terminal's tab, search, sort, kind and picked craft
-(`storage.fork_me_terminal[player]`).
+window is in storage except the terminal's tab, search, quality filter, picked craft and rows kept at 0
+(`storage.fork_me_terminal[player]`) and the player's sort, its direction and kind (`storage.fork_me_term_prefs[player]`,
+issue #602: every terminal window uses them; the tiers and mods to sort by come from `scripts/fork-me-sortkeys.lua`: the
+tiers are read from the runtime prototypes, because a dependent mod rewrites recipes and unlocks after this mod's last data
+stage, once in `on_init` and `on_configuration_changed` (about 0.9 s with Gregtorio) into `storage.fork_me_tiers`).
 
 Issue #28 (`docs/ME-REWORK.md`, "Windows with the player's inventory"): every window has the **inventory pane**, the
 player's inventory on the left of the content (`G.open_window(..., pane)`); since issue #542 ("The game's inventory
@@ -2063,13 +2212,20 @@ Each step the CPU of a job:
 
 1. collects machines that are idle again (no progress, no ingredients left): their products go to
    the pool,
+   and (issue #602) hands the requested item on from the pool as it comes (`M.hand_out`), up to the job's amount less
+   what it handed out before (`job.sent`) and less what runs not handed out yet still take of it as an ingredient: first
+   to the block of the job's Crafting Card (`N.deliverers`, issue #426), the rest into the network (`N.no_arrival`: no
+   other job takes it as an arrival). GT New Horizons' AE2 does the same: `CraftingCPUCluster.injectItems` passes a
+   final output on at once (`finalOutput.splitOutputToIngredient` keeps the part later tasks still use) and ends the
+   job when the last of it is out. Intermediates and byproducts stay in the pool,
 2. hands batches (up to 16 crafts, limited by the pool, by one stack per item ingredient, by the
    output slot and by the fluid boxes) to idle machines of the step's pattern, in plan order
    (Molecular Assembler or any other pattern machine, several machines in parallel). Crafting patterns:
    a machine that has the recipe first, else an idle one is switched (`switch_recipe`: its items and fluids into
    the network with `N.no_arrival`, then `set_recipe`; not when the network cannot take them). Processing
    patterns: an idle machine gets the inputs as a lease, a chest gets them directly (no lease),
-3. when every step is done, stores the whole pool in the network (result and by-products), items
+3. when every step is done, hands out what is left of the requested item as in 1. and stores the rest of the pool
+   in the network (a surplus of the result, by-products), items
    with the network's `insert`, fluids with `fluids.insert`. What does not fit stays in the pool
    ("Storing items and fluids (network cells full?)").
 

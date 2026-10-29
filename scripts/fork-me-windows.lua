@@ -2431,7 +2431,8 @@ local function stand_in_element(def)
 	el.tags, el.style, el.style_name, el.children, el.valid = def.tags or {}, {}, def.style, {}, true
 	el.add = function(d)
 		local c = stand_in_element(d)
-		el.children[#el.children + 1] = c
+		--- (issue #602: at its index, as the game puts it)
+		if d.index and d.index <= #el.children then table.insert(el.children, d.index, c) else el.children[#el.children + 1] = c end
 		c.parent = el
 		return c
 	end
@@ -2612,7 +2613,8 @@ remote.add_interface("gregtorio-me-gui", {
 		return out
 	end,
 	--- Issue #544: in the stand-in's open window, select tab `index` of the tabbed pane `tabs` and refresh (only the shown tab of
-	--- the terminal is refreshed); and the buttons below the element `element`: { { sprite, number, secondary_number } }
+	--- the terminal is refreshed); and the buttons below the element `element`: { { sprite, number, secondary_number, enabled
+	--- (issue #602) } }
 	stand_in_select_tab = function(name, tabs, index)
 		local sp = stand_ins[name]
 		local frame = G.window_of(sp)
@@ -2629,7 +2631,9 @@ remote.add_interface("gregtorio-me-gui", {
 		local queue, i = { root }, 1
 		while root and queue[i] do
 			for _, c in pairs(queue[i].children) do
-				if c.type == "sprite-button" then out[#out + 1] = { sprite = c.sprite, number = c.number, secondary_number = c.secondary_number } end
+				if c.type == "sprite-button" then
+					out[#out + 1] = { sprite = c.sprite, number = c.number, secondary_number = c.secondary_number, enabled = c.enabled }
+				end
 				queue[#queue + 1] = c
 			end
 			i = i + 1

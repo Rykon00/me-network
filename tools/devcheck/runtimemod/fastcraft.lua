@@ -5,6 +5,8 @@
 --- about 510 ticks at its speed: over 300 ticks (from 60 ticks after its start) the assembler makes at least 85 % of what its
 --- speed allows. (With Gregtorio's assembler, 5 crafts per tick, one stack of gears is made in less than a step: the job is
 --- stepped earlier.)
+--- Issue #602: at the end of the window (the job still runs) the network holds the gears made so far, as many as the job says
+--- it handed out; after the job all of them, as many as asked for.
 --- Loaded by control.lua: require("fastcraft")(H) returns { setup, tick, running }.
 
 local NET, AC = "gregtorio-me-network", "gregtorio-me-autocraft"
@@ -75,6 +77,13 @@ return function(H)
 			st.share = share
 			expect(share >= 0.85, string.format("the assembler made %d gears in %d ticks: %.0f %% of what its speed allows (%.2f per "
 				.. "tick), at least 85 %% expected", made, tick - st.t0, share * 100, per_tick))
+			--- issue #602: the gears reach the network as they come, before the job ends (the network had none)
+			local j = remote.call(AC, "job", st.job) or {}
+			local have = remote.call(NET, "count", ctrl, GEAR)
+			st.early = have
+			expect(j.status == "running" and (j.sent or 0) > 0 and have == j.sent and have < st.runs,
+				"while the job runs its gears reach the network: " .. serpent.line({ j.status, sent = j.sent, network = have,
+				runs = st.runs }))
 			st.phase = "done"
 		elseif st.phase == "done" then
 			local j = remote.call(AC, "job", st.job) or {}
@@ -87,8 +96,9 @@ return function(H)
 			end
 			expect(remote.call(NET, "count", ctrl, GEAR) == st.runs and remote.call(NET, "count", ctrl, "iron-plate") == 5000 - st.runs,
 				"after the job: gears " .. remote.call(NET, "count", ctrl, GEAR) .. ", plates " .. remote.call(NET, "count", ctrl, "iron-plate"))
+			expect(j.sent == st.runs, "the job handed out " .. tostring(j.sent) .. " gears, " .. st.runs .. " expected (issue #602)")
 			return finish(string.format("an assembler at %.2f crafts per tick busy %.0f %% of 300 ticks; a job of %d gears done, "
-				.. "nothing lost", per_tick, st.share * 100, st.runs))
+				.. "%d of them in the network while it ran (issue #602), nothing lost", per_tick, st.share * 100, st.runs, st.early or 0))
 		end
 	end
 

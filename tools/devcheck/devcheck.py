@@ -7,6 +7,9 @@
     python tools/devcheck/devcheck.py all                   # check + runtime
     python tools/devcheck/devcheck.py all --with-gregtorio ../Gregtorio
                                                             # the same with Gregtorio Continued loaded
+    python tools/devcheck/devcheck.py all --with-mod Krastorio2 [--mods-from DIR]
+                                                            # issue #591: with a third-party mod and its required
+                                                            # dependencies (check --base-only: without Space Age)
     python tools/devcheck/devcheck.py migrate --from-ref v0.5.0
                                                             # a save of an older version loaded with the working copy
     python tools/devcheck/devcheck.py bench                 # script time, throughput and latencies of synthetic
@@ -89,17 +92,91 @@ def download(url, dest):
         shutil.copyfileobj(r, f)
 
 
-def required_mods(info_path):
-    info = json.loads(Path(info_path).read_text(encoding="utf-8"))
+def dependency_names(info):
+    """the required dependencies of an info.json (a dict): plain, `~` (no load order) and `+` ones; optional (`?`),
+    hidden optional (`(?)`) and incompatible (`!`) ones are not pulled, nor the built-in mods, this mod and its
+    texture mod (the stand-in of texture_stand_in)"""
     out = []
     for dep in info.get("dependencies", []):
         dep = dep.strip()
-        if dep[:1] in "?!(~":
+        if dep[:1] in "?!(":
             continue
-        name = re.split(r"\s*[<>=]", dep)[0].strip()
-        if name not in BUILTIN and name != NAME:
+        name = re.split(r"\s*[<>=]", dep.lstrip("~+ "))[0].strip()
+        if name not in BUILTIN and name not in (NAME, TEXTURES):
             out.append(name)
     return out
+
+
+def required_mods(info_path):
+    return dependency_names(json.loads(Path(info_path).read_text(encoding="utf-8")))
+
+
+def zip_info(path):
+    """the info.json of a mod zip (it lies in the zip's one top folder)"""
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        name = next(n for n in z.namelist() if n.count("/") == 1 and n.endswith("/info.json"))
+        return json.loads(z.read(name).decode("utf-8"))
+
+
+def mod_zip(name):
+    """the newest zip of a mod in mods/ (Factorio loads the newest of several), None if there is none"""
+    found = sorted(MODS.glob(f"{name}_*.zip"), key=lambda z: [int(x) for x in re.findall(r"\d+", z.stem.rsplit("_", 1)[1])])
+    return found[-1] if found else None
+
+
+def fetch_mod(name, mods_from=None):
+    """a mod zip into mods/: from the folder `mods_from`, else its newest release for FACTORIO_VERSION from the mod
+    portal (FACTORIO_USERNAME/FACTORIO_TOKEN)"""
+    if mods_from:
+        found = sorted(Path(mods_from).glob(f"{name}_*.zip"))
+        if not found:
+            sys.exit(f"{name}_*.zip not found in {mods_from}")
+        shutil.copy2(found[-1], MODS / found[-1].name)
+        print(f"copied {found[-1].name}")
+        return
+    user, token = os.environ.get("FACTORIO_USERNAME"), os.environ.get("FACTORIO_TOKEN")
+    if not user or not token:
+        sys.exit(f"need {name}: set FACTORIO_USERNAME/FACTORIO_TOKEN or pass --mods-from DIR")
+    meta = json.load(urlopen(f"https://mods.factorio.com/api/mods/{urllib.parse.quote(name)}"))
+    rels = [r for r in meta["releases"] if r["info_json"].get("factorio_version") == FACTORIO_VERSION]
+    if not rels:
+        sys.exit(f"{name} has no release for Factorio {FACTORIO_VERSION} on the mod portal")
+    rel = rels[-1]
+    q = urllib.parse.urlencode({"username": user, "token": token})
+    download(f"https://mods.factorio.com{rel['download_url']}?{q}", MODS / rel["file_name"])
+
+
+def fetch_mods(names, mods_from=None):
+    """issue #591: the mods `names` and their required dependencies (dependency_names, recursively) into mods/, each
+    one that is not there yet through fetch_mod. Returns every name of that closure."""
+    MODS.mkdir(parents=True, exist_ok=True)
+    todo, seen = list(names), []
+    while todo:
+        name = todo.pop(0)
+        if name in seen:
+            continue
+        seen.append(name)
+        if not mod_zip(name):
+            fetch_mod(name, mods_from)
+        todo += dependency_names(zip_info(mod_zip(name)))
+    return seen
+
+
+def mod_closure(names):
+    """the mods `names` and their required dependencies (recursively) among the zips in mods/; fails on a missing one"""
+    todo, seen = list(names), []
+    while todo:
+        name = todo.pop(0)
+        if name in seen:
+            continue
+        z = mod_zip(name)
+        if not z:
+            sys.exit(f"{name}_*.zip is not in {MODS}: run `devcheck.py setup` with --with-gregtorio DIR or --with-mod NAME "
+                     "(and --mods-from DIR for local zips)")
+        seen.append(name)
+        todo += dependency_names(zip_info(z))
+    return seen
 
 
 def steam_factorio():
@@ -178,27 +255,8 @@ def setup(a):
             t.extractall(WORK)
         tar.unlink()
     print("factorio:", subprocess.run([str(binary), "--version"], capture_output=True, text=True).stdout.splitlines()[0])
-    MODS.mkdir(exist_ok=True)
-    for name in required_mods(Path(a.with_gregtorio) / "info.json") if a.with_gregtorio else []:
-        if list(MODS.glob(f"{name}_*.zip")):
-            continue
-        if a.mods_from:
-            found = sorted(Path(a.mods_from).glob(f"{name}_*.zip"))
-            if not found:
-                sys.exit(f"{name}_*.zip not found in {a.mods_from}")
-            shutil.copy2(found[-1], MODS / found[-1].name)
-            print(f"copied {found[-1].name}")
-            continue
-        user, token = os.environ.get("FACTORIO_USERNAME"), os.environ.get("FACTORIO_TOKEN")
-        if not user or not token:
-            sys.exit(f"need {name}: set FACTORIO_USERNAME/FACTORIO_TOKEN or pass --mods-from DIR")
-        meta = json.load(urlopen(f"https://mods.factorio.com/api/mods/{urllib.parse.quote(name)}"))
-        rels = [r for r in meta["releases"] if r["info_json"].get("factorio_version") == FACTORIO_VERSION]
-        if not rels:
-            sys.exit(f"{name} has no release for Factorio {FACTORIO_VERSION} on the mod portal")
-        rel = rels[-1]
-        q = urllib.parse.urlencode({"username": user, "token": token})
-        download(f"https://mods.factorio.com{rel['download_url']}?{q}", MODS / rel["file_name"])
+    names = required_mods(Path(a.with_gregtorio) / "info.json") if a.with_gregtorio else []
+    fetch_mods(names + (a.with_mod or []), a.mods_from)
     print("setup done")
 
 
@@ -273,12 +331,14 @@ def texture_stand_in():
 
 
 def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=None, with_migrate=False, bench_dir=None,
-                 textures=None):
+                 textures=None, with_mods=()):
     """mods/ = this mod (working copy, or `mod_dir`: an older version or the instrumented copy of `bench --profile`)
     + the devcheck helper mods (`bench_dir`: the benchmark mod with its config, instead of the check mod); with
     Gregtorio its checkout and its dependency zips. base_only: without Space Age and quality. textures: a folder
     of the texture mod me-network-ae2-textures to load next to this mod (issue #239, the proof run; never with
-    Gregtorio); without it the empty stand-in of texture_stand_in, which me-network requires (issue #325)."""
+    Gregtorio); without it the empty stand-in of texture_stand_in, which me-network requires (issue #325).
+    with_mods: third-party mods to load from their zips in mods/ (issue #591, `--with-mod`), with their required
+    dependencies; every other zip there is disabled."""
     if textures and gregtorio:
         sys.exit("the texture mod's graphics are never loaded in a Gregtorio run (issue #239: the stand-in is)")
     MODS.mkdir(parents=True, exist_ok=True)
@@ -302,12 +362,13 @@ def prepare_mods(gregtorio=None, with_runtime=False, base_only=False, mod_dir=No
     disabled = builtin if base_only else []
     if not base_only:
         enabled += builtin
-    zips = [z.name.rsplit("_", 1)[0] for z in MODS.glob("*.zip")]
+    zips = sorted({z.name.rsplit("_", 1)[0] for z in MODS.glob("*.zip")})
+    wanted = mod_closure((required_mods(Path(gregtorio) / "info.json") if gregtorio else []) + list(with_mods or []))
     if gregtorio:
         link_dir(MODS / GREGTORIO, Path(gregtorio).resolve())
-        enabled += [GREGTORIO] + zips
-    else:
-        disabled += zips
+        enabled.append(GREGTORIO)
+    enabled += wanted
+    disabled += [z for z in zips if z not in wanted]
     if with_runtime:
         link_dir(MODS / "zz-me-network-devcheck-runtime", helper_dir(HERE / "runtimemod"))
         enabled.append("zz-me-network-devcheck-runtime")
@@ -345,7 +406,7 @@ def create_map(mapfile, *args):
 
 def sections(log):
     out = {}
-    for m in re.finditer(r"DEVCHECK-([A-Z]+)-BEGIN\n(.*?)\nDEVCHECK-\1-END", log, re.S):
+    for m in re.finditer(r"DEVCHECK-([A-Z0-9]+)-BEGIN\n(.*?)\nDEVCHECK-\1-END", log, re.S):
         out[m.group(1)] = [l.split("\t") for l in m.group(2).splitlines() if l]
     return out
 
@@ -374,7 +435,7 @@ class Model:
     def __init__(self, rows):
         split = lambda s: [x.split(":", 1)[1] for x in s.split(",") if x]
         kinds = lambda s: [x.split(":", 1)[0] for x in s.split(",") if x]
-        self.R, self.C, self.CF, self.I, self.T, self.B = {}, {}, {}, {}, {}, {}
+        self.R, self.C, self.CF, self.I, self.T, self.B, self.L, self.silos = {}, {}, {}, {}, {}, {}, {}, set()
         self.base = {"water", "steam"}
         for p in rows:
             k = p[0]
@@ -384,6 +445,8 @@ class Model:
             elif k == "C":
                 self.C[p[1]] = p[3].split(",") if p[3] else []
                 self.CF[p[1]] = (int(p[4]), int(p[5]))
+                if p[2] == "rocket-silo":
+                    self.silos.add(p[1])
             elif k == "I":
                 self.I[p[1]] = p[3]
             elif k == "T":
@@ -397,6 +460,8 @@ class Model:
                 self.base.add(p[2])
             elif k == "B":
                 self.B[p[1]] = p[2]
+            elif k == "L":
+                self.L[p[1]] = split(p[2])
         self.solve()
 
     def solve(self):
@@ -419,6 +484,14 @@ class Model:
                 if fuel in self.avail and burnt not in self.avail:
                     self.avail.add(burnt)
                     changed = True
+            # issue #591: the products of a rocket launched with an item, once a rocket silo is built
+            if self.silos & self.crafters:
+                for it, products in self.L.items():
+                    if it in self.avail:
+                        for x in products:
+                            if x not in self.avail:
+                                self.avail.add(x)
+                                changed = True
             cats = {c for m in self.crafters for c in C.get(m, [])}
             for r in self.unlocked:
                 v = R[r]
@@ -457,6 +530,8 @@ class Model:
         for r in sorted(self.unlocked):
             if r.endswith("-recycling") or self.R[r]["cat"] & {"recycling", "parameters"}:
                 continue
+            if not self.R[r]["res"]:
+                continue                # (issue #591: a recipe that makes nothing, such as Krastorio 2's void crushing of an item)
             why = self.why_not(r)
             if why:
                 out.append((r, why))
@@ -688,6 +763,13 @@ def check_map(a, mapfile, textures=None):
     sec = sections(log)
     validate = [" ".join(r) for r in sec.get("VALIDATE", [])]
     print(f"load: {'FAILED' if err else 'ok'}")
+    if "VALIDATEFINAL" in sec:
+        # issue #591: a third-party mod (Krastorio 2) names in its data.lua recipes it adds in a later stage: only a
+        # reference still missing at the end (checkmod/data-final-fixes.lua) is a problem
+        final = {" ".join(r) for r in sec["VALIDATEFINAL"]}
+        report("references to prototypes missing after data.lua only, there at the end (information)",
+               [v for v in validate if v not in final])
+        validate = [v for v in validate if v in final] + sorted(final - set(validate))
     if validate:
         report("references to missing prototypes", validate)
     if err:
@@ -740,9 +822,17 @@ def check_map(a, mapfile, textures=None):
     # probability, an item's fuel_category, a fluid box's temperatures) and ignores the others: those fail silently
     rows = [r for r in sec.get("REMOVEDKEYS", []) if len(r) > 1]
     other = [r for r in rows if re.split(r"[.\[]", r[0])[0] in REMOVED_KEYS_OTHER_MODS]
-    removed = [f"{r[0]}: {r[1]}" for r in rows if r not in other]
+    # issue #591: with --with-mod, a key on a prototype that is not this mod's (its items, recipes and technologies, the
+    # entities named me-...) is the third-party mod's (Krastorio 2 2.1.4 still sets 2.0 keys)
+    own_names = {r[1] for r in sec.get("OWN", []) if len(r) > 1}
+    def ours(r):
+        name = re.split(r"[.\[]", r[0])[0].split("/", 1)[-1]
+        return name in own_names or name.startswith("me-") or name == "fluix-cable"
+    third = [r for r in rows if r not in other and getattr(a, "with_mod", None) and not ours(r)]
+    removed = [f"{r[0]}: {r[1]}" for r in rows if r not in other and r not in third]
     report("prototype keys that Factorio removed, of other mods (information: REMOVED_KEYS_OTHER_MODS)",
            [f"{r[0]}: {r[1]} ({REMOVED_KEYS_OTHER_MODS[re.split(r'[.\[]', r[0])[0]]})" for r in other])
+    report("prototype keys that Factorio removed, of the mods of --with-mod (information)", [f"{r[0]}: {r[1]}" for r in third])
     print(f"prototype keys removed by Factorio {FACTORIO_VERSION}: {len(removed)}")
     report("prototype keys that Factorio removed (removed-keys.lua; ignored when loaded: they fail silently)", removed)
     tab, tab_info = check_tab(sec, getattr(a, "with_gregtorio", None))
@@ -842,7 +932,7 @@ def check_textures(a, base_sec):
     before = {p.relative_to(ROOT).as_posix(): p.read_bytes() for p in (ROOT / "ae2-textures").rglob("*") if p.is_file()}
     copy, cases, problems = proof_copy(base_sec)
     try:
-        prepare_mods(base_only=a.base_only, textures=copy)
+        prepare_mods(base_only=a.base_only, textures=copy, with_mods=with_mods(a))
         ok, sec, log = check_map(a, WORK / "check-map-textures.zip", textures=copy)
     finally:
         link = MODS / TEXTURES
@@ -881,10 +971,101 @@ def check_textures(a, base_sec):
     return ok and sec is not None and not problems
 
 
+def with_mods(a):
+    """issue #591: the mods of `--with-mod` (each fetched with its required dependencies when not in mods/ yet:
+    `--mods-from DIR` or the mod portal)"""
+    names = getattr(a, "with_mod", None) or []
+    if names:
+        fetch_mods(names, getattr(a, "mods_from", None))
+    return names
+
+
+def mods_label(a, base_only=False):
+    return (("base only" if base_only else "base, Space Age, quality")
+            + (" + Gregtorio Continued" if getattr(a, "with_gregtorio", None) else "")
+            + "".join(f" + {m}" for m in getattr(a, "with_mod", None) or []))
+
+
+# issue #593: the vanilla stand-ins that every ME recipe swaps for a Krastorio 2 item (glass, certus quartz, piston)
+K2_GONE = ("plastic-bar", "stone", "fast-inserter")
+
+
+def check_krastorio2(sec):
+    """issue #593: with the Krastorio 2 compatibility active no ME recipe keeps a stand-in of K2_GONE, and the ME Molecular
+    Assembler crafts Krastorio 2's automation core (an assembler recipe of its first tier)"""
+    rows = [p for p in sec.get("DUMP", []) if p[0] == "R"]
+    recipes = {p[1]: p for p in rows}
+    own = [n for k, n in sec.get("OWN", []) if k == "recipe"]
+    out = []
+    for n in own:
+        ing = {x.split(":", 1)[1] for x in recipes[n][4].split(",") if x} if n in recipes else set()
+        left = sorted(ing & set(K2_GONE))
+        if left:
+            out.append(f"{n} keeps the stand-in {', '.join(left)}")
+    cats = {}
+    for p in sec.get("DUMP", []):
+        if p[0] == "C":
+            cats[p[1]] = set(p[3].split(",")) if p[3] else set()
+    core = recipes.get("kr-automation-core")
+    if not core:
+        out.append("Krastorio 2 has no recipe kr-automation-core")
+    elif not set(core[2].split(",")) & cats.get("me-molecular-assembler", set()):
+        out.append(f"the ME Molecular Assembler ({', '.join(sorted(cats.get('me-molecular-assembler', [])))}) cannot craft "
+                   f"kr-automation-core ({core[2]})")
+    assembler = [r[1] for r in sec.get("KRASTORIO2", [])[1:] if r[0] == "assembler"]
+    print(f"ME Molecular Assembler with Krastorio 2: {', '.join(assembler) or '?'}")
+    return out
+
+
+# issue #594: ME recipes that may take an ingredient their technology comes before, with the reason
+ORDER_ALLOW = {
+    "me-logistic-storage-bus": "its storage chest: the block works only in a logistic network, which comes with the robots",
+    "me-logistic-interface": "its storage and passive provider chests: the block works only in a logistic network, as above",
+}
+
+
+def unlock_order(sec):
+    """issue #594: every ingredient of an ME recipe can be made no later than the recipe: it is a raw material, a recipe
+    enabled from the start makes it, or a technology of the recipe's technology or its prerequisites (walked) unlocks a
+    recipe that makes it (recycling left out). Returns the problems ("recipe (technology): ingredient, unlocked by ...")."""
+    m = Model(sec["DUMP"])
+    own = [n for k, n in sec.get("OWN", []) if k == "recipe"]
+    makers, unlocked_by = {}, {}
+    for r, v in m.R.items():
+        if r.endswith("-recycling") or v["cat"] & {"recycling"}:
+            continue
+        for x in v["res"]:
+            makers.setdefault(x, []).append(r)
+    for t, v in m.T.items():
+        for r in v["eff"]:
+            unlocked_by.setdefault(r, set()).add(t)
+
+    def before(t):
+        seen, todo = {t}, [t]
+        while todo:
+            for p in m.T.get(todo.pop(), {}).get("pre", []):
+                if p not in seen:
+                    seen.add(p)
+                    todo.append(p)
+        return seen
+
+    out = []
+    for r in own:
+        if r not in m.R or m.R[r]["en"] or r in ORDER_ALLOW:
+            continue
+        for t in sorted(unlocked_by.get(r, [])):
+            known = before(t)
+            for i in m.R[r]["ing"]:
+                if i in m.base or any(m.R[x]["en"] or unlocked_by.get(x, set()) & known for x in makers.get(i, [])):
+                    continue
+                later = sorted({u for x in makers.get(i, []) for u in unlocked_by.get(x, [])})
+                out.append(f"{r} ({t}): {i}, unlocked by {', '.join(later) or 'nothing'}")
+    return out
+
+
 def check(a):
-    prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only)
-    print("mods: " + ("base only" if a.base_only else "base, Space Age, quality")
-          + (" + Gregtorio Continued" if a.with_gregtorio else ""))
+    prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only, with_mods=with_mods(a))
+    print("mods: " + mods_label(a, a.base_only))
     ae2 = check_ae2_graphics(a.with_gregtorio) + check_upstream_icons(a.with_gregtorio) + check_release_texture()
     if a.with_gregtorio:
         # issue #239: no AE2 graphics in a Gregtorio run; since issue #325 me-network requires the texture mod, so the
@@ -917,6 +1098,23 @@ def check(a):
     paste = check_paste(sec)
     report("settings paste: missing lists, flags or handlers (issue #519, prototypes/paste.lua)", paste)
     ok = ok and not paste
+    # issue #592: the Krastorio 2 compatibility (prototypes/compat/krastorio2.lua) runs with Krastorio 2 or Krastorio 2
+    # Spaced Out and never with Gregtorio Continued
+    k2 = {"Krastorio2", "Krastorio2-spaced-out"} & set(getattr(a, "with_mod", None) or [])
+    want = "active" if k2 and not a.with_gregtorio else "inactive"
+    got = (sec.get("KRASTORIO2") or [["missing"]])[0][0]
+    print(f"\nKrastorio 2 compatibility: {got}")
+    k2_problems = [] if got == want else [f"the Krastorio 2 compatibility is {got}, expected {want}"]
+    if got == "active":
+        k2_problems += check_krastorio2(sec)
+    report("Krastorio 2 compatibility (issues #592, #593)", k2_problems)
+    # issue #594: no ME recipe comes before what it takes (information with Gregtorio, whose tree its own devcheck checks)
+    order = unlock_order(sec)
+    print(f"\nME recipes whose ingredients come no later than their technology: {len([n for k, n in sec.get('OWN', []) if k == 'recipe']) - len({o.split(' ')[0] for o in order})}")
+    report("ME recipes with an ingredient that comes later than their technology" + (" (information)" if a.with_gregtorio else " (issue #594)"), order)
+    if not a.with_gregtorio:
+        k2_problems += order
+    ok = ok and not k2_problems
     if not a.with_gregtorio:
         ok = check_textures(a, sec) and ok
     ok = ok and not ae2
@@ -944,6 +1142,7 @@ RUNTIME_TESTS = (
     ("PLANS", "ME kept plans test"),
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"), ("QUALITYTERM", "ME Terminal quality filter and sort test"),
+    ("SORTPREFS", "ME Terminal sort preference test"),
     ("WREFILL", "ME wireless refill test"),
     ("HOLDERLISTS", "ME holder lists test"),
     ("CRAFTER", "ME crafter choice test"),
@@ -1010,6 +1209,7 @@ RUNTIME_TESTS = (
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
     ("IFACEFLUIDS", "ME interface window fluids (issue #311)"),
+    ("KRASTORIO2", "Krastorio 2 targets (issue #595)"),
     ("DONE", "all tests reported"),
 )
 
@@ -1114,8 +1314,8 @@ def saveload(mapfile, ticks, extra_args=()):
 
 
 def runtime(a):
-    prepare_mods(gregtorio=a.with_gregtorio, with_runtime=True)
-    print(f"mods: base, Space Age, quality{' + Gregtorio Continued' if a.with_gregtorio else ''}")
+    prepare_mods(gregtorio=a.with_gregtorio, with_runtime=True, with_mods=with_mods(a))
+    print("mods: " + mods_label(a))
     log, err = create_map(WORK / "runtime-map.zip", *seed_args(a))
     if err:
         print(err)
@@ -1703,7 +1903,8 @@ def bench_config(a, scene, size, variant, profile):
 
 def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
     """the map of one scene, made with `mod_dir` (None: the working copy); returns (result skeleton, error)"""
-    prepare_mods(mod_dir=mod_dir, bench_dir=bench_mod_dir(cfg), gregtorio=gregtorio)
+    prepare_mods(mod_dir=mod_dir, bench_dir=bench_mod_dir(cfg), gregtorio=gregtorio,
+                 with_mods=getattr(a, "with_mod", None) or ())
     runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
     log, err = create_map(mapfile, *seed_args(a))
     setup = bench_json(log, "SETUP")
@@ -1721,7 +1922,8 @@ def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
 
 def bench_run(a, cfg, mod_dir, mapfile, profile=False, gregtorio=None, label=""):
     """one --benchmark run of a made map; returns the parsed run or None"""
-    prepare_mods(mod_dir=mod_dir, bench_dir=bench_mod_dir(cfg), gregtorio=gregtorio)
+    prepare_mods(mod_dir=mod_dir, bench_dir=bench_mod_dir(cfg), gregtorio=gregtorio,
+                 with_mods=getattr(a, "with_mod", None) or ())
     # (issue #487: mod-settings.dat in the version of the Factorio of this run: the 2.0 reference of --ref-factorio does
     # not read the file a 2.1 run wrote)
     runtime_settings({k: int(v) for k, v in (x.split("=", 1) for x in a.set or [])})
@@ -1900,6 +2102,7 @@ def compare_plans(a):
 
 
 def bench(a):
+    with_mods(a)
     if a.check:
         return bench_check(a)
     if getattr(a, "compare_plans", None):
@@ -2273,6 +2476,10 @@ def bench_check(a):
     return 0 if ok else 1
 
 
+WITH_MOD_HELP = ("issue #591: load this third-party mod (e.g. Krastorio2) and its required dependencies from their zips in "
+                 ".devcheck/mods, fetched from the mod portal or --mods-from DIR when missing (repeatable)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -2281,9 +2488,12 @@ def main():
     s.add_argument("--factorio", help="use an existing unpacked Factorio instead of downloading (or the Steam install on Windows)")
     s.add_argument("--with-gregtorio", metavar="DIR", help="also get the dependency mods of this Gregtorio checkout")
     s.add_argument("--mods-from", help="folder with the dependency mod zips instead of downloading them")
+    s.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
     for name in ("check", "runtime", "all"):
         p = sub.add_parser(name)
         p.add_argument("--with-gregtorio", metavar="DIR", help="a Gregtorio Continued checkout to load as well")
+        p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
+        p.add_argument("--mods-from", help="with --with-mod: folder with the mod zips that are not in .devcheck/mods yet")
         if name in ("check", "all"):
             p.add_argument("--base-only", action="store_true", help="check without Space Age and quality")
         if name in ("runtime", "all"):
@@ -2338,6 +2548,8 @@ def main():
                    "sample must be the same (issue #50)")
     p.add_argument("--planner-targets", type=int, default=5, help="items the planner is timed on, the deepest first (default 5)")
     p.add_argument("--with-gregtorio", metavar="DIR", help="load this Gregtorio Continued checkout as well (the planner on its recipes)")
+    p.add_argument("--with-mod", action="append", metavar="NAME", help=WITH_MOD_HELP)
+    p.add_argument("--mods-from", help="with --with-mod: folder with the mod zips that are not in .devcheck/mods yet")
     p.add_argument("--check", metavar="REF", help="run the working copy and this git ref in turns and fail when a number is "
                    "worse by more than the measured noise (--runs rounds, at least 3)")
     p.add_argument("--ref-factorio", metavar="DIR", help="issue #487: with --check, run the reference in this unpacked Factorio "

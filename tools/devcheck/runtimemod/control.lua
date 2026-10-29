@@ -1023,6 +1023,8 @@ margin51 = require("margin")({ me_place = me_place, me_report = me_report })
 refill67 = require("refill")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #86: an ME Export Bus into a lab (lab.lua)
 lab86 = require("lab")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #595: Krastorio 2's containers, tanks, labs, matter machines and steel pipes (krastorio2.lua; skipped without it)
+krastorio2_595 = require("krastorio2")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #382: an ME Export Bus into a recipe of more than a stack (bulkexport.lua)
 bulk382 = require("bulkexport")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1066,6 +1068,9 @@ scan50 = require("scan")({ me_place = me_place, me_report = me_report })
 entries50 = require("entries")({ me_place = me_place, me_report = me_report })
 --- me-network issue #514: the terminal's quality filter and sort by quality (qualityterm.lua)
 qualityterm514 = require("qualityterm")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
+	me_connect = me_connect })
+--- me-network issue #602: the terminal's sort preference, sorts by mod and tier, rows kept at 0 (sortprefs.lua)
+sortprefs602 = require("sortprefs")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
 	me_connect = me_connect })
 --- me-network issue #603: the wireless refill (wrefill.lua)
 wrefill603 = require("wrefill")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
@@ -1299,6 +1304,7 @@ local function tests_running()
 	taglabel485.running(check)
 	fuzzydata493.running(check)
 	lab86.running(check)
+	krastorio2_595.running(check)
 	bulk382.running(check)
 	copypaste383.running(check)
 	disassembly387.running(check)
@@ -1313,6 +1319,7 @@ local function tests_running()
 	scan50.running(check)
 	entries50.running(check)
 	qualityterm514.running(check)
+	sortprefs602.running(check)
 	wrefill603.running(check)
 	holderlists59.running(check)
 	crafter59.running(check)
@@ -2295,6 +2302,7 @@ script.on_nth_tick(10, function()
 	taglabel485.tick()
 	fuzzydata493.tick()
 	lab86.tick()
+	krastorio2_595.tick()
 	bulk382.tick()
 	copypaste383.tick()
 	disassembly387.tick()
@@ -2307,6 +2315,7 @@ script.on_nth_tick(10, function()
 	scan50.tick()
 	entries50.tick()
 	qualityterm514.tick()
+	sortprefs602.tick()
 	wrefill603.tick()
 	holderlists59.tick()
 	crafter59.tick()
@@ -4657,7 +4666,7 @@ function scheduler_test()
 	elseif st.phase == 4 then
 		--- a full storage bus is passed by until its next read
 		local inv = c3.get_inventory(defines.inventory.chest)
-		inv.insert{ name = "iron-plate", count = 100 * #inv }
+		inv.insert{ name = "iron-plate", count = prototypes.item["iron-plate"].stack_size * #inv }    -- (Krastorio 2: 200 a stack)
 		remote.call(SB, "visit", s1)
 		local full = c3.get_item_count("iron-plate")
 		local total = count("iron-plate")
@@ -5207,6 +5216,7 @@ script.on_init(function()
 	for _, f in pairs(taglabel485.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(fuzzydata493.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(krastorio2_595.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(disassembly387.setup(s)) do fails[#fails + 1] = f end
@@ -5219,6 +5229,7 @@ script.on_init(function()
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(qualityterm514.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(sortprefs602.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
