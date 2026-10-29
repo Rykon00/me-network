@@ -73,20 +73,25 @@ local function again(s, rec, iv)
 	Sched.at(s.q, rec, rec.unit, Sched.slot(s.q, false, rec.unit, game.tick, iv, SPREAD, SPREAD))
 end
 
---- what the controllers of `net` can pay for: items at `per` J each, at most `want`
-local function affordable(net, per, want)
-	if per <= 0 or net.creative then return want end
-	return math.min(want, math.floor(N.spare_energy(net) / per))
-end
-
 --- `joules` paid by the controllers of `net` (counted in `s.paid`: the tests)
 local function pay(s, net, joules)
-	s.paid = (s.paid or 0) + N.pay_energy(net, joules)
+	if joules > 0 then s.paid = (s.paid or 0) + N.pay_energy(net, joules) end
+end
+
+local stack_sizes = {}                  -- item name -> stack size (per load: prototypes do not change while the game runs)
+local function stack_size(name)
+	local n = stack_sizes[name]
+	if not n then
+		n = prototypes.item[name].stack_size
+		stack_sizes[name] = n
+	end
+	return n
 end
 
 --- One visit of a character: requests filled, trash emptied. Returns the scheduler's class (0: nothing to do, 1: it moved
 --- something and something is still missing or left, 2: it moved all it was asked for), the interval until the next visit
---- and the number of items moved.
+--- and the number of items moved. (The character's inventory is read once, by get_contents, and the energy the controllers
+--- can spare once: a visit of ten requests cost 330 us when each request read them, bench --refill.)
 function M.serve(character, link)
 	local s = state()
 	if not (character.force.character_logistic_requests and has_module(character)) then return 0, AWAY_TICKS end
@@ -97,26 +102,36 @@ function M.serve(character, link)
 	if not (net and N.usable(net)) then return 0, AWAY_TICKS end
 	if not W.anchor_for(net, character.surface, character.position) then return 0, AWAY_TICKS end
 	local per = energy_per_item()
+	local budget = (per <= 0 or net.creative) and math.huge or math.floor(N.spare_energy(net) / per)   -- (items it can pay for)
 	local main = character.get_inventory(defines.inventory.character_main)
 	local moved, short = 0, false
 	--- the requests (the compiled filters: one entry per item and quality with the sections' minimums added up)
+	local have
 	for _, f in pairs(point.filters or {}) do
-		if f.name and (f.type == nil or f.type == "item") and (f.count or 0) > 0 and prototypes.item[f.name] then
+		local name = f.name
+		if name and (f.type == nil or f.type == "item") and (f.count or 0) > 0 then
 			local q = f.quality or "normal"
-			local lack = f.count - main.get_item_count{ name = f.name, quality = q }
-			local cursor = character.cursor_stack
-			if cursor and cursor.valid_for_read and cursor.name == f.name and cursor.quality.name == q then lack = lack - cursor.count end
+			if not have then                                   -- (the main inventory and the hand, once)
+				have = {}
+				for _, c in pairs(main.get_contents()) do
+					local k = c.name .. "@" .. c.quality
+					have[k] = (have[k] or 0) + c.count
+				end
+				local cursor = character.cursor_stack
+				if cursor and cursor.valid_for_read then
+					local k = cursor.name .. "@" .. cursor.quality.name
+					have[k] = (have[k] or 0) + cursor.count
+				end
+			end
+			local lack = f.count - (have[name .. "@" .. q] or 0)
 			if lack > 0 then
-				local want = math.min(lack, prototypes.item[f.name].stack_size)
-				local can = affordable(net, per, want)
-				local got = can > 0 and N.extract(net, f.name, q, can) or 0
+				local want = math.min(lack, stack_size(name))
+				local can = math.min(want, budget)
+				local got = can > 0 and N.extract(net, name, q, can) or 0
 				if got > 0 then
-					local n = main.insert{ name = f.name, quality = q, count = got }
-					if n < got then N.insert(net, f.name, q, got - n) end      -- (no room: back into the network)
-					if n > 0 then
-						pay(s, net, n * per)
-						moved = moved + n
-					end
+					local n = main.insert{ name = name, quality = q, count = got }
+					if n < got then N.insert(net, name, q, got - n) end      -- (no room: back into the network)
+					moved, budget = moved + n, budget - n
 					if n < want then short = true end
 				else
 					short = true
@@ -126,18 +141,17 @@ function M.serve(character, link)
 	end
 	--- the trash slots
 	local trash = character.get_inventory(defines.inventory.character_trash)
-	for i = 1, trash and #trash or 0 do
-		local stack = trash[i]
-		if stack.valid_for_read then
-			local max = affordable(net, per, stack.count)
-			local n = max > 0 and N.insert_partial(net, stack, max) or nil
-			if n and n > 0 then
-				pay(s, net, n * per)
-				moved = moved + n
+	if trash and not trash.is_empty() then
+		for i = 1, #trash do
+			local stack = trash[i]
+			if stack.valid_for_read then
+				local n = budget > 0 and N.insert_partial(net, stack, math.min(stack.count, budget)) or nil
+				if n and n > 0 then moved, budget = moved + n, budget - n end
+				if stack.valid_for_read then short = true end
 			end
-			if stack.valid_for_read then short = true end
 		end
 	end
+	pay(s, net, moved * per)
 	if moved == 0 then return 0, IDLE_TICKS, 0 end
 	return short and 1 or 2, ACTIVE_TICKS, moved
 end

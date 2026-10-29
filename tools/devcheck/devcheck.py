@@ -1346,6 +1346,7 @@ PROFILE_WRAP = {
                                                "demand_step", "scan_point", "scan_key", "decide", "auto_request",
                                                "auto_blocks", "me_waits"],
     # issue #538: what construction needs
+    "scripts/fork-me-wireless-refill.lua": ["M.on_tick", "visit", "M.serve", "pay"],      # (issue #603)
     "scripts/fork-me-logistic-construction.lua": ["M.on_built", "M.on_object_destroyed", "M.on_tick", "track", "put", "drop",
                                                   "needs_of", "lid_of", "rescan_cell"],
     "scripts/fork-me-autocraft.lua": ["job_step", "maintenance", "scan_provider", "refresh_providers",

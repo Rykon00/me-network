@@ -4226,3 +4226,41 @@ The check reports two numbers: the average at 1000 (+0.047 ms; the first round o
 two +0.023 and +0.046 ms: the rescan's 0.039 ms per tick) and the first tick after the load at 5000 (+1.2 ms, once). The 99th
 percentile, which the whole squares had moved by +0.155 ms at 1000, is within the noise now; throughput and latencies are
 identical.
+
+## The wireless refill (issue #603)
+
+A queue of its own (tag `wireless_refill`, `/me-stats`), one record per player who wears the ME Wireless Module. A save
+without such a player has no records and the queue costs one table read per tick.
+
+**Bench** (`bench --refill N`, new): an ME Wireless Access Point on the first part's spine and N characters without players
+around it, each in modular armour with the module and ten logistic requests (five raw items of the scene, 50 each, which the
+network has; five items it never holds); every 300 ticks (a sample tick, outside the timing) the requested items of every
+character go into its trash slots, so every visit stores and refills. A version without the refill (a `--check` reference)
+gets the same characters, which then do nothing. The characters' inventories count in the conservation check.
+
+Profile (`bench --sizes 100 --refill 100 --profile 100 --exclusive`, one run): 1.06 visits per tick (the floor of one is not
+what limits them: 100 players at 120 ticks idle and 30 ticks after a move), a visit's own time 330 µs in the first version,
+which read the inventory and the controllers' spare energy for each request. Read once per visit (`get_contents`, the hand,
+the energy as a budget of items), it is 169 µs: by sections (`helpers.create_profiler` over 7000 visits) about 36 µs for
+the checks (personal logistics, the module, the link, the network, the access point's range), 47 µs for the requester
+point's compiled filters, 59 µs for the requests (half of it `N.extract`) and 46 µs for the trash (mostly `N.insert_partial`,
+21 µs per stack: the items stored). A visit that finds nothing to do costs about 100 µs. A cache of the compiled filters
+was left out: switching a section on or off changes them without `on_entity_logistic_slot_changed`.
+
+`bench --check origin/main` (the scenes without characters, three rounds in turns; other harness runs shared the machine,
+so the noise is wide): no regression; script avg 0.496 / 0.929 / 1.21 ms (origin/main) against 0.473 / 1.014 / 1.209 ms at
+100 / 1000 / 5000, Lua alloc KB per tick identical (28.84 / 41.61 / 61.81).
+
+`bench --check origin/main --sizes 100,1000 --refill 100` (100 characters, the cost of the feature against a version that
+does nothing for them):
+
+| | origin/main | #603 |
+|---|---|---|
+| 100: script avg / p99 (ms) | 0.297 / 2.42 | 0.688 / 3.83 (noise ±0.11 / ±0.84; rounds 0.49 to 0.70) |
+| 1000: script avg / p99 (ms) | 0.482 / 2.83 | 0.629 / 2.74 (rounds 0.62, 0.63 and one of 1.42) |
+| Lua alloc KB per tick (100 / 1000) | 28.84 / 41.60 | 36.90 / 50.08 |
+| items/s, provider crafts/s | 3326, 2.5 / 33 230, 15.78 | the same |
+
+The check reports the script average at 100 and the allocation at both sizes: the refill's work, about 0.15 ms and 8 KB
+(the compiled filters and the inventory contents the engine hands over) per tick for 100 players with ten requests each,
+whose items are used up every five seconds. One player costs about a hundredth of it.
