@@ -5098,6 +5098,42 @@ function M.set_wlinks(units, edges)
 	return true
 end
 
+--- Issue #603: what the controllers of `net` hold beyond one tick of their draw (J): what a payment for moved items may take
+--- (the rest keeps the network working). A network with a Creative Energy Cell has no limit.
+function M.spare_energy(net)
+	if net.creative then return math.huge end
+	local s = storage.fork_me_net
+	local n = 0
+	for unit in pairs(net.controllers) do
+		local node = s and s.nodes[unit]
+		local e = node and node.entity
+		if e and e.valid and e.energy > e.power_usage then n = n + e.energy - e.power_usage end
+	end
+	return n
+end
+
+--- Issue #603: `joules` out of the controllers of `net` (each gives what it holds beyond one tick of its draw, by unit number;
+--- AE2's extractAEPower); returns what was paid. A network with a Creative Energy Cell pays nothing.
+function M.pay_energy(net, joules)
+	if net.creative or joules <= 0 then return joules end
+	local s = storage.fork_me_net
+	local units = {}
+	for unit in pairs(net.controllers) do units[#units + 1] = unit end
+	table.sort(units)
+	local left = joules
+	for _, unit in ipairs(units) do
+		local node = s and s.nodes[unit]
+		local e = node and node.entity
+		if e and e.valid and e.energy > e.power_usage then
+			local take = math.min(left, e.energy - e.power_usage)
+			e.energy = e.energy - take
+			left = left - take
+			if left <= 0 then break end
+		end
+	end
+	return joules - left
+end
+
 --- issue #355: the energy the network's controllers hold now (J; the level emitter's "stored energy")
 function M.stored_energy(net)
 	local s = storage.fork_me_net

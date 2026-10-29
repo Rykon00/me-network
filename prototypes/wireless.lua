@@ -25,6 +25,10 @@ local NUMBERS = {
 	charge_rate = 1000000, charger_idle = 2000,
 	--- the equipment module: its buffer (J, in the grid) and what an open window uses (W)
 	module_buffer = 20000000, module_use = 200000,
+	--- issue #603: the wireless refill pays this much (J) per item it moves, out of the network's controllers: AE2 pays 1 AE per
+	--- item it takes out of the network (Platform.poweredExtraction), and the access point's numbers above put 1 AE at about
+	--- 40 J (8 AE per tick against 20 kW)
+	refill_energy = 50,
 }
 
 data.raw["mod-data"]["fork-me-network"].data.wireless = NUMBERS
