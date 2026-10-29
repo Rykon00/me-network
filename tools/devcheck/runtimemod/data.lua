@@ -184,9 +184,14 @@ local function category(name)
 end
 local function I(name, amount) return { type = "item", name = name, amount = amount } end
 local function F(name, amount) return { type = "fluid", name = name, amount = amount } end
+--- (issue #596: kept in ZZ_DEVCHECK_STANDIN_RECIPES, so data-final-fixes.lua sets them again: Krastorio 2 Spaced Out renames
+--- chlorine and hydrogen to its own fluids in every recipe of those names in its data-updates)
+ZZ_DEVCHECK_STANDIN_RECIPES = {}
 local function recipe(name, cat, time, ingredients, results)
-	data:extend({ { type = "recipe", name = name, categories = { cat }, energy_required = time, enabled = false,
-		ingredients = ingredients, results = results, icon = ICON, subgroup = "intermediate-product" } })
+	local def = { type = "recipe", name = name, categories = { cat }, energy_required = time, enabled = false,
+		ingredients = ingredients, results = results, icon = ICON, subgroup = "intermediate-product" }
+	data:extend({ def })
+	ZZ_DEVCHECK_STANDIN_RECIPES[name] = table.deepcopy(def)
 end
 local function machine(name, base_type, base, categories, speed)
 	local e = table.deepcopy(data.raw[base_type][base])

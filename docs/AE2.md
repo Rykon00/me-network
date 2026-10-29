@@ -891,6 +891,22 @@ brings, so its singularity tech card cannot be researched; there the ME Singular
 | ME 16384k Storage, crafting and fluid; ME Crafting Accelerators 2 | 1600 / 2000 / 1600 / 2500 × 30 s, red to utility | 500 × 45 s, production, utility, matter, advanced tech card | Energy control unit, Advanced tech card (16384k, accelerators 2) |
 | ME Singularity Storage, ME Singularity Crafting Storage | 2500 / 3000 × 30 s, red to utility | 1000 × 60 s, production, utility, optimization, matter, advanced, singularity tech card (with Space Age: the advanced tier, see above) | Matter processing, Singularity tech card (storage) |
 
+#### Krastorio 2 Spaced Out
+
+Krastorio 2 Spaced Out (`Krastorio2-spaced-out`, issue #596) is an add-on of Krastorio 2 for Space Age (it needs Krastorio 2,
+k2so-assets and Space Age). Every item the recipes above take has the same name there, so the recipes are the same. Its
+upper tiers come in another order, and the technologies follow it:
+
+| Technology | With Krastorio 2 Spaced Out |
+|---|---|
+| ME 4096k Storage, crafting and fluid | 500 × 60 s, production and utility (Spaced Out's imersium processing has no matter card) |
+| ME 16384k Storage, crafting and fluid; ME Crafting Accelerators 2 | 500 × 45 s, production, utility, advanced tech card (its energy control unit comes after the advanced card, before the matter card) |
+| ME Singularity Storage, ME Singularity Crafting Storage | 2000 × 60 s, production, utility, space, metallurgic, agricultural, electromagnetic, matter, advanced and singularity (as its matter cube and singularity beacon) |
+| ME Quantum Bridge | 750 × 60 s, red to utility, after AI core (Spaced Out's quantum computer needs Aquilo's quantum processor; the bridge takes AI cores only) |
+
+The others are as with Krastorio 2. The ME Quantum Bridge links networks on different planets without a limit; the runtime
+test links a network on one surface with an ME Interface on Vulcanus.
+
 ### View Cells
 
 AE2's **View Cell** (issue #440, AE2-Unofficial's `ItemViewCell`; technology ME Upgrade Cards, next to the workbench): a list
