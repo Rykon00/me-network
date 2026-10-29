@@ -237,8 +237,14 @@ game's own filters, issue #520) and **Any quality** or a quality;
 fluids count as normal quality; the wireless terminal has it too), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
-* **Storage:** sort (by amount, by name or by quality: higher quality first, then name, then amount; the qualities of one
-  item are always in the order of their level, normal first) and **Show: all / items / fluids**. **Left click** an item: a stack into
+* **Storage:** sort (by amount, by name, by quality: higher quality first, then name, then amount; by mod: the mod that adds
+  the item, then name; by tier: the highest science pack of the earliest technology that unlocks a recipe of it, items no
+  recipe makes last; issue #602), the **direction** button beside it (▼ descending, ▲ ascending; each sort keeps its own;
+  the qualities of one item are always in the order of their level, normal first) and **Show: all / items / fluids**. The
+  sort, its direction and Show are yours: every terminal window (the ME Terminal, the wireless terminal, the ME Chest) uses
+  them, also after you opened another block (issue #602). An item whose amount reaches 0 while the window is open stays in
+  its place, greyed, with 0, until you close the window (or change the sort, the search or a filter); clicking it does
+  nothing, and it is a normal slot again when the network has the item again. **Left click** an item: a stack into
   your hand; with something in hand, the click stores that instead. **Right click**: one item into your hand (one
   more of the same item). **Shift click**: a stack into your inventory. Items with tags (loaded cells), a label or damage
   have a yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).
@@ -1924,8 +1930,11 @@ a window whose entity is gone or out of reach; a window rebuilds a part only whe
 the part's tags), so focused text fields keep their text. `scripts/fork-me-windows.lua` builds the block windows;
 each shows data from a `*_data` function and changes things through a function of the block's module or a small
 `set_*` helper; the remote interface `gregtorio-me-gui` exposes the same functions to the runtime test. Nothing of a
-window is in storage except the terminal's tab, search, sort, kind and picked craft
-(`storage.fork_me_terminal[player]`).
+window is in storage except the terminal's tab, search, quality filter, picked craft and rows kept at 0
+(`storage.fork_me_terminal[player]`) and the player's sort, its direction and kind (`storage.fork_me_term_prefs[player]`,
+issue #602: every terminal window uses them; the tiers and mods to sort by come from `scripts/fork-me-sortkeys.lua`: the
+tiers are read from the runtime prototypes, because a dependent mod rewrites recipes and unlocks after this mod's last data
+stage, once in `on_init` and `on_configuration_changed` (about 0.9 s with Gregtorio) into `storage.fork_me_tiers`).
 
 Issue #28 (`docs/ME-REWORK.md`, "Windows with the player's inventory"): every window has the **inventory pane**, the
 player's inventory on the left of the content (`G.open_window(..., pane)`); since issue #542 ("The game's inventory
