@@ -35,6 +35,41 @@ data:extend({ { type = "recipe", name = "zz-devcheck-paste-big", categories = { 
 	icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
 recipe("zz-devcheck-paste-fluids", 2, 5)       -- more fluids than the interface's four sides
 
+--- Issue #588: since Gregtorio #612 its gear recipe `iron-gear-crafting-table`, the one the autocrafting tests craft, also uses
+--- up a charge of GT crafting tools (the items `hammer-usage`, `wire-cutter-usage`; Gregtorio's FORK_TOOLS). The tests check
+--- autocrafting, not Gregtorio's tools: the recipe keeps its plate and sticks, as the stand-in of data.lua has it.
+do
+	local r = data.raw.recipe["iron-gear-crafting-table"]
+	local tools = {}
+	for _, usage in pairs(type(FORK_TOOLS) == "table" and FORK_TOOLS or {}) do tools[usage] = true end
+	if r and r.ingredients then
+		for i = #r.ingredients, 1, -1 do
+			local name = r.ingredients[i].name or r.ingredients[i][1]
+			if tools[name] or (type(name) == "string" and name:match("%-usage$")) then table.remove(r.ingredients, i) end
+		end
+	end
+end
+
+--- Issue #588: the fluid tests (the fluid jobs, the unified I/O, the recipe paste, the interface keeping one craft) take
+--- Gregtorio's phenolic circuit board as their chemical reactor recipe of an item and a fluid: a resin board and 10 phenol.
+--- Gregtorio #712 made it GT New Horizons' assembler recipe (wood pulp and glue); in the tests it keeps the reactor recipe,
+--- in the categories of Gregtorio's silicon tetrachloride (the same reactors), as the stand-in of data.lua has it.
+do
+	local r, sic = data.raw.recipe["phenolic-circuit-board"], data.raw.recipe["silicon-tetrachloride"]
+	local has_phenol = false
+	for _, ing in pairs(r and r.ingredients or {}) do
+		if ing.name == "phenol" then has_phenol = true end
+	end
+	if r and sic and not has_phenol and data.raw.item["resin-circuit-board"] and data.raw.fluid["phenol"] then
+		r.categories = sic.categories or { sic.category }
+		r.category = nil
+		r.energy_required = 5
+		r.ingredients = { { type = "item", name = "resin-circuit-board", amount = 1 }, { type = "fluid", name = "phenol", amount = 10 } }
+		r.results = { { type = "item", name = "phenolic-circuit-board", amount = 1 } }
+		r.main_product = "phenolic-circuit-board"
+	end
+end
+
 --- Gregtorio issue #560: Gregtorio's ore machines are furnaces since its 0.5.9 (they pick the recipe from their input, none
 --- is set). The tests that need a GT machine whose recipe is set (the autocraft test, scan.lua, providers.lua) take
 --- `zz-devcheck-macerator`, an assembling machine with the EV macerator's categories, speed and graphics (Gregtorio's, or
