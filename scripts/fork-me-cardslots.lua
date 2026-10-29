@@ -271,8 +271,13 @@ function M.new(def)
 	end
 	local missing_cards = C.missing_cards
 
+	--- issue #590: how many of the wanted cards the block still waits for (0 when it waits for none)
+	function C.waiting(rec)
+		return rec.want and #missing_cards(rec, rec.want) or 0
+	end
+
 	--- the wanted cards the block still lacks, taken from the network (one each); rec.want is dropped once nothing is
-	--- missing or nothing missing can ever go in
+	--- missing or nothing missing can ever go in (a block on no network keeps it: a card that fits waits for the network)
 	function C.fill_cards(rec)
 		local want = rec.want
 		if not want then return end
@@ -295,8 +300,10 @@ function M.new(def)
 
 	--- The block is to have the cards `want` (names; a blueprint, a settings paste, a clone). Cards it has beyond them go
 	--- to `player` (inventory, else the network, else the ground at the player); missing ones come from the player's
-	--- inventory, then from the network, else the block waits for them (rec.want). `player` nil: only the network.
-	function C.want_cards(entity, want, player)
+	--- inventory, then from the network, else the block waits for them (rec.want). `player` nil: only the network (robots,
+	--- scripts). Issue #590: a block built or pasted by hand passes its builder, so the cards come from the inventory first, as
+	--- the provider's patterns do (#558); `pinv` stands for the player's inventory (the runtime test).
+	function C.want_cards(entity, want, player, pinv)
 		local rec = def.rec_of(entity)
 		if not rec then return false end
 		local inv = inv_of(rec)
@@ -308,7 +315,8 @@ function M.new(def)
 		--- what is too many goes first (so the limits leave room for the wanted ones)
 		local _, extra = missing_cards(rec, list)
 		local net = N.active_of(entity)
-		local pinv = player and player.valid and G.player_inventory(player)
+		if player and not player.valid then player = nil end
+		pinv = pinv and pinv.valid and pinv or player and G.player_inventory(player) or nil
 		for slot = 1, rules.slots do
 			local name = rec.cards and rec.cards[slot]
 			local stack = inv[slot]
