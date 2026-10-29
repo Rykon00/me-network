@@ -738,6 +738,7 @@ local function visit(rec, unit, fallback)
 		return nil
 	end
 	ensure_chests(rec)
+	if rec.want then cards.fill_cards(rec) end                  -- issue #590: the cards a blueprint, a paste or a clone asked for
 	local now = game.tick
 	local net = N.network_of(e)
 	local ok, why = N.usable(net)
@@ -1185,10 +1186,11 @@ local function settings_of(rec)
 end
 
 --- the settings `t` (a blueprint tag, a source's settings) onto `entity`; `player`: the cards come from its inventory first
-local function apply(entity, t, player)
+--- (`inv` instead for a test, issue #590)
+local function apply(entity, t, player, inv)
 	local rec = rec_of(entity)
 	if not (rec and type(t) == "table") then return end
-	if type(t.cards) == "table" then cards.want_cards(entity, t.cards, player) end   -- (first: the rows they give room for)
+	if type(t.cards) == "table" then cards.want_cards(entity, t.cards, player, inv) end   -- (first: the rows they give room for)
 	for _, tab in ipairs({ "offer", "request" }) do
 		rec[tab] = {}
 		for _, r in ipairs(type(t[tab]) == "table" and t[tab] or {}) do
@@ -1300,8 +1302,9 @@ end
 
 --- `tags`: blueprint tags (or of a paste over a block, issue #383); `source`: the original of a clone. A cloned hidden chest
 --- goes to the block that stands on its tile (it takes the clone's contents and drops its own chest), or waits for its
---- block's clone (ensure_chests takes it over).
-function M.on_built(entity, tags, source)
+--- block's clone (ensure_chests takes it over). `player`: who built it by hand or pasted over it (issue #590: the cards of the
+--- tag from its inventory first, `inv` instead for a test; nil for robots: the network).
+function M.on_built(entity, tags, source, player, inv)
 	local s0 = storage.fork_me_lif
 	if s0 and s0.pts and entity.valid and REQUESTER_TYPES[entity.type] then s0.dstale = game.tick end   -- (issue #537)
 	if is_chest(entity) then
@@ -1328,7 +1331,7 @@ function M.on_built(entity, tags, source)
 	register(entity)
 	local t = type(tags) == "table" and tags[TAG] or nil
 	if type(t) == "table" then
-		apply(entity, t, nil)
+		apply(entity, t, player, inv)
 	elseif is_block(source) then
 		local from = rec_of(source)
 		if from then apply(entity, settings_of(from), nil) end
@@ -1474,7 +1477,7 @@ remote.add_interface("gregtorio-me-logistic-interface", {
 		return { due = (due and due > 0) and due or nil, interval = rec.iv, probing = rec.sq == true and not rec.park,
 			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, parked = rec.park, lid = rec.lid }
 	end,
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,   -- (`inv`: issue #590)
 	removed = function(entity, buffer) M.on_removed(entity, buffer) end,
 	paste = function(source, destination, player_index)
 		M.on_entity_settings_pasted{ source = source, destination = destination, player_index = player_index }

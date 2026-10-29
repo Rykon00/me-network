@@ -1193,6 +1193,9 @@ pending558 = require("pending")({ me_place = me_place, power = power, me_report 
 patternbulk585 = require("patternbulk")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
 	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #561: the ME Memory Card (memcard.lua)
+--- me-network issue #590: the cards of blocks built from a blueprint (bpcards.lua)
+bpcards590 = require("bpcards")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
 memcard561 = require("memcard")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
 	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #559: ME Wireless Link groups (wgroup.lua)
@@ -1354,6 +1357,7 @@ local function tests_running()
 	wgroup559.running(check)
 	memcard561.running(check)
 	patternbulk585.running(check)
+	bpcards590.running(check)
 	pending558.running(check)
 	celllight468.running(check)
 	maintrows351.running(check)
@@ -2347,6 +2351,7 @@ script.on_nth_tick(10, function()
 	wgroup559.tick()
 	memcard561.tick()
 	patternbulk585.tick()
+	bpcards590.tick()
 	pending558.tick()
 	celllight468.tick()
 	maintrows351.tick()
@@ -5257,6 +5262,7 @@ script.on_init(function()
 	for _, f in pairs(wgroup559.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(memcard561.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(patternbulk585.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(bpcards590.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pending558.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(celllight468.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end

@@ -849,25 +849,32 @@ local function fill_pending(p, net, inv)
 end
 M.fill_pending = fill_pending
 
---- Issue #558: the provider shows on the map how many patterns wait (a yellow custom status), written when the number changes
+--- Issue #558: the provider shows on the map how many patterns wait (a yellow custom status), written when the number changes.
+--- Issue #590: and how many of the cards a blueprint, a paste or a clone asked for (p.wcards).
 function M.pending_status(p)
 	local n = p.pending and table_size(p.pending) or 0
-	if (p.wstatus or 0) == n then return end
+	local c = cards.waiting(p)
+	if (p.wstatus or 0) == n and (p.wcards or 0) == c then return end
 	local e = p.entity
 	if not (e and e.valid) then return end
-	e.custom_status = n > 0 and { diode = defines.entity_status_diode.yellow, label = { "fork-me-pattern.status-waiting", n } } or nil
-	p.wstatus = n > 0 and n or nil
+	local label = c > 0 and (n > 0 and { "fork-me-pattern.status-waiting-cards-patterns", c, n } or { "fork-me-pattern.status-waiting-cards", c })
+		or n > 0 and { "fork-me-pattern.status-waiting", n } or nil
+	e.custom_status = label and { diode = defines.entity_status_diode.yellow, label = label } or nil
+	p.wstatus, p.wcards = n > 0 and n or nil, c > 0 and c or nil
 end
 
 --- Issue #558: a build or paste left `p` waiting: tell `player` once (flying text at the block when the player built it by hand;
---- else a chat line with the place, at most once per 10 s per player)
+--- else a chat line with the place, at most once per 10 s per player). Issue #590: the cards it waits for too.
 function M.tell_waiting(p, player, by_hand)
-	if not (p.pending and player and player.valid and player.connected) then return end
+	if not ((p.pending or p.want) and player and player.valid and player.connected) then return end
 	local e = p.entity
 	if not (e and e.valid) then return end
-	local n = table_size(p.pending)
+	local n, c = p.pending and table_size(p.pending) or 0, cards.waiting(p)
+	if n == 0 and c == 0 then return end
 	if by_hand then
-		player.create_local_flying_text{ text = { "fork-me-pattern.waiting-text", n }, position = e.position, surface = e.surface }
+		local text = c > 0 and { "fork-me-pattern.waiting-cards-text", c } or { "fork-me-pattern.waiting-text", n }
+		if c > 0 and n > 0 then text = { "", text, "\n", { "fork-me-pattern.waiting-text", n } } end
+		player.create_local_flying_text{ text = text, position = e.position, surface = e.surface }
 		return
 	end
 	local s = state()
@@ -875,8 +882,9 @@ function M.tell_waiting(p, player, by_hand)
 	local last = s.told[player.index]
 	if last and game.tick < last + 600 then return end
 	s.told[player.index] = game.tick
-	player.print({ "fork-me-pattern.waiting-message", n, string.format("[gps=%d,%d,%s]", math.floor(e.position.x),
-		math.floor(e.position.y), e.surface.name) })
+	local gps = string.format("[gps=%d,%d,%s]", math.floor(e.position.x), math.floor(e.position.y), e.surface.name)
+	if c > 0 then player.print({ "fork-me-pattern.waiting-cards-message", c, gps }) end
+	if n > 0 then player.print({ "fork-me-pattern.waiting-message", n, gps }) end
 end
 
 --- Issue #50, lever 6: the clean pattern of a slot (P.normalize) or the reason it has none, and the pattern's id, once per
@@ -1065,7 +1073,7 @@ local function scan_provider(p)
 	local e = p.entity
 	local net = N.network_of(e)                  -- patterns are kept while the network is off, jobs wait
 	if p.pending then fill_pending(p, N.active_of(e)) end
-	if p.pending or p.wstatus then M.pending_status(p) end                    -- (issue #558)
+	if p.pending or p.wstatus or p.want or p.wcards then M.pending_status(p) end   -- (issues #558, #590)
 	local net_id, priority = net and net.id or nil, p.priority or 0
 	local old_patterns, old_status = p.patterns or {}, p.status or {}
 	local same = p.net == net_id and p.scanned_priority == priority
@@ -3891,14 +3899,14 @@ function M.on_entity_settings_pasted(event, inv)
 	M.set_lock(dst, M.get_lock(src))                 -- (issue #346)
 	local player = event.player_index and game.get_player(event.player_index) or nil
 	local from = provider_record(src)                -- issue #156: the Pattern Capacity Cards it has are wanted (from the player, then the network)
-	if from then
-		cards.want_cards(dst, from.want and { table.unpack(from.want) } or cards.card_list(from) or {}, player)
-	end
 	inv = inv or player and player.get_main_inventory() or nil
+	if from then
+		cards.want_cards(dst, from.want and { table.unpack(from.want) } or cards.card_list(from) or {}, player, inv)
+	end
 	local settings = M.provider_settings(src)
 	M.apply_settings(dst, { priority = settings.priority, patterns = settings.patterns }, nil, inv)
 	local p = provider_record(dst)
-	if p and p.pending and player then M.tell_waiting(p, player, true) end
+	if p and (p.pending or p.want) and player then M.tell_waiting(p, player, true) end
 end
 
 --- Issue #585: "Return all patterns" of the provider window: every pattern of the provider goes into its network as an encoded
@@ -4090,11 +4098,13 @@ function M.on_built(entity, tags, source, player, inv)
 	if type(tags) == "table" and (tags[BP_TAG] or tags[OLD_TAG]) then
 		if player and not player.valid then player = nil end
 		inv = inv or player and player.get_main_inventory() or nil
+		--- issue #156: the cards never from nothing; issue #590: first, from the builder's inventory, then the network (the
+		--- order of the patterns, #558), so the patterns of the slots a card gives are filled by the same build
+		local list = type(tags[BP_TAG]) == "table" and tags[BP_TAG].cards
+		if type(list) == "table" and #list > 0 then cards.want_cards(entity, list, player, inv) end
 		M.apply_settings(entity, tags[BP_TAG], tags[OLD_TAG], inv)
 		local p = provider_record(entity)
-		if p and p.pending then M.tell_waiting(p, player or entity.last_user, player ~= nil) end
-		local list = type(tags[BP_TAG]) == "table" and tags[BP_TAG].cards
-		if type(list) == "table" and #list > 0 then cards.want_cards(entity, list, nil) end   -- issue #156: from the network, never from nothing
+		if p and (p.pending or p.want) then M.tell_waiting(p, player or entity.last_user, player ~= nil) end
 	elseif source and source.valid and source.name == PROVIDER then
 		M.set_priority(entity, M.get_priority(source))
 		local from = provider_record(source)

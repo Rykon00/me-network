@@ -73,27 +73,29 @@ fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_ioport.tag_bluepr
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_qbridge.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_lif.tag_blueprint
 
---- issue #558: the player who built an entity by hand (nil for robots, platforms and scripts)
+--- issue #558: the player who built an entity by hand (nil for robots, platforms and scripts); issue #590: the blocks with
+--- card slots take the cards of a blueprint from its inventory first, as the provider takes its patterns
 local function builder(event)
 	local p = event and event.name == defines.events.on_built_entity and game.get_player(event.player_index)
 	return p and p.valid and p or nil
 end
 
 local function on_built(entity, tags, event)
+	local player = builder(event)
 	fork_net.on_built(entity, event)
-	fork_io.on_built(entity, tags)                            -- (any other entity: the buses facing it wake)
-	fork_sbus.on_built(entity, tags)
+	fork_io.on_built(entity, tags, nil, player)               -- (any other entity: the buses facing it wake)
+	fork_sbus.on_built(entity, tags, nil, player)
 	if entity and entity.valid and not fork_net.kind_of(entity.name) then fork_sbus.wake_near(entity) end
-	fork_ae2.on_built(entity, tags, nil, builder(event))
+	fork_ae2.on_built(entity, tags, nil, player)
 	fork_circuit.on_built(entity, tags)
 	fork_bench.on_built(entity)
 	fork_pt.on_built(entity)
-	fork_wl.on_built(entity, tags)
+	fork_wl.on_built(entity, tags, nil, player)
 	fork_monitor.on_built(entity, tags)
 	fork_toggle.on_built(entity)                              -- (after the storage engine registered it, or not)
 	fork_emitter.on_built(entity, tags)
-	fork_ioport.on_built(entity, tags)                        -- (after the graph registered it)
-	fork_lif.on_built(entity, tags)                           -- (issue #531; its hidden chests)
+	fork_ioport.on_built(entity, tags, nil, player)           -- (after the graph registered it)
+	fork_lif.on_built(entity, tags, nil, player)              -- (issue #531; its hidden chests)
 	fork_lc.on_built(entity)                                  -- (issue #538: a ghost or proxy in an automatic network)
 	fork_qbridge.on_built(entity, tags)
 	fork_conn.on_built(entity)                                -- (issue #412: a block's connector; a connector's ghost revived)
@@ -160,15 +162,15 @@ end)
 --- give them to a block built from a ghost (only the module whose tag the blueprint entity carries)
 pasteover.apply = function(entity, tags, player)
 	if type(tags.fork_me_drive) == "table" then fork_net.apply_drive_settings(entity, tags.fork_me_drive) end
-	if tags.fork_me_interface or tags.fork_me_bus then fork_io.on_built(entity, tags) end
-	if tags.fork_me_storage_bus or tags.fork_me_fluid_storage_bus then fork_sbus.on_built(entity, tags) end
+	if tags.fork_me_interface or tags.fork_me_bus then fork_io.on_built(entity, tags, nil, player) end   -- (issue #590: cards)
+	if tags.fork_me_storage_bus or tags.fork_me_fluid_storage_bus then fork_sbus.on_built(entity, tags, nil, player) end
 	if tags.fork_me_provider then fork_ae2.on_built(entity, tags, nil, player) end   -- (issue #558: its inventory first)
 	if tags.fork_me_maintainer or tags.fork_me_circuit then fork_circuit.on_built(entity, tags) end
-	if tags.fork_me_access_point then fork_wl.on_built(entity, tags) end
+	if tags.fork_me_access_point then fork_wl.on_built(entity, tags, nil, player) end
 	if tags.fork_me_monitor then fork_monitor.on_built(entity, tags) end
 	if tags.fork_me_emitter then fork_emitter.on_built(entity, tags) end
-	if tags.fork_me_io_port then fork_ioport.on_built(entity, tags) end
-	if tags.fork_me_logistic_interface then fork_lif.on_built(entity, tags) end
+	if tags.fork_me_io_port then fork_ioport.on_built(entity, tags, nil, player) end
+	if tags.fork_me_logistic_interface then fork_lif.on_built(entity, tags, nil, player) end
 	if tags.fork_me_qbridge or tags.fork_me_wireless_link then fork_qbridge.on_built(entity, tags) end
 end
 script.on_event(defines.events.on_pre_build, function(event)
