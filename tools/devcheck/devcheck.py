@@ -982,6 +982,37 @@ def mods_label(a, base_only=False):
             + "".join(f" + {m}" for m in getattr(a, "with_mod", None) or []))
 
 
+# issue #593: the vanilla stand-ins that every ME recipe swaps for a Krastorio 2 item (glass, certus quartz, piston)
+K2_GONE = ("plastic-bar", "stone", "fast-inserter")
+
+
+def check_krastorio2(sec):
+    """issue #593: with the Krastorio 2 compatibility active no ME recipe keeps a stand-in of K2_GONE, and the ME Molecular
+    Assembler crafts Krastorio 2's automation core (an assembler recipe of its first tier)"""
+    rows = [p for p in sec.get("DUMP", []) if p[0] == "R"]
+    recipes = {p[1]: p for p in rows}
+    own = [n for k, n in sec.get("OWN", []) if k == "recipe"]
+    out = []
+    for n in own:
+        ing = {x.split(":", 1)[1] for x in recipes[n][4].split(",") if x} if n in recipes else set()
+        left = sorted(ing & set(K2_GONE))
+        if left:
+            out.append(f"{n} keeps the stand-in {', '.join(left)}")
+    cats = {}
+    for p in sec.get("DUMP", []):
+        if p[0] == "C":
+            cats[p[1]] = set(p[3].split(",")) if p[3] else set()
+    core = recipes.get("kr-automation-core")
+    if not core:
+        out.append("Krastorio 2 has no recipe kr-automation-core")
+    elif not set(core[2].split(",")) & cats.get("me-molecular-assembler", set()):
+        out.append(f"the ME Molecular Assembler ({', '.join(sorted(cats.get('me-molecular-assembler', [])))}) cannot craft "
+                   f"kr-automation-core ({core[2]})")
+    assembler = [r[1] for r in sec.get("KRASTORIO2", [])[1:] if r[0] == "assembler"]
+    print(f"ME Molecular Assembler with Krastorio 2: {', '.join(assembler) or '?'}")
+    return out
+
+
 def check(a):
     prepare_mods(gregtorio=a.with_gregtorio, base_only=a.base_only, with_mods=with_mods(a))
     print("mods: " + mods_label(a, a.base_only))
@@ -1024,7 +1055,9 @@ def check(a):
     got = (sec.get("KRASTORIO2") or [["missing"]])[0][0]
     print(f"\nKrastorio 2 compatibility: {got}")
     k2_problems = [] if got == want else [f"the Krastorio 2 compatibility is {got}, expected {want}"]
-    report("Krastorio 2 compatibility (issue #592)", k2_problems)
+    if got == "active":
+        k2_problems += check_krastorio2(sec)
+    report("Krastorio 2 compatibility (issues #592, #593)", k2_problems)
     ok = ok and not k2_problems
     if not a.with_gregtorio:
         ok = check_textures(a, sec) and ok
