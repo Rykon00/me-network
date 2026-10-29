@@ -834,9 +834,9 @@ into the ME Export Bus (not the import bus) and into the fourth card slot of the
   its target has room for) and a fluid row of the interface (what its side lacks), at the filter's or row's temperature or
   the fluid's default one.
 * The products go to the block that asked for them (issue #426, AE2-Unofficial's `injectCraftedItems` of
-  `PartBaseExportBus` and `DualityInterface`): when the job is done, its product, up to the amount it was asked for, goes
-  into the export bus's target, or into the interface (items into its inventory, fluid into the tank of a side tied to a row
-  of that fluid); what the block does not take, and what the job made beyond the amount, goes into the network.
+  `PartBaseExportBus` and `DualityInterface`): as the job makes it (issue #602), its product, up to the amount it was asked
+  for, goes into the export bus's target, or into the interface (items into its inventory, fluid into the tank of a side tied
+  to a row of that fluid); what the block does not take, and what the job made beyond the amount, goes into the network.
 * **Craft only** (issue #426, AE2-Unofficial's `Settings.CRAFT_ONLY`, a checkbox in the export bus's window while it has the
   card): the bus takes nothing from the network's storage. For each filter whose item its target can take (a machine: up to
   its level) or whose fluid it has room for, it starts a job for what the visit would move, and the job's products go
@@ -1135,7 +1135,8 @@ Step by step:
    red slot buttons. With something missing the Craft button stays disabled. Click **Craft**; the job
    appears in the **Jobs** tab (and in the window of the CPU that runs it) with its progress and a
    **Cancel** button.
-6. When the job is done, the result (and any by-products) is in network storage.
+6. The result goes into network storage as it is made (issue #602, as in GT New Horizons' AE2: a job of 1000 items does not
+   hold them back until the last one is done); by-products and what is left over of intermediates when the job is done.
 
 ### Patterns: encoding and clearing
 
@@ -2055,13 +2056,20 @@ Each step the CPU of a job:
 
 1. collects machines that are idle again (no progress, no ingredients left): their products go to
    the pool,
+   and (issue #602) hands the requested item on from the pool as it comes (`M.hand_out`), up to the job's amount less
+   what it handed out before (`job.sent`) and less what runs not handed out yet still take of it as an ingredient: first
+   to the block of the job's Crafting Card (`N.deliverers`, issue #426), the rest into the network (`N.no_arrival`: no
+   other job takes it as an arrival). GT New Horizons' AE2 does the same: `CraftingCPUCluster.injectItems` passes a
+   final output on at once (`finalOutput.splitOutputToIngredient` keeps the part later tasks still use) and ends the
+   job when the last of it is out. Intermediates and byproducts stay in the pool,
 2. hands batches (up to 16 crafts, limited by the pool, by one stack per item ingredient, by the
    output slot and by the fluid boxes) to idle machines of the step's pattern, in plan order
    (Molecular Assembler or any other pattern machine, several machines in parallel). Crafting patterns:
    a machine that has the recipe first, else an idle one is switched (`switch_recipe`: its items and fluids into
    the network with `N.no_arrival`, then `set_recipe`; not when the network cannot take them). Processing
    patterns: an idle machine gets the inputs as a lease, a chest gets them directly (no lease),
-3. when every step is done, stores the whole pool in the network (result and by-products), items
+3. when every step is done, hands out what is left of the requested item as in 1. and stores the rest of the pool
+   in the network (a surplus of the result, by-products), items
    with the network's `insert`, fluids with `fluids.insert`. What does not fit stays in the pool
    ("Storing items and fluids (network cells full?)").
 
