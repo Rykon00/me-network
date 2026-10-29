@@ -192,3 +192,12 @@ if ma and ma.crafting_categories and ma.crafting_categories[1] then
 		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
 	} })
 end
+
+--- Issue #591: Krastorio 2 lets a logistic robot carry 7 items and a construction robot 2 (vanilla: 1 each). The tests of the
+--- ME Logistic Interface count the robots' deliveries item by item (a requester gets what it asks, no more), so they run
+--- with the vanilla payload.
+if mods["Krastorio2"] or mods["Krastorio2-spaced-out"] then
+	for _, t in pairs({ "logistic-robot", "construction-robot" }) do
+		for _, robot in pairs(data.raw[t] or {}) do robot.max_payload_size = 1 end
+	end
+end

@@ -82,6 +82,12 @@ for t, _ in pairs(defines.prototypes.item) do
 		if it.burnt_result then D("B", n, it.burnt_result) end
 	end
 end
+--- issue #591: what a rocket launched with an item gives (Krastorio 2's space research data from a satellite)
+for t, _ in pairs(defines.prototypes.item) do
+	for n, it in pairs(data.raw[t] or {}) do
+		if it.rocket_launch_products then D("L", n, names(it.rocket_launch_products)) end
+	end
+end
 section("DUMP", dump)
 
 --- Every __me-network__/ file referenced anywhere, with its owner prototype (and every file of the texture mod
@@ -303,3 +309,7 @@ end
 for m in pairs(handlers) do paste_rows[#paste_rows + 1] = "handler\t" .. m end
 table.sort(paste_rows)
 section("PASTE", paste_rows)
+
+--- issue #591: the references to missing prototypes once more at the end (validate.lua): devcheck reports only the rows
+--- of data.lua's VALIDATE that are still here
+section("VALIDATEFINAL", require("validate")())

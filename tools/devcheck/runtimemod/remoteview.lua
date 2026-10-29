@@ -12,6 +12,8 @@
 local NET, GUI, TERM, WB = "gregtorio-me-network", "gregtorio-me-gui", "gregtorio-me-terminal", "gregtorio-me-workbench"
 local BX, BY = 10, -340
 local START = 130
+--- a full inventory of iron plates (100 a stack in the base game, 200 with Krastorio 2: issue #591)
+local function plates() return prototypes.item["iron-plate"].stack_size end
 
 return function(H)
 	local me_place, me_report, power = H.me_place, H.me_report, H.power
@@ -75,7 +77,7 @@ return function(H)
 		local before = cells()
 		local why, out = remote.call(NET, "drive_click", nil, nil, drive, 2, true)
 		expect(why == "no-inventory" and out == nil and cells() == before, "no inventory: " .. tostring(why) .. ", cells " .. cells())
-		char.insert{ name = "iron-plate", count = 100 * #char }
+		char.insert{ name = "iron-plate", count = plates() * #char }
 		why, out = remote.call(NET, "drive_click", nil, char, drive, 2, true)
 		expect(why == "inventory-full" and cells() == before, "full inventory: " .. tostring(why) .. ", cells " .. cells())
 		char.clear()
@@ -168,7 +170,7 @@ return function(H)
 		expect(not tmp[1].valid_for_read and g("stand_in_parked", "none") == 5, "no inventory: parked " .. g("stand_in_parked", "none"))
 		expect(ground_items(surface, { 0, 0 }) == ground, "nothing was spilled from remote view without an inventory")
 		expect(#g("stand_in_texts", "none") >= 1, "the player was told that the items are kept")
-		char.insert{ name = "iron-plate", count = 100 * #char }
+		char.insert{ name = "iron-plate", count = plates() * #char }
 		tmp.insert{ name = "copper-plate", count = 7 }
 		g("stand_in_give_back", "remote", tmp[1], term)
 		expect(not tmp[1].valid_for_read and g("stand_in_parked", "remote") == 7, "full inventory: parked " .. g("stand_in_parked", "remote"))
@@ -192,7 +194,7 @@ return function(H)
 			"give back with an inventory: " .. char.get_item_count("copper-plate"))
 		--- outside remote view it is as before: what the inventory cannot take is spilled at the character
 		main.clear()
-		main.insert{ name = "iron-plate", count = 100 * #main }
+		main.insert{ name = "iron-plate", count = plates() * #main }
 		tmp.insert{ name = "copper-plate", count = 2 }
 		g("stand_in_give_back", "normal", tmp[1], term)
 		expect(not tmp[1].valid_for_read and g("stand_in_parked", "normal") == 0 and ground_items(surface, { 0, 0 }) > ground,
