@@ -410,7 +410,7 @@ def create_map(mapfile, *args):
 
 def sections(log):
     out = {}
-    for m in re.finditer(r"DEVCHECK-([A-Z]+)-BEGIN\n(.*?)\nDEVCHECK-\1-END", log, re.S):
+    for m in re.finditer(r"DEVCHECK-([A-Z0-9]+)-BEGIN\n(.*?)\nDEVCHECK-\1-END", log, re.S):
         out[m.group(1)] = [l.split("\t") for l in m.group(2).splitlines() if l]
     return out
 
@@ -1017,6 +1017,15 @@ def check(a):
     paste = check_paste(sec)
     report("settings paste: missing lists, flags or handlers (issue #519, prototypes/paste.lua)", paste)
     ok = ok and not paste
+    # issue #592: the Krastorio 2 compatibility (prototypes/compat/krastorio2.lua) runs with Krastorio 2 or Krastorio 2
+    # Spaced Out and never with Gregtorio Continued
+    k2 = {"Krastorio2", "Krastorio2-spaced-out"} & set(getattr(a, "with_mod", None) or [])
+    want = "active" if k2 and not a.with_gregtorio else "inactive"
+    got = (sec.get("KRASTORIO2") or [["missing"]])[0][0]
+    print(f"\nKrastorio 2 compatibility: {got}")
+    k2_problems = [] if got == want else [f"the Krastorio 2 compatibility is {got}, expected {want}"]
+    report("Krastorio 2 compatibility (issue #592)", k2_problems)
+    ok = ok and not k2_problems
     if not a.with_gregtorio:
         ok = check_textures(a, sec) and ok
     ok = ok and not ae2
