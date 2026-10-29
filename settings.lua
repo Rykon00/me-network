@@ -43,3 +43,10 @@ data:extend({
 	int("me-network-idle-limit", "h", 300, 15, 3600),
 	int("me-network-storage-bus-idle-limit", "i", 120, 15, 3600),
 })
+
+--- Issue #598: with Krastorio 2 (or Krastorio 2 Spaced Out) the ME recipes and technologies follow its materials and science
+--- tiers (data-updates.lua, prototypes/compat/krastorio2.lua); off, they stay the standalone ones. Only with one of the two.
+if mods["Krastorio2"] or mods["Krastorio2-spaced-out"] then
+	data:extend({ { type = "bool-setting", name = "me-network-krastorio2-recipes", setting_type = "startup", order = "z",
+		default_value = true } })
+end

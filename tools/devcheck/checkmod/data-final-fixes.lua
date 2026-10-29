@@ -313,3 +313,5 @@ section("PASTE", paste_rows)
 --- issue #591: the references to missing prototypes once more at the end (validate.lua): devcheck reports only the rows
 --- of data.lua's VALIDATE that are still here
 section("VALIDATEFINAL", require("validate")())
+--- issue #592: whether me-network's Krastorio 2 compatibility ran (prototypes/compat/krastorio2.lua sets ME_NETWORK.krastorio2)
+section("KRASTORIO2", { (ME_NETWORK and ME_NETWORK.krastorio2) and "active" or "inactive" })
