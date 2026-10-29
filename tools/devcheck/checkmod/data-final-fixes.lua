@@ -314,4 +314,10 @@ section("PASTE", paste_rows)
 --- of data.lua's VALIDATE that are still here
 section("VALIDATEFINAL", require("validate")())
 --- issue #592: whether me-network's Krastorio 2 compatibility ran (prototypes/compat/krastorio2.lua sets ME_NETWORK.krastorio2)
-section("KRASTORIO2", { (ME_NETWORK and ME_NETWORK.krastorio2) and "active" or "inactive" })
+do
+	local k2 = ME_NETWORK and ME_NETWORK.krastorio2
+	local rows = { k2 and "active" or "inactive" }
+	--- issue #593: the categories the ME Molecular Assembler was rebuilt with
+	if k2 and k2.assembler_categories then rows[2] = "assembler\t" .. table.concat(k2.assembler_categories, ",") end
+	section("KRASTORIO2", rows)
+end

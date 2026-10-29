@@ -768,6 +768,85 @@ cables, 2 iron plates -> 2), the level maintainer, the circuit interface, the In
 module. The technologies need what their recipes take: ME Network also needs Lamp and Fast inserter, ME Autocrafting and
 ME Upgrade Cards need Circuit network.
 
+### With Krastorio 2
+
+With Krastorio 2 (issue #593; `prototypes/compat/krastorio2.lua`, the startup setting "Krastorio 2 recipes and technologies",
+not with Gregtorio Continued) every AE2 material whose stand-in has a Krastorio 2 counterpart takes that, with AE2's counts.
+The processors (electronic circuit, advanced circuit, processing unit), the lamp, the combinators and the machines stay:
+Krastorio 2 makes them dearer itself. No ME recipe takes printed silicon itself (in AE2 it goes into the processors), so
+Krastorio 2's silicon is not used.
+
+| AE2 | Stand-in | With Krastorio 2 |
+|---|---|---|
+| certus quartz | stone | quartz |
+| glass, quartz glass, quartz fiber | plastic bar | glass (also the 3 glass of the ME IO Port and the 4 quartz glass of the ME Quantum Bridge's chamber, which had no stand-in) |
+| fluix crystal, fluix dust | copper cable | a quartz and the copper cable |
+| annihilation core, formation core | electronic circuit | automation core |
+| piston | fast inserter | inserter parts |
+| smooth sky stone (ME Controller) | stone brick | stone brick (the controller stays at red and green science) |
+| sky stone dust (256k and 1024k components) | stone brick | imersite powder |
+| glowstone (64k component, blank pattern) | copper cable | rare metals (the 16k component keeps the copper cable: it comes with the first technology) |
+| diamond (Advanced Card) | processing unit | rare metals |
+| dense energy cell (wireless terminal and module, Singularity cells) | batteries, accumulator | lithium-sulfur battery (one for AE2's one cell; the wireless module's 10 batteries: 3) |
+| quantum ring (ME Quantum Bridge) | battery (its energy cell) | AI core |
+| the 4096k and 16384k components' material | stone brick | imersium plate, energy control unit |
+| matter condenser (Singularity cells) | (the bridges) | a charged matter stabilizer more |
+| the crafting accelerators 256x to 4096x (ME Crafting Accelerators 2) | - | an energy control unit more |
+
+The recipes that change (the others keep their ingredients: cells, crafting storages and units, the blocks that are not in
+AE2, most cards):
+
+| Item | Recipe with Krastorio 2 |
+|---|---|
+| Fluix Cable | 1 glass, 2 quartz, 2 copper cable |
+| ME Controller | 4 stone brick, 4 quartz, 4 copper cable, 1 advanced circuit |
+| ME Interface | 4 iron plate, 2 glass, 2 automation core |
+| ME Terminal | 2 automation core, 1 electronic circuit, 1 small lamp |
+| ME Chest | 2 glass, 1 ME Terminal, 2 Fluix Cable, 2 iron plate, 1 copper plate |
+| Basic Storage Housing | 2 glass, 3 copper cable, 2 iron plate, 1 copper plate |
+| ME 1K Storage Component | 4 copper cable, 4 quartz, 1 electronic circuit |
+| ME 4K Storage Component | 3 ME 1K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 16K Storage Component | 3 ME 4K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 64K Storage Component | 3 ME 16K Storage Component, 1 advanced circuit, 1 glass, 4 rare metals |
+| ME 256k Storage Component | 3 ME 64K Storage Component, 1 advanced circuit, 1 glass, 4 imersite powder |
+| ME 1024k Storage Component | 3 ME 256k Storage Component, 1 advanced circuit, 1 glass, 4 imersite powder |
+| ME 4096k Storage Component | 3 ME 1024k Storage Component, 1 advanced circuit, 1 glass, 4 imersium plate |
+| ME 16384k Storage Component | 3 ME 4096k Storage Component, 1 advanced circuit, 1 glass, 4 energy control unit |
+| ME Singularity Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 lithium-sulfur battery, 1 Basic Storage Housing, 1 charged matter stabilizer |
+| ME Import Bus | 1 automation core, 2 iron plate, 1 inserter parts |
+| ME Export Bus | 1 automation core, 2 iron plate, 1 inserter parts |
+| ME Storage Bus | 1 ME Interface, 2 inserter parts |
+| Void ME Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 iron plate |
+| Void ME Fluid Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 copper plate |
+| ME IO Port | 1 ME Drive, 2 Fluix Cable, 2 iron plate, 1 advanced circuit, 3 glass |
+| ME Quantum Bridge | 32 iron plate, 20 electronic circuit, 8 processing unit, 8 AI core, 32 Fluix Cable, 4 glass |
+| ME Pattern Provider | 4 iron plate, 2 assembling machine 1, 2 automation core |
+| ME Blank Pattern | 2 glass, 3 rare metals, 1 quartz, 2 iron plate, 1 copper plate |
+| ME Molecular Assembler | 4 iron plate, 2 glass, 2 automation core, 1 assembling machine 1 |
+| ME 256x Crafting Accelerator | 4 ME 64x Crafting Accelerator, 1 energy control unit |
+| ME 1024x Crafting Accelerator | 4 ME 256x Crafting Accelerator, 1 energy control unit |
+| ME 4096x Crafting Accelerator | 4 ME 1024x Crafting Accelerator, 1 energy control unit |
+| ME 1k Fluid Storage Cell | 1 ME 1K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4k Fluid Storage Cell | 1 ME 4K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16k Fluid Storage Cell | 1 ME 16K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 64k Fluid Storage Cell | 1 ME 64K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 256k Fluid Storage Cell | 1 ME 256k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 1024k Fluid Storage Cell | 1 ME 1024k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4096k Fluid Storage Cell | 1 ME 4096k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16384k Fluid Storage Cell | 1 ME 16384k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME Singularity Fluid Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 lithium-sulfur battery, 1 Basic Storage Housing, 1 pump, 1 charged matter stabilizer |
+| Advanced Card | 2 rare metals, 3 iron plate, 1 copper cable, 1 advanced circuit |
+| Capacity Card | 1 Basic Card, 1 quartz |
+| Acceleration Card | 1 Advanced Card, 1 quartz, 1 copper cable |
+| View Cell | 1 Basic Storage Housing, 1 quartz |
+| Wireless Booster | 2 quartz, 1 copper cable, 1 electronic circuit, 3 iron plate |
+| Wireless ME Terminal | 1 radar, 1 ME Terminal, 1 lithium-sulfur battery |
+| ME Wireless Terminal Module | 1 Wireless ME Terminal, 3 lithium-sulfur battery, 2 processing unit |
+
+The ME Molecular Assembler is made again after Krastorio 2's changes, from the assembling machine 2's item categories at
+that point (without Krastorio 2: the same; Krastorio 2's own machine categories such as crushing or electrolysis are never
+the assembling machine 2's), so it crafts Krastorio 2's assembler recipes such as the automation core.
+
 ### View Cells
 
 AE2's **View Cell** (issue #440, AE2-Unofficial's `ItemViewCell`; technology ME Upgrade Cards, next to the workbench): a list
