@@ -101,6 +101,8 @@ return function(H)
 						inserter(s, fails, what, X + 0.5, Y + 1.5, { X + 0.5, Y + 0.5 }, { X + 0.5, Y + 2.5 })
 						inserter(s, fails, what, X + 0.5, Y + 3.5, { X + 0.5, Y + 2.5 }, { X + 0.5, Y + 4.5 })
 						me_place(s, fails, what, "iron-chest", X + 0.5, Y + 4.5)
+						--- (me-network issue #560: the ME Molecular Assembler works in a working ME network only: cabled to it)
+						members[#members + 1] = c.machine
 					end
 					members[#members + 1] = c.iface
 				end

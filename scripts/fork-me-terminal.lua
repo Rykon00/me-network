@@ -1,11 +1,13 @@
 --------------------------------------------------------------------------------
 --- FORK AE2: ME TERMINAL (runtime; issue #68: the hub of the ME network, scripts/fork-me-network.lua)
 ---   * Status line: network state, bytes and types used of the item cells and of the fluid cells, drives and
----     cells, the controller's power draw. A search field above the tabs filters the Storage and Crafting tabs.
----   * Storage tab: sort (amount or name), kind (all, items, fluids), one grid with the items and then the
----     fluids. Left click on an item: a stack into the cursor (with something in the cursor: that is stored
----     instead); right click: one item into the cursor; shift click: a stack into the inventory. Fluids are
----     shown with their amounts; they cannot be taken by hand. Issue #28: the window shows the player's inventory on
+---     cells, the controller's power draw. A search field above the tabs filters the Storage and Crafting tabs, and so
+---     does the quality filter next to it (issue #514: a comparator and a quality; only in a game with qualities).
+---   * Storage tab: sort (amount, name, quality, mod or tier, issue #602: scripts/fork-me-sortkeys.lua) with its direction,
+---     kind (all, items, fluids), one grid with the items and then the fluids. A row whose amount reaches 0 while the window
+---     is open stays in its place, greyed, with 0 (issue #602). Left click on an item: a stack into the cursor (with
+---     something in the cursor: that is stored instead); right click: one item into the cursor; shift click: a stack into
+---     the inventory. Fluids are shown with their amounts; they cannot be taken by hand. Issue #28: the window shows the player's inventory on
 ---     its left (scripts/fork-me-gui.lua, the pane): shift + click there stores the stack in the network, control +
 ---     click every stack of that item (store_stack, store_inventory_item); it replaces the terminal's own grid of
 ---     the player's inventory.
@@ -22,7 +24,11 @@
 --- Every button calls a function of this module that the runtime test calls directly (take, store_cursor,
 --- store_inventory_item, withdraw, store_stack, entries, craft_preview, start_craft, cancel_job, cells). The Patterns tab is
 --- gone (issue #130): encoding patterns is the ME Pattern Terminal's job (scripts/fork-me-patternterm.lua).
---- State: storage.fork_me_terminal[player_index] = { entity, filter, sort, kind, pick, amount, shown... }
+--- State: storage.fork_me_terminal[player_index] = { entity, filter, quality, pick, amount, shown, zero... } (the open
+--- window's; issue #514: quality = { cmp = ">", "<", "=", ">=", "<=" or "!=" (issue #520: <, > and != added), name = a
+--- quality or nil }, nil or no name: any quality; issue #602: zero = { key -> its index } of the rows kept at 0). Issue #602:
+--- storage.fork_me_term_prefs[player_index] = { sort, kind, desc = { [sort] = true / false } }, the player's preference
+--- that every terminal window uses (the ME Terminal, the wireless terminal, the ME Chest), kept across opening other blocks.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -33,6 +39,9 @@ local Names = require("scripts.fork-me-names")
 local Conn = require("scripts.fork-me-connector")
 local IO = require("scripts.fork-me-io")
 local VC = require("scripts.fork-me-viewcells")        -- (issue #440)
+local picker = require("scripts.fork-me-picker")        -- (issue #514: the visible qualities)
+local circuit = require("scripts.fork-me-circuit")      -- (issue #520: the game's comparators)
+local SK = require("scripts.fork-me-sortkeys")          -- (issue #602: the sort by mod and by tier)
 
 local M = {}
 
@@ -42,10 +51,43 @@ local COLUMNS = 10
 local REFRESH_TICKS = 60
 local WIDTH = 40 * COLUMNS + 12
 local KINDS = { all = "items", items = "fluids", fluids = "all" }     -- the kind button cycles
+--- the sort button cycles (issue #514: quality; issue #602: mod and tier)
+local SORTS = { count = "name", name = "quality", quality = "mod", mod = "tier", tier = "count" }
+--- issue #602: the direction of each sort until the player turns it (more first, A to Z, higher quality first, A to Z, lower
+--- tier first)
+local DESC = { count = true, name = false, quality = true, mod = false, tier = false }
+--- issue #514: the quality filter's comparators; issue #520: the game's six, in the order of its drop-downs
+local CMPS = circuit.COMPARATORS
+local CMP_CAPTIONS = { [">"] = ">", ["<"] = "<", ["="] = "=", [">="] = "≥", ["<="] = "≤", ["!="] = "≠" }
 
 local function state()
 	storage.fork_me_terminal = storage.fork_me_terminal or {}
 	return storage.fork_me_terminal
+end
+
+--- Issue #602: the player's sort and kind (made from the open window's state of an older save, if there is one)
+local function prefs(index)
+	local all = storage.fork_me_term_prefs
+	if not all then
+		all = {}
+		storage.fork_me_term_prefs = all
+	end
+	local p = all[index]
+	if not p then
+		local st = state()[index]
+		p = { sort = st and SORTS[st.sort or ""] and st.sort or "count", kind = st and KINDS[st.kind or ""] and st.kind or "all",
+			desc = {} }
+		all[index] = p
+	end
+	return p
+end
+M.prefs = prefs
+
+--- issue #602: whether the player's sort runs from more to less (higher to lower, Z to A)
+local function desc_of(p)
+	local d = p.desc[p.sort]
+	if d == nil then d = DESC[p.sort] end
+	return d
 end
 
 --- nil when the terminal can be used, otherwise the reason as a locale key of [fork-me-net] (status-...)
@@ -84,9 +126,15 @@ end
 --- data of the tabs (also the remote interface: the runtime test calls the same code)
 --------------------------------------------------------------------------------
 
+--- Issue #514: the level of a quality (LuaQualityPrototype.level); 0 (normal's) for a quality the game does not know
+local function level_of(quality)
+	local p = quality and prototypes.quality[quality]
+	return p and p.level or 0
+end
+
 --- Issue #50, lever 8: what an entry reads of its key alone, once per key (per load: prototypes do not change while the
 --- game runs): a fluid's name, an item's name, quality and whether it has data (N.parse_key), and whether the prototype
---- exists (an entry of a removed prototype is not shown)
+--- exists (an entry of a removed prototype is not shown). Issue #514: `level`, its quality's level (a fluid: normal's).
 local key_info, key_info_n = {}, 0
 local function info_of(key)
 	local i = key_info[key]
@@ -94,15 +142,35 @@ local function info_of(key)
 		if key_info_n >= 50000 then key_info, key_info_n = {}, 0 end   -- (keys with data can be many)
 		if N.is_fluid_key(key) then
 			local name = N.fluid_name(key)                  -- (issue #159: one entry per temperature, "fluid/<name>@<degrees>")
-			i = { fluid = true, name = name, ok = prototypes.fluid[name] ~= nil }
+			i = { fluid = true, name = name, level = level_of("normal"), ok = prototypes.fluid[name] ~= nil }
 		else
 			local name, quality, json = N.parse_key(key)
-			i = { name = name, quality = quality, special = json ~= nil, ok = prototypes.item[name] ~= nil }
+			i = { name = name, quality = quality, level = level_of(quality), special = json ~= nil, ok = prototypes.item[name] ~= nil }
 		end
 		key_info[key] = i
 		key_info_n = key_info_n + 1
 	end
 	return i
+end
+
+--- Issue #514: the quality filter `q` ({ cmp, name }, the player's state) as its comparator, the chosen quality's level and
+--- its part of a kept list's id; nil for any quality (no filter, no quality chosen, one the game does not know)
+local function quality_test(q)
+	local p = type(q) == "table" and q.name and prototypes.quality[q.name]
+	if not p then return nil end
+	local cmp = CMP_CAPTIONS[q.cmp] and q.cmp or "="
+	return cmp, p.level, "|q" .. cmp .. q.name
+end
+
+--- issue #514: whether a key of quality level `level` passes the quality filter (quality_test)
+local function quality_passes(level, cmp, ql)
+	if cmp == "=" then return level == ql end
+	if cmp == ">=" then return level >= ql end
+	if cmp == "<=" then return level <= ql end
+	if cmp == ">" then return level > ql end
+	if cmp == "<" then return level < ql end
+	if cmp == "!=" then return level ~= ql end
+	return false                                                -- (issue #520: quality_test passes no other one)
 end
 
 --- issue #50, lever 8: { kept, resorted, sorted } lists since the load (tests, the benchmark)
@@ -167,13 +235,19 @@ local lists = setmetatable({}, { __mode = "k" })
 local KEEP_LISTS = 16
 
 --- The entries of the storage grid: the items, then the fluids (key "fluid/<name>", fluid = true), each filtered
---- by the search and sorted by amount or name. `kind`: "all" (default), "items" or "fluids". Issue #50, lever 8: the
+--- by the search and sorted by amount, name or quality (issue #514: higher quality first, then name, then amount; the
+--- qualities of one name by their level in every sort, normal first, never by the key's text). `kind`: "all" (default),
+--- "items" or "fluids". Issue #50, lever 8: the
 --- same table as the last call while the network's contents did not change (do not change it). `fresh` (tests, the
 --- benchmark): made from nothing, as at a first refresh, and not kept. Issue #295: `index` is the player whose
 --- translated names the search matches too (a kept list of a search is the player's, of the version of their names).
 --- Issue #440: `view`, the filter of the window's view cells (scripts/fork-me-viewcells.lua) and `vsig` its signature: only the
---- keys it allows (a kept list is the one of those cells).
-function M.entries(net, filter, sort, kind, fresh, index, view, vsig)
+--- keys it allows (a kept list is the one of those cells). Issue #514: `quality`, the quality filter ({ cmp = ">", "<", "=",
+--- ">=", "<=" or "!=" (issue #520), name }; a fluid counts as normal quality; nil or no name: any quality, with the id of
+--- the lists from before it). Issue #602: `sort` "mod" (the mod that made the prototype, then name) and "tier" (the tier of
+--- scripts/fork-me-sortkeys.lua, then name; what has none comes last in both directions), and `desc` the direction of the
+--- sort's first key (nil: the sort's own, DESC; more, higher, Z first when true): the ties keep their order.
+function M.entries(net, filter, sort, kind, fresh, index, view, vsig, quality, desc)
 	local lower
 	filter, lower = Names.search(filter)
 	local names = filter ~= "" and Names.names_of(index) or nil
@@ -183,9 +257,15 @@ function M.entries(net, filter, sort, kind, fresh, index, view, vsig)
 		per = { n = 0, of = {} }
 		lists[net] = per
 	end
+	if not SORTS[sort] then sort = "count" end
+	if desc == nil then desc = DESC[sort] end
+	local rev = (desc and true or false) ~= DESC[sort]            -- (issue #602: turned against the sort's own direction)
 	local id = tostring(sort) .. "|" .. tostring(kind) .. "|" .. filter
+	if rev then id = id .. "|r" end
 	if names then id = id .. "|" .. index .. "@" .. Names.version(index) end
 	if view then id = id .. "|v" .. vsig end                       -- (issue #440)
+	local qcmp, qlevel, qid = quality_test(quality)
+	if qcmp then id = id .. qid end                                -- (issue #514)
 	local last = not fresh and per.of[id] or nil
 	if last and last.cver == net.cver and last.usable == usable then
 		list_stats.kept = list_stats.kept + 1
@@ -201,20 +281,39 @@ function M.entries(net, filter, sort, kind, fresh, index, view, vsig)
 		for key, count in pairs(net.items) do
 			local i = info_of(key)
 			if i.ok and Names.matches(names, i.fluid and "fluid" or "item", i.name, filter, lower)
-				and (not view or VC.allows(view, key)) then           -- (issue #440: the view cells)
+				and (not view or VC.allows(view, key))                -- (issue #440: the view cells)
+				and (not qcmp or quality_passes(i.level, qcmp, qlevel)) then   -- (issue #514)
+				local e
 				if i.fluid then
-					if kind ~= "items" then liquids[key] = { key = key, name = i.name, count = count, fluid = true } end
+					if kind ~= "items" then
+						e = { key = key, name = i.name, count = count, fluid = true, level = i.level }
+						liquids[key] = e
+					end
 				elseif kind ~= "fluids" then
-					items[key] = { key = key, name = i.name, quality = i.quality, count = count, special = i.special }
+					e = { key = key, name = i.name, quality = i.quality, count = count, special = i.special, level = i.level }
+					items[key] = e
 				end
+				if e and sort == "mod" then e.mod = SK.mod_of(i.fluid, i.name)              -- (issue #602)
+				elseif e and sort == "tier" then e.tier = SK.tier_of(i.fluid, i.name) or false end
 			end
 		end
 	end
+	--- (a strict total order: the key decides only between keys of one name and quality, items with data or fluids of
+	--- other temperatures. Issue #602: `rev` turns the first key only.)
 	local function order(a, b)
-		if sort == "name" then
+		if sort == "quality" then                                 -- (issue #514: higher quality, name, amount)
+			if a.level ~= b.level then return (a.level > b.level) ~= rev end
 			if a.name ~= b.name then return a.name < b.name end
-		elseif a.count ~= b.count then
-			return a.count > b.count
+			if a.count ~= b.count then return a.count > b.count end
+		else
+			if sort == "count" and a.count ~= b.count then return (a.count > b.count) ~= rev end
+			if sort == "mod" and a.mod ~= b.mod then return (a.mod < b.mod) ~= rev end
+			if sort == "tier" and a.tier ~= b.tier then
+				if not a.tier or not b.tier then return b.tier == false end   -- (no tier: last in both directions)
+				return (a.tier < b.tier) ~= rev
+			end
+			if a.name ~= b.name then return (a.name < b.name) ~= (rev and sort == "name") end
+			if a.level ~= b.level then return a.level < b.level end   -- (issue #514: not by the key's text)
 		end
 		return a.key < b.key
 	end
@@ -422,6 +521,9 @@ local function build_storage(tab)
 	local row = G.row(tab)
 	row.add{ type = "button", name = "fork_me_sort", caption = { "fork-me-net.sort-count" },
 		tooltip = { "fork-me-net.sort-tooltip" }, tags = G.act("term_sort") }
+	local dir = row.add{ type = "button", name = "fork_me_sort_dir", caption = "▼", tooltip = { "fork-me-net.sort-desc" },
+		tags = G.act("term_sort_dir") }                                  -- (issue #602: the direction)
+	dir.style.width = 32
 	row.add{ type = "button", name = "fork_me_kind", caption = { "fork-me-gui.kind-all" },
 		tooltip = { "fork-me-gui.kind-tooltip" }, tags = G.act("term_kind") }
 	row.add{ type = "button", caption = { "fork-me-terminal.store-hand" }, tags = G.act("term_store") }
@@ -429,6 +531,18 @@ local function build_storage(tab)
 	tab.add{ type = "flow", name = "fork_me_view", direction = "horizontal" }   -- (issue #440: the view cell slots)
 	G.label(tab, "", WIDTH, nil, "fork_me_status").visible = false
 	scroll_table(tab, "fork_me_grid", COLUMNS, 9 * 40 + 8)
+end
+
+--- issue #602: the sort, direction and kind buttons of the window `frame` show the player's preference `p`
+function M.sort_captions(frame, p)
+	G.find(frame, "fork_me_sort").caption = { "fork-me-net.sort-" .. p.sort }
+	local dir = G.find(frame, "fork_me_sort_dir")
+	if dir then
+		local desc = desc_of(p)
+		dir.caption = desc and "▼" or "▲"
+		dir.tooltip = { "fork-me-net.sort-" .. (desc and "desc" or "asc") }
+	end
+	G.find(frame, "fork_me_kind").caption = { "fork-me-gui.kind-" .. p.kind }
 end
 
 local function build_crafting(tab)
@@ -466,6 +580,45 @@ local function build_cells(tab)
 	scroll.style.maximal_height = 9 * 40
 	scroll.style.minimal_width = WIDTH
 	scroll.add{ type = "table", name = "fork_me_cells", column_count = 2 }
+end
+
+--- Issue #514: the quality filter (it filters the Storage and the Crafting tab, as the search next to it does): a
+--- comparator (issue #520: the game's >, <, =, ≥, ≤ and ≠) and a quality, "Any quality" or one of the game's visible
+--- qualities with its icon (a drop-down: 2.1 has a choose-elem-button of qualities but no filter to leave out hidden
+--- ones such as quality-unknown). Only when the game has more than one visible quality (not without the quality mod).
+--- Returns whether it was added.
+local function add_quality_filter(parent, st)
+	local names = picker.qualities()
+	if #names < 2 then return false end
+	local q = type(st.quality) == "table" and st.quality or {}
+	local cmps, cmp_index = {}
+	local want = CMP_CAPTIONS[q.cmp] and q.cmp or "="                -- (issue #520: "=" is no longer the first)
+	for i, c in ipairs(CMPS) do
+		cmps[i] = CMP_CAPTIONS[c]
+		if c == want then cmp_index = i end
+	end
+	local cmp = parent.add{ type = "drop-down", name = "fork_me_qcmp", items = cmps, selected_index = cmp_index,
+		tooltip = { "fork-me-terminal.quality-cmp-tooltip" }, tags = G.act("term_qcmp") }
+	cmp.style.width = 52
+	local items, sel = { { "fork-me-terminal.quality-any" } }, 1
+	for i, name in ipairs(names) do
+		items[i + 1] = { "", "[quality=" .. name .. "] ", prototypes.quality[name].localised_name }
+		if name == q.name then sel = i + 1 end
+	end
+	local dd = parent.add{ type = "drop-down", name = "fork_me_quality", items = items, selected_index = sel,
+		tooltip = { "fork-me-terminal.quality-tooltip" }, tags = G.act("term_quality", { names = names }) }
+	dd.style.width = 140
+	return true
+end
+
+--- the row above the tabs: the search field and (issue #514) the quality filter
+function M.build_top(content, st)
+	local top = G.row(content)
+	top.add{ type = "label", caption = { "fork-me-terminal.search" } }
+	local search = top.add{ type = "textfield", name = "fork_me_search", text = st.filter or "", tags = G.act("term_search") }
+	search.style.width = 200
+	if add_quality_filter(top, st) then search.style.width = 150 end
+	return top
 end
 
 --- Issue #229: the top of an ME Chest's window: its cell slot with the cell's fill, the priority, the input slot, the power
@@ -521,20 +674,19 @@ local function open(player, entity)
 	local _, content = G.open_window(player, "terminal", chest and { "entity-name.me-chest" } or { "fork-me-terminal.title" },
 		{ unit = entity.unit_number })
 	Names.ensure(player)                                          -- (issue #295: the names for the search)
+	local p = prefs(player.index)                                  -- (issue #602: before a new state replaces the old one)
 	local st = state()[player.index]
 	if not (st and st.entity == entity) then
-		st = { entity = entity, filter = "", sort = "count", kind = "all", amount = 1, tab = 1 }
+		st = { entity = entity, filter = "", amount = 1, tab = 1 }
 		state()[player.index] = st
 	end
-	st.shown, st.craft_shown, st.jobs_shown, st.cells_shown, st.plan_shown = nil, nil, nil, nil, nil
+	st.sort, st.kind = nil, nil                                    -- (issue #602: the player's, prefs; an older save's state)
+	st.shown, st.craft_shown, st.jobs_shown, st.cells_shown, st.plan_shown, st.zero = nil, nil, nil, nil, nil, nil
 	st.chest, st.chest_sig = chest or nil, nil
 	if chest then build_chest(content, entity) end
 	G.label(content, "", WIDTH, nil, "fork_me_net_line")
 	if G.wireless_mode_button then G.wireless_mode_button(content, entity, "pattern") end   -- (issue #210: a wireless window)
-	local top = G.row(content)
-	top.add{ type = "label", caption = { "fork-me-terminal.search" } }
-	local search = top.add{ type = "textfield", name = "fork_me_search", text = st.filter or "", tags = G.act("term_search") }
-	search.style.width = 200
+	M.build_top(content, st)
 	local tabs = content.add{ type = "tabbed-pane", name = "fork_me_tabs", tags = G.act("term_tab") }
 	for _, name in ipairs(chest and CHEST_TABS or TABS) do
 		local tab = tabs.add{ type = "tab", caption = { "fork-me-gui.tab-" .. name } }
@@ -549,12 +701,22 @@ local function open(player, entity)
 		build_cells(tabs.fork_me_tab_cells)
 	end
 	tabs.selected_tab_index = chest and 1 or st.tab or 1
-	G.find(content, "fork_me_sort").caption = { "fork-me-net.sort-" .. (st.sort or "count") }
-	G.find(content, "fork_me_kind").caption = { "fork-me-gui.kind-" .. (st.kind or "all") }
+	M.sort_captions(content, p)
 	if not chest then G.find(content, "fork_me_amount").text = tostring(st.amount or 1) end
 	M.refresh(player)
 end
 M.open = open
+
+--- a slot button of the storage grid for entry `c` (at `index`, nil: at the end); issue #602: a row kept at 0 is greyed and
+--- does nothing
+function M.grid_slot(grid, c, index)
+	if c.zero then
+		local b = G.slot(grid, c.key, 0, nil, nil, nil, index)
+		b.enabled = false
+		return b
+	end
+	return G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil, nil, index)
+end
 
 local function refresh_storage(player, st, frame, net)
 	local status, grid = G.find(frame, "fork_me_status"), G.find(frame, "fork_me_grid")
@@ -567,56 +729,104 @@ local function refresh_storage(player, st, frame, net)
 	elseif vbox then
 		vbox.visible = false
 	end
-	local items = M.entries(net, st.filter, st.sort, st.kind, nil, player.index, view, vsig)
+	local p = prefs(player.index)                                  -- (issue #602: the player's sort and kind)
+	local sort, kind, desc = p.sort, p.kind, desc_of(p)
+	local items = M.entries(net, st.filter, sort, kind, nil, player.index, view, vsig, st.quality, desc)
+	local total = #items
+	--- Issue #602: a row that this window showed and whose amount reached 0 in the network stays in its place, greyed, with 0
+	--- (st.zero: key -> its place), until the window closes or what the list shows changes (sort, direction, kind, search,
+	--- quality filter, view cells); it comes back as a row of its own when the network has the key again.
+	local _, _, qid = quality_test(st.quality)
+	local lid = sort .. "|" .. kind .. "|" .. tostring(desc) .. "|" .. st.filter .. "|" .. (qid or "") .. "|" .. (vsig or "")
+	local shown = st.shown
+	local zero = st.zero
+	if type(shown) == "table" and shown.lid == lid then
+		for i = 1, shown.n do
+			local key = shown.keys[i]
+			if shown.counts[i] > 0 and not net.items[key] then
+				zero = zero or {}
+				zero[key] = i
+			end
+		end
+		for key in pairs(zero or {}) do
+			if net.items[key] then zero[key] = nil end
+		end
+		if zero and not next(zero) then zero = nil end
+	else
+		zero = nil
+	end
+	st.zero = zero
+	if zero then
+		local places = {}
+		for key, i in pairs(zero) do places[#places + 1] = { i, key } end
+		table.sort(places, function(a, b) return a[1] < b[1] or (a[1] == b[1] and a[2] < b[2]) end)
+		local list = {}
+		for i, e in ipairs(items) do list[i] = e end                -- (a copy: the kept list stays as it is)
+		for _, pl in ipairs(places) do
+			local i = info_of(pl[2])
+			table.insert(list, math.min(pl[1], #list + 1), { key = pl[2], name = i.name, count = 0, zero = true })
+		end
+		items = list
+	end
 	local n = math.min(#items, MAX_BUTTONS)
-	local sort, kind = st.sort or "count", st.kind or "all"
+	--- issue #544: the second number of a slot (Factorio 2.1's secondary_number, above the stored amount): what the network's
+	--- jobs are crafting of that key
+	local crafting = autocraft.crafting_amounts(net)
 	--- What the grid shows is kept in storage (every peer sets the same buttons) and compared entry by entry. Issue #50,
 	--- lever 8: unchanged since the last refresh: nothing is set (open tooltips stay); a button whose entry has another
-	--- amount gets the new number, one whose entry is another key is made again in its place. A new sort, kind or number
-	--- of buttons (or a window of an older version, which kept a signature string) builds the grid anew.
-	local shown = st.shown
-	if type(shown) == "table" and shown.sort == sort and shown.kind == kind and shown.n == n
+	--- amount gets the new number, one whose entry is another key (or turned into a row at 0 or back, issue #602) is made
+	--- again in its place. A new list (issue #602: `lid`) or number of buttons (or a window of an older version, which kept a
+	--- signature string) builds the grid anew.
+	if type(shown) == "table" and shown.lid == lid and shown.n == n
 		and (shown.total > MAX_BUTTONS) == (#items > MAX_BUTTONS) then
 		local keys, counts = shown.keys, shown.counts
+		local crafts = shown.crafts or {}
+		shown.crafts = crafts
 		local first
 		for i = 1, n do
-			if keys[i] ~= items[i].key or counts[i] ~= items[i].count then first = i break end
+			local key = items[i].key
+			if keys[i] ~= key or counts[i] ~= items[i].count or crafts[i] ~= crafting[key] then first = i break end
 		end
 		local children = first and grid.children
 		if not first or #children == n then              -- (else the grid is not what was kept: built anew below)
 			for i = first or n + 1, n do
 				local c = items[i]
-				if keys[i] ~= c.key then
-					children[i].destroy()
-					G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil, nil, i)
-					keys[i], counts[i] = c.key, c.count
+				local button = children[i]
+				if keys[i] ~= c.key or (counts[i] == 0) ~= (c.count == 0) then
+					button.destroy()
+					button = M.grid_slot(grid, c, i)
+					keys[i], counts[i], crafts[i] = c.key, c.count, nil
 				elseif counts[i] ~= c.count then
-					G.slot_amount(children[i], c.key, c.count)
+					G.slot_amount(button, c.key, c.count)
 					counts[i] = c.count
 				end
+				if crafts[i] ~= crafting[c.key] then
+					button.secondary_number = crafting[c.key]
+					crafts[i] = crafting[c.key]
+				end
 			end
-			if #items > MAX_BUTTONS and shown.total ~= #items then
-				status.caption = { "fork-me-terminal.too-many", MAX_BUTTONS, #items }
+			if total > MAX_BUTTONS and shown.real ~= total then
+				status.caption = { "fork-me-terminal.too-many", MAX_BUTTONS, total }
 			end
-			shown.total = #items
+			shown.total, shown.real = #items, total
 			return
 		end
 	end
-	local keys, counts = {}, {}
-	for i = 1, n do keys[i], counts[i] = items[i].key, items[i].count end
-	st.shown = { sort = sort, kind = kind, n = n, keys = keys, counts = counts, total = #items }
+	local keys, counts, crafts = {}, {}, {}
+	for i = 1, n do keys[i], counts[i], crafts[i] = items[i].key, items[i].count, crafting[items[i].key] end
+	st.shown = { lid = lid, n = n, keys = keys, counts = counts, crafts = crafts, total = #items, real = total }
 	grid.clear()
 	status.visible = false
 	if #items == 0 then
 		status.caption = { "fork-me-terminal.empty" }
 		status.visible = true
-	elseif #items > MAX_BUTTONS then
-		status.caption = { "fork-me-terminal.too-many", MAX_BUTTONS, #items }
+	elseif total > MAX_BUTTONS then
+		status.caption = { "fork-me-terminal.too-many", MAX_BUTTONS, total }
 		status.visible = true
 	end
-	for i = 1, math.min(#items, MAX_BUTTONS) do
-		local c = items[i]
-		G.slot(grid, c.key, c.count, G.act("term_take", { key = c.key }), c.special and "yellow_slot_button" or nil)
+	for i = 1, n do
+		local button = M.grid_slot(grid, items[i])
+		if crafts[i] then button.secondary_number = crafts[i] end
 	end
 end
 
@@ -627,17 +837,19 @@ local function refresh_crafting(st, frame, net, index)
 		autocraft.ignored_list(ignored), slots }
 	local filter, lower = Names.search(st.filter)
 	local names = filter ~= "" and Names.names_of(index) or nil      -- (issue #295: the names the player sees)
+	local qcmp, qlevel = quality_test(st.quality)                  -- (issue #514)
+	local crafting = autocraft.crafting_amounts(net)               -- (issue #544: the second number, what jobs craft of it)
 	local shown, sig = {}, {}
 	for _, key in pairs(keys) do
 		local fluid = key:sub(1, 6) == "fluid/"
 		local name = fluid and key:sub(7) or N.parse_key(key)
 		if (filter == "" or key:find(filter, 1, true) or Names.matches(names, fluid and "fluid" or "item", name, filter, lower))
-			and #shown < MAX_CRAFT_BUTTONS then
+			and (not qcmp or quality_passes(info_of(key).level, qcmp, qlevel)) and #shown < MAX_CRAFT_BUTTONS then
 			local d = autocraft.describe(key)
 			if d then
 				local count = d.fluid and N.count_key(net, key) or N.count(net, d.name, d.quality)   -- (issue #352: its quality)
-				shown[#shown + 1] = { key = key, craft = key, count = count }
-				sig[#sig + 1] = key .. "=" .. count
+				shown[#shown + 1] = { key = key, craft = key, count = count, crafting = crafting[key] }
+				sig[#sig + 1] = key .. "=" .. count .. "+" .. (crafting[key] or 0)
 			end
 		end
 	end
@@ -647,8 +859,9 @@ local function refresh_crafting(st, frame, net, index)
 		local grid = G.find(frame, "fork_me_craft_grid")
 		grid.clear()
 		for _, c in ipairs(shown) do
-			G.slot(grid, c.key, c.count, G.act("term_pick", { key = c.craft }),
+			local button = G.slot(grid, c.key, c.count, G.act("term_pick", { key = c.craft }),
 				c.craft == st.pick and "yellow_slot_button" or nil)
+			if c.crafting then button.secondary_number = c.crafting end
 		end
 	end
 	--- the picked resource: the plan preview
@@ -793,7 +1006,9 @@ function M.job_rows(t, jobs)
 	t.clear()
 	for _, j in ipairs(jobs) do
 		local d = autocraft.describe(j.item)
-		G.slot(t, j.item, j.amount)
+		local button = G.slot(t, j.item, j.amount)
+		--- issue #544: the second number is what is done of the amount (its share of the runs)
+		if j.total > 0 and j.done > 0 then button.secondary_number = math.floor(j.amount * math.min(j.done, j.total) / j.total) end
 		local name = t.add{ type = "label", caption = { "", G.fmt(j.amount), " ", d and d.localised_name or j.item } }
 		name.style.minimal_width = 140
 		local bar = t.add{ type = "progressbar", value = j.total > 0 and j.done / j.total or 0,
@@ -924,6 +1139,12 @@ G.window("terminal", { open = open, refresh = function(player, frame) return M.r
 
 local function st_of(player) return state()[player.index] end
 
+--- issue #602: the rows kept at 0 are the open window's only
+G.close_hooks[#G.close_hooks + 1] = function(player)
+	local st = state()[player.index]
+	if st then st.zero = nil end
+end
+
 --- issue #295: a player's names arrived: an open window searches by them
 Names.on_done[#Names.on_done + 1] = function(player)
 	if G.window_of(player) then G.refresh_one(player) end
@@ -945,16 +1166,50 @@ end)
 G.on("term_sort", function(event, player, el)
 	local st = st_of(player)
 	if not st then return end
-	st.sort = st.sort == "name" and "count" or "name"
-	el.caption = { "fork-me-net.sort-" .. st.sort }
+	local p = prefs(player.index)                                  -- (issue #602: the player's, for every terminal window)
+	p.sort = SORTS[p.sort] or "count"
+	if p.sort == "quality" and #picker.qualities() < 2 then p.sort = SORTS.quality end   -- (issue #514: a game without qualities)
+	M.sort_captions(G.window_of(player) or el.parent, p)
 	M.refresh(player)
+end)
+
+--- issue #602: the direction of the player's sort
+G.on("term_sort_dir", function(event, player, el)
+	local st = st_of(player)
+	if not st then return end
+	local p = prefs(player.index)
+	p.desc[p.sort] = not desc_of(p)
+	M.sort_captions(G.window_of(player) or el.parent, p)
+	M.refresh(player)
+end)
+
+--- issue #514: the quality filter's comparator or quality (nil: the other one as it was); "=" and any quality is no filter
+--- (nil, as before it)
+local function set_quality(player, cmp, name)
+	local st = st_of(player)
+	if not st then return end
+	local q = type(st.quality) == "table" and st.quality or {}
+	if cmp then name = q.name else cmp = q.cmp or "=" end
+	st.quality = (cmp ~= "=" or name) and { cmp = cmp, name = name } or nil
+	M.refresh(player)
+end
+
+G.on("term_qcmp", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	set_quality(player, CMPS[el.selected_index] or "=")
+end)
+
+G.on("term_quality", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	set_quality(player, nil, el.tags.names and el.tags.names[el.selected_index - 1])
 end)
 
 G.on("term_kind", function(event, player, el)
 	local st = st_of(player)
 	if not st then return end
-	st.kind = KINDS[st.kind or "all"] or "all"
-	el.caption = { "fork-me-gui.kind-" .. st.kind }
+	local p = prefs(player.index)                                  -- (issue #602: the player's, for every terminal window)
+	p.kind = KINDS[p.kind] or "all"
+	el.caption = { "fork-me-gui.kind-" .. p.kind }
 	M.refresh(player)
 end)
 
@@ -1113,15 +1368,26 @@ remote.add_interface("gregtorio-me-terminal", {
 	store_inventory_item = function(inventory, terminal, name, quality, all)
 		return M.store_inventory_item(inventory, terminal, name, quality, all)
 	end,
-	--- the grid's entries for a search text, a sort ("count" or "name") and a kind ("all", "items", "fluids")
-	--- `fresh` (tests, the benchmark): made from nothing, as at a first refresh, and not kept
+	--- the grid's entries for a search text, a sort ("count", "name" or, issue #514, "quality") and a kind ("all", "items",
+	--- "fluids"). `fresh` (tests, the benchmark): made from nothing, as at a first refresh, and not kept
 	--- (issue #440: `views`, the view cells of the window of `terminal` count, as the window's list; `player` for a wireless one)
-	entries = function(terminal, filter, sort, kind, fresh, index, views, player)
+	--- Issue #514: `quality`, the quality filter { cmp = ">", "<", "=", ">=", "<=" or "!=" (issue #520), name = a quality }
+	--- (nil: any quality); the last argument, so the calls from before it stay as they were. Issue #602: the sorts "mod" and
+	--- "tier", and `desc` the direction (nil: the sort's own)
+	entries = function(terminal, filter, sort, kind, fresh, index, views, player, quality, desc)
 		local net = network(terminal)
 		local view, vsig
 		if views then view, vsig = VC.filter(VC.inventory(terminal, player)) end
-		return net and M.entries(net, filter, sort, kind, fresh, index, view, vsig) or {}
+		return net and M.entries(net, filter, sort, kind, fresh, index, view, vsig, quality, desc) or {}
 	end,
+	--- issue #602: the player's sort preference { sort, kind, desc = the direction now }
+	prefs = function(index)
+		local p = prefs(index)
+		return { sort = p.sort, kind = p.kind, desc = desc_of(p) }
+	end,
+	--- issue #602: the tier and the mod of an item or fluid (scripts/fork-me-sortkeys.lua)
+	sort_keys = function(fluid, name) return { tier = SK.tier_of(fluid, name), mod = SK.mod_of(fluid, name) } end,
+	rebuild_tiers = function() SK.rebuild() end,
 	--- issue #50, lever 8: { kept, resorted, sorted } since the load: lists given back unchanged, made from the last one, sorted
 	--- with table.sort after too many moves
 	entries_stats = function() return { kept = list_stats.kept, resorted = list_stats.resorted, sorted = list_stats.sorted } end,
@@ -1172,14 +1438,19 @@ function M.on_configuration_changed()
 	for index in pairs(storage.fork_me_terminal) do
 		if not game.get_player(index) then storage.fork_me_terminal[index] = nil end
 	end
+	for index in pairs(storage.fork_me_term_prefs or {}) do                     -- (issue #602)
+		if not game.get_player(index) then storage.fork_me_term_prefs[index] = nil end
+	end
 	G.close_all()
 	storage.fork_me_gui_bypass = nil
+	SK.rebuild()                                            -- (issue #602: the prototypes can have changed)
 end
 
 --- on_init of the mod (control.lua, after the hand-over of an older Gregtorio Continued's state, if any)
 function M.on_init()
 	state()
 	N.rebuild()
+	SK.rebuild()                                            -- (issue #602: the tiers to sort by)
 end
 
 --- the "open GUI" key (linked to the game's own): a cell in the cursor goes into a drive, an encoded pattern into a
@@ -1214,9 +1485,10 @@ script.on_event(defines.events.on_gui_closed, function(event)
 	IO.fluid_entity_changed(event.entity)                    -- (issue #420: a machine's recipe may give it a fluid box)
 end)
 
---- issue #28: the inventory pane of an open ME window follows the player's main inventory and cursor
-script.on_event({ defines.events.on_player_main_inventory_changed, defines.events.on_player_cursor_stack_changed }, function(event)
-	G.on_inventory_changed(event)
+--- issue #542: shift + click and control + click in the inventory element of an ME window (the game draws its slots and
+--- moves stacks between them and the hand itself)
+script.on_event(defines.events.on_gui_inventory_action, function(event)
+	G.on_inventory_action(event)
 end)
 
 script.on_event(defines.events.on_player_left_game, function(event)
@@ -1238,7 +1510,6 @@ script.on_nth_tick(REFRESH_TICKS, function() Sched.metered(refresh) end)
 
 script.on_event(defines.events.on_player_removed, function(event)
 	state()[event.player_index] = nil
-	if storage.fork_me_gui_pane then storage.fork_me_gui_pane[event.player_index] = nil end
 	if storage.fork_me_pterm_ui then storage.fork_me_pterm_ui[event.player_index] = nil end      -- (the ME Pattern Terminal's editor)
 	if storage.fork_me_iterm_ui then storage.fork_me_iterm_ui[event.player_index] = nil end      -- (issue #336: the Interface Terminal's)
 	G.forget_player(event.player_index)                                                          -- (issue #179: parked items, buffer)

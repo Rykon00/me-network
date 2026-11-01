@@ -185,3 +185,37 @@ ME.add_technology{ name = "me-fluid-storage-4096k", prerequisites = { "me-fluid-
 	unit = ME.unit(5, 1200), recipes = { "me-4096k-fluid-storage-cell" } }
 ME.add_technology{ name = "me-fluid-storage-16384k", prerequisites = { "me-fluid-storage-4096k", "me-storage-16384k" },
 	unit = ME.unit(5, 1600), recipes = { "me-16384k-fluid-storage-cell" } }
+
+--- Issue #562: the Singularity cell for fluids, the item Singularity cell's idea (issue #414: one type, 4096 bytes for it). Its
+--- size is the largest amount the storage engine counts exactly: the engine's fluid amounts lie on a grid of 2^-24 units
+--- (Factorio's fixed point; P.clean_amount), so a sum of them in a Lua number is exact up to 2^53 / 2^24 = 2^29 units, not
+--- the 2^53 of the item counts: 2^29 / 8 = 2^26 bytes for the fluid, 536 870 912 units. Its recipe is the item Singularity
+--- cell's and a pump (what a fluid cell adds); unlocked with ME Storage Singularity.
+local SINGULARITY = "me-singularity-fluid-storage-cell"
+local S_PER_TYPE = 4096
+local S_BYTES = 2 ^ 29 / UNITS_PER_BYTE + S_PER_TYPE
+local s_item = ME.add_item{
+	type = "item-with-tags",
+	name = SINGULARITY,
+	icon = ME.hd_icons .. SINGULARITY .. ".png",
+	icon_size = 64,
+	subgroup = "fork-me-fluid-cells",
+	order = "09",
+	stack_size = 1,
+	recipe = { energy_required = 30, auto_recycle = false, ingredients = {
+		{ type = "item", name = "me-16384k-storage-component", amount = 8 },
+		{ type = "item", name = "me-quantum-bridge", amount = 4 },
+		{ type = "item", name = "accumulator", amount = 4 },
+		{ type = "item", name = "basic-storage-housing", amount = 1 },
+		{ type = "item", name = "pump", amount = 1 },
+	} },
+}
+net_data.cells[SINGULARITY] = { tier = "singularity", kind = "fluid", bytes = S_BYTES, per_type = S_PER_TYPE, types = 1,
+	per_byte = UNITS_PER_BYTE }
+s_item.localised_description = { "item-description.fork-me-singularity-fluid-cell",
+	string.format("%.0f", (S_BYTES - S_PER_TYPE) * UNITS_PER_BYTE) }
+do
+	local tech = data.raw.technology["me-storage-singularity"]
+	data.raw.recipe[SINGULARITY].enabled = false
+	table.insert(tech.effects, { type = "unlock-recipe", recipe = SINGULARITY })
+end

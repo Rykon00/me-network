@@ -248,6 +248,12 @@ local function count_world()
 	for _, r in pairs(s.find_entities_filtered{ type = "logistic-robot" }) do
 		inv_add(out, r.get_inventory(defines.inventory.robot_cargo))
 	end
+	for _, c in pairs(s.find_entities_filtered{ type = "character" }) do            -- (issue #603: the refill's characters)
+		for _, i in ipairs({ defines.inventory.character_main, defines.inventory.character_trash }) do
+			local inv = c.get_inventory(i)
+			if inv then inv_add(out, inv) end
+		end
+	end
 	for _, r in pairs(s.find_entities_filtered{ type = "roboport" }) do
 		inv_add(out, r.get_inventory(defines.inventory.roboport_material))
 	end
@@ -825,6 +831,183 @@ local function strip_me()
 	log("DEVCHECK-BENCH-STRIP " .. n)
 end
 
+--- Issue #506 (`logistic` = N, devcheck.py bench --logistic N): a vanilla logistic network below the last part, N roboports
+--- every LOG_PITCH tiles (no robots, no power: the network and its areas exist without them) and N / 2 storage chests, each
+--- with two kinds of items the ME scene never uses (so the scene's blocks, maintainers and jobs behave as without it),
+--- about LOG_FILL of each; LOG_FEEDERS fast inserters keep moving items into storage chests, so what the network holds
+--- changes all the time (the bus's busy case). An ME Logistic Storage Bus on a cable column from the part's spine stands in
+--- the network's area when the version has one (`--check` against an older version: the same scene without the bus).
+local LOG_PITCH, LOG_FILL, LOG_FEEDERS = 6, 800, 20
+--- Issue #531: ME Logistic Interfaces beside the bus's cable column (where the version has them), each offering LIF_ROWS kinds
+--- of the logistic network's items (20 each, from the storage chests through the bus) and asking for LIF_ROWS others (more than
+--- the network holds). The scene has no robots: the offers stay stocked and the requests open, so every visit pulls nothing in
+--- but reads its chests and works out its rows.
+local LOG_INTERFACES, LIF_ROWS = 16, 3
+--- Issue #537 (`requesters` = N, devcheck.py bench --requesters N): N requester chests in the gaps beside the roboports (up to
+--- 7 a roboport), each asking for three items: 10 of one the logistic network holds (covered), REQ_RAW of a raw item of the ME
+--- scene (the logistic network has none: unmet, the ME network has it) and REQ_BIG of another item of the logistic network
+--- (more than it holds: unmet, the ME network lacks it). The scene has no robots, so the demand stays: the interfaces in
+--- Automatic mode (built since #537) read every point once per pass and keep their stock. REQ_KINDS kinds of the logistic
+--- network's items take part.
+local REQ_RAW, REQ_BIG, REQ_KINDS = 50, 100000, 60
+local REQ_SLOTS = { { 3, -2 }, { 3, -1 }, { 3, 0 }, { 3, 1 }, { 2, -2 }, { 2, -1 }, { 2, 1 } }
+local function logistic_height(n)
+	if not (n and n > 0) then return 0 end
+	local ghost_rows = (C.ghosts or 0) > 0 and math.ceil(C.ghosts / (LOG_PITCH * math.ceil(math.sqrt(n)))) + 2 or 0   -- (issue #538)
+	return PART_GAP + 6 + LOG_PITCH * math.ceil(n / math.ceil(math.sqrt(n))) + ghost_rows
+end
+local function logistic_width(n)
+	if not (n and n > 0) then return 0 end
+	return LOG_PITCH * math.ceil(math.sqrt(n)) + 4
+end
+
+local function logistic_items()
+	local used = { [PROBE_ITEM] = true }
+	for _, name in ipairs(RAW) do used[name] = true end
+	for _, name in ipairs(BLOCKERS) do used[name] = true end
+	local recipes = pattern_recipes(game.forces.player)
+	for _, name in ipairs(PAIR_RECIPES) do recipes[#recipes + 1] = name end
+	for _, name in ipairs(recipes) do
+		local r = prototypes.recipe[name]
+		for _, p in pairs(r and r.products or {}) do used[p.name] = true end
+		for _, i in pairs(r and r.ingredients or {}) do used[i.name] = true end
+	end
+	local out = {}
+	for name in pairs(prototypes.item) do if plain(name) and not used[name] then out[#out + 1] = name end end
+	table.sort(out)
+	return out
+end
+
+local function build_logistic(b, part, members)
+	local n = C.logistic
+	local s = surface()
+	local LY = part.y + part.rows * PITCH + PART_GAP
+	local items = logistic_items()
+	local cols = math.ceil(math.sqrt(n))
+	--- the bus: a cable column from the spine's last cable down to it, one tile above the feeders
+	for y = part.y + (part.rows - 1) * PITCH + 1, LY - 2 do place("me-cable", p1(X0 - 1, y)) end
+	local bus = prototypes.entity["me-logistic-storage-bus"] and place("me-logistic-storage-bus", p1(X0 - 1, LY - 1))
+	if bus then members[#members + 1] = bus end
+	local lifs = {}
+	if prototypes.entity["me-logistic-interface"] then                     -- (issue #531, beside the column)
+		for k = 0, LOG_INTERFACES - 1 do
+			local l = place("me-logistic-interface", p1(X0 - 2, LY - 2 - k))
+			if l then
+				members[#members + 1] = l
+				lifs[#lifs + 1] = l
+			end
+		end
+	end
+	--- the feeders: a steel chest full of one item, a fast inserter, a storage chest
+	power_row(LY - 2, X0 + 4, X0 + 2 + 2 * LOG_FEEDERS)
+	for f = 0, LOG_FEEDERS - 1 do
+		local x = X0 + 2 + 2 * f
+		local src = place("steel-chest", p1(x, LY))
+		if src then chest_fill(src, items[f % #items + 1], #src.get_inventory(defines.inventory.chest)) end
+		inserter("fast-inserter", x, LY + 1, defines.direction.north)
+		place("storage-chest", p1(x, LY + 2))
+	end
+	--- the roboports (4x4, centred on a tile corner) and a storage chest in the gap right of every other one
+	local chests = 0
+	for r = 0, n - 1 do
+		local cx, cy = X0 + 2 + LOG_PITCH * (r % cols), LY + 6 + LOG_PITCH * math.floor(r / cols)
+		place("roboport", cx, cy)
+		if r % 2 == 0 then
+			local c = place("storage-chest", p1(cx + 2, cy))
+			if c then
+				for k = 0, 1 do
+					local name = items[(2 * chests + k) % #items + 1]
+					c.insert{ name = name, count = math.min(LOG_FILL, prototypes.item[name].stack_size * 20) }
+				end
+				chests = chests + 1
+			end
+		end
+	end
+	--- issue #537: the requester chests
+	local reqs, want = 0, C.requesters or 0
+	local kinds = math.min(#items, REQ_KINDS)
+	for r = 0, n - 1 do
+		if reqs >= want then break end
+		local cx, cy = X0 + 2 + LOG_PITCH * (r % cols), LY + 6 + LOG_PITCH * math.floor(r / cols)
+		for _, d in ipairs(REQ_SLOTS) do
+			if reqs >= want then break end
+			local c = place("requester-chest", p1(cx + d[1], cy + d[2]))
+			if c then
+				local sec = c.get_logistic_point(defines.logistic_member_index.logistic_container).add_section()
+				local function ask(i, name, count)
+					sec.set_slot(i, { value = { name = name, quality = "normal", comparator = "=" }, min = count })
+				end
+				ask(1, items[(3 * reqs) % kinds + 1], 10)
+				ask(2, RAW[reqs % #RAW + 1], REQ_RAW)
+				ask(3, items[(3 * reqs + 1) % kinds + 1], REQ_BIG)
+				reqs = reqs + 1
+			end
+		end
+	end
+	--- issue #538: the area of the ghost paste, below the last row of roboports (inside their construction areas)
+	if (C.ghosts or 0) > 0 then
+		local rows = math.ceil(n / cols)
+		b.ghost_area = { x = X0 + 2, y = LY + 6 + LOG_PITCH * rows, w = LOG_PITCH * cols }
+	end
+	local net = s.find_logistic_network_by_position({ X0 + 2, LY + 6 }, "player")
+	b.logistic = { roboports = n, storage_chests = chests + LOG_FEEDERS, kinds = #items, bus = bus ~= nil,
+		network = net ~= nil, items = net and net.get_item_count() or 0, interfaces = #lifs, requesters = reqs,
+		points = net and #net.requester_points or 0 }
+	b.lifs = { list = lifs, items = items }
+end
+
+--- Issue #603 (`refill` = N, devcheck.py bench --refill N): an ME Wireless Access Point on the spine's top and N characters
+--- without players around it (inside its range), each in modular armour with the ME Wireless Module and a logistic section
+--- of REFILL_REQS requests: half of them raw items of the scene (REFILL_MIN each, the network has them), half items the
+--- network never holds (open: every visit looks at them). Every SAMPLE_TICKS inside the window the requested items of every
+--- character go into its trash slots (the churn): the refill stores them and fills the requests again. A version without the
+--- refill (a --check reference) gets the same characters, which then hold what they hold. The characters' inventories count
+--- in the conservation check.
+local REFILL_REQS, REFILL_MIN = 10, 50
+local function build_refill(b, part, members)
+	local n = C.refill
+	local s = surface()
+	local ap = place("me-wireless-access-point", p1(X0 - 1, part.y - 1))
+	if ap then members[#members + 1] = ap end
+	local open = {}
+	for name in pairs(prototypes.item) do
+		if #open < REFILL_REQS and plain(name) and not prototypes.recipe[name] then open[#open + 1] = name end
+	end
+	table.sort(open)
+	local chars = {}
+	for k = 0, n - 1 do
+		local pos = s.find_non_colliding_position("character", { X0 - 6 - 2 * (k % 10), part.y - 3 - 2 * math.floor(k / 10) }, 10, 0.5)
+		local c = pos and s.create_entity{ name = "character", position = pos, force = "player" }
+		if c then
+			c.get_inventory(defines.inventory.character_armor).insert{ name = "modular-armor" }
+			if c.grid and prototypes.equipment["me-wireless-module"] then c.grid.put{ name = "me-wireless-module" } end
+			local sec = c.get_requester_point().add_section()
+			for i = 1, REFILL_REQS do
+				local name = i % 2 == 1 and RAW[(k + i) % #RAW + 1] or open[(k + i) % #open + 1]
+				if name then sec.set_slot(i, { value = { name = name, quality = "normal", comparator = "=" }, min = REFILL_MIN }) end
+			end
+			chars[#chars + 1] = c
+		end
+	end
+	b.refill = { ap = ap ~= nil, characters = chars, n = #chars }
+end
+
+--- issue #603: the churn, every character's requested raw items into its trash slots
+local function refill_churn(b)
+	for _, c in ipairs(b.refill.characters) do
+		if c.valid then
+			local main, trash = c.get_inventory(defines.inventory.character_main), c.get_inventory(defines.inventory.character_trash)
+			for i = 1, #main do
+				local st = main[i]
+				if st.valid_for_read and trash and trash.can_insert(st) then
+					local got = trash.insert(st)
+					if got > 0 then st.count = st.count - got end
+				end
+			end
+		end
+	end
+end
+
 local function build_me()
 	local b = storage.b
 	research_all(game.forces.player)
@@ -837,7 +1020,7 @@ local function build_me()
 		total_h = total_h + geos[k].height + (k < K and PART_GAP or 0)
 		max_w = math.max(max_w, geos[k].width)
 	end
-	new_surface(max_w + 16, total_h + 16)
+	new_surface(math.max(max_w, logistic_width(C.logistic)) + 16, total_h + 16 + logistic_height(C.logistic))
 	b.slots, b.drives, b.count, b.parts, b.anchors, b.lat_maint, b.sb_probe, b.job_keys = {}, {}, {}, {}, {}, {}, {}, {}
 	local members = {}
 	local y = Y0
@@ -849,6 +1032,8 @@ local function build_me()
 	end
 	b.anchor = b.parts[1].anchor
 	b.cpus = b.parts[1].cpus
+	if (C.logistic or 0) > 0 then build_logistic(b, b.parts[K], members) end   -- (issue #506)
+	if (C.refill or 0) > 0 then build_refill(b, b.parts[1], members) end         -- (issue #603)
 	if C.noent then
 		--- the engine's share: the ME entities are placed like the rest and destroyed again before the mod ever
 		--- registers them (nothing to sweep, no cells to spill); the chests, tanks, machines, inserters and power stay
@@ -865,6 +1050,26 @@ local function build_me()
 	log({ "", "DEVCHECK-BENCH-BUILD registered ", #members, " members: ", prof })
 	local types = 0
 	for k = 1, K do types = types + configure_part(b, b.parts[k], k == 1) end
+	--- issue #603: the characters join the refill's queue (where the version has it)
+	if b.refill then
+		local wl = remote.interfaces["gregtorio-me-wireless"]
+		b.refill.queued = wl and wl.refill_add ~= nil or false
+		for _, c in ipairs(b.refill.characters) do
+			if b.refill.queued then remote.call("gregtorio-me-wireless", "refill_add", c, b.anchor) end
+		end
+		b.refill.characters_n = #b.refill.characters
+	end
+	--- issue #531: the logistic interfaces' rows (registered now): distinct kinds offered and asked for, no collision
+	for k, l in ipairs(b.lifs and b.lifs.list or {}) do
+		local items = b.lifs.items
+		for i = 1, LIF_ROWS do
+			local o = items[((k - 1) * LIF_ROWS + i - 1) % #items + 1]
+			local r = items[(LOG_INTERFACES * LIF_ROWS + (k - 1) * LIF_ROWS + i - 1) % #items + 1]
+			if not remote.call("gregtorio-me-logistic-interface", "set_row", l, "offer", i, o, 20) then fail("offer row " .. o) end
+			if not remote.call("gregtorio-me-logistic-interface", "set_row", l, "request", i, r, 1000000) then fail("request row " .. r) end
+		end
+	end
+	b.lifs = nil
 	local net = remote.call(NET, "network", b.anchor)
 	local members_all, cells_all, fcells_all, sb_all, fsb_all = 0, 0, 0, 0, 0
 	for k = 1, K do
@@ -880,6 +1085,8 @@ local function build_me()
 		slots = #b.slots, rows = rows, slots_per_row = 2 * geos[1].spr, counts = b.count, cables = b.parts[1].cables,
 		members = members_all, cells = cells_all, fluid_cells = fcells_all,
 		storage_buses = sb_all, fluid_storage_buses = fsb_all, item_types = types, recipes = #b.parts[1].reg_recipes,
+		logistic = b.logistic,                                                  -- (issue #506)
+		refill = b.refill and { characters = b.refill.n, access_point = b.refill.ap, queued = b.refill.queued } or nil,   -- (issue #603)
 		jobs = #b.job_keys, cpus = b.parts[1].ncpu, network_ok = net and net.ok or false,
 		entities = #surface().find_entities_filtered{}, fails = fails })
 end
@@ -1874,6 +2081,11 @@ local function engine_profile(b)
 		time_it("window: terminal entries (all, by count)", 20, function() return remote.call(TERM, "entries", term, "", "count", "all", true) end, out)
 		time_it("window: terminal entries (items, by name)", 20, function() return remote.call(TERM, "entries", term, "", "name", "items", true) end, out)
 		time_it("window: terminal entries (search 'iron')", 20, function() return remote.call(TERM, "entries", term, "iron", "count", "all", true) end, out)
+		--- issue #514: the sort by quality and the quality filter (a version before it sorts by amount and ignores the filter)
+		time_it("window: terminal entries (all, by quality)", 20, function() return remote.call(TERM, "entries", term, "", "quality", "all", true) end, out)
+		time_it("window: terminal entries (all, by count, quality <= normal)", 20, function()
+			return remote.call(TERM, "entries", term, "", "count", "all", true, nil, nil, nil, { cmp = "<=", name = "normal" })
+		end, out)
 		remote.call(TERM, "entries", term, "", "count", "all")
 		time_it("window: terminal entries (all, by count), nothing changed", 20, function() return remote.call(TERM, "entries", term, "", "count", "all") end, out)
 		time_it("window: terminal entries (all, by count), one amount changed", 20, function(i)
@@ -2068,7 +2280,76 @@ local function on_burst_tick()
 		p.stop()
 		log({ "", "DEVCHECK-BENCH-BURST plain-remove ", k, " ", game.tick, " ", p })
 		b.burst_made = nil
-	elseif t >= 200 then
+	elseif t == 250 then
+		--- me-network issue #560: a block of pattern providers and ME Molecular Assemblers in a checkerboard (every block touches
+		--- its neighbours, no cable), `C.burst` of them where the plain chests stood, built in one tick and removed in one tick: the
+		--- assemblers carry the network since #560 (one component of them all), before they were no members (each provider alone)
+		local col, row = burst_layout(n)
+		local p = helpers.create_profiler()
+		local made, k = {}, 0
+		for y = 0, math.ceil(n / row) do
+			for i = 0, row - 1 do
+				if k < n then
+					k = k + 1
+					local name = (i + y) % 2 == 0 and "me-pattern-provider" or "me-molecular-assembler"
+					made[#made + 1] = s.create_entity{ name = name, position = { p1(X0 - 1 + i, BURST_Y - 4 - y) }, force = "player", raise_built = true }
+				end
+			end
+		end
+		p.stop()
+		b.burst_made = made
+		log({ "", "DEVCHECK-BENCH-BURST asm-build ", #made, " ", game.tick, " ", p })
+	elseif t == 310 then
+		local p = helpers.create_profiler()
+		local k = burst_remove(b.burst_made)
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST asm-remove ", k, " ", game.tick, " ", p })
+		b.burst_made = nil
+	elseif t >= 200 and not b.ghost_t0 and (C.ghosts or 0) > 0 and b.ghost_area
+		and game.tick > C.warmup + C.window + ALLOC_FROM + ALLOC_TICKS then   -- (after the allocation meter's ticks)
+		b.ghost_t0 = game.tick
+		--- issue #538: a blueprint of C.ghosts walls pasted in one tick (raise_built, as a paste raises on_built_entity per
+		--- ghost) below the roboports of the logistic network, then all of them removed in one tick (on_object_destroyed comes
+		--- at the end of that tick or the next one: its script time is the "ghost-after" line)
+		local a = b.ghost_area
+		local prof = C.profile and remote.interfaces["zz-me-bench-profile"]
+		if prof then remote.call("zz-me-bench-profile", "enable", false, C.exclusive) end
+		local p = helpers.create_profiler()
+		local made, k = {}, 0
+		for y = 0, 1000 do
+			for x = 0, a.w - 1 do
+				if k >= C.ghosts then break end
+				local g = s.create_entity{ name = "entity-ghost", inner_name = "stone-wall", position = { p1(a.x + x, a.y + y) },
+					force = "player", raise_built = true }
+				if g then made[#made + 1] = g end
+				k = k + 1
+			end
+			if k >= C.ghosts then break end
+		end
+		p.stop()
+		if prof then
+			log("DEVCHECK-BENCH-PROF-BURST ghost-paste")
+			remote.call("zz-me-bench-profile", "report")
+		end
+		b.ghosts_made = made
+		log({ "", "DEVCHECK-BENCH-BURST ghost-paste ", #made, " ", game.tick, " ", p })
+	elseif b.ghost_t0 and game.tick == b.ghost_t0 + 60 then
+		local p = helpers.create_profiler()
+		local k = 0
+		for _, g in ipairs(b.ghosts_made) do
+			if g.valid then
+				g.destroy()
+				k = k + 1
+			end
+		end
+		p.stop()
+		b.ghosts_made = nil
+		log({ "", "DEVCHECK-BENCH-BURST ghost-remove ", k, " ", game.tick, " ", p })
+	elseif b.ghost_t0 and game.tick == b.ghost_t0 + 61 then
+		local p = helpers.create_profiler()
+		p.stop()
+		log({ "", "DEVCHECK-BENCH-BURST ghost-after 0 ", game.tick, " ", p })
+	elseif t >= 320 and ((b.ghost_t0 and game.tick >= b.ghost_t0 + 70) or not ((C.ghosts or 0) > 0 and b.ghost_area)) then   -- (after #560's assembler burst)
 		b.phase = "done"
 		script.on_event(defines.events.on_tick, nil)
 		log("DEVCHECK-BENCH-DONE")
@@ -2194,6 +2475,7 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 			local st = sched_stats(false)
 			b.steady0, b.steady_tick = st and st.io and st.io.starved or 0, tick
 		end
+		if tick % SAMPLE_TICKS == 0 and b.refill then refill_churn(b) end   -- (issue #603; a sample tick: outside the timing)
 		if tick % SAMPLE_TICKS == 0 and b.samples then
 			local bl = backlogs()
 			if bl then

@@ -91,15 +91,20 @@ local function kinds()
 		if n.advanced_level_emitter then k[n.advanced_level_emitter] = "level-emitter" end   -- issue #443: the same kind
 		if n.underground then k[n.underground] = "underground" end
 		if n.storage_bus then k[n.storage_bus] = "storage-bus" end
+		if n.logistic_storage_bus then k[n.logistic_storage_bus] = "storage-bus" end   -- issue #506: a storage bus on a logistic network
 		if n.access_point then k[n.access_point] = "access-point" end   -- issue #205
 		if n.charger then k[n.charger] = "charger" end                -- issue #208
 		if n.chest then k[n.chest] = "chest" end                      -- issue #229
 		if n.io_port then k[n.io_port] = "io-port" end                -- issue #386
+		if n.logistic_interface then k[n.logistic_interface] = "logistic-interface" end   -- issue #531
 		if n.quantum_bridge then k[n.quantum_bridge] = "quantum-bridge" end   -- issue #385
 		if n.wireless_link then k[n.wireless_link] = "wireless-link" end      -- issue #384
 		if n.creative_energy then k[n.creative_energy] = "creative-energy" end   -- issue #442
 	end
 	k["me-pattern-provider"] = "provider"
+	--- issue #560: the ME Molecular Assembler carries the network like a cable (AE2), and draws its power through the controller
+	--- (M.assembler_power); another mod's (ME_NETWORK.make_molecular_assembler) has the same name
+	k["me-molecular-assembler"] = "assembler"
 	k["me-level-maintainer"] = "maintainer"
 	k["me-circuit-interface"] = "circuit"
 	k["me-fluid-interface"] = "fluid-interface"
@@ -136,6 +141,7 @@ M.power_hooks = {}
 --- issue #6: the power (W) of a crafting block drawn through the controller (mod-data "fork-me-autocraft", blocks)
 local block_power_cache
 local function member_power(node)
+	if node.kind == "assembler" then return M.assembler_power(node) end   -- (issue #560: its draw is kept in its node)
 	local hook = M.power_hooks[node.kind]
 	if hook then return node.entity.valid and hook(node.entity) or MEMBER_POWER end
 	if node.kind ~= "crafting" then return kind_power(node.kind) end
@@ -207,6 +213,10 @@ local function state()
 		storage.fork_me_net = s
 	end
 	if not s.ext then s.ext = {} end          -- saves before the storage bus
+	if not s.asm then                         -- issue #560: the units of the ME Molecular Assemblers (M.assembler_step)
+		s.asm = {}
+		for unit, node in pairs(s.nodes) do if node.kind == "assembler" then s.asm[unit] = true end end
+	end
 	return s
 end
 M.state = state
@@ -286,17 +296,17 @@ local function side_of(b, ob)
 	return 0
 end
 
---- Underground cable: its direction points along the run under the ground; above ground it connects only on
---- the opposite side (like an underground pipe), under ground to its partner (see engine_partner).
+--- Underground cable: like the vanilla underground pipe, above ground it connects only on the side its direction
+--- points to, under ground on the opposite side to its partner (see engine_partner). (Before 0.5.11 it was the other way
+--- round; M.migrate_underground_direction turns the ends of older saves.)
 local DIR_BIT = { [defines.direction.north] = 1, [defines.direction.east] = 2, [defines.direction.south] = 4, [defines.direction.west] = 8 }
-local BACK_BIT = { [1] = 4, [2] = 8, [4] = 1, [8] = 2 }
 local DIR_VEC = { [defines.direction.north] = { 0, -1 }, [defines.direction.east] = { 1, 0 },
 	[defines.direction.south] = { 0, 1 }, [defines.direction.west] = { -1, 0 } }
 
 --- may `a` and `b` (adjacent boxes) connect above ground?
 local function connects(a, b)
-	if a.kind == "underground" and side_of(a, b) ~= BACK_BIT[DIR_BIT[a.dir]] then return false end
-	if b.kind == "underground" and side_of(b, a) ~= BACK_BIT[DIR_BIT[b.dir]] then return false end
+	if a.kind == "underground" and side_of(a, b) ~= DIR_BIT[a.dir] then return false end
+	if b.kind == "underground" and side_of(b, a) ~= DIR_BIT[b.dir] then return false end
 	return true
 end
 
@@ -311,7 +321,7 @@ end
 
 --- The underground cable is a pipe-to-ground with its own connection category (prototypes/network.lua), so the
 --- engine pairs the ends exactly like underground pipes and shows the pairing on hover and while placing. The graph
---- follows the engine: the partner is the end the underground pipe connection reaches (ahead in the direction).
+--- follows the engine: the partner is the end the underground pipe connection reaches (behind the direction).
 local function engine_partner(entity, dir)
 	local v = DIR_VEC[dir]
 	if not (v and entity.fluids_count > 0) then return nil end
@@ -319,7 +329,7 @@ local function engine_partner(entity, dir)
 		local o = other.entity
 		if o and o.valid and o ~= entity and o.name == entity.name then
 			local dx, dy = o.position.x - entity.position.x, o.position.y - entity.position.y
-			if dx * v[1] + dy * v[2] > 0 then return o end
+			if dx * v[1] + dy * v[2] < 0 then return o end
 		end
 	end
 	return nil
@@ -499,6 +509,7 @@ local function add_node(s, entity, kind)
 		force = entity.force.name }
 	if kind == "underground" then node.dir = entity.direction end
 	s.nodes[unit] = node
+	if kind == "assembler" then s.asm[unit] = true end      -- (issue #560)
 	local nl = s.nlist
 	if nl then
 		nl[#nl + 1] = unit
@@ -538,6 +549,18 @@ local function add_node(s, entity, kind)
 		if not nets[qn.net] then
 			nets[qn.net] = true
 			order[#order + 1] = qn.net
+		end
+	end
+	--- issue #559: an ME Wireless Link has the links of its group it is linked to as neighbours (M.set_wlinks)
+	for wu in pairs(s.wlinks and s.wlinks[unit] or M.NONE) do
+		local wn = s.nodes[wu]
+		if wn and wn.entity.valid then
+			node.adj[wu] = true
+			wn.adj[unit] = true
+			if not nets[wn.net] then
+				nets[wn.net] = true
+				order[#order + 1] = wn.net
+			end
 		end
 	end
 	local net
@@ -647,12 +670,17 @@ function remove_node_graph(s, unit)
 		end
 		return
 	end
-	--- the rest keeps the network (and its id, the largest part); every other part becomes a new network
+	M.split_off(s, net, parts, { unit }, not M.STATUS_KINDS[node.kind])
+end
+
+--- The parts `parts` (lists of units, from split_parts) leave `net` and become new networks; the rest keeps the network (and its
+--- id, the largest part). `leaving`: units whose cells leave the rest's index besides the drives and storage buses of the parts
+--- (a removed member's); `light`: no controller left so far (a removed member was none; issue #573: an edge removal). (Fields of
+--- M, not locals: the file is at Lua's 200 locals.)
+function M.split_off(s, net, parts, leaving, light)
 	local moved
 	--- (light: no controller leaves; the drives and storage buses that leave, the member removed among them, take their cells out
 	--- of the rest's index one by one instead of the rest being computed again)
-	local light = not M.STATUS_KINDS[node.kind]
-	local leaving = { unit }
 	for i = 1, #parts do
 		local part = new_net(s, net.surface, net.force)
 		for _, u in ipairs(parts[i]) do
@@ -694,6 +722,42 @@ function remove_node_graph(s, unit)
 	end
 end
 
+--- Issue #573: a graph edge between the registered members `a` and `b` (units) that are no neighbours by place (the wireless
+--- links of a group). Two networks are merged into the larger one (as add_node merges); in one network only the edge is added.
+--- Returns true when the graph changed.
+function M.add_edge(s, a, b)
+	local na, nb = s.nodes[a], s.nodes[b]
+	if not (na and nb) or a == b or na.adj[b] then return false end
+	na.adj[b] = true
+	nb.adj[a] = true
+	if na.net == nb.net then return true end
+	local keep, other = s.nets[na.net], s.nets[nb.net]
+	if other.n > keep.n or (other.n == keep.n and other.id < keep.id) then keep, other = other, keep end
+	for u in pairs(other.nodes) do
+		keep.nodes[u] = true
+		keep.n = keep.n + 1
+		s.nodes[u].net = keep.id
+	end
+	take_waits(keep, other)                            -- (issue #38: its parked endpoints keep their wake)
+	s.nets[other.id] = nil
+	changed(s, keep)
+	return true
+end
+
+--- Issue #573: the graph edge between `a` and `b` goes; when they are no longer connected (one split search from the two ends,
+--- split_parts), the smaller side becomes a network of its own (split_off). Returns true when the graph changed.
+function M.remove_edge(s, a, b)
+	local na, nb = s.nodes[a], s.nodes[b]
+	if not (na and nb and na.adj[b]) then return false end
+	na.adj[b] = nil
+	nb.adj[a] = nil
+	local net = s.nets[na.net]
+	if not net then return true end
+	local parts = split_parts(s, { a, b }, net.n)
+	if #parts > 0 then M.split_off(s, net, parts, {}, true) end
+	return true
+end
+
 --- Unregister a member (the entity may already be invalid). The drive's cells are handled by the caller. The
 --- partner of an underground cable is registered again, so it can pair with another one in reach.
 local function remove_node(s, unit)
@@ -705,6 +769,7 @@ local function remove_node(s, unit)
 		s.qlink[unit] = nil
 		if s.qlink[qu] == unit then s.qlink[qu] = nil end
 	end
+	M.drop_wlinks(s, unit)                               -- (issue #559: so are a removed wireless link's)
 	if pu and s.nodes[pu] then
 		s.nodes[pu].partner = nil
 		s.nodes[pu].link = nil
@@ -719,6 +784,37 @@ local function remove_node(s, unit)
 		s.ug_dirty = s.ug_dirty or {}
 		s.ug_dirty[pu] = true
 	end
+end
+
+--- Issue: dragging the underground cable (0.5.11). Its prototype took the vanilla underground pipe's connections (the
+--- cable side on its direction, the underground side opposite), so the game's own underground drag places the pairs at
+--- the full reach. Every underground cable (and ghost) of a save from before is turned around once, which keeps its
+--- connections, and its node's direction follows (a kept graph is taken over as it is). Blueprints keep their old
+--- directions. Runs before the graph is built (on_init after the hand-over, on_configuration_changed before the rebuild).
+--- `only` (tests): { surface, area } turns the ends there, whatever the flag says.
+function M.migrate_underground_direction(only)
+	if not only then
+		if storage.fork_me_ug_vanilla then return end
+		storage.fork_me_ug_vanilla = true
+	end
+	local name = mod_data().names.underground
+	local s = storage.fork_me_net
+	local turned = 0
+	for _, surface in pairs(only and { only.surface } or game.surfaces) do
+		local area = only and only.area
+		for _, e in pairs(surface.find_entities_filtered{ name = name, area = area }) do
+			e.direction = (e.direction + 8) % 16
+			local node = s and s.nodes and s.nodes[e.unit_number]
+			if node and node.kind == "underground" then node.dir = e.direction end
+			turned = turned + 1
+		end
+		for _, g in pairs(surface.find_entities_filtered{ ghost_name = name, area = area }) do
+			g.direction = (g.direction + 8) % 16
+			turned = turned + 1
+		end
+	end
+	if turned > 0 then log("ME-UNDERGROUND-DIRECTION: turned " .. turned .. " underground cables around") end
+	return turned
 end
 
 --- A rotated underground cable changes its connections: register it again (its old partner too).
@@ -1920,7 +2016,93 @@ local function update_power(s, net)
 	net.power = BASE_POWER + members
 	for unit in pairs(net.controllers) do
 		local node = s.nodes[unit]
-		if node and node.entity.valid then node.entity.power_usage = net.power / 60 end
+		if node and node.entity.valid then M.set_draw(node.entity, net.power) end
+	end
+end
+
+--- Issue #556: a controller draws `watts` (its network's power), and its buffer holds BUFFER_TICKS of that draw, at least the
+--- prototype's 100 kJ: with a fixed buffer a draw of more than 100 kJ per tick (6 MW) emptied it every tick and the network
+--- reported "no-power" on any grid. The prototype's input flow limit is far above any network. (A field: the main chunk is at
+--- Lua's limit of 200 locals.)
+M.BUFFER_TICKS = 30
+M.MIN_BUFFER = 100000
+function M.set_draw(entity, watts)
+	entity.power_usage = watts / 60
+	local buffer = math.max(M.MIN_BUFFER, watts / 60 * M.BUFFER_TICKS)
+	if entity.electric_buffer_size ~= buffer then entity.electric_buffer_size = buffer end
+end
+
+--- Issue #560: the ME Molecular Assembler is a member without a power connection (a void energy source, prototypes/api.lua): the
+--- controller draws its prototype's energy usage (with its Acceleration Cards' consumption) while it crafts and a thirtieth of
+--- it otherwise (the game's drain of a machine), AE2's and the game's way. Its node keeps the draw counted for it (`w`), so a
+--- change is added to the controller's draw as it is (no walk over the members) and a member that leaves takes out what it
+--- added. M.assembler_step (once a second, from the slow step) reads each assembler's status: the draw follows within a
+--- second, and an assembler whose network does not work is switched off with a status saying why (`off`), and on again (`on`:
+--- switched on since its node was made). The usage per name is derived, read once per load.
+M.ASM_IDLE = 30
+M.asm_usage = {}
+function M.asm_watts(entity, crafting)
+	local name = entity.name
+	local w = M.asm_usage[name]
+	if not w then
+		w = prototypes.entity[name].energy_usage * 60
+		M.asm_usage[name] = w
+	end
+	--- (whole watts: the sums of the draws do not depend on their order)
+	if not crafting then return math.floor(w / M.ASM_IDLE + 0.5) end
+	return math.floor(w * math.max(0.2, 1 + entity.consumption_bonus) + 0.5)      -- (the game's floor: -80 %)
+end
+
+function M.assembler_power(node)
+	if not node.w then node.w = node.entity.valid and M.asm_watts(node.entity, false) or 0 end
+	return node.w
+end
+
+--- the draw of assembler `node` (in network `net`) becomes `w`
+function M.asm_draw(s, net, node, w)
+	local d = w - M.assembler_power(node)
+	node.w = w
+	local row = net and not net.power_dirty and net.power_by and net.power_by.assembler
+	if not row then
+		if net then net.power_dirty = true end
+		return
+	end
+	row.w = row.w + d
+	net.power = net.power + d
+	for unit in pairs(net.controllers) do
+		local c = s.nodes[unit]
+		if c and c.entity.valid then M.set_draw(c.entity, net.power) end
+	end
+end
+
+function M.assembler_step(s)
+	local working = defines.entity_status.working
+	for unit in pairs(s.asm) do
+		local node = s.nodes[unit]
+		if not (node and node.kind == "assembler") then
+			s.asm[unit] = nil
+		elseif node.entity.valid then
+			local e = node.entity
+			local net = s.nets[node.net]
+			local ok, why = M.usable(net)
+			local w
+			if ok then
+				if not node.on then
+					e.disabled_by_script = false
+					e.custom_status = nil
+					node.on, node.off = true, nil
+				end
+				w = M.asm_watts(e, e.status == working)
+			else
+				if node.off ~= why then
+					e.disabled_by_script = true
+					e.custom_status = { diode = defines.entity_status_diode.red, label = { "fork-me-net.status-" .. why } }
+					node.on, node.off = nil, why
+				end
+				w = M.asm_watts(e, false)
+			end
+			if w ~= node.w then M.asm_draw(s, net, node, w) end
+		end
 	end
 end
 
@@ -1955,7 +2137,7 @@ function M.power_add(s, net, node, sign)
 	net.power = net.power + sign * w
 	for unit in pairs(net.controllers) do
 		local c = s.nodes[unit]
-		if c and c.entity.valid then c.entity.power_usage = net.power / 60 end
+		if c and c.entity.valid then M.set_draw(c.entity, net.power) end
 	end
 end
 
@@ -2008,8 +2190,14 @@ function M.usable(net)
 		local node = s.nodes[unit]
 		local e = node and node.entity
 		if e and e.valid then
-			--- an energy interface without any pole reports no "no power" status: its buffer stays empty
-			if e.status == defines.entity_status.no_power or e.energy <= 0 then why = "no-power" else ok, why = true, nil end
+			--- an energy interface without any pole reports no "no power" status: its buffer stays empty. Issue #556: nor does one
+			--- on a grid that delivers less than its draw; the engine refills the buffer after the draw, so it holds what the grid
+			--- gave in the last tick: less than one tick's draw is no power
+			if e.status == defines.entity_status.no_power or e.energy <= 0 or e.energy < e.power_usage then
+				why = "no-power"
+			else
+				ok, why = true, nil
+			end
 		end
 	end
 	net.usable, net.why, net.usable_tick = ok, why, game.tick
@@ -2441,8 +2629,12 @@ function M.ext_sync(unit, contents)
 	for key in pairs(cell.items) do
 		if not contents[key] and ext_set(net, cid, cell, key, 0) then changed = true end
 	end
+	--- issue #509: a key whose count is the snapshot's is not passed to ext_set (most keys of a large storage at a visit: the
+	--- logistic storage bus reads hundreds); the same test as ext_set's (an amount below ZERO is none)
+	local items = cell.items
 	for key, n in pairs(contents) do
-		if ext_set(net, cid, cell, key, n) then changed = true end
+		local old = items[key]
+		if old ~= n and not (old == nil and n < ZERO) and ext_set(net, cid, cell, key, n) then changed = true end
 	end
 	return changed
 end
@@ -2922,7 +3114,7 @@ end
 
 --- the insertion in progress (insert_key; module-level instead of closures, so an insert makes no garbage); `void`:
 --- what cells with an Overflow Destruction Card destroyed of it (issue #17)
-local ins = { net = nil, key = nil, left = 0, data = nil, s = nil, void = 0 }
+local ins = { net = nil, key = nil, left = 0, data = nil, s = nil, void = 0, skip = nil }
 
 --- Issue #17: the rest of the insert is destroyed by `cell`. Counted on the cell (its window) and per key for the map
 --- (storage.fork_me_net.voided: the conservation checks of the tests add it).
@@ -2941,6 +3133,7 @@ local function put(cid)
 	local cell = net.cells[cid]
 	if cell.ext then                               -- external cell: into the real storage, then the snapshot
 		if ins.data then return false end          -- items with tags only go into cells
+		if ins.skip and ins.skip(cell) then return false end   -- (issue #531: a storage the caller leaves out)
 		if cell.full and cell.full[key] then return false end
 		local want = is_fluid_key(key) and ins.left or math.floor(ins.left)
 		local n = M.ext_handlers[cell.handler or cell.ext].insert(cell, key, want)
@@ -3000,11 +3193,13 @@ end
 --- priority first; within one priority the cells partitioned for the key first, then the cells that hold it,
 --- then any cell with room (a partitioned cell only takes its keys). Issue #5: the passes use the lookups of the
 --- network instead of walking every cell.
-local function insert_key(net, key, count, data)
+--- Issue #531: `skip(cell)`, when given, leaves out each external cell it returns true for (the ME Logistic Interface's
+--- pull-in never goes into an ME Logistic Storage Bus of its own logistic network).
+local function insert_key(net, key, count, data, skip)
 	if count <= 0 then return 0 end
 	if net.chest then return CH.store(net, key, count, data) end   -- (issue #229: into the ME Chest's cell only)
 	local s = state()
-	ins.net, ins.key, ins.left, ins.data, ins.s, ins.void = net, key, count, data, s, 0
+	ins.net, ins.key, ins.left, ins.data, ins.s, ins.void, ins.skip = net, key, count, data, s, 0, skip
 	local c = lookups(s, net)
 	local kind = is_fluid_key(key) and "fluid" or "item"
 	if net.uniform then                                -- one priority, no partition: the cells that hold it first
@@ -3074,7 +3269,7 @@ local function insert_key(net, key, count, data)
 		end
 	end
 	local left = ins.left
-	ins.net, ins.data = nil, nil
+	ins.net, ins.data, ins.skip = nil, nil, nil
 	if left + ins.void < count then moved_key(net, key, true) end   -- something was stored (not only destroyed)
 	return count - left
 end
@@ -3142,7 +3337,8 @@ local function extract_order(s, net, c, key)
 	return l
 end
 
-local function extract_key(net, key, count)
+--- (`skip(cell)`, issue #537: an external cell it returns true for is left out, as insert_key's)
+local function extract_key(net, key, count, skip)
 	if count <= 0 or not net.items[key] then return 0 end
 	if net.chest then return CH.take(net, key, count) end          -- (issue #229: out of the ME Chest's cell only)
 	local s = state()
@@ -3154,7 +3350,8 @@ local function extract_key(net, key, count)
 	for _, cid in ipairs(extract_order(s, net, c, key)) do
 		if left <= 0 then break end
 		local cell = net.cells[cid]
-		if cell.creative then                          -- issue #441: a creative cell gives the rest without end
+		if skip and cell.ext and skip(cell) then
+		elseif cell.creative then                      -- issue #441: a creative cell gives the rest without end
 			kept = kept + left
 			left = 0
 		elseif cell.ext then                           -- external cell: the real storage first (staleness)
@@ -3221,13 +3418,13 @@ local function awaited(net, key)
 	return M.awaiting(net, key) or 0
 end
 
---- the public API: plain items by name and quality; nothing happens when the network does not work
-function M.insert(net, name, quality, count)
+--- the public API: plain items by name and quality; nothing happens when the network does not work (`skip`: insert_key's)
+function M.insert(net, name, quality, count, skip)
 	if not (M.usable(net) and item_exists(name)) then return 0 end
 	local key = key_of(name, quality)
 	count = math.floor(count)
 	local claimed = arrive(net, key, count)
-	return claimed + insert_key(net, key, count - claimed)
+	return claimed + insert_key(net, key, count - claimed, nil, skip)
 end
 
 function M.extract(net, name, quality, count)
@@ -3248,6 +3445,17 @@ end
 function M.count_key(net, key)
 	if not M.usable(net) then return 0 end
 	return net.items[key] or 0
+end
+
+--- issue #537: the count of `key` without the external cells `skip(cell)` returns true for (their snapshot)
+function M.count_key_skip(net, key, skip)
+	local n = M.count_key(net, key)
+	if n <= 0 then return 0 end
+	for cid in pairs(net.index and net.index[key] or {}) do
+		local cell = net.cells[cid]
+		if cell and cell.ext and skip(cell) then n = n - (cell.items[key] or 0) end
+	end
+	return n > 0 and n or 0
 end
 
 function M.can_insert(net, name, quality, count)
@@ -3625,27 +3833,28 @@ function M.storable(stack)
 end
 
 --- Store (part of) a LuaItemStack; the stack shrinks by what was stored. Returns the count, or nil and a reason.
-function M.insert_stack(net, stack)
+--- (`skip`: insert_key's, issue #531)
+function M.insert_stack(net, stack, skip)
 	local ok, why = M.usable(net)
 	if not ok then return nil, why end
 	local problem, key, data = M.storable(stack)
 	if problem then return nil, problem end
 	local claimed = (data or net.chest) and 0 or arrive(net, key, stack.count)
-	local n = claimed + insert_key(net, key, stack.count - claimed, data)
+	local n = claimed + insert_key(net, key, stack.count - claimed, data, skip)
 	if n <= 0 then return nil, "no-storage" end
 	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
 	return n
 end
 
---- Store up to `max` items of a LuaItemStack (the stack shrinks). Returns the count, or nil and a reason.
-function M.insert_partial(net, stack, max)
+--- Store up to `max` items of a LuaItemStack (the stack shrinks). Returns the count, or nil and a reason. (`skip`: issue #531)
+function M.insert_partial(net, stack, max, skip)
 	local ok, why = M.usable(net)
 	if not ok then return nil, why end
 	local problem, key, data = M.storable(stack)
 	if problem then return nil, problem end
 	local want = math.min(stack.count, math.floor(max))
 	local claimed = (data or net.chest) and 0 or arrive(net, key, want)
-	local n = claimed + insert_key(net, key, want - claimed, data)
+	local n = claimed + insert_key(net, key, want - claimed, data, skip)
 	if n <= 0 then return nil, "no-storage" end
 	if n >= stack.count then stack.clear() else stack.count = stack.count - n end
 	return n
@@ -3716,16 +3925,16 @@ function M.put_labelled(target, def, data)
 end
 
 --- Move up to `count` of `key` into `target` (LuaPlayer, LuaEntity, LuaInventory: anything with insert, or an
---- empty LuaItemStack). Returns the amount moved.
-function M.extract_to(net, target, key, count)
+--- empty LuaItemStack). Returns the amount moved. (`skip`, issue #537: external cells left out, as M.count_key_skip)
+function M.extract_to(net, target, key, count, skip)
 	if not M.usable(net) then return 0 end
-	count = math.min(math.floor(count), net.items[key] or 0)
+	count = math.min(math.floor(count), skip and M.count_key_skip(net, key, skip) or net.items[key] or 0)
 	if count <= 0 or not key_item_exists(key) then return 0 end
 	local def, data = stack_def(net, key, count)
 	if data and data.label then
 		local moved, placed = M.put_labelled(target, def, data)
 		if moved <= 0 then return 0 end
-		local got = extract_key(net, key, moved)
+		local got = extract_key(net, key, moved, skip)
 		local surplus = moved - got                 -- (never duplicate, as below: taken back from the stacks it wrote)
 		for i = #placed, 1, -1 do
 			if surplus <= 0 then break end
@@ -3748,7 +3957,7 @@ function M.extract_to(net, target, key, count)
 		moved = target.insert(def)
 	end
 	if moved <= 0 then return 0 end
-	local got = extract_key(net, key, moved)
+	local got = extract_key(net, key, moved, skip)
 	if got < moved then                       -- a storage bus's chest had less than its snapshot: never duplicate
 		local surplus = { name = def.name, quality = def.quality, count = moved - got }
 		if target.object_name == "LuaItemStack" then
@@ -4857,6 +5066,124 @@ function M.qlink_of(entity)
 	return s and s.qlink and entity and entity.valid and s.qlink[entity.unit_number] or nil
 end
 
+--- Issue #559: the edges of the ME Wireless Links. All links of a frequency on a surface form one wireless network
+--- (scripts/fork-me-qbridge.lua decides which pairs of them are linked: a spanning forest within their range), so a link
+--- may have several partners: `s.wlinks` = { [unit] = { [unit] = true } }, both ways, state like `s.qlink`. Each edge is a
+--- graph edge like a cable. Returns the set of a link's partners (nil: none).
+function M.wlinks_of(entity)
+	local s = storage.fork_me_net
+	return s and s.wlinks and entity and entity.valid and s.wlinks[entity.unit_number] or nil
+end
+
+--- forget every edge of `unit` (both ways); returns the units that lost an edge to it
+function M.drop_wlinks(s, unit)
+	local set = s.wlinks and s.wlinks[unit]
+	if not set then return M.NONE end
+	local lost = {}
+	for other in pairs(set) do
+		local o = s.wlinks[other]
+		if o then
+			o[unit] = nil
+			if next(o) == nil then s.wlinks[other] = nil end
+		end
+		lost[#lost + 1] = other
+	end
+	s.wlinks[unit] = nil
+	return lost
+end
+
+--- The edges among the links `units` (unit numbers) become `edges` ({ { a, b } } pairs of them); an edge of one of them to a link
+--- outside the list goes. Issue #573: edge by edge (add_edge, remove_edge), the new edges first, so a removed edge mostly finds the
+--- other path at once and splits nothing; in unit order. An edge of a link that is no member (not built yet, its entity gone)
+--- is only kept in `s.wlinks` (add_node reads it). Returns true when the graph changed.
+function M.set_wlinks(units, edges)
+	local s = state()
+	s.wlinks = s.wlinks or {}
+	local want = {}
+	for _, u in ipairs(units) do want[u] = {} end
+	for _, e in ipairs(edges) do
+		if want[e[1]] and want[e[2]] and e[1] ~= e[2] then
+			want[e[1]][e[2]] = true
+			want[e[2]][e[1]] = true
+		end
+	end
+	local sorted = {}
+	for _, u in ipairs(units) do sorted[#sorted + 1] = u end
+	table.sort(sorted)
+	local add, drop = {}, {}
+	for _, u in ipairs(sorted) do
+		local old, new = s.wlinks[u] or M.NONE, want[u]
+		local list = {}
+		for k in pairs(new) do if not old[k] and (u < k or not want[k]) then list[#list + 1] = k end end
+		table.sort(list)
+		for _, k in ipairs(list) do add[#add + 1] = { u, k } end
+		list = {}
+		for k in pairs(old) do if not new[k] and (u < k or not want[k]) then list[#list + 1] = k end end
+		table.sort(list)
+		for _, k in ipairs(list) do drop[#drop + 1] = { u, k } end
+	end
+	if #add == 0 and #drop == 0 then return false end
+	local function member(u)
+		local node = s.nodes[u]
+		return node and node.entity.valid
+	end
+	for _, e in ipairs(add) do
+		local a, b = e[1], e[2]
+		s.wlinks[a] = s.wlinks[a] or {}
+		s.wlinks[b] = s.wlinks[b] or {}
+		s.wlinks[a][b], s.wlinks[b][a] = true, true
+		if member(a) and member(b) then M.add_edge(s, a, b) end
+	end
+	for _, e in ipairs(drop) do
+		local a, b = e[1], e[2]
+		for _, p in ipairs({ { a, b }, { b, a } }) do
+			local set = s.wlinks[p[1]]
+			if set then
+				set[p[2]] = nil
+				if next(set) == nil then s.wlinks[p[1]] = nil end
+			end
+		end
+		if s.nodes[a] and s.nodes[b] then M.remove_edge(s, a, b) end
+	end
+	return true
+end
+
+--- Issue #603: what the controllers of `net` hold beyond one tick of their draw (J): what a payment for moved items may take
+--- (the rest keeps the network working). A network with a Creative Energy Cell has no limit.
+function M.spare_energy(net)
+	if net.creative then return math.huge end
+	local s = storage.fork_me_net
+	local n = 0
+	for unit in pairs(net.controllers) do
+		local node = s and s.nodes[unit]
+		local e = node and node.entity
+		if e and e.valid and e.energy > e.power_usage then n = n + e.energy - e.power_usage end
+	end
+	return n
+end
+
+--- Issue #603: `joules` out of the controllers of `net` (each gives what it holds beyond one tick of its draw, by unit number;
+--- AE2's extractAEPower); returns what was paid. A network with a Creative Energy Cell pays nothing.
+function M.pay_energy(net, joules)
+	if net.creative or joules <= 0 then return joules end
+	local s = storage.fork_me_net
+	local units = {}
+	for unit in pairs(net.controllers) do units[#units + 1] = unit end
+	table.sort(units)
+	local left = joules
+	for _, unit in ipairs(units) do
+		local node = s and s.nodes[unit]
+		local e = node and node.entity
+		if e and e.valid and e.energy > e.power_usage then
+			local take = math.min(left, e.energy - e.power_usage)
+			e.energy = e.energy - take
+			left = left - take
+			if left <= 0 then break end
+		end
+	end
+	return joules - left
+end
+
 --- issue #355: the energy the network's controllers hold now (J; the level emitter's "stored energy")
 function M.stored_energy(net)
 	local s = storage.fork_me_net
@@ -4964,6 +5291,7 @@ function M.slow_step()
 	end
 	refresh_controller_lights(s, refresh_screens(s))
 	CH.power_step(s)
+	if next(s.asm) then M.assembler_step(s) end                -- (issue #560)
 	if not s.light_parts then                                      -- issue #267: the lights of a save from before
 		s.light_parts = true
 		for unit in pairs(s.drives) do s.dirty[unit] = true end
@@ -5313,6 +5641,7 @@ function M.rebuild(full)
 	for _, id in ipairs(ids) do fire_all_waits(s.nets[id]) end   -- (issue #38: no parked endpoint loses its wake)
 	s.nodes, s.nets, s.version = {}, {}, s.version + 1
 	s.drives, s.dirty, s.sweep, s.sweep_list, s.nlist = {}, {}, 1, nil, {}
+	s.asm = {}                                             -- (issue #560)
 	local names = M.node_names()
 	--- issue #43: each property of an entity is read once (a read is an engine call, and the sort read two per comparison: 1 s
 	--- at 20 000 members); the members are sorted by unit number as before
@@ -5390,6 +5719,7 @@ function M.rebuild(full)
 		s.nodes[unit] = node
 		s.nlist[#s.nlist + 1] = unit                       -- (`units` is sorted)
 		if kind == "underground" then node.dir = dir end
+		if kind == "assembler" then s.asm[unit] = true end     -- (issue #560)
 		if CELL_KINDS[kind] then drive_record(s, e) s.dirty[unit] = true end
 		if kind == "chest" then CH.parts(s, e) end
 	end
@@ -5465,6 +5795,17 @@ function M.rebuild(full)
 			b.adj[unit] = true
 		end
 	end
+	--- issue #559: the edges of the ME Wireless Links (s.wlinks)
+	for unit, set in pairs(s.wlinks or {}) do
+		local a = s.nodes[unit]
+		for wu in pairs(set) do
+			local b = s.nodes[wu]
+			if a and b then
+				a.adj[wu] = true
+				b.adj[unit] = true
+			end
+		end
+	end
 	local seen = {}
 	for _, unit in ipairs(units) do
 		if not seen[unit] then
@@ -5497,7 +5838,35 @@ function M.rebuild(full)
 			end
 		end
 	end
+	if not s.asm_told then                                 -- issue #560: once, at the first rebuild with the assemblers as members
+		s.asm_told = true
+		M.tell_asm_conflicts(s)
+	end
 	for _, hook in pairs(M.change_hooks) do hook(nil) end
+end
+
+--- Issue #560: an older save's ME Molecular Assemblers join the networks they touch, so two networks that only met in an
+--- assembler (between their pattern providers) are one now, with two controllers: its force is told where, once
+function M.tell_asm_conflicts(s)
+	local ids = {}
+	for id in pairs(s.nets) do ids[#ids + 1] = id end
+	table.sort(ids)
+	for _, id in ipairs(ids) do
+		local net = s.nets[id]
+		local asm, ctrl
+		if net.status == "conflict" then
+			for unit in pairs(net.nodes) do
+				local node = s.nodes[unit]
+				if node.kind == "assembler" then asm = true end
+				if node.kind == "controller" and node.entity.valid and not (ctrl and ctrl.unit_number < unit) then ctrl = node.entity end
+			end
+		end
+		local force = asm and ctrl and game.forces[net.force]
+		if force then
+			force.print({ "fork-me-net.assembler-conflict", string.format("[gps=%d,%d,%s]", math.floor(ctrl.position.x),
+				math.floor(ctrl.position.y), ctrl.surface.name) })
+		end
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -5855,6 +6224,17 @@ remote.add_interface("gregtorio-me-network", {
 		local s = storage.fork_me_net
 		local node = s and entity and entity.valid and s.nodes[entity.unit_number]
 		return node and node.partner or nil
+	end,
+	--- tests: the turn of the underground cables of an older save; with `surface` and `area` only there (and again)
+	migrate_underground_direction = function(surface, area)
+		return M.migrate_underground_direction(surface and { surface = surface, area = area } or nil)
+	end,
+	--- tests: the underground pair a drag of ME Cable from `a` to `b` makes over an obstacle (scripts/fork-me-cabledrag.lua);
+	--- the underground cables come from and the cables go to the inventory of the chest `chest` (nil: ghosts only)
+	drag_bridge = function(a, b, chest)
+		local inv = chest and chest.valid and chest.get_inventory(defines.inventory.chest) or nil
+		local exit, entry = M.drag_bridge(a, b, inv)          -- (set by scripts/fork-me-cabledrag.lua)
+		return exit, entry
 	end,
 })
 

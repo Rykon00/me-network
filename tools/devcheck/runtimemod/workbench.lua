@@ -5,6 +5,7 @@
 
 local NET, GUI = "gregtorio-me-network", "gregtorio-me-gui"
 local WB = "gregtorio-me-workbench"
+local wbview = require("wbview")
 local WX, WY = 200, -300
 local CARD = {
 	void = "me-overflow-destruction-card", fuzzy = "me-fuzzy-card", inverter = "me-inverter-card",
@@ -316,8 +317,8 @@ return function(H)
 			.. "copy mode, the partition without a cell, inverter/fuzzy/equal/void cells in a drive, mined/destroyed/vanished")
 	end
 
-	--- issue #28: the workbench's script inventory (slot 1 the cell, slots 2 to 5 its cards) changed the way a player
-	--- changes it; `back` stands for the player's inventory, `hands` for the place a cell is taken to
+	--- issue #28: the workbench's slots (issue #579: its two inventories, read as slot 1 the cell, slots 2 and up its cards)
+	--- changed the way a player changes them; `back` stands for the player's inventory, `hands` for the place a cell is taken to
 	local function slots_test()
 		local st = storage.wb28
 		if (st and st.done) or game.tick < 100 then return end
@@ -327,7 +328,7 @@ return function(H)
 		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
 		local s = game.surfaces[1]
 		local w = s.create_entity{ name = "me-cell-workbench", position = { WX + 22.5, WY + 4.5 }, force = "player", raise_built = true }
-		local inv = w and remote.call(WB, "inventory", w)
+		local inv = wbview(w)
 		if not inv then return me_report("WBSLOTS", "ME Cell Workbench slots", { "no workbench or no inventory" }) end
 		local back = game.create_inventory(20)
 		local hands = game.create_inventory(5)
@@ -350,7 +351,7 @@ return function(H)
 			end
 			return n
 		end
-		expect(#inv == 5 and inv.is_empty(), "a new workbench: " .. #inv .. " slots")
+		expect(#inv.cell == 1 and #inv.cards == 4 and inv.is_empty(), "a new workbench: " .. #inv.cell .. " + " .. #inv.cards .. " slots")
 		--- a cell with two cards in its tags arrives: the cards become the card slots' items, its tags lose them
 		inv[1].set_stack{ name = "me-1k-storage-cell", count = 1,
 			tags = { fork_me_cell = { items = {}, partition = { wood = true }, cards = { CARD.inverter, CARD.fuzzy } } } }
@@ -389,17 +390,18 @@ return function(H)
 		sync({})
 		expect(#tag_cards(hands[2]) == 0 and cards_in(inv) == 0 and all_cards() == total, "an unfound cell: tags "
 			.. line(tag_cards(hands[2])) .. ", slots " .. cards_in(inv) .. ", all " .. all_cards() .. "/" .. total)
-		--- a fluid cell takes 3 cards and no fuzzy card: the fuzzy card goes back, the card in slot 5 moves up
+		--- a fluid cell takes 3 cards and no fuzzy card: the fuzzy card goes back, the card in slot 5 moves up and the card
+		--- inventory shrinks to the fluid cell's 3 slots (issue #579)
 		inv[1].set_stack{ name = "me-1k-fluid-storage-cell", count = 1 }
-		sync()
 		for slot, name in pairs({ [2] = CARD.inverter, [3] = CARD.fuzzy, [5] = CARD.void }) do
 			back.remove{ name = name, count = 1 }
 			inv[slot].set_stack{ name = name, count = 1 }
 		end
 		sync()
-		expect(not inv[5].valid_for_read and cards_in(inv) == 2 and info().cell and info().cell.slots == 3
-			and back.get_item_count(CARD.fuzzy) == 1 and #info().cell.cards == 2,
-			"a fluid cell with the item cell's cards: " .. line(info().cell and info().cell.cards) .. ", fuzzy back " .. back.get_item_count(CARD.fuzzy))
+		expect(#inv.cards == 3 and cards_in(inv) == 2 and inv.cards.get_item_count(CARD.void) == 1 and info().cell
+			and info().cell.slots == 3 and back.get_item_count(CARD.fuzzy) == 1 and #info().cell.cards == 2,
+			"a fluid cell with the item cell's cards: " .. line(info().cell and info().cell.cards) .. ", fuzzy back "
+			.. back.get_item_count(CARD.fuzzy) .. ", " .. #inv.cards .. " card slots")
 		--- the old click takes the cell with its cards
 		local hand = game.create_inventory(1)
 		remote.call(WB, "cell_click", w, hand[1], back, false)
@@ -436,7 +438,7 @@ return function(H)
 		local function expect(ok, msg) if not ok then problems[#problems + 1] = msg end end
 		local s = game.surfaces[1]
 		local w = s.create_entity{ name = "me-cell-workbench", position = { WX + 24.5, WY + 4.5 }, force = "player", raise_built = true }
-		local winv = w and remote.call(WB, "inventory", w)
+		local winv = wbview(w)
 		if not winv then return me_report("WBPANE", "ME window pane (workbench)", { "no workbench or no inventory" }) end
 		local pinv = game.create_inventory(20)
 		local hold = game.create_inventory(1)
@@ -948,7 +950,7 @@ return function(H)
 		--- a cell made in the workbench: its description (the tooltip the game's inventory shows), then the hint
 		expect(remote.call(WB, "cell_click", w, hand, inv, false) == nil, "the cell into the workbench")
 		remote.call(WB, "set_partition_slot", w, 1, "iron-plate")
-		local bench_inv = remote.call(WB, "inventory", w)
+		local bench_inv = remote.call(WB, "inventories", w).cell
 		local slot = bench_inv[1]
 		local before = ident(slot)
 		local desc = slot.custom_description

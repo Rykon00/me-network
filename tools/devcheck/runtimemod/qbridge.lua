@@ -5,9 +5,11 @@
 --- * B's power is taken away: its buffer runs dry and the link goes (B's side has no network that works); power back: linked
 ---   again.
 --- * A third bridge of frequency 7 (on Nauvis): the frequency is taken, nothing links; it is mined: A and B link again.
+--- * Issue #511 (qbfield.lua): A's window keeps a typed frequency over the refreshes, shows one set elsewhere.
 --- Loaded by control.lua like lab.lua.
 
 local NET, IO, QB = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-qbridge"
+local qbfield = require("qbfield")       -- (issue #511)
 local BX, BY = -40, 240                  -- (inside the cleared test area, TEST_RADIUS of control.lua; clear of the other tests)
 local SURFACE = "me-qbridge-test"
 local START, CUT, CUT_CHECK, BACK_CHECK, THIRD_CHECK, FINAL = 100, 400, 700, 950, 1080, 1300
@@ -111,9 +113,10 @@ return function(H)
 		if tick == FINAL then
 			st.done = true
 			expect(same() and status(qa) == "linked", "the pair did not link again after the third bridge went: " .. tostring(status(qa)))
+			qbfield(problems, qa, 7, 8, "qbridge511")
 			me_report("QBRIDGE", "ME Quantum Bridge", problems, "two bridges on frequency 7 join a network on Nauvis and one on another surface"
 				.. " (an interface there fills from a drive here); no power on one side opens the link, power back closes it; a third"
-				.. " bridge of the frequency links nothing, gone again: linked")
+				.. " bridge of the frequency links nothing, gone again: linked; the window's frequency field keeps what is typed")
 		end
 	end
 

@@ -16,8 +16,14 @@
   `add_recipe` so it is listed in `ME_NETWORK.recipes`; tell Gregtorio's maintainer (its compat file gives it the GT
   recipe). Numbers reach the runtime through the mod-data `fork-me-network`, `fork-me-autocraft`, `fork-me-fluids`.
 - Since issue #385 a network can span surfaces: an ME Quantum Bridge link (and since #384 an ME Wireless Link's, on one surface) is a graph edge between two members anywhere
-  (`N.set_qlink`, `s.qlink`); code that looks for members by position (the cable router, the wireless range, a grid of
+  (`N.set_qlink`, `s.qlink`; since #559 the links of a frequency are a group whose edges are `N.set_wlinks`, `s.wlinks`); code that looks for members by position (the cable router, the wireless range, a grid of
   tiles) must keep to one surface, code that walks a network's members must not assume one.
+- Settings paste: the game raises `on_entity_settings_pasted` only for a pair its prototypes allow, so a block with a
+  paste handler in `scripts/` has its row in `prototypes/paste.lua` (targets, `allow_copy_paste`; issue #519), and
+  `devcheck check` fails without it. The runtime tests call the handlers directly and never see a missing row. A block the
+  game cannot paste for a player (an energy interface with `gui_mode = "none"` says "Not operable": the ME Quantum Bridge
+  and the ME Wireless Link, issue #527) is in `KEYS` instead, without `allow_copy_paste`, and the mod's own copy and paste
+  keys paste it (`scripts/fork-me-paste-keys.lua`).
 - Runtime: `control.lua` registers the build, clone, settings paste, blueprint (also `on_pre_build`: a blueprint pasted
   over blocks that stand there, `scripts/fork-me-pasteover.lua`, issue #383), removal (with an event filter) and
   rotation events of all modules (the graph first on build, last on removal), `on_init` (first the hand-over of a
@@ -28,7 +34,7 @@
   network. Ticks: `on_nth_tick` 60 (terminal step: the network's slow step, drive lights, sweep, the refresh of open
   windows) and one `on_tick` handler in control.lua (issue #5, `scripts/fork-me-schedule.lua`): every interface and
   bus, storage bus (item and fluid side), level maintainer and circuit interface is due at a tick of its own (a queue
-  per kind, `rec.due`, a backlog for what does not fit; the ME IO Port has a queue of its own, issue #386), crafting jobs are stepped one per tick (each at most every 20
+  per kind, `rec.due`, a backlog for what does not fit; the ME IO Port has a queue of its own, issue #386, and so has the ME Logistic Storage Bus, issue #506: a visit reads a whole logistic network), crafting jobs are stepped one per tick (each at most every 20
   ticks), one provider rescan every 2 ticks. The budgets and the bus speed are runtime-global map settings
   (`settings.lua`, read through `Sched.setting`): visits per tick (interfaces and buses 16, storage buses 8 per side, IO ports 2,
   maintainers 4), circuit interface updates per second (10), crafting jobs per tick (1), bus speed (256 items, 4000
@@ -49,8 +55,11 @@
   more (Gregtorio no longer has ME code), so the list is fixed.
 - **Test every change** with the headless harness: `python tools/devcheck/devcheck.py setup` once, then
   `python tools/devcheck/devcheck.py all` (vanilla with Space Age and quality) and, for anything Gregtorio could
-  notice, `all --with-gregtorio <Gregtorio checkout>`. `runtime` also saves the test map at tick 500 through a headless
-  server (RCON on 127.0.0.1:27815) and checks that the schedule after the load is the unbroken run's: anything that
+  notice, `all --with-gregtorio <Gregtorio checkout>`. A third-party mod is loaded with `--with-mod NAME` (issue #591:
+  the mod and its required dependencies from the mod portal or `--mods-from DIR`, the maintainer's
+  `%APPDATA%\Factorio\mods`): the Krastorio 2 compatibility (issue #598) runs `all --with-mod Krastorio2` and
+  `check --base-only --with-mod Krastorio2` as well, and `all --with-mod Krastorio2-spaced-out` (issue #596, with Space Age). `runtime` also saves the test map at tick 500 through a headless
+  server (RCON on a free port of 127.0.0.1 per run, issue #612) and checks that the schedule after the load is the unbroken run's: anything that
   decides when a block is visited must live in `storage`. Both must end with `RESULT: OK`; `check --base-only` checks
   without Space Age; `migrate --from-ref v0.1.0` (the old fluid blocks) or `--from-ref v0.2.0` (every kind of
   unified block, loaded without `on_configuration_changed` while the version number is the same) loads a save of an

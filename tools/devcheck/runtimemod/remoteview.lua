@@ -12,6 +12,8 @@
 local NET, GUI, TERM, WB = "gregtorio-me-network", "gregtorio-me-gui", "gregtorio-me-terminal", "gregtorio-me-workbench"
 local BX, BY = 10, -340
 local START = 130
+--- a full inventory of iron plates (100 a stack in the base game, 200 with Krastorio 2: issue #591)
+local function plates() return prototypes.item["iron-plate"].stack_size end
 
 return function(H)
 	local me_place, me_report, power = H.me_place, H.me_report, H.power
@@ -66,16 +68,16 @@ return function(H)
 		expect(c == nil and inv == char and remote_view == true, "the hand in remote view: no cursor, the character's inventory, remote")
 		c, inv, remote_view = g("stand_in_hand", "none")
 		expect(c == nil and inv == nil and remote_view == true, "the hand in remote view without a character")
-		expect(g("stand_in_uses_buffer", "normal") == true, "the hand-over buffer is used outside remote view")
-		expect(g("stand_in_uses_buffer", "remote") == false and g("stand_in_uses_buffer", "none") == false,
-			"the hand-over buffer is not used in remote view (the pane is)")
+		--- issue #542: the pane's inventory element leaves the hand to the mod in remote view (a click sends the stack)
+		expect(g("pane_flags", false).handle_cursor_transfer == true and g("pane_flags", true).handle_cursor_transfer == false,
+			"the game handles the hand outside remote view only")
 
 		--- a cell out of the drive (issue #177): no inventory -> it stays; a full inventory -> it stays; else it arrives
 		local function cells() local n = 0 for _ in pairs(remote.call(NET, "drive", drive)) do n = n + 1 end return n end
 		local before = cells()
 		local why, out = remote.call(NET, "drive_click", nil, nil, drive, 2, true)
 		expect(why == "no-inventory" and out == nil and cells() == before, "no inventory: " .. tostring(why) .. ", cells " .. cells())
-		char.insert{ name = "iron-plate", count = 100 * #char }
+		char.insert{ name = "iron-plate", count = plates() * #char }
 		why, out = remote.call(NET, "drive_click", nil, char, drive, 2, true)
 		expect(why == "inventory-full" and cells() == before, "full inventory: " .. tostring(why) .. ", cells " .. cells())
 		char.clear()
@@ -104,7 +106,7 @@ return function(H)
 		hand[1].set_stack{ name = "me-fuzzy-card", count = 1 }
 		expect(remote.call(WB, "card_click", bench, 1, hand[1], char, false) == nil and not hand[1].valid_for_read, "a card into the workbench")
 		why = g("block_click", bench, 2, nil, nil, true)
-		expect(why == "no-inventory" and remote.call(WB, "inventory", bench)[2].valid_for_read, "workbench card without an inventory: " .. tostring(why))
+		expect(why == "no-inventory" and remote.call(WB, "inventories", bench).cards[1].valid_for_read, "workbench card without an inventory: " .. tostring(why))
 		why, out = g("block_click", bench, 2, nil, char, true)
 		expect(why == nil and out == "out" and char.get_item_count("me-fuzzy-card") == 1, "workbench card into the inventory: " .. tostring(why))
 		--- the provider's pattern slot
@@ -149,7 +151,7 @@ return function(H)
 		local size = prototypes.item["iron-plate"].stack_size
 		local feed = game.create_inventory(4)
 		feed.insert{ name = "iron-plate", count = 2 * size + 10 }
-		remote.call(GUI, "buffer_absorb", feed, "terminal", term)
+		remote.call(GUI, "inventory_click", nil, feed, 1, "control", term)
 		expect(remote.call(NET, "count", term, "iron-plate") == before_plates + 2 * size + 10, "plates fed to the network")
 		local n, tw = remote.call(TERM, "take", nil, nil, term, "iron-plate", "inventory-one")
 		expect(n == nil and tw == "no-inventory", "terminal take without an inventory: " .. tostring(n) .. "/" .. tostring(tw))
@@ -168,7 +170,7 @@ return function(H)
 		expect(not tmp[1].valid_for_read and g("stand_in_parked", "none") == 5, "no inventory: parked " .. g("stand_in_parked", "none"))
 		expect(ground_items(surface, { 0, 0 }) == ground, "nothing was spilled from remote view without an inventory")
 		expect(#g("stand_in_texts", "none") >= 1, "the player was told that the items are kept")
-		char.insert{ name = "iron-plate", count = 100 * #char }
+		char.insert{ name = "iron-plate", count = plates() * #char }
 		tmp.insert{ name = "copper-plate", count = 7 }
 		g("stand_in_give_back", "remote", tmp[1], term)
 		expect(not tmp[1].valid_for_read and g("stand_in_parked", "remote") == 7, "full inventory: parked " .. g("stand_in_parked", "remote"))
@@ -192,7 +194,7 @@ return function(H)
 			"give back with an inventory: " .. char.get_item_count("copper-plate"))
 		--- outside remote view it is as before: what the inventory cannot take is spilled at the character
 		main.clear()
-		main.insert{ name = "iron-plate", count = 100 * #main }
+		main.insert{ name = "iron-plate", count = plates() * #main }
 		tmp.insert{ name = "copper-plate", count = 2 }
 		g("stand_in_give_back", "normal", tmp[1], term)
 		expect(not tmp[1].valid_for_read and g("stand_in_parked", "normal") == 0 and ground_items(surface, { 0, 0 }) > ground,
@@ -211,7 +213,7 @@ return function(H)
 		main.destroy()
 		char.destroy()
 		me_report("REMOTEVIEW", "ME windows in remote view", problems,
-			"the helper, no buffer, a cell and an item out into the character's inventory or kept, no spill, parked and returned")
+			"the helper, the pane's flags, a cell and an item out into the character's inventory or kept, no spill, parked and returned")
 	end
 
 	function T.running(check) check(storage.remoteview and storage.remoteview.done, "ME windows in remote view") end

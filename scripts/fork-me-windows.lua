@@ -39,6 +39,7 @@ local io = require("scripts.fork-me-io")
 local sbus = require("scripts.fork-me-storagebus")
 local bench = require("scripts.fork-me-workbench")
 local ioport = require("scripts.fork-me-ioport")          -- (issue #386)
+local lif = require("scripts.fork-me-logistic-interface")   -- (issue #531)
 local qbridge = require("scripts.fork-me-qbridge")        -- (issue #385)
 local picker = require("scripts.fork-me-picker")
 local Names = require("scripts.fork-me-names")
@@ -68,18 +69,9 @@ local function rebuild(frame, name, sig, build)
 	build(box)
 end
 
---- Issue #28: the slots `first` .. `last` of a block's inventory `inv` as slot buttons (block_slot: the window's
---- click), rebuilt when a stack changed; `tip(slot, stack)` gives a button's tooltip
-local function block_slots(frame, name, inv, first, last, tip, offset)
-	local sig = { tostring(first), tostring(last) }
-	for i = first, last do
-		local st = inv[i]
-		sig[#sig + 1] = st.valid_for_read and (st.name .. "#" .. st.count .. "@" .. st.quality.name .. G.stack_ident(st)) or "-"
-	end
-	rebuild(frame, name, table.concat(sig, ","), function(box)
-		for i = first, last do G.stack_button(box, inv[i], G.act("block_slot", { slot = i + (offset or 0) }), tip and tip(i, inv[i]) or nil) end
-	end)
-end
+--- Issue #28: the slots of a block's inventory; since issue #543 the game's inventory element where the window shows the
+--- whole inventory, slot buttons for a part of one (G.block_slots)
+local block_slots = G.block_slots
 
 local function caption_of(entity)
 	return entity.localised_name
@@ -424,10 +416,10 @@ function M.workbench_data(entity) return bench.info(entity) end
 --- the workbench is no node of the ME graph: its window finds it through the workbench's own records
 G.entity_lookup(bench.by_unit)
 
---- issue #28: the window has the player's inventory on its left; the cell slot and the card slots are the slots of the
---- workbench's inventory (slot 1 the cell, 2 to 5 its cards)
+--- issue #28: the window has the player's inventory on its left; issue #579: the cell slot and the card slots are the
+--- workbench's two inventories, each the game's inventory element (the window's slot 1 the cell, 2 and up its cards)
 local function open_workbench(player, entity)
-	if not bench.inventory(entity) then return end    -- (a workbench without a record yet gets one: the lookup needs it)
+	if not bench.inventories(entity) then return end  -- (a workbench without a record yet gets one: the lookup needs it)
 	local _, content = G.open_window(player, "workbench", caption_of(entity), { unit = entity.unit_number }, true)
 	G.label(content, { "fork-me-gui.workbench-help" }, WIDTH)
 	local row = G.row(content)
@@ -549,13 +541,13 @@ function M.refresh_workbench(player, frame)
 		dis.enabled = why == true
 		dis.tooltip = { "fork-me-gui.workbench-disassemble-" .. (why == true and "tooltip" or why) }
 	end
-	local inv = bench.inventory(entity)
-	block_slots(frame, "fork_me_wb_cell", inv, 1, 1, function(_, st)
+	local cinv, kinv = bench.inventories(entity)
+	block_slots(frame, "fork_me_wb_cell", cinv, 1, 1, function(_, st)
 		return { st.valid_for_read and "fork-me-gui.workbench-cell-tooltip" or "fork-me-gui.workbench-cell-empty" }
 	end)
-	block_slots(frame, "fork_me_wb_cards", inv, 2, 1 + (c and c.slots or 4), function(_, st)
+	block_slots(frame, "fork_me_wb_cards", kinv, 1, kinv and #kinv or 0, function(_, st)   -- (the window's slots 2 and up)
 		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or (c and "fork-me-gui.card-slot-empty" or "fork-me-gui.workbench-card-no-cell") }
-	end)
+	end, 1)
 	G.find(frame, "fork_me_wb_keep").state = d.keep
 	M.gfilter_refresh(frame, "fork_me_wb_gtext", c and c.gfilter, c and c.gtext)
 	return true
@@ -572,10 +564,9 @@ local function open_io_port(player, entity)
 	local _, content = G.open_window(player, "io-port", caption_of(entity), { unit = entity.unit_number }, true)
 	G.label(content, { "fork-me-gui.io-port-help" }, WIDTH)
 	local row = G.row(content)
-	row.add{ type = "label", caption = { "fork-me-gui.io-port-in" } }
-	row.add{ type = "flow", name = "fork_me_iop_in", direction = "horizontal" }
-	row.add{ type = "label", caption = { "fork-me-gui.io-port-out" } }
-	row.add{ type = "flow", name = "fork_me_iop_out", direction = "horizontal" }
+	--- issue #550: input and output cell are one element of the two slots (the rule per slot is the click's, ioport.cell_click)
+	row.add{ type = "label", caption = { "fork-me-gui.io-port-cells" }, tooltip = { "fork-me-gui.io-port-cells-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_iop_cells", direction = "horizontal" }
 	row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.io-port-mode" } }
 	row.add{ type = "drop-down", name = "fork_me_iop_mode", selected_index = 1, tags = G.act("iop_mode"),
@@ -593,10 +584,7 @@ function M.refresh_io_port(player, frame)
 	local d = entity and ioport.info(entity)
 	if not d then return false end
 	local inv = ioport.cells(entity)
-	block_slots(frame, "fork_me_iop_in", inv, 1, 1, function(_, st)
-		return { st.valid_for_read and "fork-me-gui.io-port-in-tooltip" or "fork-me-gui.io-port-in-empty" }
-	end)
-	block_slots(frame, "fork_me_iop_out", inv, 2, 2, function() return { "fork-me-gui.io-port-out-tooltip" } end)
+	block_slots(frame, "fork_me_iop_cells", inv, 1, #inv, function() return { "fork-me-gui.io-port-cells-tooltip" } end)
 	local cinv = ioport.card_inventory(entity)
 	block_slots(frame, "fork_me_iop_cards", cinv, 1, #cinv, function(_, st)
 		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
@@ -613,9 +601,8 @@ end
 --- network, as the windows of the other blocks without slots do.
 --------------------------------------------------------------------------------
 
-local function open_qbridge(player, entity)
-	if not qbridge.info(entity) then return end
-	local _, content = G.open_window(player, "quantum-bridge", caption_of(entity), { unit = entity.unit_number }, true)
+--- the window's content (the tests build it into a stand-in, qbridge_view below)
+local function qbridge_content(content, entity)
 	G.label(content, { entity.name == qbridge.LINK and "fork-me-gui.wlink-help" or "fork-me-gui.qbridge-help" }, WIDTH)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.qbridge-frequency" }, tooltip = { "fork-me-gui.qbridge-frequency-tooltip" } }
@@ -624,22 +611,38 @@ local function open_qbridge(player, entity)
 	f.style.width = 120
 	G.label(content, "", WIDTH, nil, "fork_me_qb_status")
 	G.label(content, "", WIDTH, nil, "fork_me_qb_power")
-	if entity.name == qbridge.LINK then G.label(content, "", WIDTH, nil, "fork_me_qb_range") end   -- (issue #384)
+	if entity.name == qbridge.LINK then
+		G.label(content, "", WIDTH, nil, "fork_me_qb_range")                   -- (issue #384)
+		G.label(content, "", WIDTH, nil, "fork_me_qb_group")                   -- (issue #559: the links of its frequency)
+	end
+end
+
+local function open_qbridge(player, entity)
+	if not qbridge.info(entity) then return end
+	local _, content = G.open_window(player, "quantum-bridge", caption_of(entity), { unit = entity.unit_number }, true)
+	qbridge_content(content, entity)
 	M.refresh_qbridge(player, G.window_of(player), true)
 end
 
+--- Issue #511: the field is written only when the stored frequency differs from the one written last (its tag `shown`:
+--- another player, a settings paste, a blueprint), so what the player types stays until Enter. The game cannot tell
+--- whether a field has the focus.
 function M.refresh_qbridge(player, frame, first)
 	local entity = G.entity_of(player, frame)
 	local d = entity and qbridge.info(entity)
 	if not d then return false end
 	local f = G.find(frame, "fork_me_qb_freq")
-	if f and (first or not f.focused) then f.text = d.freq > 0 and tostring(d.freq) or "" end
+	if f and (first or f.tags.shown ~= d.freq) then
+		f.text = d.freq > 0 and tostring(d.freq) or ""
+		f.tags = G.act("qb_freq", { shown = d.freq })
+	end
 	local p = d.partner
-	local caption = { "fork-me-gui.qbridge-status-" .. d.status }
+	local prefix = d.kind == "link" and "fork-me-gui.wlink-status-" or "fork-me-gui.qbridge-status-"   -- (issue #559: a group)
+	local caption = { prefix .. d.status }
 	if d.status == "linked" and p then
-		caption = { "fork-me-gui.qbridge-status-linked", p.surface, string.format("%.0f", p.x), string.format("%.0f", p.y) }
+		caption = { prefix .. "linked", p.surface, string.format("%.0f", p.x), string.format("%.0f", p.y) }
 	elseif d.status == "other-surface" and p then
-		caption = { "fork-me-gui.qbridge-status-other-surface", p.surface }
+		caption = { prefix .. "other-surface", p.surface }
 	end
 	G.find(frame, "fork_me_qb_status").caption = caption
 	G.find(frame, "fork_me_qb_power").caption = { "fork-me-gui.qbridge-power", G.fmt(d.watts / 1000),
@@ -649,13 +652,16 @@ function M.refresh_qbridge(player, frame, first)
 		r.caption = d.distance and { "fork-me-gui.wlink-range", string.format("%.0f", d.distance), tostring(d.range) }
 			or { "fork-me-gui.wlink-range-none", tostring(d.range) }
 	end
+	local g = G.find(frame, "fork_me_qb_group")
+	if g then g.caption = (d.group or 0) > 1 and { "fork-me-gui.wlink-group", d.group, d.edges or 0 } or "" end
 	return true
 end
 
 G.window("quantum-bridge", { open = open_qbridge, refresh = M.refresh_qbridge, entities = { qbridge.NAME, qbridge.LINK },
 	shift = M.store_shift, control = M.store_all, message = G.net_message, hint = { "fork-me-gui.store-help" } })
 
---- the frequency: set when the field is confirmed or left (a number, empty: 0, none)
+--- the frequency: set when the field is confirmed (Enter; a number, empty: 0, none). Not on every change, which would
+--- link the bridge to each number on the way (typing 12 to 1 first); the game has no event for leaving a field.
 G.on("qb_freq", function(event, player, el)
 	if event.name ~= defines.events.on_gui_confirmed then return end
 	local entity = window_entity(player)
@@ -663,6 +669,7 @@ G.on("qb_freq", function(event, player, el)
 	if not qbridge.set_frequency(entity, el.text == "" and 0 or tonumber(el.text)) then
 		player.create_local_flying_text{ text = { "fork-me-gui.qbridge-frequency-refused" }, create_at_cursor = true }
 	end
+	el.tags = G.act("qb_freq")         -- the refresh writes the stored frequency back (a refused one, 007 as 7)
 	G.refresh_one(player)
 end)
 
@@ -677,6 +684,253 @@ G.on("iop_mode", function(event, player, el)
 	if event.name ~= defines.events.on_gui_selection_state_changed then return end
 	local entity = window_entity(player)
 	if entity then ioport.set_mode(entity, el.selected_index == 2 and "fill" or "empty") G.refresh_one(player) end
+end)
+
+--------------------------------------------------------------------------------
+--- issue #531: the ME Logistic Interface (scripts/fork-me-logistic-interface.lua): three tabs, "Offer" (rows the network
+--- keeps stocked for the robots, what its provider holds), "Request" (rows "keep this many in the network", what each asks
+--- for now; a row whose item an interface of the same logistic network offers is red and not applied, what lies in the
+--- requester) and "Accept" (the switch, the filter item, what lies in the storage chest); above them the status, the
+--- logistic network, the card slots (the ME Interface's cards) and the Crafting Card's state.
+--------------------------------------------------------------------------------
+
+local LIF_TABS = { "offer", "request", "accept" }
+
+--- the window's content (the tests build it into a stand-in, lif_view below)
+local function lif_content(content)
+	G.label(content, { "fork-me-gui.logistic-interface-help" }, WIDTH)
+	G.label(content, "", WIDTH, nil, "fork_me_lif_status")
+	G.label(content, "", WIDTH, nil, "fork_me_lif_net")
+	--- issue #537: the mode and what the automatic mode does
+	content.add{ type = "checkbox", name = "fork_me_lif_mode", state = true, caption = { "fork-me-gui.logistic-interface-mode" },
+		tooltip = { "fork-me-gui.logistic-interface-mode-tooltip" }, tags = G.act("lif_mode") }
+	G.label(content, "", WIDTH, nil, "fork_me_lif_mode_line")
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.cards" }, tooltip = { "fork-me-gui.logistic-interface-cards-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_lif_cards", direction = "horizontal" }
+	G.label(content, "", WIDTH, nil, "fork_me_lif_want")
+	G.label(content, "", WIDTH, nil, "fork_me_lif_craft")
+	local tabs = content.add{ type = "tabbed-pane", name = "fork_me_lif_tabs", tags = G.act("lif_tab") }
+	local flows = {}
+	for _, name in ipairs(LIF_TABS) do
+		local tab = tabs.add{ type = "tab", caption = { "fork-me-gui.logistic-interface-tab-" .. name } }
+		local flow = tabs.add{ type = "flow", name = "fork_me_lif_tab_" .. name, direction = "vertical" }
+		flow.style.vertical_spacing = 6
+		tabs.add_tab(tab, flow)
+		G.label(flow, { "fork-me-gui.logistic-interface-" .. name .. "-help" }, WIDTH)
+		flows[name] = flow
+	end
+	for _, name in ipairs({ "offer", "request" }) do
+		local flow = flows[name]
+		local scroll = flow.add{ type = "scroll-pane", horizontal_scroll_policy = "never" }
+		scroll.style.maximal_height = 300
+		scroll.add{ type = "flow", name = "fork_me_lif_rows_" .. name, direction = "vertical" }
+	end
+	--- issue #532: the automatic requests for what the failed crafting starts lack (under the request rows)
+	flows.request.add{ type = "checkbox", name = "fork_me_lif_auto", state = true, caption = { "fork-me-gui.logistic-interface-auto" },
+		tooltip = { "fork-me-gui.logistic-interface-auto-tooltip" }, tags = G.act("lif_auto") }
+	G.label(flows.request, "", WIDTH, nil, "fork_me_lif_auto_line")
+	G.grid(flows.request, 9, "fork_me_lif_auto_list")
+	--- issue #537: the automatic offer, read only (under the offer rows)
+	G.heading(flows.offer, { "fork-me-gui.logistic-interface-auto-offer" })
+	G.grid(flows.offer, 9, "fork_me_lif_auto_offer")
+	local accept = flows.accept
+	accept.add{ type = "checkbox", name = "fork_me_lif_accept", state = true, caption = { "fork-me-gui.logistic-interface-accept" },
+		tooltip = { "fork-me-gui.logistic-interface-accept-tooltip" }, tags = G.act("lif_accept") }
+	row = G.row(accept)
+	row.add{ type = "label", caption = { "fork-me-gui.logistic-interface-filter" },
+		tooltip = { "fork-me-gui.logistic-interface-filter-tooltip" } }
+	row.add{ type = "flow", name = "fork_me_lif_filter", direction = "horizontal" }
+	for _, t in ipairs({ { "offer", "stock" }, { "request", "held" }, { "accept", "trash" } }) do
+		local flow = flows[t[1]]
+		G.heading(flow, { "fork-me-gui.logistic-interface-" .. t[2] })
+		G.grid(flow, 9, "fork_me_lif_" .. t[2])
+	end
+end
+
+local function open_logistic_interface(player, entity)
+	if not lif.info(entity) then return end
+	local _, content = G.open_window(player, "logistic-interface", caption_of(entity), { unit = entity.unit_number })
+	lif_content(content)
+	M.refresh_logistic_interface(player, G.window_of(player))
+end
+
+function M.refresh_logistic_interface(player, frame)
+	local entity = G.entity_of(player, frame)
+	local d = entity and lif.info(entity)
+	if not d then return false end
+	local cinv = lif.card_inventory(entity)
+	block_slots(frame, "fork_me_lif_cards", cinv, 1, #cinv, function(_, st)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end)
+	local want = {}
+	for _, name in ipairs(d.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
+	G.find(frame, "fork_me_lif_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
+	G.find(frame, "fork_me_lif_craft").caption = d.craft and { "fork-me-gui.craft-card-" .. d.craft } or ""
+	G.find(frame, "fork_me_lif_status").caption = { "fork-me-gui.logistic-interface-status-" .. d.status }
+	G.find(frame, "fork_me_lif_net").caption = { "", d.lid and { "fork-me-gui.logistic-interface-network", tostring(d.lid) }
+		or { "fork-me-gui.logistic-interface-no-network" }, d.ncollide > 0 and { "", "  ",
+		{ "fork-me-gui.logistic-interface-collisions", tostring(d.ncollide) } } or "" }
+	for _, tab in ipairs({ "offer", "request" }) do
+		local rows = d[tab]
+		local sig = {}
+		for i = 1, d.rows do
+			local r = rows[i]
+			sig[i] = (r and r.key or "-") .. ((tab == "request" and d.collide[i]) and "!" or "")
+		end
+		rebuild(frame, "fork_me_lif_rows_" .. tab, table.concat(sig, ","), function(box)
+			local t = box.add{ type = "table", column_count = tab == "request" and 9 or 6 }
+			for i = 1, d.rows do
+				local r = rows[i]
+				local red = tab == "request" and d.collide[i]
+				local b = G.key_button(t, r and r.key or nil, G.act("lif_row", { tab = tab, index = i }),
+					red and { "fork-me-gui.logistic-interface-collide-tooltip" } or { "fork-me-gui.key-slot-tooltip" })
+				if red then b.style = "red_slot_button" end
+				local f = G.number_field(t, r and r.amount or 0, G.act("lif_amount", { tab = tab, index = i }), 70)
+				f.enabled = r ~= nil
+				if tab == "request" then G.label(t, "", 60, nil, "fork_me_lif_asked_" .. i) end
+			end
+		end)
+	end
+	for i = 1, d.rows do
+		local l = G.find(frame, "fork_me_lif_asked_" .. i)
+		local r = d.request[i]
+		if l then
+			l.caption = r and (d.collide[i] and "-" or { "fork-me-gui.logistic-interface-asked", G.fmt(r.asked) }) or ""
+			l.tooltip = r and { "fork-me-gui.logistic-interface-asked-tooltip" } or nil
+		end
+	end
+	G.find(frame, "fork_me_lif_accept").state = d.accept
+	--- issue #537: the mode, its counts, the automatic offer; in Automatic mode the block asks whatever the switch says
+	local auto_mode = d.mode == "auto"
+	G.find(frame, "fork_me_lif_mode").state = auto_mode
+	G.find(frame, "fork_me_lif_mode_line").caption = not auto_mode and { "fork-me-gui.logistic-interface-mode-manual" }
+		or { "", { "fork-me-gui.logistic-interface-mode-line", tostring(#d.auto_offer), tostring(d.auto_offered) },
+			d.auto_leads and { "", " ", { "fork-me-gui.logistic-interface-mode-leads" } } or "",
+			d.auto_unknown > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-unknown", tostring(d.auto_unknown) } } or "",
+			d.auto_nofit > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-nofit", tostring(d.auto_nofit) } } or "",
+			d.auto_waits > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-waits", tostring(d.auto_waits) } } or "",
+			d.auto_build > 0 and { "", " ", { "fork-me-gui.logistic-interface-mode-build", G.fmt(d.auto_build) } } or "" }
+	local osig = {}
+	for _, o in ipairs(d.auto_offer) do osig[#osig + 1] = o.key .. "=" .. o.amount end
+	rebuild(frame, "fork_me_lif_auto_offer", table.concat(osig, ","), function(grid)
+		for _, o in ipairs(d.auto_offer) do G.slot(grid, o.key, o.amount) end
+	end)
+	local box = G.find(frame, "fork_me_lif_auto")
+	box.state = d.auto or auto_mode
+	box.enabled = not auto_mode
+	box.tooltip = auto_mode and { "fork-me-gui.logistic-interface-auto-tooltip-auto" } or { "fork-me-gui.logistic-interface-auto-tooltip" }
+	G.find(frame, "fork_me_lif_auto_line").caption = not (d.auto or auto_mode) and ""
+		or not d.auto_asks and { "fork-me-gui.logistic-interface-auto-other" }
+		or { "", { "fork-me-gui.logistic-interface-auto-asks", tostring(#d.auto_list) },
+			d.auto_skipped > 0 and { "", " ", { "fork-me-gui.logistic-interface-auto-skipped", tostring(d.auto_skipped) } } or "" }
+	local asig = {}
+	for _, a in ipairs(d.auto_list) do asig[#asig + 1] = a.key .. "=" .. a.asked end
+	rebuild(frame, "fork_me_lif_auto_list", table.concat(asig, ","), function(grid)
+		for _, a in ipairs(d.auto_list) do G.slot(grid, a.key, a.asked) end
+	end)
+	rebuild(frame, "fork_me_lif_filter", d.filter or "-", function(box)
+		G.key_button(box, d.filter, G.act("lif_filter"), { "fork-me-gui.key-slot-tooltip" })
+	end)
+	for _, name in ipairs({ "stock", "held", "trash" }) do
+		local list = d[name]
+		local sig = {}
+		for _, c in ipairs(list) do sig[#sig + 1] = c.key .. "=" .. c.count end
+		rebuild(frame, "fork_me_lif_" .. name, table.concat(sig, ","), function(grid)
+			for _, c in ipairs(list) do G.slot(grid, c.key, c.count) end
+		end)
+	end
+	return true
+end
+
+--- the picker for a row or the filter: items only, with their quality
+local function item_picker(player, act, data, key)
+	picker.open(player, { callback = act, data = data, kinds = { item = true }, preset = picker.preset_of(key), quality = true })
+end
+
+local lif_window = storing({ open = open_logistic_interface, refresh = M.refresh_logistic_interface, entities = { lif.NAME } })
+local lif_store = lif_window.shift
+--- shift + click: a card into the card slots, anything else is stored in the network
+lif_window.shift = function(entity, stack, inv)
+	if stack.valid_for_read and N.card_kind(stack.name) then return lif.cards.shift_in(entity, stack) end
+	return lif_store(entity, stack, inv)
+end
+lif_window.click = function(entity, slot, cursor, inv, shift) return lif.cards.card_click(entity, slot, cursor, inv, shift) end
+local lif_message = lif_window.message
+lif_window.message = function(why)
+	if why == "not-here" or why == "limit" or why == "full" then return { "fork-me-gui.refused-" .. why } end
+	return lif_message(why)
+end
+G.window("logistic-interface", lif_window)
+
+G.on("lif_tab", function(event, player)
+	if event.name == defines.events.on_gui_selected_tab_changed then G.refresh_one(player) end
+end)
+
+G.on("lif_row", function(event, player, el)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local tab, index = el.tags.tab, el.tags.index
+	local d = lif.info(entity)
+	local r = d and d[tab] and d[tab][index]
+	if right_click(event) then
+		if r then lif.set_row(entity, tab, index, nil) G.refresh_one(player) end
+		return
+	end
+	item_picker(player, "lif_row", { unit = entity.unit_number, tab = tab, index = index }, r and r.key)
+end)
+
+picker.on_confirm("lif_row", function(player, data, choice)
+	local entity = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	local key = picker.key_of(choice, true)
+	if not (key and lif.set_row(entity, data.tab, data.index, key)) then refused_choice(player) end
+	G.refresh_one(player)
+end)
+
+G.on("lif_amount", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then lif.set_amount(entity, el.tags.tab, el.tags.index, tonumber(el.text) or 0) end
+end)
+
+G.on("lif_accept", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then lif.set_accept(entity, el.state) G.refresh_one(player) end
+end)
+
+G.on("lif_auto", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then lif.set_auto(entity, el.state) G.refresh_one(player) end
+end)
+
+G.on("lif_mode", function(event, player, el)                        -- (issue #537)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then lif.set_mode(entity, el.state and "auto" or "manual") G.refresh_one(player) end
+end)
+
+G.on("lif_filter", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local d = lif.info(entity)
+	if right_click(event) then
+		if d and d.filter then lif.set_filter(entity, nil) G.refresh_one(player) end
+		return
+	end
+	item_picker(player, "lif_filter", { unit = entity.unit_number }, d and d.filter)
+end)
+
+picker.on_confirm("lif_filter", function(player, data, choice)
+	local entity = window_entity(player)
+	if not (entity and entity.unit_number == data.unit) then return end
+	local key = picker.key_of(choice, true)
+	if not (key and lif.set_filter(entity, key)) then refused_choice(player) end
+	G.refresh_one(player)
 end)
 
 G.window("workbench", { open = open_workbench, refresh = M.refresh_workbench, entities = { bench.NAME },
@@ -792,8 +1046,7 @@ function M.controller_data(entity)
 	if not net then return { status = "no-network" } end
 	local st = N.stats(net)
 	st.energy = entity.energy
-	local cap = entity.prototype.electric_energy_source_prototype
-	cap = cap and cap.buffer_capacity
+	local cap = entity.electric_buffer_size                -- (issue #556: set with the draw, not the prototype's)
 	st.supply = cap and cap > 0 and math.min(1, st.energy / cap) or nil    -- (issue #149: the buffer stays full while the network delivers)
 	return st
 end
@@ -866,6 +1119,15 @@ local function pattern_sprite(d)
 end
 M.pattern_sprite = pattern_sprite
 
+--- Issue #544: the number on a pattern's slot: the amount of its first output (nil: none known)
+local function pattern_number(d)
+	local def = patterns.normalize(d)
+	local first = def and type(def.outputs) == "table" and def.outputs[1]
+	local amount = type(first) == "table" and first.amount
+	return type(amount) == "number" and amount > 0 and amount or nil
+end
+M.pattern_number = pattern_number
+
 --- the status line of a slot (LocalisedString)
 local function slot_status(d)
 	if d.pending then return { "fork-me-pattern.status-pending" } end
@@ -891,7 +1153,7 @@ local function build_provider_slots(box, entity)
 		local d = info.slots[slot]
 		local tags = G.act("prov_slot", { slot = slot })
 		if d then
-			t.add{ type = "sprite-button", sprite = pattern_sprite(d), tooltip = slot_tooltip(d), tags = tags,
+			t.add{ type = "sprite-button", sprite = pattern_sprite(d), tooltip = slot_tooltip(d), tags = tags, number = pattern_number(d),
 				style = d.pending and "yellow_slot_button" or d.ok and "slot_button" or "red_slot_button" }
 		else
 			t.add{ type = "sprite-button", style = "slot_button", tooltip = { "fork-me-gui.provider-empty-tooltip" }, tags = tags }
@@ -994,6 +1256,9 @@ local function open_provider(player, entity, opts)
 	G.label(content, "", WIDTH, nil, "fork_me_prov_want")
 	G.label(content, { "fork-me-gui.connector-hint-provider" }, WIDTH)   -- (issue #429: its circuit connector)
 	G.label(content, "", WIDTH, "caption_label", "fork_me_provider_count")
+	G.label(content, "", WIDTH, nil, "fork_me_provider_pending")          -- (issue #558: how many patterns wait)
+	G.row(content).add{ type = "button", caption = { "fork-me-gui.provider-return" },     -- (issue #585)
+		tooltip = { "fork-me-gui.provider-return-tooltip" }, tags = G.act("prov_return") }
 	local scroll = content.add{ type = "scroll-pane", name = "fork_me_provider_scroll", horizontal_scroll_policy = "never" }
 	scroll.style.maximal_height = 380
 	scroll.add{ type = "flow", name = "fork_me_provider_slots", direction = "vertical" }
@@ -1016,6 +1281,8 @@ function M.refresh_provider(player, frame)
 	for _, name in ipairs(pinfo.want or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_prov_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
 	G.find(frame, "fork_me_provider_count").caption = { "fork-me-gui.provider-count", pinfo.filled, pinfo.slot_count }
+	local pend = G.find(frame, "fork_me_provider_pending")
+	if pend then pend.caption = pinfo.pending > 0 and { "fork-me-gui.provider-pending", pinfo.pending } or "" end
 	local dd = G.find(frame, "fork_me_prov_blocking")          -- (issue #335: set elsewhere, by a paste or another player)
 	local index = M.blocking_index(pinfo.blocking)
 	if dd and dd.selected_index ~= index then dd.selected_index = index end
@@ -1085,6 +1352,20 @@ G.on("prov_unlock", function(event, player)
 	if event.name ~= defines.events.on_gui_click then return end
 	local entity = window_entity(player)
 	if entity then autocraft.unlock(entity) end
+	G.refresh_one(player)
+end)
+
+--- Issue #585: "Return all patterns": the provider's patterns go into its network (what does not fit stays)
+G.on("prov_return", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local moved, left = autocraft.return_patterns(entity)
+	local text
+	if not moved then text = G.net_message(left)
+	elseif left > 0 then text = { "fork-me-gui.provider-returned-full", moved, left }
+	else text = { "fork-me-gui.provider-returned", moved } end
+	player.create_local_flying_text{ text = text, create_at_cursor = true }
 	G.refresh_one(player)
 end)
 
@@ -1297,6 +1578,15 @@ function M.refresh_maintainer(player, frame)
 		rebuild(frame, "fork_me_maint_target_" .. i, r.key or "-", function(box)
 			G.key_button(box, r.key, G.act("maint_target", { row = i }), { "fork-me-circuit.maintainer-target-tooltip" }).style.size = 40
 		end)
+		--- issue #544: the row's button shows the stock and, above it, the amount to keep (a fluid filter of one temperature
+		--- keeps its degrees as the number)
+		local box = G.find(frame, "fork_me_maint_target_" .. i)
+		local b = box and box.children[1]
+		if b and r.key and not (r.key:sub(1, 6) == "fluid/" and r.key:find("@%-?%d+$")) then
+			local stock, keep = math.floor(r.stock or 0), r.target or r.amount
+			if b.number ~= stock then b.number = stock end
+			if b.secondary_number ~= keep then b.secondary_number = keep end
+		end
 		local rl = G.find(frame, "fork_me_maint_row_" .. i)
 		if rl then
 			rl.caption = r.key and { "", G.fmt(r.stock or 0), " / ", G.fmt(r.target or r.amount or 0), "  ", circuit.row_status(r) } or ""
@@ -1942,6 +2232,8 @@ end)
 --------------------------------------------------------------------------------
 
 local SBUS_MODES = { "readwrite", "read", "write" }
+--- issue #506: the ME Logistic Storage Bus's modes (the storage chests, also the provider chests, read only)
+local LSBUS_MODES = { "readwrite", "providers", "read" }
 
 function M.storage_bus_data(entity) return sbus.info(entity) end
 
@@ -1951,12 +2243,13 @@ local function open_storage_bus(player, entity)
 	if not d then return end
 	--- issue #28: the player's inventory on the left, the card slots in the window
 	local _, content = G.open_window(player, "storage-bus", caption_of(entity), { unit = entity.unit_number }, true)
-	G.label(content, { "fork-me-net.storage-bus-help" }, WIDTH)
+	local lp = d.logistic and "logistic-" or ""                  -- (issue #506: the logistic bus's own texts)
+	G.label(content, { "fork-me-net." .. lp .. "storage-bus-help" }, WIDTH)
 	local row = G.row(content)
 	row.add{ type = "label", caption = { "fork-me-gui.storage-bus-mode" } }
 	local items, index = {}, 1
-	for i, mode in ipairs(SBUS_MODES) do
-		items[i] = { "fork-me-gui.storage-bus-mode-" .. mode }
+	for i, mode in ipairs(d.logistic and LSBUS_MODES or SBUS_MODES) do
+		items[i] = { "fork-me-gui." .. lp .. "storage-bus-mode-" .. mode }
 		if mode == d.mode then index = i end
 	end
 	row.add{ type = "drop-down", items = items, selected_index = index, tags = G.act("sbus_mode") }
@@ -1987,7 +2280,7 @@ local function open_storage_bus(player, entity)
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-contents" }, tooltip = { "fork-me-gui.storage-bus-contents-tooltip" },
 		tags = G.act("sbus_contents") }
 	buttons.add{ type = "button", caption = { "fork-me-gui.partition-clear" }, tags = G.act("sbus_clear") }
-	G.label(content, { "fork-me-gui.connector-hint" }, WIDTH)   -- (issue #412)
+	if not d.logistic then G.label(content, { "fork-me-gui.connector-hint" }, WIDTH) end   -- (issue #412)
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_holds")
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_target")
 	G.label(content, "", WIDTH, nil, "fork_me_sbus_status")
@@ -2035,8 +2328,9 @@ function M.refresh_storage_bus(player, frame)
 	end
 	G.find(frame, "fork_me_sbus_holds").caption = holds
 	local target = d.target and prototypes.entity[d.target]
-	G.find(frame, "fork_me_sbus_target").caption = target and { "fork-me-gui.bus-target", target.localised_name } or ""
-	G.find(frame, "fork_me_sbus_status").caption = { "fork-me-net." .. (d.side == "fluid" and "fluid-" or "")
+	G.find(frame, "fork_me_sbus_target").caption = target and { "fork-me-gui.bus-target", target.localised_name }
+		or (d.network and { "fork-me-gui.logistic-storage-bus-network", tostring(d.network) }) or ""
+	G.find(frame, "fork_me_sbus_status").caption = { "fork-me-net." .. (d.side == "fluid" and "fluid-" or d.logistic and "logistic-" or "")
 		.. "storage-bus-" .. (d.status or "ok") }
 	return true
 end
@@ -2049,7 +2343,10 @@ G.window("storage-bus", { open = open_storage_bus, refresh = M.refresh_storage_b
 G.on("sbus_mode", function(event, player, el)
 	if event.name ~= defines.events.on_gui_selection_state_changed then return end
 	local entity = window_entity(player)
-	if entity then sbus.set_mode(entity, SBUS_MODES[el.selected_index] or "readwrite") G.refresh_one(player) end
+	if not entity then return end
+	local modes = (M.storage_bus_data(entity) or {}).logistic and LSBUS_MODES or SBUS_MODES
+	sbus.set_mode(entity, modes[el.selected_index] or "readwrite")
+	G.refresh_one(player)
 end)
 
 G.on("sbus_filtermode", function(event, player, el)
@@ -2125,18 +2422,34 @@ local stand_ins = {}            -- name -> a table standing for a LuaPlayer (the
 local stand_in_frames = {}      -- name -> a table standing for a window's frame (issue #311, interface_fluid_view below)
 
 --- Issue #311 (tests): a table standing for a LuaGuiElement, as much of one as the window code that builds and updates
---- a section uses (add, clear, children, name, tags, style and the fields it sets)
+--- a section uses (add, clear, children, name, tags, style and the fields it sets). Issue #545: every field of the `add`
+--- table is kept, a child is found by its name (element.<name>) and can be destroyed, so that G.open_window and
+--- G.close_window run on a stand-in of player.gui.screen.
 local function stand_in_element(def)
-	local el = { type = def.type, name = def.name, caption = def.caption, sprite = def.sprite, number = def.number,
-		tooltip = def.tooltip, elem_tooltip = def.elem_tooltip, value = def.value, tags = def.tags or {}, style = {},
-		style_name = def.style, text = def.text, children = {} }
+	local el = {}
+	for k, v in pairs(def) do el[k] = v end
+	el.tags, el.style, el.style_name, el.children, el.valid = def.tags or {}, {}, def.style, {}, true
 	el.add = function(d)
 		local c = stand_in_element(d)
-		el.children[#el.children + 1] = c
+		--- (issue #602: at its index, as the game puts it)
+		if d.index and d.index <= #el.children then table.insert(el.children, d.index, c) else el.children[#el.children + 1] = c end
+		c.parent = el
 		return c
 	end
 	el.clear = function() el.children = {} end
-	return el
+	el.destroy = function()
+		el.valid = false
+		local p = el.parent
+		for i, c in ipairs(p and p.children or {}) do
+			if c == el then table.remove(p.children, i) break end
+		end
+	end
+	el.add_tab = function() end                         -- (issue #531: a tabbed pane's; its children are what was added)
+	return setmetatable(el, { __index = function(t, k)
+		for _, c in ipairs(rawget(t, "children")) do
+			if c.name == k then return c end
+		end
+	end })
 end
 M.stand_in_element = stand_in_element                 -- (issue #336: the ME Interface Terminal's page in its test)
 remote.add_interface("gregtorio-me-gui", {
@@ -2145,11 +2458,20 @@ remote.add_interface("gregtorio-me-gui", {
 	fit_height = function(height, scale, reserve, max, min)
 		return G.fit_height({ display_resolution = { width = 1920, height = height }, display_scale = scale }, reserve, max, min)
 	end,
-	--- issue #150 (tests): the hand-over buffer of a relative window: its stacks into the block of window `name` (what it
-	--- refuses stays), and what is left back to `to` (a player or an inventory)
-	buffer_absorb = function(inv, name, entity, seen) return G.buffer_absorb(inv, G.def_named(name), entity, seen) end,
-	buffer_return = function(inv, to, entity) G.buffer_return(inv, to, entity) end,
-	buffer_slots = function() return G.BUFFER_SLOTS end,
+	--- issue #542 (tests): a hand-over buffer of a 0.5.10 save for the player `index` (the script inventory `inv` is handed
+	--- over to the GUI module, as the old version kept it), and whether any is kept
+	legacy_buffer = function(index, inv)
+		storage.fork_me_gui_buffer = storage.fork_me_gui_buffer or {}
+		storage.fork_me_gui_buffer[index] = { inv = inv, opened_tick = 0 }
+	end,
+	has_legacy_buffer = function(index)
+		local s = storage.fork_me_gui_buffer
+		return s ~= nil and (index == nil or s[index] ~= nil)
+	end,
+	--- issue #542 (tests): the handling flags of the pane's inventory element (in remote view or not), and what a mod update
+	--- does to the windows
+	pane_flags = function(remote) return G.pane_flags(remote) end,
+	close_all = function() G.close_all() end,
 	--- true when the entity opens an ME window (click or open key)
 	has_window = function(entity) return G.has_window(entity) end,
 	drive_data = function(drive) return M.drive_data(drive) end,
@@ -2213,20 +2535,30 @@ remote.add_interface("gregtorio-me-gui", {
 	--- issue #70: the key of the picker's choice (`with_quality`: an item keeps its quality), a row from a choice
 	key_of_choice = function(choice, with_quality) return picker.key_of(choice, with_quality) end,
 	set_interface_choice = function(entity, i, choice, amount) return M.set_interface_choice(entity, i, choice, amount) end,
-	--- issue #28: a click on slot `slot` of the inventory pane of `entity`'s window (`mode` "left", "right", "shift"), for
-	--- a cursor stack and an inventory standing for the player's; returns the reason of a refusal and "picked"
+	--- issue #28, since #542 the actions of the inventory element (on_gui_inventory_action): `mode` "shift" (stack_transfer),
+	--- "control" (inventory_transfer), "shift-right" (stack_split), "control-right" (inventory_split) or "remote" (a plain
+	--- click in remote view) on slot `slot` of an inventory standing for the player's, in `entity`'s window (or the window
+	--- named `window`); returns the reason of a refusal. (`cursor` is unused: the game moves stacks to and from the hand.)
 	inventory_click = function(cursor, inventory, slot, mode, entity, window)
-		return G.inventory_click(cursor, inventory, slot, mode, window and G.def_named(window) or G.def_of(entity), entity)
+		local A = defines.inventory_actions
+		local action = ({ shift = A.stack_transfer, control = A.inventory_transfer, ["shift-right"] = A.stack_split,
+			["control-right"] = A.inventory_split, remote = A.cursor_transfer })[mode]
+		return G.inventory_action(inventory, slot, action, window and G.def_named(window) or G.def_of(entity), entity, mode == "remote")
 	end,
 	--- Issues #176 and #177: the harness has no player and a remote call cannot carry functions, so a table standing for a
 	--- LuaPlayer is made here from plain data: `spec` = { remote = in remote view, main = the main inventory (not in remote
-	--- view), character = the character's main inventory (nil: no character), index = a number }; kept under `name`.
+	--- view), character = the character's main inventory (nil: no character), index = a number, gui = true: a stand-in of
+	--- player.gui (issue #545: the window functions run on it) }; kept under `name`. Its sounds are recorded.
 	stand_in = function(name, spec)
-		local texts = {}
-		local sp = { object_name = "LuaPlayer", valid = true, index = spec.index or 9001, texts = texts,
+		local texts, sounds = {}, {}
+		local sp = { object_name = "LuaPlayer", valid = true, index = spec.index or 9001, texts = texts, sounds = sounds,
 			controller_type = spec.remote and defines.controllers.remote or defines.controllers.character,
 			get_main_inventory = function() return not spec.remote and spec.main or nil end,
-			create_local_flying_text = function(a) texts[#texts + 1] = a.text end }
+			create_local_flying_text = function(a) texts[#texts + 1] = a.text end,
+			play_sound = function(a) sounds[#sounds + 1] = a.path end,
+			can_reach_entity = function() return true end, force = game.forces.player, surface = game.surfaces[1],
+			position = { x = 0, y = 0 } }
+		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
 		if spec.character then
 			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
 				get_inventory = function() return spec.character end }
@@ -2236,11 +2568,119 @@ remote.add_interface("gregtorio-me-gui", {
 	end,
 	stand_in_inventory = function(name) return G.player_inventory(stand_ins[name]) end,
 	stand_in_hand = function(name) return G.hand(stand_ins[name]) end,
-	stand_in_uses_buffer = function(name) return G.uses_buffer(stand_ins[name]) end,
+	stand_in_drop_buffer = function(name) return G.drop_buffer(stand_ins[name]) end,    -- (issue #542)
+	parked_count = function(player) return G.parked_count(player) end,                  -- (a real player's, issue #542)
 	stand_in_give_back = function(name, stack, entity) G.give_back(stand_ins[name], stack, entity) end,
 	stand_in_parked = function(name) return G.parked_count(stand_ins[name]) end,
 	stand_in_return_parked = function(name) return G.return_parked(stand_ins[name]) end,
 	stand_in_texts = function(name) return stand_ins[name].texts end,
+	--- Issue #545: the window `window` (a registered name) of the unit `unit` opened for a stand-in with `gui` (G.open_window, as the
+	--- windows' open functions call it), what it built: { open, opened = it is the opened GUI, and the pane's inventory element
+	--- (issue #542): inventory_bound, cursor_transfer, slots_per_row }; closing it (`sound`: for good), the sounds it got
+	stand_in_open_window = function(name, window, unit)
+		local sp = stand_ins[name]
+		local frame = G.open_window(sp, window, "devcheck", { unit = unit })
+		local el = G.find(frame, "fork_me_inv")
+		return { open = sp.gui.screen.fork_me_window == frame, opened = sp.opened == frame,
+			inventory_bound = el ~= nil and el.inventory == G.player_inventory(sp),
+			cursor_transfer = el and el.handle_cursor_transfer, slots_per_row = el and el.slots_per_row }
+	end,
+	stand_in_close_window = function(name, sound) G.close_window(stand_ins[name], sound) end,
+	--- Issue #543: `entity`'s window opened for a stand-in with `gui` (the open key's path, G.open_entity) and refreshed once;
+	--- its block inventory elements: { { box = the flow's name, inventory, offset, size, cursor_transfer } }, and its slot
+	--- buttons (block_slot) by flow name
+	stand_in_open_entity = function(name, entity)
+		local sp = stand_ins[name]
+		G.open_entity(sp, entity)
+		local frame = G.window_of(sp)
+		if not frame then return nil end
+		G.refresh_one(sp)
+		local out = { elements = {}, buttons = {} }
+		local queue, i = { frame }, 1
+		while queue[i] do
+			for _, c in pairs(queue[i].children) do
+				local tags = c.tags or {}
+				if c.type == "inventory" and tags.fork_me_act == "block_inventory" then
+					out.elements[#out.elements + 1] = { box = c.parent.name, inventory = c.inventory, offset = tags.offset,
+						size = c.slots_per_row, cursor_transfer = c.handle_cursor_transfer, empty = c.empty_slot_info }
+				elseif tags.fork_me_act == "block_slot" then
+					out.buttons[c.parent.name] = (out.buttons[c.parent.name] or 0) + 1
+				end
+				queue[#queue + 1] = c
+			end
+			i = i + 1
+		end
+		return out
+	end,
+	--- Issue #544: in the stand-in's open window, select tab `index` of the tabbed pane `tabs` and refresh (only the shown tab of
+	--- the terminal is refreshed); and the buttons below the element `element`: { { sprite, number, secondary_number, enabled
+	--- (issue #602) } }
+	stand_in_select_tab = function(name, tabs, index)
+		local sp = stand_ins[name]
+		local frame = G.window_of(sp)
+		local t = frame and G.find(frame, tabs)
+		if not t then return false end
+		t.selected_tab_index = index
+		G.refresh_one(sp)
+		return true
+	end,
+	stand_in_numbers = function(name, element)
+		local frame = G.window_of(stand_ins[name])
+		local root = frame and G.find(frame, element)
+		local out = {}
+		local queue, i = { root }, 1
+		while root and queue[i] do
+			for _, c in pairs(queue[i].children) do
+				if c.type == "sprite-button" then
+					out[#out + 1] = { sprite = c.sprite, number = c.number, secondary_number = c.secondary_number, enabled = c.enabled }
+				end
+				queue[#queue + 1] = c
+			end
+			i = i + 1
+		end
+		return out
+	end,
+	--- Issue #543: an action on slot `slot` of a block's inventory element (`binv`, the window's slots offset by `offset`) of
+	--- `entity`'s window: `mode` "click", "right", "shift", "control" or "remote" (a click in remote view), with `cursor` and the
+	--- player's `inventory`; returns the reason of a refusal and "out"
+	block_action = function(entity, binv, slot, mode, cursor, inventory, offset)
+		local A = defines.inventory_actions
+		local action = ({ click = A.cursor_transfer, right = A.cursor_split, shift = A.stack_transfer, control = A.inventory_transfer,
+			remote = A.cursor_transfer })[mode]
+		return G.block_action(G.def_of(entity), entity, binv, slot, action, mode ~= "remote" and cursor or nil, inventory,
+			mode == "remote", offset)
+	end,
+	--- Issue #585: a left click on the element of the stand-in's open window whose action is `act` (and whose tags.what is `what`
+	--- when given, false: any), through the action's handler; then the captions of the labels in the window's element `element` (nil: none)
+	--- and the captions of its buttons. Returns false when there is no such element.
+	stand_in_act = function(name, act, what, element)
+		local sp = stand_ins[name]
+		local frame = G.window_of(sp)
+		local function each(root, fn)
+			local queue, i = { root }, 1
+			while root and queue[i] do
+				for _, c in pairs(queue[i].children) do
+					if fn(c) then return c end
+					queue[#queue + 1] = c
+				end
+				i = i + 1
+			end
+		end
+		local el = act and each(frame, function(c)
+			local tags = c.tags or {}
+			return tags.fork_me_act == act and (not what or tags.what == what)
+		end)
+		if act and not (el and G.run_action({ name = defines.events.on_gui_click, element = el,
+			button = defines.mouse_button_type.left }, sp, el)) then return false end
+		frame = G.window_of(sp)
+		local labels, buttons = {}, {}
+		each(frame and element and G.find(frame, element), function(c)
+			if c.type == "label" then labels[#labels + 1] = c.caption end
+			if c.type == "button" then buttons[#buttons + 1] = c.caption end
+		end)
+		return { labels = labels, buttons = buttons }
+	end,
+	stand_in_sounds = function(name) return stand_ins[name].sounds end,
 	stand_in_forget = function(name) stand_ins[name] = nil stand_in_frames[name] = nil end,
 	--- Issue #311: the fluid entries of an interface's window, and its fluid section built into a stand-in frame kept
 	--- under `name` (like an open window between its refreshes; the harness has no player): { rebuilt = built anew by
@@ -2274,6 +2714,60 @@ remote.add_interface("gregtorio-me-gui", {
 				out.rows[#out.rows + 1] = { side = side.caption, sprite = button.sprite, number = button.number,
 					tooltip = button.tooltip, elem_tooltip = button.elem_tooltip, value = bar.value, caption = text.caption }
 			end
+		end
+		return out
+	end,
+	--- Issue #511: the window of a quantum bridge or a wireless link built into a stand-in frame kept under `name` (like an
+	--- open window between its refreshes; the harness has no player), `text` typed into its frequency field (nil:
+	--- nothing), then refreshed as every 60 ticks: { ok = still open, text = the field's text, shown = its tag }
+	qbridge_view = function(name, entity, text)
+		local frame = stand_in_frames[name]
+		local first = not frame
+		if first then
+			frame = stand_in_element{ type = "frame", tags = { unit = entity.unit_number } }
+			qbridge_content(frame, entity)
+			stand_in_frames[name] = frame
+		end
+		local f = G.find(frame, "fork_me_qb_freq")
+		if text then f.text = text end
+		local ok = M.refresh_qbridge({ valid = true, can_reach_entity = function() return true end }, frame, first)
+		return { ok = ok, text = f.text, shown = f.tags.shown }
+	end,
+	--- Issue #531: the ME Logistic Interface's window built into a stand-in frame and refreshed: { ok, status, net, rows (the
+	--- request tab's row buttons: { key, red }), asked (the request rows' "asks" captions), accept }
+	lif_view = function(entity)
+		local frame = stand_in_element{ type = "frame", tags = { unit = entity.unit_number } }
+		lif_content(frame)
+		local ok = M.refresh_logistic_interface({ valid = true, can_reach_entity = function() return true end }, frame)
+		local out = { ok = ok, rows = {}, asked = {} }
+		local box = G.find(frame, "fork_me_lif_rows_request")
+		local t = box and box.children[1]
+		for _, c in ipairs(t and t.children or {}) do
+			if c.type == "sprite-button" then out.rows[#out.rows + 1] = { sprite = c.sprite, red = c.style == "red_slot_button" } end
+		end
+		local i = 1
+		while G.find(frame, "fork_me_lif_asked_" .. i) do
+			out.asked[i] = G.find(frame, "fork_me_lif_asked_" .. i).caption
+			i = i + 1
+		end
+		out.status = G.find(frame, "fork_me_lif_status").caption
+		out.net = G.find(frame, "fork_me_lif_net").caption
+		out.accept = G.find(frame, "fork_me_lif_accept").state
+		out.auto, out.auto_line = G.find(frame, "fork_me_lif_auto").state, G.find(frame, "fork_me_lif_auto_line").caption   -- (issue #532)
+		out.auto_list = #G.find(frame, "fork_me_lif_auto_list").children
+		out.mode, out.mode_line = G.find(frame, "fork_me_lif_mode").state, G.find(frame, "fork_me_lif_mode_line").caption   -- (issue #537)
+		out.auto_offer = #G.find(frame, "fork_me_lif_auto_offer").children
+		out.auto_enabled = G.find(frame, "fork_me_lif_auto").enabled
+		return out
+	end,
+	--- Issue #514: the ME Terminal's row above the tabs (the search, the quality filter) built into a stand-in for a player
+	--- whose terminal state has the quality filter `quality` (nil: any): { { type, name, items, selected_index } per element }
+	terminal_top_view = function(quality)
+		local frame = stand_in_element{ type = "frame" }
+		local top = terminal.build_top(frame, { filter = "", quality = quality })
+		local out = {}
+		for i, c in ipairs(top.children) do
+			out[i] = { type = c.type, name = c.name, items = c.items, selected_index = c.selected_index }
 		end
 		return out
 	end,

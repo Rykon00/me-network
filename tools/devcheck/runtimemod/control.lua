@@ -306,14 +306,15 @@ function me_graph_test()
 		local e = s.create_entity{ name = "me-drive", position = { GX + 12.5, GY + 4.5 }, force = "player", raise_built = true }
 		local placed, unreached = remote.call(NET, "connect", { a, e }, 8)
 		expect(placed > 0 and #unreached == 0 and same(a, e), "router: " .. placed .. " cables, " .. #unreached .. " unreached")
-		--- underground cable: drive, end facing east, 3 free tiles, end facing west, drive (no controller needed)
+		--- underground cable (the vanilla underground pipe's rule: the cable side on its direction): drive, end facing west
+		--- (its cable side to the drive), 3 free tiles, end facing east, drive (no controller needed)
 		local ux, uy = GX + 20.5, GY + 12.5
 		local function put(name, dx, dy, dir)
 			return s.create_entity{ name = name, position = { ux + dx, uy + dy }, force = "player", direction = dir, raise_built = true }
 		end
 		local ud1 = put("me-drive", 0, 0)
-		local u1 = put("me-underground-cable", 1, 0, defines.direction.east)
-		local u2 = put("me-underground-cable", 5, 0, defines.direction.west)
+		local u1 = put("me-underground-cable", 1, 0, defines.direction.west)
+		local u2 = put("me-underground-cable", 5, 0, defines.direction.east)
 		local ud2 = put("me-drive", 6, 0)
 		expect(ud1 and u1 and u2 and ud2 and same(ud1, ud2), "the drives are not connected through the underground cable")
 		expect(u1 and u2 and remote.call(NET, "underground_partner", u1) == u2.unit_number, "the underground ends did not pair")
@@ -325,33 +326,157 @@ function me_graph_test()
 		--- removing an end splits, placing it again joins
 		u2.destroy{ raise_destroy = true }
 		expect(not same(ud1, ud2), "still connected without the second end")
-		u2 = put("me-underground-cable", 5, 0, defines.direction.west)
+		u2 = put("me-underground-cable", 5, 0, defines.direction.east)
 		expect(u2 and same(ud1, ud2), "not connected again after placing the end again")
 		--- rotating an end breaks the link (and turning it back restores it)
 		u1.direction = defines.direction.south
 		remote.call(NET, "rotated", u1)
 		expect(not same(ud1, ud2) and remote.call(NET, "underground_partner", u2) == nil, "still linked after rotating an end")
-		u1.direction = defines.direction.east
+		u1.direction = defines.direction.west
 		remote.call(NET, "rotated", u1)
 		expect(same(ud1, ud2), "not linked after rotating the end back")
 		st.underground = { ud1 = ud1, ud2 = ud2, u1 = u1, u2 = u2, over = over, beside = beside }
 		--- out of reach: an end 12 tiles away does not pair
-		local far1 = put("me-underground-cable", 1, 3, defines.direction.east)
-		local far2 = put("me-underground-cable", 13, 3, defines.direction.west)
+		local far1 = put("me-underground-cable", 1, 3, defines.direction.west)
+		local far2 = put("me-underground-cable", 13, 3, defines.direction.east)
 		expect(far1 and far2 and remote.call(NET, "underground_partner", far1) == nil, "ends 12 tiles apart paired")
 		--- it is an underground pipe of its own category: a pipe next to it does not connect
 		local pipe = put("pipe", 0, 3)
 		expect(pipe and #pipe.get_fluid_box_neighbours(1) == 0, "a pipe connected to an underground cable")
 		--- an end placed between a pair takes the near end (like underground pipes); removing it gives the pair back
 		local wd1, wd2 = put("me-drive", 0, 6), put("me-drive", 8, 6)
-		local w1 = put("me-underground-cable", 1, 6, defines.direction.east)
-		local w2 = put("me-underground-cable", 7, 6, defines.direction.west)
+		local w1 = put("me-underground-cable", 1, 6, defines.direction.west)
+		local w2 = put("me-underground-cable", 7, 6, defines.direction.east)
 		expect(same(wd1, wd2), "the second pair did not connect")
-		local w3 = put("me-underground-cable", 4, 6, defines.direction.west)
+		local w3 = put("me-underground-cable", 4, 6, defines.direction.east)
 		expect(remote.call(NET, "underground_partner", w1) == w3.unit_number and not same(wd1, wd2)
 			and remote.call(NET, "underground_partner", w2) == nil, "the middle end did not take the near end")
 		w3.destroy{ raise_destroy = true }
 		st.weave = { wd1 = wd1, wd2 = wd2, w1 = w1, w2 = w2 }
+		--- dragging ME Cable over an obstacle: the two cables at its sides become an underground pair (like belts)
+		local function row(y, from, to, gap_walls, chest_items)
+			local c = { }
+			for x = from, to do
+				if gap_walls[x] then put("stone-wall", x, y) else c[x] = put("me-cable", x, y) end
+			end
+			local chest = chest_items and put("wooden-chest", from - 1, y + 1)
+			if chest then for name, n in pairs(chest_items) do chest.insert{ name = name, count = n } end end
+			return c, chest
+		end
+		local walls = { [3] = true, [4] = true, [5] = true }
+		local dd1, dd2 = put("me-drive", 0, 9), put("me-drive", 8, 9)
+		local c, chest = row(9, 1, 7, walls, { ["me-underground-cable"] = 3 })
+		local exit, entry = remote.call(NET, "drag_bridge", c[2], c[6], chest)
+		local inv = chest.get_inventory(defines.inventory.chest)
+		expect(exit and entry and entry.name == "me-underground-cable" and entry.direction == defines.direction.west
+			and exit.direction == defines.direction.east and same(dd1, dd2)
+			and remote.call(NET, "underground_partner", entry) == exit.unit_number,
+			"a dragged cable over walls did not become a connected underground pair")
+		expect(inv.get_item_count("me-underground-cable") == 1 and inv.get_item_count("fluix-cable") == 2,
+			"the drag took or gave back the wrong items: " .. serpent.line(inv.get_contents()))
+		--- no underground cables in the inventory: nothing changes
+		c, chest = row(12, 1, 7, walls, { ["iron-plate"] = 1 })
+		expect(not remote.call(NET, "drag_bridge", c[2], c[6], chest) and c[2].valid and c[6].valid,
+			"bridged without underground cables")
+		--- a gap without an obstacle, a gap with an ME cable in it and a gap wider than the reach are left alone
+		c, chest = row(15, 1, 7, {}, { ["me-underground-cable"] = 2 })
+		expect(not remote.call(NET, "drag_bridge", c[2], c[6], chest), "bridged a gap without an obstacle")
+		c, chest = row(18, 1, 7, { [3] = true, [5] = true }, { ["me-underground-cable"] = 2 })
+		expect(not remote.call(NET, "drag_bridge", c[2], c[6], chest), "bridged a gap with an ME cable in it")
+		local wide = {}
+		for x = 3, 12 do wide[x] = true end
+		c, chest = row(21, 1, 14, wide, { ["me-underground-cable"] = 4 })
+		expect(not remote.call(NET, "drag_bridge", c[2], c[13], chest), "bridged a gap wider than the reach")
+		--- the widest gap the reach allows pairs (the ends 10 tiles apart)
+		wide[12] = nil
+		c, chest = row(24, 1, 13, wide, { ["me-underground-cable"] = 2 })
+		local fx = remote.call(NET, "drag_bridge", c[2], c[12], chest)
+		expect(fx and remote.call(NET, "underground_partner", fx) ~= nil, "the ends at the full reach did not pair")
+		--- ghosts (a shift drag) become ghosts of the pair, without items
+		local g1 = s.create_entity{ name = "entity-ghost", inner_name = "me-cable", position = { ux + 2, uy + 27 }, force = "player" }
+		put("stone-wall", 3, 27)
+		local g2 = s.create_entity{ name = "entity-ghost", inner_name = "me-cable", position = { ux + 4, uy + 27 }, force = "player" }
+		local gx, ge = remote.call(NET, "drag_bridge", g1, g2, nil)
+		expect(gx and ge and gx.ghost_name == "me-underground-cable" and ge.ghost_name == "me-underground-cable"
+			and ge.direction == defines.direction.west, "a dragged ghost over a wall did not become a ghost pair")
+		--- an older save (before 0.5.11, the run along the direction): its ends are turned around once and stay paired
+		local m1 = put("me-underground-cable", 1, 30, defines.direction.east)
+		local m2 = put("me-underground-cable", 6, 30, defines.direction.west)
+		local md1, md2 = put("me-cable", 0, 30), put("me-cable", 7, 30)
+		local mg = s.create_entity{ name = "entity-ghost", inner_name = "me-underground-cable", position = { ux + 3, uy + 33 },
+			direction = defines.direction.north, force = "player" }
+		expect(not same(md1, md2), "an end facing away from its cable connected to it")
+		local turned = remote.call(NET, "migrate_underground_direction", s, { { ux - 0.5, uy + 29.5 }, { ux + 8, uy + 33.6 } })
+		expect(turned == 3 and m1.direction == defines.direction.west and m2.direction == defines.direction.east
+			and mg.direction == defines.direction.south, "the turn of an older save's underground cables: " .. tostring(turned))
+		st.migrated = { md1 = md1, md2 = md2, m1 = m1, m2 = m2 }        -- (connected by the graph rebuild below)
+		expect(remote.call(NET, "migrate_underground_direction") == nil, "the turn of a save ran a second time")
+		--- cable and underground cable replace each other in place (fast replace, like pipe and underground pipe)
+		local rd1, rd2 = put("me-drive", 0, 36), put("me-drive", 7, 36)
+		local rc = {}
+		for x = 1, 6 do rc[x] = put("me-cable", x, 36) end
+		local function replace(name, x, dir)
+			local p = { ux + x, uy + 36 }
+			if not s.can_fast_replace{ name = name, position = p, direction = dir, force = "player" } then return nil end
+			local e = s.create_entity{ name = name, position = p, direction = dir, force = "player", fast_replace = true,
+				spill = false, raise_built = true }
+			remote.call(NET, "sweep")                                  -- (a script's fast replace raises no removal)
+			return e
+		end
+		local r1 = replace("me-underground-cable", 1, defines.direction.west)
+		local r6 = replace("me-underground-cable", 6, defines.direction.east)
+		expect(r1 and r6 and not rc[1].valid and not rc[6].valid and same(rd1, rd2)
+			and remote.call(NET, "underground_partner", r1) == r6.unit_number,
+			"a cable could not be replaced by an underground cable in place")
+		local back = replace("me-cable", 6)
+		expect(back and back.name == "me-cable" and not r6.valid and remote.call(NET, "underground_partner", r1) == nil,
+			"an underground cable could not be replaced by a cable in place")
+		--- blueprints (like pipes and underground pipes, belts and underground belts): a shift paste (superforced) of an
+		--- underground cable over a cable, or of a cable over an underground cable, makes the ghost and marks the old one for
+		--- deconstruction; over a ghost it replaces the ghost; the robots' work (the old one mined, the ghost revived) joins
+		--- the network. A normal paste leaves a different entity alone, as for the vanilla pairs.
+		do
+			local inv = game.create_inventory(1)
+			inv.insert{ name = "blueprint" }
+			local bp = inv[1]
+			local function paste(name, x, y, dir, mode)
+				bp.set_blueprint_entities({ { entity_number = 1, name = name, position = { 0.5, 0.5 }, direction = dir } })
+				return bp.build_blueprint{ surface = s, force = "player", position = { ux + x, uy + y },
+					build_mode = defines.build_mode[mode] } or {}
+			end
+			local function robots(x, y)
+				for _, e in pairs(s.find_entities_filtered{ position = { ux + x, uy + y }, radius = 0.3, to_be_deconstructed = true }) do
+					e.destroy{ raise_destroy = true }
+				end
+				local g = s.find_entities_filtered{ position = { ux + x, uy + y }, radius = 0.3, type = "entity-ghost" }[1]
+				if g then g.revive{ raise_revive = true } end
+				return s.find_entities_filtered{ position = { ux + x, uy + y }, radius = 0.3, name = { "me-cable", "me-underground-cable" } }[1]
+			end
+			local bd1, bd2 = put("me-drive", 0, 40), put("me-drive", 7, 40)
+			for x = 1, 6 do put("me-cable", x, 40) end
+			local n0 = #paste("me-underground-cable", 1, 40, defines.direction.west, "normal")
+			local c1 = s.find_entity("me-cable", { ux + 1, uy + 40 })
+			expect(n0 == 0 and c1 and not c1.to_be_deconstructed(), "a normal paste replaced a cable")
+			local n1 = #paste("me-underground-cable", 1, 40, defines.direction.west, "superforced")
+			local n2 = #paste("me-underground-cable", 6, 40, defines.direction.east, "superforced")
+			expect(n1 == 1 and n2 == 1 and c1.to_be_deconstructed(), "a shift paste of underground cables over cables: "
+				.. n1 .. ", " .. n2 .. " ghosts")
+			local e1, e6 = robots(1, 40), robots(6, 40)
+			expect(e1 and e6 and e1.name == "me-underground-cable" and same(bd1, bd2)
+				and remote.call(NET, "underground_partner", e1) == e6.unit_number,
+				"the robots' underground cables from a blueprint over cables do not connect")
+			--- and back: a cable over an underground cable, and an underground cable's ghost over a cable's ghost
+			local n3 = #paste("me-cable", 6, 40, nil, "superforced")
+			local c6 = robots(6, 40)
+			expect(n3 == 1 and c6 and c6.name == "me-cable" and remote.call(NET, "underground_partner", e1) == nil,
+				"a cable from a blueprint over an underground cable")
+			s.create_entity{ name = "entity-ghost", inner_name = "me-cable", position = { ux + 3, uy + 42 }, force = "player" }
+			local n4 = #paste("me-underground-cable", 3, 42, defines.direction.west, "superforced")
+			local gs = s.find_entities_filtered{ position = { ux + 3, uy + 42 }, radius = 0.3, type = "entity-ghost" }
+			expect(n4 == 1 and #gs == 1 and gs[1].ghost_name == "me-underground-cable", "a blueprint over a cable's ghost: "
+				.. #gs .. " ghosts")
+			inv.destroy()
+		end
 		--- cables can be walked over
 		local mask = prototypes.entity["me-cable"].collision_mask.layers
 		expect(not mask.player and not prototypes.entity["me-underground-cable"].collision_mask.layers.player,
@@ -396,7 +521,12 @@ function me_graph_test()
 					"the underground pair is lost after the graph rebuild")
 				expect(not same(u.over, u.ud1) and not same(u.beside, u.ud1), "the graph rebuild joined cables over or beside the run")
 			end
-			return finish("join, split, conflict, sweep, router, underground cable, walkable, power")
+			local m = st.migrated
+			if m then
+				expect(same(m.md1, m.md2) and remote.call(NET, "underground_partner", m.m1) == m.m2.unit_number,
+					"the turned underground cables of an older save are not connected after the graph rebuild")
+			end
+			return finish("join, split, conflict, sweep, router, underground cable, cable drag, underground turn, fast replace, blueprints, walkable, power")
 		end
 	end
 	if #problems > 0 then finish() end
@@ -893,6 +1023,8 @@ margin51 = require("margin")({ me_place = me_place, me_report = me_report })
 refill67 = require("refill")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #86: an ME Export Bus into a lab (lab.lua)
 lab86 = require("lab")({ me_place = me_place, power = power, me_report = me_report })
+--- me-network issue #595: Krastorio 2's containers, tanks, labs, matter machines and steel pipes (krastorio2.lua; skipped without it)
+krastorio2_595 = require("krastorio2")({ me_place = me_place, power = power, me_report = me_report })
 --- me-network issue #382: an ME Export Bus into a recipe of more than a stack (bulkexport.lua)
 bulk382 = require("bulkexport")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -934,6 +1066,15 @@ plans50 = require("plans")({ me_place = me_place, me_report = me_report })
 scan50 = require("scan")({ me_place = me_place, me_report = me_report })
 --- me-network issue #50, lever 8: the terminal's kept entries (entries.lua)
 entries50 = require("entries")({ me_place = me_place, me_report = me_report })
+--- me-network issue #514: the terminal's quality filter and sort by quality (qualityterm.lua)
+qualityterm514 = require("qualityterm")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
+	me_connect = me_connect })
+--- me-network issue #602: the terminal's sort preference, sorts by mod and tier, rows kept at 0 (sortprefs.lua)
+sortprefs602 = require("sortprefs")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
+	me_connect = me_connect })
+--- me-network issue #603: the wireless refill (wrefill.lua)
+wrefill603 = require("wrefill")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
+	me_connect = me_connect })
 --- me-network issue #59: the storage engine's kept holder lists (holderlists.lua)
 holderlists59 = require("holderlists")({ me_place = me_place, me_report = me_report })
 --- me-network issue #59, lever 3: the machine a crafting job step takes (crafter.lua)
@@ -959,14 +1100,30 @@ providers158 = require("providers")({ me_place = me_place, power = power, me_rep
 --- me-network issue #157: a machine fed by an interface that keeps one craft (pastecraft.lua)
 pastecraft157 = require("pastecraft")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
---- me-network issue #150: the terminal's hand-over buffer (buffer150.lua)
-buffer150 = require("buffer150")({ me_place = me_place, power = power, me_report = me_report,
+--- me-network issue #542: the native inventory element of the ME windows; the hand-over buffer of #150 is gone (nativeinv.lua)
+nativeinv542 = require("nativeinv")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #545: the machine window sounds of the ME windows (windowsound.lua)
+windowsound545 = require("windowsound")({ me_report = me_report })
+--- me-network issue #543: the block slots of the ME windows as inventory elements (blockinv.lua)
+blockinv543 = require("blockinv")({ me_place = me_place, me_report = me_report, power = power })
 --- me-network issues #176 and #177: ME windows in remote view (remoteview.lua)
 remoteview176 = require("remoteview")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #155: the storage bus's filter mode (sbusmode.lua)
 sbusmode155 = require("sbusmode")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #506: the ME Logistic Storage Bus (lsbus.lua)
+lsbus506 = require("lsbus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #531: the ME Logistic Interface (lif.lua)
+lif531 = require("lif")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #537: the ME Logistic Interface's automatic mode (lifauto.lua)
+lifauto537 = require("lifauto")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #538: the ME Logistic Interface's construction supply (lifbuild.lua)
+lifbuild538 = require("lifbuild")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #156: the ME Pattern Capacity Card (patterncap.lua)
 patterncap156 = require("patterncap")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
@@ -1035,6 +1192,35 @@ perf420 = require("perf420")({ me_place = me_place, cable_row = cable_row, power
 --- me-network issue #468: the light of a cell with all its types used (celllight.lua)
 celllight468 = require("celllight")({ me_place = me_place, power = power, me_report = me_report,
 	me_connect = function(...) return me_connect(...) end })
+--- me-network issue #558: a pattern provider's waiting patterns, their status and the sources that fill them (pending.lua)
+pending558 = require("pending")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #585: settings paste of a provider's patterns, bulk clearing of encoded patterns (patternbulk.lua)
+patternbulk585 = require("patternbulk")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #561: the ME Memory Card (memcard.lua)
+--- me-network issue #590: the cards of blocks built from a blueprint (bpcards.lua)
+bpcards590 = require("bpcards")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
+memcard561 = require("memcard")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #559: ME Wireless Link groups (wgroup.lua)
+wgroup559 = require("wgroup")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #623: underground cable chains never overextend (extent.lua)
+extent623 = require("extent")({ me_place = me_place, me_report = me_report })
+--- me-network issue #562: the Singularity cell for fluids (singfluid.lua)
+singfluid562 = require("singfluid")({ me_place = me_place, power = power, me_report = me_report,
+	me_connect = function(...) return me_connect(...) end })
+--- me-network issue #560: the ME Molecular Assembler carries the network, its power through the controller (asmnet.lua)
+asmnet560 = require("asmnet")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #557: a fast machine kept busy by its job (fastcraft.lua)
+fastcraft557 = require("fastcraft")({ me_place = me_place, power = power, me_report = me_report, cable_row = cable_row,
+	me_drive = function(...) return me_drive(...) end })
+--- me-network issue #556: the ME Controller's buffer follows a draw above 6 MW (bigpower.lua)
+bigpower556 = require("bigpower")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #442: the Creative Energy Cell (creativeenergy.lua)
 creativeenergy442 = require("creativeenergy")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1120,6 +1306,7 @@ local function tests_running()
 	taglabel485.running(check)
 	fuzzydata493.running(check)
 	lab86.running(check)
+	krastorio2_595.running(check)
 	bulk382.running(check)
 	copypaste383.running(check)
 	disassembly387.running(check)
@@ -1133,6 +1320,9 @@ local function tests_running()
 	plans50.running(check)
 	scan50.running(check)
 	entries50.running(check)
+	qualityterm514.running(check)
+	sortprefs602.running(check)
+	wrefill603.running(check)
 	holderlists59.running(check)
 	crafter59.running(check)
 	holders43.running(check)
@@ -1143,7 +1333,9 @@ local function tests_running()
 	ifacefluids311.running(check)
 	providers158.running(check)
 	pastecraft157.running(check)
-	buffer150.running(check)
+	nativeinv542.running(check)
+	windowsound545.running(check)
+	blockinv543.running(check)
 	sticky193.running(check)
 	chest229.running(check)
 	wireless205.running(check)
@@ -1168,6 +1360,16 @@ local function tests_running()
 	viewcell440.running(check)
 	creativecell441.running(check)
 	creativeenergy442.running(check)
+	bigpower556.running(check)
+	fastcraft557.running(check)
+	asmnet560.running(check)
+	singfluid562.running(check)
+	wgroup559.running(check)
+	extent623.running(check)
+	memcard561.running(check)
+	patternbulk585.running(check)
+	bpcards590.running(check)
+	pending558.running(check)
 	celllight468.running(check)
 	maintrows351.running(check)
 	cpumode350.running(check)
@@ -1175,6 +1377,10 @@ local function tests_running()
 	voidcell354.running(check)
 	togglebus355.running(check)
 	sbusmode155.running(check)
+	lsbus506.running(check)
+	lif531.running(check)
+	lifauto537.running(check)
+	lifbuild538.running(check)
 	remoteview176.running(check)
 	graph43.running(check)
 	return running
@@ -1610,11 +1816,19 @@ function furnace_test()
 		local ok, why = remote.call(PT, "clear", pterm, hand[1], inv)
 		expect(not ok and why == "no-pattern-in-hand", "clearing a blank pattern: " .. tostring(why))
 		expect(inv.get_item_count(ENCODED) == 0 and not remote.call(A, "provider_info", pa).slots[1], "slot 1 not empty after taking the pattern")
-		--- settings paste: the priority, no patterns
+		--- settings paste: the priority, and (issue #585) the pattern of slot 2, encoded from the network's last blank; taken out
+		--- and cleared to a blank again, back into the network
 		remote.call(A, "set_priority", pa, 5)
 		remote.call(A, "paste", pa, pb)
 		local pbi = remote.call(A, "provider_info", pb)
-		expect(pbi.priority == 5 and next(pbi.slots) == nil, "pasted provider " .. serpent.line(pbi))
+		expect(pbi.priority == 5 and pbi.slots[2] and not pbi.slots[2].pending and pbi.slots[2].kind == "processing"
+			and not pbi.slots[1] and count(BLANK) == FU_BLANKS - 2, "pasted provider " .. serpent.line(pbi) .. ", blanks " .. count(BLANK))
+		local h2 = game.create_inventory(1)                       -- (the hand still holds the blank cleared above)
+		expect(remote.call(A, "provider_click", h2[1], inv, pb, 2, false) == nil and remote.call(PT, "clear", pterm, h2[1], inv)
+			and h2[1].valid_for_read and h2[1].name == BLANK and remote.call(TERM, "store_stack", terminal, h2[1]) == 1
+			and count(BLANK) == FU_BLANKS - 1 and next(remote.call(A, "provider_info", pb).slots) == nil,
+			"the pasted pattern cleared back into the network: blanks " .. count(BLANK))
+		h2.destroy()
 		--- blueprint: priority and patterns as entity tag
 		local bpi = game.create_inventory(1)
 		bpi.insert{ name = "blueprint" }
@@ -2023,7 +2237,7 @@ local function schedule_digest()
 	for _, e in pairs(s.find_entities_filtered{ name = { "me-network-interface", "me-import-bus", "me-export-bus" } }) do
 		put("io", e, remote.call(IO, "schedule", e))
 	end
-	for _, e in pairs(s.find_entities_filtered{ name = "me-storage-bus" }) do
+	for _, e in pairs(s.find_entities_filtered{ name = { "me-storage-bus", "me-logistic-storage-bus" } }) do   -- (issue #506)
 		put("sb", e, remote.call(SB_REMOTE, "schedule", e))
 	end
 	for _, e in pairs(s.find_entities_filtered{ name = { "me-level-maintainer", "me-circuit-interface" } }) do
@@ -2031,6 +2245,11 @@ local function schedule_digest()
 	end
 	for _, e in pairs(s.find_entities_filtered{ name = "me-io-port" }) do                -- (issue #386)
 		put("iop", e, remote.call("gregtorio-me-ioport", "schedule", e))
+	end
+	for _, surface in pairs(game.surfaces) do                                           -- (issue #531, #537: on surfaces of their own)
+		for _, e in pairs(surface.find_entities_filtered{ name = "me-logistic-interface" }) do
+			put("lif", e, remote.call("gregtorio-me-logistic-interface", "schedule", e))
+		end
 	end
 	table.sort(parts)
 	local bl = remote.call(IO, "backlogs")
@@ -2043,6 +2262,9 @@ local function schedule_digest()
 	end
 	return table.concat(parts, " ")
 end
+
+--- the checks of a single tick (margin.lua: the cap of each visit's tick); after the mod's own on_tick (this mod loads later)
+script.on_event(defines.events.on_tick, function() margin51.on_tick() end)
 
 script.on_nth_tick(10, function()
 	if game.tick == 1000 or game.tick == 1400 then log("DEVCHECK-RUNTIME-SCHEDULE " .. game.tick .. " " .. schedule_digest()) end
@@ -2086,6 +2308,7 @@ script.on_nth_tick(10, function()
 	taglabel485.tick()
 	fuzzydata493.tick()
 	lab86.tick()
+	krastorio2_595.tick()
 	bulk382.tick()
 	copypaste383.tick()
 	disassembly387.tick()
@@ -2097,6 +2320,9 @@ script.on_nth_tick(10, function()
 	plans50.tick()
 	scan50.tick()
 	entries50.tick()
+	qualityterm514.tick()
+	sortprefs602.tick()
+	wrefill603.tick()
 	holderlists59.tick()
 	crafter59.tick()
 	holders43.tick()
@@ -2107,7 +2333,9 @@ script.on_nth_tick(10, function()
 	ifacefluids311.tick()
 	providers158.tick()
 	pastecraft157.tick()
-	buffer150.tick()
+	nativeinv542.tick()
+	windowsound545.tick()
+	blockinv543.tick()
 	sticky193.tick()
 	chest229.tick()
 	wireless205.tick()
@@ -2132,6 +2360,16 @@ script.on_nth_tick(10, function()
 	viewcell440.tick()
 	creativecell441.tick()
 	creativeenergy442.tick()
+	bigpower556.tick()
+	fastcraft557.tick()
+	asmnet560.tick()
+	singfluid562.tick()
+	wgroup559.tick()
+	extent623.tick()
+	memcard561.tick()
+	patternbulk585.tick()
+	bpcards590.tick()
+	pending558.tick()
 	celllight468.tick()
 	maintrows351.tick()
 	cpumode350.tick()
@@ -2139,6 +2377,10 @@ script.on_nth_tick(10, function()
 	voidcell354.tick()
 	togglebus355.tick()
 	sbusmode155.tick()
+	lsbus506.tick()
+	lif531.tick()
+	lifauto537.tick()
+	lifbuild538.tick()
 	remoteview176.tick()
 	graph43.tick()
 	done_test()
@@ -2495,10 +2737,12 @@ function fluid_test()
 		end
 		timeout_after(200, "import after making room")
 	elseif phase == "craft" then
+		--- (a job that is gone was finished and pruned: only the last 12 finished jobs of the map are kept, MAX_FINISHED of
+		--- scripts/fork-me-autocraft.lua, and the other tests finish many; the amounts below show what it did)
 		local all_over, failed = true, {}
 		for _, id in pairs(st.jobs) do
 			local j = job_of(id)
-			if not j or (j.status ~= "done" and j.status ~= "failed") then all_over = false end
+			if j and j.status ~= "done" and j.status ~= "failed" then all_over = false end
 			if j and j.status == "failed" then failed[#failed + 1] = id .. ":" .. serpent.line(j) end
 		end
 		if all_over then
@@ -2513,7 +2757,7 @@ function fluid_test()
 			expect(items("phenolic-circuit-board") == 3, "phenolic boards: " .. items("phenolic-circuit-board"))
 			for _, id in pairs(st.jobs) do
 				local j = job_of(id)
-				expect(j and next(j.pool) == nil, "job " .. id .. " keeps a pool: " .. serpent.line(j and j.pool))
+				expect(not j or next(j.pool) == nil, "job " .. id .. " keeps a pool: " .. serpent.line(j and j.pool))
 			end
 			--- the machines hold nothing of the jobs any more
 			for _, def in pairs({ FL.reactor_a, FL.extractor, FL.reactor_c }) do
@@ -2537,7 +2781,12 @@ function fluid_test()
 			if not st.job then return finish_test() end
 			return next_phase("mine-lease")
 		end
-		timeout_after(600, "fluid jobs")
+		local states = {}
+		for _, id in pairs(st.jobs) do
+			local j = job_of(id)
+			states[#states + 1] = id .. "=" .. tostring(j and j.status) .. " " .. serpent.line(j and j.pool or {})
+		end
+		timeout_after(600, "fluid jobs (" .. table.concat(states, "; ") .. ")")
 	elseif phase == "mine-lease" then
 		local j = job_of(st.job)
 		if j.leases > 0 then
@@ -4431,7 +4680,7 @@ function scheduler_test()
 	elseif st.phase == 4 then
 		--- a full storage bus is passed by until its next read
 		local inv = c3.get_inventory(defines.inventory.chest)
-		inv.insert{ name = "iron-plate", count = 100 * #inv }
+		inv.insert{ name = "iron-plate", count = prototypes.item["iron-plate"].stack_size * #inv }    -- (Krastorio 2: 200 a stack)
 		remote.call(SB, "visit", s1)
 		local full = c3.get_item_count("iron-plate")
 		local total = count("iron-plate")
@@ -4981,6 +5230,7 @@ script.on_init(function()
 	for _, f in pairs(taglabel485.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(fuzzydata493.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lab86.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(krastorio2_595.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bulk382.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(copypaste383.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(disassembly387.setup(s)) do fails[#fails + 1] = f end
@@ -4992,6 +5242,8 @@ script.on_init(function()
 	for _, f in pairs(plans50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(scan50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(qualityterm514.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(sortprefs602.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end
@@ -5002,7 +5254,8 @@ script.on_init(function()
 	for _, f in pairs(ifacefluids311.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
-	for _, f in pairs(buffer150.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(nativeinv542.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(blockinv543.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sticky193.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(chest229.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wireless205.setup(s)) do fails[#fails + 1] = f end
@@ -5027,6 +5280,16 @@ script.on_init(function()
 	for _, f in pairs(viewcell440.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(creativecell441.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(creativeenergy442.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(bigpower556.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(fastcraft557.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(asmnet560.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(singfluid562.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(wgroup559.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(extent623.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(memcard561.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(patternbulk585.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(bpcards590.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(pending558.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(celllight468.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(maintrows351.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(cpumode350.setup(s)) do fails[#fails + 1] = f end
@@ -5034,8 +5297,13 @@ script.on_init(function()
 	for _, f in pairs(voidcell354.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(togglebus355.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(lsbus506.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(lif531.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(lifauto537.setup()) do fails[#fails + 1] = f end
+	for _, f in pairs(lifbuild538.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(wrefill603.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
 end)

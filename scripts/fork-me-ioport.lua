@@ -251,6 +251,7 @@ local function visit(rec, unit, fallback)
 		forget(s, unit, nil)
 		return nil
 	end
+	if rec.want then cards.fill_cards(rec) end             -- issue #590: the cards a blueprint, a paste or a clone asked for
 	local now = game.tick
 	local dt = math.min(MAX_CATCH_UP, now - (rec.last or (now - MIN_INTERVAL)))
 	rec.last = now
@@ -411,10 +412,12 @@ local function settings_of(rec)
 	return { mode = rec.mode, cards = list }
 end
 
-local function apply(entity, t)
+--- `player`: who built it by hand or pasted over it (issue #590: the cards from its inventory first, `inv` for a test; nil: the
+--- network only)
+local function apply(entity, t, player, inv)
 	if type(t) ~= "table" then return end
 	if MODES[t.mode] then M.set_mode(entity, t.mode) end
-	if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, nil) end   -- (from the network)
+	if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, player, inv) end
 end
 
 --------------------------------------------------------------------------------
@@ -422,12 +425,12 @@ end
 --------------------------------------------------------------------------------
 
 --- `tags`: blueprint tags of a built ghost (or of a paste over a port, issue #383); `source`: the original of a clone
-function M.on_built(entity, tags, source)
+function M.on_built(entity, tags, source, player, inv)
 	if not is_port(entity) then return end
 	register(entity)
 	local t = type(tags) == "table" and tags[TAG] or nil
 	if type(t) == "table" then
-		apply(entity, t)
+		apply(entity, t, player, inv)
 	elseif is_port(source) then
 		local from = rec_of(source)
 		if from then apply(entity, settings_of(from)) end
@@ -500,6 +503,9 @@ remote.add_interface("gregtorio-me-ioport", {
 			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, parked = rec.park }
 	end,
 	removed = function(entity, buffer) M.on_removed(entity, buffer) end,
+	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone, `inv`: the inventory of the player
+	--- who built it, issue #590)
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,
 })
 
 M.NAME = NAME

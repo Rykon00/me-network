@@ -26,18 +26,10 @@ end
 --- Issue #12: a crafting machine's recipe pasted onto the ME Interface, the import, export and storage bus
 --- (scripts/fork-me-recipe-paste.lua). The game raises on_entity_settings_pasted for such a pair only when the
 --- source prototype lists the target in additional_pastable_entities, so every crafting machine of every mod gets
---- the four blocks added to its list (what other mods put there stays).
-local PASTE_TARGETS = { "me-network-interface", "me-import-bus", "me-export-bus", "me-storage-bus" }
-for _, machine_type in pairs({ "assembling-machine", "furnace", "rocket-silo" }) do
-	for _, machine in pairs(data.raw[machine_type] or {}) do
-		local list = machine.additional_pastable_entities or {}
-		local listed = {}
-		for _, name in pairs(list) do listed[name] = true end
-		for _, name in ipairs(PASTE_TARGETS) do
-			if not listed[name] then list[#list + 1] = name end
-		end
-		machine.additional_pastable_entities = list
-	end
+--- the four blocks added to its list (what other mods put there stays; the lists are in prototypes/paste.lua).
+local PASTE = require("prototypes.paste")
+for _, machine_type in pairs(PASTE.MACHINE_TYPES) do
+	for _, machine in pairs(data.raw[machine_type] or {}) do PASTE.add_targets(machine, PASTE.MACHINE_TARGETS) end
 end
 
 --- Issue #110: the Acceleration Card is a module (the ME Molecular Assembler's module slots show it), and a machine without
@@ -69,6 +61,11 @@ do
 	end
 end
 
+--- Issue #561: the ME Memory Card holds its settings per item (its item number), so it never stacks: a mod that raises the
+--- stack of every "me-...-card" in its data stage (Gregtorio Continued's compat file) would break its "not-stackable" flag
+local memory_card = data.raw["selection-tool"]["me-memory-card"]
+if memory_card then memory_card.stack_size = 1 end
+
 --- Issue #17: the upgrade cards technology costs what ME 64k Storage costs (its prerequisite), unless a mod set it
 --- itself (ME_NETWORK.set_technology). A mod that puts the network on its own tiers (Gregtorio Continued) thereby gets a
 --- researchable cards technology on the 64k tier before it knows about the cards.
@@ -77,7 +74,13 @@ if cards_tech and storage_64k and not ME.customized["me-upgrade-cards"] then
 	cards_tech.unit = table.deepcopy(storage_64k.unit)
 	cards_tech.research_trigger = table.deepcopy(storage_64k.research_trigger)
 	if cards_tech.research_trigger then cards_tech.unit = nil end
-	cards_tech.prerequisites = { "me-storage-64k" }
+	--- (issue #594: its other prerequisites stay: the circuit network, whose combinators the Group Filter and Inverter
+	--- Cards take; before, they were dropped here)
+	local prerequisites = { "me-storage-64k" }
+	for _, p in ipairs(cards_tech.prerequisites or {}) do
+		if p ~= "me-storage-64k" then prerequisites[#prerequisites + 1] = p end
+	end
+	cards_tech.prerequisites = prerequisites
 end
 
 --- Issue #6: a crafting block recipe (the multiblock crafting CPUs) that no technology unlocks, because another mod
@@ -172,20 +175,26 @@ do
 	--- issue #282: the buses' markers (their plate and arrows, the second layer of each direction's picture) on the face of
 	--- the mod-data's bus view (docs/API.md), set by a graphics mod that replaces the buses' pictures: a marker is drawn
 	--- for a face of 58 px at the picture's top left (prototypes/network.lua BUS_FACE), so it is scaled and moved to the
-	--- view's square. With this mod's own view it stays where it is.
+	--- view's square. With this mod's own view it stays where it is. Issue #518: the ME Logistic Storage Bus's marker (its
+	--- orange marks and storage chest) likewise; it is not rotated, so its picture is one sprite with the marker as its
+	--- second layer.
 	local bview = md and md.data.bus_view
 	if bview and bview.size and bview.size > 0 then
+		local function place(layers)
+			local m = layers and layers[2]
+			if m and m.filename and m.filename:find("%-marker%.png$") then
+				m.scale = 0.5 * bview.size / m.width
+				m.shift = { (bview.x + bview.size / 2) / 64 - 0.5, (bview.y + bview.size / 2) / 64 - 0.5 }
+			end
+		end
 		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus" }) do
 			local e = data.raw["simple-entity-with-force"][name]
 			for _, dir in pairs({ "north", "east", "south", "west" }) do
-				local layers = e and e.picture and e.picture[dir] and e.picture[dir].layers
-				local m = layers and layers[2]
-				if m and m.filename and m.filename:find("%-marker%.png$") then
-					m.scale = 0.5 * bview.size / m.width
-					m.shift = { (bview.x + bview.size / 2) / 64 - 0.5, (bview.y + bview.size / 2) / 64 - 0.5 }
-				end
+				place(e and e.picture and e.picture[dir] and e.picture[dir].layers)
 			end
 		end
+		local lbus = data.raw["simple-entity-with-force"]["me-logistic-storage-bus"]
+		place(lbus and lbus.picture and lbus.picture.layers)
 	end
 	--- issue #278: the ME Controller's state as a graphics mod draws it (the mod-data's controller view, docs/API.md): a
 	--- hidden entity of the same kind on the controller's position, above its picture, one animation variation per state

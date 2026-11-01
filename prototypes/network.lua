@@ -52,6 +52,9 @@ local IMPORT_BUS, EXPORT_BUS = "me-import-bus", "me-export-bus"
 local STORAGE_BUS = "me-storage-bus"
 local UNDERGROUND = "me-underground-cable"
 local UNDERGROUND_REACH = 10        -- max_underground_distance of the underground cable (the underground pipe's)
+--- issue #623: the underground cable's fluid box is only there for the engine's pairing, so a chain of them is a fluid
+--- segment and would be capped by the pipeline extent (default 320 tiles): no cable length may ever overextend
+local NO_PIPELINE_EXTENT = 4294967295  -- uint32 maximum of FluidBox::max_pipeline_extent
 --- issue #229: the ME Chest and its hidden parts on its tile (its own power buffer, its fluid input)
 local CHEST, CHEST_POWER, CHEST_FLUID = "me-chest", "me-chest-power", "me-chest-fluid"
 local CHEST_WATTS = 4000            -- W: what it draws from the power grid on its own (a member's 4 kW through the controller)
@@ -334,6 +337,9 @@ block{
 		random_variation_on_create = false,
 		render_layer = "lower-object",
 		collision_mask = WALKABLE,
+		--- the cable and the underground cable replace each other in place, like pipe and underground pipe (vanilla's
+		--- group "pipe" on both)
+		fast_replaceable_group = "me-cable",
 	},
 }
 data.raw.item["fluix-cable"].place_result = CABLE
@@ -361,8 +367,8 @@ data:extend({ {
 	energy_source = {
 		type = "electric",
 		usage_priority = "secondary-input",
-		buffer_capacity = "100kJ",
-		input_flow_limit = "10MW",
+		buffer_capacity = "100kJ",                    -- (issue #556: the runtime sets it with the draw, N.set_draw)
+		input_flow_limit = "1TW",                     -- (issue #556: never the cap of a network; it cannot be set at runtime)
 		output_flow_limit = "0W",
 	},
 	energy_production = "0W",
@@ -387,9 +393,7 @@ block{
 	extra = { picture = {
 		filename = HD_ENTITY .. "me-drive.png",
 		priority = "extra-high", width = 64, height = 64, scale = 0.5,
-	},
-	--- settings paste of the priority and the cell partitions (issue #68 step R3, scripts/fork-me-network.lua)
-	additional_pastable_entities = { DRIVE } },
+	} },
 }
 data.raw.item["me-drive"].place_result = DRIVE
 
@@ -420,8 +424,6 @@ data:extend({ {
 	inventory_size = 1,
 	inventory_type = "normal",
 	picture = { filename = HD_ENTITY .. "me-chest.png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
-	--- the priority and the cell's partition (drive settings) go with a paste between chests and drives
-	additional_pastable_entities = { CHEST, DRIVE },
 	localised_description = { "entity-description.me-chest" },
 }, {
 	type = "electric-energy-interface",
@@ -502,8 +504,6 @@ data:extend({ {
 		filename = HD_ENTITY .. "me-interface-unified.png",
 		priority = "extra-high", width = 64, height = 64, scale = 0.5,
 	},
-	--- a container has no settings of its own: this lets the runtime copy the filters (settings paste)
-	additional_pastable_entities = { INTERFACE },
 	localised_description = { "entity-description.me-network-interface", tostring(INTERFACE_SLOTS) },
 } })
 data.raw.item["me-interface"].place_result = INTERFACE
@@ -561,8 +561,8 @@ for _, bus in pairs({
 end
 
 --------------------------------------------------------------------------------
---- ME UNDERGROUND CABLE (rotatable pair, like the underground pipe: the direction points along the run;
---- above ground an end connects only on its back side, under ground to the first end within reach that faces
+--- ME UNDERGROUND CABLE (rotatable pair, exactly like the vanilla underground pipe: above ground an end connects only
+--- on the side its direction points to, under ground on the opposite side to the first end within reach that faces
 --- it; runtime: scripts/fork-me-network.lua, find_partner)
 --------------------------------------------------------------------------------
 
@@ -578,8 +578,10 @@ ME.add_item{
 }
 --- A real pipe-to-ground whose fluid box has its own connection category: it never connects to pipes or carries
 --- fluid, but the engine pairs the ends exactly like underground pipes (reach, rotation, blocking, dragging) and
---- shows the pairing on hover and while placing. Its direction is the run's direction; the above ground
---- connection points backwards. The ME graph reads the engine's pairing (fluidbox.get_connections).
+--- shows the pairing on hover and while placing. Its connections are the vanilla underground pipe's (the above
+--- ground one on the direction side), so the game's underground drag places the pairs at the full reach as for
+--- underground pipes (it reads the connections by the vanilla rule; before 0.5.11 they were the other way round and a
+--- drag put the ends side by side). The ME graph reads the engine's pairing (fluidbox.get_connections).
 data:extend({ {
 	type = "pipe-to-ground",
 	name = UNDERGROUND,
@@ -595,21 +597,19 @@ data:extend({ {
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 45,
 	collision_mask = WALKABLE,
+	fast_replaceable_group = "me-cable",                      -- (with the cable, see there)
 	fluid_box = {
 		volume = 1,
+		max_pipeline_extent = NO_PIPELINE_EXTENT,      -- (issue #623)
 		pipe_connections = {
-			{ direction = defines.direction.south, position = { 0, 0 }, connection_category = "me-cable", hide_connection_info = true },
-			{ connection_type = "underground", direction = defines.direction.north, position = { 0, 0 },
+			{ direction = defines.direction.north, position = { 0, 0 }, connection_category = "me-cable", hide_connection_info = true },
+			{ connection_type = "underground", direction = defines.direction.south, position = { 0, 0 },
 			  max_underground_distance = UNDERGROUND_REACH, connection_category = "me-cable", hide_connection_info = true },
 		},
 	},
 	pictures = four_way(UNDERGROUND, true),
 	localised_description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
 } })
-
---- shift right click / shift left click copies the filters of the buses (runtime, on_entity_settings_pasted)
-data.raw["simple-entity-with-force"][IMPORT_BUS].additional_pastable_entities = { IMPORT_BUS }
-data.raw["simple-entity-with-force"][EXPORT_BUS].additional_pastable_entities = { EXPORT_BUS }
 
 --------------------------------------------------------------------------------
 --- ME STORAGE BUS (rotatable: the arrow side faces the chest or cargo wagon whose inventory becomes network
@@ -629,7 +629,7 @@ ME.add_item{
 block{
 	name = STORAGE_BUS, icon = HD_ICON .. STORAGE_BUS .. ".png", icon_size = 64,
 	description = { "entity-description." .. STORAGE_BUS },
-	extra = { picture = bus_picture(STORAGE_BUS), additional_pastable_entities = { STORAGE_BUS },
+	extra = { picture = bus_picture(STORAGE_BUS),
 		render_layer = "lower-object", collision_mask = WALKABLE },
 }
 
@@ -644,7 +644,122 @@ for _, bus in pairs({ IMPORT_BUS, EXPORT_BUS, STORAGE_BUS }) do
 	end
 end
 
+--------------------------------------------------------------------------------
+--- ME LOGISTIC STORAGE BUS (me-network issue #506; not in AE2): a 1x1 block that is not rotated; the vanilla logistic
+--- network whose area it stands in is storage of the ME network (its storage chests, in one mode also its provider chests;
+--- runtime: scripts/fork-me-logistic-storagebus.lua). Issue #518: its picture and icon have two layers
+--- (tools/gen_ae2_sprites.py --logistic-storage-bus): the base, the bus casing without a plate or arrows, and the
+--- marker, orange corner marks and a storage chest, a layer of its own over it (as the buses' markers, placed by the
+--- bus view), so a graphics mod can replace the base and keep the marker (the texture mod: AE2's storage bus, issue
+--- #515). The icons add its badge (both ways, in the logistic orange) as the third layer. The file names stay.
+--------------------------------------------------------------------------------
 
+local LOGISTIC_STORAGE_BUS = "me-logistic-storage-bus"
+ME.add_item{
+	name = LOGISTIC_STORAGE_BUS,
+	icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. ".png",
+	icon_size = 64,
+	subgroup = "fork-me-buses",
+	order = "b5",
+	stack_size = 50,
+	place_result = LOGISTIC_STORAGE_BUS,
+	recipe = { energy_required = 2, ingredients = I{ STORAGE_BUS, 1, "storage-chest", 1, "advanced-circuit", 2 } },
+}
+block{
+	name = LOGISTIC_STORAGE_BUS, icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. ".png", icon_size = 64,
+	description = { "entity-description." .. LOGISTIC_STORAGE_BUS },
+	extra = { picture = { layers = {
+			{ filename = HD_ENTITY .. LOGISTIC_STORAGE_BUS .. ".png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
+			{ filename = HD_ENTITY .. LOGISTIC_STORAGE_BUS .. "-marker.png", priority = "extra-high", width = BUS_FACE,
+			  height = BUS_FACE, scale = 0.5, shift = { BUS_FACE / 2 / 64 - 0.5, BUS_FACE / 2 / 64 - 0.5 } },
+		} },
+		render_layer = "lower-object", collision_mask = WALKABLE },
+}
+for _, proto in pairs({ data.raw.item[LOGISTIC_STORAGE_BUS], data.raw["simple-entity-with-force"][LOGISTIC_STORAGE_BUS] }) do
+	proto.icon, proto.icon_size = nil, nil
+	proto.icons = {
+		{ icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. ".png", icon_size = 64 },
+		{ icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. "-marker.png", icon_size = 64 },
+		{ icon = HD_ICON .. LOGISTIC_STORAGE_BUS .. "-badge.png", icon_size = 64 },
+	}
+end
+
+
+
+--------------------------------------------------------------------------------
+--- ME LOGISTIC INTERFACE (me-network issue #531; not in AE2): a solid 1x1 block (4 kW through the controller) with three
+--- hidden logistic chests on its tile that the runtime makes (scripts/fork-me-logistic-interface.lua): a passive provider
+--- (what the network offers to the robots), a requester (what it asks them for) and a storage chest (the trash they drop).
+--- Measured headless (Factorio 2.1.23): robots and construction robots serve such hidden chests, also two on one tile.
+--- The chests are copies of the vanilla ones: not selectable, no collision, hidden, not on the map, not minable, not in
+--- blueprints; the provider and the requester hold 36 rows of one stack, the storage chest 48 slots like the vanilla one.
+--- `REFUSE` is a hidden item that is never delivered: the storage chest is filtered on it while it accepts no trash.
+--- Picture and icon: the casing as the base and a marker layer (orange corner marks, the three chests), so a graphics mod
+--- can replace the base and keep the marker (tools/gen_ae2_sprites.py --logistic-interface).
+--------------------------------------------------------------------------------
+
+local LOGISTIC_INTERFACE = "me-logistic-interface"
+local LIF_FACE = 54                     -- the face of the 64 px picture (the marker's square at its top left)
+ME.add_item{
+	name = LOGISTIC_INTERFACE,
+	icon = HD_ICON .. LOGISTIC_INTERFACE .. ".png",
+	icon_size = 64,
+	subgroup = "fork-me-buses",
+	order = "b6",
+	stack_size = 50,
+	place_result = LOGISTIC_INTERFACE,
+	recipe = { energy_required = 2, ingredients = I{ "me-interface", 1, "storage-chest", 1, "passive-provider-chest", 1,
+		"advanced-circuit", 2 } },
+}
+block{
+	name = LOGISTIC_INTERFACE, icon = HD_ICON .. LOGISTIC_INTERFACE .. ".png", icon_size = 64, health = 300,
+	description = { "entity-description." .. LOGISTIC_INTERFACE, "4" },
+	extra = { picture = { layers = {
+		{ filename = HD_ENTITY .. LOGISTIC_INTERFACE .. ".png", priority = "extra-high", width = 64, height = 64, scale = 0.5 },
+		{ filename = HD_ENTITY .. LOGISTIC_INTERFACE .. "-marker.png", priority = "extra-high", width = LIF_FACE, height = LIF_FACE,
+		  scale = 0.5, shift = { LIF_FACE / 2 / 64 - 0.5, LIF_FACE / 2 / 64 - 0.5 } },
+	} } },
+}
+for _, proto in pairs({ data.raw.item[LOGISTIC_INTERFACE], data.raw["simple-entity-with-force"][LOGISTIC_INTERFACE] }) do
+	proto.icon, proto.icon_size = nil, nil
+	proto.icons = {
+		{ icon = HD_ICON .. LOGISTIC_INTERFACE .. ".png", icon_size = 64 },
+		{ icon = HD_ICON .. LOGISTIC_INTERFACE .. "-marker.png", icon_size = 64 },
+	}
+end
+
+local EMPTY_PICTURE = { filename = "__core__/graphics/empty.png", priority = "high", width = 1, height = 1, frame_count = 1 }
+--- a hidden copy of the vanilla logistic chest `base`
+local function hidden_chest(base, role, size)
+	local c = table.deepcopy(data.raw["logistic-container"][base])
+	c.name = LOGISTIC_INTERFACE .. "-" .. role
+	c.localised_name = { "entity-name." .. LOGISTIC_INTERFACE .. "-" .. role }
+	c.localised_description = nil
+	c.icon, c.icon_size = nil, nil
+	c.icons = data.raw.item[LOGISTIC_INTERFACE].icons
+	c.flags = { "not-on-map", "not-blueprintable", "not-deconstructable", "not-upgradable", "no-copy-paste", "hide-alt-info",
+		"not-in-kill-statistics", "not-flammable" }
+	c.hidden, c.hidden_in_factoriopedia = true, true
+	c.selectable_in_game = false
+	c.collision_mask = { layers = {} }
+	c.minable, c.placeable_by, c.next_upgrade, c.fast_replaceable_group = nil, nil, nil, nil
+	c.corpse, c.dying_explosion, c.damaged_trigger_effect = nil, nil, nil
+	c.robot_door = { animation = EMPTY_PICTURE }            -- (Factorio 2.1: the chest's picture and door are here)
+	c.open_sound, c.close_sound = nil, nil
+	c.circuit_connector, c.circuit_wire_max_distance, c.draw_copper_wires, c.draw_circuit_wires = nil, 0, false, false
+	c.water_reflection = nil
+	c.render_not_in_network_icon = false
+	c.inventory_size = size
+	c.is_military_target = false
+	return c
+end
+data:extend({
+	hidden_chest("passive-provider-chest", "provider", 36),
+	hidden_chest("requester-chest", "requester", 36),
+	hidden_chest("storage-chest", "storage", 48),
+	{ type = "item", name = LOGISTIC_INTERFACE .. "-nothing", icons = data.raw.item[LOGISTIC_INTERFACE].icons, stack_size = 1,
+	  hidden = true, hidden_in_factoriopedia = true, subgroup = "fork-me-buses", order = "b6z" },
+})
 
 --------------------------------------------------------------------------------
 --- ME TERMINAL (a lamp, as it always was: saves hold it by type and name; its GUI is replaced by the terminal GUI)
@@ -729,6 +844,18 @@ data:extend({ {
 	consuming = "none",
 } })
 
+--- Issue #527: the settings paste of the ME Quantum Bridge and the ME Wireless Link (prototypes/paste.lua, KEYS), on the
+--- game's copy and paste keys (Shift + right click, Shift + left click by default); the game's own paste goes on
+for _, key in pairs(require("prototypes.paste").INPUTS) do
+	data:extend({ {
+		type = "custom-input",
+		name = key.name,
+		key_sequence = "",
+		linked_game_control = key.control,
+		consuming = "none",
+	} })
+end
+
 
 
 --------------------------------------------------------------------------------
@@ -762,6 +889,7 @@ data:extend({ {
 			controller = CONTROLLER, cable = CABLE, drive = DRIVE, interface = INTERFACE,
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
+			logistic_storage_bus = LOGISTIC_STORAGE_BUS,                          -- (issue #506: kind "storage-bus")
 			creative_energy = CREATIVE_ENERGY,                                    -- (issue #442)
 			pattern_terminal_ex = "me-pattern-terminal-ex",                     -- (issue #416)
 			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)
@@ -910,6 +1038,7 @@ data:extend({ {
 	localised_description = { "entity-description.me-io-port", tostring(IO_PORT_POWER / 1000) },
 } })
 data.raw["mod-data"]["fork-me-network"].data.names.io_port = IO_PORT
+data.raw["mod-data"]["fork-me-network"].data.names.logistic_interface = LOGISTIC_INTERFACE   -- (issue #531)
 data.raw["mod-data"]["fork-me-network"].data.member_power["io-port"] = IO_PORT_POWER
 ME.crafting_block_tech[IO_PORT] = "me-network"
 
@@ -1011,6 +1140,8 @@ ME.add_technology{ name = "me-network", prerequisites = { "advanced-circuit", "l
 	"me-void-storage-cell",
 	"me-1k-storage-component", "me-4k-storage-component", "me-16k-storage-component",
 	"me-1k-storage-cell", "me-4k-storage-cell", "me-16k-storage-cell", IMPORT_BUS, EXPORT_BUS, UNDERGROUND, STORAGE_BUS,
+	LOGISTIC_STORAGE_BUS,                                                                      -- (issue #506)
+	LOGISTIC_INTERFACE,                                                                        -- (issue #531)
 } }
 
 ME.add_technology{ name = "me-storage-64k", prerequisites = { "me-network", "processing-unit" }, unit = ME.unit(3, 400),
@@ -1026,5 +1157,6 @@ ME.add_technology{ name = "me-storage-4096k", prerequisites = { "me-storage-1024
 	unit = ME.unit(5, 1200), recipes = { "me-4096k-storage-component", "me-4096k-storage-cell" } }
 ME.add_technology{ name = "me-storage-16384k", prerequisites = { "me-storage-4096k" },
 	unit = ME.unit(5, 1600), recipes = { "me-16384k-storage-component", "me-16384k-storage-cell" } }
-ME.add_technology{ name = "me-storage-singularity", prerequisites = { "me-storage-16384k", "me-quantum-bridge" },
+ME.add_technology{ name = "me-storage-singularity", prerequisites = { "me-storage-16384k", "me-quantum-bridge",
+	"electric-energy-accumulators" },                                             -- (issue #594: the cell takes accumulators)
 	unit = ME.unit(5, 2500), recipes = { SINGULARITY } }

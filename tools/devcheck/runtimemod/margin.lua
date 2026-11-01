@@ -6,11 +6,11 @@
 --- * An export bus fills iron plates into an empty steel chest at its speed (a block that moved all it was allowed to, whose
 ---   target uses nothing: its headroom says 600 ticks). Its interval must stay within the margin cap of the busy list
 ---   (remote `margin_cap`), which in the test map lies below 600 ticks. The cap is the number of busy units of the whole
----   map, so it moves while the other tests run: each interval is held against the cap of the tick its visit set it. The
----   visit runs in the mod's on_tick and this check after it, so a unit that leaves the busy list later in that tick makes
----   the cap read here one tick shorter than the one the visit used (issue #146: 16 against 15 once the map had a few
----   buses less): one tick of slack (MARGIN 1/16 at the floor of 16: a unit is a tick).
---- Loaded by control.lua: require("margin")(H) returns { setup, tick, running }.
+---   map, so it moves while the other tests run: each interval is held against the cap its own visit used, which the
+---   scheduler records for the test (remote `trace_margin_cap`, issue #611). A cap read here, after the mod's on_tick,
+---   is shorter by every unit that left the busy list later in that tick, which depends on the unit numbers of every
+---   other test's blocks (issue #146: 16 against 15; #611: 17 against 15 when a test's setup moved up the list).
+--- Loaded by control.lua: require("margin")(H) returns { setup, tick, on_tick, running }.
 
 local NET, IO = "gregtorio-me-network", "gregtorio-me-io"
 local BX, BY = 370, -250
@@ -44,6 +44,7 @@ return function(H)
 			if (got or 0) < WATER then fails[#fails + 1] = what .. ": only " .. tostring(got) .. " water went into the fluid drive" end
 		end
 		storage.margin51_scene = { ctrl = ctrl, fbus = fbus, tank = tank, ibus = ibus, chest = chest }
+		remote.call(IO, "trace_margin_cap", true)
 		return fails
 	end
 
@@ -60,6 +61,12 @@ return function(H)
 		end
 		if st.done then return end
 		local problems = st.problems
+		if not st.cap_seen and tick >= CHECK then
+			local seen = false
+			for _, c in pairs(st.caps or {}) do if c then seen = true end end
+			st.cap_seen = true
+			if not seen then problems[#problems + 1] = "the scheduler recorded no margin cap of a visit (remote trace_margin_cap)" end
+		end
 		if not (sc.fbus and sc.fbus.valid and sc.ibus and sc.ibus.valid and sc.tank and sc.tank.valid and sc.chest and sc.chest.valid) then
 			problems[#problems + 1] = "the test network was not built"
 			st.done = true
@@ -77,39 +84,46 @@ return function(H)
 				if f.starve then st.starved = st.starved + 1 end
 			end
 		end
-		--- the item bus into the chest: its intervals after the first visits, each with the cap of its visit's tick
-		local i = remote.call(IO, "schedule", sc.ibus)
-		if i and i.last and i.last ~= st.ilast then
-			st.ilast = i.last
-			st.ivisits = st.ivisits + 1
-			if st.ivisits > 2 and i.interval then
-				st.ivs[#st.ivs + 1] = i.interval
-				st.caps = st.caps or {}
-				st.caps[#st.ivs] = i.last == tick and remote.call(IO, "margin_cap") or nil
-			end
-		end
 		if tick < CHECK then return end
 		local cap = remote.call(IO, "margin_cap")
 		local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
 		expect(st.fvisits >= 3, "the water export bus was visited " .. st.fvisits .. " times while its tank had room")
 		expect(st.starved == 0, st.starved .. " of " .. st.fvisits .. " visits of the water export bus counted as starved, its tank never ran dry")
 		expect(cap and cap < 600, "the margin cap of the test map is " .. tostring(cap) .. " ticks: not below the 600 of the headroom, the case tests nothing")
-		local caps = st.caps or {}
-		if st.ivisits >= 2 and i and i.interval and i.last ~= tick then   -- (the interval it is waiting now: set at an earlier tick)
-			st.ivs[#st.ivs + 1] = i.interval
-		end
+		local caps = st.caps or {}                        -- (every visit's interval with its cap: T.on_tick)
 		local worst, over = 0, nil
 		for k, iv in ipairs(st.ivs) do
 			if iv > worst then worst = iv end
 			local c = caps[k] or cap
-			if c and iv > c + 1 and not over then over = iv .. " ticks against the cap " .. c .. " of its visit" end
+			if c and iv > c and not over then over = iv .. " ticks against the cap " .. c .. " of its visit" end
 		end
 		expect(#st.ivs >= 1, "the item export bus had " .. st.ivisits .. " visits, too few to see its interval")
 		expect(cap and not over, "the item export bus waited " .. tostring(over or worst) .. ", longer than the margin cap")
 		expect(sc.chest.get_item_count("iron-plate") > 0, "the item export bus moved nothing into its chest")
 		st.done = true
+		remote.call(IO, "trace_margin_cap", false)
 		me_report("MARGIN", "ME margin of a short busy list", problems, "water export bus: " .. st.fvisits .. " visits, " .. st.starved .. " starved; item export bus: "
 			.. #st.ivs .. " intervals, at most " .. worst .. " ticks (margin cap " .. tostring(cap) .. ")")
+	end
+
+	--- the item bus into the chest: its intervals after the first visits, each with the cap of its visit's tick, read in every
+	--- tick (control.lua's on_tick, after the mod's own). Issue #537 had moved this into the check of every 10 ticks, which
+	--- read the cap only then: it moves by several ticks between two reads while the other tests run (Krastorio 2 Spaced Out:
+	--- 16 and 17 read around a visit that had a cap of 19), so a visit's interval was held against a cap it never saw.
+	function T.on_tick()
+		local st = storage.margin51
+		local sc = storage.margin51_scene
+		if not st or st.done or not (sc and sc.ibus and sc.ibus.valid) then return end
+		local i = remote.call(IO, "schedule", sc.ibus)
+		if i and i.last and i.last ~= st.ilast then
+			st.ilast = i.last
+			st.ivisits = st.ivisits + 1
+			if st.ivisits > 2 and i.interval and i.last == game.tick then
+				st.ivs[#st.ivs + 1] = i.interval
+				st.caps = st.caps or {}
+				st.caps[#st.ivs] = i.cap or remote.call(IO, "margin_cap")     -- (i.cap: the cap the visit used, issue #611)
+			end
+		end
 	end
 
 	function T.running(check) check(storage.margin51 and storage.margin51.done, "ME margin of a short busy list") end

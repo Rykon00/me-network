@@ -20,7 +20,9 @@ monitor panels the same way (issue #421).
 The ME IO Port is AE2-Unofficial's IO port with its two cell slots in front (issue #397), the Creative Energy Cell its creative energy cell (issue #459). The ME Quantum Bridge is
 AE2-Unofficial's eight quantum rings around its link chamber, as the blocks look before they are formed, its icons a ring
 (issue #406). The ME Import, Export and Storage Bus are AE2's bus fronts with ME Network's plate and arrows on them (issue #282, through ME
-Network's bus view). The cable is AE2's Fluix glass cable (issue #283). The blocks of a Crafting CPU are AE2's crafting
+Network's bus view). The ME Logistic Storage Bus, which AE2 does not have, is AE2's storage bus front with ME Network's
+orange marks and storage chest on it, its icon AE2's storage bus cube with ME Network's chest and badge (ME Network
+issues #515, #518). The cable is AE2's Fluix glass cable (issue #283). The blocks of a Crafting CPU are AE2's crafting
 blocks, a cube each without a CPU, and in a CPU one big block in AE2's formed look with its ring around the outside
 (issues #302, #306; issue #447 the crafting storage above 256k and the crafting accelerators). The ME Wireless Access Point is an AE2 cube of its inside, the
 Wireless ME Terminal, its module and the booster have AE2's icons (issue #303). The technologies show these icons scaled

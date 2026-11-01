@@ -5,9 +5,11 @@
 --- * A quantum bridge on frequency 9 too: the kinds never pair, the links stay linked.
 --- * Frequency 21: L3 on Nauvis, L4 on another surface: "other-surface", nothing linked, the base drain.
 --- * Frequency 33 on that other surface, 600 tiles apart (the range is 512): "out-of-range", nothing linked.
+--- * Issue #511 (qbfield.lua): L1's window keeps a typed frequency over the refreshes, shows one set elsewhere.
 --- Loaded by control.lua like lab.lua.
 
 local NET, IO, QB = "gregtorio-me-network", "gregtorio-me-io", "gregtorio-me-qbridge"
+local qbfield = require("qbfield")       -- (issue #511)
 local BX, BY = 160, 280                  -- (inside the cleared test area, TEST_RADIUS of control.lua; clear of the other tests)
 local SURFACE = "me-wlink-test"
 local START, CHECK = 100, 600
@@ -101,8 +103,9 @@ return function(H)
 		local i5 = info(l5)
 		expect(i5.status == "out-of-range" and not remote.call(NET, "same_network", l5, l6) and math.abs((i5.distance or 0) - 599) < 0.01,
 			"a pair 599 tiles apart: " .. serpent.line({ i5.status, i5.distance }))
+		qbfield(problems, l1, 9, 10, "wlink511")
 		me_report("WLINK", "ME Wireless Link", problems, "two links 100 tiles apart are one network at 210 kW each (an interface there fills);"
-			.. " a quantum bridge on the same frequency stays apart; a pair on two surfaces and one 599 tiles apart do not link")
+			.. " a quantum bridge on the same frequency stays apart; a pair on two surfaces and one 599 tiles apart do not link; the window's frequency field keeps what is typed")
 	end
 
 	function T.running(check) check(storage.wlink384 and storage.wlink384.done, "ME Wireless Link") end

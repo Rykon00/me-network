@@ -334,7 +334,7 @@ return function(H)
 		local e = export_net(s, fails, "the target is replaced", bx, by, { [COPPER] = 100 }, nil, { COPPER })
 		local c = s.find_entity("iron-chest", { bx + 2.5, by - 0.5 })
 		if c then
-			c.get_inventory(defines.inventory.chest).insert{ name = "wood", count = 100 * #c.get_inventory(defines.inventory.chest) }
+			c.get_inventory(defines.inventory.chest).insert{ name = "wood", count = prototypes.item["wood"].stack_size * #c.get_inventory(defines.inventory.chest) }
 		end
 	end, {
 		wait("the export bus has a full target", 200, function(c, x) local r = sch(find_e(x)) return r and r.block == "full" end),

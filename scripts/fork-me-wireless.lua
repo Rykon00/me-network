@@ -47,6 +47,8 @@ local function state()
 	return s
 end
 
+M.state = state                                     -- (issue #603: the refill keeps its queue here)
+
 local function player_state(player)
 	local s = state()
 	local ps = s.players[player.index]
@@ -139,6 +141,7 @@ local function controller_of(unit)
 	local e = unit and G.entity_by_unit(unit)
 	return e and e.valid and N.kind_of(e.name) == "controller" and e or nil
 end
+M.controller_of = controller_of                       -- (issue #603: the refill)
 
 --------------------------------------------------------------------------------
 --- the terminal item and the module (#207, #209)
@@ -189,6 +192,9 @@ local function item_of(player)
 	end
 	return first
 end
+
+--- issue #603: the controller unit the player's module is linked to (the refill)
+function M.module_link(player) return player_state(player).link end
 
 --- What the player opens the wireless window with: { kind = "module", eq, link, energy } or { kind = "item", stack, link,
 --- energy }; the module comes first. nil when the player has neither.
@@ -303,7 +309,7 @@ function M.open_for(player)
 	local frame = G.window_of(player)
 	local anchor = frame and (G.entity_by_unit(frame.tags.via) or G.entity_by_unit(frame.tags.unit))
 	if anchor and anchor.valid and anchor.name == AP then
-		G.close_window(player)
+		G.close_window(player, true)                 -- (issue #545: with the close sound)
 		return true
 	end
 	local src = M.source_of(player)
@@ -489,9 +495,31 @@ local function spill_inv(inv, rec, buffer)
 	end
 end
 
+--- issue #590: an access point that waits for boosters (rec.want) is retried from the network once a second (M.card_step);
+--- `s.awant` holds the units of those, few
+local function note_want(rec)
+	if not rec.want then return end
+	local s = state()
+	s.awant = s.awant or {}
+	s.awant[rec.unit] = true
+end
+
+--- the network's slow step (once a second): the access points that wait for boosters take them from their network
+function M.card_step()
+	local s = storage.fork_me_wireless
+	if not (s and s.awant and next(s.awant)) then return end
+	for unit in pairs(s.awant) do
+		local rec = s.aps[unit]
+		if rec and rec.want and rec.entity and rec.entity.valid then cards.fill_cards(rec) end
+		if not (rec and rec.want) then s.awant[unit] = nil end
+	end
+end
+N.slow_hooks[#N.slow_hooks + 1] = M.card_step
+
 --- built, revived or cloned (`tags`: blueprint tags, `source`: the original of a clone): an access point wants the source's
---- boosters (from the network, never from nothing); a charger starts empty
-function M.on_built(entity, tags, source)
+--- boosters (never from nothing: issue #590, from the inventory of `player`, who built it by hand or pasted over it, first,
+--- `inv` instead for a test; then the network); a charger starts empty
+function M.on_built(entity, tags, source, player, inv)
 	if not (entity and entity.valid) then return end
 	if entity.name == CHARGER then charger_rec(entity) return end
 	if entity.name ~= AP then return end
@@ -503,7 +531,10 @@ function M.on_built(entity, tags, source)
 		local from = ap_rec(source)
 		list = from.want and { table.unpack(from.want) } or cards.card_list(from)
 	end
-	if list and #list > 0 then cards.want_cards(entity, list, nil) end
+	if list and #list > 0 then
+		cards.want_cards(entity, list, player, inv)
+		note_want(ap_rec(entity))
+	end
 	N.power_changed(entity)
 end
 
@@ -554,6 +585,7 @@ function M.on_entity_settings_pasted(event)
 	local from = ap_rec(src)
 	local player = event.player_index and game.get_player(event.player_index) or nil
 	cards.want_cards(dst, from.want and { table.unpack(from.want) } or cards.card_list(from) or {}, player)
+	note_want(ap_rec(dst))
 end
 
 --- blueprints: an access point carries its boosters
@@ -573,6 +605,7 @@ function M.on_configuration_changed()
 	local s = state()
 	for unit, rec in pairs(s.aps) do if not (rec.entity and rec.entity.valid) then s.aps[unit] = nil end end
 	for unit, rec in pairs(s.chargers) do if not (rec.entity and rec.entity.valid) then s.chargers[unit] = nil end end
+	for _, rec in pairs(s.aps) do note_want(rec) end              -- (issue #590: a save of before waits too)
 end
 
 --------------------------------------------------------------------------------
@@ -601,18 +634,9 @@ function M.refresh_ap(player, frame)
 	local rec = ap_rec(entity)
 	if not rec then return false end
 	local inv = cards.inv_of(rec)
-	local box = G.find(frame, "fork_me_ap_cards")
-	local sig = {}
-	for i = 1, #inv do sig[i] = inv[i].valid_for_read and inv[i].name or "-" end
-	sig = table.concat(sig, ",")
-	if box.tags.sig ~= sig then
-		box.clear()
-		box.tags = { sig = sig }
-		for i = 1, #inv do
-			G.stack_button(box, inv[i], G.act("block_slot", { slot = i }),
-				{ inv[i].valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" })
-		end
-	end
+	G.block_slots(frame, "fork_me_ap_cards", inv, 1, #inv, function(_, st)    -- (issue #543: the game's inventory element)
+		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or "fork-me-gui.card-slot-empty" }
+	end)
 	local want = {}
 	for _, name in ipairs(rec.want and cards.missing_cards(rec, rec.want) or {}) do want[#want + 1] = "[item=" .. name .. "]" end
 	G.find(frame, "fork_me_ap_want").caption = #want > 0 and { "fork-me-gui.cards-wanted", table.concat(want, " ") } or ""
@@ -636,7 +660,7 @@ local function open_charger(player, entity)
 	local _, content = G.open_window(player, "charger", entity.localised_name, { unit = entity.unit_number })
 	G.label(content, { "fork-me-wireless.charger-help" }, WIDTH)
 	local row = G.row(content)
-	row.add{ type = "sprite-button", name = "fork_me_charger_slot", style = "slot_button", tags = G.act("block_slot", { slot = 1 }) }
+	row.add{ type = "flow", name = "fork_me_charger_slots", direction = "horizontal" }   -- (issue #550: the game's inventory element)
 	G.label(row, "", WIDTH - 50, nil, "fork_me_charger_info")
 	M.refresh_charger(player, G.window_of(player))
 end
@@ -645,7 +669,7 @@ function M.refresh_charger(player, frame)
 	local entity = G.entity_of(player, frame)
 	local rec = charger_rec(entity)
 	if not rec then return false end
-	G.render_slot(G.find(frame, "fork_me_charger_slot"), rec.inv[1], nil, { "fork-me-wireless.charger-slot-tooltip" })
+	G.block_slots(frame, "fork_me_charger_slots", rec.inv, 1, #rec.inv, function() return { "fork-me-wireless.charger-slot-tooltip" } end)
 	local i = M.charger_info(entity)
 	G.find(frame, "fork_me_charger_info").caption = i.charge and { "fork-me-wireless.charger-charge", math.floor(100 * i.charge),
 		{ i.charging and (i.network and "fork-me-wireless.charger-charging" or "fork-me-wireless.charger-no-power")
@@ -664,6 +688,14 @@ G.window("charger", { open = open_charger, refresh = function(player, frame) ret
 --------------------------------------------------------------------------------
 
 remote.add_interface("gregtorio-me-wireless", {
+	--- issue #603, the refill (scripts/fork-me-wireless-refill.lua): a character without a player as a record of its queue,
+	--- linked to the network of controller `ctrl` (returns its unit); one visit of a record now (the items moved); the energy
+	--- the controllers paid so far; the energy per item; the queue's records
+	refill_add = function(character, ctrl) return M.refill.add_character(character, ctrl) end,
+	refill_visit = function(unit) return M.refill.visit_now(unit) end,
+	refill_paid = function() return M.refill.paid() end,
+	refill_energy = function() return M.refill.energy_per_item() end,
+	refill_records = function() local n = 0 for _ in pairs(state().refill and state().refill.recs or {}) do n = n + 1 end return n end,
 	range_of = function(b) return M.range_of(b) end,
 	power_of = function(b) return M.power_of(b) end,
 	ap_range = function(entity) return M.ap_range(entity) end,
@@ -696,7 +728,7 @@ remote.add_interface("gregtorio-me-wireless", {
 	use_rate = function(kind, d, r) return M.use_rate({ kind = kind }, d, r) end,
 	numbers = function() return numbers() end,
 	on_removed = function(entity, buffer) M.on_removed(entity, buffer) end,
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,   -- (`inv`: issue #590)
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 })
 

@@ -33,6 +33,9 @@ local fork_monitor = require("scripts.fork-me-monitor")
 local fork_emitter = require("scripts.fork-me-emitter")
 --- issues #205 to #210: the access point, the wireless terminal and its hotkey, the charger, the equipment module
 local fork_wl = require("scripts.fork-me-wireless")
+--- issue #603: the wireless refill (the module's personal logistics from the ME network)
+local fork_refill = require("scripts.fork-me-wireless-refill")
+fork_wl.refill = fork_refill
 --- a crafting machine's recipe pasted onto an ME Interface, import, export or storage bus (issue #12)
 local fork_paste = require("scripts.fork-me-recipe-paste")
 --- the ME Cell Workbench: a cell's partition and upgrade cards (issue #17)
@@ -49,10 +52,20 @@ require("scripts.fork-me-stats")
 local pasteover = require("scripts.fork-me-pasteover")
 --- issue #386: the ME IO Port (a cell emptied into the network or filled from it; its own queue)
 local fork_ioport = require("scripts.fork-me-ioport")
+--- issue #531: the ME Logistic Interface (offers to the logistic robots, asks them for what the network lacks, takes their
+--- trash; three hidden logistic chests, its own queue)
+local fork_lif = require("scripts.fork-me-logistic-interface")
+local fork_lc = require("scripts.fork-me-logistic-construction")   -- (issue #538)
 --- issue #385: the ME Quantum Bridge (two networks joined at any distance and across surfaces)
 local fork_qbridge = require("scripts.fork-me-qbridge")
 --- issue #412: the circuit connector of the buses and the ME Interface
 local fork_conn = require("scripts.fork-me-connector")
+--- issue #527: settings paste of the ME Quantum Bridge and the ME Wireless Link by the mod's own copy and paste keys
+local paste_keys = require("scripts.fork-me-paste-keys")
+--- ME Cable dragged across an obstacle becomes a pair of underground cables (like belts)
+local cabledrag = require("scripts.fork-me-cabledrag")
+--- issue #561: the ME Memory Card (a selection tool: copy a block's settings, paste them onto blocks of its kind)
+local memcard = require("scripts.fork-me-memorycard")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -61,23 +74,35 @@ fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_sbus.tag_blueprin
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_wl.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_ioport.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_qbridge.tag_blueprint
+fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_lif.tag_blueprint
+
+--- issue #558: the player who built an entity by hand (nil for robots, platforms and scripts); issue #590: the blocks with
+--- card slots take the cards of a blueprint from its inventory first, as the provider takes its patterns
+local function builder(event)
+	local p = event and event.name == defines.events.on_built_entity and game.get_player(event.player_index)
+	return p and p.valid and p or nil
+end
 
 local function on_built(entity, tags, event)
+	local player = builder(event)
 	fork_net.on_built(entity, event)
-	fork_io.on_built(entity, tags)                            -- (any other entity: the buses facing it wake)
-	fork_sbus.on_built(entity, tags)
+	fork_io.on_built(entity, tags, nil, player)               -- (any other entity: the buses facing it wake)
+	fork_sbus.on_built(entity, tags, nil, player)
 	if entity and entity.valid and not fork_net.kind_of(entity.name) then fork_sbus.wake_near(entity) end
-	fork_ae2.on_built(entity, tags)
+	fork_ae2.on_built(entity, tags, nil, player)
 	fork_circuit.on_built(entity, tags)
 	fork_bench.on_built(entity)
 	fork_pt.on_built(entity)
-	fork_wl.on_built(entity, tags)
+	fork_wl.on_built(entity, tags, nil, player)
 	fork_monitor.on_built(entity, tags)
 	fork_toggle.on_built(entity)                              -- (after the storage engine registered it, or not)
 	fork_emitter.on_built(entity, tags)
-	fork_ioport.on_built(entity, tags)                        -- (after the graph registered it)
+	fork_ioport.on_built(entity, tags, nil, player)           -- (after the graph registered it)
+	fork_lif.on_built(entity, tags, nil, player)              -- (issue #531; its hidden chests)
+	fork_lc.on_built(entity)                                  -- (issue #538: a ghost or proxy in an automatic network)
 	fork_qbridge.on_built(entity, tags)
 	fork_conn.on_built(entity)                                -- (issue #412: a block's connector; a connector's ghost revived)
+	cabledrag.on_built(entity, event)                         -- (last: a dragged cable may become an underground end)
 end
 
 --- built by players and robots, by other scripts and on space platforms
@@ -103,6 +128,7 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 	fork_toggle.on_built(event.destination)                    -- (the game cloned its lamp condition)
 	fork_emitter.on_built(event.destination, nil, event.source)
 	fork_ioport.on_built(event.destination, nil, event.source)   -- (a cloned port is empty: its cells are items)
+	fork_lif.on_built(event.destination, nil, event.source)      -- (issue #531: a cloned hidden chest goes to its block)
 	fork_qbridge.on_built(event.destination, nil, event.source)
 	fork_conn.on_built(event.destination, event.source)
 end)
@@ -122,9 +148,13 @@ script.on_event(defines.events.on_entity_settings_pasted, function(event)
 	fork_monitor.on_entity_settings_pasted(event)
 	fork_emitter.on_entity_settings_pasted(event)             -- (a toggle bus: the game pastes its lamp condition)
 	fork_ioport.on_entity_settings_pasted(event)
+	fork_lif.on_entity_settings_pasted(event)
 	fork_qbridge.on_entity_settings_pasted(event)
 	fork_conn.on_entity_settings_pasted(event)                -- (issue #412: the connector's condition)
 end)
+
+script.on_event(defines.events.on_player_selected_area, function(event) memcard.on_selected(event) end)
+script.on_event(defines.events.on_player_alt_selected_area, function(event) memcard.on_alt_selected(event) end)
 
 script.on_event(defines.events.on_player_setup_blueprint, function(event)
 	fork_ae2.on_player_setup_blueprint(event)
@@ -133,19 +163,23 @@ end)
 --- issue #383: a blueprint (or the copy-paste tool's copy) pasted over ME blocks of the same kind makes no ghost and raises
 --- no event in Factorio 2.0, so the settings in its tags are given to those blocks before the paste, as the build handlers
 --- give them to a block built from a ghost (only the module whose tag the blueprint entity carries)
-pasteover.apply = function(entity, tags)
+pasteover.apply = function(entity, tags, player)
 	if type(tags.fork_me_drive) == "table" then fork_net.apply_drive_settings(entity, tags.fork_me_drive) end
-	if tags.fork_me_interface or tags.fork_me_bus then fork_io.on_built(entity, tags) end
-	if tags.fork_me_storage_bus or tags.fork_me_fluid_storage_bus then fork_sbus.on_built(entity, tags) end
-	if tags.fork_me_provider then fork_ae2.on_built(entity, tags) end
+	if tags.fork_me_interface or tags.fork_me_bus then fork_io.on_built(entity, tags, nil, player) end   -- (issue #590: cards)
+	if tags.fork_me_storage_bus or tags.fork_me_fluid_storage_bus then fork_sbus.on_built(entity, tags, nil, player) end
+	if tags.fork_me_provider then fork_ae2.on_built(entity, tags, nil, player) end   -- (issue #558: its inventory first)
 	if tags.fork_me_maintainer or tags.fork_me_circuit then fork_circuit.on_built(entity, tags) end
-	if tags.fork_me_access_point then fork_wl.on_built(entity, tags) end
+	if tags.fork_me_access_point then fork_wl.on_built(entity, tags, nil, player) end
 	if tags.fork_me_monitor then fork_monitor.on_built(entity, tags) end
 	if tags.fork_me_emitter then fork_emitter.on_built(entity, tags) end
-	if tags.fork_me_io_port then fork_ioport.on_built(entity, tags) end
+	if tags.fork_me_io_port then fork_ioport.on_built(entity, tags, nil, player) end
+	if tags.fork_me_logistic_interface then fork_lif.on_built(entity, tags, nil, player) end
 	if tags.fork_me_qbridge or tags.fork_me_wireless_link then fork_qbridge.on_built(entity, tags) end
 end
-script.on_event(defines.events.on_pre_build, function(event) pasteover.on_pre_build(event) end)
+script.on_event(defines.events.on_pre_build, function(event)
+	cabledrag.on_pre_build(event)
+	pasteover.on_pre_build(event)
+end)
 
 --- removed ME members. Mined: an ME Drive's cells (with their items and fluids), an ME Pattern Provider's encoded
 --- patterns, an ME Storage Bus's cards and the cell in an ME Cell Workbench go into the mined buffer, the fluid in an
@@ -170,6 +204,7 @@ local function on_mined(event)
 	fork_vc.on_removed(event.entity, event.buffer)          -- (issue #440: a terminal's view cells)
 	fork_wl.on_removed(event.entity, event.buffer)          -- (an access point's boosters, a charger's terminal)
 	fork_ioport.on_removed(event.entity, event.buffer)      -- (issue #386: its cells and cards)
+	fork_lif.on_removed(event.entity, event.buffer)         -- (issue #531: its chests into the network, else the buffer)
 	fork_qbridge.on_removed(event.entity)
 	fork_conn.on_removed(event.entity)
 	fork_net.on_removed(event.entity, event.buffer)
@@ -186,11 +221,17 @@ local function on_destroyed(event)
 	fork_vc.on_removed(event.entity, nil)
 	fork_wl.on_removed(event.entity, nil)
 	fork_ioport.on_removed(event.entity, nil)
+	fork_lif.on_removed(event.entity, nil)
 	fork_qbridge.on_removed(event.entity)
 	fork_conn.on_removed(event.entity)
 	fork_net.on_removed(event.entity, nil)
 end
 script.on_event(defines.events.on_entity_died, on_destroyed, REMOVED_FILTER)
+--- issue #538: what construction needs, for the ME Logistic Interface's automatic mode (scripts/fork-me-logistic-construction.lua)
+script.on_event(defines.events.on_marked_for_upgrade, function(event) fork_lc.on_marked_for_upgrade(event) end)
+script.on_event(defines.events.on_cancelled_upgrade, function(event) fork_lc.on_cancelled_upgrade(event) end)
+script.on_event(defines.events.on_post_entity_died, function(event) fork_lc.on_post_entity_died(event) end)
+script.on_event(defines.events.on_object_destroyed, function(event) fork_lc.on_object_destroyed(event) end)
 script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILTER)
 
 --- Issue #5: every periodic visit of the network runs here, spread over the ticks (scripts/fork-me-schedule.lua):
@@ -198,10 +239,14 @@ script.on_event(defines.events.script_raised_destroy, on_destroyed, REMOVED_FILT
 --- circuit interfaces.
 --- The terminal's 60 tick step stays (windows, drive lights, the sweep).
 local function on_tick(tick)
+	--- a save of a development build of the same version (no on_configuration_changed): the underground cables' turn once
+	if not storage.fork_me_ug_vanilla then fork_net.migrate_underground_direction() end
 	sched.mark(tick)
 	fork_io.on_tick(tick)
 	fork_sbus.on_tick(tick)
 	fork_ioport.on_tick(tick)
+	fork_lif.on_tick(tick)                                    -- (issue #531)
+	fork_refill.on_tick(tick)                                 -- (issue #603)
 	fork_conn.on_tick(tick)                                   -- (issue #412: the conditions of the circuit connectors)
 	fork_ae2.on_tick(tick)
 	fork_me.on_tick(tick)
@@ -209,6 +254,16 @@ local function on_tick(tick)
 	names.step()                                              -- (issue #295: translation requests, while any wait)
 end
 script.on_event(defines.events.on_tick, function(event) sched.metered(on_tick, event.tick) end)
+
+--- issue #603: a player whose character gets the ME Wireless Module (or comes back with it) is visited by the refill
+local function refill_player(event)
+	if event.equipment and event.equipment.name ~= fork_wl.MODULE then return end
+	fork_refill.update_player(game.get_player(event.player_index))
+end
+script.on_event(defines.events.on_player_placed_equipment, refill_player)
+script.on_event(defines.events.on_player_joined_game, refill_player)
+script.on_event(defines.events.on_player_respawned, refill_player)
+script.on_event(defines.events.on_player_armor_inventory_changed, refill_player)
 
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
 	if event.setting_type == "runtime-global" then sched.on_setting_changed() end
@@ -251,6 +306,7 @@ end
 script.on_init(function()
 	if handover_pending() then refuse_old_save(nil) end
 	handover.pull()
+	fork_net.migrate_underground_direction()                  -- (a handed-over save's underground cables, before the graph)
 	fork_me.on_init()
 end)
 
@@ -275,7 +331,9 @@ script.on_configuration_changed(function(data)
 	fork_ae2.clean_removed_items()
 	fork_circuit.clean_removed_items()
 	fork_io.clean_removed_items()
-	--- the graph first (the only map scan), then the modules that read it
+	--- the underground cables of a save from before 0.5.11 turned to the vanilla underground pipe's rule, then the graph first
+	--- (the only map scan), then the modules that read it
+	fork_net.migrate_underground_direction()
 	fork_net.rebuild()
 	--- issue #146: the reports of the conversions of old saves (0.5.0 and older) are gone with them
 	storage.fork_me_migrate, storage.fork_me_migrate_fluids, storage.fork_me_unify = nil, nil, nil
@@ -287,12 +345,16 @@ script.on_configuration_changed(function(data)
 	fork_sbus.on_configuration_changed()
 	fork_bench.on_configuration_changed()
 	fork_wl.on_configuration_changed()
+	fork_refill.on_configuration_changed()                    -- (issue #603: the players who wear the module)
 	fork_monitor.on_configuration_changed()
 	fork_toggle.on_configuration_changed()
 	fork_emitter.on_configuration_changed()
 	fork_ioport.on_configuration_changed()
+	fork_lif.on_configuration_changed()
+	fork_lc.on_configuration_changed()
 	fork_qbridge.on_configuration_changed()
 	fork_conn.on_configuration_changed()                      -- (issue #412: every bus and interface gets its connector)
+	paste_keys.on_configuration_changed()
 	names.on_configuration_changed()
 	fork_net.log_removed_items()                              -- (issue #503: ME-REMOVED-ITEM / ME-REPLACED-ITEM, once per name)
 end)

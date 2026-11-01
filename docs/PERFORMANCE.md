@@ -2793,6 +2793,9 @@ measurement cannot tell from the noise is no reason for a cache that has to be k
 
 ## The pane's slot signature (issue #75)
 
+(Gone since issue #542: the pane is the game's `inventory` element, which costs no Lua work per slot or per inventory change.
+The numbers are the record of the mod's pane.)
+
 The inventory pane compares a signature per slot at every refresh (on each inventory change, and once a second with the
 quality), and since issue #75 a cell or an encoded pattern adds its `item_number` to it, so a slot that shows a stack's
 description notices when the stack was written anew. Measured as the signature work alone, headless (the loop of
@@ -3351,6 +3354,140 @@ and, for a pair, the drain written once when it changes). Nothing per tick, noth
 
 `regressions beyond the noise: 0`.
 
+## ME Wireless Link groups (issue #559)
+
+All links of a frequency on a surface are one group; its edges (`s.wlinks`, several per link) are a minimum spanning forest of
+the links with power, by distance (Prim's, O(n^2) in the group's size, on the records' saved places: no API call in the
+loops). `add_node` and the graph rebuild read one more table per member (nil for every member but a linked link). The slow
+step (once a second) reads each link's power and compares the group with its last decision (a string of the units and their
+power): nothing else runs while nothing changed. A link built without power (a fresh one) does not decide its group at once:
+only its own drain is set (its nearest link in reach), the slow step decides; a burst of n built links costs n^2, not n^3.
+A change (a link loses or gets power, changes its frequency, is removed) decides the group again and changes the graph edge by
+edge (issue #573: `N.add_edge`, a merge when the two ends are in different networks; `N.remove_edge`, one split search between
+its two ends, `split_parts`; the new edges first, so a removed edge mostly finds the other path at once). Before #573 every
+link whose edges changed was registered again (the graph's remove and add, as a pair's link did).
+
+**The group itself** (runtime test `wgroup.lua`, a probe logged as `DEVCHECK-RUNTIME-WGROUP-PERF`, `LuaProfiler`, one run; 200
+links of one frequency in reach of each other, in a 15 x 14 grid, no other ME block):
+
+| 200 links | time |
+|---|---|
+| build them (`raise_built`) | 12.4 ms |
+| set their frequency, one after the other (no power yet) | 19.3 ms (the first version, deciding the group each time: 868 ms) |
+| the slow step, nothing changed | 2.06 ms |
+| the slow step after one link lost its power (the group decided again, edges changed) | 35.6 ms |
+| one link to another frequency and back (two decisions each) | 77.3 ms |
+
+The first versions read the links' positions through the API in Prim's inner loop: the decision after a power loss took 60.5
+ms and the frequency change 135 ms. A group of 20 links decides in well under a millisecond; groups of hundreds of links are
+not what the link is for.
+
+**Edge by edge (issue #573).** The same probe, two runtime runs each in turns (origin/main ee45c27, then #573; Factorio 2.1.24):
+
+| 200 links | origin/main | #573 |
+|---|---|---|
+| build them | 12.4 / 12.7 ms | 17.0 / 12.1 ms |
+| set their frequency (no power yet) | 18.3 / 20.0 ms | 25.2 / 21.5 ms |
+| the slow step, nothing changed | 2.15 / 2.20 ms | 1.51 / 2.51 ms |
+| one link loses its power (decided again) | 65.4 / 66.7 ms | **20.2 / 14.2 ms** |
+| one link to another frequency and back | 73.8 / 68.3 ms | **33.6 / 25.9 ms** |
+
+(The first two rows touch no edge: their spread is the noise of one run. The 35.6 ms of the table above was measured on 2.1.23.)
+The re-registration was most of the time: a link that lost its power had all its edges and those of the links around it removed
+and added again, each a member's removal (a split search) and addition (a find_entities_filtered). Now the dropped link's edges go
+after the new edges among the others are in, so the split search between their ends finds the link alone at once (it becomes a
+network of its own) and the rest of the group stays one network without a search through it.
+
+The scenes have no link; the member removal now hands its parts to the same `split_off` as the edge removal.
+`bench --check origin/main --sizes 100,1000 --runs 3` (three rounds in turns, Factorio 2.1.24):
+
+| | origin/main | #573 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2853 / 2.659 | 0.2670 / 2.443 |
+| 1000: script average / p99 ms | 0.4789 / 2.925 | 0.4516 / 2.683 |
+| Lua alloc KB per tick (100 / 1000) | 28.83 / 41.61 | 28.83 / 41.61 |
+| burst build / remove ms (1000) | 117.9 / 110.6 | 102.0 / 93.27 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+**The scenes** have no link; `bench --check origin/main --sizes 100,1000 --runs 3` (three rounds in turns):
+
+| | origin/main | #559 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2406 / 2.238 | 0.2395 / 2.146 |
+| 1000: script average / p99 ms | 0.4166 / 2.424 | 0.4193 / 2.458 |
+| Lua alloc KB per tick (100 / 1000) | 28.05 / 25.90 | 28.06 / 25.90 |
+| burst build / remove ms (1000) | 94.78 / 89.79 | 92.54 / 90.28 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## The ME Molecular Assembler carries the network (issue #560)
+
+The assembler is a member of kind `assembler`: the graph's join, removal, split and rebuild treat it like any other member
+(one more name in the members' filter). Its draw is kept in its node (`node.w`, whole watts, so the sums do not depend on
+their order): a join or a removal adds or takes it out without the walk over the members (issue #420), a change adds the
+difference. The slow step (once a second) walks the assemblers (`s.asm`, their units): per assembler one look at its
+network's state (kept for the tick), one status read, and a write only when its draw or its on/off state changed.
+
+**A burst of assemblers** (the bench's new burst step: 1000 blocks, pattern providers and assemblers in a checkerboard, no
+cable, built in one tick and removed in one tick; `bench --sizes 1000 --runs 3`, medians, origin/main with the same harness):
+
+| 1000 providers and assemblers | origin/main (the assemblers no members) | #560 |
+|---|---|---|
+| build (loop) | 72.9 ms | 99.7 ms |
+| remove (loop) | 44.4 ms | 97.9 ms |
+
+About 0.1 ms per member, what the other ME blocks cost (the burst of 998 buses, interfaces and cables: 99 to 105 ms).
+
+**The scenes** have an assembler next to every pattern provider, members now: `bench --check origin/main --sizes 100,1000
+--runs 3` (three rounds in turns):
+
+| | origin/main | #560 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2483 / 2.200 | 0.2430 / 2.150 |
+| 1000: script average / p99 ms | 0.4743 / 2.820 | 0.4731 / 2.659 |
+| Lua alloc KB per tick (100 / 1000) | 28.12 / 26.18 | 28.12 / 26.18 |
+| burst build / remove ms (1000) | 95.76 / 94.42 | 109.7 / 102.8 (spread ±27 / ±30) |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
+
+## Fast machines kept busy (issue #557)
+
+A job hands a machine its work only in its steps (every 20 ticks at most, fewer with many jobs: the map setting "crafting
+jobs per tick"), and a hand-over was at most 16 crafts. A machine that crafts 16 in less than a step idled until the next one.
+Now `M.machine_batch` gives a machine as many crafts as it makes in two steps (its `crafting_speed`, which has its modules,
+quality and Acceleration Cards, against the recipe's time, cached per recipe), at least 16, as far as the pool, its input
+slots and its output slot allow; and `M.top_up` adds runs to a crafting lease whose machine still works and has less than half
+of that left (the products so far collected and counted as done first). A machine that runs out of work or fills its output
+slot (one stack of the product) before the job's next regular step has the job stepped earlier, at three quarters of that time
+(`M.note_early`, `job.early` in storage; the step's operations are at least one round's): Gregtorio's molecular assembler
+(speed 30, gears stack to 64) makes more than a stack in a step. A step's costs per busy lease: one more read
+(`products_finished`) and the speed and recipe time (cached per recipe); per top-up, the inserts a hand-over makes. The default
+and the ceiling of "crafting jobs per tick" are unchanged: top-ups and the early steps of the jobs that need them keep the
+machines busy without stepping every job more often.
+
+**The test** (`fastcraft.lua`): an ME Molecular Assembler with five Acceleration Cards on a 0.1 s recipe, a job that lasts about
+510 ticks at its speed, measured over 300 ticks from 60 ticks after its start. Standalone (2.08 crafts per tick): 38 % busy
+with origin/main (16 crafts per 20 ticks), 99 to 100 % now. With Gregtorio (5 crafts per tick): 63 % with the top-ups alone (the
+output slot holds 64 gears, a step is 100 crafts), 100 % with the early steps.
+
+`bench --check origin/main --sizes 100,1000 --runs 3` (three rounds in turns; the scenes' providers and assemblers):
+
+| | origin/main | #557 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2466 / 2.166 | 0.2363 / 2.125 |
+| 100: provider crafts per second | 2.317 | 2.500 |
+| 1000: script average / p99 ms | 0.4165 / 2.302 | 0.4240 / 2.428 |
+| 1000: provider crafts per second | 14.83 | 15.78 |
+| Lua alloc KB per tick (100 / 1000) | 28.05 / 25.90 | 28.12 / 26.18 |
+| script time per craft (100 / 1000) | 6.39 / 1.69 ms | 5.67 / 1.61 ms |
+
+`regressions beyond the noise: 0`. The scenes' machines craft 6 to 8 % more in the same time at a lower script time per craft
+(the script average divided by the crafts per tick).
+
 ## Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)
 
 The filter sets are made when the filters or the cards change, never in a visit: a Capacity Card only makes the set longer
@@ -3830,3 +3967,369 @@ throughput per kind of endpoint identical.
 At 1000 the first rounds were slow on both sides (the machine was busy; the medians differ by the reference's
 slower second round), the third rounds are equal (0.42 ms); at 5000 the third rounds are equal (1.092 ms) and the
 difference of the first two lies within the noise. The allocation and the heap are the same, as the code taken per tick is.
+
+## The ME Logistic Storage Bus (issue #506)
+
+A queue of its own (`logistic_storage_bus`, budget 1 / 2 visits per tick); with no logistic bus on the map the handler
+reads one table and returns. A visit is one `find_logistic_network_by_position`, the claim, one `get_contents` per member
+it reads (`"storage"`, and `"providers"` in the provider mode), a loop over the entries and `N.ext_sync` of the
+differences. Measured on the maintainer's save (headless, 1048 roboports, 473 storage chests, 764 000 items of 368
+kinds): `get_contents("storage")` 0.28 ms, `get_contents("providers")` 0.06 ms, `get_item_count` 0.3 µs, `insert` and
+`remove_item` 3 µs, `select_drop_point` 3 µs, `find_logistic_network_by_position` 1.4 µs. A busy logistic network (its
+contents change at every visit) is read every 30 ticks, a quiet one every 120.
+
+The bench scene (`bench --logistic 1000`, new): below the ME scene a logistic network of 1000 roboports and 520 storage
+chests (500 with two kinds each, 120 kinds the ME scene never uses, 561 520 items; 20 fed by fast inserters, so its
+contents change all the time: the busy case) and one ME Logistic Storage Bus on the ME network, built only where the
+version has it: `--check origin/main` runs the same scene without the bus as the reference.
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000` (three rounds in turns):
+
+| | origin/main (no bus) | with the bus |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.534 / 3.83 | 0.524 / 3.63 |
+| 1000: ticks over 5 ms | 13 (noise ±16.5) | 9 |
+| 1000: gc avg (ms) | 0.046 | 0.050 |
+| 1000: Lua alloc KB per tick | 25.90 | 27.21 |
+| 1000: burst build / remove (ms) | 106.1 / 118.5 | 131.2 / 130.3 (noise ±16.8 / ±22.7) |
+| 5000: script avg / p99 (ms) | 1.296 / 5.46 | 1.223 / 4.83 |
+| 5000: ticks over 5 ms | 48 | 33 |
+| 5000: Lua alloc KB per tick | 34.26 | 35.57 |
+| 5000: mod heap alive (MB) | 57.81 | 57.90 |
+| throughput, latencies, crafts, backlogs | | identical |
+
+The script time does not move beyond the noise at either size: a visit every 30 ticks is far below the per-tick spread of
+the scene. The one number `--check` reports as worse is the **allocation, +1.31 KB per tick at both sizes**: the table
+`get_contents` returns (an entry per kind and member, made by the engine at every call) at a visit every 30 ticks. It is the
+price of reading a logistic network and grows with its kinds: on the maintainer's 368 kinds about 4 KB per tick while the
+network is busy, about 1 KB per tick while it is quiet (a read every 120 ticks). The collector's time did not change beyond the noise.
+
+`bench --sizes 1000 --logistic 1000 --profile 1000 --exclusive` (each function's own time; the profiler's wrappers add to
+small functions):
+
+| function | per call | calls per tick | per tick |
+|---|---|---|---|
+| `read` (one `get_contents("storage")` of 520 chests, 120 kinds, and the loop) | 416 µs | 0.03 | 0.0139 ms |
+| `M.visit` (without `read`, `claim` and `N.ext_sync`) | 22 µs | 0.03 | 0.0007 ms |
+| `claim` (`find_logistic_network_by_position`, the claim) | 13 µs | 0.03 | 0.0004 ms |
+| `M.on_tick` (the queue: nothing due) | 1.6 µs | 1 | 0.0016 ms |
+
+The queue: 0.03 visits per tick, every visit found a change (the feeders), the interval between two visits 0.50 s (30
+ticks) in all 120 visits of the window, no backlog. So a busy logistic network of this size costs about 0.017 ms per tick
+on average and about 0.45 ms in the tick of its visit; a quiet one a quarter of that on average.
+
+## The visit of the ME Logistic Storage Bus, halved (issue #509)
+
+The headless check of #507 measured 0.64 ms per visit on the maintainer's hub, 0.30 ms of it the engine's `get_contents`.
+The Lua part now builds no string per entry (a two-level key cache, `keys[quality][name]`) and `N.ext_sync` hands a key to
+`ext_set` only when its count changed (hundreds of unchanged kinds per visit; every external cell takes this path).
+
+**On a copy of SpaceAge_first-try** (1048 roboports, 486 storage points, 316 kinds shown; the same loaded save for both
+versions, three times 50 visits through the remote against 50 bare `get_contents("storage")`; the 49 visits after the
+first find no change in that tick, so this is the cost of reading and comparing):
+
+| | origin/main (#508) | #509 |
+|---|---|---|
+| visit (ms) | 0.443 / 0.526 / 0.463 | 0.349 / 0.349 / 0.366 |
+| `get_contents("storage")` alone (ms) | 0.192 / 0.190 / 0.167 | 0.204 / 0.195 / 0.227 |
+| **Lua part (ms), median** | **0.296** | **0.145** (49 %) |
+
+**Bench scene** (`bench --logistic 1000 --profile 1000 --exclusive`, 120 kinds, a network that changes at every visit):
+`read` (one `get_contents` and the loop) 416 → **176 µs per visit**, 0.0139 → 0.0059 ms per tick.
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000` (three rounds in turns): **regressions beyond the noise: 0**,
+throughput per kind of endpoint identical.
+
+| | origin/main (#508) | #509 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.386 / 2.26 | 0.373 / 2.25 |
+| 1000: Lua alloc KB per tick | 27.21 | 27.21 |
+| 5000: script avg / p99 (ms) | 0.931 / 2.88 | 0.909 / 2.99 (noise ±1.02) |
+| 5000: gc avg (ms) | 0.062 | 0.059 |
+| 5000: Lua alloc KB per tick | 35.57 | 35.57 |
+
+The allocation is the engine's result table of `get_contents` and did not change (#506).
+
+## The ME Terminal's quality filter and sort (issue #514)
+
+The terminal's list gets the quality level of each key from the per-key cache it already had (`info_of`, once per key and
+load), so a list made anew pays one number field per entry, the filter one comparison per key (only while a quality is
+chosen), and the sort one more comparison where two entries of one name tie (before: the key's text). The kept lists keep
+their id for "any quality", so nothing changes for a window without the filter; nothing runs per tick.
+
+`bench --check origin/main` (sizes 100, 1000, 5000; three rounds in turns): **regressions beyond the noise: 0**,
+throughput per kind of endpoint identical.
+
+| | origin/main (#513) | #514 |
+|---|---|---|
+| 100: script avg / p99 (ms) | 0.208 / 1.87 | 0.205 / 1.86 |
+| 1000: script avg / p99 (ms) | 0.352 / 2.02 | 0.353 / 2.01 |
+| 5000: script avg / p99 (ms) | 0.927 / 2.79 | 0.935 / 2.82 |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 28.06 / 25.90 / 34.26 | 28.06 / 25.90 / 34.26 |
+
+The window probes (`bench --sizes 1000 --profile 1000`, two runs of each version in turns, µs per call; the bench network
+holds every item in every quality, so "≤ normal" keeps about a fifth of the keys; the version before #514 sorts
+"quality" by amount and ignores the filter):
+
+| window: terminal entries | origin/main (#513) | #514 |
+|---|---|---|
+| all, by count (made anew) | 4221 / 4517 | 4873 / 4943 |
+| items, by name (made anew) | 4671 / 4270 | 4363 / 4476 |
+| all, by quality (made anew) | 4292 / 4454 | 4694 / 4779 |
+| all, by count, quality ≤ normal (made anew) | 4228 / 4427 | 1254 / 1159 |
+| all, by count, nothing changed | 1921 / 1866 | 1961 / 1880 |
+| all, by count, one amount changed (a refresh) | 3946 / 3930 | 3445 / 3586 |
+
+A list made from nothing by amount is up to a tenth slower in these runs (the scene's qualities of one item often hold the
+same amount, so their tie goes on to the name and the level), by name it is the same; the refresh of an open window (one
+amount changed, the list sorted again from the last one) and a window whose network did not change cost the same as before.
+
+## The ME Logistic Storage Bus skips ME-owned chests (issue #530)
+
+The bus learns which logistic chests belong to the ME network (the hidden chests of the ME Logistic Interface, issue #531)
+from a lookup outside `storage` that the owning modules fill. While no owned chest exists, every engine call is the one of
+#509; each call of the bus first reads one module-local count (`owned_n == 0`). With owned chests in its logistic network
+(looked up once per tick and network: `logistic_network.network_id` of each owned chest), the bus subtracts their contents
+from its read and its counts, stores through `select_drop_point` (then `"storage-empty-slot"`, `"storage-empty"`, then the
+first 64 storage chests) into a chest that is not owned, and takes through `get_supply_points` from points that are not
+owned, but only for an item that an owned chest holds (otherwise `remove_item` as before).
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000` (three rounds in turns; no owned chest in the scene, so this
+is the cost of the empty path): **regressions beyond the noise: 0**, throughput per kind of endpoint identical.
+
+| | origin/main (#529) | #530 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.397 / 2.17 | 0.392 / 2.13 |
+| 1000: gc avg (ms) | 0.0373 | 0.0374 |
+| 1000: Lua alloc KB per tick | 27.21 | 27.21 |
+| 5000: script avg / p99 (ms) | 1.015 / 2.97 | 0.995 / 2.94 |
+| 5000: gc avg (ms) | 0.0576 | 0.0592 (noise ±0.0032) |
+| 5000: Lua alloc KB per tick | 35.57 | 35.57 |
+| burst build / remove at 1000 (ms) | 80.8 / 81.7 | 82.9 / 80.5 (noise ±2.2) |
+
+The path with owned chests is measured with the interface (issue #531), which is the first to own any.
+
+## The ME Logistic Interface (issue #531)
+
+A queue of its own (`logistic_interface`, budget 2 / 8 visits per tick). A visit: `ensure_chests` (three `valid` reads), the
+pull of three inventories (an empty one is one `is_empty`), the offer rows (one `get_item_count` per key, `N.extract_to`
+for what is missing), the request rows (`N.count_key`, one `get_item_count`, `targeted_items_deliver` only for a row that
+still asks, `set_slot` only on a change). An interface that moved nothing doubles its interval up to the idle limit
+(300 ticks): a robot's drop raises no event.
+
+**Bench scene** (`bench --logistic N`): 16 ME Logistic Interfaces beside the bus's cable column, each offering 3 kinds of the
+logistic network's items (20 each, taken from the storage chests through the bus) and asking for 3 others beyond what the
+network holds. The scene has no robots: the offers stay stocked and the requests open, so every visit reads its chests and
+works out all its rows; 48 hidden chests are owned (issue #530).
+
+`bench --sizes 1000 --logistic 1000 --profile 1000 --exclusive` (each function's own time):
+
+| function | per call | calls per tick | per tick |
+|---|---|---|---|
+| `request` (3 rows that ask, the deliveries read) | 23.7 µs | 0.05 | 0.0013 ms |
+| `offer` (3 rows stocked) | 18.4 µs | 0.05 | 0.0010 ms |
+| `visit` (without the parts listed) | 12.1 µs | 0.05 | 0.0006 ms |
+| `M.on_tick` (the queue: nothing due) | 1.2 µs | 1 | 0.0012 ms |
+| `pull` (an empty inventory) | 0.65 µs | 0.16 | 0.0001 ms |
+
+So 16 idle interfaces cost about 0.0045 ms per tick (each visited every 320 ticks), 55 µs per visit.
+
+**The bus with owned chests**: the first version grouped the owned chests by asking each one's `logistic_network` once per
+tick a bus used it (#530): with 48 owned chests a bus visit cost 112.9 µs of its own (22 µs in #506). Now the owner gives
+each chest's network id from its saved record (`rec.lid`): **15.8 µs**. The bus's `read` subtracts the owned storage chests'
+contents: 156 µs per visit with 120 kinds (176 µs in #509 without owned chests; the run differs, the subtraction is a
+`get_contents` of 16 small chests).
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000` (three rounds in turns; the reference has neither the
+interfaces nor the #530 path with owned chests): **regressions beyond the noise: 0**, throughput per kind of endpoint
+identical.
+
+| | origin/main (#530) | #531 (16 interfaces) |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.400 / 2.13 | 0.407 / 2.17 (noise ±0.027 / ±0.14) |
+| 1000: gc avg (ms) | 0.0379 | 0.0371 |
+| 1000: Lua alloc KB per tick | 27.21 | 27.57 |
+| 1000: mod heap alive (MB) | 25.95 | 26.22 |
+| 5000: script avg / p99 (ms) | 1.015 / 2.97 | 1.020 / 3.12 (noise ±0.065 / ±0.44) |
+| 5000: Lua alloc KB per tick | 35.57 | 35.93 |
+
+The first check, before the bus took the network id from the records and before the visit reused its scratch tables,
+failed at 1000 (0.403 → 0.415 ms, +0.73 KB per tick); the allocation is now half of that (the tables `targeted_items_deliver`
+and `get_contents` return, which the engine makes).
+
+## The ME Logistic Interface's automatic mode (issue #537)
+
+A scan with a budget of its own (`logistic_demand`, map setting "requests read per tick", 2 requester points per tick), one
+logistic network with an automatic block after the other: phase 1 reads the points (`filters`, one `get_item_count` per
+filter, `targeted_items_deliver` only for a point with open demand), phase 2 works out each requested key (one
+`get_item_count` of the logistic network; what the ME-owned chests hold is read once per pass, one `get_contents` per owned
+chest), phase 3 decides in one tick. The point list (`requester_points`) is kept in `storage` and taken again after 600 ticks
+or when a requester is built.
+
+**Measured on the maintainer's save** (SpaceAge_first-try, Nauvis; issue #537): 355 requester points, a full read 7–12 ms,
+20–35 µs per point. The cost estimated in the issue for 2 points per tick: 0.05–0.07 ms per tick.
+
+**Bench scene** (`bench --logistic N --requesters M`, issue #537): M requester chests beside the roboports, each asking for
+10 of an item the logistic network holds (covered), 50 of a raw item of the ME scene (unmet, ME has it) and 100 000 of another
+item of the logistic network (unmet, ME lacks it: the ME Logistic Storage Bus of the scene shows the base's chests, which the
+automatic mode leaves out). The scene has no robots, so the demand stays and every pass offers the same stock. The 16
+interfaces of #531 are built in Automatic mode (the first leads).
+
+`bench --sizes 1000 --logistic 1000 --requesters 400 --profile 1000 --exclusive` (each function's own time):
+
+| function | per call | calls per tick | per tick |
+|---|---|---|---|
+| `scan_point` (3 filters with open demand, the deliveries read) | 21.0 µs | 1.92 | 0.040 ms |
+| `demand_step` (the step, without the parts listed) | 8.9 µs | 1 | 0.009 ms |
+| `scan_key` (one key) | 3.1 µs | 0.30 | 0.001 ms |
+| `decide` (once per pass, 16 blocks) | 682 µs | 0.005 | 0.003 ms |
+| `auto_request` (the asker's visit) | 7.7 µs | 0.23 | 0.002 ms |
+
+`scan_key` first cost 99 µs per key: it counted the 48 owned chests one by one for every key; they are now read once per
+pass (`L.owned_contents`). `decide` first cost 850 µs: every key asked all 16 blocks' networks; now each ME network is asked
+once per key and blocks are sorted only for a key some network has.
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000 --requesters 400` (three rounds in turns; the reference has no
+automatic mode: its 400 requesters cost nothing):
+
+| | origin/main (#532) | #537 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.424 / 2.16 | 0.482 / 2.25 (noise ±0.021 / ±0.09) |
+| 1000: gc avg (ms) | 0.0386 | 0.0440 |
+| 1000: Lua alloc KB per tick | 27.56 | 33.59 |
+| 5000: script avg / p99 (ms) | 1.015 / 2.91 | 1.084 / 2.98 (noise ±0.020 / ±0.08) |
+| 5000: Lua alloc KB per tick | 35.93 | 41.95 |
+
+The check reports these five numbers as regressions: they are the scan's cost, **+0.058 to +0.069 ms per tick**, in the
+range the issue estimated (0.05–0.07 ms), and about 3 KB per point read (the tables the engine returns: `filters`,
+`targeted_items_deliver`, `position`). Throughput, latencies and the service of every other kind of block are identical. A
+base without an automatic block pays nothing (`demand_step` returns after one cached lookup); fewer points per tick (the
+setting) lower the cost and lengthen a pass.
+
+## What construction needs, for the automatic mode (issue #538)
+
+`scripts/fork-me-logistic-construction.lua`: entity and tile ghosts, entities marked for upgrade and item request proxies in
+a logistic network with an automatic block are records in `storage` (the maintainer's choice: a joining peer must see what
+the server counted), added by the build events and `on_marked_for_upgrade`, removed by `on_object_destroyed` and
+`on_cancelled_upgrade`. The interface's pass adds the tally of its logistic network to the points' demand (one `pairs` over
+the keys at the end of phase 1).
+
+**Measured on the maintainer's save** (SpaceAge_first-try, Nauvis, a copy): 1048 logistic cells; searching each cell's
+construction square for ghosts, proxies and upgrades costs 132 µs per cell (138 ms for all of them, about what one count
+over the surface cost: 102 ms). So the safety net goes at 10 cells per second (map setting), one quarter of a square per
+step: about 0.013–0.04 ms per tick, a full round in about 100 s on Nauvis.
+
+**Bench** (`bench --ghosts N`, new): after the build burst (and after the allocation meter's ticks) N wall ghosts are pasted in
+one tick in the logistic network of `--logistic` (with `raise_built`, as a paste raises `on_built_entity` per ghost) and
+removed in one tick 60 ticks later. The first version pasted during the allocation meter's ticks when the latency probes
+ended early; the meter then counted the rescan of the pasted ghosts (+3.35 KB per tick).
+
+`bench --sizes 1000 --logistic 1000 --requesters 400 --ghosts 5000` (three runs each, median):
+
+| | origin/main (#537) | #538 |
+|---|---|---|
+| paste of 5000 ghosts: the loop (engine and every handler) | 106.0 ms | 167.6 ms |
+| removal of 5000 ghosts: the tick, whole (on_object_destroyed) | 6.5 ms | 18.2 ms |
+
+So a ghost costs about 12 µs in the paste tick and 2.3 µs when it goes. Profile of the paste (`--profile 1000 --exclusive`,
+own time per function, the instrumented copy adds about 0.6 µs per wrapped call): `needs_of` 3.7 µs (the item of the
+ghost's prototype, cached per name; its quality; its `item_requests`), `lid_of` 3.4 µs
+(`find_logistic_networks_by_construction_area`), `track` 2.7 µs (`register_on_object_destroyed`), `put` 1.8 µs, `drop`
+0.3 µs.
+
+The safety net: the first version searched a whole square at once and every recorded ghost again (110 ghosts in a square: a
+rescan of 185 KB and about 1 ms). Now a recorded ghost is left as it is (what it needs does not change; a proxy's needs are
+taken again), upgrades are searched only in a network's first round (`order_upgrade` raises its event whoever calls it), and a
+square is searched in four steps: 58.7 µs per quarter in the first round (both searches), 0.039 ms per tick at 10 cells per
+second.
+
+`bench --check origin/main --sizes 1000,5000 --logistic 1000 --requesters 400 --ghosts 5000` (three rounds in turns; the
+measured window is the first rescan round):
+
+| | origin/main (#537) | #538 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.498 / 2.38 | 0.544 / 2.40 (noise ±0.038 / ±0.15) |
+| 1000: Lua alloc KB per tick | 33.59 | 34.70 |
+| 5000: script avg / p99 (ms) | 1.118 / 3.11 | 1.103 / 3.01 (noise ±0.050 / ±0.16) |
+| 5000: load, first tick (ms) | 5.9 | 7.1 (noise ±0.6) |
+
+The check reports two numbers: the average at 1000 (+0.047 ms; the first round of the working copy was 0.575 ms, the other
+two +0.023 and +0.046 ms: the rescan's 0.039 ms per tick) and the first tick after the load at 5000 (+1.2 ms, once). The 99th
+percentile, which the whole squares had moved by +0.155 ms at 1000, is within the noise now; throughput and latencies are
+identical.
+
+## Crafting jobs hand out their product as it arrives (issue #602)
+
+A job's requested item goes on from its pool at every job step (`M.hand_out`: one read of the pool when nothing came; when
+something did, a walk over the job's steps for what later runs still take of it, then the Crafting Card's block or one
+`N.insert` into the network) instead of in one flush when the job ends. The work is the same items stored in more, smaller
+inserts.
+
+`bench --check origin/main` (three rounds in turns; size 1000 seven rounds), measured while nothing else ran on the machine:
+
+| | origin/main | #602 |
+|---|---|---|
+| 100: script avg / p99 (ms) | 0.247 / 2.11 | 0.237 / 2.05 (noise ±0.008 / ±0.07) |
+| 1000: script avg / p99 (ms) | 0.423 / 2.30 | 0.432 / 2.38 (noise ±0.025 / ±0.19) |
+| 1000: ticks over 5 ms | 2 | 3 (noise ±2) |
+| 5000: script avg / p99 (ms) | 1.110 / 3.34 | 1.106 / 3.28 (noise ±0.015 / ±0.06) |
+| provider crafts per second (100 / 1000 / 5000) | 2.5 / 15.78 / 329.5 | the same |
+| Lua alloc KB per tick (100 / 1000 / 5000) | 28.84 / 41.61 / 61.81 | 28.83 / 41.61 / 61.83 |
+
+Throughput, latencies and the crafts are identical; no number is worse than the noise. A first check, run while the game itself
+was running on the same machine, had rounds between 0.48 and 0.88 ms at 1000 for both versions and once flagged "ticks over
+5 ms" (34 against 51); the quiet seven-round run above shows 2 against 3.
+
+## The ME Terminal's sorts by mod and by tier, rows kept at 0 (issue #602)
+
+- **Tiers** (`scripts/fork-me-sortkeys.lua`): made once when the prototypes can have changed (`on_init`,
+  `on_configuration_changed`) and kept in `storage.fork_me_tiers`, so a sort by tier reads a table (the first one in the
+  runtime test: 0.09 ms). Making them reads every recipe and technology: about 0.9 s with Gregtorio (29 705 recipes, 701
+  technologies; the vanilla game with Space Age far less), paid while the game loads after a mod change. Measured on the way
+  (`helpers.create_profiler` in the runtime test with Gregtorio): a walk of `prototypes.recipe` costs about 2.4 µs per entry
+  (70 ms for all), `r.products` about 9 to 18 µs per recipe, the effects of one technology about 110 µs (78 ms for all). The
+  engine's filters are fast to call (`get_recipe_filtered` with `has-product-item`: 0.07 ms for one item, 0.13 ms for 300;
+  `get_technology_filtered` with `unlocks-recipe`: 6 µs) but slow to walk: their result tables cost about 190 µs per entry
+  (52 ms for the 279 recipes of 300 items), so a lookup per item through them took 0.23 s for 5 items and 5.9 s for 300 more,
+  and a tier per item at the first sort was not an option. Mods are looked up per item at the first sort by mod
+  (`prototypes.get_history`), outside storage.
+- **Rows kept at 0**: a refresh of the storage grid compares the keys it showed with the network's items (at most 400 lookups)
+  and copies the kept list only when a row is kept at 0.
+
+## The wireless refill (issue #603)
+
+A queue of its own (tag `wireless_refill`, `/me-stats`), one record per player who wears the ME Wireless Module. A save
+without such a player has no records and the queue costs one table read per tick.
+
+**Bench** (`bench --refill N`, new): an ME Wireless Access Point on the first part's spine and N characters without players
+around it, each in modular armour with the module and ten logistic requests (five raw items of the scene, 50 each, which the
+network has; five items it never holds); every 300 ticks (a sample tick, outside the timing) the requested items of every
+character go into its trash slots, so every visit stores and refills. A version without the refill (a `--check` reference)
+gets the same characters, which then do nothing. The characters' inventories count in the conservation check.
+
+Profile (`bench --sizes 100 --refill 100 --profile 100 --exclusive`, one run): 1.06 visits per tick (the floor of one is not
+what limits them: 100 players at 120 ticks idle and 30 ticks after a move), a visit's own time 330 µs in the first version,
+which read the inventory and the controllers' spare energy for each request. Read once per visit (`get_contents`, the hand,
+the energy as a budget of items), it is 169 µs: by sections (`helpers.create_profiler` over 7000 visits) about 36 µs for
+the checks (personal logistics, the module, the link, the network, the access point's range), 47 µs for the requester
+point's compiled filters, 59 µs for the requests (half of it `N.extract`) and 46 µs for the trash (mostly `N.insert_partial`,
+21 µs per stack: the items stored). A visit that finds nothing to do costs about 100 µs. A cache of the compiled filters
+was left out: switching a section on or off changes them without `on_entity_logistic_slot_changed`.
+
+`bench --check origin/main` (the scenes without characters, three rounds in turns; other harness runs shared the machine,
+so the noise is wide): no regression; script avg 0.496 / 0.929 / 1.21 ms (origin/main) against 0.473 / 1.014 / 1.209 ms at
+100 / 1000 / 5000, Lua alloc KB per tick identical (28.84 / 41.61 / 61.81).
+
+`bench --check origin/main --sizes 100,1000 --refill 100` (100 characters, the cost of the feature against a version that
+does nothing for them):
+
+| | origin/main | #603 |
+|---|---|---|
+| 100: script avg / p99 (ms) | 0.297 / 2.42 | 0.688 / 3.83 (noise ±0.11 / ±0.84; rounds 0.49 to 0.70) |
+| 1000: script avg / p99 (ms) | 0.482 / 2.83 | 0.629 / 2.74 (rounds 0.62, 0.63 and one of 1.42) |
+| Lua alloc KB per tick (100 / 1000) | 28.84 / 41.60 | 36.90 / 50.08 |
+| items/s, provider crafts/s | 3326, 2.5 / 33 230, 15.78 | the same |
+
+The check reports the script average at 100 and the allocation at both sizes: the refill's work, about 0.15 ms and 8 KB
+(the compiled filters and the inventory contents the engine hands over) per tick for 100 players with ten requests each,
+whose items are used up every five seconds. One player costs about a hundredth of it.

@@ -510,7 +510,7 @@ G.on_window_closed(function(player, window)
 	local frame = picker_of(player)
 	if frame then
 		if frame.visible or frame.tags.cancel_tick == game.tick then
-			G.focus(player, window)                      -- (the window, or its hand-over buffer: issue #168)
+			G.focus(player, window)                      -- (the window is the opened GUI again)
 			if frame.visible then
 				frame.visible = false
 				set_tags(frame, { cancel_tick = game.tick })

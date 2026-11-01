@@ -109,25 +109,23 @@ return function(H)
 		remote.call(IO, "built", c, nil, a)
 		expect(data(c).slots == 36 and data(c).config[36], "a clone: " .. data(c).slots .. " rows, network " .. count(CARD))
 
-		--- issue #201: a stack of cards in the hand-over buffer (the interface takes three, the rest stays) is not pushed into a card
-		--- slot again when the player takes a card out of it; a new stack is tried
+		--- shift + click of a stack of cards in the window's inventory (issue #542: the inventory element; until then #201's buffer):
+		--- the interface takes three, the rest stays; a card taken out of a slot is not pushed back by itself
 		do
-			local buf = game.create_inventory(4)
+			local pinv = game.create_inventory(4)
 			local slots = remote.call(IO, "interface_inventory", b)
 			for i = 1, #slots do slots[i].clear() end
 			remote.call(IO, "interface_sync", b, back)
-			buf[1].set_stack{ name = CARD, count = 5 }
-			local took, seen = remote.call(GUI, "buffer_absorb", buf, "interface", b)
-			expect(buf[1].valid_for_read and buf[1].count == 2 and data(b).slots == 36, "buffer: three cards went in, two stay: "
-				.. tostring(buf[1].valid_for_read and buf[1].count) .. ", " .. data(b).slots .. " rows")
+			pinv[1].set_stack{ name = CARD, count = 5 }
+			remote.call(GUI, "inventory_click", nil, pinv, 1, "shift", b)
+			expect(pinv[1].valid_for_read and pinv[1].count == 2 and data(b).slots == 36, "shift + click: three cards went in, two stay: "
+				.. tostring(pinv[1].valid_for_read and pinv[1].count) .. ", " .. data(b).slots .. " rows")
 			expect(remote.call(IO, "interface_card_click", b, 1, hand, back, true) == nil and data(b).slots == 27, "a card out of the slot")
-			local _, seen2 = remote.call(GUI, "buffer_absorb", buf, "interface", b, seen)
-			expect(buf[1].count == 2 and data(b).slots == 27, "the stack that stayed is not put in again: " .. buf[1].count .. " in the buffer, "
+			expect(pinv[1].count == 2 and data(b).slots == 27, "the stack that stayed is not put in again: " .. pinv[1].count .. ", "
 				.. data(b).slots .. " rows")
-			buf[2].set_stack{ name = CARD, count = 1 }                       -- a new stack is tried
-			remote.call(GUI, "buffer_absorb", buf, "interface", b, seen2)
-			expect(not buf[2].valid_for_read and data(b).slots == 36, "a new stack is tried: " .. data(b).slots .. " rows")
-			buf.destroy()
+			remote.call(GUI, "inventory_click", nil, pinv, 1, "shift", b)
+			expect(pinv[1].count == 1 and data(b).slots == 36, "shift + click again: one card in: " .. data(b).slots .. " rows")
+			pinv.destroy()
 		end
 
 		--- mined: the cards come with the interface

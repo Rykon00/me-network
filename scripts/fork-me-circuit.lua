@@ -277,6 +277,10 @@ local function row_step(e, net, row, budget)
 	end
 	if stock >= target then
 		row.status, row.missing, row.retry = "stocked", nil, nil
+		if row.noted then                                         -- (issue #532: its note of what a start lacked goes)
+			autocraft.note_missing("m" .. e.unit_number .. ":" .. row.key, e.unit_number, net, nil)
+			row.noted = nil
+		end
 		return
 	end
 	if autocraft.active_job_for(net, row.key) then row.status = "other-job" return end
@@ -293,6 +297,12 @@ local function row_step(e, net, row, budget)
 		row.status = why or "failed"
 		row.missing = why == "missing" and plan and plan.missing or nil
 		row.retry = game.tick + RETRY_TICKS
+	end
+	--- issue #532: what the start lacked, for the ME Logistic Interface (until the try after the next one; `row.noted`: a note
+	--- stands)
+	if row.missing or row.noted then
+		autocraft.note_missing("m" .. e.unit_number .. ":" .. row.key, e.unit_number, net, row.missing, game.tick + 2 * RETRY_TICKS + 60)
+		row.noted = row.missing and true or nil
 	end
 end
 

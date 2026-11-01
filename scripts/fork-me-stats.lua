@@ -38,7 +38,14 @@ local QUEUES = {
 	{ name = "io", floor = "io", ceiling = "io_max", probe = "io_probe" },
 	{ name = "storage_bus", floor = "storage_bus", ceiling = "storage_bus_max", probe = "storage_bus_probe" },
 	{ name = "fluid_storage_bus", floor = "storage_bus", ceiling = "storage_bus_max", probe = "fluid_storage_bus_probe" },
+	{ name = "logistic_storage_bus", floor = "logistic_storage_bus", ceiling = "logistic_storage_bus_max",   -- issue #506
+		probe = "logistic_storage_bus_probe" },
 	{ name = "io_port", floor = "io_port", ceiling = "io_port_max", probe = "io_port_probe" },       -- issue #386
+	{ name = "wireless_refill", floor = "wireless_refill", ceiling = "wireless_refill_max" },          -- issue #603 (players)
+	{ name = "logistic_interface", floor = "logistic_interface", ceiling = "logistic_interface_max",   -- issue #531
+		probe = "logistic_interface_probe" },
+	{ name = "logistic_demand", floor = "logistic_demand", ceiling = "logistic_demand" },        -- issue #537 (requester points)
+	{ name = "logistic_construction", rate = "logistic_construction" },                         -- issue #538 (logistic cells)
 	{ name = "maintainer", floor = "maintainer", ceiling = "maintainer_max", probe = "maintainer_probe" },
 	{ name = "circuit", rate = "circuit" },
 	{ name = "jobs", floor = "jobs", ceiling = "jobs_max" },

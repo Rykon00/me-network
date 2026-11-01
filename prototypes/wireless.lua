@@ -25,6 +25,10 @@ local NUMBERS = {
 	charge_rate = 1000000, charger_idle = 2000,
 	--- the equipment module: its buffer (J, in the grid) and what an open window uses (W)
 	module_buffer = 20000000, module_use = 200000,
+	--- issue #603: the wireless refill pays this much (J) per item it moves, out of the network's controllers: AE2 pays 1 AE per
+	--- item it takes out of the network (Platform.poweredExtraction), and the access point's numbers above put 1 AE at about
+	--- 40 J (8 AE per tick against 20 kW)
+	refill_energy = 50,
 }
 
 data.raw["mod-data"]["fork-me-network"].data.wireless = NUMBERS
@@ -78,7 +82,7 @@ ME.add_item{
 	icon_size = 64,
 	subgroup = "fork-me-wireless",
 	order = "b",
-	stack_size = 64,
+	stack_size = 50,
 	localised_description = { "item-description.me-wireless-booster" },
 	--- AE2: a fluix dust, a certus quartz, an ender dust, 3 iron -> 2
 	recipe = { energy_required = 2, amount = 2, ingredients = I{ "copper-cable", 1, "stone", 1, "electronic-circuit", 1, "iron-plate", 3 } },
@@ -137,7 +141,8 @@ data:extend({ {
 } })
 recipes[#recipes + 1] = "me-wireless-module"
 
-ME.add_technology{ name = "me-wireless", prerequisites = { "me-upgrade-cards", "battery" }, unit = ME.unit(3, 500), recipes = recipes }
+--- (issue #594: the access point and the terminal take a radar)
+ME.add_technology{ name = "me-wireless", prerequisites = { "me-upgrade-cards", "battery", "radar" }, unit = ME.unit(3, 500), recipes = recipes }
 
 --- the hotkey (rebindable in the controls): opens the wireless terminal of the item or the module
 data:extend({ {

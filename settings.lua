@@ -14,6 +14,24 @@ data:extend({
 	int("me-network-io-visits-per-tick-max", "a2", 32, 1, 1000),
 	int("me-network-storage-bus-visits-per-tick", "b1", 8, 1, 1000),
 	int("me-network-storage-bus-visits-per-tick-max", "b2", 24, 1, 1000),
+	--- issue #506: the ME Logistic Storage Bus reads a whole logistic network per visit (0.28 ms at 473 storage chests)
+	int("me-network-logistic-storage-bus-visits-per-tick", "b21", 1, 1, 100),
+	int("me-network-logistic-storage-bus-visits-per-tick-max", "b22", 2, 1, 100),
+	--- issue #531: the ME Logistic Interface (a visit pulls three chests in and fills or asks for its rows)
+	int("me-network-logistic-interface-visits-per-tick", "b23", 2, 1, 1000),
+	int("me-network-logistic-interface-visits-per-tick-max", "b24", 8, 1, 1000),
+	--- issue #532: the keys an ME Logistic Interface asks for at most for what failed crafting starts lack
+	int("me-network-logistic-interface-auto-keys", "b25", 20, 0, 200),
+	--- issue #537: the automatic mode reads this many requester points per tick (about 25 us each) and offers at most this
+	--- many stacks of an item
+	int("me-network-logistic-interface-demand-points-per-tick", "b26", 2, 1, 1000),
+	int("me-network-logistic-interface-auto-stacks", "b27", 1, 0, 100),
+	--- issue #538: the safety net of what construction needs, logistic cells rescanned per second (132 us each on the
+	--- maintainer's Nauvis; 0: none, the events alone)
+	int("me-network-logistic-interface-construction-cells-per-second", "b28", 10, 0, 6000),
+	--- issue #603: the wireless refill, players visited per tick (a visit reads the character's requests and trash)
+	int("me-network-wireless-refill-visits-per-tick", "b29", 1, 1, 1000),
+	int("me-network-wireless-refill-visits-per-tick-max", "b291", 4, 1, 1000),
 	int("me-network-io-port-visits-per-tick", "b3", 2, 1, 1000),         -- issue #386: the ME IO Port
 	int("me-network-io-port-visits-per-tick-max", "b4", 8, 1, 1000),
 	int("me-network-maintainer-checks-per-tick", "c1", 4, 1, 1000),
@@ -27,8 +45,11 @@ data:extend({
 	int("me-network-bus-fluid-per-second", "g", 4000, 1, 10000000),
 	int("me-network-idle-limit", "h", 300, 15, 3600),
 	int("me-network-storage-bus-idle-limit", "i", 120, 15, 3600),
-	--- issue #150 / #168: the ME windows next to the game's own inventory window (a hand-over buffer); off: the inventory
-	--- drawn by the mod in the window (issue #28)
-	{ type = "bool-setting", name = "me-network-real-inventory", setting_type = "runtime-global", order = "z",
-		default_value = true },
 })
+
+--- Issue #598: with Krastorio 2 (or Krastorio 2 Spaced Out) the ME recipes and technologies follow its materials and science
+--- tiers (data-updates.lua, prototypes/compat/krastorio2.lua); off, they stay the standalone ones. Only with one of the two.
+if mods["Krastorio2"] or mods["Krastorio2-spaced-out"] then
+	data:extend({ { type = "bool-setting", name = "me-network-krastorio2-recipes", setting_type = "startup", order = "z",
+		default_value = true } })
+end

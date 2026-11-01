@@ -94,7 +94,7 @@ ME.add_item{
 	icon_size = 64,
 	subgroup = "fork-me-autocrafting",
 	order = "e1",
-	stack_size = 64,
+	stack_size = 50,
 	--- AE2 (issue #233): 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2
 	recipe = { energy_required = 1, amount = 2,
 		ingredients = I{ "plastic-bar", 2, "copper-cable", 3, "stone", 1, "iron-plate", 2, "copper-plate", 1 } },
@@ -144,7 +144,6 @@ data:extend({ {
 	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 60,
-	additional_pastable_entities = { "me-pattern-provider" },   -- settings paste copies the priority (issue #80)
 	picture = {
 		filename = ME.hd_entity_path .. "me-pattern-provider.png",
 		priority = "extra-high",

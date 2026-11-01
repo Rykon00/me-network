@@ -78,6 +78,11 @@ local M = {}
 
 local STEP_TICKS = 15                -- the ticks a visit of the remote `step` stands for (what one visit was before)
 local MIN_INTERVAL = 15              -- ticks between two visits of a block that moved all it was allowed to
+--- issue #611: the margin cap each visit used, by unit, while a test asked for it (remote `trace_margin_cap`, the switch
+--- in storage so it survives a save; the table itself is rebuilt after a load). Tests read it in the same tick: the cap
+--- read later in that tick moves with every unit leaving the busy list after the visit, i.e. with the unit numbers of
+--- the whole map.
+local cap_trace
 local ACTIVE_INTERVAL = 60           -- ... of a block that moves something but less
 local MAX_CATCH_UP = 600             -- ticks of speed a visit may catch up at most
 local MAX_ICAP = 2 ^ 31 - 1          -- items a bus visit may move at most (issue #356: an engine count is 32 bit)
@@ -126,7 +131,11 @@ local function craft(rec, net, key, amount)
 	else
 		craft_starts = craft_starts + 1
 		local nid
-		nid, why = AC.start(rec.entity, key, math.max(1, math.floor(amount)), rec.entity.unit_number, nil, "io")
+		local plan
+		nid, why, plan = AC.start(rec.entity, key, math.max(1, math.floor(amount)), rec.entity.unit_number, nil, "io")
+		--- issue #532: what the start lacked, for the ME Logistic Interface (until the try after the next one)
+		AC.note_missing("c" .. rec.entity.unit_number .. ":" .. key, rec.entity.unit_number, net,
+			why == "missing" and plan and plan.missing or nil, now + 2 * CRAFT_RETRY + 60)
 		if nid then
 			rec.cjobs = jobs or {}
 			rec.cjobs[key] = nid
@@ -1947,6 +1956,8 @@ function M.bus_step(rec, dt, u)
 		rec.status = why or "no-network"
 		return 0, false, nil, (n0 and why == "no-power") and "no-power" or "no-network", false, n0
 	end
+	--- issue #110: the cards a blueprint or a paste asked for (issue #590: before the target, a bus may face nothing yet)
+	if rec.want then cards.fill_cards(rec) end
 	local t = target_of(rec)
 	if not t then
 		rec.status = "no-target"
@@ -1954,7 +1965,6 @@ function M.bus_step(rec, dt, u)
 	end
 	if not rec.iset then M.set_bus_filters(e, rec.filters) end          -- a record of a save before issue #3
 	local ticks = math.min(dt or STEP_TICKS, MAX_CATCH_UP)
-	if rec.want then cards.fill_cards(rec) end                         -- issue #110: the cards a blueprint or a paste asked for
 	--- (issue #356: at most MAX_ICAP, what an engine call takes as a count; four Superluminal Speed Cards ask for billions)
 	local icap = math.max(1, math.min(MAX_ICAP, math.floor(Sched.setting("bus_items") * (rec.accel or 1) * ticks / 60)))
 	local fcap = Sched.setting("bus_fluid") * ticks / 60
@@ -2437,6 +2447,10 @@ local function visit(rec, unit, fallback)
 	if starved then nextiv = math.max(MIN_INTERVAL, math.floor(nextiv / 2)) end   -- (its other side had run out: sooner)
 	--- issue #51: while the busy blocks are few against the floor, the floor's room is spent on margin, not saved
 	local cap = Sched.margin_cap(s.q, Sched.setting("io"), MIN_INTERVAL)
+	if s.trace_cap then
+		cap_trace = cap_trace or {}
+		cap_trace[unit] = cap
+	end
 	local capped = nextiv > cap
 	if capped then nextiv = cap end
 	rec.iv = nextiv
@@ -2512,8 +2526,9 @@ function M.on_tick(tick)
 	Sched.run(queue(s), tick, Sched.setting("io"), Sched.setting("io_max"), rec_of, visit, probe, "io")
 end
 
---- `tags`: blueprint tags of a built ghost; `source`: the original of a clone
-function M.on_built(entity, tags, source)
+--- `tags`: blueprint tags of a built ghost; `source`: the original of a clone; `player`: who built it by hand or pasted over it
+--- (issue #590: the cards of the tag come from its inventory first, `inv` instead for a test; nil for robots: the network)
+function M.on_built(entity, tags, source, player, inv)
 	if entity and entity.valid and entity.name == T.SIDE then          -- a cloned side tank: the interface's clone
 		local s = storage.fork_me_io                                    -- takes it, unless it has one there already
 		local d = SIDE_OF[entity.direction]
@@ -2537,7 +2552,7 @@ function M.on_built(entity, tags, source)
 		local t = type(tags) == "table" and tags[IFACE_TAG] or nil
 		local config, sides = config_from_tag(t)
 		--- issue #196: the cards first (from the network, never from nothing), so the rows they give room for are there
-		if type(t) == "table" and type(t.cards) == "table" and #t.cards > 0 then icards.want_cards(entity, t.cards, nil) end
+		if type(t) == "table" and type(t.cards) == "table" and #t.cards > 0 then icards.want_cards(entity, t.cards, player, inv) end
 		if config then
 			M.set_interface_config(entity, config, sides or {})
 			if type(t) == "table" and t.priority then M.set_interface_priority(entity, t.priority) end
@@ -2558,7 +2573,7 @@ function M.on_built(entity, tags, source)
 			if t.gtext then M.set_bus_gtext(entity, t.gtext) end               -- (issue #363)
 			if t.pulse then M.set_bus_pulse(entity, true) end                  -- (issue #412)
 			if t.conly then M.set_bus_craft_only(entity, true) end             -- (issue #426)
-			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, nil) end
+			if type(t.cards) == "table" and #t.cards > 0 then cards.want_cards(entity, t.cards, player, inv) end
 		elseif source and source.valid and kind(source) == k then
 			local from = M.get_bus(source)
 			M.set_bus_filters(entity, from and from.filters or {})
@@ -2823,6 +2838,7 @@ remote.add_interface("gregtorio-me-io", {
 		if not rec then return nil end
 		local due = rec.due
 		return { due = (due and due > 0) and due or nil, interval = rec.iv, last = rec.last, probing = rec.sq == true and not rec.park,
+			cap = cap_trace and cap_trace[entity.unit_number],
 			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, parked = rec.park, block = rec.block,
 			starve = rec.starve or false }
 	end,
@@ -2833,6 +2849,12 @@ remote.add_interface("gregtorio-me-io", {
 	end,
 	--- tests (issue #38): how often a parked block gets its slow fallback visit (ticks)
 	set_park_fallback = function(ticks) Sched.PARK_FALLBACK = ticks end,
+	--- tests (issue #611): record the margin cap of every visit (`schedule` returns it as `cap`)
+	trace_margin_cap = function(on)
+		local s = storage.fork_me_io
+		if s then s.trace_cap = on or nil end
+		if not on then cap_trace = nil end
+	end,
 	--- issue #38: the scheduler's counters of every queue (fork-me-schedule.lua, M.snapshot); `reset` starts them anew
 	sched_stats = function(reset)
 		local snap = Sched.snapshot()
@@ -2869,6 +2891,10 @@ remote.add_interface("gregtorio-me-io", {
 		out.io_probing = out.io_probing - parked                        -- (the parked are in the probe list for their fallback)
 		put("storage_bus", sb and sb.q, sb and #sb.list)
 		put("fluid_storage_bus", fsb and fsb.q, fsb and #fsb.list)
+		local lsb = storage.fork_me_lsbus                                   -- (issue #506)
+		put("logistic_storage_bus", lsb and lsb.q, lsb and #lsb.list)
+		local lif = storage.fork_me_lif                                     -- (issue #531)
+		put("logistic_interface", lif and lif.q, lif and #lif.list)
 		put("maintainer", ae and ae.mq, ae and ae.mlist and #ae.mlist)
 		local mparked = 0
 		for _, rec in pairs(ae and ae.maintainers or {}) do if rec.park then mparked = mparked + 1 end end
@@ -2938,8 +2964,9 @@ remote.add_interface("gregtorio-me-io", {
 	bus_info = function(entity) return M.bus_info(entity) end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
-	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone)
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
+	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone, `inv`: the inventory of the player
+	--- who built it, issue #590)
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,
 	--- what the removal events do (`mined`: the interface's fluid goes into the network first)
 	removed = function(entity, mined) M.on_removed(entity, mined) end,
 })

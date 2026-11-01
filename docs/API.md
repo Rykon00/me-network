@@ -103,7 +103,8 @@ copy would inherit that is laid out for a bigger machine is set for one tile (th
 the five module slots, the alert icon, the circuit connector if the base has one, the corpse and the dying explosion); a
 frozen patch of the base's graphics is not kept (the assembler runs item recipes; autocrafting checks the machine's
 fluid boxes before it sets a recipe). Standalone it is a copy of `assembling-machine-2` with its item categories,
-speed 2.5, 375 kW.
+speed 2.5, 375 kW. Since issue #560 it is a member of the ME network (it carries it like a cable) and gets a `void` energy
+source whatever the base has: the ME Controller draws `def.energy_usage` while it crafts and a thirtieth of it while idle.
 
 ### `ME_NETWORK.replace_item(old, new)`
 
@@ -132,7 +133,8 @@ ME_NETWORK.replace_item("apatite-lens", "green-sapphire-lens")
 
 `add_item`, `add_recipe`, `add_technology` and `unit` are what this mod's own prototype files use (items with the
 same fields as Gregtorio's upstream `create_item`, so saves and other mods see the same items). Other mods do not
-need them. `ME_NETWORK.WALKABLE` is the collision mask of the blocks that are walked over (cable, buses, terminals), and
+need them. An item of `add_item` stacks to 50 unless it says otherwise (Factorio's usual size; no item of this mod
+stacks to Minecraft's 64 any more): Gregtorio Continued raises the ones that stack to 64 there. `ME_NETWORK.WALKABLE` is the collision mask of the blocks that are walked over (cable, buses, terminals), and
 `ME_NETWORK.solid_box()` (since issue #268) a new copy of the collision box of the solid one-tile blocks, -0.29 .. 0.29:
 two of them on neighbouring tiles leave a gap of 0.42 tiles, which a character (0.4 wide) walks through. A mod that adds
 a solid one-tile block next to ME blocks should give it that box (the blocks of a Crafting CPU keep -0.35 .. 0.35: they
@@ -204,7 +206,26 @@ local view = data.raw["mod-data"]["fork-me-network"].data.bus_view
 view.x, view.y, view.size = 3, 3, 48
 ```
 
-me-network's `data-final-fixes.lua` scales and moves the marker layer of every bus and direction to that square.
+me-network's `data-final-fixes.lua` scales and moves the marker layer of every bus and direction to that square. The ME
+Logistic Storage Bus (issue #518) is not rotated: its picture is one sprite whose second layer is its marker
+(`me-logistic-storage-bus-marker.png`, orange corner marks and a storage chest), moved the same way; its first layer
+`me-logistic-storage-bus.png` is the base a graphics mod replaces. Its icons are the base, the marker and the badge.
+The ME Logistic Interface (issue #531) is built the same way, but as a solid block: `me-logistic-interface.png` is the base,
+`me-logistic-interface-marker.png` (orange corner marks and its three chests) the second layer on the 54 px face at its top
+left (not moved by the bus view); its icons are the base and the marker. Its three hidden chests
+(`me-logistic-interface-provider`, `-requester`, `-storage`) have no picture.
+
+## Krastorio 2
+
+me-network carries its Krastorio 2 compatibility itself (issue #598), the way Gregtorio Continued carries its own in its
+compat file: `data-updates.lua` requires `prototypes/compat/krastorio2.lua` when `Krastorio2` or `Krastorio2-spaced-out`
+is active (hidden optional dependencies in `info.json`, so me-network's stages run after theirs), Gregtorio Continued is
+not (`gregtorio-continued`: its recipes and tiers win) and the startup setting `me-network-krastorio2-recipes` (made only
+with one of the two mods, on by default) is on. The file uses only `replace_recipe` and `set_technology` (and
+`make_molecular_assembler`), so it ends up where another mod's changes would; it sets `ME_NETWORK.krastorio2` when it ran.
+Every Krastorio 2 item goes through its helper `kr(name, fallback)`: the item when a prototype of an item type has that
+name, else the vanilla stand-in, with one log line. Krastorio 2's `data-final-fixes.lua` runs after it and takes the red to
+blue packs out of every technology that needs its advanced, optimization, matter or singularity cards.
 
 ## Runtime
 

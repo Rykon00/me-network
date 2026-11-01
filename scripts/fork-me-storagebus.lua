@@ -46,6 +46,9 @@
 local N = require("scripts.fork-me-network")
 local T = require("scripts.fork-me-targets")
 local F = require("scripts.fork-me-fluid-storagebus")
+--- issue #506: the ME Logistic Storage Bus is a storage bus (kind and record) whose storage is a logistic network: its
+--- visits, claims and engine calls are that module's, its settings, cards and window this one's (rec.logistic)
+local L = require("scripts.fork-me-logistic-storagebus")
 local Sched = require("scripts.fork-me-schedule")
 local G = require("scripts.fork-me-gui")
 local CS = require("scripts.fork-me-cardslots")
@@ -322,6 +325,10 @@ end
 
 --- put the bus into the visit list of its side (and out of the other one); a bus new to a side is due at once
 local function list_side(s, rec)
+	if rec.logistic then                                 -- (issue #506: the logistic bus's own list, never another one)
+		L.list(rec)
+		return
+	end
 	if rec.side == "fluid" then
 		if listed(s, rec.unit) then
 			unlist(s, rec.unit)
@@ -411,6 +418,11 @@ function M.visit(rec, cascade)
 	local s = state()
 	local e = rec.entity
 	if not e.valid then return false end
+	if rec.logistic then                                 -- (issue #506: a logistic network, read by its module)
+		local changed = L.visit(rec)
+		if rec.want then M.fill_cards(rec) end
+		return changed
+	end
 	local before = rec.target
 	local t = resolve(s, rec)
 	if rec.side == "fluid" then
@@ -466,11 +478,12 @@ end
 --- the fluid side visits through this when its target is gone or the bus was rotated (it may face a chest now)
 F.resolve_visit = function(rec, cascade) return M.visit(rec, cascade) end
 F.lost = function(rec) list_side(state(), rec) end
+L.after_visit = function(rec) if rec.want then M.fill_cards(rec) end end
 
 --- the record of an item side bus that is due (nil when it is gone or on the fluid side now)
 local function item_rec(unit)
 	local rec = N.ext_get(unit)
-	if rec and rec.ext == KIND and rec.side ~= "fluid" then return rec end
+	if rec and rec.ext == KIND and rec.side ~= "fluid" and not rec.logistic then return rec end
 	return nil
 end
 
@@ -483,7 +496,7 @@ end
 --- list, is not touched. State of the record (saved): `rereading`, `rr`, and what the re-read replaced (`rr_back`, `rr_probe`,
 --- `rr_vis`: the visit it took the place of, put back when it found nothing).
 function M.reread(rec)
-	if rec.rr == false or rec.rereading or rec.side == "fluid" then return end
+	if rec.rr == false or rec.rereading or rec.side == "fluid" or rec.logistic then return end
 	local s = storage.fork_me_sbus
 	if not (s and listed(s, rec.unit)) then return end
 	local now = game.tick
@@ -539,6 +552,7 @@ function M.on_tick(tick)
 			"storage_bus")
 	end
 	F.on_tick(tick)
+	L.on_tick(tick)                                  -- (issue #506: the logistic storage buses, their own queue)
 end
 
 --- read the inventory or segment at the next tick (an entity was built in front of the bus)
@@ -546,7 +560,9 @@ function M.wake(unit)
 	local rec = N.ext_get(unit)
 	if not (rec and rec.ext == KIND) then return end
 	rec.target = nil
-	if rec.side == "fluid" then
+	if rec.logistic then
+		L.wake(rec)
+	elseif rec.side == "fluid" then
 		F.wake(rec)
 	else
 		local s = storage.fork_me_sbus
@@ -567,7 +583,7 @@ function M.wake_near(entity)
 	if not bus_names then
 		bus_names = {}
 		for _, name in pairs(N.node_names()) do
-			if N.kind_of(name) == KIND then bus_names[#bus_names + 1] = name end
+			if N.kind_of(name) == KIND and name ~= L.NAME then bus_names[#bus_names + 1] = name end   -- (a logistic bus faces nothing)
 		end
 	end
 	local b = entity.bounding_box
@@ -700,7 +716,7 @@ end
 function M.set_settings(entity, settings)
 	local rec = rec_of(entity)
 	if not (rec and type(settings) == "table") then return false end
-	if MODES[settings.mode] then rec.mode = settings.mode end
+	if (rec.logistic and L.MODES or MODES)[settings.mode] then rec.mode = settings.mode end   -- (issue #506: its own modes)
 	if settings.priority ~= nil then
 		local p = math.floor(tonumber(settings.priority) or 0)
 		rec.priority = math.max(-MAX_PRIORITY, math.min(MAX_PRIORITY, p))
@@ -737,10 +753,11 @@ end
 function M.filters_from_contents(entity)
 	local rec = rec_of(entity)
 	if not rec then return false end
-	local s = state()
-	local t = resolve(s, rec)
 	local keys = {}
-	if rec.side == "fluid" then
+	local t = not rec.logistic and resolve(state(), rec)
+	if rec.logistic then                                         -- (issue #506: what the logistic network holds now)
+		for key in pairs(L.contents(rec)) do keys[#keys + 1] = key end
+	elseif rec.side == "fluid" then
 		local f = F.contents(rec)
 		for key in pairs(f) do keys[#keys + 1] = key end      -- (issue #161: at the temperature it holds)
 	else
@@ -801,6 +818,9 @@ function M.info(entity)
 	if rec.side == "fluid" then
 		out.fluid, out.amount, out.temperature, out.segment = rec.fluid, items, rec.temp, rec.seg
 	end
+	if rec.logistic then                                         -- (issue #506: the logistic network it claimed)
+		out.side, out.logistic, out.network = "logistic", true, rec.lid
+	end
 	return out
 end
 
@@ -818,6 +838,9 @@ local function register(entity)
 	if not (rec and rec.ext == KIND) then
 		rec = { ext = KIND, unit = unit, entity = entity, items = {}, data = {}, mode = "readwrite", priority = 0,
 			filters = {}, status = "no-target" }
+		if entity.name == L.NAME then                          -- issue #506: a logistic storage bus
+			rec.logistic, rec.side, rec.handler, rec.priority = true, "logistic", L.HANDLER, L.DEFAULT_PRIORITY
+		end
 		N.ext_attach(entity, rec)
 	end
 	list_side(s, rec)
@@ -840,15 +863,16 @@ end
 M.settings_of_tags = settings_of_tags
 
 --- `tags`: blueprint tags of a built ghost; `source`: the original of a clone. The cards of the tag or the source are
---- wanted, taken from the network (issue #17): never copied.
-function M.on_built(entity, tags, source)
+--- wanted, taken from the network (issue #17): never copied. `player`: who built it by hand or pasted over it (issue #590: the
+--- cards come from its inventory first, `inv` instead for a test; nil for robots).
+function M.on_built(entity, tags, source, player, inv)
 	if not is_bus(entity) then return end
 	local rec = register(entity)
 	local t = settings_of_tags(tags)
 	if not t and source and is_bus(source) then t = M.get_settings(source) end
 	if t then
 		M.set_settings(entity, t)
-		if type(t.cards) == "table" and #t.cards > 0 then M.want_cards(entity, t.cards, nil) end
+		if type(t.cards) == "table" and #t.cards > 0 then M.want_cards(entity, t.cards, player, inv) end
 	else
 		M.visit(rec)
 	end
@@ -872,6 +896,10 @@ function M.on_removed(entity, buffer)
 		end
 		F.drop(rec)
 		F.unlist(rec)
+		if rec.logistic then                                     -- (issue #506: its claim and its place in the list go)
+			L.drop(rec)
+			L.unlist(rec)
+		end
 		return
 	end
 	local bus = s and s.claims[unit]
@@ -954,6 +982,7 @@ function M.on_configuration_changed()
 	local s = state()
 	s.list, s.cursor, s.claims, s.member, s.q, s.lpos = {}, 1, {}, {}, Sched.new("sbus"), nil
 	F.reset()
+	L.reset()
 	plain_cache, bus_names = {}, nil
 	local names = {}
 	for _, name in pairs(N.node_names()) do
@@ -967,7 +996,7 @@ function M.on_configuration_changed()
 	table.sort(all, function(a, b) return a.unit_number < b.unit_number end)
 	for _, e in ipairs(all) do
 		local rec = register(e)
-		rec.target, rec.target_unit, rec.dir, rec.box, rec.seg = nil, nil, nil, nil, nil
+		rec.target, rec.target_unit, rec.dir, rec.box, rec.seg, rec.lid = nil, nil, nil, nil, nil, nil
 		rec.filters = clean_filters(rec.filters)          -- (a save before issue #3 had item keys only: unchanged)
 		inv_of(rec)                                       -- issue #28: the card names of an older save become the slots' cards
 		if rec.cards or rec.extract == false or rec.blacklist or rec.gtext then apply(rec) end   -- (no cards before issue #17: the fields stay)
@@ -986,7 +1015,7 @@ remote.add_interface("gregtorio-me-storagebus", {
 				if s.lpos and s.lpos[u] and s.lpos[u] ~= i then return false, "bus " .. u .. " is not at its place" end
 			end
 		end
-		return true
+		return L.list_ok()                                         -- (issue #506)
 	end,
 	--- issue #38 (tests): when the bus reads next: { due, interval, probing, front, backlog, side }
 	schedule = function(entity)
@@ -1004,6 +1033,8 @@ remote.add_interface("gregtorio-me-storagebus", {
 		if rec then M.visit(rec) end
 		return rec ~= nil
 	end,
+	--- issue #530 (tests): register a logistic chest as ME-owned (`role` "storage" or "provider"), or (role nil) no more
+	own_logistic = function(entity, role) L.own_test(entity, role) end,
 	info = function(entity) return M.info(entity) end,
 	get_settings = function(entity) return M.get_settings(entity) end,
 	set_settings = function(entity, settings) return M.set_settings(entity, settings) end,
@@ -1014,7 +1045,7 @@ remote.add_interface("gregtorio-me-storagebus", {
 	end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
 	--- what a build event does (`tags`: blueprint tags, `source`: the original of a clone)
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,
 	--- what the removal events do for an inventory a bus uses (destroy() raises none); `buffer`: a mined bus's cards
 	removed = function(entity, buffer) M.on_removed(entity, buffer) end,
 	rotated = function(entity) M.on_rotated(entity) end,
@@ -1048,7 +1079,7 @@ remote.add_interface("gregtorio-me-fluid-storagebus", {
 	set_filter = function(entity, index, key) return M.set_filter(entity, index, key) end,
 	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	tag_blueprint = function(bp, mapping) M.tag_blueprint(bp, mapping) end,
-	built = function(entity, tags, source) M.on_built(entity, tags, source) end,
+	built = function(entity, tags, source, inv) M.on_built(entity, tags, source, nil, inv) end,
 	removed = function(entity) M.on_removed(entity) end,
 	rotated = function(entity) M.on_rotated(entity) end,
 })

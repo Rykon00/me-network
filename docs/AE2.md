@@ -17,7 +17,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | Entity | Role |
 |---|---|
 | ME Cable | placed with the **fluix cable** item; connects ME blocks on all four sides; can be walked over |
-| ME Underground Cable | rotatable pair (technology ME Network, 8 fluix cables + 2 iron plates -> 2): carries the network under up to 10 tiles to the first underground cable facing it, like an underground pipe; above ground an end connects only on the side opposite its arrow; it is a pipe-to-ground with its own connection category, so the game pairs the ends and shows the pairing on hover and while placing exactly like underground pipes (it never connects to pipes or carries fluid); can be walked over |
+| ME Underground Cable | rotatable pair (technology ME Network, 8 fluix cables + 2 iron plates -> 2): carries the network under up to 10 tiles to the first underground cable facing it, exactly like an underground pipe; above ground an end connects only on the side it faces (the vanilla underground pipe's rule since 0.5.11; older saves are turned once, older blueprints keep their old direction); it is a pipe-to-ground with its own connection category, so the game pairs the ends and shows the pairing on hover and while placing exactly like underground pipes (it never connects to pipes or carries fluid); dragging it places the pairs at the full reach (the game's own underground pipe drag); it and the ME Cable replace each other in place (one fast replace group, like pipe and underground pipe); ME Cable dragged across an obstacle becomes a pair of them, like belts (two from the inventory, `scripts/fork-me-cabledrag.lua`); can be walked over |
 | ME Controller | 2x2, needs power; exactly one per network runs it (two are a conflict) |
 | ME Drive | 1x1, holds up to 10 storage cells; has a priority |
 | ME Chest | 1x1, one storage cell and a terminal of its own that sees that cell only; works without a controller on power from the grid (4 kW), in a working network its cell is network storage at the chest's priority; inserters and pipes put items and fluids in, nothing comes out (issue #229) |
@@ -26,7 +26,7 @@ reasons: `docs/ME-REWORK.md`). It has nothing to do with Factorio's logistic net
 | ME Interface | 1x1 with 18 slots, a tank on each of its four sides for pipes, and 9 config rows (an item or a fluid + amount; 36 with Interface Capacity Cards): keeps those in stock in it, imports everything else (this page, **Import and export**) |
 | ME Import Bus, ME Export Bus | 1x1, rotatable: pull items and fluids out of / put them into the machine, chest or tank they face; can be walked over |
 | ME Storage Bus | 1x1, rotatable, can be walked over: the chest or cargo wagon it faces, or the fluid of the tank it faces with every pipe and tank connected to it, becomes network storage, with filters, priority, read/write mode and 5 upgrade card slots (this page, **ME Storage Bus**, **Upgrade cards**) |
-| Fluid storage cell (1k ... 16384k) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
+| Fluid storage cell (1k ... 16384k, Singularity) | holds fluids in an ME Drive, like an item cell (this page, **Fluids**) |
 | ME Wireless Access Point, ME Charger | 1x1 members, power through the controller: the range of the Wireless ME Terminal (with Wireless Boosters) and its charging (this page, **Wireless**) |
 | Crafting blocks: crafting unit, 1k ... 16384k and Singularity crafting storage, co-processing unit, 4x ... 4096x crafting accelerators, crafting monitor | 1x1; a solid rectangle of them with at least one crafting storage is a Crafting CPU, which runs one autocrafting job of up to its crafting storage in bytes (this page, **Crafting CPUs**). The single-block ME Crafting CPU, Co-Processing and Quantum Crafting CPU are legacy blocks |
 | ME Pattern Provider | holds 9 encoded patterns (up to 36 with Pattern Capacity Cards); the machines (or a chest) next to it do their work (this page, **Autocrafting**) |
@@ -49,11 +49,14 @@ technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.l
 ## Building a network
 
 1. Place an **ME Controller** and give it power. It draws 120 kW, plus 4 kW for every drive, interface, bus, pattern
-   provider and circuit interface of the network, 8 kW for every terminal, 30 kW for every level maintainer and what
-   its crafting blocks need. Cables, terminals, level maintainers and every other block need no power connection of
-   their own (no pole next to a terminal).
+   provider and circuit interface of the network, 8 kW for every terminal, 30 kW for every level maintainer, what
+   its crafting blocks need and its ME Molecular Assemblers (their energy usage while they craft, a thirtieth of it while
+   they are idle; issue #560). Cables, terminals, level maintainers and every other block need no power connection of
+   their own (no pole next to a terminal). The controller's buffer holds half a second of that draw (at least
+   100 kJ), so a network of any size works on a grid that delivers its power (issue #556).
 2. Connect everything else with **ME cables**: a cable connects on all four sides, and ME blocks that touch
-   each other connect without a cable (a row of drives next to the controller is one network). Corners do not
+   each other connect without a cable (a row of drives next to the controller is one network; so do pattern providers
+   and ME Molecular Assemblers, issue #560). Corners do not
    connect. Everything connected is one network. The cable picture shows its connections.
 3. Place **ME Drives** and put **storage cells** into them (see below), and an **ME Terminal** (it takes its power from the network).
 4. Import and export with **ME Interfaces** (inserters, belts, pipes) or **buses** (directly on a machine, chest or
@@ -99,6 +102,13 @@ Issue #414: the 1024k, 4096k and 16384k cells and the Singularity cell are AE2-U
 Singularity cell has Long.MAX_VALUE / 16 bytes; here 2^50, so that its one type holds at most 2^53 - 32 768 items: the largest
 count a Lua number holds exactly (the storage engine's counts are numbers). AE2-U's idle drain of the cells is not built (no
 cell draws power here).
+
+**The Singularity cell for fluids** (issue #562; technology ME Singularity Storage): one fluid, 2^26 + 4 096 bytes at 8 units
+per byte, so **536 870 912 units** (2^29) of it. That is the largest amount the storage engine counts exactly: the game keeps
+fluid amounts to 2^-24 of a unit, so a sum of them is exact in a Lua number up to 2^53 / 2^24 = 2^29 units (not the 2^53 of
+item counts). It goes into the ME Drive and the ME Chest, the ME IO Port and the Cell Workbench like the other fluid cells
+(partition, cards, cell light) and keeps its fluid when taken out. Recipe: the item Singularity cell's (8 16384k components,
+4 ME Quantum Bridges, 4 accumulators, a storage housing) and a pump.
 
 Every item type in a cell costs its bytes per type, and every 8 items of it one byte. Another quality of an
 item is another type. A network fills cells that already hold an item first, then cells with a free type.
@@ -221,10 +231,20 @@ slot: the source slot's partition, or none) and by cloning.
 
 Needs a working network and no pole: the controller draws its power (8 kW). The screen is lit while the network works and dark while it does not (no controller, a conflict, no power). It is the hub of the network: a status line (bytes and types of the item and
 fluid cells, drives, cells, the controller's power), a search field for the Storage and Crafting tabs (it matches the
-name you see in your language, issue #295, and the internal name), and four
+name you see in your language, issue #295, and the internal name), next to it a **quality filter** for the same two
+tabs (issue #514, only in a game with qualities: a comparator **>**, **<**, **=**, **≥**, **≤** or **≠** (as in the
+game's own filters, issue #520) and **Any quality** or a quality;
+fluids count as normal quality; the wireless terminal has it too), and four
 tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 
-* **Storage:** sort (by amount or by name) and **Show: all / items / fluids**. **Left click** an item: a stack into
+* **Storage:** sort (by amount, by name, by quality: higher quality first, then name, then amount; by mod: the mod that adds
+  the item, then name; by tier: the highest science pack of the earliest technology that unlocks a recipe of it, items no
+  recipe makes last; issue #602), the **direction** button beside it (▼ descending, ▲ ascending; each sort keeps its own;
+  the qualities of one item are always in the order of their level, normal first) and **Show: all / items / fluids**. The
+  sort, its direction and Show are yours: every terminal window (the ME Terminal, the wireless terminal, the ME Chest) uses
+  them, also after you opened another block (issue #602). An item whose amount reaches 0 while the window is open stays in
+  its place, greyed, with 0, until you close the window (or change the sort, the search or a filter); clicking it does
+  nothing, and it is a normal slot again when the network has the item again. **Left click** an item: a stack into
   your hand; with something in hand, the click stores that instead. **Right click**: one item into your hand (one
   more of the same item). **Shift click**: a stack into your inventory. Items with tags (loaded cells), a label or damage
   have a yellow frame. After the items, the fluids of the fluid cells with their amounts (they cannot be taken by hand).
@@ -246,40 +266,40 @@ tabs (the Patterns tab is the **ME Pattern Terminal** since issue #130, below):
 Every ME block has its own window in one style (title bar with close button), opened by **clicking the block** (the
 normal open key).
 
-**Beside the game's inventory** (issues #150 and #168, the default; map setting "ME windows beside the game's
-inventory"): an ME window opens next to the game's own inventory window, with its click rules. Between the two is a
-**hand-over buffer** of 20 slots ("Into the ME network"): what you put into it (shift + click, control + click for
-every stack of an item, a stack put down, half a stack) goes where a shift + click sends it below (into the network, a
-cell into the drive or the workbench, a pattern into the provider, a card into its slot); what the block cannot take
-stays in the buffer and comes back to you when the window closes (into your inventory, else onto the ground). E,
-Escape or the close button close the window.
+**Your inventory is in the window** (issue #542, Factorio 2.1's own inventory element): **every ME window is one window
+with your inventory on its left** ("Character") and the block's content and slots (cards, cell, cells of a drive,
+patterns) on its right. The inventory there is the game's own: click, right click, drag, the hand, the tooltips (a
+cell's or a pattern's description, a spoiling item, a label) and the trash keys work as in your inventory window.
+**Shift + click a stack to put it into the block** (a card into a card slot, a cell into the workbench or a free drive
+slot, a pattern into a free provider slot; in the terminal and every block without slots of its own (interface, import
+and export bus, controller, level maintainer, circuit interface, crafting CPUs) it is **stored in the network**);
+**control + click** puts every stack of that item there; shift + right click half the stack, control + right click half
+of every stack of it. What the block cannot take stays where it is, with a short message. Click a slot of the block with
+an item in hand to put it in (what does not belong there is refused and stays in your hand), click it with an empty hand
+to take the item, shift + click to take it into your inventory. The card slots of the interface, the import and export
+bus, the storage bus, the pattern provider, the logistic interface, the IO port and the access point are the game's own
+slots (issue #543, with the cards' tooltips): control + click there takes every card of that kind. (Until 0.5.10 the windows opened beside the game's
+inventory window with a hand-over buffer between them, or drew your inventory themselves; the map setting "ME windows
+beside the game's inventory" is gone. Items left in a buffer of an old save come back into your inventory when you
+update; what does not fit is kept for you, see below.)
 
-**In remote view** (issues #176 and #177; a space platform, or the map): the game has no inventory window there (it shows
-the ghost picker), the hand holds nothing and you have no main inventory of your own, so the buffer is not used and the
-setting makes no difference: the window draws your **character's inventory** on its left (the "Character" pane), even
-when the character stands on another planet. A click on a stack in it sends it to the block, like shift + click (a cell
-into the drive or the workbench, a pattern into the provider, a card into its slot, else into the network). What you
-take out of a block (a click on a cell in the drive, a pattern in the provider, a card in a slot, a stack in the terminal
-(right click: one item)) goes **straight into the character's inventory**, with the message "Moved to your inventory"; it
-never goes through the hand. If the inventory is full the item stays in the block and the window says so; without a
-character (the editor, a spectator) there is no inventory: the window says so, nothing can be put in or taken out and
-everything stays where it is. Items that have no place any more (a window closed with something in its buffer, cards a
-cell does not take) are never spilled from remote view: they are kept for you ("the items are kept for you") and come
-back into your inventory the next time you have room (when you open or close a window, or within a second). The
-command `/me-remote-probe` prints what the game reports for your controller. What the hand does elsewhere has a way in remote view too
-(issue #179): **Store item in hand** of the terminal is a click on the stack in the pane; for **Load pattern** and **Clear
-pattern** of the ME Pattern Terminal click the encoded pattern in the pane (it goes into the output slot), then press the
-button (they work on the output slot when the hand is empty).
+**In remote view** (issues #176 and #177; a space platform, or the map): the hand holds nothing and you have no main
+inventory of your own, so the window shows your **character's inventory** on its left, even when the character stands on
+another planet. A click on a stack in it sends it to the block, like shift + click (a cell into the drive or the
+workbench, a pattern into the provider, a card into its slot, else into the network). What you take out of a block (a
+click on a cell in the drive, a pattern in the provider, a card in a slot, a stack in the terminal (right click: one
+item)) goes **straight into the character's inventory**, with the message "Moved to your inventory"; it never goes
+through the hand. If the inventory is full the item stays in the block and the window says so; without a character (the
+editor, a spectator) there is no inventory: the window says so, nothing can be put in or taken out and everything stays
+where it is. Items that have no place any more (cards a cell does not take, a hand-over buffer of an old save) are never
+spilled from remote view: they are kept for you ("the items are kept for you") and come back into your inventory the next
+time you have room (when you open or close a window, or within a second). The command `/me-remote-probe` prints what the
+game reports for your controller. What the hand does elsewhere has a way in remote view too (issue #179): **Store item in
+hand** of the terminal is a click on the stack in your inventory there; for **Load pattern** and **Clear pattern** of the ME
+Pattern Terminal click the encoded pattern in it (it goes into the output slot), then press the button (they work on the
+output slot when the hand is empty).
 
-With the setting off, the windows draw your inventory themselves (issue #28): **every ME window shows your inventory on its left**
-("Character"), the block's slots (cards, cell, cells of a drive, patterns) in the window: click a stack in your
-inventory to pick it up, put it down, merge or swap it, right click for half a stack, **shift + click to put it into
-the block** (a card into a card slot, a cell into the workbench or a free drive slot, a pattern into a free provider
-slot; in the terminal and every block without slots of its own (interface, import and export bus, controller, level
-maintainer, circuit interface, crafting CPUs) it is **stored in the network**, control + click stores every stack of
-that item). What the block cannot take stays where it is, with a short message. Click a slot of the block with an item
-in hand to put it in (what does not belong there is refused and stays in your hand), click it with an empty hand to
-take the item, shift + click to take it into your inventory. Blocks that have a window of the game (terminal, crafting CPUs and
+Blocks that have a window of the game (terminal, crafting CPUs and
 level maintainer: lamps; circuit interface: constant combinator; ME Interface: container) show the ME window
 instead; the others (drive, controller, buses, pattern provider) have no window of
 their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second. With a tool
@@ -289,7 +309,7 @@ click uses the tool and opens no window, as on a chest.
 | Block | Window |
 |---|---|
 | ME Terminal | the hub above; shift + click in your inventory stores (a View Cell: into its view cell slots, issue #440) |
-| ME Pattern Terminal | the pattern editor, the blank pattern slot, **Encode**, the output slot, **Load pattern**, **Clear pattern**; shift + click in your inventory: blank patterns into the blank slot, an encoded pattern into the output slot |
+| ME Pattern Terminal | the pattern editor, the blank pattern slot, **Encode**, the output slot, **Load pattern**, **Clear pattern**; **Clear patterns in inventory** (every encoded pattern in your inventory becomes a blank) and **Clear unused network patterns** (every encoded pattern in the network that no provider of it holds or waits for, broken ones always, becomes a blank in the network), each after a question that names the count (issue #585); shift + click in your inventory: blank patterns into the blank slot, an encoded pattern into the output slot |
 | ME Interface Terminal | the network's providers and interfaces, six to a page: search, machine filter, "only with free slots"; per block its name, position, the machines next to it, its pattern slots (a click works as in the provider's window) or config rows, **Rename** (providers), **Locate**, **Open**; shift + click an encoded pattern in your inventory: into the first free slot of the first provider listed |
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
@@ -331,6 +351,14 @@ same lamp condition, so blueprints and settings paste of the game keep it).
 * **ME Wireless Terminal Module**: equipment for the armour's grid (2 x 2) that works like the item without charging: the grid
   charges it (20 MJ) and the window is paid from it. It is used before an item. Link it by pointing at an access point or the
   ME Controller and pressing the key.
+* **Refill** (issue #603, the module only): while you wear the linked module inside the range of an access point of its
+  network, the network serves your **personal logistics** without a window: what your logistic requests ask for (their
+  minimums) comes out of the network, at most one stack per request every half second, and whatever you put into your
+  **trash slots** goes into it. It needs personal logistics (the research that unlocks your logistic requests), and nothing
+  happens while you switched them off. Every item moved costs 50 J from the ME Controller (`refill_energy` in the mod data;
+  AE2 pays 1 AE per item it takes out of the network): what the controller holds beyond one tick of its draw pays, and what
+  it cannot pay for waits. The network comes first: your logistic robots bring only what it lacks. The map settings
+  "Wireless refill: players visited per tick" (at least 1, at most 4) set its share of the ticks; `/me-stats` shows its queue.
 
 ## Import and export
 
@@ -534,6 +562,153 @@ fluid in that tank storage of the network (issue #3 of ME Network: this was the 
   second bus on the same wagon is "shared".
 * Settings (mode, priority, filters) are kept in blueprints, copied by settings paste and by cloning.
 
+## ME Logistic Storage Bus
+
+The **ME Logistic Storage Bus** (issue #506; tech ME Network; an ME Storage Bus, a storage chest and 2 advanced
+circuits) makes a whole **vanilla logistic network** storage of the ME network: not one chest, but every chest of the
+logistic network it stands in. It has no AE2 counterpart. It is a 1x1 block that is not rotated: place it **inside the
+area of a logistic network** (the orange area of the roboports) and connect it to the ME network like any bus.
+
+* **What it shows**: in the mode **Storage** (the default) what the network's **storage chests** hold, in every quality.
+  The terminal shows it with the cells' items as one total; autocrafting, export buses, ME Interfaces, level maintainers
+  and the circuit interface count it and take from it. Items that robots carry are not in a chest and not shown until
+  they arrive.
+* **Storing**: the network stores into the storage chests (the game picks the chest, as for a robot: a chest whose filter
+  is another item is passed by) by the bus's **filters** and **priority**, together with the drives (see "Partitions and
+  priorities"). Its **default priority is -100**: the drives are filled first, the logistic network takes what does not
+  fit, and the network takes items out of the logistic network first. Give it a priority above the drives to make the
+  logistic network the main storage.
+* **Modes** (in its window): **Storage** (its storage chests: shown, taken from, stored into); **Storage and providers**
+  (also shows and takes from the **active provider, passive provider and buffer chests**: the game counts these three
+  together, so they come as one; the network takes from the storage chests first, then the passive providers, the
+  active providers and the buffer chests, and stores only into storage chests); **Read only** (its storage chests are
+  shown and taken from, the network never stores into them). Requester chests are never read.
+* **Filters, filter mode, filter on extract, From contents, Clear and the upgrade cards** work as on the ME Storage Bus
+  (above). "From contents" takes what the logistic network holds now, sorted by name, as many as there are filters. With
+  an Overflow Destruction Card what does not fit into the storage chests is destroyed: give such a bus a low priority.
+* **One bus per logistic network**: a second logistic storage bus in the same logistic network shows "Another ME
+  Logistic Storage Bus already uses this logistic network" and does nothing; when two logistic networks join, the bus
+  that was built first keeps the joined one. When the first bus is removed, the second takes over at its next look.
+* **Changes**: robots, inserters and players change the chests without the network noticing at once. The bus reads the
+  whole logistic network at its visits: about every half second while its contents change, less often while they do
+  not, at the latest every two seconds (the setting "Longest wait of an idle storage bus"). Taking out always asks the
+  logistic network first, so nothing is duplicated or promised from an empty chest. When a logistic network is split
+  (a roboport removed between two parts) or its last roboport is removed, the bus follows at its next look; until then
+  it hands out nothing from the part it lost. A bus outside every area shows "Stands in no logistic network".
+* **Not shown or moved**: items that spoil (they come in a package of their own), tools (science packs), ammunition and
+  repair packs (a partly used one could not be told from a whole one), items with tags or a label, items with an
+  inventory or own data. **A damaged item** in a storage chest (a mined wall or turret with less than full health) is
+  taken out by count like a whole one and comes out whole: the game's logistic network does not tell them apart. (The
+  ME Storage Bus on a chest takes whole stacks only; a logistic network cannot be read stack by stack at this cost.)
+* **What it costs**: a look reads the whole logistic network once (about 0.3 to 0.4 ms for a logistic network of 1000
+  roboports and 500 storage chests holding 560 000 to 760 000 items); the looks have a budget of their own (map settings "Logistic storage bus
+  visits per tick", at least 1, at most 2), `/me-stats` shows them as "Logistic storage buses". Numbers:
+  `docs/PERFORMANCE.md`.
+* Removing the bus takes the logistic network's items out of the ME network at once; nothing is lost, the items stay in
+  the chests. Settings (mode, priority, filters, filter on extract) are kept in blueprints, copied by settings paste
+  (between logistic storage buses) and by cloning; so is which cards it has (the cards themselves are items).
+* Its picture and icon are its own (issue #518): the bus casing without a plate or arrows (it faces nothing), with orange
+  corner marks (the logistic network's colour) and a yellow storage chest in the middle; its icon's badge is the storage
+  bus's both-ways arrow in orange. With the texture mod it is AE2's storage bus with the same marks and chest on it
+  (issue #515).
+* It never stores into, shows or takes from the hidden chests of an **ME Logistic Interface** (below, issue #530): what
+  lies there belongs to the ME network already, or is its stock offered to the robots.
+
+## ME Logistic Interface
+
+The **ME Logistic Interface** (issue #531; tech ME Network; an ME Interface, a storage chest, a passive provider chest and
+2 advanced circuits) lets the **logistic robots** work with the ME network: robots take items the network offers, bring
+what the network lacks and drop their trash into it. It has no AE2 counterpart. It is a solid 1x1 block (4 kW through the
+ME Controller): place it **inside the area of a logistic network** and connect it to the ME network. Three **hidden
+logistic chests** stand on its tile; you never see them, the robots do. Its window has three tabs.
+
+* **Offer** (a hidden passive provider): rows of an item (with its quality) and an amount. The network keeps that amount
+  in the chest; robots take from it for requester chests, construction (ghosts, repairs) and players' logistics. A new
+  row offers one stack (a small stock limits how fast robots can take: a chest kept at 10 delivered about 9 items per
+  second). Requester chests take from **active providers first, then storage chests, then passive providers**, so the
+  base empties its own chests first and the ME stock is its **last source**. When a row shrinks or goes, the network takes
+  back what no robot has reserved yet. A row is filled only from what ME holds outside an **ME Logistic Storage Bus** of the
+  same logistic network (issue #540): the base's own storage chests stay where they are. With a **Crafting Card** an
+  offer row the network cannot fill that way starts a crafting job, as on the ME Interface.
+* **Request** (a hidden requester): rows "**keep this many in the network**": the item and a target. The robots are asked
+  for the target less what the whole network holds (drives, storage buses, also a logistic storage bus's chests) less what
+  lies in the requester or is on its way; at the target the request is 0. Each row shows what it asks for now.
+* **Request what crafting lacks** (issue #532; a switch under the request rows, **on** by default): when a **level
+  maintainer** or a **Crafting Card** (ME Interface, export bus, this block) cannot start its crafting job because the
+  network lacks raw ingredients (the maintainer says "missing"), the interface asks the robots for them too: what the
+  failed starts lacked together, less what arrived since, less what lies in the requester or is on its way, the largest
+  needs first, at most 20 items (map setting "ME Logistic Interface: items it asks for what crafting lacks, at most").
+  The items go into the network at the next visit, and the maintainer's or card's next try (every 5 seconds) starts the
+  job. **Per logistic network and ME network only the first interface** (the one built first) with the switch on asks;
+  the others say so. Items that an interface of the logistic network **offers** are left out (the loop guard), and so
+  are the interface's own request rows. A job never waits for what the network lacks: it does not start at all, so this
+  follows the starts that failed. What they lacked is dropped when the job starts, the target is reached, or nobody has
+  tried for two tries. The list below the switch shows what it asks for now.
+* **Automatic mode** (issue #537; the switch at the top of the window, **on** for a newly built block, off for a block
+  built before): the block works without rows. The rows still apply on top, and an item that a row of the logistic
+  network names is left to that row.
+  * **Offer**: it reads what the **requester points** of its logistic network want (requester chests, rocket silos,
+    players' and vehicles' logistics): per item the requests less what lies there less what robots bring now. Of that, what
+    the logistic network **cannot supply itself** (its storage and provider chests, without the ME Logistic Interfaces'
+    own chests) is offered, as far as the ME network has it (not counting what an ME Logistic Storage Bus of the same
+    logistic network shows: that is the base's own), at most **one stack** per item (map setting "ME Logistic
+    Interface: stacks offered per item"). So the base's own chests are used first, and what ME offers is not counted as the
+    base's supply (else it would cover the demand, the demand would vanish and ME would take the stock back). When the
+    demand of an item is gone, its stock stays for **two rounds** (robots may be on their way), then what no robot reserved
+    goes back into the network.
+  * **Construction** (issue #538): what the construction robots of the logistic network need counts as demand too: **ghosts**
+    of buildings and tiles (a pasted blueprint; a ghost left by a destroyed building), buildings marked with the **upgrade
+    planner** (the item of the new building) and **module requests** (item request proxies, and the modules a ghost asks
+    for). They are counted when they are made (the game's events) and dropped when they are built, cancelled, mined or
+    destroyed; only in logistic networks with a block in Automatic mode (whose construction area they stand in). What the
+    logistic network cannot supply itself is offered like the requesters' demand, at the block nearest to them, so the
+    robots fetch it from there. As a safety net the block also looks through the construction area of one roboport after the
+    other, a quarter per step (map setting "construction areas rescanned per second", 10; about 0.13 ms per area): that
+    finds ghosts another mod made without telling the game's events and module requests that were partly served; in the
+    first round after a logistic network got its first automatic block it also finds buildings marked for upgrade before. The window says how many items
+    construction needs there. The count is kept in the save, so every player of a multiplayer game sees the same.
+  * **The ME network first**: an item that an ME block waits for (a parked export bus, an interface, a level maintainer, a
+    crafting start that lacked it) is not offered while it waits; if it was, it goes back at once. The window counts these
+    items.
+  * **Asks**: for what ME blocks wait for (the same list) and what crafting lacks (above), **one stack** per item and only
+    while the logistic network has the item outside the ME Logistic Interfaces' chests (otherwise the request would only
+    fill the requester). In Automatic mode the switch "Request what crafting lacks" does not apply: the block always asks.
+    Only the first block of a logistic network and ME network asks, a block in Automatic mode before one in Manual mode.
+  * **Several blocks** in one logistic network: the first one in Automatic mode (built first) reads the requests and
+    decides; the stock of an item goes to the block **nearest to the requester with the largest demand** for it (the
+    robots fly less).
+  * **Unknown items and room**: a request for an item the game does not know is skipped and counted in the window (a
+    safety net: Factorio 2.1 drops such requests itself when the mod of the item is removed). A stock that does not fit
+    into the hidden chest (36 slots, less what the offer rows take) is left out, the largest demands first, and counted.
+  * **What it costs**: the block reads 2 requester points per tick (map setting "ME Logistic Interface: requests read per
+    tick"; about 25 microseconds each), one logistic network after the other: a base of 355 points is read in about 3
+    seconds. Then it works out each requested item (a few microseconds each) and decides. `/me-stats` shows the points read
+    as a queue of their own. The list of points is taken again every 10 seconds and when a requester is built.
+* **Accept** (a hidden storage chest): robots drop **trash and surplus** there like into any storage chest. "**Accept
+  trash**" is on by default; off, the chest takes nothing. A **filter** item makes it a filtered storage chest: robots
+  prefer it for that item (handy to lead a sorting line into the network), and then it takes only that item.
+* **Taken in**: at each visit everything in the requester (also its trash) and in the storage chest goes into the
+  network. What the network cannot store stays where it is and the window says "ME full". Items robots reserved in the
+  storage chest for a pickup stay for them. A robot's drop raises no event: an interface that moved something comes back
+  after half a second, an idle one less and less often, at the latest after the idle limit (5 seconds by default).
+* **Loop guard**: robots carry an item between a requester and a passive provider on the same tile in a circle. So **per
+  logistic network an item is either offered or requested**, across all its ME Logistic Interfaces: a request row of an
+  item that an interface of the same logistic network offers is **red** and asks for nothing (the status line counts
+  them). What an interface takes in never goes into an ME Logistic Storage Bus of the same logistic network.
+* **Rows and cards**: 9 rows on each tab, 9 more per **Interface Capacity Card** (up to 36); a **Crafting Card** (above).
+  Items that spoil, items with tags or a label, tools and ammunition cannot be rows (the network does not store spoiling
+  items yet); spoiling trash stays in the storage chest.
+* The window also shows its **logistic network** (or that it stands in none: then it offers and requests nothing), what
+  each chest holds now, the card slots and the cards it waits for.
+* **Mined**: the contents of its chests go into the network (without a working network into your inventory, as the mined
+  block's contents); **destroyed** or removed by a script: they are spilled where it stood. Rows, switch, filter and cards
+  are kept in **blueprints**, **settings paste** and **clones**.
+* **What it costs**: a visit reads its three chests and works out its rows; the visits have a budget of their own (map
+  settings "ME Logistic Interface visits per tick", at least 2, at most 8), `/me-stats` shows them as "ME Logistic
+  Interfaces". Numbers: `docs/PERFORMANCE.md`.
+* Its picture and icon: the casing with the orange logistic marks and its three chests, red (offer), blue (request) and
+  yellow (accept).
+
 ## Recipes (standalone)
 
 On its own, ME Network uses **AE2's recipes** (modern AE2; AE2-Unofficial for its own cards) with AE2's ingredients and
@@ -579,10 +754,13 @@ The recipes that follow:
 | ME Singularity Storage Cell (issue #414) | 8 16384k components, 4 ME Quantum Bridges, 4 accumulators, a storage housing | 8 Quantum cells (each 4 16384k components, 4 quantum rings, a dense energy cell) around a matter condenser (AE2-Unofficial) |
 | Storage cell | a component and a housing | the same |
 | Fluid storage cell | a component, 2 plastic bars, 3 copper cables, 3 copper plates | a component in a fluid cell housing (2 quartz glass, 3 redstone, 3 copper) |
+| ME Singularity Fluid Storage Cell (issue #562) | the ME Singularity Storage Cell's ingredients and a pump | none in AE2-Unofficial (the item Singularity cell's idea) |
 | Void ME Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 iron plates | 2 quartz glass, 3 redstone, an ender pearl, 3 iron (AE2-Unofficial) |
 | Void ME Fluid Storage Cell | 2 plastic bars, 3 copper cables, an electronic circuit, 3 copper plates | (AE2-U's void cell takes fluids too; this one has the fluid cell housing's copper) |
 | ME Import / Export Bus | an electronic circuit, 2 iron plates, a fast inserter | an annihilation (import) or formation core (export), 2 iron, a piston |
 | ME Storage Bus | an ME Interface, 2 fast inserters | an interface, 2 pistons |
+| ME Logistic Storage Bus (issue #506) | an ME Storage Bus, a storage chest, 2 advanced circuits | (not in AE2) |
+| ME Logistic Interface (issue #531) | an ME Interface, a storage chest, a passive provider chest, 2 advanced circuits | (not in AE2) |
 | ME IO Port | an ME Drive, 2 fluix cables, 2 iron plates, an advanced circuit (no stand-in for the glass: the plastic bar is not made with Gregtorio Continued, which gives the block its own recipe) | 3 glass, 2 fluix crystals, a drive, 2 iron, an engineering processor |
 | ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
 | ME Pattern Terminal | an ME Terminal, an assembling machine 1, an advanced circuit, a processing unit | a crafting terminal (terminal, crafting table, calculation processor), an engineering processor |
@@ -602,7 +780,146 @@ The recipes that follow:
 The cards are in **Upgrade cards**. Not in AE2, kept as they were (with the stand-ins): the underground cable (8 fluix
 cables, 2 iron plates -> 2), the level maintainer, the circuit interface, the Interface Capacity Card and the wireless
 module. The technologies need what their recipes take: ME Network also needs Lamp and Fast inserter, ME Autocrafting and
-ME Upgrade Cards need Circuit network.
+ME Upgrade Cards need Circuit network, ME Wireless needs Radar and ME Singularity Storage Electric energy
+(accumulators); the Superluminal Speed Card (a 1024k component) comes with ME 1024k Storage (issue #594).
+
+### With Krastorio 2
+
+With Krastorio 2 (issue #593; `prototypes/compat/krastorio2.lua`, the startup setting "Krastorio 2 recipes and technologies",
+not with Gregtorio Continued) every AE2 material whose stand-in has a Krastorio 2 counterpart takes that, with AE2's counts.
+The processors (electronic circuit, advanced circuit, processing unit), the lamp, the combinators and the machines stay:
+Krastorio 2 makes them dearer itself. No ME recipe takes printed silicon itself (in AE2 it goes into the processors), so
+Krastorio 2's silicon is not used.
+
+| AE2 | Stand-in | With Krastorio 2 |
+|---|---|---|
+| certus quartz | stone | quartz |
+| glass, quartz glass, quartz fiber | plastic bar | glass (also the 3 glass of the ME IO Port and the 4 quartz glass of the ME Quantum Bridge's chamber, which had no stand-in) |
+| fluix crystal, fluix dust | copper cable | a quartz and the copper cable |
+| annihilation core, formation core | electronic circuit | automation core |
+| piston | fast inserter | inserter parts |
+| smooth sky stone (ME Controller) | stone brick | stone brick (the controller stays at red and green science) |
+| sky stone dust (256k and 1024k components) | stone brick | imersite powder |
+| glowstone (64k component, blank pattern) | copper cable | rare metals (the 16k component keeps the copper cable: it comes with the first technology) |
+| diamond (Advanced Card) | processing unit | rare metals |
+| dense energy cell (wireless terminal and module, Singularity cells) | batteries, accumulator | lithium-sulfur battery (one for AE2's one cell; the wireless module's 10 batteries: 3) |
+| quantum ring (ME Quantum Bridge) | battery (its energy cell) | AI core |
+| the 4096k and 16384k components' material | stone brick | imersium plate, energy control unit |
+| matter condenser (Singularity cells) | (the bridges) | a charged matter stabilizer more |
+| the crafting accelerators 256x to 4096x (ME Crafting Accelerators 2) | - | an energy control unit more |
+
+The recipes that change (the others keep their ingredients: cells, crafting storages and units, the blocks that are not in
+AE2, most cards):
+
+| Item | Recipe with Krastorio 2 |
+|---|---|
+| Fluix Cable | 1 glass, 2 quartz, 2 copper cable |
+| ME Controller | 4 stone brick, 4 quartz, 4 copper cable, 1 advanced circuit |
+| ME Interface | 4 iron plate, 2 glass, 2 automation core |
+| ME Terminal | 2 automation core, 1 electronic circuit, 1 small lamp |
+| ME Chest | 2 glass, 1 ME Terminal, 2 Fluix Cable, 2 iron plate, 1 copper plate |
+| Basic Storage Housing | 2 glass, 3 copper cable, 2 iron plate, 1 copper plate |
+| ME 1K Storage Component | 4 copper cable, 4 quartz, 1 electronic circuit |
+| ME 4K Storage Component | 3 ME 1K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 16K Storage Component | 3 ME 4K Storage Component, 1 advanced circuit, 1 glass, 4 copper cable |
+| ME 64K Storage Component | 3 ME 16K Storage Component, 1 advanced circuit, 1 glass, 4 rare metals |
+| ME 256k Storage Component | 3 ME 64K Storage Component, 1 advanced circuit, 1 glass, 4 imersite powder |
+| ME 1024k Storage Component | 3 ME 256k Storage Component, 1 advanced circuit, 1 glass, 4 imersite powder |
+| ME 4096k Storage Component | 3 ME 1024k Storage Component, 1 advanced circuit, 1 glass, 4 imersium plate |
+| ME 16384k Storage Component | 3 ME 4096k Storage Component, 1 advanced circuit, 1 glass, 4 energy control unit |
+| ME Singularity Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 lithium-sulfur battery, 1 Basic Storage Housing, 1 charged matter stabilizer |
+| ME Import Bus | 1 automation core, 2 iron plate, 1 inserter parts |
+| ME Export Bus | 1 automation core, 2 iron plate, 1 inserter parts |
+| ME Storage Bus | 1 ME Interface, 2 inserter parts |
+| Void ME Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 iron plate |
+| Void ME Fluid Storage Cell | 2 glass, 3 copper cable, 1 electronic circuit, 3 copper plate |
+| ME IO Port | 1 ME Drive, 2 Fluix Cable, 2 iron plate, 1 advanced circuit, 3 glass |
+| ME Quantum Bridge | 32 iron plate, 20 electronic circuit, 8 processing unit, 8 AI core, 32 Fluix Cable, 4 glass |
+| ME Pattern Provider | 4 iron plate, 2 assembling machine 1, 2 automation core |
+| ME Blank Pattern | 2 glass, 3 rare metals, 1 quartz, 2 iron plate, 1 copper plate |
+| ME Molecular Assembler | 4 iron plate, 2 glass, 2 automation core, 1 assembling machine 1 |
+| ME 256x Crafting Accelerator | 4 ME 64x Crafting Accelerator, 1 energy control unit |
+| ME 1024x Crafting Accelerator | 4 ME 256x Crafting Accelerator, 1 energy control unit |
+| ME 4096x Crafting Accelerator | 4 ME 1024x Crafting Accelerator, 1 energy control unit |
+| ME 1k Fluid Storage Cell | 1 ME 1K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4k Fluid Storage Cell | 1 ME 4K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16k Fluid Storage Cell | 1 ME 16K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 64k Fluid Storage Cell | 1 ME 64K Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 256k Fluid Storage Cell | 1 ME 256k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 1024k Fluid Storage Cell | 1 ME 1024k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 4096k Fluid Storage Cell | 1 ME 4096k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME 16384k Fluid Storage Cell | 1 ME 16384k Storage Component, 2 glass, 3 copper cable, 3 copper plate |
+| ME Singularity Fluid Storage Cell | 8 ME 16384k Storage Component, 4 ME Quantum Bridge, 4 lithium-sulfur battery, 1 Basic Storage Housing, 1 pump, 1 charged matter stabilizer |
+| Advanced Card | 2 rare metals, 3 iron plate, 1 copper cable, 1 advanced circuit |
+| Capacity Card | 1 Basic Card, 1 quartz |
+| Acceleration Card | 1 Advanced Card, 1 quartz, 1 copper cable |
+| View Cell | 1 Basic Storage Housing, 1 quartz |
+| Wireless Booster | 2 quartz, 1 copper cable, 1 electronic circuit, 3 iron plate |
+| Wireless ME Terminal | 1 radar, 1 ME Terminal, 1 lithium-sulfur battery |
+| ME Wireless Terminal Module | 1 Wireless ME Terminal, 3 lithium-sulfur battery, 2 processing unit |
+
+The ME Molecular Assembler is made again after Krastorio 2's changes, from the assembling machine 2's item categories at
+that point (without Krastorio 2: the same; Krastorio 2's own machine categories such as crushing or electrolysis are never
+the assembling machine 2's), so it crafts Krastorio 2's assembler recipes such as the automation core.
+
+#### Krastorio 2's buildings
+
+Tested with Krastorio 2 loaded (issue #595, the runtime test `krastorio2.lua`), nothing of ME Network names them: the
+warehouses and strongboxes of every kind are chests for the import, export and storage bus and the ME Interface
+(containers and logistic containers: a storage bus on a requester warehouse shows and takes its contents); the big and huge
+storage tanks are tanks for the fluid side of the buses; the advanced lab takes science packs from an export bus as the
+vanilla lab does, and the research server is a crafting machine (an export bus fills its recipe's ingredients). Matter
+(`kr-matter`) is a fluid like any other: it is kept in fluid cells, an export bus fills it into a matter associator and an
+import bus takes it out of a matter plant, at its temperature (25 degrees). Krastorio 2's steel pipe and steel pipe to
+ground connect to the sides of an ME Interface (and an ME Chest) where a vanilla pipe does: Krastorio 2 lets every fluid
+box but a pipe's take its steel pipes.
+
+#### Technologies with Krastorio 2
+
+With Krastorio 2 the storage ladder follows its science tiers (issue #594): up to 256k the vanilla packs as without it, 1024k
+on utility science, 4096k with the matter tech card, 16384k with the advanced tech card and the Singularity cells with the
+singularity tech card, each with the Krastorio 2 technology whose items its recipes take as a prerequisite. Counts and times
+follow Krastorio 2's technologies of the same tier. Production and utility science need Krastorio 2's Advanced lab, the
+tech cards its Singularity lab: nothing ME Network has to do. Krastorio 2 itself takes red to blue out of every technology
+that needs its higher cards; the ME technologies of those tiers name only the tier's packs anyway. Krastorio 2 does not support
+Space Age: with it, its optimization tech card (the space science pack) needs space research data that no rocket
+brings, so its singularity tech card cannot be researched; there the ME Singularity technologies stay on the advanced tier
+(production, utility, matter and advanced tech cards).
+
+| Technology | Without Krastorio 2 | With Krastorio 2 | Krastorio 2 prerequisite added |
+|---|---|---|---|
+| ME Network | 300 × 30 s, red, green | 250 × 30 s, red, green | Silicon processing |
+| ME 64k Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue | Rare metal processing |
+| ME Upgrade Cards | ME 64k Storage's | ME 64k Storage's |  |
+| ME Autocrafting, ME Automation | 500 × 30 s, red to blue | 300 × 30 s, red to blue |  |
+| ME Fluid Storage | 400 × 30 s, red to blue | 250 × 30 s, red to blue |  |
+| ME Wireless | 500 × 30 s, red to blue | 250 × 30 s, red to blue | Lithium-sulfur battery (instead of Battery) |
+| ME Wireless Link | 400 × 30 s, red to blue | 200 × 30 s, red to blue |  |
+| ME 256k Storage, ME Fluid 256k Storage | 600 × 30 s, red to production | 350 × 60 s, red to production | Quarry minerals extraction (256k) |
+| ME Co-Processing | 800 × 30 s, red to production | 350 × 60 s, red to production |  |
+| ME 1024k Storage, ME Fluid 1024k Storage | 800 × 30 s, red to utility | 500 × 60 s, red to utility | AI core (1024k) |
+| ME Quantum Crafting, ME Crafting Accelerators | 1000 × 30 s, red to utility | 500 × 60 s, red to utility | AI core |
+| ME 1024k Crafting Storage | 1200 × 30 s, red to utility | 500 × 60 s, red to utility |  |
+| ME Quantum Bridge | 1500 × 30 s, red to utility | 750 × 60 s, red to utility | Quantum computer |
+| ME 4096k Storage, crafting and fluid | 1200 / 1600 / 1200 × 30 s, red to utility | 500 × 60 s, production, utility, matter tech card | Imersium processing (4096k) |
+| ME 16384k Storage, crafting and fluid; ME Crafting Accelerators 2 | 1600 / 2000 / 1600 / 2500 × 30 s, red to utility | 500 × 45 s, production, utility, matter, advanced tech card | Energy control unit, Advanced tech card (16384k, accelerators 2) |
+| ME Singularity Storage, ME Singularity Crafting Storage | 2500 / 3000 × 30 s, red to utility | 1000 × 60 s, production, utility, optimization, matter, advanced, singularity tech card (with Space Age: the advanced tier, see above) | Matter processing, Singularity tech card (storage) |
+
+#### Krastorio 2 Spaced Out
+
+Krastorio 2 Spaced Out (`Krastorio2-spaced-out`, issue #596) is an add-on of Krastorio 2 for Space Age (it needs Krastorio 2,
+k2so-assets and Space Age). Every item the recipes above take has the same name there, so the recipes are the same. Its
+upper tiers come in another order, and the technologies follow it:
+
+| Technology | With Krastorio 2 Spaced Out |
+|---|---|
+| ME 4096k Storage, crafting and fluid | 500 × 60 s, production and utility (Spaced Out's imersium processing has no matter card) |
+| ME 16384k Storage, crafting and fluid; ME Crafting Accelerators 2 | 500 × 45 s, production, utility, advanced tech card (its energy control unit comes after the advanced card, before the matter card) |
+| ME Singularity Storage, ME Singularity Crafting Storage | 2000 × 60 s, production, utility, space, metallurgic, agricultural, electromagnetic, matter, advanced and singularity (as its matter cube and singularity beacon) |
+| ME Quantum Bridge | 750 × 60 s, red to utility, after AI core (Spaced Out's quantum computer needs Aquilo's quantum processor; the bridge takes AI cores only) |
+
+The others are as with Krastorio 2. The ME Quantum Bridge links networks on different planets without a limit; the runtime
+test links a network on one surface with an ME Interface on Vulcanus.
 
 ### View Cells
 
@@ -670,9 +987,9 @@ into the ME Export Bus (not the import bus) and into the fourth card slot of the
   its target has room for) and a fluid row of the interface (what its side lacks), at the filter's or row's temperature or
   the fluid's default one.
 * The products go to the block that asked for them (issue #426, AE2-Unofficial's `injectCraftedItems` of
-  `PartBaseExportBus` and `DualityInterface`): when the job is done, its product, up to the amount it was asked for, goes
-  into the export bus's target, or into the interface (items into its inventory, fluid into the tank of a side tied to a row
-  of that fluid); what the block does not take, and what the job made beyond the amount, goes into the network.
+  `PartBaseExportBus` and `DualityInterface`): as the job makes it (issue #602), its product, up to the amount it was asked
+  for, goes into the export bus's target, or into the interface (items into its inventory, fluid into the tank of a side tied
+  to a row of that fluid); what the block does not take, and what the job made beyond the amount, goes into the network.
 * **Craft only** (issue #426, AE2-Unofficial's `Settings.CRAFT_ONLY`, a checkbox in the export bus's window while it has the
   card): the bus takes nothing from the network's storage. For each filter whose item its target can take (a machine: up to
   its level) or whose fluid it has room for, it starts a job for what the visit would move, and the job's products go
@@ -718,7 +1035,8 @@ and one of each other card, `StorageBusPart` and `InitUpgrades`; an item cell ha
 * **Cards are items and are never made or lost by the network:** a mined bus gives its cards back (with the bus), a
   destroyed one drops them, as a drive drops its cells.
 * **Blueprints, copy/paste, settings paste and clones** copy which cards a bus has, not the cards: a bus built from a
-  blueprint takes its cards from the network as soon as the network has them (its window lists the ones it still
+  blueprint takes its cards from your inventory first when you build it by hand (issue #590), else (robots) from the
+  network, and the cards neither had come from the network as soon as it has them (its window lists the ones it still
   waits for); a settings paste takes them from your inventory first, then from the network, and puts the cards the
   bus had beyond them into your inventory. Taking a card out by hand ends the waiting. A bus without its cards works
   as if it had none.
@@ -881,7 +1199,8 @@ one 3x3 block.
   conflict and do not work (the controller's rule). The far side's blocks take their power through the one controller.
 * When the link goes (power, a bridge mined, a frequency changed), the network splits again, as for a removed cable;
   crafting jobs whose machine is on the other side wait.
-* Blueprints, settings paste and clones carry the frequency (a copy pasted next to a pair makes a third bridge: change it).
+* Blueprints, settings paste (Shift + right click on one bridge, Shift + left click on the other, with an empty hand) and
+  clones carry the frequency (a copy pasted next to a pair makes a third bridge: change it).
 * Recipe (standalone, AE2's eight rings and a chamber in the stand-ins): 32 iron plates, 20 electronic circuits, 8
   processing units, 8 batteries, 32 fluix cables; AE2's quartz glass is left out (its stand-in, the plastic bar, is made in
   no game of Gregtorio Continued, whose compat file gives the block its own recipe and tier).
@@ -890,18 +1209,25 @@ one 3x3 block.
 
 ## ME Wireless Link
 
-The **ME Wireless Link** (issue #384, AE2 Stuff's Wireless Connector; technology ME Wireless Link, after ME Wireless) joins two
-ME networks into one **without a cable**, on the **same surface**: a cable link for a far mine or outpost without kilometres
-of cable. It works like the ME Quantum Bridge (above), on a smaller scale:
+The **ME Wireless Link** (issue #384, AE2 Stuff's Wireless Connector; technology ME Wireless Link, after ME Wireless) joins
+ME networks into one **without a cable**, on the **same surface**: a cable link for far mines or outposts without kilometres
+of cable. Like the ME Quantum Bridge (above), but with no limit of two (issue #559):
 
-* **Frequency** in its window; exactly two links with the same frequency are a pair (a link never pairs with a bridge). A third
-  link of a frequency links nothing.
-* **Range: 512 tiles** between the two links. A pair on two surfaces or further apart does not link; the window says why.
+* **Frequency** in its window. **All links with the same frequency on a surface form one wireless network**: a third, fourth ...
+  link joins the others (a link never joins a bridge). The window says how many links have the frequency and to how many of
+  them this one is linked.
+* **Range: 512 tiles.** A link joins when another link of the frequency is within 512 tiles of it, so the links can stand in a
+  **chain** (A to B to C, with A and C further apart). The links are joined by the shortest connections that reach every one
+  of them (a spanning tree: one connection fewer than there are links, never one per pair). Links on two surfaces or with
+  no other link in reach do not link; the window says why.
 * **Power from the grid where each link stands, growing with the distance:** 10 kW, and 50 kW more for every started 32 tiles
-  (a chunk) between the two: 60 kW at up to 32 tiles, 210 kW at 100 tiles, 810 kW at 512. Both ends pay it while they are
-  a pair; an end without a partner in reach draws 10 kW. The link holds while both ends have power.
-* As with the bridge: while linked it is one network with one ME Controller (build the far side without one); when the link
-  goes, the network splits as for a removed cable; blueprints, settings paste and clones carry the frequency.
+  (a chunk) of its **longest connection**: 60 kW at up to 32 tiles, 210 kW at 100 tiles, 810 kW at 512. A link without a link
+  in reach draws 10 kW. A link holds while it and the link at the other end have power; one without power drops out and
+  joins again when its power is back (the others stay linked through the rest of the chain where they can).
+* As with the bridge: the joined networks are one network with one ME Controller (build the other sides without one); when a
+  connection goes, the network splits as for a removed cable; blueprints, settings paste and clones carry the frequency.
+  Changing a link's frequency or removing it takes it out of its group at once; a newly built link joins when it has power
+  (within a second).
 * Recipe (standalone): a radar (AE2's wireless receiver), 2 advanced circuits, 4 fluix cables, 4 iron plates.
 
 ## Old saves
@@ -936,7 +1262,7 @@ Tech `me-autocrafting` (needs `me-storage-64k`, Automation 2 and Circuit network
 | **ME Blank Pattern** | cheap item (2 per craft, recipe in **Recipes (standalone)**). Encoded in an **ME Pattern Terminal** |
 | **ME Encoded Pattern** | item with tags, stack size 1: one pattern. Its tooltip lists the kind, the inputs and the outputs |
 | **ME Pattern Provider** | 1x1, no power, a member of the network. Holds **9 encoded patterns** (**Pattern Capacity Cards** in its three card slots add 9 each, up to 36); each one is a pattern of the network. The machines on the four tiles around it (or a chest there) do the work |
-| **ME Molecular Assembler** | **1x1** (one tile, like AE2's block) assembling machine for item-only crafting recipes (the item categories of the assembling machine 2, no fluid boxes), speed 2.5, 375 kW (Gregtorio Continued: its own categories and numbers), five module slots for Acceleration Cards. Up to three of them fit around one provider (its fourth side joins the network) |
+| **ME Molecular Assembler** | **1x1** (one tile, like AE2's block) assembling machine for item-only crafting recipes (the item categories of the assembling machine 2, no fluid boxes), speed 2.5, 375 kW (Gregtorio Continued: its own categories and numbers), five module slots for Acceleration Cards. Since issue #560 a **member of the network that carries it**, like a cable (AE2): providers and assemblers touching each other in any arrangement are one network, without cables in between; no power connection: the ME Controller draws its energy usage while it crafts (with its cards' extra use) and a thirtieth of it while it is idle. While its network does not work it is switched off with a status saying why |
 | **Crafting blocks** | 1x1 members of the network; a solid rectangle of them with at least one **crafting storage** is a Crafting CPU running one job (see [Crafting CPUs](#crafting-cpus)). The first: a single **ME 1k Crafting Storage** |
 
 Step by step:
@@ -962,7 +1288,8 @@ Step by step:
    red slot buttons. With something missing the Craft button stays disabled. Click **Craft**; the job
    appears in the **Jobs** tab (and in the window of the CPU that runs it) with its progress and a
    **Cancel** button.
-6. When the job is done, the result (and any by-products) is in network storage.
+6. The result goes into network storage as it is made (issue #602, as in GT New Horizons' AE2: a job of 1000 items does not
+   hold them back until the last one is done); by-products and what is left over of intermediates when the job is done.
 
 ### Patterns: encoding and clearing
 
@@ -1035,7 +1362,7 @@ to a page (the arrows beside the count turn the pages; on the left your inventor
   the order they were built; then the **ME Interfaces**. A provider of another network is never listed.
 * **Each provider:** its name (or "ME Pattern Provider"), where it is, the icons of the machines and chests next to it (or
   "no machine next to it"), and its pattern slots (9 to 36) as in its own window: green, red (why it cannot be used: the
-  tooltip) or yellow (a blueprint's pattern waiting for a blank). **Click a pattern** to take it into your hand (shift +
+  tooltip) or yellow (a blueprint's pattern waiting for an encoded or a blank pattern). **Click a pattern** to take it into your hand (shift +
   click: into your inventory; in remote view always into the inventory), **click a slot with an encoded pattern in your
   hand** to put it in (a pattern there is swapped into your hand). The tooltip shows what the pattern takes and makes.
 * **Each interface:** its config rows (items and fluids with their amounts), shown only; change them in its own window.
@@ -1068,6 +1395,13 @@ ingredient fits into a slot, and fluid boxes for the recipe's fluids without pip
 * **One machine, many patterns:** a machine works for one job at a time. A job that needs a machine that is busy with
   another job (or another pattern) **waits** ("Waiting for a free machine") and takes it at the next step after it is
   free. Jobs take turns: one job per tick (setting "Crafting jobs stepped per tick"), each one every 20 ticks at most.
+* **How much at once** (issue #557): a machine gets 16 crafts at a hand-over, or more when it is fast (its crafting speed
+  with modules, quality and Acceleration Cards against the recipe's time): enough for two of the job's steps, as far as
+  its input slots (one stack per ingredient), its output slot and what the job holds allow. While it still works and has
+  less than half of that left, the job's step tops it up (the products so far are taken out first and count as done), and
+  a machine that would run out or fill its output slot before the job's next step has the job stepped earlier, so a fast
+  machine never waits for the job. Not for recipes with fluids or ingredients with data (they get their batch when the
+  machine is idle, as before).
 * The machine keeps the recipe of the last job; it is never switched back.
 * **Cannot make it:** a pattern whose machines cannot make the recipe is no pattern of the network: the provider
   window shows why (`category`: no machine of the right kind, `not-researched`, `fixed-recipe`, `stack`, the fluid
@@ -1170,7 +1504,9 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   and takes its products out, and crafting patterns change its recipe. Do not feed them with inserters, belts or
   pipes as well.
 * A provider that is not connected to the network, or that touches no machine, makes no pattern; its patterns stay
-  in it. An ME Molecular Assembler is one tile (it was 3x3 before 0.5.0): it has to stand on a tile next to the provider, one
+  in it. ME Molecular Assemblers connect the network (issue #560), so a block of providers and assemblers needs no cable
+  inside: one cable or ME block at its edge is enough. Two networks that touch through an assembler are one network (with two
+  controllers: a conflict; an older save says so once in the chat). An ME Molecular Assembler is one tile (it was 3x3 before 0.5.0): it has to stand on a tile next to the provider, one
   tile further away is no neighbour. Assemblers of an older save keep their centre and are one tile now, so a provider that
   touched the edge of the old block is one tile away until you move the assembler or the provider: its patterns then say "No
   machine or chest next to the provider", and a job that was waiting for it waits for a machine (it holds its ingredients
@@ -1210,9 +1546,29 @@ first one. Equal patterns in two providers are one pattern: its machines are poo
   script) drops them where it stood, at the next scan.
 * **Blueprints, copy and paste:** a blueprint keeps the provider's priority and its **patterns as data**. An encoded
   pattern is an item, so a blueprint never creates one out of nothing: a provider built from a blueprint shows the
-  patterns as "waiting for a blank pattern" (yellow) and **encodes each one from a blank pattern of its network**
-  as soon as the network has one (within a few seconds). Click such a slot to forget it. Old blueprints (0.4.1 and
-  older) with a furnace recipe choice give a processing pattern of that recipe, the same way.
+  patterns it still waits for as yellow slots and fills each one from the first of these that has one (issue #558):
+  1. an **encoded pattern of the same pattern in your inventory** (when you build the provider or paste the blueprint
+     over it yourself),
+  2. an **encoded pattern of the same pattern in its network** (taken out of the network),
+  3. a **blank pattern in your inventory** (encoded into the slot),
+  4. a **blank pattern of its network** (as soon as the network has one, within a few seconds).
+
+  Encoded patterns come first, so nothing is encoded twice. A provider built by robots has no player: only the network's
+  patterns count. While patterns wait, the provider says so on the map (a yellow status "Waiting for N blank patterns"),
+  its window has a line above the slots, and the player who built it is told once (a flying text at the block, or a
+  chat line with its place when robots built it). Click such a slot to forget it. Old blueprints (0.4.1 and older) with
+  a furnace recipe choice give a processing pattern of that recipe, the same way.
+  Its **Pattern Capacity Cards** come first (issue #590), in the same order: from your inventory when you build or paste
+  it yourself, then from the network; robots take them from the network. A card neither had is waited for: it comes
+  from the network as soon as the network has one, and the patterns of the slots it gives are filled then. While cards
+  wait, the yellow status says "Waiting for N cards" (with the patterns: "Waiting for N cards and M patterns"), the
+  window lists them above the card slots, and the player is told as for the patterns. Robots never take a card from a
+  chest or from your inventory: put the cards into the ME network.
+* **Settings paste** (shift + right click on one provider, shift + left click on another; issue #585) does the same with the
+  source's patterns: each goes into the same slot of the destination when that slot is empty and is filled in the order
+  above, from your inventory first; a slot that holds a pattern keeps it, and what finds nothing waits.
+* **Return all patterns** (a button in the provider's window, issue #585) puts every pattern of the provider into its
+  network as an encoded pattern and forgets the ones it waits for; what the network has no room for stays.
 * **Settings paste** (shift right click, shift left click) and cloning copy the **priority**, the **blocking mode**
   (issue #335) and the **lock** setting (issue #346); patterns are items and stay where they are.
 * **The name** a provider got in the ME Interface Terminal (issue #336) goes with blueprints and clones, not with a
@@ -1471,7 +1827,7 @@ connects whatever touches it, like the cable, but only while it is **joined**:
 
 | Entity | Settings | Settings paste | Blueprint, copy/paste, clone |
 |---|---|---|---|
-| ME Pattern Provider | priority; its blocking mode (issue #335) and lock (issue #346); its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network); its name (issue #336) | yes (priority, blocking mode, lock, cards) | yes (patterns pending a blank pattern, blocking mode, lock, cards, name); clone: priority, blocking mode, lock, cards, name |
+| ME Pattern Provider | priority; its blocking mode (issue #335) and lock (issue #346); its patterns (blueprint only, encoded from blank patterns of the network); its Pattern Capacity Cards (the copy wants them from the player, then the network); its name (issue #336) | yes (priority, blocking mode, lock, cards; patterns into its empty slots, as from a blueprint, issue #585) | yes (patterns pending a blank pattern, blocking mode, lock, cards, name); clone: priority, blocking mode, lock, cards, name |
 | ME Interface | config rows (item with quality, or fluid; amount), the four sides, the priority, its Interface Capacity Cards (the copy wants them from the player, then the network) | yes | yes (old blueprints with slot filters are converted); the cards first, so the rows they give room for are there |
 | ME Import Bus, ME Export Bus | filters (items and fluids, also the ones kept beyond its Capacity Cards, issue #413); which cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards are taken from the network as soon as it has them) |
 | ME Storage Bus | mode, priority, filters (items and fluids), filter on extract; which upgrade cards it has | yes (the cards from your inventory, then the network; extra cards into your inventory) | yes (the cards from the network, when it has them) |
@@ -1490,6 +1846,22 @@ the copy gets them (cards come from the network, as for a built copy). A block o
 changes nothing (a blank bus pasted over a configured one keeps its filters). Not for blueprints with rails or with
 absolute grid snapping (they are placed by other rules); the toggle buses' condition is the game's own and was always
 pasted.
+
+### The ME Memory Card (issue #561)
+
+AE2's Memory Card, a **selection tool** here (crafted from an advanced circuit, 2 iron plates, 2 copper plates and a copper
+cable; unlocked with ME Network). Take it in your hand:
+
+* **Select** (drag over) an ME block: the card copies its settings, exactly what a blueprint of the block carries (the table
+  above, the monitors, emitters, toggle buses, bridges and links too), and a **pattern provider's patterns**. With several
+  ME blocks in the area the one nearest the middle is copied. The card's label shows what it holds (the block, and the
+  number of patterns). **Select empty ground** (no ME block) to empty it.
+* **Alt + select** an area: **every block of the copied kind** in it takes the settings, as a blueprint pasted over it
+  would give them (so a row of providers or buses takes one drag). A pattern provider's patterns go into its **empty
+  slots** (a slot with a pattern keeps it), each filled as a blueprint's pattern is (issue #558): an encoded pattern of the
+  same pattern in your inventory, then one in the provider's network, then a blank pattern of your inventory (encoded into
+  the slot), then a blank of the network. What finds none waits in a yellow slot until the network has a blank. Cards a
+  block's settings name come from the network, as for a blueprint.
 
 ### A machine's recipe onto an ME block
 
@@ -1705,16 +2077,18 @@ a window whose entity is gone or out of reach; a window rebuilds a part only whe
 the part's tags), so focused text fields keep their text. `scripts/fork-me-windows.lua` builds the block windows;
 each shows data from a `*_data` function and changes things through a function of the block's module or a small
 `set_*` helper; the remote interface `gregtorio-me-gui` exposes the same functions to the runtime test. Nothing of a
-window is in storage except the terminal's tab, search, sort, kind and picked craft
-(`storage.fork_me_terminal[player]`).
+window is in storage except the terminal's tab, search, quality filter, picked craft and rows kept at 0
+(`storage.fork_me_terminal[player]`) and the player's sort, its direction and kind (`storage.fork_me_term_prefs[player]`,
+issue #602: every terminal window uses them; the tiers and mods to sort by come from `scripts/fork-me-sortkeys.lua`: the
+tiers are read from the runtime prototypes, because a dependent mod rewrites recipes and unlocks after this mod's last data
+stage, once in `on_init` and `on_configuration_changed` (about 0.9 s with Gregtorio) into `storage.fork_me_tiers`).
 
-Issue #28 (`docs/ME-REWORK.md`, "Windows with the player's inventory"): a window can have the **inventory pane**, the
-player's main inventory drawn by the mod on the left of the content (`G.open_window(..., pane)`): one slot button per
-slot, updated through `on_player_main_inventory_changed` and `on_player_cursor_stack_changed` for the slots that changed
-only (`G.update_pane`, signatures in `storage.fork_me_gui_pane[player]`). Its clicks (`G.inventory_click`) pick up, put
-down, merge, swap and halve stacks like the game's, and shift + click hands the stack to the window's `shift`; the
-block's slots are buttons whose click goes to the window's `click`, which refuses a wrong item before anything moves.
-A slot's tooltip is the item's own (`elem_tooltip`) and, below it, the stack's description when it has one (issue #75: a
+Issue #28 (`docs/ME-REWORK.md`, "Windows with the player's inventory"): every window has the **inventory pane**, the
+player's inventory on the left of the content (`G.open_window(..., pane)`); since issue #542 ("The game's inventory
+element" there) it is Factorio 2.1's `inventory` element bound to the player's inventory: the game draws it and moves stacks
+to and from the hand, and `on_gui_inventory_action` brings shift + click (the window's `shift`) and control + click (its
+`control`, else `shift` for every stack of the item) to `G.inventory_action`. The block's slots are buttons whose click goes
+to the window's `click`, which refuses a wrong item before anything moves. A block slot's tooltip is the item's own (`elem_tooltip`) and, below it, the stack's description when it has one (issue #75: a
 cell's contents, partition and cards, a pattern's recipe; `G.stack_tooltip`), then the slot's own hint. The terminal's
 storage tab and every other grid of items kept in the network show the same for a stored cell or pattern (issue #79):
 the description is part of its key (`G.key_description`).
@@ -1838,13 +2212,20 @@ Each step the CPU of a job:
 
 1. collects machines that are idle again (no progress, no ingredients left): their products go to
    the pool,
+   and (issue #602) hands the requested item on from the pool as it comes (`M.hand_out`), up to the job's amount less
+   what it handed out before (`job.sent`) and less what runs not handed out yet still take of it as an ingredient: first
+   to the block of the job's Crafting Card (`N.deliverers`, issue #426), the rest into the network (`N.no_arrival`: no
+   other job takes it as an arrival). GT New Horizons' AE2 does the same: `CraftingCPUCluster.injectItems` passes a
+   final output on at once (`finalOutput.splitOutputToIngredient` keeps the part later tasks still use) and ends the
+   job when the last of it is out. Intermediates and byproducts stay in the pool,
 2. hands batches (up to 16 crafts, limited by the pool, by one stack per item ingredient, by the
    output slot and by the fluid boxes) to idle machines of the step's pattern, in plan order
    (Molecular Assembler or any other pattern machine, several machines in parallel). Crafting patterns:
    a machine that has the recipe first, else an idle one is switched (`switch_recipe`: its items and fluids into
    the network with `N.no_arrival`, then `set_recipe`; not when the network cannot take them). Processing
    patterns: an idle machine gets the inputs as a lease, a chest gets them directly (no lease),
-3. when every step is done, stores the whole pool in the network (result and by-products), items
+3. when every step is done, hands out what is left of the requested item as in 1. and stores the rest of the pool
+   in the network (a surplus of the result, by-products), items
    with the network's `insert`, fluids with `fluids.insert`. What does not fit stays in the pool
    ("Storing items and fluids (network cells full?)").
 
@@ -2071,8 +2452,9 @@ become config rows (`config_of` in `scripts/fork-me-io.lua`).
   (Factorio has no damage values or NBT, so AE2's fuzzy modes do not apply); a storage bus with an Overflow
   Destruction Card destroys nothing while it faces nothing, and a tank holding another fluid or at another temperature
   destroys nothing (AE2 voids into a bus without an inventory); items with tags are never destroyed; a storage bus never
-  shows what it cannot take (AE2 has a switch); cards a blueprint wants come from the network (AE2's memory card takes
-  them from the player's inventory); interface priority fills the higher priority interface first when the network is
+  shows what it cannot take (AE2 has a switch); cards a blueprint wants come from the inventory of the player who built
+  it by hand, then the network, robots take them from the network (AE2's memory card takes them from the player's
+  inventory); interface priority fills the higher priority interface first when the network is
   short (AE2's code uses it only to stop a lower priority interface from pulling stock out of a higher one through a
   storage bus, which this mod refuses anyway); partitioned storage is filled before storage that only holds the item
   (AE2: one pass for both). The card window's data is tested headless; its look, the red warning and the flying texts are not checked in the real

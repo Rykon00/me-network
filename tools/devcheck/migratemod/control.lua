@@ -9,6 +9,7 @@ local AREA = { { -10, -12 }, { 80, 30 } }
 local EPS = 0.5
 
 local AC = "gregtorio-me-autocraft"
+local LIF = "gregtorio-me-logistic-interface"
 local function L(key, msg) log("DEVCHECK-MIGRATE-" .. key .. " " .. msg) end
 --- me-network issue #503: the stage of the helper's test items (settings.lua, data.lua)
 local ITEMS = settings.startup["zz-me-network-devcheck-migrate-items"].value
@@ -128,6 +129,14 @@ local function setup_unified(s)
 		inv.destroy()
 		return d
 	end
+	--- me-network 0.5.11: an underground pair as the old rule built it (the run along the direction), the cables at its
+	--- ends and a ghost; the load turns them to the vanilla underground pipe's rule and keeps them connected
+	place(s, fails, "me-cable", 70.5, 10.5)
+	place(s, fails, "me-underground-cable", 71.5, 10.5, { direction = defines.direction.east })
+	place(s, fails, "me-underground-cable", 76.5, 10.5, { direction = defines.direction.west })
+	place(s, fails, "me-cable", 77.5, 10.5)
+	s.create_entity{ name = "entity-ghost", inner_name = "me-underground-cable", position = { 73.5, 12.5 },
+		direction = defines.direction.north, force = "player" }
 	local di = drive(10.5, "me-16k-storage-cell")
 	local df = drive(11.5, "me-1k-fluid-storage-cell")
 	place(s, fails, "me-terminal", 12.5, 0.5)
@@ -197,6 +206,14 @@ local function setup_unified(s)
 		if not (m and p and stack and remote.call(AC, "insert_pattern", p, stack)) then fails[#fails + 1] = "pattern at " .. x end
 		inv.destroy()
 	end
+	--- me-network issue #560: a provider that touches only an assembler (no cable, no other block), and two networks with a
+	--- controller each whose providers meet at an assembler: before, the assembler was no member (the provider alone, two
+	--- networks); after the load the provider is in the network and the two networks are one, in conflict
+	place(s, fails, "me-pattern-provider", 29.5, -0.5)
+	place(s, fails, "me-network-controller", 9, 40)
+	for _, x in ipairs({ 10.5, 12.5 }) do place(s, fails, "me-pattern-provider", x, 39.5) end
+	place(s, fails, "me-molecular-assembler", 11.5, 39.5)
+	place(s, fails, "me-network-controller", 14, 40)
 	local has_legacy = prototypes.entity["me-crafting-cpu"] ~= nil
 	local legacy_chest
 	if has_legacy then
@@ -269,12 +286,55 @@ local function setup_unified(s)
 		local c2 = place(s, fails, "me-circuit-interface", 56.5, 2.5)
 		if c2 then remote.call("gregtorio-me-circuit", "set_circuit_filters", c2, { "devcheck-renamed-item", "devcheck-removed-item" }) end
 	end
+	--- me-network issue #537: an ME Logistic Interface in a logistic network (a version that has it). Built by a version without
+	--- the automatic mode it must be Manual after the load; with `--removed-items` (a save of the working copy) it is in
+	--- Automatic mode and a requester of the logistic network asks for the item the load removes: after the load its pass
+	--- runs without an error (the game drops that filter)
+	local lif
+	if prototypes.entity["me-logistic-interface"] then
+		place(s, fails, "roboport", 50, -8)
+		local e = place(s, fails, "me-logistic-interface", 45.5, 0.5)
+		if e then
+			lif = { modes = remote.interfaces[LIF].set_mode ~= nil }
+			if ITEMS == "old" then
+				local rq = place(s, fails, "requester-chest", 49.5, -3.5)
+				local p = rq and rq.get_logistic_point(defines.logistic_member_index.logistic_container)
+				local sec = p and (p.get_section(1) or p.add_section())
+				if sec then sec.set_slot(1, { value = { name = "devcheck-removed-item", quality = "normal", comparator = "=" }, min = 50 }) end
+				if lif.modes then remote.call(LIF, "set_mode", e, "auto") end
+			end
+		end
+	end
+	--- me-network issue #556: a network of its own that draws 8.12 MW (four 4096x accelerators, a version that has them): until 0.5.10
+	--- its controller's buffer was 100 kJ, so it never worked; after the load its buffer follows the draw and it works
+	local big
+	if prototypes.entity["me-crafting-accelerator-4096x"] then
+		local e3 = place(s, fails, "electric-energy-interface", 2, -24)
+		if e3 then e3.power_production = 1e7 e3.electric_buffer_size = 1e8 end
+		place(s, fails, "substation", 5, -24)
+		big = place(s, fails, "me-network-controller", 9, -24) ~= nil
+		for i = 1, 4 do place(s, fails, "me-crafting-accelerator-4096x", 9.5 + i, -24.5) end
+	end
+	--- me-network issue #559: three ME Wireless Links of one frequency (a version that has them): until 0.5.10 a third link of a
+	--- frequency linked nothing; after the load the three are one wireless network
+	local links
+	if prototypes.entity["me-wireless-link"] and remote.interfaces["gregtorio-me-qbridge"] then
+		links = true
+		for _, x in ipairs({ 0, 30, 60 }) do
+			local e = place(s, fails, "electric-energy-interface", x - 6, 22)
+			if e then e.power_production = 1e7 e.electric_buffer_size = 1e8 end
+			place(s, fails, "substation", x - 3, 22)
+			local l = place(s, fails, "me-wireless-link", x + 0.5, 22.5)
+			if l then remote.call("gregtorio-me-qbridge", "set_frequency", l, 17) else links = nil end
+		end
+	end
 	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, cards = cards, legacy_chest = legacy_chest,
-		damaged = damaged, items = items }
+		damaged = damaged, items = items, lif = lif, big = big, links = links }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
 		.. (has_legacy and "; the legacy CPUs" or "") .. (cards and "; cards on a storage bus and a workbench's cell" or "")
-		.. (damaged and "; damaged stone walls" or "") .. ")"
+		.. (damaged and "; damaged stone walls" or "") .. (big and "; an 8 MW network" or "")
+		.. (links and "; three wireless links of one frequency" or "") .. ")"
 		.. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
 end
 
@@ -284,6 +344,13 @@ local function check_unified(st)
 	local function at(name, x, y) return s.find_entity(name, { x, y }) end
 	local problems = {}
 	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	--- me-network 0.5.11: the old underground pair turned and still paired, its ghost turned
+	local ua, ub = at("me-underground-cable", 71.5, 10.5), at("me-underground-cable", 76.5, 10.5)
+	local ug = s.find_entities_filtered{ ghost_name = "me-underground-cable", position = { 73.5, 12.5 } }[1]
+	expect(ua and ub and ua.direction == defines.direction.west and ub.direction == defines.direction.east
+		and remote.call(NET, "underground_partner", ua) == ub.unit_number
+		and ug and ug.direction == defines.direction.south, "the underground cables of the old save: "
+		.. serpent.line({ ua and ua.direction, ub and ub.direction, ug and ug.direction }))
 	local t = at("me-terminal", 12.5, 0.5)
 	local function count(name) return t and remote.call(NET, "count", t, name) or -1 end
 	local c1, c2, c3 = at("iron-chest", 14.5, 3.5), at("iron-chest", 16.5, 3.5), at("iron-chest", 30.5, 3.5)
@@ -306,6 +373,27 @@ local function check_unified(st)
 	local m = maint and remote.call("gregtorio-me-circuit", "get_maintainer", maint)
 	expect(m and m.status and m.status ~= "no-target" and m.stock ~= nil, "level maintainer not checked: " .. serpent.line(m))
 	--- me-network issue #128: the terminal and the level maintainer without a pole work in the network that has the power
+	if st.links then
+		local l1, l2, l3 = at("me-wireless-link", 0.5, 22.5), at("me-wireless-link", 30.5, 22.5), at("me-wireless-link", 60.5, 22.5)
+		local function same(a, b) return a and b and remote.call(NET, "same_network", a, b) end
+		expect(same(l1, l2) and same(l1, l3), "the three wireless links of one frequency after the update (issue #559): "
+			.. serpent.line({ same(l1, l2), same(l1, l3), l1 and remote.call("gregtorio-me-qbridge", "info", l1) }))
+	end
+	--- me-network issue #560: the assemblers carry the network
+	local lone, asm = at("me-pattern-provider", 29.5, -0.5), at("me-molecular-assembler", 28.5, -0.5)
+	expect(t and lone and asm and remote.call(NET, "same_network", t, lone) and remote.call(NET, "same_network", t, asm),
+		"the provider next to an assembler only is not in the network after the update (issue #560)")
+	local ca, cb = at("me-network-controller", 9, 40), at("me-network-controller", 14, 40)
+	local nab = ca and remote.call(NET, "network", ca)
+	expect(ca and cb and remote.call(NET, "same_network", ca, cb) and nab and nab.graph_status == "conflict",
+		"two networks that meet at an assembler after the update (issue #560): " .. serpent.line(nab and nab.graph_status))
+	if st.big then
+		local c = at("me-network-controller", 9, -24)
+		local n = c and remote.call(NET, "network", c)
+		expect(n and n.ok and n.power == 120000 + 4 * 2000000 and math.abs(c.electric_buffer_size - n.power / 60 * 30) < 1,
+			"the controller of the 8 MW network after the update (issue #556): " .. serpent.line({ n and n.status, n and n.power,
+			c and c.electric_buffer_size }))
+	end
 	local far_t, far_m = at("me-terminal", 60.5, 1.5), at("me-level-maintainer", 61.5, 1.5)
 	if remote.interfaces["gregtorio-me-terminal"].problem and far_t then
 		expect(remote.call("gregtorio-me-terminal", "problem", far_t) == nil, "the terminal far from every pole: "
@@ -367,14 +455,16 @@ local function check_unified(st)
 			"storage bus cards after the load: " .. serpent.line(inv and inv.get_contents()) .. " " .. serpent.line(bi and bi.cards))
 		local WB = "gregtorio-me-workbench"
 		local wb = at("me-cell-workbench", 20.5, 8.5)
-		local winv = wb and remote.call(WB, "inventory", wb)
+		--- issue #579: the one inventory of before became two, the cell's (one slot) and the cards' (the 4k item cell's 4)
+		local winv = wb and remote.call(WB, "inventories", wb)
 		local wi = wb and remote.call(WB, "info", wb)
-		local cell = winv and winv[1]
+		local cell = winv and winv.cell[1]
+		local cards = winv and winv.cards
 		local tagged = cell and cell.valid_for_read and cell.is_item_with_tags and cell.tags.fork_me_cell
-		expect(winv and #winv == 5 and cell.valid_for_read and cell.name == "me-4k-storage-cell" and tagged and not tagged.cards
-			and winv.get_item_count("me-inverter-card") == 1 and winv.get_item_count("me-overflow-destruction-card") == 1
+		expect(winv and #winv.cell == 1 and #cards == 4 and cell.valid_for_read and cell.name == "me-4k-storage-cell" and tagged
+			and not tagged.cards and cards.get_item_count("me-inverter-card") == 1 and cards.get_item_count("me-overflow-destruction-card") == 1
 			and wi.cell and wi.cell.inverted and wi.cell.void and serpent.line(wi.cell.partition) == serpent.line({ "wood" }),
-			"workbench after the load: " .. serpent.line(winv and winv.get_contents()) .. " " .. serpent.line(wi and wi.cell))
+			"workbench after the load: " .. serpent.line(cards and cards.get_contents()) .. " " .. serpent.line(wi and wi.cell))
 	end
 	--- me-network issue #481: the old save's damaged key loads as it was, a stack of the same health stored now joins it (the key
 	--- of a damaged plain item did not change), the terminal names its health and it comes out at its health
@@ -470,6 +560,35 @@ local function check_items(st)
 		.. "one nowhere; a circuit interface built after the load writes its signals)")
 end
 
+--- me-network issue #537: the ME Logistic Interface after the load (LIF)
+local function check_lif(st)
+	local s = game.surfaces[1]
+	local e = s.find_entity("me-logistic-interface", { 45.5, 0.5 })
+	local d = e and remote.call(LIF, "info", e)
+	local problems = {}
+	local function expect(ok, what) if not ok then problems[#problems + 1] = what end end
+	local what
+	if not st.lif.modes then
+		what = "a block built before the automatic mode is Manual"
+		expect(d and d.mode == "manual", "the block of the old version: mode " .. serpent.line(d and d.mode))
+	elseif ITEMS == "new" then
+		--- (Factorio 2.1.23, measured: the load drops a logistic filter of a removed item from the section; the scan's check
+		--- for a name without a prototype is a safety net, and a pass over the point must run without an error)
+		what = "a requester of the removed item: its filter dropped by the game, the pass ran, nothing offered or counted"
+		local rq = s.find_entity("requester-chest", { 49.5, -3.5 })
+		local pt = rq and rq.get_logistic_point(defines.logistic_member_index.logistic_container)
+		local sec = pt and pt.get_section(1)
+		local demand = remote.call(LIF, "demand")
+		expect(sec and #sec.filters == 0, "the game kept the filter of the removed item: " .. serpent.line(sec and sec.filters))
+		expect(d and d.mode == "auto" and d.auto_unknown == 0 and d.auto_offered == 0 and demand and demand.auto
+			and demand.auto[d.lid], "the block after the load: " .. serpent.line(d and { d.mode, d.auto_unknown, d.auto_offered, d.lid }))
+	else
+		what = "nothing to check: the save has the automatic mode and no removed item"
+	end
+	for _, p in pairs(problems) do L("FAIL", p) end
+	L("LIF", (#problems == 0 and "ok" or "failed") .. " (" .. what .. ")")
+end
+
 script.on_init(function()
 	local s = game.surfaces[1]
 	s.always_day = true
@@ -500,6 +619,7 @@ script.on_nth_tick(10, function()
 		st.ticked = true
 		check_unified(st)
 		if st.items and ITEMS == "new" then check_items(st) end
+		if st.lif then check_lif(st) end
 		local after = fluid_totals(game.surfaces[1])
 		local ok, diff = same_totals(st.before, after)
 		if not ok then L("FAIL", "fluid differs: " .. diff) end

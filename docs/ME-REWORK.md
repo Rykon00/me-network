@@ -22,6 +22,8 @@ The rework comes in three steps:
 | Fluid storage bus | the ME Fluid Storage Bus: the fluid segment of a tank as network storage, one bus per segment | done (this document, "Fluid storage bus (after the storage bus)") |
 | Encoded patterns | issue #80: blank and encoded pattern items, the Patterns tab of the terminal (the ME Pattern Terminal since issue #130), the pattern provider with 9 slots, recipe switching, processing patterns with outputs that come back into the network, migration of the old providers | done (this document, "Encoded patterns (issue #80)") |
 | Unified I/O | me-network issue #3: one ME Interface, Import Bus, Export Bus and Storage Bus for items and fluids; the four fluid blocks removed and migrated | done (this document, "Items and fluids in one block (me-network issue #3)") |
+| Logistic storage bus | me-network issue #506, the first package of the crossover "me-network x logistic network": the ME Logistic Storage Bus, a vanilla logistic network as an external cell | done (this document, "The ME Logistic Storage Bus (issue #506)") |
+| Logistic interface | me-network issue #531, the second package: the ME Logistic Interface, three hidden logistic chests that offer to the robots, ask them for what the network lacks and take their trash | done (this document, "The ME Logistic Interface (issue #531)") |
 
 This file is the design record: what was decided and why, and what is still open ("Open points"). The
 player's guide is `docs/AE2.md`.
@@ -2273,8 +2275,9 @@ The ME windows were free frames in `player.gui.screen` without the player's inve
 in only by a click with the item in hand. **Decision (the maintainer's comment "Maintainer decision after the in-game
 test of pull request #30" on #28, approved in the game from a mock): every ME window is one screen frame with two
 panes, the player's inventory drawn by the mod on the left, the ME content with the block's slots on the right.** The
-game cannot show its inventory without its own second panel, and a mod cannot put the real inventory element into its
-own window.
+game could not show its inventory without its own second panel, and a mod could not put the real inventory element into
+its own window (Factorio 2.0). Since issue #542 the pane is Factorio 2.1's own `inventory` element ("The game's inventory
+element" below); the description of the mod's pane here is the state from #28 to 0.5.10.
 
 The first attempt (pull request #30) made the window a frame in `player.gui.relative` anchored to `script_inventory_gui`
 with the block's script inventory as the opened GUI: it worked, but showed three parts side by side (the game's
@@ -2406,6 +2409,9 @@ events) was run against a mock of the GUI elements outside the game; how it look
 
 ### The windows beside the game's inventory (me-network issues #150 and #168)
 
+(Replaced by issue #542, "The game's inventory element" below: the buffer, the relative frame and the map setting are gone.
+This section is the record of 0.5.10.)
+
 Issue #150 built it for the ME Terminal behind a map setting; after the maintainer's test in the game (#168: "much
 better so") every ME window opens so, and the map setting "me-network-real-inventory" is **on by default** (off: the
 pane of issue #28, kept as it was). `G.open_window` decides it for every window with a pane; the buffer does what the
@@ -2477,6 +2483,196 @@ the game's inventory window is the ghost picker and the hand holds nothing. The 
   returns, and spills outside it. The remote controller itself cannot be created headless: what the API returns there (the
   forum report: `get_main_inventory()` nil, the character's inventory reachable) and how the pane looks is checked in the
   game with `/me-remote-probe` (`scripts/fork-me-stats.lua`) on a space platform.
+
+### The game's inventory element (me-network issue #542)
+
+Factorio 2.1 has a GUI element `inventory`: it shows any `LuaInventory` inside a mod's frame, drawn and clicked by the
+game. With it the layout decided in #28 is possible as meant: **every ME window is one frame, the player's real inventory
+on the left, the ME content with the block's slots on the right** (the maintainer's decision for #542: no relative frame,
+no hand-over buffer, no extra column). It replaces both the mod's pane of #28 (slot buttons, clicks emulated by
+`inventory_click`) and the hand-over buffer of #150/#168, and with them the map setting "me-network-real-inventory".
+
+**Probe (Factorio 2.1.23, headless).** A probe mod on a copy of a save with a player, run with `--benchmark` (the player
+is connected there), and the working copy's windows on the same save:
+
+* `add{ type = "inventory", ... }` takes `slots_per_row`, `empty_slot_info` and the six `handle_*` flags; `inventory` is
+  no `add` parameter and is set afterwards. Defaults: `handle_cursor_transfer`, `handle_cursor_split`, `handle_open_item`
+  and `handle_open_mod_item` true, `handle_send_stack_to_trash` and `handle_send_stacks_to_trash` false, `slots_per_row`
+  and `empty_slot_info` nil, style `inventory_frame`. Tags, a scroll pane around it and `style.maximal_height` work.
+* `element.inventory` takes any inventory (the main inventory, a script inventory, a chest's) and nil; read back it is
+  `==` the bound inventory (a new wrapper, not `rawequal`). A bound inventory that is destroyed reads back as nil and the
+  element stays valid; a resized one reports its new size.
+* Script inventories still have no filters (`supports_filters()` false, `set_filter` errors): an element of a block's
+  script inventory cannot show or enforce a slot rule by itself.
+* `player.opened = frame` works with the element inside.
+* `LuaPlayer.stack_transfers{ source_inventory, index, target, transfer_type }`: `stack_transfer` moves the slot's stack,
+  `stack_split` half of it, `inventory_transfer` every stack of that item; the target may be a `LuaInventory`, a
+  `LuaEntity` (a chest) or a `LuaPlayer` (into their main inventory). An empty slot or a full target returns `{}`, not nil.
+  `cursor_transfer` and `cursor_split` on a script inventory pick up, put down, take half, put one down and swap as the
+  game's own slots do.
+* The working copy: the terminal window opens as one frame, `player.opened` is the frame, no frame in `gui.relative`; the
+  pane is an `inventory` element bound to the main inventory (80 slots), 10 per row, the flags below, in a scroll pane of at
+  most 600 pixels; shift + click at a terminal without network is refused (`no-controller`), a cell goes into a drive by
+  shift + click; after the refresh the element is still bound; `player.opened = nil` closes the window.
+* What only the game shows goes to the `[Task-Ingame]` issue #546: whether the slots follow a change of the inventory at
+  once (belt, robots, crafting: there is no Lua refresh any more and nothing headless sees a drawing), which actions reach
+  the event for drag, middle click and the trash keys, E and Escape with the frame as the opened GUI, the tooltips (a cell,
+  an encoded pattern, a spoiling item, a labelled blueprint), remote view.
+
+**The window** (`scripts/fork-me-gui.lua`): `build_pane` adds "Character", the window's hint and, in a scroll pane of at
+most 600 pixels (issue #469: less on a small screen), the element `fork_me_inv` (tag `fork_me_act = "inventory"`,
+`slots_per_row = 10`) bound to `G.player_inventory(player)`. Flags (`G.pane_flags`): the game handles the hand (cursor
+transfer and split), opening an item (`handle_open_item`, and `handle_open_mod_item` for items of other mods, as in its own
+inventory) and the trash keys. Shift + click and control + click it cannot do (it does not know where the stack goes): they
+come as `on_gui_inventory_action` (registered in `scripts/fork-me-terminal.lua`), and `G.on_inventory_action` hands them to
+`G.inventory_action(inv, slot, action, def, entity, remote)`:
+
+| Action | Mouse | What the window does |
+|---|---|---|
+| `stack_transfer` | shift + click | `def.shift(entity, stack, inv)` (as the pane's shift + click before) |
+| `stack_split` | shift + right click | half the stack through `def.shift` (a part goes through a stack of its own; what the block leaves comes back) |
+| `inventory_transfer` | control + click | `def.control` where the window has one (store every stack), else `def.shift` for every stack of the item (before: this stack only) |
+| `inventory_split` | control + right click | half of every stack of the item through `def.shift` |
+| `cursor_transfer`, `cursor_split` | click, right click | the game's; in remote view (flags off) the stack goes to the block like shift + click (issue #177) |
+| `open_item`, `open_mod_item`, the trash actions | | the game's |
+
+A refusal is shown as flying text as before (`def.message`). The refresh once a second binds the element again when the
+player's inventory changed (the character died, remote view entered or left) and sets the cursor flags for remote view
+(`follow_inventory`); that is all the pane costs: nothing per inventory change (the events
+`on_player_main_inventory_changed` and `on_player_cursor_stack_changed` are no longer registered) and nothing per slot. The
+refresh step only lost work (the quality pass over the pane), so no bench was run.
+
+**Remote view** (issues #176, #177): the element shows the character's inventory with the cursor flags off, so every click
+on a stack sends it to the block as before; without a character the window says so and has no element. Parking stays
+(`give_back` still parks from remote view).
+
+**Gone:** `update_pane`, `inventory_click`, the slot cache and `storage.fork_me_gui_pane`; the hand-over buffer
+(`buffer_absorb`, `buffer_return`, `uses_buffer`, the relative frame, the absorbing on inventory and cursor events and at
+the refresh); the map setting. A removed runtime-global setting is dropped silently when a save loads (no message in the
+log of a 0.5.10 save loaded with the working copy), so it went with its locale.
+
+**Saves.** No storage key, prototype or remote interface was renamed. `storage.fork_me_gui_pane` is dropped by `close_all`
+(a mod update). A 0.5.10 save can hold a player's hand-over buffer (`storage.fork_me_gui_buffer[player_index]`) with items
+in it and the frame anchored beside it: `G.drop_buffer` (from `close_window`, so from `close_all` on a mod update, and from
+the buffer's own close if a save loads without one) puts its stacks into the player's inventory, parks what does not fit
+(never the ground) and destroys the frame; a buffer of a player who is gone is dropped like that player's inventory
+(issue #179's rule). Parked items stay where they are and are returned as before. Proof run (a scratch script, not part of
+the harness, since `devcheck migrate` makes its save without a player): v0.5.10 on a headless server with a copy of a save
+with a player, the terminal window opened for player 1 through `remote.call("gregtorio-me-terminal", "open", ...)` (the old
+window opens for a player who is not connected too), 77 iron plates, 2 storage cells and 5 science packs put into the
+buffer (the terminal had no network, so they stayed), saved; loaded with the working copy one version up: all of it in the
+player's inventory, no buffer, no anchored frame, the setting gone. With the player's inventory full: 84 items parked
+(remote `parked_count`), nothing on the ground. `devcheck migrate --from-ref v0.5.10` loads an old save (every kind of
+block) with the working copy.
+
+**Tests.** `runtimemod/nativeinv.lua` replaces `buffer150.lua`: the setting is gone; the flags in and outside remote view;
+at a terminal shift + click stores 50 plates, a used science pack is refused and stays, shift + right click stores half of
+40, control + click every stack, control + right click half of each, a click in remote view the whole stack, another action
+nothing; at a drive a cell by shift + click and two cells by control + click, plates refused; a 0.5.10 buffer goes back to
+its player (a stand-in), into a full inventory it is parked and returned later, and `close_all` leaves no buffer. The
+remote `inventory_click` of `gregtorio-me-gui` maps "shift", "control", "shift-right", "control-right" and "remote" to these
+actions, so the window tests of #28 keep their shift and control clicks; the pane's own click tests (pick up, put down,
+merge, swap, half) are gone with the code, the game does that now. `ifacecap.lua`'s check of #201 (a buffer stack pushed
+back) became the same check by shift + click; `remoteview.lua` checks the flags instead of the buffer.
+
+**Sounds (issue #545).** Factorio 2.1.13's `utility/machine_gui_open` and `utility/machine_gui_close` (valid sound paths,
+probed): `G.open_window` plays the open sound for the player (`player.play_sound` without a position: only they hear it)
+unless the same window (name and unit) is only built again; a window that replaces another (a cell window from the drive,
+Back to the terminal) plays the open sound alone. `G.close_window(player, true)` plays the close sound when a window was
+open: the close button, E or Escape (`on_gui_closed`), the refresh closing a window whose block is gone or out of reach,
+Back without a terminal, the wireless hotkey. Silent: the close inside `open_window`, another GUI that took over without an
+event, a player leaving, a mod update (`close_all`). Test `runtimemod/windowsound.lua`: the window functions run on a
+stand-in player with a stand-in of `player.gui.screen` (the remote's `stand_in` with `gui`; `stand_in_element` keeps every
+field of `add`, finds children by name and can be destroyed) whose `play_sound` records the paths: open, rebuild, open from
+another window, close, close without a window, the silent close; it also checks the window's inventory element (bound to
+the stand-in's inventory, the game's cursor handling, 10 per row).
+
+**Not done with the element here:** the block's slots; issue #543 (next section).
+
+### The block slots as inventory elements (me-network issue #543)
+
+The card slots of a block are a script inventory of the block (`rec.inv`, scripts/fork-me-cardslots.lua), and the window
+showed them as slot buttons. Since #543 `G.block_slots(frame, name, inv, first, last, tip, offset)` (moved from
+`scripts/fork-me-windows.lua` into the GUI module, so the access point uses it too) puts the game's `inventory` element there
+**when the window shows the whole inventory** (`first == 1` and `last == #inv`): the game draws the slots, their tooltips
+(the card's description), quality and the hand. A part of an inventory stays slot buttons as before.
+
+**The rule check.** Script inventories have no filters (the probe of #542), so the element cannot keep a wrong item out by
+itself. Its handling flags are all off (`handle_cursor_transfer`, `handle_cursor_split`, opening and trashing): the game moves
+nothing and raises `on_gui_inventory_action` for every click, and `G.block_action` hands it to the window's `click`, the same
+function the buttons call, which refuses a wrong item before anything moves:
+
+| Action | Mouse | What happens |
+|---|---|---|
+| `cursor_transfer`, `cursor_split` | click, right click | `def.click(entity, slot + offset, cursor, inventory, remote)`: the hand's card goes in (one of the stack) or is refused and stays in the hand; with an empty hand the card goes into the hand; in remote view into the inventory |
+| `stack_transfer`, `stack_split` | shift + click, shift + right click | `def.click(..., nil, inventory, true)`: the card into the inventory, whatever the hand holds |
+| `inventory_transfer`, `inventory_split` | control + click, control + right click | the same for every slot with that card |
+| `open_item`, `open_mod_item`, the trash actions | | nothing |
+
+From the player's side a card comes in only by the window's `shift` (shift + click, control + click: #542), which checks the
+same rules. Whether the game can put an item into an element with its handling off by any other path (a drag over the
+slots, a drop from the hand while dragging) cannot be seen headless: the `[Task-Ingame]` issue #546 checks it. Should one
+exist, `cards.sync` (the backstop of #30 that gives back what does not belong) is there to be called at the refresh.
+The empty slots' tooltip is the window's hint for an empty slot (`empty_slot_info.text`, no sprite: a custom
+`empty_slot_info` sprite hides the bar in 2.1.11, forum t=135616).
+
+**Per window:**
+
+| Window | Slots | Now |
+|---|---|---|
+| ME Interface | card slots (`io.interface_inventory`) | element |
+| Import / Export Bus | card slots (`io.bus_inventory`) | element |
+| ME Storage Bus | card slots (`sbus.inventory`) | element |
+| ME Pattern Provider | card slots (`autocraft.provider_inventory`) | element |
+| ME Logistic Interface | card slots (`fork_me_lif_cards`) | element |
+| ME IO Port | card slots (`fork_me_iop_cards`; the window's slots 3 to 6: offset 2) | element |
+| ME Wireless Access Point | booster slots | element (not in the issue's list; the same card inventory) |
+| ME IO Port | input and output cell (slots 1 and 2 of one inventory) | element since #550: **one element of both slots** ("Cells (in, out)", one empty-slot tooltip for both); the rule per slot is the click's (`ioport.cell_click`: a cell only into the input, nothing into the output). Chosen over two inventories: no change of the saved layout |
+| ME Cell Workbench | cell slot and card slots | element since #579: **two inventories, two elements**: the cell's (`rec.cinv`, one slot) and the cards' (`rec.kinv`, resized with the cell: 4, 3 or 2 card slots, 4 without a cell; the window's slots 2 and up: offset 1). `sync()` grows the card inventory before a cell's tag cards come out and shrinks it at its end, when the slots beyond the cell's are empty (a card there moves to a free slot below or goes back); the code works on `view()`, the two as one list (slot 1 the cell). The one inventory of 5 slots of 0.5.11 and older is moved into the two when the workbench is first touched (`inv_of`: on the update, `on_configuration_changed` registers every workbench) |
+| ME Drive | 10 cell slots | **buttons**: the fill numbers and the yellow partition style are per slot, the element has no per-slot style; the cells are records, not an inventory |
+| ME Pattern Provider | the pattern slots | **buttons**: records with a state colour per slot (yellow pending, red broken), not an inventory |
+| ME Pattern Terminal | blank and output slot (one inventory of 2) | element since #550: **one element of both slots** next to Encode; the rule per slot is `M.click`'s (blank patterns into the first, nothing into the second) |
+| ME Charger | its slot (`rec.inv`, an inventory of 1) | element since #550 |
+| ME Terminal | the View Cell slots (`VC.inventory`, the terminal's or, wireless, the player's) | element since #550 (`VC.draw`: a label and the element's flow `fork_me_view_slots`) |
+
+Issue #550 made the four above elements; old windows are closed by every mod update (`G.close_all`), and the inventories are
+the ones the saves hold, so nothing is migrated. The workbench followed in #579 (its saved inventory is migrated, above).
+
+**Tests.** `runtimemod/blockinv.lua` opens every window of the table that has an element for a stand-in player (the open
+key's path, `G.open_entity`, and one refresh; the stand-in of #545 can reach every entity) and finds the element: bound to the
+block's card inventory, its size, the handling off, the offset, an empty-slot tooltip; the IO port's cell slots are still one
+button each. Then, through `block_action` as the event calls it: iron plates in the hand are refused by click and by right
+click and stay in the hand, a card goes in by click and by right click (one of a stack of three), shift + click takes one out
+into the inventory, control + click every card of the kind, a click in remote view takes it into the inventory, and no card
+is made or lost. Issue #579: the workbench's two elements (offset 0 and 1, sizes 1 and 4): a card without a cell and iron plates on
+the cell slot refused; the item cell in (four card slots), a card by click, a second of its kind refused (`limit`), another by
+right click, shift and control + click; the item cell swapped for a fluid cell by a click (its card goes with it into its tags,
+the cards' element has three slots) and taken out by shift + click (four again). `runtimemod/wbview.lua` reads the two
+inventories as the one list the older workbench tests read (remote `inventories`).
+
+### A second number on slot buttons (me-network issue #544)
+
+Factorio 2.1.18's `LuaGuiElement.secondary_number` puts a second number on a sprite-button, at the right above `number`
+(probed: read back as set, a fraction too, nil removes it; only sprite-buttons have it). Decided per window, the tooltips
+stay as they were:
+
+| Window | `number` | `secondary_number` |
+|---|---|---|
+| ME Terminal, storage tab | stored (as before) | what the network's active jobs (queued or running) are crafting of that key (`autocraft.crafting_amounts`) |
+| ME Terminal, crafting tab | stored (as before) | the same |
+| Jobs (terminal tab, Crafting CPU window) | the job's amount (as before) | what is done of it: the amount times the share of the runs done, once a run is done |
+| ME Level Maintainer rows | the stock (new; the button had none) | the amount to keep (with the circuit's amount when it sets it); a fluid filter of one temperature keeps its degrees as the number and gets neither |
+| ME Pattern Provider and ME Interface Terminal, pattern slots | the amount of the pattern's first output (new: only the tooltip had it) | none |
+| ME Interface config rows, ME Logistic Interface rows, ME Pattern Terminal | unchanged | none: the rows show the configured amount and the windows show the current state in their own lines (what the interface holds, the asks and the stock); a current amount per row would be a read of the block's inventory per row and refresh, for a number the lines already give |
+
+The numbers are written as plain amounts (`G.fmt` is for captions): the game draws `number` short (1.2k); how it draws a
+large `secondary_number` only the game shows (#546). Cost: the terminal's refresh walks the network's active jobs once (a
+handful) and writes a second number only where it changed (the grid keeps `shown.crafts` next to the keys and counts of
+issue #50's lever 8; a window of an older version without it sets them once); the maintainer reads and writes five buttons'
+two numbers only when they differ. Test: the CPU test (`runtimemod/cpus.lua`) opens the windows for a stand-in player while
+its two jobs run (10 and 20 gears): the crafting tab's gear has 30 as its second number, the jobs tab the amounts 10 and 20;
+with the maintainer waiting for 1100 gears its row button shows the stock and 1100; the provider's gear pattern shows 1. A
+negative run (no crafting amounts, no second number on the maintainer) fails both checks.
 
 ## Open points
 
@@ -3089,3 +3285,237 @@ the controllers' energy; `M.stored_energy` reports the controllers' buffers full
 interface stays as it is (its draw, its status without a pole).
 
 *Test:* `tools/devcheck/runtimemod/creativeenergy.lua`.
+
+## The ME Logistic Storage Bus (issue #506)
+
+The first package of the crossover plan "me-network x logistic network": the whole vanilla logistic network a block
+stands in as storage of the ME network. In-game check: issue #507.
+
+### Model: the storage bus's record, a module of its own
+
+`me-logistic-storage-bus` is a 1x1 member that is not rotated (4 kW through the controller, as the other buses). Its
+kind is `storage-bus` (mod-data name `logistic_storage_bus`), so its record is the storage bus's external cell (`ext =
+"storage-bus"`) with `logistic = true`, `side = "logistic"` and `handler = "logistic-storage-bus"`: the engine calls the
+logistic handler directly, as it does for the fluid side (`ext_handlers[cell.handler or cell.ext]`, no dispatch per
+call). Everything a player sets is the storage bus's: the window, the filters, whitelist and blacklist, filter on
+extract, priority, cards, blueprint tag `fork_me_storage_bus`, settings paste (between logistic buses:
+`additional_pastable_entities` lists only itself) and clones. What is its own lives in
+`scripts/fork-me-logistic-storagebus.lua`: the visit, the claims, the engine calls and the queue. The storage bus module
+hands a record with `logistic` to it in `list_side`, `M.visit`, `M.wake`, "From contents", the removal and
+`on_configuration_changed`.
+
+* **Modes**: `readwrite` ("Storage"), `providers` ("Storage and providers") and `read`; `write` (insert only) is no mode
+  of it (`set_settings` ignores it). The engine needs no change: `read` keeps it out of the insertion lists as for a
+  storage bus, `providers` is an ordinary mode for it.
+* **Default priority -100**: the drives fill first, the logistic network is the overflow, and it is emptied first (lower
+  priority first). Set at registration, so a blueprint of such a bus always carries its priority.
+
+### Which logistic network: resolved anew, claimed by id
+
+`LuaSurface::find_logistic_network_by_position(position, force)` at every visit and at every engine call (1.4 us). The
+network is never kept as an object across ticks: the network ids change when networks split or join, and an object kept
+by one peer could differ from the one a peer that joined the game finds by position (a desync). The record keeps the id
+it claimed at its last visit (`rec.lid`, saved); an engine call uses the network at the bus's position only while its
+id is that one. Between a split or a join and the next visit the bus therefore sees nothing: an extraction finds 0 and
+corrects the snapshot (the engine's staleness rule), an insert goes to other storage, and the visit takes the new
+network (a changed id counts as a change: the next visit comes after 30 ticks).
+
+**One bus per logistic network**: `storage.fork_me_lsbus.claims[network id] = bus unit`. Conflicts are decided in unit
+order, as the fluid side's segments: the lower unit keeps the network, the other one is cleared at once (`ext_sync` with
+nothing) and shows "shared-target". A claim whose bus no longer stands in that network (or is gone) is stale and taken
+over. When the first bus is removed, the second takes over at its next visit.
+
+### Engine calls (Factorio 2.1.23, probed headless)
+
+* `get_contents(member)` and `get_item_count(item, member)` take `"storage"` or `"providers"`; **`"providers"` is the
+  active and passive provider and the buffer chests together** (probed: 100 in a passive, 1000 in an active provider and
+  4800 in a buffer chest gave 5900), `"storage"` the storage chests; requester chests are in neither. So the mode
+  "providers" reads both members and takes, after `"storage"`, from `"passive-provider"`, `"active-provider"` and
+  `"buffer"` in that order (`remove_item` takes one member at a time): what it counts is exactly what it can take.
+  Taking only from passive providers would have shown items (the active and buffer chests' part of `"providers"`) that the
+  network can never hand out.
+* `insert(stack, "storage")` puts into storage chests as robots do: `select_drop_point{ stack, members = "storage" }`
+  honours a storage chest's filter (probed). The handler's `room` is the insertable count of the chest
+  `select_drop_point` picks: a lower bound, never more than fits; an insert that stores less than offered marks the key
+  `full` until the next visit (the engine's rule for every external cell).
+* `remove_item` takes damaged stacks too and does not keep their health (probed: two turrets at half health came out
+  with the whole ones). A logistic network cannot be read stack by stack at the cost of a visit, so the bus takes damaged
+  items out by count, as the storage bus did before issue #84; documented for the player.
+* Every call carries the quality (`{ name, quality }`); the keys are `name@quality` as everywhere.
+
+### What it shows
+
+Plain items that do not spoil (`N.item_class` "plain", `get_spoil_ticks` 0), any quality. Not the classes the storage
+bus walks stack by stack on a chest (tools, ammo, repair tools: "worn"; items with tags or a label): a partly used
+magazine would be counted and taken as a whole one, a turret with kills would lose them. Spoiling items stay out until
+the package "Spoilable items in ME storage".
+
+### Visits and cost
+
+* A queue of its own (`Sched.new("lsbus")`, `storage.fork_me_lsbus = { list, lpos, claims, q }`) with its own budget:
+  map settings `me-network-logistic-storage-bus-visits-per-tick` (floor, 1) and `-max` (ceiling, 2), since one visit
+  reads a whole logistic network (`get_contents("storage")` 0.28 ms at 1048 roboports, 473 storage chests, 764 000 items
+  of 368 kinds on the maintainer's save; `"providers"` 0.06 ms). Intervals as the storage bus: 30 ticks after a visit
+  that found a change, doubling up to the storage bus idle limit (120 ticks) while nothing changes (the probe list).
+  Everything that decides a visit is in `storage`; the save at tick 500 of `devcheck runtime` covers the queue (its buses
+  are in the schedule digest). `/me-stats` lists the queue ("Logistic storage buses"), `backlogs` reports it.
+* A visit: one `find_logistic_network_by_position`, the claim, one `get_contents` per member read, a Lua loop over its
+  entries (a cached class check, the filter) and `N.ext_sync` (only the differences). The other engine calls cost what
+  the issue measured (count 0.3 us, insert or remove 3 us, `select_drop_point` 3 us) plus one position lookup each.
+* Measured: `docs/PERFORMANCE.md`, "ME Logistic Storage Bus (issue #506)".
+* Issue #509 (from the headless check of #507 on the maintainer's hub: 0.64 ms per visit, 0.30 ms of it the engine's
+  `get_contents`): the Lua part of a visit was halved. The decision "can the bus show it" and the item's key come from one
+  two-level cache (`keys[quality][name]`, key or false, per load) instead of a `"name@quality"` string built per entry and a
+  `N.key_of` call; the first member read assigns, only the provider read adds. `N.ext_sync` passes a key to `ext_set` only
+  when its count differs from the snapshot's (the same test: an amount below ZERO is none), so the hundreds of kinds that did
+  not change between two visits cost a lookup each; this helps every external cell. Micro-measured on the hub copy before:
+  the string cache 15 % slower than the two-level one, filling the table and diffing it the larger share; a "nothing
+  changed, skip" shortcut alone would not help there, robots change the network between nearly every two visits.
+
+### Limits
+
+* No limit per move: as a storage bus on a chest, the network takes or stores what a caller asks (the bus speed of the
+  import and export buses applies to them, not to storage).
+* Items in robots are not in a chest and not shown; items a robot is about to fetch are counted until it took them (the
+  engine's own counts).
+* Not tested in the real game: the window, the sprite, a real base (issue #507).
+
+### ME-owned chests (issue #530)
+
+The ME Logistic Interface (issue #531) puts hidden logistic chests on its tile: ordinary members of the logistic network.
+The bus must not store into them (the interface pulls the storage chest back in: with full drives, a loop), count them
+(what lies there is the network's already, or its stock offered to the robots) or take from them (the interface would
+restock its provider from the network: a loop with nothing gained).
+
+* **The lookup**: `owned[unit] = { entity, role }` outside `storage`, built from the sources the owning modules register
+  at load (`L.owned_source(fn)`, `fn(add)` calls `add(entity, role)` for each chest of its records) and built again after
+  `L.owned_changed()`. Roles: `"storage"` (left out of the member `"storage"`), `"provider"` (left out of `"providers"`).
+  Grouped by logistic network: since issue #531 a source gives each chest's network id too, the one its owner saved at its
+  last visit (`add(entity, role, lid)`; the owner calls `owned_changed` when it changes), so a call of the bus costs one
+  `network_id` read and a lookup. (In #530 the lookup asked each owned chest's `logistic_network` once per tick a bus used
+  it: with 48 owned chests that made a bus visit 90 µs dearer.) A split or a join is seen at the owner's next visit, as the
+  bus sees one at its own. Role `"requester"` (issue #531): a requester's trash is an active provider point and counted in
+  `"providers"`, so its trash is left out of the provider counts and reads. The runtime test registers stand-ins through
+  the remote (`own_logistic`, kept with their network id in `storage.fork_me_lsbus.owned_test`, a source like the others).
+* **Nothing owned** (every game until the interface exists): each call reads one count and takes the path of #509.
+* **Read and count**: the owned chests' contents are subtracted from `get_contents` and `get_item_count` (never below 0).
+* **Store**: `select_drop_point` for `"storage"`, then `"storage-empty-slot"`, then `"storage-empty"`; a point whose owner is
+  owned is passed over; then the first 64 storage chests of `net.storages` that are not owned and take the item. Inserted
+  into that chest's inventory, at most four chests per call; never `net.insert`, which could pick an owned chest.
+* **Take**: while an owned chest of the network holds the item, `get_supply_points(item)` per member in the order of the
+  remove path (storage, then in the provider mode passive, active, buffer), skipping owned owners, from the inventory the
+  point stands for (an active provider point of a requester, a character or a vehicle is its trash). Otherwise
+  `remove_item`, the cheaper call.
+
+### Tests
+
+`devcheck runtime`, "ME logistic storage bus (issue #506)" (`tools/devcheck/runtimemod/lsbus.lua`): three roboports in a
+row (the middle one joins the outer two), storage chests, a passive and an active provider, a buffer and a requester chest,
+a storage chest in the far roboport's area only, three buses. Checked: the second bus refused, the one outside every area
+"no-target"; the counts (storage only, a rare quality, no spoiling item, no ammo, never the requester); extraction and
+insertion (the drive first at -100, the logistic network first at priority 10, rare quality); the mode "providers" (the
+three provider kinds counted and taken in order, inserts still into storage chests); read only; a whitelist and a
+blacklist; settings by paste, clone and blueprint tag, `write` refused; a split by a removed roboport (the stale count
+corrected by an extraction, the visit drops the far half); the second bus taking over; a bus that gets a network when a
+roboport is built and loses it at its next scheduled visit when the roboport goes; a change by hand seen at a scheduled
+visit; the visit lists. Two mutations were checked to fail it: no claims (the network counted twice) and the provider
+mode counting only storage (its extractions came up short). `devcheck bench --logistic N` adds a logistic network of N
+roboports and N / 2 filled storage chests with feeding inserters and the bus to every ME scene (only where the version
+has the bus: `--check` against an older version measures exactly the bus).
+
+## The ME Logistic Interface (issue #531)
+
+The second package of the crossover plan: the logistic robots work with the ME network. In-game check: issue #533. The
+concept (with the maintainer's headless research, Factorio 2.1.23) decided: the visible part is an ME block, 1x1, trash
+accepted by default, automatic requests for crafting ingredients on by default (issue #532).
+
+### Model: a block and three hidden chests
+
+`me-logistic-interface` is a solid 1x1 `simple-entity-with-force`, kind `logistic-interface` (mod-data name
+`logistic_interface`), 4 kW through the controller (the default). On its tile the module makes three copies of vanilla
+logistic chests: `-provider` (passive provider, 36 slots), `-requester` (36 slots, 20 trash slots) and `-storage` (48 slots).
+They are hidden, not selectable, without collision, not on the map, not blueprintable, deconstructable or pasteable, not
+minable, `destructible = false` at runtime, and have no picture (Factorio 2.1 moved a logistic chest's picture into
+`robot_door`). A logistic chest cannot have more than one kind of logistic point by mod, so one chest per role.
+
+* **Engine facts it relies on** (the maintainer's research; the runtime test checks the first three on every run):
+  robots and construction robots serve hidden chests, also two on one tile; robots carry an item between a requester and a
+  passive provider on the same tile; requesters take from active providers first, then storage chests, then passive
+  providers; buffers only with `request_from_buffers`; removing items robots reserved is safe (they plan again); a filtered
+  storage chest takes nothing else. Probed here: a requester's trash is an active provider point
+  (`logistic_container_trash_provider`) and **is counted in `get_contents("providers")`** (7 in the trash and 3 in a passive
+  provider gave 10); `set_slot` on a requester chest works without research; the requester's `trash_not_requested` is
+  false by default.
+* **Offer**: the rows (item with quality, amount) are a want per key; the visit fills the provider with `N.extract_to` up to
+  it, takes back the surplus and what no row keeps less what robots reserved (`targeted_items_pickup`), and waits for a key
+  the network lacks (`N.wait_for`, up). A Crafting Card starts a job as the ME Interface's (`AC.start` with the waker
+  `logistic_interface`, a retry after 300 or 1200 ticks).
+* **Request**: section 1 of the requester, slot i = row i. Asked = target - `N.count_key` (every storage, external cells
+  too) - the requester's count - `targeted_items_deliver`; written only when the key or the count changed (`rec.rq[i]`, a
+  signature, cleared when the chests or the rows change). A row registers `N.wait_below` at its target (or `wait_for` up
+  while the network is below it).
+* **Accept**: `storage_filter` is nil (accept), the filter item, or `me-logistic-interface-nothing` (a hidden item never
+  delivered: accepts nothing).
+* **Pull in**: the requester's main inventory and trash and the storage chest, stack by stack, through
+  `N.insert_partial(net, stack, max, skip)`; the storage chest's reserved pickups stay. What the network refuses stays, the
+  status is "me-full" and the block waits for room (`N.wait_room`).
+* **Loop guard**: offered keys per logistic network, derived from the records (`rec.lid`, the network id the last visit
+  found at the provider, saved; the offer rows), outside `storage` and built again when a record's network, offers or
+  existence changes. A request row of an offered key (its own interface included) asks for 0 and is shown red. The
+  storage engine got `skip(cell)` on its insert path (`insert_key`, `put`): an external cell it returns true for is left
+  out; the interface skips a logistic storage bus whose claimed network is its own. The bus leaves the hidden chests alone
+  (issue #530): the module is a source of `L.owned_source` with the roles provider, storage and requester (its trash).
+* **Visits**: a queue of its own (`Sched.new("logistic_interface")`, `storage.fork_me_lif = { recs, list, lpos, q }`),
+  budget map settings `me-network-logistic-interface-visits-per-tick` (2) and `-max` (8), `/me-stats` "ME Logistic
+  Interfaces". After a visit that moved something the next comes after 30 ticks, else the interval doubles up to the idle
+  limit (300): a robot's drop raises no event. No network or no power parks it (`N.wait_usable`).
+* **Build, remove, copies**: the chests are made on build (one standing on the tile without an owner is taken over: a
+  clone's); mined, their contents go into the network (else the buffer, else spilled); destroyed, spilled. A cloned
+  hidden chest replaces the fresh one of its block. Blueprint tag `fork_me_logistic_interface` = { offer, request (with
+  their row index), accept, filter, cards }, settings paste (`prototypes/paste.lua`), clones. `on_configuration_changed`
+  registers the blocks, makes missing chests, drops rows of items that are gone and destroys hidden chests that belong to
+  no block (their contents spilled).
+
+### Limits
+
+* No robots of its own: it works with the logistic network's robots, in their order (the ME stock last).
+* Rows are plain items that do not spoil (the network stores no spoiling items yet).
+* Not tested in the real game: the window, the sprite, personal logistics from the provider (issue #533).
+
+### Tests
+
+`devcheck runtime`, "ME logistic interface (issue #531)" (`tools/devcheck/runtimemod/lif.lua`), on a surface of its own
+with six logistic networks: offer to a requester and to a construction ghost, a request filled from a storage chest and an
+active provider to its target, the loop guard (its own row and another interface's), refused rows, settings by paste,
+blueprint tag and clone (exactly three chests on a clone's tile), accept, accept off and a filter, mined and destroyed, the
+three engine facts, and with a logistic storage bus (priority 10): pulled-in coal in the drive, not in the bus's chest
+(a run without the skip failed exactly there), the provider not counted, the network's insert into a vanilla storage
+chest. The save at tick 500 covers the queue (schedule digest, every surface). `devcheck bench --logistic N`: 16
+interfaces with three offer and three request rows each in the logistic scene.
+
+### Requests for what crafting lacks (issue #532)
+
+The issue asked for the needs of jobs that wait for ingredients. A job never waits for what the network lacks: `M.start`
+refuses its plan ("missing") and takes every ingredient at its start. So the maintainer chose (2026-10-26) **option A**:
+the needs of the starts that failed, which their owners try again (a level maintainer's row every `RETRY_TICKS`, a
+Crafting Card every `CRAFT_RETRY`).
+
+* **The notes** (`scripts/fork-me-autocraft.lua`): `AC.note_missing(owner, unit, net, missing, upto)`, called by the owner
+  after each start: `storage.fork_ae2.wmissing[owner] = { unit, keys = { key -> { n = what plan.missing said, have = the
+  network's count then } }, upto }`; a start that succeeds or a stocked row drops it, else it runs out at `upto` (the try
+  after the next one: an owner that stops trying, a removed block, a changed row). Owners: `"m<unit>:<key>"` (a
+  maintainer's row; `row.noted` keeps the stocked check from building the string each time), `"c<unit>:<key>"` (a Crafting
+  Card of an interface, an export bus or a logistic interface).
+* **The needs** (`AC.waiting_needs(net)`): per key the sum of what the notes of the network lacked and the lowest count the
+  network had when one was noted; the need now is sum + base - the count (what arrived since is taken off). Kept outside
+  `storage`, made again when a note changes, the graph changes (`N.version()`) or a note runs out. `AC.missing_hooks` wake
+  the network's interfaces with the switch on when a note changes.
+* **The requests** (`scripts/fork-me-logistic-interface.lua`, `auto_request`): only the first interface (by unit number)
+  of a logistic network and ME network with the switch on (`rec.auto`, nil = on); item keys only, rows' items only (no
+  spoiling item), not the keys its own request rows have, not the keys offered in the logistic network (counted as
+  skipped). Largest need first, then by key; at most `me-network-logistic-interface-auto-keys` (20). Into the requester's
+  second section, slot i = the i-th need, asked = need - in the requester - `targeted_items_deliver`, written only on a
+  change (`rec.aq`), cleared when it no longer asks.
+* **Arrival**: pulled in like every delivery (`N.insert_partial`, skipping the logistic storage bus of the same logistic
+  network); the owner's next try plans with it. No job waits, so `N.on_arrival` has nothing to hand over.
+* **Tests**: `lif.lua` clusters G, H and I (the header of the file).

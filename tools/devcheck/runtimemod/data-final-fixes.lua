@@ -35,6 +35,41 @@ data:extend({ { type = "recipe", name = "zz-devcheck-paste-big", categories = { 
 	icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product" } })
 recipe("zz-devcheck-paste-fluids", 2, 5)       -- more fluids than the interface's four sides
 
+--- Issue #588: since Gregtorio #612 its gear recipe `iron-gear-crafting-table`, the one the autocrafting tests craft, also uses
+--- up a charge of GT crafting tools (the items `hammer-usage`, `wire-cutter-usage`; Gregtorio's FORK_TOOLS). The tests check
+--- autocrafting, not Gregtorio's tools: the recipe keeps its plate and sticks, as the stand-in of data.lua has it.
+do
+	local r = data.raw.recipe["iron-gear-crafting-table"]
+	local tools = {}
+	for _, usage in pairs(type(FORK_TOOLS) == "table" and FORK_TOOLS or {}) do tools[usage] = true end
+	if r and r.ingredients then
+		for i = #r.ingredients, 1, -1 do
+			local name = r.ingredients[i].name or r.ingredients[i][1]
+			if tools[name] or (type(name) == "string" and name:match("%-usage$")) then table.remove(r.ingredients, i) end
+		end
+	end
+end
+
+--- Issue #588: the fluid tests (the fluid jobs, the unified I/O, the recipe paste, the interface keeping one craft) take
+--- Gregtorio's phenolic circuit board as their chemical reactor recipe of an item and a fluid: a resin board and 10 phenol.
+--- Gregtorio #712 made it GT New Horizons' assembler recipe (wood pulp and glue); in the tests it keeps the reactor recipe,
+--- in the categories of Gregtorio's silicon tetrachloride (the same reactors), as the stand-in of data.lua has it.
+do
+	local r, sic = data.raw.recipe["phenolic-circuit-board"], data.raw.recipe["silicon-tetrachloride"]
+	local has_phenol = false
+	for _, ing in pairs(r and r.ingredients or {}) do
+		if ing.name == "phenol" then has_phenol = true end
+	end
+	if r and sic and not has_phenol and data.raw.item["resin-circuit-board"] and data.raw.fluid["phenol"] then
+		r.categories = sic.categories or { sic.category }
+		r.category = nil
+		r.energy_required = 5
+		r.ingredients = { { type = "item", name = "resin-circuit-board", amount = 1 }, { type = "fluid", name = "phenol", amount = 10 } }
+		r.results = { { type = "item", name = "phenolic-circuit-board", amount = 1 } }
+		r.main_product = "phenolic-circuit-board"
+	end
+end
+
 --- Gregtorio issue #560: Gregtorio's ore machines are furnaces since its 0.5.9 (they pick the recipe from their input, none
 --- is set). The tests that need a GT machine whose recipe is set (the autocraft test, scan.lua, providers.lua) take
 --- `zz-devcheck-macerator`, an assembling machine with the EV macerator's categories, speed and graphics (Gregtorio's, or
@@ -144,4 +179,38 @@ do
 			subgroup = "intermediate-product", ingredients = { { type = "item", name = "zz-devcheck-tagged-wall", amount = 2 } },
 			results = { { type = "item", name = "zz-devcheck-tagged-post", amount = 1 } } },
 	})
+end
+
+--- me-network issue #557: a fast recipe of the ME Molecular Assembler (a plate into a gear in a tenth of a second), in its first
+--- crafting category, so that a machine finishes 16 crafts long before a job's next step (fastcraft.lua)
+local ma = data.raw["assembling-machine"]["me-molecular-assembler"]
+if ma and ma.crafting_categories and ma.crafting_categories[1] then
+	data:extend({ {
+		type = "recipe", name = "zz-devcheck-fast-gear", categories = { ma.crafting_categories[1] }, energy_required = 0.1,
+		enabled = false, ingredients = { { type = "item", name = "iron-plate", amount = 1 } },
+		results = { { type = "item", name = "iron-gear-wheel", amount = 1 } },
+		icon = "__base__/graphics/icons/signal/signal-info.png", subgroup = "intermediate-product",
+	} })
+end
+
+--- Issue #591: Krastorio 2 lets a logistic robot carry 7 items and a construction robot 2 (vanilla: 1 each). The tests of the
+--- ME Logistic Interface count the robots' deliveries item by item (a requester gets what it asks, no more), so they run
+--- with the vanilla payload.
+if mods["Krastorio2"] or mods["Krastorio2-spaced-out"] then
+	for _, t in pairs({ "logistic-robot", "construction-robot" }) do
+		for _, robot in pairs(data.raw[t] or {}) do robot.max_payload_size = 1 end
+	end
+end
+
+--- Issue #596: the stand-in recipes of data.lua as they were made there (another mod's data-updates may have changed them:
+--- Krastorio 2 Spaced Out puts its own chlorine and hydrogen into every recipe of the names they have); the tests count on
+--- their ingredients. Without Gregtorio only; a recipe is set again only when everything it names still exists.
+for name, def in pairs(ZZ_DEVCHECK_STANDIN_RECIPES or {}) do
+	local keep = true
+	for _, list in pairs({ def.ingredients or {}, def.results or {} }) do
+		for _, x in pairs(list) do
+			if not (x.type == "fluid" and data.raw.fluid[x.name] or x.type ~= "fluid" and data.raw.item[x.name]) then keep = false end
+		end
+	end
+	if keep then data.raw.recipe[name] = table.deepcopy(def) end
 end
