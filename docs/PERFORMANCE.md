@@ -3362,8 +3362,10 @@ loops). `add_node` and the graph rebuild read one more table per member (nil for
 step (once a second) reads each link's power and compares the group with its last decision (a string of the units and their
 power): nothing else runs while nothing changed. A link built without power (a fresh one) does not decide its group at once:
 only its own drain is set (its nearest link in reach), the slow step decides; a burst of n built links costs n^2, not n^3.
-A change (a link loses or gets power, changes its frequency, is removed) decides the group again and registers again the links
-whose edges changed (the graph's remove and add, as a pair's link did; a removal can be a split search).
+A change (a link loses or gets power, changes its frequency, is removed) decides the group again and changes the graph edge by
+edge (issue #573: `N.add_edge`, a merge when the two ends are in different networks; `N.remove_edge`, one split search between
+its two ends, `split_parts`; the new edges first, so a removed edge mostly finds the other path at once). Before #573 every
+link whose edges changed was registered again (the graph's remove and add, as a pair's link did).
 
 **The group itself** (runtime test `wgroup.lua`, a probe logged as `DEVCHECK-RUNTIME-WGROUP-PERF`, `LuaProfiler`, one run; 200
 links of one frequency in reach of each other, in a 15 x 14 grid, no other ME block):
@@ -3377,8 +3379,37 @@ links of one frequency in reach of each other, in a 15 x 14 grid, no other ME bl
 | one link to another frequency and back (two decisions each) | 77.3 ms |
 
 The first versions read the links' positions through the API in Prim's inner loop: the decision after a power loss took 60.5
-ms and the frequency change 135 ms. What is left is mostly the graph's re-registration of the links whose edges changed. A group
-of 20 links decides in well under a millisecond; groups of hundreds of links are not what the link is for.
+ms and the frequency change 135 ms. A group of 20 links decides in well under a millisecond; groups of hundreds of links are
+not what the link is for.
+
+**Edge by edge (issue #573).** The same probe, two runtime runs each in turns (origin/main ee45c27, then #573; Factorio 2.1.24):
+
+| 200 links | origin/main | #573 |
+|---|---|---|
+| build them | 12.4 / 12.7 ms | 17.0 / 12.1 ms |
+| set their frequency (no power yet) | 18.3 / 20.0 ms | 25.2 / 21.5 ms |
+| the slow step, nothing changed | 2.15 / 2.20 ms | 1.51 / 2.51 ms |
+| one link loses its power (decided again) | 65.4 / 66.7 ms | **20.2 / 14.2 ms** |
+| one link to another frequency and back | 73.8 / 68.3 ms | **33.6 / 25.9 ms** |
+
+(The first two rows touch no edge: their spread is the noise of one run. The 35.6 ms of the table above was measured on 2.1.23.)
+The re-registration was most of the time: a link that lost its power had all its edges and those of the links around it removed
+and added again, each a member's removal (a split search) and addition (a find_entities_filtered). Now the dropped link's edges go
+after the new edges among the others are in, so the split search between their ends finds the link alone at once (it becomes a
+network of its own) and the rest of the group stays one network without a search through it.
+
+The scenes have no link; the member removal now hands its parts to the same `split_off` as the edge removal.
+`bench --check origin/main --sizes 100,1000 --runs 3` (three rounds in turns, Factorio 2.1.24):
+
+| | origin/main | #573 |
+|---|---|---|
+| 100: script average / p99 ms | 0.2853 / 2.659 | 0.2670 / 2.443 |
+| 1000: script average / p99 ms | 0.4789 / 2.925 | 0.4516 / 2.683 |
+| Lua alloc KB per tick (100 / 1000) | 28.83 / 41.61 | 28.83 / 41.61 |
+| burst build / remove ms (1000) | 117.9 / 110.6 | 102.0 / 93.27 |
+| throughput per kind of endpoint | identical | identical |
+
+`regressions beyond the noise: 0`.
 
 **The scenes** have no link; `bench --check origin/main --sizes 100,1000 --runs 3` (three rounds in turns):
 
