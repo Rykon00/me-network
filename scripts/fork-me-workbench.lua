@@ -6,9 +6,12 @@
 ---     partition when the cell is taken out": it stays in the workbench and goes onto the next cell whose partition
 ---     is empty). AE2's workbench needs neither the network nor power (its block entity has no grid node): this one is
 ---     no ME member and needs no cable.
----   * Issue #28 (docs/ME-REWORK.md "Windows with the player's inventory"): the workbench's script inventory of 5
----     slots (rec.inv), whose slots its window shows next to the player's inventory: slot 1 the cell, slots 2 to 5 its
----     cards. While a cell lies in the workbench its cards are those items and not in its tags (never both). A cell that
+---   * Issue #28 (docs/ME-REWORK.md "Windows with the player's inventory"): the workbench's slots, which its window shows
+---     next to the player's inventory: the cell and its cards. Issue #579: two script inventories, the cell's (rec.cinv,
+---     one slot) and the cards' (rec.kinv, as many slots as the cell has card slots: an item cell 4, a fluid cell 3, a View
+---     Cell 2; without a cell 4), each the game's inventory element in the window; the code works on view(): slot 1 the
+---     cell, slots 2 and up its cards (what the one inventory of 5 slots of 0.5.11 and older was, moved over by inv_of).
+---     While a cell lies in the workbench its cards are those items and not in its tags (never both). A cell that
 ---     arrives gives its tag cards to the slots; a cell taken out by a click gets them into its tags before it moves.
 ---     cell_click, card_click and shift_in refuse a wrong item before it moves. sync() is the backstop (the migration,
 ---     the removal): what may not be there goes back, a cell that left is looked for by its item_number.
@@ -23,8 +26,8 @@
 ---   * Mined: the cards into the cell's tags, the cell into the buffer; destroyed or removed by a script: spilled; a
 ---     workbench removed without an event: the sweep (from the network's slow step) spills it at the position kept in
 ---     the record.
---- State: storage.fork_me_workbench = { recs = { [unit] = { entity, inv, keep, config (a list of keys), where, cell
---- (item_number of the cell in slot 1) } }, list, cursor }.
+--- State: storage.fork_me_workbench = { recs = { [unit] = { entity, cinv, kinv, keep, config (a list of keys), where, cell
+--- (item_number of the cell in the cell slot) } }, list, cursor }.
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
@@ -34,7 +37,7 @@ local M = {}
 
 local NAME = "me-cell-workbench"
 local SWEEP_PER_STEP = 20           -- workbenches checked for a vanished entity per slow step
-local SLOTS = 5                     -- the cell and the most card slots of a cell (an item cell's 4)
+local CARD_SLOTS = 4                -- the card slots without a cell (an item cell's, the most a cell has)
 
 local function state()
 	local s = storage.fork_me_workbench
@@ -180,20 +183,65 @@ local function pack_cards(inv, stack)
 	stack.set_stack(N.cell_stack(cell))
 end
 
---- the workbench's inventory; a workbench of 0.3.0 had one slot without a title (the cell, its cards in its tags): it is
---- replaced here, the cell moved over and its tag cards become the card slots' items
+--- the number of card slots of the cell in the cell inventory `cinv` (without a cell: CARD_SLOTS)
+local function card_slots(cinv)
+	local stack = cinv[1]
+	return is_cell(stack) and rules_of(spec_of(stack.name)).slots or CARD_SLOTS
+end
+
+--- Issue #579: the two inventories as one list, as the code before worked on one inventory: [1] the cell's slot, [2] and up
+--- the card slots, # the cell slot and the card slots (Lua 5.2: __len on a table)
+local VIEW = {
+	__index = function(v, i) if i == 1 then return v.cinv[1] end return v.kinv[i - 1] end,
+	__len = function(v) return 1 + #v.kinv end,
+}
+
+--- The workbench's view (above) of its two inventories, made here when missing. Issue #579: the one inventory of 0.5.11 and
+--- older (slot 1 the cell, 2 to 5 its cards) is moved into the two and destroyed; a workbench of 0.3.0 had one slot without a
+--- title (the cell, its cards in its tags): the cell moves over and its tag cards become the card slots' items.
 local function inv_of(rec)
-	local inv = rec.inv
-	if inv and inv.valid and #inv == SLOTS then return inv end
-	local e = rec.entity
-	local new = game.create_inventory(SLOTS, e and e.valid and e.localised_name or { "entity-name." .. NAME })
-	if inv and inv.valid then
-		for i = 1, math.min(#inv, SLOTS) do new[i].transfer_stack(inv[i]) end
-		if inv.is_empty() then inv.destroy() end
+	local cinv, kinv = rec.cinv, rec.kinv
+	if not (cinv and cinv.valid and kinv and kinv.valid) then
+		local e = rec.entity
+		local title = e and e.valid and e.localised_name or { "entity-name." .. NAME }
+		if not (cinv and cinv.valid) then
+			cinv = game.create_inventory(1, title)
+			rec.cinv = cinv
+		end
+		local old = rec.inv
+		rec.inv = nil
+		if old and old.valid and #old > 0 then cinv[1].transfer_stack(old[1]) end
+		if not (kinv and kinv.valid) then
+			kinv = game.create_inventory(math.max(card_slots(cinv), old and old.valid and #old - 1 or 0), title)
+			rec.kinv = kinv
+		end
+		if old and old.valid then
+			for i = 2, #old do
+				if old[i].valid_for_read then kinv.insert(old[i]) old[i].clear() end
+			end
+			old.destroy()
+		end
+		if is_cell(cinv[1]) then unpack_cards(rec, setmetatable({ cinv = cinv, kinv = kinv }, VIEW), nil) end
 	end
-	rec.inv = new
-	if is_cell(new[1]) then unpack_cards(rec, new, nil) end
-	return new
+	return setmetatable({ cinv = cinv, kinv = kinv }, VIEW)
+end
+
+--- Issue #579: the card inventory gets the cell's number of card slots (`grow`: only more; else only fewer). A card in a slot
+--- that goes away goes to a free slot below, else to `back` (G.give_back), never deleted.
+local function fit(rec, back, grow)
+	local kinv = rec.kinv
+	local n = card_slots(rec.cinv)
+	if #kinv == n or (grow and #kinv > n) or (not grow and #kinv < n) then return end
+	for i = n + 1, #kinv do
+		local s = kinv[i]
+		if s.valid_for_read then
+			for j = 1, n do
+				if not kinv[j].valid_for_read then kinv[j].transfer_stack(s) break end
+			end
+			if s.valid_for_read then G.give_back(back, s, rec.entity) end
+		end
+	end
+	kinv.resize(n)
 end
 
 local function register(entity)
@@ -307,6 +355,7 @@ function M.sync(rec, back, places)
 		for i = 2, #inv do if not inv[i].valid_for_read then free = i break end end
 		if free and N.card_kind(inv[1].name) then inv[free].transfer_stack(inv[1]) else G.give_back(back, inv[1], rec.entity) end
 	end
+	fit(rec, back, true)                               -- (issue #579: a cell with more card slots, before its tag cards come out)
 	if is_cell(inv[1]) and inv[1].item_number ~= rec.cell then arrived(rec, inv, back) end
 	--- the card slots
 	local stack = inv[1]
@@ -344,6 +393,7 @@ function M.sync(rec, back, places)
 			end
 		end
 	end
+	fit(rec, back, false)                              -- (issue #579: the slots beyond the cell's are empty by now)
 	rec.sig = signature(rec, inv)
 	return rec.sig ~= before
 end
@@ -352,10 +402,13 @@ end
 --- the window's functions (scripts/fork-me-windows.lua) and the runtime test (remote below)
 --------------------------------------------------------------------------------
 
---- the workbench's inventory (its window shows it)
-function M.inventory(entity)
+--- the workbench's two inventories (issue #579; its window shows each): the cell's (one slot) and the cards' (the cell's card
+--- slots), or nil
+function M.inventories(entity)
 	local rec = rec_of(entity)
-	return rec and inv_of(rec) or nil
+	if not rec then return nil end
+	inv_of(rec)
+	return rec.cinv, rec.kinv
 end
 
 --- sync() of a workbench (`back`, `places` as there)
@@ -649,7 +702,9 @@ end
 
 local function forget(s, unit)
 	local rec = s.recs[unit]
-	if rec and rec.inv and rec.inv.valid and rec.inv.is_empty() then rec.inv.destroy() end
+	for _, inv in pairs(rec and { rec.inv, rec.cinv, rec.kinv } or {}) do
+		if inv.valid and inv.is_empty() then inv.destroy() end
+	end
 	s.recs[unit] = nil
 	for i = #s.list, 1, -1 do if s.list[i] == unit then table.remove(s.list, i) end end
 end
@@ -733,9 +788,13 @@ remote.add_interface("gregtorio-me-workbench", {
 	--- issue #387: the empty cell taken apart, its parts to `back` (a LuaInventory standing for the player's)
 	disassemble = function(entity, back) return M.disassemble(entity, back) end,
 	parts_of = function(name) return M.parts_of(name) end,
-	--- issue #28: the inventory the window shows, and what a change by a player does (`back`: a LuaInventory standing
-	--- for the player's inventory; `places`: LuaItemStacks and LuaInventories where a cell that left is looked for)
-	inventory = function(entity) return M.inventory(entity) end,
+	--- issue #28: the inventories the window shows (issue #579: { cell = the cell's inventory of one slot, cards = the cards',
+	--- the cell's card slots }), and what a change by a player does (`back`: a LuaInventory standing for the player's
+	--- inventory; `places`: LuaItemStacks and LuaInventories where a cell that left is looked for)
+	inventories = function(entity)
+		local cinv, kinv = M.inventories(entity)
+		return cinv and { cell = cinv, cards = kinv } or nil
+	end,
 	sync = function(entity, back, places) return M.sync_entity(entity, back, places) end,
 	--- shift + click on a stack of the player's inventory in the window: a cell into the cell slot, cards after it
 	shift_in = function(entity, stack, inventory) return M.shift_in(entity, stack, inventory) end,
