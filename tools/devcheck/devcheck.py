@@ -1187,6 +1187,7 @@ RUNTIME_TESTS = (
     ("PATTERNBULK", "Pattern paste and bulk clearing (issue #585)"),
     ("BPCARDS", "Cards of blocks built from a blueprint (issue #590)"),
     ("WGROUP", "ME Wireless Link groups (issue #559)"),
+    ("EXTENT", "ME underground cable chains never overextend (issue #623)"),
     ("SINGFLUID", "Singularity cell for fluids (issue #562)"),
     ("FASTCRAFT", "Fast machines kept busy (issue #557)"),
     ("ASMNET", "ME Molecular Assembler carries the network (issue #560)"),
