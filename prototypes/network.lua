@@ -52,6 +52,9 @@ local IMPORT_BUS, EXPORT_BUS = "me-import-bus", "me-export-bus"
 local STORAGE_BUS = "me-storage-bus"
 local UNDERGROUND = "me-underground-cable"
 local UNDERGROUND_REACH = 10        -- max_underground_distance of the underground cable (the underground pipe's)
+--- issue #623: the underground cable's fluid box is only there for the engine's pairing, so a chain of them is a fluid
+--- segment and would be capped by the pipeline extent (default 320 tiles): no cable length may ever overextend
+local NO_PIPELINE_EXTENT = 4294967295  -- uint32 maximum of FluidBox::max_pipeline_extent
 --- issue #229: the ME Chest and its hidden parts on its tile (its own power buffer, its fluid input)
 local CHEST, CHEST_POWER, CHEST_FLUID = "me-chest", "me-chest-power", "me-chest-fluid"
 local CHEST_WATTS = 4000            -- W: what it draws from the power grid on its own (a member's 4 kW through the controller)
@@ -597,6 +600,7 @@ data:extend({ {
 	fast_replaceable_group = "me-cable",                      -- (with the cable, see there)
 	fluid_box = {
 		volume = 1,
+		max_pipeline_extent = NO_PIPELINE_EXTENT,      -- (issue #623)
 		pipe_connections = {
 			{ direction = defines.direction.north, position = { 0, 0 }, connection_category = "me-cable", hide_connection_info = true },
 			{ connection_type = "underground", direction = defines.direction.south, position = { 0, 0 },

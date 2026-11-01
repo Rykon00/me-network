@@ -1207,6 +1207,8 @@ memcard561 = require("memcard")({ me_place = me_place, power = power, me_report 
 --- me-network issue #559: ME Wireless Link groups (wgroup.lua)
 wgroup559 = require("wgroup")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #623: underground cable chains never overextend (extent.lua)
+extent623 = require("extent")({ me_place = me_place, me_report = me_report })
 --- me-network issue #562: the Singularity cell for fluids (singfluid.lua)
 singfluid562 = require("singfluid")({ me_place = me_place, power = power, me_report = me_report,
 	me_connect = function(...) return me_connect(...) end })
@@ -1363,6 +1365,7 @@ local function tests_running()
 	asmnet560.running(check)
 	singfluid562.running(check)
 	wgroup559.running(check)
+	extent623.running(check)
 	memcard561.running(check)
 	patternbulk585.running(check)
 	bpcards590.running(check)
@@ -2362,6 +2365,7 @@ script.on_nth_tick(10, function()
 	asmnet560.tick()
 	singfluid562.tick()
 	wgroup559.tick()
+	extent623.tick()
 	memcard561.tick()
 	patternbulk585.tick()
 	bpcards590.tick()
@@ -5281,6 +5285,7 @@ script.on_init(function()
 	for _, f in pairs(asmnet560.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(singfluid562.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(wgroup559.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(extent623.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(memcard561.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(patternbulk585.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(bpcards590.setup(s)) do fails[#fails + 1] = f end

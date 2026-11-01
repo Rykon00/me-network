@@ -48,6 +48,7 @@ Version: 0.5.11
     - ME Terminal: sort by mod (the mod that adds the item) and by tier (the highest science pack of the earliest technology that unlocks a recipe of it; items no recipe makes come last), and a direction button beside the sort button (descending / ascending, each sort keeps its own) (issue #602).
     - ME Terminal: an item whose amount reaches 0 while the window is open stays in its place, greyed, with 0, until you close the window or change the sort, the search or a filter (issue #602); so the grid does not jump when you take the last of something.
   Bugfixes:
+    - ME Underground Cable: long runs no longer show as overextended (issue #623). The underground cable has a hidden fluid box for the game's pairing, so a chain of them counted as a pipeline and hit the pipeline length limit (320 tiles); ME cables now have no length limit. Real pipes and the fluid connections of the ME Chest and ME Interface keep the game's limit.
     - The frequency field of the ME Quantum Bridge and the ME Wireless Link no longer resets while typing (issue #511).
     - Settings paste (Shift + right/left click) works for the ME IO Port, ME Wireless Access Point and the ME monitors (issue #519).
     - Settings paste works on the ME Quantum Bridge and ME Wireless Link (no more "Not operable").
