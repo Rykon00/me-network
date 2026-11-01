@@ -78,6 +78,11 @@ local M = {}
 
 local STEP_TICKS = 15                -- the ticks a visit of the remote `step` stands for (what one visit was before)
 local MIN_INTERVAL = 15              -- ticks between two visits of a block that moved all it was allowed to
+--- issue #611: the margin cap each visit used, by unit, while a test asked for it (remote `trace_margin_cap`, the switch
+--- in storage so it survives a save; the table itself is rebuilt after a load). Tests read it in the same tick: the cap
+--- read later in that tick moves with every unit leaving the busy list after the visit, i.e. with the unit numbers of
+--- the whole map.
+local cap_trace
 local ACTIVE_INTERVAL = 60           -- ... of a block that moves something but less
 local MAX_CATCH_UP = 600             -- ticks of speed a visit may catch up at most
 local MAX_ICAP = 2 ^ 31 - 1          -- items a bus visit may move at most (issue #356: an engine count is 32 bit)
@@ -2442,6 +2447,10 @@ local function visit(rec, unit, fallback)
 	if starved then nextiv = math.max(MIN_INTERVAL, math.floor(nextiv / 2)) end   -- (its other side had run out: sooner)
 	--- issue #51: while the busy blocks are few against the floor, the floor's room is spent on margin, not saved
 	local cap = Sched.margin_cap(s.q, Sched.setting("io"), MIN_INTERVAL)
+	if s.trace_cap then
+		cap_trace = cap_trace or {}
+		cap_trace[unit] = cap
+	end
 	local capped = nextiv > cap
 	if capped then nextiv = cap end
 	rec.iv = nextiv
@@ -2829,6 +2838,7 @@ remote.add_interface("gregtorio-me-io", {
 		if not rec then return nil end
 		local due = rec.due
 		return { due = (due and due > 0) and due or nil, interval = rec.iv, last = rec.last, probing = rec.sq == true and not rec.park,
+			cap = cap_trace and cap_trace[entity.unit_number],
 			front = due == Sched.FRONT, backlog = due == Sched.BACKLOG, parked = rec.park, block = rec.block,
 			starve = rec.starve or false }
 	end,
@@ -2839,6 +2849,12 @@ remote.add_interface("gregtorio-me-io", {
 	end,
 	--- tests (issue #38): how often a parked block gets its slow fallback visit (ticks)
 	set_park_fallback = function(ticks) Sched.PARK_FALLBACK = ticks end,
+	--- tests (issue #611): record the margin cap of every visit (`schedule` returns it as `cap`)
+	trace_margin_cap = function(on)
+		local s = storage.fork_me_io
+		if s then s.trace_cap = on or nil end
+		if not on then cap_trace = nil end
+	end,
 	--- issue #38: the scheduler's counters of every queue (fork-me-schedule.lua, M.snapshot); `reset` starts them anew
 	sched_stats = function(reset)
 		local snap = Sched.snapshot()

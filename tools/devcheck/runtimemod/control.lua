@@ -5298,8 +5298,6 @@ script.on_init(function()
 	for _, f in pairs(lifbuild538.setup()) do fails[#fails + 1] = f end
 	for _, f in pairs(remoteview176.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(graph43.setup(s)) do fails[#fails + 1] = f end
-	--- (issue #603: last, so the blocks of the tests above keep their unit numbers: the scheduler spreads by them, and the margin
-	--- test (margin.lua) has one tick of slack)
 	for _, f in pairs(wrefill603.setup(s)) do fails[#fails + 1] = f end
 	log("DEVCHECK-RUNTIME setup failed=" .. #fails .. " (" .. (script.active_mods["gregtorio-continued"] and "with Gregtorio Continued" or "vanilla") .. ")")
 	for _, f in pairs(fails) do log("DEVCHECK-RUNTIME-FAIL " .. f) end
