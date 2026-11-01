@@ -47,6 +47,14 @@
 ---       asks    for what ME blocks wait for: the keys of net.wait_in (but the interfaces') and AC.waiting_needs, one stack
 ---               each, and only while the logistic network holds them outside the ME-owned chests (the second section, as
 ---               #532; in Automatic mode it asks whatever the switch "auto" says).
+---       takes   (issue #617) what ME blocks wait for straight out of the base's storage chests, without robots, as an ME
+---               Logistic Storage Bus would: per visit and key at most one stack (AC.waiting_needs: what they lack), never
+---               from an ME-owned chest, and only by the block that asks. So a waiting ME block gets an item before a
+---               requester of the base. The engine reserves a new item for the requesters in the tick it appears (from
+---               then on LuaLogisticNetwork::get_item_count and get_supply_points no longer count it), while a robot needs
+---               seconds to reach the chest: so the chests themselves are read (SCAN_CHESTS per visit, a cursor in the
+---               record), and what robots reserved for a pickup is taken too (they find the chest empty and plan again);
+---               what a robot carries is out of reach. While ME blocks wait the block comes back after MIN_INTERVAL ticks.
 ---     The scan: a pass per logistic network with an automatic block, one after the other; its first automatic block by
 ---     unit number leads, a stock goes to the automatic block nearest to the point with the largest open demand of the key
 ---     (ties by unit number). A pass reads the points' filters (the setting "points per tick", default 2, about 25 us each;
@@ -718,6 +726,72 @@ end
 --- the storage engine's `skip` for logistic network `lid`: an ME Logistic Storage Bus that claimed it (one function per id,
 --- kept for the load: it depends on the id only)
 local skips, nskips = {}, 0
+--- Issue #617: what ME blocks of `net` wait for, taken straight out of the storage chests of logistic network `ln` (not the
+--- ME-owned ones) into the network. Returns what moved and whether ME blocks wait for a key (the caller then comes back soon).
+--- Cost per visit while ME blocks wait: the waited keys (at most the setting "keys") and SCAN_CHESTS storage chests from the
+--- record's cursor, one get_item_count per chest and key still needed; nothing while no ME block waits.
+local SCAN_CHESTS = 64
+local TAKE = { name = nil, quality = nil }
+local function take_waited(rec, net, ln, skip)
+	local needs = AC.waiting_needs(net)
+	local want, nwant = nil, 0
+	local function add(key, need)
+		if need <= 0 or N.is_fluid_key(key) or key:find("#", 1, true) or (want and want[key]) then return end
+		local name, q = N.parse_key(key)
+		if not M.row_item(name, q) then return end
+		want = want or {}
+		want[key] = math.min(need, prototypes.item[name].stack_size)
+		nwant = nwant + 1
+	end
+	for key, t in pairs(needs) do add(key, t.sum + t.base - N.count_key(net, key)) end
+	for key, w in pairs(net.wait_in or {}) do
+		for _, kind in pairs(w) do
+			if kind ~= WAKER then
+				add(key, math.huge)
+				break
+			end
+		end
+	end
+	if not want then
+		rec.tcur = nil
+		return 0, false
+	end
+	local list = ln.storages
+	local count = #list
+	if count == 0 then return 0, true end
+	local units = L.owned_units(ln) or {}
+	local moved, left = 0, nwant
+	local i = rec.tcur or 1
+	if i > count then i = 1 end
+	for _ = 1, math.min(SCAN_CHESTS, count) do
+		local e = list[i]
+		i = i < count and i + 1 or 1
+		if e.valid and not units[e.unit_number] then
+			local inv = e.get_inventory(CHEST)
+			if inv and not inv.is_empty() then
+				for key, need in pairs(want) do
+					if need > 0 then
+						local name, q = N.parse_key(key)
+						TAKE.name, TAKE.quality = name, q
+						while need > 0 do
+							local st = inv.find_item_stack(TAKE)
+							if not st then break end
+							local n = N.insert_partial(net, st, need, skip)
+							if not n or n <= 0 then need = 0 break end      -- (the network takes no more of it)
+							moved, need = moved + n, need - n
+						end
+						want[key] = need
+						if need <= 0 then left = left - 1 end
+					end
+				end
+				if left <= 0 then break end
+			end
+		end
+	end
+	rec.tcur = i
+	return moved, true
+end
+
 local function skip_of(lid)
 	local f = skips[lid]
 	if not f then
@@ -761,6 +835,14 @@ local function visit(rec, unit, fallback)
 	local m2, r2 = pull(rec.requester.get_inventory(TRASH), net, skip, nil)
 	local m3, r3 = pull(rec.store.get_inventory(CHEST), net, skip, rec.store.get_logistic_point(MAIN_POINT))
 	local moved, refused = m1 + m2 + m3, r1 or r2 or r3
+	local waits = false
+	if lid and rec.mode == "auto" and asks_needs(rec, net) then   -- (issue #617: the block that asks also takes)
+		local m4
+		m4, waits = take_waited(rec, net, ln, skip)
+		moved = moved + m4
+	elseif rec.tcur then
+		rec.tcur = nil
+	end
 	moved = moved + offer(rec, net, unit, skip)
 	request(rec, net, unit)
 	local auto, skipped = auto_request(rec, net, ln)              -- (issue #532)
@@ -769,7 +851,7 @@ local function visit(rec, unit, fallback)
 	rec.status = not lid and "no-logistic-network" or refused and "me-full" or "ok"
 	if refused then N.wait_room(net, WAKER, unit) end
 	if fallback and moved > 0 then Sched.missed(WAKER) end
-	rec.iv = Sched.interval(rec.iv, moved, moved > 0, MIN_INTERVAL, MIN_INTERVAL, idle_limit())
+	rec.iv = waits and MIN_INTERVAL or Sched.interval(rec.iv, moved, moved > 0, MIN_INTERVAL, MIN_INTERVAL, idle_limit())
 	Sched.at(s.q, rec, unit, now + rec.iv, moved <= 0)
 	return moved > 0 and 1 or 0
 end

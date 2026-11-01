@@ -1215,7 +1215,17 @@ RUNTIME_TESTS = (
 
 
 SAVELOAD_TICK = 500             # the runtime map is saved at this tick of a server run and loaded again (issue #38)
-RCON_PORT = 27815
+
+
+def free_port(kind=None):
+    """a port of 127.0.0.1 that nothing is bound to now (the OS picks it; `kind` socket.SOCK_DGRAM for the game's UDP
+    port, TCP else). The save-and-load server takes one for RCON and one for the game per run (issue #612: a fixed port let two harness runs side by side, from two worktrees
+    or this repository's and Gregtorio's harness, talk to each other's server); ME_DEVCHECK_RCON_PORT fixes the RCON
+    port instead."""
+    import socket
+    with socket.socket(socket.AF_INET, kind or socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def rcon(sock, kind, body, req_id):
@@ -1243,6 +1253,16 @@ def rcon(sock, kind, body, req_id):
     return rest[8:-2].decode("utf-8", errors="replace")
 
 
+def port_taken(server_log):
+    """the reason to add when the server could not bind its ports (another process holds one)"""
+    try:
+        text = server_log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    m = re.search(r"(?i)(.*(?:address already in use|failed to bind|bind failed|socket.*in use|Only one usage).*)", text)
+    return ": the port is taken by another process (" + m.group(1).strip() + ")" if m else ""
+
+
 def saveload(mapfile, ticks, extra_args=()):
     """The map runs as a headless server (real time, nobody connected) until SAVELOAD_TICK, saves through RCON
     (`game.server_save`) and quits; the save is then run with `--benchmark` to `ticks`. Returns the benchmark log
@@ -1261,24 +1281,28 @@ def saveload(mapfile, ticks, extra_args=()):
     server_log = WORK / "saveload-server.log"
     start = WORK / "saveload-start.zip"                 # (a copy: the server saves the map back when it quits)
     shutil.copy2(mapfile, start)
+    rcon_port = int(os.environ["ME_DEVCHECK_RCON_PORT"]) if os.environ.get("ME_DEVCHECK_RCON_PORT") else free_port()
+    game_port = free_port(socket.SOCK_DGRAM)          # (the game's port is UDP)
+    password = "devcheck-" + os.urandom(6).hex()          # (so an RCON client can never reach another run's server)
     with open(server_log, "w", encoding="utf-8") as out:
         proc = subprocess.Popen([str(binary), "--mod-directory", str(MODS), "--start-server", str(start),
-                                 "--server-settings", str(settings), "--bind", "127.0.0.1",
-                                 "--rcon-bind", f"127.0.0.1:{RCON_PORT}", "--rcon-password", "devcheck", *extra_args],
+                                 "--server-settings", str(settings), "--bind", f"127.0.0.1:{game_port}",
+                                 "--rcon-bind", f"127.0.0.1:{rcon_port}", "--rcon-password", password, *extra_args],
                                 stdout=out, stderr=subprocess.STDOUT)
         sock = None
         deadline = time.time() + 120
         try:
             while time.time() < deadline and proc.poll() is None:
                 try:
-                    sock = socket.create_connection(("127.0.0.1", RCON_PORT), timeout=5)
-                    rcon(sock, 3, "devcheck", 1)
+                    sock = socket.create_connection(("127.0.0.1", rcon_port), timeout=5)
+                    rcon(sock, 3, password, 1)
                     break
                 except OSError:
                     sock = None
                     time.sleep(0.5)
             if not sock:
-                return None, "the server did not start or answer RCON (" + str(server_log) + ")"
+                return None, ("the server did not start or answer RCON on 127.0.0.1:" + str(rcon_port)
+                              + port_taken(server_log) + " (" + str(server_log) + ")")
             while time.time() < deadline:
                 t = rcon(sock, 2, "/silent-command rcon.print(game.tick)", 2).strip()
                 if t.isdigit() and int(t) >= SAVELOAD_TICK:
