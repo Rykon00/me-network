@@ -354,8 +354,9 @@ local EMPTY_SLOT = { valid_for_read = false }
 --- a slot's tooltip, `offset` is added to the slot numbers the window's click gets. Issue #543: when the window shows the whole
 --- inventory, it is the game's `inventory` element (the game's tooltips, quality, the hand) with the game's handling off: every
 --- click comes as on_gui_inventory_action and goes through the window's `click`, which refuses a wrong item before anything
---- moves (block_action); the empty slots' tooltip is `tip`'s for an empty slot. A part of an inventory (the workbench's cell
---- and card slots, the IO port's input and output) stays slot buttons (block_slot), rebuilt when a stack changed.
+--- moves (block_action); the empty slots' tooltip is `tip`'s for an empty slot, set again when it changed (the workbench's card
+--- slots say whether a cell is there, issue #579). A part of an inventory stays slot buttons (block_slot), rebuilt when a stack
+--- changed.
 function M.block_slots(frame, name, inv, first, last, tip, offset)
 	local box = M.find(frame, name)
 	if not (box and inv and inv.valid) then return end
@@ -368,8 +369,12 @@ function M.block_slots(frame, name, inv, first, last, tip, offset)
 				tags = M.act("block_inventory", { offset = offset or 0 }), handle_cursor_transfer = false,
 				handle_cursor_split = false, handle_open_item = false, handle_open_mod_item = false,
 				handle_send_stack_to_trash = false, handle_send_stacks_to_trash = false }
-			local empty = tip and tip(1, EMPTY_SLOT)
+		end
+		local empty = tip and tip(1, EMPTY_SLOT)
+		local key = empty and helpers.table_to_json({ empty }) or ""
+		if box.tags.empty ~= key then
 			if empty then el.empty_slot_info = { text = empty } end
+			box.tags = { sig = "inventory", empty = key }
 		end
 		if el.inventory ~= inv then el.inventory = inv end
 		if el.slots_per_row ~= #inv then el.slots_per_row = #inv end

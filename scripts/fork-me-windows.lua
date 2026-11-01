@@ -416,10 +416,10 @@ function M.workbench_data(entity) return bench.info(entity) end
 --- the workbench is no node of the ME graph: its window finds it through the workbench's own records
 G.entity_lookup(bench.by_unit)
 
---- issue #28: the window has the player's inventory on its left; the cell slot and the card slots are the slots of the
---- workbench's inventory (slot 1 the cell, 2 to 5 its cards)
+--- issue #28: the window has the player's inventory on its left; issue #579: the cell slot and the card slots are the
+--- workbench's two inventories, each the game's inventory element (the window's slot 1 the cell, 2 and up its cards)
 local function open_workbench(player, entity)
-	if not bench.inventory(entity) then return end    -- (a workbench without a record yet gets one: the lookup needs it)
+	if not bench.inventories(entity) then return end  -- (a workbench without a record yet gets one: the lookup needs it)
 	local _, content = G.open_window(player, "workbench", caption_of(entity), { unit = entity.unit_number }, true)
 	G.label(content, { "fork-me-gui.workbench-help" }, WIDTH)
 	local row = G.row(content)
@@ -541,13 +541,13 @@ function M.refresh_workbench(player, frame)
 		dis.enabled = why == true
 		dis.tooltip = { "fork-me-gui.workbench-disassemble-" .. (why == true and "tooltip" or why) }
 	end
-	local inv = bench.inventory(entity)
-	block_slots(frame, "fork_me_wb_cell", inv, 1, 1, function(_, st)
+	local cinv, kinv = bench.inventories(entity)
+	block_slots(frame, "fork_me_wb_cell", cinv, 1, 1, function(_, st)
 		return { st.valid_for_read and "fork-me-gui.workbench-cell-tooltip" or "fork-me-gui.workbench-cell-empty" }
 	end)
-	block_slots(frame, "fork_me_wb_cards", inv, 2, 1 + (c and c.slots or 4), function(_, st)
+	block_slots(frame, "fork_me_wb_cards", kinv, 1, kinv and #kinv or 0, function(_, st)   -- (the window's slots 2 and up)
 		return { st.valid_for_read and "fork-me-gui.card-slot-tooltip" or (c and "fork-me-gui.card-slot-empty" or "fork-me-gui.workbench-card-no-cell") }
-	end)
+	end, 1)
 	G.find(frame, "fork_me_wb_keep").state = d.keep
 	M.gfilter_refresh(frame, "fork_me_wb_gtext", c and c.gfilter, c and c.gtext)
 	return true

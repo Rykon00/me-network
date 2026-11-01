@@ -106,7 +106,7 @@ return function(H)
 		hand[1].set_stack{ name = "me-fuzzy-card", count = 1 }
 		expect(remote.call(WB, "card_click", bench, 1, hand[1], char, false) == nil and not hand[1].valid_for_read, "a card into the workbench")
 		why = g("block_click", bench, 2, nil, nil, true)
-		expect(why == "no-inventory" and remote.call(WB, "inventory", bench)[2].valid_for_read, "workbench card without an inventory: " .. tostring(why))
+		expect(why == "no-inventory" and remote.call(WB, "inventories", bench).cards[1].valid_for_read, "workbench card without an inventory: " .. tostring(why))
 		why, out = g("block_click", bench, 2, nil, char, true)
 		expect(why == nil and out == "out" and char.get_item_count("me-fuzzy-card") == 1, "workbench card into the inventory: " .. tostring(why))
 		--- the provider's pattern slot

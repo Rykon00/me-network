@@ -2628,7 +2628,7 @@ The empty slots' tooltip is the window's hint for an empty slot (`empty_slot_inf
 | ME IO Port | card slots (`fork_me_iop_cards`; the window's slots 3 to 6: offset 2) | element |
 | ME Wireless Access Point | booster slots | element (not in the issue's list; the same card inventory) |
 | ME IO Port | input and output cell (slots 1 and 2 of one inventory) | element since #550: **one element of both slots** ("Cells (in, out)", one empty-slot tooltip for both); the rule per slot is the click's (`ioport.cell_click`: a cell only into the input, nothing into the output). Chosen over two inventories: no change of the saved layout |
-| ME Cell Workbench | cell slot and card slots (slot 1 and 2 to 5 of one inventory; how many card slots depends on the cell) | **buttons**: a range of one inventory whose shown part changes with the cell (4, 3 or 2 card slots); an element needs two inventories (cell, cards; the card inventory resized with the cell) and a migration of the saved one: issue #579 |
+| ME Cell Workbench | cell slot and card slots | element since #579: **two inventories, two elements**: the cell's (`rec.cinv`, one slot) and the cards' (`rec.kinv`, resized with the cell: 4, 3 or 2 card slots, 4 without a cell; the window's slots 2 and up: offset 1). `sync()` grows the card inventory before a cell's tag cards come out and shrinks it at its end, when the slots beyond the cell's are empty (a card there moves to a free slot below or goes back); the code works on `view()`, the two as one list (slot 1 the cell). The one inventory of 5 slots of 0.5.11 and older is moved into the two when the workbench is first touched (`inv_of`: on the update, `on_configuration_changed` registers every workbench) |
 | ME Drive | 10 cell slots | **buttons**: the fill numbers and the yellow partition style are per slot, the element has no per-slot style; the cells are records, not an inventory |
 | ME Pattern Provider | the pattern slots | **buttons**: records with a state colour per slot (yellow pending, red broken), not an inventory |
 | ME Pattern Terminal | blank and output slot (one inventory of 2) | element since #550: **one element of both slots** next to Encode; the rule per slot is `M.click`'s (blank patterns into the first, nothing into the second) |
@@ -2636,7 +2636,7 @@ The empty slots' tooltip is the window's hint for an empty slot (`empty_slot_inf
 | ME Terminal | the View Cell slots (`VC.inventory`, the terminal's or, wireless, the player's) | element since #550 (`VC.draw`: a label and the element's flow `fork_me_view_slots`) |
 
 Issue #550 made the four above elements; old windows are closed by every mod update (`G.close_all`), and the inventories are
-the ones the saves hold, so nothing is migrated. Left: the workbench (#579).
+the ones the saves hold, so nothing is migrated. The workbench followed in #579 (its saved inventory is migrated, above).
 
 **Tests.** `runtimemod/blockinv.lua` opens every window of the table that has an element for a stand-in player (the open
 key's path, `G.open_entity`, and one refresh; the stand-in of #545 can reach every entity) and finds the element: bound to the
@@ -2644,7 +2644,11 @@ block's card inventory, its size, the handling off, the offset, an empty-slot to
 button each. Then, through `block_action` as the event calls it: iron plates in the hand are refused by click and by right
 click and stay in the hand, a card goes in by click and by right click (one of a stack of three), shift + click takes one out
 into the inventory, control + click every card of the kind, a click in remote view takes it into the inventory, and no card
-is made or lost.
+is made or lost. Issue #579: the workbench's two elements (offset 0 and 1, sizes 1 and 4): a card without a cell and iron plates on
+the cell slot refused; the item cell in (four card slots), a card by click, a second of its kind refused (`limit`), another by
+right click, shift and control + click; the item cell swapped for a fluid cell by a click (its card goes with it into its tags,
+the cards' element has three slots) and taken out by shift + click (four again). `runtimemod/wbview.lua` reads the two
+inventories as the one list the older workbench tests read (remote `inventories`).
 
 ### A second number on slot buttons (me-network issue #544)
 

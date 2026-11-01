@@ -50,6 +50,7 @@ return function(H)
 		H.power(s, fails, "block inventories", BX + 40, BY + 6)
 		me_place(s, fails, "block inventories", "me-network-controller", BX + 47, BY + 6)
 		me_place(s, fails, "block inventories", "me-terminal", BX + 48.5, BY + 5.5)
+		me_place(s, fails, "block inventories", "me-cell-workbench", BX + 36.5, BY + 0.5)   -- (issue #579)
 		return fails
 	end
 
@@ -176,13 +177,99 @@ return function(H)
 				done2[#done2 + 1] = b.name
 			end
 		end
+		--- issue #579: the ME Cell Workbench's two elements, the cell's (one slot) and the cards' (the cell's card slots, the window's
+		--- slots 2 and up: offset 1); the card rules of today through the cards' element, and the cards' element follows the cell
+		local wbdone = false
+		do
+			local what = "me-cell-workbench: "
+			local e = s.find_entity("me-cell-workbench", { BX + 36.5, BY + 0.5 })
+			local function open()
+				local ok, view = pcall(g, "stand_in_open_entity", "blockinv", e)
+				local els = {}
+				for _, x in ipairs(ok and view and view.elements or {}) do els[x.box] = x end
+				return els, ok and view or nil
+			end
+			local els, view = {}, nil
+			if e then els, view = open() end
+			local ce, ke = els.fork_me_wb_cell, els.fork_me_wb_cards
+			if not (e and ce and ke) then
+				expect(false, what .. "no elements: " .. serpent.line(view))
+			else
+				local cinv, kinv = ce.inventory, ke.inventory
+				expect(cinv and cinv.valid and #cinv == 1 and ce.offset == 0 and ce.cursor_transfer == false and ce.empty ~= nil
+					and kinv and kinv.valid and #kinv == 4 and ke.offset == 1 and ke.cursor_transfer == false and ke.empty ~= nil
+					and (view.buttons.fork_me_wb_cell or 0) == 0 and (view.buttons.fork_me_wb_cards or 0) == 0,
+					what .. "the elements: " .. serpent.line({ ce, ke }))
+				local function cact(slot, mode) return g("block_action", e, cinv, slot, mode, cursor, pinv, 0) end
+				local function kact(slot, mode) return g("block_action", e, kinv, slot, mode, cursor, pinv, 1) end
+				local function count(name) return cinv.get_item_count(name) + kinv.get_item_count(name) + pinv.get_item_count(name)
+					+ hold.get_item_count(name) end
+				--- a card without a cell, then a wrong item on the cell slot: refused, they stay in the hand
+				cursor.set_stack{ name = "me-fuzzy-card", count = 2 }
+				local why = kact(1, "click")
+				expect(why ~= nil and cursor.count == 2 and kinv.is_empty(), what .. "a card without a cell: " .. tostring(why))
+				pinv.insert(cursor)
+				cursor.set_stack{ name = "iron-plate", count = 5 }
+				why = cact(1, "click")
+				expect(why ~= nil and cursor.count == 5 and cinv.is_empty(), what .. "iron plates on the cell slot: " .. tostring(why))
+				cursor.clear()
+				--- the item cell in: four card slots; a card by click, a second of the kind refused (its limit), another by right click
+				cursor.set_stack{ name = "me-1k-storage-cell", count = 1 }
+				why = cact(1, "click")
+				expect(why == nil and cinv.get_item_count("me-1k-storage-cell") == 1 and #kinv == 4, what .. "the item cell: " .. tostring(why)
+					.. ", " .. #kinv .. " card slots")
+				local fuzzy = count("me-fuzzy-card")
+				cursor.transfer_stack((pinv.find_item_stack("me-fuzzy-card")))   -- (the stack alone, not its index as the count)
+				why = kact(1, "click")
+				expect(why == nil and kinv.get_item_count("me-fuzzy-card") == 1 and cursor.count == 1, what .. "a card by click: " .. tostring(why))
+				why = kact(2, "right")
+				expect(why == "limit" and kinv.get_item_count("me-fuzzy-card") == 1 and cursor.count == 1, what .. "a second fuzzy card: "
+					.. tostring(why))
+				pinv.insert(cursor)
+				cursor.set_stack{ name = "me-inverter-card", count = 1 }
+				why = kact(3, "right")
+				expect(why == nil and kinv.get_item_count("me-inverter-card") == 1 and not cursor.valid_for_read, what .. "a card by right click: "
+					.. tostring(why))
+				--- shift + click takes a card into the inventory, control + click every card of the kind
+				local slot
+				for i = 1, #kinv do if kinv[i].valid_for_read and kinv[i].name == "me-inverter-card" then slot = i end end
+				why = kact(slot or 1, "shift")
+				expect(why == nil and kinv.get_item_count("me-inverter-card") == 0 and pinv.get_item_count("me-inverter-card") == 1,
+					what .. "shift + click on a card: " .. tostring(why))
+				for i = 1, #kinv do if kinv[i].valid_for_read and kinv[i].name == "me-fuzzy-card" then slot = i end end
+				why = kact(slot or 1, "control")
+				expect(why == nil and kinv.is_empty() and count("me-fuzzy-card") == fuzzy, what .. "control + click on a card: " .. tostring(why))
+				--- a fuzzy card in, then the item cell swapped for a fluid cell by a click: the item cell takes its card along, the
+				--- cards' element now has the fluid cell's 3 slots
+				cursor.transfer_stack(pinv.find_item_stack("me-fuzzy-card"), 1)
+				kact(1, "click")
+				cursor.set_stack{ name = "me-1k-fluid-storage-cell", count = 1 }
+				why = cact(1, "click")
+				local t = cursor.valid_for_read and cursor.is_item_with_tags and cursor.tags.fork_me_cell
+				expect(why == nil and cinv.get_item_count("me-1k-fluid-storage-cell") == 1 and #kinv == 3 and kinv.is_empty()
+					and cursor.valid_for_read and cursor.name == "me-1k-storage-cell" and t and t.cards and #t.cards == 1,
+					what .. "the swap to a fluid cell: " .. tostring(why) .. ", " .. #kinv .. " card slots, tags " .. serpent.line(t and t.cards))
+				local els2 = open()
+				expect(els2.fork_me_wb_cards and els2.fork_me_wb_cards.size == 3, what .. "the cards' element after the swap: "
+					.. serpent.line(els2.fork_me_wb_cards))
+				--- shift + click on the cell slot: the fluid cell into the inventory, four card slots again
+				why = cact(1, "shift")
+				expect(why == nil and cinv.is_empty() and pinv.get_item_count("me-1k-fluid-storage-cell") == 1 and #kinv == 4,
+					what .. "the fluid cell out by shift + click: " .. tostring(why) .. ", " .. #kinv .. " card slots")
+				pinv.clear()
+				cursor.clear()
+				wbdone = true
+			end
+		end
 		g("stand_in_close_window", "blockinv", false)
 		g("stand_in_forget", "blockinv")
 		pinv.destroy()
 		hold.destroy()
 		me_report("BLOCKINV", "ME windows: block slots as inventory elements", problems, table.concat(done, ", ")
 			.. ": the element, a wrong item refused by click and right click, a card by click and right click, shift, control, remote view; "
-			.. "issue #550: " .. table.concat(done2, ", ") .. ": the element, a wrong item refused, slot 2 refuses, in and out")
+			.. "issue #550: " .. table.concat(done2, ", ") .. ": the element, a wrong item refused, slot 2 refuses, in and out"
+			.. (wbdone and "; issue #579: the workbench's cell and cards elements, the card rules by click, right click, shift and control, "
+				.. "the cards' element following the cell" or ""))
 	end
 
 	function T.running(check) check(storage.blockinv and storage.blockinv.done, "ME windows: block slots as inventory elements") end
