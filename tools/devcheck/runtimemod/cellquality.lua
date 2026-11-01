@@ -63,7 +63,7 @@ return function(H)
 			remote.call(WB, "set_partition_slot", wb, 1, "iron-plate")
 			inv[2].set_stack{ name = "me-inverter-card", count = 1 }
 			remote.call(WB, "card_click", wb, 1, inv[2], inv, false)
-			local inside = remote.call(WB, "inventory", wb)[1]
+			local inside = remote.call(WB, "inventories", wb).cell[1]
 			expect(quality_of(inside) == q, "in the workbench after a partition and a card: " .. quality_of(inside))
 			hand.clear()
 			remote.call(WB, "cell_click", wb, hand, inv, false)

@@ -227,6 +227,12 @@ function M.owned_count(net, it)
 	return held(own.storage, it) + provided(own, it)
 end
 
+--- issue #617: the unit numbers of the owned chests of logistic network `net` ({ unit -> true }), or nil while none is owned
+function M.owned_units(net)
+	local own = owned_in(net)
+	return own and own.units or nil
+end
+
 --- issue #537: the same for every key at once ({ key -> count }, one get_contents per owned chest; empty while nothing is
 --- owned there)
 function M.owned_contents(net)

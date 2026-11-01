@@ -455,14 +455,16 @@ local function check_unified(st)
 			"storage bus cards after the load: " .. serpent.line(inv and inv.get_contents()) .. " " .. serpent.line(bi and bi.cards))
 		local WB = "gregtorio-me-workbench"
 		local wb = at("me-cell-workbench", 20.5, 8.5)
-		local winv = wb and remote.call(WB, "inventory", wb)
+		--- issue #579: the one inventory of before became two, the cell's (one slot) and the cards' (the 4k item cell's 4)
+		local winv = wb and remote.call(WB, "inventories", wb)
 		local wi = wb and remote.call(WB, "info", wb)
-		local cell = winv and winv[1]
+		local cell = winv and winv.cell[1]
+		local cards = winv and winv.cards
 		local tagged = cell and cell.valid_for_read and cell.is_item_with_tags and cell.tags.fork_me_cell
-		expect(winv and #winv == 5 and cell.valid_for_read and cell.name == "me-4k-storage-cell" and tagged and not tagged.cards
-			and winv.get_item_count("me-inverter-card") == 1 and winv.get_item_count("me-overflow-destruction-card") == 1
+		expect(winv and #winv.cell == 1 and #cards == 4 and cell.valid_for_read and cell.name == "me-4k-storage-cell" and tagged
+			and not tagged.cards and cards.get_item_count("me-inverter-card") == 1 and cards.get_item_count("me-overflow-destruction-card") == 1
 			and wi.cell and wi.cell.inverted and wi.cell.void and serpent.line(wi.cell.partition) == serpent.line({ "wood" }),
-			"workbench after the load: " .. serpent.line(winv and winv.get_contents()) .. " " .. serpent.line(wi and wi.cell))
+			"workbench after the load: " .. serpent.line(cards and cards.get_contents()) .. " " .. serpent.line(wi and wi.cell))
 	end
 	--- me-network issue #481: the old save's damaged key loads as it was, a stack of the same health stored now joins it (the key
 	--- of a damaged plain item did not change), the terminal names its health and it comes out at its health
