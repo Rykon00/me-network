@@ -14,8 +14,9 @@
 ---   5 gears) to the ME network, whose drive has 10 copper plates and no gears; requesters want 20 of each. The stock comes
 ---   from the drive only (10 copper plates; no gears): what the bus shows is the base's own.
 --- * Q (logistic robots, issue #617): an export bus and a requester of the base both wait for 10 copper cable that nobody
----   has; the block asks for it before it exists (the request stands while the bus waits). At tick TQ 10 copper cable
----   appear in a storage chest of the base: the waiting ME block gets them first (the bus's chest 10, the requester 0).
+---   has. At tick TQ 10 copper cable appear in a storage chest of the base; the engine reserves them for the requester at
+---   once, but the block takes them straight out of the chest before a robot arrives: the waiting ME block gets them first
+---   (the bus's chest 10, the requester 0, the storage chest 0).
 --- The save at tick 500 lies between the checks; the scan's state and the stock are in `storage`. Loaded by control.lua.
 
 local NET, LIF, IO = "gregtorio-me-network", "gregtorio-me-logistic-interface", "gregtorio-me-io"
@@ -24,7 +25,7 @@ local NAME = "me-logistic-interface"
 local X = { J = 0, L = 200, M = 400, N = 600, P = 800, Q = 1000 }
 local GEAR, GEAR_RECIPE = "iron-gear-wheel", "iron-gear-crafting-table"   -- (as lif.lua: the stand-in or Gregtorio's)
 local T1, T2 = 420, 1150    -- (the checks; the save at 500 lies between them)
-local TQ = 360              -- (Q: the copper cable appears, after the block's request stands)
+local TQ = 360              -- (Q: the copper cable appears, after the bus waits)
 
 local function surface()
 	local s = game.surfaces[SURFACE]
@@ -183,13 +184,7 @@ return function(H)
 		local function info(l) return remote.call(LIF, "info", l) or {} end
 		local function chests(l) return remote.call(LIF, "chests", l) or {} end
 		local le = find(NAME, X.L + 15.5, 3.5)
-		--- Q: the block's request stands before the copper cable exists; then it appears in the base's storage chest
-		if tick >= TQ - 30 and st.q_asked == nil then
-			local lq = find(NAME, X.Q + 4.5, 3.5)
-			local asked = 0
-			for _, a in ipairs(info(lq).auto_list or {}) do if a.key == "copper-cable" then asked = a.asked end end
-			st.q_asked = asked
-		end
+		--- Q: the copper cable appears in the base's storage chest while the bus and the requester wait
 		if tick >= TQ and not st.q_put then
 			st.q_put = tick
 			local qc = find("storage-chest", X.Q - 4.5, 6.5)
@@ -258,10 +253,10 @@ return function(H)
 			.. n(chests(le).provider, "pipe") .. ", the network " .. count(le, "pipe"))
 		--- Q: the waiting ME block first (issue #617)
 		local qch, qrq = find("iron-chest", X.Q + 8.5, 4.5), find("requester-chest", X.Q - 8.5, 9.5)
-		expect((st.q_asked or 0) > 0, "Q: the block did not ask for copper cable while the bus waited and the base had none ("
-			.. tostring(st.q_asked) .. ")")
-		expect(n(qch, "copper-cable") == 10 and n(qrq, "copper-cable") == 0, "Q: the export bus's chest " .. n(qch, "copper-cable")
-			.. ", the base's requester " .. n(qrq, "copper-cable") .. " copper cable (want 10 and 0: the waiting ME block first)")
+		local qsc = find("storage-chest", X.Q - 4.5, 6.5)
+		expect(n(qch, "copper-cable") == 10 and n(qrq, "copper-cable") == 0 and n(qsc, "copper-cable") == 0, "Q: the export bus's "
+			.. "chest " .. n(qch, "copper-cable") .. ", the base's requester " .. n(qrq, "copper-cable") .. ", the storage chest "
+			.. n(qsc, "copper-cable") .. " copper cable (want 10, 0, 0: the waiting ME block first)")
 		--- N: the export bus got what it waited for
 		local ch = find("iron-chest", X.N + 8.5, 4.5)
 		expect(n(ch, "copper-cable") == 30 and n(find("storage-chest", X.N - 4.5, 6.5), "copper-cable") == 0, "N: the export bus's "
