@@ -45,8 +45,10 @@
 ---               reserve goes back. Unknown items (their mod is gone) are counted, not offered; a stock that does not fit
 ---               the provider's free slots is left out, the largest unmet keys first.
 ---       asks    for what ME blocks wait for: the keys of net.wait_in (but the interfaces') and AC.waiting_needs, one stack
----               each, and only while the logistic network holds them outside the ME-owned chests (the second section, as
----               #532; in Automatic mode it asks whatever the switch "auto" says).
+---               each, for as long as they wait, also while the logistic network does not hold the key (issue #617: the
+---               request then stands when the item appears, so a requester of the base does not reserve it first and a
+---               waiting ME block gets it first); not while ME-owned chests hold the key (robots would only carry ME's
+---               own stock around). The second section, as #532; in Automatic mode it asks whatever the switch "auto" says.
 ---     The scan: a pass per logistic network with an automatic block, one after the other; its first automatic block by
 ---     unit number leads, a stock goes to the automatic block nearest to the point with the largest open demand of the key
 ---     (ties by unit number). A pass reads the points' filters (the setting "points per tick", default 2, about 25 us each;
@@ -642,7 +644,9 @@ local function auto_request(rec, net, ln)
 			local r = rec.request[i]
 			if r then own[row_key(r)] = true end
 		end
-		--- issue #537: in Automatic mode one stack at most, and only what the logistic network holds outside the ME-owned chests
+		--- issue #537: in Automatic mode one stack at most. Issue #617: the request stands while the ME blocks wait, whatever
+		--- the logistic network holds now (a request made only once the base held the key came after the base's requesters,
+		--- which had reserved it already); only ME-owned chests holding the key cap it (that stock is ME's own).
 		local auto = rec.mode == "auto"
 		local function add(key, need)
 			if own[key] or N.is_fluid_key(key) or key:find("#", 1, true) then return end
@@ -655,7 +659,8 @@ local function auto_request(rec, net, ln)
 			end
 			if auto then
 				local it = item(name, q)
-				local supply = ln and ln.get_item_count(it) - L.owned_count(ln, it) or 0
+				local owned = ln and L.owned_count(ln, it) or 0
+				local supply = owned > 0 and (ln.get_item_count(it) - owned) or need
 				need = math.min(need, supply, prototypes.item[name].stack_size)
 				if need <= 0 then return end
 			end
