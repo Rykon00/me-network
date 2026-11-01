@@ -1217,13 +1217,13 @@ RUNTIME_TESTS = (
 SAVELOAD_TICK = 500             # the runtime map is saved at this tick of a server run and loaded again (issue #38)
 
 
-def free_port():
-    """a TCP port of 127.0.0.1 that nothing listens on now (the OS picks it). The save-and-load server takes one for
-    RCON and one for the game per run (issue #612: a fixed port let two harness runs side by side, from two worktrees
+def free_port(kind=None):
+    """a port of 127.0.0.1 that nothing is bound to now (the OS picks it; `kind` socket.SOCK_DGRAM for the game's UDP
+    port, TCP else). The save-and-load server takes one for RCON and one for the game per run (issue #612: a fixed port let two harness runs side by side, from two worktrees
     or this repository's and Gregtorio's harness, talk to each other's server); ME_DEVCHECK_RCON_PORT fixes the RCON
     port instead."""
     import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    with socket.socket(socket.AF_INET, kind or socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
@@ -1282,7 +1282,7 @@ def saveload(mapfile, ticks, extra_args=()):
     start = WORK / "saveload-start.zip"                 # (a copy: the server saves the map back when it quits)
     shutil.copy2(mapfile, start)
     rcon_port = int(os.environ["ME_DEVCHECK_RCON_PORT"]) if os.environ.get("ME_DEVCHECK_RCON_PORT") else free_port()
-    game_port = free_port()
+    game_port = free_port(socket.SOCK_DGRAM)          # (the game's port is UDP)
     password = "devcheck-" + os.urandom(6).hex()          # (so an RCON client can never reach another run's server)
     with open(server_log, "w", encoding="utf-8") as out:
         proc = subprocess.Popen([str(binary), "--mod-directory", str(MODS), "--start-server", str(start),
