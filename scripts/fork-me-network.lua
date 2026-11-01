@@ -670,12 +670,17 @@ function remove_node_graph(s, unit)
 		end
 		return
 	end
-	--- the rest keeps the network (and its id, the largest part); every other part becomes a new network
+	M.split_off(s, net, parts, { unit }, not M.STATUS_KINDS[node.kind])
+end
+
+--- The parts `parts` (lists of units, from split_parts) leave `net` and become new networks; the rest keeps the network (and its
+--- id, the largest part). `leaving`: units whose cells leave the rest's index besides the drives and storage buses of the parts
+--- (a removed member's); `light`: no controller left so far (a removed member was none; issue #573: an edge removal). (Fields of
+--- M, not locals: the file is at Lua's 200 locals.)
+function M.split_off(s, net, parts, leaving, light)
 	local moved
 	--- (light: no controller leaves; the drives and storage buses that leave, the member removed among them, take their cells out
 	--- of the rest's index one by one instead of the rest being computed again)
-	local light = not M.STATUS_KINDS[node.kind]
-	local leaving = { unit }
 	for i = 1, #parts do
 		local part = new_net(s, net.surface, net.force)
 		for _, u in ipairs(parts[i]) do
@@ -715,6 +720,42 @@ function remove_node_graph(s, unit)
 			if f then f(m[1]) end
 		end
 	end
+end
+
+--- Issue #573: a graph edge between the registered members `a` and `b` (units) that are no neighbours by place (the wireless
+--- links of a group). Two networks are merged into the larger one (as add_node merges); in one network only the edge is added.
+--- Returns true when the graph changed.
+function M.add_edge(s, a, b)
+	local na, nb = s.nodes[a], s.nodes[b]
+	if not (na and nb) or a == b or na.adj[b] then return false end
+	na.adj[b] = true
+	nb.adj[a] = true
+	if na.net == nb.net then return true end
+	local keep, other = s.nets[na.net], s.nets[nb.net]
+	if other.n > keep.n or (other.n == keep.n and other.id < keep.id) then keep, other = other, keep end
+	for u in pairs(other.nodes) do
+		keep.nodes[u] = true
+		keep.n = keep.n + 1
+		s.nodes[u].net = keep.id
+	end
+	take_waits(keep, other)                            -- (issue #38: its parked endpoints keep their wake)
+	s.nets[other.id] = nil
+	changed(s, keep)
+	return true
+end
+
+--- Issue #573: the graph edge between `a` and `b` goes; when they are no longer connected (one split search from the two ends,
+--- split_parts), the smaller side becomes a network of its own (split_off). Returns true when the graph changed.
+function M.remove_edge(s, a, b)
+	local na, nb = s.nodes[a], s.nodes[b]
+	if not (na and nb and na.adj[b]) then return false end
+	na.adj[b] = nil
+	nb.adj[a] = nil
+	local net = s.nets[na.net]
+	if not net then return true end
+	local parts = split_parts(s, { a, b }, net.n)
+	if #parts > 0 then M.split_off(s, net, parts, {}, true) end
+	return true
 end
 
 --- Unregister a member (the entity may already be invalid). The drive's cells are handled by the caller. The
@@ -5052,8 +5093,9 @@ function M.drop_wlinks(s, unit)
 end
 
 --- The edges among the links `units` (unit numbers) become `edges` ({ { a, b } } pairs of them); an edge of one of them to a link
---- outside the list goes. Only the links whose edges changed (and the ones that lost an edge) are registered again, in unit
---- order. Returns true when the graph changed.
+--- outside the list goes. Issue #573: edge by edge (add_edge, remove_edge), the new edges first, so a removed edge mostly finds the
+--- other path at once and splits nothing; in unit order. An edge of a link that is no member (not built yet, its entity gone)
+--- is only kept in `s.wlinks` (add_node reads it). Returns true when the graph changed.
 function M.set_wlinks(units, edges)
 	local s = state()
 	s.wlinks = s.wlinks or {}
@@ -5065,35 +5107,43 @@ function M.set_wlinks(units, edges)
 			want[e[2]][e[1]] = true
 		end
 	end
-	local dirty = {}
-	for _, u in ipairs(units) do
+	local sorted = {}
+	for _, u in ipairs(units) do sorted[#sorted + 1] = u end
+	table.sort(sorted)
+	local add, drop = {}, {}
+	for _, u in ipairs(sorted) do
 		local old, new = s.wlinks[u] or M.NONE, want[u]
-		local same = true
-		for k in pairs(old) do if not new[k] then same = false break end end
-		if same then for k in pairs(new) do if not old[k] then same = false break end end end
-		if not same then
-			dirty[u] = true
-			for _, k in ipairs(M.drop_wlinks(s, u)) do dirty[k] = true end
-		end
+		local list = {}
+		for k in pairs(new) do if not old[k] and (u < k or not want[k]) then list[#list + 1] = k end end
+		table.sort(list)
+		for _, k in ipairs(list) do add[#add + 1] = { u, k } end
+		list = {}
+		for k in pairs(old) do if not new[k] and (u < k or not want[k]) then list[#list + 1] = k end end
+		table.sort(list)
+		for _, k in ipairs(list) do drop[#drop + 1] = { u, k } end
 	end
-	if next(dirty) == nil then return false end
-	for u in pairs(dirty) do
-		for k in pairs(want[u] or M.NONE) do
-			s.wlinks[u] = s.wlinks[u] or {}
-			s.wlinks[k] = s.wlinks[k] or {}
-			s.wlinks[u][k], s.wlinks[k][u] = true, true
-			dirty[k] = true
-		end
-	end
-	local list = {}
-	for u in pairs(dirty) do list[#list + 1] = u end
-	table.sort(list)
-	for _, u in ipairs(list) do
+	if #add == 0 and #drop == 0 then return false end
+	local function member(u)
 		local node = s.nodes[u]
-		if node and node.entity.valid then
-			remove_node_graph(s, u)
-			add_node(s, node.entity, node.kind)
+		return node and node.entity.valid
+	end
+	for _, e in ipairs(add) do
+		local a, b = e[1], e[2]
+		s.wlinks[a] = s.wlinks[a] or {}
+		s.wlinks[b] = s.wlinks[b] or {}
+		s.wlinks[a][b], s.wlinks[b][a] = true, true
+		if member(a) and member(b) then M.add_edge(s, a, b) end
+	end
+	for _, e in ipairs(drop) do
+		local a, b = e[1], e[2]
+		for _, p in ipairs({ { a, b }, { b, a } }) do
+			local set = s.wlinks[p[1]]
+			if set then
+				set[p[2]] = nil
+				if next(set) == nil then s.wlinks[p[1]] = nil end
+			end
 		end
+		if s.nodes[a] and s.nodes[b] then M.remove_edge(s, a, b) end
 	end
 	return true
 end
