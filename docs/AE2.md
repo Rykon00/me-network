@@ -318,7 +318,7 @@ click uses the tool and opens no window, as on a chest.
 | Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
 | ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
-| ME Interface | the priority, 4 card slots (up to 3 Interface Capacity Cards: 9 more config rows each; a Crafting Card, issue #411, with a line for its last request), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount, temperature, a fill bar and what its pipes hold too), status, **Open inventory** (the container's own window, once) |
+| ME Interface | the priority, 4 card slots (up to 3 Interface Capacity Cards: 9 more config rows each; a Crafting Card, issue #411, with a line for its last request), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount it and its pipes hold, temperature, a fill bar and what its tank alone holds), status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, a line for the Crafting Card's last request (export bus, issue #411) and its **Craft only** checkbox (issue #426, shown while the card is in), the entity it faces and whether the bus uses its items, fluids or both, status |
 | ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
@@ -374,15 +374,17 @@ confirm key), right click empties the row; no virtual signal can be chosen.
 * **Fluids** (issue #3 of ME Network; before, the ME Fluid Interface did this): pipes, pumps and tanks connect to
   any of the four sides. Each side is set in the window to **Import** (the default: everything piped in, the whole
   pipe network up to the next pump, goes into the network), **Off** (neither), or a **fluid row**: the network keeps
-  that side's tank filled with the row's fluid up to the row's amount (at most 5000 units; pipes connected without a
-  pump share the level with the tank). A new fluid row takes the first import side that has a pipe (else the first
+  that side filled with the row's fluid up to the row's amount, counted over the side's tank and the pipes connected to
+  it without a pump together (at most 5000 units, one tank's volume; with a long pipe behind the side the tank is only
+  partly full). What they hold beyond the amount (it was lowered) goes back into the network. A new fluid row takes the first import side that has a pipe (else the first
   import side); several sides can keep the same row. A side holds one fluid, so **up to four fluids at once** (AE2's
   interface holds 9 fluids; a 1x1 block has four sides). A fluid row that no side keeps does nothing. An import side
   whose pipes run round to an export side of the same interface imports nothing (no pumping in a circle).
   The window lists the fluids its sides hold (issue #311 of ME Network), one entry per side (a fluid in two sides is two
-  entries: each side has a tank of its own): the fluid with the game's tooltip, the amount of the side's volume with a
-  bar, its temperature when not the default, and what the tank and its pipes hold together when the pipes hold some
-  too. An import side shows its fluid only until it is imported (then it is in the network, and the side is empty).
+  entries: each side has a tank of its own): the fluid with the game's tooltip, the amount the side and its pipes hold
+  together (what a row counts) of the side's volume with a bar, its temperature when not the default, and what the
+  tank alone holds of it when the pipes hold some too. An import side shows its fluid only until it is imported (then
+  it is in the network, and the side is empty).
   Pointed at in the world, its tooltip lists them too (issue #322: the interface's status line, "Sides: [fluid]
   amount/volume ...", refreshed once a second while someone points at it).
 * Mined, the fluid in its sides goes into the network; destroyed, it is lost like a tank's. Interfaces of saves from

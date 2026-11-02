@@ -1859,16 +1859,18 @@ local function side_choices(d, side)
 end
 
 --- Issue #311: the sides that hold fluid, in side order (a fluid in two sides is two entries: each side has a tank of
---- its own): { side, key (with its temperature when not the default), name, amount, fill (0..1 of the side's volume),
---- segment (what its tank and pipes hold together; nil when that is no more than the tank, or nothing is connected) }
+--- its own): { side, key (with its temperature when not the default), name, amount (issue #626: what its tank and pipes
+--- hold together, the amount a fluid row counts), fill (0..1 of the side's volume, the most a row keeps), tank (what its
+--- tank holds of it; nil when the pipes hold none, or nothing is connected) }
 function M.interface_fluid_entries(d)
 	local out = {}
 	for s = 1, io.SIDES do
 		local f = d.fluids[s]
 		if f and f.name and prototypes.fluid[f.name] then
-			out[#out + 1] = { side = s, key = N.fluid_key(f.name, f.temperature), name = f.name, amount = f.amount,
-				fill = d.volume > 0 and math.min(1, f.amount / d.volume) or 0,
-				segment = f.connected and f.segment and f.segment > f.amount + 1 and f.segment or nil }
+			local pipes = f.connected and f.segment and f.segment > f.amount + 1
+			local amount = pipes and f.segment or f.amount
+			out[#out + 1] = { side = s, key = N.fluid_key(f.name, f.temperature), name = f.name, amount = amount,
+				fill = d.volume > 0 and math.min(1, amount / d.volume) or 0, tank = pipes and f.amount or nil }
 		end
 	end
 	return out
@@ -1904,12 +1906,12 @@ local function refresh_interface_fluids(frame, d)
 		local s = e.side
 		local b = G.find(box, "fork_me_if_fluid_" .. s)
 		if b then
-			local pipes = e.segment and { "fork-me-gui.interface-fluid-pipes", G.fmt(e.segment) } or ""
+			local tank = e.tank and { "fork-me-gui.interface-fluid-tank", G.fmt(e.tank) } or ""
 			G.slot_amount(b, e.key, e.amount, { "", "\n", { "fork-me-gui.interface-fluid-tooltip",
-				{ "fork-me-gui.interface-side-" .. SIDE_NAMES[s] }, G.fmt(d.volume) }, e.segment and "\n" or "", pipes })
+				{ "fork-me-gui.interface-side-" .. SIDE_NAMES[s] }, G.fmt(d.volume) }, e.tank and "\n" or "", tank })
 			G.find(box, "fork_me_if_fbar_" .. s).value = e.fill
 			G.find(box, "fork_me_if_ftext_" .. s).caption = { "", { "fork-me-gui.interface-fluid-fill", (G.fluid_label(e.key)),
-				G.fmt(e.amount), G.fmt(d.volume), percent(e.fill) }, e.segment and "\n" or "", pipes }
+				G.fmt(e.amount), G.fmt(d.volume), percent(e.fill) }, e.tank and "\n" or "", tank }
 		end
 	end
 end
@@ -1963,9 +1965,11 @@ function M.refresh_interface(player, frame)
 		local f = d.fluids[s]
 		local label = G.find(frame, "fork_me_if_side_" .. s)
 		if label then
-			--- issue #311: short (the fluid's icon and how full the tank is), the amounts are in the fluid section below
+			--- issue #311: short (the fluid's icon and how full the side is: issue #626, its tank and pipes, as a row counts
+			--- them), the amounts are in the fluid section below
 			local proto = f.name and prototypes.fluid[f.name]
-			local holds = proto and { "fork-me-gui.interface-side-holds", f.name, percent(math.min(1, f.amount / d.volume)) }
+			local held = f.connected and math.max(f.amount, f.segment or 0) or f.amount
+			local holds = proto and { "fork-me-gui.interface-side-holds", f.name, percent(math.min(1, held / d.volume)) }
 				or { "fork-me-gui.interface-side-empty" }
 			label.caption = { "", holds, f.connected and "" or { "fork-me-gui.interface-side-unconnected" } }
 			label.tooltip = f.status and { "fork-me-gui.interface-side-status-" .. f.status } or nil

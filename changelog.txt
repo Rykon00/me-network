@@ -1,4 +1,8 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.12
+  Bugfixes:
+    - ME Interface: a side tied to a fluid row now counts what its tank and the pipes behind it hold together (issue #626). Before, only the tank counted, so a row of 5000 with pipes behind the side took far more than 5000 from the network and filled every pipe. A side that holds more than its row (the amount was lowered, or the pipes were over-filled before this update) gives the surplus back to the network, as item rows do; when the network has no room, the side says so and gives it back once there is. The window's amount and "holds x %" count the tank and its pipes too, with what the tank alone holds below.
+---------------------------------------------------------------------------------------------------
 Version: 0.5.11
 Date: 2026-11-01
   Features:
