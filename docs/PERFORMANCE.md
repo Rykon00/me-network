@@ -4381,4 +4381,4 @@ ms): the engine builds a display panel with its wire connectors where it built a
 1.05, the same.
 
 A save of 0.5.11 is converted once at its first load (every bus and provider built anew and its state moved, the old
-connectors handed over); the migrate test's save of a few dozen blocks does it within the load tick.
+connectors handed over, in on_configuration_changed); how long that takes for a large save was not measured.
