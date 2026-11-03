@@ -4353,3 +4353,32 @@ empty storage tank of 25 000 with no consumer. Before, a row of 5000 kept going 
 each of them took 30 000 (the bug); now it takes 5000. The drop, about 35 000 per second at 1000 over the 60 s window
 (2.1 million; the scene has 100 such sinks, up to 25 000 more each) and five times that at 5000, is that over-fill. Script time and allocation are
 within the noise.
+
+## The blocks take circuit wires themselves (issue #628)
+
+The ME Import, Export and Storage Bus and the ME Pattern Provider are display panels, the ME Interface a container with a
+circuit connector; the hidden connector of issue #412 is gone. A block without a condition, pulse mode, rows from the
+circuit or a circuit lock still has no record in the check list and costs nothing per tick, wired or not; a listed block's
+check reads its own wires (`get_signal` on red and green, `get_circuit_network` for the wire check) instead of a lamp's
+control behavior. The build handler asks one table more (`scripts/fork-me-wired.lua`: is it an old block or its ghost) and
+the connector module looks for an old connector's ghost waiting at the block's place only while one waits.
+
+`bench --check origin/main --sizes 1000,5000` (three rounds in turns; the scenes have no condition):
+
+| | origin/main | #628 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.368 / 2.05 | 0.368 / 2.07 |
+| 5000: script avg / p99 (ms) | 0.959 / 2.93 | 0.969 / 2.99 (rounds 0.965, 1.016, 0.969) |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.71 / 61.79 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+| burst build / remove ms (1000) | 82.3 / 79.2 | 86.5 / 81.2 |
+| burst build / remove ms (5000) | 89.9 / 84.7 | 95.5 / 79.0 |
+| load first tick ms (1000 / 5000) | 3.24 / 6.71 | 3.27 / 7.31 |
+
+No regression beyond the noise; the build burst is about 5 % slower in both sizes (within the noise of the check, ±3 to 4
+ms): the engine builds a display panel with its wire connectors where it built a simple entity. `bench --sizes 5000 --idle
+--runs 3` of each (one after the other): the idle 5000 scene 0.361 ms (origin/main) against 0.347 ms, p99 1.07 against
+1.05, the same.
+
+A save of 0.5.11 is converted once at its first load (every bus and provider built anew and its state moved, the old
+connectors handed over); the migrate test's save of a few dozen blocks does it within the load tick.
