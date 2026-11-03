@@ -58,8 +58,10 @@ local fork_lif = require("scripts.fork-me-logistic-interface")
 local fork_lc = require("scripts.fork-me-logistic-construction")   -- (issue #538)
 --- issue #385: the ME Quantum Bridge (two networks joined at any distance and across surfaces)
 local fork_qbridge = require("scripts.fork-me-qbridge")
---- issue #412: the circuit connector of the buses and the ME Interface
+--- issue #412: the circuit condition of the buses, the ME Interface and the provider (issue #628: on the blocks' own wires)
 local fork_conn = require("scripts.fork-me-connector")
+--- issue #628: the old buses and pattern providers (simple entities, renamed `<name>-legacy`) become the wired ones
+local wired = require("scripts.fork-me-wired")
 --- issue #527: settings paste of the ME Quantum Bridge and the ME Wireless Link by the mod's own copy and paste keys
 local paste_keys = require("scripts.fork-me-paste-keys")
 --- ME Cable dragged across an obstacle becomes a pair of underground cables (like belts)
@@ -75,6 +77,7 @@ fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_wl.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_ioport.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_qbridge.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_lif.tag_blueprint
+fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_conn.tag_blueprint   -- (issue #628: the circuit condition)
 
 --- issue #558: the player who built an entity by hand (nil for robots, platforms and scripts); issue #590: the blocks with
 --- card slots take the cards of a blueprint from its inventory first, as the provider takes its patterns
@@ -84,6 +87,8 @@ local function builder(event)
 end
 
 local function on_built(entity, tags, event)
+	entity = wired.on_built(entity)                           -- (issue #628: an old bus or provider, or its ghost, first)
+	if not entity then return end
 	local player = builder(event)
 	fork_net.on_built(entity, event)
 	fork_io.on_built(entity, tags, nil, player)               -- (any other entity: the buses facing it wake)
@@ -101,7 +106,7 @@ local function on_built(entity, tags, event)
 	fork_lif.on_built(entity, tags, nil, player)              -- (issue #531; its hidden chests)
 	fork_lc.on_built(entity)                                  -- (issue #538: a ghost or proxy in an automatic network)
 	fork_qbridge.on_built(entity, tags)
-	fork_conn.on_built(entity)                                -- (issue #412: a block's connector; a connector's ghost revived)
+	fork_conn.on_built(entity, tags)                          -- (issues #412, #628: the condition; an old connector hands over)
 	cabledrag.on_built(entity, event)                         -- (last: a dragged cable may become an underground end)
 end
 
@@ -130,7 +135,7 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 	fork_ioport.on_built(event.destination, nil, event.source)   -- (a cloned port is empty: its cells are items)
 	fork_lif.on_built(event.destination, nil, event.source)      -- (issue #531: a cloned hidden chest goes to its block)
 	fork_qbridge.on_built(event.destination, nil, event.source)
-	fork_conn.on_built(event.destination, event.source)
+	fork_conn.on_built(event.destination, nil, event.source)
 end)
 
 --- the priority of an ME Pattern Provider (its patterns travel in blueprints, see fork-me-autocraft.lua) and the
@@ -175,6 +180,7 @@ pasteover.apply = function(entity, tags, player)
 	if tags.fork_me_io_port then fork_ioport.on_built(entity, tags, nil, player) end
 	if tags.fork_me_logistic_interface then fork_lif.on_built(entity, tags, nil, player) end
 	if tags.fork_me_qbridge or tags.fork_me_wireless_link then fork_qbridge.on_built(entity, tags) end
+	if tags[fork_conn.TAG] then fork_conn.apply_tag(entity, tags) end   -- (issue #628: the circuit condition)
 end
 script.on_event(defines.events.on_pre_build, function(event)
 	cabledrag.on_pre_build(event)
@@ -189,7 +195,7 @@ end)
 local REMOVED_FILTER = {}
 --- (logistic chests, infinity chests and cargo wagons: the inventory of a storage bus leaves the network at once; pipes,
 --- underground pipes and pumps: a removed one may split the fluid segment of a storage bus on fluid)
-for _, t in pairs({ "simple-entity-with-force", "storage-tank", "lamp", "electric-energy-interface", "container",
+for _, t in pairs({ "simple-entity-with-force", "display-panel", "storage-tank", "lamp", "electric-energy-interface", "container",
 	"constant-combinator", "assembling-machine", "furnace", "logistic-container", "infinity-container", "cargo-wagon", "fluid-wagon", "pipe", "pipe-to-ground",
 	"pump" }) do
 	REMOVED_FILTER[#REMOVED_FILTER + 1] = { filter = "type", type = t }
@@ -306,6 +312,7 @@ end
 script.on_init(function()
 	if handover_pending() then refuse_old_save(nil) end
 	handover.pull()
+	wired.migrate()                                           -- (issue #628: old buses and providers, before the graph)
 	fork_net.migrate_underground_direction()                  -- (a handed-over save's underground cables, before the graph)
 	fork_me.on_init()
 end)
@@ -322,6 +329,9 @@ script.on_configuration_changed(function(data)
 		end
 	end
 	handover.pull()
+	--- issue #628: the old buses and pattern providers become the wired ones, their state moved to the new units, before
+	--- anything rebuilds from the records
+	wired.migrate()
 	--- issue #503: the keys of items that no longer exist (a mod removed or renamed them; a JSON migration renames items in the
 	--- engine's inventories only), mapped onto their replacement (ME_NETWORK.replace_item) or dropped, before anything reads
 	--- them: the cells and storage bus snapshots (the graph rebuild computes the totals and the index from them), the jobs, the
@@ -353,7 +363,7 @@ script.on_configuration_changed(function(data)
 	fork_lif.on_configuration_changed()
 	fork_lc.on_configuration_changed()
 	fork_qbridge.on_configuration_changed()
-	fork_conn.on_configuration_changed()                      -- (issue #412: every bus and interface gets its connector)
+	fork_conn.on_configuration_changed()                      -- (issue #628: old connectors hand their wires to the blocks)
 	paste_keys.on_configuration_changed()
 	names.on_configuration_changed()
 	fork_net.log_removed_items()                              -- (issue #503: ME-REMOVED-ITEM / ME-REPLACED-ITEM, once per name)

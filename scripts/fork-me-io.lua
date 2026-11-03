@@ -2799,6 +2799,20 @@ function M.clean_removed_items()
 	end
 end
 
+--- Issue #628 (scripts/fork-me-wired.lua, before on_configuration_changed): bus `old` (a unit) was replaced by entity `new` at
+--- its place: its record moves to the new unit (the rebuild below keeps it by unit number)
+function M.rekey(old, new)
+	local s = storage.fork_me_io
+	local rec = s and s.recs[old]
+	if not rec then return end
+	local u = new.unit_number
+	s.recs[old], s.recs[u] = nil, rec
+	rec.entity, rec.target = new, nil
+	for i, unit in ipairs(s.list) do if unit == old then s.list[i] = u end end
+	if s.lpos then s.lpos[old], s.lpos[u] = nil, s.lpos[old] end
+	if s.prio and s.prio[old] then s.prio[old], s.prio[u] = nil, s.prio[old] end
+end
+
 --- rebuild the records from the world; filters of buses, the config and sides of interfaces are kept by unit
 --- number; interfaces get their side tanks (an interface of a save from before issue #3: `fresh`)
 function M.on_configuration_changed()
@@ -2821,9 +2835,12 @@ function M.on_configuration_changed()
 				M.set_bus_filters(e, o and (o.keys or o.filters) or {})
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.accel = o.inv, o.cards, o.want, o.where, o.accel end   -- issue #110
 				if o then rec.gtext, rec.gcard = o.gtext, o.gcard M.bus_gf(rec) end                                       -- issue #363
+				--- issue #628: the pulse mode, craft only and the Crafting Card's jobs were lost at every update before
+				if o then rec.pulse, rec.conly, rec.cjobs = o.pulse, o.conly, o.cjobs end
 			end
 			if rec.kind == "interface" then
 				if o then rec.inv, rec.cards, rec.want, rec.where, rec.nrows = o.inv, o.cards, o.want, o.where, o.nrows end   -- issue #196
+				if o then rec.ccfg, rec.cjobs = o.ccfg, o.cjobs end   -- (issue #628: the rows from the circuit were lost at every update)
 				if o and o.config then split_rows(rec, clean_config(o.config)) end
 				if o and o.extra then
 					local all = {}

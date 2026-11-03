@@ -1169,7 +1169,7 @@ RUNTIME_TESTS = (
     ("GROUPBUS", "Group Filter Card on the import and export bus (issue #363)"),
     ("BUSCARDS", "Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)"),
     ("CRAFTCARD", "Crafting Card on the export bus and the interface (issue #411)"),
-    ("CIRCUITBUS", "Circuit connector of the buses and the interface (issue #412)"),
+    ("CIRCUITBUS", "Circuit condition of the buses and the interface (issues #412, #628)"),
     ("BIGCELLS", "Storage cells above 256k and the Singularity cell (issue #414)"),
     ("BIGCPUS", "Crafting storage above 256k and the crafting accelerators (issue #415)"),
     ("PTERMEX", "ME Pattern Terminal Ex (issue #416)"),

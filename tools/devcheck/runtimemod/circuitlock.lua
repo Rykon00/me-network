@@ -7,7 +7,7 @@
 ---   * "low": with K off it is locked; K on, the next batch goes in;
 ---   * "pulse": one batch goes in, then it is locked; K off and on again (a rise), the next batch goes in;
 --- and the settings: the provider's data, its blueprint settings, a blueprint's tag, a settings paste and a clone carry the
---- mode, an unknown mode is off, and the provider gets its connector.
+--- mode, an unknown mode is off, and the provider takes the wire itself (issue #628).
 --- Loaded by control.lua: require("circuitlock")(H) returns { setup, tick, running }.
 
 local AC, NET, CONN = "gregtorio-me-autocraft", "gregtorio-me-network", "gregtorio-me-connector"
@@ -74,21 +74,14 @@ return function(H)
 			remote.call(AC, "set_blocking", s.p, "blocking")
 			remote.call(AC, "set_lock", s.p, "high")
 
-			--- the connector: K's signal A on a red wire, the condition A > 0
-			local cn = remote.call(CONN, "connector", s.p)
-			expect(cn and cn.valid and cn.position.x == s.p.position.x and cn.position.y == s.p.position.y, "the provider has its connector")
+			--- issue #628: K's signal A on a red wire to the provider itself, the condition A > 0
 			local cb = s.k.get_or_create_control_behavior()
 			if cb.sections_count == 0 then cb.add_section() end
 			cb.get_section(1).set_slot(1, { value = { type = SIG.type, name = SIG.name, quality = "normal" }, min = 1 })
 			cb.enabled = false
-			if cn then
-				local w = defines.wire_connector_id.circuit_red
-				cn.get_wire_connector(w, true).connect_to(s.k.get_wire_connector(w, true), false)
-				local ccb = cn.get_or_create_control_behavior()
-				ccb.circuit_enable_disable = true
-				ccb.circuit_condition = { first_signal = SIG, comparator = ">", constant = 0 }
-				remote.call(CONN, "update", s.p)
-			end
+			local w = defines.wire_connector_id.circuit_red
+			expect(s.p.get_wire_connector(w, true).connect_to(s.k.get_wire_connector(w, true), false), "the provider takes a wire")
+			remote.call(CONN, "set_condition", s.p, true, { first_signal = SIG, comparator = ">", constant = 0 })
 
 			--- the settings
 			expect(remote.call(AC, "get_lock", s.p) == "high" and info().lock == "high", "the lock mode is set")

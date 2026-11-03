@@ -196,7 +196,10 @@ part to its state once a second. With an empty view (me-network's own) there is 
 
 The ME Import, Export and Storage Bus show where they work by a marker: the plate on the side they face and their
 arrows. Since issue #282 it is a layer of its own over each direction's picture (`me-<bus>-<direction>-marker.png`,
-the picture's own pixels), so a graphics mod can replace the picture (the first layer) and keep the marker. Where the
+the picture's own pixels), so a graphics mod can replace the picture (the first layer) and keep the marker. Since issue
+#628 the three buses are `display-panel` prototypes (they take circuit wires themselves), so their pictures are the
+`sprites` of `data.raw["display-panel"]["me-import-bus"]` and so on (until 0.5.11 the `picture` of a
+`simple-entity-with-force`; the hidden `me-<bus>-legacy` prototypes keep that for old saves). Where the
 marker is drawn is the mod-data `fork-me-network`'s `bus_view`, the square of the 64 px picture that is the bus's face,
 in px from its top left; me-network's own is `{ x = 0, y = 0, size = 58 }`. A mod whose bus has another face sets it in
 its `data.lua` or `data-updates.lua`:
