@@ -32,6 +32,9 @@ M.SOURCES = {
 	["me-pattern-provider"] = { handler = "fork-me-autocraft", targets = { "me-pattern-provider" } },            -- (issue #80)
 	["me-io-port"] = { handler = "fork-me-ioport", targets = { "me-io-port" } },                                 -- (mode, cards)
 	["me-wireless-access-point"] = { handler = "fork-me-wireless", targets = { "me-wireless-access-point" } },   -- (boosters)
+	--- issue #629: the destination becomes an output of the source's frequency (an unbound source its input first)
+	["me-item-p2p-tunnel"] = { handler = "fork-me-p2p", targets = { "me-item-p2p-tunnel" } },
+	["me-fluid-p2p-tunnel"] = { handler = "fork-me-p2p", targets = { "me-fluid-p2p-tunnel" } },
 	--- the resource, the lock and the unit, between any two of the three kinds
 	["me-storage-monitor"] = { handler = "fork-me-monitor", targets = MONITORS },
 	["me-conversion-monitor"] = { handler = "fork-me-monitor", targets = MONITORS },

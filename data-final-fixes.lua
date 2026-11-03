@@ -187,7 +187,7 @@ do
 				m.shift = { (bview.x + bview.size / 2) / 64 - 0.5, (bview.y + bview.size / 2) / 64 - 0.5 }
 			end
 		end
-		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus" }) do
+		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-item-p2p-tunnel", "me-fluid-p2p-tunnel" }) do   -- (issue #629: the tunnels)
 			local e = data.raw["simple-entity-with-force"][name]
 			for _, dir in pairs({ "north", "east", "south", "west" }) do
 				place(e and e.picture and e.picture[dir] and e.picture[dir].layers)

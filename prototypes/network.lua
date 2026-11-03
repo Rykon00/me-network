@@ -645,6 +645,39 @@ for _, bus in pairs({ IMPORT_BUS, EXPORT_BUS, STORAGE_BUS }) do
 end
 
 --------------------------------------------------------------------------------
+--- ME P2P TUNNELS (me-network issue #629; AE2-Unofficial's P2P Tunnel - Items and - Fluids, parts/p2p/PartP2PItems.java and
+--- PartP2PLiquids.java): rotatable 1x1 blocks, walked over like the buses, members of the network (the default 4 kW through
+--- the controller). A frequency has one input and any number of outputs of the same kind in the input's network; a pattern
+--- provider that an input faces serves the machines and chests its outputs face (runtime: scripts/fork-me-p2p.lua; guide:
+--- docs/AE2.md "ME P2P Tunnels"). Recipe: AE2-Unofficial's ME P2P Tunnel (recipes/network/parts/tunnels.recipe: 3 iron,
+--- an engineering processor, 3 fluix crystals) with the stand-ins, for both kinds: AE2 attunes an ME P2P tunnel with a chest
+--- or a bucket and uses nothing up, so a recipe turns one kind into the other. Pictures: the casing and, as a layer of its own
+--- placed by the bus view, the plate on the side it faces and the tunnel's mouth (tools/gen_ae2_sprites.py --p2p-tunnels).
+--------------------------------------------------------------------------------
+
+local P2P_TUNNELS = { { name = "me-item-p2p-tunnel", order = "e-p2p-a" }, { name = "me-fluid-p2p-tunnel", order = "e-p2p-b" } }
+for i, t in ipairs(P2P_TUNNELS) do
+	ME.add_item{
+		name = t.name,
+		icon = HD_ICON .. t.name .. ".png",
+		icon_size = 64,
+		subgroup = "fork-me-autocrafting",
+		order = t.order,
+		stack_size = 50,
+		place_result = t.name,
+		recipe = { energy_required = 2, ingredients = I{ "iron-plate", 3, "processing-unit", 1, "copper-cable", 3 } },
+	}
+	block{
+		name = t.name, icon = HD_ICON .. t.name .. ".png", icon_size = 64,
+		description = { "entity-description." .. t.name },
+		extra = { picture = bus_picture(t.name), render_layer = "lower-object", collision_mask = WALKABLE },
+	}
+	--- attuned from the other kind (AE2: a right click with a chest or a bucket)
+	ME.add_recipe{ name = t.name .. "-attune", result = t.name, energy_required = 0.5, ingredients = I{ P2P_TUNNELS[3 - i].name, 1 },
+		subgroup = "fork-me-autocrafting", order = t.order .. "-attune", auto_recycle = false }
+end
+
+--------------------------------------------------------------------------------
 --- ME LOGISTIC STORAGE BUS (me-network issue #506; not in AE2): a 1x1 block that is not rotated; the vanilla logistic
 --- network whose area it stands in is storage of the ME network (its storage chests, in one mode also its provider chests;
 --- runtime: scripts/fork-me-logistic-storagebus.lua). Issue #518: its picture and icon have two layers
@@ -890,6 +923,7 @@ data:extend({ {
 			import_bus = IMPORT_BUS, export_bus = EXPORT_BUS, terminal = "me-terminal",
 			underground = UNDERGROUND, storage_bus = STORAGE_BUS, pattern_terminal = "me-pattern-terminal",
 			logistic_storage_bus = LOGISTIC_STORAGE_BUS,                          -- (issue #506: kind "storage-bus")
+			p2p_item_tunnel = P2P_TUNNELS[1].name, p2p_fluid_tunnel = P2P_TUNNELS[2].name,   -- (issue #629: kind "p2p-tunnel")
 			creative_energy = CREATIVE_ENERGY,                                    -- (issue #442)
 			pattern_terminal_ex = "me-pattern-terminal-ex",                     -- (issue #416)
 			chest = CHEST, interface_terminal = "me-interface-terminal",          -- (issue #336)

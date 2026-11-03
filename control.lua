@@ -66,6 +66,8 @@ local paste_keys = require("scripts.fork-me-paste-keys")
 local cabledrag = require("scripts.fork-me-cabledrag")
 --- issue #561: the ME Memory Card (a selection tool: copy a block's settings, paste them onto blocks of its kind)
 local memcard = require("scripts.fork-me-memorycard")
+--- issue #629: the ME P2P Tunnels (frequencies; a pattern provider serves the machines their outputs face)
+local fork_p2p = require("scripts.fork-me-p2p")
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -75,6 +77,7 @@ fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_wl.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_ioport.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_qbridge.tag_blueprint
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_lif.tag_blueprint
+fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_p2p.tag_blueprint
 
 --- issue #558: the player who built an entity by hand (nil for robots, platforms and scripts); issue #590: the blocks with
 --- card slots take the cards of a blueprint from its inventory first, as the provider takes its patterns
@@ -101,6 +104,7 @@ local function on_built(entity, tags, event)
 	fork_lif.on_built(entity, tags, nil, player)              -- (issue #531; its hidden chests)
 	fork_lc.on_built(entity)                                  -- (issue #538: a ghost or proxy in an automatic network)
 	fork_qbridge.on_built(entity, tags)
+	fork_p2p.on_built(entity, tags)                           -- (issue #629)
 	fork_conn.on_built(entity)                                -- (issue #412: a block's connector; a connector's ghost revived)
 	cabledrag.on_built(entity, event)                         -- (last: a dragged cable may become an underground end)
 end
@@ -130,6 +134,7 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 	fork_ioport.on_built(event.destination, nil, event.source)   -- (a cloned port is empty: its cells are items)
 	fork_lif.on_built(event.destination, nil, event.source)      -- (issue #531: a cloned hidden chest goes to its block)
 	fork_qbridge.on_built(event.destination, nil, event.source)
+	fork_p2p.on_built(event.destination, nil, event.source)   -- (issue #629: the source's frequency and role)
 	fork_conn.on_built(event.destination, event.source)
 end)
 
@@ -150,6 +155,7 @@ script.on_event(defines.events.on_entity_settings_pasted, function(event)
 	fork_ioport.on_entity_settings_pasted(event)
 	fork_lif.on_entity_settings_pasted(event)
 	fork_qbridge.on_entity_settings_pasted(event)
+	fork_p2p.on_entity_settings_pasted(event)                 -- (issue #629: bound as an output of the source's frequency)
 	fork_conn.on_entity_settings_pasted(event)                -- (issue #412: the connector's condition)
 end)
 
@@ -175,6 +181,7 @@ pasteover.apply = function(entity, tags, player)
 	if tags.fork_me_io_port then fork_ioport.on_built(entity, tags, nil, player) end
 	if tags.fork_me_logistic_interface then fork_lif.on_built(entity, tags, nil, player) end
 	if tags.fork_me_qbridge or tags.fork_me_wireless_link then fork_qbridge.on_built(entity, tags) end
+	if tags.fork_me_p2p then fork_p2p.on_built(entity, tags) end                -- (issue #629)
 end
 script.on_event(defines.events.on_pre_build, function(event)
 	cabledrag.on_pre_build(event)
@@ -206,6 +213,7 @@ local function on_mined(event)
 	fork_ioport.on_removed(event.entity, event.buffer)      -- (issue #386: its cells and cards)
 	fork_lif.on_removed(event.entity, event.buffer)         -- (issue #531: its chests into the network, else the buffer)
 	fork_qbridge.on_removed(event.entity)
+	fork_p2p.on_removed(event.entity)
 	fork_conn.on_removed(event.entity)
 	fork_net.on_removed(event.entity, event.buffer)
 end
@@ -223,6 +231,7 @@ local function on_destroyed(event)
 	fork_ioport.on_removed(event.entity, nil)
 	fork_lif.on_removed(event.entity, nil)
 	fork_qbridge.on_removed(event.entity)
+	fork_p2p.on_removed(event.entity)
 	fork_conn.on_removed(event.entity)
 	fork_net.on_removed(event.entity, nil)
 end
@@ -269,11 +278,12 @@ script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
 	if event.setting_type == "runtime-global" then sched.on_setting_changed() end
 end)
 
---- a rotated import, export or storage bus faces another entity
+--- a rotated import, export or storage bus (or ME P2P tunnel, issue #629) faces another entity
 script.on_event(defines.events.on_player_rotated_entity, function(event)
 	fork_io.on_rotated(event.entity)
 	fork_net.on_rotated(event.entity)
 	fork_sbus.on_rotated(event.entity)
+	fork_p2p.on_rotated(event.entity)
 end)
 
 --- Issue #146: saves from before 0.5.0 are no longer converted (the old drives, controller and interface of before the
@@ -353,6 +363,7 @@ script.on_configuration_changed(function(data)
 	fork_lif.on_configuration_changed()
 	fork_lc.on_configuration_changed()
 	fork_qbridge.on_configuration_changed()
+	fork_p2p.on_configuration_changed()                       -- (issue #629)
 	fork_conn.on_configuration_changed()                      -- (issue #412: every bus and interface gets its connector)
 	paste_keys.on_configuration_changed()
 	names.on_configuration_changed()

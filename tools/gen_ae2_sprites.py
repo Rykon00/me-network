@@ -28,6 +28,9 @@ Sources:
     python tools/gen_ae2_sprites.py --bus-markers # only the marker layers of the import, export and storage bus
                                                   # (issue #282: the plate and the arrows alone, drawn over the bus)
     python tools/gen_ae2_sprites.py --fluid-storage-bus # only the ME Fluid Storage Bus, from the R1 PNGs
+    python tools/gen_ae2_sprites.py --p2p-tunnels # only the ME P2P Tunnels for items and fluids (issue #629): the base
+                                                  # and the marker layer of each direction, the icons and the contact
+                                                  # sheet docs/graphics-review/issue-629.png
     python tools/gen_ae2_sprites.py --patterns    # only the blank and encoded pattern icons (issue #80)
     python tools/gen_ae2_sprites.py --unified     # only the ME Interface with its four pipe sides (me-network issue #3)
     python tools/gen_ae2_sprites.py --cards C:/00_Repositories/GT5-Unofficial   # only the upgrade cards (from GT
@@ -1210,6 +1213,83 @@ def logistic_storage_bus_sheet(path):
                 x = 8 + part * (len(buses) * col + 8) + i * col
                 sheet.alpha_composite(img, (x, y0))
                 sheet.alpha_composite(img.resize((32, 32), Image.LANCZOS), (x + 16, y0 + 72))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(path)
+    return path
+
+
+# --- me-network issue #629: the ME P2P Tunnels (items, fluids) ------------------------------------
+# A bus casing (flat: walked over) as the base of each direction, and as a layer of its own the plate on the side the tunnel
+# faces and the tunnel's mouth: two dark rings with the kind in the middle (a crate for items, a drop for fluids) and the
+# fluix light of a P2P link around them. The texture mod can replace the base (AE2's tunnel part) and keep the marker; the
+# file names stay. Drawn facing north, then rotated, like the buses.
+P2P_KINDS = {"me-item-p2p-tunnel": ((230, 160, 60), "item"), "me-fluid-p2p-tunnel": ((80, 150, 245), "fluid")}
+
+
+def p2p_tunnel_marker(accent, kind, direction):
+    """the 32 px marker alone: the plate on the facing side (north before the turn), the mouth and the kind's sign"""
+    img = Image.new("RGBA", (TILE, TILE))
+    d = ImageDraw.Draw(img)
+    d.rectangle((4, 0, TILE - 5, 4), fill=accent + (255,), outline=(40, 40, 48, 255))   # the plate (north)
+    d.ellipse((6, 7, TILE - 7, TILE - 6), fill=(14, 12, 18, 255), outline=FLUIX + (255,), width=2)   # the mouth, its light
+    d.ellipse((10, 11, TILE - 11, TILE - 10), outline=(70, 66, 84, 255), width=1)        # the inner ring
+    d.polygon([(13, 9), (18, 9), (15, 6)], fill=(235, 235, 245, 255))                    # towards the plate
+    turns = {"north": 0, "east": 270, "south": 180, "west": 90}[direction]
+    if turns:
+        img = img.rotate(turns, resample=Image.NEAREST)
+    d = ImageDraw.Draw(img)                         # the kind's sign upright in every direction (the mouth is round)
+    if kind == "item":                              # a crate
+        d.rectangle((13, 13, 18, 18), fill=accent + (255,), outline=(70, 46, 18, 255))
+        d.line((13, 15, 18, 15), fill=(70, 46, 18, 255))
+    else:                                           # a drop
+        d.polygon([(15, 11), (12, 16), (19, 16)], fill=accent + (255,))
+        d.ellipse((12, 14, 19, 20), fill=accent + (255,))
+    return img
+
+
+def p2p_tunnels():
+    """me-network issue #629: for each tunnel and direction the base (the casing's 64 px picture, made like the buses' with
+    hd_block at BUS_DEPTH) and its marker layer (the picture's face, BUS_FACE px); the icon cube with the marker facing
+    south drawn on its front. prototypes/autocrafting.lua draws the marker over the base, placed by the bus view."""
+    HD_ENTITY.mkdir(parents=True, exist_ok=True)
+    HD_ICON.mkdir(parents=True, exist_ok=True)
+    face = casing_ring(load(OUT_ENTITY / "me-interface.png"))
+    images = {}
+    for name, (accent, kind) in P2P_KINDS.items():
+        for direction in ("north", "east", "south", "west"):
+            images[HD_ENTITY / f"{name}-{direction}.png"] = hd_block(face, depth=BUS_DEPTH)
+            images[HD_ENTITY / f"{name}-{direction}-marker.png"] = \
+                hd_up(p2p_tunnel_marker(accent, kind, direction)).resize((BUS_FACE, BUS_FACE), Image.NEAREST)
+        front = face.copy()
+        front.alpha_composite(p2p_tunnel_marker(accent, kind, "south"))
+        images[HD_ICON / f"{name}.png"] = hd_cube(front)
+    for path, img in images.items():
+        img.save(path)
+    return list(images)
+
+
+def p2p_tunnel_sheet(path):
+    """issue #629: the two tunnels in their four directions (base and marker) and their icons, next to the storage bus, at
+    64 px and 32 px, on a dark and a light ground"""
+    pictures = []
+    for name in P2P_KINDS:
+        for direction in ("north", "east", "south", "west"):
+            img = load(HD_ENTITY / f"{name}-{direction}.png").copy()
+            img.alpha_composite(load(HD_ENTITY / f"{name}-{direction}-marker.png"))
+            pictures.append(img)
+        pictures.append(load(HD_ICON / f"{name}.png"))
+    bus = load(HD_ENTITY / "me-storage-bus-north.png").copy()
+    bus.alpha_composite(load(HD_ENTITY / "me-storage-bus-north-marker.png"))
+    pictures.append(bus)
+    col, row_h = 80, 64 + 32 + 24
+    sheet = Image.new("RGBA", (len(pictures) * col + 16, 2 * row_h + 8), (60, 60, 60, 255))
+    for row, ground in enumerate(((60, 60, 60, 255), (170, 170, 170, 255))):
+        y0 = 8 + row * row_h
+        ImageDraw.Draw(sheet).rectangle((0, y0 - 4, sheet.width, y0 + row_h - 8), fill=ground)
+        for i, img in enumerate(pictures):
+            x = 8 + i * col
+            sheet.alpha_composite(img, (x, y0))
+            sheet.alpha_composite(img.resize((32, 32), Image.LANCZOS), (x + 16, y0 + 72))
     path.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(path)
     return path
@@ -2748,6 +2828,10 @@ def main():
                          "the orange marks and its three chests as a layer of their own)")
     ap.add_argument("--fluid-storage-bus", action="store_true",
                     help="only the ME Fluid Storage Bus, derived from the R1 PNGs")
+    ap.add_argument("--p2p-tunnels", action="store_true",
+                    help="only the ME P2P Tunnels for items and fluids (me-network issue #629): the casing as the base of each "
+                         "direction, the plate and the tunnel mouth as a layer of their own, the icons and the contact sheet "
+                         "docs/graphics-review/issue-629.png")
     ap.add_argument("--patterns", action="store_true",
                     help="only the blank and encoded pattern icons (issue #80, drawn with Pillow)")
     ap.add_argument("--cards", type=Path, metavar="GT",
@@ -2813,7 +2897,7 @@ def main():
             or a.patterns or a.unified or a.cards or a.thumbnail or a.sheet or a.crafting_cpu or a.assembler
             or a.sheet_assembler or a.pattern_terminal or a.interface_terminal or a.monitors or a.sheet_pattern_terminal or a.terminal_lit or a.wireless or a.hd or a.chest
             or a.own_icons or a.light or a.bus_markers or a.toggle_emitter or a.io_port or a.quantum_bridge or a.wireless_link
-            or a.logistic_interface):
+            or a.logistic_interface or a.p2p_tunnels):
         ap.error("--gt <checkout>, --fluids, --extras, --r1, --underground, --storage-bus, --logistic-storage-bus, --fluid-storage-bus,"
                  " --patterns, --unified, --cards, --crafting-cpu, --assembler, --terminal-lit, --pattern-terminal, --interface-terminal, --own-icons,"
                  " --thumbnail, --sheet,"
@@ -2907,6 +2991,9 @@ def main():
         print("contact sheet:", logistic_storage_bus_sheet(ROOT / "docs/graphics-review/issue-518.png"))
     if a.gt or a.logistic_interface:            # (issue #531)
         print("ME logistic interface sprites:", len(logistic_interface()))
+    if a.gt or a.p2p_tunnels:                   # (issue #629; after hd_batch2, whose bus depth it shares)
+        print("ME P2P tunnel sprites:", len(p2p_tunnels()))
+        print("contact sheet:", p2p_tunnel_sheet(ROOT / "docs/graphics-review/issue-629.png"))
     if a.gt or a.own_icons:
         print("contact sheet:", own_icons_sheet(ROOT / "docs/graphics-review/own-icons-238.png"))
     if a.gt or a.thumbnail:

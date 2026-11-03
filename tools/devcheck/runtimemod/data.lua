@@ -136,6 +136,30 @@ do
 			results = { { type = "item", name = "zz-devcheck-hot-token", amount = 1 } } } })
 end
 
+--- me-network issue #629 (p2p.lua): a machine of its own category without power needs (an assembling machine 2 with its
+--- fluid boxes, twice as fast) and three recipes of it, one product each: iron plate (items only), water (fluid only), both
+do
+	local m = table.deepcopy(data.raw["assembling-machine"]["assembling-machine-2"])
+	m.name = "zz-devcheck-p2p-machine"
+	m.crafting_categories = { "zz-devcheck-p2p" }
+	m.crafting_speed = 2
+	m.energy_source = { type = "void" }
+	m.minable = nil
+	m.next_upgrade = nil
+	m.fast_replaceable_group = nil
+	local icon = "__base__/graphics/icons/signal/signal-info.png"
+	local out = { { type = "recipe-category", name = "zz-devcheck-p2p" }, m }
+	for _, r in ipairs({ { "a", { { type = "item", name = "iron-plate", amount = 1 } } },
+		{ "b", { { type = "fluid", name = "water", amount = 10 } } },
+		{ "c", { { type = "item", name = "iron-plate", amount = 1 }, { type = "fluid", name = "water", amount = 10 } } } }) do
+		out[#out + 1] = { type = "item", name = "zz-devcheck-p2p-" .. r[1], icon = icon, stack_size = 100, subgroup = "intermediate-product" }
+		out[#out + 1] = { type = "recipe", name = "zz-devcheck-p2p-" .. r[1], categories = { "zz-devcheck-p2p" }, energy_required = 0.5,
+			enabled = true, icon = icon, subgroup = "intermediate-product", ingredients = r[2],
+			results = { { type = "item", name = "zz-devcheck-p2p-" .. r[1], amount = 1 } } }
+	end
+	data:extend(out)
+end
+
 --- me-network issue #487: tools with durability, as Gregtorio's science packs are (Factorio 2.1's science packs are plain
 --- items without durability), for the tests of used tools (storable.lua, refused.lua, buffer150.lua); with Gregtorio too
 for i, icon in ipairs({ "automation", "logistic", "chemical" }) do

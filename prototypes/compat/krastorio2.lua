@@ -78,6 +78,8 @@ local SWAPS = {
 	["me-import-bus"] = { ["electronic-circuit"] = each(CORE), ["fast-inserter"] = each(PISTON) },
 	["me-export-bus"] = { ["electronic-circuit"] = each(CORE), ["fast-inserter"] = each(PISTON) },
 	["me-storage-bus"] = { ["fast-inserter"] = each(PISTON) },
+	["me-item-p2p-tunnel"] = { ["copper-cable"] = FLUIX },                     -- (issue #629: the ME P2P tunnel's 3 fluix crystals)
+	["me-fluid-p2p-tunnel"] = { ["copper-cable"] = FLUIX },
 	["me-void-storage-cell"] = { ["plastic-bar"] = each(GLASS) },
 	["me-void-fluid-storage-cell"] = { ["plastic-bar"] = each(GLASS) },
 	["me-io-port"] = { add = { { NEW_GLASS, 3 } } },      -- (AE2's 3 glass, no stand-in before)

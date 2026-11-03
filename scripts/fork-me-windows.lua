@@ -41,6 +41,7 @@ local bench = require("scripts.fork-me-workbench")
 local ioport = require("scripts.fork-me-ioport")          -- (issue #386)
 local lif = require("scripts.fork-me-logistic-interface")   -- (issue #531)
 local qbridge = require("scripts.fork-me-qbridge")        -- (issue #385)
+qbridge.p2p = require("scripts.fork-me-p2p")              -- (issue #629; a field: the main chunk is near Lua's 200 locals)
 local picker = require("scripts.fork-me-picker")
 local Names = require("scripts.fork-me-names")
 local terminal = require("scripts.fork-me-terminal")
@@ -671,6 +672,92 @@ G.on("qb_freq", function(event, player, el)
 	end
 	el.tags = G.act("qb_freq")         -- the refresh writes the stored frequency back (a refused one, 007 as 7)
 	G.refresh_one(player)
+end)
+
+--------------------------------------------------------------------------------
+--- issue #629: the ME P2P Tunnels (scripts/fork-me-p2p.lua): the frequency (set on Enter), input or output, a new frequency,
+--- unbind, and where the input is or how many outputs carry. Settings paste and the ME Memory Card bind them as well.
+--------------------------------------------------------------------------------
+
+--- the window's content (the tests build it into a stand-in, p2p_view below)
+function M.p2p_content(content)
+	G.label(content, { "fork-me-gui.p2p-help" }, WIDTH)
+	local row = G.row(content)
+	row.add{ type = "label", caption = { "fork-me-gui.qbridge-frequency" }, tooltip = { "fork-me-gui.p2p-frequency-tooltip" } }
+	local f = row.add{ type = "textfield", name = "fork_me_p2p_freq", numeric = true, allow_decimal = false, allow_negative = false,
+		lose_focus_on_confirm = true, tooltip = { "fork-me-gui.p2p-frequency-tooltip" }, tags = G.act("p2p_freq") }
+	f.style.width = 120
+	row.add{ type = "switch", name = "fork_me_p2p_role", left_label_caption = { "fork-me-gui.p2p-input" },
+		right_label_caption = { "fork-me-gui.p2p-output" }, tooltip = { "fork-me-gui.p2p-role-tooltip" }, tags = G.act("p2p_role") }
+	local buttons = G.row(content)
+	buttons.add{ type = "button", caption = { "fork-me-gui.p2p-new" }, tooltip = { "fork-me-gui.p2p-new-tooltip" }, tags = G.act("p2p_new") }
+	buttons.add{ type = "button", caption = { "fork-me-gui.p2p-unbind" }, tags = G.act("p2p_unbind") }
+	G.label(content, "", WIDTH, nil, "fork_me_p2p_status")
+end
+
+local function open_p2p(player, entity)
+	if not qbridge.p2p.info(entity) then return end
+	local _, content = G.open_window(player, "p2p-tunnel", caption_of(entity), { unit = entity.unit_number }, true)
+	M.p2p_content(content)
+	M.refresh_p2p(player, G.window_of(player), true)
+end
+
+--- (the field as the bridge's, issue #511: written only when the stored frequency changed since it was written last)
+function M.refresh_p2p(player, frame, first)
+	local entity = G.entity_of(player, frame)
+	local d = entity and qbridge.p2p.info(entity)
+	if not d then return false end
+	local f = G.find(frame, "fork_me_p2p_freq")
+	if f and (first or f.tags.shown ~= d.freq) then
+		f.text = d.freq > 0 and tostring(d.freq) or ""
+		f.tags = G.act("p2p_freq", { shown = d.freq })
+	end
+	local role = G.find(frame, "fork_me_p2p_role")
+	if role then role.switch_state = d.output and "right" or "left" end
+	local at = d.input and { "", d.input.surface, " ", string.format("%.0f", d.input.x), ", ", string.format("%.0f", d.input.y) }
+	local caption = { "fork-me-gui.p2p-status-" .. d.status }
+	if d.status == "input" then caption = { "fork-me-gui.p2p-status-input", d.outputs or 0, d.bound or 0 }
+	elseif at then caption = { "fork-me-gui.p2p-status-" .. d.status, at } end
+	G.find(frame, "fork_me_p2p_status").caption = caption
+	return true
+end
+
+G.window("p2p-tunnel", { open = open_p2p, refresh = M.refresh_p2p, entities = qbridge.p2p.NAMES,
+	shift = M.store_shift, control = M.store_all, message = G.net_message, hint = { "fork-me-gui.store-help" } })
+
+--- the frequency: set when the field is confirmed (Enter; empty: 0, unbound), in the role the switch shows
+G.on("p2p_freq", function(event, player, el)
+	if event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if not entity then return end
+	local d = qbridge.p2p.info(entity)
+	if not qbridge.p2p.set(entity, el.text == "" and 0 or tonumber(el.text), d and d.output) then
+		player.create_local_flying_text{ text = { "fork-me-gui.qbridge-frequency-refused" }, create_at_cursor = true }
+	end
+	el.tags = G.act("p2p_freq")
+	G.refresh_one(player)
+end)
+
+G.on("p2p_role", function(event, player, el)
+	if event.name ~= defines.events.on_gui_switch_state_changed then return end
+	local entity = window_entity(player)
+	local d = entity and qbridge.p2p.info(entity)
+	if not d then return end
+	if d.freq == 0 then qbridge.p2p.make_input(entity) end           -- (an unbound tunnel: a new frequency first)
+	qbridge.p2p.set(entity, qbridge.p2p.info(entity).freq, el.switch_state == "right")
+	G.refresh_one(player)
+end)
+
+G.on("p2p_new", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if entity then qbridge.p2p.make_input(entity, true) G.refresh_one(player) end
+end)
+
+G.on("p2p_unbind", function(event, player)
+	if event.name ~= defines.events.on_gui_click then return end
+	local entity = window_entity(player)
+	if entity then qbridge.p2p.unbind(entity) G.refresh_one(player) end
 end)
 
 G.window("io-port", { open = open_io_port, refresh = M.refresh_io_port, entities = { ioport.NAME },
@@ -2736,6 +2823,15 @@ remote.add_interface("gregtorio-me-gui", {
 		if text then f.text = text end
 		local ok = M.refresh_qbridge({ valid = true, can_reach_entity = function() return true end }, frame, first)
 		return { ok = ok, text = f.text, shown = f.tags.shown }
+	end,
+	--- Issue #629: the window of an ME P2P tunnel built into a stand-in frame and refreshed: { ok, text (the field), role (the
+	--- switch's state), status (the status line's caption) }
+	p2p_view = function(entity)
+		local frame = stand_in_element{ type = "frame", tags = { unit = entity.unit_number } }
+		M.p2p_content(frame)
+		local ok = M.refresh_p2p({ valid = true, can_reach_entity = function() return true end }, frame, true)
+		return { ok = ok, text = G.find(frame, "fork_me_p2p_freq").text, role = G.find(frame, "fork_me_p2p_role").switch_state,
+			status = G.find(frame, "fork_me_p2p_status").caption }
 	end,
 	--- Issue #531: the ME Logistic Interface's window built into a stand-in frame and refreshed: { ok, status, net, rows (the
 	--- request tab's row buttons: { key, red }), asked (the request rows' "asks" captions), accept }
