@@ -4381,3 +4381,13 @@ maximum are higher: a rescan of 64 machines happens at once, every 34 ticks, ins
 about 0.6 ms (about 10 µs a machine, the same as a neighbour's), with the force's recipe table read once for all of its
 views (before: 0.77 ms p99). Both layouts make the same 120 crafts/s: the two jobs' hand-outs per step limit them, not the
 providers.
+
+Networks without tunnels: every rescan pays one lookup of the provider's tile and a field per view. `bench --check origin/main
+--sizes 1000,5000` (three rounds in turns) passes:
+
+| | origin/main | #629 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.363 / 2.05 | 0.361 / 2.00 |
+| 5000: script avg / p99 (ms) | 0.931 / 2.85 | 0.926 / 2.83 |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.71 / 61.79 |
+| items/s, provider crafts/s (5000) | 165 100, 329.5 | 165 100, 329.5 |
