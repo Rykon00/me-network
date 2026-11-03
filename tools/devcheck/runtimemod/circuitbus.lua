@@ -48,6 +48,33 @@ return function(H)
 		local lone = s.create_entity{ name = CONNECTOR, position = { BX + 20.5, BY + 3.5 }, force = "player" }
 		if lone then remote.call(CONN, "on_built", lone) end
 		if lone and lone.valid then fails[#fails + 1] = what .. ": a connector without a block stayed" end
+		--- issue #628: a blueprint of 0.5.11 in the library (no migration renamed it): a bus, its connector with the condition
+		--- and a wire to a constant combinator; built and revived, the bus has the wire and the condition, no connector is left
+		local red = defines.wire_connector_id.circuit_red
+		local inv = game.create_inventory(1)
+		inv[1].set_stack{ name = "blueprint" }
+		inv[1].set_blueprint_entities{
+			{ entity_number = 1, name = "me-import-bus", position = { 0.5, 0.5 }, direction = defines.direction.south },
+			{ entity_number = 2, name = CONNECTOR, position = { 0.5, 0.5 }, wires = { { 2, red, 3, red } },
+				control_behavior = { circuit_enabled = true, circuit_condition = { first_signal = SIG, comparator = "<", constant = 3 } } },
+			{ entity_number = 3, name = "constant-combinator", position = { 0.5, 3.5 }, wires = { { 3, red, 2, red } } },
+		}
+		local area = { { BX + 21, BY + 3 }, { BX + 26, BY + 10 } }
+		inv[1].build_blueprint{ surface = s, force = "player", position = { BX + 23, BY + 6 }, raise_built = true }
+		for _, g in pairs(s.find_entities_filtered{ area = area, type = "entity-ghost" }) do
+			if g.valid then g.revive{ raise_revive = true } end
+		end
+		inv.destroy()
+		local bus = s.find_entities_filtered{ area = area, name = "me-import-bus" }[1]
+		local left = s.find_entities_filtered{ area = area, name = CONNECTOR }
+		local got = bus and remote.call(CONN, "condition", bus) or {}
+		local n = bus and bus.get_wire_connector(red, true).connection_count
+		if not (bus and #left == 0 and n == 1 and got[1] == true and got[2] and got[2].comparator == "<" and got[2].constant == 3) then
+			fails[#fails + 1] = what .. ": an old library blueprint built: " .. serpent.line({ bus ~= nil, #left, n, got })
+		end
+		for _, e in pairs(s.find_entities_filtered{ area = area }) do
+			if e.valid and e.type ~= "character" then e.destroy{ raise_destroy = true } end
+		end
 		return fails
 	end
 
