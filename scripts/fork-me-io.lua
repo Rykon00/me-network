@@ -769,11 +769,23 @@ local function destroy_tanks(rec)
 	rec.tanks = nil
 end
 
---- Move what a side tank holds into the network (the tank's whole fluid segment, as far as it fits); returns the
---- amount moved and a status.
-local function tank_to_network(t, held, net)
-	local segment = T.segment_contents(t, 1)
-	local available = math.max(held.amount, (segment and segment[held.name] or 0) + 1)   -- segment counts are rounded
+--- Issue #626: what a side's whole fluid segment holds (its tank and the pipes joined to it without a pump; a segment
+--- holds one fluid), at least the tank's own share; 0 without `held` (the tank's fluid)
+local function side_amount(t, held)
+	if not held then return 0 end
+	local B = N.bound(t)
+	local f = B.has_fluid_segment(1) and B.get_fluid_segment_fluid(1)
+	return math.max(held.amount, f and f.amount or 0)
+end
+
+--- Move what a side tank holds into the network (the tank's whole fluid segment, as far as it fits; `limit`: at most
+--- that much, issue #626); returns the amount moved and a status.
+local function tank_to_network(t, held, net, limit)
+	local available = limit
+	if not available then
+		local segment = T.segment_contents(t, 1)
+		available = math.max(held.amount, (segment and segment[held.name] or 0) + 1)   -- segment counts are rounded
+	end
 	local room = N.can_insert_fluid(net, held.name, available, held.temperature)          -- (issue #159: its temperature)
 	if room <= EPS then return 0, "full" end
 	local removed = N.bound(t).extract_fluid{ name = held.name, amount = room }
@@ -840,8 +852,20 @@ local function mix_check(rec, net, name)
 	end
 end
 
---- keep a side's tank at its row's amount of the row's fluid; returns the status, the amount moved and what the
---- side still lacks, and the storage key it waits for (issue #159). `p`: the interface's priority when priorities are in use (issue #17: what interfaces of a higher
+--- Issue #626: the amount a side tied to fluid row `row` keeps, counted over its whole fluid segment (side_amount): the
+--- row's amount, at most one tank's volume (clean_config). The cap stays one tank: a row means the same with or without
+--- pipes behind the side, and its pipes share the level (a row of 5000 with a long pipe fills the tank only partly).
+local function fluid_target(row)
+	return math.min(row.amount, volume())
+end
+
+--- issue #626: a side holds more than its row only beyond this (segment counts are rounded: no filling and taking back
+--- of the last unit at every visit)
+local SURPLUS_SLACK = 1
+
+--- keep a side's fluid segment at its row's amount of the row's fluid (filled from the network, the surplus taken back,
+--- issue #626); returns the status, the amount moved and what the side still lacks, and the storage key it waits for
+--- (issue #159). `p`: the interface's priority when priorities are in use (issue #17: what interfaces of a higher
 --- priority lack is left in the network)
 local function export_side(t, held, row, net, p)
 	local moved = 0
@@ -852,8 +876,14 @@ local function export_side(t, held, row, net, p)
 		if held and held.amount <= EPS then held = nil end
 		if held and not holds_key(held, fk) then return "blocked", moved, 0 end
 	end
-	local want = math.min(row.amount, volume()) - (held and held.amount or 0)
+	local target = fluid_target(row)
+	local have = side_amount(t, held)
 	local first = N.fluid_storage_key(fk)
+	if have > target + SURPLUS_SLACK then              -- a lowered row, or a segment an older version over-filled
+		local n, why = tank_to_network(t, held, net, have - target)
+		return why, moved + n, 0, why == "full" and N.fluid_key(held.name, held.temperature) or first
+	end
+	local want = target - have
 	if want <= EPS then return "ok", moved, 0, first end
 	local keys, n = export_keys(net, row.name, fk, nil, nil, held and held.temperature)
 	if n == 0 then
@@ -943,11 +973,14 @@ local function interface_sides(rec, net, config, short, dt)
 				if why == "empty-network" and rec.ccard and lack > EPS then
 					craft(rec, net, N.fluid_storage_key(row_key(config[setting])), lack)
 				end
+			elseif why == "full" then                                -- (issue #626: a surplus the network has no room for)
+				N.wait_for(net, key, "io", rec.entity.unit_number, false)
+				N.wait_room(net, "io", rec.entity.unit_number)
 			end
 			key = key or row_key(config[setting])
 			if short and lack > EPS then short[key] = (short[key] or 0) + lack end
 			if n + lack > EPS then                                   -- the side is drained at (n + lack) per dt
-				local tt = math.min(config[setting].amount, volume()) * dt / (n + lack)
+				local tt = fluid_target(config[setting]) * dt / (n + lack)
 				if tt < time then time = tt end
 			end
 		elseif held then
@@ -2254,7 +2287,7 @@ local NET_SIDE = { ["no-key"] = true, ["net-full"] = true, ["no-network"] = true
 --- what the probe of a blocked block compares against: the items the source or the interface holds (one engine
 --- call), plus the fluid of an interface's sides (not of one that does not look at them, `rec.sidle`: probe_work looks
 --- at those at the idle limit, issue #313) or of the source's boxes. The second value of an interface: an import side
---- holds fluid that waits (issue #313).
+--- holds fluid that waits (issue #313), or a side tied to a row holds a surplus that waits for room (issue #626).
 local function probe_mark(rec)
 	local e = rec.entity
 	if rec.kind == "interface" then
@@ -2269,10 +2302,11 @@ local function probe_mark(rec)
 					local f = N.bound(t).get_fluid(1)
 					if f then
 						n = n + math.floor(f.amount)
-						--- (the safety net: an import side that waits for room or was not looked at; not one that feeds an
-						--- export side, "loop", or holds what the network does not take, which a visit cannot change)
+						--- (the safety net: an import side that waits for room or was not looked at, or a side tied to a row
+						--- whose surplus waits for room, issue #626; not one that feeds an export side, "loop", or holds what
+						--- the network does not take, which a visit cannot change)
 						local why = rec.fstatus and rec.fstatus[d]
-						if type(setting) ~= "number" and f.amount > EPS and (why == nil or why == "import" or why == "full") then
+						if f.amount > EPS and (why == "full" or type(setting) ~= "number" and (why == nil or why == "import")) then
 							held = true
 						end
 					end

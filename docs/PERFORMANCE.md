@@ -4333,3 +4333,23 @@ does nothing for them):
 The check reports the script average at 100 and the allocation at both sizes: the refill's work, about 0.15 ms and 8 KB
 (the compiled filters and the inventory contents the engine hands over) per tick for 100 players with ten requests each,
 whose items are used up every five seconds. One player costs about a hundredth of it.
+
+## Fluid rows count the side's segment (issue #626)
+
+A side tied to a fluid row reads its segment's fluid (`has_fluid_segment`, `get_fluid_segment_fluid`: two engine calls
+more per visit of such a side) and fills it only up to the row's amount; a surplus goes back. `bench --check origin/main
+--sizes 1000,5000` (three rounds in turns):
+
+| | origin/main | #626 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.396 / 2.19 | 0.397 / 2.17 |
+| 5000: script avg / p99 (ms) | 1.077 / 3.21 | 1.031 / 3.09 |
+| Lua alloc KB per tick (1000 / 5000) | 41.61 / 61.83 | 41.71 / 61.79 |
+| items/s (1000 / 5000) | 33 230 / 165 700 | 33 270 / 165 100 |
+| fluid/s (1000 / 5000) | 241 000 / 1 200 000 | 205 800 / 1 004 000 |
+
+The check fails on fluid/s, as it should: the bench's `iface_fout` endpoints are interface sides piped straight into an
+empty storage tank of 25 000 with no consumer. Before, a row of 5000 kept going until the side's own tank held 5000, so
+each of them took 30 000 (the bug); now it takes 5000. The drop, about 35 000 per second at 1000 over the 60 s window
+(2.1 million; the scene has 100 such sinks, up to 25 000 more each) and five times that at 5000, is that over-fill. Script time and allocation are
+within the noise.

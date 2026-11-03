@@ -5,7 +5,7 @@
 ---     steam stays in the tank and the pipes (one fluid segment: the pipes hold some of it);
 ---   * south and west: import, nothing connected, empty.
 --- Once the north tank is full: the window's entries are the two sides (water with its fill, steam with its temperature
---- and what its pipes hold too), the empty sides give none. The fluid section, built into a stand-in frame (the harness
+--- and, issue #626, its amount with its pipes and the tank's share), the empty sides give none. The fluid section, built into a stand-in frame (the harness
 --- has no player), shows them; a second refresh does not build it anew; a new amount is set in place; when the tanks
 --- are emptied it is built anew with the "no side holds fluid" line. All in one tick (the stand-in frame is not saved).
 --- Loaded by control.lua: require("ifacefluids")(H) returns { setup, tick, running }.
@@ -97,9 +97,11 @@ return function(H)
 		local w, sm = es[1] or {}, es[2] or {}
 		expect(#es == 2, "two sides hold fluid, entries: " .. serpent.line(es))
 		expect(w.side == NORTH and w.key == "fluid/water" and math.abs(w.amount - WATER) < 1
-			and math.abs(w.fill - WATER / d.volume) < 0.01 and w.segment == nil, "the water entry " .. serpent.line(w))
-		expect(sm.side == EAST and sm.key == "fluid/steam@" .. DEG and sm.amount > 0 and sm.segment
-			and sm.segment >= STEAM - 1 and sm.segment > sm.amount + 1, "the steam entry (its pipes hold some) " .. serpent.line(sm))
+			and math.abs(w.fill - WATER / d.volume) < 0.01 and w.tank == nil, "the water entry " .. serpent.line(w))
+		--- (issue #626: the amount is what the tank and its pipes hold together, `tank` the tank's share)
+		expect(sm.side == EAST and sm.key == "fluid/steam@" .. DEG and sm.tank and sm.tank > 0
+			and sm.amount >= STEAM - 1 and sm.amount > sm.tank + 1 and math.abs(sm.fill - math.min(1, sm.amount / d.volume)) < 0.01,
+			"the steam entry (its pipes hold some) " .. serpent.line(sm))
 
 		--- issue #322: the tooltip in the world (the interface's custom status) names both fluids, the steam's temperature
 		local hs = remote.call(GUI, "interface_hover", iface)
@@ -122,7 +124,7 @@ return function(H)
 		expect(r2.sprite == "fluid/steam" and type(r2.caption) == "table" and r2.caption[2]
 			and type(r2.caption[2][2]) == "table" and r2.caption[2][2][1] == "fork-me-gui.fluid-at-temperature"
 			and r2.caption[2][2][3] == tostring(DEG) and type(r2.caption[4]) == "table"
-			and r2.caption[4][1] == "fork-me-gui.interface-fluid-pipes", "the steam row (temperature, pipes) " .. serpent.line(r2))
+			and r2.caption[4][1] == "fork-me-gui.interface-fluid-tank", "the steam row (temperature, pipes) " .. serpent.line(r2))
 		v = remote.call(GUI, "interface_fluid_view", "if311", iface)
 		expect(not v.rebuilt and #v.rows == 2, "a refresh without a change built the section anew")
 		tanks[NORTH].extract_fluid{ name = "water", amount = 400 }
@@ -138,8 +140,8 @@ return function(H)
 		expect(remote.call(GUI, "interface_hover", iface) == nil and iface.custom_status == nil,
 			"no custom status once the tanks are empty: " .. serpent.line(iface.custom_status))
 		remote.call(GUI, "stand_in_forget", "if311")
-		return finish("north " .. WATER .. " water, east " .. string.format("%.0f", sm.amount or 0) .. " steam at " .. DEG
-			.. " °C in its tank, " .. string.format("%.0f", sm.segment or 0) .. " with its pipes; built once, amounts in place, emptied; custom status for the tooltip")
+		return finish("north " .. WATER .. " water, east " .. string.format("%.0f", sm.tank or 0) .. " steam at " .. DEG
+			.. " °C in its tank, " .. string.format("%.0f", sm.amount or 0) .. " with its pipes; built once, amounts in place, emptied; custom status for the tooltip")
 	end
 
 	function T.running(check) check(storage.ifacefluids311 and storage.ifacefluids311.done, "ME interface window fluids (issue #311)") end

@@ -1091,6 +1091,9 @@ gridfluid261 = require("gridfluid")({ me_place = me_place, power = power, me_rep
 --- me-network issue #313: an interface's import side that holds fluid is visited again (ifacewake.lua)
 ifacewake313 = require("ifacewake")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- me-network issue #626: a fluid row counts the side's whole segment, a surplus goes back (ifacesegment.lua)
+ifacesegment626 = require("ifacesegment")({ me_place = me_place, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
 --- me-network issue #311: the interface window shows the fluids its sides hold (ifacefluids.lua)
 ifacefluids311 = require("ifacefluids")({ me_place = me_place, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
@@ -1331,6 +1334,7 @@ local function tests_running()
 	gridfluid261.running(check)
 	ifacewake313.running(check)
 	ifacefluids311.running(check)
+	ifacesegment626.running(check)
 	providers158.running(check)
 	pastecraft157.running(check)
 	nativeinv542.running(check)
@@ -2331,6 +2335,7 @@ script.on_nth_tick(10, function()
 	gridfluid261.tick()
 	ifacewake313.tick()
 	ifacefluids311.tick()
+	ifacesegment626.tick()
 	providers158.tick()
 	pastecraft157.tick()
 	nativeinv542.tick()
@@ -3688,9 +3693,11 @@ function unified_test()
 	step(i, 6)
 	local inv = i.get_inventory(defines.inventory.chest)
 	expect(inv.get_item_count("iron-plate") == 20, "item row: " .. inv.get_item_count("iron-plate") .. " plates")
+	--- (issue #626: the row counts the side's segment, its tank and the pipe behind it; the tank holds its share)
 	local east = tanks(i)[2].get_fluid(1)
-	expect(east and east.name == "water" and near(east.amount, 1000, 0.5), "fluid row: the east side holds " .. serpent.line(east))
 	local seg = fluid_segment(tanks(i)[2], 1) or {}
+	expect(east and east.name == "water" and east.amount < 1000 - 0.5 and near(seg.water, 1000, 1),
+		"fluid row: the east side holds " .. serpent.line(east) .. ", its segment " .. tostring(seg.water))
 	expect(near(water0 - fluid("water"), seg.water or 0, 0.05), "water out of the network " .. (water0 - fluid("water"))
 		.. ", in the east segment " .. tostring(seg.water))
 	--- (issue #159: the steam keeps its 165 degrees)
@@ -5252,6 +5259,7 @@ script.on_init(function()
 	for _, f in pairs(gridfluid261.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ifacewake313.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(ifacefluids311.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(ifacesegment626.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(providers158.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(pastecraft157.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(nativeinv542.setup(s)) do fails[#fails + 1] = f end
