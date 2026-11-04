@@ -299,9 +299,9 @@ hand** of the terminal is a click on the stack in your inventory there; for **Lo
 Pattern Terminal click the encoded pattern in it (it goes into the output slot), then press the button (they work on the
 output slot when the hand is empty).
 
-Blocks that have a window of the game (terminal and crafting CPUs: lamps; circuit interface: constant combinator; ME
-Interface: container) show the ME window instead; the level maintainer (a lamp too) keeps the game's lamp window and shows its
-ME window beside it (issue #639); the others (drive, controller, buses, pattern provider) have no window of
+Blocks that have a window of the game (terminal, crafting CPUs and
+level maintainer: lamps; circuit interface: constant combinator; ME Interface: container) show the ME window
+instead; the others (drive, controller, buses, pattern provider) have no window of
 their own and open the ME window directly. E or Escape closes it. Open windows refresh once per second. With a tool
 in hand (blueprint, deconstruction or upgrade planner, copy-paste or cut tool, a wire, a ghost, an item to build) a
 click uses the tool and opens no window, as on a chest.
@@ -316,27 +316,25 @@ click uses the tool and opens no window, as on a chest.
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, the power in W, kW or MW and where it goes (issue #149: a line per kind of block with the number of blocks, the power in all and of one, biggest first, the controller's base draw as the first line; the lines add up to the total), and a line when the controller's power buffer is not full (its electric network delivers less than the network asks for) |
 | ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), **Lock crafting** (a drop-down: off, until the result is back (issue #346), by the circuit network (issue #429: the mode is chosen in the circuit network panel, issue #639)) with what a locked provider waits for and **Unlock**, 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
-| ME Level Maintainer | beside the game's lamp window (its circuit and logistic network conditions, issue #639): five rows (item or fluid, amount, batch, amount from the circuit, stock and status), **Craft what the circuit asks**, the rows the circuit asks for |
+| ME Level Maintainer | five rows: item or fluid, amount, batch, stock and status (the circuit options and the conditions: the panel below) |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 4 card slots (up to 3 Interface Capacity Cards: 9 more config rows each; a Crafting Card, issue #411, with a line for its last request), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount it and its pipes hold, temperature, a fill bar and what its tank alone holds), status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, a line for the Crafting Card's last request (export bus, issue #411) and its **Craft only** checkbox (issue #426, shown while the card is in), the entity it faces and whether the bus uses its items, fluids or both, status |
 | ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
-the level maintainer opens the game's lamp window with the ME window on its left: its circuit and logistic network
-conditions are the lamp's own, set in the game's own panel of that window (blueprints and settings paste of the game keep
-them). The lamp window also shows the lamp's colour settings, which do nothing on the maintainer.
+the lamp window of the level maintainer is replaced, its circuit and logistic network settings are set in the panel below
+(they are the lamp's own conditions, so blueprints and settings paste of the game keep them).
 
-**The circuit and logistic network panel** (issue #639). The game shows its own circuit and logistic network panel only in the
-window of an entity whose type has these settings (a lamp, an inserter, a belt, ...); the ME Import, Export and Storage Bus
-and the ME Pattern Provider are display panels and the ME Interface a container, types without them. So these blocks have a
-panel built like the game's **to the right of the block's window**, which moves, opens and closes with it. It is there only
-while the block has a red or green wire (**Circuit connection**: the networks it is connected to, **Enable if** with the
+**The circuit and logistic network panel** (issue #639). As on a vanilla inserter, belt or lamp, the circuit and logistic
+network settings of the ME Import, Export and Storage Bus, the ME Interface, the ME Pattern Provider and the ME Level
+Maintainer are in a small panel **to the right of the block's window**, which moves, opens and closes with it. It is there
+only while the block has a red or green wire (**Circuit connection**: the networks it is connected to, **Enable if** with the
 condition and a line saying whether it holds, and the block's circuit modes: the export bus's **Pulse**, the interface's
-**Rows from the circuit** with the rows they make, the provider's **Lock crafting** mode by the circuit) or stands in the
-logistic area of a logistic network of its force, or is connected to one (**Logistic connection**: **Connect** and a
-condition on the network's contents). Nothing circuit-related of these blocks is in their ME windows any more. The ME Level
-Maintainer has the game's own panel (above); the ME Toggle Bus and the ME Inverted Toggle Bus open the game's lamp window,
+**Rows from the circuit** with the rows they make, the provider's **Lock crafting** mode by the circuit, the maintainer's
+**Amount from the circuit** per row and **Craft what the circuit asks**) or stands in the logistic area of a logistic network
+of its force, or is connected to one (**Logistic connection**: **Connect** and a condition on the network's contents). Nothing
+circuit-related is in the ME windows any more. The ME Toggle Bus and the ME Inverted Toggle Bus open the game's lamp window,
 which has the same settings. The ME Level Emitter and the ME Circuit Interface only send signals and have no panel.
 
 ## Wireless: the Wireless ME Terminal
@@ -1778,12 +1776,13 @@ What the window says:
 
 **Circuit network** (connect a red or green wire to the maintainer):
 
-* **On/off:** set the circuit condition in the game's lamp window the maintainer opens (issue #639; it is the lamp's circuit
-  condition, also a second signal). While the condition is false it starts nothing; a running job goes on.
-* **Logistic network** (issue #639): standing in a logistic network's area, connect the lamp to the logistic network in that
-  window and set its condition on the network's contents (the lamp's own logistic condition, evaluated by the game). While it
-  does not hold the maintainer starts nothing; with both conditions on, only while both hold.
-* **Amount from the circuit:** tick a row's box in the ME window. The signal of that row's item or fluid on
+* **On/off:** tick **Enable if** in the panel right of its window (issue #639) and set the condition
+  (signal, comparator, number; it is the lamp's circuit condition). While the condition is false it
+  starts nothing; a running job goes on.
+* **Logistic network** (issue #639): standing in a logistic network's area, tick **Connect** in the panel and set a condition
+  on the network's contents (the lamp's own logistic condition). While it does not hold the maintainer starts nothing; with
+  both conditions on, only while both hold. Connected outside every logistic network, it is off, as a vanilla lamp is.
+* **Amount from the circuit:** tick a row's box in the panel. The signal of that row's item or fluid on
   the wires (red plus green) is then the amount to keep, instead of the number field. No signal means
   0 (keep nothing).
 * **Craft what the circuit asks** (issue #351): with this box ticked the rows are not used; every item and fluid

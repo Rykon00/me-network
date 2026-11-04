@@ -8,8 +8,7 @@
 ---   * the maintainer's logistic condition (its lamp's own): disabled while it does not hold, its levels follow;
 ---   * a blueprint copy, a settings paste and a clone of E1 keep the logistic part; a tag made before #639 (no logistic part)
 ---     still applies and clears it;
----   * the panel (a stand-in player's window): E1's window shows the logistic section only, E2's both; M's window sits beside
----     the game's lamp window (anchored in player.gui.relative, the lamp stays opened) and has no panel of ours;
+---   * the panel (a stand-in player's window): E1's window shows the logistic section only, E2's both, M's the logistic one;
 ---     the "Connect" check box switches E1's connection through its handler; the roboport removed: E1, still connected, is off
 ---     (as a vanilla inserter outside every network) and its panel says so; E3 (no wire, not connected) has no panel then.
 --- Loaded by control.lua: require("panel639")(H) returns { setup, tick, running }.
@@ -107,14 +106,9 @@ return function(H)
 			p = side(E2)
 			expect(p.visible and p.logistic and p.circuit and p.names.fork_me_bus_pulse and p.states.fork_me_cond_on == true,
 				"E2's panel: both sections, the pulse mode in the circuit one: " .. line({ p.visible, p.circuit, p.logistic, p.states }))
-			--- the maintainer: its ME window beside the game's lamp window (which has the game's own panel), none of ours
 			p = side(M)
-			local anchor = p.anchor or {}
-			expect(p.relative and p.opened_entity and not p.visible and anchor.gui == defines.relative_gui_type.lamp_gui
-				and anchor.position == defines.relative_gui_position.left and anchor.names and anchor.names[1] == "me-level-maintainer",
-				"M's window beside the game's lamp window: " .. line({ p.relative, p.opened_entity, p.visible, anchor }))
-			local mview = remote.call(GUI, "stand_in_act", "panel639", nil, nil, "fork_me_maint_rows")
-			expect(mview and #mview.labels > 0, "M's window has its rows (with the circuit column): " .. line(mview))
+			expect(p.visible and p.logistic and not p.circuit and p.states.fork_me_lcond_on == true,
+				"M's panel: the logistic section, connected: " .. line({ p.visible, p.circuit, p.logistic, p.states }))
 			p = side(E3)
 			expect(p.visible and p.logistic and not p.circuit and p.states.fork_me_lcond_on == false,
 				"E3's panel: in the network's area, not connected: " .. line({ p.visible, p.circuit, p.logistic, p.states }))
