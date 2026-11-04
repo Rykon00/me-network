@@ -774,6 +774,48 @@ function M.set_condition(entity, enabled, signal, comparator, constant)
 	return true
 end
 
+--- Issue #639: the maintainer's logistic network condition, the lamp's own (`connect_to_logistic_network`,
+--- `logistic_condition`: the game evaluates it, copies it with blueprints, settings paste and clones; maintainer_step reads
+--- `disabled`, which covers both): { enabled, cond = { first_signal, comparator, constant, second_signal } }
+function M.get_logistic(entity)
+	if not (entity and entity.valid and entity.name == MAINTAINER) then return nil end
+	local cb = entity.get_or_create_control_behavior()
+	local c = cb.logistic_condition or {}
+	return { enabled = cb.connect_to_logistic_network, cond = { first_signal = c.first_signal, comparator = c.comparator or "<",
+		constant = c.constant or 0, second_signal = c.second_signal } }
+end
+
+--- Issue #639: set it; `enabled` nil keeps it, `cond` nil keeps the condition (a whole condition otherwise)
+function M.set_logistic(entity, enabled, cond)
+	if not (entity and entity.valid and entity.name == MAINTAINER) then return false end
+	local cb = entity.get_or_create_control_behavior()
+	if enabled ~= nil then cb.connect_to_logistic_network = enabled and true or false end
+	if type(cond) == "table" then
+		local out = { first_signal = cond.first_signal, comparator = "<", constant = math.floor(tonumber(cond.constant) or 0),
+			second_signal = cond.second_signal }
+		for _, v in pairs(COMPARATORS) do if v == cond.comparator then out.comparator = v end end
+		if out.second_signal then out.constant = nil end
+		cb.logistic_condition = out
+	end
+	local rec = maintainer_record(state(), entity)
+	rec.retry = nil
+	N.update_screen(entity)
+	return true
+end
+
+--- Issue #639 (the panel): whether the lamp's circuit and logistic condition hold now (the game's `fulfilled`; nil: it does
+--- nothing: off, or the circuit one without a wire)
+function M.levels(entity)
+	if not (entity and entity.valid and entity.name == MAINTAINER) then return nil, nil end
+	local cb = entity.get_or_create_control_behavior()
+	local cl, ll
+	if cb.circuit_enable_disable and (entity.get_circuit_network(WIRES[1]) or entity.get_circuit_network(WIRES[2])) then
+		cl = (cb.circuit_condition or {}).fulfilled == true
+	end
+	if cb.connect_to_logistic_network then ll = (cb.logistic_condition or {}).fulfilled == true end
+	return cl, ll
+end
+
 --- the circuit interface's output switch (the combinator's own on/off)
 function M.get_circuit_enabled(entity)
 	if not (entity and entity.valid and entity.name == CIRCUIT) then return nil end
@@ -1075,6 +1117,10 @@ remote.add_interface("gregtorio-me-circuit", {
 	set_condition = function(entity, enabled, signal, comparator, constant)
 		return M.set_condition(entity, enabled, signal, comparator, constant)
 	end,
+	--- issue #639: the maintainer's logistic condition (the lamp's) and the levels of both conditions
+	get_logistic = function(entity) return M.get_logistic(entity) end,
+	set_logistic = function(entity, enabled, cond) return M.set_logistic(entity, enabled, cond) end,
+	levels = function(entity) return { M.levels(entity) } end,
 	get_circuit_enabled = function(entity) return M.get_circuit_enabled(entity) end,
 	set_circuit_enabled = function(entity, on) return M.set_circuit_enabled(entity, on) end,
 	maintainer_status = function(entity) return M.maintainer_status(entity) end,

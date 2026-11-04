@@ -823,6 +823,45 @@ local function configure_part(b, part, first)
 	return types
 end
 
+--- Issue #639 (`conditions`): every import and export bus gets a circuit condition (no wire: it does nothing, the bus works)
+--- and, where the version has the logistic condition, one that holds ("iron plate >= 0") in the logistic network of unpowered
+--- roboports without collision on the buses' tiles (data.lua): every bus is in the connector's
+--- check list (16 checks per tick, each bus at most every 10 ticks), so the scene's throughput stays the same
+local function add_conditions(b)
+	local CONN = "gregtorio-me-connector"
+	local iface = remote.interfaces[CONN]
+	if not (iface and iface.set_condition) then return end
+	local s = surface()
+	local buses = {}
+	for _, rec in ipairs(b.slots) do
+		for _, e in pairs({ rec.bus, rec.exp, rec.imp }) do
+			if e and e.valid and (e.name == "me-import-bus" or e.name == "me-export-bus") then buses[#buses + 1] = e end
+		end
+	end
+	local logistic = iface.set_logistic ~= nil
+	local ports = 0
+	--- (on the tile of each bus that none covers yet: data.lua, no collision; in both versions, so that what the logistic networks
+	--- cost elsewhere is the same and the difference is the condition's)
+	do
+		for _, e in ipairs(buses) do
+			if not s.find_logistic_network_by_position(e.position, "player")
+				and s.create_entity{ name = "zz-bench-roboport", position = e.position, force = "player" } then ports = ports + 1 end
+		end
+	end
+	local covered = 0
+	for _, e in ipairs(buses) do
+		remote.call(CONN, "set_condition", e, true, { first_signal = { type = "virtual", name = "signal-A" }, comparator = "<", constant = 1 })
+		if logistic then
+			remote.call(CONN, "set_logistic", e, true, { first_signal = { type = "item", name = "iron-plate" }, comparator = ">=", constant = 0 })
+			if s.find_logistic_network_by_position(e.position, "player") then covered = covered + 1 end
+		end
+	end
+	if logistic and covered < #buses then
+		fail("conditions: " .. (#buses - covered) .. " buses outside the roboport's area (" .. ports .. " roboports)")
+	end
+	b.conditions = { buses = #buses, roboports = ports, logistic = logistic }
+end
+
 --- `noent`: every entity of the mod goes (the members, the interfaces' side tanks), nothing is registered any more
 local function strip_me()
 	local n = 0
@@ -1054,6 +1093,7 @@ local function build_me()
 	log({ "", "DEVCHECK-BENCH-BUILD registered ", #members, " members: ", prof })
 	local types = 0
 	for k = 1, K do types = types + configure_part(b, b.parts[k], k == 1) end
+	if C.conditions then add_conditions(b) end                                 -- (issue #639)
 	--- issue #603: the characters join the refill's queue (where the version has it)
 	if b.refill then
 		local wl = remote.interfaces["gregtorio-me-wireless"]
@@ -1090,6 +1130,7 @@ local function build_me()
 		members = members_all, cells = cells_all, fluid_cells = fcells_all,
 		storage_buses = sb_all, fluid_storage_buses = fsb_all, item_types = types, recipes = #b.parts[1].reg_recipes,
 		logistic = b.logistic,                                                  -- (issue #506)
+		conditions = b.conditions,                                              -- (issue #639)
 		refill = b.refill and { characters = b.refill.n, access_point = b.refill.ap, queued = b.refill.queued } or nil,   -- (issue #603)
 		jobs = #b.job_keys, cpus = b.parts[1].ncpu, network_ok = net and net.ok or false,
 		entities = #surface().find_entities_filtered{}, fails = fails })

@@ -25,7 +25,16 @@
 ---   * The ME Interface is a container, which puts its contents on its wires unless `read_contents` is off: the script keeps it
 ---     off (a block's record is made, a player points at it, its windows close, every interface at on_configuration_changed),
 ---     so its contents never mix with the signals its condition and its rows read.
---- State: storage.fork_me_conn = { hosts = { [unit] = { host, kind, cc, cond, pulse, read, last, sig, due } },
+---   * Issue #639: the logistic network condition, as on a vanilla inserter, belt or lamp: `lc` (connected to the logistic
+---     network) and `lcond` (a condition on the network's contents: an item signal counts the network's items of its quality,
+---     any other first signal never holds, as the game's). The network is the one whose logistic area covers the block
+---     (LuaSurface.find_logistic_network_by_position), looked up at most every LOOKUP ticks (5 s) per block (`lnet`, `lnext`) or at
+---     once when it became invalid. Measured on a real inserter (Factorio 2.1.24): connected outside every logistic network
+---     (also inside a construction area only) it is off; a circuit condition without a wire does nothing. With both on, the
+---     block works only while both hold: the level of both replaces the circuit's (the off state, the pulse's rise, the
+---     provider's locks).
+--- State: storage.fork_me_conn = { hosts = { [unit] = { host, kind, cc, cond, lc, lcond, lnet, lnext, pulse, read, last, sig,
+--- due } },
 --- off = { [unit] = true }, edge = { [unit] = true }, list = { units }, cursor,
 --- orphans = { ["<surface>:<x>:<y>"] = { entity = an old connector's ghost waiting for its block's ghost, tick } } }
 --- `cond` = { first_signal, comparator, constant, second_signal } (a CircuitCondition without `fulfilled`).
@@ -55,6 +64,7 @@ local WIRES = { RED, GREEN }
 M.COMPARATORS = { ">", "<", "=", ">=", "<=", "!=" }
 local COMPARATORS = { [">"] = ">", ["<"] = "<", ["="] = "=", [">="] = ">=", ["<="] = "<=", ["!="] = "!=",
 	["≥"] = ">=", ["≤"] = "<=", ["≠"] = "!=" }
+local LOOKUP = 300                 -- ticks: how often a block with a logistic condition looks up its logistic network (#639)
 local ORPHAN_TICKS = 2             -- an old connector's ghost whose block's ghost did not come within this is removed
 
 --- the modules that visit the blocks put the off state into their records (`rec.coff`): N.off_setters[kind](unit, off, level),
@@ -158,12 +168,77 @@ local function holds(e, cond)
 	return compare(e.get_signal(first, RED, GREEN), op, right)
 end
 
---- the condition's level: true (it holds), false (it does not), nil (it does nothing: off, no wire)
-local function level(h)
+--- Issue #639: the ItemWithQualityID of an item signal, made once per name and quality (false: no item of this game); the
+--- prototypes do not change while the game runs, so this is derived and kept outside `storage` (a check makes no table and
+--- reads no prototype: the bench of issue #639)
+local item_ids = {}
+local function item_id(sig)
+	local q = sig.quality or "normal"
+	local by = item_ids[sig.name]
+	if not by then
+		by = {}
+		item_ids[sig.name] = by
+	end
+	local id = by[q]
+	if id == nil then
+		id = prototypes.item[sig.name] ~= nil and prototypes.quality[q] ~= nil and { name = sig.name, quality = q } or false
+		by[q] = id
+	end
+	return id
+end
+
+--- Issue #639: the count of an item signal in logistic network `net` (with its quality; nil: not an item, it counts nothing)
+local function net_count(net, sig)
+	if not (sig and (sig.type or "item") == "item") then return nil end
+	local id = item_id(sig)
+	if not id then return nil end
+	return net.get_item_count(id)
+end
+
+--- Issue #639: does `cond` hold on the contents of logistic network `net`? (no network or no item as the first signal: never,
+--- as on the game's inserter; a second signal that is no item counts 0)
+local function net_holds(net, cond)
+	if not (net and net.valid and cond) then return false end
+	local left = net_count(net, cond.first_signal)
+	if not left then return false end
+	local right = cond.constant or 0
+	if cond.second_signal then right = net_count(net, cond.second_signal) or 0 end
+	return compare(left, cond.comparator or "<", right)
+end
+M.net_holds = net_holds
+
+--- Issue #639: the logistic network whose logistic area covers block `e` (nil: none), found now (the windows)
+local function find_network(e)
+	return e.surface.find_logistic_network_by_position(e.position, e.force)
+end
+M.find_network = find_network
+
+--- the block's logistic network as its checks see it: looked up at most every LOOKUP ticks (kept in the record, so a loaded
+--- save follows the same checks), at once when the one it had became invalid
+local function network(h, tick)
+	local n = h.lnet
+	if (h.lnext or 0) > tick and (n == nil or n.valid) then return n end
+	n = find_network(h.host)
+	h.lnet, h.lnext = n, tick + LOOKUP
+	return n
+end
+
+--- the levels of the circuit and the logistic condition: true (it holds), false (it does not), nil (it does nothing: off, or
+--- the circuit's without a wire); the logistic one without a network is false (the game's inserter is off then)
+local function levels(h, tick)
 	local e = h.host
-	if not (h.cc and e and e.valid) then return nil end
-	if not wired(e) then return nil end
-	return holds(e, h.cond)
+	if not (e and e.valid) then return nil, nil end
+	local cl, ll
+	if h.cc and wired(e) then cl = holds(e, h.cond) end
+	if h.lc then ll = net_holds(network(h, tick or game.tick), h.lcond) end
+	return cl, ll
+end
+
+--- the level of both: nil when neither does anything, else true while each that does something holds
+local function level(h, tick)
+	local cl, ll = levels(h, tick)
+	if cl == nil and ll == nil then return nil end
+	return cl ~= false and ll ~= false
 end
 
 --- the signals on the block's wires, red and green added: { [key] = count } with item keys "name" / "name@quality" and fluid
@@ -215,7 +290,7 @@ function M.update(unit)
 	local s = state()
 	local h = s.hosts[unit]
 	if not h then return end
-	if h.cc or h.pulse or h.read then
+	if h.cc or h.lc or h.pulse or h.read then
 		if not listed(s, unit) then s.list[#s.list + 1] = unit end
 		local lv = level(h)
 		local on = lv ~= false
@@ -278,7 +353,29 @@ function M.set_condition(e, cc, cond)
 	return true
 end
 
---- whether the block's condition holds now (the window: true, false, nil when it does nothing)
+--- Issue #639: the block's logistic condition: `lc` (connected to the logistic network), `lcond` (as stored; nil: none set)
+function M.logistic(e)
+	local s = storage.fork_me_conn
+	local h = e and e.valid and s and s.hosts[e.unit_number]
+	if not h then return false, nil end
+	return h.lc == true, h.lcond and clean_condition(h.lcond) or nil
+end
+
+--- Issue #639: sets the block's logistic condition; `cond` nil keeps the one it has, false clears it
+function M.set_logistic(e, lc, cond)
+	if not (e and e.valid and HOSTS[e.name]) then return false end
+	local s = storage.fork_me_conn
+	if not lc and not cond and not (s and s.hosts[e.unit_number]) then return true end   -- (nothing to clear: no record made)
+	local h = M.ensure(e)
+	if not h then return false end
+	h.lc = lc and true or nil
+	if cond ~= nil then h.lcond = clean_condition(cond or nil) end
+	h.lnet, h.lnext = nil, nil                               -- (looked up at the next check)
+	M.update(e.unit_number)
+	return true
+end
+
+--- whether the block's conditions hold now (the window: true, false, nil when it does nothing)
 function M.level(e)
 	local s = storage.fork_me_conn
 	local h = e and e.valid and s and s.hosts[e.unit_number]
@@ -286,25 +383,43 @@ function M.level(e)
 	return level(h)
 end
 
---- copies the condition of block `src` to block `dst` (a settings paste of the blocks, a clone)
+--- Issue #639 (the panel): the levels of the circuit and the logistic condition apart, the logistic one with the network
+--- found now (the checks' lookup is left as it is)
+function M.levels(e)
+	local s = storage.fork_me_conn
+	local h = e and e.valid and s and s.hosts[e.unit_number]
+	if not h then return nil, nil end
+	local cl, ll
+	if h.cc and wired(e) then cl = holds(e, h.cond) end
+	if h.lc then ll = net_holds(find_network(e), h.lcond) end
+	return cl, ll
+end
+
+--- copies the conditions of block `src` to block `dst` (a settings paste of the blocks, a clone)
 function M.copy(src, dst)
 	if not (src and src.valid and dst and dst.valid) then return end
 	local cc, cond = M.condition(src)
 	M.set_condition(dst, cc, cond or false)
+	local lc, lcond = M.logistic(src)
+	M.set_logistic(dst, lc, lcond or false)
 end
 
---- the condition of a block's blueprint tags applied to it (a block built from a ghost, pasted over, a Memory Card)
+--- the conditions of a block's blueprint tags applied to it (a block built from a ghost, pasted over, a Memory Card); a tag
+--- made before #639 has no logistic part: the block's is cleared
 function M.apply_tag(e, tags)
 	local t = type(tags) == "table" and tags[TAG]
 	if type(t) ~= "table" then return false end
-	return M.set_condition(e, t.cc, t.cond or false)
+	local ok = M.set_condition(e, t.cc, t.cond or false)
+	M.set_logistic(e, t.lc, type(t.lcond) == "table" and t.lcond or false)
+	return ok
 end
 
---- the tag of a block's condition (nil: it has none); the Memory Card and the blueprints
+--- the tag of a block's conditions (nil: it has none); the Memory Card and the blueprints
 function M.tag_of(e)
 	local cc, cond = M.condition(e)
-	if not (cc or cond) then return nil end
-	return { cc = cc or nil, cond = cond }
+	local lc, lcond = M.logistic(e)
+	if not (cc or cond or lc or lcond) then return nil end
+	return { cc = cc or nil, cond = cond, lc = lc or nil, lcond = lcond }
 end
 
 --- blueprints: the condition of every block that has one (control.lua's blueprint hooks)
@@ -522,7 +637,7 @@ function M.on_tick(tick)
 			i = i + 1
 			if (h.due or 0) <= tick then
 				h.due = tick + INTERVAL
-				local lv = level(h)
+				local lv = level(h, tick)
 				local on = lv ~= false
 				local was = not s.off[unit]
 				set_off(s, h.kind, unit, not on, lv)        -- (every check: the record's field follows even a record made anew)
@@ -594,6 +709,14 @@ remote.add_interface("gregtorio-me-connector", {
 	--- tests: the condition of a block (cc, cond) and setting it (what its window does)
 	condition = function(entity) return { M.condition(entity) } end,
 	set_condition = function(entity, cc, cond) return M.set_condition(entity, cc, cond) end,
+	--- issue #639: the logistic condition (lc, lcond) and setting it; the levels of both conditions apart; the tag
+	logistic = function(entity) return { M.logistic(entity) } end,
+	set_logistic = function(entity, lc, cond) return M.set_logistic(entity, lc, cond) end,
+	levels = function(entity) return { M.levels(entity) } end,
+	level = function(entity) return M.level(entity) end,
+	tag_of = function(entity) return M.tag_of(entity) end,
+	apply_tag = function(entity, tags) return M.apply_tag(entity, tags) end,
+	paste = function(source, destination) M.on_entity_settings_pasted{ source = source, destination = destination } end,
 	--- tests: the block's wires were changed by a script (the next check sees it; this makes it now)
 	update = function(entity) if entity and entity.valid then M.update(entity.unit_number) end end,
 	is_off = function(entity) return entity and entity.valid and M.is_off(entity.unit_number) or false end,

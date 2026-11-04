@@ -35,6 +35,9 @@ local function cond(cb) cb.circuit_condition = { first_signal = { type = "item",
 local function wired(e, on, second)
 	remote.call(CONN, "set_condition", e, on, { first_signal = { type = "virtual", name = "signal-B" }, comparator = "<=",
 		constant = 17, second_signal = second and { type = "item", name = "copper-plate" } or nil })
+	--- issue #639: the logistic condition too (in the same tag)
+	remote.call(CONN, "set_logistic", e, true, { first_signal = { type = "item", name = "iron-plate" }, comparator = ">",
+		constant = 9, second_signal = second and { type = "item", name = "copper-plate" } or nil })
 end
 --- the blocks and how each is configured (by its remote interface, as its window does)
 local BLOCKS = {
@@ -50,7 +53,10 @@ local BLOCKS = {
 		remote.call(SB, "set_settings", e, { filters = { "copper-plate" }, priority = 4 })
 		wired(e, false)                                                                                -- (set, but off)
 	end },
-	{ "me-level-maintainer", function(e) remote.call(C, "set_maintainer", e, "iron-gear-wheel", 1234, false) end },
+	{ "me-level-maintainer", function(e)
+		remote.call(C, "set_maintainer", e, "iron-gear-wheel", 1234, false)
+		remote.call(C, "set_logistic", e, true, { first_signal = { type = "item", name = "copper-plate" }, comparator = "<", constant = 3 })   -- (#639)
+	end },
 	{ "me-circuit-interface", function(e) remote.call(C, "set_circuit_filters", e, { "iron-plate", "fluid/water" }) end },
 	{ "me-toggle-bus", function(e) cond(e.get_or_create_control_behavior()) end },
 	{ "me-inverted-toggle-bus", function(e) cond(e.get_or_create_control_behavior()) end },
