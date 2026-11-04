@@ -1215,6 +1215,7 @@ RUNTIME_TESTS = (
     ("IFACEFLUIDS", "ME interface window fluids (issue #311)"),
     ("IFACESEGMENT", "ME interface fluid row over its segment (issue #626)"),
     ("P2P", "ME P2P tunnels with a pattern provider (issue #629)"),
+    ("P2PFLOW", "ME P2P tunnels on their own (issue #633)"),
     ("KRASTORIO2", "Krastorio 2 targets (issue #595)"),
     ("DONE", "all tests reported"),
 )
@@ -1904,6 +1905,8 @@ def variant_name(v):
     parts = []
     if v.get("tunnel") is not None:                 # (issue #629: the tunnel scene's two layouts)
         parts.append("tunnel" if v["tunnel"] else "neighbours")
+    if v.get("carry"):                              # (issue #633: the carry scene's two ways)
+        parts.append(v["carry"])
     if v.get("base"):
         parts.append("base")
     if v.get("idle"):
@@ -1930,6 +1933,8 @@ def bench_config(a, scene, size, variant, profile):
            # issue #629: the tunnel scene's layout: one provider reaching its machines through ME P2P tunnels, or providers with
            # the machines next to them
            "tunnel": bool(variant.get("tunnel")) if scene == "tunnels" else None,
+           # issue #633: the carry scene's way: "tunnels" (ME P2P tunnels on their own) or "buses" (import and export buses)
+           "carry": variant.get("carry") if scene == "carry" else None,
            # issue #506: a logistic network of that many roboports below the ME scene, with an ME Logistic Storage Bus
            "logistic": (getattr(a, "logistic", 0) or 0) if scene == "me" else 0,
            # issue #537: that many requester chests in the logistic network (for the ME Logistic Interface's automatic mode)
@@ -1954,7 +1959,7 @@ def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
     machine = re.search(r"System info: \[(.*?)\]", log)
     strip = re.search(r"DEVCHECK-BENCH-STRIP (\d+)", log)
     out = {"scene": cfg["scene"], "size": cfg["size"],
-           "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base", "tunnel") if cfg.get(k) is not None},
+           "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base", "tunnel", "carry") if cfg.get(k) is not None},
            "setup": setup[0], "build": build.group(1) if build else None, "save_bytes": Path(mapfile).stat().st_size,
            "runs": [], "machine": machine.group(1) if machine else None, "window": cfg["window"],
            "stripped": int(strip.group(1)) if strip else None}
@@ -2157,7 +2162,7 @@ def bench(a):
     print(results["factorio"])
     problems = []
     plan = []                                              # (scene, size, variant)
-    if not (a.planner_only or a.tunnels_only):
+    if not (a.planner_only or a.tunnels_only or a.carry_only):
         for scene in ["me"] + (["inserters", "robots"] if a.reference else []):
             for entry in sizes:
                 size, base = size_variant(entry)
@@ -2179,6 +2184,9 @@ def bench(a):
         for idle in ([False, True] if a.idle else [False]):
             for tunnel in (True, False):
                 plan.append(("tunnels", TUNNEL_MACHINES, {"tunnel": tunnel, **({"idle": True} if idle else {})}))
+    if a.carry or a.carry_only:                       # (issue #633)
+        for way in ("tunnels", "buses"):
+            plan.append(("carry", 60, {"carry": way}))
     for scene, size, variant in plan:
         runs_before = a.runs
         if variant.get("long"):
@@ -2238,6 +2246,7 @@ def print_service(s):
               "logistic_storage_bus", "logistic_storage_bus_probe",                   # (issue #506)
               "logistic_interface", "logistic_interface_probe", "logistic_demand",  # (issue #531, #537)
               "wireless_refill",                                                       # (issue #603)
+              "p2p", "p2p_probe",                                                     # (issue #633)
               "maintainer", "maintainer_probe", "circuit", "jobs"):
         st = sched.get(q)
         if not st or not (st.get("visits") or st.get("due")):
@@ -2302,6 +2311,10 @@ def print_bench(results):
             continue
         if s["scene"] == "planner":
             print(f"  planner: jobs {tp.get('jobs')}; conservation: {tp['conservation']['keys']} keys, {tp['conservation']['problems']} problems")
+            continue
+        if s["scene"] == "carry":                      # (issue #633)
+            print(f"  {scene_label(s)}: {tp.get('item_lines')} item and {tp.get('fluid_lines')} fluid lines, items into the sinks "
+                  f"{fmt(tp.get('items_per_s'), 1)}/s")
             continue
         if s["scene"] == "tunnels":                    # (issue #629)
             print(f"  {scene_label(s)} {s['size']}: {tp.get('providers')} providers, {tp.get('machines')} machines "
@@ -2597,6 +2610,9 @@ def main():
                    "machines through ME P2P tunnels and %d providers with 4 machines next to each (with --idle: also without "
                    "jobs)" % (64, 16))
     p.add_argument("--tunnels-only", action="store_true", help="only the tunnel scene (with --idle: also without jobs)")
+    p.add_argument("--carry", action="store_true", help="issue #633: also the carry scene, 40 item and 20 fluid lines (a source, "
+                   "four sinks) carried by ME P2P tunnels on their own and by an import bus and four export buses")
+    p.add_argument("--carry-only", action="store_true", help="only the carry scene")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "
                    "sample must be the same (issue #50)")

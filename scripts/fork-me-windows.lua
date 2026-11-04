@@ -695,6 +695,7 @@ function M.p2p_content(content)
 	buttons.add{ type = "button", caption = { "fork-me-gui.p2p-new" }, tooltip = { "fork-me-gui.p2p-new-tooltip" }, tags = G.act("p2p_new") }
 	buttons.add{ type = "button", caption = { "fork-me-gui.p2p-unbind" }, tags = G.act("p2p_unbind") }
 	G.label(content, "", WIDTH, nil, "fork_me_p2p_status")
+	G.label(content, "", WIDTH, nil, "fork_me_p2p_carry")          -- (issue #633: what it carries on its own)
 end
 
 local function open_p2p(player, entity)
@@ -721,6 +722,12 @@ function M.refresh_p2p(player, frame, first)
 	if d.status == "input" then caption = { "fork-me-gui.p2p-status-input", d.outputs or 0, d.bound or 0 }
 	elseif at then caption = { "fork-me-gui.p2p-status-" .. d.status, at } end
 	G.find(frame, "fork_me_p2p_status").caption = caption
+	local carry = G.find(frame, "fork_me_p2p_carry")
+	if carry then
+		carry.caption = (not d.output and d.holds) and { "fork-me-gui.p2p-carry",
+			d.kind == "fluid" and string.format("%.0f", d.holds) or G.fmt(d.holds),
+			{ "fork-me-gui.p2p-carry-" .. (d.carry or "empty") } } or ""
+	end
 	return true
 end
 
@@ -2912,7 +2919,7 @@ remote.add_interface("gregtorio-me-gui", {
 		M.p2p_content(frame)
 		local ok = M.refresh_p2p({ valid = true, can_reach_entity = function() return true end }, frame, true)
 		return { ok = ok, text = G.find(frame, "fork_me_p2p_freq").text, role = G.find(frame, "fork_me_p2p_role").switch_state,
-			status = G.find(frame, "fork_me_p2p_status").caption }
+			status = G.find(frame, "fork_me_p2p_status").caption, carry = G.find(frame, "fork_me_p2p_carry").caption }
 	end,
 	--- Issue #531: the ME Logistic Interface's window built into a stand-in frame and refreshed: { ok, status, net, rows (the
 	--- request tab's row buttons: { key, red }), asked (the request rows' "asks" captions), accept }

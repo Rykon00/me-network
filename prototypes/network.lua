@@ -694,6 +694,54 @@ for i, t in ipairs(P2P_TUNNELS) do
 		subgroup = "fork-me-autocrafting", order = t.order .. "-attune", auto_recycle = false }
 end
 
+--- Issue #633: what a tunnel that is not an output carries on its own (scripts/fork-me-p2p.lua makes the part on its tile): the
+--- item tunnel's chest that inserters drop into, the fluid tunnel's tank whose one pipe connection is the tunnel's front (made
+--- in the tunnel's direction, made again when it turns). Not selectable, no collision, not in blueprints; inserters and pipes
+--- reach them (probed headless, Factorio 2.1.24).
+local P2P_CHEST_SLOTS, P2P_TANK_VOLUME = 4, 1000
+local NOTHING = { filename = "__core__/graphics/empty.png", priority = "extra-high", width = 1, height = 1 }
+data:extend({ {
+	type = "container",
+	name = "me-item-p2p-tunnel-buffer",
+	icon = HD_ICON .. P2P_TUNNELS[1].name .. ".png",
+	icon_size = 64,
+	flags = HIDDEN_FLAGS,
+	hidden = true,
+	hidden_in_factoriopedia = true,
+	selectable_in_game = false,
+	is_military_target = false,
+	max_health = 200,
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_mask = { layers = {} },
+	inventory_size = P2P_CHEST_SLOTS,
+	picture = NOTHING,
+	circuit_wire_max_distance = 0,
+	localised_name = { "entity-name." .. P2P_TUNNELS[1].name },
+}, {
+	type = "storage-tank",
+	name = "me-fluid-p2p-tunnel-tank",
+	icon = HD_ICON .. P2P_TUNNELS[2].name .. ".png",
+	icon_size = 64,
+	flags = HIDDEN_FLAGS,
+	hidden = true,
+	hidden_in_factoriopedia = true,
+	selectable_in_game = false,
+	is_military_target = false,
+	max_health = 200,
+	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	collision_mask = { layers = {} },
+	fluid_box = {
+		volume = P2P_TANK_VOLUME,
+		pipe_connections = { { direction = defines.direction.north, position = { 0, 0 }, hide_connection_info = true } },
+	},
+	window_bounding_box = { { 0, 0 }, { 0, 0 } },
+	flow_length_in_ticks = 360,
+	pictures = { picture = NOTHING },
+	two_direction_only = false,
+	circuit_wire_max_distance = 0,
+	localised_name = { "entity-name." .. P2P_TUNNELS[2].name },
+} })
+
 --------------------------------------------------------------------------------
 --- ME LOGISTIC STORAGE BUS (me-network issue #506; not in AE2): a 1x1 block that is not rotated; the vanilla logistic
 --- network whose area it stands in is storage of the ME network (its storage chests, in one mode also its provider chests;
