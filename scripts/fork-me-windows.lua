@@ -15,8 +15,8 @@
 ---     click a pattern to take it out), the status of each pattern (usable by how many machines, or why not), the
 ---     machines and chests next to it, the priority.
 ---   * ME Crafting CPU (issue #6: a multiblock of crafting blocks): its blocks, bytes, co-processors, its job.
----   * ME Level Maintainer: item or fluid, amount, batch, amount from the circuit, status (issue #639: beside the game's lamp
----     window, which has the game's own circuit and logistic network panel with both conditions).
+---   * ME Level Maintainer: item or fluid, amount, batch, status (issue #639: the circuit options and the conditions are in the
+---     circuit and logistic network panel right of the window).
 ---   * ME Circuit Interface: 20 filters, output on/off, status.
 ---   * ME Interface: 9 config rows (an item or a fluid and its amount), the four fluid sides (import, off or a fluid
 ---     row; what each side's tank holds), the container's content, "Open inventory"; its priority (issue #17).
@@ -1654,8 +1654,8 @@ local function open_maintainer(player, entity)
 	G.label(content, { "fork-me-circuit.maintainer-help" }, WIDTH)
 	--- issue #351: the rows (GTNH's level maintainer: 5 slots), each a resource, the amount to keep, a batch (at most this
 	--- much per job, 0 the whole difference), the amount from the circuit, and its stock and status
-	local t = content.add{ type = "table", name = "fork_me_maint_rows", column_count = 5 }
-	for _, h in ipairs({ "row-resource", "maintainer-keep", "row-batch", "row-circuit", "row-status" }) do
+	local t = content.add{ type = "table", name = "fork_me_maint_rows", column_count = 4 }
+	for _, h in ipairs({ "row-resource", "maintainer-keep", "row-batch", "row-status" }) do
 		t.add{ type = "label", caption = { "fork-me-circuit." .. h }, style = "caption_label",
 			tooltip = { "fork-me-circuit." .. h .. "-tooltip" } }
 	end
@@ -1664,16 +1664,10 @@ local function open_maintainer(player, entity)
 		t.add{ type = "flow", name = "fork_me_maint_target_" .. i }
 		G.number_field(t, r.amount or 0, G.act("maint_amount", { row = i }), 90)
 		G.number_field(t, r.batch or 0, G.act("maint_batch", { row = i }), 70)
-		t.add{ type = "checkbox", name = "fork_me_maint_circuit_" .. i, state = r.circuit or false,
-			tooltip = { "fork-me-circuit.maintainer-circuit-tooltip" }, tags = G.act("maint_circuit", { row = i }) }
 		t.add{ type = "label", name = "fork_me_maint_row_" .. i }
 	end
-	content.add{ type = "checkbox", name = "fork_me_maint_all", state = d.circuit_all or false,
-		caption = { "fork-me-circuit.maintainer-circuit-all" }, tooltip = { "fork-me-circuit.maintainer-circuit-all-tooltip" },
-		tags = G.act("maint_circuit_all") }
-	--- (issue #639: the conditions are in the game's lamp window this one sits beside: its own circuit and logistic panel)
+	--- (issue #639: the amounts from the circuit, "craft what the circuit asks" and the conditions are in the panel)
 	content.add{ type = "line" }
-	G.label(content, "", WIDTH, nil, "fork_me_maint_stock")
 	G.label(content, "", WIDTH, nil, "fork_me_maint_status")
 	M.refresh_maintainer(player, G.window_of(player))
 end
@@ -1701,15 +1695,10 @@ function M.refresh_maintainer(player, frame)
 			rl.caption = r.key and { "", G.fmt(r.stock or 0), " / ", G.fmt(r.target or r.amount or 0), "  ", circuit.row_status(r) } or ""
 		end
 	end
-	local all = G.find(frame, "fork_me_maint_all")              -- (set elsewhere: a paste, another player)
-	if all and all.state ~= (d.circuit_all or false) then all.state = d.circuit_all or false end
-	for i = 1, MAINT_ROWS do
-		local cb = G.find(frame, "fork_me_maint_circuit_" .. i)
-		local on = ((d.rows or {})[i] or {}).circuit or false
-		if cb and cb.state ~= on then cb.state = on end
-	end
-	local stock = G.find(frame, "fork_me_maint_stock")
-	if d.circuit_all then
+	refresh_side(frame, entity)                                -- (issue #639: first, it holds the line below)
+	local stock = G.find(frame, "fork_me_maint_stock")          -- (issue #639: in the circuit panel, while it is there)
+	if not stock then
+	elseif d.circuit_all then
 		--- the rows of the signals: their resources and stock
 		local parts = { "" }
 		for i, r in ipairs(d.crows or {}) do
@@ -1726,10 +1715,7 @@ function M.refresh_maintainer(player, frame)
 	return true
 end
 
---- issue #639: beside the game's lamp window (it stays open, with the game's own circuit and logistic network panel)
-local maintainer_window = storing({ open = open_maintainer, refresh = M.refresh_maintainer, entities = { "maintainer" } })
-maintainer_window.relative = { gui = defines.relative_gui_type.lamp_gui, position = defines.relative_gui_position.left }
-G.window("maintainer", maintainer_window)
+G.window("maintainer", storing({ open = open_maintainer, refresh = M.refresh_maintainer, entities = { "maintainer" } }))
 
 G.on("maint_target", function(event, player, el)
 	if event.name ~= defines.events.on_gui_click then return end
@@ -1773,6 +1759,42 @@ G.on("maint_circuit", function(event, player, el)
 	if entity then circuit.set_maintainer(entity, nil, nil, el.state, el.tags.row or 1) G.refresh_one(player) end
 end)
 
+--- issue #639: the maintainer's logistic condition (the lamp's own)
+local function set_maint_logistic(player, field, value)
+	local entity = window_entity(player)
+	if not entity then return end
+	local l = circuit.get_logistic(entity)
+	if not l then return end
+	if field == "on" then circuit.set_logistic(entity, value)
+	else
+		local c = l.cond
+		c[field] = value
+		if field == "second_signal" then c.constant = not value and (c.constant or 0) or nil end
+		circuit.set_logistic(entity, nil, c)
+	end
+	G.refresh_one(player)
+end
+G.on("maint_lcond_on", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	set_maint_logistic(player, "on", el.state)
+end)
+G.on("maint_lcond_signal", function(event, player, el)
+	if event.name ~= defines.events.on_gui_elem_changed then return end
+	set_maint_logistic(player, el.tags.which == "second" and "second_signal" or "first_signal", el.elem_value or nil)
+end)
+G.on("maint_lcond_cmp", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	set_maint_logistic(player, "comparator", circuit.COMPARATORS[el.selected_index])
+end)
+G.on("maint_lcond_const", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	local l = entity and circuit.get_logistic(entity)
+	if not l then return end
+	l.cond.constant = math.floor(tonumber(el.text) or 0)
+	circuit.set_logistic(entity, nil, l.cond)                 -- (no refresh: the field keeps its focus)
+end)
+
 --- issue #351: craft what the circuit asks
 G.on("maint_circuit_all", function(event, player, el)
 	if event.name ~= defines.events.on_gui_checked_state_changed then return end
@@ -1780,7 +1802,29 @@ G.on("maint_circuit_all", function(event, player, el)
 	if entity then circuit.set_circuit_all(entity, el.state) G.refresh_one(player) end
 end)
 
---- (issue #639: the maintainer's conditions are set in the game's lamp window)
+G.on("maint_cond_on", function(event, player, el)
+	if event.name ~= defines.events.on_gui_checked_state_changed then return end
+	local entity = window_entity(player)
+	if entity then circuit.set_condition(entity, el.state) G.refresh_one(player) end
+end)
+
+G.on("maint_cond_signal", function(event, player, el)
+	if event.name ~= defines.events.on_gui_elem_changed then return end
+	local entity = window_entity(player)
+	if entity then circuit.set_condition(entity, nil, el.elem_value or false) end
+end)
+
+G.on("maint_cond_cmp", function(event, player, el)
+	if event.name ~= defines.events.on_gui_selection_state_changed then return end
+	local entity = window_entity(player)
+	if entity then circuit.set_condition(entity, nil, nil, circuit.COMPARATORS[el.selected_index]) end
+end)
+
+G.on("maint_cond_const", function(event, player, el)
+	if event.name ~= defines.events.on_gui_text_changed and event.name ~= defines.events.on_gui_confirmed then return end
+	local entity = window_entity(player)
+	if entity then circuit.set_condition(entity, nil, nil, nil, tonumber(el.text) or 0) end
+end)
 
 --------------------------------------------------------------------------------
 --- ME Circuit Interface
@@ -2163,33 +2207,42 @@ G.on("if_inventory", function(event, player)
 end)
 
 --------------------------------------------------------------------------------
---- issue #639: the circuit and logistic network panel right of a block's window (G.side_of), built like the game's own panel
---- of an inserter: the ME Import, Export and Storage Bus, the ME Interface and the pattern provider (their conditions in
---- scripts/fork-me-connector.lua). Their entity types (display panels, a container) have no such settings of the game, so the
---- game cannot show its own panel for them. The ME Level Maintainer is a lamp: its window sits beside the game's lamp window,
---- which has the game's own panel. Until #639 (since #412, #628) these were rows in the windows.
+--- issue #639: the circuit and logistic network panel right of a block's window (G.side_of), as the game's own panel of an
+--- inserter or a lamp: the ME Import, Export and Storage Bus, the ME Interface, the pattern provider (their conditions in
+--- scripts/fork-me-connector.lua) and the ME Level Maintainer (its lamp's own). Until #639 (since #412, #628) these were rows
+--- in the windows.
 --------------------------------------------------------------------------------
 
 local RED, GREEN = defines.wire_connector_id.circuit_red, defines.wire_connector_id.circuit_green
+local MAINTAINER = "me-level-maintainer"
 local SIDE_WIDTH = 300
-local CMP = Conn.COMPARATORS
+local CMP = Conn.COMPARATORS             -- (the maintainer's, circuit.COMPARATORS, are the same in the same order)
 
 --- does the block have the panel at all?
 local function has_side(entity)
-	return Conn.HOSTS[entity.name] ~= nil
+	return entity.name == MAINTAINER or Conn.HOSTS[entity.name] ~= nil
 end
 
---- What the panel of `entity` shows: { kind ("bus", "export", "interface", "provider"), red, green (the circuit
+--- What the panel of `entity` shows: { kind ("bus", "export", "interface", "provider", "maintainer"), red, green (the circuit
 --- networks), net (the logistic network covering the block), cc, cond, lc, lcond (the conditions), cl, ll (their levels),
 --- wired, logistic (the two sections: while the block has a wire; while a logistic network covers it or it is connected to
 --- one, so that a block left off outside every network, as the game's inserter is, can be switched back) }
 function M.side_state(entity)
 	local d = { red = entity.get_circuit_network(RED), green = entity.get_circuit_network(GREEN), net = Conn.find_network(entity) }
-	d.kind = entity.name == "me-export-bus" and "export" or entity.name == "me-network-interface" and "interface"
-		or entity.name == "me-pattern-provider" and "provider" or "bus"
-	d.cc, d.cond = Conn.condition(entity)
-	d.lc, d.lcond = Conn.logistic(entity)
-	d.cl, d.ll = Conn.levels(entity)
+	if entity.name == MAINTAINER then
+		d.kind = "maintainer"
+		local c = circuit.get_condition(entity)
+		d.cc, d.cond = c.enabled == true, { first_signal = c.signal, comparator = c.comparator, constant = c.constant }
+		local l = circuit.get_logistic(entity)
+		d.lc, d.lcond = l.enabled == true, l.cond
+		d.cl, d.ll = circuit.levels(entity)
+	else
+		d.kind = entity.name == "me-export-bus" and "export" or entity.name == "me-network-interface" and "interface"
+			or entity.name == "me-pattern-provider" and "provider" or "bus"
+		d.cc, d.cond = Conn.condition(entity)
+		d.lc, d.lcond = Conn.logistic(entity)
+		d.cl, d.ll = Conn.levels(entity)
+	end
 	d.cond, d.lcond = d.cond or {}, d.lcond or {}
 	d.wired = d.red ~= nil or d.green ~= nil
 	d.logistic = d.net ~= nil or d.lc == true
@@ -2207,21 +2260,18 @@ end
 --- _cmp, _second, _const, _state; the actions `act`_signal (tag `which`), _cmp, _const
 local function condition_row(box, prefix, act, c, second, default_cmp)
 	local row = G.row(box)
-	row.style.horizontal_spacing = 0                 -- (the game's condition row: the parts touch, the comparator's own style)
-	row.add{ type = "choose-elem-button", name = prefix .. "_first", elem_type = "signal", signal = c.first_signal,
-		style = "slot_button_in_shallow_frame", tooltip = { "fork-me-gui.circuit-condition-first" },
-		tags = G.act(act .. "_signal", { which = "first" }) }
+	local first = row.add{ type = "choose-elem-button", name = prefix .. "_first", elem_type = "signal", signal = c.first_signal,
+		style = "slot_button", tooltip = { "fork-me-gui.circuit-condition-first" }, tags = G.act(act .. "_signal", { which = "first" }) }
+	first.style.size = 40
 	local index = default_cmp
 	for i, v in ipairs(CMP) do if v == c.comparator then index = i end end
-	row.add{ type = "drop-down", name = prefix .. "_cmp", items = CMP, selected_index = index, style = "circuit_condition_comparator_dropdown",
-		tags = G.act(act .. "_cmp") }
+	row.add{ type = "drop-down", name = prefix .. "_cmp", items = CMP, selected_index = index, tags = G.act(act .. "_cmp") }.style.width = 60
 	if second then
-		row.add{ type = "choose-elem-button", name = prefix .. "_second", elem_type = "signal", signal = c.second_signal,
-			style = "slot_button_in_shallow_frame", tooltip = { "fork-me-gui.circuit-condition-second" },
-			tags = G.act(act .. "_signal", { which = "second" }) }
+		local b = row.add{ type = "choose-elem-button", name = prefix .. "_second", elem_type = "signal", signal = c.second_signal,
+			style = "slot_button", tooltip = { "fork-me-gui.circuit-condition-second" }, tags = G.act(act .. "_signal", { which = "second" }) }
+		b.style.size = 40
 	end
 	local field = G.number_field(row, c.constant or 0, G.act(act .. "_const"), 90, true)
-	field.style.left_margin = 8
 	field.name = prefix .. "_const"
 	field.tooltip = { "fork-me-gui.circuit-condition-constant" }
 	G.label(box, "", SIDE_WIDTH, nil, prefix .. "_state")
@@ -2237,7 +2287,8 @@ local function section(side, name, caption)
 end
 
 --- the circuit network section's modes of each block (moved from the windows): the export bus's pulse mode (#412), the
---- interface's rows from the circuit (#412), the provider's circuit lock (#429)
+--- interface's rows from the circuit (#412), the provider's circuit lock (#429), the maintainer's amounts from the circuit and
+--- "craft what the circuit asks" (#351)
 local function build_modes(box, entity, d)
 	if d.kind == "export" then
 		box.add{ type = "checkbox", name = "fork_me_bus_pulse", state = false, caption = { "fork-me-gui.bus-pulse" },
@@ -2253,17 +2304,33 @@ local function build_modes(box, entity, d)
 			tooltip = { "fork-me-gui.provider-circuit-lock-tooltip" },
 			items = { { "gui-control-behavior-modes.none" }, { "fork-me-gui.provider-lock-low" }, { "fork-me-gui.provider-lock-high" },
 				{ "fork-me-gui.provider-lock-pulse" } } }
+	elseif d.kind == "maintainer" then
+		local m = M.maintainer_data(entity)
+		local t = box.add{ type = "table", name = "fork_me_maint_circuit_rows", column_count = 2 }
+		for i = 1, MAINT_ROWS do
+			local r = m.rows and m.rows[i] or {}
+			local desc = r.key and autocraft.describe(r.key)
+			t.add{ type = "label", caption = { "fork-me-gui.side-row", i, desc and desc.localised_name or r.key or "-" } }
+			t.add{ type = "checkbox", name = "fork_me_maint_circuit_" .. i, state = r.circuit or false,
+				caption = { "fork-me-circuit.maintainer-circuit" }, tooltip = { "fork-me-circuit.maintainer-circuit-tooltip" },
+				tags = G.act("maint_circuit", { row = i }) }
+		end
+		box.add{ type = "checkbox", name = "fork_me_maint_all", state = m.circuit_all or false,
+			caption = { "fork-me-circuit.maintainer-circuit-all" }, tooltip = { "fork-me-circuit.maintainer-circuit-all-tooltip" },
+			tags = G.act("maint_circuit_all") }
+		G.label(box, "", SIDE_WIDTH, nil, "fork_me_maint_stock")
 	end
 end
 
 local function build_side(side, entity, d)
 	side.clear()
+	local m = d.kind == "maintainer"
 	if d.wired then
 		local box = section(side, "fork_me_side_circuit", { "gui-control-behavior.circuit-connection" })
 		G.label(box, "", SIDE_WIDTH, nil, "fork_me_side_wires")
 		box.add{ type = "checkbox", name = "fork_me_cond_on", state = d.cc, caption = { "gui-control-behavior-modes.enable-if" },
-			tooltip = { "gui-control-behavior-modes.enable-if-description" }, tags = G.act("cond_on") }
-		condition_row(box, "fork_me_cond", "cond", d.cond, true, 2)
+			tooltip = { "gui-control-behavior-modes.enable-if-description" }, tags = G.act(m and "maint_cond_on" or "cond_on") }
+		condition_row(box, "fork_me_cond", m and "maint_cond" or "cond", d.cond, not m, m and 1 or 2)
 		local before = #box.children
 		build_modes(box, entity, d)
 		if #box.children > before then box.add{ type = "line", index = before + 1 } end
@@ -2272,8 +2339,8 @@ local function build_side(side, entity, d)
 		local box = section(side, "fork_me_side_logistic", { "gui-control-behavior.logistic-connection" })
 		G.label(box, "", SIDE_WIDTH, nil, "fork_me_side_lnet")
 		box.add{ type = "checkbox", name = "fork_me_lcond_on", state = d.lc, caption = { "gui-control-behavior.connect" },
-			tooltip = { "fork-me-gui.logistic-condition-tooltip" }, tags = G.act("lcond_on") }
-		condition_row(box, "fork_me_lcond", "lcond", d.lcond, true, 2)
+			tooltip = { "fork-me-gui.logistic-condition-tooltip" }, tags = G.act(m and "maint_lcond_on" or "lcond_on") }
+		condition_row(box, "fork_me_lcond", m and "maint_lcond" or "lcond", d.lcond, true, 2)
 	end
 end
 
@@ -2301,7 +2368,16 @@ refresh_side = function(frame, entity)
 		return
 	end
 	local d = M.side_state(entity)
-	local sig = table.concat({ d.kind, tostring(d.wired), tostring(d.logistic), condition_sig(d.cond), condition_sig(d.lcond) }, "|")
+	local extra = ""
+	if d.kind == "maintainer" then
+		local keys = {}
+		for i = 1, MAINT_ROWS do
+			local r = (M.maintainer_data(entity).rows or {})[i]
+			keys[i] = r and r.key or "-"
+		end
+		extra = table.concat(keys, ",")
+	end
+	local sig = table.concat({ d.kind, tostring(d.wired), tostring(d.logistic), condition_sig(d.cond), condition_sig(d.lcond), extra }, "|")
 	if (side.tags or {}).sig ~= sig then
 		build_side(side, entity, d)
 		side.tags = { sig = sig }
@@ -2319,7 +2395,8 @@ refresh_side = function(frame, entity)
 	set_state(side, "fork_me_cond_on", d.cc)
 	local const = G.find(side, "fork_me_cond_const")
 	if const then const.visible = d.cond.second_signal == nil end
-	state_line(side, "fork_me_cond_state", d.cc, d.cl, "fork-me-gui.circuit-condition-off", "fork-me-gui.circuit-condition-no-wire")
+	state_line(side, "fork_me_cond_state", d.cc, d.cl, d.kind == "maintainer" and "fork-me-gui.maintainer-condition-off"
+		or "fork-me-gui.circuit-condition-off", "fork-me-gui.circuit-condition-no-wire")
 	if d.kind == "export" then
 		set_state(side, "fork_me_bus_pulse", (M.bus_data(entity) or {}).pulse or false)
 	elseif d.kind == "interface" and G.find(side, "fork_me_if_circuit") then
@@ -2340,6 +2417,10 @@ refresh_side = function(frame, entity)
 			for n, mode in ipairs(CIRCUIT_LOCKS) do if mode == lock then index = n + 1 end end
 			if dd.selected_index ~= index then dd.selected_index = index end
 		end
+	elseif d.kind == "maintainer" then
+		local m = M.maintainer_data(entity)
+		for n = 1, MAINT_ROWS do set_state(side, "fork_me_maint_circuit_" .. n, ((m.rows or {})[n] or {}).circuit or false) end
+		set_state(side, "fork_me_maint_all", m.circuit_all or false)
 	end
 	--- the logistic section
 	local lnet = G.find(side, "fork_me_side_lnet")
@@ -2867,7 +2948,7 @@ remote.add_interface("gregtorio-me-gui", {
 			play_sound = function(a) sounds[#sounds + 1] = a.path end,
 			can_reach_entity = function() return true end, force = game.forces.player, surface = game.surfaces[1],
 			position = { x = 0, y = 0 } }
-		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = stand_in_element{ type = "empty-widget" } } end
+		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
 		if spec.character then
 			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
 				get_inventory = function() return spec.character end }
@@ -2900,8 +2981,6 @@ remote.add_interface("gregtorio-me-gui", {
 	--- buttons (block_slot) by flow name
 	stand_in_open_entity = function(name, entity)
 		local sp = stand_ins[name]
-		local def = G.def_of(entity)
-		if def and def.relative then sp.opened = entity end          -- (issue #639: the game opened its window first)
 		G.open_entity(sp, entity)
 		local frame = G.window_of(sp)
 		if not frame then return nil end
@@ -3022,8 +3101,7 @@ remote.add_interface("gregtorio-me-gui", {
 			G.refresh_one(sp)
 			side = G.side_of(G.window_of(sp))
 		end
-		local out = { visible = side.visible == true, names = {}, captions = {}, states = {}, relative = G.is_relative(frame),
-			anchor = frame.anchor, opened_entity = sp.opened == G.entity_by_unit(frame.tags.unit) }
+		local out = { visible = side.visible == true, names = {}, captions = {}, states = {} }
 		each(function(c)
 			if c.name then
 				out.names[c.name] = true

@@ -137,32 +137,11 @@ end
 
 local PARK_SLOTS = 20
 
---- Issue #639: a window whose block has a window of the game with the game's own circuit and logistic network panel (the
---- ME Level Maintainer's lamp window) is not a screen frame: it is `fork_me_rwindow` in player.gui.relative, anchored beside
---- the game's window (the window definition's `relative` = { gui, position }), which stays the player's opened GUI.
-local RELATIVE = "fork_me_rwindow"
-
 --- the player's open ME window (or nil), and its name
 function M.window_of(player)
 	local frame = player.gui.screen.fork_me_window
 	if frame and frame.valid then return frame, frame.tags.fork_me_window end
-	local rel = player.gui.relative
-	frame = rel and rel[RELATIVE]
-	if frame and frame.valid then return frame, frame.tags.fork_me_window end
 	return nil
-end
-
---- Issue #639: is `frame` a window beside the game's window of its block?
-function M.is_relative(frame)
-	return frame ~= nil and frame.name == RELATIVE
-end
-
---- Issue #639: is the player's window `frame` still open? A screen window while it is the opened GUI; a window beside the
---- game's while that window of its block is
-function M.is_open(player, frame)
-	if not M.is_relative(frame) then return player.opened == frame end
-	local e = player.opened
-	return e ~= nil and e.object_name == "LuaEntity" and e.valid and e.unit_number == frame.tags.unit
 end
 
 --- Issue #639: the flow of a window's circuit and logistic network panel (right of the window; G.open_window)
@@ -172,11 +151,6 @@ end
 
 --- make the player's ME window the opened GUI again (the picker keeps a window open on the close keys)
 function M.focus(player, frame)
-	if M.is_relative(frame) then                       -- (issue #639: the game's window of its block is the opened GUI)
-		local e = M.entity_by_unit(frame.tags.unit)
-		if e and e.valid and player.opened ~= e then player.opened = e end
-		return
-	end
 	if player.opened ~= frame then player.opened = frame end
 end
 
@@ -300,12 +274,6 @@ function M.close_window(player, sound)
 	local frame = player.gui.screen.fork_me_window
 	local had = frame and frame.valid
 	if had then frame.destroy() end
-	local rel = player.gui.relative
-	local rframe = rel and rel[RELATIVE]
-	if rframe and rframe.valid then                       -- (issue #639: beside the game's window; closed for good, that one too)
-		if sound and M.is_open(player, rframe) then player.opened = nil end
-		rframe.destroy()
-	end
 	for _, hook in ipairs(M.close_hooks) do hook(player) end
 	if had and sound then player.play_sound{ path = SOUND_CLOSE } end
 	M.drop_buffer(player)                                 -- (issue #542: a buffer of a 0.5.10 save)
@@ -490,33 +458,22 @@ function M.open_window(player, name, caption, tags, pane)
 	--- issue #639: the screen element is a frame without graphics holding the window (`fork_me_main`) and, to its right, the
 	--- circuit and logistic network panel (`fork_me_side`, M.side_of; hidden until a window's refresh fills it), so the panel
 	--- moves, opens and closes with the window as the game's own does (a script cannot read a window's width to place a frame
-	--- of its own next to it). A window with `relative` goes beside the game's window of its block instead (that window has the
-	--- game's own panel): anchored in player.gui.relative, the game's window stays the opened GUI and plays its own sounds.
-	local rel = windows[name] and windows[name].relative
-	local frame
-	if rel then
-		local e = M.entity_by_unit(t.unit)
-		frame = player.gui.relative.add{ type = "frame", name = RELATIVE, direction = "horizontal", style = "invisible_frame", tags = t,
-			anchor = { gui = rel.gui, position = rel.position, names = e and e.valid and { e.name } or nil } }
-	else
-		frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "horizontal", style = "invisible_frame",
-			tags = t }
-	end
+	--- of its own next to it)
+	local frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "horizontal", style = "invisible_frame",
+		tags = t }
 	local main = frame.add{ type = "frame", name = "fork_me_main", direction = "vertical" }
 	local side = frame.add{ type = "flow", name = "fork_me_side", direction = "vertical", visible = false }
 	side.style.left_margin = 4
 	local bar = main.add{ type = "flow", direction = "horizontal" }
-	if not rel then bar.drag_target = frame end
+	bar.drag_target = frame
 	bar.style.horizontal_spacing = 8
 	bar.add{ type = "label", name = "fork_me_title", caption = caption, style = "frame_title", ignored_by_interaction = true }
 	local drag = bar.add{ type = "empty-widget", style = "draggable_space_header", ignored_by_interaction = true }
 	drag.style.horizontally_stretchable = true
 	drag.style.height = 24
 	drag.style.right_margin = 4
-	if not rel then
-		bar.add{ type = "sprite-button", style = "frame_action_button", sprite = "utility/close",
-			tooltip = { "gui.close-instruction" }, tags = M.act("close") }
-	end
+	bar.add{ type = "sprite-button", style = "frame_action_button", sprite = "utility/close",
+		tooltip = { "gui.close-instruction" }, tags = M.act("close") }
 	local body = main.add{ type = "flow", name = "fork_me_body", direction = "horizontal" }
 	body.style.horizontal_spacing = 12
 	if pane ~= false then build_pane(body, windows[name] and windows[name].hint, player) end
@@ -524,7 +481,6 @@ function M.open_window(player, name, caption, tags, pane)
 	inner.style.vertically_stretchable = true
 	local content = inner.add{ type = "flow", name = "fork_me_content", direction = "vertical" }
 	content.style.vertical_spacing = 6
-	if rel then return frame, content end                -- (the game's window: opened, its own sound, its own place)
 	frame.auto_center = true
 	player.opened = frame
 	if not rebuilt then player.play_sound{ path = SOUND_OPEN } end
@@ -951,16 +907,6 @@ function M.open_entity(player, entity)
 		return true                                   -- the vanilla window, asked for by the ME window
 	end
 	if not player.can_reach_entity(entity) then return true end
-	local def = M.def_of(entity)
-	if def and def.relative then
-		--- issue #639: the game's window of the block opens (the open key: the game opens it itself, on_gui_opened follows)
-		--- and the ME window goes beside it
-		if player.opened ~= entity then return true end
-		local f = M.window_of(player)
-		if f and M.is_relative(f) and f.tags.unit == entity.unit_number then return true end
-		open(player, entity)
-		return true
-	end
 	local frame, name = M.window_of(player)
 	if frame and frame.tags.unit == entity.unit_number and not frame.tags.via and windows[name] and open == windows[name].open then
 		player.opened = frame                         -- already open (the open key and on_gui_opened both fire)
@@ -1053,19 +999,6 @@ function M.on_closed(event)
 		if player then M.drop_buffer(player) end
 		return false
 	end
-	if event.gui_type == defines.gui_type.entity and event.entity and event.entity.valid then
-		--- issue #639: the game's window beside which an ME window sits was closed (E, Escape, another GUI)
-		local player = game.get_player(event.player_index)
-		local frame = player and M.window_of(player)
-		if frame and M.is_relative(frame) and frame.tags.unit == event.entity.unit_number then
-			for _, hook in ipairs(closed_hooks) do
-				if hook(player, frame) then return true end
-			end
-			M.close_window(player)
-			return true
-		end
-		return false
-	end
 	local el = event.element
 	if el and el.valid and el.name == "fork_me_window" then
 		--- the open key's own game action can close the window in the tick it was opened (an entity without a
@@ -1101,7 +1034,7 @@ function M.refresh_all()
 			local def = windows[name]
 			if not def then
 				M.close_window(player, true)
-			elseif not M.is_open(player, frame) then
+			elseif player.opened ~= frame then
 				M.close_window(player)                     -- dying or another GUI closed it without an event
 			else
 				local ok = true
