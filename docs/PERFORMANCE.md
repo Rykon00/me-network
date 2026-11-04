@@ -4446,3 +4446,49 @@ bus pair moves each item into the network's cells and out again.
 `bench --check origin/main --sizes 1000,5000` (the provider's neighbour search and `T.is_me` read one name more; the game ran
 on the machine too, so the noise is wide): passes, nothing worse (script avg 1.18 / 0.78 ms at 1000, 3.02 / 3.08 at 5000;
 items/s, fluid/s, provider crafts/s and the allocation per tick equal).
+
+## The logistic network condition and the circuit panel (issue #639)
+
+A block connected to the logistic network is one more block in the connector's check list of issue #412 (16 checks per tick,
+each block at most every 10 ticks; no tick handler of its own). Its check reads its logistic network's count of the condition's
+item (`LuaLogisticNetwork.get_item_count`, with an ItemWithQualityID made once per signal and kept outside `storage`) besides the
+circuit condition; the network itself is looked up (`find_logistic_network_by_position`) at most every 300 ticks per block and
+kept in the block's record (`lnet`, `lnext`: the save/load check of `devcheck runtime` sees the same checks), at once when it
+became invalid. A block without any condition or circuit mode still has no record and costs nothing. The panel is built and
+refreshed with the window (once a second, while it is open).
+
+Measured per call on this machine (10 000 calls, headless): `find_logistic_network_by_position` 0.86 µs, `get_item_count` 0.41
+µs with a kept id and 0.81 µs with a new table, `get_circuit_network` on both wires 0.70 µs.
+
+`bench --check origin/main --sizes 1000,5000` (the scenes have no condition; three rounds in turns):
+
+| | origin/main | #639 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.371 / 2.08 | 0.370 / 2.05 |
+| 5000: script avg / p99 (ms) | 0.933 / 2.83 | 0.927 / 2.85 |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.71 / 61.79 |
+| items/s, fluid/s (5000) | 165 100, 1 004 000 | the same |
+| burst build / remove ms (5000) | 94.2 / 78.0 | 96.2 / 78.0 |
+
+`regressions beyond the noise: 0` (the first tick after the load at 5000, 6.7 against 14.6 ms, is within its noise of ±4 ms).
+
+`bench --check origin/main --sizes 1000,5000 --conditions` (new variant: every import and export bus of the scene, 600 at 1000
+and about 3000 at 5000, gets a circuit condition without a wire and, in #639, a logistic condition that holds, "iron plate >= 0",
+in the logistic area of unpowered roboports without collision on the buses' tiles, which both versions get; so origin/main
+checks the circuit condition of the same list and the difference is the logistic part):
+
+| | origin/main | #639, first version | #639 |
+|---|---|---|---|
+| 1000: script avg / p99 (ms) | 0.467 / 2.30 | 0.511 / 2.23 (alloc 52.5) | 0.518 / 2.35 |
+| 5000: script avg / p99 (ms) | 1.110 / 3.27 | 1.175 / 3.15 (alloc 77.9) | 1.192 / 3.34 |
+| Lua alloc KB per tick (1000 / 5000) | 44.47 / 64.54 | 52.50 / 77.92 | 46.73 / 68.59 |
+| gc avg ms (1000 / 5000) | 0.042 / 0.061 | 0.048 / 0.058 | 0.042 / 0.063 |
+| items/s, fluid/s | 33 270, 205 800 / 165 100, 1 004 000 | the same | the same |
+
+(The origin/main column is of the last run; its script avg was 0.427 and 1.048 ms in the run of the first version, the machine's
+noise between runs.) The first version made a table for `get_item_count`, read `prototypes.item` per check and looked the
+network up every 120 ticks: 8 to 13 KB more allocation per tick. With the kept ids and the 300 ticks the cost of a check with
+both conditions is about 3 to 5 µs more than one with the circuit condition alone: 0.05 ms per tick at 1000 and 0.08 ms at 5000
+while every bus has both conditions (the 16 checks per tick are the cost's limit, whatever the number of blocks), 2 to 4 KB of
+allocation per tick, the GC the same, the throughput identical. `bench --check` reports these as regressions: they are the price
+of the feature where it is used on every bus, not a cost of the scenes without it.

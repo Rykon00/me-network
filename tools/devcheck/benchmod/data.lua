@@ -16,3 +16,16 @@ tank.minable = nil
 tank.next_upgrade = nil
 tank.fast_replaceable_group = nil
 data:extend({ tank })
+
+--- issue #639: a roboport without collision (placed on a bus's tile in the dense scene; unpowered it has the 25 tiles of
+--- logistic area whatever its prototype says, measured): the logistic condition of `conditions`
+local port = table.deepcopy(data.raw.roboport.roboport)
+port.name = "zz-bench-roboport"
+port.collision_mask = { layers = {} }
+port.collision_box = { { -0.1, -0.1 }, { 0.1, 0.1 } }
+port.selection_box = { { -0.1, -0.1 }, { 0.1, 0.1 } }
+port.selectable_in_game = false
+port.minable = nil
+port.next_upgrade = nil
+port.fast_replaceable_group = nil
+data:extend({ port })

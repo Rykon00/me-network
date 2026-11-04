@@ -144,6 +144,11 @@ function M.window_of(player)
 	return nil
 end
 
+--- Issue #639: the flow of a window's circuit and logistic network panel (right of the window; G.open_window)
+function M.side_of(frame)
+	return frame and frame.valid and frame.fork_me_side or nil
+end
+
 --- make the player's ME window the opened GUI again (the picker keeps a window open on the close keys)
 function M.focus(player, frame)
 	if player.opened ~= frame then player.opened = frame end
@@ -279,7 +284,8 @@ end
 
 --- the pane's inventory element (named "fork_me_inv"), or nil
 local function pane_element(frame)
-	local body = frame and frame.valid and frame.fork_me_body
+	local main = frame and frame.valid and frame.fork_me_main
+	local body = main and main.fork_me_body
 	local pane = body and body.fork_me_pane
 	local scroll = pane and pane.fork_me_inv_scroll
 	return scroll and scroll.fork_me_inv
@@ -449,18 +455,26 @@ function M.open_window(player, name, caption, tags, pane)
 	M.close_window(player)
 	local t = { fork_me_window = name, opened_tick = game.tick }
 	for k, v in pairs(tags or {}) do t[k] = v end
-	local frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "vertical", tags = t }
-	local bar = frame.add{ type = "flow", direction = "horizontal" }
+	--- issue #639: the screen element is a frame without graphics holding the window (`fork_me_main`) and, to its right, the
+	--- circuit and logistic network panel (`fork_me_side`, M.side_of; hidden until a window's refresh fills it), so the panel
+	--- moves, opens and closes with the window as the game's own does (a script cannot read a window's width to place a frame
+	--- of its own next to it)
+	local frame = player.gui.screen.add{ type = "frame", name = "fork_me_window", direction = "horizontal", style = "invisible_frame",
+		tags = t }
+	local main = frame.add{ type = "frame", name = "fork_me_main", direction = "vertical" }
+	local side = frame.add{ type = "flow", name = "fork_me_side", direction = "vertical", visible = false }
+	side.style.left_margin = 4
+	local bar = main.add{ type = "flow", direction = "horizontal" }
 	bar.drag_target = frame
 	bar.style.horizontal_spacing = 8
-	bar.add{ type = "label", caption = caption, style = "frame_title", ignored_by_interaction = true }
+	bar.add{ type = "label", name = "fork_me_title", caption = caption, style = "frame_title", ignored_by_interaction = true }
 	local drag = bar.add{ type = "empty-widget", style = "draggable_space_header", ignored_by_interaction = true }
 	drag.style.horizontally_stretchable = true
 	drag.style.height = 24
 	drag.style.right_margin = 4
 	bar.add{ type = "sprite-button", style = "frame_action_button", sprite = "utility/close",
 		tooltip = { "gui.close-instruction" }, tags = M.act("close") }
-	local body = frame.add{ type = "flow", name = "fork_me_body", direction = "horizontal" }
+	local body = main.add{ type = "flow", name = "fork_me_body", direction = "horizontal" }
 	body.style.horizontal_spacing = 12
 	if pane ~= false then build_pane(body, windows[name] and windows[name].hint, player) end
 	local inner = body.add{ type = "frame", style = "inside_shallow_frame_with_padding", direction = "vertical" }

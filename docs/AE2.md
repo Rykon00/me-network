@@ -314,17 +314,28 @@ click uses the tool and opens no window, as on a chest.
 | ME Drive | 10 slots with cell, fill bar, bytes and types; priority; click: cell in/out, right click: cell window; shift + click a cell in your inventory: into a free slot |
 | Storage cell | contents, fill, partition buttons, **Clear**, **From contents**; shift + click a cell: into a free slot of its drive |
 | ME Controller | status, members, drives, cells, bytes and types of item and fluid cells, the power in W, kW or MW and where it goes (issue #149: a line per kind of block with the number of blocks, the power in all and of one, biggest first, the controller's base draw as the first line; the lines add up to the total), and a line when the controller's power buffer is not full (its electric network delivers less than the network asks for) |
-| ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), **Lock crafting** (a drop-down: off, until the result is back (issue #346), and by its circuit condition: while it does not hold, while it holds, until it turns true (issue #429)) with what a locked provider waits for and **Unlock**, its circuit condition (issue #628: on its own wires), 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
+| ME Pattern Provider | the priority, the **blocking mode** for the chests next to it (off, blocking, smart blocking; issue #335), **Lock crafting** (a drop-down: off, until the result is back (issue #346), by the circuit network (issue #429: the mode is chosen in the circuit network panel, issue #639)) with what a locked provider waits for and **Unlock**, 3 card slots (Pattern Capacity Cards only: 9 more pattern slots each, 9 to 36; a card cannot be taken out while a pattern sits in a slot it gives), "Patterns: n of m" and 9 to 36 pattern slots in a list that scrolls (shift + click an encoded pattern in your inventory: into a free slot; click with one in hand: put it in or swap; click a pattern: take it, shift: into the inventory), the status of each pattern (usable by how many machines, or why not), the machines and chests next to it with their recipe, the priority |
 | Crafting block (any block of a Crafting CPU) | titled by the CPU ("Crafting CPU 47", the name the ME Terminal uses; "Crafting blocks" for a group that is no CPU), the CPU's status (or why the group is no CPU), size, crafting storage used and total, co-processors and speed, monitors, its job (progress, **Cancel**) |
-| ME Level Maintainer | item or fluid, amount, amount from the circuit, the circuit condition (on/off by a signal), stock and status |
+| ME Level Maintainer | five rows: item or fluid, amount, batch, stock and status (the circuit options and the conditions: the panel below) |
 | ME Circuit Interface | output on/off, up to 20 filters (empty: everything), how many signals it sends |
 | ME Interface | the priority, 4 card slots (up to 3 Interface Capacity Cards: 9 more config rows each; a Crafting Card, issue #411, with a line for its last request), 9 to 36 config rows (an item or a fluid + amount; a list that scrolls), the four sides (import, off, or a fluid row; each with its fluid's icon and how full its tank is), what it holds, the fluids in its sides (issue #311: per side its fluid with the amount it and its pipes hold, temperature, a fill bar and what its tank alone holds), status, **Open inventory** (the container's own window, once) |
 | ME Import/Export Bus | 9 filters (items and fluids; 9 more per Capacity Card, up to 27, issue #413), 4 card slots, a line for the Inverter and Fuzzy Card and for filters kept beyond the cards' room, a line for the Crafting Card's last request (export bus, issue #411) and its **Craft only** checkbox (issue #426, shown while the card is in), the entity it faces and whether the bus uses its items, fluids or both, status |
 | ME Storage Bus | your inventory on the left, its 5 card slots; mode (read and write, read only, write only), priority, 18 filters (9 more per Capacity Card; the filter mode whitelist or blacklist, a blacklist by itself with an Inverter Card), "filter on extract", From contents, Clear, the cards it waits for, a red warning with an Overflow Destruction Card, how many items it shows (on a tank: the fluid with amount and temperature), the entity it faces, status |
 
 The ME Interface's container window is still reachable through **Open inventory** (to take items out by hand);
-the lamp window of the level maintainer is replaced, its circuit condition is set in the ME window (it is the
-same lamp condition, so blueprints and settings paste of the game keep it).
+the lamp window of the level maintainer is replaced, its circuit and logistic network settings are set in the panel below
+(they are the lamp's own conditions, so blueprints and settings paste of the game keep them).
+
+**The circuit and logistic network panel** (issue #639). As on a vanilla inserter, belt or lamp, the circuit and logistic
+network settings of the ME Import, Export and Storage Bus, the ME Interface, the ME Pattern Provider and the ME Level
+Maintainer are in a small panel **to the right of the block's window**, which moves, opens and closes with it. It is there
+only while the block has a red or green wire (**Circuit connection**: the networks it is connected to, **Enable if** with the
+condition and a line saying whether it holds, and the block's circuit modes: the export bus's **Pulse**, the interface's
+**Rows from the circuit** with the rows they make, the provider's **Lock crafting** mode by the circuit, the maintainer's
+**Amount from the circuit** per row and **Craft what the circuit asks**) or stands in the logistic area of a logistic network
+of its force, or is connected to one (**Logistic connection**: **Connect** and a condition on the network's contents). Nothing
+circuit-related is in the ME windows any more. The ME Toggle Bus and the ME Inverted Toggle Bus open the game's lamp window,
+which has the same settings. The ME Level Emitter and the ME Circuit Interface only send signals and have no panel.
 
 ## Wireless: the Wireless ME Terminal
 
@@ -1760,15 +1771,18 @@ What the window says:
 | Waiting: the job is bigger than every Crafting CPU of this network | add crafting storage (or keep a smaller amount) |
 | Cannot craft the difference, missing: ... | the plan lacks raw materials; it tries again every 5 seconds |
 | No pattern for this item or fluid | no usable encoded pattern for it in a provider of the network |
-| Switched off by the circuit condition | see below |
+| Switched off by the circuit condition | the circuit or the logistic condition does not hold (see below) |
 | The ME Controller has no power / Not connected to an ME network | the network does not work; the maintainer sleeps until it does |
 
 **Circuit network** (connect a red or green wire to the maintainer):
 
-* **On/off:** tick "Switch on and off by the circuit condition" in the window and set the condition
+* **On/off:** tick **Enable if** in the panel right of its window (issue #639) and set the condition
   (signal, comparator, number; it is the lamp's circuit condition). While the condition is false it
   starts nothing; a running job goes on.
-* **Amount from the circuit:** tick a row's box in the window. The signal of that row's item or fluid on
+* **Logistic network** (issue #639): standing in a logistic network's area, tick **Connect** in the panel and set a condition
+  on the network's contents (the lamp's own logistic condition). While it does not hold the maintainer starts nothing; with
+  both conditions on, only while both hold. Connected outside every logistic network, it is off, as a vanilla lamp is.
+* **Amount from the circuit:** tick a row's box in the panel. The signal of that row's item or fluid on
   the wires (red plus green) is then the amount to keep, instead of the number field. No signal means
   0 (keep nothing).
 * **Craft what the circuit asks** (issue #351): with this box ticked the rows are not used; every item and fluid
@@ -1780,14 +1794,14 @@ What the window says:
 another maintainer (the game copies the circuit condition). Blueprints, copy and paste (ctrl+C, ctrl+V)
 and cloning keep them.
 
-## Circuit condition of the buses and the ME Interface (issues #412, #628)
+## Circuit and logistic condition of the buses and the ME Interface (issues #412, #628, #639)
 
 AE2's **Redstone Card** (AE2-Unofficial: the import and export bus's redstone modes) is Factorio's circuit condition here, on
 the **ME Import Bus, ME Export Bus, ME Storage Bus and ME Interface** (and the ME Pattern Provider's locks), without a card.
 Since issue #628 the blocks take red and green wires **themselves**, like any combinator (one hitbox per block; the wire
-connector is drawn in the south-east corner of the tile). The condition is set in the block's own ME window: **Enable/disable
-by circuit condition**, the signal ("Everything" and "Anything" too), the comparator and a number or a second signal, and a
-line that says whether it holds. The ME Interface's own contents are never on its wires (the script keeps the container's
+connector is drawn in the south-east corner of the tile). The condition is set in the circuit network panel right of the
+block's ME window (issue #639, shown while the block has a wire): **Enable if**, the signal ("Everything" and "Anything"
+too), the comparator and a number or a second signal, and a line that says whether it holds. The ME Interface's own contents are never on its wires (the script keeps the container's
 "read contents" off), so they do not mix with the signals its condition and its rows read.
 
 Until 0.5.11 the blocks could not take wires, so each had a small hidden **ME Circuit Connector** (a lamp) in that corner, a
@@ -1802,16 +1816,27 @@ and conditions to the blocks the same way.
   interface neither fills its rows nor imports. Its window says "Off". Without a wire the condition does nothing, as on an
   inserter. AE2-Unofficial has the Redstone Card on the import and export bus only; the storage bus and the interface are
   an addition (the maintainer's choice).
-* **Pulse** (ME Export Bus, a checkbox in its window, AE2's "once per pulse"): the bus moves what one visit allows each time
-  the condition turns true, and nothing in between.
-* **Rows from the circuit** (ME Interface, a checkbox in its window): every item and fluid signal on the connector's wires
+* **Logistic network** (issue #639, as a vanilla inserter): a block that stands in the logistic area (the orange area) of a
+  logistic network of its force has the **Logistic connection** section in its panel: **Connect** and a condition on the
+  network's contents (an item signal counts the items of that quality in the network's chests; another signal, also
+  Everything and Anything, never holds, as in the game). While it does not hold the block is off, as by the circuit
+  condition. **With both conditions on, the block works only while both hold**; the pulse mode and the provider's locks read
+  both together. Measured on a real inserter: a block connected to the logistic network but outside every logistic network
+  (also inside a construction area only) is **off**, while a circuit condition without a wire does nothing; the panel keeps
+  the section while the block is connected, with "No network in range", so it can be switched back. A block looks its
+  logistic network up at most every 5 seconds (at once when that network is gone) and follows its contents within about 10
+  ticks.
+* **Pulse** (ME Export Bus, a checkbox in the circuit panel, AE2's "once per pulse"): the bus moves what one visit allows each
+  time the condition turns true, and nothing in between.
+* **Rows from the circuit** (ME Interface, a checkbox in the circuit panel): every item and fluid signal on the connector's wires
   with a positive value is a row of that amount, in the order of the names, as many as the interface has rows (a fluid row at
   most a side's volume). The window lists them. The rows set by hand stay and work again when the option is off. The
   interface's sides tied to a row follow the row's number.
 * A block follows its condition within about 10 ticks (up to 16 blocks are checked per tick); a block without a
-  condition, pulse or rows from the circuit costs nothing for it, wired or not.
-* Blueprints, copy/paste and clones hold the wires, the condition and the pulse and rows settings; a settings paste from
-  block to block (of the same kind) copies the condition too, and so does the ME Memory Card.
+  condition, logistic connection, pulse or rows from the circuit costs nothing for it, wired or not.
+* Blueprints, copy/paste and clones hold the wires, both conditions and the pulse and rows settings; a settings paste from
+  block to block (of the same kind) copies the conditions too, and so does the ME Memory Card. A blueprint made before
+  0.5.12 has no logistic part: the block it builds is not connected.
 
 ## Circuit network: ME Circuit Interface
 
