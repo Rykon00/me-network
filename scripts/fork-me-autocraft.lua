@@ -723,7 +723,7 @@ local function neighbors_of(entity)
 		for _, m in pairs(entity.surface.find_entities_filtered{
 			position = { entity.position.x + d[1], entity.position.y + d[2] }, type = TARGET_TYPES, force = entity.force,
 		}) do
-			if not seen[m.unit_number] then
+			if not seen[m.unit_number] and not M.T.PARTS[m.name] then   -- (issue #633: never a tunnel's hidden chest)
 				seen[m.unit_number] = true
 				out[#out + 1] = m
 			end

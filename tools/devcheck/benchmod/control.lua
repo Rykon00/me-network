@@ -12,6 +12,8 @@
 ---     recipes), the raw materials in cells; the planner and a job start are timed on the deepest items.
 ---   scene "tunnels" (issue #629): 64 ME Molecular Assemblers of one pattern, reached by one provider through ME P2P tunnels
 ---     (`tunnel`) or by 16 providers with four next to each; jobs keep them busy (none with `idle`).
+---   scene "carry" (issue #633): 40 item and 20 fluid lines, one source and four sinks each, carried by ME P2P tunnels on
+---     their own (`carry` "tunnels") or by an import bus and four export buses (`carry` "buses").
 ---   scene "inserters": the same number of chest -> inserter -> chest lines (half fast, half bulk inserters).
 ---   scene "robots": size / 10 requester chests (each emptied by a bulk inserter) served by logistic robots from
 ---     passive provider chests.
@@ -1400,6 +1402,112 @@ local function report_tunnels(b, p0, p1)
 end
 
 --------------------------------------------------------------------------------
+--- issue #633: the carry scene. CARRY_ITEMS item lines (an infinity chest, a bulk inserter, then the input, and four steel
+--- chests as the sinks) and CARRY_FLUIDS fluid lines (an infinity pipe of water, then the input, and four infinity pipes that
+--- drain it) on one network, carried either by ME P2P tunnels on their own (`C.carry == "tunnels"`: an input tunnel and four
+--- output tunnels per line) or by buses (an import bus facing the inserter's chest or the source pipe, four export buses on
+--- the sinks, a drive for what passes through). The items the sinks got are the throughput.
+--------------------------------------------------------------------------------
+
+local CARRY_ITEMS, CARRY_FLUIDS, CARRY_PITCH = 40, 20, 12
+local function build_carry()
+	local b = storage.b
+	research_all(game.forces.player)
+	local tunnels = C.carry == "tunnels"
+	local lines = CARRY_ITEMS + CARRY_FLUIDS
+	local width = 10 * 3 + 4
+	new_surface(width + 32, 16 + CARRY_PITCH * math.ceil(lines / 3))
+	b.sinks, b.slots, b.job_keys = {}, {}, {}
+	local members = {}
+	local function member(e) if e then members[#members + 1] = e end return e end
+	local N_, S_, W_ = defines.direction.north, defines.direction.south, defines.direction.west
+	power_row(Y0 - 6, X0 - 22, X0 + 3 * width + 2)
+	b.anchor = member(place("me-network-controller", X0 - 2, Y0 + 1))
+	local drive = member(place("me-drive", p1(X0 - 1, Y0 + 3)))
+	for yy = Y0, Y0 + CARRY_PITCH * math.ceil(lines / 3) do place("me-cable", p1(X0 - 1, yy)) end   -- the spine
+	local outs, ins, freq = {}, {}, 0
+	for i = 0, lines - 1 do
+		local fluid = i >= CARRY_ITEMS
+		local col, row = i % 3, math.floor(i / 3)
+		local x0, y0 = X0 + col * width, Y0 + 4 + row * CARRY_PITCH
+		for x = X0, X0 + 3 * width - 1 do if col == 0 then place("me-cable", p1(x, y0)) end end   -- the line's cable row
+		power_row(y0 + 5, x0 + 2, x0 + 2)
+		--- the source, south of the cable: the input (or the import bus) touches the cable
+		local inx, iny = p1(x0 + 1, y0 + 1)
+		if fluid then
+			local pipe = place("infinity-pipe", p1(x0 + 1, y0 + 2))
+			if pipe then pipe.set_infinity_pipe_filter{ name = "water", percentage = 1 } end
+			if tunnels then ins[#ins + 1] = member(place("me-fluid-p2p-tunnel", inx, iny, S_))
+			else
+				local bus = member(place("me-import-bus", inx, iny, S_))
+				if bus then b.slots[#b.slots + 1] = { bus = bus, filters = { "fluid/water" } } end
+			end
+		else
+			local src = place("infinity-chest", p1(x0 + 1, y0 + 3))
+			if src then src.set_infinity_container_filter(1, { name = "iron-plate", count = 100, mode = "at-least" }) end
+			local ix, iy = p1(x0 + 1, y0 + 2)
+			place("bulk-inserter", ix, iy, S_)
+			if tunnels then ins[#ins + 1] = member(place("me-item-p2p-tunnel", inx, iny, N_))
+			else
+				place("wooden-chest", p1(x0 + 1, y0 + 1))
+				local bx, by = p1(x0 + 2, y0 + 1)
+				member(place("me-import-bus", bx, by, W_))
+			end
+		end
+		--- four sinks north of the cable, an output (or an export bus) on each
+		local line_outs = {}
+		for k = 0, 3 do
+			local x = x0 + 3 + 2 * k
+			local ox, oy = p1(x, y0 - 1)
+			if fluid then
+				local sink = place("infinity-pipe", p1(x, y0 - 2))
+				if sink then sink.set_infinity_pipe_filter{ name = "water", percentage = 0, mode = "exactly" } end
+			else
+				local sink = place("steel-chest", p1(x, y0 - 2))
+				b.sinks[#b.sinks + 1] = sink
+			end
+			local name = tunnels and (fluid and "me-fluid-p2p-tunnel" or "me-item-p2p-tunnel") or "me-export-bus"
+			local e = member(place(name, ox, oy, N_))
+			if tunnels then line_outs[#line_outs + 1] = e
+			elseif e then b.slots[#b.slots + 1] = { bus = e, filters = { fluid and "fluid/water" or "iron-plate" } } end
+		end
+		outs[#outs + 1] = line_outs
+	end
+	remote.call(NET, "rebuild")
+	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
+	if tunnels then
+		for i, input in ipairs(ins) do
+			local f = remote.call("gregtorio-me-p2p", "make_input", input)
+			for _, o in ipairs(outs[i]) do
+				if not (o and remote.call("gregtorio-me-p2p", "bind_output", o, f)) then fail("an output tunnel was not bound") end
+			end
+		end
+	else
+		for _, s in ipairs(b.slots) do remote.call(IO, "set_bus_filters", s.bus, s.filters) end
+		if drive then
+			insert_cell(drive, "me-256k-storage-cell", {}, 1)
+			insert_cell(drive, "me-256k-fluid-storage-cell", {}, 2)
+		end
+	end
+	local net = remote.call(NET, "network", b.anchor)
+	log_json("SETUP", { scene = "carry", size = C.size, carry = C.carry, item_lines = CARRY_ITEMS, fluid_lines = CARRY_FLUIDS,
+		sinks = #b.sinks, members = #members, network_ok = net and net.ok or false,
+		entities = #surface().find_entities_filtered{}, fails = fails })
+end
+
+local function probe_carry(b)
+	local n = 0
+	for _, s in ipairs(b.sinks) do n = n + (s.valid and s.get_item_count("iron-plate") or 0) end
+	return { tick = game.tick, items = n }
+end
+
+local function report_carry(b, p0, p1)
+	local secs = (p1.tick - p0.tick) / 60
+	return { seconds = secs, carry = C.carry, item_lines = CARRY_ITEMS, fluid_lines = CARRY_FLUIDS,
+		items_per_s = (p1.items - p0.items) / secs }
+end
+
+--------------------------------------------------------------------------------
 --- reference scenes: inserters, robots
 --------------------------------------------------------------------------------
 
@@ -2489,6 +2597,7 @@ script.on_init(function()
 	if C.scene == "me" then build_me()
 	elseif C.scene == "planner" then build_planner()
 	elseif C.scene == "tunnels" then build_tunnels()                 -- (issue #629)
+	elseif C.scene == "carry" then build_carry()                     -- (issue #633)
 	elseif C.scene == "inserters" then build_inserters()
 	else build_robots() end
 end)
@@ -2523,6 +2632,7 @@ local function probe(b)
 	if C.scene == "me" then return probe_me(b) end
 	if C.scene == "planner" then return { tick = game.tick, world = count_world(), crafted = crafted(), slots = {} } end
 	if C.scene == "tunnels" then return probe_tunnels(b) end
+	if C.scene == "carry" then return probe_carry(b) end
 	return probe_native(b)
 end
 
@@ -2549,8 +2659,11 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		if C.scene == "me" then log_json("THROUGHPUT", report_me(b, b.p0, p1))
 		elseif C.scene == "planner" then log_json("THROUGHPUT", report_planner(b, b.p0, p1))
 		elseif C.scene == "tunnels" then log_json("THROUGHPUT", report_tunnels(b, b.p0, p1))
+		elseif C.scene == "carry" then log_json("THROUGHPUT", report_carry(b, b.p0, p1))
 		else log_json("THROUGHPUT", report_native(b, b.p0, p1)) end
-		if C.scene == "me" or C.scene == "planner" or C.scene == "tunnels" then log_json("SERVICE", service_report(b, b.p0, p1)) end
+		if C.scene == "me" or C.scene == "planner" or C.scene == "tunnels" or C.scene == "carry" then
+			log_json("SERVICE", service_report(b, b.p0, p1))
+		end
 		b.p0 = nil
 		if C.profile and C.scene == "me" and not C.noent then engine_profile(b) end
 		if C.scene == "me" and C.latency and not C.profile and not C.noent then

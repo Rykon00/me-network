@@ -49,9 +49,12 @@ end
 
 --- an ME block or a hidden part of one: never the target of a bus. Issue #560: the ME Molecular Assembler is a member (it carries
 --- the network) and stays a machine a bus can fill and empty, as before
+--- (issue #633: the hidden parts of the ME P2P tunnels too)
+M.PARTS = { [M.SIDE] = true, ["me-item-p2p-tunnel-buffer"] = true, ["me-fluid-p2p-tunnel-tank"] = true }
 function M.is_me(entity)
-	local k = N.kind_of(entity.name)
-	return (k ~= nil and k ~= "assembler") or entity.name == M.SIDE
+	local name = entity.name
+	local k = N.kind_of(name)
+	return (k ~= nil and k ~= "assembler") or M.PARTS[name] == true
 end
 
 local fluid_cache = {}

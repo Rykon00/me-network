@@ -4420,3 +4420,29 @@ ms): the engine builds a display panel with its wire connectors where it built a
 
 A save of 0.5.11 is converted once at its first load (every bus and provider built anew and its state moved, the old
 connectors handed over, in on_configuration_changed); how long that takes for a large save was not measured.
+
+## ME P2P tunnels on their own (issue #633)
+
+An input tunnel that is no output is a unit of a queue of its own (`p2p`, budget "ME P2P Tunnel visits per tick", at least 2,
+at most 8). A visit reads its hidden chest or tank and hands what it holds to the entities the outputs face (kept in the
+output's record like a bus's target); one that moved all the bus speed allowed comes back after 10 ticks, one that moved
+some after 20, an empty or blocked one is probed at an interval doubling from 30 ticks up to the idle limit.
+
+`bench --carry-only` (new scene `carry`: 40 item lines, a bulk inserter from an infinity chest into the input and four steel
+chests as sinks, and 20 fluid lines, an infinity pipe of water into the input and four draining infinity pipes; carried by
+the tunnels, or by an import bus and four export buses on a drive):
+
+| | ME P2P tunnels on their own | import bus + 4 export buses |
+|---|---|---|
+| script avg / p99 / max (ms) | 0.090 / 0.32 / 0.76 | 0.594 / 1.34 / 2.25 |
+| items into the sinks per second | 1201 | 1202 |
+| visits per tick | p2p 2.10, probes 0.27 | (the io queue) |
+
+One run on a quiet machine. The three-run median, taken while the game itself ran on the same machine, has every number about
+three times as high and the same order (0.27 against 1.64 ms avg). The bulk inserters limit both ways to the same item rate;
+the fluid is not counted (the sinks drain it). A tunnel visit hands a whole chest or tank over in one go and keeps no stock, a
+bus pair moves each item into the network's cells and out again.
+
+`bench --check origin/main --sizes 1000,5000` (the provider's neighbour search and `T.is_me` read one name more; the game ran
+on the machine too, so the noise is wide): passes, nothing worse (script avg 1.18 / 0.78 ms at 1000, 3.02 / 3.08 at 5000;
+items/s, fluid/s, provider crafts/s and the allocation per tick equal).

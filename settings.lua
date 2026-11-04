@@ -34,6 +34,8 @@ data:extend({
 	int("me-network-wireless-refill-visits-per-tick-max", "b291", 4, 1, 1000),
 	int("me-network-io-port-visits-per-tick", "b3", 2, 1, 1000),         -- issue #386: the ME IO Port
 	int("me-network-io-port-visits-per-tick-max", "b4", 8, 1, 1000),
+	int("me-network-p2p-visits-per-tick", "b5", 2, 1, 1000),             -- issue #633: the ME P2P tunnels on their own
+	int("me-network-p2p-visits-per-tick-max", "b6", 8, 1, 1000),
 	int("me-network-maintainer-checks-per-tick", "c1", 4, 1, 1000),
 	int("me-network-maintainer-checks-per-tick-max", "c2", 12, 1, 1000),
 	int("me-network-circuit-updates-per-second", "d", 10, 1, 6000),

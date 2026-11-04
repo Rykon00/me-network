@@ -1270,9 +1270,19 @@ an input tunnel on the provider's side, an output tunnel at each machine.
   and gives back what is left, and hands nothing more to that machine.
 * **Blueprints, copy and paste and clones** keep each tunnel's frequency and role (a copy of an input next to the original
   is a second input and waits: give the copy a new frequency).
-* **Not in this version:** tunnels that carry items or fluids on their own (an inserter or a pipe into the input), tunnels
-  that chain (an output facing another input), the ME, redstone, light and power tunnels of AE2 (the ME Quantum Bridge and
-  the ME Wireless Link join networks over distance).
+* **On their own** (issue #633, as in GTNH): an input tunnel also carries without a provider. An **inserter** that puts items
+  into an item input (any side), or a **pipe** (or a machine's fluid output) in front of a fluid input, feeds it; what it gets
+  goes to what the outputs face: items into chests, machines, furnaces and labs, round robin over the outputs, fluid into
+  pipes, tanks and machines, split evenly by what each takes. It moves at the **bus speed** (the map settings "bus speed",
+  items and fluid per second). An input holds what waits: 4 stacks of items, 1000 units of fluid (an item input mined gives
+  its items into your inventory; destroyed, they are spilled). Its window says what it holds and whether it carries, waits
+  for an inserter or a pipe, or why not (no output faces something that takes it, no network, no power). An input that
+  waits for something is looked at less and less often, up to the idle limit (5 s by default): the first items may take
+  that long. The map settings "ME P2P Tunnel visits per tick" (at least 2, at most 8) set its budget; `/me-stats` shows its
+  queue. Nothing comes back through a tunnel.
+* **Not in this version:** tunnels that chain (an output facing another input), returns (AE2's fluid tunnel also sends what
+  is filled into an output back to the input's side), the ME, redstone, light and power tunnels of AE2 (the ME Quantum
+  Bridge and the ME Wireless Link join networks over distance).
 * Recipe (standalone, AE2-Unofficial's ME P2P Tunnel in the stand-ins): 3 iron plates, a processing unit, 3 copper cables,
   for both kinds; a tunnel of one kind turns into the other in the crafting window (AE2 attunes a tunnel with a chest or a
   bucket).
