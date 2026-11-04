@@ -10,6 +10,8 @@
 ---     every entity of the mod after the build (the engine's share: the same scene without the ME entities).
 ---   scene "planner": every usable recipe of the game as a processing pattern (deep trees, with Gregtorio its
 ---     recipes), the raw materials in cells; the planner and a job start are timed on the deepest items.
+---   scene "tunnels" (issue #629): 64 ME Molecular Assemblers of one pattern, reached by one provider through ME P2P tunnels
+---     (`tunnel`) or by 16 providers with four next to each; jobs keep them busy (none with `idle`).
 ---   scene "inserters": the same number of chest -> inserter -> chest lines (half fast, half bulk inserters).
 ---   scene "robots": size / 10 requester chests (each emptied by a bulk inserter) served by logistic robots from
 ---     passive provider chests.
@@ -1293,6 +1295,111 @@ local function slice_report(b)
 end
 
 --------------------------------------------------------------------------------
+--- issue #629: the tunnel scene. TUNNEL_MACHINES ME Molecular Assemblers on one network, all for one crafting pattern: either
+--- one pattern provider reaches them through ME P2P item tunnels (`C.tunnel`: an input tunnel facing it, an output tunnel on
+--- each machine), or TUNNEL_MACHINES / 4 providers have four of them next to each. Two jobs of the pattern keep them busy (none
+--- with `idle`): the providers' rescans and the job steps over the same machines, in the two layouts.
+--------------------------------------------------------------------------------
+
+local TUNNEL_MACHINES, TUNNEL_PER_ROW, TUNNEL_STOCK = 64, 8, 400000
+local function build_tunnels()
+	local b = storage.b
+	research_all(game.forces.player)
+	fit_lists()
+	local recipe = prototypes.recipe[PAIR_RECIPES[1]]
+	local rows = C.tunnel and TUNNEL_MACHINES / TUNNEL_PER_ROW or TUNNEL_MACHINES / 16
+	local width = C.tunnel and 3 * TUNNEL_PER_ROW + 2 or 18
+	new_surface(width + 32, 16 + 6 * rows)
+	b.machines, b.providers, b.job_keys, b.slots, b.cpus = {}, {}, {}, {}, {}
+	local members = {}
+	local function member(e) if e then members[#members + 1] = e end return e end
+	power_row(Y0 - 6, X0 - 22, X0 + width + 2)
+	for yy = Y0, Y0 + 6 * rows do place("me-cable", p1(X0 - 1, yy)) end            -- the spine
+	for x = X0, X0 + width - 1 do place("me-cable", p1(x, Y0)) end
+	b.anchor = member(place("me-network-controller", X0 - 2, Y0 + 1))
+	for k = 0, 1 do                                                                   -- two CPUs, as the planner scene's
+		local cy = Y0 + 3 + 2 * k
+		b.cpus[#b.cpus + 1] = member(place("me-256k-crafting-storage", p1(X0 - 2, cy)))
+		for dx = 3, 17 do member(place("me-256k-crafting-storage", p1(X0 - dx, cy))) end
+		for dx = 18, 20 do member(place("me-crafting-co-processing-unit", p1(X0 - dx, cy))) end
+	end
+	local drive = member(place("me-drive", p1(X0 + 1, Y0 + 1)))
+	local input
+	if C.tunnel then
+		b.providers[1] = member(place("me-pattern-provider", p1(X0 + 4, Y0 + 1)))
+		local x, y = p1(X0 + 3, Y0 + 1)
+		input = member(place("me-item-p2p-tunnel", x, y, defines.direction.east))     -- (faces the provider)
+	end
+	local outputs = {}
+	for r = 0, rows - 1 do
+		local y = Y0 + 6 + 6 * r
+		for x = X0, X0 + width - 1 do place("me-cable", p1(x, y)) end
+		if C.tunnel then
+			for i = 0, TUNNEL_PER_ROW - 1 do
+				local x = X0 + 1 + 3 * i
+				local tx, ty = p1(x, y + 1)
+				outputs[#outputs + 1] = member(place("me-item-p2p-tunnel", tx, ty, defines.direction.south))
+				b.machines[#b.machines + 1] = member(place("me-molecular-assembler", p1(x, y + 2)))
+			end
+		else
+			for i = 0, 3 do
+				local x = X0 + 2 + 4 * i
+				b.providers[#b.providers + 1] = member(place("me-pattern-provider", p1(x, y + 2)))
+				for _, d in ipairs({ { 0, 1 }, { -1, 2 }, { 1, 2 }, { 0, 3 } }) do
+					b.machines[#b.machines + 1] = member(place("me-molecular-assembler", p1(x + d[1], y + d[2])))
+				end
+			end
+		end
+		power_row(y + 3, X0 + width + 4, X0 + width + 4)
+	end
+	--- the graph in one pass, every module registers its blocks; then the frequency, the patterns, the stock
+	remote.call(NET, "rebuild")
+	for _, e in ipairs(members) do script.raise_script_built{ entity = e } end
+	if input then
+		local f = remote.call("gregtorio-me-p2p", "make_input", input)
+		for _, o in ipairs(outputs) do
+			if not remote.call("gregtorio-me-p2p", "bind_output", o, f) then fail("an output tunnel was not bound") end
+		end
+	end
+	for _, prov in ipairs(b.providers) do give_pattern(prov, recipe.name) end
+	if drive then
+		local ing = recipe.ingredients[1]
+		insert_cell(drive, "me-256k-storage-cell", { [ing.name] = TUNNEL_STOCK }, 1)
+	end
+	if not C.idle then
+		for _ = 1, 2 do b.job_keys[#b.job_keys + 1] = { anchor = b.anchor, key = recipe.products[1].name } end
+	end
+	local net = remote.call(NET, "network", b.anchor)
+	log_json("SETUP", { scene = "tunnels", size = C.size, tunnel = C.tunnel or false, idle = C.idle or false, recipe = recipe.name,
+		providers = #b.providers, machines = #b.machines, members = #members, network_ok = net and net.ok or false,
+		entities = #surface().find_entities_filtered{}, fails = fails })
+end
+
+local function probe_tunnels(b)
+	local n = {}
+	for i, m in ipairs(b.machines) do n[i] = m.valid and m.products_finished or 0 end
+	return { tick = game.tick, crafted = n }
+end
+
+local function report_tunnels(b, p0, p1)
+	local secs = (p1.tick - p0.tick) / 60
+	local crafts, working = 0, 0
+	for i = 1, #b.machines do
+		local d = (p1.crafted[i] or 0) - (p0.crafted[i] or 0)
+		crafts = crafts + d
+		if d > 0 then working = working + 1 end
+	end
+	local reached = 0
+	for _, prov in ipairs(b.providers) do
+		local info = prov.valid and remote.call(AC, "provider_info", prov)
+		local slot = info and info.slots and info.slots[1]
+		reached = reached + (slot and slot.machines or 0)
+	end
+	return { seconds = secs, providers = #b.providers, machines = #b.machines, reached = reached, crafts_per_s = crafts / secs,
+		working = working }
+end
+
+--------------------------------------------------------------------------------
 --- reference scenes: inserters, robots
 --------------------------------------------------------------------------------
 
@@ -2381,6 +2488,7 @@ script.on_init(function()
 	storage.b = { phase = "warmup" }
 	if C.scene == "me" then build_me()
 	elseif C.scene == "planner" then build_planner()
+	elseif C.scene == "tunnels" then build_tunnels()                 -- (issue #629)
 	elseif C.scene == "inserters" then build_inserters()
 	else build_robots() end
 end)
@@ -2414,6 +2522,7 @@ end
 local function probe(b)
 	if C.scene == "me" then return probe_me(b) end
 	if C.scene == "planner" then return { tick = game.tick, world = count_world(), crafted = crafted(), slots = {} } end
+	if C.scene == "tunnels" then return probe_tunnels(b) end
 	return probe_native(b)
 end
 
@@ -2422,7 +2531,7 @@ end
 script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 	local b = storage.b
 	local tick = event.tick
-	if tick == C.warmup / 2 and C.scene == "me" and not C.noent then
+	if tick == C.warmup / 2 and (C.scene == "me" or C.scene == "tunnels") and not C.noent then
 		start_jobs(b)
 	elseif tick == C.warmup then
 		if C.scene == "me" then refill(b) end
@@ -2439,8 +2548,9 @@ script.on_nth_tick(math.min(C.warmup / 2, SAMPLE_TICKS), function(event)
 		log("DEVCHECK-BENCH-PROBE1 " .. game.tick)
 		if C.scene == "me" then log_json("THROUGHPUT", report_me(b, b.p0, p1))
 		elseif C.scene == "planner" then log_json("THROUGHPUT", report_planner(b, b.p0, p1))
+		elseif C.scene == "tunnels" then log_json("THROUGHPUT", report_tunnels(b, b.p0, p1))
 		else log_json("THROUGHPUT", report_native(b, b.p0, p1)) end
-		if C.scene == "me" or C.scene == "planner" then log_json("SERVICE", service_report(b, b.p0, p1)) end
+		if C.scene == "me" or C.scene == "planner" or C.scene == "tunnels" then log_json("SERVICE", service_report(b, b.p0, p1)) end
 		b.p0 = nil
 		if C.profile and C.scene == "me" and not C.noent then engine_profile(b) end
 		if C.scene == "me" and C.latency and not C.profile and not C.noent then

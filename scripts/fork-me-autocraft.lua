@@ -641,7 +641,8 @@ local VIEW = {
 	end,
 }
 local function machine_view(entity)
-	return setmetatable({ entity = entity, type = entity.type, unit = entity.unit_number }, VIEW)
+	--- (issue #629: `via`, false for a neighbour; a machine reached through ME P2P tunnels only: { item, fluid }, the kinds)
+	return setmetatable({ entity = entity, type = entity.type, unit = entity.unit_number, via = false }, VIEW)
 end
 
 --- Can an assembling machine (view `v`) be switched to the recipe of pattern `def`? nil when it can, else the reason
@@ -919,6 +920,52 @@ end
 --- The functions of later issues live in this one table: the main chunk is at Lua's limit of 200 locals (add new helpers here).
 local EXT = {}
 
+--- Issue #629: the ME P2P tunnels (scripts/fork-me-p2p.lua). An input tunnel that faces a provider adds the machines and
+--- chests its frequency's outputs face to the provider's views (after its neighbours, each machine once), with the kinds of
+--- the tunnels that reach it (`via`); a neighbour that a tunnel reaches too stays a neighbour. `p.far`: how many machines it
+--- reaches through tunnels only (nil: none), its weight in the round robin rescan (EXT.rescan_debt).
+EXT.P2P = require("scripts.fork-me-p2p")
+function EXT.tunnel_views(p, e, net, around)
+	local far = EXT.P2P.targets(e, net, TARGET_TYPES)
+	if not far then p.far = nil return end
+	local at = {}
+	for _, v in ipairs(around) do at[v.unit] = v end
+	local n = 0
+	local force, recipes = e.force_index, nil                  -- (the force's recipes read once for all of them)
+	for _, t in ipairs(far) do
+		local unit = t.entity.unit_number
+		local v = at[unit]
+		if not v then
+			v = machine_view(t.entity)
+			v.via = {}
+			if t.entity.force_index == force then
+				recipes = recipes or e.force.recipes
+				v.recipes = recipes
+			end
+			around[#around + 1] = v
+			at[unit] = v
+			n = n + 1
+		end
+		if v.via then v.via[t.kind] = true end
+	end
+	p.far = n > 0 and n or nil
+end
+
+--- may a machine reached through tunnels only (view `v`) get pattern `def`? nil, or why not: item ingredients need an item
+--- tunnel ("tunnel-items"), fluid ingredients a fluid tunnel ("tunnel-fluids")
+function EXT.tunnel_problem(v, def)
+	local facts = def_facts(def)
+	if facts.items > 0 and not v.via.item then return "tunnel-items" end
+	if facts.fluid_in and not v.via.fluid then return "tunnel-fluids" end
+	return nil
+end
+
+--- the rescan slots a provider takes after its own: one more per started 4 machines it reaches through tunnels, so a
+--- provider that reaches 64 machines is rescanned as often per machine as 16 providers with 4 neighbours each
+function EXT.rescan_debt(p)
+	return p.far and math.ceil(p.far / 4) or 0
+end
+
 --- Issue #336: the entity names of the machines and chests next to a provider (`around`: their views), kept in its record for the
 --- ME Interface Terminal's filter by machine; written only when they changed (a provider is rescanned every few seconds), so a
 --- rescan that finds the same neighbours makes no table
@@ -1082,7 +1129,10 @@ local function scan_provider(p)
 	local around = {}
 	if net then
 		for i, m in ipairs(neighbors_of(e)) do around[i] = machine_view(m) end
+		EXT.tunnel_views(p, e, net, around)         -- (issue #629: the machines its input tunnels reach)
 		EXT.note_near(p, around)
+	else
+		p.far = nil
 	end
 	for slot = 1, slots_of(p) do
 		local raw = p.slots[slot]
@@ -1103,7 +1153,9 @@ local function scan_provider(p)
 			else
 				local targets, reason = {}, nil
 				for _, v in ipairs(around) do
-					local t, r = target_for(v, def)
+					local t, r
+					if v.via then r = EXT.tunnel_problem(v, def) end    -- (issue #629)
+					if not r then t, r = target_for(v, def) end
 					if t then t.prov = p.unit end          -- (issue #335: a chest's blocking mode; #429: every target's circuit lock)
 					if t then targets[#targets + 1] = t else reason = reason or r end
 				end
@@ -1243,6 +1295,11 @@ N.change_hooks[#N.change_hooks + 1] = function()
 	local s = storage.fork_ae2
 	if s then s.graph_dirty, s.await = true, nil end
 end
+--- issue #629: a tunnel bound, turned or removed: the providers' targets as after a change of the graph
+EXT.P2P.change_hooks[#EXT.P2P.change_hooks + 1] = function()
+	local s = storage.fork_ae2
+	if s then s.graph_dirty, s.await = true, nil end
+end
 
 --- bounded slice of the round robin rescan: `count` providers
 local function maintenance(s, count)
@@ -1252,9 +1309,13 @@ local function maintenance(s, count)
 		if s.pcursor > #s.plist then s.pcursor = 1 end
 		local unit = s.plist[s.pcursor]
 		local p = s.providers[unit]
-		if p and p.entity.valid then
+		if s.pdebt then                                          -- (issue #629: the slots of a provider that reaches far)
+			s.pdebt = s.pdebt > 1 and s.pdebt - 1 or nil
+		elseif p and p.entity.valid then
 			if p.want then cards.fill_cards(p) end                  -- issue #156: the cards a blueprint, a paste or a clone asked for
 			scan_provider(p)
+			local debt = EXT.rescan_debt(p)
+			if debt > 0 then s.pdebt = debt end
 			s.pcursor = s.pcursor + 1
 		else
 			drop_provider(s, unit)

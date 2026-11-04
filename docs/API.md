@@ -217,6 +217,9 @@ The ME Logistic Interface (issue #531) is built the same way, but as a solid blo
 `me-logistic-interface-marker.png` (orange corner marks and its three chests) the second layer on the 54 px face at its top
 left (not moved by the bus view); its icons are the base and the marker. Its three hidden chests
 (`me-logistic-interface-provider`, `-requester`, `-storage`) have no picture.
+The ME P2P Tunnels (issue #629, `me-item-p2p-tunnel`, `me-fluid-p2p-tunnel`) are rotated like the buses: each direction's
+picture is the casing (`<tunnel>-<direction>.png`) with the marker (`<tunnel>-<direction>-marker.png`, the plate on the side
+it faces and the tunnel's mouth) as its second layer, moved by the bus view like the buses' markers.
 
 ## Krastorio 2
 

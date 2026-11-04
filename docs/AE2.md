@@ -765,6 +765,7 @@ The recipes that follow:
 | ME Logistic Interface (issue #531) | an ME Interface, a storage chest, a passive provider chest, 2 advanced circuits | (not in AE2) |
 | ME IO Port | an ME Drive, 2 fluix cables, 2 iron plates, an advanced circuit (no stand-in for the glass: the plastic bar is not made with Gregtorio Continued, which gives the block its own recipe) | 3 glass, 2 fluix crystals, a drive, 2 iron, an engineering processor |
 | ME Pattern Provider | 4 iron plates, 2 assembling machines 1, 2 electronic circuits | 4 iron, 2 crafting tables, an annihilation and a formation core |
+| ME P2P Tunnel - Items, - Fluids (issue #629) | 3 iron plates, a processing unit, 3 copper cables; one kind from the other (1 to 1) | the ME P2P Tunnel: 3 iron, an engineering processor, 3 fluix crystals (AE2-Unofficial); attuned with a chest or a bucket |
 | ME Pattern Terminal | an ME Terminal, an assembling machine 1, an advanced circuit, a processing unit | a crafting terminal (terminal, crafting table, calculation processor), an engineering processor |
 | ME Interface Terminal | an ME Terminal, an ME Interface, a processing unit | an illuminated panel, an interface, an engineering processor (GTNH: an ME Terminal, an ME Interface, an engineering processor) |
 | Blank Pattern (2) | 2 plastic bars, 3 copper cables, a stone, 2 iron plates, a copper plate | 2 quartz glass, 3 glowstone, a certus quartz, 2 iron, a copper -> 2 |
@@ -838,6 +839,7 @@ AE2, most cards):
 | ME IO Port | 1 ME Drive, 2 Fluix Cable, 2 iron plate, 1 advanced circuit, 3 glass |
 | ME Quantum Bridge | 32 iron plate, 20 electronic circuit, 8 processing unit, 8 AI core, 32 Fluix Cable, 4 glass |
 | ME Pattern Provider | 4 iron plate, 2 assembling machine 1, 2 automation core |
+| ME P2P Tunnel - Items, - Fluids | 3 iron plate, 1 processing unit, 3 quartz, 3 copper cable |
 | ME Blank Pattern | 2 glass, 3 rare metals, 1 quartz, 2 iron plate, 1 copper plate |
 | ME Molecular Assembler | 4 iron plate, 2 glass, 2 automation core, 1 assembling machine 1 |
 | ME 256x Crafting Accelerator | 4 ME 64x Crafting Accelerator, 1 energy control unit |
@@ -1231,6 +1233,49 @@ of cable. Like the ME Quantum Bridge (above), but with no limit of two (issue #5
   Changing a link's frequency or removing it takes it out of its group at once; a newly built link joins when it has power
   (within a second).
 * Recipe (standalone): a radar (AE2's wireless receiver), 2 advanced circuits, 4 fluix cables, 4 iron plates.
+
+## ME P2P Tunnels
+
+The **ME P2P Tunnel - Items** and **ME P2P Tunnel - Fluids** (issue #629, AE2-Unofficial's P2P tunnels for items and
+fluids; technology ME Autocrafting) let **one ME Pattern Provider serve machines that are not next to it**: a row of
+machines along a line, machines spread over a base, more machines than four sides give. GTNH players build it this way:
+an input tunnel on the provider's side, an output tunnel at each machine.
+
+* **The block:** 1x1, rotated like a bus (the plate points to the tile it faces), walked over like the buses, a member of
+  the ME network (the controller draws 4 kW for it, like a bus). It must be connected to the network like any ME block.
+* **Frequencies:** a frequency has **one input and any number of outputs**. A new tunnel is unbound. Bind them:
+  * **Settings paste:** Shift + right click a tunnel, Shift + left click others: they become outputs of its frequency (an
+    unbound tunnel you copy becomes the input of a new frequency first). Only between tunnels of the same kind.
+  * **ME Memory Card** (as AE2's): select a tunnel and it becomes the **input** (an output or an unbound tunnel gets a new
+    frequency, as in AE2), the card holds its frequency; alt + select the other tunnels: they become its **outputs** (the
+    input itself, if it is in the area, stays the input).
+  * **Its window:** the frequency (a number, Enter sets it), Input or Output, "New frequency" (this tunnel becomes the
+    input of a frequency no other tunnel has), "Unbind", and what it is: an input says how many outputs carry, an output
+    where its input is.
+* **What carries:** an output carries while it is in the **same ME network** as its input (AE2 keeps frequencies per
+  network) and is of the **same kind**. The network may span surfaces through an ME Quantum Bridge, so the outputs may stand
+  on another surface of the same network. A second input of a frequency waits ("taken") until the first one goes or gets
+  another frequency, as a third bridge of a frequency does.
+* **With a pattern provider:** turn an input tunnel so that it **faces the provider**, on any of its four sides. Every
+  machine or chest that an output of its frequency faces counts as if it stood next to the provider: the provider's
+  patterns are usable there, and crafting jobs spread over all of them and the provider's neighbours. Item ingredients go
+  through an **item tunnel**, fluid ingredients through a **fluid tunnel**: a pattern with both needs a machine that both
+  reach (an item and a fluid output on it, from an item and a fluid input on the provider). The provider's window says
+  "item ingredients through an item tunnel only" (or fluids) for a machine that the needed kind does not reach. Blocking
+  mode, the locks and the fluid boxes work per machine, as for neighbours.
+* **Results come back as from a neighbour:** the job takes a crafting machine's products and a processing machine's
+  outputs from the machine itself (nothing travels back through the tunnel; AE2's item tunnel is one way too). What a chest
+  gets comes back through your buses or interfaces, as for a chest next to the provider.
+* An output **removed while a job runs** on its machine loses nothing: the machine finishes, the job takes its products
+  and gives back what is left, and hands nothing more to that machine.
+* **Blueprints, copy and paste and clones** keep each tunnel's frequency and role (a copy of an input next to the original
+  is a second input and waits: give the copy a new frequency).
+* **Not in this version:** tunnels that carry items or fluids on their own (an inserter or a pipe into the input), tunnels
+  that chain (an output facing another input), the ME, redstone, light and power tunnels of AE2 (the ME Quantum Bridge and
+  the ME Wireless Link join networks over distance).
+* Recipe (standalone, AE2-Unofficial's ME P2P Tunnel in the stand-ins): 3 iron plates, a processing unit, 3 copper cables,
+  for both kinds; a tunnel of one kind turns into the other in the crafting window (AE2 attunes a tunnel with a chest or a
+  bucket).
 
 ## Old saves
 
@@ -1843,6 +1888,7 @@ connects whatever touches it, like the cable, but only while it is **joined**:
 | ME Level Maintainer | resource, amount, amount from the circuit; the lamp's circuit condition | yes | yes |
 | ME Circuit Interface | filters | yes | yes (the signals of the moment in a blueprint are rewritten when it is built) |
 | ME IO Port | the mode, which speed cards it has | yes (the cards from your inventory, then the network) | yes (the cards from the network); its cells are items, not settings |
+| ME P2P Tunnel (issue #629) | frequency, input or output | the destination becomes an output of the source's frequency | yes (a copy of an input next to it waits: one input per frequency) |
 
 **The copy-paste tool and blueprints pasted over blocks** (issue #383): the copy of Ctrl+C / Ctrl+X is a blueprint, so
 every block of the table above (and the monitors, the level emitter, the advanced level emitter and the toggle buses) keeps its settings when the copy is

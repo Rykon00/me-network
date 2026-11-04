@@ -4354,6 +4354,44 @@ each of them took 30 000 (the bug); now it takes 5000. The drop, about 35 000 pe
 (2.1 million; the scene has 100 such sinks, up to 25 000 more each) and five times that at 5000, is that over-fill. Script time and allocation are
 within the noise.
 
+## ME P2P tunnels for pattern providers (issue #629)
+
+A provider's rescan now also reads the machines its input tunnels reach. What it costs:
+
+* Which outputs of a frequency carry (in the input's network, of its kind) is derived when a tunnel is built, removed, turned
+  or bound, or the ME graph changes (`resolved` in `scripts/fork-me-p2p.lua`), never per visit. The input tunnels that face a
+  provider are found by one table lookup of its tile (`facing`); a provider without tunnels pays that lookup and nothing else.
+* The machine an output faces is kept in its record and looked for again only when it is gone or the tunnel turned, as a bus
+  keeps its target. A neighbour is still found by `find_entities_filtered` at every rescan.
+* A provider that reaches machines through tunnels takes one more slot of the round robin rescan per started 4 of them
+  (`EXT.rescan_debt`, `storage.fork_ae2.pdebt`): one provider with 64 machines is rescanned every 34 ticks, as often per
+  machine as 16 providers with 4 neighbours each (every 32 ticks).
+
+`bench --tunnels-only --idle` (new scene `tunnels`: 64 ME Molecular Assemblers making one crafting pattern, two jobs of it,
+three runs, median):
+
+| | 1 provider, 64 machines through tunnels | 16 providers, 4 neighbours each |
+|---|---|---|
+| script avg / p99 / max (ms), jobs running | 0.047 / 0.68 / 1.34 | 0.075 / 0.47 / 0.95 |
+| script avg / p99 / max (ms), idle | 0.031 / 0.65 / 1.14 | 0.059 / 0.28 / 0.57 |
+| crafts/s | 120 | 120 |
+
+On average the tunnels cost less: an output's machine is kept, a neighbour is looked for at every rescan. The p99 and the
+maximum are higher: a rescan of 64 machines happens at once, every 34 ticks, instead of 16 rescans of 4. That rescan takes
+about 0.6 ms (about 10 µs a machine, the same as a neighbour's), with the force's recipe table read once for all of its
+views (before: 0.77 ms p99). Both layouts make the same 120 crafts/s: the two jobs' hand-outs per step limit them, not the
+providers.
+
+Networks without tunnels: every rescan pays one lookup of the provider's tile and a field per view. `bench --check origin/main
+--sizes 1000,5000` (three rounds in turns) passes:
+
+| | origin/main | #629 |
+|---|---|---|
+| 1000: script avg / p99 (ms) | 0.363 / 2.05 | 0.361 / 2.00 |
+| 5000: script avg / p99 (ms) | 0.931 / 2.85 | 0.926 / 2.83 |
+| Lua alloc KB per tick (1000 / 5000) | 41.71 / 61.79 | 41.71 / 61.79 |
+| items/s, provider crafts/s (5000) | 165 100, 329.5 | 165 100, 329.5 |
+
 ## The blocks take circuit wires themselves (issue #628)
 
 The ME Import, Export and Storage Bus and the ME Pattern Provider are display panels, the ME Interface a container with a

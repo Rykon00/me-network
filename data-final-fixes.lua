@@ -196,6 +196,12 @@ do
 				end
 			end
 		end
+		for _, name in pairs({ "me-item-p2p-tunnel", "me-fluid-p2p-tunnel" }) do   -- (issue #629: the tunnels, simple entities)
+			local e = data.raw["simple-entity-with-force"][name]
+			for _, dir in pairs({ "north", "east", "south", "west" }) do
+				place(e and e.picture and e.picture[dir] and e.picture[dir].layers)
+			end
+		end
 		local lbus = data.raw["simple-entity-with-force"]["me-logistic-storage-bus"]
 		place(lbus and lbus.picture and lbus.picture.layers)
 	end

@@ -10,6 +10,9 @@
 ---     patterns go into its empty slots and are filled from the player's inventory first, then from the network (issue #558,
 ---     fill_pending: encoded from the inventory, encoded from the network, blank from the inventory, blank from the
 ---     network); what finds nothing waits and is shown as #558 shows it. A provider's filled slots keep their patterns.
+---   * Issue #629, ME P2P tunnels as AE2's memory card binds them: a selected tunnel becomes the input (an output or an
+---     unbound one of a new frequency, AE2's convertToInput) before its tags are copied; alt-select binds the tunnels of its kind
+---     as outputs of that frequency.
 ---   * The content is per card: a selection tool has no tags, but a unique item number, so
 ---     `storage.fork_me_memcard.cards[item_number] = { name, tags, patterns }`; the card's label shows the block and the
 ---     number of patterns ([entity=...] rich text, no language).
@@ -18,6 +21,7 @@
 local N = require("scripts.fork-me-network")
 local AC = require("scripts.fork-me-autocraft")
 local PO = require("scripts.fork-me-pasteover")
+local P2P = require("scripts.fork-me-p2p")
 
 local M = {}
 M.CARD = "me-memory-card"
@@ -89,6 +93,7 @@ function M.copy(stack, entities, area, player)
 		tell(player, { "fork-me-memcard.cleared" })
 		return nil
 	end
+	if P2P.is_tunnel(best) then P2P.make_input(best) end      -- (issue #629)
 	local tags = M.tags_of(best)
 	local n = patterns_of(tags)
 	s.cards[stack.item_number] = { name = best.name, tags = tags, patterns = n }
@@ -112,6 +117,10 @@ function M.paste(stack, entities, player, inv)
 		if e.valid and e.name == c.name and (not player or e.force == player.force) then
 			if c.tags[PROVIDER_TAG] then
 				AC.on_built(e, c.tags, nil, player, inv)
+			elseif type(c.tags[P2P.TAG]) == "table" then              -- (issue #629: an output of the copied frequency; its input,
+				local f = c.tags[P2P.TAG].freq                        -- in the area too, stays the input)
+				local info = P2P.info(e)
+				if not (info and info.freq == f and not info.output) then P2P.bind_output(e, f) end
 			elseif PO.apply then
 				PO.apply(e, c.tags, player)
 			end

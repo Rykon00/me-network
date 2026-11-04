@@ -603,7 +603,8 @@ end
 
 ME.add_technology{ name = "me-autocrafting", prerequisites = { "me-storage-64k", "automation-2", "circuit-network" }, unit = ME.unit(3, 500),
 	recipes = with_blocks("me-autocrafting", { "me-pattern-provider", "me-pattern-terminal", "me-pattern-terminal-ex", "me-interface-terminal", "me-blank-pattern",
-		"me-molecular-assembler" }) }
+		"me-molecular-assembler", "me-item-p2p-tunnel", "me-fluid-p2p-tunnel", "me-item-p2p-tunnel-attune",   -- (issue #629)
+		"me-fluid-p2p-tunnel-attune" }) }
 
 --- issue #38: level maintainer and circuit interface, bigger CPUs
 ME.add_technology{ name = "me-automation", prerequisites = { "me-autocrafting", "circuit-network" }, unit = ME.unit(3, 500),
@@ -640,6 +641,9 @@ end
 ME.crafting_block_tech["me-pattern-terminal"] = "me-autocrafting"
 ME.crafting_block_tech["me-pattern-terminal-ex"] = "me-autocrafting"         -- (issue #416, the same way)
 ME.crafting_block_tech["me-interface-terminal"] = "me-autocrafting"            -- (issue #336, the same way)
+for _, name in ipairs({ "me-item-p2p-tunnel", "me-fluid-p2p-tunnel", "me-item-p2p-tunnel-attune", "me-fluid-p2p-tunnel-attune" }) do
+	ME.crafting_block_tech[name] = "me-autocrafting"                              -- (issue #629, the same way)
+end
 for _, name in ipairs({ "me-toggle-bus", "me-inverted-toggle-bus", "me-level-emitter" }) do   -- (issue #355, the same way)
 	ME.crafting_block_tech[name] = "me-automation"
 end

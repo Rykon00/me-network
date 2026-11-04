@@ -23,6 +23,9 @@
                                                             # a run of 30 minutes, reported per 5 minutes
     python tools/devcheck/devcheck.py bench --planner [--with-gregtorio ../Gregtorio]
                                                             # the planner on every recipe of the game as deep trees
+    python tools/devcheck/devcheck.py bench --tunnels-only [--idle]
+                                                            # issue #629: one provider reaching 64 machines through
+                                                            # ME P2P tunnels against 16 providers with 4 neighbours
     python tools/devcheck/devcheck.py bench --check origin/main --sizes 1000,5000
                                                             # the working copy against a reference, in turns; fails
                                                             # when a number is worse by more than the measured noise
@@ -1211,11 +1214,13 @@ RUNTIME_TESTS = (
     ("IFACEWAKE", "ME interface wake (issue #313)"),
     ("IFACEFLUIDS", "ME interface window fluids (issue #311)"),
     ("IFACESEGMENT", "ME interface fluid row over its segment (issue #626)"),
+    ("P2P", "ME P2P tunnels with a pattern provider (issue #629)"),
     ("KRASTORIO2", "Krastorio 2 targets (issue #595)"),
     ("DONE", "all tests reported"),
 )
 
 
+TUNNEL_MACHINES = 64            # issue #629: the machines of the tunnel scene (benchmod: one provider, or 16 with 4 each)
 SAVELOAD_TICK = 500             # the runtime map is saved at this tick of a server run and loaded again (issue #38)
 
 
@@ -1897,6 +1902,8 @@ def size_variant(size):
 
 def variant_name(v):
     parts = []
+    if v.get("tunnel") is not None:                 # (issue #629: the tunnel scene's two layouts)
+        parts.append("tunnel" if v["tunnel"] else "neighbours")
     if v.get("base"):
         parts.append("base")
     if v.get("idle"):
@@ -1920,6 +1927,9 @@ def bench_config(a, scene, size, variant, profile):
            "burst": 0 if (variant.get("long") or variant.get("noent") or variant.get("base") or scene != "me") else a.burst,
            "slice": (SLICE_TICKS if window >= 2 * SLICE_TICKS else max(300, window // 2 // 300 * 300)) if variant.get("long") else None,
            "planner_targets": a.planner_targets,
+           # issue #629: the tunnel scene's layout: one provider reaching its machines through ME P2P tunnels, or providers with
+           # the machines next to them
+           "tunnel": bool(variant.get("tunnel")) if scene == "tunnels" else None,
            # issue #506: a logistic network of that many roboports below the ME scene, with an ME Logistic Storage Bus
            "logistic": (getattr(a, "logistic", 0) or 0) if scene == "me" else 0,
            # issue #537: that many requester chests in the logistic network (for the ME Logistic Interface's automatic mode)
@@ -1943,7 +1953,8 @@ def bench_map(a, cfg, mod_dir, mapfile, gregtorio=None):
         return None, err or "no DEVCHECK-BENCH-SETUP line"
     machine = re.search(r"System info: \[(.*?)\]", log)
     strip = re.search(r"DEVCHECK-BENCH-STRIP (\d+)", log)
-    out = {"scene": cfg["scene"], "size": cfg["size"], "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base")},
+    out = {"scene": cfg["scene"], "size": cfg["size"],
+           "variant": {k: cfg[k] for k in ("idle", "networks", "noent", "base", "tunnel") if cfg.get(k) is not None},
            "setup": setup[0], "build": build.group(1) if build else None, "save_bytes": Path(mapfile).stat().st_size,
            "runs": [], "machine": machine.group(1) if machine else None, "window": cfg["window"],
            "stripped": int(strip.group(1)) if strip else None}
@@ -2146,7 +2157,7 @@ def bench(a):
     print(results["factorio"])
     problems = []
     plan = []                                              # (scene, size, variant)
-    if not a.planner_only:
+    if not (a.planner_only or a.tunnels_only):
         for scene in ["me"] + (["inserters", "robots"] if a.reference else []):
             for entry in sizes:
                 size, base = size_variant(entry)
@@ -2164,6 +2175,10 @@ def bench(a):
             plan.append(("me", max(x for x in sizes if x != "base"), {"long": True}))
     if a.planner or a.planner_only:
         plan.append(("planner", 0, {}))
+    if a.tunnels or a.tunnels_only:                   # (issue #629)
+        for idle in ([False, True] if a.idle else [False]):
+            for tunnel in (True, False):
+                plan.append(("tunnels", TUNNEL_MACHINES, {"tunnel": tunnel, **({"idle": True} if idle else {})}))
     for scene, size, variant in plan:
         runs_before = a.runs
         if variant.get("long"):
@@ -2287,6 +2302,11 @@ def print_bench(results):
             continue
         if s["scene"] == "planner":
             print(f"  planner: jobs {tp.get('jobs')}; conservation: {tp['conservation']['keys']} keys, {tp['conservation']['problems']} problems")
+            continue
+        if s["scene"] == "tunnels":                    # (issue #629)
+            print(f"  {scene_label(s)} {s['size']}: {tp.get('providers')} providers, {tp.get('machines')} machines "
+                  f"({tp.get('reached')} reached by the patterns), crafts {fmt(tp.get('crafts_per_s'), 1)}/s, {tp.get('working')} "
+                  f"machines crafted")
             continue
         print(f"  {scene_label(s)} {s['size']}: items {fmt(tp['items_per_s'], 0)}/s, {fmt(tp['items_per_s_per_endpoint'], 2)}/s "
               f"per endpoint ({tp['endpoints']} endpoints)"
@@ -2573,6 +2593,10 @@ def main():
     p.add_argument("--refill", type=int, default=0, metavar="N", help="issue #603: every ME scene also gets N characters with the "
                    "ME Wireless Module and 10 logistic requests each at an access point (the wireless refill's queue)")
     p.add_argument("--planner", action="store_true", help="also the planner scene: every recipe of the game as a processing pattern")
+    p.add_argument("--tunnels", action="store_true", help="issue #629: also the tunnel scene, one pattern provider that reaches %d "
+                   "machines through ME P2P tunnels and %d providers with 4 machines next to each (with --idle: also without "
+                   "jobs)" % (64, 16))
+    p.add_argument("--tunnels-only", action="store_true", help="only the tunnel scene (with --idle: also without jobs)")
     p.add_argument("--planner-only", action="store_true", help="only the planner scene")
     p.add_argument("--compare-plans", metavar="REF", help="the planner scene with that git ref and the working copy: every plan of its "
                    "sample must be the same (issue #50)")

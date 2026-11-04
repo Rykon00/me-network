@@ -100,6 +100,8 @@ local function kinds()
 		if n.quantum_bridge then k[n.quantum_bridge] = "quantum-bridge" end   -- issue #385
 		if n.wireless_link then k[n.wireless_link] = "wireless-link" end      -- issue #384
 		if n.creative_energy then k[n.creative_energy] = "creative-energy" end   -- issue #442
+		if n.p2p_item_tunnel then k[n.p2p_item_tunnel] = "p2p-tunnel" end      -- issue #629: the ME P2P tunnels
+		if n.p2p_fluid_tunnel then k[n.p2p_fluid_tunnel] = "p2p-tunnel" end
 	end
 	k["me-pattern-provider"] = "provider"
 	--- issue #560: the ME Molecular Assembler carries the network like a cable (AE2), and draws its power through the controller
