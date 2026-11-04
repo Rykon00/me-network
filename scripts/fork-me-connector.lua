@@ -397,6 +397,13 @@ function M.adopt(c, tick)
 	end
 end
 
+--- an entry of `orphans`: a record { entity, tick } since #628; before, the connector itself (a save of a build before
+--- #628 may still hold one, possibly invalid by now: only `valid` may be read on it)
+local function orphan_entity(o)
+	if type(o) == "table" then return o.entity end
+	return o
+end
+
 --- a block or its ghost was built where an old connector's ghost waits: it takes it (a table lookup: no search per build)
 local function take_orphan(e)
 	local s = storage.fork_me_conn
@@ -406,7 +413,8 @@ local function take_orphan(e)
 	if not o then return end
 	s.orphans[key] = nil
 	if not next(s.orphans) then s.orphans = nil end
-	if o.entity.valid then hand_over(o.entity, e) end
+	local c = orphan_entity(o)
+	if c and c.valid then hand_over(c, e) end
 end
 
 --------------------------------------------------------------------------------
@@ -459,15 +467,38 @@ function M.on_entity_settings_pasted(event)
 	if HOSTS[src.name] and src.name == dst.name then M.copy(src, dst) end
 end
 
+--- `orphans` of a save made before #628 (0.5.11 and the builds before it): an entry was the connector itself, not a record
+--- { entity, tick }, and may be invalid by now (only `valid` may be read on it). Each goes to M.adopt, which hands its
+--- wires and condition to the block at its place, makes it a record again (a ghost with no block yet) or removes it.
+--- Collected first: M.adopt may write into `orphans`, which a `pairs` over it must not see.
+function M.legacy_orphans(s, tick)
+	if not s.orphans then return end
+	local old
+	for key, o in pairs(s.orphans) do
+		if type(o) ~= "table" then
+			old = old or {}
+			old[#old + 1] = o
+			s.orphans[key] = nil
+		end
+	end
+	if not old then return end
+	if not next(s.orphans) then s.orphans = nil end
+	for _, c in ipairs(old) do
+		if c.valid then M.adopt(c, tick) end
+	end
+end
+
 --- the checks of the listed blocks (control.lua's on_tick; at most CHECKS_PER_TICK, each at most every INTERVAL ticks)
 function M.on_tick(tick)
 	local s = storage.fork_me_conn
 	if not s then return end
+	if s.orphans then M.legacy_orphans(s, tick) end      -- (a save of 0.5.11 loaded without on_configuration_changed)
 	if s.orphans then
 		for key, o in pairs(s.orphans) do
-			if tick - o.tick >= ORPHAN_TICKS then
+			if tick - (o.tick or 0) >= ORPHAN_TICKS then
 				s.orphans[key] = nil
-				if o.entity.valid then o.entity.destroy() end          -- (no block's ghost came: nothing it belongs to)
+				local c = o.entity
+				if c and c.valid then c.destroy() end              -- (no block's ghost came: nothing it belongs to)
 			end
 		end
 		if not next(s.orphans) then s.orphans = nil end
@@ -537,6 +568,7 @@ end
 function M.on_configuration_changed()
 	local s = state()
 	s.by_conn = nil                                          -- (0.5.11: connector unit -> block unit)
+	M.legacy_orphans(s, game.tick)                           -- (before #628 an entry was the connector itself)
 	for _, surface in pairs(game.surfaces) do
 		for _, c in pairs(surface.find_entities_filtered{ name = NAME }) do M.adopt(c) end
 		for _, g in pairs(surface.find_entities_filtered{ ghost_name = NAME }) do
