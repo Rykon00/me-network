@@ -48,7 +48,12 @@
   storage engine (`N.ext_*`), with an item side and a fluid side (`scripts/fork-me-fluid-storagebus.lua`). Since issue
   #3 the ME Interface, the import, export and storage bus handle items and fluids; the ME Fluid Interface and the ME
   Fluid Import / Export / Storage Bus are hidden prototypes that `scripts/fork-me-unify.lua` replaces (keep them while
-  saves may hold them). The entity types the buses work with are in `scripts/fork-me-targets.lua`. The terminal module registers every GUI event and hands it to `fork-me-gui.lua`
+  saves may hold them). Since issue #628 the ME Import, Export and
+  Storage Bus and the ME Pattern Provider are display panels that take circuit wires (the interface a container with a circuit
+  connector); their old simple entities are hidden as `<name>-legacy` (the one approved exception to "never rename a
+  prototype": the old ones were renamed by `migrations/me-network-wired-hosts.json`, the wired ones kept the names), and
+  `scripts/fork-me-wired.lua` replaces them, moving their state to the new unit number through each module's `M.rekey`. A new
+  table keyed by the unit number of a bus or provider needs its line in that module's `rekey`. The entity types the buses work with are in `scripts/fork-me-targets.lua`. The terminal module registers every GUI event and hands it to `fork-me-gui.lua`
   (`dispatch`: actions by the `fork_me_act` tag; the block windows are in `fork-me-windows.lua`).
 - The hand-over (`scripts/fork-me-handover.lua`): the table list and the fingerprint function must stay equal to
   Gregtorio's `scripts/fork-me-handover.lua`. A new storage table that a Gregtorio save could hold cannot appear any

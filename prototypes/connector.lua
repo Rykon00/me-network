@@ -1,10 +1,10 @@
 --------------------------------------------------------------------------------
---- ME NETWORK: THE CIRCUIT CONNECTOR (issue #412; runtime: scripts/fork-me-connector.lua)
---- AE2's Redstone Card as Factorio's circuit condition, on the ME Import, Export and Storage Bus and the ME Interface. Those
---- blocks are simple entities and a container without wires, and a block's prototype type cannot change (a save would lose
---- the block): each gets this hidden lamp at its position. Its small selection box is the south-east corner of the block's
---- tile, where the game draws its wire connector; its window is the game's lamp window (the circuit condition). A hidden item
---- places it, so blueprints and copies hold it with its wires and condition (its ghost is revived by the runtime at once).
+--- ME NETWORK: THE OLD CIRCUIT CONNECTOR (issue #412; since issue #628 only for saves and blueprints of 0.5.11 and before)
+--- Until 0.5.11 the ME Import, Export and Storage Bus, the ME Interface and the ME Pattern Provider took no wires, so each had
+--- this hidden lamp at its position: a small selection box in the south-east corner of the block's tile, the game's lamp window
+--- for the circuit condition. Since issue #628 the blocks take the wires themselves (prototypes/wired.lua); the lamp and its
+--- hidden item stay so that saves and blueprints holding them load: the runtime (scripts/fork-me-connector.lua, M.adopt)
+--- gives a placed one's or a ghost's wires and condition to the block at its place and removes it. Nothing makes new ones.
 --------------------------------------------------------------------------------
 
 local ME = ME_NETWORK
@@ -19,7 +19,7 @@ ME.add_item{
 	stack_size = 50,
 	place_result = NAME,
 	hidden = true,
-	recipe = false,                                   -- (no recipe: only blueprints and copies hold it, the runtime builds it)
+	recipe = false,                                   -- (no recipe: only old blueprints and copies hold it)
 	fields = { hidden_in_factoriopedia = true },
 }
 

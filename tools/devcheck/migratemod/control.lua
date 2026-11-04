@@ -11,6 +11,8 @@ local EPS = 0.5
 local AC = "gregtorio-me-autocraft"
 local LIF = "gregtorio-me-logistic-interface"
 local function L(key, msg) log("DEVCHECK-MIGRATE-" .. key .. " " .. msg) end
+--- me-network issue #628: the old buses and providers become the wired blocks (wired.lua)
+local WIRED = require("wired")
 --- me-network issue #503: the stage of the helper's test items (settings.lua, data.lua)
 local ITEMS = settings.startup["zz-me-network-devcheck-migrate-items"].value
 
@@ -328,7 +330,10 @@ local function setup_unified(s)
 			if l then remote.call("gregtorio-me-qbridge", "set_frequency", l, 17) else links = nil end
 		end
 	end
+	local va, vb, vc = (script.active_mods["me-network"] or "0.0.0"):match("^(%d+)%.(%d+)%.(%d+)")
+	local old_underground = tonumber(va) == 0 and (tonumber(vb) < 5 or tonumber(vb) == 5 and tonumber(vc) < 11)
 	storage.mig = { unified = true, before = fluid_totals(s), fails = fails, start = nil, cards = cards, legacy_chest = legacy_chest,
+		old_underground = old_underground,
 		damaged = damaged, items = items, lif = lif, big = big, links = links }
 	L("SETUP", (#fails == 0 and "ok" or "failed") .. " (unified blocks of " .. tostring(script.active_mods["me-network"]) .. "; "
 		.. #fails .. " problems; fluid " .. string.format("%.1f", sum(storage.mig.before)) .. " units"
@@ -347,7 +352,8 @@ local function check_unified(st)
 	--- me-network 0.5.11: the old underground pair turned and still paired, its ghost turned
 	local ua, ub = at("me-underground-cable", 71.5, 10.5), at("me-underground-cable", 76.5, 10.5)
 	local ug = s.find_entities_filtered{ ghost_name = "me-underground-cable", position = { 73.5, 12.5 } }[1]
-	expect(ua and ub and ua.direction == defines.direction.west and ub.direction == defines.direction.east
+	--- (a save of 0.5.11 or later has the vanilla rule already: nothing to turn, the pair as placed is not one)
+	expect(not st.old_underground or ua and ub and ua.direction == defines.direction.west and ub.direction == defines.direction.east
 		and remote.call(NET, "underground_partner", ua) == ub.unit_number
 		and ug and ug.direction == defines.direction.south, "the underground cables of the old save: "
 		.. serpent.line({ ua and ua.direction, ub and ub.direction, ug and ug.direction }))
@@ -609,15 +615,19 @@ script.on_init(function()
 		return
 	end
 	setup_unified(s)
+	local fails, what = WIRED.setup(s)
+	L("WIRED-SETUP", (#fails == 0 and "ok" or "failed") .. " (" .. what .. ")" .. (#fails > 0 and (": " .. table.concat(fails, "; ")) or ""))
 end)
 
 script.on_nth_tick(10, function()
 	local st = storage.mig
 	if st and st.unified then
 		st.start = st.start or game.tick
+		if st.ticked and not st.wired_done and game.tick >= st.start + 150 then st.wired_done = WIRED.check(st) end
 		if st.ticked or game.tick < st.start + 150 then return end
 		st.ticked = true
 		check_unified(st)
+		st.wired_done = WIRED.check(st)
 		if st.items and ITEMS == "new" then check_items(st) end
 		if st.lif then check_lif(st) end
 		local after = fluid_totals(game.surfaces[1])

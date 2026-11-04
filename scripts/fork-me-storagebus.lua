@@ -978,6 +978,15 @@ end
 
 --- after the graph rebuild: every storage bus has a record and is in the visit list of its side, targets are found
 --- again (the fluid side claims its segments in unit order)
+--- Issue #628 (scripts/fork-me-wired.lua, before on_configuration_changed): storage bus `old` (a unit) was replaced by entity
+--- `new` at its place. Its record is its external cell, which the network moves (N.rekey); the record learns its new unit
+--- here (its lists and claims are made again below). Call before N.rekey.
+function M.rekey(old, new)
+	local rec = N.ext_get(old)
+	if not (rec and rec.ext == KIND) then return end
+	rec.unit, rec.entity, rec.target, rec.target_unit = new.unit_number, new, nil, nil
+end
+
 function M.on_configuration_changed()
 	local s = state()
 	s.list, s.cursor, s.claims, s.member, s.q, s.lpos = {}, 1, {}, {}, Sched.new("sbus"), nil

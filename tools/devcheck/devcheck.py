@@ -1169,7 +1169,7 @@ RUNTIME_TESTS = (
     ("GROUPBUS", "Group Filter Card on the import and export bus (issue #363)"),
     ("BUSCARDS", "Capacity, Fuzzy and Inverter Card on the import and export bus (issue #413)"),
     ("CRAFTCARD", "Crafting Card on the export bus and the interface (issue #411)"),
-    ("CIRCUITBUS", "Circuit connector of the buses and the interface (issue #412)"),
+    ("CIRCUITBUS", "Circuit condition of the buses and the interface (issues #412, #628)"),
     ("BIGCELLS", "Storage cells above 256k and the Singularity cell (issue #414)"),
     ("BIGCPUS", "Crafting storage above 256k and the crafting accelerators (issue #415)"),
     ("PTERMEX", "ME Pattern Terminal Ex (issue #416)"),
@@ -1483,6 +1483,8 @@ def migrate_run(a):
         return 1
     setup = re.search(r"DEVCHECK-MIGRATE-SETUP (.*)", log)
     print(f"old save (every kind of block): {setup.group(1) if setup else 'no result'}")
+    wired_setup = re.search(r"DEVCHECK-MIGRATE-WIRED-SETUP (.*)", log)       # issue #628
+    print(f"old save, buses and providers with their connectors: {wired_setup.group(1) if wired_setup else 'no result'}")
     prepare_mods(mod_dir=bumped_tree() if a.bump else None, with_migrate=True)
     if a.removed_items:                   # one of them removed, one renamed through ME_NETWORK.replace_item
         startup_setting(ITEMS_SETTING, "new")
@@ -1504,6 +1506,8 @@ def migrate_run(a):
     fluids = re.search(r"DEVCHECK-MIGRATE-FLUIDS (.*)", log)
     print(f"the blocks after the update: {unified.group(1) if unified else 'no result'}")
     print(f"the fluid after the I/O steps: {fluids.group(1) if fluids else 'no result'}")
+    wired = re.search(r"DEVCHECK-MIGRATE-WIRED (.*)", log)   # issue #628: the wired buses and providers
+    print(f"the wired buses and providers after the update: {wired.group(1) if wired else 'no result'}")
     lif = re.search(r"DEVCHECK-MIGRATE-LIF (.*)", log)       # issue #537 (a version with the ME Logistic Interface)
     if lif:
         print(f"the ME Logistic Interface after the update: {lif.group(1)}")
@@ -1513,7 +1517,7 @@ def migrate_run(a):
     if not ran:
         print(load_errors(log) or "")
     ok = ran and setup and setup.group(1).startswith("ok") and unified and unified.group(1).startswith("ok") \
-        and fluids and fluids.group(1).startswith("ok") and not fails
+        and fluids and fluids.group(1).startswith("ok") and not fails         and wired_setup and wired_setup.group(1).startswith("ok") and wired and wired.group(1).startswith("ok")
     if a.removed_items:
         # issue #503: after the update the network holds the renamed item under its new name (counts added up, quality kept), the
         # removed one nowhere, and every circuit interface (one built after the load too) works; the log names each name once

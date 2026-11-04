@@ -4380,6 +4380,37 @@ end
 
 --- Rebuild the registries from the world, drop stale references, and repair the job books.
 --- Jobs and their pools are kept; provider slots, blueprint patterns and priorities are kept by unit number.
+--- Issue #628 (scripts/fork-me-wired.lua, before on_configuration_changed): block `old` (a unit) was replaced by entity `new` at
+--- its place. A provider's record moves to the new unit (the rebuild below keeps it by unit number); the jobs a bus's Crafting
+--- Card started (`owner`, `anchor`) and what their starts lacked (`wmissing`, keyed "c<unit>:<key>") follow the bus.
+function M.rekey(old, new)
+	local s = storage.fork_ae2
+	if not s then return end
+	local u = new.unit_number
+	local p = s.providers and s.providers[old]
+	if p then
+		s.providers[old], s.providers[u] = nil, p
+		p.entity, p.unit = new, u
+		for i, unit in ipairs(s.plist or {}) do if unit == old then s.plist[i] = u end end
+		if s.locked and s.locked[old] then s.locked[old], s.locked[u] = nil, s.locked[old] end
+		s.dirty = true
+	end
+	for _, job in pairs(s.jobs or {}) do
+		if job.owner == old and job.waker == "io" then
+			job.owner = u
+			if not (job.anchor and job.anchor.valid) or job.anchor.unit_number == old then job.anchor = new end
+		end
+	end
+	local prefix = "c" .. old .. ":"
+	for owner, w in pairs(shallow_map(s.wmissing or {})) do
+		if owner:sub(1, #prefix) == prefix then
+			s.wmissing[owner] = nil
+			s.wmissing["c" .. u .. ":" .. owner:sub(#prefix + 1)] = w
+			if w.unit == old then w.unit = u end
+		end
+	end
+end
+
 function M.on_configuration_changed()
 	local s = state()
 	s.pattern_version = PATTERN_VERSION
@@ -4408,6 +4439,8 @@ function M.on_configuration_changed()
 			local p = s.providers[e.unit_number]
 			p.slots, p.pending, p.priority = k.slots or {}, k.pending, k.priority or 0
 			p.inv, p.cards, p.want, p.where, p.nslots = k.inv, k.cards, k.want, k.where, k.nslots   -- issue #156
+			--- issue #628: the blocking mode, the locks and the label were lost at every update before
+			p.blocking, p.lock, p.locked, p.plock, p.clevel, p.label = k.blocking, k.lock, k.locked, k.plock, k.clevel, k.label
 			kept[e.unit_number] = nil
 		end
 		register(s, e)
