@@ -4546,7 +4546,6 @@ function settings_test()
 	expect(tc and serpent.line(tc.filters) == serpent.line(C_SET), "circuit interface tag " .. serpent.line(tc))
 	expect(tf and tf.config and #tf.config == 2 and tf.sides and #tf.sides == 2, "ME Interface tag " .. serpent.line(tf))
 	built["me-cable"] = nil                         -- the cables that connected the originals are in the blueprint too
-	built["me-circuit-connector"] = nil             -- (issue #412: the interface's circuit connector comes with it)
 	expect(table_size(built) == 3, "revived from the blueprint: " .. table_size(built) .. " of 3")
 	local cfails = {}
 	connect38(SC_Y, { built["me-level-maintainer"], built["me-circuit-interface"], built["me-network-interface"] }, cfails)

@@ -19,6 +19,7 @@
 local IO, NET, AC = "gregtorio-me-io", "gregtorio-me-network", "gregtorio-me-autocraft"
 local SB, C, MON, EM = "gregtorio-me-storagebus", "gregtorio-me-circuit", "gregtorio-me-monitor", "gregtorio-me-emitter"
 local PO = "gregtorio-me-pasteover"
+local CONN = "gregtorio-me-connector"
 local BX, BY = -300, 180                 -- (inside the cleared test area, TEST_RADIUS of control.lua; clear of the other tests)
 local STEP = 4                           -- tiles between two blocks of a row
 local ROWS = { source = 0, blueprint = 6, ghost = 12, ghostcopy = 18, over = 24, raw = 30, cut = 36, mixed = 42 }
@@ -30,16 +31,25 @@ local LAND = { x = BX + 30, y = BY + 90 }   -- (the landing check: the row, turn
 local START = 60
 
 local function cond(cb) cb.circuit_condition = { first_signal = { type = "item", name = "iron-plate" }, comparator = ">", constant = 5 } end
+--- issue #628: the circuit condition of the buses, the interface and the provider (kept by the script, in their tags)
+local function wired(e, on, second)
+	remote.call(CONN, "set_condition", e, on, { first_signal = { type = "virtual", name = "signal-B" }, comparator = "<=",
+		constant = 17, second_signal = second and { type = "item", name = "copper-plate" } or nil })
+end
 --- the blocks and how each is configured (by its remote interface, as its window does)
 local BLOCKS = {
 	{ "me-network-interface", function(e)
 		remote.call(IO, "set_interface_config", e, { [1] = { name = "iron-plate", quality = "normal", amount = 50 },
 			[2] = { type = "fluid", name = "water", amount = 2345 } }, { [2] = 2, [4] = "off" })
 		remote.call(IO, "set_interface_priority", e, 3)
+		wired(e, true)
 	end },
-	{ "me-import-bus", function(e) remote.call(IO, "set_bus_filters", e, { "iron-plate", "fluid/water" }) end },
+	{ "me-import-bus", function(e) remote.call(IO, "set_bus_filters", e, { "iron-plate", "fluid/water" }) wired(e, true, true) end },
 	{ "me-export-bus", function(e) remote.call(IO, "set_bus_filters", e, { "copper-plate", "iron-gear-wheel" }) end },
-	{ "me-storage-bus", function(e) remote.call(SB, "set_settings", e, { filters = { "copper-plate" }, priority = 4 }) end },
+	{ "me-storage-bus", function(e)
+		remote.call(SB, "set_settings", e, { filters = { "copper-plate" }, priority = 4 })
+		wired(e, false)                                                                                -- (set, but off)
+	end },
 	{ "me-level-maintainer", function(e) remote.call(C, "set_maintainer", e, "iron-gear-wheel", 1234, false) end },
 	{ "me-circuit-interface", function(e) remote.call(C, "set_circuit_filters", e, { "iron-plate", "fluid/water" }) end },
 	{ "me-toggle-bus", function(e) cond(e.get_or_create_control_behavior()) end },
@@ -55,6 +65,7 @@ local BLOCKS = {
 	{ "me-pattern-provider", function(e)
 		remote.call(AC, "set_priority", e, 7)
 		remote.call(AC, "set_blocking", e, "blocking")
+		wired(e, true)
 	end },
 	{ "me-drive", function(e) remote.call(NET, "set_priority", e, 5) end },
 	{ "me-chest", function(e) remote.call(NET, "set_priority", e, -2) end },
@@ -160,10 +171,8 @@ local function landing(s, bp, at, d)
 	end
 	for _, g in pairs(ghosts) do
 		if g.valid and g.ghost_name == "me-circuit-connector" then
-			--- issue #412: a circuit connector lands on its block (one per bus and interface, at the block's position)
-			if not at_ghost[g.position.x .. ":" .. g.position.y] then
-				problems[#problems + 1] = "the circuit connector at " .. serpent.line(g.position) .. " has no block's ghost there"
-			end
+			--- issue #628: the blocks take their wires themselves; a blueprint has no connector any more
+			problems[#problems + 1] = "a blueprint holds an old circuit connector at " .. serpent.line(g.position)
 			g.destroy()
 		elseif g.valid then
 			local p = want[g.ghost_name]

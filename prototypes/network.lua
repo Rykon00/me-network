@@ -62,6 +62,7 @@ local CHEST_FLUID_VOLUME = 1000
 --- cables can be walked over (like heat pipes): no "player" layer, the rest of a building's mask. Since issue #129 so can the
 --- buses and the ME Terminal (prototypes/api.lua)
 local WALKABLE = ME.WALKABLE
+local WIRED = require("prototypes.wired")      -- (issue #628: the blocks that take circuit wires themselves)
 
 
 
@@ -500,6 +501,10 @@ data:extend({ {
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	inventory_size = INTERFACE_SLOTS,
 	inventory_type = "with_filters_and_bar",
+	--- issue #628: it takes circuit wires itself (the condition, the rows from the circuit); the script keeps its contents off the
+	--- wire (read_contents, scripts/fork-me-connector.lua), so they never mix with the signals its rows read
+	circuit_connector = { WIRED.connector()[1] },
+	circuit_wire_max_distance = 9,
 	picture = {                                       -- issue #3: with its four pipe sides (tools/gen_ae2_sprites.py --unified)
 		filename = HD_ENTITY .. "me-interface-unified.png",
 		priority = "extra-high", width = 64, height = 64, scale = 0.5,
@@ -552,12 +557,18 @@ for _, bus in pairs({
 		--- AE2: an annihilation (import) or formation core (export), 2 iron, a piston
 		recipe = { energy_required = 2, ingredients = I{ "electronic-circuit", 1, "iron-plate", 2, "fast-inserter", 1 } },
 	}
-	block{
+	--- issue #628: a display panel that takes the wires itself, walkable like the cable (issue #129); the simple entity of
+	--- 0.5.11 and before under its legacy name (prototypes/wired.lua)
+	WIRED.block{
 		name = bus.name, icon = HD_ICON .. bus.name .. ".png", icon_size = 64,
 		description = { "entity-description." .. bus.name },
-		--- walkable like the cable (issue #129): drawn under the character
-		extra = { picture = bus_picture(bus.name), render_layer = "lower-object", collision_mask = WALKABLE },
+		sprites = bus_picture(bus.name), collision_mask = WALKABLE,
 	}
+	WIRED.legacy(block{
+		name = bus.name .. WIRED.LEGACY_SUFFIX, item = bus.name, icon = HD_ICON .. bus.name .. ".png", icon_size = 64,
+		description = { "entity-description." .. bus.name },
+		extra = { picture = bus_picture(bus.name), render_layer = "lower-object", collision_mask = WALKABLE },
+	}, bus.name)
 end
 
 --------------------------------------------------------------------------------
@@ -626,12 +637,17 @@ ME.add_item{
 	place_result = STORAGE_BUS,
 	recipe = { energy_required = 2, ingredients = I{ "me-interface", 1, "fast-inserter", 2 } },   -- (AE2: an interface, 2 pistons)
 }
-block{
+WIRED.block{                                                  -- (issue #628, as the import and export bus)
 	name = STORAGE_BUS, icon = HD_ICON .. STORAGE_BUS .. ".png", icon_size = 64,
+	description = { "entity-description." .. STORAGE_BUS },
+	sprites = bus_picture(STORAGE_BUS), collision_mask = WALKABLE,
+}
+WIRED.legacy(block{
+	name = STORAGE_BUS .. WIRED.LEGACY_SUFFIX, item = STORAGE_BUS, icon = HD_ICON .. STORAGE_BUS .. ".png", icon_size = 64,
 	description = { "entity-description." .. STORAGE_BUS },
 	extra = { picture = bus_picture(STORAGE_BUS),
 		render_layer = "lower-object", collision_mask = WALKABLE },
-}
+}, STORAGE_BUS)
 
 --- Issue #381: the buses' icons (item and entity; the recipes show the item's) carry a badge with their direction: into
 --- the network (import), out of it (export), both ways (storage bus), as a layer of its own over the block's icon
@@ -639,7 +655,8 @@ block{
 --- which all look alike) keeps it. The badge's file names are kept stable for that.
 for _, bus in pairs({ IMPORT_BUS, EXPORT_BUS, STORAGE_BUS }) do
 	local icons = { { icon = HD_ICON .. bus .. ".png", icon_size = 64 }, { icon = HD_ICON .. bus .. "-badge.png", icon_size = 64 } }
-	for _, proto in pairs({ data.raw.item[bus], data.raw["simple-entity-with-force"][bus] }) do
+	for _, proto in pairs({ data.raw.item[bus], data.raw["display-panel"][bus],
+		data.raw["simple-entity-with-force"][bus .. WIRED.LEGACY_SUFFIX] }) do
 		proto.icon, proto.icon_size, proto.icons = nil, nil, table.deepcopy(icons)
 	end
 end

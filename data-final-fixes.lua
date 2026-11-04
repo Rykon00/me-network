@@ -187,7 +187,16 @@ do
 				m.shift = { (bview.x + bview.size / 2) / 64 - 0.5, (bview.y + bview.size / 2) / 64 - 0.5 }
 			end
 		end
-		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus", "me-item-p2p-tunnel", "me-fluid-p2p-tunnel" }) do   -- (issue #629: the tunnels)
+		for _, name in pairs({ "me-import-bus", "me-export-bus", "me-storage-bus" }) do
+			--- (issue #628: the buses are display panels, their pictures `sprites`; the hidden legacy blocks keep `picture`)
+			for _, e in pairs({ data.raw["display-panel"][name], data.raw["simple-entity-with-force"][name .. "-legacy"] }) do
+				local pic = e.sprites or e.picture
+				for _, dir in pairs({ "north", "east", "south", "west" }) do
+					place(pic and pic[dir] and pic[dir].layers)
+				end
+			end
+		end
+		for _, name in pairs({ "me-item-p2p-tunnel", "me-fluid-p2p-tunnel" }) do   -- (issue #629: the tunnels, simple entities)
 			local e = data.raw["simple-entity-with-force"][name]
 			for _, dir in pairs({ "north", "east", "south", "west" }) do
 				place(e and e.picture and e.picture[dir] and e.picture[dir].layers)

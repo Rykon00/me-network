@@ -26,6 +26,7 @@
 --------------------------------------------------------------------------------
 
 local ME = ME_NETWORK
+local WIRED = require("prototypes.wired")      -- (issue #628)
 local ENTITY_PATH = ME.entity_path
 local ICON_FORK = ME.icons .. "fork/"
 local function I(list) local t = {} for i = 1, #list, 2 do t[#t + 1] = { type = "item", name = list[i], amount = list[i + 1] } end return t end
@@ -129,28 +130,37 @@ ME.add_item{
 
 
 --------------------------------------------------------------------------------
---- PATTERN PROVIDER (passive marker, no power: it only tells the network which machine to use)
+--- PATTERN PROVIDER (passive marker, no power: it only tells the network which machine to use). Issue #628: a display panel
+--- that takes circuit wires itself (the lock modes read them, prototypes/wired.lua); the simple entity of 0.5.11 and before
+--- under its legacy name
 --------------------------------------------------------------------------------
 
-data:extend({ {
+local PROVIDER_PICTURE = {
+	filename = ME.hd_entity_path .. "me-pattern-provider.png",
+	priority = "extra-high",
+	width = 64, height = 64, scale = 0.5,              -- (issue #269: the 3D-style 64 px picture; 32 drew its top left quarter)
+}
+WIRED.block{
+	name = "me-pattern-provider", icon = ME.hd_icons .. "me-pattern-provider.png", icon_size = 64, health = 150,
+	sprites = PROVIDER_PICTURE,
+	description = { "entity-description.me-pattern-provider" },
+}
+data:extend({ WIRED.legacy({
 	type = "simple-entity-with-force",
-	name = "me-pattern-provider",
+	name = "me-pattern-provider" .. WIRED.LEGACY_SUFFIX,
 	icon = ME.hd_icons .. "me-pattern-provider.png",
 	icon_size = 64,
 	flags = { "placeable-neutral", "player-creation" },
 	minable = { mining_time = 0.2, result = "me-pattern-provider" },
+	placeable_by = { item = "me-pattern-provider", count = 1 },
 	max_health = 150,
 	corpse = "small-remnants",
 	collision_box = ME.solid_box(),                   -- (issue #268)
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 60,
-	picture = {
-		filename = ME.hd_entity_path .. "me-pattern-provider.png",
-		priority = "extra-high",
-		width = 64, height = 64, scale = 0.5,              -- (issue #269: the 3D-style 64 px picture; 32 drew its top left quarter)
-	},
+	picture = table.deepcopy(PROVIDER_PICTURE),
 	localised_description = { "entity-description.me-pattern-provider" },
-} })
+}, "me-pattern-provider") })
 
 
 

@@ -5222,6 +5222,45 @@ function M.on_removed(entity, buffer)
 	remove_node(s, entity.unit_number)
 end
 
+--- Issue #628 (scripts/fork-me-wired.lua): member `old` (a unit) was replaced by entity `new` of another prototype at its
+--- place; its node, its edges, its place in the sweep and its network, its waits and its external cell (a storage bus) move to
+--- the new unit, so the graph and the storage engine do not change. The other modules move their records first.
+function M.rekey(old, new)
+	local s = storage.fork_me_net
+	local node = s and s.nodes[old]
+	if not node then return end
+	local u = new.unit_number
+	s.nodes[old], s.nodes[u] = nil, node
+	node.entity = new
+	for v in pairs(node.adj) do
+		local other = s.nodes[v]
+		if other then other.adj[old], other.adj[u] = nil, true end
+	end
+	if node.li and s.nlist[node.li] == old then s.nlist[node.li] = u end
+	local net = node.net and s.nets[node.net]
+	if net then
+		if net.nodes[old] then net.nodes[old], net.nodes[u] = nil, true end
+		for _, field in pairs({ "wunits", "wait_use", "wait_room" }) do
+			local w = net[field]
+			if w and w[old] ~= nil then w[old], w[u] = nil, w[old] end
+		end
+		for _, field in pairs({ "wait_in", "wait_out", "wait_below" }) do
+			for _, w in pairs(net[field] or {}) do
+				if w[old] ~= nil then w[old], w[u] = nil, w[old] end
+			end
+		end
+	end
+	local cell = s.ext[old]
+	if cell then
+		--- the cell leaves under its old id and comes back under the new one (the totals and the index follow; a wait it fires
+		--- wakes a block that is moved already)
+		if net and net.cells[ext_cid(old)] == cell then net_cell(net, ext_cid(old), cell, -1) end
+		s.ext[old], s.ext[u] = nil, cell
+		if net then net_cell(net, ext_cid(u), cell, 1) end
+	end
+	s.version = (s.version or 0) + 1
+end
+
 --- a member whose entity vanished without an event: spill its cells at the stored position, unregister it
 local function vanish(s, unit)
 	local node = s.nodes[unit]
