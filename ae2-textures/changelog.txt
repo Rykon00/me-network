@@ -1,6 +1,7 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.6
   Graphics:
+    - The ME Underground Cable's cable side is AE2's Fluix cable, as the ME Cable (the cable sheet, also for the arm of the underground cable that ME Network now draws as a layer of its own); no new image.
     - The ME Import, Export and Storage Bus and the ME Pattern Provider keep AE2's look as the blocks that take circuit wires themselves (ME Network issue #628: their prototypes are display panels now).
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.5
