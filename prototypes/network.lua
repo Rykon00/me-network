@@ -53,8 +53,10 @@ local STORAGE_BUS = "me-storage-bus"
 local UNDERGROUND = "me-underground-cable"
 local UNDERGROUND_REACH = 10        -- max_underground_distance of the underground cable (the underground pipe's)
 --- issue #623: the underground cable's fluid box is only there for the engine's pairing, so a chain of them is a fluid
---- segment and would be capped by the pipeline extent (default 320 tiles): no cable length may ever overextend
-local NO_PIPELINE_EXTENT = 4294967295  -- uint32 maximum of FluidBox::max_pipeline_extent
+--- segment and would be capped by the pipeline extent (default 320 tiles): no cable length may ever overextend. Not the uint32
+--- maximum (it was until 0.5.12): a blueprint held over underground cables showed them red, the preview adds the ghosts' extent to a
+--- segment at its limit; a million tiles is more than any chain on a map
+local NO_PIPELINE_EXTENT = 1000000
 --- issue #229: the ME Chest and its hidden parts on its tile (its own power buffer, its fluid input)
 local CHEST, CHEST_POWER, CHEST_FLUID = "me-chest", "me-chest-power", "me-chest-fluid"
 local CHEST_WATTS = 4000            -- W: what it draws from the power grid on its own (a member's 4 kW through the controller)
