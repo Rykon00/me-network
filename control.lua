@@ -242,6 +242,26 @@ local function on_destroyed(event)
 	fork_net.on_removed(event.entity, nil)
 end
 script.on_event(defines.events.on_entity_died, on_destroyed, REMOVED_FILTER)
+--- a member marked for deconstruction carries no network from that moment (it leaves the graph as if it were mined, the modules
+--- first), and joins again when the mark is cancelled; the blocks that work on the network wake then
+local function wake_all(unit)
+	fork_io.wake(unit)
+	fork_sbus.wake(unit)
+	fork_ioport.wake(unit)
+	fork_lif.wake(unit)
+end
+script.on_event(defines.events.on_marked_for_deconstruction, function(event)
+	local entity = event.entity
+	if not (entity and entity.valid and fork_net.kind_of(entity.name)) then return end
+	fork_io.on_marked(entity)                                 -- (an ME Interface's side fluid into the network first)
+	fork_net.set_marked(entity, true)
+end, REMOVED_FILTER)
+script.on_event(defines.events.on_cancelled_deconstruction, function(event)
+	local entity = event.entity
+	if not (entity and entity.valid and fork_net.kind_of(entity.name)) then return end
+	if fork_net.set_marked(entity, false) then wake_all(entity.unit_number) end
+end, REMOVED_FILTER)
+
 --- issue #538: what construction needs, for the ME Logistic Interface's automatic mode (scripts/fork-me-logistic-construction.lua)
 script.on_event(defines.events.on_marked_for_upgrade, function(event) fork_lc.on_marked_for_upgrade(event) end)
 script.on_event(defines.events.on_cancelled_upgrade, function(event) fork_lc.on_cancelled_upgrade(event) end)

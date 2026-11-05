@@ -2671,7 +2671,8 @@ function M.on_removed(entity, mined)
 	local rec = s and entity and entity.valid and entity.unit_number and s.recs[entity.unit_number]
 	if not rec then return end
 	if rec.kind == "interface" then
-		local net = mined and N.active_of(entity)
+		--- (a member marked for deconstruction is out of the graph: the network beside it takes the fluid)
+		local net = mined and (N.active_of(entity) or (N.is_marked(entity.unit_number) and N.network_beside(entity)) or nil)
 		for _, t in pairs(net and rec.tanks or {}) do
 			local held = t.valid and t.get_fluid(1)
 			if held and held.amount > EPS then tank_to_network(t, held, net) end
@@ -2686,6 +2687,19 @@ function M.on_removed(entity, mined)
 		cards.detach(rec)
 	end
 	drop(s, entity.unit_number)
+end
+
+--- the block was marked for deconstruction, before it leaves the graph (control.lua): an ME Interface's sides give their fluid
+--- to the network while it still is the block's (marked, the block works no more)
+function M.on_marked(entity)
+	local s = storage.fork_me_io
+	local rec = s and entity and entity.valid and entity.unit_number and s.recs[entity.unit_number]
+	if not (rec and rec.kind == "interface") then return end
+	local net = N.active_of(entity)
+	for _, t in pairs(net and rec.tanks or {}) do
+		local held = t.valid and t.get_fluid(1)
+		if held and held.amount > EPS then tank_to_network(t, held, net) end
+	end
 end
 
 function M.on_rotated(entity)

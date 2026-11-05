@@ -1192,6 +1192,7 @@ RUNTIME_TESTS = (
     ("BPCARDS", "Cards of blocks built from a blueprint (issue #590)"),
     ("WGROUP", "ME Wireless Link groups (issue #559)"),
     ("EXTENT", "ME underground cable chains never overextend (issue #623)"),
+    ("DECON", "ME blocks marked for deconstruction carry no network"),
     ("SINGFLUID", "Singularity cell for fluids (issue #562)"),
     ("FASTCRAFT", "Fast machines kept busy (issue #557)"),
     ("ASMNET", "ME Molecular Assembler carries the network (issue #560)"),
