@@ -621,6 +621,19 @@ data:extend({ {
 	pictures = four_way(UNDERGROUND, true),
 	localised_description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
 } })
+--- The game draws a pipe-to-ground's visualization over it while a pipe, underground or blueprint is held; without one of its own
+--- it takes the underground pipe's, and a blueprint's underground cables showed the red "disabled" one (they carry no fluid, so
+--- the game finds them in no fluid system). Both are the underground pipe's normal (blue) visualization, so a blueprint pasted
+--- over underground cables looks as it does over cables.
+do
+	local vanilla = data.raw["pipe-to-ground"]["pipe-to-ground"]
+	local vis = vanilla and vanilla.visualization
+	if vis then
+		local ug = data.raw["pipe-to-ground"][UNDERGROUND]
+		ug.visualization = table.deepcopy(vis)
+		ug.disabled_visualization = table.deepcopy(vis)
+	end
+end
 
 --------------------------------------------------------------------------------
 --- ME STORAGE BUS (rotatable: the arrow side faces the chest or cargo wagon whose inventory becomes network
