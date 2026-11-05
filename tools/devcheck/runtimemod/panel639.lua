@@ -11,6 +11,11 @@
 ---   * the panel (a stand-in player's window): E1's window shows the logistic section only, E2's both, M's the logistic one;
 ---     the "Connect" check box switches E1's connection through its handler; the roboport removed: E1, still connected, is off
 ---     (as a vanilla inserter outside every network) and its panel says so; E3 (no wire, not connected) has no panel then.
+---   * Issue #651, the status lines name the condition that switches a block off: with a storage bus S (a chest behind it) and a
+---     pattern provider P (lock "while the condition does not hold"), both connected with "iron plate > 100": E1, S, M and P say
+---     their logistic condition does not hold; with 150 plates E2 (its circuit condition off) says circuit, also when its
+---     logistic condition fails as well (the circuit one is named first), and P in lock mode "while it holds" says the logistic
+---     one holds; the roboport removed: E1, S, M and P (back in the first mode) say no logistic network covers them.
 --- Loaded by control.lua: require("panel639")(H) returns { setup, tick, running }.
 
 local IO, CONN, C, GUI = "gregtorio-me-io", "gregtorio-me-connector", "gregtorio-me-circuit", "gregtorio-me-gui"
@@ -40,6 +45,10 @@ return function(H)
 		me_place(s, fails, what, "iron-chest", BX + 12.5, BY + 1.5)
 		me_place(s, fails, what, "constant-combinator", BX + 12.5, BY + 3.5)
 		me_place(s, fails, what, "me-export-bus", BX + 24.5, BY + 0.5, SOUTH)                -- E3, on its own
+		--- issue #651: S (a chest behind it) and P
+		members[#members + 1] = me_place(s, fails, what, "me-storage-bus", BX + 14.5, BY + 0.5, SOUTH)
+		me_place(s, fails, what, "iron-chest", BX + 14.5, BY + 1.5)
+		members[#members + 1] = me_place(s, fails, what, "me-pattern-provider", BX + 16.5, BY + 0.5)
 		local port = me_place(s, fails, what, "roboport", BX + 3, BY + 10)
 		local sc = me_place(s, fails, what, "storage-chest", BX + 7.5, BY + 10.5)
 		if sc then sc.insert{ name = "iron-plate", count = 50 } end
@@ -71,7 +80,8 @@ return function(H)
 		local M = find("me-level-maintainer", 19.5, -0.5)
 		local A, B = find("iron-chest", 10.5, 1.5), find("iron-chest", 12.5, 1.5)
 		local K, SC = find("constant-combinator", 12.5, 3.5), find("storage-chest", 7.5, 10.5)
-		if not (E1 and E2 and E3 and M and A and B and K and SC) then expect(false, "entities missing") return finish() end
+		local S, P = find("me-storage-bus", 14.5, 0.5), find("me-pattern-provider", 16.5, 0.5)   -- (issue #651)
+		if not (E1 and E2 and E3 and M and A and B and K and SC and S and P) then expect(false, "entities missing") return finish() end
 		local function off(e) return remote.call(CONN, "is_off", e) end
 		local function logistic(e) return remote.call(CONN, "logistic", e) end
 		local function side(e, act, state)
@@ -83,6 +93,16 @@ return function(H)
 		end
 		local function same(a, b)
 			return a and b and a[1] == b[1] and line(a[2]) == line(b[2])
+		end
+		--- issue #651: the status line of `e`'s window (its element `element`) must be locale key `key`
+		local STATUS = { ["me-export-bus"] = "fork_me_bus_status", ["me-storage-bus"] = "fork_me_sbus_status",
+			["me-level-maintainer"] = "fork_me_maint_status", ["me-pattern-provider"] = "fork_me_prov_locked" }
+		local function status(e, key, what)
+			if not (st.inv and st.inv.valid) then st.inv = game.create_inventory(10) end
+			remote.call(GUI, "stand_in", "panel639", { main = st.inv, index = 9639, gui = true })
+			remote.call(GUI, "stand_in_open_entity", "panel639", e)
+			local c = remote.call(GUI, "stand_in_caption", "panel639", STATUS[e.name])
+			expect(type(c) == "table" and c[1] == key, what .. ": the status line is " .. line(c) .. ", not " .. key)
 		end
 		local wait = game.tick - (st.tick or 0)
 
@@ -99,6 +119,11 @@ return function(H)
 			remote.call(C, "set_maintainer", M, "iron-gear-wheel", 10, false)
 			expect(remote.call(C, "set_logistic", M, true, { first_signal = IRON, comparator = ">", constant = 100 }), "M set")
 			expect(off(E1), "E1 is off at once: 50 plates in the network, its condition asks for more than 100")
+			--- issue #651: S and P with the same logistic condition, P locked while it does not hold
+			for _, e in pairs({ S, P }) do
+				expect(remote.call(CONN, "set_logistic", e, true, { first_signal = IRON, comparator = ">", constant = 100 }), e.name .. " set")
+			end
+			expect(remote.call("gregtorio-me-autocraft", "set_lock", P, "low"), "P's lock mode")
 			--- the panels
 			local p = side(E1)
 			expect(p.visible and p.logistic and not p.circuit and p.states.fork_me_lcond_on == true,
@@ -130,6 +155,11 @@ return function(H)
 			local ml = remote.call(C, "levels", M)
 			local m = remote.call(C, "get_maintainer", M)
 			expect(ml[2] == false and m.status == "disabled", "M is disabled by its logistic condition: " .. line({ ml, m.status }))
+			--- issue #651: the logistic condition is named
+			status(E1, "fork-me-net.bus-logistic-off", "E1 (its logistic condition does not hold)")
+			status(S, "fork-me-net.storage-bus-logistic-off", "S (its logistic condition does not hold)")
+			status(M, "fork-me-circuit.maintainer-logistic-off", "M (its logistic condition does not hold)")
+			status(P, "fork-me-gui.provider-locked-low-logistic", "P (its logistic condition does not hold)")
 			SC.insert{ name = "iron-plate", count = 100 }
 			K.get_or_create_control_behavior().enabled = false
 			st.phase, st.tick = "flip", game.tick
@@ -144,6 +174,15 @@ return function(H)
 			expect(off(E2) and lv[1] == false and lv[2] == true, "E2 is off while its circuit condition does not hold: " .. line(lv))
 			local ml = remote.call(C, "levels", M)
 			expect(ml[2] == true, "M's logistic condition holds with 150 plates: " .. line(ml))
+			--- issue #651: the circuit condition is named, also when both fail (a fixed order); P locked while it holds
+			status(E2, "fork-me-net.bus-circuit-off", "E2 (its circuit condition does not hold, the logistic one holds)")
+			remote.call(CONN, "set_logistic", E2, true, { first_signal = IRON, comparator = ">", constant = 1000 })
+			status(E2, "fork-me-net.bus-circuit-off", "E2 (neither holds: the circuit condition first)")
+			remote.call(CONN, "set_logistic", E2, true, { first_signal = IRON, comparator = ">", constant = 10 })
+			remote.call("gregtorio-me-autocraft", "set_lock", P, "high")
+			remote.call(CONN, "update", P)
+			status(P, "fork-me-gui.provider-locked-high-logistic", "P in lock mode high (its logistic condition holds)")
+			remote.call("gregtorio-me-autocraft", "set_lock", P, "low")
 			--- blueprint, settings paste, clone, an old tag
 			local want = logistic(E1)
 			local copy, why, tags = H.blueprint_copy(E1, 0, 6)
@@ -178,6 +217,11 @@ return function(H)
 			expect(not p.visible, "E3 (no wire, not connected, no network) has no panel: " .. line({ p.visible, p.names }))
 			local m = remote.call(C, "get_maintainer", M)
 			expect(m.status == "disabled", "M, connected outside every network, is disabled: " .. tostring(m.status))
+			--- issue #651: no logistic network is named
+			status(E1, "fork-me-net.bus-no-logistic-network", "E1 (no logistic network)")
+			status(S, "fork-me-net.storage-bus-no-logistic-network", "S (no logistic network)")
+			status(M, "fork-me-circuit.maintainer-no-logistic-network", "M (no logistic network)")
+			status(P, "fork-me-gui.provider-locked-low-no-logistic-network", "P (no logistic network)")
 			remote.call(GUI, "stand_in_close_window", "panel639")
 			remote.call(GUI, "stand_in_forget", "panel639")
 			if st.inv and st.inv.valid then st.inv.destroy() end
