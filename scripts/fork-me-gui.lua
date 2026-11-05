@@ -44,6 +44,8 @@ function M.entity_by_unit(unit)
 	local s = storage.fork_me_net
 	local node = s and s.nodes and s.nodes[unit]
 	if node and node.entity and node.entity.valid then return node.entity end
+	local marked = s and s.decon and s.decon[unit]          -- (a member out of the graph for its deconstruction mark)
+	if marked and marked.valid then return marked end
 	for _, fn in ipairs(lookups) do
 		local found = fn(unit)
 		if found and found.valid then return found end

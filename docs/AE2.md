@@ -66,6 +66,12 @@ technologies on its GregTech tiers (its `prototypes/120-fork-me-network-compat.l
 over by cars and tanks: they collide through the same layer as the player); nothing can be built on them. The interface,
 drive, controller, provider, level maintainer, circuit interface, crafting blocks and the Cell Workbench stay solid.
 
+**Marked for deconstruction:** an ME block marked for deconstruction (deconstruction planner, undo) carries the network
+no more from that moment, as if it were already removed: a marked cable or underground cable splits the network there, a marked
+drive's cells and a marked storage bus's inventory leave the network's storage (they stay in the block). Cancel the mark and the
+block joins again. When the robots mine it, it gives its contents as a mined block does (an ME Interface gives the fluid of its
+sides to the network when it is marked).
+
 The terminal's status line (and the ME Controller's status) tells what is wrong:
 
 | Status | Meaning |
@@ -2137,7 +2143,7 @@ migration are described in `docs/ME-REWORK.md` (the design record of the rework)
 the networks (one connected component each, its controllers, status, drives, storage totals, bytes, types and
 an index item -> cells) and the drives with their cells (`storage.fork_me_net.drives[unit].slots`); every
 build and removal updates them, a breadth first search over the stored adjacency splits a network when a
-member is removed, and a sweep in the terminal step finds members removed without an event. The storage API
+member is removed (or marked for deconstruction: `N.set_marked`, `storage.fork_me_net.decon`), and a sweep in the terminal step finds members removed without an event. The storage API
 (`insert`, `extract`, `count`, `can_insert`, `contents`, `insert_stack`, `extract_to`, `stats`) works on a
 network and does nothing when the network does not work. `scripts/fork-me-io.lua` visits the interfaces and buses
 (since issue #5 of ME Network each one at a tick of its own, `scripts/fork-me-schedule.lua`, from the one `on_tick`

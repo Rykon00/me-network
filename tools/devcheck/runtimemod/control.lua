@@ -1161,6 +1161,9 @@ voidcell354 = require("voidcell")({ me_place = me_place, cable_row = cable_row, 
 --- me-network issue #336: the ME Interface Terminal (ifaceterm.lua)
 ifaceterm336 = require("ifaceterm")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end })
+--- deconstruction marks: a marked member carries no network (marked.lua)
+markeddecon = require("marked")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
+	me_drive = function(...) return me_drive(...) end })
 --- me-network issue #355: the toggle buses and the level emitter (togglebus.lua)
 togglebus355 = require("togglebus")({ me_place = me_place, cable_row = cable_row, power = power, me_report = me_report,
 	me_drive = function(...) return me_drive(...) end, me_connect = function(...) return me_connect(...) end,
@@ -1392,6 +1395,7 @@ local function tests_running()
 	monitors353.running(check)
 	voidcell354.running(check)
 	togglebus355.running(check)
+	markeddecon.running(check)
 	sbusmode155.running(check)
 	lsbus506.running(check)
 	lif531.running(check)
@@ -2396,6 +2400,7 @@ script.on_nth_tick(10, function()
 	monitors353.tick()
 	voidcell354.tick()
 	togglebus355.tick()
+	markeddecon.tick()
 	sbusmode155.tick()
 	lsbus506.tick()
 	lif531.tick()
@@ -5321,6 +5326,7 @@ script.on_init(function()
 	for _, f in pairs(monitors353.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(voidcell354.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(togglebus355.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(markeddecon.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sbusmode155.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lsbus506.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(lif531.setup()) do fails[#fails + 1] = f end
