@@ -587,6 +587,21 @@ ME.add_item{
 	place_result = UNDERGROUND,
 	recipe = { energy_required = 1, amount = 2, ingredients = I{ "fluix-cable", 8, "iron-plate", 2 } },   -- (not in AE2)
 }
+--- The underground cable's picture: the cable's arm on the side it faces (the cable sheet's variation with only that side's bit, so
+--- a graphics mod that replaces the cable sheet, the texture mod's AE2 cable, replaces the arm as well) under the tunnel mouth
+--- (me-underground-cable-<direction>.png, tools/gen_ae2_sprites.py --underground)
+local function underground_pictures()
+	local out = four_way(UNDERGROUND, true)
+	local BIT = { north = 1, east = 2, south = 4, west = 8 }
+	for dir, mouth in pairs(out) do
+		out[dir] = { layers = {
+			{ filename = HD_ENTITY .. "me-cable.png", priority = "extra-high", width = 64, height = 64, scale = 0.5, x = BIT[dir] * 64 },
+			mouth,
+		} }
+	end
+	return out
+end
+
 --- A real pipe-to-ground whose fluid box has its own connection category: it never connects to pipes or carries
 --- fluid, but the engine pairs the ends exactly like underground pipes (reach, rotation, blocking, dragging) and
 --- shows the pairing on hover and while placing. Its connections are the vanilla underground pipe's (the above
@@ -621,7 +636,7 @@ data:extend({ {
 			  max_underground_distance = UNDERGROUND_REACH, connection_category = "me-cable", hide_connection_info = true },
 		},
 	},
-	pictures = four_way(UNDERGROUND, true),
+	pictures = underground_pictures(),
 	localised_description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
 } })
 --- The game draws a pipe-to-ground's visualization over it while a pipe, underground or blueprint is held; both are the underground

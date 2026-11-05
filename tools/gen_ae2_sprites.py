@@ -954,11 +954,13 @@ def bus_sprite(accent, export, direction, marker_only=False):
     return img.rotate(turns, resample=Image.NEAREST) if turns else img
 
 
-def underground_sprite(direction):
+def underground_sprite(direction, arm=True):
     """1x1 underground cable end. Drawn with the run going north under the ground (the cable arm on the south side
     into a dark tunnel mouth with a fluix arrow pointing along the run), which since 0.5.11 is the end facing south: the
-    underground cable has the vanilla underground pipe's connections (the cable side on its direction). Rotated."""
-    img = cable_variation(4)
+    underground cable has the vanilla underground pipe's connections (the cable side on its direction). Rotated.
+    `arm` False: the tunnel mouth alone (the entity's picture: its arm is a layer of its own below it, the cable sheet's
+    variation of that side, so a graphics mod that replaces the cable sheet replaces the arm too)."""
+    img = cable_variation(4) if arm else Image.new("RGBA", (TILE, TILE))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle((6, 3, TILE - 7, 20), radius=4, fill=(24, 22, 30, 255), outline=CABLE_EDGE + (255,), width=2)
     d.rectangle((10, 6, TILE - 11, 18), fill=(12, 10, 16, 255))
@@ -972,7 +974,7 @@ def underground():
     written = []
     for direction in ("north", "east", "south", "west"):
         path = OUT_ENTITY / f"me-underground-cable-{direction}.png"
-        underground_sprite(direction).save(path)
+        underground_sprite(direction, arm=False).save(path)      # (the arm: the cable sheet, prototypes/network.lua)
         written.append(path)
     path = OUT_ICON / "me-underground-cable.png"
     underground_sprite("south").save(path)                 # (the icon as before 0.5.11: the run going north)

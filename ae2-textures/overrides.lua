@@ -258,6 +258,10 @@ return {
 		["__me-network__/graphics/icons/hd/me-cable.png"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
 	},
 	["item/fluix-cable"] = { filename = "__me-network-ae2-textures__/graphics/icons/blocks/me-cable.png", icon_size = 64 },
+	--- the underground cable's arm (ME Network: a layer of the cable sheet's variation of its side, under the tunnel mouth): the same sheet
+	["pipe-to-ground/me-underground-cable"] = {
+		["__me-network__/graphics/entity/fork/ae2/hd/me-cable.png"] = "__me-network-ae2-textures__/graphics/blocks/me-cable.png",
+	},
 	--- the crafting blocks (issue #302): each a sheet of ME Network's 48 variations (16 without a CPU: a cube each; 32 of a
 	--- CPU: AE2's formed look per side that touches the CPU, one big block with AE2's ring around its outside, issue #306)
 	["simple-entity-with-force/me-crafting-unit"] = {
