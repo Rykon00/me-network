@@ -604,7 +604,10 @@ data:extend({ {
 	max_health = 80,
 	is_military_target = false,
 	corpse = "small-remnants",
-	collision_box = { { -0.35, -0.35 }, { 0.35, 0.35 } },
+	--- the vanilla underground pipe's collision box: with a square one (+-0.35 until 0.5.12) the game's preview of a blueprint drew
+	--- its underground cables red over underground cables or their ghosts that stand there (the paste built fine); the maintainer's
+	--- test of one variant per property in the game found this one
+	collision_box = { { -0.29, -0.29 }, { 0.29, 0.2 } },
 	selection_box = { { -0.5, -0.5 }, { 0.5, 0.5 } },
 	selection_priority = 45,
 	collision_mask = WALKABLE,
@@ -621,10 +624,9 @@ data:extend({ {
 	pictures = four_way(UNDERGROUND, true),
 	localised_description = { "entity-description." .. UNDERGROUND, tostring(UNDERGROUND_REACH) },
 } })
---- The game draws a pipe-to-ground's visualization over it while a pipe, underground or blueprint is held; without one of its own
---- it takes the underground pipe's, and a blueprint's underground cables showed the red "disabled" one (they carry no fluid, so
---- the game finds them in no fluid system). Both are the underground pipe's normal (blue) visualization, so a blueprint pasted
---- over underground cables looks as it does over cables.
+--- The game draws a pipe-to-ground's visualization over it while a pipe, underground or blueprint is held; both are the underground
+--- pipe's normal (blue) one, as for a cable (the red preview of blueprints over underground cables was the collision box above; the
+--- maintainer's test that found it had this as well)
 do
 	local vanilla = data.raw["pipe-to-ground"]["pipe-to-ground"]
 	local vis = vanilla and vanilla.visualization
