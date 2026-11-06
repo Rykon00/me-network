@@ -351,10 +351,15 @@ return function(H)
 	local function p2p_paste(s)
 		local problems = {}
 		local I = "me-item-p2p-tunnel"
-		local function put(x) return me_place(s, problems, "p2p paste", I, BX + x + 0.5, TY + 0.5) end
+		local function put(x, name) return me_place(s, problems, "p2p paste", name or I, BX + x + 0.5, TY + 0.5) end
 		local a, b, c, d, e = put(0), put(3), put(6), put(9), put(12)
-		local function gone() for _, x in pairs({ a, b, c, d, e }) do if x and x.valid then x.destroy{ raise_destroy = true } end end end
-		if not (a and b and c and d and e) then gone() return problems end
+		--- (Task-Ingame #654: an unbound one, and the fluid kind)
+		local F = "me-fluid-p2p-tunnel"
+		local u, fa, fb, fc, fd, fe = put(15), put(18, F), put(21, F), put(24, F), put(27, F), put(30, F)
+		local function gone()
+			for _, x in pairs({ a, b, c, d, e, u, fa, fb, fc, fd, fe }) do if x and x.valid then x.destroy{ raise_destroy = true } end end
+		end
+		if not (a and b and c and d and e and u and fa and fb and fc and fd and fe) then gone() return problems end
 		local function info(x) return remote.call(P2P, "info", x) or {} end
 		local function over(src, dst)
 			local inv, bp = copy_of(s, area_of(src))
@@ -387,6 +392,26 @@ return function(H)
 		want(d, f1, false, "taken", "an input pasted over the input of another frequency")
 		want(a, f1, false, "input", "the copied input (it keeps the frequency)")
 		want(e, f2, true, "no-input", "the output of the frequency the pasted-over input left")
+		--- Task-Ingame #654: a blank (unbound) copy pasted over a bound tunnel changes nothing
+		over(u, b)
+		want(b, f1, true, nil, "a blank copy pasted over a bound output")
+		over(u, a)
+		want(a, f1, false, "input", "a blank copy pasted over a bound input")
+		--- Task-Ingame #654: the same with fluid tunnels
+		local g1 = remote.call(P2P, "make_input", fa)
+		remote.call(P2P, "bind_output", fb, g1)
+		local g2 = remote.call(P2P, "make_input", fd)
+		remote.call(P2P, "bind_output", fe, g2)
+		if not (g1 and g2 and g1 ~= g2) then
+			problems[#problems + 1] = "p2p paste: no two fluid frequencies (" .. tostring(g1) .. ", " .. tostring(g2) .. ")"
+		else
+			over(fb, fc)
+			want(fc, g1, true, nil, "a bound fluid output pasted over an unbound fluid tunnel")
+			over(fa, fd)
+			want(fd, g1, false, "taken", "a fluid input pasted over the input of another frequency")
+			want(fa, g1, false, "input", "the copied fluid input (it keeps the frequency)")
+			want(fe, g2, true, "no-input", "the fluid output of the frequency the pasted-over input left")
+		end
 		gone()
 		return problems
 	end
@@ -617,7 +642,8 @@ return function(H)
 				.. " block, the card comes back, a bridge's stand-in takes no frequency, nothing stays")
 		me_report("P2PPASTE", "ME P2P tunnels pasted over tunnels", p2p_paste(s),
 			"issue #649: a bound output pasted over an unbound tunnel takes its frequency and role; an input pasted over the"
-				.. " input of another frequency waits as a second input of the copy's frequency")
+				.. " input of another frequency waits as a second input of the copy's frequency; a blank copy changes nothing;"
+				.. " the same with fluid tunnels (Task-Ingame #654)")
 	end
 
 	function T.running(check) check(storage.copypaste383 and storage.copypaste383.done, "ME settings through the copy-paste tool") end

@@ -16,6 +16,10 @@
 ---     their logistic condition does not hold; with 150 plates E2 (its circuit condition off) says circuit, also when its
 ---     logistic condition fails as well (the circuit one is named first), and P in lock mode "while it holds" says the logistic
 ---     one holds; the roboport removed: E1, S, M and P (back in the first mode) say no logistic network covers them.
+---   * Task-Ingame #658: an ME Interface I (connected with "iron plate > 100") says its logistic condition does not hold, and is
+---     off once the roboport is gone (its line then still says "Working.": issue #664); E2 with its circuit condition holding and its logistic one failing names the
+---     logistic condition (its panel: the circuit condition holds, the logistic one not); the combinator on again with 150
+---     plates: E2 says "Working."; the line names the missing logistic network at most 300 ticks after the roboport went.
 --- Loaded by control.lua: require("panel639")(H) returns { setup, tick, running }.
 
 local IO, CONN, C, GUI = "gregtorio-me-io", "gregtorio-me-connector", "gregtorio-me-circuit", "gregtorio-me-gui"
@@ -49,6 +53,7 @@ return function(H)
 		members[#members + 1] = me_place(s, fails, what, "me-storage-bus", BX + 14.5, BY + 0.5, SOUTH)
 		me_place(s, fails, what, "iron-chest", BX + 14.5, BY + 1.5)
 		members[#members + 1] = me_place(s, fails, what, "me-pattern-provider", BX + 16.5, BY + 0.5)
+		members[#members + 1] = me_place(s, fails, what, "me-network-interface", BX + 18.5, BY + 0.5)    -- (Task-Ingame #658)
 		local port = me_place(s, fails, what, "roboport", BX + 3, BY + 10)
 		local sc = me_place(s, fails, what, "storage-chest", BX + 7.5, BY + 10.5)
 		if sc then sc.insert{ name = "iron-plate", count = 50 } end
@@ -74,14 +79,16 @@ return function(H)
 		local function finish()
 			st.done = true
 			me_report("PANEL639", "Logistic condition and the circuit and logistic network panel", problems, "a bus switched by the "
-				.. "logistic network's contents, both conditions, the maintainer's, blueprint/paste/clone/old tag, the panel's sections")
+				.. "logistic network's contents, both conditions, the maintainer's, blueprint/paste/clone/old tag, the panel's sections"
+				.. (st.seen and ("; the missing network named after " .. st.seen .. " ticks") or ""))
 		end
 		local E1, E2, E3 = find("me-export-bus", 10.5, 0.5), find("me-export-bus", 12.5, 0.5), find("me-export-bus", 24.5, 0.5)
 		local M = find("me-level-maintainer", 19.5, -0.5)
 		local A, B = find("iron-chest", 10.5, 1.5), find("iron-chest", 12.5, 1.5)
 		local K, SC = find("constant-combinator", 12.5, 3.5), find("storage-chest", 7.5, 10.5)
 		local S, P = find("me-storage-bus", 14.5, 0.5), find("me-pattern-provider", 16.5, 0.5)   -- (issue #651)
-		if not (E1 and E2 and E3 and M and A and B and K and SC and S and P) then expect(false, "entities missing") return finish() end
+		local I = find("me-network-interface", 18.5, 0.5)                                        -- (Task-Ingame #658)
+		if not (E1 and E2 and E3 and M and A and B and K and SC and S and P and I) then expect(false, "entities missing") return finish() end
 		local function off(e) return remote.call(CONN, "is_off", e) end
 		local function logistic(e) return remote.call(CONN, "logistic", e) end
 		local function side(e, act, state)
@@ -96,12 +103,16 @@ return function(H)
 		end
 		--- issue #651: the status line of `e`'s window (its element `element`) must be locale key `key`
 		local STATUS = { ["me-export-bus"] = "fork_me_bus_status", ["me-storage-bus"] = "fork_me_sbus_status",
-			["me-level-maintainer"] = "fork_me_maint_status", ["me-pattern-provider"] = "fork_me_prov_locked" }
-		local function status(e, key, what)
+			["me-level-maintainer"] = "fork_me_maint_status", ["me-pattern-provider"] = "fork_me_prov_locked",
+			["me-network-interface"] = "fork_me_if_status" }
+		local function caption(e)
 			if not (st.inv and st.inv.valid) then st.inv = game.create_inventory(10) end
 			remote.call(GUI, "stand_in", "panel639", { main = st.inv, index = 9639, gui = true })
 			remote.call(GUI, "stand_in_open_entity", "panel639", e)
-			local c = remote.call(GUI, "stand_in_caption", "panel639", STATUS[e.name])
+			return remote.call(GUI, "stand_in_caption", "panel639", STATUS[e.name])
+		end
+		local function status(e, key, what)
+			local c = caption(e)
 			expect(type(c) == "table" and c[1] == key, what .. ": the status line is " .. line(c) .. ", not " .. key)
 		end
 		local wait = game.tick - (st.tick or 0)
@@ -120,7 +131,7 @@ return function(H)
 			expect(remote.call(C, "set_logistic", M, true, { first_signal = IRON, comparator = ">", constant = 100 }), "M set")
 			expect(off(E1), "E1 is off at once: 50 plates in the network, its condition asks for more than 100")
 			--- issue #651: S and P with the same logistic condition, P locked while it does not hold
-			for _, e in pairs({ S, P }) do
+			for _, e in pairs({ S, P, I }) do
 				expect(remote.call(CONN, "set_logistic", e, true, { first_signal = IRON, comparator = ">", constant = 100 }), e.name .. " set")
 			end
 			expect(remote.call("gregtorio-me-autocraft", "set_lock", P, "low"), "P's lock mode")
@@ -160,6 +171,21 @@ return function(H)
 			status(S, "fork-me-net.storage-bus-logistic-off", "S (its logistic condition does not hold)")
 			status(M, "fork-me-circuit.maintainer-logistic-off", "M (its logistic condition does not hold)")
 			status(P, "fork-me-gui.provider-locked-low-logistic", "P (its logistic condition does not hold)")
+			--- Task-Ingame #658: the interface; E2 with its circuit condition holding and its logistic one failing
+			status(I, "fork-me-net.bus-logistic-off", "I (its logistic condition does not hold)")
+			remote.call(CONN, "set_logistic", E2, true, { first_signal = IRON, comparator = ">", constant = 1000 })
+			st.phase, st.tick = "e2logistic", game.tick
+			return
+		end
+
+		if st.phase == "e2logistic" then
+			if wait < 40 then return end           -- (the status line follows the bus's next visit)
+			status(E2, "fork-me-net.bus-logistic-off", "E2 (its circuit condition holds, its logistic one not)")
+			local p2 = side(E2)
+			local cs, ls = p2.captions and p2.captions.fork_me_cond_state, p2.captions and p2.captions.fork_me_lcond_state
+			expect(type(cs) == "table" and cs[1] == "fork-me-gui.circuit-condition-holds" and type(ls) == "table"
+				and ls[1] == "fork-me-gui.circuit-condition-not", "E2's panel (circuit holds, logistic not): " .. line({ cs, ls }))
+			remote.call(CONN, "set_logistic", E2, true, { first_signal = IRON, comparator = ">", constant = 10 })
 			SC.insert{ name = "iron-plate", count = 100 }
 			K.get_or_create_control_behavior().enabled = false
 			st.phase, st.tick = "flip", game.tick
@@ -198,6 +224,16 @@ return function(H)
 			local c3 = remote.call(CONN, "condition", E3)
 			expect(c3[1] == true and c3[2] and c3[2].constant == 4 and logistic(E3)[1] == false,
 				"a tag of 0.5.11 (no logistic part) applies: " .. line({ c3, logistic(E3) }))
+			--- Task-Ingame #658: the combinator on again (150 plates in the network): E2 works
+			K.get_or_create_control_behavior().enabled = true
+			st.phase, st.tick = "back", game.tick
+			return
+		end
+
+		if st.phase == "back" then
+			if wait < 40 then return end
+			expect(not off(E2), "E2 with both conditions holding again is off: " .. line(remote.call(CONN, "levels", E2)))
+			status(E2, "fork-me-net.bus-ok", "E2 (both conditions hold)")
 			--- the logistic network goes
 			local port = s.find_entities_filtered{ name = "roboport", position = { BX + 3, BY + 10 } }[1]
 			if port then port.destroy{ raise_destroy = true } end
@@ -206,7 +242,16 @@ return function(H)
 		end
 
 		if st.phase == "gone" then
+			--- Task-Ingame #658: when E1's line first names the missing network (the harness calls this every 10 ticks)
+			if not st.seen then
+				local c = caption(E1)
+				if type(c) == "table" and c[1] == "fork-me-net.bus-no-logistic-network" then st.seen = wait end
+			end
 			if wait < 320 then return end           -- (the checks' lookup is at most 300 ticks old)
+			expect(st.seen and st.seen <= 300, "E1's line names the missing logistic network " .. tostring(st.seen)
+				.. " ticks after the roboport went (at most 300)")
+			--- (I is switched off now, but its line still says "Working.": issue #664; its check comes with the fix)
+			expect(off(I), "I, connected outside every network, is not off: " .. line(remote.call(CONN, "levels", I)))
 			expect(off(E1) and remote.call(CONN, "levels", E1)[2] == false, "E1, connected outside every network, is off: "
 				.. line(remote.call(CONN, "levels", E1)))
 			local p = side(E1)

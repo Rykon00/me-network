@@ -1211,6 +1211,7 @@ RUNTIME_TESTS = (
     ("LIF", "ME logistic interface (issue #531)"),
     ("LIFAUTO", "ME logistic interface automatic mode (issue #537)"),
     ("LIFBUILD", "ME logistic interface construction supply (issue #538)"),
+    ("GHOSTBUILD", "ME windows of ghosts built by robots (Task-Ingame #661)"),
     ("REMOTEVIEW", "ME windows in remote view (issues #176, #177)"),
     ("GRIDFLUID", "ME pattern fluid amounts on the engine's grid (issue #261)"),
     ("IFACEWAKE", "ME interface wake (issue #313)"),
