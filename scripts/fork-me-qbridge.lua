@@ -27,6 +27,7 @@
 --------------------------------------------------------------------------------
 
 local N = require("scripts.fork-me-network")
+local Standin = require("scripts.fork-me-standin")   -- (issue #659: the stand-in of a ghost's window links nothing)
 
 local M = {}
 
@@ -100,7 +101,7 @@ end
 local function members(s, name, f)
 	local out = {}
 	for unit, rec in pairs(s.recs) do
-		if rec.freq == f and rec.entity.valid and rec.entity.name == name then out[#out + 1] = unit end
+		if rec.freq == f and rec.entity.valid and rec.entity.name == name and not Standin.is(unit) then out[#out + 1] = unit end
 	end
 	table.sort(out)
 	return out
@@ -124,7 +125,8 @@ local function nearest_in_reach(s, rec, f)
 	local range = spec(LINK).range or 0
 	local w, m = rec.where, nil
 	for unit, o in pairs(s.recs) do
-		if o ~= rec and o.freq == f and o.where.surface == w.surface and o.entity.valid and o.entity.name == LINK then
+		if o ~= rec and o.freq == f and o.where.surface == w.surface and o.entity.valid and o.entity.name == LINK
+			and not Standin.is(unit) then
 			local dx, dy = o.where.x - w.x, o.where.y - w.y
 			local d2 = dx * dx + dy * dy
 			if d2 <= range * range and (not m or d2 < m) then m = d2 end

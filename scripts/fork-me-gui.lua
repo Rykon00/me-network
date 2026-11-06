@@ -899,8 +899,14 @@ end
 
 --- The open key on an entity, or the vanilla window of an entity that has one: open the ME window instead.
 --- Returns true when the entity has an ME window.
+--- issue #659: function(player, ghost) -> true when it opened the ME window of a ghost (scripts/fork-me-ghostwin.lua)
+M.ghost_open = nil
+--- issue #659: the ghost whose stand-in `entity` is (nil: none; scripts/fork-me-ghostwin.lua sets it)
+M.ghost_of = function(entity) return nil end
+
 function M.open_entity(player, entity)
 	if not (entity and entity.valid) then return false end
+	if entity.type == "entity-ghost" then return M.ghost_open ~= nil and M.ghost_open(player, entity) or false end
 	local open = openers[entity.name] or (M.kind_of and openers[M.kind_of(entity.name) or ""])
 	if not open then return false end
 	local b = storage.fork_me_gui_bypass
@@ -1143,6 +1149,14 @@ function M.window_list()
 		out[name] = { pane = true, shift = def.shift ~= nil, control = def.control ~= nil, message = def.message ~= nil }
 	end
 	return out
+end
+
+--- issue #659: the name and definition of the window of entities named `entity_name` (nil: none)
+function M.window_for(entity_name)
+	local open = openers[entity_name] or (M.kind_of and openers[M.kind_of(entity_name) or ""])
+	if not open then return nil end
+	for name, def in pairs(windows) do if def.open == open then return name, def end end
+	return nil
 end
 
 --- the window definition of an entity's window (the tests' clicks)

@@ -42,6 +42,7 @@ local VC = require("scripts.fork-me-viewcells")        -- (issue #440)
 local picker = require("scripts.fork-me-picker")        -- (issue #514: the visible qualities)
 local circuit = require("scripts.fork-me-circuit")      -- (issue #520: the game's comparators)
 local SK = require("scripts.fork-me-sortkeys")          -- (issue #602: the sort by mod and by tier)
+local Ghost = require("scripts.fork-me-ghostwin")      -- (issue #659: the window of a ghost)
 
 local M = {}
 
@@ -1442,6 +1443,7 @@ function M.on_configuration_changed()
 		if not game.get_player(index) then storage.fork_me_term_prefs[index] = nil end
 	end
 	G.close_all()
+	Ghost.on_configuration_changed()                        -- (issue #659: the stand-ins of the ghosts' windows)
 	storage.fork_me_gui_bypass = nil
 	SK.rebuild()                                            -- (issue #602: the prototypes can have changed)
 end
@@ -1483,6 +1485,8 @@ script.on_event(defines.events.on_gui_closed, function(event)
 	G.on_closed(event)
 	Conn.on_gui_closed(event)                                -- (issue #412: a circuit connector's lamp window)
 	IO.fluid_entity_changed(event.entity)                    -- (issue #420: a machine's recipe may give it a fluid box)
+	local player = game.get_player(event.player_index)
+	if player then Ghost.settle(player) end                  -- (issue #659: a ghost's window closed)
 end)
 
 --- issue #542: shift + click and control + click in the inventory element of an ME window (the game draws its slots and
@@ -1492,14 +1496,19 @@ script.on_event(defines.events.on_gui_inventory_action, function(event)
 end)
 
 script.on_event(defines.events.on_player_left_game, function(event)
-	G.on_left(game.get_player(event.player_index))
+	local player = game.get_player(event.player_index)
+	G.on_left(player)
+	if player then Ghost.settle(player) end                  -- (issue #659)
 end)
 
 script.on_event({ defines.events.on_gui_click, defines.events.on_gui_text_changed, defines.events.on_gui_elem_changed,
 	defines.events.on_gui_confirmed, defines.events.on_gui_checked_state_changed,
 	defines.events.on_gui_switch_state_changed, defines.events.on_gui_selection_state_changed,
 	defines.events.on_gui_selected_tab_changed, defines.events.on_gui_value_changed }, function(event)
-	G.dispatch(event)
+	if G.dispatch(event) then
+		local player = game.get_player(event.player_index)
+		if player then Ghost.settle(player) end              -- (issue #659: the settings of a ghost's window into its tags)
+	end
 end)
 
 local function refresh()
