@@ -11,6 +11,10 @@
 ---   * An output removed while a job runs on its machine: the job ends done, nothing lost (the network lost exactly the
 ---     plates of the products it got, the machine is empty), the provider no longer reaches that machine.
 ---   * Kept: a blueprint copy of an output (frequency and role), of the input (the copy waits: "taken"), a clone.
+---   * Issue #650, the reason of a mixed recipe: a second provider in the network, its item input tunnel bound first (to two
+---     machines of the scene's category, M4 and M5), its fluid input to a stand-in chemical plant (M6, zz-devcheck-p2p-chem).
+---     The pattern zz-devcheck-p2p-mixed (an iron plate and water, the chemical plant's only) reaches none of them; the reason
+---     is M6's, the one machine that could craft it: "tunnel-items", not the assemblers' "tunnel-fluids".
 --- The scene runs through the save and load of the save-and-load run.
 --- Loaded by control.lua: require("p2p")(H) returns { setup, tick, running }.
 
@@ -21,6 +25,7 @@ local START, LAST = 160, 1420
 local PLATES, WATER = 400, 20000
 local N_A, N_B, N_C, N_RM = 34, 4, 2, 24                 -- (a: more than two hand-overs of 16, so both machines get work)
 local FLUID_FREQ, OTHER_FREQ = 7000, 7001
+local MIX_ITEM_FREQ, MIX_FLUID_FREQ = 7010, 7011          -- (issue #650)
 local MACHINE = "zz-devcheck-p2p-machine"
 
 return function(H)
@@ -59,7 +64,20 @@ return function(H)
 		o.fluid1 = me_place(s, fails, what, "me-fluid-p2p-tunnel", BX + 21.5, BY + 8.5, south)
 		o.item2 = me_place(s, fails, what, "me-item-p2p-tunnel", BX + 26.5, BY + 8.5, south)
 		o.fluid3 = me_place(s, fails, what, "me-fluid-p2p-tunnel", BX + 31.5, BY + 8.5, south)
-		H.me_connect(fails, what, { ctrl, drive, fdrive, cpu, sc.provider, sc.in_item, sc.in_fluid, o.item1, o.fluid1, o.item2, o.fluid3 })
+		--- issue #650: the second provider, its item input (bound first) to M4 and M5, its fluid input to M6 (a chemical plant)
+		local MY = BY + 18
+		sc.mix = me_place(s, fails, what, "me-pattern-provider", BX + 0.5, MY + 0.5)
+		sc.mix_item = me_place(s, fails, what, "me-item-p2p-tunnel", BX - 0.5, MY + 0.5, east)
+		sc.mix_fluid = me_place(s, fails, what, "me-fluid-p2p-tunnel", BX + 0.5, MY - 0.5, south)
+		sc.mm = {}
+		for i = 1, 3 do
+			sc.mm[i] = me_place(s, fails, what, i < 3 and MACHINE or "zz-devcheck-p2p-chem", BX + 21.5 + 5 * i, MY + 0.5)
+		end
+		sc.mo = { me_place(s, fails, what, "me-item-p2p-tunnel", BX + 26.5, MY - 1.5, south),
+			me_place(s, fails, what, "me-item-p2p-tunnel", BX + 31.5, MY - 1.5, south),
+			me_place(s, fails, what, "me-fluid-p2p-tunnel", BX + 36.5, MY - 1.5, south) }
+		H.me_connect(fails, what, { ctrl, drive, fdrive, cpu, sc.provider, sc.in_item, sc.in_fluid, o.item1, o.fluid1, o.item2, o.fluid3,
+			sc.mix, sc.mix_item, sc.mix_fluid, sc.mo[1], sc.mo[2], sc.mo[3] })
 		storage.p2p629_scene = sc
 		return fails
 	end
@@ -121,6 +139,17 @@ return function(H)
 			expect(remote.call(P2P, "set", o.fluid1, FLUID_FREQ, true) and remote.call(P2P, "set", o.fluid3, FLUID_FREQ, true),
 				"the fluid outputs' frequency")
 			st.fi = fi.freq
+			--- issue #650: the item input of the second provider first, then its fluid input
+			local mixed = sc.mix and sc.mix.valid and sc.mix_item and sc.mix_item.valid and sc.mix_fluid and sc.mix_fluid.valid
+			expect(mixed, "the scene of the mixed recipe is missing")
+			if mixed then
+				expect(give_patterns(sc.mix, { { kind = "crafting", recipe = "zz-devcheck-p2p-mixed" } }, problems) == 1,
+					"the second provider took the mixed pattern")
+				expect(remote.call(P2P, "set", sc.mix_item, MIX_ITEM_FREQ, false) and remote.call(P2P, "set", sc.mo[1], MIX_ITEM_FREQ, true)
+					and remote.call(P2P, "set", sc.mo[2], MIX_ITEM_FREQ, true), "the second provider's item frequency")
+				expect(remote.call(P2P, "set", sc.mix_fluid, MIX_FLUID_FREQ, false) and remote.call(P2P, "set", sc.mo[3], MIX_FLUID_FREQ, true),
+					"the second provider's fluid frequency")
+			end
 			st.phase, st.at = 1, tick
 			return
 		end
@@ -147,6 +176,14 @@ return function(H)
 			expect(a.ok and a.machines == 2, "pattern a (items): " .. serpent.line(a))
 			expect(b.ok and b.machines == 2, "pattern b (water): " .. serpent.line(b))
 			expect(c.ok and c.machines == 1, "pattern c (both): " .. serpent.line(c))
+			--- issue #650: the reason names the tunnel that the chemical plant lacks
+			if sc.mix and sc.mix.valid then
+				local reach2 = remote.call(P2P, "targets", sc.mix)
+				expect(#reach2 == 3, "the second provider reaches " .. #reach2 .. " machines through tunnels (3: M4, M5, M6)")
+				local mx = ((remote.call(AC, "provider_info", sc.mix) or {}).slots or {})[1] or {}
+				expect(not mx.ok and mx.reason == "tunnel-items", "the mixed pattern: " .. serpent.line(mx)
+					.. " (expected tunnel-items: the chemical plant, the only machine of its category, has no item tunnel)")
+			end
 			st.a0 = count(sc, "zz-devcheck-p2p-a")
 			local id, why = remote.call(AC, "start", sc.ctrl, "zz-devcheck-p2p-a", N_A)
 			expect(id ~= nil, "the job of a: " .. tostring(why))

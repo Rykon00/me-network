@@ -952,7 +952,8 @@ function EXT.tunnel_views(p, e, net, around)
 end
 
 --- may a machine reached through tunnels only (view `v`) get pattern `def`? nil, or why not: item ingredients need an item
---- tunnel ("tunnel-items"), fluid ingredients a fluid tunnel ("tunnel-fluids")
+--- tunnel ("tunnel-items"), fluid ingredients a fluid tunnel ("tunnel-fluids"). Asked only of a machine that takes `def`
+--- otherwise (target_for), so the reason names the tunnel a machine that could craft it lacks (issue #650).
 function EXT.tunnel_problem(v, def)
 	local facts = def_facts(def)
 	if facts.items > 0 and not v.via.item then return "tunnel-items" end
@@ -1151,14 +1152,20 @@ local function scan_provider(p)
 					same = old_patterns[slot] == nil and was ~= nil and was.reason == "no-network"
 				end
 			else
-				local targets, reason = {}, nil
+				local targets, reason, treason = {}, nil, nil
 				for _, v in ipairs(around) do
-					local t, r
-					if v.via then r = EXT.tunnel_problem(v, def) end    -- (issue #629)
-					if not r then t, r = target_for(v, def) end
+					local t, r = target_for(v, def)
+					--- issue #629: a machine reached through tunnels only needs the tunnels of the pattern's ingredients. Issue
+					--- #650: asked only of a machine that takes the pattern otherwise, and its reason is named before any other
+					--- (an assembler that cannot craft the recipe at all said "fluid tunnel" for the chemical plant that can)
+					if t and v.via then
+						r = EXT.tunnel_problem(v, def)
+						if r then t, treason = nil, treason or r end
+					end
 					if t then t.prov = p.unit end          -- (issue #335: a chest's blocking mode; #429: every target's circuit lock)
 					if t then targets[#targets + 1] = t else reason = reason or r end
 				end
+				reason = treason or reason
 				patterns[slot] = { id = id, def = def, targets = targets, why = reason }
 				local ok = #targets > 0
 				status[slot] = { ok = ok, reason = not ok and (reason or "no-machine") or nil, machines = #targets }

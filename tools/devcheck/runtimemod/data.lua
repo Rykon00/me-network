@@ -157,6 +157,18 @@ do
 			enabled = true, icon = icon, subgroup = "intermediate-product", ingredients = r[2],
 			results = { { type = "item", name = "zz-devcheck-p2p-" .. r[1], amount = 1 } } }
 	end
+	--- issue #650: a stand-in of a chemical plant (a category of its own, which zz-devcheck-p2p-machine lacks) and a mixed
+	--- recipe of it (an iron plate and water, as plastic bars take coal and petroleum gas), the same with and without Gregtorio
+	local chem = table.deepcopy(m)
+	chem.name = "zz-devcheck-p2p-chem"
+	chem.crafting_categories = { "zz-devcheck-p2p-chem" }
+	out[#out + 1] = { type = "recipe-category", name = "zz-devcheck-p2p-chem" }
+	out[#out + 1] = chem
+	out[#out + 1] = { type = "item", name = "zz-devcheck-p2p-mixed", icon = icon, stack_size = 100, subgroup = "intermediate-product" }
+	out[#out + 1] = { type = "recipe", name = "zz-devcheck-p2p-mixed", categories = { "zz-devcheck-p2p-chem" }, energy_required = 0.5,
+		enabled = true, icon = icon, subgroup = "intermediate-product",
+		ingredients = { { type = "item", name = "iron-plate", amount = 1 }, { type = "fluid", name = "water", amount = 10 } },
+		results = { { type = "item", name = "zz-devcheck-p2p-mixed", amount = 1 } } }
 	data:extend(out)
 end
 
