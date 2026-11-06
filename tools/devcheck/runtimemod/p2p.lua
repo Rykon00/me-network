@@ -15,6 +15,8 @@
 ---     machines of the scene's category, M4 and M5), its fluid input to a stand-in chemical plant (M6, zz-devcheck-p2p-chem).
 ---     The pattern zz-devcheck-p2p-mixed (an iron plate and water, the chemical plant's only) reaches none of them; the reason
 ---     is M6's, the one machine that could craft it: "tunnel-items", not the assemblers' "tunnel-fluids".
+---   * Task-Ingame #656: at the end an item output of that provider's item frequency is bound onto M6 as well: the pattern is
+---     ok (one machine) and a job of it runs on M6 (the iron plates through the item tunnel, the water through the fluid one).
 --- The scene runs through the save and load of the save-and-load run.
 --- Loaded by control.lua: require("p2p")(H) returns { setup, tick, running }.
 
@@ -26,6 +28,7 @@ local PLATES, WATER = 400, 20000
 local N_A, N_B, N_C, N_RM = 34, 4, 2, 24                 -- (a: more than two hand-overs of 16, so both machines get work)
 local FLUID_FREQ, OTHER_FREQ = 7000, 7001
 local MIX_ITEM_FREQ, MIX_FLUID_FREQ = 7010, 7011          -- (issue #650)
+local N_MIX = 3                                           -- (Task-Ingame #656)
 local MACHINE = "zz-devcheck-p2p-machine"
 
 return function(H)
@@ -75,9 +78,10 @@ return function(H)
 		end
 		sc.mo = { me_place(s, fails, what, "me-item-p2p-tunnel", BX + 26.5, MY - 1.5, south),
 			me_place(s, fails, what, "me-item-p2p-tunnel", BX + 31.5, MY - 1.5, south),
-			me_place(s, fails, what, "me-fluid-p2p-tunnel", BX + 36.5, MY - 1.5, south) }
+			me_place(s, fails, what, "me-fluid-p2p-tunnel", BX + 36.5, MY - 1.5, south),
+			me_place(s, fails, what, "me-item-p2p-tunnel", BX + 35.5, MY - 1.5, south) }    -- (Task-Ingame #656: unbound until the end)
 		H.me_connect(fails, what, { ctrl, drive, fdrive, cpu, sc.provider, sc.in_item, sc.in_fluid, o.item1, o.fluid1, o.item2, o.fluid3,
-			sc.mix, sc.mix_item, sc.mix_fluid, sc.mo[1], sc.mo[2], sc.mo[3] })
+			sc.mix, sc.mix_item, sc.mix_fluid, sc.mo[1], sc.mo[2], sc.mo[3], sc.mo[4] })
 		storage.p2p629_scene = sc
 		return fails
 	end
@@ -303,7 +307,32 @@ return function(H)
 			d = info(clone)
 			expect(clone and d.freq == FLUID_FREQ and d.output == true, "the clone: " .. serpent.line(d))
 			if clone then clone.destroy{ raise_destroy = true } end
-			return finish(N_A .. " + " .. N_B .. " + " .. N_C .. " + " .. N_RM .. " crafts through tunnels")
+			--- Task-Ingame #656: an item output of the second provider's item frequency onto the chemical plant M6 as well
+			local mo4 = sc.mo[4]
+			expect(mo4 and mo4.valid and remote.call(P2P, "set", mo4, MIX_ITEM_FREQ, true), "M6's item output on the second provider's frequency")
+			st.phase, st.at = 8, tick
+			return
+		end
+
+		if st.phase == 8 then
+			if tick < st.at + 5 then return end
+			local mx = ((remote.call(AC, "provider_info", sc.mix) or {}).slots or {})[1] or {}
+			expect(mx.ok and mx.machines == 1, "the mixed pattern with M6's item tunnel: " .. serpent.line(mx))
+			st.x0 = count(sc, "zz-devcheck-p2p-mixed")
+			local id, why = remote.call(AC, "start", sc.ctrl, "zz-devcheck-p2p-mixed", N_MIX)
+			expect(id ~= nil, "the job of the mixed recipe: " .. tostring(why))
+			if not id then return finish() end
+			st.job, st.phase, st.at = id, 9, tick
+			return
+		end
+
+		if st.phase == 9 then
+			if not job_done(10, "the job of the mixed recipe") then return end
+			local got = count(sc, "zz-devcheck-p2p-mixed") - st.x0
+			local m6 = sc.mm[3]
+			expect(got == N_MIX and m6.valid and m6.products_finished == N_MIX, "the mixed recipe: " .. got .. " of " .. N_MIX
+				.. ", M6 made " .. tostring(m6.valid and m6.products_finished))
+			return finish(N_A .. " + " .. N_B .. " + " .. N_C .. " + " .. N_RM .. " + " .. N_MIX .. " crafts through tunnels (tick " .. tick .. ")")
 		end
 	end
 
