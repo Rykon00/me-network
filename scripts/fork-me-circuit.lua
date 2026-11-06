@@ -729,6 +729,13 @@ function M.maintainer_status(entity)
 		return { "fork-me-circuit.maintainer-running", job or "?", j and j.done or 0, j and j.total or 0 }
 	elseif st == "missing" and rec.missing then
 		return { "fork-me-circuit.maintainer-missing", autocraft.item_list(rec.missing, 6) }
+	elseif st == "disabled" then
+		--- issue #651: the lamp's condition that switches it off (the circuit one first when both fail)
+		local cl, ll = M.levels(entity)
+		if cl ~= false and ll == false then
+			local net = entity.surface.find_logistic_network_by_position(entity.position, entity.force)
+			return { "fork-me-circuit.maintainer-" .. (net and "logistic-off" or "no-logistic-network") }
+		end
 	end
 	return { "fork-me-circuit.maintainer-" .. st }
 end

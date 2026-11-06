@@ -1396,7 +1396,7 @@ function M.refresh_provider(player, frame)
 	if locked_row then
 		locked_row.visible = pinfo.locked ~= nil or pinfo.clocked == true
 		G.find(frame, "fork_me_prov_locked").caption = pinfo.locked and M.locked_text(pinfo.locked)
-			or pinfo.clocked and { "fork-me-gui.provider-locked-" .. pinfo.lock } or ""
+			or pinfo.clocked and M.circuit_locked_text(entity, pinfo.lock) or ""   -- (issue #651: the condition that locks it)
 	end
 	rebuild(frame, "fork_me_provider_slots", slots_sig, function(box) build_provider_slots(box, entity) end)
 	rebuild(frame, "fork_me_provider_machines", machines_sig, function(box) build_provider_machines(box, entity) end)
@@ -1430,6 +1430,30 @@ G.on("prov_slot", function(event, player, el)
 	if remote and out then G.moved_text(player) end
 	G.refresh_one(player)
 end)
+
+--- Issue #651: the status of a block switched off by its conditions ("circuit-off", the visits' word for both) as the one that
+--- does it: "circuit-off", "logistic-off" or "no-logistic-network" (fork-me-connector.lua M.off_cause); any other status as it is
+function M.cond_status(entity, status)
+	if status ~= "circuit-off" then return status end
+	local cause = Conn.off_cause(entity)
+	if cause == "logistic" then return "logistic-off" end
+	if cause == "no-logistic-network" then return cause end
+	return status
+end
+
+--- Issue #651: the line of a provider locked by its conditions (lock mode `mode`: "low", "high", "pulse"), naming the conditions
+--- that lock it: "low" the one that does not hold (fork-me-connector.lua M.off_cause), "high" and "pulse" those switched on
+function M.circuit_locked_text(entity, mode)
+	local suffix = ""
+	if mode == "low" then
+		local cause = Conn.off_cause(entity)
+		if cause == "logistic" or cause == "no-logistic-network" then suffix = "-" .. cause end
+	else
+		local cl, ll = Conn.levels(entity)
+		if ll ~= nil then suffix = cl ~= nil and "-both" or "-logistic" end
+	end
+	return { "fork-me-gui.provider-locked-" .. mode .. suffix }
+end
 
 --- Issue #346: what a locked provider still waits for: "Locked until these are back: 12 [item=pipe]"
 function M.locked_text(locked)
@@ -2109,7 +2133,7 @@ function M.refresh_interface(player, frame)
 	rebuild(frame, "fork_me_if_items", table.concat(sig, ","), function(grid)
 		for _, c in ipairs(d.contents) do G.slot(grid, c.key, c.count) end
 	end)
-	G.find(frame, "fork_me_if_status").caption = M.mix_status({ "fork-me-net.bus-" .. (d.status or "ok") }, d.fmix)
+	G.find(frame, "fork_me_if_status").caption = M.mix_status({ "fork-me-net.bus-" .. M.cond_status(entity, d.status or "ok") }, d.fmix)
 	return true
 end
 
@@ -2546,7 +2570,7 @@ function M.refresh_bus(player, frame)
 	local what = d.items and d.fluids and "both" or d.fluids and "fluids" or "items"
 	G.find(frame, "fork_me_bus_target").caption = target
 		and { "fork-me-gui.bus-target-" .. what, target.localised_name } or ""
-	local status = { "fork-me-net.bus-" .. (d.status or "ok") }
+	local status = { "fork-me-net.bus-" .. M.cond_status(entity, d.status or "ok") }   -- (issue #651)
 	if d.tstat then                                       -- issue #159: the temperatures the network has and the target takes
 		status = { "fork-me-net.bus-temperature-detail", "[fluid=" .. d.tstat[1] .. "]", d.tstat[2], d.tstat[3] }
 	end
@@ -2720,7 +2744,7 @@ function M.refresh_storage_bus(player, frame)
 	G.find(frame, "fork_me_sbus_target").caption = target and { "fork-me-gui.bus-target", target.localised_name }
 		or (d.network and { "fork-me-gui.logistic-storage-bus-network", tostring(d.network) }) or ""
 	G.find(frame, "fork_me_sbus_status").caption = { "fork-me-net." .. (d.side == "fluid" and "fluid-" or d.logistic and "logistic-" or "")
-		.. "storage-bus-" .. (d.status or "ok") }
+		.. "storage-bus-" .. M.cond_status(entity, d.status or "ok") }       -- (issue #651)
 	refresh_side(frame, entity)                                -- (issue #639; the logistic storage bus has none)
 	return true
 end
@@ -3111,6 +3135,15 @@ remote.add_interface("gregtorio-me-gui", {
 		end)
 		out.circuit, out.logistic = out.names.fork_me_side_circuit == true, out.names.fork_me_side_logistic == true
 		return out
+	end,
+	--- Issue #651: the caption of the element `element` of the stand-in's open window after a refresh (nil: no such element)
+	stand_in_caption = function(name, element)
+		local sp = stand_ins[name]
+		if not G.window_of(sp) then return nil end
+		G.refresh_one(sp)
+		local frame = G.window_of(sp)
+		local el = frame and G.find(frame, element)
+		return el and el.caption or nil
 	end,
 	stand_in_sounds = function(name) return stand_ins[name].sounds end,
 	stand_in_forget = function(name) stand_ins[name] = nil stand_in_frames[name] = nil end,

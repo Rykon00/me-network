@@ -395,6 +395,22 @@ function M.levels(e)
 	return cl, ll
 end
 
+--- Issue #651 (the status lines of the windows): what switches block `e` off now: "circuit" (its circuit condition does not
+--- hold), "logistic" (its logistic condition does not hold), "no-logistic-network" (connected outside every logistic network);
+--- when both fail, the circuit one is named (a fixed order). Nil when neither does (an export bus in pulse mode waits for a rise).
+--- The panel's view (the network found now); while that differs from the checks' lookup (at most LOOKUP ticks old), a block
+--- they switched off for want of a network says so.
+function M.off_cause(e)
+	local s = storage.fork_me_conn
+	local h = e and e.valid and s and s.hosts[e.unit_number]
+	if not h then return nil end
+	local cl, ll = M.levels(e)
+	if cl == false then return "circuit" end
+	if ll == false then return find_network(e) and "logistic" or "no-logistic-network" end
+	if h.lc and s.off[e.unit_number] and not (h.lnet and h.lnet.valid) then return "no-logistic-network" end
+	return nil
+end
+
 --- copies the conditions of block `src` to block `dst` (a settings paste of the blocks, a clone)
 function M.copy(src, dst)
 	if not (src and src.valid and dst and dst.valid) then return end
