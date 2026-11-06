@@ -338,6 +338,54 @@ return function(H)
 		return problems
 	end
 
+	--- me-network issue #649: an ME P2P tunnel's copy pasted over a tunnel that stands there (Ctrl+C / Ctrl+V) gives it the
+	--- copy's frequency and role, as a tunnel built from the ghost: a bound output pasted over an unbound tunnel becomes an
+	--- output of that frequency; an input pasted over a tunnel of another frequency becomes a second input of the copy's
+	--- frequency, which waits ("taken") while the first one holds it, and the frequency it left has no input any more.
+	local P2P, TY = "gregtorio-me-p2p", KY + 6
+	local function p2p_paste(s)
+		local problems = {}
+		local I = "me-item-p2p-tunnel"
+		local function put(x) return me_place(s, problems, "p2p paste", I, BX + x + 0.5, TY + 0.5) end
+		local a, b, c, d, e = put(0), put(3), put(6), put(9), put(12)
+		local function gone() for _, x in pairs({ a, b, c, d, e }) do if x and x.valid then x.destroy{ raise_destroy = true } end end end
+		if not (a and b and c and d and e) then gone() return problems end
+		local function info(x) return remote.call(P2P, "info", x) or {} end
+		local function over(src, dst)
+			local inv, bp = copy_of(s, area_of(src))
+			remote.call(PO, "paste", bp, s, "player", dst.position, defines.direction.north)
+			inv.destroy()
+		end
+		local function want(x, freq, output, status, what)
+			local i = info(x)
+			if i.freq ~= freq or i.output ~= output or (status and i.status ~= status) then
+				problems[#problems + 1] = ("%s: frequency %s, %s, status %s (expected %s, %s%s)"):format(what, tostring(i.freq),
+					i.output and "output" or "input", tostring(i.status), freq, output and "output" or "input",
+					status and (", " .. status) or "")
+			end
+		end
+		local f1 = remote.call(P2P, "make_input", a)
+		remote.call(P2P, "bind_output", b, f1)
+		local f2 = remote.call(P2P, "make_input", d)
+		remote.call(P2P, "bind_output", e, f2)
+		if not (f1 and f2 and f1 ~= f2) then
+			problems[#problems + 1] = "p2p paste: no two frequencies (" .. tostring(f1) .. ", " .. tostring(f2) .. ")"
+			gone()
+			return problems
+		end
+		--- a bound output over an unbound tunnel
+		over(b, c)
+		want(c, f1, true, nil, "a bound output pasted over an unbound tunnel")
+		want(b, f1, true, nil, "the copied output")
+		--- an input over the input of another frequency: a second input of the copy's frequency waits
+		over(a, d)
+		want(d, f1, false, "taken", "an input pasted over the input of another frequency")
+		want(a, f1, false, "input", "the copied input (it keeps the frequency)")
+		want(e, f2, true, "no-input", "the output of the frequency the pasted-over input left")
+		gone()
+		return problems
+	end
+
 	function T.setup() return {} end
 
 	function T.tick()
@@ -442,6 +490,9 @@ return function(H)
 			"the player's path (the mod's keys, issue #527): the frequency from a bridge onto a bridge and a link onto a link,"
 				.. " not across, with sound and flying text; a copy over another block, another force and a source that is"
 				.. " gone paste nothing")
+		me_report("P2PPASTE", "ME P2P tunnels pasted over tunnels", p2p_paste(s),
+			"issue #649: a bound output pasted over an unbound tunnel takes its frequency and role; an input pasted over the"
+				.. " input of another frequency waits as a second input of the copy's frequency")
 	end
 
 	function T.running(check) check(storage.copypaste383 and storage.copypaste383.done, "ME settings through the copy-paste tool") end
