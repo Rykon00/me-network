@@ -39,6 +39,7 @@
 local N = require("scripts.fork-me-network")
 local T = require("scripts.fork-me-targets")
 local Sched = require("scripts.fork-me-schedule")
+local Standin = require("scripts.fork-me-standin")   -- (issue #659)
 
 local M = {}
 
@@ -131,6 +132,7 @@ end
 --- put it into its frequency (an input also into the tile index, by the tile it faces)
 local function link(s, unit, rec)
 	if rec.freq == 0 then return end
+	if Standin.is(unit) then return end            -- (issue #659: a ghost window's stand-in keeps its frequency, takes none)
 	local fr = s.freqs[rec.freq]
 	if not fr then
 		fr = { inputs = {}, outputs = {} }

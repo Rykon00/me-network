@@ -2269,6 +2269,15 @@ function M.side_state(entity)
 	end
 	d.cond, d.lcond = d.cond or {}, d.lcond or {}
 	d.wired = d.red ~= nil or d.green ~= nil
+	local ghost = G.ghost_of(entity)
+	if ghost then                    -- (issue #659: a ghost's window; its stand-in has no wires and stands nowhere)
+		local ok, connectors = pcall(function() return ghost.get_wire_connectors(false) end)
+		for id, c in pairs(ok and connectors or {}) do
+			if (id == defines.wire_connector_id.circuit_red or id == defines.wire_connector_id.circuit_green)
+				and c.connection_count > 0 then d.wired = true end
+		end
+		d.net = Conn.find_network(ghost)
+	end
 	d.logistic = d.net ~= nil or d.lc == true
 	return d
 end

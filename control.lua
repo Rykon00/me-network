@@ -70,6 +70,7 @@ local cabledrag = require("scripts.fork-me-cabledrag")
 local memcard = require("scripts.fork-me-memorycard")
 --- issue #629: the ME P2P Tunnels (frequencies; a pattern provider serves the machines their outputs face)
 local fork_p2p = require("scripts.fork-me-p2p")
+local ghostwin = require("scripts.fork-me-ghostwin")      -- (issue #659: the ME window of a ghost)
 
 --- the blueprint handler of the autocrafting module also tags ME Interfaces, buses and drives
 fork_ae2.blueprint_hooks[#fork_ae2.blueprint_hooks + 1] = fork_io.tag_blueprint
@@ -242,6 +243,13 @@ local function on_destroyed(event)
 	fork_net.on_removed(event.entity, nil)
 end
 script.on_event(defines.events.on_entity_died, on_destroyed, REMOVED_FILTER)
+--- issue #659: the stand-in of a ghost's window is built from the ghost's tags as a robot builds it, tagged by the blueprint
+--- hooks, and mined into a buffer that goes back to the player
+ghostwin.build = function(entity, tags)
+	on_built(entity, tags, { name = defines.events.script_raised_built, entity = entity, tags = tags })   -- (the drive reads the event's)
+end
+ghostwin.remove = function(entity, buffer) on_mined{ entity = entity, buffer = buffer } end
+ghostwin.tag = function(bp, mapping) fork_ae2.tag_blueprint(bp, mapping) end
 --- a member marked for deconstruction carries no network from that moment (it leaves the graph as if it were mined, the modules
 --- first), and joins again when the mark is cancelled; the blocks that work on the network wake then
 local function wake_all(unit)
