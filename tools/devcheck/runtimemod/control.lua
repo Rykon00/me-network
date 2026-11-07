@@ -737,6 +737,32 @@ function me_terminal_test()
 	remote.call(NET, "extract", t, "iron-plate", 7)
 	expect(remote.call(TERM, "store_inventory_item", main, t, "iron-plate", "normal", true) == size + 7 and main.get_item_count("iron-plate") == 0
 		and count("iron-plate") == 1000, "storing all plates of the inventory: " .. count("iron-plate"))
+	--- issue #676: control + click takes as much as fits into the inventory, control + right click half (rounded up), capped
+	--- by what fits; the rest stays in the network
+	local stone = prototypes.item["stone"].stack_size
+	main.insert{ name = "stone", count = 7 * stone }
+	local got = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "all")
+	expect(got == 3 * size and main.get_item_count("iron-plate") == 3 * size and count("iron-plate") == 1000 - 3 * size,
+		"control click with 3 free slots: took " .. tostring(got) .. ", network " .. count("iron-plate"))
+	remote.call(TERM, "store_inventory_item", main, t, "iron-plate", "normal", true)
+	main.clear()
+	local want = math.min(500, 10 * size)
+	got = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "half")
+	expect(got == want and count("iron-plate") == 1000 - want, "control + right click: took " .. tostring(got) .. " of 1000, want " .. want)
+	local have, held = count("iron-plate"), main.get_item_count("iron-plate")
+	local room = main.count_empty_stacks() * size + (size - held % size) % size
+	local want2 = math.min(math.ceil(have / 2), room)
+	got = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "half")
+	expect(got == want2 and count("iron-plate") == have - want2, "second control + right click: took " .. tostring(got) .. " of " .. have .. ", want " .. want2)
+	remote.call(TERM, "store_inventory_item", main, t, "iron-plate", "normal", true)
+	main.clear()
+	main.insert{ name = "stone", count = 10 * stone }
+	local none, why = remote.call(TERM, "take", cursor[1], main, t, "iron-plate", "all")
+	expect(none == nil and why == "inventory-full" and count("iron-plate") == 1000, "control click into a full inventory: " .. tostring(none) .. " " .. tostring(why))
+	none, why = remote.call(TERM, "take", cursor[1], main, t, "fluid/water", "all")
+	expect(none == nil and why == "fluid-by-hand", "control click on a fluid: " .. tostring(why))
+	main.clear()
+	expect(count("iron-plate") == 1000, "plates lost by the control clicks: " .. count("iron-plate"))
 	--- search and sort
 	local found = remote.call(TERM, "entries", t, "copper", "count")
 	expect(#found == 1 and found[1].name == "copper-plate", "search 'copper': " .. serpent.line(found))
@@ -793,7 +819,7 @@ function me_terminal_test()
 	expect(n == nil and why == "cannot-store-blueprint", "a blueprint: " .. tostring(n) .. " " .. tostring(why))
 	cursor.destroy()
 	main.destroy()
-	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, store cursor and inventory, search, sort, unstorable")
+	me_report("METERMINAL", "ME terminal", problems, "take stack/one/inventory, control + click all and half (issue #676), store cursor and inventory, search, sort, unstorable")
 end
 
 --- an ME Drive with four cells of `tier` (default 16k; `fluid`: fluid cells) at x, y, holding `items` ({ name -> count })
@@ -1072,6 +1098,8 @@ qualityterm514 = require("qualityterm")({ me_place = me_place, power = power, me
 --- me-network issue #602: the terminal's sort preference, sorts by mod and tier, rows kept at 0 (sortprefs.lua)
 sortprefs602 = require("sortprefs")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
 	me_connect = me_connect })
+--- me-network issue #677: config slots take the item in the cursor (cursorslot.lua)
+cursorslot677 = require("cursorslot")({ me_place = me_place, power = power, me_report = me_report, me_connect = me_connect })
 --- me-network issue #603: the wireless refill (wrefill.lua)
 wrefill603 = require("wrefill")({ me_place = me_place, power = power, me_report = me_report, me_drive = me_drive,
 	me_connect = me_connect })
@@ -1341,6 +1369,7 @@ local function tests_running()
 	entries50.running(check)
 	qualityterm514.running(check)
 	sortprefs602.running(check)
+	cursorslot677.running(check)
 	wrefill603.running(check)
 	holderlists59.running(check)
 	crafter59.running(check)
@@ -2348,6 +2377,7 @@ script.on_nth_tick(10, function()
 	entries50.tick()
 	qualityterm514.tick()
 	sortprefs602.tick()
+	cursorslot677.tick()
 	wrefill603.tick()
 	holderlists59.tick()
 	crafter59.tick()
@@ -5060,15 +5090,26 @@ function paste_test()
 	--- the gear recipe's two items in the recipe's order (Gregtorio's lists the stick first)
 	local gear = {}
 	for _, g in ipairs(prototypes.recipe["iron-gear-crafting-table"].ingredients) do gear[#gear + 1] = g.name end
-	local function gear_rows(q)
+	--- (rows `first` and `first` + 1, `n` crafts each)
+	local function gear_rows(q, first, n)
 		local r = "iron-gear-crafting-table"
-		return "1=" .. gear[1] .. "@" .. q .. ":" .. per_craft(r, gear[1]) .. " 2=" .. gear[2] .. "@" .. q .. ":" .. per_craft(r, gear[2])
+		first, n = first or 1, n or 1
+		return first .. "=" .. gear[1] .. "@" .. q .. ":" .. n * per_craft(r, gear[1]) .. " " .. (first + 1) .. "=" .. gear[2] .. "@" .. q
+			.. ":" .. n * per_craft(r, gear[2])
 	end
-	--- an item recipe onto an interface: its rows are replaced, one craft each (issue #157)
+	--- an item recipe onto an interface (issue #678: the paste adds): the copper row stays, the ingredients take the free
+	--- rows, one craft each (issue #157); pasted again, two crafts each; a second recipe (the gear at another quality) gets
+	--- rows of its own; "Clear" empties them all
 	remote.call(IO, "set_interface_config", i2, { { name = "copper-plate", quality = "normal", amount = 10 } })
 	local msgs = remote.call(RP, "paste", m1, i2)
-	local want = gear_rows("normal")
+	local want = "1=copper-plate@normal:10 " .. gear_rows("normal", 2, 1)
 	expect(#keys(msgs) == 0 and config_line(i2) == want, "item recipe onto an interface: " .. config_line(i2) .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", m1, i2)
+	want = "1=copper-plate@normal:10 " .. gear_rows("normal", 2, 2)
+	expect(#keys(msgs) == 0 and config_line(i2) == want, "the same recipe pasted twice: " .. config_line(i2) .. " " .. line(keys(msgs)))
+	msgs = remote.call(RP, "paste", m2, i2)
+	want = "1=copper-plate@normal:10 " .. gear_rows("normal", 2, 2) .. " " .. gear_rows("uncommon", 4, 1)
+	expect(#keys(msgs) == 0 and config_line(i2) == want, "a second recipe onto an interface: " .. config_line(i2) .. " " .. line(keys(msgs)))
 	--- a quality recipe: the rows, the storage bus filters and (issue #291) the export bus filters take its quality (mode
 	--- and priority stay)
 	msgs = remote.call(RP, "paste", m2, i3)
@@ -5095,15 +5136,22 @@ function paste_test()
 		.. per_craft("phenolic-circuit-board", "phenol")
 	expect(#keys(msgs) == 0 and config_line(i1) == want and sides(i1) == line({ "off", 2 }),
 		"fluid recipe onto an interface with a pipe: " .. config_line(i1) .. " sides " .. sides(i1) .. " " .. line(keys(msgs)))
-	--- a side tied to a fluid that comes again keeps it; then a recipe without it: the side imports again, the two new
-	--- fluid rows get the next import sides, which have no pipe (the player is told)
+	--- issue #678: a fluid that has a row gets one craft more there and keeps its side, the item takes the first free row;
+	--- then a second recipe: its two fluid rows get the next free rows and import sides, which have no pipe (the player is
+	--- told); "Clear" empties the rows, the side that is off stays off
 	remote.call(IO, "set_interface_config", i4, { [5] = { type = "fluid", name = "phenol", amount = 100 } }, { [1] = "off", [3] = 5 })
 	msgs = remote.call(RP, "paste", r1, i4)
-	expect(#keys(msgs) == 0 and sides(i4) == line({ [1] = "off", [3] = 2 }), "a fluid's side kept: " .. sides(i4) .. " " .. line(keys(msgs)))
+	want = "1=resin-circuit-board@normal:" .. per_craft("phenolic-circuit-board", "resin-circuit-board") .. " 5=fluid/phenol:"
+		.. (100 + per_craft("phenolic-circuit-board", "phenol"))
+	expect(#keys(msgs) == 0 and config_line(i4) == want and sides(i4) == line({ [1] = "off", [3] = 5 }),
+		"a fluid's row grows and keeps its side: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
 	msgs = remote.call(RP, "paste", r2, i4)
-	want = "1=fluid/chlorine:" .. per_craft("hydrochloric-acid", "chlorine") .. " 2=fluid/hydrogen:" .. per_craft("hydrochloric-acid", "hydrogen")
-	expect(config_line(i4) == want and sides(i4) == line({ "off", 1, 2 }) and line(keys(msgs)) == line({ "no-pipe", "no-pipe" }),
-		"two fluids onto sides without a pipe: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
+	want = want:gsub(" 5=", " 2=fluid/chlorine:" .. per_craft("hydrochloric-acid", "chlorine") .. " 3=fluid/hydrogen:"
+		.. per_craft("hydrochloric-acid", "hydrogen") .. " 5=")
+	expect(config_line(i4) == want and sides(i4) == line({ "off", 2, 5, 3 }) and line(keys(msgs)) == line({ "no-pipe", "no-pipe" }),
+		"two more fluids onto sides without a pipe: " .. config_line(i4) .. " sides " .. sides(i4) .. " " .. line(keys(msgs)))
+	expect(remote.call(GUI, "clear_interface", i4) and config_line(i4) == "" and sides(i4) == line({ "off" }),
+		"Clear: " .. config_line(i4) .. " sides " .. sides(i4))
 	--- the fluid recipe onto the buses and storage buses
 	msgs = remote.call(RP, "paste", r1, e1)
 	expect(#keys(msgs) == 0 and line(remote.call(IO, "get_bus", e1).filters) == line({ "resin-circuit-board", "fluid/phenol" }),
@@ -5145,6 +5193,15 @@ function paste_test()
 	msgs = remote.call(RP, "paste", mx, i5)
 	expect(line(row_names(i5)) == line(names) and has(msgs, "rows-full"),
 		"too many ingredients onto an interface: " .. config_line(i5) .. " " .. line(keys(msgs)))
+	--- issue #678: pasted again onto the full interface: the rows that are there grow, nothing is lost, the player is told
+	local before5 = remote.call(IO, "get_interface_config", i5)
+	msgs = remote.call(RP, "paste", mx, i5)
+	local after5, grown = remote.call(IO, "get_interface_config", i5), true
+	for i, c in pairs(before5) do
+		if not (after5[i] and after5[i].name == c.name and after5[i].amount > c.amount) then grown = false end
+	end
+	expect(grown and line(row_names(i5)) == line(names) and has(msgs, "rows-full"),
+		"the recipe pasted again onto a full interface: " .. config_line(i5) .. " " .. line(keys(msgs)))
 	local fnames, fl = fill("zz-devcheck-paste-fluids")
 	msgs = remote.call(RP, "paste", mf, i6)
 	expect(fl == 4 and line(row_names(i6)) == line(fnames) and line(keys(msgs)) == line({ "no-pipe", "no-pipe", "no-pipe", "no-pipe", "fluids-full" })
@@ -5190,6 +5247,7 @@ function paste_test()
 	--- issue #157: one craft needs more of a fluid than a side holds: the row holds a side's volume, the player is told
 	local mbig = s.find_entity("zz-devcheck-paste-machine", { PAX + 46.5, PAY + 6.5 })
 	if mbig then
+		expect(remote.call(GUI, "clear_interface", i2) and config_line(i2) == "", "Clear: " .. config_line(i2))   -- (issue #678)
 		msgs = remote.call(RP, "paste", mbig, i2)
 		local big = prototypes.recipe["zz-devcheck-paste-big"].ingredients
 		local bitem, bfluid = big[1].type == "item" and big[1] or big[2], big[1].type == "fluid" and big[1] or big[2]
@@ -5284,6 +5342,7 @@ script.on_init(function()
 	for _, f in pairs(entries50.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(qualityterm514.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(sortprefs602.setup(s)) do fails[#fails + 1] = f end
+	for _, f in pairs(cursorslot677.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holderlists59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(crafter59.setup(s)) do fails[#fails + 1] = f end
 	for _, f in pairs(holders43.setup(s)) do fails[#fails + 1] = f end

@@ -11,6 +11,11 @@
 --- * D: ghosts that go: one cancelled (deconstruction order), one destroyed without an event (as undo removes it), one built
 ---   (revive with raise_revive, as robots build): their ghost neighbours follow; an ME Interface ghost and a built ME block
 ---   next to a cable ghost (arm), the block mined (no arm), an underground cable ghost facing away (no arm) and facing it (arm);
+--- * E (issue #673): a cable has a direction that does not show; the game refuses a paste (red) that lands a cable on a
+---   cable of another direction. What scripts/fork-me-cableturn.lua does when a player holding the corner presses R (remote
+---   `align` with the key): the line's cables turn east, the corner turned east onto it builds, the line keeps its shape;
+---   a line of four turned east on free ground (a column 5 6 6 2); a cable turned east by hand under the corner held as it is
+---   (`align` without a key: north again); V then R counts west; a blueprint of turned cables is stored north (`normalise`);
 --- * at the end every entity is removed and the module keeps nothing (`counts`).
 --- A new ghost takes its shape on the next tick (the module's queue), what goes and what a member changes at once; every
 --- step waits two ticks (on_object_destroyed comes at the end of the tick or the next one).
@@ -19,6 +24,7 @@
 --- Loaded by control.lua: require("cableshape")(H) returns { setup, tick, running }.
 
 local CS = "gregtorio-me-cableshape"
+local CT = "gregtorio-me-cableturn"
 local SURFACE = "me-cableshape-test"
 local START = 140
 local CABLE, UG = "me-cable", "me-underground-cable"
@@ -108,10 +114,10 @@ return function(H)
 				direction = dir, raise_built = true }
 		end
 		--- paste `list` with its middle at `pos` as a player's paste: on_pre_build first, then the build
-		local function paste(list, pos)
+		local function paste(list, pos, dir)
 			local inv, bp = blueprint(list)
-			if has then remote.call(CS, "note_paste", bp, s, "player", pos, D.north, false, false) end
-			local made = bp.build_blueprint{ surface = s, force = "player", position = pos, raise_built = true } or {}
+			if has then remote.call(CS, "note_paste", bp, s, "player", pos, dir or D.north, false, false) end
+			local made = bp.build_blueprint{ surface = s, force = "player", position = pos, direction = dir, raise_built = true } or {}
 			inv.destroy()
 			return made
 		end
@@ -192,6 +198,62 @@ return function(H)
 		elseif step == 8 then
 			check("D: an underground ghost facing the cable", { { 0, 0, true } }, "9")
 			check("D: the interface ghost cancelled", { { 3, 5, true } }, "1")
+			st.step = 9
+
+		--- E: the corner pasted turned east (the blueprint rotated) onto a line y = 10: (1,10) and (2,10) on the line, a ghost
+		--- at (2,11); and a blueprint line of four turned east on free ground (a column at x = 10)
+		elseif step == 9 then
+			local turn = remote.interfaces[CT] ~= nil
+			expect(turn, "no remote interface " .. CT)
+			line(10, 0, 4)
+			if turn then remote.call(CT, "align", s, { 2, 11 }, { "fork-me-cable-rotate" }) end
+			st.e = paste(CORNER, { 2, 11 }, D.east)
+			expect(#st.e == 1, "E: the turned paste onto the line made " .. #st.e .. " ghosts, wanted 1")
+			local turned = {}
+			for x = 0, 4 do local c = at(x, 10) turned[#turned + 1] = tostring(c and c.direction) end
+			expect(table.concat(turned, " ") == "4 4 4 4 4", "E: the line's directions after R: "
+				.. table.concat(turned, " ") .. ", wanted 4 4 4 4 4")
+			--- a blueprint of the turned line is stored north
+			local inv = game.create_inventory(1)
+			inv.insert{ name = "blueprint" }
+			inv[1].create_blueprint{ surface = s, force = "player", area = { { 0.2, 10.2 }, { 4.8, 10.8 } } }
+			local before = inv[1].get_blueprint_entities() or {}
+			local d0 = before[1] and before[1].direction
+			if turn then remote.call(CT, "normalise", inv[1]) end
+			local after = inv[1].get_blueprint_entities() or {}
+			local left = 0
+			for _, be in pairs(after) do if (be.direction or 0) ~= 0 then left = left + 1 end end
+			expect(#after == 5 and d0 == D.east and left == 0, "E: a blueprint of the turned line: " .. #after .. " cables, the first "
+				.. tostring(d0) .. " before, " .. left .. " not north after, wanted 5, 4 and 0")
+			inv.destroy()
+			if turn then
+				local _, d = remote.call(CT, "align", s, { 40, 40 }, { "fork-me-cable-flip-vertical", "fork-me-cable-rotate" })
+				expect(d == D.west, "E: V then R counts " .. tostring(d) .. ", wanted west (12)")
+			end
+			st.e2 = paste({ { CABLE, 0.5, 0.5, 3 }, { CABLE, 1.5, 0.5, 11 }, { CABLE, 2.5, 0.5, 11 }, { CABLE, 3.5, 0.5, 9 } }, { 10, 15 }, D.east)
+			expect(#st.e2 == 4, "E: the turned line on free ground made " .. #st.e2 .. " ghosts, wanted 4")
+			--- E3: a cable turned by hand (east) under a paste as it is (north): x 0..2 at y = 13, a ghost at (2,13) (the built
+			--- (1,13) keeps its real shape: no arm to the ghost)
+			cable(0, 13, nil, D.east)
+			cable(1, 13)
+			if turn then remote.call(CT, "align", s, { 1.5, 13.5 }, {}) end
+			st.e3 = paste({ { CABLE, 0.5, 0.5, 3 }, { CABLE, 1.5, 0.5, 11 }, { CABLE, 2.5, 0.5, 9 } }, { 1.5, 13.5 })
+			expect(#st.e3 == 1, "E3: the paste over a cable turned by hand made " .. #st.e3 .. " ghosts, wanted 1")
+		elseif step == 10 then
+			check("E: the line a tick after the turned paste", { { 0, 10 }, { 1, 10 }, { 2, 10 }, { 3, 10 }, { 4, 10 } }, "3 11 11 11 9")
+			check("E: the turned ghost", { { 2, 11, true } }, "2")
+			local col = {}
+			for _, g in pairs(st.e2) do if g.valid then col[#col + 1] = { g.position.y, g.graphics_variation, g.direction } end end
+			table.sort(col, function(a, b) return a[1] < b[1] end)
+			local got = {}
+			for i, c in ipairs(col) do got[i] = tostring(c[2]) end
+			expect(table.concat(got, " ") == "5 6 6 2", "E: the turned column: " .. table.concat(got, " ") .. ", wanted 5 6 6 2")
+			check("E3: a tick after the paste", { { 0, 13 }, { 1, 13 }, { 2, 13, true } }, "3 9 9")
+			revive(st.e)
+			revive(st.e2)
+			revive(st.e3)
+			st.e, st.e2, st.e3 = nil, nil, nil
+			check("E: built", { { 1, 10 }, { 2, 10 }, { 2, 11 } }, "11 15 2")
 			st.step = 11
 
 		--- the end: everything goes, nothing is kept
@@ -207,7 +269,7 @@ return function(H)
 			expect(c.ghosts == 0 and c.pastes == 0 and not c.surfaces and (c.tiles or 0) == 0 and (c.queued or 0) == 0, "left in the module's state: " .. serpent.line(c))
 			local left = #s.find_entities_filtered{ area = { { -40, -40 }, { 40, 40 } }, name = { CABLE, UG, "entity-ghost" } }
 			expect(left == 0, left .. " entities left")
-			return finish("corner next to and onto a line, a paste without cable, shift-drag and dot blueprints, ghosts that go (tick "
+			return finish("corner next to and onto a line, a paste without cable, shift-drag and dot blueprints, ghosts that go, turned pastes (tick "
 				.. game.tick .. ")")
 		end
 	end

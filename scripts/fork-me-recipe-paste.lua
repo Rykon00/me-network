@@ -4,14 +4,15 @@
 --- Interface, the import, export and storage bus to the `additional_pastable_entities` of every crafting machine
 --- (assembling machines, furnaces, rocket silos of every mod), so the game raises on_entity_settings_pasted.
 ---   * The recipe: the machine's recipe and its quality; a furnace without one: its previous recipe.
----   * ME Interface: the config rows become the recipe's ingredients in recipe order (items at the recipe's quality),
----     a fluid row for each fluid. Issue #157: each row keeps one craft of the recipe (its ingredient amount; a fluid's
----     rounded up to whole units, as rows hold them; before, a full stack of each item and a side's volume of each
----     fluid), at most what a row holds (items MAX_ROW_AMOUNT, a fluid a side's volume: the player is told). 9 rows, 4
----     fluids at most (one per side). The sides: "off" stays off, a side tied to a fluid that is
----     in the new config again stays tied to it, a side tied to a row that goes away imports again. A fluid row
----     without a side gets the side the window gives a new fluid row: the first import side with a pipe, else the
----     first import side (the player is told that it has no pipe yet); with no import side left it has none.
+---   * ME Interface (issue #678: the paste adds, it never replaces): each ingredient adds one craft of the recipe (its
+---     ingredient amount; a fluid's rounded up to whole units, as rows hold them; issue #157) to the row that holds it
+---     (an item at the recipe's quality, a fluid at the recipe's temperature), at most what a row holds (items
+---     MAX_ROW_AMOUNT, a fluid a side's volume: the player is told). An ingredient without a row gets the first free row
+---     (in recipe order); what finds none (the rows the cards give, 4 fluids at most: one per side) is named to the
+---     player. The rows of other items stay as they are, and so do the sides. A new fluid row gets the side the window
+---     gives a new fluid row: the first import side with a pipe, else the first import side (the player is told that it
+---     has no pipe yet); with no import side left it has none. To start over, the window's "Clear" button empties the
+---     rows (fork-me-windows.lua, M.clear_interface).
 ---   * ME Storage Bus: the filters become the ingredients (facing a chest or cargo wagon the items, facing a tank
 ---     the fluids, with no target yet both), items at the recipe's quality; mode and priority stay. 18 filters.
 ---   * ME Export Bus: the filters become the ingredients, ME Import Bus: the products; items and fluids, 9
@@ -90,64 +91,74 @@ end
 --- the blocks
 --------------------------------------------------------------------------------
 
+--- the row of `config` (by index, with holes) that holds the ingredient `e` (an item at `quality`, a fluid at its exact
+--- temperature or none)
+local function row_of(config, e, quality)
+	for i, c in pairs(config) do
+		if e.type == "fluid" then
+			if c.type == "fluid" and c.name == e.name and c.temperature == e.temperature then return i end
+		elseif c.type ~= "fluid" and c.name == e.name and (c.quality or "normal") == quality then
+			return i
+		end
+	end
+end
+
 local function paste_interface(dst, recipe, quality, msgs)
 	local wanted = entries(recipe.ingredients)
 	if #wanted == 0 then return msg(msgs, "no-ingredients") end
-	local old_config, old_sides = io.get_interface_config(dst), io.get_interface_sides(dst)
-	local config, row_of_fluid, fluids = {}, {}, 0
-	local rows_full, fluids_full, capped = {}, {}, {}
+	--- issue #678: the rows stay where they are (also those beyond the cards' rows: they come back with a card), each
+	--- ingredient adds one craft to its row or takes the first free one
+	local config, sides = io.get_interface_config(dst), io.get_interface_sides(dst)
+	local capacity, fluids = io.row_capacity(dst), 0
+	for _, c in pairs(config) do
+		if c.type == "fluid" then fluids = fluids + 1 end
+	end
+	local rows_full, fluids_full, capped, new_fluids = {}, {}, {}, {}
 	for _, e in ipairs(wanted) do
-		if #config >= io.row_capacity(dst) then
-			rows_full[#rows_full + 1] = e
-		elseif e.type == "fluid" then
-			if fluids >= MAX_FLUID_ROWS then
-				fluids_full[#fluids_full + 1] = e
-			else
-				fluids = fluids + 1
-				--- one craft, in whole units (a row holds whole units: rounded up, so one craft is always there)
-				local amount = math.ceil(e.amount - 1e-6)
-				if amount > io.side_volume() then
-					amount = io.side_volume()
-					capped[#capped + 1] = e
-				end
-				config[#config + 1] = { type = "fluid", name = e.name, amount = amount, temperature = e.temperature }
-				row_of_fluid[e.name] = #config
-			end
-		else
-			local amount = math.ceil(e.amount - 1e-6)
-			if amount > MAX_ROW_AMOUNT then
-				amount = MAX_ROW_AMOUNT
+		--- one craft, in whole units (a row holds whole units: rounded up, so one craft is always there)
+		local craft = math.ceil(e.amount - 1e-6)
+		local max = e.type == "fluid" and io.side_volume() or MAX_ROW_AMOUNT
+		local i = row_of(config, e, quality)
+		if i then
+			local amount = (config[i].amount or 0) + craft
+			if amount > max then
+				amount = max
 				capped[#capped + 1] = e
 			end
-			config[#config + 1] = { name = e.name, quality = quality, amount = amount }
-		end
-	end
-	--- the sides: off stays off, a fluid that is there again keeps its sides, the rest imports
-	local sides, tied = {}, {}
-	for d = 1, io.SIDES do
-		local v = old_sides[d]
-		if v == "off" then
-			sides[d] = "off"
-		elseif type(v) == "number" then
-			local old = old_config[v]
-			local i = old and old.type == "fluid" and row_of_fluid[old.name]
-			if i then
-				sides[d] = i
-				tied[i] = true
+			config[i].amount = amount
+		else
+			local free
+			for k = 1, capacity do
+				if not config[k] then free = k break end
+			end
+			if not free then
+				rows_full[#rows_full + 1] = e
+			elseif e.type == "fluid" and fluids >= MAX_FLUID_ROWS then
+				fluids_full[#fluids_full + 1] = e
+			else
+				if craft > max then
+					craft = max
+					capped[#capped + 1] = e
+				end
+				if e.type == "fluid" then
+					fluids = fluids + 1
+					config[free] = { type = "fluid", name = e.name, amount = craft, temperature = e.temperature }
+					new_fluids[#new_fluids + 1] = free
+				else
+					config[free] = { name = e.name, quality = quality, amount = craft }
+				end
 			end
 		end
 	end
 	io.set_interface_config(dst, config, sides)
-	for i, c in ipairs(config) do
-		if c.type == "fluid" and not tied[i] then
-			local d, piped = io.free_side(dst)
-			local icon = "[fluid=" .. c.name .. "]"
-			if d then
-				io.set_interface_side(dst, d, i)
-				if not piped then msg(msgs, "no-pipe", icon, { "fork-me-gui.interface-side-" .. SIDE_NAMES[d] }) end
-			else
-				msg(msgs, "no-side", icon)
-			end
+	for _, i in ipairs(new_fluids) do
+		local d, piped = io.free_side(dst)
+		local icon = "[fluid=" .. config[i].name .. "]"
+		if d then
+			io.set_interface_side(dst, d, i)
+			if not piped then msg(msgs, "no-pipe", icon, { "fork-me-gui.interface-side-" .. SIDE_NAMES[d] }) end
+		else
+			msg(msgs, "no-side", icon)
 		end
 	end
 	if #rows_full > 0 then msg(msgs, "rows-full", tostring(io.row_capacity(dst)), icons(rows_full)) end
