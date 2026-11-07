@@ -144,8 +144,35 @@ M.key_of_elem = key_of_elem
 --- picker opens on it), `with_quality` false for a place that takes no quality (buses, the circuit interface's filters;
 --- issue #352: the maintainer's target and the pattern editor's rows take one)
 local function key_picker(player, act, data, key, with_quality)
-	picker.open(player, { callback = act, data = data, kinds = { item = true, fluid = true }, preset = picker.preset_of(key),
+	M.pick(player, { callback = act, data = data, kinds = { item = true, fluid = true }, preset = picker.preset_of(key),
 		quality = with_quality and true or false })
+end
+
+do
+	--- the items of the cursor a slot never takes from it (tools: the picker opens instead)
+	local TOOLS = { ["blueprint"] = true, ["blueprint-book"] = true, ["deconstruction-item"] = true, ["upgrade-item"] = true,
+		["selection-tool"] = true, ["copy-paste-tool"] = true, ["spidertron-remote"] = true }
+	local WIRES = { ["red-wire"] = true, ["green-wire"] = true, ["copper-wire"] = true }   -- (the wire tools of the shortcut bar)
+
+	--- Issue #677 (AE2's ghost slots, a vanilla filter slot): the picker's choice a slot of `spec` (as picker.open takes it)
+	--- gets from what `player` holds in the cursor: { kind = "item", name, quality (nil where the slot takes none), cursor = true }, or nil
+	--- (an empty hand, a tool, a blueprint or a ghost in the cursor, a wire being dragged, a slot that takes no item) for the
+	--- picker. The cursor stays as it is.
+	function M.cursor_choice(player, spec)
+		if not (spec.kinds and spec.kinds.item) then return nil end
+		local stack = player.cursor_stack           -- (a ghost or a library blueprint in the cursor: an empty stack)
+		if not (stack and stack.valid_for_read) or TOOLS[stack.type] or WIRES[stack.name] or player.drag_target then return nil end
+		if not prototypes.item[stack.name] then return nil end
+		return { kind = "item", name = stack.name, quality = spec.quality ~= false and stack.quality.name or nil, cursor = true }
+	end
+end
+
+--- Issue #677: a key slot's left click: with an item in the cursor the slot takes it (the picker's callback, as if it was
+--- chosen there: what the slot refuses is refused as a choice of the picker), else the picker opens as before
+function M.pick(player, spec)
+	local choice = M.cursor_choice(player, spec)
+	if choice and picker.choose(player, spec, choice) then return end
+	picker.open(player, spec)
 end
 
 local function right_click(event) return event.button == defines.mouse_button_type.right end
@@ -386,7 +413,7 @@ G.on("cell_part", function(event, player, el)
 		if key then M.set_partition_slot(drive, slot, index, nil) G.refresh_one(player) end
 		return
 	end
-	picker.open(player, { callback = "cell_part", data = { unit = drive.unit_number, slot = slot, index = index },
+	M.pick(player, { callback = "cell_part", data = { unit = drive.unit_number, slot = slot, index = index },
 		kinds = { item = not c.fluid, fluid = c.fluid == true }, preset = picker.preset_of(key),
 		title = { "fork-me-picker.title-" .. (c.fluid and "fluid" or "item") } })
 end)
@@ -942,7 +969,7 @@ end
 
 --- the picker for a row or the filter: items only, with their quality
 local function item_picker(player, act, data, key)
-	picker.open(player, { callback = act, data = data, kinds = { item = true }, preset = picker.preset_of(key), quality = true })
+	M.pick(player, { callback = act, data = data, kinds = { item = true }, preset = picker.preset_of(key), quality = true })
 end
 
 local lif_window = storing({ open = open_logistic_interface, refresh = M.refresh_logistic_interface, entities = { lif.NAME } })
@@ -1059,7 +1086,7 @@ G.on("wb_slot", function(event, player, el)
 	local kinds = M.workbench_kinds(d, index)
 	if not (kinds.item or kinds.fluid) then return end
 	local preset = picker.preset_of(key)
-	picker.open(player, { callback = "wb_slot", data = { unit = entity.unit_number, index = index }, kinds = kinds,
+	M.pick(player, { callback = "wb_slot", data = { unit = entity.unit_number, index = index }, kinds = kinds,
 		preset = preset, title = { "fork-me-picker.title-" .. (kinds.item and kinds.fluid and "both" or kinds.item and "item" or "fluid") } })
 end)
 
@@ -2201,7 +2228,9 @@ end)
 picker.on_confirm("if_item", function(player, data, choice)
 	local entity = window_entity(player)
 	if not (entity and entity.unit_number == data.unit) then return end
-	if not M.set_interface_choice(entity, data.index, choice) then refused_choice(player) end
+	--- (issue #677: a row set from the cursor that held something keeps its amount; the picker's choice gets the new row's)
+	local old = choice.cursor and io.get_interface_config(entity)[data.index]
+	if not M.set_interface_choice(entity, data.index, choice, old and old.amount or nil) then refused_choice(player) end
 	G.refresh_one(player)
 end)
 
@@ -3000,7 +3029,7 @@ remote.add_interface("gregtorio-me-gui", {
 			create_local_flying_text = function(a) texts[#texts + 1] = a.text end,
 			play_sound = function(a) sounds[#sounds + 1] = a.path end,
 			can_reach_entity = function() return true end, force = game.forces.player, surface = game.surfaces[1],
-			position = { x = 0, y = 0 } }
+			position = { x = 0, y = 0 }, cursor_stack = spec.cursor }          -- (issue #677: `cursor`, a LuaItemStack)
 		if spec.gui then sp.gui = { screen = stand_in_element{ type = "empty-widget" }, relative = {} } end
 		if spec.character then
 			sp.character = { valid = true, surface = game.surfaces[1], position = { x = 0, y = 0 },
@@ -3123,6 +3152,26 @@ remote.add_interface("gregtorio-me-gui", {
 		end)
 		return { labels = labels, buttons = buttons }
 	end,
+	--- Issue #677: a click (`button` "left" or "right") on the slot of the stand-in's open window whose action is `act` and whose
+	--- tags.<field> is `value` (nil: the first such slot), through the action's handler (with the stand-in's cursor). False
+	--- when there is no such slot. And the choice a slot of `spec` gets from the stand-in's cursor (nil: the picker opens).
+	stand_in_slot_click = function(name, act, field, value, button)
+		local sp = stand_ins[name]
+		local frame = G.window_of(sp)
+		local queue, i, el = { frame }, 1, nil
+		while frame and queue[i] and not el do
+			for _, c in pairs(queue[i].children) do
+				local tags = c.tags or {}
+				if tags.fork_me_act == act and (field == nil or tags[field] == value) then el = c break end
+				queue[#queue + 1] = c
+			end
+			i = i + 1
+		end
+		if not el then return false end
+		local b = button == "right" and defines.mouse_button_type.right or defines.mouse_button_type.left
+		return G.run_action({ name = defines.events.on_gui_click, element = el, button = b }, sp, el)
+	end,
+	stand_in_cursor_choice = function(name, spec) return M.cursor_choice(stand_ins[name], spec) end,
 	--- Issue #639: the circuit and logistic network panel of the stand-in's open window after a refresh: { visible, circuit,
 	--- logistic (its sections are there), names = { [element name] = true }, captions = { [label name] = caption }, states =
 	--- { [checkbox name] = state } }; `act` (optional): first a check box of the panel with that action is set to `state` through

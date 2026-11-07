@@ -1146,6 +1146,7 @@ RUNTIME_TESTS = (
     ("SCAN", "ME provider scan test"),
     ("ENTRIES", "ME terminal entries test"), ("QUALITYTERM", "ME Terminal quality filter and sort test"),
     ("SORTPREFS", "ME Terminal sort preference test"),
+    ("CURSORSLOT", "ME config slots from the cursor test"),
     ("WREFILL", "ME wireless refill test"),
     ("HOLDERLISTS", "ME holder lists test"),
     ("CRAFTER", "ME crafter choice test"),
