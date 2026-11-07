@@ -83,6 +83,16 @@ local BLOCKS = {
 	{ "me-io-port", function(e) remote.call("gregtorio-me-ioport", "set_mode", e, "fill") end },       -- (issue #386)
 	{ "me-quantum-bridge", function(e) remote.call("gregtorio-me-qbridge", "set_frequency", e, 1234) end },   -- (issue #385, 3x3)
 	{ "me-wireless-link", function(e) remote.call("gregtorio-me-qbridge", "set_frequency", e, 4321) end },   -- (issue #384)
+	--- issue #663: the ME Logistic Interface (issue #531), every setting away from a blank block's (built since #537: Automatic)
+	{ "me-logistic-interface", function(e)
+		local LIF = "gregtorio-me-logistic-interface"
+		remote.call(LIF, "set_row", e, "offer", 2, "iron-plate", 70)
+		remote.call(LIF, "set_row", e, "request", 1, "copper-plate", 30)
+		remote.call(LIF, "set_accept", e, false)
+		remote.call(LIF, "set_filter", e, "iron-gear-wheel")
+		remote.call(LIF, "set_auto", e, false)
+		remote.call(LIF, "set_mode", e, "manual")
+	end },
 }
 
 --- the centre of block `i` in a row (by the size of its prototype)
